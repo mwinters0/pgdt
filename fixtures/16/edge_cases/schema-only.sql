@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict BbKa188wOHjgVhErcZfviNSk2peegypJW6HqUcm2baXuMbvCf73OQmMc5xj8QYs
+\restrict mI5WKyG6Hgzq0l1GyeLNQEp42p7bNYqwGVSmiRRRli3LlmEA3q5GqomsS3RfcjL
 
 -- Dumped from database version 16.15
 -- Dumped by pg_dump version 16.15
@@ -26,6 +26,39 @@ CREATE SCHEMA logs;
 
 
 ALTER SCHEMA logs OWNER TO postgres;
+
+--
+-- Name: sample_fn(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.sample_fn() RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+COPY public.widgets TO stdout;
+COPY public.widgets FROM stdin WITH (FORMAT csv);
+COPY public.widgets (id, name) FROM stdin;
+1	adversarial
+2	rows
+\.
+END;
+$$;
+
+
+ALTER FUNCTION public.sample_fn() OWNER TO postgres;
+
+--
+-- Name: tagged_fn(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.tagged_fn() RETURNS text
+    LANGUAGE sql
+    AS $_$
+    SELECT 'contains an inner $$ marker' AS note;
+$_$;
+
+
+ALTER FUNCTION public.tagged_fn() OWNER TO postgres;
 
 SET default_tablespace = '';
 
@@ -171,5 +204,5 @@ ALTER TABLE ONLY logs.events
 -- PostgreSQL database dump complete
 --
 
-\unrestrict BbKa188wOHjgVhErcZfviNSk2peegypJW6HqUcm2baXuMbvCf73OQmMc5xj8QYs
+\unrestrict mI5WKyG6Hgzq0l1GyeLNQEp42p7bNYqwGVSmiRRRli3LlmEA3q5GqomsS3RfcjL
 

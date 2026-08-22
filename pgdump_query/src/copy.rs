@@ -109,6 +109,76 @@ pub fn is_terminator(line: &[u8]) -> bool {
     line == TERMINATOR
 }
 
+/// Find the next `$tag$` dollar-quote delimiter at or after `from` in `line`.
+/// `tag` is empty for `$$`, or a PostgreSQL identifier otherwise
+/// (`[A-Za-z_][A-Za-z0-9_]*`). Returns the delimiter's byte range, both `$`
+/// signs included.
+fn find_dollar_delimiter(line: &[u8], from: usize) -> Option<std::ops::Range<usize>> {
+    let mut i = from;
+    while let Some(rel) = memchr::memchr(b'$', &line[i..]) {
+        let start = i + rel;
+        let mut end = start + 1;
+        match line.get(end) {
+            Some(b'$') => return Some(start..end + 1),
+            Some(&c) if c.is_ascii_alphabetic() || c == b'_' => {
+                end += 1;
+                while matches!(line.get(end), Some(&c) if c.is_ascii_alphanumeric() || c == b'_') {
+                    end += 1;
+                }
+                if line.get(end) == Some(&b'$') {
+                    return Some(start..end + 1);
+                }
+            }
+            _ => {}
+        }
+        // Not a valid delimiter starting at `start`; retry from the next `$`.
+        i = start + 1;
+    }
+    None
+}
+
+/// Advance dollar-quote tracking across one line.
+///
+/// PostgreSQL dollar-quoting (`$tag$ ... $tag$`, tag optional) is how
+/// `pg_dump` emits function/procedure bodies verbatim, and a line inside one
+/// can coincidentally match the `COPY` header grammar — see
+/// `docs/design/roadmap-phase2-typed-columns.md`, "Dollar-quote tracking
+/// closes the Phase 1 known gap". The scanner must never structurally
+/// interpret a line while inside a dollar-quoted string.
+///
+/// `tag` is the delimiter currently open, if any — `None` outside any
+/// dollar-quoted string. Returns the tag to carry into the next line, and
+/// whether this line touched a delimiter at all: a line that did is quoting
+/// syntax or body text, never structure, even past the point a tag closes —
+/// `pg_dump` always closes a body on a line of its own, so nothing meaningful
+/// follows a closing delimiter on the same line in practice.
+pub fn scan_dollar_quotes(line: &[u8], mut tag: Option<Vec<u8>>) -> (Option<Vec<u8>>, bool) {
+    let mut pos = 0;
+    let mut touched = false;
+    loop {
+        match tag {
+            Some(open) => {
+                touched = true;
+                match memchr::memmem::find(&line[pos..], &open) {
+                    Some(rel) => {
+                        pos += rel + open.len();
+                        tag = None;
+                    }
+                    None => return (Some(open), touched),
+                }
+            }
+            None => match find_dollar_delimiter(line, pos) {
+                Some(range) => {
+                    touched = true;
+                    pos = range.end;
+                    tag = Some(line[range].to_vec());
+                }
+                None => return (None, touched),
+            },
+        }
+    }
+}
+
 /// Split a raw COPY TEXT data line into its still-escaped field slices.
 ///
 /// Splitting on raw delimiter bytes is correct: COPY TEXT output always
@@ -440,5 +510,59 @@ mod tests {
         assert!(!is_terminator(b"\\\\."));
         assert!(!is_terminator(b"\\.x"));
         assert!(!is_terminator(b" \\."));
+    }
+
+    #[test]
+    fn dollar_quotes_untouched_line_is_a_no_op() {
+        let (tag, touched) = scan_dollar_quotes(b"CREATE TABLE public.t (id integer);", None);
+        assert_eq!(tag, None);
+        assert!(!touched);
+    }
+
+    #[test]
+    fn dollar_quotes_open_and_close_across_lines() {
+        let (tag, touched) = scan_dollar_quotes(b"    AS $$", None);
+        assert_eq!(tag, Some(b"$$".to_vec()));
+        assert!(touched);
+
+        let (tag, touched) = scan_dollar_quotes(b"COPY public.t (a) FROM stdin;", tag);
+        assert_eq!(tag, Some(b"$$".to_vec()), "still inside the quote, not a real header");
+        assert!(touched);
+
+        let (tag, touched) = scan_dollar_quotes(b"$$;", tag);
+        assert_eq!(tag, None);
+        assert!(touched);
+    }
+
+    #[test]
+    fn dollar_quotes_tag_matching_ignores_a_different_tag() {
+        let (tag, _) = scan_dollar_quotes(b"AS $func$", None);
+        assert_eq!(tag, Some(b"$func$".to_vec()));
+
+        // An untagged $$ inside a $func$-quoted body must not close it.
+        let (tag, touched) = scan_dollar_quotes(b"SELECT 'x $$ y' AS note;", tag);
+        assert_eq!(tag, Some(b"$func$".to_vec()));
+        assert!(touched);
+
+        let (tag, touched) = scan_dollar_quotes(b"$func$;", tag);
+        assert_eq!(tag, None);
+        assert!(touched);
+    }
+
+    #[test]
+    fn dollar_quotes_open_and_close_on_the_same_line() {
+        let (tag, touched) = scan_dollar_quotes(b"SELECT $$literal$$ AS x;", None);
+        assert_eq!(tag, None);
+        assert!(touched);
+    }
+
+    #[test]
+    fn dollar_quotes_reject_a_tag_starting_with_a_digit() {
+        // `$1$` is a positional parameter reference, not a valid dollar-quote
+        // tag (PostgreSQL identifiers can't start with a digit) -- must not
+        // be mistaken for one.
+        let (tag, touched) = scan_dollar_quotes(b"SELECT $1$;", None);
+        assert_eq!(tag, None);
+        assert!(!touched);
     }
 }

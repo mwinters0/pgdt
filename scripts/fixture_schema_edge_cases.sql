@@ -91,3 +91,40 @@ CREATE TABLE public.generated_column (
 INSERT INTO public.generated_column (id, a, b) VALUES
     (1, 2, 3),
     (2, 10, -4);
+
+-- Dollar-quoted function bodies, pg_dump's own way of writing a value out
+-- verbatim (docs/design/roadmap-phase2-typed-columns.md, "Dollar-quote
+-- tracking closes the Phase 1 known gap"). check_function_bodies is off for
+-- sample_fn only, so PostgreSQL doesn't reject its deliberately-invalid
+-- pseudo-PL/pgSQL body at CREATE time -- pg_dump doesn't re-validate, so
+-- whatever prosrc stored comes back out unchanged.
+SET check_function_bodies = false;
+
+-- The first two COPY-like lines are near-misses parse_copy_header already
+-- rejects on grammar; the third is a syntactically perfect header followed
+-- by rows and a bare terminator line -- the exact shape an unguarded scanner
+-- mistakes for a real block, swallowing every block that follows.
+CREATE FUNCTION public.sample_fn() RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+COPY public.widgets TO stdout;
+COPY public.widgets FROM stdin WITH (FORMAT csv);
+COPY public.widgets (id, name) FROM stdin;
+1	adversarial
+2	rows
+\.
+END;
+$$;
+
+RESET check_function_bodies;
+
+-- A body containing an untagged $$ pair forces pg_dump's own delimiter
+-- picker (appendStringLiteralDQ) to choose a tagged wrapper instead ($_$) to
+-- avoid colliding with it -- exercising tag matching, not just "some
+-- dollar-quote is open".
+CREATE FUNCTION public.tagged_fn() RETURNS text
+    LANGUAGE sql
+    AS $func$
+    SELECT 'contains an inner $$ marker' AS note;
+$func$;

@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict iyrmbC9NUs9fNHcIK97Vm8MLw3vQsZfM6wxeVwUpR3X8Pg7T1PC1xGiVyzfS44c
+\restrict 6bJSW9pZMwY2b1YJgE1ojOwpy2Igq4NaI0LOF7jJ62Wc4sE6Le8xr0DVXUhhMlz
 
 -- Dumped from database version 13.23
 -- Dumped by pg_dump version 13.23
@@ -26,6 +26,39 @@ CREATE SCHEMA logs;
 
 
 ALTER SCHEMA logs OWNER TO postgres;
+
+--
+-- Name: sample_fn(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.sample_fn() RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+COPY public.widgets TO stdout;
+COPY public.widgets FROM stdin WITH (FORMAT csv);
+COPY public.widgets (id, name) FROM stdin;
+1	adversarial
+2	rows
+\.
+END;
+$$;
+
+
+ALTER FUNCTION public.sample_fn() OWNER TO postgres;
+
+--
+-- Name: tagged_fn(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.tagged_fn() RETURNS text
+    LANGUAGE sql
+    AS $_$
+    SELECT 'contains an inner $$ marker' AS note;
+$_$;
+
+
+ALTER FUNCTION public.tagged_fn() OWNER TO postgres;
 
 SET default_tablespace = '';
 
@@ -115,9 +148,9 @@ ALTER TABLE public.widgets OWNER TO postgres;
 -- Data for Name: events; Type: TABLE DATA; Schema: logs; Owner: postgres
 --
 
-INSERT INTO logs.events VALUES (100, 1, 'created', '2026-08-22 07:25:42.095738+00');
-INSERT INTO logs.events VALUES (101, 2, NULL, '2026-08-22 07:25:42.095738+00');
-INSERT INTO logs.events VALUES (102, 3, 'updated	with a tab char', '2026-08-22 07:25:42.095738+00');
+INSERT INTO logs.events VALUES (100, 1, 'created', '2026-08-22 07:37:27.530285+00');
+INSERT INTO logs.events VALUES (101, 2, NULL, '2026-08-22 07:37:27.530285+00');
+INSERT INTO logs.events VALUES (102, 3, 'updated	with a tab char', '2026-08-22 07:37:27.530285+00');
 
 
 --
@@ -354,5 +387,5 @@ ALTER TABLE ONLY logs.events
 -- PostgreSQL database dump complete
 --
 
-\unrestrict iyrmbC9NUs9fNHcIK97Vm8MLw3vQsZfM6wxeVwUpR3X8Pg7T1PC1xGiVyzfS44c
+\unrestrict 6bJSW9pZMwY2b1YJgE1ojOwpy2Igq4NaI0LOF7jJ62Wc4sE6Le8xr0DVXUhhMlz
 

@@ -21,7 +21,7 @@
 
 use std::ops::ControlFlow;
 
-use crate::copy::{CopyHeader, is_terminator, parse_copy_header};
+use crate::copy::{CopyHeader, is_terminator, parse_copy_header, scan_dollar_quotes};
 use crate::io::ByteRangeSource;
 use crate::{Error, Result};
 
@@ -86,6 +86,11 @@ pub struct CopyScanner {
     /// Bytes of the current buffer already turned into events.
     pos: usize,
     state: State,
+    /// The `$tag$` delimiter of a dollar-quoted string currently open
+    /// outside a COPY block, if any. Always `None` while `state` is
+    /// `InCopy` — a dollar-quoted body can never appear inside COPY data,
+    /// only in the DDL around it (`docs/design/postgres-invariants.md` I1).
+    dollar_tag: Option<Vec<u8>>,
 }
 
 impl Default for CopyScanner {
@@ -96,7 +101,7 @@ impl Default for CopyScanner {
 
 impl CopyScanner {
     pub fn new() -> Self {
-        Self { base: 0, pos: 0, state: State::Outside }
+        Self { base: 0, pos: 0, state: State::Outside, dollar_tag: None }
     }
 
     /// Resume scanning at `offset`, as if `take_consumed` had just been
@@ -105,12 +110,16 @@ impl CopyScanner {
     /// rows of that block have already been consumed, matching what
     /// [`in_copy_rows`](Self::in_copy_rows) reported at the point the caller
     /// captured this position.
+    ///
+    /// A resume point is always a COPY block boundary (a cached block's
+    /// `data_offset` or `end_offset`), which is never inside a dollar-quoted
+    /// string, so dollar-quote tracking always restarts clean.
     pub fn resume(offset: u64, in_copy: Option<(u64, u64)>) -> Self {
         let state = match in_copy {
             Some((header_offset, rows)) => State::InCopy { rows, header_offset },
             None => State::Outside,
         };
-        Self { base: offset, pos: 0, state }
+        Self { base: offset, pos: 0, state, dollar_tag: None }
     }
 
     /// Absolute file offset of the next unconsumed byte.
@@ -172,6 +181,15 @@ impl CopyScanner {
 
             match self.state {
                 State::Outside => {
+                    let (tag, touched) = scan_dollar_quotes(line, self.dollar_tag.take());
+                    self.dollar_tag = tag;
+                    if touched {
+                        // Inside, entering, or leaving a dollar-quoted
+                        // string: this line is body text or quoting syntax,
+                        // never structure, regardless of what it looks like.
+                        continue;
+                    }
+
                     // Line-anchored: only a line that both starts with `COPY`
                     // and matches the full header grammar is structural.
                     // Everything else — SQL, comments, psql meta-commands —

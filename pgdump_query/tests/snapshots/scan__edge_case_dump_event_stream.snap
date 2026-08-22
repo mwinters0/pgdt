@@ -1,21 +1,22 @@
 ---
 source: pgdump_query/tests/scan.rs
+assertion_line: 73
 expression: "render(&edge_cases(), 1 << 20).await"
 ---
-START public.empty_table [id, value] header@729 data@777
-END rows=0 terminator@777 end@780
-START public.widgets [id, name, description, created_at] header@849 data@917
-  ROW 0 @917 "1" | "alpha" | "a simple widget" | "2024-01-01 00:00:00+00"
-  ROW 1 @964 "2" | "beta" | NULL | "2024-01-02 00:00:00+00"
-  ROW 2 @997 "3" | "gamma" | "multi\nline\twith a backslash \\ inside" | NULL
-  ROW 3 @1048 "4" | "delta" | "contains a COPY-like phrase: COPY public.widgets (id) FROM stdin; -- not a directive" | "2024-01-04 00:00:00+00"
-  ROW 4 @1164 "5" | "" | "empty name to the left" | "2024-01-05 00:00:00+00"
-  ROW 5 @1213 "6" | "epsilon" | "carriage\rreturn, octal A, hex B" | "2024-01-06 00:00:00+00"
-END rows=6 terminator@1285 end@1288
-START My Schema.Odd Table [Id, select] header@1362 data@1420
-  ROW 0 @1420 "1" | "quoted identifiers"
-END rows=1 terminator@1441 end@1444
-START public.no_column_list [<none>] header@1520 data@1559
-  ROW 0 @1559 "\\."
-  ROW 1 @1563 "just a value"
-END rows=2 terminator@1576 end@1579
+START public.empty_table [id, value] header@1419 data@1467
+END rows=0 terminator@1467 end@1470
+START public.widgets [id, name, description, created_at] header@1539 data@1607
+  ROW 0 @1607 "1" | "alpha" | "a simple widget" | "2024-01-01 00:00:00+00"
+  ROW 1 @1654 "2" | "beta" | NULL | "2024-01-02 00:00:00+00"
+  ROW 2 @1687 "3" | "gamma" | "multi\nline\twith a backslash \\ inside" | NULL
+  ROW 3 @1738 "4" | "delta" | "contains a COPY-like phrase: COPY public.widgets (id) FROM stdin; -- not a directive" | "2024-01-04 00:00:00+00"
+  ROW 4 @1854 "5" | "" | "empty name to the left" | "2024-01-05 00:00:00+00"
+  ROW 5 @1903 "6" | "epsilon" | "carriage\rreturn, octal A, hex B" | "2024-01-06 00:00:00+00"
+END rows=6 terminator@1975 end@1978
+START My Schema.Odd Table [Id, select] header@2052 data@2110
+  ROW 0 @2110 "1" | "quoted identifiers"
+END rows=1 terminator@2131 end@2134
+START public.no_column_list [<none>] header@2210 data@2249
+  ROW 0 @2249 "\\."
+  ROW 1 @2253 "just a value"
+END rows=2 terminator@2266 end@2269

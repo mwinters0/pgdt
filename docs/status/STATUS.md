@@ -12,7 +12,7 @@ started" is groundwork that phase specified but never required. How
 it landed — module map, and the implementation facts later phases inherit — is
 in `docs/design/roadmap-phase1-mvp-notes.md`.
 
-Phase 2 is **specified and not started**
+Phase 2 is **in progress**
 (`docs/design/roadmap-phase2-typed-columns.md`). It lands in five slices; as
 each one does, it gets a line in the checklist below linking to its notes doc,
 which holds the detail.
@@ -27,7 +27,9 @@ Last updated: 2026-08-22.
       reachable via any `numeric` column, `infinity`/`-infinity` reachable via
       `date` too). Notes:
       `docs/design/roadmap-phase2.0-fixture-validation-notes.md`
-- [ ] **2.1** Dollar-quote tracking in the scanner
+- [x] **2.1** Dollar-quote tracking in the scanner — closes the Phase 1
+      known gap. Notes:
+      `docs/design/roadmap-phase2.1-dollar-quote-tracking-notes.md`
 - [ ] **2.2** Preamble parsing, `DumpMetadata`, cache persistence, `pgdq info`
 - [ ] **2.3** Type resolution, `ResolvedSchema`, diagnostics (still all-`Utf8View`)
 - [ ] **2.4** Decoders, render-back, round-trip tests
@@ -35,7 +37,7 @@ Last updated: 2026-08-22.
 
 ## Not started
 
-- **Phase 2** — specified, no code yet. See the checklist above.
+- **Phase 2, slices 2.2-2.5** — see the checklist above.
 - **Phases 3-7** — not designed. See `docs/design/roadmap.md`.
 - **Benchmarks** (`criterion`) — not wired in.
 - **Full 8-version worktree fixture sweep** (`v13.0` … `v18.6`) — worktree
@@ -44,11 +46,6 @@ Last updated: 2026-08-22.
 
 ## Known gaps
 
-- A line inside a dollar-quoted function body that starts at column 0 *and*
-  matches the full `COPY ... FROM stdin;` grammar would be mistaken for a
-  real block. Closing this needs dollar-quote tracking in the scanner, which
-  Phase 2 scopes in (`docs/design/roadmap-phase2-typed-columns.md`); see also
-  `docs/design/pg-dump-compatibility.md`.
 - Large objects in plain-format dumps (`lo_create`/loader calls, not `COPY`
   blocks) remain unmodelled.
 - Resuming a `ResumeToken` taken from partway through a cache replay treats

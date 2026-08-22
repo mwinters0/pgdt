@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict Ss5R6rcuIKINyt49OUvaGdqlTLuKgyo8culfxKaGGJy7U7A0wodjaI9bEwa8uDj
+\restrict xk7iIXoG3l4EHgcJXEdG8xfSOfVfnfQAYeGKAMQMzkQesv5DYMM00GfShtt0PKa
 
 -- Dumped from database version 13.23
 -- Dumped by pg_dump version 13.23
@@ -31,6 +31,8 @@ DROP TABLE IF EXISTS public.escapes;
 DROP TABLE IF EXISTS public.empty_table;
 DROP TABLE IF EXISTS public.dropped_column;
 DROP TABLE IF EXISTS logs.events;
+DROP FUNCTION IF EXISTS public.tagged_fn();
+DROP FUNCTION IF EXISTS public.sample_fn();
 DROP SCHEMA IF EXISTS logs;
 --
 -- Name: logs; Type: SCHEMA; Schema: -; Owner: postgres
@@ -40,6 +42,39 @@ CREATE SCHEMA logs;
 
 
 ALTER SCHEMA logs OWNER TO postgres;
+
+--
+-- Name: sample_fn(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.sample_fn() RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+COPY public.widgets TO stdout;
+COPY public.widgets FROM stdin WITH (FORMAT csv);
+COPY public.widgets (id, name) FROM stdin;
+1	adversarial
+2	rows
+\.
+END;
+$$;
+
+
+ALTER FUNCTION public.sample_fn() OWNER TO postgres;
+
+--
+-- Name: tagged_fn(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.tagged_fn() RETURNS text
+    LANGUAGE sql
+    AS $_$
+    SELECT 'contains an inner $$ marker' AS note;
+$_$;
+
+
+ALTER FUNCTION public.tagged_fn() OWNER TO postgres;
 
 SET default_tablespace = '';
 
@@ -130,9 +165,9 @@ ALTER TABLE public.widgets OWNER TO postgres;
 --
 
 COPY logs.events (event_id, widget_id, message, logged_at) FROM stdin;
-100	1	created	2026-08-22 07:25:42.095738+00
-101	2	\N	2026-08-22 07:25:42.095738+00
-102	3	updated\twith a tab char	2026-08-22 07:25:42.095738+00
+100	1	created	2026-08-22 07:37:27.530285+00
+101	2	\N	2026-08-22 07:37:27.530285+00
+102	3	updated\twith a tab char	2026-08-22 07:37:27.530285+00
 \.
 
 
@@ -377,5 +412,5 @@ ALTER TABLE ONLY logs.events
 -- PostgreSQL database dump complete
 --
 
-\unrestrict Ss5R6rcuIKINyt49OUvaGdqlTLuKgyo8culfxKaGGJy7U7A0wodjaI9bEwa8uDj
+\unrestrict xk7iIXoG3l4EHgcJXEdG8xfSOfVfnfQAYeGKAMQMzkQesv5DYMM00GfShtt0PKa
 

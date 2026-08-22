@@ -10,8 +10,11 @@ SET client_encoding = 'UTF8';
 SELECT pg_catalog.set_config('search_path', '', false);
 
 --
--- A dollar-quoted body whose lines start with COPY. Neither matches the
--- header grammar, so both are skipped as ordinary SQL.
+-- A dollar-quoted body. The first two COPY-like lines are near-misses that
+-- parse_copy_header already rejects on grammar alone; the third is a
+-- syntactically perfect header followed by rows and a bare `\.` -- the exact
+-- shape an unguarded scanner mistakes for a real block, swallowing every
+-- block that follows. Dollar-quote tracking must skip all of it regardless.
 --
 
 CREATE FUNCTION public.sample_fn() RETURNS void
@@ -20,8 +23,24 @@ CREATE FUNCTION public.sample_fn() RETURNS void
 BEGIN
 COPY public.widgets TO stdout;
 COPY public.widgets FROM stdin WITH (FORMAT csv);
+COPY public.widgets (id, name) FROM stdin;
+1	adversarial
+2	rows
+\.
 END;
 $$;
+
+--
+-- A dollar-quoted body opened with a tagged delimiter whose text contains an
+-- inner untagged pair that must not be mistaken for the closing delimiter --
+-- tag matching, not just "some dollar-quote is open", is what has to hold.
+--
+
+CREATE FUNCTION public.tagged_fn() RETURNS text
+    LANGUAGE sql
+    AS $func$
+    SELECT 'contains an inner $$ marker' AS note;
+$func$;
 
 --
 -- Data for Name: empty_table; Type: TABLE DATA; Schema: public

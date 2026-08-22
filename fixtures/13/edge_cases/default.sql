@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict G79eSU9CJv7y3K1n7Gwhg8NaRWRhfcmCwWvLyZyfQN57leLc9CExcbdBc9vaJn4
+\restrict UJpaVJNxsSJhEUpyfwh6HfiyYutVfSaAlab9FQu5gAejXagZrsMjXstBiNeySby
 
 -- Dumped from database version 13.23
 -- Dumped by pg_dump version 13.23
@@ -26,6 +26,39 @@ CREATE SCHEMA logs;
 
 
 ALTER SCHEMA logs OWNER TO postgres;
+
+--
+-- Name: sample_fn(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.sample_fn() RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+COPY public.widgets TO stdout;
+COPY public.widgets FROM stdin WITH (FORMAT csv);
+COPY public.widgets (id, name) FROM stdin;
+1	adversarial
+2	rows
+\.
+END;
+$$;
+
+
+ALTER FUNCTION public.sample_fn() OWNER TO postgres;
+
+--
+-- Name: tagged_fn(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.tagged_fn() RETURNS text
+    LANGUAGE sql
+    AS $_$
+    SELECT 'contains an inner $$ marker' AS note;
+$_$;
+
+
+ALTER FUNCTION public.tagged_fn() OWNER TO postgres;
 
 SET default_tablespace = '';
 
@@ -116,9 +149,9 @@ ALTER TABLE public.widgets OWNER TO postgres;
 --
 
 COPY logs.events (event_id, widget_id, message, logged_at) FROM stdin;
-100	1	created	2026-08-22 07:25:42.095738+00
-101	2	\N	2026-08-22 07:25:42.095738+00
-102	3	updated\twith a tab char	2026-08-22 07:25:42.095738+00
+100	1	created	2026-08-22 07:37:27.530285+00
+101	2	\N	2026-08-22 07:37:27.530285+00
+102	3	updated\twith a tab char	2026-08-22 07:37:27.530285+00
 \.
 
 
@@ -363,5 +396,5 @@ ALTER TABLE ONLY logs.events
 -- PostgreSQL database dump complete
 --
 
-\unrestrict G79eSU9CJv7y3K1n7Gwhg8NaRWRhfcmCwWvLyZyfQN57leLc9CExcbdBc9vaJn4
+\unrestrict UJpaVJNxsSJhEUpyfwh6HfiyYutVfSaAlab9FQu5gAejXagZrsMjXstBiNeySby
 

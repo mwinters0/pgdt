@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict 9dHPzLOq1ePzHVC7Vs275Z5sMxg8sunQuDdShkj5rp8HegcAMrJ8KlidFwJFQap
+\restrict D4ntgtVbB5GEVpjxfVpzXAHqJXYdYJn84KShVMztSRUne45Ao4HB7Nki9bLEh6k
 
 -- Dumped from database version 13.23
 -- Dumped by pg_dump version 13.23
@@ -26,6 +26,39 @@ CREATE SCHEMA logs;
 
 
 ALTER SCHEMA logs OWNER TO postgres;
+
+--
+-- Name: sample_fn(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.sample_fn() RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+COPY public.widgets TO stdout;
+COPY public.widgets FROM stdin WITH (FORMAT csv);
+COPY public.widgets (id, name) FROM stdin;
+1	adversarial
+2	rows
+\.
+END;
+$$;
+
+
+ALTER FUNCTION public.sample_fn() OWNER TO postgres;
+
+--
+-- Name: tagged_fn(); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.tagged_fn() RETURNS text
+    LANGUAGE sql
+    AS $_$
+    SELECT 'contains an inner $$ marker' AS note;
+$_$;
+
+
+ALTER FUNCTION public.tagged_fn() OWNER TO postgres;
 
 SET default_tablespace = '';
 
@@ -115,9 +148,9 @@ ALTER TABLE public.widgets OWNER TO postgres;
 -- Data for Name: events; Type: TABLE DATA; Schema: logs; Owner: postgres
 --
 
-INSERT INTO logs.events (event_id, widget_id, message, logged_at) VALUES (100, 1, 'created', '2026-08-22 07:25:42.095738+00');
-INSERT INTO logs.events (event_id, widget_id, message, logged_at) VALUES (101, 2, NULL, '2026-08-22 07:25:42.095738+00');
-INSERT INTO logs.events (event_id, widget_id, message, logged_at) VALUES (102, 3, 'updated	with a tab char', '2026-08-22 07:25:42.095738+00');
+INSERT INTO logs.events (event_id, widget_id, message, logged_at) VALUES (100, 1, 'created', '2026-08-22 07:37:27.530285+00');
+INSERT INTO logs.events (event_id, widget_id, message, logged_at) VALUES (101, 2, NULL, '2026-08-22 07:37:27.530285+00');
+INSERT INTO logs.events (event_id, widget_id, message, logged_at) VALUES (102, 3, 'updated	with a tab char', '2026-08-22 07:37:27.530285+00');
 
 
 --
@@ -354,5 +387,5 @@ ALTER TABLE ONLY logs.events
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 9dHPzLOq1ePzHVC7Vs275Z5sMxg8sunQuDdShkj5rp8HegcAMrJ8KlidFwJFQap
+\unrestrict D4ntgtVbB5GEVpjxfVpzXAHqJXYdYJn84KShVMztSRUne45Ao4HB7Nki9bLEh6k
 
