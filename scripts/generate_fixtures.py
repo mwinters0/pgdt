@@ -27,16 +27,21 @@ FIXTURES_DIR = REPO_ROOT / "fixtures"
 
 DOCKER = ["sudo", "-n", "docker"]
 
-# Routine compatibility-matrix subset (docs/design/roadmap-phase1-mvp.md):
-# oldest supported, version matching the real koji sample, newest available.
-# The full historical worktree sweep (v13.0, v13.23, v14.0, v15.0, v16.0,
-# v17.0, v18.0, v18.6) is a separate, manual/occasional exercise -- these
-# images are convenient stand-ins for "major version N", not an attempt to hit
-# exact patch levels.
+# Routine version set: the latest minor release of every PostgreSQL major
+# from 13 onward (13 being the oldest still-supported major) -- see
+# docs/design/roadmap-phase1-mvp.md ("Testing & fixtures") for the policy.
+# Pinned to exact minors (not floating "16-alpine"-style tags) so a
+# regeneration is reproducible instead of silently drifting to whatever
+# minor the tag resolves to that day. This list changes as new minors ship;
+# update it here and say so in the commit message (see the policy doc for
+# what that message needs to assert).
 ROUTINE_VERSIONS = {
-    "13": "postgres:13-alpine",
-    "16": "postgres:16-alpine",
-    "18": "postgres:18-alpine",
+    "13": "postgres:13.23-alpine",
+    "14": "postgres:14.24-alpine",
+    "15": "postgres:15.19-alpine",
+    "16": "postgres:16.15-alpine",
+    "17": "postgres:17.11-alpine",
+    "18": "postgres:18.6-alpine",
 }
 
 DB_NAME = "pgdq_fixture"

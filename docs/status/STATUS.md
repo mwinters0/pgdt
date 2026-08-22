@@ -41,9 +41,6 @@ Last updated: 2026-08-22.
 - **Phase 2, slices 2.3-2.5** — see the checklist above.
 - **Phases 3-7** — not designed. See `docs/design/roadmap.md`.
 - **Benchmarks** (`criterion`) — not wired in.
-- **Full 8-version worktree fixture sweep** (`v13.0` … `v18.6`) — worktree
-  binaries not yet built; the 3-version container sweep
-  (`scripts/generate_fixtures.py`) covers routine needs in the meantime.
 
 ## Decisions worth a second look
 

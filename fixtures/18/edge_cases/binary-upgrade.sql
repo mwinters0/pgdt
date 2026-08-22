@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict knMTEqyzogQFYmTetqIKcH0OOmoP4dOJt77CuTDcuCHvhOLR2Z21OLUZvqsXtMz
+\restrict P7bsfdIbkxusazK0R7i1PHJRwcBsa5UxHa52HDMbC8a7RDxZpInzduGGyfQIT1J
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -312,9 +312,9 @@ ALTER TABLE public.widgets OWNER TO postgres;
 --
 
 COPY logs.events (event_id, widget_id, message, logged_at) FROM stdin;
-100	1	created	2026-08-22 07:37:43.764017+00
-101	2	\N	2026-08-22 07:37:43.764017+00
-102	3	updated\twith a tab char	2026-08-22 07:37:43.764017+00
+100	1	created	2026-08-22 18:46:12.841768+00
+101	2	\N	2026-08-22 18:46:12.841768+00
+102	3	updated\twith a tab char	2026-08-22 18:46:12.841768+00
 \.
 
 
@@ -589,5 +589,5 @@ ALTER TABLE ONLY logs.events
 -- PostgreSQL database dump complete
 --
 
-\unrestrict knMTEqyzogQFYmTetqIKcH0OOmoP4dOJt77CuTDcuCHvhOLR2Z21OLUZvqsXtMz
+\unrestrict P7bsfdIbkxusazK0R7i1PHJRwcBsa5UxHa52HDMbC8a7RDxZpInzduGGyfQIT1J
 

@@ -259,23 +259,39 @@ configurable behavior:
   `COPY ...;`-like substring mid-line, multiple schemas).
 - **Fixture generation & the pg_dump compatibility matrix**: Python scripts
   under `scripts/` (`scripts/generate_fixtures.py`), using `uv` (already
-  provisioned in `mise.toml`). The Postgres worktrees at
-  `/mnt/wd12t/upstream/postgres/` turned out to be source checkouts only, not
-  built binaries — building 3+ Postgres versions from source was too heavy a
-  cost for routine fixture generation. Instead, the tooling drives
+  provisioned in `mise.toml`). Building half a dozen Postgres versions from
+  source was too heavy a cost for routine fixture generation, so the tooling
+  drives
   memory-limited, throwaway containers (`docker`, aliased to `nerdctl` in
-  this environment, via passwordless `sudo`) running the official
-  `postgres:13-alpine` / `postgres:16-alpine` / `postgres:18-alpine` images —
-  oldest supported major, version matching the real koji sample, newest
-  available. Loads `scripts/fixture_schema_edge_cases.sql` (a small synthetic schema
+  this environment, via passwordless `sudo`) running the official upstream
+  `postgres:<version>-alpine` images instead — lighter than a from-source
+  build and more consistent than a locally-built binary.
+- **Version policy (durable — applies as new minors ship, not just at time of
+  writing)**: routine generation tracks the *latest minor release of every
+  PostgreSQL major from 13 onward* (13 being the oldest still-supported
+  major), one container per major, pinned to its exact current minor —
+  `postgres:16.15-alpine`, not the floating `postgres:16-alpine` — so a
+  regeneration is reproducible instead of silently drifting to whatever
+  minor the tag resolves to that day. The pinned versions live in
+  `scripts/generate_fixtures.py`'s `ROUTINE_VERSIONS` (currently `13.23`,
+  `14.24`, `15.19`, `16.15`, `17.11`, `18.6` — six versions); this doc
+  doesn't restate them since they'll go stale — check that dict. Fixtures
+  are written to `fixtures/<major-version>/...`, major only, so a routine
+  minor bump doesn't churn the directory tree; the exact minor a given
+  fixture was generated from is recorded in the git history of that
+  regeneration, and when a minor bump is expected to (and does) reproduce
+  byte-identical output, the commit message says so explicitly rather than
+  leaving it assumed.
+- Loads `scripts/fixture_schema_edge_cases.sql` (a small synthetic schema
   deliberately covering the edge cases this doc calls out, not derived from
   koji) and runs `pg_dump` across a flag matrix, writing output to
-  `fixtures/<major-version>/<flag-set>.sql`. The worktrees remain useful for
-  other needs (e.g. building an exact patch level unavailable as an image)
-  but aren't the routine mechanism. The full historical worktree-version
-  sweep (`v13.0`, `v13.23`, `v14.0`, `v15.0`, `v16.0`, `v17.0`, `v18.0`,
-  `v18.6`) as a manual/occasional job is unaffected by this — it's still
-  open, just not yet built. See `docs/design/pg-dump-compatibility.md` for
+  `fixtures/<major-version>/<flag-set>.sql`.
+- The Postgres worktrees at `/mnt/wd12t/upstream/postgres/` (source
+  checkouts, one per release tag, tracking the same version set as the
+  policy above) remain useful for other needs — e.g. re-verifying an entry
+  in `docs/design/postgres-invariants.md` against source, or building an
+  exact patch level unavailable as a container image — but aren't the
+  routine fixture mechanism. See `docs/design/pg-dump-compatibility.md` for
   the tracked option matrix this tooling exists to populate.
   Cross-checking against `pgdumplib` (Python) is in scope for this tooling
   where useful, not yet implemented.

@@ -403,8 +403,8 @@ weakest part of this spec.
 So generating `fixture_schema_types.sql` comes **first**, before any code, and
 its output is *read* before slice 2.4 commits a decoder to anything:
 
-1. Spin up the `postgres:13/16/18-alpine` containers `generate_fixtures.py`
-   already drives.
+1. Spin up the routine-version containers `generate_fixtures.py` already
+   drives.
 2. Populate a table per type family, several rows each, covering the boundary
    values below.
 3. `pg_dump` it out of the container into `fixtures/<version>/types/`.
