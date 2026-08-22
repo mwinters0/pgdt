@@ -5,6 +5,12 @@ statement, MVP use cases, and design philosophy (Hardcoded /
 Configurable-MVP / Configurable-future buckets) carry over unchanged from
 that doc and aren't repeated here.
 
+**Phase 1 is implemented.** This doc stays the specification — the contracts
+below are binding on later phases, and the "Configurable (future)" items are
+still open questions rather than closed ones. For how it landed in code (module
+map, the implementation facts later phases inherit), see
+`docs/design/roadmap-phase1-mvp-notes.md`.
+
 ## Crate layout
 
 Cargo workspace, two members:
@@ -131,7 +137,7 @@ scan up front) is the other.
 cache-replay falls back to treating the rest of the file as unscanned live
 territory (re-reading, and possibly re-recording, bytes the cache already
 covered) rather than resuming the replay — `ResumeToken` doesn't carry which
-blocks were already known when it was taken, and `mvp.md` requires it stay
+blocks were already known when it was taken, and this doc requires it stay
 field-free/opaque. Correctness is unaffected; this only gives back some of
 the I/O saving for that one combination.
 
@@ -171,9 +177,9 @@ line; a watermark of how much of the file has been scanned so far.
 Three optional fields are reserved in the serialized form from the first
 release, though none is populated in Phase 1 — adding any of them after the
 format ships would be a break, and all are cheap to leave room for now: a
-**sparse row index** (`docs/design/scan-performance.md`); a **dump-level
-metadata block** (server version, `pg_dump` version, extension list,
-user-defined type definitions — `docs/design/roadmap.md`, Phase 2 companion);
+**sparse row index** (`docs/design/roadmap-phase5-scan-performance.md`); a
+**dump-level metadata block** (server version, `pg_dump` version, extension
+list, user-defined type definitions — `docs/design/roadmap.md`, Phase 2 companion);
 and **per-row-group column statistics**, keyed to the sparse index's checkpoints
 (`docs/design/roadmap.md`, Phase 3 companion).
 
@@ -314,7 +320,7 @@ require them.
 Phase 5 (scan performance) adds a fifth, which bears on work in flight right
 now rather than later: the batch layer should build `Utf8View` arrays over the
 scanner's existing chunk buffer instead of copying field bytes out of it. See
-`docs/design/scan-performance.md`.
+`docs/design/roadmap-phase5-scan-performance.md`.
 
 ## Non-goals (Phase 1)
 

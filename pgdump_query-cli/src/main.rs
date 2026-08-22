@@ -95,7 +95,8 @@ async fn main() -> Result<()> {
     match cli.command {
         Command::Parse { file, cache_path } => {
             // `parse` is the eager entry point: always scan fresh (ignoring
-            // any existing cache) and (re)write it, per `mvp.md`'s CLI spec.
+            // any existing cache) and (re)write it, per the CLI spec in
+            // `roadmap-phase1-mvp.md`.
             // Reject `--cache-path none` up front, before paying for a scan
             // we won't be allowed to persist.
             let mode = CacheMode::resolve(&file, cache_path.as_deref());
@@ -117,9 +118,9 @@ async fn main() -> Result<()> {
                 None => {
                     // No usable (or disabled) cache: scan, then persist what
                     // we learned — a no-op under `CacheMode::Disabled` —
-                    // `mvp.md`'s "cache is never required for correctness"
-                    // rule means this fallback must still produce a correct
-                    // answer.
+                    // `roadmap-phase1-mvp.md`'s "cache is never required for
+                    // correctness" rule means this fallback must still
+                    // produce a correct answer.
                     let source = LocalFileSource::open(&file)?;
                     let index = build_index(&source, &ScanOptions::default()).await?;
                     mode.save(&index)?;

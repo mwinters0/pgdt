@@ -6,8 +6,8 @@
 //! events zero-copy and lets the same state machine serve both the async
 //! driver here ([`scan`]) and any future pull-mode stream.
 //!
-//! Robustness rules this implements (see `docs/design/mvp.md`, "Parser
-//! robustness requirements"):
+//! Robustness rules this implements (see `docs/design/roadmap-phase1-mvp.md`,
+//! "Parser robustness requirements"):
 //!
 //! * `COPY` detection is line-anchored. Row data may contain a literal
 //!   `COPY ... TO stdout;` mid-line, and a non-anchored search would misfire.

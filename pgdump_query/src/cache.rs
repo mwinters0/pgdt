@@ -1,6 +1,6 @@
 //! On-disk structure cache: a serialized [`DumpIndex`], colocated with the
-//! dump file by default or at an explicit path (`docs/design/mvp.md`,
-//! "Index / structure cache").
+//! dump file by default or at an explicit path
+//! (`docs/design/roadmap-phase1-mvp.md`, "Index / structure cache").
 //!
 //! Reading is best-effort — the cache is never required for correctness, so
 //! a missing, foreign, or unrecognised-version file just means "scan
@@ -11,9 +11,9 @@
 //! silently degrade every future run of the same command back to a full
 //! scan.
 //!
-//! No dump-file identity check (size/mtime) is performed: `mvp.md` puts that
-//! under "Configurable (future)" rather than MVP, so a cache is trusted
-//! as-is once its format/container are recognised.
+//! No dump-file identity check (size/mtime) is performed:
+//! `roadmap-phase1-mvp.md` puts that under "Configurable (future)" rather than
+//! MVP, so a cache is trusted as-is once its format/container are recognised.
 
 use std::path::{Path, PathBuf};
 
@@ -23,10 +23,10 @@ use crate::index::DumpIndex;
 use crate::{Error, Result};
 
 /// Bumped whenever the on-disk shape changes incompatibly. A cache written
-/// under a different version is treated as absent (`mvp.md`, "Decisions
-/// that keep later phases open") rather than partially trusted — the three
-/// fields reserved on [`DumpIndex`]/[`crate::index::CopyBlock`] are what let
-/// most future additions avoid needing a bump at all.
+/// under a different version is treated as absent (`roadmap-phase1-mvp.md`,
+/// "Decisions that keep later phases open") rather than partially trusted —
+/// the three fields reserved on [`DumpIndex`]/[`crate::index::CopyBlock`] are
+/// what let most future additions avoid needing a bump at all.
 const FORMAT_VERSION: u32 = 1;
 
 /// What produced the indexed blocks' byte offsets. Plain-format offsets are

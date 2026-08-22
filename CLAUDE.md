@@ -60,18 +60,25 @@ A later session reads `runs/koji-scan.log`; `sudo nerdctl inspect -f
 
 ## Architecture & design docs
 
-`docs/design/mvp.md` is the source of truth for Phase 1 (current)
+`docs/design/roadmap.md` holds the project goals and indexes the phases; a
+phase that has been specified gets its own doc, named
+`docs/design/roadmap-phase<N>-<slug>.md`. Keep that convention when a new
+phase's plan is written.
+
+`docs/design/roadmap-phase1-mvp.md` is the source of truth for the built
 architecture — read it before making architectural changes, rather than
-inferring intent from code alone. `docs/design/roadmap.md` holds the project
-goals and sketches Phases 2-6. `docs/design/scan-performance.md` is the
-performance design for the local-file read path — read it before touching the
-batch layer or the cache format, which it constrains ahead of its own phase.
+inferring intent from code alone; its companion
+`docs/design/roadmap-phase1-mvp-notes.md` records how that phase landed in code
+(module map, and the implementation facts later phases inherit).
+`docs/design/roadmap-phase5-scan-performance.md` is the performance design for
+the local-file read path — read it before touching the batch layer or the cache
+format, which it constrains ahead of its own phase.
 `docs/design/pg-dump-compatibility.md` tracks which `pg_dump` options/variants
 are tested/untested/unsupported.
 `docs/design/historical/initial.md` is frozen — historical only.
 
 For current implementation status (what's built vs. not), see
-`docs/status/STATUS.md` — not this file or `mvp.md`, which describe the
+`docs/status/STATUS.md` — not this file or the design docs, which describe the
 design, not its progress. `docs/status/history/` holds dated notes
 (`YYYY-MM-DD.md`, one file per day) for two things only: what a future
 session should pick up mid-work, and discoveries that changed the plan —
@@ -84,9 +91,9 @@ supposition-then-correction chains, no "resolved"/"original note" pairs, no
 in-progress status that has since resolved. Rewrite sections in place as things
 settle — full rules in `docs/status/history/README.md`. Update
 `STATUS.md` as part of any change that alters implementation state — don't
-let it drift. `mvp.md`'s "Parser robustness requirements" is the spec the
-`COPY`-block scanner (`pgdump_query/src/scan.rs`, `copy.rs`) implements —
-read it before changing scanner behaviour.
+let it drift. `roadmap-phase1-mvp.md`'s "Parser robustness requirements" is the
+spec the `COPY`-block scanner (`pgdump_query/src/scan.rs`, `copy.rs`)
+implements — read it before changing scanner behaviour.
 
 ## Writing style
 Do not document what _was_, document what _is_.  If we learn something important

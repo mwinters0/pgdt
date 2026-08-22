@@ -1,13 +1,13 @@
 //! Row/batch assembly: turns rows inside a `COPY` block into `Utf8View`
 //! Arrow `RecordBatch`es.
 //!
-//! Per `docs/design/scan-performance.md`, a field that needs no unescaping
-//! is appended as a zero-copy view into the Arrow `Buffer` backing the read
-//! chunk it came from, rather than copied into the builder's own storage —
-//! retrofitting that later would be expensive, so it's built in now even
-//! though the rest of the performance work (roadmap Phase 5) is not. Only
-//! fields that need unescaping, or whose bytes straddle two read chunks,
-//! take a copying path.
+//! Per `docs/design/roadmap-phase5-scan-performance.md`, a field that needs no
+//! unescaping is appended as a zero-copy view into the Arrow `Buffer` backing
+//! the read chunk it came from, rather than copied into the builder's own
+//! storage — retrofitting that later would be expensive, so it's built in now
+//! even though the rest of the performance work (roadmap Phase 5) is not. Only
+//! fields that need unescaping, or whose bytes straddle two read chunks, take
+//! a copying path.
 
 use std::borrow::Cow;
 use std::collections::VecDeque;
@@ -225,13 +225,13 @@ fn push_field(
 /// bare — see [`CopyHeader::matches`]). A table with zero rows produces no
 /// batches.
 ///
-/// Push-mode entry point (`mvp.md`, "Streaming API"): internally drains the
-/// pull-mode [`crate::stream::table_stream`], so the two share one scan loop.
-/// The callback may return [`ControlFlow::Break`] to stop early, in which
-/// case the returned token resumes from just past the last batch delivered
-/// to it — see [`crate::stream::TableStream::resume_token`]. `predicate`
-/// applies a post-parse row filter — see `table_stream`'s docs. `cache`
-/// controls structure-cache consulting — see `table_stream`'s docs.
+/// Push-mode entry point (`roadmap-phase1-mvp.md`, "Streaming API"):
+/// internally drains the pull-mode [`crate::stream::table_stream`], so the two
+/// share one scan loop. The callback may return [`ControlFlow::Break`] to stop
+/// early, in which case the returned token resumes from just past the last
+/// batch delivered to it — see [`crate::stream::TableStream::resume_token`].
+/// `predicate` applies a post-parse row filter — see `table_stream`'s docs.
+/// `cache` controls structure-cache consulting — see `table_stream`'s docs.
 pub async fn read_table<S, F>(
     source: &S,
     table: &str,

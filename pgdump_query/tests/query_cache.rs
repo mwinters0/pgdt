@@ -1,6 +1,6 @@
 //! `table_stream`/`read_table`'s cache-consulting behavior
-//! (`docs/design/mvp.md`, "Index / structure cache"): replaying already-
-//! cached blocks, skipping non-matching ones at zero I/O cost, and
+//! (`docs/design/roadmap-phase1-mvp.md`, "Index / structure cache"): replaying
+//! already- cached blocks, skipping non-matching ones at zero I/O cost, and
 //! persisting newly-discovered blocks as a live scan finds them. See
 //! `tests/stream.rs`/`tests/batch.rs` for cache-free behavior, and
 //! `tests/cache.rs` for the on-disk cache format itself.

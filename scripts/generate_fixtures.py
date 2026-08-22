@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Generate pg_dump fixture files across PostgreSQL versions and flag combos.
 
-Backs docs/design/mvp.md ("Testing & fixtures") and the tested/untested
-matrix in docs/design/pg-dump-compatibility.md. Spins up a throwaway,
-memory-limited Postgres container per version (never a host-run process,
-per this repo's CPU-heavy-machine / glibc-arena caution), loads
+Backs docs/design/roadmap-phase1-mvp.md ("Testing & fixtures") and the
+tested/untested matrix in docs/design/pg-dump-compatibility.md. Spins up a
+throwaway, memory-limited Postgres container per version (never a host-run
+process, per this repo's CPU-heavy-machine / glibc-arena caution), loads
 fixture_schema.sql, runs pg_dump across a flag matrix, and writes the
 output under fixtures/<major-version>/<flag-set>.sql.
 
@@ -27,12 +27,12 @@ FIXTURES_DIR = REPO_ROOT / "fixtures"
 
 DOCKER = ["sudo", "-n", "docker"]
 
-# Routine compatibility-matrix subset (docs/design/mvp.md): oldest
-# supported, version matching the real koji sample, newest available.
+# Routine compatibility-matrix subset (docs/design/roadmap-phase1-mvp.md):
+# oldest supported, version matching the real koji sample, newest available.
 # The full historical worktree sweep (v13.0, v13.23, v14.0, v15.0, v16.0,
 # v17.0, v18.0, v18.6) is a separate, manual/occasional exercise -- these
-# images are convenient stand-ins for "major version N", not an attempt to
-# hit exact patch levels.
+# images are convenient stand-ins for "major version N", not an attempt to hit
+# exact patch levels.
 ROUTINE_VERSIONS = {
     "13": "postgres:13-alpine",
     "16": "postgres:16-alpine",

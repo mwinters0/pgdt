@@ -11,7 +11,8 @@ use crate::{Error, Result};
 ///
 /// Shaped to mirror `object_store`'s `get_range`/`head` semantics so a real
 /// `object_store`-backed implementation can be added later (behind a Cargo
-/// feature flag, see docs/design/mvp.md) without changing this trait.
+/// feature flag, see docs/design/roadmap-phase1-mvp.md) without changing this
+/// trait.
 pub trait ByteRangeSource: Send + Sync {
     fn read_range(&self, offset: u64, len: usize) -> impl Future<Output = Result<Bytes>> + Send;
     fn size(&self) -> impl Future<Output = Result<u64>> + Send;

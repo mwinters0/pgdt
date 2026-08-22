@@ -1,16 +1,17 @@
-//! Pull-mode streaming API (`docs/design/mvp.md`, "Streaming API").
+//! Pull-mode streaming API (`docs/design/roadmap-phase1-mvp.md`, "Streaming
+//! API").
 //!
-//! [`table_stream`] is the primitive: an async `Stream<Item = Result<RecordBatch>>`
-//! built directly on [`CopyScanner`]/[`RowBatcher`], the same machinery
-//! [`crate::batch::read_table`] (push mode) now drives internally rather than
-//! duplicating. [`ResumeToken`] lets a caller stop consuming partway through
-//! and pick back up later in the same process — it holds no public fields
-//! (`mvp.md` is explicit that it must stay opaque), so its representation is
-//! free to change without an API break.
+//! [`table_stream`] is the primitive: an async `Stream<Item =
+//! Result<RecordBatch>>` built directly on [`CopyScanner`]/[`RowBatcher`], the
+//! same machinery [`crate::batch::read_table`] (push mode) now drives
+//! internally rather than duplicating. [`ResumeToken`] lets a caller stop
+//! consuming partway through and pick back up later in the same process — it
+//! holds no public fields (`roadmap-phase1-mvp.md` is explicit that it must
+//! stay opaque), so its representation is free to change without an API break.
 //!
-//! **Cache-consulting** (`mvp.md`, "Index / structure cache"): a
-//! [`CacheMode::Enabled`] cache is consulted up front and turned into a
-//! sequence of [`Segment`]s — one [`Segment::Known`] per already-cached
+//! **Cache-consulting** (`roadmap-phase1-mvp.md`, "Index / structure
+//! cache"): a [`CacheMode::Enabled`] cache is consulted up front and turned
+//! into a sequence of [`Segment`]s — one [`Segment::Known`] per already-cached
 //! block matching the query table (replayed for its rows, at zero I/O cost
 //! for every non-matching block in between) plus one trailing
 //! [`Segment::Live`] covering whatever's past the cache's watermark, which
@@ -78,9 +79,9 @@ struct Recorder {
 
 impl Recorder {
     /// Record `block`, ignoring it if a block at the same `header_offset` is
-    /// already present. A resumed stream's live segment can re-walk bytes
-    /// the base index already covers (see `docs/design/mvp.md`'s "Known
-    /// gaps") — without this guard that would duplicate an entry rather
+    /// already present. A resumed stream's live segment can re-walk bytes the
+    /// base index already covers (see `docs/design/roadmap-phase1-mvp.md`'s
+    /// "Known gaps") — without this guard that would duplicate an entry rather
     /// than just redundantly re-read some bytes.
     fn record(&mut self, block: CopyBlock) {
         if !self.index.blocks.iter().any(|b| b.header_offset == block.header_offset) {
@@ -100,15 +101,15 @@ impl Recorder {
 /// Opaque cursor into a [`table_stream`]/[`crate::batch::read_table`]
 /// consumption, sufficient to resume from just past the last batch a caller
 /// accepted. Valid only within the process that produced it — persisting it
-/// across a restart is out of scope for Phase 1 (`mvp.md`).
+/// across a restart is out of scope for Phase 1 (`roadmap-phase1-mvp.md`).
 #[derive(Debug, Clone)]
 pub struct ResumeToken {
     offset: u64,
     rows_emitted: u64,
     /// Reserved for the structural cache's generation stamp. The cache
-    /// doesn't exist yet (`docs/status/STATUS.md`, "Not started"), so this
-    /// is always 0 in Phase 1; carrying the field now avoids a later
-    /// breaking change to this already-opaque type.
+    /// doesn't stamp generations in Phase 1, so this is always 0; carrying
+    /// the field now avoids a later breaking change to this already-opaque
+    /// type.
     #[allow(dead_code)]
     generation: u64,
     in_copy: Option<InCopyResume>,
@@ -202,22 +203,24 @@ fn snapshot(scanner: &CopyScanner, active: &Option<Active>, rows_emitted: u64) -
 /// `resume` continues a previous consumption from a [`ResumeToken`] it
 /// produced; `None` starts from the beginning of `source`.
 ///
-/// `predicate` applies `docs/design/mvp.md`'s post-parse row filter
-/// (`docs/design/mvp.md`, "Predicate filtering"): `None` yields every row, as
-/// before; `Some` drops any row whose named column doesn't satisfy it, after
-/// that row has been fully unescaped. Referencing a column absent from a
-/// matching block's own schema is `Error::UnknownPredicateColumn`.
+/// `predicate` applies `docs/design/roadmap-phase1-mvp.md`'s post-parse row
+/// filter (`docs/design/roadmap-phase1-mvp.md`, "Predicate filtering"): `None`
+/// yields every row, as before; `Some` drops any row whose named column
+/// doesn't satisfy it, after that row has been fully unescaped. Referencing a
+/// column absent from a matching block's own schema is
+/// `Error::UnknownPredicateColumn`.
 ///
-/// `cache` controls structure-cache consulting (`docs/design/mvp.md`,
-/// "Index / structure cache"): `CacheMode::Disabled` is pure streaming with
-/// no side effects; `CacheMode::Enabled` replays already-cached blocks
-/// matching `table` at zero I/O cost for everything in between, then scans
-/// live from the cache's watermark, persisting each newly-discovered block
-/// (matching or not) as it completes — so a later query against the same
-/// dump gets progressively cheaper. `resume` takes priority over cache
-/// replay: it always starts a single live segment at the token's offset (see
-/// `docs/design/mvp.md`'s "Known gaps" for what that costs in the rare case
-/// of resuming from inside a would-be replay).
+/// `cache` controls structure-cache consulting
+/// (`docs/design/roadmap-phase1-mvp.md`, "Index / structure cache"):
+/// `CacheMode::Disabled` is pure streaming with no side effects;
+/// `CacheMode::Enabled` replays already-cached blocks matching `table` at zero
+/// I/O cost for everything in between, then scans live from the cache's
+/// watermark, persisting each newly-discovered block (matching or not) as it
+/// completes — so a later query against the same dump gets progressively
+/// cheaper. `resume` takes priority over cache replay: it always starts a
+/// single live segment at the token's offset (see
+/// `docs/design/roadmap-phase1-mvp.md`'s "Known gaps" for what that costs in
+/// the rare case of resuming from inside a would-be replay).
 pub fn table_stream<'a, S>(
     source: &'a S,
     table: &str,

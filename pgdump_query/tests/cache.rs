@@ -1,5 +1,5 @@
 //! On-disk structure cache: round-tripping, and the "unusable cache is
-//! treated as absent" contract `docs/design/mvp.md` requires.
+//! treated as absent" contract `docs/design/roadmap-phase1-mvp.md` requires.
 
 use std::path::{Path, PathBuf};
 

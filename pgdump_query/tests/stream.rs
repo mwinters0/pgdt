@@ -214,7 +214,8 @@ async fn resume_at_a_block_boundary() {
 }
 
 /// The blocking `Iterator` wrapper drives the same stream to the same result
-/// with no ambient `tokio` runtime — the sync-caller path `mvp.md` calls for.
+/// with no ambient `tokio` runtime — the sync-caller path
+/// `roadmap-phase1-mvp.md` calls for.
 #[test]
 fn blocking_iterator_matches_async_stream() {
     let source = LocalFileSource::open(edge_cases()).unwrap();

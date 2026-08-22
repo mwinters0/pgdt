@@ -198,14 +198,17 @@ should follow the measurements rather than this doc's ordering.
 
 ## What this constrains before Phase 5
 
-Three things in flight or near-term should be built with this in mind, because
-retrofitting them is expensive and pre-empting them is nearly free:
+Three rules that earlier phases hold to, because retrofitting them is expensive
+and pre-empting them is nearly free. The first two are already satisfied by
+Phase 1 and must survive any change to those layers; the third is standing.
 
-1. **The batch layer** (currently next up, per `docs/status/STATUS.md`) should
-   read chunks into an Arrow `Buffer` and build `Utf8View` arrays as views
-   over it, rather than copying field bytes into fresh allocations. This is
-   the one item with a real cost to deferring.
-2. **The serialized cache** should leave room for the optional sparse row
-   index, so adding it later is not a format break.
-3. **`ScanOptions::chunk_size`** stays tunable and defaults are treated as
+1. **The batch layer reads chunks into an Arrow `Buffer` and builds `Utf8View`
+   arrays as views over it**, rather than copying field bytes into fresh
+   allocations. This is the one item with a real cost to deferring. See the
+   sharp edges around that path in
+   `docs/design/roadmap-phase1-mvp-notes.md`.
+2. **The serialized cache leaves room for the optional sparse row index**, so
+   adding it later is not a format break — `CopyBlock::sparse_index`, reserved
+   and always `None`.
+3. **`ScanOptions::chunk_size`** stays tunable, and defaults are treated as
    measured values, not constants.

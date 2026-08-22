@@ -1,4 +1,5 @@
-//! Post-parse row filtering (`docs/design/mvp.md`, "Predicate filtering").
+//! Post-parse row filtering (`docs/design/roadmap-phase1-mvp.md`, "Predicate
+//! filtering").
 
 use crate::Result;
 use crate::copy::{decode_field, split_fields};

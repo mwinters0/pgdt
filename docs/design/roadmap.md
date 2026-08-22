@@ -1,9 +1,14 @@
 # Roadmap
 
 This supersedes `docs/design/historical/initial.md` (frozen) as the live design
-set. Phase 1 is fully specified in `docs/design/mvp.md`. Phases 2-6 are
-sketched here at a level sufficient to keep Phase 1 from painting us into a
-corner; each gets its own full grilling session when it becomes current.
+set. Each phase that has been specified gets its own doc, named
+`roadmap-phase<N>-<slug>.md`; the sections below are the index. Phases still
+sketched here are at a level sufficient to keep earlier phases from painting us
+into a corner — **each gets its own full grilling session when it becomes
+current**, and the resulting spec becomes its own numbered doc.
+
+Phase 1 is complete (`docs/design/roadmap-phase1-mvp.md`,
+`docs/design/roadmap-phase1-mvp-notes.md`). Phase 2 is current and unspecified.
 
 ## Project goals
 
@@ -18,15 +23,16 @@ Two things distinguish this project from existing `pg_dump` tooling
   difference between a usable tool and an overnight job. Concretely: the
   local-file path should stay device-bound, not CPU-bound, on hardware from
   HDD through NVMe, at flat memory. See
-  `docs/design/scan-performance.md`.
+  `docs/design/roadmap-phase5-scan-performance.md`.
 
-## Phase 1 — MVP
+## Phase 1 — MVP (complete)
 
 Streaming, string-typed row extraction from a single plain-format dump file,
 with a best-effort structural cache. Binary `pgdq`, library crate
-`pgdump_query`. Full spec: `docs/design/mvp.md`.
+`pgdump_query`. Full spec: `docs/design/roadmap-phase1-mvp.md`; implementation
+notes: `docs/design/roadmap-phase1-mvp-notes.md`.
 
-## Phase 2 — Typed columns
+## Phase 2 — Typed columns (current, unspecified)
 
 Parse the `CREATE TABLE` DDL preceding a table's `COPY` block to recover
 column types, and map known PostgreSQL types to Arrow types, so results come
@@ -133,12 +139,13 @@ Three qualifications on that, all cheap to honour:
   label afterwards through oid-preserving calls. A label-set extractor that only
   reads the body would silently yield an empty enum there.
 
-**Where the work lands.** The scan and the CLI display are Phase 2 work, but one
-piece is due in Phase 1: `DumpIndex` must carry the metadata field *before* the
-cache is first serialized, or adding it later is a format break. That is the same
-reasoning as the sparse row index in `docs/design/scan-performance.md` and the
-per-row-group statistics under Phase 3 below; the cache work has not started yet,
-so reserve all three slots together.
+**Where the work lands.** The scan and the CLI display are Phase 2 work. The
+cache slot it needs already exists: `DumpIndex::metadata` is reserved and always
+`None`, alongside the sparse row index
+(`docs/design/roadmap-phase5-scan-performance.md`) and the per-row-group
+statistics under Phase 3 below — all three were reserved together in Phase 1
+precisely so populating one is not a format break. The reserved `DumpMetadata`
+type is a placeholder; its real shape is this phase's design work.
 
 ## Phase 3 — Pushdown
 
@@ -157,7 +164,8 @@ plausibly land against string columns first if it proves valuable earlier.
 Parquet-style statistics, gathered during a scan and persisted in the cache, so
 a later query can skip data instead of reading it. Depends on Phase 2 (a min/max
 needs a parsed value), pays off in Phase 3 (the pruning consumer), and — like the
-metadata block — needs its cache slot reserved in Phase 1.
+metadata block — already has its cache slot reserved (`CopyBlock::column_stats`,
+always `None`).
 
 Starting set, cheapest and most useful first:
 
@@ -175,9 +183,9 @@ tables big enough to matter: koji's blocks run to billions of rows, and the
 min/max of a monotonic `id` column over a whole block spans the entire domain, so
 it prunes nothing. Parquet's win comes from row-group granularity, and there is
 already a natural unit to reuse — the sparse row index checkpoints every 8192
-rows (`docs/design/scan-performance.md`). Statistics attach to those checkpoints;
-block-level statistics are then just the roll-up, free to compute and still worth
-storing for the coarse first pass.
+rows (`docs/design/roadmap-phase5-scan-performance.md`). Statistics attach to
+those checkpoints; block-level statistics are then just the roll-up, free to
+compute and still worth storing for the coarse first pass.
 
 **Sortedness is worth more here than min/max, and costs less.** `pg_dump` emits
 rows in physical heap order, and for an append-only table that is very often
@@ -202,9 +210,9 @@ group that does in fact contain matching rows silently drops data, with no error
 to notice. So statistics cannot inherit the structural index's relaxed
 validation:
 
-- The dump-file identity check (size/mtime) that `docs/design/mvp.md` files under
-  "Configurable (future)" for the structural cache is **mandatory** before any
-  statistic is trusted.
+- The dump-file identity check (size/mtime) that
+  `docs/design/roadmap-phase1-mvp.md` files under "Configurable (future)" for
+  the structural cache is **mandatory** before any statistic is trusted.
 - Statistics must be **discardable independently** of the structural index, so a
   cache written by a version with a stats bug can be downgraded to "structure
   only" rather than thrown away.
@@ -270,7 +278,7 @@ structure discovery, zero-copy row extraction into Arrow buffers, bulk UTF-8
 validation, and device-aware parallelism (sequential on rotational media,
 parallel on NVMe). Full sketch, including the measurements that should gate
 each piece and the Phase 1-3 decisions it constrains:
-`docs/design/scan-performance.md`.
+`docs/design/roadmap-phase5-scan-performance.md`.
 
 Scheduled here, after the engine story, for two reasons. Phase 3's pushdown
 changes which bytes get touched at all, so optimizing the pre-pushdown parser
@@ -325,4 +333,5 @@ current:
   opaque and the cache gains an entry-relative addressing mode.
 
 The Phase 1 decisions that keep all of this additive rather than a rewrite are
-listed under "Decisions that keep later phases open" in `docs/design/mvp.md`.
+listed under "Decisions that keep later phases open" in
+`docs/design/roadmap-phase1-mvp.md`.

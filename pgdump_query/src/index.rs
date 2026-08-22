@@ -16,12 +16,12 @@ use crate::{CopyStart, Result};
 /// row, letting a later reader seek into the middle of a large block instead
 /// of scanning from its start. Reserved in the cache format from the first
 /// release; not populated until roadmap Phase 5
-/// (`docs/design/scan-performance.md`, "Cache: a sparse row index") — no
-/// code constructs one yet.
+/// (`docs/design/roadmap-phase5-scan-performance.md`, "Cache: a sparse row
+/// index") — no code constructs one yet.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SparseRowIndex {
     /// Rows between checkpoints (matches the default batch size, 8192 — see
-    /// `scan-performance.md`).
+    /// `roadmap-phase5-scan-performance.md`).
     pub interval: u64,
     /// `checkpoints[i]` is the byte offset of data row `i * interval` within
     /// the block.
