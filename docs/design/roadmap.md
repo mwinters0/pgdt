@@ -405,3 +405,31 @@ this section when it acquires a phase number, not when it acquires a design.
   round-trip test against real `pg_dump` output rather than a hand-written
   literal — the pattern `public.escapes` already establishes. This is careful,
   case-by-case work; the value is in the test coverage, not in the mapping table.
+
+- **Role discovery — and "what does this dump need", more generally, as a
+  sysadmin-facing use case.** A regular `pg_dump` never emits `CREATE ROLE`
+  (roles are cluster-level, out of scope for a single-database dump), but the
+  dump is full of *references* to roles that must already exist on the
+  restore target: `OWNER TO`, `GRANT`/`REVOKE ... TO/FROM`, `ALTER DEFAULT
+  PRIVILEGES FOR ROLE ...`, `SECURITY LABEL`. Today the only way to learn
+  which roles a dump needs is to attempt the restore, watch it fail on a
+  missing role, create that role, and repeat — `pgdq info` could just list
+  them up front, letting someone provision the roles once instead of by
+  trial and error. This is a **second use case for the CLI**, distinct from
+  the embeddable-query-source goal the rest of this roadmap is organized
+  around: a sysadmin or engineer handed a dump file of unknown origin,
+  wanting to understand what it needs before loading it anywhere. Roles are
+  the concrete first instance; the same use case generalizes to other
+  discoverable-but-not-obvious requirements — referenced tablespaces
+  (`TABLESPACE <name>`) are the same shape of problem (must pre-exist on the
+  target, discovered today only by a failed restore), and the extensions in
+  Phase 2's metadata pass already partly serve it.
+  **Scoping note for whenever this is taken up:** unlike Phase 2's
+  version/extension/type metadata, role (and tablespace) references are
+  *not* confined to the pre-data preamble — an `OWNER TO` for a given table
+  sits next to that table's own DDL, wherever in the file that falls, not
+  bunched before the first `COPY` block. So this can't reuse the
+  stop-at-the-first-`COPY`-block trick Phase 2 relies on (I1 in
+  `docs/design/postgres-invariants.md`); it needs a different scan shape —
+  most likely a full structural pass that collects role/tablespace names as
+  it goes, rather than a preamble-only one.
