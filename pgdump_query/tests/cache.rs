@@ -3,7 +3,8 @@
 
 use std::path::{Path, PathBuf};
 
-use pgdump_query::{LocalFileSource, ScanOptions, build_index, cache};
+use pgdump_query::cache::CacheMode;
+use pgdump_query::{Error, LocalFileSource, ScanOptions, build_index, cache};
 
 fn edge_cases() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/edge_cases.sql")
@@ -63,4 +64,64 @@ async fn save_overwrites_an_existing_cache() {
     cache::save(&path, &index).unwrap();
 
     assert_eq!(cache::load(&path).unwrap().as_ref(), Some(&index));
+}
+
+/// A write failure (here: parent directory doesn't exist) must propagate as
+/// a hard error, never a silent fallback to running without a cache.
+#[tokio::test]
+async fn save_propagates_write_failures() {
+    let source = LocalFileSource::open(edge_cases()).unwrap();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("no-such-subdir").join("edge_cases.sql.dqcache");
+    assert!(matches!(cache::save(&path, &index), Err(Error::Io(_))));
+}
+
+#[test]
+fn cache_mode_resolves_default_explicit_and_disabled() {
+    let dump = Path::new("/a/b/dump.sql");
+
+    assert_eq!(
+        CacheMode::resolve(dump, None),
+        CacheMode::Enabled(PathBuf::from("/a/b/dump.sql.dqcache"))
+    );
+    assert_eq!(
+        CacheMode::resolve(dump, Some(Path::new("/other/path.dqcache"))),
+        CacheMode::Enabled(PathBuf::from("/other/path.dqcache"))
+    );
+    assert_eq!(CacheMode::resolve(dump, Some(Path::new("none"))), CacheMode::Disabled);
+}
+
+#[tokio::test]
+async fn disabled_cache_ignores_an_existing_file_and_persists_nothing() {
+    let source = LocalFileSource::open(edge_cases()).unwrap();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("edge_cases.sql");
+    let path = cache::colocated_path(&dump);
+    cache::save(&path, &index).unwrap();
+    assert!(path.exists());
+
+    let mode = CacheMode::resolve(&dump, Some(Path::new("none")));
+    assert_eq!(mode, CacheMode::Disabled);
+
+    // The existing valid cache at the colocated path is ignored, not read.
+    assert!(mode.load().unwrap().is_none());
+
+    // Saving under a disabled mode is a no-op: it must not touch whatever is
+    // (or isn't) at the would-be colocated path.
+    std::fs::write(&path, b"clobbered after the disabled mode was resolved").unwrap();
+    mode.save(&index).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), b"clobbered after the disabled mode was resolved");
+}
+
+#[test]
+fn require_enabled_errors_when_disabled() {
+    assert!(CacheMode::Enabled(PathBuf::from("/x")).require_enabled("parse").is_ok());
+    assert!(matches!(
+        CacheMode::Disabled.require_enabled("parse"),
+        Err(Error::CacheDisabled { operation: "parse" })
+    ));
 }

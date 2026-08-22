@@ -102,10 +102,26 @@ acceleration.
 1. Colocated with the dump file: `<dump-path>.dqcache`.
 2. An explicit path supplied by the caller.
 
-No XDG-style or other fallback location. If the colocated path can't be
-written (read-only mount, permissions) and no explicit path was given, the
-library proceeds without persisting a cache — consistent with the hardcoded
-rule below that the cache is never required for correctness.
+No XDG-style or other fallback location.
+
+**Hardcoded (MVP): a cache write failure is a hard error.** If the resolved
+path can't be written (read-only mount, permissions, disk full), the library
+returns an error rather than silently proceeding without a cache. This is a
+different axis from the "best-effort" rule below: *reading* a missing,
+foreign, or stale cache falls back to scanning without complaint, because
+that's the routine first-run/cold-cache case. A *write* failure means
+something is actually wrong with the resolved location, and swallowing it
+would silently degrade every future run of the same command back to a full
+scan with no indication why.
+
+**Configurable (MVP): explicitly disabling the cache.** A caller can opt out
+of the cache entirely for one operation: any file already at the resolved
+location is ignored (never read), and nothing is written when the operation
+finishes. The CLI spells this `--cache-path none`. Disabling the cache is
+incompatible with an operation whose entire purpose is to populate it
+(`pgdq parse`) — combining the two is a hard error at both the library level
+(`pgdump_query::cache::CacheMode::require_enabled`) and the CLI level, not a
+silent no-op.
 
 **Format:** custom binary encoding via `serde` + `bincode`. Not
 human-readable by design — the CLI `info` command is the intended way to
@@ -130,9 +146,11 @@ query, persisting whatever it discovered along the way (so a query for table
 X that scans past A, B, C leaves the cache useful for those too). Eager mode
 (`pgdq parse`) scans the whole file up front before answering any query.
 
-**Hardcoded (MVP):** the cache is a best-effort accelerator, never required
-for correctness. Missing, stale, or non-covering cache → fall back to
-scanning (from the furthest covered point, or from the start).
+**Hardcoded (MVP):** reading the cache is best-effort, never required for
+correctness. Missing, stale, or non-covering cache → fall back to scanning
+(from the furthest covered point, or from the start). This best-effort
+contract covers *reads* only — see "a cache write failure is a hard error"
+above.
 
 **Configurable (future):** cache invalidation strategy if the underlying
 dump file changes (size/mtime check vs. trusting the client). Note that this
@@ -172,12 +190,16 @@ configurable behavior:
 
 ## CLI (`pgdq`)
 
-- `pgdq parse <file> [--cache-path PATH]` — eager full-file scan; builds and
-  writes the cache (colocated by default, or at `PATH`).
-- `pgdq info <file> [--cache-path PATH] [--verbose]` — pretty-print what the
-  cache knows: table names, column *names* (from the `COPY` header list —
+- `pgdq parse <file> [--cache-path PATH|none]` — eager full-file scan; builds
+  and writes the cache (colocated by default, or at `PATH`). `--cache-path
+  none` is rejected: `parse`'s whole purpose is to persist a cache, so
+  disabling it is a contradiction.
+- `pgdq info <file> [--cache-path PATH|none] [--verbose]` — pretty-print what
+  the cache knows: table names, column *names* (from the `COPY` header list —
   types aren't available until Phase 2), row counts. `--verbose` additionally
   shows file offsets for each `COPY` block and other cache internals.
+  `--cache-path none` ignores any existing cache and performs a fresh scan
+  without persisting it.
 
 ## Testing & fixtures
 

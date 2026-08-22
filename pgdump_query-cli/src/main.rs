@@ -1,8 +1,9 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use pgdump_query::{DumpIndex, LocalFileSource, ScanOptions, build_index, cache};
+use pgdump_query::cache::CacheMode;
+use pgdump_query::{DumpIndex, LocalFileSource, ScanOptions, build_index};
 
 #[derive(Parser)]
 #[command(
@@ -19,22 +20,21 @@ enum Command {
     /// Perform a full file scan and build the structure cache.
     Parse {
         file: PathBuf,
+        /// Cache file path, or `none` to disable the cache. Since `parse`'s
+        /// whole purpose is to write the cache, `none` is rejected.
         #[arg(long)]
         cache_path: Option<PathBuf>,
     },
     /// Print what is known about a dump file from its cache.
     Info {
         file: PathBuf,
+        /// Cache file path, or `none` to ignore any existing cache and
+        /// perform a fresh scan without persisting it.
         #[arg(long)]
         cache_path: Option<PathBuf>,
         #[arg(long)]
         verbose: bool,
     },
-}
-
-/// `--cache-path`, or the colocated default (`<file>.dqcache`) when unset.
-fn resolve_cache_path(file: &Path, cache_path: Option<PathBuf>) -> PathBuf {
-    cache_path.unwrap_or_else(|| cache::colocated_path(file))
 }
 
 #[tokio::main]
@@ -44,27 +44,33 @@ async fn main() -> Result<()> {
         Command::Parse { file, cache_path } => {
             // `parse` is the eager entry point: always scan fresh (ignoring
             // any existing cache) and (re)write it, per `mvp.md`'s CLI spec.
-            let path = resolve_cache_path(&file, cache_path);
+            // Reject `--cache-path none` up front, before paying for a scan
+            // we won't be allowed to persist.
+            let mode = CacheMode::resolve(&file, cache_path.as_deref());
+            let path = mode
+                .require_enabled("parse")
+                .context("`--cache-path none` cannot be combined with `parse`")?
+                .to_path_buf();
             let source = LocalFileSource::open(&file)?;
             let index = build_index(&source, &ScanOptions::default()).await?;
             print_index(&index, false);
-            cache::save(&path, &index)?;
+            pgdump_query::cache::save(&path, &index)?;
             println!();
             println!("wrote cache to {}", path.display());
         }
         Command::Info { file, cache_path, verbose } => {
-            let path = resolve_cache_path(&file, cache_path);
-            let index = match cache::load(&path)? {
+            let mode = CacheMode::resolve(&file, cache_path.as_deref());
+            let index = match mode.load()? {
                 Some(index) => index,
                 None => {
-                    // No usable cache: scan, then persist what we learned —
+                    // No usable (or disabled) cache: scan, then persist what
+                    // we learned — a no-op under `CacheMode::Disabled` —
                     // `mvp.md`'s "cache is never required for correctness"
                     // rule means this fallback must still produce a correct
-                    // answer, and there's no reason to throw away the scan
-                    // we just paid for.
+                    // answer.
                     let source = LocalFileSource::open(&file)?;
                     let index = build_index(&source, &ScanOptions::default()).await?;
-                    cache::save(&path, &index)?;
+                    mode.save(&index)?;
                     index
                 }
             };

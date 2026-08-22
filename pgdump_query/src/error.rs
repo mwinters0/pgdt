@@ -20,4 +20,6 @@ pub enum Error {
     Arrow(#[from] arrow::error::ArrowError),
     #[error("failed to encode structure cache: {0}")]
     CacheEncode(#[from] bincode::error::EncodeError),
+    #[error("cache is disabled (`--cache-path none`), but `{operation}` requires a cache file")]
+    CacheDisabled { operation: &'static str },
 }

@@ -7,7 +7,8 @@ that changed the plan, see `history/` (one file per day, `YYYY-MM-DD.md`) —
 not a changelog, only entries worth keeping. For the design itself (section
 names below track `mvp.md`'s headings), see `docs/design/mvp.md`.
 
-Last updated: 2026-08-22 (structure cache).
+Last updated: 2026-08-22 (cache write failures are hard errors; explicit
+`CacheMode::Disabled`/`--cache-path none`).
 
 ## Done
 
@@ -54,22 +55,31 @@ Last updated: 2026-08-22 (structure cache).
   per `mvp.md`'s "Decisions that keep later phases open" — a cache whose
   version or container this build doesn't recognise (or whose bytes don't
   parse as a cache at all) is treated the same as a missing file: `Ok(None)`,
-  never an error, per the "best-effort, never required for correctness" rule.
-  No dump-file identity check (size/mtime) — `mvp.md` puts that under
-  "Configurable (future)", not MVP. `cache::colocated_path()` derives
-  `<dump-path>.dqcache`; `cache::save`/`load` take an explicit path either
-  way, so the CLI's `--cache-path` and the colocated default share one
-  implementation.
+  never an error, per the "reading is best-effort" rule. Writing is not
+  best-effort: `cache::save` propagates I/O failures as `Error::Io` rather
+  than falling back to running without a cache. No dump-file identity check
+  (size/mtime) — `mvp.md` puts that under "Configurable (future)", not MVP.
+  `cache::colocated_path()` derives `<dump-path>.dqcache`; `cache::save`/
+  `load` take an explicit path either way. `cache::CacheMode` is the
+  higher-level entry point the CLI uses: `CacheMode::resolve(dump_path,
+  cache_path)` turns a `--cache-path`-style argument into `Enabled(path)`
+  (colocated default, or an explicit path) or `Disabled` (the literal path
+  `none` — ignores any existing file at the would-be location and persists
+  nothing); `CacheMode::require_enabled(operation)` rejects `Disabled` with
+  `Error::CacheDisabled` for operations (like `parse`) whose purpose is to
+  populate the cache.
 - **CLI**: `pgdq parse` always does a fresh eager scan and (over)writes the
-  cache (colocated, or at `--cache-path`). `pgdq info` reads a valid cache if
-  one exists at that path; otherwise it scans and writes the cache before
-  printing, so the fallback path still leaves a cache behind for next time.
-  `--verbose` adds file offsets either way.
+  cache (colocated, or at `--cache-path`); `--cache-path none` is rejected
+  up front. `pgdq info` reads a valid cache if one exists at that path;
+  otherwise it scans and writes the cache before printing, so the fallback
+  path still leaves a cache behind for next time — unless `--cache-path
+  none` disabled the cache, in which case the scan result is never
+  persisted. `--verbose` adds file offsets either way.
 - **Error handling**: `pgdump_query::Error` (`thiserror`) — `Io`, `Join`,
-  `UnterminatedCopyBlock`, `LineTooLong`, `InvalidUtf8`, `CacheEncode`; CLI
-  uses `anyhow`.
-- **Tests** (`cargo test --workspace`, 52 tests; see also `batch.rs`'s 10,
-  `stream.rs`'s 5, and `cache.rs`'s 5, below):
+  `UnterminatedCopyBlock`, `LineTooLong`, `InvalidUtf8`, `CacheEncode`,
+  `CacheDisabled`; CLI uses `anyhow`.
+- **Tests** (`cargo test --workspace`, 51 tests; see also `batch.rs`'s 11,
+  `stream.rs`'s 5, and `cache.rs`'s 9, below):
   - Unit tests for the header grammar and escape decoding.
   - `pgdump_query/tests/data/edge_cases.sql` — hand-written and deterministic
     (no generated timestamps, so snapshots are stable) — under an `insta`
@@ -144,10 +154,14 @@ Last updated: 2026-08-22 (structure cache).
   headerless-schema block, resume exactly at a block boundary, the blocking
   iterator) plus 2 more in `tests/batch.rs` covering `read_table`'s own
   `Break`-returns-a-token path.
-  5 tests in `tests/cache.rs`: colocated-path derivation, a missing file and
+  9 tests in `tests/cache.rs`: colocated-path derivation, a missing file and
   foreign (non-cache) bytes both load as `Ok(None)`, a saved index round-trips
-  exactly including the three reserved `None` fields, and `save` overwrites
-  an existing file at that path.
+  exactly including the three reserved `None` fields, `save` overwrites an
+  existing file at that path, a write failure (unwritable path) propagates as
+  `Error::Io`, `CacheMode::resolve` picks the colocated default/explicit
+  path/`Disabled` correctly, a disabled cache ignores an existing file at its
+  would-be location and leaves it untouched on `save`, and
+  `require_enabled` errors on `Disabled`.
 
 ## Not started
 
@@ -184,6 +198,8 @@ natural shape: resume-from-`scanned_through` using the same
 `CopyScanner::resume` machinery `ResumeToken` already relies on, replaying
 `DumpIndex::blocks_for(table)` for the already-known portion and only
 scanning the file from the watermark onward, writing the cache back
-(colocated, best-effort — a write failure shouldn't fail the query) each
-time new blocks are discovered. Predicate filtering is the other open MVP
-item and doesn't depend on this.
+(colocated, or wherever the caller's `CacheMode` resolved to — a no-op under
+`CacheMode::Disabled`) each time new blocks are discovered. A write failure
+here must propagate as an error, not be swallowed, per `mvp.md`'s "a cache
+write failure is a hard error" rule. Predicate filtering is the other open
+MVP item and doesn't depend on this.
