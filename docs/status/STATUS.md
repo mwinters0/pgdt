@@ -7,7 +7,7 @@ that changed the plan, see `history/` (one file per day, `YYYY-MM-DD.md`) —
 not a changelog, only entries worth keeping. For the design itself (section
 names below track `mvp.md`'s headings), see `docs/design/mvp.md`.
 
-Last updated: 2026-08-22.
+Last updated: 2026-08-22 (streaming API).
 
 ## Done
 
@@ -106,13 +106,27 @@ Last updated: 2026-08-22.
   (exercises the zero-copy/straddling/decode-copy paths against the same
   expected output), and a `public.escapes` round-trip against real `pg_dump`
   output on all three fixture versions.
+- **Streaming API** (`stream.rs`): `table_stream()` is now the primitive — a
+  pull-mode `Stream<Item = Result<RecordBatch>>` built with `async-stream`
+  (new dependency) directly on `CopyScanner`/`RowBatcher`. `read_table()`
+  (push mode) is reimplemented on top of it, draining the stream and driving
+  the `FnMut(RecordBatch) -> ControlFlow<()>` callback internally, per
+  `mvp.md`. `BlockingTableIter` wraps a `TableStream` in a dedicated
+  current-thread `tokio` runtime for sync callers with no ambient runtime
+  (not yet wired into the CLI, which has no table-query subcommand yet).
+  `ResumeToken` (opaque, no public fields) captures the scanner's file
+  offset, a cumulative row count, and — for a token taken mid-`COPY`-block —
+  the block's header and in-block row count, letting a fresh stream/
+  `read_table` call reconstruct the exact same schema and continue without a
+  gap or a repeat; a reserved `generation` field for the future structural
+  cache is always 0 in Phase 1. 5 tests in `tests/stream.rs` (pull mode
+  matches push mode, resume across arbitrary row-count splits, resume mid a
+  headerless-schema block, resume exactly at a block boundary, the blocking
+  iterator) plus 2 more in `tests/batch.rs` covering `read_table`'s own
+  `Break`-returns-a-token path.
 
 ## Not started
 
-- **Streaming API** — pull-mode `Stream`, blocking `Iterator` wrapper,
-  push-mode callback, `ResumeToken`. `read_table()`'s callback is now the
-  batch-level push shape `mvp.md` specifies; pull mode and the `Iterator`
-  wrapper still need building on top of it.
 - **Predicate filtering** — single-column `=`/`!=` post-parse filter.
 - **Index/structure cache** — `bincode` format, colocated vs. explicit path,
   incremental vs. eager indexing. `DumpIndex` is the intended payload;
@@ -134,11 +148,11 @@ Last updated: 2026-08-22.
 
 ## Next up
 
-The streaming API on top of `read_table()`: a pull-mode `Stream`, a blocking
-`Iterator` wrapper over it, and the opaque `ResumeToken`. The cache is the
-other independent thread of work and can proceed in parallel — `DumpIndex` is
-ready to be given a serialized form; leave room in it for three optional fields
-so adding any of them later isn't a format break: a sparse row index
+The index/structure cache: `bincode` serialization of `DumpIndex`, the
+colocated-vs-explicit-path and eager-vs-incremental behavior `mvp.md`
+specifies, and `pgdq info`/`parse` reading and writing it instead of always
+rescanning. Leave room in the serialized form for three optional fields so
+adding any of them later isn't a format break: a sparse row index
 (`docs/design/scan-performance.md`); a dump-level metadata block — server
 version, `pg_dump` version, extension list, user-defined type definitions
 (`docs/design/roadmap.md`, "Companion: dump-level metadata"); and per-row-group

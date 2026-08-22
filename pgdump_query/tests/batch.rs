@@ -218,13 +218,41 @@ async fn stops_early_on_break() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
     let options = BatchOptions { max_rows: 1, max_bytes: None };
     let mut batches = 0;
-    read_table(&source, "public.widgets", &ScanOptions::default(), &options, |_| {
+    let token = read_table(&source, "public.widgets", &ScanOptions::default(), &options, |_| {
         batches += 1;
         ControlFlow::Break(())
     })
     .await
     .unwrap();
     assert_eq!(batches, 1);
+    assert!(token.is_some(), "a Break should hand back a resume token");
+}
+
+/// The resume token `read_table` returns on an early `Break` picks up
+/// exactly where the callback stopped: feeding it back in continues without
+/// re-delivering the row(s) already seen.
+#[tokio::test]
+async fn resume_token_from_break_continues_correctly() {
+    use pgdump_query::table_stream;
+
+    let source = LocalFileSource::open(edge_cases()).unwrap();
+    let options = BatchOptions { max_rows: 1, max_bytes: None };
+    let mut rows = Vec::new();
+    let token = read_table(&source, "public.widgets", &ScanOptions::default(), &options, |batch| {
+        rows.extend(rows_of(&batch));
+        ControlFlow::Break(())
+    })
+    .await
+    .unwrap()
+    .expect("Break yields a resume token");
+
+    let mut resumed =
+        table_stream(&source, "public.widgets", ScanOptions::default(), options, Some(token));
+    use futures::StreamExt;
+    while let Some(batch) = resumed.next().await {
+        rows.extend(rows_of(&batch.unwrap()));
+    }
+    assert_eq!(rows, widgets_expected());
 }
 
 /// Round-trip check against real `pg_dump` output, batched with a small

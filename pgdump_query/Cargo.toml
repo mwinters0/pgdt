@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 arrow = { version = "59.2.0", default-features = false }
+async-stream = "0.3"
 bincode = { version = "2", features = ["serde"] }
 bytes = "1.12.1"
 futures = "0.3.34"

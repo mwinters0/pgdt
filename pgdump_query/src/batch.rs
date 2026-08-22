@@ -21,7 +21,7 @@ use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 
 use crate::copy::{CopyHeader, DELIMITER, decode_field};
 use crate::io::ByteRangeSource;
-use crate::scan::{CopyScanner, Event, ScanOptions};
+use crate::scan::ScanOptions;
 use crate::{Error, Result};
 
 /// Tuning knobs for batch assembly.
@@ -42,20 +42,20 @@ impl Default for BatchOptions {
 
 /// A read chunk retained only long enough for zero-copy views to be taken
 /// into it. Dropped once the scanner has moved past it for good.
-struct SourceChunk {
+pub(crate) struct SourceChunk {
     /// Absolute file offset of `buffer[0]`.
-    start: u64,
-    buffer: Buffer,
+    pub(crate) start: u64,
+    pub(crate) buffer: Buffer,
     /// Cached `StringViewBuilder::append_block` index per column, filled in
     /// the first time a column takes a view into this chunk. Grown lazily
     /// rather than sized up front, since more than one schema (from
     /// sequential or same-name-different-schema blocks) can reference the
     /// same chunk.
-    column_blocks: Vec<Option<u32>>,
+    pub(crate) column_blocks: Vec<Option<u32>>,
 }
 
 impl SourceChunk {
-    fn end(&self) -> u64 {
+    pub(crate) fn end(&self) -> u64 {
         self.start + self.buffer.len() as u64
     }
 
@@ -79,7 +79,7 @@ impl SourceChunk {
 /// next batch, which invalidates every cached block index in `chunks` — a
 /// flush must clear them all, or a later reference to an already-seen chunk
 /// would resolve to the wrong (or out-of-bounds) block in the new batch.
-fn invalidate_block_cache(chunks: &mut VecDeque<SourceChunk>) {
+pub(crate) fn invalidate_block_cache(chunks: &mut VecDeque<SourceChunk>) {
     for chunk in chunks.iter_mut() {
         chunk.column_blocks.clear();
     }
@@ -90,7 +90,7 @@ fn invalidate_block_cache(chunks: &mut VecDeque<SourceChunk>) {
 /// `CopyHeader::columns`) — Phase 1 has no DDL parsing to name them from, so
 /// placeholder names are used instead, sized to `field_count` (the first
 /// row's field count).
-fn schema_for(header: &CopyHeader, field_count: usize) -> SchemaRef {
+pub(crate) fn schema_for(header: &CopyHeader, field_count: usize) -> SchemaRef {
     let names: Vec<String> = if header.columns.is_empty() {
         (1..=field_count).map(|i| format!("column{i}")).collect()
     } else {
@@ -103,7 +103,7 @@ fn schema_for(header: &CopyHeader, field_count: usize) -> SchemaRef {
 
 /// Accumulates rows from a single `COPY` block into `Utf8View`
 /// `RecordBatch`es.
-struct RowBatcher {
+pub(crate) struct RowBatcher {
     schema: SchemaRef,
     columns: Vec<StringViewBuilder>,
     rows_in_batch: usize,
@@ -112,22 +112,28 @@ struct RowBatcher {
 }
 
 impl RowBatcher {
-    fn new(schema: SchemaRef, options: BatchOptions) -> Self {
+    pub(crate) fn new(schema: SchemaRef, options: BatchOptions) -> Self {
         let columns = (0..schema.fields().len()).map(|_| StringViewBuilder::new()).collect();
         Self { schema, columns, rows_in_batch: 0, bytes_in_batch: 0, options }
     }
 
-    fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.rows_in_batch == 0
     }
 
-    fn should_flush(&self) -> bool {
+    /// Columns in this block's schema — the field count a resumed stream
+    /// needs to rebuild the same schema without re-reading the header.
+    pub(crate) fn field_count(&self) -> usize {
+        self.schema.fields().len()
+    }
+
+    pub(crate) fn should_flush(&self) -> bool {
         self.rows_in_batch >= self.options.max_rows
             || self.options.max_bytes.is_some_and(|max| self.bytes_in_batch >= max)
     }
 
     /// Append one raw (still-escaped) COPY TEXT data row.
-    fn push_row(
+    pub(crate) fn push_row(
         &mut self,
         header_offset: u64,
         row_offset: u64,
@@ -166,7 +172,7 @@ impl RowBatcher {
         Ok(())
     }
 
-    fn flush(&mut self) -> Result<RecordBatch> {
+    pub(crate) fn flush(&mut self) -> Result<RecordBatch> {
         self.rows_in_batch = 0;
         self.bytes_in_batch = 0;
         let arrays: Vec<ArrayRef> =
@@ -217,111 +223,35 @@ fn push_field(
 /// bare — see [`CopyHeader::matches`]). A table with zero rows produces no
 /// batches.
 ///
-/// The callback may return [`ControlFlow::Break`] to stop early.
+/// Push-mode entry point (`mvp.md`, "Streaming API"): internally drains the
+/// pull-mode [`crate::stream::table_stream`], so the two share one scan loop.
+/// The callback may return [`ControlFlow::Break`] to stop early, in which
+/// case the returned token resumes from just past the last batch delivered
+/// to it — see [`crate::stream::TableStream::resume_token`].
 pub async fn read_table<S, F>(
     source: &S,
     table: &str,
     scan_options: &ScanOptions,
     batch_options: &BatchOptions,
     mut on_batch: F,
-) -> Result<()>
+) -> Result<Option<crate::stream::ResumeToken>>
 where
     S: ByteRangeSource,
     F: FnMut(RecordBatch) -> ControlFlow<()>,
 {
-    let size = source.size().await?;
-    let mut scanner = CopyScanner::new();
-    let mut buf: Vec<u8> = Vec::with_capacity(scan_options.chunk_size);
-    let mut chunks: VecDeque<SourceChunk> = VecDeque::new();
-    let mut read_pos = 0u64;
+    use futures::StreamExt;
 
-    // Set once a matching header with an explicit column list starts, or
-    // once the first row of a matching headerless-column block arrives.
-    let mut active: Option<(u64, RowBatcher)> = None;
-    // A matching header with no column list, waiting on its first row to
-    // learn the field count.
-    let mut pending: Option<(CopyHeader, u64)> = None;
-
-    loop {
-        let want = scan_options.chunk_size.min((size - read_pos) as usize);
-        if want > 0 {
-            let bytes = source.read_range(read_pos, want).await?;
-            chunks.push_back(SourceChunk {
-                start: read_pos,
-                buffer: Buffer::from(bytes.clone()),
-                column_blocks: Vec::new(),
-            });
-            read_pos += bytes.len() as u64;
-            buf.extend_from_slice(&bytes);
-        }
-        let eof = read_pos >= size;
-
-        while let Some(event) = scanner.next_event(&buf, eof)? {
-            match event {
-                Event::CopyStart(start) if start.header.matches(table) => {
-                    if start.header.columns.is_empty() {
-                        pending = Some((start.header, start.header_offset));
-                    } else {
-                        let schema = schema_for(&start.header, start.header.columns.len());
-                        active = Some((
-                            start.header_offset,
-                            RowBatcher::new(schema, batch_options.clone()),
-                        ));
-                    }
-                }
-                Event::CopyStart(_) => {}
-                Event::Row(row) => {
-                    if let Some((header, header_offset)) = pending.take() {
-                        let field_count = memchr::memchr_iter(DELIMITER, row.raw).count() + 1;
-                        let schema = schema_for(&header, field_count);
-                        active =
-                            Some((header_offset, RowBatcher::new(schema, batch_options.clone())));
-                    }
-                    if let Some((header_offset, batcher)) = active.as_mut() {
-                        batcher.push_row(*header_offset, row.offset, row.raw, &mut chunks)?;
-                        if batcher.should_flush() {
-                            let batch = batcher.flush()?;
-                            invalidate_block_cache(&mut chunks);
-                            if on_batch(batch).is_break() {
-                                return Ok(());
-                            }
-                        }
-                    }
-                }
-                Event::CopyEnd(_) => {
-                    pending = None;
-                    if let Some((_, mut batcher)) = active.take()
-                        && !batcher.is_empty()
-                    {
-                        let batch = batcher.flush()?;
-                        invalidate_block_cache(&mut chunks);
-                        if on_batch(batch).is_break() {
-                            return Ok(());
-                        }
-                    }
-                }
-            }
-        }
-
-        let used = scanner.take_consumed();
-        buf.drain(..used);
-
-        // Everything before the scanner's new position has already had its
-        // chance to be referenced by a zero-copy view (that happens
-        // synchronously above, before we get here), so it's safe to drop.
-        let floor = scanner.position();
-        while chunks.front().is_some_and(|c| c.end() <= floor) {
-            chunks.pop_front();
-        }
-
-        if eof {
-            return Ok(());
-        }
-        if buf.len() > scan_options.max_line_bytes {
-            return Err(Error::LineTooLong {
-                offset: scanner.position(),
-                limit: scan_options.max_line_bytes,
-            });
+    let mut stream = crate::stream::table_stream(
+        source,
+        table,
+        scan_options.clone(),
+        batch_options.clone(),
+        None,
+    );
+    while let Some(batch) = stream.next().await.transpose()? {
+        if on_batch(batch).is_break() {
+            return Ok(Some(stream.resume_token()));
         }
     }
+    Ok(None)
 }

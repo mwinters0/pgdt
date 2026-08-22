@@ -99,6 +99,20 @@ impl CopyScanner {
         Self { base: 0, pos: 0, state: State::Outside }
     }
 
+    /// Resume scanning at `offset`, as if `take_consumed` had just been
+    /// called there. `in_copy` carries `(header_offset, rows)` when `offset`
+    /// falls inside an already-open COPY block — `rows` is how many data
+    /// rows of that block have already been consumed, matching what
+    /// [`in_copy_rows`](Self::in_copy_rows) reported at the point the caller
+    /// captured this position.
+    pub fn resume(offset: u64, in_copy: Option<(u64, u64)>) -> Self {
+        let state = match in_copy {
+            Some((header_offset, rows)) => State::InCopy { rows, header_offset },
+            None => State::Outside,
+        };
+        Self { base: offset, pos: 0, state }
+    }
+
     /// Absolute file offset of the next unconsumed byte.
     pub fn position(&self) -> u64 {
         self.base + self.pos as u64
@@ -107,6 +121,15 @@ impl CopyScanner {
     /// Whether the scanner is currently inside a COPY data block.
     pub fn in_copy_block(&self) -> bool {
         matches!(self.state, State::InCopy { .. })
+    }
+
+    /// Data rows consumed so far in the current COPY block, or `None` when
+    /// not inside one.
+    pub fn in_copy_rows(&self) -> Option<u64> {
+        match self.state {
+            State::InCopy { rows, .. } => Some(rows),
+            State::Outside => None,
+        }
     }
 
     /// Bytes of the buffer consumed so far. Resets the scanner's buffer
