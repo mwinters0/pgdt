@@ -193,7 +193,7 @@ terminator.
 
 **Verified against:** koji (19.58B rows, no false terminator); the
 `public.escapes` round-trip on `pg_dump` 13.23 / 16.15 / 18.6.
-**Relied on by:** `roadmap-phase6-scan-performance.md` (structure discovery).
+**Relied on by:** `roadmap-phase7-scan-performance.md` (structure discovery).
 **Re-verify:** the `public.escapes` fixture test already asserts the escaping
 rule this rests on; a new major that changed it would fail that test.
 

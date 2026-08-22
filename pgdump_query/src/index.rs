@@ -16,13 +16,13 @@ use crate::{CopyStart, Result};
 /// A block's sparse row index: the byte offset of every `interval`-th data
 /// row, letting a later reader seek into the middle of a large block instead
 /// of scanning from its start. Reserved in the cache format from the first
-/// release; not populated until roadmap Phase 5
-/// (`docs/design/roadmap-phase6-scan-performance.md`, "Cache: a sparse row
+/// release; not populated until roadmap Phase 7
+/// (`docs/design/roadmap-phase7-scan-performance.md`, "Cache: a sparse row
 /// index") — no code constructs one yet.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SparseRowIndex {
     /// Rows between checkpoints (matches the default batch size, 8192 — see
-    /// `roadmap-phase6-scan-performance.md`).
+    /// `roadmap-phase7-scan-performance.md`).
     pub interval: u64,
     /// `checkpoints[i]` is the byte offset of data row `i * interval` within
     /// the block.
@@ -31,7 +31,7 @@ pub struct SparseRowIndex {
 
 /// Per-row-group column statistics for one block, keyed to its
 /// [`SparseRowIndex`] checkpoints. Reserved in the cache format from the
-/// first release; not populated until roadmap Phase 3
+/// first release; not populated until roadmap Phase 5
 /// (`docs/design/roadmap.md`, "Companion: per-row-group column statistics")
 /// defines its real shape (null counts, sortedness, min/max, the type each
 /// was computed as) — no code constructs one yet.

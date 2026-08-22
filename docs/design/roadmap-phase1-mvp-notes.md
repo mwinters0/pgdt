@@ -48,7 +48,7 @@ query. Phase 2's typed columns replace the placeholder path, not the per-block
 resolution.
 
 **The zero-copy `Utf8View` path has three sharp edges.** Per
-[`roadmap-phase6-scan-performance.md`](roadmap-phase6-scan-performance.md), a
+[`roadmap-phase7-scan-performance.md`](roadmap-phase7-scan-performance.md), a
 field with no escapes is appended as a view into the Arrow `Buffer` backing the
 read chunk it came from (`append_block`/`append_view_unchecked`), not copied.
 Only escaped fields, and the rare field straddling two read chunks, take the
@@ -65,14 +65,14 @@ copying `append_value` path. Around that:
 (`SparseRowIndex`), `CopyBlock::column_stats` (`RowGroupStats`), and
 `DumpIndex::metadata` (`DumpMetadata`) are serialized from the first release but
 never constructed by any code. Populating any of them — Phase 2's metadata,
-Phase 3's statistics, Phase 5's sparse index — is additive, not a format-version
+Phase 5's statistics, Phase 7's sparse index — is additive, not a format-version
 bump. The types are placeholders: their real shape is each phase's own design
 work.
 
 **Cache reads and writes have deliberately opposite failure modes.** An
 unrecognised `format_version`/`container_kind`, or bytes that don't parse as a
 cache at all, load as `Ok(None)` — indistinguishable from a missing file.
-`cache::save` propagates I/O failures as `Error::Io`. Phase 3 statistics break
+`cache::save` propagates I/O failures as `Error::Io`. Phase 5 statistics break
 the assumption that makes the read side safe (a stale statistic yields a wrong
 answer, not a rescan), so the dump-file identity check currently filed under
 "Configurable (future)" becomes mandatory there.
@@ -93,7 +93,7 @@ token taken mid-block — the block's header and in-block row count**, which is
 what lets a fresh stream reconstruct the same schema and continue with no gap
 or repeat. A reserved `generation` field is always 0. The token exposes no
 public fields and must stay that way: a raw file offset is meaningless inside a
-compressed archive entry (Phase 6).
+compressed archive entry (Phase 8).
 
 **Error surface**: `Io`, `Join`, `UnterminatedCopyBlock`, `LineTooLong`,
 `InvalidUtf8`, `CacheEncode`, `CacheDisabled`, `UnknownPredicateColumn`. The CLI

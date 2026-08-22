@@ -5,7 +5,7 @@ optimization pass — see "Project goals" in `docs/design/roadmap.md`. The
 target is that the local-file path stays **device-bound rather than
 CPU-bound**, at flat memory, across hardware from rotational disk to NVMe.
 
-This doc is the design sketch for the concentrated work in roadmap Phase 5,
+This doc is the design sketch for the concentrated work in roadmap Phase 7,
 plus the small number of constraints it places on work happening *now*. It is
 a plan, not a description of implemented behaviour; nothing here is built.
 
@@ -91,7 +91,7 @@ views must reference it (arrow-rs exposes block-based view construction on
 consequences to design around:
 
 - A batch then pins its whole source chunk in memory. Harmless at full
-  selectivity; wasteful once Phase 3 pushdown filters aggressively. Compact
+  selectivity; wasteful once Phase 5 pushdown filters aggressively. Compact
   the view array when the selected fraction drops below a threshold.
 - Fields ≤12 bytes are stored inline in the view and don't reference the
   buffer at all, so short-column tables get this for free either way.
@@ -109,7 +109,7 @@ since `\xNN` and octal escapes can synthesize invalid sequences.
 
 mmap is the intuitive choice here and it is the wrong default.
 
-- It bypasses `ByteRangeSource`, so it cannot be the path for Phase 4's
+- It bypasses `ByteRangeSource`, so it cannot be the path for Phase 6's
   `object_store` backend — adopting it means maintaining two readers.
 - Page faults on a 784GB file on slow media are synchronous and
   uninterruptible, with no way to bound prefetch depth or time out.
@@ -119,7 +119,7 @@ mmap is the intuitive choice here and it is the wrong default.
 
 The current design — positioned reads into a reusable caller-owned buffer —
 already delivers the flat ~9 MiB RSS and 243 MB/s, behind an abstraction that
-survives into Phase 4. The wins available are within it:
+survives into Phase 6. The wins available are within it:
 
 - **Double-buffered readahead**: issue the next chunk's read while parsing the
   current one, so parse time and I/O time overlap instead of alternating.
@@ -178,7 +178,7 @@ It buys two things that matter:
 Reserve room for it in the serialized `DumpIndex` from the start; it is
 optional data, so a cache without it stays valid. The checkpoint interval also
 defines the row-group boundary that per-column statistics attach to
-(`docs/design/roadmap.md`, Phase 3 companion), so the two features share one
+(`docs/design/roadmap.md`, Phase 5 companion), so the two features share one
 addressing scheme.
 
 ## Measurement discipline
@@ -202,7 +202,7 @@ should follow the measurements rather than this doc's ordering.
 - Follow the long-running-process rules in `CLAUDE.md` for anything at koji
   scale.
 
-## What this constrains before Phase 5
+## What this constrains before Phase 7
 
 Three rules that earlier phases hold to, because retrofitting them is expensive
 and pre-empting them is nearly free. The first two are already satisfied by

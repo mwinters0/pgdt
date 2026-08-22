@@ -75,7 +75,7 @@ architecture — read it before making architectural changes, rather than
 inferring intent from code alone; its companion
 `docs/design/roadmap-phase1-mvp-notes.md` records how that phase landed in code
 (module map, and the implementation facts later phases inherit).
-`docs/design/roadmap-phase6-scan-performance.md` is the performance design for
+`docs/design/roadmap-phase7-scan-performance.md` is the performance design for
 the local-file read path — read it before touching the batch layer or the cache
 format, which it constrains ahead of its own phase.
 `docs/design/pg-dump-compatibility.md` tracks which `pg_dump` options/variants

@@ -34,7 +34,7 @@ trait ByteRangeSource {
 
 shaped to match `object_store`'s `get_range`/`head` semantics on purpose, so
 a real `object_store`-backed implementation is a drop-in addition later
-(Phase 4), not a redesign. MVP ships exactly one implementation: a local-file
+(Phase 6), not a redesign. MVP ships exactly one implementation: a local-file
 backend (`std::fs::File::read_at` wrapped in `spawn_blocking`, since `tokio`
 has no native async positioned-read). No dependency on the `object_store`
 crate itself in MVP — it would pull in a cloud-SDK dependency tree that buys
@@ -52,7 +52,7 @@ only the I/O layer is async.
 
 **Hardcoded (MVP):** each row's columns are returned as `Utf8View` Arrow
 arrays, nullable (SQL `NULL` distinct from empty string). Chosen over
-`Utf8`/`LargeUtf8` because DataFusion (Phase 4's primary embedding target) is
+`Utf8`/`LargeUtf8` because DataFusion (Phase 6's primary embedding target) is
 converging on `Utf8View` as its preferred string representation — starting
 there avoids a representation migration later, at the cost of being the less
 battle-tested of the three options in the wider Arrow ecosystem.
@@ -66,7 +66,7 @@ DataFusion batch-size convention), no default byte cap. Both remain
 user-settable.
 
 **Hardcoded (MVP):** MVP always returns all columns of the queried table — no
-projection. Column projection is Phase 3.
+projection. Column projection is Phase 5.
 
 ## Streaming API
 
@@ -177,11 +177,11 @@ line; a watermark of how much of the file has been scanned so far.
 Three optional fields are reserved in the serialized form from the first
 release, though none is populated in Phase 1 — adding any of them after the
 format ships would be a break, and all are cheap to leave room for now: a
-**sparse row index** (`docs/design/roadmap-phase6-scan-performance.md`); a
+**sparse row index** (`docs/design/roadmap-phase7-scan-performance.md`); a
 **dump-level metadata block** (server version, `pg_dump` version, extension
 list, user-defined type definitions — `docs/design/roadmap.md`, Phase 2 companion);
 and **per-row-group column statistics**, keyed to the sparse index's checkpoints
-(`docs/design/roadmap.md`, Phase 3 companion).
+(`docs/design/roadmap.md`, Phase 5 companion).
 
 **Configurable (MVP): eager vs. incremental indexing.** Incremental
 (default) discovers structure only as far as needed to answer the current
@@ -200,7 +200,7 @@ dump file changes (size/mtime check vs. trusting the client). Note that this
 stops being optional once the statistics field above is populated: a stale
 structural index only costs a rescan, but a stale statistic prunes real rows and
 yields a wrong answer. See the correctness asymmetry in `docs/design/roadmap.md`,
-Phase 3 companion. Exporting the cache to a common/portable format (raised
+Phase 5 companion. Exporting the cache to a common/portable format (raised
 during design review as a plausible later ask — not scoped further yet).
 
 ## Parser robustness requirements (hardcoded)
@@ -227,7 +227,7 @@ configurable behavior:
 - Input is assumed to already be decompressed plain SQL text — the library
   does not handle compressed dumps (`.gz`/`.xz`/etc.) itself; that's a
   caller-side preprocessing step. This is a rule about *plain-format input*
-  specifically, not a global policy: archive formats (Phase 6, Track B)
+  specifically, not a global policy: archive formats (Phase 8, Track B)
   compress per entry, internally, and will need streaming decompression
   inside the container layer.
 
@@ -308,20 +308,20 @@ configurable behavior:
 ## Decisions that keep later phases open
 
 Phase 1 is plain-format-only and single-threaded by design. These four
-choices are what make Phases 5 and 6 additive rather than a rewrite, and they
+choices are what make Phases 7 and 8 additive rather than a rewrite, and they
 are cheap to hold to now — so hold to them, even where Phase 1 alone wouldn't
 require them.
 
 - **The COPY TEXT decoder stays independent of where its bytes came from.**
   `copy.rs` operates on a caller-owned slice and never assumes "a file at
   offset N". Every dump format stores table data as this same COPY TEXT
-  payload, so this decoder is the one component all of Phase 6 reuses
+  payload, so this decoder is the one component all of Phase 8 reuses
   verbatim.
 - **Structure discovery is a separate concern from row decoding.** `scan.rs`
   finds `COPY` boundaries in a plain file; an archive reads them from a TOC.
   Keeping the boundary between "what entries exist and where are their bytes"
   and "decode these bytes into rows" clean is what lets a container layer slot
-  in later (roadmap Phase 6, Track B).
+  in later (roadmap Phase 8, Track B).
 - **The cache format is versioned and records what produced it.** Serialized
   `DumpIndex` carries a format-version field and a container-kind tag from the
   first release, so archive-derived indexes and entry-relative offsets are a
@@ -333,10 +333,10 @@ require them.
   compressed archive entry. Opaque now means the representation can change
   without an API break.
 
-Phase 5 (scan performance) adds a fifth, which bears on work in flight right
+Phase 7 (scan performance) adds a fifth, which bears on work in flight right
 now rather than later: the batch layer should build `Utf8View` arrays over the
 scanner's existing chunk buffer instead of copying field bytes out of it. See
-`docs/design/roadmap-phase6-scan-performance.md`.
+`docs/design/roadmap-phase7-scan-performance.md`.
 
 ## Non-goals (Phase 1)
 
@@ -345,7 +345,7 @@ scanner's existing chunk buffer instead of copying field bytes out of it. See
   (and, in Phase 2, extract columns/types from `CREATE TABLE` for the
   table(s) being queried).
 - Typed columns, predicate pushdown, column projection pushdown, and
-  multi-language/engine bindings — Phases 2-4.
+  multi-language/engine bindings — Phases 2, 5, and 6.
 - Custom/directory/tar archive formats, and `--inserts`/`--column-inserts`
-  input variants — Phase 6. Not Phase 1 work, but no longer permanently out
+  input variants — Phase 8. Not Phase 1 work, but no longer permanently out
   of scope; see `docs/design/roadmap.md`.

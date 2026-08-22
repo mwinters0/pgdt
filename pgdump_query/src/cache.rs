@@ -30,7 +30,7 @@ use crate::{Error, Result};
 const FORMAT_VERSION: u32 = 1;
 
 /// What produced the indexed blocks' byte offsets. Plain-format offsets are
-/// raw file positions; a future archive format's (roadmap Phase 6, Track B)
+/// raw file positions; a future archive format's (roadmap Phase 8, Track B)
 /// are entry-relative, so the two must never be silently conflated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum ContainerKind {

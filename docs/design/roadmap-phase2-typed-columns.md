@@ -57,7 +57,7 @@ The disagreements are real, not hypothetical (I5):
 **One schema per stream.** The schema is resolved once, up front, and held for
 the whole stream. This is close to a tautology within a single-database dump,
 because a table produces at most one `COPY` block (I2) — but it is the contract
-Phase 5's `TableProvider` needs, and it forecloses any design where a column's
+Phase 6's `TableProvider` needs, and it forecloses any design where a column's
 Arrow type depends on how far a scan happened to get.
 
 ## Multi-database dumps
@@ -141,7 +141,7 @@ so an unguarded body can produce a fake `CREATE TABLE`, a fake TOC comment, or
 the original fake `COPY` header — and the failure mode becomes wrong types on a
 real table. The outside-block path is already line-oriented over a few MB, so
 the cost is not measurable, and
-`docs/design/roadmap-phase6-scan-performance.md` explicitly preserved the
+`docs/design/roadmap-phase7-scan-performance.md` explicitly preserved the
 option.
 
 ## What the cache stores
@@ -153,7 +153,7 @@ strings per column, the extension list, the version headers, `CREATE TYPE` /
 
 The Arrow mapping is a *versioned opinion* that changes as coverage grows.
 Caching resolved Arrow types would recreate exactly the staleness hazard the
-roadmap flags for Phase 4 statistics — a cache written under an older mapping
+roadmap flags for Phase 5 statistics — a cache written under an older mapping
 silently reused under a newer one. Declared type strings are durable facts
 about the file that cannot go stale while the file does not change.
 Re-resolving on load is a few thousand string comparisons.
@@ -204,7 +204,7 @@ bargain. It is also asymmetric with `--data-only`, where the identical table
 would come back nullable purely because of how it was dumped — the same
 accident-dependent schema ruled out under "Schema resolution".
 
-Revisit in Phase 4 alongside statistics, where `null_count` gives a *verified*
+Revisit in Phase 5 alongside statistics, where `null_count` gives a *verified*
 basis for the claim rather than a declared one.
 
 ## Type mapping
@@ -240,7 +240,7 @@ almost every column in a real 75-table schema.
 | `inet`, `cidr`, `macaddr`, `macaddr8` | `Utf8View` | |
 | enum (`CREATE TYPE ... AS ENUM`) | `Dictionary(Int32, Utf8)` | Only when the label set is non-empty |
 | domain (`CREATE DOMAIN`) | base type's mapping | Resolved transitively |
-| array, composite, range | `Utf8View` | Phase 3 — they share one nested-quoting decoder |
+| array, composite, range | `Utf8View` | Phase 4 — they share one nested-quoting decoder |
 
 Microsecond precision throughout, because that is PostgreSQL's storage
 resolution. Nullability is not refined by `NOT NULL` — see "Nullability" above.
@@ -290,7 +290,7 @@ consumption. Per-column outcomes carry *why*:
 - `Mapped`
 - `UnknownType { declared }` — declared, but this build has no mapping
 - `NotDeclared` — no DDL explained this column (`--data-only`, typed table)
-- `Deferred { kind: Array | Composite | Range }` — decodable, waiting on Phase 3
+- `Deferred { kind: Array | Composite | Range }` — decodable, waiting on Phase 4
 - `OpaqueBaseType` — a C-level base type; the dump says how the *server* parses
   it, which tells us nothing
 - `EmptyEnum`
@@ -303,10 +303,10 @@ ignores them. Decode failures do **not** come through here.
 ## Predicates
 
 Unchanged from Phase 1 apart from one addition. Typed predicates and ordering
-operators (`<`, `>`) are **Phase 4**, where pushdown lands — a typed post-parse
+operators (`<`, `>`) are **Phase 5**, where pushdown lands — a typed post-parse
 predicate is a half-measure pushdown rewrites immediately, and it drags
 collation, NULL ordering and numeric coercion into a phase whose job is the
-type mapping. Phase 2 makes them possible; Phase 4 does them once.
+type mapping. Phase 2 makes them possible; Phase 5 does them once.
 
 The addition rounds out Phase 1's NULL semantics, where a NULL field matches
 neither `=` nor `!=` and there was no way to ask for one:
@@ -454,7 +454,7 @@ to go wrong:
 
 The array row matters most: `{}`, `{NULL}`, and a NULL array are three distinct
 values that all look similar, and getting them confused is the classic way an
-array decoder goes wrong. They are Phase 3's problem, but the fixture should
+array decoder goes wrong. They are Phase 4's problem, but the fixture should
 capture them now while the schema is being written.
 
 koji is not evidence for a third of the mapping table — it contains **no**
@@ -470,11 +470,11 @@ goes through a parse Phase 1 skipped entirely — and the koji baseline (243 MB/
 at ~33% of one core) **cannot detect a typed-decode regression at all**,
 because it is I/O-bound on an HDD. The cost only becomes visible on fast media
 or a warm page cache, which is exactly the trap
-`docs/design/roadmap-phase6-scan-performance.md` names under "Measurement
+`docs/design/roadmap-phase7-scan-performance.md` names under "Measurement
 discipline".
 
 Scope is narrow on purpose — a regression tripwire for Phase 2's own work, not
-the start of Phase 6's optimization campaign:
+the start of Phase 7's optimization campaign:
 
 - A decoder microbenchmark per mapped type family.
 - One warm-cache whole-file run.
@@ -494,12 +494,12 @@ size, written wherever the caller points it.
   interchangeable. Correctness lives in `fixtures/`, which *is* committed.
 - **Deliberately includes stress sections** targeting the code paths whose cost
   is expected to move: high-escape-density fields, very long text values,
-  wide rows, and — for Phase 3 — large runs of array-valued columns, so array
+  wide rows, and — for Phase 4 — large runs of array-valued columns, so array
   decoding has something that surfaces a regression rather than hiding it in
   the average.
 
 Phase 2 uses a size that fits page cache; later phases turn the dial up (~100 GB
-is the target for Phase 6's device-bound runs, which is also where the
+is the target for Phase 7's device-bound runs, which is also where the
 long-running-process rules in `CLAUDE.md` start applying). The generator is
 shared, the size and stress mix are per-phase.
 

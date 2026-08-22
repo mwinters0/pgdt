@@ -1,11 +1,11 @@
 //! Row/batch assembly: turns rows inside a `COPY` block into `Utf8View`
 //! Arrow `RecordBatch`es.
 //!
-//! Per `docs/design/roadmap-phase6-scan-performance.md`, a field that needs no
+//! Per `docs/design/roadmap-phase7-scan-performance.md`, a field that needs no
 //! unescaping is appended as a zero-copy view into the Arrow `Buffer` backing
 //! the read chunk it came from, rather than copied into the builder's own
 //! storage — retrofitting that later would be expensive, so it's built in now
-//! even though the rest of the performance work (roadmap Phase 5) is not. Only
+//! even though the rest of the performance work (roadmap Phase 7) is not. Only
 //! fields that need unescaping, or whose bytes straddle two read chunks, take
 //! a copying path.
 

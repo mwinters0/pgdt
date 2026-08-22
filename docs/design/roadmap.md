@@ -37,14 +37,19 @@ Two things distinguish this project from existing `pg_dump` tooling
 (`pgdumplib` and friends), and both shape the phase ordering below:
 
 - **Embeddable as a query data source**, not just a dump reader — Arrow-native
-  output, and ultimately a DataFusion `TableProvider` (Phase 5).
+  output, and ultimately a DataFusion `TableProvider` (Phase 6).
 - **High performance is a core goal, not a later optimization**, specifically
   for the local-file reader. Dumps are routinely hundreds of gigabytes; the
   difference between a saturated-device scan and a merely-correct one is the
   difference between a usable tool and an overnight job. Concretely: the
   local-file path should stay device-bound, not CPU-bound, on hardware from
   HDD through NVMe, at flat memory. See
-  `docs/design/roadmap-phase6-scan-performance.md`.
+  `docs/design/roadmap-phase7-scan-performance.md`.
+
+  This targets the `COPY`-block/bulk-row path specifically. Preamble and other
+  non-data DDL scanning (Phase 3, below) is bounded by schema size, not file
+  size — a few thousand lines even for a multi-hundred-GB dump — and isn't
+  held to the same device-bound target.
 
 ## Phase 1 — MVP (complete)
 
@@ -167,12 +172,84 @@ Three qualifications on that, all cheap to honour:
 **Where the work lands.** The scan and the CLI display are Phase 2 work. The
 cache slot it needs already exists: `DumpIndex::metadata` is reserved and always
 `None`, alongside the sparse row index
-(`docs/design/roadmap-phase6-scan-performance.md`) and the per-row-group
-statistics under Phase 4 below — all three were reserved together in Phase 1
+(`docs/design/roadmap-phase7-scan-performance.md`) and the per-row-group
+statistics under Phase 5 below — all three were reserved together in Phase 1
 precisely so populating one is not a format break. The reserved `DumpMetadata`
 type is a placeholder; its real shape is this phase's design work.
 
-## Phase 3 — Composite value decoding
+## Phase 3 — Full DDL object inventory
+
+`pg_dump` output is full of statements Phase 2's preamble pass never looks
+at — `GRANT`/`REVOKE`, `OWNER TO`, `ALTER DEFAULT PRIVILEGES FOR ROLE ...`,
+`SECURITY LABEL`, `CREATE FUNCTION`, `CREATE INDEX`, sequence `setval`, and
+more — most of it in the post-data section, which sits *after every* `COPY`
+block and so is invisible to Phase 2.2's I1-based short-circuit
+(`PreambleBuilder` marks a database's preamble complete at its first `COPY`
+block and never looks again). This is a **second use case for the CLI**,
+distinct from the embeddable-query-source goal the rest of this roadmap is
+organized around: a sysadmin or engineer handed a dump file of unknown
+origin, wanting to understand what it needs before loading it anywhere.
+
+Roles are the concrete first instance: a regular `pg_dump` never emits
+`CREATE ROLE` (roles are cluster-level, out of scope for a single-database
+dump), but `OWNER TO`/`GRANT`/`ALTER DEFAULT PRIVILEGES`/`SECURITY LABEL` all
+*reference* roles that must already exist on the restore target. Today the
+only way to learn which roles a dump needs is to attempt the restore, watch
+it fail on a missing role, create that role, and repeat — `pgdq info` could
+just list them up front. Referenced tablespaces (`TABLESPACE <name>`) are
+the same shape of problem, and the extensions Phase 2 already captures
+partly serve it too.
+
+### Scan shape: two tiers, not a size heuristic
+
+Role/tablespace references (and post-data DDL generally) aren't confined to
+the pre-data preamble, so this can't reuse I1's stop-at-the-first-`COPY`-
+block trick — it needs a scan that covers the whole file, not just the
+region ahead of the first block.
+
+- *Cheap tier, unconditional, every gap.* The existing keyword-dispatch
+  grammar (`preamble.rs`) costs almost nothing per line — dropping its I1
+  short-circuit and running it over every byte range between `CopyBlock`s
+  (including the tail, from the last block to EOF, where post-data DDL
+  lives) costs no meaningful CPU against a few thousand DDL lines total, and
+  directly closes the post-data blind spot with no threshold needed for
+  correctness.
+- *Deferred, index-driven, heavier tier.* A separate pass, run after any
+  scan (full or incremental) that already has an index, seeks directly to
+  each gap using `CopyBlock`'s existing byte offsets — no rescanning needed.
+  It classifies whatever the cheap tier left unattributed into
+  known-but-unhandled (recognized statement type, not modeled), unknown
+  (unrecognized), comment-run, and whitespace-run spans. A size cutoff
+  belongs here, not as a correctness gate (the cheap tier already guarantees
+  nothing is silently dropped) but to decide whether a leftover span is
+  worth the heavier classifier's cost, and as a reporting signal ("40KB of
+  unrecognized content between these two tables").
+
+### Full file map
+
+Once every span between `CopyBlock`s is attributed to something — known
+object, known-but-unhandled, unknown, comment-run (n lines), or
+whitespace-run — coverage becomes a hard invariant (spans sum to file size)
+rather than a heuristic judgment call. That also makes "this dump has zero
+comments" or "this dump has an unusual amount of unrecognized content"
+objectively queryable facts, useful for the sysadmin story and for
+recognizing non-`pg_dump`-generated input. Getting there needs byte-offset
+fields added to `DatabaseMetadata`'s own DDL records (`Extension`,
+`TypeDef`, table entries) — today only `CopyBlock` carries a position at
+all.
+
+### Object model stays read-side
+
+The inventory this produces should be a kind/classification plus the raw
+statement text and its byte span, not a write-compatible representation —
+ordering/dependency fidelity, exact comment/whitespace preservation, and
+OID stability are writer concerns the sysadmin use case doesn't need.
+Storing the raw text is cheap and doesn't foreclose a future writer, but
+round-trip fidelity shouldn't shape this design now.
+
+Reasoning and evidence: `docs/status/history/2026-08-22.md`.
+
+## Phase 4 — Composite value decoding
 
 Arrays, composite types, and ranges — the three type families Phase 2
 deliberately leaves as `Utf8View`. They are grouped into one phase because they
@@ -190,12 +267,12 @@ follow for free once the decoder exists, and Phase 2's metadata pass already
 recovers the field types and subtype needed to give them Arrow `Struct` and
 range representations rather than strings.
 
-Placed here, ahead of pushdown, because Phase 4 is designed *against the type
+Placed here, ahead of pushdown, because Phase 5 is designed *against the type
 set*: "min/max for collation-independent orderable types" is a different table
 when arrays and ranges are still strings, so designing pushdown and statistics
 against a partial type set means designing them twice.
 
-## Phase 4 — Pushdown
+## Phase 5 — Pushdown
 
 - **Predicate pushdown**: evaluate predicates *during* the scan/parse, so
   non-matching rows never get fully unescaped/materialized — as opposed to
@@ -211,7 +288,7 @@ plausibly land against string columns first if it proves valuable earlier.
 
 Parquet-style statistics, gathered during a scan and persisted in the cache, so
 a later query can skip data instead of reading it. Depends on Phase 2 (a min/max
-needs a parsed value), pays off in Phase 4 (the pruning consumer), and — like the
+needs a parsed value), pays off in Phase 5 (the pruning consumer), and — like the
 metadata block — already has its cache slot reserved (`CopyBlock::column_stats`,
 always `None`).
 
@@ -231,7 +308,7 @@ tables big enough to matter: koji's blocks run to billions of rows, and the
 min/max of a monotonic `id` column over a whole block spans the entire domain, so
 it prunes nothing. Parquet's win comes from row-group granularity, and there is
 already a natural unit to reuse — the sparse row index checkpoints every 8192
-rows (`docs/design/roadmap-phase6-scan-performance.md`). Statistics attach to
+rows (`docs/design/roadmap-phase7-scan-performance.md`). Statistics attach to
 those checkpoints; block-level statistics are then just the roll-up, free to
 compute and still worth storing for the coarse first pass.
 
@@ -301,7 +378,7 @@ caller asked for anyway, so coverage is naturally partial. The cache must record
 which row groups actually have statistics — absent is a normal state, not a
 defect.
 
-## Phase 5 — Embeddable engine story
+## Phase 6 — Embeddable engine story
 
 The least-specified phase — the user has explicitly flagged unfamiliarity
 with this space, so treat its eventual grilling session as needing real
@@ -319,25 +396,25 @@ decisions already made to keep this open:
 - Apache Spark / Trino integration — order and approach TBD; likely follows
   whatever pattern the DataFusion integration establishes, if applicable.
 
-## Phase 6 — Scan performance
+## Phase 7 — Scan performance
 
 Concentrated optimization of the local-file read path: SIMD-accelerated
 structure discovery, zero-copy row extraction into Arrow buffers, bulk UTF-8
 validation, and device-aware parallelism (sequential on rotational media,
 parallel on NVMe). Full sketch, including the measurements that should gate
-each piece and the Phase 1-4 decisions it constrains:
-`docs/design/roadmap-phase6-scan-performance.md`.
+each piece and the Phase 1, 2, 4, and 5 decisions it constrains:
+`docs/design/roadmap-phase7-scan-performance.md`.
 
-Scheduled here, after the engine story, for two reasons. Phase 4's pushdown
+Scheduled here, after the engine story, for two reasons. Phase 5's pushdown
 changes which bytes get touched at all, so optimizing the pre-pushdown parser
-would partly optimize code that pushdown deletes; and Phase 5's
+would partly optimize code that pushdown deletes; and Phase 6's
 `object_store` backend settles the I/O layer that any readahead/parallelism
-scheme has to live behind. Deliberately *before* Phase 7 — the format work
+scheme has to live behind. Deliberately *before* Phase 8 — the format work
 multiplies the surface area that any later optimization has to be correct
 against, so the fast path should exist first and archive containers should be
 built to fit it.
 
-## Phase 7 — Format coverage beyond plain COPY TEXT
+## Phase 8 — Format coverage beyond plain COPY TEXT
 
 Everything that widens the set of `pg_dump` outputs we can read. Two
 independent tracks; A is listed first because it is cheap, not because it
@@ -405,31 +482,3 @@ this section when it acquires a phase number, not when it acquires a design.
   round-trip test against real `pg_dump` output rather than a hand-written
   literal — the pattern `public.escapes` already establishes. This is careful,
   case-by-case work; the value is in the test coverage, not in the mapping table.
-
-- **Role discovery — and "what does this dump need", more generally, as a
-  sysadmin-facing use case.** A regular `pg_dump` never emits `CREATE ROLE`
-  (roles are cluster-level, out of scope for a single-database dump), but the
-  dump is full of *references* to roles that must already exist on the
-  restore target: `OWNER TO`, `GRANT`/`REVOKE ... TO/FROM`, `ALTER DEFAULT
-  PRIVILEGES FOR ROLE ...`, `SECURITY LABEL`. Today the only way to learn
-  which roles a dump needs is to attempt the restore, watch it fail on a
-  missing role, create that role, and repeat — `pgdq info` could just list
-  them up front, letting someone provision the roles once instead of by
-  trial and error. This is a **second use case for the CLI**, distinct from
-  the embeddable-query-source goal the rest of this roadmap is organized
-  around: a sysadmin or engineer handed a dump file of unknown origin,
-  wanting to understand what it needs before loading it anywhere. Roles are
-  the concrete first instance; the same use case generalizes to other
-  discoverable-but-not-obvious requirements — referenced tablespaces
-  (`TABLESPACE <name>`) are the same shape of problem (must pre-exist on the
-  target, discovered today only by a failed restore), and the extensions in
-  Phase 2's metadata pass already partly serve it.
-  **Scoping note for whenever this is taken up:** unlike Phase 2's
-  version/extension/type metadata, role (and tablespace) references are
-  *not* confined to the pre-data preamble — an `OWNER TO` for a given table
-  sits next to that table's own DDL, wherever in the file that falls, not
-  bunched before the first `COPY` block. So this can't reuse the
-  stop-at-the-first-`COPY`-block trick Phase 2 relies on (I1 in
-  `docs/design/postgres-invariants.md`); it needs a different scan shape —
-  most likely a full structural pass that collects role/tablespace names as
-  it goes, rather than a preamble-only one.

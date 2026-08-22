@@ -108,7 +108,7 @@ pub enum TypeKind {
     /// every field nullable regardless (see "Nullability" in the phase doc).
     Domain { base_type: String },
     /// Field name -> declared type, in declaration order. Decoding COPY
-    /// TEXT's record literal is Phase 3's job; this is what that decoder
+    /// TEXT's record literal is Phase 4's job; this is what that decoder
     /// will need.
     Composite { fields: Vec<(String, String)> },
     /// The subtype named in the `CREATE TYPE ... AS RANGE (...)` parameter
