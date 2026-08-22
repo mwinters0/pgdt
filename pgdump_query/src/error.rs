@@ -18,4 +18,6 @@ pub enum Error {
     ColumnCountMismatch { header_offset: u64, row_offset: u64, expected: usize, found: usize },
     #[error("arrow error: {0}")]
     Arrow(#[from] arrow::error::ArrowError),
+    #[error("failed to encode structure cache: {0}")]
+    CacheEncode(#[from] bincode::error::EncodeError),
 }

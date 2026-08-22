@@ -1,4 +1,5 @@
 pub mod batch;
+pub mod cache;
 pub mod copy;
 mod error;
 pub mod index;
@@ -9,7 +10,7 @@ pub mod stream;
 pub use batch::{BatchOptions, read_table};
 pub use copy::CopyHeader;
 pub use error::Error;
-pub use index::{CopyBlock, DumpIndex, build_index};
+pub use index::{CopyBlock, DumpIndex, DumpMetadata, RowGroupStats, SparseRowIndex, build_index};
 pub use io::{ByteRangeSource, LocalFileSource};
 pub use scan::{CopyEnd, CopyScanner, CopyStart, Event, Row, ScanOptions, scan};
 pub use stream::{BlockingTableIter, ResumeToken, TableStream, table_stream};

@@ -5,6 +5,8 @@
 
 use std::borrow::Cow;
 
+use serde::{Deserialize, Serialize};
+
 use crate::{Error, Result};
 
 /// The default COPY TEXT field delimiter. `pg_dump` plain-format output never
@@ -18,7 +20,7 @@ const NULL_MARKER: &[u8] = b"\\N";
 pub const TERMINATOR: &[u8] = b"\\.";
 
 /// A parsed `COPY <table> [(<columns>)] FROM stdin;` header line.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CopyHeader {
     /// Schema qualifier, if the header named one.
     pub schema: Option<String>,

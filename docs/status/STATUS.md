@@ -7,7 +7,7 @@ that changed the plan, see `history/` (one file per day, `YYYY-MM-DD.md`) —
 not a changelog, only entries worth keeping. For the design itself (section
 names below track `mvp.md`'s headings), see `docs/design/mvp.md`.
 
-Last updated: 2026-08-22 (streaming API).
+Last updated: 2026-08-22 (structure cache).
 
 ## Done
 
@@ -41,15 +41,35 @@ Last updated: 2026-08-22 (streaming API).
     sync `FnMut(Event) -> ControlFlow<()>` callback.
 - **Structure index** (`index.rs`): `build_index()` runs an eager full-file
   scan into a `DumpIndex` of `CopyBlock`s (header, column names, header/data/
-  terminator/end offsets, row count). This is the payload the cache will
-  persist; it is **not** serialized or written to disk yet.
-- **CLI**: `pgdq parse` and `pgdq info` both run a real eager scan and print
-  the discovered structure (`--verbose` adds file offsets). `--cache-path` is
-  accepted but inert.
+  terminator/end offsets, row count). This is the payload the cache
+  persists (see below). `DumpIndex` and `CopyBlock` also carry three reserved
+  `Option` fields, always `None` in Phase 1 and never constructed by any code
+  yet — `CopyBlock::sparse_index`/`SparseRowIndex` (roadmap Phase 5,
+  `docs/design/scan-performance.md`), `CopyBlock::column_stats`/
+  `RowGroupStats` (roadmap Phase 3), `DumpIndex::metadata`/`DumpMetadata`
+  (roadmap Phase 2) — so populating any of them later, once its real shape is
+  designed, doesn't force a cache format-version bump.
+- **Structure cache** (`cache.rs`): `bincode`+`serde` serialization of
+  `DumpIndex`, wrapped in a small `format_version`/`container_kind` envelope
+  per `mvp.md`'s "Decisions that keep later phases open" — a cache whose
+  version or container this build doesn't recognise (or whose bytes don't
+  parse as a cache at all) is treated the same as a missing file: `Ok(None)`,
+  never an error, per the "best-effort, never required for correctness" rule.
+  No dump-file identity check (size/mtime) — `mvp.md` puts that under
+  "Configurable (future)", not MVP. `cache::colocated_path()` derives
+  `<dump-path>.dqcache`; `cache::save`/`load` take an explicit path either
+  way, so the CLI's `--cache-path` and the colocated default share one
+  implementation.
+- **CLI**: `pgdq parse` always does a fresh eager scan and (over)writes the
+  cache (colocated, or at `--cache-path`). `pgdq info` reads a valid cache if
+  one exists at that path; otherwise it scans and writes the cache before
+  printing, so the fallback path still leaves a cache behind for next time.
+  `--verbose` adds file offsets either way.
 - **Error handling**: `pgdump_query::Error` (`thiserror`) — `Io`, `Join`,
-  `UnterminatedCopyBlock`, `LineTooLong`, `InvalidUtf8`; CLI uses `anyhow`.
-- **Tests** (`cargo test --workspace`, 36 tests; see also `batch.rs`'s 10
-  below):
+  `UnterminatedCopyBlock`, `LineTooLong`, `InvalidUtf8`, `CacheEncode`; CLI
+  uses `anyhow`.
+- **Tests** (`cargo test --workspace`, 52 tests; see also `batch.rs`'s 10,
+  `stream.rs`'s 5, and `cache.rs`'s 5, below):
   - Unit tests for the header grammar and escape decoding.
   - `pgdump_query/tests/data/edge_cases.sql` — hand-written and deterministic
     (no generated timestamps, so snapshots are stable) — under an `insta`
@@ -124,14 +144,21 @@ Last updated: 2026-08-22 (streaming API).
   headerless-schema block, resume exactly at a block boundary, the blocking
   iterator) plus 2 more in `tests/batch.rs` covering `read_table`'s own
   `Break`-returns-a-token path.
+  5 tests in `tests/cache.rs`: colocated-path derivation, a missing file and
+  foreign (non-cache) bytes both load as `Ok(None)`, a saved index round-trips
+  exactly including the three reserved `None` fields, and `save` overwrites
+  an existing file at that path.
 
 ## Not started
 
 - **Predicate filtering** — single-column `=`/`!=` post-parse filter.
-- **Index/structure cache** — `bincode` format, colocated vs. explicit path,
-  incremental vs. eager indexing. `DumpIndex` is the intended payload;
-  nothing is serialized or written yet, and `pgdq info` therefore rescans
-  instead of reading a cache.
+- **Incremental indexing consulting the cache during a table query** —
+  `mvp.md`'s "Configurable (MVP): eager vs. incremental indexing" describes a
+  query that discovers structure only as far as needed and persists it along
+  the way. `table_stream`/`read_table` don't do this yet — they always scan
+  from the start (or a `ResumeToken`'s position) with no cache involved. Only
+  `pgdq parse`/`info` read or write a cache today, and always eagerly (a full
+  scan), never partially.
 - **Benchmarks** (`criterion`) — not wired in.
 - **Full 8-version worktree fixture sweep** (`v13.0` … `v18.6`) — worktree
   binaries not yet built; the 3-version container sweep above covers routine
@@ -148,14 +175,15 @@ Last updated: 2026-08-22 (streaming API).
 
 ## Next up
 
-The index/structure cache: `bincode` serialization of `DumpIndex`, the
-colocated-vs-explicit-path and eager-vs-incremental behavior `mvp.md`
-specifies, and `pgdq info`/`parse` reading and writing it instead of always
-rescanning. Leave room in the serialized form for three optional fields so
-adding any of them later isn't a format break: a sparse row index
-(`docs/design/scan-performance.md`); a dump-level metadata block — server
-version, `pg_dump` version, extension list, user-defined type definitions
-(`docs/design/roadmap.md`, "Companion: dump-level metadata"); and per-row-group
-column statistics keyed to the sparse index's checkpoints
-(`docs/design/roadmap.md`, "Companion: per-row-group column statistics"). None is
-populated in Phase 1; only the slots are due.
+Wiring the cache into the query path: `table_stream`/`read_table` should
+consult a cache for blocks already known (skipping their bytes entirely
+rather than rescanning) and persist newly-discovered blocks as they scan
+past them — the "incremental" half of `mvp.md`'s "Configurable (MVP): eager
+vs. incremental indexing" that `cache.rs`/the CLI don't yet exercise. The
+natural shape: resume-from-`scanned_through` using the same
+`CopyScanner::resume` machinery `ResumeToken` already relies on, replaying
+`DumpIndex::blocks_for(table)` for the already-known portion and only
+scanning the file from the watermark onward, writing the cache back
+(colocated, best-effort — a write failure shouldn't fail the query) each
+time new blocks are discovered. Predicate filtering is the other open MVP
+item and doesn't depend on this.

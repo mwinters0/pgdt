@@ -1,8 +1,8 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use pgdump_query::{DumpIndex, LocalFileSource, ScanOptions, build_index};
+use pgdump_query::{DumpIndex, LocalFileSource, ScanOptions, build_index, cache};
 
 #[derive(Parser)]
 #[command(
@@ -32,27 +32,42 @@ enum Command {
     },
 }
 
+/// `--cache-path`, or the colocated default (`<file>.dqcache`) when unset.
+fn resolve_cache_path(file: &Path, cache_path: Option<PathBuf>) -> PathBuf {
+    cache_path.unwrap_or_else(|| cache::colocated_path(file))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Parse { file, cache_path } => {
+            // `parse` is the eager entry point: always scan fresh (ignoring
+            // any existing cache) and (re)write it, per `mvp.md`'s CLI spec.
+            let path = resolve_cache_path(&file, cache_path);
             let source = LocalFileSource::open(&file)?;
             let index = build_index(&source, &ScanOptions::default()).await?;
             print_index(&index, false);
-            if cache_path.is_some() {
-                println!();
-                println!(
-                    "note: --cache-path is accepted but the structure cache is not implemented yet"
-                );
-            }
+            cache::save(&path, &index)?;
+            println!();
+            println!("wrote cache to {}", path.display());
         }
         Command::Info { file, cache_path, verbose } => {
-            // No cache reader yet, so `info` scans the file itself. Once the
-            // cache lands this reads the cache instead.
-            let _ = cache_path;
-            let source = LocalFileSource::open(&file)?;
-            let index = build_index(&source, &ScanOptions::default()).await?;
+            let path = resolve_cache_path(&file, cache_path);
+            let index = match cache::load(&path)? {
+                Some(index) => index,
+                None => {
+                    // No usable cache: scan, then persist what we learned —
+                    // `mvp.md`'s "cache is never required for correctness"
+                    // rule means this fallback must still produce a correct
+                    // answer, and there's no reason to throw away the scan
+                    // we just paid for.
+                    let source = LocalFileSource::open(&file)?;
+                    let index = build_index(&source, &ScanOptions::default()).await?;
+                    cache::save(&path, &index)?;
+                    index
+                }
+            };
             print_index(&index, verbose);
         }
     }
