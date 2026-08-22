@@ -24,4 +24,14 @@ pub enum Error {
     CacheDisabled { operation: &'static str },
     #[error("predicate column `{column}` not found in COPY block at offset {header_offset}")]
     UnknownPredicateColumn { header_offset: u64, column: String },
+    #[error(
+        "table `{name}` is ambiguous: matches {}; qualify the name or pass --database",
+        candidates.join(", ")
+    )]
+    AmbiguousTable { name: String, candidates: Vec<String> },
+    #[error(
+        "metadata for database {} was not scanned — run `pgdq parse` first, or use --schema-mode strings",
+        database.as_deref().unwrap_or("(unnamed)")
+    )]
+    MetadataNotScanned { database: Option<String> },
 }

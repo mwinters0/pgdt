@@ -21,6 +21,24 @@ struct Cli {
     command: Command,
 }
 
+/// CLI spelling of [`SchemaMode`] — see "Output model" in
+/// `docs/design/roadmap-phase2-typed-columns.md`.
+#[derive(Clone, Copy, Default, clap::ValueEnum)]
+enum CliSchemaMode {
+    #[default]
+    Typed,
+    Strings,
+}
+
+impl From<CliSchemaMode> for SchemaMode {
+    fn from(mode: CliSchemaMode) -> Self {
+        match mode {
+            CliSchemaMode::Typed => SchemaMode::Typed,
+            CliSchemaMode::Strings => SchemaMode::Strings,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// Perform a full file scan and build the structure cache.
@@ -62,6 +80,17 @@ enum Command {
         /// row's decoded field value.
         #[arg(long)]
         filter: Option<String>,
+        /// Select which database to query when `table` is ambiguous across
+        /// a multi-`\connect` dump (`docs/design/roadmap-phase2-typed-columns.md`,
+        /// "One target per query").
+        #[arg(long)]
+        database: Option<String>,
+        /// `typed` (default) resolves column types against the dump's DDL;
+        /// `strings` skips that lookup entirely, matching Phase 1's
+        /// byte-for-byte output — the way out of `Error::MetadataNotScanned`
+        /// for a database an incremental scan hasn't read the DDL for yet.
+        #[arg(long, value_enum, default_value_t)]
+        schema_mode: CliSchemaMode,
     },
 }
 
@@ -171,17 +200,22 @@ async fn main() -> Result<()> {
             };
             print_index(&index, verbose);
         }
-        Command::Query { file, table, cache_path, filter } => {
+        Command::Query { file, table, cache_path, filter, database, schema_mode } => {
             let mode = CacheMode::resolve(&file, cache_path.as_deref());
             let predicate = filter.as_deref().map(parse_filter).transpose()?;
             let source = LocalFileSource::open(&file)?;
             let mut header_printed = false;
             let mut rows = 0u64;
+            let batch_options = BatchOptions {
+                database,
+                schema_mode: schema_mode.into(),
+                ..BatchOptions::default()
+            };
             let (_resolved_schema, _resume) = pgdump_query::read_table(
                 &source,
                 &table,
                 &ScanOptions::default(),
-                &BatchOptions::default(),
+                &batch_options,
                 predicate,
                 mode,
                 |batch| {
@@ -272,7 +306,27 @@ fn print_index(index: &DumpIndex, verbose: bool) {
     let mut total_columns = 0usize;
     let mut total_unmapped = 0usize;
 
+    // Group by database once blocks carry more than one — the common case
+    // (a plain or single-`--create` dump) prints no header at all. Blocks
+    // are already in file order, and every `\connect` segment is contiguous
+    // in the file, so a header line whenever the database changes is enough
+    // — no need to sort or bucket first. This is also what makes an
+    // `AmbiguousTable` error's candidate names actionable: they're names
+    // this listing already showed (`docs/design/roadmap-phase2-typed-columns.md`,
+    // "One target per query").
+    let multi_database =
+        index.blocks.iter().map(|b| &b.database).collect::<std::collections::BTreeSet<_>>().len()
+            > 1;
+    let mut current_database: Option<&Option<String>> = None;
+
     for block in &index.blocks {
+        if multi_database && current_database != Some(&block.database) {
+            current_database = Some(&block.database);
+            match &block.database {
+                Some(name) => println!("database: {name}"),
+                None => println!("database: (unnamed)"),
+            }
+        }
         println!("{} ({} rows)", block.header.qualified_name(), block.row_count);
         if block.header.columns.is_empty() {
             println!("    columns: (not listed in COPY header)");
@@ -282,6 +336,7 @@ fn print_index(index: &DumpIndex, verbose: bool) {
                 &qualified,
                 &block.header.columns,
                 index.metadata.as_ref(),
+                block.database.as_deref(),
                 SchemaMode::Typed,
             );
             let columns: Vec<String> = resolved

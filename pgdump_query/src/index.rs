@@ -49,6 +49,16 @@ pub use crate::preamble::DumpMetadata;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CopyBlock {
     pub header: CopyHeader,
+    /// The database this block belongs to — the name from the `\connect`
+    /// governing it, read straight off the line as either scan pass sees it.
+    /// `None` means the file had no `\connect` at all (a plain dump), which
+    /// falls back to the single unnamed [`DatabaseMetadata`]. Not an ordinal
+    /// into `metadata.databases`: an incremental scan's metadata can hold
+    /// just one entry no matter how many databases the file contains, so an
+    /// index would be unresolvable in exactly the case this field exists for
+    /// (`docs/design/roadmap-phase2-typed-columns.md`, "One target per
+    /// query").
+    pub database: Option<String>,
     /// Absolute file offset of the `C` in `COPY`.
     pub header_offset: u64,
     /// Absolute file offset of the block's first data byte.
@@ -114,6 +124,7 @@ pub async fn build_index<S: ByteRangeSource>(
                 if let Some(start) = pending.take() {
                     index.blocks.push(CopyBlock {
                         header: start.header,
+                        database: preamble.current_database_name(),
                         header_offset: start.header_offset,
                         data_offset: start.data_offset,
                         terminator_offset: end.terminator_offset,

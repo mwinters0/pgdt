@@ -293,14 +293,24 @@ contains both shapes. A hand-built concatenation of `--create` outputs
 produces only the first, which is why a genuine `pg_dumpall` fixture is
 added in slice 2.3.2.
 
+**Slice 2.3.2 confirmed both segment shapes against a real `pg_dumpall`
+run**, not just the hand-concatenated stand-in: `fixtures/{13,18}/edge_cases/dumpall.sql`
+(`pg_dumpall --no-role-passwords` against the fixture cluster) show, on both
+the oldest and newest routine versions, `template1`/`postgres` printing
+`\connect` *then* their version-header pair, and `pgdq_fixture` printing the
+pair *then* its own `\connect` — exactly the flip this invariant predicted
+from source reading alone.
+
 **Verified against:** v18.6 source (`RestoreArchive()`,
 `pg_dumpall.c`'s `dumpDatabases()` per-database invocation and its
 `postgres`/`template1` special case); koji
 (`pg_dump 16.14`); two concatenated `--create` fixtures
-(`pgdump_query/tests/preamble.rs`'s `multidb_fixture`, versions 13/16/18).
+(`pgdump_query/tests/preamble.rs`'s `multidb_fixture`, versions 13/16/18);
+`fixtures/{13,18}/edge_cases/dumpall.sql`, a real `pg_dumpall` run (2.3.2).
 **Relied on by:** `roadmap-phase2-typed-columns.md` (preamble pass);
 `roadmap-phase2.2-preamble-notes.md`;
-`roadmap-phase2.3.1-multidb-fixtures-notes.md`.
+`roadmap-phase2.3.1-multidb-fixtures-notes.md`;
+`roadmap-phase2.3.2-fixture-evidence-notes.md`.
 **Re-verify:** `grep -n 'Dumped from database version' -B5
 src/bin/pg_dump/pg_backup_archiver.c` — confirm it's still inside
 `RestoreArchive()` and still unconditional-per-call; `grep -n
@@ -354,9 +364,15 @@ must tolerate a multi-line body and a multi-word subtype value.
 
 **Verified against:** v18.6 source (`selectDumpableType()`,
 `dumpRangeType()`), v13.23 source (`dumpRangeType()`, no multirange);
-probed `pg_dump` 16.15.
+probed `pg_dump` 16.15; `fixtures/{13..18}/types/default.sql`'s
+`public.myrange`/`public.myrange_multi` (2.3.2) — all six routine versions,
+not just one probed container, and confirms the PG13/PG14+ split in the
+`multirange_type_name` parameter's presence exactly.
 **Relied on by:** `roadmap-phase2-typed-columns.md` ("Multiranges", type
-mapping table).
+mapping table); `roadmap-phase2.3.2-fixture-evidence-notes.md`;
+`roadmap-phase2.3.3-one-target-behaviour-notes.md` (`pgtype.rs`'s companion
+lookup and `TypeKind::Range::multirange_type_name` are built directly on
+this invariant, not just tested against it).
 **Re-verify:** `grep -n 'skip auto-generated array and multirange types' -A 4
 src/bin/pg_dump/pg_dump.c` — confirm multiranges are still `DO_DUMMY_TYPE`;
 `grep -n 'AS RANGE' -A 8 src/bin/pg_dump/pg_dump.c` — confirm the parameter
@@ -411,6 +427,17 @@ CREATE TYPE public.mybase (INPUT = public.mybase_in,
 `pg_dump` then emits `mybase` twice (SHELL TYPE, then TYPE), `shellonly` once,
 and `myrange` with its multirange parameter (I10).
 
+**Slice 2.3.2 promoted this from a one-off probe to permanent fixture
+coverage**: the same three statements are now in
+`scripts/fixture_schema_types.sql`, generated across all six routine
+versions (`fixtures/<version>/types/default.sql`), backed by tables
+(`t_base_type`, `t_user_range`) so the types round-trip through a real
+`COPY` block rather than appearing only as bare `CREATE TYPE` statements.
+The completed `mybase` body's parameter order differs slightly from the
+hand-written recipe above — `pg_dump` emits `INTERNALLENGTH` first, then
+`INPUT`/`OUTPUT`/`ALIGNMENT`/`STORAGE` — which is cosmetic, not a grammar
+concern.
+
 **Consequence for `crate::preamble` / `crate::pgtype`.** One name can own two
 `TypeDef` entries, so `resolve_user_type`'s first-match lookup returns the
 `Shell` entry for a completed base type. Harmless as long as `Base` and
@@ -420,8 +447,11 @@ remembering if those outcomes ever diverge. Also removes the standing excuse
 that these shapes cannot be fixture-generated.
 
 **Verified against:** v18.6 source (`dumpShellType()`, `dumpUndefinedType()`,
-`DefineType()`); probed `pg_dump` 16.15.
-**Relied on by:** `roadmap-phase2-typed-columns.md` ("Fixtures").
+`DefineType()`); probed `pg_dump` 16.15; `fixtures/{13..18}/types/default.sql`
+(2.3.2) — the same recipe as permanent fixture coverage across all six
+routine versions, not a single probed container.
+**Relied on by:** `roadmap-phase2-typed-columns.md` ("Fixtures");
+`roadmap-phase2.3.2-fixture-evidence-notes.md`.
 **Re-verify:** `grep -n '"SHELL TYPE"' -B 12 src/bin/pg_dump/pg_dump.c` —
 confirm `dumpShellType()` still emits a bare `CREATE TYPE x;` ahead of the
 real definition; re-run the recipe above against the newest major.

@@ -356,17 +356,58 @@ async fn all_rows(source: &LocalFileSource, table: &str) -> Vec<Vec<Option<Strin
     rows
 }
 
-/// `table_stream` matches `COPY` blocks by qualified table name alone, with
-/// no notion of which `\connect` segment a block belongs to (`resolve.rs`'s
-/// `database_for` has the same simplification for typing — see
-/// `docs/status/STATUS.md`, "Decisions worth a second look"). Against a real
-/// multi-database dump where the same table name is genuinely defined twice,
-/// today's behavior is a silent union of both databases' rows, in file
-/// order — not the per-database error `docs/design/roadmap-phase2-typed-columns.md`
-/// ("Multi-database dumps") describes as the eventual intent. This test
-/// locks in and documents *current* behavior; it is not an endorsement of it.
+/// `table_stream` used to match `COPY` blocks by qualified table name alone,
+/// with no notion of which `\connect` segment a block belongs to, and
+/// silently unioned both databases' rows for a name genuinely defined
+/// twice. Slice 2.3.3 (`docs/design/roadmap-phase2-typed-columns.md`, "One
+/// target per query") closed that: the query now errors, naming both
+/// candidates, instead of returning a union of two unrelated tables.
 #[tokio::test]
-async fn querying_a_table_name_shared_by_two_databases_silently_unions_both() {
+async fn querying_a_table_name_shared_by_two_databases_errors_without_a_database_selector() {
+    for version in [13, 16, 18] {
+        let (_dir, path) = multidb_fixture(version);
+        let source = LocalFileSource::open(&path).unwrap();
+        let mut stream = table_stream(
+            &source,
+            "public.widgets",
+            ScanOptions::default(),
+            BatchOptions::default(),
+            None,
+            None,
+            CacheMode::Disabled,
+        );
+        let err = loop {
+            match stream.next().await {
+                Some(Err(e)) => break e,
+                Some(Ok(_)) => continue,
+                None => panic!("pg_dump {version}: stream ended without erroring"),
+            }
+        };
+        match &err {
+            pgdump_query::Error::AmbiguousTable { name, candidates } => {
+                assert_eq!(name, "public.widgets", "pg_dump {version}");
+                assert_eq!(
+                    candidates,
+                    &[
+                        "pgdq_fixture.public.widgets".to_string(),
+                        "pgdq_fixture_2.public.widgets".to_string()
+                    ],
+                    "pg_dump {version}"
+                );
+            }
+            other => panic!("pg_dump {version}: expected AmbiguousTable, got {other:?}"),
+        }
+    }
+}
+
+/// `BatchOptions::database` (`--database` at the CLI) is the way out of that
+/// ambiguity: naming the *first* database returns exactly that database's
+/// rows, matching what querying the un-concatenated single-database fixture
+/// returns. The first database is the one an incremental scan's preamble
+/// prepass always captures (`crate::index::scan_preamble`), so `Typed` mode
+/// resolves it with no extra scan needed.
+#[tokio::test]
+async fn database_selector_resolves_the_ambiguity_to_the_first_databases_rows() {
     for version in [13, 16, 18] {
         let single_source = LocalFileSource::open(fixture(version, "create")).unwrap();
         let single_rows = all_rows(&single_source, "public.widgets").await;
@@ -374,10 +415,73 @@ async fn querying_a_table_name_shared_by_two_databases_silently_unions_both() {
 
         let (_dir, path) = multidb_fixture(version);
         let combined_source = LocalFileSource::open(&path).unwrap();
-        let combined_rows = all_rows(&combined_source, "public.widgets").await;
+        let batch_options =
+            BatchOptions { database: Some("pgdq_fixture".to_string()), ..Default::default() };
+        let mut stream = table_stream(
+            &combined_source,
+            "public.widgets",
+            ScanOptions::default(),
+            batch_options,
+            None,
+            None,
+            CacheMode::Disabled,
+        );
+        let mut rows = Vec::new();
+        while let Some(batch) = stream.next().await {
+            rows.extend(rows_of(&batch.unwrap()));
+        }
+        assert_eq!(rows, single_rows, "pg_dump {version}");
+    }
+}
 
-        let mut expected = single_rows.clone();
-        expected.extend(single_rows);
-        assert_eq!(combined_rows, expected, "pg_dump {version}");
+/// Selecting the *second* database still requires either `SchemaMode::Strings`
+/// or a prior full scan: an incremental scan never learns a later
+/// `\connect`ed database's DDL (`table_stream`'s live scan deliberately does
+/// not accumulate preamble as it goes — "The preamble pass" in the phase
+/// doc), so a `Typed` query against it is `Error::MetadataNotScanned`, not a
+/// silent `Utf8View` degradation.
+#[tokio::test]
+async fn selecting_a_later_databases_table_needs_strings_mode_or_a_prior_full_scan() {
+    for version in [13, 16, 18] {
+        let (_dir, path) = multidb_fixture(version);
+        let source = LocalFileSource::open(&path).unwrap();
+
+        let typed =
+            BatchOptions { database: Some("pgdq_fixture_2".to_string()), ..Default::default() };
+        let mut stream = table_stream(
+            &source,
+            "public.widgets",
+            ScanOptions::default(),
+            typed,
+            None,
+            None,
+            CacheMode::Disabled,
+        );
+        match stream.next().await {
+            Some(Err(pgdump_query::Error::MetadataNotScanned { database })) => {
+                assert_eq!(database.as_deref(), Some("pgdq_fixture_2"), "pg_dump {version}");
+            }
+            other => panic!("pg_dump {version}: expected MetadataNotScanned, got {other:?}"),
+        }
+
+        let strings = BatchOptions {
+            database: Some("pgdq_fixture_2".to_string()),
+            schema_mode: SchemaMode::Strings,
+            ..Default::default()
+        };
+        let mut stream = table_stream(
+            &source,
+            "public.widgets",
+            ScanOptions::default(),
+            strings,
+            None,
+            None,
+            CacheMode::Disabled,
+        );
+        let mut rows = Vec::new();
+        while let Some(batch) = stream.next().await {
+            rows.extend(rows_of(&batch.unwrap()));
+        }
+        assert!(!rows.is_empty(), "pg_dump {version}: SchemaMode::Strings bypasses the check");
     }
 }

@@ -78,14 +78,15 @@ Precision above 76 digits also falls back to a string (`Decimal256`'s limit).
 to round-trip without loss. `NaN`, `Infinity` and `-Infinity` are written in
 those exact spellings and are parsed as such.
 
-### Arrays, composites, and ranges are strings for now
+### Arrays, composites, ranges, and multiranges are strings for now
 
 `text[]` arrives as `{a,b,"c,d"}` — a value with its own quoting rules nested
 inside the escaping COPY TEXT already applies. Decoding it correctly is real
-work, shared with composite types and ranges, and it is scheduled as its own
-phase. Until then these come back as strings **with their outer COPY escaping
-already removed**, so what you get is the literal array text PostgreSQL would
-print.
+work, shared with composite types, ranges, and multiranges (including a
+range type's own auto-created multirange companion), and it is scheduled as
+its own phase. Until then these come back as strings **with their outer COPY
+escaping already removed**, so what you get is the literal array text
+PostgreSQL would print.
 
 ### `json` and `jsonb` are strings
 

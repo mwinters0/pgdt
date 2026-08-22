@@ -50,7 +50,11 @@ DB_USER = "postgres"
 # Each schema exercises a different concern and so wants a different flag
 # list -- see docs/design/roadmap-phase2-typed-columns.md ("Fixtures") for
 # why the split exists and why each gets exactly this set.
-SCHEMAS: dict[str, dict[str, list[str]]] = {
+#
+# `None` is a sentinel meaning "run pg_dumpall instead of pg_dump" -- see
+# dump_flag_set. It isn't a `pg_dump` flag set at all, so it can't be
+# expressed as a flag list.
+SCHEMAS: dict[str, dict[str, list[str] | None]] = {
     "edge_cases": {
         "default": [],
         "data-only": ["--data-only"],
@@ -61,6 +65,8 @@ SCHEMAS: dict[str, dict[str, list[str]]] = {
         "column-inserts": ["--column-inserts"],
         "binary-upgrade": ["--binary-upgrade"],
         "create": ["--create"],
+        "no-comments": ["--no-comments", "--no-security-labels"],
+        "dumpall": None,
     },
     "types": {
         "default": [],
@@ -148,15 +154,21 @@ def drop_fixture_db(name: str) -> None:
     run(DOCKER + ["exec", name, "dropdb", "-U", DB_USER, DB_NAME], capture_output=True)
 
 
-def dump_flag_set(name: str, version: str, schema: str, flag_name: str, flags: list[str]) -> Path:
+def dump_flag_set(
+    name: str, version: str, schema: str, flag_name: str, flags: list[str] | None
+) -> Path:
     out_dir = FIXTURES_DIR / version / schema
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{flag_name}.sql"
-    result = run(
-        DOCKER + ["exec", name, "pg_dump", "-U", DB_USER, *flags, DB_NAME],
-        stdout=subprocess.PIPE,
-        text=True,
-    )
+    if flags is None:
+        # dumpall: the whole cluster (postgres/template1 plus DB_NAME), not
+        # a `pg_dump` invocation against one database -- `--no-role-passwords`
+        # keeps the output deterministic (no password hashes to vary run to
+        # run). Run before drop_fixture_db so DB_NAME is still loaded.
+        cmd = DOCKER + ["exec", name, "pg_dumpall", "-U", DB_USER, "--no-role-passwords"]
+    else:
+        cmd = DOCKER + ["exec", name, "pg_dump", "-U", DB_USER, *flags, DB_NAME]
+    result = run(cmd, stdout=subprocess.PIPE, text=True)
     out_path.write_text(result.stdout)
     return out_path
 

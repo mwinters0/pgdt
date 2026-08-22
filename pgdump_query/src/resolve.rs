@@ -94,22 +94,28 @@ impl ResolvedSchema {
     }
 }
 
-/// Find the first database (in `metadata.databases` order) whose DDL
-/// mentions `qualified_table`. Real disambiguation needs each `CopyBlock` to
-/// record which database it belongs to, which nothing tracks yet (multi-`\connect`
-/// dumps have zero fixture or koji coverage — see "Multi-database dumps" in
-/// the phase doc) — first-match is the same simplification `pgdq info` used
-/// before this module existed, just centralized here instead of duplicated.
-fn database_for<'a>(
+/// Find the database named `database` in `metadata.databases` — an exact
+/// match on [`crate::preamble::DatabaseMetadata::name`], never a guess.
+/// `database: None` matches the single unnamed database a plain (non-`\connect`)
+/// dump produces.
+///
+/// This used to be "the first database whose DDL mentions `qualified_table`"
+/// — a guess, since nothing tracked which database a `CopyBlock` actually
+/// belonged to. Per-block attribution (`docs/design/roadmap-phase2-typed-columns.md`,
+/// "One target per query") turns it into a fact: the caller already knows,
+/// from the block it matched, which database's DDL applies.
+fn database_for_name<'a>(
     metadata: &'a DumpMetadata,
-    qualified_table: &str,
+    database: Option<&str>,
 ) -> Option<&'a crate::preamble::DatabaseMetadata> {
-    metadata.databases.iter().find(|db| db.tables.contains_key(qualified_table))
+    metadata.databases.iter().find(|db| db.name.as_deref() == database)
 }
 
 /// Resolve `columns` (in `COPY`-header order — placeholder names like
 /// `column1` when the header carried none, same as `crate::batch::schema_for`
-/// derives) against `metadata` for `qualified_table`.
+/// derives) against `metadata` for `qualified_table`, scoped to the
+/// database this block was attributed to (`database` — `None` for a plain
+/// dump's single unnamed database).
 ///
 /// `SchemaMode::Strings` never looks anything up: every column comes back
 /// `NotDeclared`/`Utf8View`, matching Phase 1 exactly and at zero cost.
@@ -117,11 +123,12 @@ pub fn resolve_columns(
     qualified_table: &str,
     columns: &[String],
     metadata: Option<&DumpMetadata>,
+    database: Option<&str>,
     mode: SchemaMode,
 ) -> ResolvedSchema {
     let db = match mode {
         SchemaMode::Strings => None,
-        SchemaMode::Typed => metadata.and_then(|m| database_for(m, qualified_table)),
+        SchemaMode::Typed => metadata.and_then(|m| database_for_name(m, database)),
     };
     let declared_cols = db.and_then(|d| d.tables.get(qualified_table));
 
@@ -197,7 +204,7 @@ mod tests {
     fn mapped_and_not_declared_columns() {
         let meta = one_db(&[("public.t", &[("id", "integer"), ("name", "text")])], vec![]);
         let cols = vec!["id".to_string(), "name".to_string(), "extra".to_string()];
-        let resolved = resolve_columns("public.t", &cols, Some(&meta), SchemaMode::Typed);
+        let resolved = resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Typed);
         assert_eq!(
             resolved.columns,
             [ColumnResolution::Mapped, ColumnResolution::Mapped, ColumnResolution::NotDeclared,]
@@ -213,7 +220,7 @@ mod tests {
     fn strings_mode_never_looks_up_ddl() {
         let meta = one_db(&[("public.t", &[("id", "integer")])], vec![]);
         let cols = vec!["id".to_string()];
-        let resolved = resolve_columns("public.t", &cols, Some(&meta), SchemaMode::Strings);
+        let resolved = resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Strings);
         assert_eq!(resolved.columns, [ColumnResolution::NotDeclared]);
         assert_eq!(resolved.schema.field(0).data_type(), &arrow::datatypes::DataType::Utf8View);
     }
@@ -221,7 +228,7 @@ mod tests {
     #[test]
     fn no_metadata_at_all_is_every_column_not_declared() {
         let cols = vec!["id".to_string()];
-        let resolved = resolve_columns("public.t", &cols, None, SchemaMode::Typed);
+        let resolved = resolve_columns("public.t", &cols, None, None, SchemaMode::Typed);
         assert_eq!(resolved.columns, [ColumnResolution::NotDeclared]);
     }
 
@@ -239,7 +246,7 @@ mod tests {
             types,
         );
         let cols = vec!["a".to_string(), "b".to_string(), "c".to_string(), "d".to_string()];
-        let resolved = resolve_columns("public.t", &cols, Some(&meta), SchemaMode::Typed);
+        let resolved = resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Typed);
         assert_eq!(
             resolved.columns,
             [
@@ -255,23 +262,36 @@ mod tests {
     fn diagnostic_carries_the_declared_string_when_present() {
         let meta = one_db(&[("public.t", &[("id", "integer")])], vec![]);
         let cols = vec!["id".to_string(), "extra".to_string()];
-        let resolved = resolve_columns("public.t", &cols, Some(&meta), SchemaMode::Typed);
+        let resolved = resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Typed);
         assert_eq!(resolved.notes[0].declared.as_deref(), Some("integer"));
         assert_eq!(resolved.notes[1].declared, None);
     }
 
-    /// `database_for`'s doc comment claims first-match, not real
-    /// disambiguation (`docs/status/STATUS.md`, "Decisions worth a second
-    /// look") — proven here by giving the two databases genuinely different
-    /// declared types for the same qualified table name, so the outcome
-    /// would differ observably if the second database were picked instead.
+    /// `database_for_name` selects by the attributed database's *name*, not
+    /// by which database's DDL happens to mention the table first — proven
+    /// here by giving the two databases genuinely different declared types
+    /// for the same qualified table name, so the outcome differs observably
+    /// depending on which name is passed. This is what slice 2.3.3
+    /// (`docs/design/roadmap-phase2-typed-columns.md`, "One target per
+    /// query") turned the old first-match guess into: the caller already
+    /// knows, from the matched `CopyBlock`'s own attribution, which database
+    /// applies — see `docs/design/roadmap-phase2.3.1-multidb-fixtures-notes.md`
+    /// for the guess this test used to pin down.
     #[test]
-    fn ambiguous_table_across_databases_resolves_against_the_first_match() {
-        let a = one_db(&[("public.t", &[("id", "text")])], vec![]).databases.remove(0);
-        let b = one_db(&[("public.t", &[("id", "integer")])], vec![]).databases.remove(0);
+    fn database_selects_by_attributed_name_not_by_first_match() {
+        let mut a = one_db(&[("public.t", &[("id", "text")])], vec![]).databases.remove(0);
+        a.name = Some("a".to_string());
+        let mut b = one_db(&[("public.t", &[("id", "integer")])], vec![]).databases.remove(0);
+        b.name = Some("b".to_string());
         let meta = DumpMetadata { databases: vec![a, b] };
         let cols = vec!["id".to_string()];
-        let resolved = resolve_columns("public.t", &cols, Some(&meta), SchemaMode::Typed);
-        assert_eq!(resolved.schema.field(0).data_type(), &arrow::datatypes::DataType::Utf8View);
+
+        let resolved_a =
+            resolve_columns("public.t", &cols, Some(&meta), Some("a"), SchemaMode::Typed);
+        assert_eq!(resolved_a.schema.field(0).data_type(), &arrow::datatypes::DataType::Utf8View);
+
+        let resolved_b =
+            resolve_columns("public.t", &cols, Some(&meta), Some("b"), SchemaMode::Typed);
+        assert_eq!(resolved_b.schema.field(0).data_type(), &arrow::datatypes::DataType::Int32);
     }
 }

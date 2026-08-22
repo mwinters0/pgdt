@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict wYvQXfRbjGk3MDEmqx9b3R7FO6NgOC99ezldFVH4BG4touHp0fu0igLHHDzmhVa
+\restrict JIvcRO79EPdqpFD4jyvtRHvAICS72I3r1G62ZS3yVAHKjUbBdOiTEcRtNdbqUgl
 
 -- Dumped from database version 14.24
 -- Dumped by pg_dump version 14.24
@@ -148,9 +148,9 @@ ALTER TABLE public.widgets OWNER TO postgres;
 -- Data for Name: events; Type: TABLE DATA; Schema: logs; Owner: postgres
 --
 
-INSERT INTO logs.events (event_id, widget_id, message, logged_at) VALUES (100, 1, 'created', '2026-08-22 18:45:43.019279+00');
-INSERT INTO logs.events (event_id, widget_id, message, logged_at) VALUES (101, 2, NULL, '2026-08-22 18:45:43.019279+00');
-INSERT INTO logs.events (event_id, widget_id, message, logged_at) VALUES (102, 3, 'updated	with a tab char', '2026-08-22 18:45:43.019279+00');
+INSERT INTO logs.events (event_id, widget_id, message, logged_at) VALUES (100, 1, 'created', '2026-08-22 23:16:55.724016+00');
+INSERT INTO logs.events (event_id, widget_id, message, logged_at) VALUES (101, 2, NULL, '2026-08-22 23:16:55.724016+00');
+INSERT INTO logs.events (event_id, widget_id, message, logged_at) VALUES (102, 3, 'updated	with a tab char', '2026-08-22 23:16:55.724016+00');
 
 
 --
@@ -387,5 +387,5 @@ ALTER TABLE ONLY logs.events
 -- PostgreSQL database dump complete
 --
 
-\unrestrict wYvQXfRbjGk3MDEmqx9b3R7FO6NgOC99ezldFVH4BG4touHp0fu0igLHHDzmhVa
+\unrestrict JIvcRO79EPdqpFD4jyvtRHvAICS72I3r1G62ZS3yVAHKjUbBdOiTEcRtNdbqUgl
 

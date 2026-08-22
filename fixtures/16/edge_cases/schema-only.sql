@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict NSPPC8fsmmua7jv8Y3FQQeh6a41IjjUyqSV8wNwkD7DgXXeDFUw3NvjfSKsSdO9
+\restrict Xj2N7qTPfaNL4uMsVKiJqykZQysawM8FrvmoUvrYXbslr5Y0rHxlFX9fBBrGKod
 
 -- Dumped from database version 16.15
 -- Dumped by pg_dump version 16.15
@@ -204,5 +204,5 @@ ALTER TABLE ONLY logs.events
 -- PostgreSQL database dump complete
 --
 
-\unrestrict NSPPC8fsmmua7jv8Y3FQQeh6a41IjjUyqSV8wNwkD7DgXXeDFUw3NvjfSKsSdO9
+\unrestrict Xj2N7qTPfaNL4uMsVKiJqykZQysawM8FrvmoUvrYXbslr5Y0rHxlFX9fBBrGKod
 

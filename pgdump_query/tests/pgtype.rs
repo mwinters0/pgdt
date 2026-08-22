@@ -51,7 +51,7 @@ fn resolutions(meta: &DumpMetadata, qualified: &str) -> Vec<ColumnResolution> {
     let db = meta.databases.first().unwrap();
     let cols: Vec<String> =
         db.tables.get(qualified).unwrap().iter().map(|(n, _)| n.clone()).collect();
-    resolve_columns(qualified, &cols, Some(meta), SchemaMode::Typed).columns
+    resolve_columns(qualified, &cols, Some(meta), db.name.as_deref(), SchemaMode::Typed).columns
 }
 
 #[tokio::test]
@@ -129,8 +129,13 @@ async fn enum_column_maps_to_a_dictionary_and_domain_to_its_base_type() {
         let meta = metadata(&types_fixture(version, "default")).await;
         let db = meta.databases.first().unwrap();
         let cols = vec!["v_mood".to_string(), "v_domain".to_string()];
-        let resolved =
-            resolve_columns("public.t_enum_domain", &cols, Some(&meta), SchemaMode::Typed);
+        let resolved = resolve_columns(
+            "public.t_enum_domain",
+            &cols,
+            Some(&meta),
+            db.name.as_deref(),
+            SchemaMode::Typed,
+        );
         assert_eq!(
             resolved.schema.field(0).data_type(),
             &DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8)),
@@ -145,10 +150,11 @@ async fn enum_column_maps_to_a_dictionary_and_domain_to_its_base_type() {
 
 /// Real-shape smoke test for `resolve_columns` against genuine multi-database
 /// `DumpMetadata` (as opposed to `resolve.rs`'s hand-built
-/// `ambiguous_table_across_databases_resolves_against_the_first_match`,
-/// which proves the first-match rule with deliberately differing types):
-/// resolution must not error or degrade just because `metadata.databases`
-/// has more than one entry.
+/// `database_selects_by_attributed_name_not_by_first_match`, which proves
+/// exact-name selection with deliberately differing types): resolution must
+/// not error or degrade just because `metadata.databases` has more than one
+/// entry, and selecting each database explicitly by name must reach that
+/// same database's own declared types.
 #[tokio::test]
 async fn resolution_still_works_against_metadata_with_more_than_one_database() {
     use ColumnResolution::Mapped;
@@ -157,18 +163,22 @@ async fn resolution_still_works_against_metadata_with_more_than_one_database() {
         let meta = metadata(&path).await;
         assert_eq!(meta.databases.len(), 2, "pg_dump {version}");
 
-        let cols: Vec<String> = meta.databases[0]
-            .tables
-            .get("public.widgets")
-            .unwrap()
-            .iter()
-            .map(|(n, _)| n.clone())
-            .collect();
-        let resolved = resolve_columns("public.widgets", &cols, Some(&meta), SchemaMode::Typed);
-        assert!(
-            resolved.columns.iter().all(|r| *r == Mapped),
-            "pg_dump {version}: {:?}",
-            resolved.columns
-        );
+        for db in &meta.databases {
+            let cols: Vec<String> =
+                db.tables.get("public.widgets").unwrap().iter().map(|(n, _)| n.clone()).collect();
+            let resolved = resolve_columns(
+                "public.widgets",
+                &cols,
+                Some(&meta),
+                db.name.as_deref(),
+                SchemaMode::Typed,
+            );
+            assert!(
+                resolved.columns.iter().all(|r| *r == Mapped),
+                "pg_dump {version}, database {:?}: {:?}",
+                db.name,
+                resolved.columns
+            );
+        }
     }
 }

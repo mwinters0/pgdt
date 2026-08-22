@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict CYcvWsh7JwwZpNA0mfdrewP1rczbsTdoPT2WhBJrIGF0nBwS5nrRniOfvSzuuq4
+\restrict 1e42ojnkXJKa8KJFNCd6fqwVIb54mXSaPY7JDNJoILdmes3FpefrFmvzKUlbII1
 
 -- Dumped from database version 13.23
 -- Dumped by pg_dump version 13.23
@@ -36,9 +36,9 @@ COPY public.widgets (id, name, description, is_active, created_at) FROM stdin;
 --
 
 COPY logs.events (event_id, widget_id, message, logged_at) FROM stdin;
-100	1	created	2026-08-22 18:45:33.060774+00
-101	2	\N	2026-08-22 18:45:33.060774+00
-102	3	updated\twith a tab char	2026-08-22 18:45:33.060774+00
+100	1	created	2026-08-22 23:16:45.434891+00
+101	2	\N	2026-08-22 23:16:45.434891+00
+102	3	updated\twith a tab char	2026-08-22 23:16:45.434891+00
 \.
 
 
@@ -214,5 +214,5 @@ COPY public.generated_column (id, a, b) FROM stdin;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict CYcvWsh7JwwZpNA0mfdrewP1rczbsTdoPT2WhBJrIGF0nBwS5nrRniOfvSzuuq4
+\unrestrict 1e42ojnkXJKa8KJFNCd6fqwVIb54mXSaPY7JDNJoILdmes3FpefrFmvzKUlbII1
 

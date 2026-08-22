@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict it7OkkgrqAS7TgCcTHfgc57AfH3z1febp0Hii2nV65b1SISZRGjdDg5mgjgebMt
+\restrict CelkbbO9baNq9kNtglEjdnO2GMzTQX6cdhv1MQYJgSPO2m8zxlfQrQgQMVAIhzy
 
 -- Dumped from database version 17.11
 -- Dumped by pg_dump version 17.11
@@ -26,6 +26,16 @@ SET row_security = off;
 COPY public.t_array (id, v_empty, v_with_null, v_null_array, v_text_special, v_multidim) FROM stdin;
 1	{}	{NULL}	\N	{"a,b","c{d}","e\\"f","g\\\\h"}	{{1,2},{3,4}}
 2	{1,2,3}	{1,NULL,3}	{1,2}	{NULL,plain}	\N
+\.
+
+
+--
+-- Data for Name: t_base_type; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_base_type (id, v_mybase) FROM stdin;
+1	hello
+2	\N
 \.
 
 
@@ -130,6 +140,17 @@ COPY public.t_json (id, v_json, v_jsonb) FROM stdin;
 
 
 --
+-- Data for Name: t_multirange; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_multirange (id, v_int4multirange, v_myrange_multi) FROM stdin;
+1	{[1,10)}	{[1.5,10.5)}
+2	{}	{}
+3	\N	\N
+\.
+
+
+--
 -- Data for Name: t_net; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
@@ -206,6 +227,17 @@ COPY public.t_timestamp (id, v_ts, v_tstz) FROM stdin;
 
 
 --
+-- Data for Name: t_user_range; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_user_range (id, v_myrange) FROM stdin;
+1	[1.5,10.5)
+2	empty
+3	\N
+\.
+
+
+--
 -- Data for Name: t_uuid; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
@@ -220,5 +252,5 @@ COPY public.t_uuid (id, v_uuid) FROM stdin;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict it7OkkgrqAS7TgCcTHfgc57AfH3z1febp0Hii2nV65b1SISZRGjdDg5mgjgebMt
+\unrestrict CelkbbO9baNq9kNtglEjdnO2GMzTQX6cdhv1MQYJgSPO2m8zxlfQrQgQMVAIhzy
 

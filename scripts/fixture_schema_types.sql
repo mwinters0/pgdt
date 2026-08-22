@@ -209,3 +209,73 @@ INSERT INTO public.t_range VALUES
     (2, 'empty'),
     (3, '(,5)'),
     (4, NULL);
+
+-- Base type and shell type: reachable from pure SQL, no compiled extension
+-- needed (postgres-invariants.md I11). pg_dump emits mybase TWICE under one
+-- name (a SHELL TYPE entry, then the completed TYPE entry); shellonly is
+-- never completed, so it emits once, also under Type: TYPE (not SHELL TYPE
+-- -- that description is reserved for a base type's first half).
+CREATE TYPE public.shellonly;
+
+CREATE TYPE public.mybase;
+CREATE FUNCTION public.mybase_in(cstring) RETURNS public.mybase
+    AS 'textin' LANGUAGE internal IMMUTABLE STRICT;
+CREATE FUNCTION public.mybase_out(public.mybase) RETURNS cstring
+    AS 'textout' LANGUAGE internal IMMUTABLE STRICT;
+CREATE TYPE public.mybase (INPUT = public.mybase_in,
+    OUTPUT = public.mybase_out, INTERNALLENGTH = VARIABLE,
+    STORAGE = extended);
+
+CREATE TABLE public.t_base_type (
+    id integer PRIMARY KEY,
+    v_mybase public.mybase
+);
+INSERT INTO public.t_base_type VALUES
+    (1, 'hello'),
+    (2, NULL);
+
+-- User-defined range type: pg_dump has never been observed emitting this
+-- grammar for real -- the existing coverage (t_range, above) is a built-in
+-- range, and the parser's range grammar was otherwise tested only against
+-- hand-written single-line `subtype = int4` text. Real output is multi-line
+-- with one parameter per line, and the subtype here is deliberately a
+-- multi-word type name. PG14+ auto-creates a companion multirange type and
+-- lets it be named explicitly via `multirange_type_name`; on 13 that
+-- parameter doesn't exist at all (I10).
+SELECT current_setting('server_version_num')::int >= 140000 AS has_multirange \gset
+\if :has_multirange
+CREATE TYPE public.myrange AS RANGE (
+    subtype = double precision,
+    multirange_type_name = public.myrange_multi
+);
+\else
+CREATE TYPE public.myrange AS RANGE (
+    subtype = double precision
+);
+\endif
+
+CREATE TABLE public.t_user_range (
+    id integer PRIMARY KEY,
+    v_myrange public.myrange
+);
+INSERT INTO public.t_user_range VALUES
+    (1, '[1.5,10.5)'),
+    (2, 'empty'),
+    (3, NULL);
+
+-- Multirange types (PG14+). The six built-ins appear bare, exactly like the
+-- six built-in range types; `myrange`'s auto-created companion has no
+-- `CREATE TYPE` of its own anywhere in the dump -- its only trace is the
+-- `multirange_type_name` parameter above (I10), which is exactly what makes
+-- a column declared with that companion name unrecoverable without it.
+\if :has_multirange
+CREATE TABLE public.t_multirange (
+    id integer PRIMARY KEY,
+    v_int4multirange int4multirange,
+    v_myrange_multi public.myrange_multi
+);
+INSERT INTO public.t_multirange VALUES
+    (1, '{[1,10)}', '{[1.5,10.5)}'),
+    (2, '{}', '{}'),
+    (3, NULL, NULL);
+\endif

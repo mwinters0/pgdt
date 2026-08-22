@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict gT9bm4lKrie2NipUMkDYeTPg212mLiIzdJLhmZk3Y0u2t2xQk5jUps2aNj5LauV
+\restrict rmK2YbKajqxF8Nx1L9eIjR1hPXUXRj0tBYPhbQEfkf9dc2JSM4eUOSx2oC2OvC2
 
 -- Dumped from database version 16.15
 -- Dumped by pg_dump version 16.15
@@ -53,6 +53,62 @@ CREATE TYPE public.mood AS ENUM (
 ALTER TYPE public.mood OWNER TO postgres;
 
 --
+-- Name: mybase; Type: SHELL TYPE; Schema: public; Owner: postgres
+--
+
+CREATE TYPE public.mybase;
+
+
+--
+-- Name: mybase_in(cstring); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.mybase_in(cstring) RETURNS public.mybase
+    LANGUAGE internal IMMUTABLE STRICT
+    AS $$textin$$;
+
+
+ALTER FUNCTION public.mybase_in(cstring) OWNER TO postgres;
+
+--
+-- Name: mybase_out(public.mybase); Type: FUNCTION; Schema: public; Owner: postgres
+--
+
+CREATE FUNCTION public.mybase_out(public.mybase) RETURNS cstring
+    LANGUAGE internal IMMUTABLE STRICT
+    AS $$textout$$;
+
+
+ALTER FUNCTION public.mybase_out(public.mybase) OWNER TO postgres;
+
+--
+-- Name: mybase; Type: TYPE; Schema: public; Owner: postgres
+--
+
+CREATE TYPE public.mybase (
+    INTERNALLENGTH = variable,
+    INPUT = public.mybase_in,
+    OUTPUT = public.mybase_out,
+    ALIGNMENT = int4,
+    STORAGE = extended
+);
+
+
+ALTER TYPE public.mybase OWNER TO postgres;
+
+--
+-- Name: myrange; Type: TYPE; Schema: public; Owner: postgres
+--
+
+CREATE TYPE public.myrange AS RANGE (
+    subtype = double precision,
+    multirange_type_name = public.myrange_multi
+);
+
+
+ALTER TYPE public.myrange OWNER TO postgres;
+
+--
 -- Name: point2d; Type: TYPE; Schema: public; Owner: postgres
 --
 
@@ -63,6 +119,15 @@ CREATE TYPE public.point2d AS (
 
 
 ALTER TYPE public.point2d OWNER TO postgres;
+
+--
+-- Name: shellonly; Type: TYPE; Schema: public; Owner: postgres
+--
+
+CREATE TYPE public.shellonly;
+
+
+ALTER TYPE public.shellonly OWNER TO postgres;
 
 SET default_tablespace = '';
 
@@ -83,6 +148,18 @@ CREATE TABLE public.t_array (
 
 
 ALTER TABLE public.t_array OWNER TO postgres;
+
+--
+-- Name: t_base_type; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.t_base_type (
+    id integer NOT NULL,
+    v_mybase public.mybase
+);
+
+
+ALTER TABLE public.t_base_type OWNER TO postgres;
 
 --
 -- Name: t_bytea; Type: TABLE; Schema: public; Owner: postgres
@@ -186,6 +263,19 @@ CREATE TABLE public.t_json (
 ALTER TABLE public.t_json OWNER TO postgres;
 
 --
+-- Name: t_multirange; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.t_multirange (
+    id integer NOT NULL,
+    v_int4multirange int4multirange,
+    v_myrange_multi public.myrange_multi
+);
+
+
+ALTER TABLE public.t_multirange OWNER TO postgres;
+
+--
 -- Name: t_net; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -268,6 +358,18 @@ CREATE TABLE public.t_timestamp (
 ALTER TABLE public.t_timestamp OWNER TO postgres;
 
 --
+-- Name: t_user_range; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.t_user_range (
+    id integer NOT NULL,
+    v_myrange public.myrange
+);
+
+
+ALTER TABLE public.t_user_range OWNER TO postgres;
+
+--
 -- Name: t_uuid; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -286,6 +388,16 @@ ALTER TABLE public.t_uuid OWNER TO postgres;
 COPY public.t_array (id, v_empty, v_with_null, v_null_array, v_text_special, v_multidim) FROM stdin;
 1	{}	{NULL}	\N	{"a,b","c{d}","e\\"f","g\\\\h"}	{{1,2},{3,4}}
 2	{1,2,3}	{1,NULL,3}	{1,2}	{NULL,plain}	\N
+\.
+
+
+--
+-- Data for Name: t_base_type; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_base_type (id, v_mybase) FROM stdin;
+1	hello
+2	\N
 \.
 
 
@@ -390,6 +502,17 @@ COPY public.t_json (id, v_json, v_jsonb) FROM stdin;
 
 
 --
+-- Data for Name: t_multirange; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_multirange (id, v_int4multirange, v_myrange_multi) FROM stdin;
+1	{[1,10)}	{[1.5,10.5)}
+2	{}	{}
+3	\N	\N
+\.
+
+
+--
 -- Data for Name: t_net; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
@@ -466,6 +589,17 @@ COPY public.t_timestamp (id, v_ts, v_tstz) FROM stdin;
 
 
 --
+-- Data for Name: t_user_range; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_user_range (id, v_myrange) FROM stdin;
+1	[1.5,10.5)
+2	empty
+3	\N
+\.
+
+
+--
 -- Data for Name: t_uuid; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
@@ -482,6 +616,14 @@ COPY public.t_uuid (id, v_uuid) FROM stdin;
 
 ALTER TABLE ONLY public.t_array
     ADD CONSTRAINT t_array_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: t_base_type t_base_type_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.t_base_type
+    ADD CONSTRAINT t_base_type_pkey PRIMARY KEY (id);
 
 
 --
@@ -549,6 +691,14 @@ ALTER TABLE ONLY public.t_json
 
 
 --
+-- Name: t_multirange t_multirange_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.t_multirange
+    ADD CONSTRAINT t_multirange_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: t_net t_net_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -597,6 +747,14 @@ ALTER TABLE ONLY public.t_timestamp
 
 
 --
+-- Name: t_user_range t_user_range_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.t_user_range
+    ADD CONSTRAINT t_user_range_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: t_uuid t_uuid_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -608,5 +766,5 @@ ALTER TABLE ONLY public.t_uuid
 -- PostgreSQL database dump complete
 --
 
-\unrestrict gT9bm4lKrie2NipUMkDYeTPg212mLiIzdJLhmZk3Y0u2t2xQk5jUps2aNj5LauV
+\unrestrict rmK2YbKajqxF8Nx1L9eIjR1hPXUXRj0tBYPhbQEfkf9dc2JSM4eUOSx2oC2OvC2
 

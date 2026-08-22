@@ -42,11 +42,17 @@ pub struct BatchOptions {
     /// `TableStream::resolved_schema`/`read_table`'s returned
     /// [`crate::resolve::ResolvedSchema`] reports.
     pub schema_mode: SchemaMode,
+    /// Selects which database's table to query when the name alone is
+    /// ambiguous — matched against `DatabaseMetadata::name`
+    /// (`docs/design/roadmap-phase2-typed-columns.md`, "One target per
+    /// query"). `None` is the common case: a single-database dump, or a
+    /// cross-schema ambiguity a qualified name already resolves on its own.
+    pub database: Option<String>,
 }
 
 impl Default for BatchOptions {
     fn default() -> Self {
-        Self { max_rows: 8192, max_bytes: None, schema_mode: SchemaMode::default() }
+        Self { max_rows: 8192, max_bytes: None, schema_mode: SchemaMode::default(), database: None }
     }
 }
 

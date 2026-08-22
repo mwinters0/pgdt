@@ -112,10 +112,14 @@ pub enum TypeKind {
     /// will need.
     Composite { fields: Vec<(String, String)> },
     /// The subtype named in the `CREATE TYPE ... AS RANGE (...)` parameter
-    /// list, if the grammar found one. No fixture or koji evidence exercises
-    /// this shape (both use built-in range types), so this is best-effort
-    /// from `pg_dump` source reading alone.
-    Range { subtype: Option<String> },
+    /// list, if the grammar found one, plus the name of its auto-created
+    /// companion multirange type (PG14+), if the DDL named one explicitly
+    /// via `multirange_type_name` (I10, `docs/design/postgres-invariants.md`).
+    /// `pg_dump` never emits a `CREATE TYPE` for that companion at all — this
+    /// parameter is its only trace in the file, which is why `crate::pgtype`
+    /// needs it to resolve a column declared with that name instead of
+    /// falling through to `Unknown`.
+    Range { subtype: Option<String>, multirange_type_name: Option<String> },
     /// A C-level base type (`CREATE TYPE x (INPUT = ..., OUTPUT = ...)`) —
     /// information-free; the dump says how the *server* parses it.
     Base,
@@ -401,11 +405,19 @@ fn parse_create_type(rest: &str) -> Option<TypeDef> {
     if let Some(body) = strip_kw(after, "AS RANGE") {
         let open = body.find('(')?;
         let close = matching_paren(body.as_bytes(), open)?;
-        let subtype = split_top_level_commas(&body[open + 1..close]).into_iter().find_map(|kv| {
-            let (k, v) = kv.split_once('=')?;
-            k.trim().eq_ignore_ascii_case("subtype").then(|| v.trim().to_string())
-        });
-        return Some(TypeDef { name, kind: TypeKind::Range { subtype } });
+        let mut subtype = None;
+        let mut multirange_type_name = None;
+        for kv in split_top_level_commas(&body[open + 1..close]) {
+            let Some((k, v)) = kv.split_once('=') else { continue };
+            let k = k.trim();
+            let v = v.trim().to_string();
+            if k.eq_ignore_ascii_case("subtype") {
+                subtype = Some(v);
+            } else if k.eq_ignore_ascii_case("multirange_type_name") {
+                multirange_type_name = Some(v);
+            }
+        }
+        return Some(TypeDef { name, kind: TypeKind::Range { subtype, multirange_type_name } });
     }
     if let Some(body) = strip_kw(after, "AS") {
         let body = body.trim_start();
@@ -444,7 +456,13 @@ fn apply_alter_type_add_value(types: &mut [TypeDef], rest: &str) {
     }
 }
 
-fn parse_connect(line: &str) -> Option<String> {
+/// `\connect <name>` — a bare prefix check on a line the scanner already
+/// holds. Exposed to `crate::stream`'s live scan too (Phase 2.3.3,
+/// `docs/design/roadmap-phase2-typed-columns.md`, "One target per query"):
+/// tracking which database a `CopyBlock` belongs to needs only the name a
+/// `\connect` yields, never a column type, so it isn't "reading preamble as
+/// it goes" in the sense that section rules out.
+pub(crate) fn parse_connect(line: &str) -> Option<String> {
     let rest = line.trim_start().strip_prefix("\\connect ")?;
     Cursor::new(rest.trim().as_bytes()).parse_ident()
 }
@@ -533,6 +551,16 @@ impl PreambleBuilder {
     pub(crate) fn on_copy_start(&mut self) {
         self.pending = None;
         self.current.preamble_complete = true;
+    }
+
+    /// The database name in scope right now — `None` before any `\connect`
+    /// has been seen (a plain dump, or a `--create` dump's discarded
+    /// pre-`\connect` segment). Used to attribute a `CopyBlock` to the
+    /// database whose segment it falls in (`crate::index::build_index`,
+    /// `crate::stream::table_stream`'s live scan) — see "One target per
+    /// query" in `docs/design/roadmap-phase2-typed-columns.md`.
+    pub(crate) fn current_database_name(&self) -> Option<String> {
+        self.current.name.clone()
     }
 
     fn on_connect(&mut self, name: String) {
@@ -838,7 +866,31 @@ mod tests {
         let db = one_stmt(&[
             "CREATE TYPE public.myrange AS RANGE (subtype = int4, subtype_diff = int4mi);",
         ]);
-        assert_eq!(db.types[0].kind, TypeKind::Range { subtype: Some("int4".to_string()) });
+        assert_eq!(
+            db.types[0].kind,
+            TypeKind::Range { subtype: Some("int4".to_string()), multirange_type_name: None }
+        );
+    }
+
+    /// PG14+ real output (`fixtures/{14..18}/types/default.sql`): multi-line
+    /// body, multi-word subtype, and the `multirange_type_name` parameter
+    /// naming the auto-created companion type nothing else in the dump ever
+    /// declares (I10).
+    #[test]
+    fn parses_a_range_type_with_a_multirange_companion() {
+        let db = one_stmt(&[
+            "CREATE TYPE public.myrange AS RANGE (",
+            "    subtype = double precision,",
+            "    multirange_type_name = public.myrange_multi",
+            ");",
+        ]);
+        assert_eq!(
+            db.types[0].kind,
+            TypeKind::Range {
+                subtype: Some("double precision".to_string()),
+                multirange_type_name: Some("public.myrange_multi".to_string()),
+            }
+        );
     }
 
     #[test]

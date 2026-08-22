@@ -103,7 +103,12 @@ fn map_builtin(base: &str, typmod: Option<&str>) -> Option<TypeOutcome> {
         "bytea" => Binary,
         "json" | "jsonb" => Utf8View,
         "inet" | "cidr" | "macaddr" | "macaddr8" => Utf8View,
-        "int4range" | "int8range" | "numrange" | "tsrange" | "tstzrange" | "daterange" => {
+        // Built-in ranges, and their PG14+ multirange counterparts (I10):
+        // both appear bare, never schema-qualified, so both need this table
+        // rather than the user-defined lookup below (I8).
+        "int4range" | "int8range" | "numrange" | "tsrange" | "tstzrange" | "daterange"
+        | "int4multirange" | "int8multirange" | "nummultirange" | "tsmultirange"
+        | "tstzmultirange" | "datemultirange" => {
             return Some(TypeOutcome::Deferred(DeferredKind::Range));
         }
         _ => return None,
@@ -117,7 +122,21 @@ fn map_builtin(base: &str, typmod: Option<&str>) -> Option<TypeOutcome> {
 /// domain), and always finite: PostgreSQL cannot create a domain over a type
 /// that does not exist yet, so there is no cycle to guard against.
 fn resolve_user_type(name: &str, types: &[TypeDef]) -> TypeOutcome {
-    let Some(def) = types.iter().find(|t| t.name == name) else { return TypeOutcome::Unknown };
+    let Some(def) = types.iter().find(|t| t.name == name) else {
+        // Not a type of its own — but it might be a range's auto-created
+        // multirange companion, which `pg_dump` never emits a `CREATE TYPE`
+        // for at all (I10). Its only trace in the file is the
+        // `multirange_type_name` parameter inside the range's own DDL, so
+        // that's the only place left to look.
+        let is_multirange_companion = types.iter().any(|t| {
+            matches!(&t.kind, TypeKind::Range { multirange_type_name: Some(n), .. } if n == name)
+        });
+        return if is_multirange_companion {
+            TypeOutcome::Deferred(DeferredKind::Range)
+        } else {
+            TypeOutcome::Unknown
+        };
+    };
     match &def.kind {
         TypeKind::Enum { labels } if labels.is_empty() => TypeOutcome::EmptyEnum,
         TypeKind::Enum { .. } => TypeOutcome::Mapped(DataType::Dictionary(
@@ -291,7 +310,7 @@ mod tests {
     fn composite_and_range_are_deferred() {
         let types = [
             ty("public.point2d", TypeKind::Composite { fields: vec![] }),
-            ty("public.myrange", TypeKind::Range { subtype: None }),
+            ty("public.myrange", TypeKind::Range { subtype: None, multirange_type_name: None }),
         ];
         assert_eq!(
             resolve_declared_type("public.point2d", &types),
@@ -301,6 +320,47 @@ mod tests {
             resolve_declared_type("public.myrange", &types),
             TypeOutcome::Deferred(DeferredKind::Range)
         );
+    }
+
+    #[test]
+    fn builtin_multirange_types_are_deferred_not_unknown() {
+        for declared in [
+            "int4multirange",
+            "int8multirange",
+            "nummultirange",
+            "tsmultirange",
+            "tstzmultirange",
+            "datemultirange",
+        ] {
+            assert_eq!(
+                resolve_declared_type(declared, &[]),
+                TypeOutcome::Deferred(DeferredKind::Range),
+                "{declared}"
+            );
+        }
+    }
+
+    /// I10: a user range's auto-created multirange companion has no
+    /// `CREATE TYPE` of its own anywhere in the dump — its only trace is the
+    /// `multirange_type_name` parameter inside the range's own DDL, so a
+    /// column declared with that companion name must still resolve, not
+    /// fall through to `Unknown`.
+    #[test]
+    fn a_ranges_multirange_companion_resolves_even_with_no_type_def_of_its_own() {
+        let types = [ty(
+            "public.myrange",
+            TypeKind::Range {
+                subtype: Some("double precision".to_string()),
+                multirange_type_name: Some("public.myrange_multi".to_string()),
+            },
+        )];
+        assert_eq!(
+            resolve_declared_type("public.myrange_multi", &types),
+            TypeOutcome::Deferred(DeferredKind::Range)
+        );
+        // A name that merely resembles a companion but isn't named by any
+        // range's `multirange_type_name` stays `Unknown`.
+        assert_eq!(resolve_declared_type("public.not_a_companion", &types), TypeOutcome::Unknown);
     }
 
     #[test]
