@@ -21,8 +21,12 @@ Last updated: 2026-08-22.
 
 ## Phase 2 progress
 
-- [ ] **2.0** Generate `fixtures/*/types/` and validate the mapping table
-      against what `pg_dump` actually emits (no code; do this first)
+- [x] **2.0** Generate `fixtures/*/types/` and validate the mapping table
+      against what `pg_dump` actually emits — no changes needed to the
+      mapping table itself; two clarifications added to the phase doc (`NaN`
+      reachable via any `numeric` column, `infinity`/`-infinity` reachable via
+      `date` too). Notes:
+      `docs/design/roadmap-phase2.0-fixture-validation-notes.md`
 - [ ] **2.1** Dollar-quote tracking in the scanner
 - [ ] **2.2** Preamble parsing, `DumpMetadata`, cache persistence, `pgdq info`
 - [ ] **2.3** Type resolution, `ResolvedSchema`, diagnostics (still all-`Utf8View`)

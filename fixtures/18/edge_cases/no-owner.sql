@@ -2,14 +2,15 @@
 -- PostgreSQL database dump
 --
 
-\restrict bMe8jmb5uSPwcaknJgtrnlV5lLTp4Z1p5MCVuNI67EU7NvmvUfCw0X9MySau3Iq
+\restrict cnA4LQccnTCSHSIjvAbCbQIwnn8mQhaaB2VwOA6LmbFqmQg1D9eb8lgD2iPNv7Q
 
--- Dumped from database version 13.23
--- Dumped by pg_dump version 13.23
+-- Dumped from database version 18.6
+-- Dumped by pg_dump version 18.6
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
+SET transaction_timeout = 0;
 SET client_encoding = 'UTF8';
 SET standard_conforming_strings = on;
 SELECT pg_catalog.set_config('search_path', '', false);
@@ -42,6 +43,17 @@ CREATE TABLE logs.events (
 
 
 --
+-- Name: dropped_column; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.dropped_column (
+    id integer NOT NULL,
+    keep_me text,
+    also_keep boolean
+);
+
+
+--
 -- Name: empty_table; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -58,6 +70,18 @@ CREATE TABLE public.empty_table (
 CREATE TABLE public.escapes (
     codepoint integer NOT NULL,
     value text NOT NULL
+);
+
+
+--
+-- Name: generated_column; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.generated_column (
+    id integer NOT NULL,
+    a integer,
+    b integer,
+    total integer GENERATED ALWAYS AS ((a + b)) STORED
 );
 
 
@@ -79,9 +103,19 @@ CREATE TABLE public.widgets (
 --
 
 COPY logs.events (event_id, widget_id, message, logged_at) FROM stdin;
-100	1	created	2026-08-22 00:17:40.563857+00
-101	2	\N	2026-08-22 00:17:40.563857+00
-102	3	updated\twith a tab char	2026-08-22 00:17:40.563857+00
+100	1	created	2026-08-22 07:25:58.730192+00
+101	2	\N	2026-08-22 07:25:58.730192+00
+102	3	updated\twith a tab char	2026-08-22 07:25:58.730192+00
+\.
+
+
+--
+-- Data for Name: dropped_column; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+COPY public.dropped_column (id, keep_me, also_keep) FROM stdin;
+1	x	t
+2	y	f
 \.
 
 
@@ -234,6 +268,16 @@ COPY public.escapes (codepoint, value) FROM stdin;
 
 
 --
+-- Data for Name: generated_column; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+COPY public.generated_column (id, a, b) FROM stdin;
+1	2	3
+2	10	-4
+\.
+
+
+--
 -- Data for Name: widgets; Type: TABLE DATA; Schema: public; Owner: -
 --
 
@@ -255,6 +299,14 @@ ALTER TABLE ONLY logs.events
 
 
 --
+-- Name: dropped_column dropped_column_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dropped_column
+    ADD CONSTRAINT dropped_column_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: empty_table empty_table_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -268,6 +320,14 @@ ALTER TABLE ONLY public.empty_table
 
 ALTER TABLE ONLY public.escapes
     ADD CONSTRAINT escapes_pkey PRIMARY KEY (codepoint);
+
+
+--
+-- Name: generated_column generated_column_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.generated_column
+    ADD CONSTRAINT generated_column_pkey PRIMARY KEY (id);
 
 
 --
@@ -290,5 +350,5 @@ ALTER TABLE ONLY logs.events
 -- PostgreSQL database dump complete
 --
 
-\unrestrict bMe8jmb5uSPwcaknJgtrnlV5lLTp4Z1p5MCVuNI67EU7NvmvUfCw0X9MySau3Iq
+\unrestrict cnA4LQccnTCSHSIjvAbCbQIwnn8mQhaaB2VwOA6LmbFqmQg1D9eb8lgD2iPNv7Q
 

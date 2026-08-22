@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict M5iSiyvjxhKriih7ZkIe3RISTigG4nJS0jfIOqHzwfHWJZIBlbW0ScI14EGhBW7
+\restrict sYCHrTgggb5EO5CXMTu6bpP6PgO6BbqdbqYokjRiObY3k31A32s3gbISzVFQmXZ
 
 -- Dumped from database version 13.23
 -- Dumped by pg_dump version 13.23
@@ -18,31 +18,19 @@ SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
 
-ALTER TABLE IF EXISTS ONLY logs.events DROP CONSTRAINT IF EXISTS events_widget_id_fkey;
-ALTER TABLE IF EXISTS ONLY public.widgets DROP CONSTRAINT IF EXISTS widgets_pkey;
-ALTER TABLE IF EXISTS ONLY public.escapes DROP CONSTRAINT IF EXISTS escapes_pkey;
-ALTER TABLE IF EXISTS ONLY public.empty_table DROP CONSTRAINT IF EXISTS empty_table_pkey;
-ALTER TABLE IF EXISTS ONLY logs.events DROP CONSTRAINT IF EXISTS events_pkey;
-DROP TABLE IF EXISTS public.widgets;
-DROP TABLE IF EXISTS public.escapes;
-DROP TABLE IF EXISTS public.empty_table;
-DROP TABLE IF EXISTS logs.events;
-DROP SCHEMA IF EXISTS logs;
 --
--- Name: logs; Type: SCHEMA; Schema: -; Owner: postgres
+-- Name: logs; Type: SCHEMA; Schema: -; Owner: -
 --
 
 CREATE SCHEMA logs;
 
-
-ALTER SCHEMA logs OWNER TO postgres;
 
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
 
 --
--- Name: events; Type: TABLE; Schema: logs; Owner: postgres
+-- Name: events; Type: TABLE; Schema: logs; Owner: -
 --
 
 CREATE TABLE logs.events (
@@ -53,10 +41,19 @@ CREATE TABLE logs.events (
 );
 
 
-ALTER TABLE logs.events OWNER TO postgres;
+--
+-- Name: dropped_column; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.dropped_column (
+    id integer NOT NULL,
+    keep_me text,
+    also_keep boolean
+);
+
 
 --
--- Name: empty_table; Type: TABLE; Schema: public; Owner: postgres
+-- Name: empty_table; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.empty_table (
@@ -65,10 +62,8 @@ CREATE TABLE public.empty_table (
 );
 
 
-ALTER TABLE public.empty_table OWNER TO postgres;
-
 --
--- Name: escapes; Type: TABLE; Schema: public; Owner: postgres
+-- Name: escapes; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.escapes (
@@ -77,10 +72,20 @@ CREATE TABLE public.escapes (
 );
 
 
-ALTER TABLE public.escapes OWNER TO postgres;
+--
+-- Name: generated_column; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.generated_column (
+    id integer NOT NULL,
+    a integer,
+    b integer,
+    total integer GENERATED ALWAYS AS ((a + b)) STORED
+);
+
 
 --
--- Name: widgets; Type: TABLE; Schema: public; Owner: postgres
+-- Name: widgets; Type: TABLE; Schema: public; Owner: -
 --
 
 CREATE TABLE public.widgets (
@@ -92,21 +97,29 @@ CREATE TABLE public.widgets (
 );
 
 
-ALTER TABLE public.widgets OWNER TO postgres;
-
 --
--- Data for Name: events; Type: TABLE DATA; Schema: logs; Owner: postgres
+-- Data for Name: events; Type: TABLE DATA; Schema: logs; Owner: -
 --
 
 COPY logs.events (event_id, widget_id, message, logged_at) FROM stdin;
-100	1	created	2026-08-22 00:17:40.563857+00
-101	2	\N	2026-08-22 00:17:40.563857+00
-102	3	updated\twith a tab char	2026-08-22 00:17:40.563857+00
+100	1	created	2026-08-22 07:25:42.095738+00
+101	2	\N	2026-08-22 07:25:42.095738+00
+102	3	updated\twith a tab char	2026-08-22 07:25:42.095738+00
 \.
 
 
 --
--- Data for Name: empty_table; Type: TABLE DATA; Schema: public; Owner: postgres
+-- Data for Name: dropped_column; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+COPY public.dropped_column (id, keep_me, also_keep) FROM stdin;
+1	x	t
+2	y	f
+\.
+
+
+--
+-- Data for Name: empty_table; Type: TABLE DATA; Schema: public; Owner: -
 --
 
 COPY public.empty_table (id, value) FROM stdin;
@@ -114,7 +127,7 @@ COPY public.empty_table (id, value) FROM stdin;
 
 
 --
--- Data for Name: escapes; Type: TABLE DATA; Schema: public; Owner: postgres
+-- Data for Name: escapes; Type: TABLE DATA; Schema: public; Owner: -
 --
 
 COPY public.escapes (codepoint, value) FROM stdin;
@@ -254,7 +267,17 @@ COPY public.escapes (codepoint, value) FROM stdin;
 
 
 --
--- Data for Name: widgets; Type: TABLE DATA; Schema: public; Owner: postgres
+-- Data for Name: generated_column; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+COPY public.generated_column (id, a, b) FROM stdin;
+1	2	3
+2	10	-4
+\.
+
+
+--
+-- Data for Name: widgets; Type: TABLE DATA; Schema: public; Owner: -
 --
 
 COPY public.widgets (id, name, description, is_active, created_at) FROM stdin;
@@ -267,7 +290,7 @@ COPY public.widgets (id, name, description, is_active, created_at) FROM stdin;
 
 
 --
--- Name: events events_pkey; Type: CONSTRAINT; Schema: logs; Owner: postgres
+-- Name: events events_pkey; Type: CONSTRAINT; Schema: logs; Owner: -
 --
 
 ALTER TABLE ONLY logs.events
@@ -275,7 +298,15 @@ ALTER TABLE ONLY logs.events
 
 
 --
--- Name: empty_table empty_table_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: dropped_column dropped_column_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dropped_column
+    ADD CONSTRAINT dropped_column_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: empty_table empty_table_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.empty_table
@@ -283,7 +314,7 @@ ALTER TABLE ONLY public.empty_table
 
 
 --
--- Name: escapes escapes_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: escapes escapes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.escapes
@@ -291,7 +322,15 @@ ALTER TABLE ONLY public.escapes
 
 
 --
--- Name: widgets widgets_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+-- Name: generated_column generated_column_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.generated_column
+    ADD CONSTRAINT generated_column_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: widgets widgets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.widgets
@@ -299,7 +338,7 @@ ALTER TABLE ONLY public.widgets
 
 
 --
--- Name: events events_widget_id_fkey; Type: FK CONSTRAINT; Schema: logs; Owner: postgres
+-- Name: events events_widget_id_fkey; Type: FK CONSTRAINT; Schema: logs; Owner: -
 --
 
 ALTER TABLE ONLY logs.events
@@ -310,5 +349,5 @@ ALTER TABLE ONLY logs.events
 -- PostgreSQL database dump complete
 --
 
-\unrestrict M5iSiyvjxhKriih7ZkIe3RISTigG4nJS0jfIOqHzwfHWJZIBlbW0ScI14EGhBW7
+\unrestrict sYCHrTgggb5EO5CXMTu6bpP6PgO6BbqdbqYokjRiObY3k31A32s3gbISzVFQmXZ
 

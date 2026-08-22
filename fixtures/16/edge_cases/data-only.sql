@@ -2,10 +2,10 @@
 -- PostgreSQL database dump
 --
 
-\restrict gYsVvacKNEkcXapzKPIGgWf9YpAvyZrrRb4w9eLzmdX7j0JzOZaC3iOqviwW6pz
+\restrict 1f5gt2yPEAsDMUAN9chGyT06lReOa4EMNJyo936AVdwkNA0f1RHxCzk1Ngueg1V
 
--- Dumped from database version 13.23
--- Dumped by pg_dump version 13.23
+-- Dumped from database version 16.15
+-- Dumped by pg_dump version 16.15
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -36,9 +36,19 @@ COPY public.widgets (id, name, description, is_active, created_at) FROM stdin;
 --
 
 COPY logs.events (event_id, widget_id, message, logged_at) FROM stdin;
-100	1	created	2026-08-22 00:17:40.563857+00
-101	2	\N	2026-08-22 00:17:40.563857+00
-102	3	updated\twith a tab char	2026-08-22 00:17:40.563857+00
+100	1	created	2026-08-22 07:25:51.336962+00
+101	2	\N	2026-08-22 07:25:51.336962+00
+102	3	updated\twith a tab char	2026-08-22 07:25:51.336962+00
+\.
+
+
+--
+-- Data for Name: dropped_column; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.dropped_column (id, keep_me, also_keep) FROM stdin;
+1	x	t
+2	y	f
 \.
 
 
@@ -191,8 +201,18 @@ COPY public.escapes (codepoint, value) FROM stdin;
 
 
 --
+-- Data for Name: generated_column; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.generated_column (id, a, b) FROM stdin;
+1	2	3
+2	10	-4
+\.
+
+
+--
 -- PostgreSQL database dump complete
 --
 
-\unrestrict gYsVvacKNEkcXapzKPIGgWf9YpAvyZrrRb4w9eLzmdX7j0JzOZaC3iOqviwW6pz
+\unrestrict 1f5gt2yPEAsDMUAN9chGyT06lReOa4EMNJyo936AVdwkNA0f1RHxCzk1Ngueg1V
 

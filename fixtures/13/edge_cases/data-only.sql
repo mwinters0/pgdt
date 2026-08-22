@@ -2,15 +2,14 @@
 -- PostgreSQL database dump
 --
 
-\restrict ngXR8MRnk0Mk25hDc1vNPwXzNvcgjEWxKoWauFJ0xE1aghf9khFPU2KoDte3K0o
+\restrict CHfbNV31mogr3X28wx2pp01X1ywzx1hykrUGgoFNEjZ2MhEFjAADdB6uRpxUJUS
 
--- Dumped from database version 18.6
--- Dumped by pg_dump version 18.6
+-- Dumped from database version 13.23
+-- Dumped by pg_dump version 13.23
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
-SET transaction_timeout = 0;
 SET client_encoding = 'UTF8';
 SET standard_conforming_strings = on;
 SELECT pg_catalog.set_config('search_path', '', false);
@@ -37,9 +36,19 @@ COPY public.widgets (id, name, description, is_active, created_at) FROM stdin;
 --
 
 COPY logs.events (event_id, widget_id, message, logged_at) FROM stdin;
-100	1	created	2026-08-22 00:17:53.197238+00
-101	2	\N	2026-08-22 00:17:53.197238+00
-102	3	updated\twith a tab char	2026-08-22 00:17:53.197238+00
+100	1	created	2026-08-22 07:25:42.095738+00
+101	2	\N	2026-08-22 07:25:42.095738+00
+102	3	updated\twith a tab char	2026-08-22 07:25:42.095738+00
+\.
+
+
+--
+-- Data for Name: dropped_column; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.dropped_column (id, keep_me, also_keep) FROM stdin;
+1	x	t
+2	y	f
 \.
 
 
@@ -192,8 +201,18 @@ COPY public.escapes (codepoint, value) FROM stdin;
 
 
 --
+-- Data for Name: generated_column; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.generated_column (id, a, b) FROM stdin;
+1	2	3
+2	10	-4
+\.
+
+
+--
 -- PostgreSQL database dump complete
 --
 
-\unrestrict ngXR8MRnk0Mk25hDc1vNPwXzNvcgjEWxKoWauFJ0xE1aghf9khFPU2KoDte3K0o
+\unrestrict CHfbNV31mogr3X28wx2pp01X1ywzx1hykrUGgoFNEjZ2MhEFjAADdB6uRpxUJUS
 

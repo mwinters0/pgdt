@@ -2,14 +2,15 @@
 -- PostgreSQL database dump
 --
 
-\restrict PpMyCdUGs5hyVDfW2vtDyvCb08sFpjVh68WFH3DdOrW0v4I1YXb8O6oiNapadoR
+\restrict hp2IRvsqGNz6INJ1EF9dV5vd0F2MI8yHVgdCyUdNaTfemqjs9zpvGwOVpu52fDM
 
--- Dumped from database version 16.15
--- Dumped by pg_dump version 16.15
+-- Dumped from database version 18.6
+-- Dumped by pg_dump version 18.6
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
+SET transaction_timeout = 0;
 SET client_encoding = 'UTF8';
 SET standard_conforming_strings = on;
 SELECT pg_catalog.set_config('search_path', '', false);
@@ -46,6 +47,19 @@ CREATE TABLE logs.events (
 ALTER TABLE logs.events OWNER TO postgres;
 
 --
+-- Name: dropped_column; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.dropped_column (
+    id integer NOT NULL,
+    keep_me text,
+    also_keep boolean
+);
+
+
+ALTER TABLE public.dropped_column OWNER TO postgres;
+
+--
 -- Name: empty_table; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -68,6 +82,20 @@ CREATE TABLE public.escapes (
 
 
 ALTER TABLE public.escapes OWNER TO postgres;
+
+--
+-- Name: generated_column; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.generated_column (
+    id integer NOT NULL,
+    a integer,
+    b integer,
+    total integer GENERATED ALWAYS AS ((a + b)) STORED
+);
+
+
+ALTER TABLE public.generated_column OWNER TO postgres;
 
 --
 -- Name: widgets; Type: TABLE; Schema: public; Owner: postgres
@@ -93,6 +121,14 @@ ALTER TABLE ONLY logs.events
 
 
 --
+-- Name: dropped_column dropped_column_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.dropped_column
+    ADD CONSTRAINT dropped_column_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: empty_table empty_table_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -106,6 +142,14 @@ ALTER TABLE ONLY public.empty_table
 
 ALTER TABLE ONLY public.escapes
     ADD CONSTRAINT escapes_pkey PRIMARY KEY (codepoint);
+
+
+--
+-- Name: generated_column generated_column_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.generated_column
+    ADD CONSTRAINT generated_column_pkey PRIMARY KEY (id);
 
 
 --
@@ -128,5 +172,5 @@ ALTER TABLE ONLY logs.events
 -- PostgreSQL database dump complete
 --
 
-\unrestrict PpMyCdUGs5hyVDfW2vtDyvCb08sFpjVh68WFH3DdOrW0v4I1YXb8O6oiNapadoR
+\unrestrict hp2IRvsqGNz6INJ1EF9dV5vd0F2MI8yHVgdCyUdNaTfemqjs9zpvGwOVpu52fDM
 

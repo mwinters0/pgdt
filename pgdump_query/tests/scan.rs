@@ -16,6 +16,7 @@ fn fixture(version: u32, name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../fixtures")
         .join(version.to_string())
+        .join("edge_cases")
         .join(format!("{name}.sql"))
 }
 
@@ -98,8 +99,10 @@ async fn generated_fixtures_have_the_expected_structure() {
 
         let expected: Vec<(String, String, u64)> = [
             ("logs.events", "event_id,widget_id,message,logged_at", 3),
+            ("public.dropped_column", "id,keep_me,also_keep", 2),
             ("public.empty_table", "id,value", 0),
             ("public.escapes", "codepoint,value", 132),
+            ("public.generated_column", "id,a,b", 2),
             ("public.widgets", "id,name,description,is_active,created_at", 5),
         ]
         .into_iter()
@@ -107,7 +110,7 @@ async fn generated_fixtures_have_the_expected_structure() {
         .collect();
 
         assert_eq!(summary, expected, "pg_dump {version} default fixture");
-        assert_eq!(index.total_rows(), 140);
+        assert_eq!(index.total_rows(), 144);
         assert_eq!(
             index.scanned_through,
             std::fs::metadata(fixture(version, "default")).unwrap().len()
@@ -157,8 +160,8 @@ async fn data_only_dumps_carry_every_block() {
     for version in [13, 16, 18] {
         let source = LocalFileSource::open(fixture(version, "data-only")).unwrap();
         let index = build_index(&source, &ScanOptions::default()).await.unwrap();
-        assert_eq!(index.blocks.len(), 4, "pg_dump {version} data-only");
-        assert_eq!(index.total_rows(), 140);
+        assert_eq!(index.blocks.len(), 6, "pg_dump {version} data-only");
+        assert_eq!(index.total_rows(), 144);
     }
 }
 

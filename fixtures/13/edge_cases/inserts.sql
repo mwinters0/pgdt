@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict mgjIhSacE67zKZWHrcxT4stYR4b2WiMRxb70rPUFMlnaMNN87cgiRfgCgxB0ayR
+\restrict iyrmbC9NUs9fNHcIK97Vm8MLw3vQsZfM6wxeVwUpR3X8Pg7T1PC1xGiVyzfS44c
 
 -- Dumped from database version 13.23
 -- Dumped by pg_dump version 13.23
@@ -46,6 +46,19 @@ CREATE TABLE logs.events (
 ALTER TABLE logs.events OWNER TO postgres;
 
 --
+-- Name: dropped_column; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.dropped_column (
+    id integer NOT NULL,
+    keep_me text,
+    also_keep boolean
+);
+
+
+ALTER TABLE public.dropped_column OWNER TO postgres;
+
+--
 -- Name: empty_table; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -70,6 +83,20 @@ CREATE TABLE public.escapes (
 ALTER TABLE public.escapes OWNER TO postgres;
 
 --
+-- Name: generated_column; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.generated_column (
+    id integer NOT NULL,
+    a integer,
+    b integer,
+    total integer GENERATED ALWAYS AS ((a + b)) STORED
+);
+
+
+ALTER TABLE public.generated_column OWNER TO postgres;
+
+--
 -- Name: widgets; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -88,9 +115,17 @@ ALTER TABLE public.widgets OWNER TO postgres;
 -- Data for Name: events; Type: TABLE DATA; Schema: logs; Owner: postgres
 --
 
-INSERT INTO logs.events VALUES (100, 1, 'created', '2026-08-22 00:17:40.563857+00');
-INSERT INTO logs.events VALUES (101, 2, NULL, '2026-08-22 00:17:40.563857+00');
-INSERT INTO logs.events VALUES (102, 3, 'updated	with a tab char', '2026-08-22 00:17:40.563857+00');
+INSERT INTO logs.events VALUES (100, 1, 'created', '2026-08-22 07:25:42.095738+00');
+INSERT INTO logs.events VALUES (101, 2, NULL, '2026-08-22 07:25:42.095738+00');
+INSERT INTO logs.events VALUES (102, 3, 'updated	with a tab char', '2026-08-22 07:25:42.095738+00');
+
+
+--
+-- Data for Name: dropped_column; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO public.dropped_column VALUES (1, 'x', true);
+INSERT INTO public.dropped_column VALUES (2, 'y', false);
 
 
 --
@@ -240,6 +275,14 @@ INSERT INTO public.escapes VALUES (128169, '💩');
 
 
 --
+-- Data for Name: generated_column; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO public.generated_column VALUES (1, 2, 3, DEFAULT);
+INSERT INTO public.generated_column VALUES (2, 10, -4, DEFAULT);
+
+
+--
 -- Data for Name: widgets; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
@@ -260,6 +303,14 @@ ALTER TABLE ONLY logs.events
 
 
 --
+-- Name: dropped_column dropped_column_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.dropped_column
+    ADD CONSTRAINT dropped_column_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: empty_table empty_table_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -273,6 +324,14 @@ ALTER TABLE ONLY public.empty_table
 
 ALTER TABLE ONLY public.escapes
     ADD CONSTRAINT escapes_pkey PRIMARY KEY (codepoint);
+
+
+--
+-- Name: generated_column generated_column_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.generated_column
+    ADD CONSTRAINT generated_column_pkey PRIMARY KEY (id);
 
 
 --
@@ -295,5 +354,5 @@ ALTER TABLE ONLY logs.events
 -- PostgreSQL database dump complete
 --
 
-\unrestrict mgjIhSacE67zKZWHrcxT4stYR4b2WiMRxb70rPUFMlnaMNN87cgiRfgCgxB0ayR
+\unrestrict iyrmbC9NUs9fNHcIK97Vm8MLw3vQsZfM6wxeVwUpR3X8Pg7T1PC1xGiVyzfS44c
 

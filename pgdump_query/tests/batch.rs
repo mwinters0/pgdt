@@ -19,6 +19,7 @@ fn fixture(version: u32, name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../fixtures")
         .join(version.to_string())
+        .join("edge_cases")
         .join(format!("{name}.sql"))
 }
 

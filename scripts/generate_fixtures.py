@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Generate pg_dump fixture files across PostgreSQL versions and flag combos.
 
-Backs docs/design/roadmap-phase1-mvp.md ("Testing & fixtures") and the
-tested/untested matrix in docs/design/pg-dump-compatibility.md. Spins up a
+Backs docs/design/roadmap-phase1-mvp.md ("Testing & fixtures"), the
+tested/untested matrix in docs/design/pg-dump-compatibility.md, and
+docs/design/roadmap-phase2-typed-columns.md ("Fixtures"). Spins up a
 throwaway, memory-limited Postgres container per version (never a host-run
-process, per this repo's CPU-heavy-machine / glibc-arena caution), loads
-fixture_schema_edge_cases.sql, runs pg_dump across a flag matrix, and writes
-the output under fixtures/<major-version>/<flag-set>.sql.
+process, per this repo's CPU-heavy-machine / glibc-arena caution), loads one
+of two fixture schemas, runs pg_dump across each schema's own flag matrix, and
+writes the output under fixtures/<major-version>/<schema>/<flag-set>.sql.
 
 Requires `docker` (aliased to `nerdctl` in this environment) runnable via
 passwordless `sudo`.
@@ -22,7 +23,6 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
-SCHEMA_FILE = SCRIPT_DIR / "fixture_schema_edge_cases.sql"
 FIXTURES_DIR = REPO_ROOT / "fixtures"
 
 DOCKER = ["sudo", "-n", "docker"]
@@ -42,15 +42,30 @@ ROUTINE_VERSIONS = {
 DB_NAME = "pgdq_fixture"
 DB_USER = "postgres"
 
-FLAG_SETS: dict[str, list[str]] = {
-    "default": [],
-    "data-only": ["--data-only"],
-    "schema-only": ["--schema-only"],
-    "no-owner": ["--no-owner", "--no-privileges"],
-    "clean-if-exists": ["--clean", "--if-exists"],
-    "inserts": ["--inserts"],
-    "column-inserts": ["--column-inserts"],
+# Each schema exercises a different concern and so wants a different flag
+# list -- see docs/design/roadmap-phase2-typed-columns.md ("Fixtures") for
+# why the split exists and why each gets exactly this set.
+SCHEMAS: dict[str, dict[str, list[str]]] = {
+    "edge_cases": {
+        "default": [],
+        "data-only": ["--data-only"],
+        "schema-only": ["--schema-only"],
+        "no-owner": ["--no-owner", "--no-privileges"],
+        "clean-if-exists": ["--clean", "--if-exists"],
+        "inserts": ["--inserts"],
+        "column-inserts": ["--column-inserts"],
+        "binary-upgrade": ["--binary-upgrade"],
+    },
+    "types": {
+        "default": [],
+        "data-only": ["--data-only"],
+        "binary-upgrade": ["--binary-upgrade"],
+    },
 }
+
+
+def schema_file(schema: str) -> Path:
+    return SCRIPT_DIR / f"fixture_schema_{schema}.sql"
 
 
 def run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
@@ -97,7 +112,7 @@ def wait_ready(name: str, timeout: float = 30.0) -> None:
     raise TimeoutError(f"postgres in container {name} did not become ready in {timeout}s")
 
 
-def create_fixture_db(name: str, attempts: int = 10, delay: float = 1.0) -> None:
+def create_fixture_db(name: str, schema: str, attempts: int = 10, delay: float = 1.0) -> None:
     # The official postgres image briefly starts a *temporary* instance to
     # run init scripts before restarting for real; pg_isready can succeed
     # against that transient instance. Retry the actual DDL-capable command
@@ -113,7 +128,7 @@ def create_fixture_db(name: str, attempts: int = 10, delay: float = 1.0) -> None
             time.sleep(delay)
     if last_error is not None:
         raise last_error
-    schema_sql = SCHEMA_FILE.read_text()
+    schema_sql = schema_file(schema).read_text()
     run(
         DOCKER
         + ["exec", "-i", name, "psql", "-U", DB_USER, "-d", DB_NAME, "-v", "ON_ERROR_STOP=1"],
@@ -123,8 +138,12 @@ def create_fixture_db(name: str, attempts: int = 10, delay: float = 1.0) -> None
     )
 
 
-def dump_flag_set(name: str, version: str, flag_name: str, flags: list[str]) -> Path:
-    out_dir = FIXTURES_DIR / version
+def drop_fixture_db(name: str) -> None:
+    run(DOCKER + ["exec", name, "dropdb", "-U", DB_USER, DB_NAME], capture_output=True)
+
+
+def dump_flag_set(name: str, version: str, schema: str, flag_name: str, flags: list[str]) -> Path:
+    out_dir = FIXTURES_DIR / version / schema
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{flag_name}.sql"
     result = run(
@@ -140,16 +159,18 @@ def stop_container(name: str) -> None:
     subprocess.run(DOCKER + ["rm", "-f", name], capture_output=True)
 
 
-def generate_for_version(version: str, image: str) -> None:
+def generate_for_version(version: str, image: str, schemas: list[str]) -> None:
     print(f"== {version} ({image}) ==")
     name = start_container(version, image)
     try:
         wait_ready(name)
-        create_fixture_db(name)
-        for flag_name, flags in FLAG_SETS.items():
-            out_path = dump_flag_set(name, version, flag_name, flags)
-            size = out_path.stat().st_size
-            print(f"  {flag_name}: {out_path.relative_to(REPO_ROOT)} ({size} bytes)")
+        for schema in schemas:
+            create_fixture_db(name, schema)
+            for flag_name, flags in SCHEMAS[schema].items():
+                out_path = dump_flag_set(name, version, schema, flag_name, flags)
+                size = out_path.stat().st_size
+                print(f"  {schema}/{flag_name}: {out_path.relative_to(REPO_ROOT)} ({size} bytes)")
+            drop_fixture_db(name)
     finally:
         stop_container(name)
 
@@ -163,11 +184,19 @@ def main() -> int:
         choices=sorted(ROUTINE_VERSIONS),
         help="limit to specific major version(s); default: all routine versions",
     )
+    parser.add_argument(
+        "--schema",
+        action="append",
+        dest="schemas",
+        choices=sorted(SCHEMAS),
+        help="limit to specific fixture schema(s); default: all schemas",
+    )
     args = parser.parse_args()
     versions = args.versions or sorted(ROUTINE_VERSIONS)
+    schemas = args.schemas or sorted(SCHEMAS)
 
     for version in versions:
-        generate_for_version(version, ROUTINE_VERSIONS[version])
+        generate_for_version(version, ROUTINE_VERSIONS[version], schemas)
 
     print("done.")
     return 0

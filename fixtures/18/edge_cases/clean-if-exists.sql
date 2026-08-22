@@ -2,14 +2,15 @@
 -- PostgreSQL database dump
 --
 
-\restrict k40DUV60wTES9zmLSL9UTizUWzX9nEbUPD6BQKheYqc6RWYDWH5DbCujFyYQfK5
+\restrict oP1OgLnlJMKhdbO6hoSst9eTNRfn45hj6AC10m4yy0EhsMQFb4eoFzPvOMypeWG
 
--- Dumped from database version 16.15
--- Dumped by pg_dump version 16.15
+-- Dumped from database version 18.6
+-- Dumped by pg_dump version 18.6
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
+SET transaction_timeout = 0;
 SET client_encoding = 'UTF8';
 SET standard_conforming_strings = on;
 SELECT pg_catalog.set_config('search_path', '', false);
@@ -18,6 +19,20 @@ SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
 
+ALTER TABLE IF EXISTS ONLY logs.events DROP CONSTRAINT IF EXISTS events_widget_id_fkey;
+ALTER TABLE IF EXISTS ONLY public.widgets DROP CONSTRAINT IF EXISTS widgets_pkey;
+ALTER TABLE IF EXISTS ONLY public.generated_column DROP CONSTRAINT IF EXISTS generated_column_pkey;
+ALTER TABLE IF EXISTS ONLY public.escapes DROP CONSTRAINT IF EXISTS escapes_pkey;
+ALTER TABLE IF EXISTS ONLY public.empty_table DROP CONSTRAINT IF EXISTS empty_table_pkey;
+ALTER TABLE IF EXISTS ONLY public.dropped_column DROP CONSTRAINT IF EXISTS dropped_column_pkey;
+ALTER TABLE IF EXISTS ONLY logs.events DROP CONSTRAINT IF EXISTS events_pkey;
+DROP TABLE IF EXISTS public.widgets;
+DROP TABLE IF EXISTS public.generated_column;
+DROP TABLE IF EXISTS public.escapes;
+DROP TABLE IF EXISTS public.empty_table;
+DROP TABLE IF EXISTS public.dropped_column;
+DROP TABLE IF EXISTS logs.events;
+DROP SCHEMA IF EXISTS logs;
 --
 -- Name: logs; Type: SCHEMA; Schema: -; Owner: postgres
 --
@@ -46,6 +61,19 @@ CREATE TABLE logs.events (
 ALTER TABLE logs.events OWNER TO postgres;
 
 --
+-- Name: dropped_column; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.dropped_column (
+    id integer NOT NULL,
+    keep_me text,
+    also_keep boolean
+);
+
+
+ALTER TABLE public.dropped_column OWNER TO postgres;
+
+--
 -- Name: empty_table; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -70,6 +98,20 @@ CREATE TABLE public.escapes (
 ALTER TABLE public.escapes OWNER TO postgres;
 
 --
+-- Name: generated_column; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.generated_column (
+    id integer NOT NULL,
+    a integer,
+    b integer,
+    total integer GENERATED ALWAYS AS ((a + b)) STORED
+);
+
+
+ALTER TABLE public.generated_column OWNER TO postgres;
+
+--
 -- Name: widgets; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -89,9 +131,19 @@ ALTER TABLE public.widgets OWNER TO postgres;
 --
 
 COPY logs.events (event_id, widget_id, message, logged_at) FROM stdin;
-100	1	created	2026-08-22 00:17:46.987006+00
-101	2	\N	2026-08-22 00:17:46.987006+00
-102	3	updated\twith a tab char	2026-08-22 00:17:46.987006+00
+100	1	created	2026-08-22 07:25:58.730192+00
+101	2	\N	2026-08-22 07:25:58.730192+00
+102	3	updated\twith a tab char	2026-08-22 07:25:58.730192+00
+\.
+
+
+--
+-- Data for Name: dropped_column; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.dropped_column (id, keep_me, also_keep) FROM stdin;
+1	x	t
+2	y	f
 \.
 
 
@@ -244,6 +296,16 @@ COPY public.escapes (codepoint, value) FROM stdin;
 
 
 --
+-- Data for Name: generated_column; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.generated_column (id, a, b) FROM stdin;
+1	2	3
+2	10	-4
+\.
+
+
+--
 -- Data for Name: widgets; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
@@ -265,6 +327,14 @@ ALTER TABLE ONLY logs.events
 
 
 --
+-- Name: dropped_column dropped_column_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.dropped_column
+    ADD CONSTRAINT dropped_column_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: empty_table empty_table_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -278,6 +348,14 @@ ALTER TABLE ONLY public.empty_table
 
 ALTER TABLE ONLY public.escapes
     ADD CONSTRAINT escapes_pkey PRIMARY KEY (codepoint);
+
+
+--
+-- Name: generated_column generated_column_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.generated_column
+    ADD CONSTRAINT generated_column_pkey PRIMARY KEY (id);
 
 
 --
@@ -300,5 +378,5 @@ ALTER TABLE ONLY logs.events
 -- PostgreSQL database dump complete
 --
 
-\unrestrict k40DUV60wTES9zmLSL9UTizUWzX9nEbUPD6BQKheYqc6RWYDWH5DbCujFyYQfK5
+\unrestrict oP1OgLnlJMKhdbO6hoSst9eTNRfn45hj6AC10m4yy0EhsMQFb4eoFzPvOMypeWG
 

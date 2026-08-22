@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict 7UZJ05ZWlFKxfYf6iQtMmj8u7rW3VWbtGS5qEZQQPXtU2yCP5hRw5ZUezZ6zesn
+\restrict tszTcTcn3tDlL9BOnSSlol1dbykqrBD1h3hHDAnasxzAzGWUvZmEr4T7Ak6l7kQ
 
 -- Dumped from database version 13.23
 -- Dumped by pg_dump version 13.23
@@ -46,6 +46,19 @@ CREATE TABLE logs.events (
 ALTER TABLE logs.events OWNER TO postgres;
 
 --
+-- Name: dropped_column; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.dropped_column (
+    id integer NOT NULL,
+    keep_me text,
+    also_keep boolean
+);
+
+
+ALTER TABLE public.dropped_column OWNER TO postgres;
+
+--
 -- Name: empty_table; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -68,6 +81,20 @@ CREATE TABLE public.escapes (
 
 
 ALTER TABLE public.escapes OWNER TO postgres;
+
+--
+-- Name: generated_column; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.generated_column (
+    id integer NOT NULL,
+    a integer,
+    b integer,
+    total integer GENERATED ALWAYS AS ((a + b)) STORED
+);
+
+
+ALTER TABLE public.generated_column OWNER TO postgres;
 
 --
 -- Name: widgets; Type: TABLE; Schema: public; Owner: postgres
@@ -93,6 +120,14 @@ ALTER TABLE ONLY logs.events
 
 
 --
+-- Name: dropped_column dropped_column_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.dropped_column
+    ADD CONSTRAINT dropped_column_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: empty_table empty_table_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -106,6 +141,14 @@ ALTER TABLE ONLY public.empty_table
 
 ALTER TABLE ONLY public.escapes
     ADD CONSTRAINT escapes_pkey PRIMARY KEY (codepoint);
+
+
+--
+-- Name: generated_column generated_column_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.generated_column
+    ADD CONSTRAINT generated_column_pkey PRIMARY KEY (id);
 
 
 --
@@ -128,5 +171,5 @@ ALTER TABLE ONLY logs.events
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 7UZJ05ZWlFKxfYf6iQtMmj8u7rW3VWbtGS5qEZQQPXtU2yCP5hRw5ZUezZ6zesn
+\unrestrict tszTcTcn3tDlL9BOnSSlol1dbykqrBD1h3hHDAnasxzAzGWUvZmEr4T7Ak6l7kQ
 

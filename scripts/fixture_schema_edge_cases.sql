@@ -63,3 +63,31 @@ SELECT g, chr(g) FROM generate_series(1, 127) AS g;
 -- A spread of 2-, 3- and 4-byte UTF-8 codepoints.
 INSERT INTO public.escapes (codepoint, value)
 SELECT g, chr(g) FROM unnest(ARRAY[233, 1071, 12354, 8364, 128169]) AS g;
+
+-- COPY's column list can be a strict subset of CREATE TABLE's -- dropped and
+-- generated columns are in the DDL (dropped columns only under
+-- --binary-upgrade, as a placeholder INTEGER /* dummy */ column with a
+-- mangled name) and never in COPY.
+CREATE TABLE public.dropped_column (
+    id integer PRIMARY KEY,
+    keep_me text,
+    drop_me integer,
+    also_keep boolean
+);
+
+INSERT INTO public.dropped_column (id, keep_me, drop_me, also_keep) VALUES
+    (1, 'x', 5, true),
+    (2, 'y', NULL, false);
+
+ALTER TABLE public.dropped_column DROP COLUMN drop_me;
+
+CREATE TABLE public.generated_column (
+    id integer PRIMARY KEY,
+    a integer,
+    b integer,
+    total integer GENERATED ALWAYS AS (a + b) STORED
+);
+
+INSERT INTO public.generated_column (id, a, b) VALUES
+    (1, 2, 3),
+    (2, 10, -4);

@@ -225,7 +225,7 @@ almost every column in a real 75-table schema.
 | `smallint`, `integer`, `bigint` | `Int16`, `Int32`, `Int64` | |
 | `boolean` | `Boolean` | Rendered `t` / `f` |
 | `real`, `double precision` | `Float32`, `Float64` | `extra_float_digits = 3` guarantees exact round-trip (I4). `NaN`/`Infinity`/`-Infinity` parsed explicitly — Rust accepts `inf`/`NaN`, not PostgreSQL's spellings |
-| `numeric(p,s)` | `Decimal128` (p ≤ 38), `Decimal256` (p ≤ 76) | Wider precision → `Utf8View` |
+| `numeric(p,s)` | `Decimal128` (p ≤ 38), `Decimal256` (p ≤ 76) | `NaN` bypasses PostgreSQL's precision/scale check and is reachable through *any* numeric column, typed or not (confirmed: `fixtures/*/types/*.sql`, `public.t_numeric.v_small numeric(10,2)`) — hits the "non-finite in a decimal" `FieldDecode` case under "Failure and diagnostics" below, same as the untyped column |
 | `numeric` (no typmod) | `Utf8View` | Arbitrary precision, plus `NaN`/`Infinity`, have no Arrow decimal representation |
 | `text`, `character varying(n)`, `character(n)`, `name` | `Utf8View` | Already correct in Phase 1 |
 | `date` | `Date32` | |
@@ -267,12 +267,18 @@ Two channels, deliberately separate.
 
 **Decode failures are hard errors.** A value that does not parse as its mapped
 type — `12x` in an `integer` column, a non-finite in a decimal, an out-of-range
-or `infinity` timestamp — raises
+or `infinity`/`-infinity` `date` or timestamp — raises
 `Error::FieldDecode { table, column, row_offset, declared_type, value }`. A
 dump is machine-generated, so such a value means either the file is corrupt or
 *our mapping is wrong*, and both deserve to surface at a byte offset. Nulling
 the value would launder our bug into the caller's silent data loss; the escape
 hatch is `SchemaMode::Strings`, which is explicit.
+
+`infinity`/`-infinity` are real, reachable values — PostgreSQL's own pseudo-values
+for "unbounded", not corruption — and neither `Date32` nor `Timestamp` has a
+sentinel for them, so they hit this path by construction rather than by
+accident. `fixture_schema_types.sql`'s `t_date`/`t_timestamp` tables carry
+them specifically so this is exercised rather than assumed.
 
 This matches Phase 1's calls for `InvalidUtf8` and `UnknownPredicateColumn`.
 

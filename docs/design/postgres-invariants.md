@@ -141,7 +141,10 @@ all — when that leaves no columns. Separately, under `--binary-upgrade`,
 `dumpTableSchema()` re-creates dropped columns in the `CREATE TABLE` body as
 `INTEGER /* dummy */`, so the DDL there contains columns the data never will.
 
-**Verified against:** v18.6.
+**Verified against:** v18.6 (source); the `dropped_column`/`generated_column`
+tables in `scripts/fixture_schema_edge_cases.sql` reproduce both shapes in
+real `pg_dump` output on 13.23/16.15/18.6 — the dummy column only appears
+under `--binary-upgrade`, matching the gate above.
 **Relied on by:** `roadmap-phase2-typed-columns.md` ("the `COPY` header is
 authoritative; the DDL is a by-name type lookup").
 **Re-verify:** `awk '/^fmtCopyColumnList\(/,/^}$/' src/bin/pg_dump/pg_dump.c`.
@@ -162,7 +165,16 @@ reads the `AS ENUM ()` body silently yields an empty enum.
 `binary_upgrade_set_next_pg_enum_oid('<oid>'::pg_catalog.oid)` call, and
 `ALTER TYPE %s ADD VALUE ` per label.
 
-**Verified against:** v18.6.
+**Verified against:** v18.6 (source); `scripts/fixture_schema_types.sql`'s
+`public.mood` enum reproduces this exactly in real `pg_dump --binary-upgrade`
+output on 13.23/16.15/18.6 (`fixtures/<version>/types/binary-upgrade.sql`) —
+empty `AS ENUM ()` body, one `binary_upgrade_set_next_pg_enum_oid` +
+`ALTER TYPE ... ADD VALUE` pair per label, all still ahead of the first
+`COPY` block. The same dump also shows this OID-preservation noise
+interspersed before *every* object's real statement (tables included, not
+just types) — worth knowing for the 2.2 preamble parser, since the "TOC
+comment segments, then a strict grammar parses the statement" design needs
+to tolerate that noise between the two under `--binary-upgrade`.
 **Relied on by:** `roadmap-phase2-typed-columns.md` (enum resolution).
 **Re-verify:** `awk '/^dumpEnumType\(Archive/,/^}$/' src/bin/pg_dump/pg_dump.c`.
 
