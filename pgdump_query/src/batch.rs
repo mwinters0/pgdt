@@ -22,6 +22,7 @@ use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use crate::cache::CacheMode;
 use crate::copy::{CopyHeader, DELIMITER, decode_field};
 use crate::io::ByteRangeSource;
+use crate::predicate::Predicate;
 use crate::scan::ScanOptions;
 use crate::{Error, Result};
 
@@ -228,13 +229,15 @@ fn push_field(
 /// pull-mode [`crate::stream::table_stream`], so the two share one scan loop.
 /// The callback may return [`ControlFlow::Break`] to stop early, in which
 /// case the returned token resumes from just past the last batch delivered
-/// to it — see [`crate::stream::TableStream::resume_token`]. `cache`
+/// to it — see [`crate::stream::TableStream::resume_token`]. `predicate`
+/// applies a post-parse row filter — see `table_stream`'s docs. `cache`
 /// controls structure-cache consulting — see `table_stream`'s docs.
 pub async fn read_table<S, F>(
     source: &S,
     table: &str,
     scan_options: &ScanOptions,
     batch_options: &BatchOptions,
+    predicate: Option<Predicate>,
     cache: CacheMode,
     mut on_batch: F,
 ) -> Result<Option<crate::stream::ResumeToken>>
@@ -249,6 +252,7 @@ where
         table,
         scan_options.clone(),
         batch_options.clone(),
+        predicate,
         None,
         cache,
     );

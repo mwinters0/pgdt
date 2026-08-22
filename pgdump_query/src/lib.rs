@@ -4,6 +4,7 @@ pub mod copy;
 mod error;
 pub mod index;
 mod io;
+pub mod predicate;
 pub mod scan;
 pub mod stream;
 
@@ -12,6 +13,7 @@ pub use copy::CopyHeader;
 pub use error::Error;
 pub use index::{CopyBlock, DumpIndex, DumpMetadata, RowGroupStats, SparseRowIndex, build_index};
 pub use io::{ByteRangeSource, LocalFileSource};
+pub use predicate::{Predicate, PredicateOp};
 pub use scan::{CopyEnd, CopyScanner, CopyStart, Event, Row, ScanOptions, scan};
 pub use stream::{BlockingTableIter, ResumeToken, TableStream, table_stream};
 

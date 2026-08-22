@@ -1,9 +1,13 @@
+use std::ops::ControlFlow;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
+use arrow::array::{Array, RecordBatch, StringViewArray};
 use clap::{Parser, Subcommand};
 use pgdump_query::cache::CacheMode;
-use pgdump_query::{DumpIndex, LocalFileSource, ScanOptions, build_index};
+use pgdump_query::{
+    BatchOptions, DumpIndex, LocalFileSource, Predicate, PredicateOp, ScanOptions, build_index,
+};
 
 #[derive(Parser)]
 #[command(
@@ -35,6 +39,54 @@ enum Command {
         #[arg(long)]
         verbose: bool,
     },
+    /// Stream a table's rows, optionally filtered by a single-column predicate.
+    Query {
+        file: PathBuf,
+        /// Table name, qualified (`schema.table`) or bare.
+        table: String,
+        /// Cache file path, or `none` to ignore any existing cache and
+        /// perform a fresh scan without persisting it.
+        #[arg(long)]
+        cache_path: Option<PathBuf>,
+        /// Single-column filter: `column=value` or `column!=value`, compared
+        /// against each row's decoded field value.
+        #[arg(long)]
+        filter: Option<String>,
+    },
+}
+
+/// Parse a `--filter` argument into a [`Predicate`]. `!=` is checked before
+/// `=` since it contains that byte.
+fn parse_filter(spec: &str) -> Result<Predicate> {
+    let (column, op, value) = match spec.split_once("!=") {
+        Some((column, value)) => (column, PredicateOp::Ne, value),
+        None => match spec.split_once('=') {
+            Some((column, value)) => (column, PredicateOp::Eq, value),
+            None => {
+                anyhow::bail!("--filter must be `column=value` or `column!=value`, got `{spec}`")
+            }
+        },
+    };
+    Ok(Predicate { column: column.to_string(), op, value: value.to_string() })
+}
+
+/// Print one batch's rows tab-separated, `\N` for NULL — mirroring COPY
+/// TEXT's own NULL marker.
+fn print_batch(batch: &RecordBatch) {
+    let columns: Vec<&StringViewArray> = batch
+        .columns()
+        .iter()
+        .map(|c| {
+            c.as_any().downcast_ref::<StringViewArray>().expect("query columns are all Utf8View")
+        })
+        .collect();
+    for row in 0..batch.num_rows() {
+        let fields: Vec<String> = columns
+            .iter()
+            .map(|c| if c.is_valid(row) { c.value(row).to_string() } else { "\\N".to_string() })
+            .collect();
+        println!("{}", fields.join("\t"));
+    }
 }
 
 #[tokio::main]
@@ -75,6 +127,38 @@ async fn main() -> Result<()> {
                 }
             };
             print_index(&index, verbose);
+        }
+        Command::Query { file, table, cache_path, filter } => {
+            let mode = CacheMode::resolve(&file, cache_path.as_deref());
+            let predicate = filter.as_deref().map(parse_filter).transpose()?;
+            let source = LocalFileSource::open(&file)?;
+            let mut header_printed = false;
+            let mut rows = 0u64;
+            pgdump_query::read_table(
+                &source,
+                &table,
+                &ScanOptions::default(),
+                &BatchOptions::default(),
+                predicate,
+                mode,
+                |batch| {
+                    if !header_printed {
+                        let names: Vec<String> =
+                            batch.schema().fields().iter().map(|f| f.name().clone()).collect();
+                        println!("{}", names.join("\t"));
+                        header_printed = true;
+                    }
+                    print_batch(&batch);
+                    rows += batch.num_rows() as u64;
+                    ControlFlow::Continue(())
+                },
+            )
+            .await?;
+            if header_printed {
+                eprintln!("{rows} row(s)");
+            } else {
+                eprintln!("no rows found for {table} in {}", file.display());
+            }
         }
     }
     Ok(())

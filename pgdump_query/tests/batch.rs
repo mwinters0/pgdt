@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 
 use arrow::array::{Array, RecordBatch, StringViewArray};
 use pgdump_query::cache::CacheMode;
-use pgdump_query::{BatchOptions, LocalFileSource, ScanOptions, read_table};
+use pgdump_query::{
+    BatchOptions, LocalFileSource, Predicate, PredicateOp, ScanOptions, read_table,
+};
 
 fn edge_cases() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/edge_cases.sql")
@@ -46,7 +48,7 @@ async fn collect(
     let mut batch_sizes = Vec::new();
     let mut rows = Vec::new();
 
-    read_table(&source, table, scan_options, batch_options, CacheMode::Disabled, |batch| {
+    read_table(&source, table, scan_options, batch_options, None, CacheMode::Disabled, |batch| {
         batch_sizes.push(batch.num_rows());
         rows.extend(rows_of(&batch));
         ControlFlow::Continue(())
@@ -55,6 +57,29 @@ async fn collect(
     .unwrap();
 
     (batch_sizes, rows)
+}
+
+async fn collect_with_predicate(
+    path: &Path,
+    table: &str,
+    predicate: Predicate,
+) -> pgdump_query::Result<Vec<Vec<Option<String>>>> {
+    let source = LocalFileSource::open(path).unwrap();
+    let mut rows = Vec::new();
+    read_table(
+        &source,
+        table,
+        &ScanOptions::default(),
+        &BatchOptions::default(),
+        Some(predicate),
+        CacheMode::Disabled,
+        |batch| {
+            rows.extend(rows_of(&batch));
+            ControlFlow::Continue(())
+        },
+    )
+    .await?;
+    Ok(rows)
 }
 
 fn widgets_expected() -> Vec<Vec<Option<String>>> {
@@ -105,6 +130,62 @@ async fn widgets_table_decodes_correctly() {
 }
 
 #[tokio::test]
+async fn predicate_eq_filters_to_matching_rows() {
+    let rows = collect_with_predicate(
+        &edge_cases(),
+        "public.widgets",
+        Predicate { column: "name".into(), op: PredicateOp::Eq, value: "beta".into() },
+    )
+    .await
+    .unwrap();
+    assert_eq!(rows, vec![widgets_expected()[1].clone()]);
+}
+
+#[tokio::test]
+async fn predicate_ne_excludes_the_matching_row() {
+    let rows = collect_with_predicate(
+        &edge_cases(),
+        "public.widgets",
+        Predicate { column: "name".into(), op: PredicateOp::Ne, value: "beta".into() },
+    )
+    .await
+    .unwrap();
+    let expected: Vec<_> =
+        widgets_expected().into_iter().filter(|r| r[1].as_deref() != Some("beta")).collect();
+    assert_eq!(rows, expected);
+}
+
+/// Row 2 (`beta`) has a NULL `description`. Neither `=` nor `!=` against any
+/// value selects it — this MVP has no `IS [NOT] NULL` predicate, so a NULL
+/// field is excluded from both rather than guessing which three-valued-logic
+/// reading a caller wants (`docs/status/history/2026-08-22.md`).
+#[tokio::test]
+async fn predicate_never_matches_a_null_field() {
+    for op in [PredicateOp::Eq, PredicateOp::Ne] {
+        let rows = collect_with_predicate(
+            &edge_cases(),
+            "public.widgets",
+            Predicate { column: "description".into(), op, value: "a simple widget".into() },
+        )
+        .await
+        .unwrap();
+        assert!(rows.iter().all(|r| r[1].as_deref() != Some("beta")), "{op:?}");
+    }
+}
+
+#[tokio::test]
+async fn predicate_on_unknown_column_errors() {
+    let err = collect_with_predicate(
+        &edge_cases(),
+        "public.widgets",
+        Predicate { column: "nope".into(), op: PredicateOp::Eq, value: "x".into() },
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(err, pgdump_query::Error::UnknownPredicateColumn { .. }));
+}
+
+#[tokio::test]
 async fn table_matching_is_bare_or_qualified() {
     for name in ["widgets", "public.widgets"] {
         let (_, rows) =
@@ -148,6 +229,7 @@ async fn header_without_column_list_gets_placeholder_schema() {
         "public.no_column_list",
         &ScanOptions::default(),
         &BatchOptions::default(),
+        None,
         CacheMode::Disabled,
         |batch| {
             batches.push(batch);
@@ -225,6 +307,7 @@ async fn stops_early_on_break() {
         "public.widgets",
         &ScanOptions::default(),
         &options,
+        None,
         CacheMode::Disabled,
         |_| {
             batches += 1;
@@ -252,6 +335,7 @@ async fn resume_token_from_break_continues_correctly() {
         "public.widgets",
         &ScanOptions::default(),
         &options,
+        None,
         CacheMode::Disabled,
         |batch| {
             rows.extend(rows_of(&batch));
@@ -267,6 +351,7 @@ async fn resume_token_from_break_continues_correctly() {
         "public.widgets",
         ScanOptions::default(),
         options,
+        None,
         Some(token),
         CacheMode::Disabled,
     );

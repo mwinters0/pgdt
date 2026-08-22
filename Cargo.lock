@@ -821,6 +821,7 @@ name = "pgdump_query-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arrow",
  "clap",
  "pgdump_query",
  "tokio",

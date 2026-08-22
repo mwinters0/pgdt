@@ -7,9 +7,8 @@ that changed the plan, see `history/` (one file per day, `YYYY-MM-DD.md`) —
 not a changelog, only entries worth keeping. For the design itself (section
 names below track `mvp.md`'s headings), see `docs/design/mvp.md`.
 
-Last updated: 2026-08-22 (`table_stream`/`read_table` consult the structure
-cache: replay known blocks, skip non-matching ones, persist newly-discovered
-ones incrementally).
+Last updated: 2026-08-22 (predicate filtering and the `pgdq query` CLI
+subcommand land — the only item MVP had left).
 
 ## Done
 
@@ -75,11 +74,25 @@ ones incrementally).
   otherwise it scans and writes the cache before printing, so the fallback
   path still leaves a cache behind for next time — unless `--cache-path
   none` disabled the cache, in which case the scan result is never
-  persisted. `--verbose` adds file offsets either way.
+  persisted. `--verbose` adds file offsets either way. `pgdq query <file>
+  <table> [--cache-path PATH|none] [--filter column=value|column!=value]`
+  streams a table's rows tab-separated (`\N` for NULL) with a header line of
+  column names, consulting/populating the cache the same way `info` does.
+- **Predicate filtering** (`predicate.rs`): `Predicate { column, op, value }`
+  (`op` is `Eq`/`Ne`) threaded through `table_stream`/`read_table` as
+  `Option<Predicate>`, evaluated post-parse against each row's decoded field.
+  `column` resolves against the matching block's own schema once per block
+  (headerless blocks' placeholder names can vary block-to-block for the same
+  table); an unresolvable column is `Error::UnknownPredicateColumn`, not a
+  silent non-match. A NULL field matches neither operator — see
+  `docs/design/mvp.md`'s "Predicate filtering (MVP)" and
+  `docs/status/history/2026-08-22.md` for why. 4 unit tests in
+  `predicate.rs` plus 4 end-to-end tests in `tests/batch.rs` (Eq, Ne, NULL
+  exclusion under both operators, unknown-column error).
 - **Error handling**: `pgdump_query::Error` (`thiserror`) — `Io`, `Join`,
   `UnterminatedCopyBlock`, `LineTooLong`, `InvalidUtf8`, `CacheEncode`,
-  `CacheDisabled`; CLI uses `anyhow`.
-- **Tests** (`cargo test --workspace`, 57 tests; see also `batch.rs`'s 11,
+  `CacheDisabled`, `UnknownPredicateColumn`; CLI uses `anyhow`.
+- **Tests** (`cargo test --workspace`, 65 tests; see also `batch.rs`'s 15,
   `stream.rs`'s 5, `cache.rs`'s 9, and `query_cache.rs`'s 6, below):
   - Unit tests for the header grammar and escape decoding.
   - `pgdump_query/tests/data/edge_cases.sql` — hand-written and deterministic
@@ -195,14 +208,10 @@ ones incrementally).
 
 ## Not started
 
-- **Predicate filtering** — single-column `=`/`!=` post-parse filter.
 - **Benchmarks** (`criterion`) — not wired in.
 - **Full 8-version worktree fixture sweep** (`v13.0` … `v18.6`) — worktree
   binaries not yet built; the 3-version container sweep above covers routine
   needs in the meantime.
-- **CLI table-query subcommand** — `pgdq` has no `query`/table-lookup command
-  yet; only `parse`/`info` exist. Deferred until predicate filtering lands,
-  so the CLI query surface ships once instead of twice.
 
 ## Known gaps
 
@@ -220,10 +229,19 @@ ones incrementally).
 
 ## Next up
 
-**Predicate filtering** is the only open MVP item left: a single-column
-`=`/`!=` post-parse filter (`mvp.md`, "Predicate filtering (MVP)"),
-evaluated after a row is fully parsed/unescaped. Once it lands, a minimal
-CLI table-query subcommand (`pgdq query <file> <table> [--cache-path
-PATH|none]`, deferred until now so the CLI query surface ships once — see
-"Not started") can wire it up alongside the cache-consulting `table_stream`/
-`read_table` already have.
+Every functional item `mvp.md` specifies is now implemented; what's left
+under "Not started" (benchmarks, the full worktree fixture sweep) is
+groundwork that doesn't block moving on. **Phase 2 (typed columns,
+`docs/design/roadmap.md`) is the natural next step, but per the roadmap's own
+rule each phase "gets its own full grilling session when it becomes
+current"** — that hasn't happened yet, so this session stopped short of
+starting Phase 2 implementation rather than presuming its design. The next
+attended session should either run that grilling session or explicitly
+choose one of the "Not started" items instead.
+
+Two judgment calls made implementing predicate filtering this session are
+worth a second look (reasoning in
+`docs/status/history/2026-08-22.md`): a NULL field matches neither `=` nor
+`!=`, and a `--filter` column absent from the queried table's schema is a
+hard error (`Error::UnknownPredicateColumn`) rather than a silent non-match.
+Neither was pinned down by `mvp.md` before this session.

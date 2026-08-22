@@ -22,4 +22,6 @@ pub enum Error {
     CacheEncode(#[from] bincode::error::EncodeError),
     #[error("cache is disabled (`--cache-path none`), but `{operation}` requires a cache file")]
     CacheDisabled { operation: &'static str },
+    #[error("predicate column `{column}` not found in COPY block at offset {header_offset}")]
+    UnknownPredicateColumn { header_offset: u64, column: String },
 }

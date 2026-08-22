@@ -31,8 +31,31 @@ use crate::cache::CacheMode;
 use crate::copy::{CopyHeader, DELIMITER};
 use crate::index::{CopyBlock, DumpIndex};
 use crate::io::ByteRangeSource;
+use crate::predicate::Predicate;
 use crate::scan::{CopyScanner, CopyStart, Event, ScanOptions};
 use crate::{Error, Result};
+
+/// State for a `COPY` block whose table matches the query: the batcher
+/// accumulating its rows, and — when a [`Predicate`] was given — the column
+/// index it was resolved to against this block's own schema (schemas can
+/// differ block-to-block, e.g. a headerless block's placeholder names).
+type Active = (u64, CopyHeader, RowBatcher, Option<usize>);
+
+/// Resolve `predicate`'s column name against `schema`, once per block. `Ok(None)`
+/// when there is no predicate to apply.
+fn resolve_predicate_index(
+    predicate: Option<&Predicate>,
+    schema: &arrow::datatypes::SchemaRef,
+    header_offset: u64,
+) -> Result<Option<usize>> {
+    let Some(predicate) = predicate else { return Ok(None) };
+    schema
+        .fields()
+        .iter()
+        .position(|f| f.name() == &predicate.column)
+        .map(Some)
+        .ok_or(Error::UnknownPredicateColumn { header_offset, column: predicate.column.clone() })
+}
 
 /// One piece of a [`table_stream`] scan: either replaying a block the cache
 /// already knew about, or walking unscanned territory live. See the module
@@ -139,24 +162,31 @@ impl<'a> TableStream<'a> {
 fn resume_state(
     token: &ResumeToken,
     batch_options: &BatchOptions,
-) -> (CopyScanner, Option<(u64, CopyHeader, RowBatcher)>) {
+    predicate: Option<&Predicate>,
+) -> Result<(CopyScanner, Option<Active>)> {
     let scanner = CopyScanner::resume(
         token.offset,
         token.in_copy.as_ref().map(|ic| (ic.header_offset, ic.rows_in_block)),
     );
-    let active = token.in_copy.as_ref().map(|ic| {
-        let schema = schema_for(&ic.header, ic.field_count);
-        (ic.header_offset, ic.header.clone(), RowBatcher::new(schema, batch_options.clone()))
-    });
-    (scanner, active)
+    let active = token
+        .in_copy
+        .as_ref()
+        .map(|ic| {
+            let schema = schema_for(&ic.header, ic.field_count);
+            let predicate_index = resolve_predicate_index(predicate, &schema, ic.header_offset)?;
+            Ok::<_, Error>((
+                ic.header_offset,
+                ic.header.clone(),
+                RowBatcher::new(schema, batch_options.clone()),
+                predicate_index,
+            ))
+        })
+        .transpose()?;
+    Ok((scanner, active))
 }
 
-fn snapshot(
-    scanner: &CopyScanner,
-    active: &Option<(u64, CopyHeader, RowBatcher)>,
-    rows_emitted: u64,
-) -> ResumeToken {
-    let in_copy = active.as_ref().map(|(header_offset, header, batcher)| InCopyResume {
+fn snapshot(scanner: &CopyScanner, active: &Option<Active>, rows_emitted: u64) -> ResumeToken {
+    let in_copy = active.as_ref().map(|(header_offset, header, batcher, _)| InCopyResume {
         header: header.clone(),
         header_offset: *header_offset,
         rows_in_block: scanner.in_copy_rows().unwrap_or(0),
@@ -171,6 +201,12 @@ fn snapshot(
 ///
 /// `resume` continues a previous consumption from a [`ResumeToken`] it
 /// produced; `None` starts from the beginning of `source`.
+///
+/// `predicate` applies `docs/design/mvp.md`'s post-parse row filter
+/// (`docs/design/mvp.md`, "Predicate filtering"): `None` yields every row, as
+/// before; `Some` drops any row whose named column doesn't satisfy it, after
+/// that row has been fully unescaped. Referencing a column absent from a
+/// matching block's own schema is `Error::UnknownPredicateColumn`.
 ///
 /// `cache` controls structure-cache consulting (`docs/design/mvp.md`,
 /// "Index / structure cache"): `CacheMode::Disabled` is pure streaming with
@@ -187,6 +223,7 @@ pub fn table_stream<'a, S>(
     table: &str,
     scan_options: ScanOptions,
     batch_options: BatchOptions,
+    predicate: Option<Predicate>,
     resume: Option<ResumeToken>,
     cache: CacheMode,
 ) -> TableStream<'a>
@@ -221,7 +258,7 @@ where
         // logic isn't duplicated below.
         let (mut active, mut first_scanner) = match &resume {
             Some(token) => {
-                let (scanner, active) = resume_state(token, &batch_options);
+                let (scanner, active) = resume_state(token, &batch_options, predicate.as_ref())?;
                 (active, Some(scanner))
             }
             None => (None, None),
@@ -281,10 +318,16 @@ where
                                 } else {
                                     let schema =
                                         schema_for(&start.header, start.header.columns.len());
+                                    let predicate_index = resolve_predicate_index(
+                                        predicate.as_ref(),
+                                        &schema,
+                                        start.header_offset,
+                                    )?;
                                     active = Some((
                                         start.header_offset,
                                         start.header,
                                         RowBatcher::new(schema, batch_options.clone()),
+                                        predicate_index,
                                     ));
                                 }
                             }
@@ -294,14 +337,33 @@ where
                                 let field_count =
                                     memchr::memchr_iter(DELIMITER, row.raw).count() + 1;
                                 let schema = schema_for(&header, field_count);
+                                let predicate_index = resolve_predicate_index(
+                                    predicate.as_ref(),
+                                    &schema,
+                                    header_offset,
+                                )?;
                                 active = Some((
                                     header_offset,
                                     header,
                                     RowBatcher::new(schema, batch_options.clone()),
+                                    predicate_index,
                                 ));
                             }
-                            if let Some((header_offset, _, batcher)) = active.as_mut() {
-                                batcher.push_row(*header_offset, row.offset, row.raw, &mut chunks)?;
+                            if let Some((header_offset, _, batcher, predicate_index)) =
+                                active.as_mut()
+                            {
+                                let keep = match (predicate.as_ref(), *predicate_index) {
+                                    (Some(pred), Some(col)) => pred.matches(row.raw, col)?,
+                                    _ => true,
+                                };
+                                if keep {
+                                    batcher.push_row(
+                                        *header_offset,
+                                        row.offset,
+                                        row.raw,
+                                        &mut chunks,
+                                    )?;
+                                }
                                 if batcher.should_flush() {
                                     let batch = batcher.flush()?;
                                     invalidate_block_cache(&mut chunks);
@@ -314,7 +376,7 @@ where
                         }
                         Event::CopyEnd(end) => {
                             pending = None;
-                            if let Some((_, _, mut batcher)) = active.take()
+                            if let Some((_, _, mut batcher, _)) = active.take()
                                 && !batcher.is_empty()
                             {
                                 let batch = batcher.flush()?;

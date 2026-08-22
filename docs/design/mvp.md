@@ -97,6 +97,24 @@ unparsed strings they'd be actively misleading for numeric/date columns
 (`"9" < "10"` is false lexicographically) and are deferred until Phase 2
 typed columns can do them correctly.
 
+Implemented as `pgdump_query::predicate::Predicate { column, op, value }`,
+threaded through `table_stream`/`read_table` as `Option<Predicate>`. `column`
+is resolved against the matching `COPY` block's own schema — the header's
+column list, or its `column1`, `column2`, ... placeholders when it has none
+— once per block, since schemas can differ block-to-block. Referencing a
+column absent from a block's schema is `Error::UnknownPredicateColumn`, not a
+silent non-match: a query-shaping mistake should surface immediately rather
+than quietly returning zero (or every) row. **A NULL field never matches
+either operator** — this MVP has no `IS [NOT] NULL` predicate, so both `=`
+and `!=` collapse SQL's three-valued NULL comparison to "excluded" rather
+than guessing which reading a caller wants; see
+`docs/status/history/2026-08-22.md` for the reasoning.
+
+`pgdq query <file> <table> [--cache-path PATH|none] [--filter
+column=value|column!=value]` is the CLI surface: streams the table's rows
+tab-separated (`\N` for NULL, matching COPY TEXT's own marker), one line per
+row, a header line of column names first.
+
 ## Index / structure cache
 
 **Configurable (MVP): whether to build/consult a cache at all.** Pure
@@ -219,6 +237,12 @@ configurable behavior:
   shows file offsets for each `COPY` block and other cache internals.
   `--cache-path none` ignores any existing cache and performs a fresh scan
   without persisting it.
+- `pgdq query <file> <table> [--cache-path PATH|none] [--filter
+  column=value|column!=value]` — stream a table's rows (bare or qualified
+  `table` name), one tab-separated line per row (`\N` for NULL), a header
+  line of column names first. `--filter` applies the post-parse predicate
+  above; omitted, every row is streamed. Consults/populates the cache the
+  same way `info` does.
 
 ## Testing & fixtures
 

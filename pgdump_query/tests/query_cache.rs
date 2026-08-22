@@ -90,7 +90,7 @@ async fn drain(
     cache: CacheMode,
 ) -> Vec<Vec<Option<String>>> {
     let mut stream =
-        table_stream(source, table, ScanOptions::default(), batch_options, None, cache);
+        table_stream(source, table, ScanOptions::default(), batch_options, None, None, cache);
     let mut rows = Vec::new();
     while let Some(batch) = stream.next().await {
         rows.extend(rows_of(&batch.unwrap()));
@@ -246,6 +246,7 @@ async fn interrupted_scan_leaves_correct_partial_progress() {
             "public.widgets",
             ScanOptions::default(),
             BatchOptions { max_rows: 1, max_bytes: None },
+            None,
             None,
             CacheMode::Enabled(cache_path.clone()),
         );

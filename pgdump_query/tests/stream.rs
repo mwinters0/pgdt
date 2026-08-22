@@ -83,6 +83,7 @@ async fn stream_matches_push_mode_output() {
         ScanOptions::default(),
         BatchOptions::default(),
         None,
+        None,
         CacheMode::Disabled,
     );
     let mut rows = Vec::new();
@@ -107,6 +108,7 @@ async fn resume_continues_without_gap_or_repeat() {
             ScanOptions::default(),
             options.clone(),
             None,
+            None,
             CacheMode::Disabled,
         );
 
@@ -123,6 +125,7 @@ async fn resume_continues_without_gap_or_repeat() {
             "public.widgets",
             ScanOptions::default(),
             options.clone(),
+            None,
             Some(token),
             CacheMode::Disabled,
         );
@@ -146,6 +149,7 @@ async fn resume_reconstructs_headerless_schema() {
         ScanOptions::default(),
         BatchOptions { max_rows: 1, max_bytes: None },
         None,
+        None,
         CacheMode::Disabled,
     );
 
@@ -159,6 +163,7 @@ async fn resume_reconstructs_headerless_schema() {
         "public.no_column_list",
         ScanOptions::default(),
         BatchOptions { max_rows: 1, max_bytes: None },
+        None,
         Some(token),
         CacheMode::Disabled,
     );
@@ -185,6 +190,7 @@ async fn resume_at_a_block_boundary() {
             ScanOptions::default(),
             options.clone(),
             None,
+            None,
             CacheMode::Disabled,
         );
 
@@ -199,6 +205,7 @@ async fn resume_at_a_block_boundary() {
             "public.escapes",
             ScanOptions::default(),
             options,
+            None,
             Some(token),
             CacheMode::Disabled,
         );
@@ -216,6 +223,7 @@ fn blocking_iterator_matches_async_stream() {
         "public.widgets",
         ScanOptions::default(),
         BatchOptions::default(),
+        None,
         None,
         CacheMode::Disabled,
     );
