@@ -218,7 +218,8 @@ region ahead of the first block.
   (including the tail, from the last block to EOF, where post-data DDL
   lives) costs no meaningful CPU against a few thousand DDL lines total, and
   directly closes the post-data blind spot with no threshold needed for
-  correctness.
+  correctness. **Except where large objects are present** — see below, which
+  is the one case where a gap is not schema-sized.
 - *Deferred, index-driven, heavier tier.* A separate pass, run after any
   scan (full or incremental) that already has an index, seeks directly to
   each gap using `CopyBlock`'s existing byte offsets — no rescanning needed.
@@ -232,16 +233,78 @@ region ahead of the first block.
 
 ### Full file map
 
-Once every span between `CopyBlock`s is attributed to something — known
-object, known-but-unhandled, unknown, comment-run (n lines), or
-whitespace-run — coverage becomes a hard invariant (spans sum to file size)
-rather than a heuristic judgment call. That also makes "this dump has zero
-comments" or "this dump has an unusual amount of unrecognized content"
-objectively queryable facts, useful for the sysadmin story and for
-recognizing non-`pg_dump`-generated input. Getting there needs byte-offset
-fields added to `DatabaseMetadata`'s own DDL records (`Extension`,
-`TypeDef`, table entries) — today only `CopyBlock` carries a position at
-all.
+**This is Phase 3's exit criterion, not a byproduct of it.** A full scan
+yields an ordered set of spans that *tiles* the file: every byte belongs to
+exactly one span, spans sum to the file size, none overlap. Every span is
+attributed to something — known object, known-but-unhandled, unknown,
+comment-run (n lines), whitespace-run, `COPY` block, or large-object data.
+Getting there needs byte-offset fields added to `DatabaseMetadata`'s own DDL
+records (`Extension`, `TypeDef`, table entries) — today only `CopyBlock`
+carries a position at all.
+
+Coverage then becomes a hard invariant rather than a heuristic judgment
+call, which also makes "this dump has zero comments" or "this dump has an
+unusual amount of unrecognized content" objectively queryable facts — useful
+for the sysadmin story and for recognizing non-`pg_dump`-generated input.
+
+**Standing rule, from Phase 3 onward: a later phase may subdivide a span or
+attach detail to it, never reduce coverage.** Specificity increases
+monotonically; the tiling property does not degrade. Splitting one
+large-object span into one span per object is the intended shape of "more
+specific"; introducing a span kind that leaves bytes unaccounted for is not.
+This outlives Phase 3 the way `layering.md` outlives the phase that
+introduced it.
+
+The rule is only real if something checks it. A test asserts tiling over
+every fixture, and the cases that matter most are the degenerate ones:
+`--data-only` (no DDL), `--inserts` (no `COPY` blocks at all), and the
+concatenated multi-database shape. Absent that test, "spans sum to file
+size" decays into an aspiration the first time a span kind is added.
+
+### Large objects: ranges, not contents
+
+Large-object data is mapped as a span and **never parsed**. There is nothing
+in it a query engine wants — it is opaque bytes belonging to no table — but
+leaving it out would put a hole in the map, and a hole is exactly what the
+map exists to forbid.
+
+`pg_dump` makes this cheap (I12):
+
+- All LO data is **one contiguous region**, after every `COPY` block and
+  before post-data DDL, introduced by a single `BLOBS` archive entry and
+  wrapped in `BEGIN;`/`COMMIT;`. One TOC comment opens it (I3), so the cheap
+  tier recognizes it at its header and closes it at `COMMIT;`.
+- Its contents are `SELECT pg_catalog.lowrite(0, '\x…');` lines at roughly
+  2× hex expansion, so the region can be hundreds of gigabytes. **This is
+  the one gap that is not schema-sized**, and running the keyword-dispatch
+  grammar across it would turn the cheap tier into a full-file parse. The
+  fast-path is not an optimization; it is what keeps the tier's cost claim
+  true.
+- LO *definitions* (ownership, ACL, comments) sort ahead of the pre-data
+  boundary, so they are already inside the region Phase 2's preamble pass
+  walks. Only the bytes are far away.
+
+**Per-object detail is deferred, deliberately.** One span for the whole
+region satisfies the map; subdividing it into one span per large object is
+the reference case for the standing rule above, available whenever something
+needs it. The only identity the data region carries is the OID in each
+`lo_create('%u')` opener — recorded here because it is the thing a later
+phase would have to go looking for, and finding it costs a walk of the whole
+region, which is precisely what one span avoids paying today.
+
+### How the map relates to `DumpIndex`
+
+Left to Phase 3's own spec. If every byte is a span and `COPY` blocks are
+spans, then `DumpIndex::blocks` is a filtered view of the map — but making
+that true touches the cache format, `blocks_for`, `table_stream`'s segment
+planner, and Phase 7's sparse index, and the pass that has to build it is
+better placed to weigh that than this sketch is. The lean is one ordered
+`Vec<Span>` as the primary structure with `CopyData { block: usize }`
+pointing into `blocks`; it is a lean, not a decision.
+
+What earlier phases owe the map is only that span-level facts be recorded in
+a form it can absorb. Phase 2.3.3's per-`CopyBlock` database attribution is
+the first of them, and its `Option<String>` name already qualifies.
 
 ### Object model stays read-side
 
@@ -430,6 +493,14 @@ matters more.
 `docs/design/pg-dump-compatibility.md` turns up as it fills in via the Phase 1
 fixture tooling. Small: a second row-source implementation feeding the same
 batch layer.
+
+**Not CSV-format `COPY` blocks.** `docs/design/historical/initial.md` listed
+those alongside `--inserts` as a future option, and the compatibility matrix
+carried the pairing forward — but `pg_dump` has no CSV mode at all (I13), so
+there is no such output to support. The `--format` flag names the archive
+container, which is Track B. Reading CSV would mean accepting input `pg_dump`
+never emits: a new input source, to be argued on its own merits rather than
+inherited from a superseded sketch.
 
 **Track B — archive container formats.** `--format=custom`,
 `--format=directory`, and `--format=tar`. Formerly a permanent non-goal;

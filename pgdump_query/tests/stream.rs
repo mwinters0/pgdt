@@ -325,3 +325,59 @@ fn blocking_iterator_matches_async_stream() {
     }
     assert_eq!(rows, widgets_expected());
 }
+
+/// Two copies of `edge_cases/create.sql`, concatenated into one real
+/// `\connect`-delimited multi-database dump — see `tests/preamble.rs`'s
+/// `multidb_fixture` for the full rationale (duplicated here since each
+/// `tests/*.rs` file is its own crate with no shared support module).
+fn multidb_fixture(version: u32) -> (tempfile::TempDir, PathBuf) {
+    let content = std::fs::read_to_string(fixture(version, "create")).unwrap();
+    let renamed = content.replace("pgdq_fixture", "pgdq_fixture_2");
+    let dir = tempfile::tempdir().unwrap();
+    let combined = dir.path().join("multidb.sql");
+    std::fs::write(&combined, format!("{content}{renamed}")).unwrap();
+    (dir, combined)
+}
+
+async fn all_rows(source: &LocalFileSource, table: &str) -> Vec<Vec<Option<String>>> {
+    let mut stream = table_stream(
+        source,
+        table,
+        ScanOptions::default(),
+        BatchOptions::default(),
+        None,
+        None,
+        CacheMode::Disabled,
+    );
+    let mut rows = Vec::new();
+    while let Some(batch) = stream.next().await {
+        rows.extend(rows_of(&batch.unwrap()));
+    }
+    rows
+}
+
+/// `table_stream` matches `COPY` blocks by qualified table name alone, with
+/// no notion of which `\connect` segment a block belongs to (`resolve.rs`'s
+/// `database_for` has the same simplification for typing — see
+/// `docs/status/STATUS.md`, "Decisions worth a second look"). Against a real
+/// multi-database dump where the same table name is genuinely defined twice,
+/// today's behavior is a silent union of both databases' rows, in file
+/// order — not the per-database error `docs/design/roadmap-phase2-typed-columns.md`
+/// ("Multi-database dumps") describes as the eventual intent. This test
+/// locks in and documents *current* behavior; it is not an endorsement of it.
+#[tokio::test]
+async fn querying_a_table_name_shared_by_two_databases_silently_unions_both() {
+    for version in [13, 16, 18] {
+        let single_source = LocalFileSource::open(fixture(version, "create")).unwrap();
+        let single_rows = all_rows(&single_source, "public.widgets").await;
+        assert!(!single_rows.is_empty(), "pg_dump {version}");
+
+        let (_dir, path) = multidb_fixture(version);
+        let combined_source = LocalFileSource::open(&path).unwrap();
+        let combined_rows = all_rows(&combined_source, "public.widgets").await;
+
+        let mut expected = single_rows.clone();
+        expected.extend(single_rows);
+        assert_eq!(combined_rows, expected, "pg_dump {version}");
+    }
+}

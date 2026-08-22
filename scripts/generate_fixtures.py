@@ -60,6 +60,7 @@ SCHEMAS: dict[str, dict[str, list[str]]] = {
         "inserts": ["--inserts"],
         "column-inserts": ["--column-inserts"],
         "binary-upgrade": ["--binary-upgrade"],
+        "create": ["--create"],
     },
     "types": {
         "default": [],

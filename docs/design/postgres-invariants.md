@@ -261,21 +261,282 @@ otherwise pure `CREATE DATABASE` noise (see `PreambleBuilder`'s docs) and
 gets discarded — but discarding it naively would silently drop the version
 headers for every single-database `--create` dump, including koji. They are
 carried forward onto the database the first `\connect` switches into
-instead. A later `\connect` (only reachable via a real `pg_dumpall`
-concatenation, untested here) needs no such carry-over: that database's
-segment holds its own pair, from its own `pg_dump` child's own
-`RestoreArchive()` call.
+instead.
+
+**A later `\connect` needs the same carry-over, not none.** This invariant
+originally claimed a later `\connect`-ed database's own pair needs no such
+handling, "held within that database's own segment" — reasoning about
+`pg_dumpall`'s child-process structure without a concatenated fixture to
+check it against. Phase 2.3.1 built one (two `--create` fixtures
+concatenated, `docs/design/roadmap-phase2.3.1-multidb-fixtures-notes.md`) and
+found the opposite: a later child's version-header pair prints ahead of
+*its own* `\connect`, exactly like the first child's does ahead of its
+`\connect` — which puts those lines in `PreambleBuilder::feed_line` while
+`current` is still the *previous* database's finished (`preamble_complete`)
+segment, not the new one they describe, so they were silently dropped for
+every database after the first. Fixed by staging a later segment's headers
+separately (`PreambleBuilder::pending_headers`) and consuming them on that
+segment's own `\connect`, the same carry-over the first segment already got,
+just triggered on every `\connect` instead of only the first.
+
+**`pg_dumpall` emits two segment shapes, and the header order flips between
+them.** `dumpDatabases()` passes `--create` to its `pg_dump` child for
+ordinary databases — those segments print their version headers *ahead of*
+their own `\connect`, the `pending_headers` case above. But for `postgres`
+and `template1` it passes **no** `--create` and writes `\connect <db>`
+itself, under the comment "Since pg_dump won't emit a `\connect` command, we
+must". Those segments print `\connect` *first*, so their headers arrive
+afterwards, into a segment that is already `current` and not yet
+`preamble_complete` — `feed_line`'s ordinary path, not the staging one.
+Both databases are always dumped, so **every** real `pg_dumpall` file
+contains both shapes. A hand-built concatenation of `--create` outputs
+produces only the first, which is why a genuine `pg_dumpall` fixture is
+added in slice 2.3.2.
 
 **Verified against:** v18.6 source (`RestoreArchive()`,
-`pg_dumpall.c`'s per-database `pg_dump --create` invocation); koji
-(`pg_dump 16.14`).
+`pg_dumpall.c`'s `dumpDatabases()` per-database invocation and its
+`postgres`/`template1` special case); koji
+(`pg_dump 16.14`); two concatenated `--create` fixtures
+(`pgdump_query/tests/preamble.rs`'s `multidb_fixture`, versions 13/16/18).
 **Relied on by:** `roadmap-phase2-typed-columns.md` (preamble pass);
-`roadmap-phase2.2-preamble-notes.md`.
+`roadmap-phase2.2-preamble-notes.md`;
+`roadmap-phase2.3.1-multidb-fixtures-notes.md`.
 **Re-verify:** `grep -n 'Dumped from database version' -B5
 src/bin/pg_dump/pg_backup_archiver.c` — confirm it's still inside
 `RestoreArchive()` and still unconditional-per-call; `grep -n
 '"--create"' src/bin/pg_dump/pg_dumpall.c` — confirm pg_dumpall still shells
 out to a fresh `pg_dump --create` per database rather than driving one dump
-across all of them.
+across all of them, and that the `postgres`/`template1` branch still writes
+its own `\connect` instead.
+
+---
+
+## I10 — A range type's companion multirange type is never dumped; its name survives only inside the range's own DDL
+
+**Claim.** `CREATE TYPE x AS RANGE (...)` auto-creates a companion multirange
+type (PostgreSQL 14+), and `pg_dump` emits **no `CREATE TYPE` statement for
+it at all** — in any flag combination. The only evidence the file carries that
+the companion exists, or what it is called, is the
+`multirange_type_name = <name>` parameter inside the range type's own
+`CREATE TYPE ... AS RANGE` body. A column declared with that companion type is
+therefore explained by nothing else in the dump.
+
+Secondarily: the `AS RANGE` parameter list is always emitted **multi-line**,
+one parameter per line, `subtype` first, and the subtype may be a multi-word
+type name (`subtype = double precision`).
+
+**Proof.** `selectDumpableType()` (`pg_dump.c`) reclassifies any type with
+`typtype = TYPTYPE_MULTIRANGE` as `DO_DUMMY_TYPE` under the comment "skip
+auto-generated array and multirange types", exactly as it does for
+auto-generated array types — so no `dumpType()` ever runs for one.
+`dumpRangeType()` writes `"CREATE TYPE %s AS RANGE ("` followed by
+`"\n    subtype = %s"` and, when `rngmultitype` is non-null,
+`",\n    multirange_type_name = %s"`. The multi-line layout is in the format
+strings themselves, not a wrapper, and is identical back to v13 (which has
+the `\n    subtype` line but no multirange parameter — multiranges postdate
+it).
+
+**Observed.** Probed against `postgres:16-alpine` (16.15): `CREATE TYPE
+public.myrange AS RANGE (subtype = float8);` dumps as `CREATE TYPE
+public.myrange AS RANGE (\n    subtype = double precision,\n
+multirange_type_name = public.mymultirange\n);` — note `float8` came back
+canonicalised to the two-word `double precision`. A table with a
+`public.mymultirange` column dumps that column with no accompanying type
+definition anywhere in the file.
+
+**Consequence for `crate::pgtype`.** `TypeKind::Range` carries the companion
+name so a column declared with it resolves to `DeferredKind::Range` instead
+of `Unknown`; discarding the parameter would make that unrecoverable without
+re-scanning the file. The six built-in multirange names are recognized in the
+built-in table alongside the six built-in range names, since like them they
+appear bare and never reach the user-defined lookup (I8). The range grammar
+must tolerate a multi-line body and a multi-word subtype value.
+
+**Verified against:** v18.6 source (`selectDumpableType()`,
+`dumpRangeType()`), v13.23 source (`dumpRangeType()`, no multirange);
+probed `pg_dump` 16.15.
+**Relied on by:** `roadmap-phase2-typed-columns.md` ("Multiranges", type
+mapping table).
+**Re-verify:** `grep -n 'skip auto-generated array and multirange types' -A 4
+src/bin/pg_dump/pg_dump.c` — confirm multiranges are still `DO_DUMMY_TYPE`;
+`grep -n 'AS RANGE' -A 8 src/bin/pg_dump/pg_dump.c` — confirm the parameter
+list is still emitted one-per-line and that `multirange_type_name` is still
+the only trace of the companion.
+
+---
+
+## I11 — A base type is emitted twice under one name, and both it and a shell type are reachable without compiled C
+
+**Claim.** `pg_dump` emits a C-level base type as **two** TOC entries sharing
+one type name: first `CREATE TYPE <name>;` under `Type: SHELL TYPE`, then the
+full `CREATE TYPE <name> (INPUT = ..., OUTPUT = ..., ...)` under `Type: TYPE`.
+A genuinely never-completed shell type emits only the first, also under
+`Type: TYPE` (not `SHELL TYPE`).
+
+Both shapes — and a user-defined range type — are creatable from **pure SQL**
+against a stock server, with no compiled extension, so the fixture generator
+can produce all three.
+
+**Proof.** Two separate emitters: `dumpShellType()` writes `"CREATE TYPE %s;\n"`
+with `.description = "SHELL TYPE"`, and `dumpUndefinedType()` writes the same
+statement for a type that never got I/O functions, under the ordinary `TYPE`
+description — its comment distinguishes "this case from where we have to emit
+a shell type definition to break a circular dependency". `DefineType()`
+(`typecmds.c`) requires the shell to exist first ("we must already have a
+shell type, since there is no other way that the I/O functions could have been
+created"), which is what makes the pair unavoidable rather than incidental.
+The I/O functions themselves need no C source: `LANGUAGE internal` bodies
+naming the built-in symbols `textin`/`textout` satisfy `CREATE FUNCTION`
+against a shell return type (the server emits `NOTICE: return type ... is
+only a shell` and proceeds). Creating a base type requires superuser
+(`errmsg("must be superuser to create a base type")`), which the fixture
+containers run as.
+
+**Observed.** Probed against `postgres:16-alpine` (16.15). This is the whole
+recipe:
+
+```sql
+CREATE TYPE public.myrange AS RANGE (subtype = float8);
+CREATE TYPE public.shellonly;
+CREATE TYPE public.mybase;
+CREATE FUNCTION public.mybase_in(cstring) RETURNS public.mybase
+    AS 'textin' LANGUAGE internal IMMUTABLE STRICT;
+CREATE FUNCTION public.mybase_out(public.mybase) RETURNS cstring
+    AS 'textout' LANGUAGE internal IMMUTABLE STRICT;
+CREATE TYPE public.mybase (INPUT = public.mybase_in,
+    OUTPUT = public.mybase_out, INTERNALLENGTH = VARIABLE,
+    STORAGE = extended);
+```
+
+`pg_dump` then emits `mybase` twice (SHELL TYPE, then TYPE), `shellonly` once,
+and `myrange` with its multirange parameter (I10).
+
+**Consequence for `crate::preamble` / `crate::pgtype`.** One name can own two
+`TypeDef` entries, so `resolve_user_type`'s first-match lookup returns the
+`Shell` entry for a completed base type. Harmless as long as `Base` and
+`Shell` share the `OpaqueBaseType` outcome — but it is a first-match lookup
+over a list that is *not* known to be unique by name, which is worth
+remembering if those outcomes ever diverge. Also removes the standing excuse
+that these shapes cannot be fixture-generated.
+
+**Verified against:** v18.6 source (`dumpShellType()`, `dumpUndefinedType()`,
+`DefineType()`); probed `pg_dump` 16.15.
+**Relied on by:** `roadmap-phase2-typed-columns.md` ("Fixtures").
+**Re-verify:** `grep -n '"SHELL TYPE"' -B 12 src/bin/pg_dump/pg_dump.c` —
+confirm `dumpShellType()` still emits a bare `CREATE TYPE x;` ahead of the
+real definition; re-run the recipe above against the newest major.
+
+---
+
+## I12 — Large-object data is one contiguous, line-oriented region that cannot contain a `COPY` block
+
+**Claim.** In plain-format output, large-object *data* appears as a single
+contiguous region: after every `COPY` block, before post-data DDL, introduced
+by one `BLOBS` archive entry (hence one TOC comment, I3) and wrapped in
+`BEGIN;` / `COMMIT;`. Its contents are ordinary single-line SQL statements —
+`SELECT pg_catalog.lo_open(pg_catalog.lo_create('<oid>'), 131072);`, a run of
+`SELECT pg_catalog.lowrite(0, '\x…');`, `SELECT pg_catalog.lo_close(0);` per
+object. **No line inside it can be mistaken for a `COPY` header or a `\.`
+terminator**, because the payload is a bytea hex literal and hex cannot
+contain a line break. Large-object *definitions* (ownership, ACL, comments)
+are separate entries that sort ahead of the pre-data boundary.
+
+**Proof.** `dbObjectTypePriorities` (`pg_dump_sort.c`) places
+`PRIO_LARGE_OBJECT_DATA` between `PRIO_TABLE_DATA` and
+`PRIO_POST_DATA_BOUNDARY`, and `PRIO_LARGE_OBJECT` (the definition entries)
+before `PRIO_PRE_DATA_BOUNDARY` — so the data region is one block in a fixed
+position, never interleaved with table data. `pg_dump.c` creates exactly one
+archive entry named `BLOBS` with `.description = "BLOBS"` for all of it.
+`StartRestoreLOs()`/`EndRestoreLOs()` (`pg_backup_archiver.c`) emit the
+`BEGIN;`/`COMMIT;` wrapper when not restoring to a live connection;
+`_StartLO()` emits the `lo_open(lo_create(...))` line, and `dump_lo_buf()`'s
+no-connection branch emits each chunk through `appendByteaLiteralAHX()` as
+`SELECT pg_catalog.lowrite(0, %s);`.
+
+**Size.** Chunks are `LOBBUFSIZE`-bounded but the region is not: hex encoding
+roughly doubles the on-disk size of the objects, so a dump of a
+large-object-heavy database can carry hundreds of gigabytes here. This is the
+one inter-`COPY` gap that is **not** bounded by schema size.
+
+**Consequence.** Two, in opposite directions. The scanner needs no defence:
+`crate::scan` steps over this region as ordinary outside-block lines and
+cannot be confused by it, which is why large objects have never been a
+correctness hazard despite being unmodelled. But Phase 3's full file map must
+recognize the region by its TOC header and skip to `COMMIT;` rather than
+running the keyword-dispatch grammar over every line — otherwise the "cheap
+tier costs a few thousand DDL lines" claim becomes a full-file parse. The
+per-object OID appears only in the `lo_create('<oid>')` opener; recovering it
+costs a walk of the whole region, which is why per-object spans are deferred.
+
+**Verified against:** v16.15 and v18.6 source (`pg_dump_sort.c` priorities;
+`dumpLOs`/`BLOBS` entry; `StartRestoreLOs`, `_StartLO`, `dump_lo_buf` in
+`pg_backup_archiver.c`); the `"BLOBS"` description string is unchanged from
+v13.23 through v18.6. No fixture or koji coverage — koji has no large
+objects.
+**Relied on by:** `roadmap.md` (Phase 3, "Large objects: ranges, not
+contents"); `pg-dump-compatibility.md`.
+**Re-verify:** `grep -n 'PRIO_LARGE_OBJECT_DATA' src/bin/pg_dump/pg_dump_sort.c`
+— confirm it still sits between `PRIO_TABLE_DATA` and
+`PRIO_POST_DATA_BOUNDARY`; `grep -n 'lowrite' src/bin/pg_dump/pg_backup_archiver.c`
+— confirm the no-connection branch still emits one bytea literal per
+statement.
+
+---
+
+## I13 — `pg_dump` emits table data only as `COPY … FROM stdin;` in TEXT format, or as `INSERT`
+
+**Claim.** There is no `pg_dump` output in which a `COPY` block carries an
+options clause. Data is emitted either as `COPY <table> [(<cols>)] FROM
+stdin;` with COPY's default TEXT format, or — under `--inserts` /
+`--column-inserts` — as `INSERT INTO` statements. No flag produces
+`WITH (FORMAT csv)`, `WITH (FORMAT binary)`, a custom `DELIMITER`, or any
+other `COPY` option.
+
+**Proof.** `dumpTableData()` (`pg_dump.c`) branches on exactly one condition:
+
+```c
+if (dopt->dump_inserts == 0) {
+    dumpFn = dumpTableData_copy;
+    printfPQExpBuffer(copyBuf, "COPY %s ", copyFrom);
+    appendPQExpBuffer(copyBuf, "%s FROM stdin;\n", fmtCopyColumnList(tbinfo, clistBuf));
+} else {
+    dumpFn = dumpTableData_insert;
+}
+```
+
+The `COPY` branch is a fixed format string terminated by `FROM stdin;` — the
+column list is the only variable part, and there is no code path that appends
+anything after it. The server-side read is symmetric: `dumpTableData_copy()`
+issues `COPY <table> <cols> TO stdout;` (or `COPY (SELECT …) TO stdout;` for
+foreign tables and partition-root loads), again with no options clause.
+`grep -rni csv src/bin/pg_dump/` matches nothing whatsoever. `pg_backup_tar.c`
+independently assumes the same shape, validating that a stored `copyStmt`
+ends in the literal `" FROM stdin;\n"`.
+
+**Consequence.** Two. The scanner's `parse_copy_header` deliberately rejects
+any `COPY` line carrying a trailing `WITH (...)` and treats it as ordinary
+SQL rather than guessing — safe precisely because `pg_dump` never emits one,
+so the only way to encounter it is in text that is not `pg_dump` output (or
+inside a dollar-quoted body, where it must be ignored anyway). And
+CSV-format `COPY` blocks are not a compatibility gap but a non-shape: see
+`pg-dump-compatibility.md` and Phase 8 Track A in `roadmap.md`.
+
+Note the asymmetry with `--inserts`: that one *is* a real output shape and a
+real gap, scheduled in Phase 8 Track A. The two were bundled together in
+`docs/design/historical/initial.md`'s future-options list; only one of them
+exists.
+
+**Verified against:** v13.23, v16.15 and v18.6 source (`dumpTableData()`,
+`dumpTableData_copy()`, `pg_backup_tar.c`'s `copyStmt` check) — the `COPY`
+format string is unchanged across all three. Also consistent with every
+fixture in `fixtures/` and with koji (`pg_dump 16.14`), none of which
+contains a `COPY` line with an options clause.
+**Relied on by:** `pgdump_query/src/copy.rs`'s `parse_copy_header` (its doc
+comment states the deliberate non-match for `WITH (...)`);
+`pg-dump-compatibility.md` ("`COPY` header variants" and "CSV-format `COPY`
+blocks"); `roadmap.md` (Phase 8 Track A).
+**Re-verify:** `grep -n 'FROM stdin' src/bin/pg_dump/pg_dump.c` — confirm the
+statement is still built from a fixed format string with no options clause;
+`grep -rni csv src/bin/pg_dump/` — confirm it still matches nothing.
 
 ---

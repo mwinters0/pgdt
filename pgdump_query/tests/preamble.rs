@@ -26,6 +26,35 @@ fn edge_cases_fixture(version: u32, flag_set: &str) -> PathBuf {
         .join(format!("{flag_set}.sql"))
 }
 
+/// Two copies of `edge_cases/create.sql`, concatenated: a real
+/// `\connect`-delimited multi-database dump, the shape `pg_dumpall` and
+/// hand-concatenated dump files produce ("Multi-database dumps" in
+/// `docs/design/roadmap-phase2-typed-columns.md`). `--create` is the only
+/// flag combination in the fixture matrix that emits a `\connect` at all
+/// (plain `pg_dump` never does), so it's the only one two copies of can be
+/// concatenated into this shape.
+///
+/// The second copy has its database name changed so the two `\connect`
+/// targets are distinguishable: `pgdq_fixture` (the fixture generator's
+/// fixed `DB_NAME`) appears nowhere in a `--create` dump except in the
+/// `CREATE DATABASE`/`ALTER DATABASE`/`\connect` lines naming it, so a
+/// literal string replace is safe and needs no real second Postgres
+/// instance. The rest of the schema — every table, type, and row — is
+/// identical between the two, which is deliberate: it means a table name
+/// like `public.widgets` genuinely collides across databases, exercising
+/// `resolve.rs::database_for`'s first-match behavior and `table_stream`'s
+/// cross-database matching (both currently un-scoped by database — see
+/// `docs/status/STATUS.md`, "Decisions worth a second look") against a real
+/// dump instead of only hand-written unit input.
+fn multidb_fixture(version: u32) -> (tempfile::TempDir, PathBuf) {
+    let content = std::fs::read_to_string(edge_cases_fixture(version, "create")).unwrap();
+    let renamed = content.replace("pgdq_fixture", "pgdq_fixture_2");
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("multidb.sql");
+    std::fs::write(&path, format!("{content}{renamed}")).unwrap();
+    (dir, path)
+}
+
 async fn single_database(path: &Path) -> DatabaseMetadata {
     let source = LocalFileSource::open(path).unwrap();
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
@@ -220,5 +249,49 @@ async fn edge_cases_binary_upgrade_dump_recreates_the_dropped_column_as_a_dummy(
         // dummy type, exactly as real `pg_dump --binary-upgrade` writes them.
         assert_eq!(cols[2], ("........pg.dropped.3........".to_string(), "INTEGER".to_string()));
         assert_eq!(cols[3], ("also_keep".to_string(), "boolean".to_string()));
+    }
+}
+
+/// Phase 2.3.1: real fixture coverage for a concatenated/`pg_dumpall`-shaped
+/// multi-database dump — previously only exercised by hand-written
+/// `\connect` input in `pgdump_query/src/preamble.rs`'s unit tests (see
+/// `docs/status/STATUS.md`, "Decisions worth a second look").
+#[tokio::test]
+async fn concatenated_create_dumps_yield_two_named_databases_each_fully_parsed() {
+    for version in [13, 16, 18] {
+        let (_dir, path) = multidb_fixture(version);
+        let source = LocalFileSource::open(&path).unwrap();
+        let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+
+        // I2: this is the only shape in which one qualified table name owns
+        // more than one `COPY` block — one per database, both present in the
+        // flat block list.
+        let widget_blocks: Vec<_> = index.blocks_for("public.widgets").collect();
+        assert_eq!(widget_blocks.len(), 2, "pg_dump {version}");
+        assert_eq!(index.total_rows(), 2 * 144, "pg_dump {version}: doubled row count");
+
+        let metadata = index.metadata.expect("build_index always populates metadata");
+        assert_eq!(metadata.databases.len(), 2, "pg_dump {version}");
+        assert_eq!(
+            metadata.databases[0].name.as_deref(),
+            Some("pgdq_fixture"),
+            "pg_dump {version}"
+        );
+        assert_eq!(
+            metadata.databases[1].name.as_deref(),
+            Some("pgdq_fixture_2"),
+            "pg_dump {version}"
+        );
+
+        for db in &metadata.databases {
+            assert!(db.preamble_complete, "pg_dump {version}: {:?}", db.name);
+            assert!(db.server_version.is_some(), "pg_dump {version}: {:?}", db.name);
+            assert!(db.pg_dump_version.is_some(), "pg_dump {version}: {:?}", db.name);
+        }
+        // Same source schema copied verbatim into both `\connect` segments —
+        // the DDL itself (everything but the database name) must come out
+        // identical.
+        assert_eq!(metadata.databases[0].tables, metadata.databases[1].tables, "pg_dump {version}");
+        assert!(metadata.databases[0].tables.contains_key("public.widgets"), "pg_dump {version}");
     }
 }

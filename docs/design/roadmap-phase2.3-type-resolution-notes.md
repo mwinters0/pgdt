@@ -124,10 +124,17 @@
   matches DDL in more than one database) and real attribution (which
   database a *found* `CopyBlock` belongs to, so a query can tell which
   database's data it's reading, not just which database's DDL to type
-  against) — neither is implemented. Every fixture and koji are
-  single-database, so this path has zero real-world exercise either way; a
-  fixture or dump that actually concatenates two `pg_dump --create` outputs
-  (real `pg_dumpall` shape) would be the first evidence either matters.
+  against) — neither is implemented. koji is still single-database, so this
+  path has no *real-dump* exercise, but Phase 2.3.1 added fixture coverage
+  (two concatenated `--create` dumps —
+  `docs/design/roadmap-phase2.3.1-multidb-fixtures-notes.md`) that proves
+  the gap end to end rather than only against hand-written input: a table
+  name genuinely defined in two databases resolves types against the first
+  one silently (`tests/pgtype.rs`) and `stream::table_stream` returns both
+  databases' rows unioned (`tests/stream.rs`) — both now pinned by tests, not
+  just described here. **Scheduled as slice 2.3.3**, generalized to cover
+  bare-name cross-*schema* ambiguity within a single database as well — see
+  `roadmap-phase2-typed-columns.md`, "One target per query".
 - **`ColumnResolution::Deferred`'s `kind` doesn't distinguish a built-in
   range from a user-defined one**, even though `pgtype.rs` now recognizes
   both. Nothing downstream needs the distinction yet — Phase 4's decoder
@@ -135,3 +142,10 @@
   the user-defined case and nowhere at all for the built-in ones (PostgreSQL
   encodes it in the catalog, not in DDL text) — so this is deferred to
   whichever slice of Phase 4 builds the range decoder, not decided now.
+  Multiranges (2.3.3) join the same bucket for the same reason.
+- **`map_builtin` covers ranges but not multiranges**, and
+  `resolve_user_type`'s `types.iter().find()` assumes one `TypeDef` per name
+  — which a completed base type violates, since `pg_dump` emits it as a
+  `SHELL TYPE` entry plus a `TYPE` entry under the same name (I11). Harmless
+  while `Base` and `Shell` share the `OpaqueBaseType` outcome. Both addressed
+  in 2.3.3.

@@ -20,6 +20,24 @@ fn types_fixture(version: u32, flag_set: &str) -> PathBuf {
         .join(format!("{flag_set}.sql"))
 }
 
+/// Two copies of `edge_cases/create.sql`, concatenated into one real
+/// `\connect`-delimited multi-database dump — see `tests/preamble.rs`'s
+/// `multidb_fixture` for the full rationale (duplicated here since each
+/// `tests/*.rs` file is its own crate with no shared support module).
+fn multidb_fixture(version: u32) -> (tempfile::TempDir, PathBuf) {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../fixtures")
+        .join(version.to_string())
+        .join("edge_cases")
+        .join("create.sql");
+    let content = std::fs::read_to_string(path).unwrap();
+    let renamed = content.replace("pgdq_fixture", "pgdq_fixture_2");
+    let dir = tempfile::tempdir().unwrap();
+    let combined = dir.path().join("multidb.sql");
+    std::fs::write(&combined, format!("{content}{renamed}")).unwrap();
+    (dir, combined)
+}
+
 async fn metadata(path: &Path) -> DumpMetadata {
     let source = LocalFileSource::open(path).unwrap();
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
@@ -122,5 +140,35 @@ async fn enum_column_maps_to_a_dictionary_and_domain_to_its_base_type() {
         // over `integer` -- transitive resolution must reach `Int32`.
         assert_eq!(resolved.schema.field(1).data_type(), &DataType::Int32, "pg_dump {version}");
         assert!(db.tables.contains_key("public.t_enum_domain"), "pg_dump {version}");
+    }
+}
+
+/// Real-shape smoke test for `resolve_columns` against genuine multi-database
+/// `DumpMetadata` (as opposed to `resolve.rs`'s hand-built
+/// `ambiguous_table_across_databases_resolves_against_the_first_match`,
+/// which proves the first-match rule with deliberately differing types):
+/// resolution must not error or degrade just because `metadata.databases`
+/// has more than one entry.
+#[tokio::test]
+async fn resolution_still_works_against_metadata_with_more_than_one_database() {
+    use ColumnResolution::Mapped;
+    for version in [13, 16, 18] {
+        let (_dir, path) = multidb_fixture(version);
+        let meta = metadata(&path).await;
+        assert_eq!(meta.databases.len(), 2, "pg_dump {version}");
+
+        let cols: Vec<String> = meta.databases[0]
+            .tables
+            .get("public.widgets")
+            .unwrap()
+            .iter()
+            .map(|(n, _)| n.clone())
+            .collect();
+        let resolved = resolve_columns("public.widgets", &cols, Some(&meta), SchemaMode::Typed);
+        assert!(
+            resolved.columns.iter().all(|r| *r == Mapped),
+            "pg_dump {version}: {:?}",
+            resolved.columns
+        );
     }
 }

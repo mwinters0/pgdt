@@ -60,21 +60,121 @@ because a table produces at most one `COPY` block (I2) — but it is the contrac
 Phase 6's `TableProvider` needs, and it forecloses any design where a column's
 Arrow type depends on how far a scan happened to get.
 
-## Multi-database dumps
+## One target per query
 
-`pg_dumpall` output, and concatenated dump files, contain several databases'
-dumps in sequence, each introduced by `\connect`. This is the only way one
-table name can own more than one `COPY` block (I2).
+**A query resolves to exactly one `(database, schema, table)`, or it is an
+error naming the candidates.** Anything else is a silent union of unrelated
+tables under one schema.
+
+Two independent ways a query can match more than one target, both real:
+
+- **Across databases.** `pg_dumpall` output, and concatenated dump files,
+  contain several databases' dumps in sequence, each introduced by `\connect`.
+  This is the only way one *qualified* table name can own more than one `COPY`
+  block (I2).
+- **Across schemas.** `CopyHeader::matches` accepts a bare name against any
+  schema, so `widgets` matches `public.widgets` and `other.widgets` within a
+  single database — no `\connect` involved. Ambiguity here is reachable in
+  every dump shape, including koji's.
+
+The two share one rule because they share one failure. They differ only in
+remedy: a cross-schema collision is fixed by qualifying the name, a
+cross-database one is not fixable by naming at all until per-database
+selection exists.
+
+Declining to support these shapes would not have protected anyone: the file
+still parses, blocks still match by name, and the wrong answer still comes
+out. The cost is not symmetric across slices, either — while every column is
+`Utf8View` (through 2.3) a union is merely wrong; once 2.4's decoders exist, a
+schema resolved from one target's DDL and applied to another's rows is silent
+corruption, and `RecordBatch::try_new` cannot catch it because the column
+*names* match.
+
+### What this requires
 
 - The preamble search **re-arms at each `\connect`** — the pre-data ordering
-  invariant is per database, not per file (I1).
-- A query **never spans databases**. A table query that matches blocks in more
-  than one database is an error naming the candidates, not a silent union of
-  two different tables under one schema.
-- Single-database dumps — every fixture, and koji — never trigger the check.
+  invariant is per database, not per file (I1). Already built.
+- **Per-`CopyBlock` database attribution.** A `CopyBlock` records
+  `database: Option<String>`, the name from the `\connect` that governs it,
+  read straight off the line as either scan passes it. `None` means the file
+  had no `\connect` at all — a plain dump — and falls back to the single
+  unnamed `DatabaseMetadata`. This is what turns `resolve.rs::database_for`
+  from "first database whose DDL mentions this name" into "the database this
+  block belongs to" — the difference between a guess and a fact.
 
-Declining to support this shape would not have protected anyone: the file still
-parses, blocks still match by name, and the wrong answer still comes out.
+  **Not an ordinal into `metadata.databases`.** An index would be
+  unresolvable in exactly the case attribution exists for: `scan_preamble`
+  stops at the first `COPY` block, so an incremental query's metadata holds
+  one entry no matter how many databases the file contains, and a live scan
+  can discover a block in database 3 whose entry will never be filled in. A
+  name is self-contained.
+
+  **Tracking `\connect` in the live scan is not "reading preamble as it
+  goes."** The distinction matters because "The preamble pass" below rejects
+  exactly that: `parse_connect` is one prefix check on a line the scanner
+  already holds, it yields a database *name*, and it never yields a column
+  type — so the resolved schema still cannot change partway through a
+  stream, which is the whole property being protected. Boundary tracking and
+  DDL accumulation are different jobs that happen to read the same line.
+- **A candidate check over the matched block set**, before any streaming
+  starts. Cross-schema needs no new data at all: the matched blocks already
+  carry their own schema names.
+
+Single-database dumps with qualified queries — every fixture, and koji as
+queried today — never trigger the check.
+
+Scheduled as slice 2.3.3, ahead of 2.4, for the corruption reason above.
+The cache format change is free: pre-1.0 carries no compatibility
+obligation.
+
+### The error, and the way out of it
+
+`Error::AmbiguousTable { name, candidates }`, candidates rendered
+`database.schema.table`. Erroring without a way to then ask for the right
+target would be a net loss — the tool would go from returning *wrong* rows
+for a `pg_dumpall` file to returning none — so the two axes each get one:
+
+- **Cross-schema is self-remedying**: qualify the name. No new API.
+- **Cross-database needs a selector**, because the table name cannot express
+  it. The query gains a `database: Option<String>` option (`--database` at
+  the CLI), matched against `DatabaseMetadata::name`.
+
+**Database is a separate parameter, not a third name segment.** Three-part
+`db.schema.table` would make `CopyHeader::matches` — which splits on the
+first `.` — ambiguous about whether segment one is a database or a schema,
+in a function whose whole job is being unambiguous. A separate axis stays a
+separate parameter.
+
+**`SchemaMode::Strings` does not suppress this error.** The two new errors sit
+on different axes and opt out differently:
+
+| Error | About | `Strings` bypasses? |
+|---|---|---|
+| `AmbiguousTable` | *which rows* come back | **No** — a union of two databases' `widgets` is two unrelated tables concatenated whether or not anything is typed |
+| `MetadataNotScanned` | *what types* the columns get | **Yes** — the mode means "I distrust the mapping", and the error's own message names it as the remedy |
+
+Stated here as a property of each error rather than left to fall out of
+implementation order: bypassing both is the tempting shortcut, and it
+silently reinstates the union this section exists to remove.
+
+A candidate can never be a *nameless* database: only `--create` and
+`pg_dumpall` output contains more than one database, and both introduce every
+one with a `\connect` that names it. The nameless shape is the limit below,
+which is undetectable rather than ambiguous.
+
+### The limit: concatenated plain dumps are undetectable
+
+Two plain (non-`--create`) dumps of different databases, concatenated, contain
+no `\connect` at all. The file is indistinguishable from a single database's
+dump: both databases' DDL folds into one `DatabaseMetadata`, and a table name
+they share collides in the `tables` map with the later one winning. No check
+can fire, because the file carries no evidence that there were ever two
+databases.
+
+This is a property of the input, not a gap in the parser — the information is
+absent, not missed. It is recorded here so a future reader does not mistake
+"one target per query" for a guarantee that holds against arbitrary
+concatenation.
 
 ## The preamble pass
 
@@ -108,12 +208,29 @@ to have been seen), which makes the Arrow schema depend on scan progress.
 
 **A full metadata scan is `pgdq parse`, not a new flag.** `parse`'s job grows
 to include metadata; it already means "scan the whole file eagerly and persist
-what you find". An incremental `Typed` query reads preamble as it goes and
-records coverage; if it resolves a table whose database's preamble it never
-covered, it errors with `metadata for database <db> was not scanned — run
-'pgdq parse <file>' first, or use --schema-mode strings`. Detection and remedy
-in one message, on the eager/incremental axis Phase 1 already built. A `--full`
-flag on `query` would be a third way to say the same thing.
+what you find". An incremental `Typed` query captures exactly one database's
+preamble — the first, via the `scan_preamble` prepass — and nothing more. If
+it matches a block belonging to any other database, that database's
+`preamble_complete` is false and the query errors with `metadata for database
+<db> was not scanned — run 'pgdq parse <file>' first, or use --schema-mode
+strings`. Detection and remedy in one message, on the eager/incremental axis
+Phase 1 already built. A `--full` flag on `query` would be a third way to say
+the same thing.
+
+**The live scan deliberately does not accumulate preamble as it goes.** It
+would look strictly better — a stream passing database 2's DDL on its way to
+database 2's data could just read it, and the error above would become nearly
+unreachable. It is the rejected lazy-resolution alternative wearing a
+different hat: that DDL sits *before* its `COPY` block, so the stream would
+learn a column's type partway through its own run and the resolved schema
+would depend on how far the scan had got. "One schema per stream", resolved
+up front, is worth more than avoiding one error message whose remedy is a
+single command.
+
+This check is only precise once a `CopyBlock` knows which database it belongs
+to — before that, "which database's preamble do I need?" has no answer better
+than a guess. It therefore lands with the attribution work in slice 2.3.3,
+not before.
 
 **`DumpIndex::scanned_through` is what makes "not present" distinguishable from
 "not yet scanned".** The field already exists and already advances as
@@ -241,6 +358,7 @@ almost every column in a real 75-table schema.
 | enum (`CREATE TYPE ... AS ENUM`) | `Dictionary(Int32, Utf8)` | Only when the label set is non-empty |
 | domain (`CREATE DOMAIN`) | base type's mapping | Resolved transitively |
 | array, composite, range | `Utf8View` | Phase 4 — they share one nested-quoting decoder |
+| multirange (`int4multirange` … `datemultirange`, and a user range's companion) | `Utf8View` | Phase 4, same `DeferredKind::Range` bucket — see "Multiranges" below |
 
 Microsecond precision throughout, because that is PostgreSQL's storage
 resolution. Nullability is not refined by `NOT NULL` — see "Nullability" above.
@@ -260,6 +378,27 @@ empty-label fallback to `Utf8View` remains for genuinely empty enums.
 
 This makes the metadata pass a **hard prerequisite** for typing, not just an
 `info` nicety.
+
+**Multiranges.** PostgreSQL 14 added multirange types, in three shapes, none
+of which this design named before slice 2.3.3:
+
+- The six built-ins (`int4multirange`, `int8multirange`, `nummultirange`,
+  `tsmultirange`, `tstzmultirange`, `datemultirange`) appear bare, exactly
+  like the six built-in range types, so they never reach the user-defined
+  lookup through the `.` discriminator (I8). They are recognized in the
+  built-in table directly, same as the ranges.
+- Every user-defined range type **auto-creates a companion multirange type**,
+  and `pg_dump` emits **no `CREATE TYPE` for it at all** — its only trace in
+  the file is the `multirange_type_name = <name>` parameter inside the range
+  type's own DDL (I10). A column declared with that companion name would
+  otherwise resolve `Unknown` with no way to recover what it is, so
+  `TypeKind::Range` carries the companion name and the type lookup honours
+  it. Discarding that parameter would make the information unrecoverable
+  without re-scanning the file.
+- Both land in `DeferredKind::Range` rather than a new `Multirange` kind, on
+  the same reasoning that already defers built-in-vs-user range
+  discrimination to whichever Phase 4 slice writes the range decoder: nothing
+  downstream needs the distinction until then.
 
 ## Failure and diagnostics
 
@@ -355,6 +494,12 @@ neither `=` nor `!=` and there was no way to ask for one:
   shortcut). Default stays a full scan — the block listing and row counts are
   also genuine "what is in here" answers this flag trades away.
 
+`pgdq query` gains **`--database <name>`** (2.3.3), the way out of
+`AmbiguousTable` — see "One target per query". `pgdq info` lists blocks
+grouped by their owning database once blocks carry that attribution, which is
+also what makes an `AmbiguousTable` message actionable: the candidate names
+it prints are names `info` has already shown.
+
 `pgdq query` **renders typed values back to their PostgreSQL text form**, so
 its output is byte-identical whether typing is on or off. The CLI's job is
 showing what is in the dump, and having `--schema-mode` silently change the
@@ -380,6 +525,9 @@ forms that do not round-trip back into PostgreSQL at all.
 - `PredicateOp` gains `IsNull`/`IsNotNull`; `Predicate::value` becomes
   `Option<String>`.
 - `Error` gains `FieldDecode`.
+- **2.3.3**: the query gains `database: Option<String>`; `CopyBlock` gains its
+  database attribution; `Error` gains `AmbiguousTable { name, candidates }`
+  and `MetadataNotScanned { database }`.
 
 ## Fixtures
 
@@ -395,13 +543,87 @@ The fixture schemas split by purpose, because they want opposite things:
   `numeric` at 38 and 39 digits, empty vs NULL `bytea`, an enum, a domain over
   a domain. Dropping this into the edge-case schema would swamp its snapshots.
 
+  It also carries the three `CREATE TYPE` shapes that have no `pg_dump`-emitted
+  evidence behind them (added in slice 2.3.2): a user-defined range type, a
+  never-completed shell type, and a full C-level base type. All three are
+  reachable from **pure SQL** — no compiled extension — because a base type's
+  I/O functions can be `LANGUAGE internal` wrappers over `textin`/`textout`
+  (I11). Getting them under `pg_dump` matters most for the range type, whose
+  grammar had only ever been tested against a hand-written single-line
+  `subtype = int4`; real output is multi-line and carries a *multi-word*
+  subtype (`subtype = double precision`) plus a `multirange_type_name`
+  parameter. Shell and base types ride along on the same regeneration and pin
+  one thing nothing else does: a base type occupies **two** entries under one
+  name (a `SHELL TYPE` TOC entry, then the `TYPE` one).
+
 Each schema gets its **own flag list**, and output nests by schema:
 `fixtures/<version>/<schema>/<flag-set>.sql`.
 
 | Schema | Flag sets |
 |---|---|
-| `edge_cases` | the existing seven, plus `binary-upgrade` |
+| `edge_cases` | the existing seven, plus `binary-upgrade`, `create`, `no-comments`, and `dumpall` |
 | `types` | `default`, `data-only`, `binary-upgrade` |
+
+`no-comments` (`--no-comments --no-security-labels`, added in 2.3.2) exists
+for one hypothesis: I3 claims TOC header comments survive it, and the entire
+preamble segmenter rests on that claim while being proven by source reading
+alone. The other untested flags stay untested on purpose — `--schema=X` only
+removes objects, a shape the matrix already covers in kind, and
+`--rows-per-insert` is dead weight until Phase 8 Track A can read `--inserts`
+at all.
+
+`dumpall` is not a `pg_dump` flag set at all: it runs `pg_dumpall
+--no-role-passwords` against the whole cluster, so the generator needs a
+sentinel entry that swaps the binary rather than appending flags
+(`--no-role-passwords` keeps the output deterministic). It earns its place
+on two counts. `pg_dumpall` passes `--create` for ordinary databases but
+**not** for `postgres`/`template1`, writing those `\connect` lines itself —
+which flips the order of a segment's version headers relative to its
+`\connect`, exercising the branch of `PreambleBuilder` that the hand-built
+concatenation provably cannot reach (I9). And it is the only fixture whose
+file *starts* with content nothing parses yet — roles and tablespaces ahead
+of the first `\connect` — which is exactly where Phase 3's "spans tile the
+file" claim would otherwise go unchecked.
+
+`create` (`--create`) was added in Phase 2.3.1. It's
+the only flag combination that ever emits a `\connect`, which makes it the
+building block for multi-database dump coverage: `pgdump_query/tests/{preamble,pgtype,stream}.rs`
+each concatenate two renamed copies of it at test time into a real
+`\connect`-delimited multi-database file rather than adding a whole second
+fixture tree — see `docs/design/roadmap-phase2.3.1-multidb-fixtures-notes.md`.
+
+### The fixture tree is uniform across versions
+
+**Every routine version gets every flag set of every schema.** 2.3.1
+generated `create` for 13/16/18 only, matching the trio the Rust tests
+iterate; 2.3.2 backfills 14/15/17. A tree where `fixtures/16/` and
+`fixtures/15/` hold different flag sets is a trap — the next person to add a
+version-sensitive test has no way to tell "deliberately absent" from "nobody
+got round to it". The containers are the same throwaway cost the other three
+already pay, and which versions the *tests* iterate stays a separate,
+freely-revisable question from which versions the *fixtures* cover.
+
+**Version-conditional DDL is guarded inside the one shared schema file**, with
+psql conditionals rather than per-version overlay files:
+
+```sql
+SELECT :SERVER_VERSION_NUM >= 140000 AS has_multirange \gset
+\if :has_multirange
+...
+\endif
+```
+
+The generator pipes each schema through `psql -v ON_ERROR_STOP=1`, so
+meta-commands are available and an ungated PG14+ statement would hard-fail the
+13 container. Keeping the guard beside the DDL it applies to means one source
+of truth per schema; an overlay file would split a table's definition across
+two places for the reader who most needs it in one.
+
+The consequence lands on the tests: an object may be genuinely absent from an
+older version's fixture, and a test must say so explicitly rather than let a
+`None` lookup pass for a pass. That boundary is itself worth covering — the
+13-vs-14 multirange difference is otherwise asserted from source reading
+alone (I10).
 
 The types schema needs only three: `--no-owner` and `--clean` cannot change a
 column's declared type, while `data-only` is the no-DDL degradation path and
@@ -506,10 +728,10 @@ shared, the size and stress mix are per-phase.
 ## Implementation slices
 
 Phase 2 is substantially larger than any Phase 1 increment, so it lands as
-five numbered subphases, plus 2.2.1 — a small follow-up patch to 2.2's own
-contract, numbered because it changed `table_stream`'s behavior and needed
-its own record, not because it was planned as a sixth slice. The ordering is
-deliberate: **each slice makes the next one's mistakes visible.**
+five numbered subphases, plus the `<N>.<M>` follow-ups each earned by
+changing an already-landed slice's contract rather than by being planned
+up front: 2.2.1, 2.3.1, 2.3.2, 2.3.3. The ordering is deliberate: **each slice
+makes the next one's mistakes visible.**
 
 | Slice | Content |
 |---|---|
@@ -518,6 +740,9 @@ deliberate: **each slice makes the next one's mistakes visible.**
 | **2.2** | Preamble parsing, `DumpMetadata`, cache persistence, `pgdq info` display |
 | **2.2.1** | Incremental (`table_stream`) scans guarantee the first database's preamble is captured too, not just `build_index`'s full scan — see `docs/design/roadmap-phase2.2.1-incremental-preamble-notes.md` |
 | **2.3** | Type resolution, `ResolvedSchema`, diagnostics — still emitting `Utf8View` for every column; also `pgdq info --preamble-only`, a fast path skipping the full structural scan (see "CLI") |
+| **2.3.1** | Concatenated/multi-database dump fixtures — see `docs/design/roadmap-phase2.3.1-multidb-fixtures-notes.md` |
+| **2.3.2** | Fixtures and evidence, no code: the three unevidenced `CREATE TYPE` shapes and multirange DDL added to the types schema behind `\if` guards, the `no-comments` and `dumpall` flag sets, and a six-version regeneration making the tree uniform — see "Fixtures" |
+| **2.3.3** | Behaviour: one target per query (per-`CopyBlock` database attribution, `AmbiguousTable`, `--database`), `MetadataNotScanned`, multirange recognition — see "One target per query", "The preamble pass", "Multiranges" |
 | **2.4** | Decoders + render-back + round-trip tests, one type family at a time |
 | **2.5** | Benchmarks and the synthetic performance dataset |
 
@@ -530,7 +755,15 @@ metadata unless it came from a full scan, which every incremental `pgdq
 query` run is not. 2.3 is the important one: the resolved schema and its
 diagnostics become inspectable for koji and every fixture *before* a single
 decoder exists — which is when the mapping table is cheapest to argue about.
-Only then does 2.4 start narrowing column types. 2.3 also gives `pgdq info`
+2.3.2 and 2.3.3 come between because everything in them is a **pre-decoder**
+correction: an ambiguous query and an unrecognized multirange are both
+survivable while every column is `Utf8View`, and neither is survivable once a
+decoder trusts the resolved schema. They are two slices rather than one
+because the halves fail and are reviewed differently — "did the container
+produce what we predicted" versus "does a query now refuse what it used to
+union" — and because the order is forced anyway: 2.3.3's multirange and range
+grammar changes are tested against fixtures 2.3.2 generates. Only then does
+2.4 start narrowing column types. 2.3 also gives `pgdq info`
 its `--preamble-only` fast path: `crate::index::scan_preamble` (2.2.1)
 already proves a preamble read never needs the full structural scan (it's
 what `table_stream` uses internally), so exposing that shortcut at the CLI is

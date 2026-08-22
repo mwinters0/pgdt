@@ -507,6 +507,13 @@ pub(crate) struct PreambleBuilder {
     current: DatabaseMetadata,
     databases: Vec<DatabaseMetadata>,
     pending: Option<PendingStmt>,
+    /// A later database's version-header pair (I9), staged here because it
+    /// arrives — ahead of *that* database's own `\connect` — while `current`
+    /// is still the *previous* database's already-`preamble_complete`
+    /// segment. Consumed by the next `on_connect`. The first database needs
+    /// no staging: its headers land in `current` directly, since nothing has
+    /// set `preamble_complete` yet when they arrive.
+    pending_headers: (Option<String>, Option<String>),
 }
 
 impl PreambleBuilder {
@@ -516,6 +523,7 @@ impl PreambleBuilder {
             current: DatabaseMetadata::empty(None),
             databases: Vec::new(),
             pending: None,
+            pending_headers: (None, None),
         }
     }
 
@@ -530,8 +538,10 @@ impl PreambleBuilder {
     fn on_connect(&mut self, name: String) {
         self.pending = None;
         if self.seen_connect {
-            let finished =
-                std::mem::replace(&mut self.current, DatabaseMetadata::empty(Some(name)));
+            let mut next = DatabaseMetadata::empty(Some(name));
+            next.server_version = self.pending_headers.0.take();
+            next.pg_dump_version = self.pending_headers.1.take();
+            let finished = std::mem::replace(&mut self.current, next);
             self.databases.push(Self::finalize(finished));
         } else {
             // Discard the pre-connect segment itself (see the struct docs)
@@ -581,6 +591,15 @@ impl PreambleBuilder {
         }
 
         if self.current.preamble_complete {
+            // Still worth checking for a *later* database's own version
+            // headers (I9) — they precede that database's `\connect`, so
+            // they arrive here, while `current` is the previous database's
+            // finished segment, not the new one they belong to.
+            if let Some(rest) = line.strip_prefix("-- Dumped from database version ") {
+                self.pending_headers.0 = Some(rest.trim().to_string());
+            } else if let Some(rest) = line.strip_prefix("-- Dumped by pg_dump version ") {
+                self.pending_headers.1 = Some(rest.trim().to_string());
+            }
             return;
         }
 
@@ -899,6 +918,34 @@ mod tests {
         assert!(!meta.databases[0].tables.contains_key("public.ignored"));
         assert_eq!(meta.databases[1].name.as_deref(), Some("two"));
         assert!(meta.databases[1].tables.contains_key("public.b"));
+    }
+
+    /// I9: every `\connect`-segment in a real `pg_dumpall`/concatenated dump
+    /// carries its own version-header pair ahead of its own `\connect`, not
+    /// just the first one — see `postgres-invariants.md`. Regression test
+    /// for the gap phase 2.3.1's fixture (`fixtures/*/edge_cases/create.sql`
+    /// x2, concatenated) surfaced: a second database's headers used to be
+    /// silently dropped because they land while `current` is still the
+    /// first database's already-`preamble_complete` segment.
+    #[test]
+    fn a_later_connect_segment_keeps_its_own_version_headers_too() {
+        let mut b = PreambleBuilder::new();
+        b.feed_line(b"-- Dumped from database version 16.14");
+        b.feed_line(b"-- Dumped by pg_dump version 16.14");
+        b.feed_line(b"\\connect one");
+        b.feed_line(b"CREATE TABLE public.a (id integer);");
+        b.on_copy_start();
+        b.feed_line(b"-- Dumped from database version 16.15");
+        b.feed_line(b"-- Dumped by pg_dump version 16.15");
+        b.feed_line(b"\\connect two");
+        b.feed_line(b"CREATE TABLE public.b (id integer);");
+        let meta = b.finish();
+
+        assert_eq!(meta.databases.len(), 2);
+        assert_eq!(meta.databases[0].server_version.as_deref(), Some("16.14"));
+        assert_eq!(meta.databases[0].pg_dump_version.as_deref(), Some("16.14"));
+        assert_eq!(meta.databases[1].server_version.as_deref(), Some("16.15"));
+        assert_eq!(meta.databases[1].pg_dump_version.as_deref(), Some("16.15"));
     }
 
     #[test]

@@ -259,4 +259,19 @@ mod tests {
         assert_eq!(resolved.notes[0].declared.as_deref(), Some("integer"));
         assert_eq!(resolved.notes[1].declared, None);
     }
+
+    /// `database_for`'s doc comment claims first-match, not real
+    /// disambiguation (`docs/status/STATUS.md`, "Decisions worth a second
+    /// look") — proven here by giving the two databases genuinely different
+    /// declared types for the same qualified table name, so the outcome
+    /// would differ observably if the second database were picked instead.
+    #[test]
+    fn ambiguous_table_across_databases_resolves_against_the_first_match() {
+        let a = one_db(&[("public.t", &[("id", "text")])], vec![]).databases.remove(0);
+        let b = one_db(&[("public.t", &[("id", "integer")])], vec![]).databases.remove(0);
+        let meta = DumpMetadata { databases: vec![a, b] };
+        let cols = vec!["id".to_string()];
+        let resolved = resolve_columns("public.t", &cols, Some(&meta), SchemaMode::Typed);
+        assert_eq!(resolved.schema.field(0).data_type(), &arrow::datatypes::DataType::Utf8View);
+    }
 }
