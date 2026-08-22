@@ -7,8 +7,9 @@ that changed the plan, see `history/` (one file per day, `YYYY-MM-DD.md`) —
 not a changelog, only entries worth keeping. For the design itself (section
 names below track `mvp.md`'s headings), see `docs/design/mvp.md`.
 
-Last updated: 2026-08-22 (cache write failures are hard errors; explicit
-`CacheMode::Disabled`/`--cache-path none`).
+Last updated: 2026-08-22 (`table_stream`/`read_table` consult the structure
+cache: replay known blocks, skip non-matching ones, persist newly-discovered
+ones incrementally).
 
 ## Done
 
@@ -78,8 +79,8 @@ Last updated: 2026-08-22 (cache write failures are hard errors; explicit
 - **Error handling**: `pgdump_query::Error` (`thiserror`) — `Io`, `Join`,
   `UnterminatedCopyBlock`, `LineTooLong`, `InvalidUtf8`, `CacheEncode`,
   `CacheDisabled`; CLI uses `anyhow`.
-- **Tests** (`cargo test --workspace`, 51 tests; see also `batch.rs`'s 11,
-  `stream.rs`'s 5, and `cache.rs`'s 9, below):
+- **Tests** (`cargo test --workspace`, 57 tests; see also `batch.rs`'s 11,
+  `stream.rs`'s 5, `cache.rs`'s 9, and `query_cache.rs`'s 6, below):
   - Unit tests for the header grammar and escape decoding.
   - `pgdump_query/tests/data/edge_cases.sql` — hand-written and deterministic
     (no generated timestamps, so snapshots are stable) — under an `insta`
@@ -162,21 +163,46 @@ Last updated: 2026-08-22 (cache write failures are hard errors; explicit
   path/`Disabled` correctly, a disabled cache ignores an existing file at its
   would-be location and leaves it untouched on `save`, and
   `require_enabled` errors on `Disabled`.
+- **Incremental indexing consulting the cache during a table query**
+  (`stream.rs`): `table_stream`/`read_table` take a `CacheMode` directly
+  (`Disabled` — pure streaming, no side effects — or `Enabled(path)`), per
+  `mvp.md`'s "Configurable (MVP): eager vs. incremental indexing". A query
+  resolves the cache (if any) into a sequence of `Segment`s up front: one
+  `Segment::Known { start, end }` per already-cached block matching the
+  query table (replayed for its rows, at zero I/O cost for every
+  non-matching cached block in between — nothing outside a `Known` range is
+  ever read), then one trailing `Segment::Live { start }` covering whatever
+  lies past the cache's watermark, scanned as before. Both segment kinds
+  drive the exact same `CopyStart`/`Row`/`CopyEnd` handling; a `Live`
+  segment additionally hands every block it finds (matching the query table
+  or not) to a private `Recorder`, which persists the growing index back to
+  the cache after every completed block (a dedup guard by `header_offset`
+  makes this idempotent) and once more at the segment's true EOF — so an
+  early `ControlFlow::Break`/dropped stream still leaves correct, usable
+  partial progress behind, not just a full-scan-or-nothing cache. A `resume`
+  `ResumeToken` takes priority over cache replay (see `mvp.md`'s "Known
+  gap" on what that costs in the one case where a token was taken mid-replay).
+  `CacheMode::Disabled` skips the recorder's bookkeeping entirely. 6 tests in
+  the new `tests/query_cache.rs`: a counting `ByteRangeSource` test double
+  proves a non-matching cached block costs zero bytes; cached-block replay
+  (headered and headerless) matches a fresh scan; `Disabled` is a
+  byte-for-byte no-op that never writes a cache file; one query against a
+  cold cache leaves behind an index covering every table in the file, not
+  just the one queried; dropping a stream mid-block still persists only the
+  fully-completed blocks with a consistent `scanned_through`, and a later
+  query against that partial cache still finds everything; repeat queries
+  against an already-fully-cached file don't grow or duplicate the index.
 
 ## Not started
 
 - **Predicate filtering** — single-column `=`/`!=` post-parse filter.
-- **Incremental indexing consulting the cache during a table query** —
-  `mvp.md`'s "Configurable (MVP): eager vs. incremental indexing" describes a
-  query that discovers structure only as far as needed and persists it along
-  the way. `table_stream`/`read_table` don't do this yet — they always scan
-  from the start (or a `ResumeToken`'s position) with no cache involved. Only
-  `pgdq parse`/`info` read or write a cache today, and always eagerly (a full
-  scan), never partially.
 - **Benchmarks** (`criterion`) — not wired in.
 - **Full 8-version worktree fixture sweep** (`v13.0` … `v18.6`) — worktree
   binaries not yet built; the 3-version container sweep above covers routine
   needs in the meantime.
+- **CLI table-query subcommand** — `pgdq` has no `query`/table-lookup command
+  yet; only `parse`/`info` exist. Deferred until predicate filtering lands,
+  so the CLI query surface ships once instead of twice.
 
 ## Known gaps
 
@@ -186,20 +212,18 @@ Last updated: 2026-08-22 (cache write failures are hard errors; explicit
   `docs/design/pg-dump-compatibility.md`.
 - Large objects in plain-format dumps (`lo_create`/loader calls, not `COPY`
   blocks) remain unmodelled.
+- Resuming a `ResumeToken` taken from partway through a cache replay treats
+  the rest of the file as unscanned live territory rather than continuing
+  the replay — see `mvp.md`'s "Index / structure cache" for why. Correctness
+  is unaffected; it only gives back some of the I/O saving for that one
+  combination.
 
 ## Next up
 
-Wiring the cache into the query path: `table_stream`/`read_table` should
-consult a cache for blocks already known (skipping their bytes entirely
-rather than rescanning) and persist newly-discovered blocks as they scan
-past them — the "incremental" half of `mvp.md`'s "Configurable (MVP): eager
-vs. incremental indexing" that `cache.rs`/the CLI don't yet exercise. The
-natural shape: resume-from-`scanned_through` using the same
-`CopyScanner::resume` machinery `ResumeToken` already relies on, replaying
-`DumpIndex::blocks_for(table)` for the already-known portion and only
-scanning the file from the watermark onward, writing the cache back
-(colocated, or wherever the caller's `CacheMode` resolved to — a no-op under
-`CacheMode::Disabled`) each time new blocks are discovered. A write failure
-here must propagate as an error, not be swallowed, per `mvp.md`'s "a cache
-write failure is a hard error" rule. Predicate filtering is the other open
-MVP item and doesn't depend on this.
+**Predicate filtering** is the only open MVP item left: a single-column
+`=`/`!=` post-parse filter (`mvp.md`, "Predicate filtering (MVP)"),
+evaluated after a row is fully parsed/unescaped. Once it lands, a minimal
+CLI table-query subcommand (`pgdq query <file> <table> [--cache-path
+PATH|none]`, deferred until now so the CLI query surface ships once — see
+"Not started") can wire it up alongside the cache-consulting `table_stream`/
+`read_table` already have.

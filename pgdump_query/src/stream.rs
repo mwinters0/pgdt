@@ -7,6 +7,15 @@
 //! and pick back up later in the same process — it holds no public fields
 //! (`mvp.md` is explicit that it must stay opaque), so its representation is
 //! free to change without an API break.
+//!
+//! **Cache-consulting** (`mvp.md`, "Index / structure cache"): a
+//! [`CacheMode::Enabled`] cache is consulted up front and turned into a
+//! sequence of [`Segment`]s — one [`Segment::Known`] per already-cached
+//! block matching the query table (replayed for its rows, at zero I/O cost
+//! for every non-matching block in between) plus one trailing
+//! [`Segment::Live`] covering whatever's past the cache's watermark, which
+//! is scanned as today, with every block it finds (matching or not) handed
+//! to a [`Recorder`] and persisted back after each one completes.
 
 use std::collections::VecDeque;
 use std::pin::Pin;
@@ -18,10 +27,52 @@ use async_stream::try_stream;
 use futures::Stream;
 
 use crate::batch::{BatchOptions, RowBatcher, SourceChunk, invalidate_block_cache, schema_for};
+use crate::cache::CacheMode;
 use crate::copy::{CopyHeader, DELIMITER};
+use crate::index::{CopyBlock, DumpIndex};
 use crate::io::ByteRangeSource;
-use crate::scan::{CopyScanner, Event, ScanOptions};
+use crate::scan::{CopyScanner, CopyStart, Event, ScanOptions};
 use crate::{Error, Result};
+
+/// One piece of a [`table_stream`] scan: either replaying a block the cache
+/// already knew about, or walking unscanned territory live. See the module
+/// docs.
+enum Segment {
+    /// `[start, end)`: an already-cached block matching the query table.
+    Known { start: u64, end: u64 },
+    /// `[start, size)`: unscanned territory, discovered as it's walked.
+    Live { start: u64 },
+}
+
+/// Accumulates newly-discovered blocks during a [`Segment::Live`] scan and
+/// persists them back to the cache. Seeded from whatever the cache already
+/// had, so a persisted index stays complete rather than shrinking to just
+/// this call's discoveries.
+struct Recorder {
+    cache: CacheMode,
+    index: DumpIndex,
+}
+
+impl Recorder {
+    /// Record `block`, ignoring it if a block at the same `header_offset` is
+    /// already present. A resumed stream's live segment can re-walk bytes
+    /// the base index already covers (see `docs/design/mvp.md`'s "Known
+    /// gaps") — without this guard that would duplicate an entry rather
+    /// than just redundantly re-read some bytes.
+    fn record(&mut self, block: CopyBlock) {
+        if !self.index.blocks.iter().any(|b| b.header_offset == block.header_offset) {
+            self.index.blocks.push(block);
+        }
+    }
+
+    /// `end.end_offset` is always a safe, resumable watermark — the scanner
+    /// is back in its `Outside` state there — so every persisted
+    /// `scanned_through` is valid for a later query to replay from.
+    fn persist(&mut self, scanned_through: u64) -> Result<()> {
+        self.index.scanned_through = self.index.scanned_through.max(scanned_through);
+        self.cache.save(&self.index)
+    }
+}
 
 /// Opaque cursor into a [`table_stream`]/[`crate::batch::read_table`]
 /// consumption, sufficient to resume from just past the last batch a caller
@@ -120,12 +171,24 @@ fn snapshot(
 ///
 /// `resume` continues a previous consumption from a [`ResumeToken`] it
 /// produced; `None` starts from the beginning of `source`.
+///
+/// `cache` controls structure-cache consulting (`docs/design/mvp.md`,
+/// "Index / structure cache"): `CacheMode::Disabled` is pure streaming with
+/// no side effects; `CacheMode::Enabled` replays already-cached blocks
+/// matching `table` at zero I/O cost for everything in between, then scans
+/// live from the cache's watermark, persisting each newly-discovered block
+/// (matching or not) as it completes — so a later query against the same
+/// dump gets progressively cheaper. `resume` takes priority over cache
+/// replay: it always starts a single live segment at the token's offset (see
+/// `docs/design/mvp.md`'s "Known gaps" for what that costs in the rare case
+/// of resuming from inside a would-be replay).
 pub fn table_stream<'a, S>(
     source: &'a S,
     table: &str,
     scan_options: ScanOptions,
     batch_options: BatchOptions,
     resume: Option<ResumeToken>,
+    cache: CacheMode,
 ) -> TableStream<'a>
 where
     S: ByteRangeSource + 'a,
@@ -137,66 +200,123 @@ where
 
     let inner = try_stream! {
         let size = source.size().await?;
-        let mut buf: Vec<u8> = Vec::with_capacity(scan_options.chunk_size);
-        let mut chunks: VecDeque<SourceChunk> = VecDeque::new();
 
-        let (mut scanner, mut read_pos, mut active, mut rows_emitted) = match resume {
-            None => (CopyScanner::new(), 0u64, None, 0u64),
-            Some(token) => {
-                let offset = token.offset;
-                let rows_emitted = token.rows_emitted;
-                let (scanner, active) = resume_state(&token, &batch_options);
-                (scanner, offset, active, rows_emitted)
+        let base_index = cache.load()?.unwrap_or_default();
+        let segments: Vec<Segment> = match &resume {
+            Some(token) => vec![Segment::Live { start: token.offset }],
+            None => {
+                let mut segs: Vec<Segment> = base_index
+                    .blocks_for(&table)
+                    .map(|b| Segment::Known { start: b.header_offset, end: b.end_offset })
+                    .collect();
+                segs.push(Segment::Live { start: base_index.scanned_through });
+                segs
             }
+        };
+        let mut recorder: Option<Recorder> = (!matches!(cache, CacheMode::Disabled))
+            .then(|| Recorder { cache: cache.clone(), index: base_index });
+
+        // Only the first segment can start mid-block (a resumed stream); a
+        // fresh `CopyScanner` for it is prebuilt here so `resume_state`'s
+        // logic isn't duplicated below.
+        let (mut active, mut first_scanner) = match &resume {
+            Some(token) => {
+                let (scanner, active) = resume_state(token, &batch_options);
+                (active, Some(scanner))
+            }
+            None => (None, None),
         };
         // A matching header with no column list, waiting on its first row to
         // learn the field count. Never non-empty across a resume point: a
         // stream only yields right after a flush, and by then any pending
         // headerless block has already seen its first row (see `active`).
         let mut pending: Option<(CopyHeader, u64)> = None;
+        let mut rows_emitted = resume.as_ref().map_or(0, |t| t.rows_emitted);
 
-        loop {
-            let want = scan_options.chunk_size.min((size - read_pos) as usize);
-            if want > 0 {
-                let bytes = source.read_range(read_pos, want).await?;
-                chunks.push_back(SourceChunk {
-                    start: read_pos,
-                    buffer: Buffer::from(bytes.clone()),
-                    column_blocks: Vec::new(),
-                });
-                read_pos += bytes.len() as u64;
-                buf.extend_from_slice(&bytes);
-            }
-            let eof = read_pos >= size;
+        for (segment_index, segment) in segments.into_iter().enumerate() {
+            let is_live = matches!(segment, Segment::Live { .. });
+            let (seg_start, seg_end) = match &segment {
+                Segment::Known { start, end } => (*start, *end),
+                Segment::Live { start } => (*start, size),
+            };
 
-            while let Some(event) = scanner.next_event(&buf, eof)? {
-                match event {
-                    Event::CopyStart(start) if start.header.matches(&table) => {
-                        if start.header.columns.is_empty() {
-                            pending = Some((start.header, start.header_offset));
-                        } else {
-                            let schema = schema_for(&start.header, start.header.columns.len());
-                            active = Some((
-                                start.header_offset,
-                                start.header,
-                                RowBatcher::new(schema, batch_options.clone()),
-                            ));
+            let mut scanner = if segment_index == 0 {
+                first_scanner.take().unwrap_or_else(|| CopyScanner::resume(seg_start, None))
+            } else {
+                CopyScanner::resume(seg_start, None)
+            };
+            let mut read_pos = seg_start;
+            let mut buf: Vec<u8> = Vec::with_capacity(scan_options.chunk_size);
+            let mut chunks: VecDeque<SourceChunk> = VecDeque::new();
+            // The most recent `CopyStart` in this (live) segment, regardless
+            // of table match — mirrors `build_index`'s `pending`, tracked
+            // separately from the table-matching `pending`/`active` above
+            // since a live segment must record every block, not just ones
+            // the query cares about.
+            let mut block_start: Option<CopyStart> = None;
+
+            loop {
+                let want = scan_options.chunk_size.min((seg_end - read_pos) as usize);
+                if want > 0 {
+                    let bytes = source.read_range(read_pos, want).await?;
+                    chunks.push_back(SourceChunk {
+                        start: read_pos,
+                        buffer: Buffer::from(bytes.clone()),
+                        column_blocks: Vec::new(),
+                    });
+                    read_pos += bytes.len() as u64;
+                    buf.extend_from_slice(&bytes);
+                }
+                let eof = read_pos >= seg_end;
+
+                while let Some(event) = scanner.next_event(&buf, eof)? {
+                    match event {
+                        Event::CopyStart(start) => {
+                            if is_live && recorder.is_some() {
+                                block_start = Some(start.clone());
+                            }
+                            if start.header.matches(&table) {
+                                if start.header.columns.is_empty() {
+                                    pending = Some((start.header, start.header_offset));
+                                } else {
+                                    let schema =
+                                        schema_for(&start.header, start.header.columns.len());
+                                    active = Some((
+                                        start.header_offset,
+                                        start.header,
+                                        RowBatcher::new(schema, batch_options.clone()),
+                                    ));
+                                }
+                            }
                         }
-                    }
-                    Event::CopyStart(_) => {}
-                    Event::Row(row) => {
-                        if let Some((header, header_offset)) = pending.take() {
-                            let field_count = memchr::memchr_iter(DELIMITER, row.raw).count() + 1;
-                            let schema = schema_for(&header, field_count);
-                            active = Some((
-                                header_offset,
-                                header,
-                                RowBatcher::new(schema, batch_options.clone()),
-                            ));
+                        Event::Row(row) => {
+                            if let Some((header, header_offset)) = pending.take() {
+                                let field_count =
+                                    memchr::memchr_iter(DELIMITER, row.raw).count() + 1;
+                                let schema = schema_for(&header, field_count);
+                                active = Some((
+                                    header_offset,
+                                    header,
+                                    RowBatcher::new(schema, batch_options.clone()),
+                                ));
+                            }
+                            if let Some((header_offset, _, batcher)) = active.as_mut() {
+                                batcher.push_row(*header_offset, row.offset, row.raw, &mut chunks)?;
+                                if batcher.should_flush() {
+                                    let batch = batcher.flush()?;
+                                    invalidate_block_cache(&mut chunks);
+                                    rows_emitted += batch.num_rows() as u64;
+                                    *position_for_stream.lock().unwrap() =
+                                        snapshot(&scanner, &active, rows_emitted);
+                                    yield batch;
+                                }
+                            }
                         }
-                        if let Some((header_offset, _, batcher)) = active.as_mut() {
-                            batcher.push_row(*header_offset, row.offset, row.raw, &mut chunks)?;
-                            if batcher.should_flush() {
+                        Event::CopyEnd(end) => {
+                            pending = None;
+                            if let Some((_, _, mut batcher)) = active.take()
+                                && !batcher.is_empty()
+                            {
                                 let batch = batcher.flush()?;
                                 invalidate_block_cache(&mut chunks);
                                 rows_emitted += batch.num_rows() as u64;
@@ -204,43 +324,49 @@ where
                                     snapshot(&scanner, &active, rows_emitted);
                                 yield batch;
                             }
-                        }
-                    }
-                    Event::CopyEnd(_) => {
-                        pending = None;
-                        if let Some((_, _, mut batcher)) = active.take()
-                            && !batcher.is_empty()
-                        {
-                            let batch = batcher.flush()?;
-                            invalidate_block_cache(&mut chunks);
-                            rows_emitted += batch.num_rows() as u64;
-                            *position_for_stream.lock().unwrap() =
-                                snapshot(&scanner, &active, rows_emitted);
-                            yield batch;
+                            if let (Some(start), Some(rec)) =
+                                (block_start.take(), recorder.as_mut())
+                            {
+                                rec.record(CopyBlock {
+                                    header: start.header,
+                                    header_offset: start.header_offset,
+                                    data_offset: start.data_offset,
+                                    terminator_offset: end.terminator_offset,
+                                    end_offset: end.end_offset,
+                                    row_count: end.row_count,
+                                    sparse_index: None,
+                                    column_stats: None,
+                                });
+                                rec.persist(end.end_offset)?;
+                            }
                         }
                     }
                 }
+
+                let used = scanner.take_consumed();
+                buf.drain(..used);
+
+                // Everything before the scanner's new position has already had
+                // its chance to be referenced by a zero-copy view (that happens
+                // synchronously above, before we get here), so it's safe to drop.
+                let floor = scanner.position();
+                while chunks.front().is_some_and(|c| c.end() <= floor) {
+                    chunks.pop_front();
+                }
+
+                if eof {
+                    break;
+                }
+                if buf.len() > scan_options.max_line_bytes {
+                    Err(Error::LineTooLong {
+                        offset: scanner.position(),
+                        limit: scan_options.max_line_bytes,
+                    })?;
+                }
             }
 
-            let used = scanner.take_consumed();
-            buf.drain(..used);
-
-            // Everything before the scanner's new position has already had
-            // its chance to be referenced by a zero-copy view (that happens
-            // synchronously above, before we get here), so it's safe to drop.
-            let floor = scanner.position();
-            while chunks.front().is_some_and(|c| c.end() <= floor) {
-                chunks.pop_front();
-            }
-
-            if eof {
-                return;
-            }
-            if buf.len() > scan_options.max_line_bytes {
-                Err(Error::LineTooLong {
-                    offset: scanner.position(),
-                    limit: scan_options.max_line_bytes,
-                })?;
+            if is_live && let Some(rec) = recorder.as_mut() {
+                rec.persist(size)?;
             }
         }
     };

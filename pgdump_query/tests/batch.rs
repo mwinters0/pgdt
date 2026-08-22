@@ -6,6 +6,7 @@ use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 
 use arrow::array::{Array, RecordBatch, StringViewArray};
+use pgdump_query::cache::CacheMode;
 use pgdump_query::{BatchOptions, LocalFileSource, ScanOptions, read_table};
 
 fn edge_cases() -> PathBuf {
@@ -45,7 +46,7 @@ async fn collect(
     let mut batch_sizes = Vec::new();
     let mut rows = Vec::new();
 
-    read_table(&source, table, scan_options, batch_options, |batch| {
+    read_table(&source, table, scan_options, batch_options, CacheMode::Disabled, |batch| {
         batch_sizes.push(batch.num_rows());
         rows.extend(rows_of(&batch));
         ControlFlow::Continue(())
@@ -147,6 +148,7 @@ async fn header_without_column_list_gets_placeholder_schema() {
         "public.no_column_list",
         &ScanOptions::default(),
         &BatchOptions::default(),
+        CacheMode::Disabled,
         |batch| {
             batches.push(batch);
             ControlFlow::Continue(())
@@ -218,10 +220,17 @@ async fn stops_early_on_break() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
     let options = BatchOptions { max_rows: 1, max_bytes: None };
     let mut batches = 0;
-    let token = read_table(&source, "public.widgets", &ScanOptions::default(), &options, |_| {
-        batches += 1;
-        ControlFlow::Break(())
-    })
+    let token = read_table(
+        &source,
+        "public.widgets",
+        &ScanOptions::default(),
+        &options,
+        CacheMode::Disabled,
+        |_| {
+            batches += 1;
+            ControlFlow::Break(())
+        },
+    )
     .await
     .unwrap();
     assert_eq!(batches, 1);
@@ -238,16 +247,29 @@ async fn resume_token_from_break_continues_correctly() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
     let options = BatchOptions { max_rows: 1, max_bytes: None };
     let mut rows = Vec::new();
-    let token = read_table(&source, "public.widgets", &ScanOptions::default(), &options, |batch| {
-        rows.extend(rows_of(&batch));
-        ControlFlow::Break(())
-    })
+    let token = read_table(
+        &source,
+        "public.widgets",
+        &ScanOptions::default(),
+        &options,
+        CacheMode::Disabled,
+        |batch| {
+            rows.extend(rows_of(&batch));
+            ControlFlow::Break(())
+        },
+    )
     .await
     .unwrap()
     .expect("Break yields a resume token");
 
-    let mut resumed =
-        table_stream(&source, "public.widgets", ScanOptions::default(), options, Some(token));
+    let mut resumed = table_stream(
+        &source,
+        "public.widgets",
+        ScanOptions::default(),
+        options,
+        Some(token),
+        CacheMode::Disabled,
+    );
     use futures::StreamExt;
     while let Some(batch) = resumed.next().await {
         rows.extend(rows_of(&batch.unwrap()));

@@ -19,6 +19,7 @@ use arrow::array::{ArrayRef, RecordBatch};
 use arrow::buffer::Buffer;
 use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 
+use crate::cache::CacheMode;
 use crate::copy::{CopyHeader, DELIMITER, decode_field};
 use crate::io::ByteRangeSource;
 use crate::scan::ScanOptions;
@@ -227,12 +228,14 @@ fn push_field(
 /// pull-mode [`crate::stream::table_stream`], so the two share one scan loop.
 /// The callback may return [`ControlFlow::Break`] to stop early, in which
 /// case the returned token resumes from just past the last batch delivered
-/// to it — see [`crate::stream::TableStream::resume_token`].
+/// to it — see [`crate::stream::TableStream::resume_token`]. `cache`
+/// controls structure-cache consulting — see `table_stream`'s docs.
 pub async fn read_table<S, F>(
     source: &S,
     table: &str,
     scan_options: &ScanOptions,
     batch_options: &BatchOptions,
+    cache: CacheMode,
     mut on_batch: F,
 ) -> Result<Option<crate::stream::ResumeToken>>
 where
@@ -247,6 +250,7 @@ where
         scan_options.clone(),
         batch_options.clone(),
         None,
+        cache,
     );
     while let Some(batch) = stream.next().await.transpose()? {
         if on_batch(batch).is_break() {

@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use arrow::array::{Array, RecordBatch, StringViewArray};
 use futures::StreamExt;
+use pgdump_query::cache::CacheMode;
 use pgdump_query::{BatchOptions, BlockingTableIter, LocalFileSource, ScanOptions, table_stream};
 
 fn edge_cases() -> PathBuf {
@@ -82,6 +83,7 @@ async fn stream_matches_push_mode_output() {
         ScanOptions::default(),
         BatchOptions::default(),
         None,
+        CacheMode::Disabled,
     );
     let mut rows = Vec::new();
     while let Some(batch) = stream.next().await {
@@ -99,8 +101,14 @@ async fn resume_continues_without_gap_or_repeat() {
     let options = BatchOptions { max_rows: 1, max_bytes: None };
     for stop_after in [1, 2, 5] {
         let source = LocalFileSource::open(edge_cases()).unwrap();
-        let mut stream =
-            table_stream(&source, "public.widgets", ScanOptions::default(), options.clone(), None);
+        let mut stream = table_stream(
+            &source,
+            "public.widgets",
+            ScanOptions::default(),
+            options.clone(),
+            None,
+            CacheMode::Disabled,
+        );
 
         let mut rows = Vec::new();
         for _ in 0..stop_after {
@@ -116,6 +124,7 @@ async fn resume_continues_without_gap_or_repeat() {
             ScanOptions::default(),
             options.clone(),
             Some(token),
+            CacheMode::Disabled,
         );
         while let Some(batch) = resumed.next().await {
             rows.extend(rows_of(&batch.unwrap()));
@@ -137,6 +146,7 @@ async fn resume_reconstructs_headerless_schema() {
         ScanOptions::default(),
         BatchOptions { max_rows: 1, max_bytes: None },
         None,
+        CacheMode::Disabled,
     );
 
     let first = stream.next().await.unwrap().unwrap();
@@ -150,6 +160,7 @@ async fn resume_reconstructs_headerless_schema() {
         ScanOptions::default(),
         BatchOptions { max_rows: 1, max_bytes: None },
         Some(token),
+        CacheMode::Disabled,
     );
     let second = resumed.next().await.unwrap().unwrap();
     assert_eq!(
@@ -168,8 +179,14 @@ async fn resume_at_a_block_boundary() {
         let path = fixture(version, "default");
         let source = LocalFileSource::open(&path).unwrap();
         let options = BatchOptions { max_rows: 132, max_bytes: None };
-        let mut stream =
-            table_stream(&source, "public.escapes", ScanOptions::default(), options.clone(), None);
+        let mut stream = table_stream(
+            &source,
+            "public.escapes",
+            ScanOptions::default(),
+            options.clone(),
+            None,
+            CacheMode::Disabled,
+        );
 
         let only_batch = stream.next().await.unwrap().unwrap();
         assert_eq!(only_batch.num_rows(), 132, "pg_dump {version}");
@@ -177,8 +194,14 @@ async fn resume_at_a_block_boundary() {
         assert!(stream.next().await.is_none());
         drop(stream);
 
-        let mut resumed =
-            table_stream(&source, "public.escapes", ScanOptions::default(), options, Some(token));
+        let mut resumed = table_stream(
+            &source,
+            "public.escapes",
+            ScanOptions::default(),
+            options,
+            Some(token),
+            CacheMode::Disabled,
+        );
         assert!(resumed.next().await.is_none(), "pg_dump {version}: nothing left after boundary");
     }
 }
@@ -194,6 +217,7 @@ fn blocking_iterator_matches_async_stream() {
         ScanOptions::default(),
         BatchOptions::default(),
         None,
+        CacheMode::Disabled,
     );
     let iter = BlockingTableIter::new(stream).unwrap();
 

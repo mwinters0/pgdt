@@ -76,7 +76,12 @@ projection. Column projection is Phase 3.
 - **Resume/position tracking**: an opaque `ResumeToken` (file offset +
   in-table row index + a cache-generation stamp), with no public field
   access in MVP. Sufficient for a caller to stop consuming partway through a
-  stream and resume later within the same process.
+  stream and resume later within the same process. `resume` takes priority
+  over cache replay: it always starts live from the token's offset — see
+  "Index / structure cache" below for what that costs in the rare case of
+  resuming from inside a would-be replay.
+- **Cache consulting**: both entry points take a `CacheMode` — see "Index /
+  structure cache" below.
 
 **Configurable (future):** persisting a `ResumeToken` across process
 restarts (independent of the index cache below).
@@ -96,7 +101,21 @@ typed columns can do them correctly.
 
 **Configurable (MVP): whether to build/consult a cache at all.** Pure
 streaming with no side effects is supported; so is cache-backed
-acceleration.
+acceleration. `table_stream`/`read_table` take a `CacheMode` directly:
+`Disabled` is pure streaming; `Enabled(path)` replays every already-cached
+block matching the query table (at zero I/O cost for every non-matching
+cached block in between), then scans live from the cache's watermark,
+persisting each newly-discovered block — matching or not — as it completes.
+This is the "incremental" half of the axis below; `pgdq parse` (eager, full
+scan up front) is the other.
+
+**Known gap:** resuming a `ResumeToken` taken from partway through a
+cache-replay falls back to treating the rest of the file as unscanned live
+territory (re-reading, and possibly re-recording, bytes the cache already
+covered) rather than resuming the replay — `ResumeToken` doesn't carry which
+blocks were already known when it was taken, and `mvp.md` requires it stay
+field-free/opaque. Correctness is unaffected; this only gives back some of
+the I/O saving for that one combination.
 
 **Configurable (MVP): cache location.** Exactly two options, no others:
 1. Colocated with the dump file: `<dump-path>.dqcache`.
