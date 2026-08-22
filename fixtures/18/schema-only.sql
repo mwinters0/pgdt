@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict SG2MLyIETLrRecwkGHCfV1J5f3mQdHnN4ErcyWlSJ7BSCf4QccbCsz28oPn7SD4
+\restrict ilkXqGq459F1cbvxF067BdVBUDUVnMlmlLR5sewdFk7h8aS7m6X1VjUtm5x3yfS
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -59,6 +59,18 @@ CREATE TABLE public.empty_table (
 ALTER TABLE public.empty_table OWNER TO postgres;
 
 --
+-- Name: escapes; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.escapes (
+    codepoint integer NOT NULL,
+    value text NOT NULL
+);
+
+
+ALTER TABLE public.escapes OWNER TO postgres;
+
+--
 -- Name: widgets; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -90,6 +102,14 @@ ALTER TABLE ONLY public.empty_table
 
 
 --
+-- Name: escapes escapes_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.escapes
+    ADD CONSTRAINT escapes_pkey PRIMARY KEY (codepoint);
+
+
+--
 -- Name: widgets widgets_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -109,5 +129,5 @@ ALTER TABLE ONLY logs.events
 -- PostgreSQL database dump complete
 --
 
-\unrestrict SG2MLyIETLrRecwkGHCfV1J5f3mQdHnN4ErcyWlSJ7BSCf4QccbCsz28oPn7SD4
+\unrestrict ilkXqGq459F1cbvxF067BdVBUDUVnMlmlLR5sewdFk7h8aS7m6X1VjUtm5x3yfS
 

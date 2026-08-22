@@ -1,0 +1,4 @@
+# The codebase keeps struct literals, call arguments, and attributes on one
+# line whenever they fit the 100-column limit, rather than exploding them at
+# rustfmt's much narrower per-construct defaults.
+use_small_heuristics = "Max"

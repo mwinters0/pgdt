@@ -3,3 +3,4 @@
 .DS_Store
 /scripts/.venv
 __pycache__/
+/runs

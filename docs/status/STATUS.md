@@ -7,21 +7,64 @@ that changed the plan, see `history/` (one file per day, `YYYY-MM-DD.md`) —
 not a changelog, only entries worth keeping. For the design itself (section
 names below track `mvp.md`'s headings), see `docs/design/mvp.md`.
 
-Last updated: 2026-08-21.
+Last updated: 2026-08-22.
 
 ## Done
 
 - **Crate layout**: workspace with `pgdump_query` (lib) + `pgdump_query-cli`
-  (bin `pgdq`), edition 2024.
+  (bin `pgdq`), edition 2024. `rustfmt.toml` sets
+  `use_small_heuristics = "Max"` so `cargo fmt --check` matches the
+  codebase's compact style.
 - **Core execution model (I/O layer)**: `ByteRangeSource` trait and its only
   MVP impl, `LocalFileSource` (blocking positioned reads via
   `spawn_blocking`).
-- **Error handling**: `pgdump_query::Error` (`thiserror`, currently `Io` +
-  `Join` variants); CLI uses `anyhow`.
-- **CLI arg wiring**: `pgdq parse <file> [--cache-path]` and
-  `pgdq info <file> [--cache-path] [--verbose]` parse their arguments but
-  print placeholders only — no scanning, parsing, or cache I/O behind them
-  yet.
+- **`COPY`-block scanner/parser** (`scan.rs`, `copy.rs`):
+  - `CopyScanner` is a synchronous, zero-copy state machine. It does not own
+    the bytes it scans — the caller owns a buffer and the scanner reports how
+    much it consumed — so the same state machine can back the async driver
+    and, later, a pull-mode `Stream`.
+  - Line-anchored `COPY` detection with a strict
+    `COPY <table> [(<cols>)] FROM stdin;` grammar (schema-qualified or bare,
+    quoted or unquoted identifiers). Inside a block only the `\.` terminator
+    is looked for, so data can never be read as structure. Non-matching
+    `COPY` lines (`TO stdout;`, `WITH (...)`) and psql meta-commands
+    (`\restrict`, `\unrestrict`, `\connect`) are skipped as ordinary SQL.
+  - COPY TEXT field splitting and unescaping: `\N` NULL (distinct from empty
+    string), `\b\f\n\r\t\v\\`, octal (`\101`) and hex (`\x41`) escapes,
+    PostgreSQL's permissive "unknown escape stands for itself" rule.
+    Non-UTF8 field bytes are a hard `Error::InvalidUtf8`.
+  - CRLF line endings and a missing final newline are tolerated; an
+    unterminated block and an over-long line are errors, not silent
+    truncation or unbounded buffering.
+  - `scan()` drives it over a `ByteRangeSource` with a configurable
+    `chunk_size` / `max_line_bytes` (`ScanOptions`), pushing `Event`s to a
+    sync `FnMut(Event) -> ControlFlow<()>` callback.
+- **Structure index** (`index.rs`): `build_index()` runs an eager full-file
+  scan into a `DumpIndex` of `CopyBlock`s (header, column names, header/data/
+  terminator/end offsets, row count). This is the payload the cache will
+  persist; it is **not** serialized or written to disk yet.
+- **CLI**: `pgdq parse` and `pgdq info` both run a real eager scan and print
+  the discovered structure (`--verbose` adds file offsets). `--cache-path` is
+  accepted but inert.
+- **Error handling**: `pgdump_query::Error` (`thiserror`) — `Io`, `Join`,
+  `UnterminatedCopyBlock`, `LineTooLong`, `InvalidUtf8`; CLI uses `anyhow`.
+- **Tests** (`cargo test --workspace`, 26 tests):
+  - Unit tests for the header grammar and escape decoding.
+  - `pgdump_query/tests/data/edge_cases.sql` — hand-written and deterministic
+    (no generated timestamps, so snapshots are stable) — under an `insta`
+    snapshot of the whole event stream, plus a test asserting the event
+    stream is identical across chunk sizes 1…4096 (chunk-boundary
+    correctness).
+  - The generated `fixtures/{13,16,18}` tree gets structural assertions
+    (block names, columns, row counts, and offsets verified to address the
+    right bytes) rather than snapshots, since its timestamps change on
+    regeneration.
+  - A decoder round-trip against real `pg_dump` output on all three
+    versions: `fixture_schema.sql`'s `public.escapes` table holds one row per
+    codepoint (`chr(n)`), so the test compares against a value it computes
+    itself instead of a hand-transcribed literal. Covers every escape
+    `pg_dump` emits (`\b \t \n \v \f \r \\`), the raw control bytes it leaves
+    unescaped, and 2-, 3- and 4-byte UTF-8.
 - **Fixture generation tooling**: `scripts/generate_fixtures.py` (`uv`-run)
   drives `postgres:13/16/18-alpine` containers; `fixtures/{13,16,18}/*.sql`
   populated (7 flag variants × 3 versions).
@@ -32,27 +75,42 @@ Last updated: 2026-08-21.
 
 ## Not started
 
-- **`COPY`-block scanner/parser** — line-anchored `^COPY ` detection, psql
-  meta-command skipping, TEXT-format escape handling. This is the critical
-  gap; see `mvp.md`'s "Parser robustness requirements" before building it.
 - **Row/batch representation** — `Utf8View` Arrow arrays, configurable batch
-  size limits.
+  size limits. The scanner already hands out decoded, NULL-aware field
+  values, so this is now assembly rather than parsing work.
 - **Streaming API** — pull-mode `Stream`, blocking `Iterator` wrapper,
-  push-mode callback, `ResumeToken`.
+  push-mode callback, `ResumeToken`. (`scan()`'s callback is the push shape
+  already, but it is not the batch-level API `mvp.md` specifies.)
 - **Predicate filtering** — single-column `=`/`!=` post-parse filter.
 - **Index/structure cache** — `bincode` format, colocated vs. explicit path,
-  incremental vs. eager (`pgdq parse`) indexing.
-- **`pgq parse` / `pgq info` real implementations** — currently print
-  placeholder text only.
-- **Unit/snapshot tests** (`insta`) — no test infra wired in; `cargo test
-  --workspace` runs zero tests.
+  incremental vs. eager indexing. `DumpIndex` is the intended payload;
+  nothing is serialized or written yet, and `pgdq info` therefore rescans
+  instead of reading a cache.
 - **Benchmarks** (`criterion`) — not wired in.
 - **Full 8-version worktree fixture sweep** (`v13.0` … `v18.6`) — worktree
   binaries not yet built; the 3-version container sweep above covers routine
   needs in the meantime.
 
+## Known gaps
+
+- A line inside a dollar-quoted function body that starts at column 0 *and*
+  matches the full `COPY ... FROM stdin;` grammar would be mistaken for a
+  real block. Closing this needs dollar-quote tracking in the scanner; see
+  `docs/design/pg-dump-compatibility.md`.
+- Large objects in plain-format dumps (`lo_create`/loader calls, not `COPY`
+  blocks) remain unmodelled.
+
+## In flight
+
+A full-file scan of the 784GB koji sample is running detached; results land
+in `runs/koji-scan.log`. See `history/2026-08-22.md` for what to check. Flat
+~9 MiB RSS at 243 MB/s is already confirmed from a partial run; what remains
+unconfirmed is that a whole real dump scans end to end without a spurious or
+missed block.
+
 ## Next up
 
-The `COPY`-block scanner is the critical-path item — row parsing, the
-streaming API, and the cache all depend on it and can't meaningfully start
-first.
+The row/batch layer: turn the scanner's `Event::Row` into `Utf8View`
+`RecordBatch`es behind the batch-size limits, then the streaming API on top.
+The cache is the other independent thread of work and can proceed in
+parallel — `DumpIndex` is ready to be given a serialized form.

@@ -39,3 +39,23 @@ INSERT INTO logs.events (event_id, widget_id, message) VALUES
     (100, 1, 'created'),
     (101, 2, NULL),
     (102, 3, E'updated\twith a tab char');
+
+-- Round-trip coverage for COPY TEXT escaping. One row per codepoint means the
+-- test can compare against a value it computes itself, rather than against a
+-- hand-transcribed literal that could encode the same misreading twice.
+--
+-- chr(0) is rejected by PostgreSQL (NUL is not valid in text), so this starts
+-- at 1. Codepoints 8, 9, 10, 11, 12, 13 and 92 are the ones pg_dump emits as
+-- \b \t \n \v \f \r and \; the rest of the low range is written out as raw
+-- control bytes, which is itself worth exercising.
+CREATE TABLE public.escapes (
+    codepoint integer PRIMARY KEY,
+    value text NOT NULL
+);
+
+INSERT INTO public.escapes (codepoint, value)
+SELECT g, chr(g) FROM generate_series(1, 127) AS g;
+
+-- A spread of 2-, 3- and 4-byte UTF-8 codepoints.
+INSERT INTO public.escapes (codepoint, value)
+SELECT g, chr(g) FROM unnest(ARRAY[233, 1071, 12354, 8364, 128169]) AS g;

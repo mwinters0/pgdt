@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict nDllQwzSDgywQvLqvqHhM0EH2i4bbkTRduyHTHy1jiuWbkjZDsTQdbdzNejvbBS
+\restrict mgjIhSacE67zKZWHrcxT4stYR4b2WiMRxb70rPUFMlnaMNN87cgiRfgCgxB0ayR
 
 -- Dumped from database version 13.23
 -- Dumped by pg_dump version 13.23
@@ -58,6 +58,18 @@ CREATE TABLE public.empty_table (
 ALTER TABLE public.empty_table OWNER TO postgres;
 
 --
+-- Name: escapes; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.escapes (
+    codepoint integer NOT NULL,
+    value text NOT NULL
+);
+
+
+ALTER TABLE public.escapes OWNER TO postgres;
+
+--
 -- Name: widgets; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -76,15 +88,155 @@ ALTER TABLE public.widgets OWNER TO postgres;
 -- Data for Name: events; Type: TABLE DATA; Schema: logs; Owner: postgres
 --
 
-INSERT INTO logs.events VALUES (100, 1, 'created', '2026-08-21 23:10:46.623461+00');
-INSERT INTO logs.events VALUES (101, 2, NULL, '2026-08-21 23:10:46.623461+00');
-INSERT INTO logs.events VALUES (102, 3, 'updated	with a tab char', '2026-08-21 23:10:46.623461+00');
+INSERT INTO logs.events VALUES (100, 1, 'created', '2026-08-22 00:17:40.563857+00');
+INSERT INTO logs.events VALUES (101, 2, NULL, '2026-08-22 00:17:40.563857+00');
+INSERT INTO logs.events VALUES (102, 3, 'updated	with a tab char', '2026-08-22 00:17:40.563857+00');
 
 
 --
 -- Data for Name: empty_table; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
+
+
+--
+-- Data for Name: escapes; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+INSERT INTO public.escapes VALUES (1, '');
+INSERT INTO public.escapes VALUES (2, '');
+INSERT INTO public.escapes VALUES (3, '');
+INSERT INTO public.escapes VALUES (4, '');
+INSERT INTO public.escapes VALUES (5, '');
+INSERT INTO public.escapes VALUES (6, '');
+INSERT INTO public.escapes VALUES (7, '');
+INSERT INTO public.escapes VALUES (8, '');
+INSERT INTO public.escapes VALUES (9, '	');
+INSERT INTO public.escapes VALUES (10, '
+');
+INSERT INTO public.escapes VALUES (11, '');
+INSERT INTO public.escapes VALUES (12, '');
+INSERT INTO public.escapes VALUES (13, '
+');
+INSERT INTO public.escapes VALUES (14, '');
+INSERT INTO public.escapes VALUES (15, '');
+INSERT INTO public.escapes VALUES (16, '');
+INSERT INTO public.escapes VALUES (17, '');
+INSERT INTO public.escapes VALUES (18, '');
+INSERT INTO public.escapes VALUES (19, '');
+INSERT INTO public.escapes VALUES (20, '');
+INSERT INTO public.escapes VALUES (21, '');
+INSERT INTO public.escapes VALUES (22, '');
+INSERT INTO public.escapes VALUES (23, '');
+INSERT INTO public.escapes VALUES (24, '');
+INSERT INTO public.escapes VALUES (25, '');
+INSERT INTO public.escapes VALUES (26, '');
+INSERT INTO public.escapes VALUES (27, '');
+INSERT INTO public.escapes VALUES (28, '');
+INSERT INTO public.escapes VALUES (29, '');
+INSERT INTO public.escapes VALUES (30, '');
+INSERT INTO public.escapes VALUES (31, '');
+INSERT INTO public.escapes VALUES (32, ' ');
+INSERT INTO public.escapes VALUES (33, '!');
+INSERT INTO public.escapes VALUES (34, '"');
+INSERT INTO public.escapes VALUES (35, '#');
+INSERT INTO public.escapes VALUES (36, '$');
+INSERT INTO public.escapes VALUES (37, '%');
+INSERT INTO public.escapes VALUES (38, '&');
+INSERT INTO public.escapes VALUES (39, '''');
+INSERT INTO public.escapes VALUES (40, '(');
+INSERT INTO public.escapes VALUES (41, ')');
+INSERT INTO public.escapes VALUES (42, '*');
+INSERT INTO public.escapes VALUES (43, '+');
+INSERT INTO public.escapes VALUES (44, ',');
+INSERT INTO public.escapes VALUES (45, '-');
+INSERT INTO public.escapes VALUES (46, '.');
+INSERT INTO public.escapes VALUES (47, '/');
+INSERT INTO public.escapes VALUES (48, '0');
+INSERT INTO public.escapes VALUES (49, '1');
+INSERT INTO public.escapes VALUES (50, '2');
+INSERT INTO public.escapes VALUES (51, '3');
+INSERT INTO public.escapes VALUES (52, '4');
+INSERT INTO public.escapes VALUES (53, '5');
+INSERT INTO public.escapes VALUES (54, '6');
+INSERT INTO public.escapes VALUES (55, '7');
+INSERT INTO public.escapes VALUES (56, '8');
+INSERT INTO public.escapes VALUES (57, '9');
+INSERT INTO public.escapes VALUES (58, ':');
+INSERT INTO public.escapes VALUES (59, ';');
+INSERT INTO public.escapes VALUES (60, '<');
+INSERT INTO public.escapes VALUES (61, '=');
+INSERT INTO public.escapes VALUES (62, '>');
+INSERT INTO public.escapes VALUES (63, '?');
+INSERT INTO public.escapes VALUES (64, '@');
+INSERT INTO public.escapes VALUES (65, 'A');
+INSERT INTO public.escapes VALUES (66, 'B');
+INSERT INTO public.escapes VALUES (67, 'C');
+INSERT INTO public.escapes VALUES (68, 'D');
+INSERT INTO public.escapes VALUES (69, 'E');
+INSERT INTO public.escapes VALUES (70, 'F');
+INSERT INTO public.escapes VALUES (71, 'G');
+INSERT INTO public.escapes VALUES (72, 'H');
+INSERT INTO public.escapes VALUES (73, 'I');
+INSERT INTO public.escapes VALUES (74, 'J');
+INSERT INTO public.escapes VALUES (75, 'K');
+INSERT INTO public.escapes VALUES (76, 'L');
+INSERT INTO public.escapes VALUES (77, 'M');
+INSERT INTO public.escapes VALUES (78, 'N');
+INSERT INTO public.escapes VALUES (79, 'O');
+INSERT INTO public.escapes VALUES (80, 'P');
+INSERT INTO public.escapes VALUES (81, 'Q');
+INSERT INTO public.escapes VALUES (82, 'R');
+INSERT INTO public.escapes VALUES (83, 'S');
+INSERT INTO public.escapes VALUES (84, 'T');
+INSERT INTO public.escapes VALUES (85, 'U');
+INSERT INTO public.escapes VALUES (86, 'V');
+INSERT INTO public.escapes VALUES (87, 'W');
+INSERT INTO public.escapes VALUES (88, 'X');
+INSERT INTO public.escapes VALUES (89, 'Y');
+INSERT INTO public.escapes VALUES (90, 'Z');
+INSERT INTO public.escapes VALUES (91, '[');
+INSERT INTO public.escapes VALUES (92, '\');
+INSERT INTO public.escapes VALUES (93, ']');
+INSERT INTO public.escapes VALUES (94, '^');
+INSERT INTO public.escapes VALUES (95, '_');
+INSERT INTO public.escapes VALUES (96, '`');
+INSERT INTO public.escapes VALUES (97, 'a');
+INSERT INTO public.escapes VALUES (98, 'b');
+INSERT INTO public.escapes VALUES (99, 'c');
+INSERT INTO public.escapes VALUES (100, 'd');
+INSERT INTO public.escapes VALUES (101, 'e');
+INSERT INTO public.escapes VALUES (102, 'f');
+INSERT INTO public.escapes VALUES (103, 'g');
+INSERT INTO public.escapes VALUES (104, 'h');
+INSERT INTO public.escapes VALUES (105, 'i');
+INSERT INTO public.escapes VALUES (106, 'j');
+INSERT INTO public.escapes VALUES (107, 'k');
+INSERT INTO public.escapes VALUES (108, 'l');
+INSERT INTO public.escapes VALUES (109, 'm');
+INSERT INTO public.escapes VALUES (110, 'n');
+INSERT INTO public.escapes VALUES (111, 'o');
+INSERT INTO public.escapes VALUES (112, 'p');
+INSERT INTO public.escapes VALUES (113, 'q');
+INSERT INTO public.escapes VALUES (114, 'r');
+INSERT INTO public.escapes VALUES (115, 's');
+INSERT INTO public.escapes VALUES (116, 't');
+INSERT INTO public.escapes VALUES (117, 'u');
+INSERT INTO public.escapes VALUES (118, 'v');
+INSERT INTO public.escapes VALUES (119, 'w');
+INSERT INTO public.escapes VALUES (120, 'x');
+INSERT INTO public.escapes VALUES (121, 'y');
+INSERT INTO public.escapes VALUES (122, 'z');
+INSERT INTO public.escapes VALUES (123, '{');
+INSERT INTO public.escapes VALUES (124, '|');
+INSERT INTO public.escapes VALUES (125, '}');
+INSERT INTO public.escapes VALUES (126, '~');
+INSERT INTO public.escapes VALUES (127, '');
+INSERT INTO public.escapes VALUES (233, 'é');
+INSERT INTO public.escapes VALUES (1071, 'Я');
+INSERT INTO public.escapes VALUES (12354, 'あ');
+INSERT INTO public.escapes VALUES (8364, '€');
+INSERT INTO public.escapes VALUES (128169, '💩');
 
 
 --
@@ -116,6 +268,14 @@ ALTER TABLE ONLY public.empty_table
 
 
 --
+-- Name: escapes escapes_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.escapes
+    ADD CONSTRAINT escapes_pkey PRIMARY KEY (codepoint);
+
+
+--
 -- Name: widgets widgets_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -135,5 +295,5 @@ ALTER TABLE ONLY logs.events
 -- PostgreSQL database dump complete
 --
 
-\unrestrict nDllQwzSDgywQvLqvqHhM0EH2i4bbkTRduyHTHy1jiuWbkjZDsTQdbdzNejvbBS
+\unrestrict mgjIhSacE67zKZWHrcxT4stYR4b2WiMRxb70rPUFMlnaMNN87cgiRfgCgxB0ayR
 
