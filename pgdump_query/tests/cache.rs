@@ -33,17 +33,19 @@ fn foreign_bytes_at_the_cache_path_are_treated_as_absent() {
     assert!(cache::load(&path).unwrap().is_none());
 }
 
-/// A saved index round-trips exactly, including the reserved-but-unpopulated
-/// fields (`DumpIndex::metadata`, `CopyBlock::sparse_index`/`column_stats`) —
-/// they must serialize as `None` rather than being silently dropped, which is
-/// the whole point of reserving them ahead of population.
+/// A saved index round-trips exactly, including the still-reserved-and-
+/// unpopulated fields (`CopyBlock::sparse_index`/`column_stats`) — they must
+/// serialize as `None` rather than being silently dropped, which is the
+/// whole point of reserving them ahead of population. `DumpIndex::metadata`
+/// is no longer one of these: every `build_index` scan populates it (Phase
+/// 2.2), so this also pins that a `Some(DumpMetadata { .. })` round-trips.
 #[tokio::test]
 async fn saved_index_round_trips_exactly() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
     assert!(!index.blocks.is_empty());
     assert!(index.blocks.iter().all(|b| b.sparse_index.is_none() && b.column_stats.is_none()));
-    assert!(index.metadata.is_none());
+    assert!(index.metadata.is_some());
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql.dqcache");

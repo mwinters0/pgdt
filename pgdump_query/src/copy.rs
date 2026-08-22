@@ -287,14 +287,17 @@ fn hex_val(b: u8) -> Option<u32> {
     }
 }
 
-/// Minimal byte cursor for the `COPY` header grammar.
-struct Cursor<'a> {
+/// Minimal byte cursor for the `COPY` header grammar. Also reused by
+/// `crate::preamble` for the preamble's DDL grammars (`CREATE TABLE` /
+/// `TYPE` / `DOMAIN` / `EXTENSION`), which share the same identifier and
+/// keyword rules.
+pub(crate) struct Cursor<'a> {
     buf: &'a [u8],
     pos: usize,
 }
 
 impl<'a> Cursor<'a> {
-    fn new(buf: &'a [u8]) -> Self {
+    pub(crate) fn new(buf: &'a [u8]) -> Self {
         Self { buf, pos: 0 }
     }
 
@@ -306,7 +309,7 @@ impl<'a> Cursor<'a> {
         self.buf.get(self.pos).copied()
     }
 
-    fn skip_spaces(&mut self) {
+    pub(crate) fn skip_spaces(&mut self) {
         while matches!(self.peek(), Some(b' ' | b'\t')) {
             self.pos += 1;
         }
@@ -319,7 +322,7 @@ impl<'a> Cursor<'a> {
         (self.pos > before).then_some(())
     }
 
-    fn eat_byte(&mut self, b: u8) -> bool {
+    pub(crate) fn eat_byte(&mut self, b: u8) -> bool {
         if self.peek() == Some(b) {
             self.pos += 1;
             true
@@ -340,9 +343,15 @@ impl<'a> Cursor<'a> {
         }
     }
 
+    /// Byte offset of the next unconsumed byte, usable to slice the original
+    /// `&str`/`&[u8]` this cursor was built over.
+    pub(crate) fn pos(&self) -> usize {
+        self.pos
+    }
+
     /// Parse a SQL identifier: either double-quoted (with `""` escaping) or
     /// bare (ASCII-case-folded, as unquoted SQL identifiers are).
-    fn parse_ident(&mut self) -> Option<String> {
+    pub(crate) fn parse_ident(&mut self) -> Option<String> {
         if self.eat_byte(b'"') {
             let mut out: Vec<u8> = Vec::new();
             loop {

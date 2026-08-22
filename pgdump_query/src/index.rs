@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::copy::CopyHeader;
 use crate::io::ByteRangeSource;
+use crate::preamble::PreambleBuilder;
 use crate::scan::{Event, ScanOptions, scan};
 use crate::{CopyStart, Result};
 
@@ -38,12 +39,10 @@ pub struct SparseRowIndex {
 pub struct RowGroupStats {}
 
 /// Dump-level preamble: source server version, `pg_dump` version, extension
-/// list, user-defined type definitions. Reserved in the cache format from
-/// the first release; not populated until roadmap Phase 2
-/// (`docs/design/roadmap.md`, "Companion: dump-level metadata") defines its
-/// real shape — no code constructs one yet.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DumpMetadata {}
+/// list, user-defined type definitions. Populated by [`build_index`] via
+/// `crate::preamble` (roadmap Phase 2.2,
+/// `docs/design/roadmap-phase2-typed-columns.md`, "The preamble pass").
+pub use crate::preamble::DumpMetadata;
 
 /// One located COPY block.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,7 +70,10 @@ pub struct DumpIndex {
     /// How much of the file the scan covered. Equal to the file size after an
     /// eager scan.
     pub scanned_through: u64,
-    /// Reserved — see [`DumpMetadata`]. Always `None` in Phase 1.
+    /// Dump-level preamble metadata — see [`DumpMetadata`]. Always `None`
+    /// for a `DumpIndex` a caller built by hand rather than through
+    /// [`build_index`] (Phase 1's default), but every `build_index` scan now
+    /// populates it.
     pub metadata: Option<DumpMetadata>,
 }
 
@@ -87,17 +89,24 @@ impl DumpIndex {
     }
 }
 
-/// Scan `source` end to end and collect its COPY block structure.
+/// Scan `source` end to end and collect its COPY block structure, plus its
+/// dump-level metadata (`docs/design/roadmap-phase2-typed-columns.md`, "The
+/// preamble pass") — a single pass serves both, since the preamble builder
+/// only ever looks at the same outside-block lines this scan already walks.
 pub async fn build_index<S: ByteRangeSource>(
     source: &S,
     options: &ScanOptions,
 ) -> Result<DumpIndex> {
     let mut index = DumpIndex::default();
     let mut pending: Option<CopyStart> = None;
+    let mut preamble = PreambleBuilder::new();
 
     scan(source, options, |event| {
         match event {
-            Event::CopyStart(start) => pending = Some(start),
+            Event::CopyStart(start) => {
+                preamble.on_copy_start();
+                pending = Some(start);
+            }
             Event::Row(_) => {}
             Event::CopyEnd(end) => {
                 // A `CopyEnd` is only ever emitted after a `CopyStart`.
@@ -114,11 +123,13 @@ pub async fn build_index<S: ByteRangeSource>(
                     });
                 }
             }
+            Event::Line(line) => preamble.feed_line(line.raw),
         }
         ControlFlow::Continue(())
     })
     .await?;
 
     index.scanned_through = source.size().await?;
+    index.metadata = Some(preamble.finish());
     Ok(index)
 }

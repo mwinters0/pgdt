@@ -227,3 +227,55 @@ the empty-`search_path` line.
 confirm fixtures still contain `set_config('search_path', '', false)`.
 
 ---
+
+## I9 — The version header lines print once per `pg_dump` invocation, not once per `\connect` segment
+
+**Claim.** `-- Dumped from database version` / `-- Dumped by pg_dump version`
+are written exactly once, at the very top of a plain-format file (before any
+`CREATE DATABASE`/`\connect`), never repeated when a `--create` dump switches
+into the database it just created. A `pg_dumpall` file is the exception, but
+only because it is several *separate* `pg_dump --create` invocations
+concatenated — each one gets its own pair, at the top of its own segment,
+for the same reason.
+
+**Proof.** Both lines are written in `RestoreArchive()`
+(`pg_backup_archiver.c`), unconditionally near the top of the function, ahead
+of the `\restrict` token and any TOC-entry processing — there is exactly one
+call to `RestoreArchive()` per plain-format output, regardless of how many
+databases' worth of `\connect` segments that output goes on to contain.
+`pg_dumpall` (`pg_dumpall.c`) does not merge multiple databases into one
+`pg_dump` invocation at all: for each database it `find_other_exec()`s a
+fresh `pg_dump` child process with `--create` and concatenates that child's
+complete output (banner, version headers, `CREATE DATABASE`, `\connect`,
+content) after the previous one's.
+
+**Observed.** The koji sample (`pg_dump --create` against a single database)
+has exactly one `-- Dumped from`/`-- Dumped by` pair, ahead of its one
+`\connect koji` — confirmed by grepping the raw file, not inferred from
+source alone.
+
+**Consequence for `crate::preamble`.** The version headers describe the
+whole `pg_dump` invocation, not the database whose segment happens to
+contain them positionally. A `--create` dump's pre-`\connect` segment is
+otherwise pure `CREATE DATABASE` noise (see `PreambleBuilder`'s docs) and
+gets discarded — but discarding it naively would silently drop the version
+headers for every single-database `--create` dump, including koji. They are
+carried forward onto the database the first `\connect` switches into
+instead. A later `\connect` (only reachable via a real `pg_dumpall`
+concatenation, untested here) needs no such carry-over: that database's
+segment holds its own pair, from its own `pg_dump` child's own
+`RestoreArchive()` call.
+
+**Verified against:** v18.6 source (`RestoreArchive()`,
+`pg_dumpall.c`'s per-database `pg_dump --create` invocation); koji
+(`pg_dump 16.14`).
+**Relied on by:** `roadmap-phase2-typed-columns.md` (preamble pass);
+`roadmap-phase2.2-preamble-notes.md`.
+**Re-verify:** `grep -n 'Dumped from database version' -B5
+src/bin/pg_dump/pg_backup_archiver.c` — confirm it's still inside
+`RestoreArchive()` and still unconditional-per-call; `grep -n
+'"--create"' src/bin/pg_dump/pg_dumpall.c` — confirm pg_dumpall still shells
+out to a fresh `pg_dump --create` per database rather than driving one dump
+across all of them.
+
+---

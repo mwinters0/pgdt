@@ -59,6 +59,9 @@ async fn render(path: &Path, chunk_size: usize) -> String {
                     end.row_count, end.terminator_offset, end.end_offset,
                 );
             }
+            // DDL/comment/meta-command lines outside a COPY block —
+            // `crate::preamble`'s input, not the scanner's own concern.
+            Event::Line(_) => {}
         }
         ControlFlow::Continue(())
     })
@@ -198,6 +201,7 @@ async fn copy_text_escaping_round_trips_through_postgres() {
                     checked += 1;
                 }
                 Event::Row(_) => {}
+                Event::Line(_) => {}
             }
             ControlFlow::Continue(())
         })

@@ -6,7 +6,8 @@ use arrow::array::{Array, RecordBatch, StringViewArray};
 use clap::{Parser, Subcommand};
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
-    BatchOptions, DumpIndex, LocalFileSource, Predicate, PredicateOp, ScanOptions, build_index,
+    BatchOptions, DumpIndex, DumpMetadata, LocalFileSource, Predicate, PredicateOp, ScanOptions,
+    build_index,
 };
 
 #[derive(Parser)]
@@ -165,7 +166,61 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// Look up `column`'s declared type string for `qualified` table, from
+/// whichever database's metadata explains it. `info` is diagnostic output,
+/// not a query: a table name landing in more than one database's `tables`
+/// map (only possible in a multi-database dump — untested, see
+/// `docs/design/roadmap-phase2-typed-columns.md`, "Multi-database dumps") is
+/// resolved by just taking the first match rather than erroring, unlike a
+/// real query would. Associating each `CopyBlock` with the database it
+/// belongs to, so this can't happen, is Phase 2.3's `resolve.rs`.
+fn declared_type<'a>(
+    metadata: &'a Option<DumpMetadata>,
+    qualified: &str,
+    column: &str,
+) -> Option<&'a str> {
+    let metadata = metadata.as_ref()?;
+    metadata.databases.iter().find_map(|db| {
+        db.tables.get(qualified).and_then(|cols| {
+            cols.iter().find(|(name, _)| name == column).map(|(_, ty)| ty.as_str())
+        })
+    })
+}
+
+/// Dump-level metadata header: server/`pg_dump` versions, extension and
+/// user-defined-type counts (`docs/design/roadmap-phase2-typed-columns.md`,
+/// "CLI"). The `database: <name>` line is only shown when it's informative —
+/// a single unnamed database (a plain, non-`--create` dump: the overwhelming
+/// common case) is printed with no header line, since one would just be
+/// noise.
+fn print_metadata(metadata: &DumpMetadata) {
+    let multi = metadata.databases.len() > 1;
+    for db in &metadata.databases {
+        let show_name = multi || db.name.is_some();
+        let indent = if show_name { "  " } else { "" };
+        if show_name {
+            match &db.name {
+                Some(name) => println!("database: {name}"),
+                None => println!("database: (unnamed)"),
+            }
+        }
+        if let Some(v) = &db.server_version {
+            println!("{indent}server version: {v}");
+        }
+        if let Some(v) = &db.pg_dump_version {
+            println!("{indent}pg_dump version: {v}");
+        }
+        println!("{indent}extensions: {}", db.extensions.len());
+        println!("{indent}user-defined types: {}", db.types.len());
+    }
+}
+
 fn print_index(index: &DumpIndex, verbose: bool) {
+    if let Some(metadata) = &index.metadata {
+        print_metadata(metadata);
+        println!();
+    }
+
     if index.blocks.is_empty() {
         println!("no COPY blocks found in {} scanned bytes", index.scanned_through);
         return;
@@ -176,7 +231,17 @@ fn print_index(index: &DumpIndex, verbose: bool) {
         if block.header.columns.is_empty() {
             println!("    columns: (not listed in COPY header)");
         } else {
-            println!("    columns: {}", block.header.columns.join(", "));
+            let qualified = block.header.qualified_name();
+            let columns: Vec<String> = block
+                .header
+                .columns
+                .iter()
+                .map(|c| match declared_type(&index.metadata, &qualified, c) {
+                    Some(ty) => format!("{c} {ty}"),
+                    None => format!("{c} (unknown)"),
+                })
+                .collect();
+            println!("    columns: {}", columns.join(", "));
         }
         if verbose {
             println!("    header offset: {}", block.header_offset);

@@ -60,12 +60,29 @@ pub struct CopyEnd {
     pub row_count: u64,
 }
 
+/// One line encountered outside a COPY block that is neither a COPY header
+/// nor part of a dollar-quoted string — DDL, comments, blank lines, or a
+/// psql meta-command (`\connect`, `\restrict`, ...). This is the raw material
+/// `crate::preamble` parses into a [`crate::index::DumpMetadata`]; every
+/// other caller ignores it. Cheap to emit: outside a COPY block's data rows,
+/// which never reach this arm, the preamble of even a multi-database dump is
+/// a few thousand lines against however many billion rows follow it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Line<'a> {
+    /// Absolute file offset of the line's first byte.
+    pub offset: u64,
+    /// The line with its terminating newline (and any `\r` before it)
+    /// stripped.
+    pub raw: &'a [u8],
+}
+
 /// An event emitted while scanning.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event<'a> {
     CopyStart(CopyStart),
     Row(Row<'a>),
     CopyEnd(CopyEnd),
+    Line(Line<'a>),
 }
 
 #[derive(Debug)]
@@ -202,6 +219,7 @@ impl CopyScanner {
                             data_offset: self.position(),
                         })));
                     }
+                    return Ok(Some(Event::Line(Line { offset: line_offset, raw: line })));
                 }
                 State::InCopy { rows, header_offset } => {
                     if is_terminator(line) {

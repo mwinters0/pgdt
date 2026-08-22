@@ -405,6 +405,11 @@ where
                                 rec.persist(end.end_offset)?;
                             }
                         }
+                        // Preamble/metadata capture during an incremental
+                        // live scan is Phase 2.3's concern (it's the first
+                        // slice that actually consumes `DumpMetadata` for
+                        // type resolution); a pull-mode query ignores these.
+                        Event::Line(_) => {}
                     }
                 }
 

@@ -30,19 +30,45 @@ Last updated: 2026-08-22.
 - [x] **2.1** Dollar-quote tracking in the scanner — closes the Phase 1
       known gap. Notes:
       `docs/design/roadmap-phase2.1-dollar-quote-tracking-notes.md`
-- [ ] **2.2** Preamble parsing, `DumpMetadata`, cache persistence, `pgdq info`
+- [x] **2.2** Preamble parsing, `DumpMetadata`, cache persistence, `pgdq info`
+      display. Notes: `docs/design/roadmap-phase2.2-preamble-notes.md`
 - [ ] **2.3** Type resolution, `ResolvedSchema`, diagnostics (still all-`Utf8View`)
 - [ ] **2.4** Decoders, render-back, round-trip tests
 - [ ] **2.5** Benchmarks and the synthetic performance dataset
 
 ## Not started
 
-- **Phase 2, slices 2.2-2.5** — see the checklist above.
+- **Phase 2, slices 2.3-2.5** — see the checklist above.
 - **Phases 3-7** — not designed. See `docs/design/roadmap.md`.
 - **Benchmarks** (`criterion`) — not wired in.
 - **Full 8-version worktree fixture sweep** (`v13.0` … `v18.6`) — worktree
   binaries not yet built; the 3-version container sweep
   (`scripts/generate_fixtures.py`) covers routine needs in the meantime.
+
+## Decisions worth a second look
+
+- **Phase 2.2's preamble grammar dispatches off five fixed line-start
+  keywords rather than modeling the phase doc's `-- Name: ...; Type: ...` TOC
+  comment as a formal segmenter.** Same soundness property either way (never
+  guesses; an unrecognized line is just ignored), and nothing in the fixture
+  matrix or koji exercised a gap in it — but it's a deliberate departure from
+  the letter of the spec, worth revisiting if a real-world dump ever trips it
+  up. `docs/design/roadmap-phase2.2-preamble-notes.md`, "Grammar approach".
+- **`CREATE TYPE ... AS RANGE` and C-level base/shell types have zero fixture
+  or koji coverage** — neither can be produced by the fixture generator
+  (koji's own range column uses a built-in type; base types need C
+  functions). Implemented from `pg_dump` source reading and unit-tested
+  against hand-written statement text only. Same notes doc, "Not touched /
+  deferred".
+- **A full fresh `pgdq parse`/`info` scan of the real 784 GB koji dump was
+  not run this session** (an hour-long process on the HDD; this was an
+  unattended run — see `CLAUDE.md`'s long-running-process rule). The
+  preamble pass is verified against real koji bytes only up through the
+  first `COPY` block (`lock_monitor.activity`), via a truncated-file
+  technique described in the notes doc — not end to end. Nothing in the
+  design suggests the untested remainder matters (I1 says nothing of
+  interest follows a database's first `COPY` block), but a future session
+  with a container-hour to spare could confirm it.
 
 ## Known gaps
 
