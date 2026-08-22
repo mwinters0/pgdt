@@ -24,6 +24,9 @@ Not a changelog, and not a status doc — for what is and isn't built now, see
 | Post-parse predicate | `pgdump_query/src/predicate.rs` |
 | CLI (`pgdq parse` / `info` / `query`) | `pgdump_query-cli/src/main.rs` |
 
+Each of these modules is assigned to a layer, and which layer it is constrains
+what it may depend on and what it may know: [`layering.md`](layering.md).
+
 Integration tests mirror that split: `tests/batch.rs`, `tests/stream.rs`,
 `tests/cache.rs`, `tests/query_cache.rs`, plus an `insta` snapshot of the whole
 event stream over `tests/data/edge_cases.sql`.

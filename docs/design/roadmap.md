@@ -11,6 +11,11 @@ Phase 1 is complete (`docs/design/roadmap-phase1-mvp.md`,
 `docs/design/roadmap-phase1-mvp-notes.md`). Phase 2 is current
 (`docs/design/roadmap-phase2-typed-columns.md`).
 
+`docs/design/layering.md` cuts across every phase below: it assigns each module
+to one of four layers and fixes the direction dependencies may point. Several
+phases here are cross-layer by nature — Phase 5's pushdown and statistics
+especially — and that doc holds the decision rules for them.
+
 ## Pre-1.0: no compatibility obligations
 
 Everything in this roadmap happens before 1.0, and **nothing here carries a

@@ -65,6 +65,12 @@ A later session reads `runs/koji-scan.log`; `sudo nerdctl inspect -f
 
 ## Architecture & design docs
 
+`docs/design/layering.md` assigns every module to one of four layers and states
+the rules that keep dependencies pointing downward. **Read it before adding a
+module, moving code between modules, or wiring a concern across existing
+ones** — it is a standing constraint, not a phase, and it pre-answers where
+new code goes.
+
 `docs/design/roadmap.md` holds the project goals and indexes the phases; a
 phase that has been specified gets its own doc, named
 `docs/design/roadmap-phase<N>-<slug>.md`. Keep that convention when a new

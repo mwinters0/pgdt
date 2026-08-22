@@ -549,14 +549,23 @@ waiting on the whole phase to finish.
 
 ## Module layout
 
-Four new modules, flat, matching the four concerns:
+Four new modules, flat, matching the four concerns. The layer column is
+binding — see [`layering.md`](layering.md) for the rules it implies:
 
-| Module | Concern |
-|---|---|
-| `preamble.rs` | TOC segmentation and the `CREATE TABLE`/`TYPE`/`DOMAIN`/`EXTENSION` grammars, producing `DumpMetadata` |
-| `pgtype.rs` | Declared-type string → Arrow `DataType`; domain/enum resolution; the `.`-qualified split (I8) |
-| `decode.rs` | Per-type field decoders **and** their render-back counterparts |
-| `resolve.rs` | `ResolvedSchema`, `ColumnResolution`, `Diagnostic` — the join of a `COPY` header against `DumpMetadata` |
+| Module | Layer | Concern |
+|---|---|---|
+| `preamble.rs` | L1 | TOC segmentation and the `CREATE TABLE`/`TYPE`/`DOMAIN`/`EXTENSION` grammars, producing `DumpMetadata` |
+| `pgtype.rs` | L2 | Declared-type string → Arrow `DataType`; domain/enum resolution; the `.`-qualified split (I8) |
+| `decode.rs` | L2 | Per-type field decoders **and** their render-back counterparts |
+| `resolve.rs` | L2 | `ResolvedSchema`, `ColumnResolution`, `Diagnostic` — the join of a `COPY` header against `DumpMetadata` |
+
+Two consequences worth stating before 2.3 starts. `preamble.rs` is L1, so it
+parses a declared type as an opaque string and never interprets it — the whole
+type→Arrow mapping lives in `pgtype.rs`, which is what makes "store what the
+dump said, never what we concluded" hold structurally rather than by
+discipline. And the three L2 modules use `arrow::datatypes` only: a decoder in
+`decode.rs` takes a `&[u8]` field and returns a value, never an Arrow builder,
+because array construction is tied to the reader's buffers in `batch.rs` (L3).
 
 Keeping decode and render-back in one module is the non-obvious call: they are
 inverse functions, and separating them invites them to drift apart in exactly
