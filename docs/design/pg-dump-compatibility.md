@@ -11,18 +11,19 @@ inspection of the `koji` sample dump or from `pg_dump` documentation instead
 — that distinction is called out per row.
 
 Status values: **Tested** (fixture or real-dump evidence), **Untested**
-(plausibly relevant, no evidence yet), **Unsupported** (explicitly out of
-scope), **N/A** (flag doesn't apply to plain format at all).
+(plausibly relevant, no evidence yet), **Planned (Phase N)** (in scope, not
+built, roadmap phase named), **Unsupported** (explicitly out of scope), **N/A**
+(flag doesn't apply to plain format at all).
 
 | Option / variant | Status | Notes |
 |---|---|---|
 | `--format=plain` (default) | Tested | Confirmed against the koji sample (784GB, `pg_dump 16.14`). This is the library's only target format. |
-| `--format=custom` | Unsupported | Non-goal — existing tools (`pgdumplib`, etc.) already cover this well. |
-| `--format=directory` | Unsupported | Same rationale as custom. |
-| `--format=tar` | Unsupported | Not named explicitly in the design docs, but falls under the same "non-plain format" exclusion as custom/directory. **Doc gap**: should be named explicitly next time `mvp.md`'s hardcoded format scope is revised. |
-| `--inserts` | Tested (fixture) | Confirmed against `postgres:13/16/18-alpine`: produces `INSERT INTO` statements, zero `COPY` blocks. Parser support for this shape is still Phase 5 — this row tracks the *fixture data existing*, not library support. |
-| `--column-inserts` | Tested (fixture) | Same as above; fixture confirms the variant output shape. Phase 5 for actual support. |
-| `--rows-per-insert=N` | Untested | Only relevant once `--inserts` support exists (Phase 5); not yet in the fixture matrix. |
+| `--format=custom` | Planned (Phase 6) | Container layer over the same COPY TEXT payload: `PGDMP` header + TOC gives the entries, each entry's data block is separately compressed. Needs streaming decompression; no new row parser. |
+| `--format=directory` | Planned (Phase 6) | `toc.dat` plus one compressed file per entry. Same container layer as custom, different entry addressing. |
+| `--format=tar` | Planned (Phase 6) | Tar member index plus `toc.dat`; members are uncompressed, so this is the cheapest of the three to add. |
+| `--inserts` | Tested (fixture) | Confirmed against `postgres:13/16/18-alpine`: produces `INSERT INTO` statements, zero `COPY` blocks. Parser support for this shape is Phase 6 Track A — this row tracks the *fixture data existing*, not library support. |
+| `--column-inserts` | Tested (fixture) | Same as above; fixture confirms the variant output shape. Phase 6 Track A for actual support. |
+| `--rows-per-insert=N` | Untested | Only relevant once `--inserts` support exists (Phase 6 Track A); not yet in the fixture matrix. |
 | `--data-only` | Tested (fixture) | Confirmed against all 3 routine versions: `COPY` blocks present with minimal preceding DDL, as expected. |
 | `--schema-only` | Tested (fixture) | Confirmed: zero `COPY` blocks in the output across all 3 versions — the degenerate case parses to "no tables found," not an error. |
 | `--no-owner`, `--no-privileges` | Tested (fixture) | Confirmed no structural effect on `COPY` blocks across all 3 versions. `--no-comments`/`--no-security-labels` not yet in the fixture matrix but expected to behave the same (same category of DDL-only removal). |
@@ -34,7 +35,7 @@ scope), **N/A** (flag doesn't apply to plain format at all).
 | Non-UTF8 `client_encoding` | Unsupported (errors) | koji sample is UTF8 only. Field decoding validates UTF-8 and returns `Error::InvalidUtf8` otherwise, so a non-UTF8 dump fails loudly rather than silently corrupting. Block *structure* (`COPY`/`\.` boundaries) is still found correctly, since it is located at the byte level. |
 | `COPY` header variants | Tested (fixture) | The scanner accepts `COPY <table> [(<cols>)] FROM stdin;` — schema-qualified or bare, quoted or unquoted identifiers, with or without a column list. Anything else on a `COPY` line (notably `TO stdout;` and any trailing `WITH (...)`) is deliberately not recognised and is skipped as ordinary SQL rather than guessed at. |
 | `COPY ... FROM stdin;` at line start inside a dollar-quoted body | Untested / known gap | A function body containing a line that both starts at column 0 and matches the full header grammar would be read as a real `COPY` block, and the scanner would then consume following SQL as data until it found a `\.` line. The strict grammar rules out the near-misses (`COPY ... TO stdout;` and `WITH`-suffixed forms are covered by a fixture), but not this exact shape. Closing it properly needs dollar-quote tracking in the scanner; not scoped yet. Reasoning and the options weighed: `docs/status/history/2026-08-22.md`. |
-| Dump-level compression (`-Z`/`--compress`) | N/A | Per `pg_dump` docs, compression only applies to custom/directory/tar archive formats, not plain SQL text output. |
+| Dump-level compression (`-Z`/`--compress`) | N/A for plain; Planned (Phase 6) elsewhere | Per `pg_dump` docs, compression only applies to custom/directory/tar archive formats, not plain SQL text output — so it is N/A for the only format Phase 1 reads. It becomes load-bearing with those formats: gzip throughout, plus lz4/zstd from PG 16 on. |
 | External compression of the `.sql` file (e.g. `.xz`, `.gz`) | Unsupported (by design) | Input is assumed already-decompressed plain SQL text; decompression is a caller-side preprocessing step (see: the koji sample also exists as a separate `.xz`-compressed download, decompressed before use here). |
-| CSV-format `COPY` blocks | Unclear / needs clarification | Listed as a future aspiration in the historical doc, but no known `pg_dump` flag actually produces CSV-format `COPY ... FROM stdin` output — plain-format dumps always use `COPY`'s TEXT format. This may refer to a hypothetical alternate input the library could accept rather than real `pg_dump` output; needs clarification before Phase 5 scoping. |
+| CSV-format `COPY` blocks | Unclear / needs clarification | Listed as a future aspiration in the historical doc, but no known `pg_dump` flag actually produces CSV-format `COPY ... FROM stdin` output — plain-format dumps always use `COPY`'s TEXT format. This may refer to a hypothetical alternate input the library could accept rather than real `pg_dump` output; needs clarification before Phase 6 Track A scoping. |
 | COPY TEXT wire format stability across PG 13-18 | Tested | Confirmed byte-identical escaping across `pg_dump 13.23`, `16.15`, `18.6`: the `public.escapes` fixture table holds one row per codepoint (`chr(n)` for 1-127 plus a 2-/3-/4-byte UTF-8 spread), and the decoder round-trips every row back to the original character on all three versions. All three escape only `\b \t \n \v \f \r \\` and emit the remaining control bytes raw. The full 8-version worktree sweep (`v13.0`, `v13.23`, `v14.0`, `v15.0`, `v16.0`, `v17.0`, `v18.0`, `v18.6`) as a manual/occasional job is still open, and worktree binaries still need to be built for that (see `mvp.md`). |

@@ -153,7 +153,10 @@ configurable behavior:
   with embedded literal `\n` sequences).
 - Input is assumed to already be decompressed plain SQL text — the library
   does not handle compressed dumps (`.gz`/`.xz`/etc.) itself; that's a
-  caller-side preprocessing step.
+  caller-side preprocessing step. This is a rule about *plain-format input*
+  specifically, not a global policy: archive formats (Phase 6, Track B)
+  compress per entry, internally, and will need streaming decompression
+  inside the container layer.
 
 ## CLI (`pgdq`)
 
@@ -203,13 +206,47 @@ configurable behavior:
 `thiserror` for library errors (`pgdump_query`), `anyhow` in the CLI binary
 (`pgdump_query-cli`) — standard split, not further specified here.
 
-## Non-goals (Phase 1, carried forward from the historical doc)
+## Decisions that keep later phases open
 
-- Writing or modifying dump files.
-- Custom/directory/tar pg_dump archive formats.
+Phase 1 is plain-format-only and single-threaded by design. These four
+choices are what make Phases 5 and 6 additive rather than a rewrite, and they
+are cheap to hold to now — so hold to them, even where Phase 1 alone wouldn't
+require them.
+
+- **The COPY TEXT decoder stays independent of where its bytes came from.**
+  `copy.rs` operates on a caller-owned slice and never assumes "a file at
+  offset N". Every dump format stores table data as this same COPY TEXT
+  payload, so this decoder is the one component all of Phase 6 reuses
+  verbatim.
+- **Structure discovery is a separate concern from row decoding.** `scan.rs`
+  finds `COPY` boundaries in a plain file; an archive reads them from a TOC.
+  Keeping the boundary between "what entries exist and where are their bytes"
+  and "decode these bytes into rows" clean is what lets a container layer slot
+  in later (roadmap Phase 6, Track B).
+- **The cache format is versioned and records what produced it.** Serialized
+  `DumpIndex` carries a format-version field and a container-kind tag from the
+  first release, so archive-derived indexes and entry-relative offsets are a
+  later variant rather than a breaking change. A cache whose version or kind
+  isn't recognised is treated as absent — the "never required for correctness"
+  rule above makes that safe.
+- **`ResumeToken` exposes no fields, ever.** Phase 1's contents are a file
+  offset plus a row index, but a raw file offset is meaningless inside a
+  compressed archive entry. Opaque now means the representation can change
+  without an API break.
+
+Phase 5 (scan performance) adds a fifth, which bears on work in flight right
+now rather than later: the batch layer should build `Utf8View` arrays over the
+scanner's existing chunk buffer instead of copying field bytes out of it. See
+`docs/design/scan-performance.md`.
+
+## Non-goals (Phase 1)
+
+- Writing or modifying dump files — permanently out of scope.
 - A full SQL/DDL parser — only enough recognition to locate `COPY` blocks
   (and, in Phase 2, extract columns/types from `CREATE TABLE` for the
   table(s) being queried).
-- Typed columns, predicate pushdown, column projection pushdown,
-  multi-language/engine bindings, `--inserts`/CSV-`COPY` input variants — all
-  later phases, see `docs/design/roadmap.md`.
+- Typed columns, predicate pushdown, column projection pushdown, and
+  multi-language/engine bindings — Phases 2-4.
+- Custom/directory/tar archive formats, and `--inserts`/`--column-inserts`
+  input variants — Phase 6. Not Phase 1 work, but no longer permanently out
+  of scope; see `docs/design/roadmap.md`.

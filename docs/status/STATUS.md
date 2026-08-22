@@ -114,3 +114,9 @@ The row/batch layer: turn the scanner's `Event::Row` into `Utf8View`
 `RecordBatch`es behind the batch-size limits, then the streaming API on top.
 The cache is the other independent thread of work and can proceed in
 parallel — `DumpIndex` is ready to be given a serialized form.
+
+Both have a constraint worth honouring up front, from
+`docs/design/scan-performance.md`: build the `Utf8View` arrays as views over
+an Arrow `Buffer` holding the read chunk rather than copying field bytes out,
+and leave room in the serialized cache for an optional sparse row index.
+Retrofitting either is expensive; pre-empting them is nearly free.
