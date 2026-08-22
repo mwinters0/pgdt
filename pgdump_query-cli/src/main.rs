@@ -5,9 +5,10 @@ use anyhow::{Context, Result};
 use arrow::array::{Array, RecordBatch, StringViewArray};
 use clap::{Parser, Subcommand};
 use pgdump_query::cache::CacheMode;
+use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdump_query::{
-    BatchOptions, DumpIndex, DumpMetadata, LocalFileSource, Predicate, PredicateOp, ScanOptions,
-    build_index,
+    BatchOptions, DeferredKind, DumpIndex, DumpMetadata, LocalFileSource, Predicate, PredicateOp,
+    ScanOptions, build_index, preamble_only,
 };
 
 #[derive(Parser)]
@@ -39,6 +40,13 @@ enum Command {
         cache_path: Option<PathBuf>,
         #[arg(long)]
         verbose: bool,
+        /// Answer from the preamble alone (dump-level header only, no
+        /// per-block listing or row counts) instead of a full structural
+        /// scan — cost is independent of dump size regardless of how much
+        /// `COPY` data follows (`docs/design/roadmap-phase2-typed-columns.md`,
+        /// "CLI").
+        #[arg(long)]
+        preamble_only: bool,
     },
     /// Stream a table's rows, optionally filtered by a single-column predicate.
     Query {
@@ -49,26 +57,53 @@ enum Command {
         /// perform a fresh scan without persisting it.
         #[arg(long)]
         cache_path: Option<PathBuf>,
-        /// Single-column filter: `column=value` or `column!=value`, compared
-        /// against each row's decoded field value.
+        /// Single-column filter: `column=value`, `column!=value`,
+        /// `column IS NULL`, or `column IS NOT NULL`, compared against each
+        /// row's decoded field value.
         #[arg(long)]
         filter: Option<String>,
     },
 }
 
-/// Parse a `--filter` argument into a [`Predicate`]. `!=` is checked before
-/// `=` since it contains that byte.
+/// Parse a `--filter` argument into a [`Predicate`]: `column=value`,
+/// `column!=value`, `column IS NULL`, or `column IS NOT NULL` (the `IS`
+/// forms matched case-insensitively after the column name — see
+/// `docs/design/roadmap-phase2-typed-columns.md`, "Predicates"). `!=` is
+/// checked before `=` since it contains that byte.
 fn parse_filter(spec: &str) -> Result<Predicate> {
+    let trimmed = spec.trim_end();
+    if let Some(column) = strip_ci_suffix(trimmed, "is not null") {
+        return Ok(Predicate {
+            column: column.trim_end().to_string(),
+            op: PredicateOp::IsNotNull,
+            value: None,
+        });
+    }
+    if let Some(column) = strip_ci_suffix(trimmed, "is null") {
+        return Ok(Predicate {
+            column: column.trim_end().to_string(),
+            op: PredicateOp::IsNull,
+            value: None,
+        });
+    }
     let (column, op, value) = match spec.split_once("!=") {
         Some((column, value)) => (column, PredicateOp::Ne, value),
         None => match spec.split_once('=') {
             Some((column, value)) => (column, PredicateOp::Eq, value),
-            None => {
-                anyhow::bail!("--filter must be `column=value` or `column!=value`, got `{spec}`")
-            }
+            None => anyhow::bail!(
+                "--filter must be `column=value`, `column!=value`, `column IS NULL`, or `column IS NOT NULL`, got `{spec}`"
+            ),
         },
     };
-    Ok(Predicate { column: column.to_string(), op, value: value.to_string() })
+    Ok(Predicate { column: column.to_string(), op, value: Some(value.to_string()) })
+}
+
+/// Case-insensitive suffix strip, for matching `IS NULL`/`IS NOT NULL` at
+/// the end of a `--filter` argument regardless of how the user cased it.
+fn strip_ci_suffix<'a>(s: &'a str, suffix: &str) -> Option<&'a str> {
+    let split = s.len().checked_sub(suffix.len())?;
+    let (head, tail) = s.split_at(split);
+    tail.eq_ignore_ascii_case(suffix).then_some(head)
 }
 
 /// Print one batch's rows tab-separated, `\N` for NULL — mirroring COPY
@@ -112,8 +147,14 @@ async fn main() -> Result<()> {
             println!();
             println!("wrote cache to {}", path.display());
         }
-        Command::Info { file, cache_path, verbose } => {
+        Command::Info { file, cache_path, verbose, preamble_only: preamble_only_flag } => {
             let mode = CacheMode::resolve(&file, cache_path.as_deref());
+            if preamble_only_flag {
+                let source = LocalFileSource::open(&file)?;
+                let metadata = preamble_only(&source, &ScanOptions::default(), &mode).await?;
+                print_metadata(&metadata);
+                return Ok(());
+            }
             let index = match mode.load()? {
                 Some(index) => index,
                 None => {
@@ -136,7 +177,7 @@ async fn main() -> Result<()> {
             let source = LocalFileSource::open(&file)?;
             let mut header_printed = false;
             let mut rows = 0u64;
-            pgdump_query::read_table(
+            let (_resolved_schema, _resume) = pgdump_query::read_table(
                 &source,
                 &table,
                 &ScanOptions::default(),
@@ -166,25 +207,27 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Look up `column`'s declared type string for `qualified` table, from
-/// whichever database's metadata explains it. `info` is diagnostic output,
-/// not a query: a table name landing in more than one database's `tables`
-/// map (only possible in a multi-database dump — untested, see
-/// `docs/design/roadmap-phase2-typed-columns.md`, "Multi-database dumps") is
-/// resolved by just taking the first match rather than erroring, unlike a
-/// real query would. Associating each `CopyBlock` with the database it
-/// belongs to, so this can't happen, is Phase 2.3's `resolve.rs`.
-fn declared_type<'a>(
-    metadata: &'a Option<DumpMetadata>,
-    qualified: &str,
-    column: &str,
-) -> Option<&'a str> {
-    let metadata = metadata.as_ref()?;
-    metadata.databases.iter().find_map(|db| {
-        db.tables.get(qualified).and_then(|cols| {
-            cols.iter().find(|(name, _)| name == column).map(|(_, ty)| ty.as_str())
-        })
-    })
+/// Human-readable label for one column's resolution outcome — the `info
+/// --verbose` per-column diagnostic line
+/// (`docs/design/roadmap-phase2-typed-columns.md`, "CLI").
+fn resolution_label(r: &ColumnResolution) -> String {
+    match r {
+        ColumnResolution::Mapped => "mapped".to_string(),
+        ColumnResolution::UnknownType => "unknown type — no mapping for this build".to_string(),
+        ColumnResolution::NotDeclared => "not declared — no DDL explained this column".to_string(),
+        ColumnResolution::Deferred { kind } => {
+            let kind = match kind {
+                DeferredKind::Array => "array",
+                DeferredKind::Composite => "composite",
+                DeferredKind::Range => "range",
+            };
+            format!("deferred ({kind}) — decodable, not yet implemented")
+        }
+        ColumnResolution::OpaqueBaseType => {
+            "opaque base type — information-free in the dump".to_string()
+        }
+        ColumnResolution::EmptyEnum => "empty enum".to_string(),
+    }
 }
 
 /// Dump-level metadata header: server/`pg_dump` versions, extension and
@@ -226,22 +269,39 @@ fn print_index(index: &DumpIndex, verbose: bool) {
         return;
     }
 
+    let mut total_columns = 0usize;
+    let mut total_unmapped = 0usize;
+
     for block in &index.blocks {
         println!("{} ({} rows)", block.header.qualified_name(), block.row_count);
         if block.header.columns.is_empty() {
             println!("    columns: (not listed in COPY header)");
         } else {
             let qualified = block.header.qualified_name();
-            let columns: Vec<String> = block
-                .header
-                .columns
+            let resolved: ResolvedSchema = resolve_columns(
+                &qualified,
+                &block.header.columns,
+                index.metadata.as_ref(),
+                SchemaMode::Typed,
+            );
+            let columns: Vec<String> = resolved
+                .notes
                 .iter()
-                .map(|c| match declared_type(&index.metadata, &qualified, c) {
-                    Some(ty) => format!("{c} {ty}"),
-                    None => format!("{c} (unknown)"),
+                .map(|d| match &d.declared {
+                    Some(ty) => format!("{} {ty}", d.column),
+                    None => format!("{} (unknown)", d.column),
                 })
                 .collect();
             println!("    columns: {}", columns.join(", "));
+            if verbose {
+                for note in
+                    resolved.notes.iter().filter(|d| d.resolution != ColumnResolution::Mapped)
+                {
+                    println!("    {}: {}", note.column, resolution_label(&note.resolution));
+                }
+            }
+            total_columns += resolved.notes.len();
+            total_unmapped += resolved.unmapped_count();
         }
         if verbose {
             println!("    header offset: {}", block.header_offset);
@@ -258,4 +318,9 @@ fn print_index(index: &DumpIndex, verbose: bool) {
         index.total_rows(),
         index.scanned_through
     );
+    if total_unmapped > 0 {
+        println!(
+            "{total_unmapped} of {total_columns} columns unmapped — run with --verbose for details"
+        );
+    }
 }

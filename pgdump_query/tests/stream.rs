@@ -4,8 +4,10 @@
 use std::path::{Path, PathBuf};
 
 use arrow::array::{Array, RecordBatch, StringViewArray};
+use arrow::datatypes::DataType;
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
+use pgdump_query::resolve::{ColumnResolution, SchemaMode};
 use pgdump_query::{BatchOptions, BlockingTableIter, LocalFileSource, ScanOptions, table_stream};
 
 fn edge_cases() -> PathBuf {
@@ -18,6 +20,14 @@ fn fixture(version: u32, name: &str) -> PathBuf {
         .join(version.to_string())
         .join("edge_cases")
         .join(format!("{name}.sql"))
+}
+
+fn types_fixture(version: u32, flag_set: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../fixtures")
+        .join(version.to_string())
+        .join("types")
+        .join(format!("{flag_set}.sql"))
 }
 
 fn rows_of(batch: &RecordBatch) -> Vec<Vec<Option<String>>> {
@@ -100,7 +110,7 @@ async fn stream_matches_push_mode_output() {
 /// resume points at different row counts.
 #[tokio::test]
 async fn resume_continues_without_gap_or_repeat() {
-    let options = BatchOptions { max_rows: 1, max_bytes: None };
+    let options = BatchOptions { max_rows: 1, max_bytes: None, ..Default::default() };
     for stop_after in [1, 2, 5] {
         let source = LocalFileSource::open(edge_cases()).unwrap();
         let mut stream = table_stream(
@@ -148,7 +158,7 @@ async fn resume_reconstructs_headerless_schema() {
         &source,
         "public.no_column_list",
         ScanOptions::default(),
-        BatchOptions { max_rows: 1, max_bytes: None },
+        BatchOptions { max_rows: 1, max_bytes: None, ..Default::default() },
         None,
         None,
         CacheMode::Disabled,
@@ -163,7 +173,7 @@ async fn resume_reconstructs_headerless_schema() {
         &source,
         "public.no_column_list",
         ScanOptions::default(),
-        BatchOptions { max_rows: 1, max_bytes: None },
+        BatchOptions { max_rows: 1, max_bytes: None, ..Default::default() },
         None,
         Some(token),
         CacheMode::Disabled,
@@ -184,7 +194,7 @@ async fn resume_at_a_block_boundary() {
     for version in [13, 16, 18] {
         let path = fixture(version, "default");
         let source = LocalFileSource::open(&path).unwrap();
-        let options = BatchOptions { max_rows: 132, max_bytes: None };
+        let options = BatchOptions { max_rows: 132, max_bytes: None, ..Default::default() };
         let mut stream = table_stream(
             &source,
             "public.escapes",
@@ -212,6 +222,84 @@ async fn resume_at_a_block_boundary() {
         );
         assert!(resumed.next().await.is_none(), "pg_dump {version}: nothing left after boundary");
     }
+}
+
+/// `TableStream::resolved_schema` reports the *target* typing this build
+/// already understands (`docs/design/roadmap-phase2-typed-columns.md`,
+/// "API shape changes"), even though every `RecordBatch` this same stream
+/// yields is still all-`Utf8View` in Phase 2.3 — see `resolve.rs`'s module
+/// docs for why the two schemas deliberately disagree at this slice.
+#[tokio::test]
+async fn resolved_schema_reflects_the_dumps_ddl_while_batches_stay_utf8view() {
+    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
+    let batch_options = BatchOptions { schema_mode: SchemaMode::Typed, ..Default::default() };
+    let mut stream = table_stream(
+        &source,
+        "public.t_int",
+        ScanOptions::default(),
+        batch_options,
+        None,
+        None,
+        CacheMode::Disabled,
+    );
+    let mut batches = Vec::new();
+    while let Some(batch) = stream.next().await.transpose().unwrap() {
+        batches.push(batch);
+    }
+    assert_eq!(batches.len(), 1);
+    // The actual batch: every field Utf8View, decoders don't exist yet.
+    assert!(batches[0].schema().fields().iter().all(|f| f.data_type() == &DataType::Utf8View));
+
+    let resolved = stream.resolved_schema();
+    assert_eq!(resolved.schema.field(0).data_type(), &DataType::Int32, "id");
+    assert_eq!(resolved.schema.field(1).data_type(), &DataType::Int16, "v_smallint");
+    assert_eq!(resolved.schema.field(2).data_type(), &DataType::Int32, "v_integer");
+    assert_eq!(resolved.schema.field(3).data_type(), &DataType::Int64, "v_bigint");
+    assert!(resolved.columns.iter().all(|c| *c == ColumnResolution::Mapped));
+    assert!(resolved.schema.fields().iter().all(|f| f.is_nullable()));
+}
+
+/// `SchemaMode::Strings` never looks at the DDL at all — every column comes
+/// back `NotDeclared`, matching Phase 1 exactly.
+#[tokio::test]
+async fn strings_mode_never_resolves_types() {
+    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
+    let batch_options = BatchOptions { schema_mode: SchemaMode::Strings, ..Default::default() };
+    let mut stream = table_stream(
+        &source,
+        "public.t_int",
+        ScanOptions::default(),
+        batch_options,
+        None,
+        None,
+        CacheMode::Disabled,
+    );
+    while stream.next().await.transpose().unwrap().is_some() {}
+    let resolved = stream.resolved_schema();
+    assert!(resolved.columns.iter().all(|c| *c == ColumnResolution::NotDeclared));
+}
+
+/// `--cache-path none` (`CacheMode::Disabled`) disables persistence, not
+/// typing (`docs/design/roadmap-phase2-typed-columns.md`, "The preamble
+/// pass") — the preamble is still scanned fresh, so typing works identically
+/// to `CacheMode::Enabled`, just without leaving a cache file behind.
+#[tokio::test]
+async fn disabled_cache_still_resolves_types() {
+    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
+    let batch_options = BatchOptions { schema_mode: SchemaMode::Typed, ..Default::default() };
+    let mut stream = table_stream(
+        &source,
+        "public.t_int",
+        ScanOptions::default(),
+        batch_options,
+        None,
+        None,
+        CacheMode::Disabled,
+    );
+    while stream.next().await.transpose().unwrap().is_some() {}
+    let resolved = stream.resolved_schema();
+    assert_eq!(resolved.schema.field(0).data_type(), &DataType::Int32, "id");
+    assert!(resolved.columns.iter().all(|c| *c == ColumnResolution::Mapped));
 }
 
 /// The blocking `Iterator` wrapper drives the same stream to the same result

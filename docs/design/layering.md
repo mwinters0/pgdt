@@ -74,8 +74,9 @@ rg -n '^use arrow' pgdump_query/src/{io,copy,scan,index,cache,preamble}.rs
 rg -n '^use arrow::(array|buffer)' pgdump_query/src/{pgtype,resolve,decode}.rs
 ```
 
-The L2 check errors on missing files until Phase 2.3/2.4 create them; that is
-the expected state, not a failure.
+`pgtype.rs`/`resolve.rs` exist as of Phase 2.3; the L2 check errors on
+`decode.rs` (missing until Phase 2.4) in the meantime — expected, not a
+failure.
 
 Rule 1 is read off the import lists:
 

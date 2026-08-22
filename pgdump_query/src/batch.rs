@@ -23,6 +23,7 @@ use crate::cache::CacheMode;
 use crate::copy::{CopyHeader, DELIMITER, decode_field};
 use crate::io::ByteRangeSource;
 use crate::predicate::Predicate;
+use crate::resolve::SchemaMode;
 use crate::scan::ScanOptions;
 use crate::{Error, Result};
 
@@ -34,11 +35,18 @@ pub struct BatchOptions {
     /// Optional cap on a batch's total field-byte count. Whichever of this
     /// or `max_rows` is hit first flushes the batch.
     pub max_bytes: Option<usize>,
+    /// Whether to resolve column types against the dump's DDL — see
+    /// `docs/design/roadmap-phase2-typed-columns.md`, "Output model". Every
+    /// `RecordBatch` this build produces is still all-`Utf8View` regardless
+    /// (Phase 2.4 builds the decoders); this only controls what
+    /// `TableStream::resolved_schema`/`read_table`'s returned
+    /// [`crate::resolve::ResolvedSchema`] reports.
+    pub schema_mode: SchemaMode,
 }
 
 impl Default for BatchOptions {
     fn default() -> Self {
-        Self { max_rows: 8192, max_bytes: None }
+        Self { max_rows: 8192, max_bytes: None, schema_mode: SchemaMode::default() }
     }
 }
 
@@ -240,7 +248,7 @@ pub async fn read_table<S, F>(
     predicate: Option<Predicate>,
     cache: CacheMode,
     mut on_batch: F,
-) -> Result<Option<crate::stream::ResumeToken>>
+) -> Result<(crate::resolve::ResolvedSchema, Option<crate::stream::ResumeToken>)>
 where
     S: ByteRangeSource,
     F: FnMut(RecordBatch) -> ControlFlow<()>,
@@ -258,8 +266,8 @@ where
     );
     while let Some(batch) = stream.next().await.transpose()? {
         if on_batch(batch).is_break() {
-            return Ok(Some(stream.resume_token()));
+            return Ok((stream.resolved_schema(), Some(stream.resume_token())));
         }
     }
-    Ok(None)
+    Ok((stream.resolved_schema(), None))
 }

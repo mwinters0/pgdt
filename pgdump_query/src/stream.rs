@@ -21,13 +21,23 @@
 //! **Preamble capture** (Phase 2.2.1,
 //! `docs/design/roadmap-phase2.2.1-incremental-preamble-notes.md`): before
 //! any of that, [`table_stream`] runs [`crate::index::scan_preamble`] once
-//! (skipped once a cache already has it) so the first database's
-//! [`crate::index::DumpMetadata`] is always present in a persisted cache —
-//! regardless of which table was queried, whether it ever appears, or how
-//! far the live scan gets before a caller stops polling. A cache file's
-//! mere presence therefore does *not* mean its metadata is complete for
-//! every database (a later `\connect`-ed one is still full-scan-only), but
-//! it does always mean the first one is.
+//! (skipped once a cache already has it), regardless of which table was
+//! queried, whether it ever appears, or how far the live scan gets before a
+//! caller stops polling. This runs even under [`CacheMode::Disabled`] as of
+//! Phase 2.3 — `--cache-path none` disables *persistence*, not type
+//! resolution (`docs/design/roadmap-phase2-typed-columns.md`, "The preamble
+//! pass") — but `cache.save` is a no-op there, so nothing is written to
+//! disk. Under [`CacheMode::Enabled`], a cache file's mere presence
+//! therefore does *not* mean its metadata is complete for every database (a
+//! later `\connect`-ed one is still full-scan-only), but it does always mean
+//! the first one is.
+//!
+//! **Type resolution** (Phase 2.2.1's successor): once a query's matching
+//! `COPY` block is found, its column list is resolved against that captured
+//! metadata into a [`crate::resolve::ResolvedSchema`], retrievable via
+//! [`TableStream::resolved_schema`]. This is a preview, not what actually
+//! decodes a row — see that method's docs and `resolve.rs`'s module docs for
+//! why the `RecordBatch`es this stream yields stay all-`Utf8View` regardless.
 
 use std::collections::VecDeque;
 use std::pin::Pin;
@@ -43,7 +53,9 @@ use crate::cache::CacheMode;
 use crate::copy::{CopyHeader, DELIMITER};
 use crate::index::{CopyBlock, DumpIndex, scan_preamble};
 use crate::io::ByteRangeSource;
+use crate::preamble::DumpMetadata;
 use crate::predicate::Predicate;
+use crate::resolve::{ResolvedSchema, resolve_columns};
 use crate::scan::{CopyScanner, CopyStart, Event, ScanOptions};
 use crate::{Error, Result};
 
@@ -145,6 +157,7 @@ impl ResumeToken {
 pub struct TableStream<'a> {
     inner: Pin<Box<dyn Stream<Item = Result<RecordBatch>> + Send + 'a>>,
     position: Arc<Mutex<ResumeToken>>,
+    resolved_schema: Arc<Mutex<ResolvedSchema>>,
 }
 
 impl<'a> Stream for TableStream<'a> {
@@ -165,6 +178,32 @@ impl<'a> TableStream<'a> {
     pub fn resume_token(&self) -> ResumeToken {
         self.position.lock().unwrap().clone()
     }
+
+    /// This query's resolved schema and diagnostics
+    /// (`docs/design/roadmap-phase2-typed-columns.md`, "Schema resolution":
+    /// "one schema per stream"). The empty schema (`ResolvedSchema::default`)
+    /// until the query's matching `COPY` block has been found — which, for a
+    /// table that never appears in the dump, is forever; a caller checking
+    /// before consuming any batches only learns that once the whole stream
+    /// has been drained.
+    pub fn resolved_schema(&self) -> ResolvedSchema {
+        self.resolved_schema.lock().unwrap().clone()
+    }
+}
+
+/// Build both the batch schema (always all-`Utf8View` in Phase 2.3 — see
+/// [`TableStream::resolved_schema`]'s docs) and the preview
+/// [`ResolvedSchema`] for a table-matching block, from the same column names.
+fn resolve_block(
+    header: &CopyHeader,
+    field_count: usize,
+    metadata: Option<&DumpMetadata>,
+    schema_mode: crate::resolve::SchemaMode,
+) -> (arrow::datatypes::SchemaRef, ResolvedSchema) {
+    let batch_schema = schema_for(header, field_count);
+    let names: Vec<String> = batch_schema.fields().iter().map(|f| f.name().clone()).collect();
+    let resolved = resolve_columns(&header.qualified_name(), &names, metadata, schema_mode);
+    (batch_schema, resolved)
 }
 
 /// Reconstruct the in-progress block state a [`ResumeToken`] captured, if
@@ -175,16 +214,20 @@ fn resume_state(
     token: &ResumeToken,
     batch_options: &BatchOptions,
     predicate: Option<&Predicate>,
-) -> Result<(CopyScanner, Option<Active>)> {
+    metadata: Option<&DumpMetadata>,
+) -> Result<(CopyScanner, Option<Active>, Option<ResolvedSchema>)> {
     let scanner = CopyScanner::resume(
         token.offset,
         token.in_copy.as_ref().map(|ic| (ic.header_offset, ic.rows_in_block)),
     );
+    let mut resolved = None;
     let active = token
         .in_copy
         .as_ref()
         .map(|ic| {
-            let schema = schema_for(&ic.header, ic.field_count);
+            let (schema, r) =
+                resolve_block(&ic.header, ic.field_count, metadata, batch_options.schema_mode);
+            resolved = Some(r);
             let predicate_index = resolve_predicate_index(predicate, &schema, ic.header_offset)?;
             Ok::<_, Error>((
                 ic.header_offset,
@@ -194,7 +237,7 @@ fn resume_state(
             ))
         })
         .transpose()?;
-    Ok((scanner, active))
+    Ok((scanner, active, resolved))
 }
 
 fn snapshot(scanner: &CopyScanner, active: &Option<Active>, rows_emitted: u64) -> ResumeToken {
@@ -248,32 +291,40 @@ where
     let start_token = resume.clone().unwrap_or_else(ResumeToken::start);
     let position = Arc::new(Mutex::new(start_token));
     let position_for_stream = Arc::clone(&position);
+    let resolved_schema = Arc::new(Mutex::new(ResolvedSchema::default()));
+    let resolved_schema_for_stream = Arc::clone(&resolved_schema);
 
     let inner = try_stream! {
         let size = source.size().await?;
 
         let mut base_index = cache.load()?.unwrap_or_default();
 
-        // Every path that can persist a cache also guarantees the first
-        // database's preamble gets captured, regardless of which table this
-        // particular call queries or whether it ever reaches the file's
-        // first `COPY` block itself (`crate::index::scan_preamble`'s docs).
-        // `CacheMode::Disabled` skips this: it promises pure streaming with
-        // no side effects, and metadata with nowhere to persist would just
-        // be wasted I/O. Persisted immediately (not deferred to whenever a
-        // segment below next saves) so it survives even a caller that polls
-        // the stream once and drops it.
+        // The first database's preamble always gets captured before
+        // anything else runs, regardless of which table this particular
+        // call queries or whether it ever reaches the file's first `COPY`
+        // block itself (`crate::index::scan_preamble`'s docs) — every
+        // `Typed`-mode query needs it for type resolution below, not just a
+        // caller that goes on to persist a cache. `CacheMode::Disabled`
+        // still runs the scan (`docs/design/roadmap-phase2-typed-columns.md`,
+        // "`--cache-path none` disables persistence, not typing") but
+        // `cache.save` below is a no-op for it, so nothing is written.
+        // Persisted immediately (not deferred to whenever a segment below
+        // next saves) so it survives even a caller that polls the stream
+        // once and drops it.
         let first_db_preamble_known = base_index
             .metadata
             .as_ref()
             .and_then(|m| m.databases.first())
             .is_some_and(|db| db.preamble_complete);
-        if !matches!(cache, CacheMode::Disabled) && !first_db_preamble_known {
+        if !first_db_preamble_known {
             let (metadata, preamble_end) = scan_preamble(source, &scan_options).await?;
             base_index.metadata = Some(metadata);
             base_index.scanned_through = base_index.scanned_through.max(preamble_end);
             cache.save(&base_index)?;
         }
+        // Captured before `base_index` is moved into `recorder` below —
+        // every call site that resolves a matching block's schema needs it.
+        let metadata = base_index.metadata.clone();
 
         let segments: Vec<Segment> = match &resume {
             Some(token) => vec![Segment::Live { start: token.offset }],
@@ -294,7 +345,11 @@ where
         // logic isn't duplicated below.
         let (mut active, mut first_scanner) = match &resume {
             Some(token) => {
-                let (scanner, active) = resume_state(token, &batch_options, predicate.as_ref())?;
+                let (scanner, active, resolved) =
+                    resume_state(token, &batch_options, predicate.as_ref(), metadata.as_ref())?;
+                if let Some(r) = resolved {
+                    *resolved_schema_for_stream.lock().unwrap() = r;
+                }
                 (active, Some(scanner))
             }
             None => (None, None),
@@ -352,8 +407,13 @@ where
                                 if start.header.columns.is_empty() {
                                     pending = Some((start.header, start.header_offset));
                                 } else {
-                                    let schema =
-                                        schema_for(&start.header, start.header.columns.len());
+                                    let (schema, resolved) = resolve_block(
+                                        &start.header,
+                                        start.header.columns.len(),
+                                        metadata.as_ref(),
+                                        batch_options.schema_mode,
+                                    );
+                                    *resolved_schema_for_stream.lock().unwrap() = resolved;
                                     let predicate_index = resolve_predicate_index(
                                         predicate.as_ref(),
                                         &schema,
@@ -372,7 +432,13 @@ where
                             if let Some((header, header_offset)) = pending.take() {
                                 let field_count =
                                     memchr::memchr_iter(DELIMITER, row.raw).count() + 1;
-                                let schema = schema_for(&header, field_count);
+                                let (schema, resolved) = resolve_block(
+                                    &header,
+                                    field_count,
+                                    metadata.as_ref(),
+                                    batch_options.schema_mode,
+                                );
+                                *resolved_schema_for_stream.lock().unwrap() = resolved;
                                 let predicate_index = resolve_predicate_index(
                                     predicate.as_ref(),
                                     &schema,
@@ -480,7 +546,7 @@ where
         }
     };
 
-    TableStream { inner: Box::pin(inner), position }
+    TableStream { inner: Box::pin(inner), position, resolved_schema }
 }
 
 /// Blocking [`Iterator`] wrapper over a [`TableStream`], for sync callers

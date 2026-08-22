@@ -3,10 +3,13 @@
 How `pgdump_query` decides what Arrow type a column gets, and where a
 PostgreSQL type does not survive the trip into a dump file intact.
 
-> **Not yet implemented.** Typed columns are Phase 2, in specification. Today
-> every column comes back as `Utf8View`. This page describes the intended
-> behaviour and is written ahead of the code so the quirks below are recorded
-> where a user will look for them.
+> **Schema resolution is implemented; decoding is not yet.** As of Phase 2.3,
+> `pgdq info` and `ResolvedSchema` show you exactly what Arrow type each
+> column *would* get and why a column doesn't map — the quirks below are all
+> real, current behaviour of that resolution step. What Phase 2.4 still has
+> to build is the decoder itself: every `RecordBatch` you actually get back
+> from `pgdq query` or the streaming API is `Utf8View` for every column
+> regardless of what `ResolvedSchema` reports, until then.
 
 ## The short version
 
@@ -18,7 +21,8 @@ what Phase 1 did and what you want if you would rather do your own parsing.
 
 You can see exactly what happened to each column: `pgdq info --verbose` lists
 per-column resolutions, and the library exposes the same thing as diagnostics
-on the resolved schema.
+on the resolved schema (`TableStream::resolved_schema`, or `read_table`'s
+returned `ResolvedSchema`).
 
 ## What we can and cannot recover from a dump
 
@@ -102,6 +106,10 @@ known non-nullable. Domains over domains resolve transitively. Constraints
 beyond `NOT NULL` are not enforced — we are reading a dump, not validating it.
 
 ## When a value does not match its type
+
+*(Phase 2.4 — not yet built. Described here for the same reason the rest of
+this page was written ahead of the code: this is where the failure mode will
+land, and it shapes how the mapping decisions above are chosen.)*
 
 If a column is typed `Int32` and a value in it does not parse as an integer,
 that is an **error**, not a null. A dump is machine-generated, so a value that

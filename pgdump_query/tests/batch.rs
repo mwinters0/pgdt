@@ -135,7 +135,7 @@ async fn predicate_eq_filters_to_matching_rows() {
     let rows = collect_with_predicate(
         &edge_cases(),
         "public.widgets",
-        Predicate { column: "name".into(), op: PredicateOp::Eq, value: "beta".into() },
+        Predicate { column: "name".into(), op: PredicateOp::Eq, value: Some("beta".into()) },
     )
     .await
     .unwrap();
@@ -147,7 +147,7 @@ async fn predicate_ne_excludes_the_matching_row() {
     let rows = collect_with_predicate(
         &edge_cases(),
         "public.widgets",
-        Predicate { column: "name".into(), op: PredicateOp::Ne, value: "beta".into() },
+        Predicate { column: "name".into(), op: PredicateOp::Ne, value: Some("beta".into()) },
     )
     .await
     .unwrap();
@@ -157,16 +157,17 @@ async fn predicate_ne_excludes_the_matching_row() {
 }
 
 /// Row 2 (`beta`) has a NULL `description`. Neither `=` nor `!=` against any
-/// value selects it — this MVP has no `IS [NOT] NULL` predicate, so a NULL
-/// field is excluded from both rather than guessing which three-valued-logic
-/// reading a caller wants (`docs/status/history/2026-08-22.md`).
+/// value selects it — SQL's own three-valued logic collapses both to
+/// "excluded" — which is exactly why `IS [NOT] NULL` exists as its own
+/// operator below, rather than trying to express it through `=`/`!=`
+/// (`docs/status/history/2026-08-22.md`).
 #[tokio::test]
 async fn predicate_never_matches_a_null_field() {
     for op in [PredicateOp::Eq, PredicateOp::Ne] {
         let rows = collect_with_predicate(
             &edge_cases(),
             "public.widgets",
-            Predicate { column: "description".into(), op, value: "a simple widget".into() },
+            Predicate { column: "description".into(), op, value: Some("a simple widget".into()) },
         )
         .await
         .unwrap();
@@ -175,11 +176,33 @@ async fn predicate_never_matches_a_null_field() {
 }
 
 #[tokio::test]
+async fn predicate_is_null_and_is_not_null() {
+    let null_rows = collect_with_predicate(
+        &edge_cases(),
+        "public.widgets",
+        Predicate { column: "description".into(), op: PredicateOp::IsNull, value: None },
+    )
+    .await
+    .unwrap();
+    assert_eq!(null_rows, vec![widgets_expected()[1].clone()]);
+
+    let not_null_rows = collect_with_predicate(
+        &edge_cases(),
+        "public.widgets",
+        Predicate { column: "description".into(), op: PredicateOp::IsNotNull, value: None },
+    )
+    .await
+    .unwrap();
+    let expected: Vec<_> = widgets_expected().into_iter().filter(|r| r[2].is_some()).collect();
+    assert_eq!(not_null_rows, expected);
+}
+
+#[tokio::test]
 async fn predicate_on_unknown_column_errors() {
     let err = collect_with_predicate(
         &edge_cases(),
         "public.widgets",
-        Predicate { column: "nope".into(), op: PredicateOp::Eq, value: "x".into() },
+        Predicate { column: "nope".into(), op: PredicateOp::Eq, value: Some("x".into()) },
     )
     .await
     .unwrap_err();
@@ -270,7 +293,7 @@ async fn quoted_identifiers_are_matched_and_decoded() {
 #[tokio::test]
 async fn max_rows_splits_batches() {
     for max_rows in [1, 2, 4, 100] {
-        let options = BatchOptions { max_rows, max_bytes: None };
+        let options = BatchOptions { max_rows, max_bytes: None, ..Default::default() };
         let (sizes, rows) =
             collect(&edge_cases(), "public.widgets", &ScanOptions::default(), &options).await;
         assert_eq!(rows, widgets_expected(), "max_rows {max_rows}");
@@ -301,9 +324,9 @@ async fn batch_contents_are_independent_of_chunk_size() {
 #[tokio::test]
 async fn stops_early_on_break() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
-    let options = BatchOptions { max_rows: 1, max_bytes: None };
+    let options = BatchOptions { max_rows: 1, max_bytes: None, ..Default::default() };
     let mut batches = 0;
-    let token = read_table(
+    let (_, token) = read_table(
         &source,
         "public.widgets",
         &ScanOptions::default(),
@@ -329,9 +352,9 @@ async fn resume_token_from_break_continues_correctly() {
     use pgdump_query::table_stream;
 
     let source = LocalFileSource::open(edge_cases()).unwrap();
-    let options = BatchOptions { max_rows: 1, max_bytes: None };
+    let options = BatchOptions { max_rows: 1, max_bytes: None, ..Default::default() };
     let mut rows = Vec::new();
-    let token = read_table(
+    let (_, token) = read_table(
         &source,
         "public.widgets",
         &ScanOptions::default(),
@@ -344,8 +367,8 @@ async fn resume_token_from_break_continues_correctly() {
         },
     )
     .await
-    .unwrap()
-    .expect("Break yields a resume token");
+    .unwrap();
+    let token = token.expect("Break yields a resume token");
 
     let mut resumed = table_stream(
         &source,
@@ -373,7 +396,7 @@ async fn resume_token_from_break_continues_correctly() {
 #[tokio::test]
 async fn escapes_table_round_trips_through_postgres_batched() {
     for version in [13, 16, 18] {
-        let options = BatchOptions { max_rows: 17, max_bytes: None };
+        let options = BatchOptions { max_rows: 17, max_bytes: None, ..Default::default() };
         let (_, rows) = collect(
             &fixture(version, "default"),
             "public.escapes",

@@ -12,22 +12,31 @@ use crate::copy::{decode_field, split_fields};
 pub enum PredicateOp {
     Eq,
     Ne,
+    /// `col IS NULL` — matches only a NULL field (`\N`). Rounds out the NULL
+    /// semantics `Eq`/`Ne` deliberately can't express (see [`Predicate::value`]).
+    IsNull,
+    /// `col IS NOT NULL` — matches every non-NULL field.
+    IsNotNull,
 }
 
 /// A single-column post-parse filter: `column <op> value`. `column` is
 /// matched against the queried table's column names (the `COPY` header list,
 /// or the `column1`, `column2`, ... placeholders used when the header has
 /// none). `value` is compared against each row's decoded (unescaped) field
-/// as a plain string — not typed, since Phase 2 typed columns don't exist
-/// yet. A NULL field never matches either operator: this MVP has no `IS
-/// [NOT] NULL` predicate, so both `=` and `!=` collapse SQL's three-valued
-/// NULL comparison to "excluded" rather than guessing which reading a caller
-/// wants (`docs/status/history/2026-08-22.md`).
+/// as a plain string — not typed, since Phase 2's post-parse predicates are
+/// unchanged from Phase 1 (typed/ordering predicates are Phase 5, where
+/// pushdown lands). `value` is `None` for `IsNull`/`IsNotNull`, which need
+/// no comparison value; it is always `Some` for `Eq`/`Ne`.
+///
+/// A NULL field matches neither `Eq` nor `Ne` — SQL's own three-valued
+/// logic collapses both to "excluded" — which is exactly why `IsNull`/
+/// `IsNotNull` exist: before Phase 2 there was no way to ask for a NULL
+/// explicitly (`docs/status/history/2026-08-22.md`).
 #[derive(Debug, Clone)]
 pub struct Predicate {
     pub column: String,
     pub op: PredicateOp,
-    pub value: String,
+    pub value: Option<String>,
 }
 
 impl Predicate {
@@ -39,12 +48,11 @@ impl Predicate {
             Some(f) => decode_field(f)?,
             None => None,
         };
-        Ok(match decoded {
-            None => false,
-            Some(v) => match self.op {
-                PredicateOp::Eq => v == self.value.as_str(),
-                PredicateOp::Ne => v != self.value.as_str(),
-            },
+        Ok(match self.op {
+            PredicateOp::IsNull => decoded.is_none(),
+            PredicateOp::IsNotNull => decoded.is_some(),
+            PredicateOp::Eq => decoded.is_some_and(|v| Some(v.as_ref()) == self.value.as_deref()),
+            PredicateOp::Ne => decoded.is_some_and(|v| Some(v.as_ref()) != self.value.as_deref()),
         })
     }
 }
@@ -55,31 +63,41 @@ mod tests {
 
     #[test]
     fn eq_matches_the_decoded_value() {
-        let p = Predicate { column: "x".into(), op: PredicateOp::Eq, value: "a\tb".into() };
+        let p = Predicate { column: "x".into(), op: PredicateOp::Eq, value: Some("a\tb".into()) };
         assert!(p.matches(b"other\ta\\tb", 1).unwrap());
         assert!(!p.matches(b"other\tc", 1).unwrap());
     }
 
     #[test]
     fn ne_matches_everything_but_the_decoded_value() {
-        let p = Predicate { column: "x".into(), op: PredicateOp::Ne, value: "a".into() };
+        let p = Predicate { column: "x".into(), op: PredicateOp::Ne, value: Some("a".into()) };
         assert!(p.matches(b"other\tb", 1).unwrap());
         assert!(!p.matches(b"other\ta", 1).unwrap());
     }
 
     #[test]
-    fn null_matches_neither_operator() {
-        let eq = Predicate { column: "x".into(), op: PredicateOp::Eq, value: "a".into() };
-        let ne = Predicate { column: "x".into(), op: PredicateOp::Ne, value: "a".into() };
+    fn null_matches_neither_eq_nor_ne() {
+        let eq = Predicate { column: "x".into(), op: PredicateOp::Eq, value: Some("a".into()) };
+        let ne = Predicate { column: "x".into(), op: PredicateOp::Ne, value: Some("a".into()) };
         assert!(!eq.matches(b"other\t\\N", 1).unwrap());
         assert!(!ne.matches(b"other\t\\N", 1).unwrap());
+    }
+
+    #[test]
+    fn is_null_and_is_not_null() {
+        let is_null = Predicate { column: "x".into(), op: PredicateOp::IsNull, value: None };
+        let is_not_null = Predicate { column: "x".into(), op: PredicateOp::IsNotNull, value: None };
+        assert!(is_null.matches(b"other\t\\N", 1).unwrap());
+        assert!(!is_null.matches(b"other\ta", 1).unwrap());
+        assert!(!is_not_null.matches(b"other\t\\N", 1).unwrap());
+        assert!(is_not_null.matches(b"other\ta", 1).unwrap());
     }
 
     #[test]
     fn missing_column_index_is_treated_as_null() {
         // Can't happen once a caller resolves `column_index` from the
         // block's own schema, but the fallback is still exercised here.
-        let p = Predicate { column: "x".into(), op: PredicateOp::Ne, value: "a".into() };
+        let p = Predicate { column: "x".into(), op: PredicateOp::Ne, value: Some("a".into()) };
         assert!(!p.matches(b"onlyone", 5).unwrap());
     }
 }

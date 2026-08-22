@@ -7,6 +7,7 @@ use std::ops::ControlFlow;
 
 use serde::{Deserialize, Serialize};
 
+use crate::cache::CacheMode;
 use crate::copy::CopyHeader;
 use crate::io::ByteRangeSource;
 use crate::preamble::PreambleBuilder;
@@ -173,4 +174,31 @@ pub(crate) async fn scan_preamble<S: ByteRangeSource>(
     })
     .await?;
     Ok((preamble.finish(), end))
+}
+
+/// Answer from the preamble alone (`docs/design/roadmap-phase2-typed-columns.md`,
+/// "CLI", `--preamble-only`): reuse a cache's already-known metadata when
+/// present, falling back to a fresh [`scan_preamble`] otherwise and
+/// persisting the result when the cache is enabled (a no-op when it isn't —
+/// see [`CacheMode::save`]). Bounded to the file's first `COPY` block
+/// regardless of dump size (I1), independent of `build_index`'s full
+/// structural scan.
+pub async fn preamble_only<S: ByteRangeSource>(
+    source: &S,
+    options: &ScanOptions,
+    cache: &CacheMode,
+) -> Result<DumpMetadata> {
+    let mut base_index = cache.load()?.unwrap_or_default();
+    let known = base_index
+        .metadata
+        .as_ref()
+        .and_then(|m| m.databases.first())
+        .is_some_and(|db| db.preamble_complete);
+    if !known {
+        let (metadata, preamble_end) = scan_preamble(source, options).await?;
+        base_index.metadata = Some(metadata);
+        base_index.scanned_through = base_index.scanned_through.max(preamble_end);
+        cache.save(&base_index)?;
+    }
+    Ok(base_index.metadata.unwrap_or_default())
 }
