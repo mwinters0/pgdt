@@ -38,11 +38,11 @@ minimize work *per byte*, not to skip.
 The natural sketch — SIMD-scan for every `\n`, record the offsets, then look
 around each one — does more work than the problem needs, in two ways.
 
-**Don't store the offsets.** koji has roughly 4-8 billion rows (784GB at
-100-200 bytes each). Eight-byte offsets for all of them is 31-63 GB of index
-for a 784GB file: more bytes written than the useful output, and more write
-bandwidth than the read itself. The right cache granularity is per-block (what
-`DumpIndex` already stores) plus a **sparse** row index — see below.
+**Don't store the offsets.** koji has 19,575,829,920 rows. Eight-byte offsets
+for all of them is ~157 GB of index for a 784GB file: a fifth of the input
+written back out, and more write bandwidth than the read itself. The right cache
+granularity is per-block (what `DumpIndex` already stores) plus a **sparse** row
+index — see below.
 
 **Don't enumerate the newlines either.** Inside a `COPY` block the only thing
 that ends the block is a line containing exactly `\.`, and that line is
@@ -168,14 +168,18 @@ this one.
 
 This is where the newline-offset idea belongs, at the right granularity.
 Record the byte offset of every Nth row (N matching the default batch size,
-8192). For koji that is ~480k entries, under 4 MB — against 31-63 GB for a
-dense index. It buys two things that matter:
+8192). koji's completed scan puts a real number on it: 19,575,829,920 rows is
+~2.4M checkpoints at ~19 MB, against ~157 GB for a dense 8-byte-per-row index.
+It buys two things that matter:
 
 - **Seek to a row range** without scanning the block from its start.
 - **Parallel splits at known row boundaries**, removing even the resync scan.
 
 Reserve room for it in the serialized `DumpIndex` from the start; it is
-optional data, so a cache without it stays valid.
+optional data, so a cache without it stays valid. The checkpoint interval also
+defines the row-group boundary that per-column statistics attach to
+(`docs/design/roadmap.md`, Phase 3 companion), so the two features share one
+addressing scheme.
 
 ## Measurement discipline
 

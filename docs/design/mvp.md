@@ -115,6 +115,15 @@ inspect it.
 discovered `COPY <table> (...) FROM stdin;` header and its terminating `\.`
 line; a watermark of how much of the file has been scanned so far.
 
+Three optional fields are reserved in the serialized form from the first
+release, though none is populated in Phase 1 — adding any of them after the
+format ships would be a break, and all are cheap to leave room for now: a
+**sparse row index** (`docs/design/scan-performance.md`); a **dump-level
+metadata block** (server version, `pg_dump` version, extension list,
+user-defined type definitions — `docs/design/roadmap.md`, Phase 2 companion);
+and **per-row-group column statistics**, keyed to the sparse index's checkpoints
+(`docs/design/roadmap.md`, Phase 3 companion).
+
 **Configurable (MVP): eager vs. incremental indexing.** Incremental
 (default) discovers structure only as far as needed to answer the current
 query, persisting whatever it discovered along the way (so a query for table
@@ -126,9 +135,12 @@ for correctness. Missing, stale, or non-covering cache → fall back to
 scanning (from the furthest covered point, or from the start).
 
 **Configurable (future):** cache invalidation strategy if the underlying
-dump file changes (size/mtime check vs. trusting the client). Exporting the
-cache to a common/portable format (raised during design review as a
-plausible later ask — not scoped further yet).
+dump file changes (size/mtime check vs. trusting the client). Note that this
+stops being optional once the statistics field above is populated: a stale
+structural index only costs a rescan, but a stale statistic prunes real rows and
+yields a wrong answer. See the correctness asymmetry in `docs/design/roadmap.md`,
+Phase 3 companion. Exporting the cache to a common/portable format (raised
+during design review as a plausible later ask — not scoped further yet).
 
 ## Parser robustness requirements (hardcoded)
 

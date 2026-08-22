@@ -78,7 +78,11 @@ session should pick up mid-work, and discoveries that changed the plan —
 it's not a changelog, so skip routine progress already reflected in
 `STATUS.md`. When a discovery changes the plan, put the resulting decision
 in the plan doc itself and the reasoning/evidence in a history entry, linked
-from the plan doc — don't inline the narrative into the plan. Update
+from the plan doc — don't inline the narrative into the plan. Write each entry
+as the day's settled facts looking back, not a log of how the day unfolded: no
+supposition-then-correction chains, no "resolved"/"original note" pairs, no
+in-progress status that has since resolved. Rewrite sections in place as things
+settle — full rules in `docs/status/history/README.md`. Update
 `STATUS.md` as part of any change that alters implementation state — don't
 let it drift. `mvp.md`'s "Parser robustness requirements" is the spec the
 `COPY`-block scanner (`pgdump_query/src/scan.rs`, `copy.rs`) implements —
@@ -87,6 +91,8 @@ read it before changing scanner behaviour.
 ## Writing style
 Do not document what _was_, document what _is_.  If we learn something important
 enough to persist as historical reference, I'll ask you explicitly to do so.
+This holds inside `docs/status/history/` too — a dated filename records *when*
+something was learned, not licence to narrate *how*.
 
 ## Memories
 Prefer to store memories in this project rather than in user memories.  We may

@@ -137,6 +137,11 @@ Last updated: 2026-08-22.
 The streaming API on top of `read_table()`: a pull-mode `Stream`, a blocking
 `Iterator` wrapper over it, and the opaque `ResumeToken`. The cache is the
 other independent thread of work and can proceed in parallel — `DumpIndex` is
-ready to be given a serialized form; leave room in it for an optional sparse
-row index per `docs/design/scan-performance.md`, so adding that later isn't a
-format break.
+ready to be given a serialized form; leave room in it for three optional fields
+so adding any of them later isn't a format break: a sparse row index
+(`docs/design/scan-performance.md`); a dump-level metadata block — server
+version, `pg_dump` version, extension list, user-defined type definitions
+(`docs/design/roadmap.md`, "Companion: dump-level metadata"); and per-row-group
+column statistics keyed to the sparse index's checkpoints
+(`docs/design/roadmap.md`, "Companion: per-row-group column statistics"). None is
+populated in Phase 1; only the slots are due.
