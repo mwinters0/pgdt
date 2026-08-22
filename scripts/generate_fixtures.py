@@ -5,8 +5,8 @@ Backs docs/design/roadmap-phase1-mvp.md ("Testing & fixtures") and the
 tested/untested matrix in docs/design/pg-dump-compatibility.md. Spins up a
 throwaway, memory-limited Postgres container per version (never a host-run
 process, per this repo's CPU-heavy-machine / glibc-arena caution), loads
-fixture_schema.sql, runs pg_dump across a flag matrix, and writes the
-output under fixtures/<major-version>/<flag-set>.sql.
+fixture_schema_edge_cases.sql, runs pg_dump across a flag matrix, and writes
+the output under fixtures/<major-version>/<flag-set>.sql.
 
 Requires `docker` (aliased to `nerdctl` in this environment) runnable via
 passwordless `sudo`.
@@ -22,7 +22,7 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
-SCHEMA_FILE = SCRIPT_DIR / "fixture_schema.sql"
+SCHEMA_FILE = SCRIPT_DIR / "fixture_schema_edge_cases.sql"
 FIXTURES_DIR = REPO_ROOT / "fixtures"
 
 DOCKER = ["sudo", "-n", "docker"]

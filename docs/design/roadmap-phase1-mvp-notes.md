@@ -48,7 +48,7 @@ query. Phase 2's typed columns replace the placeholder path, not the per-block
 resolution.
 
 **The zero-copy `Utf8View` path has three sharp edges.** Per
-[`roadmap-phase5-scan-performance.md`](roadmap-phase5-scan-performance.md), a
+[`roadmap-phase6-scan-performance.md`](roadmap-phase6-scan-performance.md), a
 field with no escapes is appended as a view into the Arrow `Buffer` backing the
 read chunk it came from (`append_block`/`append_view_unchecked`), not copied.
 Only escaped fields, and the rare field straddling two read chunks, take the
@@ -110,7 +110,7 @@ consequences for index sizing are in
 [`../status/history/2026-08-22.md`](../status/history/2026-08-22.md).
 
 Decoder correctness rests on a round-trip against real `pg_dump` output on all
-three fixture versions: `scripts/fixture_schema.sql`'s `public.escapes` table
+three fixture versions: `scripts/fixture_schema_edge_cases.sql`'s `public.escapes` table
 holds one row per codepoint (`chr(n)`), so the test compares against a value it
 computes itself rather than a hand-transcribed literal — covering every escape
 `pg_dump` emits, the raw control bytes it leaves unescaped, and 2-, 3- and

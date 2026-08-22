@@ -52,8 +52,13 @@ sudo nerdctl run -d --name pgdq-koji -m 512m --memory-swap 512m \
   -v "$PWD/runs:/out" \
   -v "/path/to/dump.sql:/dump.sql:ro" \
   postgres:16-alpine \
-  sh -c '/pgdq info /dump.sql --verbose > /out/koji-scan.log 2>&1; echo "exit=$?" >> /out/koji-scan.log'
+  sh -c '/pgdq info /dump.sql --cache-path /out/koji.dqcache --verbose > /out/koji-scan.log 2>&1; echo "exit=$?" >> /out/koji-scan.log'
 ```
+
+**Pass `--cache-path` into the mounted `/out`.** The dump is mounted read-only,
+so the colocated default (`/dump.sql.dqcache`) lands in the container's
+ephemeral writable layer and is destroyed with the container — throwing away an
+hour of scanning without an error, since the write itself succeeds.
 
 A later session reads `runs/koji-scan.log`; `sudo nerdctl inspect -f
 '{{.State.Status}}' pgdq-koji` says whether it is still going.
@@ -70,12 +75,31 @@ architecture — read it before making architectural changes, rather than
 inferring intent from code alone; its companion
 `docs/design/roadmap-phase1-mvp-notes.md` records how that phase landed in code
 (module map, and the implementation facts later phases inherit).
-`docs/design/roadmap-phase5-scan-performance.md` is the performance design for
+`docs/design/roadmap-phase6-scan-performance.md` is the performance design for
 the local-file read path — read it before touching the batch layer or the cache
 format, which it constrains ahead of its own phase.
 `docs/design/pg-dump-compatibility.md` tracks which `pg_dump` options/variants
 are tested/untested/unsupported.
+`docs/design/postgres-invariants.md` is the evidence layer beneath the design
+docs: each entry is a property of `pg_dump` output that a design decision
+treats as guaranteed, with the source that proves it and how to re-verify it
+when a new PostgreSQL major lands. Add an entry whenever a decision starts
+depending on `pg_dump` behaving a particular way.
+`docs/manual/` is the user-facing manual — written for someone who will never
+read the source. Keep design rationale out of it.
+
 `docs/design/historical/initial.md` is frozen — historical only.
+
+A phase large enough to land in slices numbers them `<N>.<M>` and gives each
+its own notes doc, `roadmap-phase<N>.<M>-<slug>-notes.md`, written as that
+slice lands. At the end of the phase they are consolidated into a single
+`roadmap-phase<N>-<slug>-notes.md` and the per-slice files removed. Phase 2 is
+the first to work this way — see its "Implementation slices".
+
+**Pre-1.0, nothing carries a backwards-compatibility or API-stability
+guarantee** — see "Pre-1.0" in `docs/design/roadmap.md`. Don't design around
+hypothetical downstream breakage, don't add compatibility shims, and don't
+caveat proposals with migration concerns.
 
 For current implementation status (what's built vs. not), see
 `docs/status/STATUS.md` — not this file or the design docs, which describe the
@@ -91,7 +115,9 @@ supposition-then-correction chains, no "resolved"/"original note" pairs, no
 in-progress status that has since resolved. Rewrite sections in place as things
 settle — full rules in `docs/status/history/README.md`. Update
 `STATUS.md` as part of any change that alters implementation state — don't
-let it drift. `roadmap-phase1-mvp.md`'s "Parser robustness requirements" is the
+let it drift. During a sliced phase, `STATUS.md` is a **terse checklist** of
+what has landed this phase, each item linking to the subphase notes doc that
+holds the detail — not a prose summary duplicating them. `roadmap-phase1-mvp.md`'s "Parser robustness requirements" is the
 spec the `COPY`-block scanner (`pgdump_query/src/scan.rs`, `copy.rs`)
 implements — read it before changing scanner behaviour.
 

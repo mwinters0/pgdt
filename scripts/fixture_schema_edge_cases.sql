@@ -1,10 +1,14 @@
--- Synthetic fixture schema/data for pg_dump compatibility testing.
+-- Scanner edge-case fixture schema: structural and escaping cases.
 --
 -- Deliberately not koji-derived: covers the edge-case breadth called out in
--- docs/design/mvp.md (multiple schemas, NULLs, an empty table, COPY TEXT
--- escaping of newlines/tabs/backslashes/quotes, and a data value containing
--- a COPY-directive-like substring mid-line) rather than koji's specific
--- structure.
+-- docs/design/roadmap-phase1-mvp.md (multiple schemas, NULLs, an empty table,
+-- COPY TEXT escaping of newlines/tabs/backslashes/quotes, and a data value
+-- containing a COPY-directive-like substring mid-line) rather than koji's
+-- specific structure.
+--
+-- Type coverage is deliberately NOT this file's job -- see
+-- scripts/fixture_schema_types.sql. Keeping the two apart keeps this file's
+-- insta snapshots small and stable.
 
 CREATE SCHEMA IF NOT EXISTS logs;
 

@@ -189,6 +189,12 @@ should follow the measurements rather than this doc's ordering.
 - **Separate I/O-bound from CPU-bound** by benchmarking from tmpfs or a warm
   page cache, not just from disk. A change that improves parse throughput is
   invisible in the koji number and will be dismissed wrongly.
+- **Measure on fast media, with a dataset that fits on it.** koji lives on an
+  HDD and cannot answer a CPU-cost question. `scripts/generate_perf_data.py`
+  (introduced in Phase 2) generates a synthetic dump of any size onto the SSD
+  or NVMe volume — ~100 GB is the target here — with stress sections for the
+  paths whose cost is expected to move. Generated, never committed, and
+  deliberately not reproducible: this measures throughput, not correctness.
 - **`criterion` microbenchmarks** for the decoder and the needle search;
   **whole-file runs** for the end-to-end number. Both, not either.
 - **Track bytes/second and CPU%**, not wall clock alone — 243 MB/s at 33% of a

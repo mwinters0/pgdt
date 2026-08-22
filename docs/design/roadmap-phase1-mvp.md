@@ -177,7 +177,7 @@ line; a watermark of how much of the file has been scanned so far.
 Three optional fields are reserved in the serialized form from the first
 release, though none is populated in Phase 1 — adding any of them after the
 format ships would be a break, and all are cheap to leave room for now: a
-**sparse row index** (`docs/design/roadmap-phase5-scan-performance.md`); a
+**sparse row index** (`docs/design/roadmap-phase6-scan-performance.md`); a
 **dump-level metadata block** (server version, `pg_dump` version, extension
 list, user-defined type definitions — `docs/design/roadmap.md`, Phase 2 companion);
 and **per-row-group column statistics**, keyed to the sparse index's checkpoints
@@ -267,7 +267,7 @@ configurable behavior:
   this environment, via passwordless `sudo`) running the official
   `postgres:13-alpine` / `postgres:16-alpine` / `postgres:18-alpine` images —
   oldest supported major, version matching the real koji sample, newest
-  available. Loads `scripts/fixture_schema.sql` (a small synthetic schema
+  available. Loads `scripts/fixture_schema_edge_cases.sql` (a small synthetic schema
   deliberately covering the edge cases this doc calls out, not derived from
   koji) and runs `pg_dump` across a flag matrix, writing output to
   `fixtures/<major-version>/<flag-set>.sql`. The worktrees remain useful for
@@ -320,7 +320,7 @@ require them.
 Phase 5 (scan performance) adds a fifth, which bears on work in flight right
 now rather than later: the batch layer should build `Utf8View` arrays over the
 scanner's existing chunk buffer instead of copying field bytes out of it. See
-`docs/design/roadmap-phase5-scan-performance.md`.
+`docs/design/roadmap-phase6-scan-performance.md`.
 
 ## Non-goals (Phase 1)
 

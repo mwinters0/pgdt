@@ -8,7 +8,28 @@ into a corner — **each gets its own full grilling session when it becomes
 current**, and the resulting spec becomes its own numbered doc.
 
 Phase 1 is complete (`docs/design/roadmap-phase1-mvp.md`,
-`docs/design/roadmap-phase1-mvp-notes.md`). Phase 2 is current and unspecified.
+`docs/design/roadmap-phase1-mvp-notes.md`). Phase 2 is current
+(`docs/design/roadmap-phase2-typed-columns.md`).
+
+## Pre-1.0: no compatibility obligations
+
+Everything in this roadmap happens before 1.0, and **nothing here carries a
+backwards-compatibility or API-stability guarantee**. Public types, the CLI
+surface, the cache format, and the Arrow schema a given table resolves to are
+all free to change in any release until 1.0. We are iterating, not publishing
+contracts.
+
+This is a standing decision, not a question to reopen each phase: don't design
+around hypothetical downstream breakage, don't add compatibility shims, and
+don't caveat a proposal with migration concerns. The cache's `format_version`
+envelope exists so that a stale cache is *detected* rather than misread — not
+as a promise to keep reading old ones.
+
+The one place this genuinely costs something is the Arrow schema drifting as
+Phase 2's type coverage grows (a column that resolves to `Utf8View` today may
+resolve to `Int32` after the next release, invalidating a downstream query
+plan). The Future item "caller-supplied type mapping" below is the answer for
+anyone who needs a schema pinned; until 1.0 it is the only one.
 
 ## Project goals
 
@@ -16,14 +37,14 @@ Two things distinguish this project from existing `pg_dump` tooling
 (`pgdumplib` and friends), and both shape the phase ordering below:
 
 - **Embeddable as a query data source**, not just a dump reader — Arrow-native
-  output, and ultimately a DataFusion `TableProvider` (Phase 4).
+  output, and ultimately a DataFusion `TableProvider` (Phase 5).
 - **High performance is a core goal, not a later optimization**, specifically
   for the local-file reader. Dumps are routinely hundreds of gigabytes; the
   difference between a saturated-device scan and a merely-correct one is the
   difference between a usable tool and an overnight job. Concretely: the
   local-file path should stay device-bound, not CPU-bound, on hardware from
   HDD through NVMe, at flat memory. See
-  `docs/design/roadmap-phase5-scan-performance.md`.
+  `docs/design/roadmap-phase6-scan-performance.md`.
 
 ## Phase 1 — MVP (complete)
 
@@ -32,7 +53,11 @@ with a best-effort structural cache. Binary `pgdq`, library crate
 `pgdump_query`. Full spec: `docs/design/roadmap-phase1-mvp.md`; implementation
 notes: `docs/design/roadmap-phase1-mvp-notes.md`.
 
-## Phase 2 — Typed columns (current, unspecified)
+## Phase 2 — Typed columns (current)
+
+Specified in `docs/design/roadmap-phase2-typed-columns.md`; the sketch below is
+the origin of that spec and is kept for the reasoning it carries. Where the two
+disagree, the phase doc wins.
 
 Parse the `CREATE TABLE` DDL preceding a table's `COPY` block to recover
 column types, and map known PostgreSQL types to Arrow types, so results come
@@ -142,12 +167,35 @@ Three qualifications on that, all cheap to honour:
 **Where the work lands.** The scan and the CLI display are Phase 2 work. The
 cache slot it needs already exists: `DumpIndex::metadata` is reserved and always
 `None`, alongside the sparse row index
-(`docs/design/roadmap-phase5-scan-performance.md`) and the per-row-group
-statistics under Phase 3 below — all three were reserved together in Phase 1
+(`docs/design/roadmap-phase6-scan-performance.md`) and the per-row-group
+statistics under Phase 4 below — all three were reserved together in Phase 1
 precisely so populating one is not a format break. The reserved `DumpMetadata`
 type is a placeholder; its real shape is this phase's design work.
 
-## Phase 3 — Pushdown
+## Phase 3 — Composite value decoding
+
+Arrays, composite types, and ranges — the three type families Phase 2
+deliberately leaves as `Utf8View`. They are grouped into one phase because they
+are one piece of work: each is a value rendered by COPY TEXT with **its own
+nested quoting rules, inside the field escaping `copy.rs` already decodes**
+(`{a,b,"c,d"}`, `(a,b,"c,d")`, `[a,b)`). Writing that nested decoder once
+unlocks all three; writing it three times is how it goes wrong.
+
+Arrays are the reason this is worth a phase rather than a footnote — koji has
+6 `text[]` columns and they are ordinary in real schemas. The synthetic
+performance dataset (`scripts/generate_perf_data.py`, introduced in Phase 2)
+grows an array-heavy stress section here, so array decoding is measured against
+something that surfaces a regression rather than averaging it away. Composites and ranges
+follow for free once the decoder exists, and Phase 2's metadata pass already
+recovers the field types and subtype needed to give them Arrow `Struct` and
+range representations rather than strings.
+
+Placed here, ahead of pushdown, because Phase 4 is designed *against the type
+set*: "min/max for collation-independent orderable types" is a different table
+when arrays and ranges are still strings, so designing pushdown and statistics
+against a partial type set means designing them twice.
+
+## Phase 4 — Pushdown
 
 - **Predicate pushdown**: evaluate predicates *during* the scan/parse, so
   non-matching rows never get fully unescaped/materialized — as opposed to
@@ -163,7 +211,7 @@ plausibly land against string columns first if it proves valuable earlier.
 
 Parquet-style statistics, gathered during a scan and persisted in the cache, so
 a later query can skip data instead of reading it. Depends on Phase 2 (a min/max
-needs a parsed value), pays off in Phase 3 (the pruning consumer), and — like the
+needs a parsed value), pays off in Phase 4 (the pruning consumer), and — like the
 metadata block — already has its cache slot reserved (`CopyBlock::column_stats`,
 always `None`).
 
@@ -183,7 +231,7 @@ tables big enough to matter: koji's blocks run to billions of rows, and the
 min/max of a monotonic `id` column over a whole block spans the entire domain, so
 it prunes nothing. Parquet's win comes from row-group granularity, and there is
 already a natural unit to reuse — the sparse row index checkpoints every 8192
-rows (`docs/design/roadmap-phase5-scan-performance.md`). Statistics attach to
+rows (`docs/design/roadmap-phase6-scan-performance.md`). Statistics attach to
 those checkpoints; block-level statistics are then just the roll-up, free to
 compute and still worth storing for the coarse first pass.
 
@@ -253,7 +301,7 @@ caller asked for anyway, so coverage is naturally partial. The cache must record
 which row groups actually have statistics — absent is a normal state, not a
 defect.
 
-## Phase 4 — Embeddable engine story
+## Phase 5 — Embeddable engine story
 
 The least-specified phase — the user has explicitly flagged unfamiliarity
 with this space, so treat its eventual grilling session as needing real
@@ -271,25 +319,25 @@ decisions already made to keep this open:
 - Apache Spark / Trino integration — order and approach TBD; likely follows
   whatever pattern the DataFusion integration establishes, if applicable.
 
-## Phase 5 — Scan performance
+## Phase 6 — Scan performance
 
 Concentrated optimization of the local-file read path: SIMD-accelerated
 structure discovery, zero-copy row extraction into Arrow buffers, bulk UTF-8
 validation, and device-aware parallelism (sequential on rotational media,
 parallel on NVMe). Full sketch, including the measurements that should gate
-each piece and the Phase 1-3 decisions it constrains:
-`docs/design/roadmap-phase5-scan-performance.md`.
+each piece and the Phase 1-4 decisions it constrains:
+`docs/design/roadmap-phase6-scan-performance.md`.
 
-Scheduled here, after the engine story, for two reasons. Phase 3's pushdown
+Scheduled here, after the engine story, for two reasons. Phase 4's pushdown
 changes which bytes get touched at all, so optimizing the pre-pushdown parser
-would partly optimize code that pushdown deletes; and Phase 4's
+would partly optimize code that pushdown deletes; and Phase 5's
 `object_store` backend settles the I/O layer that any readahead/parallelism
-scheme has to live behind. Deliberately *before* Phase 6 — the format work
+scheme has to live behind. Deliberately *before* Phase 7 — the format work
 multiplies the surface area that any later optimization has to be correct
 against, so the fast path should exist first and archive containers should be
 built to fit it.
 
-## Phase 6 — Format coverage beyond plain COPY TEXT
+## Phase 7 — Format coverage beyond plain COPY TEXT
 
 Everything that widens the set of `pg_dump` outputs we can read. Two
 independent tracks; A is listed first because it is cheap, not because it
@@ -335,3 +383,25 @@ current:
 The Phase 1 decisions that keep all of this additive rather than a rewrite are
 listed under "Decisions that keep later phases open" in
 `docs/design/roadmap-phase1-mvp.md`.
+
+## Future — wanted, unscheduled
+
+Work we intend to do without committing it to a phase. An item moves out of
+this section when it acquires a phase number, not when it acquires a design.
+
+- **Caller-supplied type mapping.** Let a caller override the
+  PostgreSQL-type→Arrow-type resolution: per column, per declared type, or
+  wholesale. Two uses, and the second is the important one. It lets a caller who
+  distrusts our mapping substitute their own; and it lets a caller **pin a
+  schema** against the drift that Phase 2's progressive type coverage otherwise
+  causes, by mapping everything to a string type and getting the unparsed
+  values, CSV-style. That makes it the mitigation named under "Pre-1.0" above.
+  `SchemaMode::Strings` is the crude version of this that Phase 2 ships.
+
+- **Exhaustive built-in type coverage, with tests to match.** Phase 2 maps the
+  types that carry real data in real schemas and leaves the rest as strings.
+  The eventual goal is every PostgreSQL built-in type, plus the types the
+  standard extensions (`hstore`, PostGIS, `citext`, …) introduce, each with a
+  round-trip test against real `pg_dump` output rather than a hand-written
+  literal — the pattern `public.escapes` already establishes. This is careful,
+  case-by-case work; the value is in the test coverage, not in the mapping table.
