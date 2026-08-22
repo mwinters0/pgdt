@@ -133,3 +133,44 @@ pub async fn build_index<S: ByteRangeSource>(
     index.metadata = Some(preamble.finish());
     Ok(index)
 }
+
+/// Scan only far enough to recover the first database's preamble — up to
+/// (not including) the first `COPY` block header in the file, or to EOF if
+/// none exists. Per I1 (`docs/design/postgres-invariants.md`), nothing
+/// `crate::preamble` cares about can follow that point for whichever
+/// database is open when it's reached, and no database earlier in the file
+/// (in a multi-`\connect` dump) can have a `COPY` block of its own before it
+/// either — so this one offset always closes out the *first* database's
+/// preamble, incidentally finishing any earlier, table-less database's too.
+///
+/// Phase 2.2.1 (`docs/design/roadmap-phase2.2.1-incremental-preamble-notes.md`):
+/// exists so an incremental scan (`crate::stream::table_stream`) can
+/// guarantee this metadata gets captured even when the query's own target
+/// table starts later in the file (or never appears at all) — see also
+/// `docs/design/roadmap-phase2-typed-columns.md`, "Companion: dump-level
+/// metadata".
+///
+/// Returns the recovered metadata and the offset just past the scanned
+/// prefix — a safe watermark for a later scan to continue from, since no
+/// `COPY` block starts before it.
+pub(crate) async fn scan_preamble<S: ByteRangeSource>(
+    source: &S,
+    options: &ScanOptions,
+) -> Result<(DumpMetadata, u64)> {
+    let mut preamble = PreambleBuilder::new();
+    let mut end = source.size().await?;
+    scan(source, options, |event| match event {
+        Event::CopyStart(start) => {
+            preamble.on_copy_start();
+            end = start.header_offset;
+            ControlFlow::Break(())
+        }
+        Event::Line(line) => {
+            preamble.feed_line(line.raw);
+            ControlFlow::Continue(())
+        }
+        _ => ControlFlow::Continue(()),
+    })
+    .await?;
+    Ok((preamble.finish(), end))
+}

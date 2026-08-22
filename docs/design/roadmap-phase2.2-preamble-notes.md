@@ -19,11 +19,13 @@ typing yet — every column is still `Utf8View` (Phase 2.3).
   handed to the caller instead of silently discarded. This is what feeds
   `PreambleBuilder` — cheap, since outside-block lines are the DDL preamble
   (a few thousand lines even for a multi-database dump), never a `COPY`
-  block's billions of data rows. `build_index` is the only caller that acts
-  on it; `table_stream`'s live-scan loop and the scanner's own tests just add
-  a no-op arm (metadata capture during an *incremental* query scan is Phase
-  2.3's job, once something actually consumes `DumpMetadata` for type
-  resolution).
+  block's billions of data rows. `build_index` acts on every `Line` it sees
+  (a full scan, so it captures every database's preamble); `table_stream`'s
+  own live-scan loop just adds a no-op arm — its metadata capture is a
+  separate, bounded prepass added in Phase 2.2.1
+  (`docs/design/roadmap-phase2.2.1-incremental-preamble-notes.md`), not
+  something the loop's own `Line` events feed. Per-column type *resolution*
+  from any of this remains Phase 2.3's job.
 - **`build_index` now always populates `DumpIndex::metadata`** — one pass
   serves both structure and metadata, since `PreambleBuilder` only looks at
   lines the scan already walks. `DumpIndex::metadata` is no longer
@@ -169,8 +171,15 @@ end.
   are implemented from `pg_dump` source reading and unit-tested against
   hand-written statement text only — worth a second look if a real range/base
   type ever needs to be typed.
-- **`table_stream`'s incremental live-scan segments do not build metadata.**
-  Only `build_index` (used by `parse` and `info`'s cache-miss path) does.
-  This matches the phase doc's own slice boundary — 2.2 "proves the metadata
-  pass on its own, with no typing involved"; wiring it into an incremental
-  query is Phase 2.3, once something downstream actually needs it mid-scan.
+- **`table_stream`'s incremental live-scan segments still don't build
+  metadata as they walk** — that matches this slice's own boundary, "proves
+  the metadata pass on its own, with no typing involved." Phase 2.2.1
+  (`docs/design/roadmap-phase2.2.1-incremental-preamble-notes.md`) closes the
+  practical gap this left — a cache file's presence not implying *any*
+  metadata, even after a full incremental scan to EOF — without waiting on
+  2.3: a bounded prepass now guarantees the *first* database's preamble is
+  captured by any cache-enabled call regardless. A **later** `\connect`-ed
+  database's preamble in a multi-database dump is still only ever populated
+  by `build_index`'s full scan; closing that gap (if it turns out to matter —
+  every fixture and koji are single-database) is still open, and still most
+  naturally Phase 2.3's, once something downstream needs it.

@@ -39,9 +39,17 @@ pub struct DatabaseMetadata {
     /// from this case.
     pub name: Option<String>,
     /// Whether this database's preamble was read to completion. Always
-    /// `true` for an entry produced by a full scan (`build_index`) — it
-    /// exists to compose with `DumpIndex::scanned_through` once an
-    /// *incremental* query can also produce metadata (Phase 2.3).
+    /// `true` for every entry a [`crate::index::build_index`] full scan or a
+    /// [`crate::index::scan_preamble`] prepass produces — both only ever
+    /// finish a database's segment, never leave one half-read. What it
+    /// composes with is `DumpIndex::scanned_through`: the *first* database's
+    /// metadata is guaranteed present after any scan that persists a cache
+    /// (`crate::stream::table_stream`'s Phase 2.2.1 prepass —
+    /// `docs/design/roadmap-phase2.2.1-incremental-preamble-notes.md`), but a
+    /// later `\connect`-ed database's is only ever populated by a full scan
+    /// — so a caller walking `DumpIndex::metadata` still needs to check this
+    /// per-database rather than assume the whole list is complete just
+    /// because a cache file exists.
     pub preamble_complete: bool,
     pub server_version: Option<String>,
     pub pg_dump_version: Option<String>,

@@ -278,6 +278,42 @@ async fn interrupted_scan_leaves_correct_partial_progress() {
     );
 }
 
+/// The first database's preamble is captured up front, before any segment
+/// scanning begins — so even a stream dropped after its very first row
+/// still leaves a cache with `DumpMetadata` behind, not just whatever
+/// blocks happened to complete before the drop.
+#[tokio::test]
+async fn interrupted_scan_still_captures_the_first_database_preamble() {
+    let (_dir, dump) = sandboxed_edge_cases();
+    let cache_path = cache::colocated_path(&dump);
+    let source = LocalFileSource::open(&dump).unwrap();
+
+    {
+        let mut stream = table_stream(
+            &source,
+            "public.widgets",
+            ScanOptions::default(),
+            BatchOptions { max_rows: 1, max_bytes: None },
+            None,
+            None,
+            CacheMode::Enabled(cache_path.clone()),
+        );
+        // One row of `widgets` (the second real block) is enough to prove
+        // the point without waiting on any block, let alone the file, to
+        // finish.
+        stream.next().await.unwrap().unwrap();
+    }
+
+    let index = cache::load(&cache_path).unwrap().expect("progress was persisted");
+    assert!(
+        index.scanned_through < source.size().await.unwrap(),
+        "sanity check: this scan really did stop well short of EOF"
+    );
+    let metadata = index.metadata.expect("preamble captured despite the early stop");
+    let first_db = metadata.databases.first().expect("at least one database entry");
+    assert!(first_db.preamble_complete);
+}
+
 /// Repeat queries against an already-fully-cached file don't grow or
 /// duplicate the persisted index.
 #[tokio::test]

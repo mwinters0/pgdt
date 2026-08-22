@@ -13,9 +13,10 @@ it landed — module map, and the implementation facts later phases inherit — 
 in `docs/design/roadmap-phase1-mvp-notes.md`.
 
 Phase 2 is **in progress**
-(`docs/design/roadmap-phase2-typed-columns.md`). It lands in five slices; as
-each one does, it gets a line in the checklist below linking to its notes doc,
-which holds the detail.
+(`docs/design/roadmap-phase2-typed-columns.md`). It lands in five slices
+(plus 2.2.1, a small follow-up patch to 2.2); as each one does, it gets a
+line in the checklist below linking to its notes doc, which holds the
+detail.
 
 Last updated: 2026-08-22.
 
@@ -32,6 +33,9 @@ Last updated: 2026-08-22.
       `docs/design/roadmap-phase2.1-dollar-quote-tracking-notes.md`
 - [x] **2.2** Preamble parsing, `DumpMetadata`, cache persistence, `pgdq info`
       display. Notes: `docs/design/roadmap-phase2.2-preamble-notes.md`
+- [x] **2.2.1** Incremental (`table_stream`/`pgdq query`) scans now capture
+      the first database's preamble too, not just `build_index`'s full scan.
+      Notes: `docs/design/roadmap-phase2.2.1-incremental-preamble-notes.md`
 - [ ] **2.3** Type resolution, `ResolvedSchema`, diagnostics (still all-`Utf8View`)
 - [ ] **2.4** Decoders, render-back, round-trip tests
 - [ ] **2.5** Benchmarks and the synthetic performance dataset

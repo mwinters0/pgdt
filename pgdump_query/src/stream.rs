@@ -17,6 +17,17 @@
 //! [`Segment::Live`] covering whatever's past the cache's watermark, which
 //! is scanned as today, with every block it finds (matching or not) handed
 //! to a [`Recorder`] and persisted back after each one completes.
+//!
+//! **Preamble capture** (Phase 2.2.1,
+//! `docs/design/roadmap-phase2.2.1-incremental-preamble-notes.md`): before
+//! any of that, [`table_stream`] runs [`crate::index::scan_preamble`] once
+//! (skipped once a cache already has it) so the first database's
+//! [`crate::index::DumpMetadata`] is always present in a persisted cache —
+//! regardless of which table was queried, whether it ever appears, or how
+//! far the live scan gets before a caller stops polling. A cache file's
+//! mere presence therefore does *not* mean its metadata is complete for
+//! every database (a later `\connect`-ed one is still full-scan-only), but
+//! it does always mean the first one is.
 
 use std::collections::VecDeque;
 use std::pin::Pin;
@@ -30,7 +41,7 @@ use futures::Stream;
 use crate::batch::{BatchOptions, RowBatcher, SourceChunk, invalidate_block_cache, schema_for};
 use crate::cache::CacheMode;
 use crate::copy::{CopyHeader, DELIMITER};
-use crate::index::{CopyBlock, DumpIndex};
+use crate::index::{CopyBlock, DumpIndex, scan_preamble};
 use crate::io::ByteRangeSource;
 use crate::predicate::Predicate;
 use crate::scan::{CopyScanner, CopyStart, Event, ScanOptions};
@@ -241,7 +252,29 @@ where
     let inner = try_stream! {
         let size = source.size().await?;
 
-        let base_index = cache.load()?.unwrap_or_default();
+        let mut base_index = cache.load()?.unwrap_or_default();
+
+        // Every path that can persist a cache also guarantees the first
+        // database's preamble gets captured, regardless of which table this
+        // particular call queries or whether it ever reaches the file's
+        // first `COPY` block itself (`crate::index::scan_preamble`'s docs).
+        // `CacheMode::Disabled` skips this: it promises pure streaming with
+        // no side effects, and metadata with nowhere to persist would just
+        // be wasted I/O. Persisted immediately (not deferred to whenever a
+        // segment below next saves) so it survives even a caller that polls
+        // the stream once and drops it.
+        let first_db_preamble_known = base_index
+            .metadata
+            .as_ref()
+            .and_then(|m| m.databases.first())
+            .is_some_and(|db| db.preamble_complete);
+        if !matches!(cache, CacheMode::Disabled) && !first_db_preamble_known {
+            let (metadata, preamble_end) = scan_preamble(source, &scan_options).await?;
+            base_index.metadata = Some(metadata);
+            base_index.scanned_through = base_index.scanned_through.max(preamble_end);
+            cache.save(&base_index)?;
+        }
+
         let segments: Vec<Segment> = match &resume {
             Some(token) => vec![Segment::Live { start: token.offset }],
             None => {
@@ -405,10 +438,16 @@ where
                                 rec.persist(end.end_offset)?;
                             }
                         }
-                        // Preamble/metadata capture during an incremental
-                        // live scan is Phase 2.3's concern (it's the first
-                        // slice that actually consumes `DumpMetadata` for
-                        // type resolution); a pull-mode query ignores these.
+                        // The prepass above already captured the first
+                        // database's preamble (I1: nothing before its first
+                        // `COPY` block matters to `crate::preamble`), so a
+                        // `Line` reaching here is always past that boundary
+                        // — DDL for a later `\connect`ed database in a
+                        // multi-database dump included, which no incremental
+                        // path captures yet (only `build_index`'s full scan
+                        // does). Nothing consumes these regardless: Phase
+                        // 2.3 is post-preamble type resolution, not preamble
+                        // capture itself.
                         Event::Line(_) => {}
                     }
                 }

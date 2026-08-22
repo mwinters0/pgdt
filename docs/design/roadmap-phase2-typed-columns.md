@@ -335,6 +335,25 @@ neither `=` nor `!=` and there was no way to ask for one:
   would bury a wide schema for a user who did not ask.
 - **Default summary line**: `3 of 47 columns unmapped — run with --verbose for
   details`, keeping it discoverable without the wall of text.
+- **`--preamble-only`** (new flag, opt-in): answer from the preamble alone —
+  the dump-level header above, no per-block listing or row counts — instead
+  of `info`'s usual full structural scan. Backed by
+  `crate::index::scan_preamble` (already landed in Phase 2.2.1, ahead of this
+  slice, for `table_stream`'s incremental cache-warming prepass —
+  `docs/design/roadmap-phase2.2.1-incremental-preamble-notes.md`): bounded to
+  the file's
+  first `COPY` block (I1, `docs/design/postgres-invariants.md`), so cost is
+  independent of dump size regardless of how many gigabytes of `COPY` data
+  follow. Reuses a cache's already-known metadata when present (every
+  cache-enabled `table_stream`/`pgdq query` run leaves the first database's
+  preamble captured this way, whether or not the flag was ever passed) and
+  falls back to running `scan_preamble` fresh otherwise — never a full
+  `build_index` scan. Two buckets, two operations: this is the "preamble
+  only" side of the split described in `docs/design/roadmap.md`'s
+  role-discovery Future item, which is the "full scan" side (role/tablespace
+  references aren't preamble-confined, so that one can't take this
+  shortcut). Default stays a full scan — the block listing and row counts are
+  also genuine "what is in here" answers this flag trades away.
 
 `pgdq query` **renders typed values back to their PostgreSQL text form**, so
 its output is byte-identical whether typing is on or off. The CLI's job is
@@ -486,36 +505,47 @@ shared, the size and stress mix are per-phase.
 
 ## Implementation slices
 
-Phase 2 is substantially larger than any Phase 1 increment, so it lands as five
-subphases. The ordering is deliberate: **each slice makes the next one's
-mistakes visible.**
+Phase 2 is substantially larger than any Phase 1 increment, so it lands as
+five numbered subphases, plus 2.2.1 — a small follow-up patch to 2.2's own
+contract, numbered because it changed `table_stream`'s behavior and needed
+its own record, not because it was planned as a sixth slice. The ordering is
+deliberate: **each slice makes the next one's mistakes visible.**
 
 | Slice | Content |
 |---|---|
 | **2.0** | Generate the types fixture and validate the mapping table against it — no code, see "Fixtures" |
 | **2.1** | Dollar-quote tracking in the scanner |
 | **2.2** | Preamble parsing, `DumpMetadata`, cache persistence, `pgdq info` display |
-| **2.3** | Type resolution, `ResolvedSchema`, diagnostics — still emitting `Utf8View` for every column |
+| **2.2.1** | Incremental (`table_stream`) scans guarantee the first database's preamble is captured too, not just `build_index`'s full scan — see `docs/design/roadmap-phase2.2.1-incremental-preamble-notes.md` |
+| **2.3** | Type resolution, `ResolvedSchema`, diagnostics — still emitting `Utf8View` for every column; also `pgdq info --preamble-only`, a fast path skipping the full structural scan (see "CLI") |
 | **2.4** | Decoders + render-back + round-trip tests, one type family at a time |
 | **2.5** | Benchmarks and the synthetic performance dataset |
 
 2.0 comes first because it needs no code and de-risks the least-evidenced part
 of this spec. 2.1 closes the Phase 1 known gap, ships value with zero new API,
 and protects the preamble everything downstream reads. 2.2 makes `pgdq info` immediately
-better and proves the metadata pass on its own, with no typing involved. 2.3 is
-the important one: the resolved schema and its diagnostics become inspectable
-for koji and every fixture *before* a single decoder exists — which is when the
-mapping table is cheapest to argue about. Only then does 2.4 start narrowing
-column types.
+better and proves the metadata pass on its own, with no typing involved. 2.2.1
+closes a gap 2.2 left in that proof: a cache file's presence didn't imply any
+metadata unless it came from a full scan, which every incremental `pgdq
+query` run is not. 2.3 is the important one: the resolved schema and its
+diagnostics become inspectable for koji and every fixture *before* a single
+decoder exists — which is when the mapping table is cheapest to argue about.
+Only then does 2.4 start narrowing column types. 2.3 also gives `pgdq info`
+its `--preamble-only` fast path: `crate::index::scan_preamble` (2.2.1)
+already proves a preamble read never needs the full structural scan (it's
+what `table_stream` uses internally), so exposing that shortcut at the CLI is
+wiring, not new design.
 
 ### Where each slice's notes live
 
 Each slice accumulates its own implementation notes as it lands, in
-`docs/design/roadmap-phase2.<N>-<slug>-notes.md`. At the end of Phase 2 these
-are consolidated into a single `docs/design/roadmap-phase2-typed-columns-notes.md`
-— matching the Phase 1 `-notes` convention — and the per-slice files are
-removed. The split exists so that a slice's detail has somewhere to go while it
-is fresh, without waiting on the whole phase to finish.
+`docs/design/roadmap-phase2.<N>-<slug>-notes.md` (or `2.<N>.<K>` for a small
+follow-up patch to an already-landed slice, like 2.2.1). At the end of Phase 2
+these are consolidated into a single
+`docs/design/roadmap-phase2-typed-columns-notes.md` — matching the Phase 1
+`-notes` convention — and the per-slice files are removed. The split exists
+so that a slice's detail has somewhere to go while it is fresh, without
+waiting on the whole phase to finish.
 
 ## Module layout
 
