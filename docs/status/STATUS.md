@@ -48,7 +48,8 @@ Last updated: 2026-08-22.
   accepted but inert.
 - **Error handling**: `pgdump_query::Error` (`thiserror`) — `Io`, `Join`,
   `UnterminatedCopyBlock`, `LineTooLong`, `InvalidUtf8`; CLI uses `anyhow`.
-- **Tests** (`cargo test --workspace`, 26 tests):
+- **Tests** (`cargo test --workspace`, 36 tests; see also `batch.rs`'s 10
+  below):
   - Unit tests for the header grammar and escape decoding.
   - `pgdump_query/tests/data/edge_cases.sql` — hand-written and deterministic
     (no generated timestamps, so snapshots are stable) — under an `insta`
@@ -72,15 +73,46 @@ Last updated: 2026-08-22.
   substantially filled in from fixture tooling + koji-sample inspection.
 - **Dependencies provisioned ahead of use**: `arrow`, `bincode`+`serde`
   already in `pgdump_query/Cargo.toml`, not yet referenced by any code.
+- **Full-file scan validated against a real 784GB dump**: `pgdq info
+  --verbose` over the koji sample completed clean — exit 0, 74 `COPY`
+  blocks, 19,575,829,920 rows, all 784,019,857,152 bytes accounted for, no
+  `UnterminatedCopyBlock`. `lock_monitor.activity` (the table whose row data
+  contains a literal `COPY ... TO stdout;` substring) parsed as a single
+  correct block, confirming line-anchored detection holds against the case
+  that motivated it. All 74 blocks are plausible koji tables with no
+  duplicates or spurious splits. Log at `runs/koji-scan.log` (gitignored).
+- **Row/batch representation** (`batch.rs`): `read_table()` drives the
+  scanner over a `ByteRangeSource` and assembles `Utf8View` `RecordBatch`es
+  for every row of every `COPY` block matching a given table name (bare or
+  qualified), pushed to a sync `FnMut(RecordBatch) -> ControlFlow<()>`
+  callback — same shape as `scan()`. Batches flush at a configurable row
+  count (`BatchOptions::max_rows`, default 8192) and/or byte count
+  (`max_bytes`, no default cap); a table with zero matching rows produces no
+  batches. A header with no explicit column list gets placeholder names
+  (`column1`, `column2`, ...) sized to the first row's field count, since
+  Phase 1 has no DDL parsing to name them from.
+  Per `docs/design/scan-performance.md`'s constraint on this layer: a field
+  with no escapes is appended as a zero-copy `StringViewBuilder` view into
+  the Arrow `Buffer` backing the read chunk it came from
+  (`append_block`/`append_view_unchecked`), not copied. Only escaped fields
+  and the rare field whose bytes straddle two read chunks take a copying
+  path (`append_value`). Chunk buffers are retained in a small deque, evicted
+  once the scanner has moved past them for good; a chunk's cached
+  `StringViewBuilder` block index is invalidated on every flush, since
+  `StringViewBuilder::finish()` resets the builder's internal block list.
+  10 tests in `tests/batch.rs`: decode correctness against the hand-written
+  edge cases (NULL, all escape kinds, empty-vs-NULL, quoted identifiers, the
+  no-column-list case), batch-size-limit splitting, chunk-size independence
+  (exercises the zero-copy/straddling/decode-copy paths against the same
+  expected output), and a `public.escapes` round-trip against real `pg_dump`
+  output on all three fixture versions.
 
 ## Not started
 
-- **Row/batch representation** — `Utf8View` Arrow arrays, configurable batch
-  size limits. The scanner already hands out decoded, NULL-aware field
-  values, so this is now assembly rather than parsing work.
 - **Streaming API** — pull-mode `Stream`, blocking `Iterator` wrapper,
-  push-mode callback, `ResumeToken`. (`scan()`'s callback is the push shape
-  already, but it is not the batch-level API `mvp.md` specifies.)
+  push-mode callback, `ResumeToken`. `read_table()`'s callback is now the
+  batch-level push shape `mvp.md` specifies; pull mode and the `Iterator`
+  wrapper still need building on top of it.
 - **Predicate filtering** — single-column `=`/`!=` post-parse filter.
 - **Index/structure cache** — `bincode` format, colocated vs. explicit path,
   incremental vs. eager indexing. `DumpIndex` is the intended payload;
@@ -100,23 +132,11 @@ Last updated: 2026-08-22.
 - Large objects in plain-format dumps (`lo_create`/loader calls, not `COPY`
   blocks) remain unmodelled.
 
-## In flight
-
-A full-file scan of the 784GB koji sample is running detached; results land
-in `runs/koji-scan.log`. See `history/2026-08-22.md` for what to check. Flat
-~9 MiB RSS at 243 MB/s is already confirmed from a partial run; what remains
-unconfirmed is that a whole real dump scans end to end without a spurious or
-missed block.
-
 ## Next up
 
-The row/batch layer: turn the scanner's `Event::Row` into `Utf8View`
-`RecordBatch`es behind the batch-size limits, then the streaming API on top.
-The cache is the other independent thread of work and can proceed in
-parallel — `DumpIndex` is ready to be given a serialized form.
-
-Both have a constraint worth honouring up front, from
-`docs/design/scan-performance.md`: build the `Utf8View` arrays as views over
-an Arrow `Buffer` holding the read chunk rather than copying field bytes out,
-and leave room in the serialized cache for an optional sparse row index.
-Retrofitting either is expensive; pre-empting them is nearly free.
+The streaming API on top of `read_table()`: a pull-mode `Stream`, a blocking
+`Iterator` wrapper over it, and the opaque `ResumeToken`. The cache is the
+other independent thread of work and can proceed in parallel — `DumpIndex` is
+ready to be given a serialized form; leave room in it for an optional sparse
+row index per `docs/design/scan-performance.md`, so adding that later isn't a
+format break.

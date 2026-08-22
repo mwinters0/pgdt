@@ -12,4 +12,10 @@ pub enum Error {
     LineTooLong { offset: u64, limit: usize },
     #[error("value is not valid UTF-8 (valid up to byte {valid_up_to})")]
     InvalidUtf8 { valid_up_to: usize },
+    #[error(
+        "row at offset {row_offset} (COPY block at {header_offset}) has {found} column(s), expected {expected}"
+    )]
+    ColumnCountMismatch { header_offset: u64, row_offset: u64, expected: usize, found: usize },
+    #[error("arrow error: {0}")]
+    Arrow(#[from] arrow::error::ArrowError),
 }
