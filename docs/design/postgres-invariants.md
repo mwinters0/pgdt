@@ -268,8 +268,8 @@ originally claimed a later `\connect`-ed database's own pair needs no such
 handling, "held within that database's own segment" — reasoning about
 `pg_dumpall`'s child-process structure without a concatenated fixture to
 check it against. Phase 2.3.1 built one (two `--create` fixtures
-concatenated, `docs/design/roadmap-phase2.3.1-multidb-fixtures-notes.md`) and
-found the opposite: a later child's version-header pair prints ahead of
+concatenated — `docs/design/roadmap-phase2-typed-columns-notes.md`, "Fixture
+tree") and found the opposite: a later child's version-header pair prints ahead of
 *its own* `\connect`, exactly like the first child's does ahead of its
 `\connect` — which puts those lines in `PreambleBuilder::feed_line` while
 `current` is still the *previous* database's finished (`preamble_complete`)
@@ -308,9 +308,7 @@ from source reading alone.
 (`pgdump_query/tests/preamble.rs`'s `multidb_fixture`, versions 13/16/18);
 `fixtures/{13,18}/edge_cases/dumpall.sql`, a real `pg_dumpall` run (2.3.2).
 **Relied on by:** `roadmap-phase2-typed-columns.md` (preamble pass);
-`roadmap-phase2.2-preamble-notes.md`;
-`roadmap-phase2.3.1-multidb-fixtures-notes.md`;
-`roadmap-phase2.3.2-fixture-evidence-notes.md`.
+`roadmap-phase2-typed-columns-notes.md` ("Preamble parsing", "Fixture tree").
 **Re-verify:** `grep -n 'Dumped from database version' -B5
 src/bin/pg_dump/pg_backup_archiver.c` — confirm it's still inside
 `RestoreArchive()` and still unconditional-per-call; `grep -n
@@ -369,10 +367,9 @@ probed `pg_dump` 16.15; `fixtures/{13..18}/types/default.sql`'s
 not just one probed container, and confirms the PG13/PG14+ split in the
 `multirange_type_name` parameter's presence exactly.
 **Relied on by:** `roadmap-phase2-typed-columns.md` ("Multiranges", type
-mapping table); `roadmap-phase2.3.2-fixture-evidence-notes.md`;
-`roadmap-phase2.3.3-one-target-behaviour-notes.md` (`pgtype.rs`'s companion
-lookup and `TypeKind::Range::multirange_type_name` are built directly on
-this invariant, not just tested against it).
+mapping table); `roadmap-phase2-typed-columns-notes.md` ("Type resolution")
+— `pgtype.rs`'s companion lookup and `TypeKind::Range::multirange_type_name`
+are built directly on this invariant, not just tested against it.
 **Re-verify:** `grep -n 'skip auto-generated array and multirange types' -A 4
 src/bin/pg_dump/pg_dump.c` — confirm multiranges are still `DO_DUMMY_TYPE`;
 `grep -n 'AS RANGE' -A 8 src/bin/pg_dump/pg_dump.c` — confirm the parameter
@@ -451,7 +448,8 @@ that these shapes cannot be fixture-generated.
 (2.3.2) — the same recipe as permanent fixture coverage across all six
 routine versions, not a single probed container.
 **Relied on by:** `roadmap-phase2-typed-columns.md` ("Fixtures");
-`roadmap-phase2.3.2-fixture-evidence-notes.md`.
+`roadmap-phase2-typed-columns-notes.md` ("Evidence carried forward for later
+phases").
 **Re-verify:** `grep -n '"SHELL TYPE"' -B 12 src/bin/pg_dump/pg_dump.c` —
 confirm `dumpShellType()` still emits a bare `CREATE TYPE x;` ahead of the
 real definition; re-run the recipe above against the newest major.
@@ -612,7 +610,8 @@ crossing 15 is. Confirmed against a running `postgres:16-alpine`
 (`extra_float_digits = 3`) as well as the source above.
 
 **Relied on by:** `pgdump_query/src/decode.rs`'s `render_f32`/`render_f64`
-(`docs/design/roadmap-phase2.4-decoders-notes.md`), whose own fixed/scientific
+(`docs/design/roadmap-phase2-typed-columns-notes.md`, "Decoders and
+render-back"), whose own fixed/scientific
 decision uses `FLT_DIG`/`DBL_DIG` (6/15) as the threshold for exactly this
 reason — matching digit-for-digit is necessary but not sufficient for the
 round-trip test in "Testing the mapping's correctness"

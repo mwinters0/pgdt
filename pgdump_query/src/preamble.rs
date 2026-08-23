@@ -44,8 +44,9 @@ pub struct DatabaseMetadata {
     /// finish a database's segment, never leave one half-read. What it
     /// composes with is `DumpIndex::scanned_through`: the *first* database's
     /// metadata is guaranteed present after any scan that persists a cache
-    /// (`crate::stream::table_stream`'s Phase 2.2.1 prepass —
-    /// `docs/design/roadmap-phase2.2.1-incremental-preamble-notes.md`), but a
+    /// (`crate::stream::table_stream`'s Phase 2.2.1 prepass — see
+    /// `docs/design/roadmap-phase2-typed-columns-notes.md`, "Preamble
+    /// parsing"), but a
     /// later `\connect`-ed database's is only ever populated by a full scan
     /// — so a caller walking `DumpIndex::metadata` still needs to check this
     /// per-database rather than assume the whole list is complete just

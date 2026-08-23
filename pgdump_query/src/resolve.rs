@@ -275,8 +275,8 @@ mod tests {
     /// (`docs/design/roadmap-phase2-typed-columns.md`, "One target per
     /// query") turned the old first-match guess into: the caller already
     /// knows, from the matched `CopyBlock`'s own attribution, which database
-    /// applies — see `docs/design/roadmap-phase2.3.1-multidb-fixtures-notes.md`
-    /// for the guess this test used to pin down.
+    /// applies — see `docs/design/roadmap-phase2-typed-columns-notes.md`,
+    /// "One target per query", for the guess this test used to pin down.
     #[test]
     fn database_selects_by_attributed_name_not_by_first_match() {
         let mut a = one_db(&[("public.t", &[("id", "text")])], vec![]).databases.remove(0);

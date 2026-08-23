@@ -155,8 +155,9 @@ pub async fn build_index<S: ByteRangeSource>(
 /// either — so this one offset always closes out the *first* database's
 /// preamble, incidentally finishing any earlier, table-less database's too.
 ///
-/// Phase 2.2.1 (`docs/design/roadmap-phase2.2.1-incremental-preamble-notes.md`):
-/// exists so an incremental scan (`crate::stream::table_stream`) can
+/// Phase 2.2.1 (`docs/design/roadmap-phase2-typed-columns-notes.md`,
+/// "Preamble parsing"): exists so an incremental scan
+/// (`crate::stream::table_stream`) can
 /// guarantee this metadata gets captured even when the query's own target
 /// table starts later in the file (or never appears at all) — see also
 /// `docs/design/roadmap-phase2-typed-columns.md`, "Companion: dump-level

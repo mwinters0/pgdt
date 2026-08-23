@@ -19,7 +19,7 @@
 //! to a [`Recorder`] and persisted back after each one completes.
 //!
 //! **Preamble capture** (Phase 2.2.1,
-//! `docs/design/roadmap-phase2.2.1-incremental-preamble-notes.md`): before
+//! `docs/design/roadmap-phase2-typed-columns-notes.md`, "Preamble parsing"): before
 //! any of that, [`table_stream`] runs [`crate::index::scan_preamble`] once
 //! (skipped once a cache already has it), regardless of which table was
 //! queried, whether it ever appears, or how far the live scan gets before a

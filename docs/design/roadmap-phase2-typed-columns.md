@@ -478,9 +478,9 @@ neither `=` nor `!=` and there was no way to ask for one:
   the dump-level header above, no per-block listing or row counts — instead
   of `info`'s usual full structural scan. Backed by
   `crate::index::scan_preamble` (already landed in Phase 2.2.1, ahead of this
-  slice, for `table_stream`'s incremental cache-warming prepass —
-  `docs/design/roadmap-phase2.2.1-incremental-preamble-notes.md`): bounded to
-  the file's
+  slice, for `table_stream`'s incremental cache-warming prepass — see
+  `docs/design/roadmap-phase2-typed-columns-notes.md`, "Preamble parsing"):
+  bounded to the file's
   first `COPY` block (I1, `docs/design/postgres-invariants.md`), so cost is
   independent of dump size regardless of how many gigabytes of `COPY` data
   follow. Reuses a cache's already-known metadata when present (every
@@ -590,7 +590,8 @@ the only flag combination that ever emits a `\connect`, which makes it the
 building block for multi-database dump coverage: `pgdump_query/tests/{preamble,pgtype,stream}.rs`
 each concatenate two renamed copies of it at test time into a real
 `\connect`-delimited multi-database file rather than adding a whole second
-fixture tree — see `docs/design/roadmap-phase2.3.1-multidb-fixtures-notes.md`.
+fixture tree — see `docs/design/roadmap-phase2-typed-columns-notes.md`,
+"Fixture tree".
 
 ### The fixture tree is uniform across versions
 
@@ -738,9 +739,9 @@ makes the next one's mistakes visible.**
 | **2.0** | Generate the types fixture and validate the mapping table against it — no code, see "Fixtures" |
 | **2.1** | Dollar-quote tracking in the scanner |
 | **2.2** | Preamble parsing, `DumpMetadata`, cache persistence, `pgdq info` display |
-| **2.2.1** | Incremental (`table_stream`) scans guarantee the first database's preamble is captured too, not just `build_index`'s full scan — see `docs/design/roadmap-phase2.2.1-incremental-preamble-notes.md` |
+| **2.2.1** | Incremental (`table_stream`) scans guarantee the first database's preamble is captured too, not just `build_index`'s full scan — see `docs/design/roadmap-phase2-typed-columns-notes.md`, "Preamble parsing" |
 | **2.3** | Type resolution, `ResolvedSchema`, diagnostics — still emitting `Utf8View` for every column; also `pgdq info --preamble-only`, a fast path skipping the full structural scan (see "CLI") |
-| **2.3.1** | Concatenated/multi-database dump fixtures — see `docs/design/roadmap-phase2.3.1-multidb-fixtures-notes.md` |
+| **2.3.1** | Concatenated/multi-database dump fixtures — see `docs/design/roadmap-phase2-typed-columns-notes.md`, "Fixture tree" |
 | **2.3.2** | Fixtures and evidence, no code: the three unevidenced `CREATE TYPE` shapes and multirange DDL added to the types schema behind `\if` guards, the `no-comments` and `dumpall` flag sets, and a six-version regeneration making the tree uniform — see "Fixtures" |
 | **2.3.3** | Behaviour: one target per query (per-`CopyBlock` database attribution, `AmbiguousTable`, `--database`), `MetadataNotScanned`, multirange recognition — see "One target per query", "The preamble pass", "Multiranges" |
 | **2.4** | Decoders + render-back + round-trip tests, one type family at a time |
