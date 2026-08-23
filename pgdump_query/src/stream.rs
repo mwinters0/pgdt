@@ -127,9 +127,13 @@ impl Recorder {
     /// `end.end_offset` is always a safe, resumable watermark — the scanner
     /// is back in its `Outside` state there — so every persisted
     /// `scanned_through` is valid for a later query to replay from.
-    fn persist(&mut self, scanned_through: u64) -> Result<()> {
+    async fn persist<S: ByteRangeSource>(
+        &mut self,
+        source: &S,
+        scanned_through: u64,
+    ) -> Result<()> {
         self.index.scanned_through = self.index.scanned_through.max(scanned_through);
-        self.cache.save(&self.index)
+        self.cache.save(source, &self.index).await
     }
 }
 
@@ -350,7 +354,7 @@ where
     let inner = try_stream! {
         let size = source.size().await?;
 
-        let mut base_index = cache.load()?.unwrap_or_default();
+        let mut base_index = cache.load(source).await?.unwrap_or_default();
 
         // The first database's preamble always gets captured before
         // anything else runs, regardless of which table this particular
@@ -373,7 +377,7 @@ where
             let (metadata, preamble_end) = scan_preamble(source, &scan_options).await?;
             base_index.metadata = Some(metadata);
             base_index.scanned_through = base_index.scanned_through.max(preamble_end);
-            cache.save(&base_index)?;
+            cache.save(source, &base_index).await?;
         }
         // Captured before `base_index` is moved into `recorder` below —
         // every call site that resolves a matching block's schema needs it.
@@ -668,7 +672,7 @@ where
                                     sparse_index: None,
                                     column_stats: None,
                                 });
-                                rec.persist(end.end_offset)?;
+                                rec.persist(source, end.end_offset).await?;
                             }
                         }
                         // The prepass above already captured the first
@@ -717,7 +721,7 @@ where
             }
 
             if is_live && let Some(rec) = recorder.as_mut() {
-                rec.persist(size)?;
+                rec.persist(source, size).await?;
             }
         }
     };

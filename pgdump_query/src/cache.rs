@@ -3,23 +3,36 @@
 //! (`docs/design/roadmap-phase1-mvp.md`, "Index / structure cache").
 //!
 //! Reading is best-effort — the cache is never required for correctness, so
-//! a missing, foreign, or unrecognised-version file just means "scan
-//! instead," never a hard error. Writing is not best-effort: [`save`]
-//! propagates I/O failures rather than silently falling back to running
-//! without a cache, since a write failure (read-only mount, permissions,
-//! disk full) means something is actually wrong and swallowing it would
-//! silently degrade every future run of the same command back to a full
-//! scan.
+//! a missing, foreign, unrecognised-version, or (as of Phase 3.2, see below)
+//! size-mismatched file just means "scan instead," never a hard error.
+//! Writing is not best-effort: [`save`] propagates I/O failures rather than
+//! silently falling back to running without a cache, since a write failure
+//! (read-only mount, permissions, disk full) means something is actually
+//! wrong and swallowing it would silently degrade every future run of the
+//! same command back to a full scan.
 //!
-//! No dump-file identity check (size/mtime) is performed:
-//! `roadmap-phase1-mvp.md` puts that under "Configurable (future)" rather than
-//! MVP, so a cache is trusted as-is once its format/container are recognised.
+//! **The dump file's identity is checked, not assumed**
+//! (`docs/design/roadmap-phase3-object-inventory.md`, "Cache: the dump
+//! file's identity is checked, not assumed"). Every cache records the
+//! source's size and mtime as observed at save time; [`load`] re-observes
+//! the live source and compares. A size mismatch means every byte offset in
+//! the cache could be wrong, so the cache is invalidated the same way a
+//! foreign or wrong-version file is — silently, per this module's
+//! best-effort contract, not as a hard error. An mtime mismatch is weaker
+//! evidence (mtime granularity and preservation vary too much across
+//! filesystems to be conclusive) and does **not** invalidate the cache; it
+//! is surfaced on [`CacheStatus::Valid`] for a caller that wants to report
+//! it, but [`CacheMode::load`] — the path every existing caller uses —
+//! discards that bit and treats the cache as good, matching a same-size
+//! same-mtime cache exactly.
 
 use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
 
 use crate::index::DumpIndex;
+use crate::io::ByteRangeSource;
 use crate::{Error, Result};
 
 /// Bumped whenever the on-disk shape changes incompatibly. A cache written
@@ -27,7 +40,33 @@ use crate::{Error, Result};
 /// "Decisions that keep later phases open") rather than partially trusted —
 /// the three fields reserved on [`DumpIndex`]/[`crate::index::CopyBlock`] are
 /// what let most future additions avoid needing a bump at all.
-const FORMAT_VERSION: u32 = 1;
+///
+/// Bumped to 2 in Phase 3.2 for [`SourceIdentity`] — pre-1.0, so this is
+/// free (`CLAUDE.md`, "Pre-1.0").
+const FORMAT_VERSION: u32 = 2;
+
+/// The dump file's size and modification time as observed when a cache was
+/// last saved — see the module docs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct SourceIdentity {
+    size: u64,
+    /// `(seconds, nanoseconds)` since the Unix epoch — `SystemTime` itself
+    /// isn't `Serialize`, and this is L1's own on-disk vocabulary rather
+    /// than borrowing `std`'s. `None` when the source exposed no mtime.
+    mtime: Option<(u64, u32)>,
+}
+
+impl SourceIdentity {
+    async fn observe<S: ByteRangeSource>(source: &S) -> Result<Self> {
+        let size = source.size().await?;
+        let mtime = source
+            .modified()
+            .await?
+            .map(|t| t.duration_since(UNIX_EPOCH).unwrap_or_default())
+            .map(|d| (d.as_secs(), d.subsec_nanos()));
+        Ok(Self { size, mtime })
+    }
+}
 
 /// What produced the indexed blocks' byte offsets. Plain-format offsets are
 /// raw file positions; a future archive format's (roadmap Phase 8, Track B)
@@ -41,6 +80,7 @@ enum ContainerKind {
 struct CacheFile {
     format_version: u32,
     container_kind: ContainerKind,
+    identity: SourceIdentity,
     index: DumpIndex,
 }
 
@@ -52,34 +92,60 @@ pub fn colocated_path(dump_path: &Path) -> PathBuf {
     PathBuf::from(path)
 }
 
-/// Load a cache from `path`. `Ok(None)` covers every "no usable cache" case
-/// that isn't a hard I/O error — file absent, or bytes this build's
-/// format/container doesn't recognise — since both are safe to treat as
-/// absent under the cache's best-effort contract.
-pub fn load(path: &Path) -> Result<Option<DumpIndex>> {
+/// What [`load`] found at a cache path, once checked against the live
+/// source's identity — see the module docs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CacheStatus {
+    /// No usable cache: absent, foreign bytes, an unrecognised
+    /// format/container version, or a source-size mismatch. All four are
+    /// the same "not trustworthy" outcome under this module's best-effort
+    /// contract, so callers that don't care why get exactly one case to
+    /// handle.
+    Absent,
+    /// A usable cache. `mtime_changed` is `true` when the source's current
+    /// mtime differs from the one recorded at save time — weaker evidence
+    /// than a size mismatch (see the module docs), so it does not itself
+    /// make the cache [`Absent`](CacheStatus::Absent).
+    Valid { index: DumpIndex, mtime_changed: bool },
+}
+
+/// Load a cache from `path` and validate it against `source`'s current
+/// identity. See [`CacheStatus`] and the module docs for what "validate"
+/// means. A hard I/O error reading `path` (anything but "not found") still
+/// propagates — only the cache's own *content* is best-effort.
+pub async fn load<S: ByteRangeSource>(path: &Path, source: &S) -> Result<CacheStatus> {
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(CacheStatus::Absent),
         Err(e) => return Err(Error::Io(e)),
     };
     let file: CacheFile =
         match bincode::serde::decode_from_slice(&bytes, bincode::config::standard()) {
             Ok((file, _)) => file,
-            Err(_) => return Ok(None),
+            Err(_) => return Ok(CacheStatus::Absent),
         };
     if file.format_version != FORMAT_VERSION || file.container_kind != ContainerKind::Plain {
-        return Ok(None);
+        return Ok(CacheStatus::Absent);
     }
-    Ok(Some(file.index))
+    let live = SourceIdentity::observe(source).await?;
+    if file.identity.size != live.size {
+        return Ok(CacheStatus::Absent);
+    }
+    let mtime_changed = file.identity.mtime != live.mtime;
+    Ok(CacheStatus::Valid { index: file.index, mtime_changed })
 }
 
 /// Write `index` to `path` (colocated or explicit — whichever the caller
-/// resolved), overwriting any existing cache there. Propagates I/O failures
-/// as `Error::Io` rather than swallowing them — see the module docs.
-pub fn save(path: &Path, index: &DumpIndex) -> Result<()> {
+/// resolved), overwriting any existing cache there, and record `source`'s
+/// current size/mtime for [`load`] to check next time. Propagates I/O
+/// failures as `Error::Io` rather than swallowing them — see the module
+/// docs.
+pub async fn save<S: ByteRangeSource>(path: &Path, source: &S, index: &DumpIndex) -> Result<()> {
+    let identity = SourceIdentity::observe(source).await?;
     let file = CacheFile {
         format_version: FORMAT_VERSION,
         container_kind: ContainerKind::Plain,
+        identity,
         index: index.clone(),
     };
     let bytes = bincode::serde::encode_to_vec(&file, bincode::config::standard())?;
@@ -112,13 +178,19 @@ impl CacheMode {
         }
     }
 
-    /// Load the cache this mode points at. A disabled cache always yields
-    /// `Ok(None)` — even if a file happens to sit at what would otherwise be
-    /// its resolved location, per [`CacheMode::Disabled`]'s contract that
-    /// existing files are ignored, never read.
-    pub fn load(&self) -> Result<Option<DumpIndex>> {
+    /// Load the cache this mode points at, discarding the
+    /// [`CacheStatus::Valid::mtime_changed`] bit (see the module docs — a
+    /// caller that wants it can call [`load`] directly instead). A disabled
+    /// cache always yields `Ok(None)` — even if a file happens to sit at
+    /// what would otherwise be its resolved location, per
+    /// [`CacheMode::Disabled`]'s contract that existing files are ignored,
+    /// never read.
+    pub async fn load<S: ByteRangeSource>(&self, source: &S) -> Result<Option<DumpIndex>> {
         match self {
-            CacheMode::Enabled(path) => load(path),
+            CacheMode::Enabled(path) => match load(path, source).await? {
+                CacheStatus::Absent => Ok(None),
+                CacheStatus::Valid { index, .. } => Ok(Some(index)),
+            },
             CacheMode::Disabled => Ok(None),
         }
     }
@@ -128,9 +200,9 @@ impl CacheMode {
     /// whole purpose is to populate the cache should reject a disabled mode
     /// up front with [`CacheMode::require_enabled`] instead of relying on
     /// this silently doing nothing.
-    pub fn save(&self, index: &DumpIndex) -> Result<()> {
+    pub async fn save<S: ByteRangeSource>(&self, source: &S, index: &DumpIndex) -> Result<()> {
         match self {
-            CacheMode::Enabled(path) => save(path, index),
+            CacheMode::Enabled(path) => save(path, source, index).await,
             CacheMode::Disabled => Ok(()),
         }
     }

@@ -169,19 +169,19 @@ async fn main() -> Result<()> {
             let source = LocalFileSource::open(&file)?;
             let index = build_index(&source, &ScanOptions::default()).await?;
             print_index(&index, false);
-            pgdump_query::cache::save(&path, &index)?;
+            pgdump_query::cache::save(&path, &source, &index).await?;
             println!();
             println!("wrote cache to {}", path.display());
         }
         Command::Info { file, cache_path, verbose, preamble_only: preamble_only_flag } => {
             let mode = CacheMode::resolve(&file, cache_path.as_deref());
+            let source = LocalFileSource::open(&file)?;
             if preamble_only_flag {
-                let source = LocalFileSource::open(&file)?;
                 let metadata = preamble_only(&source, &ScanOptions::default(), &mode).await?;
                 print_metadata(&metadata);
                 return Ok(());
             }
-            let index = match mode.load()? {
+            let index = match mode.load(&source).await? {
                 Some(index) => index,
                 None => {
                     // No usable (or disabled) cache: scan, then persist what
@@ -189,9 +189,8 @@ async fn main() -> Result<()> {
                     // `roadmap-phase1-mvp.md`'s "cache is never required for
                     // correctness" rule means this fallback must still
                     // produce a correct answer.
-                    let source = LocalFileSource::open(&file)?;
                     let index = build_index(&source, &ScanOptions::default()).await?;
-                    mode.save(&index)?;
+                    mode.save(&source, &index).await?;
                     index
                 }
             };

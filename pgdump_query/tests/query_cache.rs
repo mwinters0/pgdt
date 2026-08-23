@@ -122,6 +122,12 @@ impl ByteRangeSource for CountingSource {
     fn size(&self) -> impl Future<Output = pgdump_query::Result<u64>> + Send {
         self.inner.size()
     }
+
+    fn modified(
+        &self,
+    ) -> impl Future<Output = pgdump_query::Result<Option<std::time::SystemTime>>> + Send {
+        self.inner.modified()
+    }
 }
 
 /// Once the whole file is cached, querying a table other than the last one
@@ -134,7 +140,7 @@ async fn non_matching_cached_blocks_cost_zero_bytes() {
 
     let seed_source = LocalFileSource::open(&dump).unwrap();
     let index = build_index(&seed_source, &ScanOptions::default()).await.unwrap();
-    cache::save(&cache_path, &index).unwrap();
+    cache::save(&cache_path, &seed_source, &index).await.unwrap();
     let empty_table_block =
         index.blocks_for("public.empty_table").next().expect("empty_table was indexed");
     let expected_bytes = empty_table_block.end_offset - empty_table_block.header_offset;
@@ -162,7 +168,7 @@ async fn replay_matches_a_fresh_scan() {
 
     let seed_source = LocalFileSource::open(&dump).unwrap();
     let index = build_index(&seed_source, &ScanOptions::default()).await.unwrap();
-    cache::save(&cache_path, &index).unwrap();
+    cache::save(&cache_path, &seed_source, &index).await.unwrap();
 
     let source = LocalFileSource::open(&dump).unwrap();
     let widgets = drain(
@@ -216,7 +222,11 @@ async fn cold_cache_gets_fully_populated_by_one_query() {
     .await;
     assert_eq!(rows, widgets_expected());
 
-    let index = cache::load(&cache_path).unwrap().expect("a cache was written");
+    let index = CacheMode::Enabled(cache_path.clone())
+        .load(&source)
+        .await
+        .unwrap()
+        .expect("a cache was written");
     let mut tables: Vec<&str> = index.blocks.iter().map(|b| b.header.table.as_str()).collect();
     tables.sort_unstable();
     assert_eq!(tables, vec!["Odd Table", "empty_table", "no_column_list", "widgets"]);
@@ -250,7 +260,11 @@ async fn interrupted_scan_leaves_correct_partial_progress() {
         }
     }
 
-    let index = cache::load(&cache_path).unwrap().expect("partial progress was persisted");
+    let index = CacheMode::Enabled(cache_path.clone())
+        .load(&source)
+        .await
+        .unwrap()
+        .expect("partial progress was persisted");
     assert_eq!(index.blocks.len(), 1, "only the fully-completed empty_table block is recorded");
     let empty_table = &index.blocks[0];
     assert_eq!(empty_table.header.table, "empty_table");
@@ -297,7 +311,11 @@ async fn interrupted_scan_still_captures_the_first_database_preamble() {
         stream.next().await.unwrap().unwrap();
     }
 
-    let index = cache::load(&cache_path).unwrap().expect("progress was persisted");
+    let index = CacheMode::Enabled(cache_path.clone())
+        .load(&source)
+        .await
+        .unwrap()
+        .expect("progress was persisted");
     assert!(
         index.scanned_through < source.size().await.unwrap(),
         "sanity check: this scan really did stop well short of EOF"
@@ -322,7 +340,7 @@ async fn no_duplication_on_repeat_queries() {
         CacheMode::Enabled(cache_path.clone()),
     )
     .await;
-    let before = cache::load(&cache_path).unwrap().unwrap();
+    let before = CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap().unwrap();
 
     drain(
         &source,
@@ -331,7 +349,7 @@ async fn no_duplication_on_repeat_queries() {
         CacheMode::Enabled(cache_path.clone()),
     )
     .await;
-    let after = cache::load(&cache_path).unwrap().unwrap();
+    let after = CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap().unwrap();
 
     assert_eq!(before.blocks.len(), after.blocks.len());
     let mut offsets: Vec<u64> = after.blocks.iter().map(|b| b.header_offset).collect();

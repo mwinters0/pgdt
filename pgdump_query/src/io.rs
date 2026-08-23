@@ -2,6 +2,7 @@ use std::future::Future;
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use bytes::Bytes;
 
@@ -16,6 +17,13 @@ use crate::{Error, Result};
 pub trait ByteRangeSource: Send + Sync {
     fn read_range(&self, offset: u64, len: usize) -> impl Future<Output = Result<Bytes>> + Send;
     fn size(&self) -> impl Future<Output = Result<u64>> + Send;
+    /// Last-modified time, if the source exposes one — `object_store`'s
+    /// `head` carries this too. `None` rather than an error for a source
+    /// that genuinely has no notion of one; the structure cache
+    /// (`docs/design/roadmap-phase3-object-inventory.md`, "Cache: the dump
+    /// file's identity is checked, not assumed") treats an absent mtime as
+    /// nothing to compare against, never as a mismatch.
+    fn modified(&self) -> impl Future<Output = Result<Option<SystemTime>>> + Send;
 }
 
 /// The only `ByteRangeSource` implementation shipped in the MVP: a local
@@ -59,5 +67,14 @@ impl ByteRangeSource for LocalFileSource {
             .map_err(Error::from)?
             .map_err(Error::from)?;
         Ok(len)
+    }
+
+    async fn modified(&self) -> Result<Option<SystemTime>> {
+        let file = Arc::clone(&self.file);
+        let mtime = tokio::task::spawn_blocking(move || file.metadata().and_then(|m| m.modified()))
+            .await
+            .map_err(Error::from)?
+            .map_err(Error::from)?;
+        Ok(Some(mtime))
     }
 }

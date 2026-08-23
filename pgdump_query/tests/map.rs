@@ -1,0 +1,266 @@
+//! The full file map (`crate::map`, Phase 3.2): the tiling invariant over
+//! every generated fixture plus the hand-written edge-case dump, and
+//! targeted classification checks.
+
+use std::path::{Path, PathBuf};
+
+use pgdump_query::map::{SpanBody, TilingIssue};
+use pgdump_query::{LocalFileSource, ScanOptions, build_map, check_tiling};
+
+fn edge_cases() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/edge_cases.sql")
+}
+
+/// Every real `pg_dump` output file the fixture generator produced, across
+/// all six routine versions and all three schemas
+/// (`edge_cases`/`objects`/`types`) — including the degenerate shapes the
+/// design doc calls out by name: `data-only`, `schema-only`, `inserts`/
+/// `column-inserts` (no `COPY` blocks at all), and `dumpall` (concatenated,
+/// multi-`\connect`).
+fn all_fixtures() -> Vec<PathBuf> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures");
+    let mut out = Vec::new();
+    for version in std::fs::read_dir(&root).unwrap() {
+        let version = version.unwrap().path();
+        if !version.is_dir() {
+            continue;
+        }
+        for schema in std::fs::read_dir(&version).unwrap() {
+            let schema = schema.unwrap().path();
+            if !schema.is_dir() {
+                continue;
+            }
+            for entry in std::fs::read_dir(&schema).unwrap() {
+                let path = entry.unwrap().path();
+                if path.extension().is_some_and(|e| e == "sql") {
+                    out.push(path);
+                }
+            }
+        }
+    }
+    assert!(!out.is_empty(), "fixture discovery found nothing — did the tree move?");
+    out
+}
+
+async fn map_of(path: &Path) -> (Vec<pgdump_query::Span>, u64) {
+    let source = LocalFileSource::open(path).unwrap();
+    let spans = build_map(&source, &ScanOptions::default()).await.unwrap();
+    use pgdump_query::ByteRangeSource;
+    let size = source.size().await.unwrap();
+    (spans, size)
+}
+
+/// The standing rule (`roadmap-phase3-object-inventory.md`, "Standing rule:
+/// coverage increases monotonically") made concrete: every span list this
+/// module can produce tiles its file exactly, with no exemptions.
+#[tokio::test]
+async fn every_fixture_tiles_exactly() {
+    let mut failures = Vec::new();
+    for path in all_fixtures() {
+        let (spans, size) = map_of(&path).await;
+        let issues = check_tiling(&spans, size);
+        if !issues.is_empty() {
+            failures.push(format!("{}: {issues:?}", path.display()));
+        }
+    }
+    assert!(failures.is_empty(), "tiling violations:\n{}", failures.join("\n"));
+}
+
+/// `tests/data/edge_cases.sql` is hand-written, not real `pg_dump` output —
+/// no `-- Name: ...; Type: ...` TOC comments at all, unlike every generated
+/// fixture — so it's exactly the "statement-grammar fallback, no TOC
+/// header" path, and its two dollar-quoted `CREATE FUNCTION`s (including
+/// one whose adversarial body contains lines that look exactly like `COPY`
+/// headers, `docs/design/roadmap-phase1-mvp.md`'s dollar-quote-tracking
+/// motivation) still have to tile.
+#[tokio::test]
+async fn edge_cases_dump_tiles_exactly() {
+    let (spans, size) = map_of(&edge_cases()).await;
+    assert!(check_tiling(&spans, size).is_empty());
+    assert!(spans.iter().any(|s| matches!(s.body, SpanBody::Data(_))));
+    assert_eq!(
+        spans.iter().filter(|s| matches!(s.body, SpanBody::Unparsed)).count(),
+        2,
+        "the two CREATE FUNCTIONs, with no TOC comment to anchor on, via the statement fallback"
+    );
+}
+
+/// A schema-only dump (no `COPY` blocks at all) still tiles: every span is
+/// DDL/framing, and `check_tiling`'s no-`Data`-span path is exercised.
+#[tokio::test]
+async fn schema_only_dump_has_no_data_spans_but_still_tiles() {
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/edge_cases/schema-only.sql");
+    let (spans, size) = map_of(&path).await;
+    assert!(check_tiling(&spans, size).is_empty());
+    assert!(!spans.iter().any(|s| matches!(s.body, SpanBody::Data(_))));
+}
+
+/// A data-only dump (no DDL) is nothing but `Data` spans (and framing) —
+/// still tiles.
+#[tokio::test]
+async fn data_only_dump_tiles_exactly() {
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/edge_cases/data-only.sql");
+    let (spans, size) = map_of(&path).await;
+    assert!(check_tiling(&spans, size).is_empty());
+    assert!(spans.iter().any(|s| matches!(s.body, SpanBody::Data(_))));
+}
+
+/// `--inserts` output has zero `COPY` blocks and, per the module docs,
+/// no dedicated `Data`-span fast path in this slice — every `INSERT`
+/// becomes its own `Unparsed` span via the generic statement grammar. The
+/// value that matters here is tiling across the embedded-raw-newline row
+/// (`public.escapes` row 10, `docs/status/history/2026-08-23.md`).
+#[tokio::test]
+async fn inserts_dump_with_an_embedded_newline_value_still_tiles() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/edge_cases/inserts.sql");
+    let (spans, size) = map_of(&path).await;
+    assert!(check_tiling(&spans, size).is_empty());
+    assert!(!spans.iter().any(|s| matches!(s.body, SpanBody::Data(_))));
+    assert!(
+        spans.iter().filter(|s| matches!(s.body, SpanBody::Unparsed)).count() > 100,
+        "expected roughly one Unparsed span per INSERT statement"
+    );
+}
+
+#[tokio::test]
+async fn column_inserts_dump_still_tiles() {
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/edge_cases/column-inserts.sql");
+    let (spans, size) = map_of(&path).await;
+    assert!(check_tiling(&spans, size).is_empty());
+}
+
+/// `dumpall.sql` concatenates several `\connect`-separated dumps, each with
+/// its own prologue/epilogue banner — still tiles, and spans after each
+/// `\connect` are attributed to the new database.
+#[tokio::test]
+async fn concatenated_dumpall_tiles_and_attributes_databases_by_connect() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/edge_cases/dumpall.sql");
+    let (spans, size) = map_of(&path).await;
+    assert!(check_tiling(&spans, size).is_empty());
+
+    let databases: std::collections::BTreeSet<Option<String>> =
+        spans.iter().map(|s| s.database.clone()).collect();
+    assert!(databases.len() > 1, "a concatenated dumpall must span more than one database");
+}
+
+/// The `objects` fixture is the one place large objects (I12) and every
+/// dollar-quoted-body TOC kind (`FUNCTION`, `AGGREGATE`, `EVENT TRIGGER`,
+/// ...) actually appear — the case the module docs' "why TOC-block
+/// boundaries" reasoning exists for.
+#[tokio::test]
+async fn objects_fixture_with_dollar_quoted_function_bodies_tiles_exactly() {
+    for flavor in ["default", "verbose"] {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures/18/objects")
+            .join(format!("{flavor}.sql"));
+        let (spans, size) = map_of(&path).await;
+        let issues = check_tiling(&spans, size);
+        assert!(issues.is_empty(), "{flavor}: {issues:?}");
+
+        let table_span = spans
+            .iter()
+            .find(|s| matches!(&s.body, SpanBody::Table { name, .. } if name == "objects.widgets"));
+        assert!(table_span.is_some(), "{flavor}: objects.widgets must classify as a Table span");
+    }
+}
+
+/// A `CREATE TABLE`'s span carries the same name/columns
+/// `crate::preamble::PreambleBuilder` would have parsed out of the same
+/// statement.
+#[tokio::test]
+async fn create_table_span_carries_name_and_columns() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/edge_cases/default.sql");
+    let (spans, _) = map_of(&path).await;
+    let widgets = spans
+        .iter()
+        .find(|s| matches!(&s.body, SpanBody::Table { name, .. } if name == "public.widgets"))
+        .expect("public.widgets must be a Table span");
+    let SpanBody::Table { columns, .. } = &widgets.body else { unreachable!() };
+    assert!(columns.iter().any(|(name, _)| name == "id"));
+}
+
+/// A trailing `ALTER TABLE ... OWNER TO` (no TOC comment of its own) tiles
+/// as its own `Unparsed` span, immediately adjacent to its table's span —
+/// exactly the "no grouping in this slice" behavior the module docs
+/// describe.
+#[tokio::test]
+async fn alter_owner_to_is_its_own_adjacent_unparsed_span() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/objects/default.sql");
+    let (spans, _) = map_of(&path).await;
+    let (i, _) = spans
+        .iter()
+        .enumerate()
+        .find(|(_, s)| matches!(&s.body, SpanBody::Table { name, .. } if name == "objects.widgets"))
+        .expect("objects.widgets must be a Table span");
+    let next = &spans[i + 1];
+    assert_eq!(next.body, SpanBody::Unparsed);
+    assert_eq!(next.start, spans[i].end, "adjacent spans must share a boundary — no gap");
+}
+
+/// The file prologue (banner, `\restrict`, version headers, the
+/// `SET`/`set_config` block) and epilogue (`\unrestrict`) all classify as
+/// framing, never as an object.
+#[tokio::test]
+async fn prologue_and_epilogue_classify_as_framing() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/edge_cases/default.sql");
+    let (spans, _) = map_of(&path).await;
+    assert_eq!(spans[0].body, SpanBody::Framing);
+    assert_eq!(spans.last().unwrap().body, SpanBody::Framing);
+}
+
+#[tokio::test]
+async fn tiling_issue_reports_a_gap() {
+    use pgdump_query::{Span, SpanBody as Body};
+    let spans = vec![
+        Span { start: 0, end: 10, database: None, body: Body::Framing },
+        Span { start: 12, end: 20, database: None, body: Body::Framing },
+    ];
+    let issues = check_tiling(&spans, 20);
+    assert_eq!(
+        issues,
+        vec![TilingIssue::Discontinuity { after_index: 0, span_end: 10, next_start: 12 }]
+    );
+}
+
+#[tokio::test]
+async fn tiling_issue_reports_an_overlap() {
+    use pgdump_query::{Span, SpanBody as Body};
+    let spans = vec![
+        Span { start: 0, end: 10, database: None, body: Body::Framing },
+        Span { start: 8, end: 20, database: None, body: Body::Framing },
+    ];
+    let issues = check_tiling(&spans, 20);
+    assert_eq!(
+        issues,
+        vec![TilingIssue::Discontinuity { after_index: 0, span_end: 10, next_start: 8 }]
+    );
+}
+
+#[tokio::test]
+async fn tiling_issue_reports_a_short_final_span() {
+    use pgdump_query::{Span, SpanBody as Body};
+    let spans = vec![Span { start: 0, end: 10, database: None, body: Body::Framing }];
+    let issues = check_tiling(&spans, 20);
+    assert_eq!(issues, vec![TilingIssue::DoesNotReachEnd { last_end: 10, expected_end: 20 }]);
+}
+
+/// An `Unscanned` tail is a legitimate, tiling shape — a prefix-covering
+/// partial scan (`roadmap-phase3-object-inventory.md`, "Scan coverage is a
+/// prefix, expressed as a span") is not exempt from the invariant.
+#[tokio::test]
+async fn an_unscanned_tail_tiles_cleanly() {
+    use pgdump_query::{Span, SpanBody as Body};
+    let spans = vec![
+        Span { start: 0, end: 10, database: None, body: Body::Framing },
+        Span { start: 10, end: 20, database: None, body: Body::Unscanned },
+    ];
+    assert!(check_tiling(&spans, 20).is_empty());
+}
+
+#[tokio::test]
+async fn empty_span_list_against_a_zero_length_scan_tiles_cleanly() {
+    assert!(check_tiling(&[], 0).is_empty());
+}

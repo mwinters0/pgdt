@@ -1,10 +1,12 @@
-//! On-disk structure cache: round-tripping, and the "unusable cache is
-//! treated as absent" contract `docs/design/roadmap-phase1-mvp.md` requires.
+//! On-disk structure cache: round-tripping, the "unusable cache is treated
+//! as absent" contract `docs/design/roadmap-phase1-mvp.md` requires, and the
+//! source-identity check `docs/design/roadmap-phase3-object-inventory.md`
+//! ("Cache: the dump file's identity is checked, not assumed") adds on top.
 
 use std::path::{Path, PathBuf};
 
-use pgdump_query::cache::CacheMode;
-use pgdump_query::{Error, LocalFileSource, ScanOptions, build_index, cache};
+use pgdump_query::cache::{CacheMode, CacheStatus};
+use pgdump_query::{ByteRangeSource, Error, LocalFileSource, ScanOptions, build_index, cache};
 
 fn edge_cases() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/edge_cases.sql")
@@ -18,19 +20,21 @@ fn colocated_path_appends_the_cache_suffix() {
     );
 }
 
-#[test]
-fn missing_cache_file_is_treated_as_absent() {
+#[tokio::test]
+async fn missing_cache_file_is_treated_as_absent() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("nonexistent.dqcache");
-    assert!(cache::load(&path).unwrap().is_none());
+    let source = LocalFileSource::open(edge_cases()).unwrap();
+    assert_eq!(cache::load(&path, &source).await.unwrap(), CacheStatus::Absent);
 }
 
-#[test]
-fn foreign_bytes_at_the_cache_path_are_treated_as_absent() {
+#[tokio::test]
+async fn foreign_bytes_at_the_cache_path_are_treated_as_absent() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("garbage.dqcache");
     std::fs::write(&path, b"not a cache file").unwrap();
-    assert!(cache::load(&path).unwrap().is_none());
+    let source = LocalFileSource::open(edge_cases()).unwrap();
+    assert_eq!(cache::load(&path, &source).await.unwrap(), CacheStatus::Absent);
 }
 
 /// A saved index round-trips exactly, including the still-reserved-and-
@@ -49,8 +53,14 @@ async fn saved_index_round_trips_exactly() {
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql.dqcache");
-    cache::save(&path, &index).unwrap();
-    let loaded = cache::load(&path).unwrap().expect("a freshly saved cache must load");
+    cache::save(&path, &source, &index).await.unwrap();
+    let loaded = match cache::load(&path, &source).await.unwrap() {
+        CacheStatus::Valid { index, mtime_changed } => {
+            assert!(!mtime_changed, "just-saved cache must match the source's current mtime");
+            index
+        }
+        CacheStatus::Absent => panic!("a freshly saved cache must load"),
+    };
 
     assert_eq!(loaded, index);
 }
@@ -63,9 +73,12 @@ async fn save_overwrites_an_existing_cache() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql.dqcache");
     std::fs::write(&path, b"stale placeholder").unwrap();
-    cache::save(&path, &index).unwrap();
+    cache::save(&path, &source, &index).await.unwrap();
 
-    assert_eq!(cache::load(&path).unwrap().as_ref(), Some(&index));
+    assert_eq!(
+        cache::load(&path, &source).await.unwrap(),
+        CacheStatus::Valid { index, mtime_changed: false }
+    );
 }
 
 /// A write failure (here: parent directory doesn't exist) must propagate as
@@ -77,7 +90,55 @@ async fn save_propagates_write_failures() {
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("no-such-subdir").join("edge_cases.sql.dqcache");
-    assert!(matches!(cache::save(&path, &index), Err(Error::Io(_))));
+    assert!(matches!(cache::save(&path, &source, &index).await, Err(Error::Io(_))));
+}
+
+/// A cache saved against a differently-sized file is invalidated outright
+/// (`Absent`) — every offset it holds could be wrong.
+#[tokio::test]
+async fn size_mismatch_invalidates_the_cache() {
+    let source = LocalFileSource::open(edge_cases()).unwrap();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("edge_cases.sql.dqcache");
+    cache::save(&path, &source, &index).await.unwrap();
+
+    let dump_bytes = std::fs::read(edge_cases()).unwrap();
+    let grown = dir.path().join("grown.sql");
+    let mut grown_bytes = dump_bytes.clone();
+    grown_bytes.push(b'\n');
+    std::fs::write(&grown, &grown_bytes).unwrap();
+    let grown_source = LocalFileSource::open(&grown).unwrap();
+    assert_ne!(grown_source.size().await.unwrap(), source.size().await.unwrap());
+
+    assert_eq!(cache::load(&path, &grown_source).await.unwrap(), CacheStatus::Absent);
+}
+
+/// An mtime mismatch alone is a loud warning, not grounds for invalidation
+/// — the cache still loads as `Valid`. Simulated by touching the dump file's
+/// mtime forward after the cache was saved, without changing its size.
+#[tokio::test]
+async fn mtime_mismatch_alone_does_not_invalidate_the_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("edge_cases.sql");
+    std::fs::copy(edge_cases(), &dump).unwrap();
+    let source = LocalFileSource::open(&dump).unwrap();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+
+    let path = cache::colocated_path(&dump);
+    cache::save(&path, &source, &index).await.unwrap();
+
+    let future = std::time::SystemTime::now() + std::time::Duration::from_secs(3600);
+    std::fs::File::options().write(true).open(&dump).unwrap().set_modified(future).unwrap();
+
+    match cache::load(&path, &source).await.unwrap() {
+        CacheStatus::Valid { index: loaded, mtime_changed } => {
+            assert!(mtime_changed);
+            assert_eq!(loaded, index);
+        }
+        CacheStatus::Absent => panic!("an mtime-only mismatch must not invalidate the cache"),
+    }
 }
 
 #[test]
@@ -103,19 +164,19 @@ async fn disabled_cache_ignores_an_existing_file_and_persists_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let dump = dir.path().join("edge_cases.sql");
     let path = cache::colocated_path(&dump);
-    cache::save(&path, &index).unwrap();
+    cache::save(&path, &source, &index).await.unwrap();
     assert!(path.exists());
 
     let mode = CacheMode::resolve(&dump, Some(Path::new("none")));
     assert_eq!(mode, CacheMode::Disabled);
 
     // The existing valid cache at the colocated path is ignored, not read.
-    assert!(mode.load().unwrap().is_none());
+    assert!(mode.load(&source).await.unwrap().is_none());
 
     // Saving under a disabled mode is a no-op: it must not touch whatever is
     // (or isn't) at the would-be colocated path.
     std::fs::write(&path, b"clobbered after the disabled mode was resolved").unwrap();
-    mode.save(&index).unwrap();
+    mode.save(&source, &index).await.unwrap();
     assert_eq!(std::fs::read(&path).unwrap(), b"clobbered after the disabled mode was resolved");
 }
 

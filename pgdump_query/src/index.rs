@@ -200,7 +200,7 @@ pub async fn preamble_only<S: ByteRangeSource>(
     options: &ScanOptions,
     cache: &CacheMode,
 ) -> Result<DumpMetadata> {
-    let mut base_index = cache.load()?.unwrap_or_default();
+    let mut base_index = cache.load(source).await?.unwrap_or_default();
     let known = base_index
         .metadata
         .as_ref()
@@ -210,7 +210,7 @@ pub async fn preamble_only<S: ByteRangeSource>(
         let (metadata, preamble_end) = scan_preamble(source, options).await?;
         base_index.metadata = Some(metadata);
         base_index.scanned_through = base_index.scanned_through.max(preamble_end);
-        cache.save(&base_index)?;
+        cache.save(source, &base_index).await?;
     }
     Ok(base_index.metadata.unwrap_or_default())
 }

@@ -457,6 +457,42 @@ fn apply_alter_type_add_value(types: &mut [TypeDef], rest: &str) {
     }
 }
 
+/// The three statement shapes [`classify_statement`] recognizes directly
+/// (out of this module's five triggers — `ALTER TYPE ADD VALUE` is the
+/// fourth, handled by [`apply_alter_type_add_value`] instead since it
+/// mutates an already-open [`TypeDef`] rather than introducing a new one).
+/// Shared by [`PreambleBuilder::dispatch`] and [`crate::map`]'s per-span
+/// classification, which has no open `TypeDef` to fold an `ADD VALUE` into
+/// (unlike `PreambleBuilder`, its span-level view treats one as [`crate::map::SpanBody::Unparsed`]).
+pub(crate) enum StatementShape {
+    Table { name: String, columns: Vec<(String, String)> },
+    Type(TypeDef),
+    Extension(Extension),
+}
+
+/// Classify a complete statement (see [`statement_complete`]) as one of
+/// this module's recognized `CREATE` shapes, or `None` for anything else —
+/// including `ALTER TYPE ADD VALUE`, which needs an already-open `TypeDef`
+/// to fold into (see [`StatementShape`]'s docs) rather than being
+/// classifiable from its own text alone.
+pub(crate) fn classify_statement(stmt: &str) -> Option<StatementShape> {
+    let trimmed = stmt.trim_start();
+    if let Some(rest) = strip_kw(trimmed, "CREATE TABLE") {
+        return parse_create_table(rest)
+            .map(|(name, columns)| StatementShape::Table { name, columns });
+    }
+    if let Some(rest) = strip_kw(trimmed, "CREATE TYPE") {
+        return parse_create_type(rest).map(StatementShape::Type);
+    }
+    if let Some(rest) = strip_kw(trimmed, "CREATE DOMAIN") {
+        return parse_create_domain(rest).map(StatementShape::Type);
+    }
+    if let Some(rest) = strip_kw(trimmed, "CREATE EXTENSION") {
+        return parse_create_extension(rest).map(StatementShape::Extension);
+    }
+    None
+}
+
 /// `\connect <name>` — a bare prefix check on a line the scanner already
 /// holds. Exposed to `crate::stream`'s live scan too (Phase 2.3.3,
 /// `docs/design/roadmap-phase2-typed-columns.md`, "One target per query"):
@@ -469,34 +505,109 @@ pub(crate) fn parse_connect(line: &str) -> Option<String> {
 }
 
 /// Whether `buf` (everything accumulated for a statement so far) is a
-/// complete SQL statement: parens balanced, not mid string literal, and
-/// ending in `;`. `pg_dump`'s own DDL is simple enough (no dollar-quoted or
-/// otherwise `;`-containing content inside these five statement shapes)
-/// that quote/paren tracking alone is sufficient — it never needs to parse
-/// an arbitrary expression.
-fn statement_complete(buf: &str) -> bool {
-    let mut depth: i32 = 0;
-    let mut in_string = false;
+/// complete SQL statement: parens balanced, not mid string literal or
+/// double-quoted identifier or `--` line comment, and ending in `;`.
+///
+/// Tracks single-quoted strings (`''` doubling), double-quoted identifiers
+/// (`""` doubling), and `--` line comments (closed by the next `\n` in
+/// `buf`, since `buf` accumulates multiple physical lines joined by `\n` —
+/// see [`crate::map`]'s module docs for why a comment can't just be
+/// stripped up front). Without double-quote and comment awareness, an
+/// apostrophe inside either (`public."it's"`, `-- it's here`) would open a
+/// string that never closes and swallow every following line into the same
+/// pending statement forever — unreachable through this module's five
+/// `CREATE`/`ALTER TYPE` triggers (`pg_dump` emits neither shape for them),
+/// but reachable by [`crate::map`]'s general statement scan, which is what
+/// this hardening is for (`docs/status/history/2026-08-23.md`, "The Phase 2
+/// statement accumulator is not yet safe for arbitrary statements").
+/// `E'…'` escapes are not a concern: `pg_dump` sets
+/// `standard_conforming_strings = on`, so `''` is the only in-string escape.
+/// Where [`statement_complete`]'s scan over `buf` ends up: whether it's
+/// mid string/double-quoted-identifier/line-comment, and the paren depth.
+/// Exposed as [`in_open_quote`] for [`crate::map`]'s boundary-reassertion
+/// check — see that function's docs.
+struct ScanState {
+    depth: i32,
+    in_string: bool,
+    in_dquote: bool,
+    in_comment: bool,
+}
+
+fn scan_buf(buf: &str) -> ScanState {
+    let mut st = ScanState { depth: 0, in_string: false, in_dquote: false, in_comment: false };
     let mut chars = buf.chars().peekable();
     while let Some(c) = chars.next() {
-        if in_string {
+        if st.in_comment {
+            if c == '\n' {
+                st.in_comment = false;
+            }
+            continue;
+        }
+        if st.in_string {
             if c == '\'' {
                 if chars.peek() == Some(&'\'') {
                     chars.next();
                 } else {
-                    in_string = false;
+                    st.in_string = false;
+                }
+            }
+            continue;
+        }
+        if st.in_dquote {
+            if c == '"' {
+                if chars.peek() == Some(&'"') {
+                    chars.next();
+                } else {
+                    st.in_dquote = false;
                 }
             }
             continue;
         }
         match c {
-            '\'' => in_string = true,
-            '(' => depth += 1,
-            ')' => depth -= 1,
+            '\'' => st.in_string = true,
+            '"' => st.in_dquote = true,
+            '-' if chars.peek() == Some(&'-') => {
+                chars.next();
+                st.in_comment = true;
+            }
+            '(' => st.depth += 1,
+            ')' => st.depth -= 1,
             _ => {}
         }
     }
-    !in_string && depth == 0 && buf.trim_end().ends_with(';')
+    st
+}
+
+pub(crate) fn statement_complete(buf: &str) -> bool {
+    let st = scan_buf(buf);
+    !st.in_string
+        && !st.in_dquote
+        && !st.in_comment
+        && st.depth == 0
+        && buf.trim_end().ends_with(';')
+}
+
+/// Whether `buf` ends inside an open single-quoted string or double-quoted
+/// identifier — the one case where a line that syntactically *looks* like a
+/// fresh boundary (starts with `--`, in [`crate::map`]'s case) is actually
+/// just string content spanning multiple physical lines, and must not be
+/// treated as one. `pg_dump` never emits a `--` comment inside a
+/// non-dollar-quoted statement's own parens, so paren depth doesn't gate
+/// this the same way — only being mid-string does.
+pub(crate) fn in_open_quote(buf: &str) -> bool {
+    let st = scan_buf(buf);
+    st.in_string || st.in_dquote
+}
+
+/// Append `line` to a statement buffer being accumulated line by line,
+/// joining with `\n` — but never a leading one before the buffer's first
+/// line. Shared by [`PreambleBuilder::feed_line`] and [`crate::map`]'s
+/// general statement scan.
+pub(crate) fn push_stmt_line(buf: &mut String, line: &str) {
+    if !buf.is_empty() {
+        buf.push('\n');
+    }
+    buf.push_str(line);
 }
 
 struct PendingStmt {
@@ -610,8 +721,7 @@ impl PreambleBuilder {
         // first), so a line reaching here while `pending.is_some()` is
         // always mid-statement.
         if let Some(pending) = &mut self.pending {
-            pending.buf.push('\n');
-            pending.buf.push_str(&line);
+            push_stmt_line(&mut pending.buf, &line);
             if statement_complete(&pending.buf) {
                 let stmt = self.pending.take().unwrap().buf;
                 self.dispatch(&stmt);
@@ -658,25 +768,17 @@ impl PreambleBuilder {
     }
 
     fn dispatch(&mut self, stmt: &str) {
-        let trimmed = stmt.trim_start();
-        if let Some(rest) = strip_kw(trimmed, "CREATE TABLE") {
-            if let Some((name, cols)) = parse_create_table(rest) {
-                self.current.tables.insert(name, cols);
+        match classify_statement(stmt) {
+            Some(StatementShape::Table { name, columns }) => {
+                self.current.tables.insert(name, columns);
             }
-        } else if let Some(rest) = strip_kw(trimmed, "CREATE TYPE") {
-            if let Some(def) = parse_create_type(rest) {
-                self.current.types.push(def);
+            Some(StatementShape::Type(def)) => self.current.types.push(def),
+            Some(StatementShape::Extension(ext)) => self.current.extensions.push(ext),
+            None => {
+                if let Some(rest) = strip_kw(stmt.trim_start(), "ALTER TYPE") {
+                    apply_alter_type_add_value(&mut self.current.types, rest);
+                }
             }
-        } else if let Some(rest) = strip_kw(trimmed, "CREATE DOMAIN") {
-            if let Some(def) = parse_create_domain(rest) {
-                self.current.types.push(def);
-            }
-        } else if let Some(rest) = strip_kw(trimmed, "CREATE EXTENSION") {
-            if let Some(ext) = parse_create_extension(rest) {
-                self.current.extensions.push(ext);
-            }
-        } else if let Some(rest) = strip_kw(trimmed, "ALTER TYPE") {
-            apply_alter_type_add_value(&mut self.current.types, rest);
         }
     }
 
@@ -1010,5 +1112,53 @@ mod tests {
         assert!(db.tables.is_empty());
         assert!(db.types.is_empty());
         assert_eq!(db.server_version.as_deref(), Some("16.15"));
+    }
+
+    /// The gap `docs/status/history/2026-08-23.md` flagged: an apostrophe in
+    /// comment prose used to open a string that never closed.
+    #[test]
+    fn statement_complete_is_not_confused_by_an_apostrophe_in_a_line_comment() {
+        assert!(statement_complete("CREATE TABLE t (id integer);\n-- it's here\nSELECT 1;"));
+        // Not complete until a real `;` follows the comment.
+        assert!(!statement_complete("SELECT 1\n-- it's here"));
+    }
+
+    /// The gap `docs/status/history/2026-08-23.md` flagged: an apostrophe
+    /// inside a double-quoted identifier used to open a string that never
+    /// closed.
+    #[test]
+    fn statement_complete_is_not_confused_by_an_apostrophe_in_a_double_quoted_identifier() {
+        assert!(statement_complete(r#"CREATE TABLE public."it's" (id integer);"#));
+    }
+
+    #[test]
+    fn statement_complete_handles_doubled_double_quotes() {
+        assert!(statement_complete(r#"CREATE TABLE public."a""b" (id integer);"#));
+        assert!(!statement_complete(r#"CREATE TABLE public."a""b (id integer);"#));
+    }
+
+    #[test]
+    fn statement_complete_a_comment_run_to_end_of_buffer_is_never_complete() {
+        // No trailing `\n` to close the comment — matches a statement scan
+        // whose last fed line is itself a bare comment.
+        assert!(!statement_complete("SELECT 1;\n-- trailing comment, no newline after it"));
+    }
+
+    #[test]
+    fn classify_statement_recognizes_the_three_span_shapes() {
+        assert!(matches!(
+            classify_statement("CREATE TABLE public.t (id integer);"),
+            Some(StatementShape::Table { .. })
+        ));
+        assert!(matches!(
+            classify_statement("CREATE TYPE public.mood AS ENUM ('sad');"),
+            Some(StatementShape::Type(_))
+        ));
+        assert!(matches!(
+            classify_statement("CREATE EXTENSION pgcrypto;"),
+            Some(StatementShape::Extension(_))
+        ));
+        assert!(classify_statement("ALTER TABLE t OWNER TO postgres;").is_none());
+        assert!(classify_statement("ALTER TYPE t ADD VALUE 'x';").is_none());
     }
 }
