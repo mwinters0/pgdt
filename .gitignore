@@ -4,3 +4,4 @@
 /scripts/.venv
 __pycache__/
 /runs
+*.dqcache

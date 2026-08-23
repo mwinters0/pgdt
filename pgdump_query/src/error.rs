@@ -34,4 +34,14 @@ pub enum Error {
         database.as_deref().unwrap_or("(unnamed)")
     )]
     MetadataNotScanned { database: Option<String> },
+    #[error(
+        "{table}.{column} at row offset {row_offset}: value `{value}` does not parse as its mapped type `{declared_type}`"
+    )]
+    FieldDecode {
+        table: String,
+        column: String,
+        row_offset: u64,
+        declared_type: String,
+        value: String,
+    },
 }

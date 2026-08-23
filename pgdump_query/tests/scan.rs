@@ -5,7 +5,7 @@ use std::fmt::Write as _;
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 
-use pgdump_query::copy::{decode_field, split_fields};
+use pgdump_query::copy::{decode_field, encode_field, split_fields};
 use pgdump_query::{Event, LocalFileSource, ScanOptions, build_index, scan};
 
 fn edge_cases() -> PathBuf {
@@ -174,6 +174,11 @@ async fn data_only_dumps_carry_every_block() {
 /// bake in the same misreading twice. Covers the escapes pg_dump emits
 /// (`\b \t \n \v \f \r \\`), the raw control bytes it does not escape, and
 /// 2-, 3- and 4-byte UTF-8.
+///
+/// Also proves the full on-disk-bytes round trip (`raw -> decode_field ->
+/// encode_field -> raw`), not just the decoded-text one above: `encode_field`
+/// re-escaping each decoded field must reproduce the exact bytes `pg_dump`
+/// wrote, for every codepoint in the table.
 #[tokio::test]
 async fn copy_text_escaping_round_trips_through_postgres() {
     for version in [13, 16, 18] {
@@ -186,7 +191,9 @@ async fn copy_text_escaping_round_trips_through_postgres() {
                 Event::CopyStart(start) => in_escapes = start.header.matches("public.escapes"),
                 Event::CopyEnd(_) => in_escapes = false,
                 Event::Row(row) if in_escapes => {
-                    let fields: Vec<Option<String>> = split_fields(row.raw)
+                    let raw_fields: Vec<&[u8]> = split_fields(row.raw).collect();
+                    let fields: Vec<Option<String>> = raw_fields
+                        .iter()
                         .map(|f| decode_field(f).unwrap().map(|v| v.into_owned()))
                         .collect();
                     assert_eq!(fields.len(), 2, "pg_dump {version} escapes row {}", row.index);
@@ -198,6 +205,14 @@ async fn copy_text_escaping_round_trips_through_postgres() {
                         Some(expected.as_str()),
                         "pg_dump {version} codepoint {codepoint}",
                     );
+
+                    for (raw, decoded) in raw_fields.iter().zip(&fields) {
+                        assert_eq!(
+                            encode_field(decoded.as_deref()),
+                            *raw,
+                            "pg_dump {version} codepoint {codepoint}",
+                        );
+                    }
                     checked += 1;
                 }
                 Event::Row(_) => {}

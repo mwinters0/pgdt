@@ -13,7 +13,8 @@ use bytes::Bytes;
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
-    BatchOptions, ByteRangeSource, LocalFileSource, ScanOptions, build_index, cache, table_stream,
+    BatchOptions, ByteRangeSource, LocalFileSource, ScanOptions, build_index, cache, render_field,
+    table_stream,
 };
 
 fn edge_cases() -> PathBuf {
@@ -31,16 +32,8 @@ fn sandboxed_edge_cases() -> (tempfile::TempDir, PathBuf) {
 }
 
 fn rows_of(batch: &arrow::array::RecordBatch) -> Vec<Vec<Option<String>>> {
-    use arrow::array::{Array, StringViewArray};
-    let columns: Vec<&StringViewArray> = batch
-        .columns()
-        .iter()
-        .map(|c| c.as_any().downcast_ref::<StringViewArray>().unwrap())
-        .collect();
     (0..batch.num_rows())
-        .map(|row| {
-            columns.iter().map(|c| c.is_valid(row).then(|| c.value(row).to_string())).collect()
-        })
+        .map(|row| batch.columns().iter().map(|c| render_field(c.as_ref(), row)).collect())
         .collect()
 }
 

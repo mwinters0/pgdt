@@ -17,9 +17,9 @@ Phase 2 is **in progress**
 plus the `<N>.<M>` follow-ups each earned by changing an already-landed
 slice's contract — 2.2.1, 2.3.1, 2.3.2, 2.3.3. As each one lands it gets a
 line in the checklist below linking to its notes doc, which holds the
-detail. Only 2.4 (decoders) and 2.5 (benchmarks) remain.
+detail. Only 2.5 (benchmarks) remains.
 
-Last updated: 2026-08-22.
+Last updated: 2026-08-23.
 
 ## Phase 2 progress
 
@@ -62,12 +62,19 @@ Last updated: 2026-08-22.
       flag, added alongside it so the error's own remedy is real),
       multirange recognition (`pgtype.rs`, `TypeKind::Range::multirange_type_name`).
       Notes: `docs/design/roadmap-phase2.3.3-one-target-behaviour-notes.md`
-- [ ] **2.4** Decoders, render-back, round-trip tests
+- [x] **2.4** Decoders + render-back for every non-deferred mapped type
+      (bool, ints, floats, numeric/decimal, date, time, timestamp/timestamptz,
+      uuid, bytea, enum), wired into `batch.rs` so a `RecordBatch`'s actual
+      columns match its `ResolvedSchema`; round-trip tests against real
+      `pg_dump` output using `SchemaMode::Strings` as the oracle, plus
+      `copy::encode_field` (COPY-text escaping's own inverse, alongside
+      `decode_field`) proving the on-disk-byte leg. Notes:
+      `docs/design/roadmap-phase2.4-decoders-notes.md`
 - [ ] **2.5** Benchmarks and the synthetic performance dataset
 
 ## Not started
 
-- **Phase 2, slices 2.4-2.5** — see the checklist above.
+- **Phase 2, slice 2.5** — see the checklist above.
 - **Phases 3-7** — not designed. See `docs/design/roadmap.md`.
 - **Benchmarks** (`criterion`) — not wired in.
 

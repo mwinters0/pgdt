@@ -3,12 +3,14 @@
 
 use std::path::{Path, PathBuf};
 
-use arrow::array::{Array, RecordBatch, StringViewArray};
+use arrow::array::RecordBatch;
 use arrow::datatypes::DataType;
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::resolve::{ColumnResolution, SchemaMode};
-use pgdump_query::{BatchOptions, BlockingTableIter, LocalFileSource, ScanOptions, table_stream};
+use pgdump_query::{
+    BatchOptions, BlockingTableIter, LocalFileSource, ScanOptions, render_field, table_stream,
+};
 
 fn edge_cases() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/edge_cases.sql")
@@ -31,15 +33,8 @@ fn types_fixture(version: u32, flag_set: &str) -> PathBuf {
 }
 
 fn rows_of(batch: &RecordBatch) -> Vec<Vec<Option<String>>> {
-    let columns: Vec<&StringViewArray> = batch
-        .columns()
-        .iter()
-        .map(|c| c.as_any().downcast_ref::<StringViewArray>().unwrap())
-        .collect();
     (0..batch.num_rows())
-        .map(|row| {
-            columns.iter().map(|c| c.is_valid(row).then(|| c.value(row).to_string())).collect()
-        })
+        .map(|row| batch.columns().iter().map(|c| render_field(c.as_ref(), row)).collect())
         .collect()
 }
 
@@ -224,13 +219,12 @@ async fn resume_at_a_block_boundary() {
     }
 }
 
-/// `TableStream::resolved_schema` reports the *target* typing this build
-/// already understands (`docs/design/roadmap-phase2-typed-columns.md`,
-/// "API shape changes"), even though every `RecordBatch` this same stream
-/// yields is still all-`Utf8View` in Phase 2.3 — see `resolve.rs`'s module
-/// docs for why the two schemas deliberately disagree at this slice.
+/// `TableStream::resolved_schema` reports the same typing the actual
+/// `RecordBatch`es carry (Phase 2.4 wired the decoders in — see
+/// `batch.rs`'s module docs) — `resolved_schema` is a preview available
+/// before/during consumption, not a second, independent schema.
 #[tokio::test]
-async fn resolved_schema_reflects_the_dumps_ddl_while_batches_stay_utf8view() {
+async fn resolved_schema_matches_the_batches_it_describes() {
     let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
     let batch_options = BatchOptions { schema_mode: SchemaMode::Typed, ..Default::default() };
     let mut stream = table_stream(
@@ -247,10 +241,13 @@ async fn resolved_schema_reflects_the_dumps_ddl_while_batches_stay_utf8view() {
         batches.push(batch);
     }
     assert_eq!(batches.len(), 1);
-    // The actual batch: every field Utf8View, decoders don't exist yet.
-    assert!(batches[0].schema().fields().iter().all(|f| f.data_type() == &DataType::Utf8View));
+    assert_eq!(batches[0].schema().field(0).data_type(), &DataType::Int32, "id");
+    assert_eq!(batches[0].schema().field(1).data_type(), &DataType::Int16, "v_smallint");
+    assert_eq!(batches[0].schema().field(2).data_type(), &DataType::Int32, "v_integer");
+    assert_eq!(batches[0].schema().field(3).data_type(), &DataType::Int64, "v_bigint");
 
     let resolved = stream.resolved_schema();
+    assert_eq!(*resolved.schema, *batches[0].schema());
     assert_eq!(resolved.schema.field(0).data_type(), &DataType::Int32, "id");
     assert_eq!(resolved.schema.field(1).data_type(), &DataType::Int16, "v_smallint");
     assert_eq!(resolved.schema.field(2).data_type(), &DataType::Int32, "v_integer");

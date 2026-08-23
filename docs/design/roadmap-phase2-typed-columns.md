@@ -810,12 +810,22 @@ Throughput is the benchmarks' job; correctness is this one's. A test asserting
 `id` came back as `Int32` proves the plumbing, not the parse.
 
 **The primary test is a round-trip through the render-back path**: for every row
-of every fixture, decode the COPY TEXT field to a typed value, render it back to
-PostgreSQL text, and assert it equals the original bytes. This is self-checking
+of every fixture, decode the COPY TEXT field's already-unescaped text
+(`copy::decode_field`'s output) to a typed value, render it back to text, and
+assert it equals that same decoded text — `SchemaMode::Strings`, Phase 1's
+untouched behavior, is the trustworthy oracle for it. This is self-checking
 in the way `public.escapes` already is — no expected values are written by hand,
 so a test cannot encode the same misreading twice — and it catches the failures
 that matter: a timestamp parsed to the wrong instant, a decimal losing a digit,
 a float not round-tripping at `extra_float_digits = 3`.
+
+Decode/render-back and COPY-text escaping are separate concerns living in
+separate layers (`docs/design/layering.md`): this test never touches the raw
+on-disk COPY-escaped bytes, only `decode_field`'s already-unescaped output.
+The escaping/unescaping leg itself — raw on-disk bytes through
+`decode_field` and back through `copy::encode_field` — has its own round-trip
+test, `copy_text_escaping_round_trips_through_postgres` in `tests/scan.rs`,
+against the same `public.escapes` fixture.
 
 It also means the `pgdq query` render-back decision earns its keep twice: the
 CLI's output format and the test oracle are the same code path.

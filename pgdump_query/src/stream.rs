@@ -48,7 +48,7 @@ use arrow::buffer::Buffer;
 use async_stream::try_stream;
 use futures::Stream;
 
-use crate::batch::{BatchOptions, RowBatcher, SourceChunk, invalidate_block_cache, schema_for};
+use crate::batch::{BatchOptions, RowBatcher, SourceChunk, column_names, invalidate_block_cache};
 use crate::cache::CacheMode;
 use crate::copy::{CopyHeader, DELIMITER};
 use crate::index::{CopyBlock, DumpIndex, scan_preamble};
@@ -210,10 +210,10 @@ impl<'a> TableStream<'a> {
     }
 }
 
-/// Build both the batch schema (always all-`Utf8View` in Phase 2.3 — see
-/// [`TableStream::resolved_schema`]'s docs) and the preview
-/// [`ResolvedSchema`] for a table-matching block, from the same column
-/// names, scoped to `database` — the block's own attribution, never a guess
+/// Build the [`ResolvedSchema`] for a table-matching block — the actual
+/// batch schema a [`RowBatcher`] built from it carries, as of Phase 2.4 (see
+/// [`TableStream::resolved_schema`]'s docs) — scoped to `database`, the
+/// block's own attribution, never a guess
 /// (`docs/design/roadmap-phase2-typed-columns.md`, "One target per query").
 ///
 /// `Typed` mode against metadata that doesn't (yet) have a *complete* entry
@@ -228,18 +228,15 @@ fn resolve_block(
     metadata: Option<&DumpMetadata>,
     database: Option<&str>,
     schema_mode: crate::resolve::SchemaMode,
-) -> Result<(arrow::datatypes::SchemaRef, ResolvedSchema)> {
-    let batch_schema = schema_for(header, field_count);
+) -> Result<ResolvedSchema> {
     if schema_mode == crate::resolve::SchemaMode::Typed
         && let Some(meta) = metadata
         && !meta.databases.iter().any(|db| db.name.as_deref() == database && db.preamble_complete)
     {
         return Err(Error::MetadataNotScanned { database: database.map(str::to_string) });
     }
-    let names: Vec<String> = batch_schema.fields().iter().map(|f| f.name().clone()).collect();
-    let resolved =
-        resolve_columns(&header.qualified_name(), &names, metadata, database, schema_mode);
-    Ok((batch_schema, resolved))
+    let names = column_names(header, field_count);
+    Ok(resolve_columns(&header.qualified_name(), &names, metadata, database, schema_mode))
 }
 
 /// Reconstruct the in-progress block state a [`ResumeToken`] captured, if
@@ -261,19 +258,20 @@ fn resume_state(
         .in_copy
         .as_ref()
         .map(|ic| {
-            let (schema, r) = resolve_block(
+            let r = resolve_block(
                 &ic.header,
                 ic.field_count,
                 metadata,
                 ic.database.as_deref(),
                 batch_options.schema_mode,
             )?;
+            let predicate_index = resolve_predicate_index(predicate, &r.schema, ic.header_offset)?;
+            let batcher = RowBatcher::new(&r, ic.header.qualified_name(), batch_options.clone());
             resolved = Some(r);
-            let predicate_index = resolve_predicate_index(predicate, &schema, ic.header_offset)?;
             Ok::<_, Error>((
                 ic.header_offset,
                 ic.header.clone(),
-                RowBatcher::new(schema, batch_options.clone()),
+                batcher,
                 predicate_index,
                 ic.database.clone(),
             ))
@@ -556,23 +554,28 @@ where
                                 if start.header.columns.is_empty() {
                                     pending = Some((start.header, start.header_offset, block_database));
                                 } else {
-                                    let (schema, resolved) = resolve_block(
+                                    let resolved = resolve_block(
                                         &start.header,
                                         start.header.columns.len(),
                                         metadata.as_ref(),
                                         block_database.as_deref(),
                                         batch_options.schema_mode,
                                     )?;
-                                    *resolved_schema_for_stream.lock().unwrap() = resolved;
                                     let predicate_index = resolve_predicate_index(
                                         predicate.as_ref(),
-                                        &schema,
+                                        &resolved.schema,
                                         start.header_offset,
                                     )?;
+                                    let batcher = RowBatcher::new(
+                                        &resolved,
+                                        start.header.qualified_name(),
+                                        batch_options.clone(),
+                                    );
+                                    *resolved_schema_for_stream.lock().unwrap() = resolved;
                                     active = Some((
                                         start.header_offset,
                                         start.header,
-                                        RowBatcher::new(schema, batch_options.clone()),
+                                        batcher,
                                         predicate_index,
                                         block_database,
                                     ));
@@ -583,23 +586,28 @@ where
                             if let Some((header, header_offset, block_database)) = pending.take() {
                                 let field_count =
                                     memchr::memchr_iter(DELIMITER, row.raw).count() + 1;
-                                let (schema, resolved) = resolve_block(
+                                let resolved = resolve_block(
                                     &header,
                                     field_count,
                                     metadata.as_ref(),
                                     block_database.as_deref(),
                                     batch_options.schema_mode,
                                 )?;
-                                *resolved_schema_for_stream.lock().unwrap() = resolved;
                                 let predicate_index = resolve_predicate_index(
                                     predicate.as_ref(),
-                                    &schema,
+                                    &resolved.schema,
                                     header_offset,
                                 )?;
+                                let batcher = RowBatcher::new(
+                                    &resolved,
+                                    header.qualified_name(),
+                                    batch_options.clone(),
+                                );
+                                *resolved_schema_for_stream.lock().unwrap() = resolved;
                                 active = Some((
                                     header_offset,
                                     header,
-                                    RowBatcher::new(schema, batch_options.clone()),
+                                    batcher,
                                     predicate_index,
                                     block_database,
                                 ));

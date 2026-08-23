@@ -1,6 +1,7 @@
 pub mod batch;
 pub mod cache;
 pub mod copy;
+pub mod decode;
 mod error;
 pub mod index;
 mod io;
@@ -11,7 +12,7 @@ pub mod resolve;
 pub mod scan;
 pub mod stream;
 
-pub use batch::{BatchOptions, read_table};
+pub use batch::{BatchOptions, read_table, render_field};
 pub use copy::CopyHeader;
 pub use error::Error;
 pub use index::{CopyBlock, DumpIndex, RowGroupStats, SparseRowIndex, build_index, preamble_only};

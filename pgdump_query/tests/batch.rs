@@ -5,10 +5,10 @@
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 
-use arrow::array::{Array, RecordBatch, StringViewArray};
+use arrow::array::RecordBatch;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
-    BatchOptions, LocalFileSource, Predicate, PredicateOp, ScanOptions, read_table,
+    BatchOptions, LocalFileSource, Predicate, PredicateOp, ScanOptions, read_table, render_field,
 };
 
 fn edge_cases() -> PathBuf {
@@ -23,16 +23,16 @@ fn fixture(version: u32, name: &str) -> PathBuf {
         .join(format!("{name}.sql"))
 }
 
+/// Every column rendered back to text via [`render_field`] — works
+/// regardless of `SchemaMode`: a hand-written fixture with no DDL (like
+/// `edge_cases()`) resolves every column `Utf8View` either way, so this reads
+/// identically to a hardcoded `StringViewArray` downcast there, and also
+/// handles a real `pg_dump` fixture's typed columns
+/// (`docs/design/roadmap-phase2-typed-columns.md`, "CLI": render-back is
+/// exactly this build's own decode/render round trip).
 fn rows_of(batch: &RecordBatch) -> Vec<Vec<Option<String>>> {
-    let columns: Vec<&StringViewArray> = batch
-        .columns()
-        .iter()
-        .map(|c| c.as_any().downcast_ref::<StringViewArray>().unwrap())
-        .collect();
     (0..batch.num_rows())
-        .map(|row| {
-            columns.iter().map(|c| c.is_valid(row).then(|| c.value(row).to_string())).collect()
-        })
+        .map(|row| batch.columns().iter().map(|c| render_field(c.as_ref(), row)).collect())
         .collect()
 }
 
@@ -393,27 +393,37 @@ async fn resume_token_from_break_continues_correctly() {
 /// against a hand-transcribed literal risks baking in the same misreading
 /// twice). Exercises the zero-copy view path against every escape pg_dump
 /// emits, not just the hand-written edge cases.
+///
+/// Runs in both `SchemaMode`s — the one pair of existing tests that does
+/// (`docs/design/roadmap-phase2-typed-columns.md`, "Test strategy for
+/// existing coverage"): `codepoint` is `integer` (Int32 in `Typed`, Utf8View
+/// in `Strings`) but `value` (`text`) is `Utf8View` either way, so both modes
+/// must agree once rendered back through `rows_of`.
 #[tokio::test]
 async fn escapes_table_round_trips_through_postgres_batched() {
+    use pgdump_query::resolve::SchemaMode;
     for version in [13, 16, 18] {
-        let options = BatchOptions { max_rows: 17, max_bytes: None, ..Default::default() };
-        let (_, rows) = collect(
-            &fixture(version, "default"),
-            "public.escapes",
-            &ScanOptions::default(),
-            &options,
-        )
-        .await;
+        for schema_mode in [SchemaMode::Typed, SchemaMode::Strings] {
+            let options =
+                BatchOptions { max_rows: 17, max_bytes: None, schema_mode, ..Default::default() };
+            let (_, rows) = collect(
+                &fixture(version, "default"),
+                "public.escapes",
+                &ScanOptions::default(),
+                &options,
+            )
+            .await;
 
-        assert_eq!(rows.len(), 132, "pg_dump {version}");
-        for row in &rows {
-            let codepoint: u32 = row[0].as_deref().unwrap().parse().unwrap();
-            let expected = char::from_u32(codepoint).unwrap().to_string();
-            assert_eq!(
-                row[1].as_deref(),
-                Some(expected.as_str()),
-                "pg_dump {version} codepoint {codepoint}"
-            );
+            assert_eq!(rows.len(), 132, "pg_dump {version} {schema_mode:?}");
+            for row in &rows {
+                let codepoint: u32 = row[0].as_deref().unwrap().parse().unwrap();
+                let expected = char::from_u32(codepoint).unwrap().to_string();
+                assert_eq!(
+                    row[1].as_deref(),
+                    Some(expected.as_str()),
+                    "pg_dump {version} {schema_mode:?} codepoint {codepoint}"
+                );
+            }
         }
     }
 }

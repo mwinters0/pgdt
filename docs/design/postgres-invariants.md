@@ -570,3 +570,87 @@ statement is still built from a fixed format string with no options clause;
 `grep -rni csv src/bin/pg_dump/` — confirm it still matches nothing.
 
 ---
+
+## I14 — `real`/`double precision` switch to scientific notation at a fixed exponent threshold, not by digit count
+
+**Claim.** `float4out`/`float8out` render the shortest round-trip decimal
+(I4 already establishes this part) in fixed-point form when the value's
+decimal exponent is in `[-4, 6)` for `real` or `[-4, 15)` for `double
+precision`, and in scientific notation (`d.ddde±NN`, sign always shown,
+exponent zero-padded to at least 2 digits) otherwise. The threshold is the
+literal constant (6 / 15) — not the number of significant digits the
+shortest-round-trip representation happens to have, which is what a
+textbook `%g` implementation switches on instead.
+
+**Proof.** `float4out`/`float8out_internal` (`src/backend/utils/adt/float.c`)
+call `float_to_shortest_decimal_buf`/`double_to_shortest_decimal_buf`, which
+live in `src/common/f2s.c`/`d2s.c` (PostgreSQL's port of the public-domain
+Ryu algorithm). Each file's `to_chars` picks the format directly on the
+computed display exponent:
+
+```c
+// src/common/f2s.c
+if (exp >= -4 && exp < 6)
+    return to_chars_df(v, olength, result) + sign;
+// src/common/d2s.c
+if (exp >= -4 && exp < 15)
+    return to_chars_df(v, olength, result + index) + sign;
+```
+
+`6` and `15` are `FLT_DIG`/`DBL_DIG`'s values written as literals in the
+Ryu-derived formatter, not references to those macros (which are used
+elsewhere in `float.c` only for the *non*-shortest-decimal fallback path,
+`extra_float_digits <= 0`) — a coincidence of naming, not of code path, but
+the threshold value is identical either way.
+
+**Observed shape.** `real`: `1e5` → `100000`, `1e6` → `1e+06`. `double
+precision`: `1e14` → `100000000000000` (`1e14`, 15 digits), `1e15` →
+`1e+15`; `123456789012345` (15 digits, exponent 14) prints fixed,
+`1234567890123456` (16 digits, exponent 15) prints
+`1.234567890123456e+15` — digit count is not what switched it, the exponent
+crossing 15 is. Confirmed against a running `postgres:16-alpine`
+(`extra_float_digits = 3`) as well as the source above.
+
+**Relied on by:** `pgdump_query/src/decode.rs`'s `render_f32`/`render_f64`
+(`docs/design/roadmap-phase2.4-decoders-notes.md`), whose own fixed/scientific
+decision uses `FLT_DIG`/`DBL_DIG` (6/15) as the threshold for exactly this
+reason — matching digit-for-digit is necessary but not sufficient for the
+round-trip test in "Testing the mapping's correctness"
+(`roadmap-phase2-typed-columns.md`) to pass.
+**Re-verify:** `grep -n 'exp >= -4' src/common/f2s.c src/common/d2s.c` —
+confirm the literal thresholds are still `6` and `15`.
+
+---
+
+## I15 — `COPY TO`'s TEXT-format output uses a small, fixed escape set
+
+**Claim.** `COPY ... TO` (what `pg_dump` uses for table data) escapes exactly
+seven things in a field's text: the six control-character mnemonics `\b \f
+\n \r \t \v` and a literal backslash (doubled: `\\`). Every other byte,
+including other ASCII control characters and the high bytes of multibyte
+UTF-8, is written unescaped. The octal (`\NNN`) and hex (`\xNN`) forms are a
+`COPY FROM` *reader* convenience only — `COPY TO` never emits them.
+
+**Proof.** `CopyAttributeOutText` (`src/backend/commands/copyto.c`) switches
+on each byte: bytes `< 0x20` go through a `switch` that maps only `\b \f \n
+\r \t \v` to their letter form (`case '\b': c = 'b'; break;`, etc.) and falls
+through unescaped for anything else in that range unless it's the delimiter
+byte; `c == '\\'` is the only non-control-character case that gets
+backslash-prefixed. No code path in `copyto.c` ever writes `\NNN` or `\xNN`.
+
+**Verified against:** `CopyAttributeOutText` in `release-v18.6/src/backend/commands/copyto.c`
+(identical logic in `release-v16.15`), and the `public.escapes` fixture (one
+row per `chr(n)` codepoint) round-tripping through
+`pgdump_query::copy::encode_field`/`decode_field` byte-for-byte —
+`copy_text_escaping_round_trips_through_postgres`, `tests/scan.rs`.
+
+**Relied on by:** `pgdump_query/src/copy.rs`'s `encode_field`, which only
+implements these seven escapes and is therefore *not* a general COPY-text
+encoder — it is exactly `decode_field`'s inverse for text `pg_dump` could
+have produced, no more.
+
+**Re-verify:** `grep -n "case '\\\\b'" src/backend/commands/copyto.c` in a new
+major's source — confirm the mnemonic set and the "no octal/hex on output"
+shape are unchanged.
+
+---

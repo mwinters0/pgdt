@@ -2,13 +2,13 @@ use std::ops::ControlFlow;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use arrow::array::{Array, RecordBatch, StringViewArray};
+use arrow::array::RecordBatch;
 use clap::{Parser, Subcommand};
 use pgdump_query::cache::CacheMode;
 use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdump_query::{
     BatchOptions, DeferredKind, DumpIndex, DumpMetadata, LocalFileSource, Predicate, PredicateOp,
-    ScanOptions, build_index, preamble_only,
+    ScanOptions, build_index, preamble_only, render_field,
 };
 
 #[derive(Parser)]
@@ -136,19 +136,16 @@ fn strip_ci_suffix<'a>(s: &'a str, suffix: &str) -> Option<&'a str> {
 }
 
 /// Print one batch's rows tab-separated, `\N` for NULL — mirroring COPY
-/// TEXT's own NULL marker.
+/// TEXT's own NULL marker. Each field is rendered back to PostgreSQL text via
+/// [`render_field`], so output is byte-identical whether `--schema-mode` is
+/// `typed` or `strings` (`docs/design/roadmap-phase2-typed-columns.md`,
+/// "CLI").
 fn print_batch(batch: &RecordBatch) {
-    let columns: Vec<&StringViewArray> = batch
-        .columns()
-        .iter()
-        .map(|c| {
-            c.as_any().downcast_ref::<StringViewArray>().expect("query columns are all Utf8View")
-        })
-        .collect();
     for row in 0..batch.num_rows() {
-        let fields: Vec<String> = columns
+        let fields: Vec<String> = batch
+            .columns()
             .iter()
-            .map(|c| if c.is_valid(row) { c.value(row).to_string() } else { "\\N".to_string() })
+            .map(|c| render_field(c.as_ref(), row).unwrap_or_else(|| "\\N".to_string()))
             .collect();
         println!("{}", fields.join("\t"));
     }

@@ -1,29 +1,43 @@
-//! Row/batch assembly: turns rows inside a `COPY` block into `Utf8View`
-//! Arrow `RecordBatch`es.
+//! Row/batch assembly: turns rows inside a `COPY` block into typed Arrow
+//! `RecordBatch`es, one column builder per [`crate::resolve::ResolvedSchema`]
+//! field (Phase 2.4, "Output model" in
+//! `docs/design/roadmap-phase2-typed-columns.md`).
 //!
-//! Per `docs/design/roadmap-phase7-scan-performance.md`, a field that needs no
-//! unescaping is appended as a zero-copy view into the Arrow `Buffer` backing
-//! the read chunk it came from, rather than copied into the builder's own
-//! storage — retrofitting that later would be expensive, so it's built in now
-//! even though the rest of the performance work (roadmap Phase 7) is not. Only
-//! fields that need unescaping, or whose bytes straddle two read chunks, take
-//! a copying path.
+//! Per `docs/design/roadmap-phase7-scan-performance.md`, a `Utf8View` field
+//! that needs no unescaping is appended as a zero-copy view into the Arrow
+//! `Buffer` backing the read chunk it came from, rather than copied into the
+//! builder's own storage — retrofitting that later would be expensive, so
+//! it's built in even though the rest of the performance work (roadmap Phase
+//! 7) is not. Every other mapped type always copies: its decoded value has
+//! its own representation (an `i32`, a `[u8; 16]`, …), not a byte range of
+//! the original field.
 
 use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
-use arrow::array::builder::StringViewBuilder;
-use arrow::array::{ArrayRef, RecordBatch};
+use arrow::array::builder::{
+    BinaryBuilder, BooleanBuilder, Date32Builder, Decimal128Builder, Decimal256Builder,
+    FixedSizeBinaryBuilder, Float32Builder, Float64Builder, Int16Builder, Int32Builder,
+    Int64Builder, StringDictionaryBuilder, StringViewBuilder, Time64MicrosecondBuilder,
+    TimestampMicrosecondBuilder,
+};
+use arrow::array::{
+    Array, ArrayRef, BinaryArray, BooleanArray, Date32Array, Decimal128Array, Decimal256Array,
+    DictionaryArray, FixedSizeBinaryArray, Float32Array, Float64Array, Int16Array, Int32Array,
+    Int64Array, RecordBatch, StringArray, StringViewArray, Time64MicrosecondArray,
+    TimestampMicrosecondArray,
+};
 use arrow::buffer::Buffer;
-use arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use arrow::datatypes::{DataType, Int32Type, SchemaRef, TimeUnit};
 
 use crate::cache::CacheMode;
 use crate::copy::{CopyHeader, DELIMITER, decode_field};
+use crate::decode;
 use crate::io::ByteRangeSource;
 use crate::predicate::Predicate;
-use crate::resolve::SchemaMode;
+use crate::resolve::{ResolvedSchema, SchemaMode};
 use crate::scan::ScanOptions;
 use crate::{Error, Result};
 
@@ -37,10 +51,10 @@ pub struct BatchOptions {
     pub max_bytes: Option<usize>,
     /// Whether to resolve column types against the dump's DDL — see
     /// `docs/design/roadmap-phase2-typed-columns.md`, "Output model". Every
-    /// `RecordBatch` this build produces is still all-`Utf8View` regardless
-    /// (Phase 2.4 builds the decoders); this only controls what
-    /// `TableStream::resolved_schema`/`read_table`'s returned
-    /// [`crate::resolve::ResolvedSchema`] reports.
+    /// `RecordBatch` this build produces carries the same schema as its
+    /// query's [`crate::resolve::ResolvedSchema`] — a column this build has
+    /// no mapping for stays `Utf8View`, same as `SchemaMode::Strings` maps
+    /// every column.
     pub schema_mode: SchemaMode,
     /// Selects which database's table to query when the name alone is
     /// ambiguous — matched against `DatabaseMetadata::name`
@@ -101,36 +115,196 @@ pub(crate) fn invalidate_block_cache(chunks: &mut VecDeque<SourceChunk>) {
     }
 }
 
-/// Build the schema for a `COPY` header's columns. A header with no
-/// explicit column list means "all columns, in table order" (see
-/// `CopyHeader::columns`) — Phase 1 has no DDL parsing to name them from, so
-/// placeholder names are used instead, sized to `field_count` (the first
-/// row's field count).
-pub(crate) fn schema_for(header: &CopyHeader, field_count: usize) -> SchemaRef {
-    let names: Vec<String> = if header.columns.is_empty() {
+/// The column names a `COPY` header implies: its own list, or — when it
+/// carried none, meaning "all columns, in table order" — placeholder names
+/// sized to `field_count` (the first row's field count). Phase 1 had no DDL
+/// to name them from; this is also what a headerless block's
+/// [`crate::resolve::resolve_columns`] lookup is keyed against.
+pub(crate) fn column_names(header: &CopyHeader, field_count: usize) -> Vec<String> {
+    if header.columns.is_empty() {
         (1..=field_count).map(|i| format!("column{i}")).collect()
     } else {
         header.columns.clone()
-    };
-    let fields: Vec<Field> =
-        names.into_iter().map(|name| Field::new(name, DataType::Utf8View, true)).collect();
-    Arc::new(Schema::new(fields))
+    }
 }
 
-/// Accumulates rows from a single `COPY` block into `Utf8View`
-/// `RecordBatch`es.
+/// One column's typed builder, chosen from a [`crate::resolve::ResolvedSchema`]
+/// field's [`DataType`] — the complete set [`crate::pgtype::resolve_declared_type`]
+/// and [`crate::resolve::resolve_columns`] can ever produce. `with_data_type`/
+/// `with_precision_and_scale`/`with_timezone_opt` tag each builder so its
+/// `finish()`ed array's type matches the schema exactly (`RecordBatch::try_new`
+/// checks this), rather than the builder's own default `DataType`.
+enum ColumnBuilder {
+    Utf8View(StringViewBuilder),
+    Bool(BooleanBuilder),
+    Int16(Int16Builder),
+    Int32(Int32Builder),
+    Int64(Int64Builder),
+    Float32(Float32Builder),
+    Float64(Float64Builder),
+    Date32(Date32Builder),
+    TimestampMicro { builder: TimestampMicrosecondBuilder, has_tz: bool },
+    Time64Micro(Time64MicrosecondBuilder),
+    Decimal128 { builder: Decimal128Builder, scale: i8 },
+    Decimal256 { builder: Decimal256Builder, scale: i8 },
+    FixedSizeBinary16(FixedSizeBinaryBuilder),
+    Binary(BinaryBuilder),
+    Dictionary(StringDictionaryBuilder<Int32Type>),
+}
+
+fn new_column_builder(data_type: &DataType) -> ColumnBuilder {
+    match data_type {
+        DataType::Utf8View => ColumnBuilder::Utf8View(StringViewBuilder::new()),
+        DataType::Boolean => ColumnBuilder::Bool(BooleanBuilder::new()),
+        DataType::Int16 => ColumnBuilder::Int16(Int16Builder::new()),
+        DataType::Int32 => ColumnBuilder::Int32(Int32Builder::new()),
+        DataType::Int64 => ColumnBuilder::Int64(Int64Builder::new()),
+        DataType::Float32 => ColumnBuilder::Float32(Float32Builder::new()),
+        DataType::Float64 => ColumnBuilder::Float64(Float64Builder::new()),
+        DataType::Date32 => ColumnBuilder::Date32(Date32Builder::new()),
+        DataType::Timestamp(TimeUnit::Microsecond, tz) => ColumnBuilder::TimestampMicro {
+            builder: TimestampMicrosecondBuilder::new().with_timezone_opt(tz.clone()),
+            has_tz: tz.is_some(),
+        },
+        DataType::Time64(TimeUnit::Microsecond) => {
+            ColumnBuilder::Time64Micro(Time64MicrosecondBuilder::new())
+        }
+        DataType::Decimal128(p, s) => ColumnBuilder::Decimal128 {
+            builder: Decimal128Builder::new().with_precision_and_scale(*p, *s).expect(
+                "pgtype::map_numeric only ever produces a valid Decimal128 precision/scale",
+            ),
+            scale: *s,
+        },
+        DataType::Decimal256(p, s) => ColumnBuilder::Decimal256 {
+            builder: Decimal256Builder::new().with_precision_and_scale(*p, *s).expect(
+                "pgtype::map_numeric only ever produces a valid Decimal256 precision/scale",
+            ),
+            scale: *s,
+        },
+        DataType::FixedSizeBinary(16) => {
+            ColumnBuilder::FixedSizeBinary16(FixedSizeBinaryBuilder::new(16))
+        }
+        DataType::Binary => ColumnBuilder::Binary(BinaryBuilder::new()),
+        DataType::Dictionary(k, v) if **k == DataType::Int32 && **v == DataType::Utf8 => {
+            ColumnBuilder::Dictionary(StringDictionaryBuilder::new())
+        }
+        other => unreachable!("resolve_columns never resolves a column to {other:?}"),
+    }
+}
+
+fn append_null(builder: &mut ColumnBuilder) {
+    match builder {
+        ColumnBuilder::Utf8View(b) => b.append_null(),
+        ColumnBuilder::Bool(b) => b.append_null(),
+        ColumnBuilder::Int16(b) => b.append_null(),
+        ColumnBuilder::Int32(b) => b.append_null(),
+        ColumnBuilder::Int64(b) => b.append_null(),
+        ColumnBuilder::Float32(b) => b.append_null(),
+        ColumnBuilder::Float64(b) => b.append_null(),
+        ColumnBuilder::Date32(b) => b.append_null(),
+        ColumnBuilder::TimestampMicro { builder, .. } => builder.append_null(),
+        ColumnBuilder::Time64Micro(b) => b.append_null(),
+        ColumnBuilder::Decimal128 { builder, .. } => builder.append_null(),
+        ColumnBuilder::Decimal256 { builder, .. } => builder.append_null(),
+        ColumnBuilder::FixedSizeBinary16(b) => b.append_null(),
+        ColumnBuilder::Binary(b) => b.append_null(),
+        ColumnBuilder::Dictionary(b) => b.append_null(),
+    }
+}
+
+/// Decode `text` (already COPY-unescaped) per `builder`'s type and append it,
+/// via `crate::decode`'s per-type decoders. `Err(text)` on a decode failure
+/// — the caller wraps it into `Error::FieldDecode` with the table/column/row
+/// context this function doesn't have. Never called for `ColumnBuilder::Utf8View`,
+/// which the caller handles itself (its zero-copy path needs the raw field's
+/// byte offset, which this function never sees).
+fn append_typed(builder: &mut ColumnBuilder, text: &str) -> std::result::Result<(), String> {
+    let fail = || text.to_string();
+    match builder {
+        ColumnBuilder::Utf8View(_) => unreachable!("caller handles Utf8View directly"),
+        ColumnBuilder::Bool(b) => b.append_value(decode::decode_bool(text).ok_or_else(fail)?),
+        ColumnBuilder::Int16(b) => b.append_value(text.parse::<i16>().map_err(|_| fail())?),
+        ColumnBuilder::Int32(b) => b.append_value(text.parse::<i32>().map_err(|_| fail())?),
+        ColumnBuilder::Int64(b) => b.append_value(text.parse::<i64>().map_err(|_| fail())?),
+        ColumnBuilder::Float32(b) => b.append_value(decode::decode_f32(text).ok_or_else(fail)?),
+        ColumnBuilder::Float64(b) => b.append_value(decode::decode_f64(text).ok_or_else(fail)?),
+        ColumnBuilder::Date32(b) => b.append_value(decode::decode_date32(text).ok_or_else(fail)?),
+        ColumnBuilder::TimestampMicro { builder, has_tz } => {
+            builder.append_value(decode::decode_timestamp_micros(text, *has_tz).ok_or_else(fail)?);
+        }
+        ColumnBuilder::Time64Micro(b) => {
+            b.append_value(decode::decode_time64_micros(text).ok_or_else(fail)?);
+        }
+        ColumnBuilder::Decimal128 { builder, scale } => {
+            let unscaled = decode::decimal_unscaled_digits(text, *scale).ok_or_else(fail)?;
+            builder.append_value(unscaled.parse::<i128>().map_err(|_| fail())?);
+        }
+        ColumnBuilder::Decimal256 { builder, scale } => {
+            let unscaled = decode::decimal_unscaled_digits(text, *scale).ok_or_else(fail)?;
+            builder.append_value(arrow::datatypes::i256::from_string(&unscaled).ok_or_else(fail)?);
+        }
+        ColumnBuilder::FixedSizeBinary16(b) => {
+            let bytes = decode::decode_uuid(text).ok_or_else(fail)?;
+            b.append_value(bytes).expect("decode_uuid always produces exactly 16 bytes");
+        }
+        ColumnBuilder::Binary(b) => {
+            b.append_value(decode::decode_bytea(text).ok_or_else(fail)?);
+        }
+        ColumnBuilder::Dictionary(b) => b.append_value(text),
+    }
+    Ok(())
+}
+
+fn finish_column(builder: &mut ColumnBuilder) -> ArrayRef {
+    match builder {
+        ColumnBuilder::Utf8View(b) => Arc::new(b.finish()) as ArrayRef,
+        ColumnBuilder::Bool(b) => Arc::new(b.finish()) as ArrayRef,
+        ColumnBuilder::Int16(b) => Arc::new(b.finish()) as ArrayRef,
+        ColumnBuilder::Int32(b) => Arc::new(b.finish()) as ArrayRef,
+        ColumnBuilder::Int64(b) => Arc::new(b.finish()) as ArrayRef,
+        ColumnBuilder::Float32(b) => Arc::new(b.finish()) as ArrayRef,
+        ColumnBuilder::Float64(b) => Arc::new(b.finish()) as ArrayRef,
+        ColumnBuilder::Date32(b) => Arc::new(b.finish()) as ArrayRef,
+        ColumnBuilder::TimestampMicro { builder, .. } => Arc::new(builder.finish()) as ArrayRef,
+        ColumnBuilder::Time64Micro(b) => Arc::new(b.finish()) as ArrayRef,
+        ColumnBuilder::Decimal128 { builder, .. } => Arc::new(builder.finish()) as ArrayRef,
+        ColumnBuilder::Decimal256 { builder, .. } => Arc::new(builder.finish()) as ArrayRef,
+        ColumnBuilder::FixedSizeBinary16(b) => Arc::new(b.finish()) as ArrayRef,
+        ColumnBuilder::Binary(b) => Arc::new(b.finish()) as ArrayRef,
+        ColumnBuilder::Dictionary(b) => Arc::new(b.finish()) as ArrayRef,
+    }
+}
+
+/// Accumulates rows from a single `COPY` block into typed `RecordBatch`es,
+/// one [`ColumnBuilder`] per field of the query's
+/// [`crate::resolve::ResolvedSchema`].
 pub(crate) struct RowBatcher {
     schema: SchemaRef,
-    columns: Vec<StringViewBuilder>,
+    /// Qualified table name, for `Error::FieldDecode`'s context.
+    table: String,
+    /// Parallel to `schema.fields()` — the declared PostgreSQL type string
+    /// behind each `Mapped` column, for the same error.
+    declared_types: Vec<Option<String>>,
+    columns: Vec<ColumnBuilder>,
     rows_in_batch: usize,
     bytes_in_batch: usize,
     options: BatchOptions,
 }
 
 impl RowBatcher {
-    pub(crate) fn new(schema: SchemaRef, options: BatchOptions) -> Self {
-        let columns = (0..schema.fields().len()).map(|_| StringViewBuilder::new()).collect();
-        Self { schema, columns, rows_in_batch: 0, bytes_in_batch: 0, options }
+    pub(crate) fn new(resolved: &ResolvedSchema, table: String, options: BatchOptions) -> Self {
+        let schema = resolved.schema.clone();
+        let declared_types = resolved.notes.iter().map(|n| n.declared.clone()).collect();
+        let columns = schema.fields().iter().map(|f| new_column_builder(f.data_type())).collect();
+        Self {
+            schema,
+            table,
+            declared_types,
+            columns,
+            rows_in_batch: 0,
+            bytes_in_batch: 0,
+            options,
+        }
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -162,13 +336,15 @@ impl RowBatcher {
             let end = memchr::memchr(DELIMITER, &raw[pos..]).map_or(raw.len(), |i| pos + i);
             let field = &raw[pos..end];
             let expected = self.columns.len();
-            let builder = self.columns.get_mut(col).ok_or(Error::ColumnCountMismatch {
-                header_offset,
-                row_offset,
-                expected,
-                found: col + 1,
-            })?;
-            push_field(builder, col, row_offset + pos as u64, field, chunks)?;
+            if col >= expected {
+                return Err(Error::ColumnCountMismatch {
+                    header_offset,
+                    row_offset,
+                    expected,
+                    found: col + 1,
+                });
+            }
+            self.push_field(col, row_offset, row_offset + pos as u64, field, chunks)?;
             self.bytes_in_batch += field.len();
             col += 1;
             if end == raw.len() {
@@ -188,30 +364,67 @@ impl RowBatcher {
         Ok(())
     }
 
+    fn push_field(
+        &mut self,
+        col: usize,
+        row_offset: u64,
+        field_offset: u64,
+        field: &[u8],
+        chunks: &mut VecDeque<SourceChunk>,
+    ) -> Result<()> {
+        let decoded = decode_field(field)?;
+        // Disjoint-field borrow: `columns[col]` is mutated below while
+        // `schema`/`table`/`declared_types` are only ever read, on the
+        // (rare) error path.
+        let Self { schema, table, declared_types, columns, .. } = self;
+        let builder = &mut columns[col];
+        let Some(text) = decoded else {
+            append_null(builder);
+            return Ok(());
+        };
+        match builder {
+            ColumnBuilder::Utf8View(b) => {
+                push_utf8view_field(b, col, field_offset, field, text, chunks)
+            }
+            _ => {
+                if let Err(value) = append_typed(builder, &text) {
+                    return Err(Error::FieldDecode {
+                        table: table.clone(),
+                        column: schema.field(col).name().clone(),
+                        row_offset,
+                        declared_type: declared_types[col].clone().unwrap_or_default(),
+                        value,
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn flush(&mut self) -> Result<RecordBatch> {
         self.rows_in_batch = 0;
         self.bytes_in_batch = 0;
-        let arrays: Vec<ArrayRef> =
-            self.columns.iter_mut().map(|b| Arc::new(b.finish()) as ArrayRef).collect();
+        let arrays: Vec<ArrayRef> = self.columns.iter_mut().map(finish_column).collect();
         Ok(RecordBatch::try_new(self.schema.clone(), arrays)?)
     }
 }
 
-/// Append one still-escaped field to `builder`. Reuses [`decode_field`] so
-/// the escaping rules live in exactly one place; a `Cow::Borrowed` result
-/// (no escapes present, already UTF-8 checked) is what makes the field
-/// eligible for a zero-copy view — everything else is copied.
-fn push_field(
+/// Append one still-escaped field to a `Utf8View` column. Reuses
+/// [`decode_field`] so the escaping rules live in exactly one place; a
+/// `Cow::Borrowed` result (no escapes present, already UTF-8 checked) is what
+/// makes the field eligible for a zero-copy view — everything else is
+/// copied.
+fn push_utf8view_field(
     builder: &mut StringViewBuilder,
     col: usize,
     field_offset: u64,
     field: &[u8],
+    text: Cow<'_, str>,
     chunks: &mut VecDeque<SourceChunk>,
-) -> Result<()> {
-    match decode_field(field)? {
-        None => builder.append_null(),
-        Some(Cow::Owned(s)) => builder.append_value(s),
-        Some(Cow::Borrowed(s)) => {
+) {
+    match text {
+        Cow::Owned(s) => builder.append_value(s),
+        Cow::Borrowed(s) => {
             let view = chunks
                 .iter_mut()
                 .find_map(|c| c.contains(field_offset, field.len()).map(|coords| (c, coords)));
@@ -231,13 +444,80 @@ fn push_field(
             }
         }
     }
-    Ok(())
 }
 
-/// Scan `source` end to end, assembling `Utf8View` `RecordBatch`es for every
-/// row of every `COPY` block whose table matches `table` (qualified or
-/// bare — see [`CopyHeader::matches`]). A table with zero rows produces no
-/// batches.
+/// Render one row of `column` back to the same PostgreSQL text form
+/// `crate::copy::decode_field` would have produced for it — `pgdq query`'s
+/// job (`docs/design/roadmap-phase2-typed-columns.md`, "CLI": output must be
+/// byte-identical whether typing is on or off) and the round-trip tests'
+/// oracle. `None` for SQL NULL. Covers exactly the [`DataType`]s
+/// [`crate::resolve::resolve_columns`] can ever produce.
+pub fn render_field(column: &dyn Array, row: usize) -> Option<String> {
+    if column.is_null(row) {
+        return None;
+    }
+    Some(match column.data_type() {
+        DataType::Utf8View => {
+            column.as_any().downcast_ref::<StringViewArray>().unwrap().value(row).to_string()
+        }
+        DataType::Boolean => {
+            decode::render_bool(column.as_any().downcast_ref::<BooleanArray>().unwrap().value(row))
+                .to_string()
+        }
+        DataType::Int16 => {
+            column.as_any().downcast_ref::<Int16Array>().unwrap().value(row).to_string()
+        }
+        DataType::Int32 => {
+            column.as_any().downcast_ref::<Int32Array>().unwrap().value(row).to_string()
+        }
+        DataType::Int64 => {
+            column.as_any().downcast_ref::<Int64Array>().unwrap().value(row).to_string()
+        }
+        DataType::Float32 => {
+            decode::render_f32(column.as_any().downcast_ref::<Float32Array>().unwrap().value(row))
+        }
+        DataType::Float64 => {
+            decode::render_f64(column.as_any().downcast_ref::<Float64Array>().unwrap().value(row))
+        }
+        DataType::Date32 => {
+            decode::render_date32(column.as_any().downcast_ref::<Date32Array>().unwrap().value(row))
+        }
+        DataType::Timestamp(TimeUnit::Microsecond, tz) => {
+            let v = column.as_any().downcast_ref::<TimestampMicrosecondArray>().unwrap().value(row);
+            decode::render_timestamp_micros(v, tz.is_some())
+        }
+        DataType::Time64(TimeUnit::Microsecond) => decode::render_time64_micros(
+            column.as_any().downcast_ref::<Time64MicrosecondArray>().unwrap().value(row),
+        ),
+        DataType::Decimal128(_, scale) => {
+            let v = column.as_any().downcast_ref::<Decimal128Array>().unwrap().value(row);
+            decode::render_decimal(&v.to_string(), *scale)
+        }
+        DataType::Decimal256(_, scale) => {
+            let v = column.as_any().downcast_ref::<Decimal256Array>().unwrap().value(row);
+            decode::render_decimal(&v.to_string(), *scale)
+        }
+        DataType::FixedSizeBinary(16) => {
+            let bytes = column.as_any().downcast_ref::<FixedSizeBinaryArray>().unwrap().value(row);
+            let bytes: &[u8; 16] =
+                bytes.try_into().expect("FixedSizeBinary(16) is always 16 bytes");
+            decode::render_uuid(bytes)
+        }
+        DataType::Binary => {
+            decode::render_bytea(column.as_any().downcast_ref::<BinaryArray>().unwrap().value(row))
+        }
+        DataType::Dictionary(k, v) if **k == DataType::Int32 && **v == DataType::Utf8 => {
+            let dict = column.as_any().downcast_ref::<DictionaryArray<Int32Type>>().unwrap();
+            let values = dict.values().as_any().downcast_ref::<StringArray>().unwrap();
+            values.value(dict.keys().value(row) as usize).to_string()
+        }
+        other => unreachable!("resolve_columns never resolves a column to {other:?}"),
+    })
+}
+
+/// Scan `source` end to end, assembling typed `RecordBatch`es for every row
+/// of every `COPY` block whose table matches `table` (qualified or bare — see
+/// [`CopyHeader::matches`]). A table with zero rows produces no batches.
 ///
 /// Push-mode entry point (`roadmap-phase1-mvp.md`, "Streaming API"):
 /// internally drains the pull-mode [`crate::stream::table_stream`], so the two

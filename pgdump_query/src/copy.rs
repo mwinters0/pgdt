@@ -1,7 +1,13 @@
-//! `COPY` header grammar and COPY TEXT-format field decoding.
+//! `COPY` header grammar and COPY TEXT-format field decoding/encoding.
 //!
 //! This module is pure, synchronous, byte-slice-level code: it knows nothing
 //! about files, offsets, or chunking. [`crate::scan`] drives it.
+//!
+//! [`decode_field`]/[`encode_field`] are the one place in the codebase that
+//! converts between a field's on-disk COPY-escaped bytes and its unescaped
+//! text — see `docs/design/layering.md`, L1. [`crate::decode`] (L2) never
+//! sees escaped bytes at all: it takes `decode_field`'s already-unescaped
+//! `&str` output and works purely in "unescaped text vs. Arrow value" terms.
 
 use std::borrow::Cow;
 
@@ -274,11 +280,40 @@ pub fn decode_field(field: &[u8]) -> Result<Option<Cow<'_, str>>> {
     }
 }
 
+/// Re-apply COPY TEXT escaping to already-unescaped text — the exact inverse
+/// of [`decode_field`], restricted to the escapes `pg_dump`'s `COPY TO` ever
+/// emits: a doubled backslash, the six control-character mnemonics `\b \f \n
+/// \r \t \v`, and a backslashed delimiter (postgres-invariants.md I15). The
+/// octal/hex forms `decode_field` accepts on input are a `COPY FROM` reader
+/// convenience only; `COPY TO` never produces them, so `encode_field` doesn't
+/// need to reproduce them for a round trip against real `pg_dump` output to
+/// hold — see `copy_text_escaping_round_trips_through_postgres` in
+/// `tests/scan.rs`. `None` encodes as the `\N` null marker.
+pub fn encode_field(field: Option<&str>) -> Vec<u8> {
+    let Some(s) = field else {
+        return NULL_MARKER.to_vec();
+    };
+    let mut out = Vec::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            0x08 => out.extend_from_slice(b"\\b"),
+            0x0c => out.extend_from_slice(b"\\f"),
+            b'\n' => out.extend_from_slice(b"\\n"),
+            b'\r' => out.extend_from_slice(b"\\r"),
+            b'\t' => out.extend_from_slice(b"\\t"),
+            0x0b => out.extend_from_slice(b"\\v"),
+            b'\\' => out.extend_from_slice(b"\\\\"),
+            _ => out.push(b),
+        }
+    }
+    out
+}
+
 fn as_utf8(bytes: &[u8]) -> Result<&str> {
     std::str::from_utf8(bytes).map_err(|e| Error::InvalidUtf8 { valid_up_to: e.valid_up_to() })
 }
 
-fn hex_val(b: u8) -> Option<u32> {
+pub(crate) fn hex_val(b: u8) -> Option<u32> {
     match b {
         b'0'..=b'9' => Some(u32::from(b - b'0')),
         b'a'..=b'f' => Some(u32::from(b - b'a') + 10),
@@ -486,6 +521,38 @@ mod tests {
         assert_eq!(decode("\\."), Some(".".to_string()));
         // Unknown escapes stand for the character itself.
         assert_eq!(decode("a\\qb"), Some("aqb".to_string()));
+    }
+
+    #[test]
+    fn encodes_null_and_empty_distinctly() {
+        assert_eq!(encode_field(None), b"\\N");
+        assert_eq!(encode_field(Some("")), b"");
+        assert_eq!(encode_field(Some("\\N")), b"\\\\N");
+    }
+
+    #[test]
+    fn encodes_character_escapes() {
+        assert_eq!(encode_field(Some("a\nb")), b"a\\nb");
+        assert_eq!(encode_field(Some("a\tb")), b"a\\tb");
+        assert_eq!(encode_field(Some("a\rb")), b"a\\rb");
+        assert_eq!(encode_field(Some("a\\b")), b"a\\\\b");
+        assert_eq!(encode_field(Some("a\u{8}b")), b"a\\bb");
+        assert_eq!(encode_field(Some("a\u{c}b")), b"a\\fb");
+        assert_eq!(encode_field(Some("a\u{b}b")), b"a\\vb");
+    }
+
+    #[test]
+    fn encode_is_the_exact_inverse_of_decode_for_canonical_escapes() {
+        // decode_field also accepts octal/hex escapes and unknown
+        // "stands for itself" escapes, but pg_dump's COPY TO never emits
+        // them (postgres-invariants.md I15), so encode_field only needs to
+        // invert the six mnemonics, `\\`, and the delimiter -- exercised
+        // against real pg_dump output in
+        // `copy_text_escaping_round_trips_through_postgres` (tests/scan.rs).
+        for field in [None, Some(""), Some("plain"), Some("a\\b\tc\nd\re\u{8}f\u{c}g\u{b}h")] {
+            let encoded = encode_field(field);
+            assert_eq!(decode_field(&encoded).unwrap().as_deref(), field);
+        }
     }
 
     #[test]
