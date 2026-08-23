@@ -47,9 +47,26 @@ slices, ordered so that **each slice makes the next one's mistakes visible**.
 Cheap, no-code, evidence-gathering slices go first, because they de-risk the
 least-evidenced parts of the spec while they are still cheap to change.
 
+**Size a slice by its review, not by its scope.** A slice that pairs a
+self-contained new module with a rework of an already-tested core path is two
+slices: the confidence in each half is different, and bundling them forces the
+review to accept both at one confidence. Split at spec time — the seam is
+usually visible there — because the alternative is discovering it mid-slice,
+when the only options left are landing the risky half unreviewed or shipping
+the slice half-done.
+
+**In the same change that writes the spec, write the whole slice list into
+`STATUS.md` as an unchecked checklist** — every slice, with its title and a
+one-line description, before any of it exists. The checklist is where the
+phase's progress is tracked, and it is the *only* place; see "Progress lives
+in STATUS, never in the spec" below.
+
 **4. Land a slice, write its notes.** Each slice gets
 `roadmap-phase<N>.<M>-<slug>-notes.md`, written as it lands, while it is
-fresh. Update `STATUS.md` in the same change.
+fresh — **including a slice that lands no code at all**, because a
+fixture-only or evidence-only slice is precisely the kind whose findings the
+next slice inherits. In the same change, tick the slice's box in `STATUS.md`
+and point it at the notes doc.
 
 **5. Wrap the phase.** Consolidate the per-slice notes into one
 `roadmap-phase<N>-<slug>-notes.md` and delete the per-slice files. Rewrite
@@ -111,15 +128,40 @@ code?" A module map, the load-bearing invariants of the implementation, the
 non-obvious calls and why. Not a changelog.
 
 **STATUS.md** describes the present tense and is rewritten in place. During a
-sliced phase it is a **terse checklist** of what has landed, each item linking
-to the slice notes that hold the detail — never prose duplicating them. Two
-sections earn their keep beyond the checklist:
+sliced phase it is a **terse checklist**, populated in full and unchecked when
+the spec is written, then ticked slice by slice:
+
+```
+## Phase 3 progress
+
+- [x] **3.1** The `objects` fixture schema — the TOC kinds neither existing
+      schema produces, plus large objects. No library code. Notes:
+      `docs/design/roadmap-phase3.1-objects-fixture-notes.md`
+- [ ] **3.3** The TOC enrichment layer: owner, kind labels, `Tablespace:`,
+      TOC-coverage reporting.
+```
+
+A landed item links to the slice notes that hold the detail — never prose
+duplicating them. **A box is ticked only when the slice's whole spec row is
+delivered.** Partially complete work is never "done"; a tick that can mean
+"about half" makes every other tick worthless. An unfinished slice keeps its
+empty box and says, in its own checklist entry, what landed and what did not.
+
+Three sections earn their keep beyond the checklist:
 
 - **Not started** — so the boundary of what exists is explicit, not inferred.
 - **Known gaps** — deficiencies that are known and *accepted*, each with why
   it is safe or what it costs. This is the section that stops the next session
   from re-discovering a deliberate limitation as a bug, and it is worth more
   than the checklist above it.
+- **Decisions worth another look** — calls made without the maintainer
+  present that a person should still weigh in on: cautionary and
+  informational, never blocking. Each entry states the call, why it was made
+  that way, and what would change if it were reconsidered. An entry leaves
+  when the maintainer has looked at it — either settled into the design docs
+  or reversed. This is the pressure valve that makes unattended work honest
+  rather than silent; without it the choice is between stalling and burying
+  the decision in a diff.
 
 Keeping STATUS.md current is part of any change that alters implementation
 state, not a separate chore. It drifts within days otherwise.
@@ -228,11 +270,21 @@ docs/
 ```
 
 **Slice numbering.** A phase's planned slices are `<N>.1`, `<N>.2`, …. A third
-level (`<N>.<M>.<K>`) is **earned, not planned**: it exists when a slice that
-already landed turns out to have shipped the wrong contract, and fixing it is
-its own increment. Do not pre-allocate them — the fact that they were earned
-rather than planned is itself information about where the design was weak,
-and the spec's slice table should say so.
+level (`<N>.<M>.<K>`) is **earned, not planned**, in one of two ways: a slice
+that already landed turns out to have shipped the wrong contract, and fixing
+it is its own increment; or a slice turns out to have been mis-sized, and the
+part that did not land becomes its own increment. Do not pre-allocate them —
+the fact that they were earned rather than planned is itself information about
+where the plan was weak, and the spec's slice table should say so. Prefer
+earning a third level over renumbering the tail: renumbering invalidates every
+reference to a slice number and erases the record that the split happened at
+all.
+
+A mis-sized slice's spec row is **rewritten to the scope that actually
+landed**, with the remainder moved into the new `<N>.<M>.<K>` rows. That is a
+decision change, not progress-tracking — the reasoning goes in a history entry
+and the spec's slice table says the split was earned. It is the one case where
+the finished half is legitimately ticked.
 
 **Consolidation at wrap** is not optional cleanup. Per-slice notes exist so a
 slice's detail has somewhere to go while it is fresh, without waiting on the
@@ -245,6 +297,36 @@ that it stays readable as *what we thought at the start* — which is only usefu
 if nobody has quietly updated it.
 
 ---
+
+## Working unattended
+
+An agent session with no maintainer present can still land a slice. What it
+cannot do is decide, on its own, that a risky change is acceptable — because
+the thing it is short of is not capability but a reviewer.
+
+**Stop at the last clean boundary when ambiguity meets a wide blast radius.**
+Concretely: an unattended session does not rework an already-tested core path
+on a judgement call. It lands the part it is confident in, leaves the rest,
+and hands over.
+
+**Never mix high-confidence and low-confidence work in one review cycle.**
+This is the operative rule, and it is the reason for the one above. A diff
+that contains both forces the maintainer to accept the uncertain half in order
+to get the certain one, which is exactly the review they were meant to
+provide. Two changes, reviewed separately, cost less than one change reviewed
+badly.
+
+**Stopping is not the same as being blocked.** The session finishes the
+unaffected work, ticks nothing it did not finish, and leaves three things: the
+slice's box unticked with its entry saying what landed and what did not, an
+entry under "Decisions worth another look" for each call the maintainer should
+weigh, and — if the work is mid-flight — a history entry saying where to pick
+it up.
+
+**A judgement call that had to be made anyway goes in "Decisions worth another
+look", not in silence and not in a blocking question.** The section exists so
+that proceeding and flagging is available as a third option; use it. An entry
+there is cheap to write, cheap to read, and cheap to reverse.
 
 ## CLAUDE.md vs. CLAUDE.local.md vs. docs
 
@@ -307,6 +389,17 @@ lives only in the conversation is a decision that dies with the context window.
 An interrupted session should leave every answer so far already recorded.
 
 **Update STATUS.md inside the change that alters state.** Not afterwards.
+
+**Progress lives in STATUS, never in the spec.** A phase spec is written once
+and then left alone for the duration of the phase: no ✅ marks on the slice
+table, no "landed"/"deferred" annotations, no rewriting a slice's row to
+describe what it turned out to do. Those all destroy the same thing — the
+record of what the phase was *committed* to, which is the only baseline the
+finished phase can be measured against. The spec is still edited when the
+**decision** changes (with the reasoning in a history entry, per "Spec vs.
+notes"), and that is the sole reason to touch it. Everything else — what has
+landed, what was cut, what was deferred and why — goes in the STATUS checklist
+and the slice notes.
 
 **Every standing constraint carries its own check.** The layering doc ends with
 three greps that must produce no output. A rule nobody can mechanically verify
@@ -372,6 +465,12 @@ Each of these means a specific rule has stopped being followed.
   instead of for the next phase.
 - **A spec doc matches the code exactly.** It was retro-fitted, and the record
   of original intent is gone.
+- **The spec's slice table carries ✅ marks, or a slice row describes what was
+  deferred.** Progress has leaked into the spec; the phase can no longer be
+  measured against what it committed to. Move it to the STATUS checklist.
+- **A slice landed with no notes doc**, because "it was only fixtures" or
+  "it's all in the history entry". Its findings are now scattered, and the
+  phase wrap has nothing to consolidate.
 - **History entries contain "turns out", "actually", "correction".** They were
   written as a log of the day rather than as the day's settled facts.
 - **An invariant has no re-verification step.** It will not be checked at the

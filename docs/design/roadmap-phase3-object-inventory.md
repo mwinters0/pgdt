@@ -266,6 +266,29 @@ above plus a per-span record of whether it carried a TOC header. Byte-exact
 "how much of this file is blank" accounting is the one thing lost, and nothing
 needs it.
 
+**Two signals close a span, and both are needed.** The next TOC comment
+block's arrival is one — recognized lexically, by the presence of a `-- Name:
+…; Type: …` line, never by parsing its fields, so this is a boundary
+mechanism and not an early draw on the enrichment layer. It is load-bearing
+rather than merely convenient: `scan.rs` emits no `Event::Line` for a
+dollar-quoted line, including the one carrying a `CREATE FUNCTION`'s own
+closing `;`, so a detector watching only for statement completion can never
+observe such a statement ending.
+
+The other is statement completion itself, for content with no TOC comment —
+and it needs `scan.rs` to emit a **position-only event marking where a
+dollar-quoted region ended**, added in slice 3.2.3. Without it, the first
+dollar-quoted body in a header-less file absorbs every statement after it into
+one span: measured, and recorded in
+[`../status/history/2026-08-23.md`](../status/history/2026-08-23.md). That
+event carries an offset and nothing else — the dollar-quoted lines themselves
+stay unsurfaced, so L1's event contract still says nothing about DDL text.
+
+This is what makes "graceful degradation" true rather than aspirational. The
+degraded map is *coarser* — no owner, no kind label, no grouping — but it is
+still one span per object, which is the claim the decision to reject
+TOC-driven segmentation rests on.
+
 **Framing spans.** The file prologue and epilogue carry no TOC header and are
 not archive entries: the `-- PostgreSQL database dump` banner, `\restrict`, the
 two version-header lines (I9), and the `SET`/`set_config` block written by
@@ -347,8 +370,10 @@ the file. Slicing by offset makes text a pure function of the span's
 boundaries rather than of parser state, which is the same property the tiling
 invariant wants, and costs nothing: the bytes are in the scan buffer already.
 
-Adding an event variant to surface dollar-quoted lines was rejected as leaking
-a Phase 3 concern into L1's event contract for no gain.
+Surfacing dollar-quoted *lines* as events stays rejected: it leaks a Phase 3
+concern into L1's event contract, and slicing by offset already gives the text.
+A **position-only** event is a different matter, and is added in slice 3.2.3 —
+see "Span boundaries" below.
 
 The stored text is the **whole span**, TOC comment and trailing blank lines
 included — the span is the tiling unit, and the comment is context a reader
@@ -401,11 +426,30 @@ no-code, evidence-gathering slice goes first.
 
 | Slice | Scope |
 |---|---|
-| **3.1** ✅ | A third fixture schema (`objects`) covering the TOC kinds neither existing schema produces, plus **large objects**, plus a `--verbose` flag set. No library code. |
-| **3.2** ✅ | `map.rs`: the span model, `Unscanned` coverage, the tiling invariant with its runtime check and its test over every fixture, cache identity checking, and the hardened statement accumulator — statement-driven pass only, no TOC enrichment. Updates `layering.md`'s module table and Arrow-free check for `map.rs`. A dedicated `Data`-span fast path for `INSERT` runs and large objects (this table's original "string-aware `INSERT`-run scanner") turned out to be a performance-only optimization the generic hardened accumulator already tiles correctly without — deferred; see `roadmap-phase3.2-span-model-notes.md`. `crate::map` is not yet wired into `DumpIndex`/`crate::cache`/`crate::stream` — also deferred, same notes doc. |
+| **3.1** | A third fixture schema (`objects`) covering the TOC kinds neither existing schema produces, plus **large objects**, plus a `--verbose` flag set. No library code. |
+| **3.2** | `map.rs` as a standalone module: the span model, the tiling invariant with its test over every fixture, cache identity checking, and the hardened statement accumulator — statement-driven pass only, no TOC enrichment. Updates `layering.md`'s module table and Arrow-free check for `map.rs`. |
+| **3.2.1** | The map becomes `DumpIndex`'s primary structure, per "The map is the structure, not a description of it": `spans` primary with `blocks()`/`blocks_for` derived, `Span::Data` holding `CopyBlock` inline, `DumpMetadata` as a memoized derived view, spans persisted (cache format bump), `stream.rs`'s segment planner reading spans, and `build_index` producing the map **in its existing pass** rather than as a second one. `Unscanned` becomes a span a real incremental scan produces, not a reserved variant. |
+| **3.2.2** | Additive remainder: span text sliced from the file and stored in the cache with its 64KB-per-span cap and `truncated` marker, and the file-level `Diagnostic` channel on `DumpIndex` — through which the runtime tiling check and the cache's mtime warning are reported. |
+| **3.2.3** | A position-only `scan.rs` event marking where a dollar-quoted region ended, and `map.rs` closing a statement on it — so a TOC-comment-less dump degrades to one span per object rather than to one span for the rest of the file. See "Span boundaries". |
 | **3.3** | The TOC enrichment layer: owner, kind labels, the `Tablespace:` field, TOC-coverage reporting. |
 | **3.4** | The cross-reference set — referenced roles and tablespaces. `objects.rs` splits out of `preamble.rs` here or in 3.3 if that module passes ~1500 lines. |
+| **3.6** | The `Data`-span fast path for the two bulk regions the generic statement grammar merely tiles correctly rather than skipping: `INSERT` runs (the string-aware scanner this table originally placed in 3.2) and the large-object region, grouped into one `Data` span apiece. Carries this phase's two "Verification" measurements. Ordered before 3.5 so the CLI's span listing shows the shape the map keeps. |
 | **3.5** | CLI surface: `pgdq info` gains role, tablespace and object-kind summaries by default and a `--map` span listing; `docs/manual/` gains the dump-inspection page. |
+
+**3.2.1, 3.2.2 and 3.2.3 were earned, not planned.** The first two come from
+3.2 being mis-sized: as originally written it paired a self-contained new
+module with a rework of the tested core query path, which is two review
+cycles' worth of confidence in one slice. Its row above is the scope that
+landed; the remainder became those two follow-ups. 3.2.3 is the other kind —
+3.2 shipped a boundary rule that is correct for `pg_dump`'s own output and
+collapses on the header-less input the "Scanning" decision is justified by.
+Reasoning for all three:
+[`../status/history/2026-08-23.md`](../status/history/2026-08-23.md).
+
+**3.6 is numbered out of order deliberately** — it was split out of 3.2 for
+the same sizing reason, but it is not a `<N>.<M>.<K>` follow-up to it: its
+content is independent of everything 3.2 landed, and it runs after the
+enrichment slices rather than before them.
 
 **3.1 must produce a large-object fixture**, generated by hand
 (`lo_from_bytea`/`lo_import` against a scratch database) since no `pg_dump`
@@ -456,7 +500,9 @@ consequence — which is why it is safe to defer.
 
 ## Verification
 
-**Decision.** Two measurements gate the phase.
+**Decision.** Two measurements gate the phase, and the phase does not wrap
+without both. They belong to slice 3.6, which lands the bulk-region fast path
+they measure.
 
 - **A synthetic large-object dump**, a few GB, on the SSD. The large-object
   fast path is the only part of the cost argument with no evidence behind it at

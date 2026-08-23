@@ -50,7 +50,7 @@
 //! "graceful degradation" framing. Grouping (via the TOC's `Dependencies:`
 //! field) is Phase 3.3/3.4 work.
 //!
-//! ## What's deferred past this slice
+//! ## What is outside this slice, and which slice has it
 //!
 //! - **TOC enrichment** (owner, kind label, `Tablespace:`, TOC-coverage,
 //!   grouping) — Phase 3.3/3.4.
@@ -66,23 +66,21 @@
 //!   [`crate::preamble::statement_complete`] re-scans its whole buffer
 //!   (parens/quotes included) on every appended line regardless of how many
 //!   physical lines a value spans — it just does it one statement (or one
-//!   `lowrite` call) per span rather than one span per whole run. Only the
-//!   *cost* win is deferred; see
-//!   `docs/design/roadmap-phase3.2-span-model-notes.md` for the
+//!   `lowrite` call) per span rather than one span per whole run. Phase 3.6;
+//!   see `docs/design/roadmap-phase3.2-span-model-notes.md` for the
 //!   verification this rests on.
-//! - **Span text storage** (`docs/design/roadmap-phase3-object-inventory.md`,
-//!   "Span text comes from the file, not from the parser") and the cache's
-//!   64KB-per-span cap — both belong to whichever slice wires the map into
-//!   `DumpIndex`/the on-disk cache. [`Span`] carries offsets only.
-//! - **Wiring into `DumpIndex`/`crate::cache`/`crate::stream`.** [`build_map`]
-//!   is a standalone, always-full scan; it does not (yet) replace
+//! - **Wiring into `DumpIndex`/`crate::cache`/`crate::stream`** — Phase
+//!   3.2.1. [`build_map`] is a standalone, always-full scan, so producing
+//!   both an index and a map costs two passes today; it does not replace
 //!   `DumpIndex::blocks` as the primary structure the design's "The map is
 //!   the structure, not a description of it" section calls for, and
 //!   [`SpanBody::Unscanned`] is exercised only via [`check_tiling`]'s own
-//!   tests, not by a real incremental scan. See
-//!   `docs/design/roadmap-phase3.2-span-model-notes.md` for why this
-//!   integration was left to a follow-up rather than attempted in the same
-//!   change that introduces the span model.
+//!   tests, not by a real incremental scan.
+//! - **Span text storage** (`docs/design/roadmap-phase3-object-inventory.md`,
+//!   "Span text comes from the file, not from the parser"), the cache's
+//!   64KB-per-span cap, and the file-level `Diagnostic` channel
+//!   [`check_tiling`] is meant to report through — Phase 3.2.2. [`Span`]
+//!   carries offsets only, and no production path calls [`check_tiling`].
 
 use std::ops::ControlFlow;
 
@@ -145,8 +143,8 @@ pub enum SpanBody {
     /// `build_map` always scans to its target's end
     /// (`docs/design/roadmap-phase3-object-inventory.md`, "Scan coverage is
     /// a prefix, expressed as a span"). Not produced by [`build_map`] today
-    /// (which always scans to EOF); reserved for whichever follow-up wires
-    /// an incremental/resumable map scan.
+    /// (which always scans to EOF); Phase 3.2.1 wires the incremental scan
+    /// that emits one.
     Unscanned,
 }
 
@@ -461,8 +459,8 @@ fn classify(stmt: &str) -> SpanBody {
 
 /// Scan `source` end to end and build its full file map — see the module
 /// docs for what this slice does and doesn't classify. Always scans to EOF;
-/// there is no partial/incremental form yet (see the module docs' "What's
-/// deferred" list), so [`SpanBody::Unscanned`] never appears in the result.
+/// there is no partial/incremental form until Phase 3.2.1, so
+/// [`SpanBody::Unscanned`] never appears in the result.
 pub async fn build_map<S: ByteRangeSource>(source: &S, options: &ScanOptions) -> Result<Vec<Span>> {
     let mut builder = Builder::new();
 

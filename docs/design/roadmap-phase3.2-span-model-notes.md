@@ -31,46 +31,46 @@ all of Phase 3 lands.
   `crate::preamble::classify_statement` (the three-shape classifier
   `PreambleBuilder::dispatch` and `crate::map` both now share).
 
-## What did not land — deferred past this slice
+## What this slice does not do, and which slice does it
 
-- **TOC field enrichment** (owner, kind label, `Tablespace:`, TOC-coverage
-  reporting, grouping via `Dependencies:`) — Phase 3.3/3.4, as specified.
-  `crate::map` reads a TOC comment block only as a lexical *boundary*
-  signal (does it contain a `-- Name: ...; Type: ...` line at all), never
-  parsing or storing its fields.
+3.2 was originally specified to carry the integration work as well. It was
+mis-sized — a self-contained new module and a rework of the tested core query
+path are two review cycles — and split; see
+[`../status/history/2026-08-23.md`](../status/history/2026-08-23.md), "Slice
+3.2 was mis-sized". What is outside this slice, and where it went:
+
+- **`crate::map` is not wired into `DumpIndex`/`crate::cache`/`crate::stream`
+  — slice 3.2.1.** `build_map` is a standalone function that always scans to
+  EOF, so today a caller wanting both an index and a map pays **two full
+  passes**; `build_index` does not produce spans. `DumpIndex::blocks` is
+  still the primary structure rather than a derived filter over `spans`, and
+  `SpanBody::Unscanned` is exercised only by `check_tiling`'s own unit tests
+  (`an_unscanned_tail_tiles_cleanly`), never by a real incremental scan. The
+  work `stream.rs` needs is a segment planner that reads spans instead of
+  `blocks`/`blocks_for`.
+- **Span text storage, the cache's 64KB-per-span cap, and the file-level
+  `Diagnostic` channel — slice 3.2.2.** `Span` carries offsets only. Nothing
+  in a production path calls `check_tiling`, because there is no diagnostic
+  channel for it to report through yet; the invariant is currently enforced by
+  `tests/map.rs` alone.
 - **A dedicated `Data`-span fast path for `INSERT` runs and the large-object
-  region.** The design doc frames this as a *performance* optimization
-  (`roadmap-phase3-object-inventory.md`, "Bulk regions"), not a correctness
-  requirement — confirmed empirically: the generic statement-grammar
-  fallback already tiles both shapes correctly, including the
-  embedded-raw-newline case (`fixtures/*/edge_cases/inserts.sql`'s
-  `public.escapes` row 10), because `statement_complete` re-scans its whole
-  accumulated buffer (quotes and parens included) on every appended line
-  regardless of how many physical lines a value spans. It just produces one
-  `Unparsed` span per `INSERT` statement (or per large-object `lowrite`
-  call) instead of one `Data` span per whole run — `every_fixture_tiles_exactly`
-  and `inserts_dump_with_an_embedded_newline_value_still_tiles`
-  (`tests/map.rs`) are the evidence. A koji-scale `--inserts` dump would
-  still be correct under this slice, just not walked at the cost the full
-  design promises.
-- **Span text storage** and the cache's 64KB-per-span cap
-  (`roadmap-phase3-object-inventory.md`, "Span text comes from the file,
-  not from the parser"). `Span` carries offsets only in this slice.
-- **Wiring `crate::map` into `DumpIndex`/`crate::cache`/`crate::stream`.**
-  `build_map` is a standalone function, always scanning to EOF; it does not
-  replace `DumpIndex::blocks` as the primary structure the way the design's
-  "The map is the structure, not a description of it" section calls for,
-  and `SpanBody::Unscanned` is exercised only by `check_tiling`'s own unit
-  tests (`an_unscanned_tail_tiles_cleanly`), not by a real incremental scan.
-  **Decision worth a second look:** this integration was deferred
-  deliberately rather than attempted in the same change — it requires
-  reworking `stream.rs`'s segment planner (which currently reads
-  `DumpIndex.blocks`/`blocks_for` directly) to consume spans instead, a
-  mechanical but wide-blast-radius change to the tested core streaming
-  query path, done unattended with no user available to review the
-  approach first. The span-building capability itself is complete and
-  independently tested; only its integration into the primary on-disk/
-  in-memory structure remains.
+  region — slice 3.6.** The generic statement-grammar fallback already tiles
+  both shapes correctly, including the embedded-raw-newline case
+  (`fixtures/*/edge_cases/inserts.sql`'s `public.escapes` row 10), because
+  `statement_complete` re-scans its whole accumulated buffer (quotes and
+  parens included) on every appended line regardless of how many physical
+  lines a value spans. It just produces one `Unparsed` span per `INSERT`
+  statement (or per large-object `lowrite` call) instead of one `Data` span
+  per whole run — `every_fixture_tiles_exactly` and
+  `inserts_dump_with_an_embedded_newline_value_still_tiles` (`tests/map.rs`)
+  are the evidence. So a koji-scale `--inserts` dump is correct under this
+  slice, just not walked at the cost the design promises, and the map's shape
+  over a bulk region is not yet the one the design specifies.
+- **TOC field enrichment** (owner, kind label, `Tablespace:`, TOC-coverage
+  reporting, grouping via `Dependencies:`) — slices 3.3/3.4, as originally
+  specified. `crate::map` reads a TOC comment block only as a lexical
+  *boundary* signal (does it contain a `-- Name: ...; Type: ...` line at
+  all), never parsing or storing its fields.
 
 ## Span boundaries: TOC-block-anchored, not pure statement completion
 
@@ -118,6 +118,16 @@ recognized statement shapes, so the check is unambiguous for every other
 case — confirmed by re-running `every_fixture_tiles_exactly` after the fix
 with no regressions.
 
+**The reassertion check is not a general fix, and slice 3.2.3 is.** It only
+fires on a `--`-prefixed line, so a header-less file whose dollar-quoted body
+is followed by an ordinary statement still collapses: measured at one
+`Unparsed` span for a whole 206-byte file
+([`../status/history/2026-08-23.md`](../status/history/2026-08-23.md), "A
+dollar-quoted body with no TOC comment"). 3.2.3 closes it properly, with a
+position-only `scan.rs` event marking where a dollar-quoted region ended. No
+real `pg_dump` output is affected — every entry carries a TOC header, and
+`--no-comments` does not remove them.
+
 ## Framing recognition beyond `\connect`/`\restrict`
 
 The design's "Framing spans" section names the `SET`/`set_config` block
@@ -148,8 +158,8 @@ synthetic inputs (no file I/O), including the dollar-quote-gap case
 `docs/status/history/2026-08-23.md` first identified as needing evidence.
 
 No koji-scale performance verification was run this slice — the design's
-own "Verification" section scopes that to whichever slice lands the
-`Data`-span fast path for bulk regions (deferred here, see above), since
-this slice's cost profile is unchanged from Phase 1/2 (the statement-driven
-pass walks the same DDL-sized preamble either way; it doesn't yet walk
-`INSERT`/large-object bulk regions any differently than ordinary DDL).
+own "Verification" section belongs to slice 3.6, which lands the `Data`-span
+fast path for bulk regions. This slice's cost profile is unchanged from Phase
+1/2 (the statement-driven pass walks the same DDL-sized preamble either way;
+it doesn't yet walk `INSERT`/large-object bulk regions any differently than
+ordinary DDL).

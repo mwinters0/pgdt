@@ -65,6 +65,13 @@ A later session reads `runs/koji-scan.log`; `sudo nerdctl inspect -f
 
 ## Architecture & design docs
 
+`docs/process.md` is the development process this project runs on — the doc
+set, where each fact goes, and what landing a slice obliges. **Don't read it
+directly: invoke the `process` skill**, which requires reading it in full and
+names the obligations. Trigger the skill before implementing a roadmap phase
+or slice, wrapping one up, writing or revising a phase spec or notes doc, or
+updating `STATUS.md`. Planning, grilling and ad-hoc exploration don't need it.
+
 `docs/design/layering.md` assigns every module to one of four layers and states
 the rules that keep dependencies pointing downward. **Read it before adding a
 module, moving code between modules, or wiring a concern across existing
