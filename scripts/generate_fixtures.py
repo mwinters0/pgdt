@@ -73,6 +73,14 @@ SCHEMAS: dict[str, dict[str, list[str] | None]] = {
         "data-only": ["--data-only"],
         "binary-upgrade": ["--binary-upgrade"],
     },
+    # roadmap-phase3-object-inventory.md's slice 3.1: `--verbose` is the one
+    # documented way to widen the TOC comment block past three lines (the
+    # `-- TOC entry ... (class OID)` / `-- Dependencies: ...` lines), so it's
+    # this schema's whole reason for a flag set beyond the default.
+    "objects": {
+        "default": [],
+        "verbose": ["--verbose"],
+    },
 }
 
 
@@ -151,7 +159,24 @@ def create_fixture_db(name: str, schema: str, attempts: int = 10, delay: float =
 
 
 def drop_fixture_db(name: str) -> None:
+    # fixture_schema_objects.sql creates a subscription and a role, both of
+    # which outlive `dropdb` unless cleared explicitly: a subscription
+    # blocks dropping its own database outright, and a role is cluster-
+    # global so it would otherwise leak into whatever schema runs next in
+    # this same container. Both commands are IF EXISTS, so they're safe
+    # no-ops for every other schema. The subscription's slot_name = NONE
+    # (see that file) is what makes DROP SUBSCRIPTION not need a reachable
+    # publisher here.
+    run(
+        DOCKER
+        + ["exec", name, "psql", "-U", DB_USER, "-d", DB_NAME, "-c", "DROP SUBSCRIPTION IF EXISTS objects_sub"],
+        capture_output=True,
+    )
     run(DOCKER + ["exec", name, "dropdb", "-U", DB_USER, DB_NAME], capture_output=True)
+    run(
+        DOCKER + ["exec", name, "psql", "-U", DB_USER, "-c", "DROP ROLE IF EXISTS fixture_reader"],
+        capture_output=True,
+    )
 
 
 def dump_flag_set(

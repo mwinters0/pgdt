@@ -139,6 +139,16 @@ only two of the three have an invariant behind them:
 | `BLOBS` | `COMMIT;` | I12 — the payload is a bytea hex literal, which cannot contain a line break |
 | `INSERT` run | next TOC header | **none** — see below |
 
+**A `BLOBS` region can be more than one `BEGIN;`/`COMMIT;` pair.** Confirmed
+by slice 3.1's fixture (I12): v13-16 always emit exactly one `BLOBS` entry
+covering every large object in the database, but v17+ gives each large
+object its own `BLOB METADATA`/`BLOBS` entry pair. Since this phase treats
+"the large-object region" as one `Data` span regardless of major version,
+finding the end of *the region* on v17+ means walking past every
+consecutive `BLOB METADATA`/`BLOBS` TOC header, closing at each one's own
+`COMMIT;`, until a TOC header of neither kind is reached — not stopping at
+the first `COMMIT;` the way `COPY` does at its first `\.`.
+
 **`INSERT` runs need a string-aware scan, not a line-anchored check.** A
 `pg_dump --inserts` value is a single-quoted SQL literal, and a value carrying
 a newline puts the rest of its statement on the next physical line, which
@@ -391,7 +401,7 @@ no-code, evidence-gathering slice goes first.
 
 | Slice | Scope |
 |---|---|
-| **3.1** | A third fixture schema (`objects`) covering the TOC kinds neither existing schema produces, plus **large objects**, plus a `--verbose` flag set. No library code. |
+| **3.1** ✅ | A third fixture schema (`objects`) covering the TOC kinds neither existing schema produces, plus **large objects**, plus a `--verbose` flag set. No library code. |
 | **3.2** | `map.rs`: the span model, `Unscanned` coverage, the tiling invariant with its runtime check and its test over every fixture, cache identity checking, the hardened statement accumulator, and the string-aware `INSERT`-run scanner — statement-driven pass only, no TOC enrichment. Updates `layering.md`'s module table and Arrow-free check for `map.rs`. |
 | **3.3** | The TOC enrichment layer: owner, kind labels, the `Tablespace:` field, TOC-coverage reporting. |
 | **3.4** | The cross-reference set — referenced roles and tablespaces. `objects.rs` splits out of `preamble.rs` here or in 3.3 if that module passes ~1500 lines. |
@@ -409,9 +419,21 @@ the TOC comment block taller than three lines.
 precondition for trusting any cached span offset and the tiling test is the
 first thing that reads them back.
 
-Current fixture coverage, for reference: across both existing schemas real
-`pg_dump` output produces only `TABLE`, `TABLE DATA`, `CONSTRAINT`,
-`FK CONSTRAINT`, `FUNCTION`, `SCHEMA`, `TYPE`, `DOMAIN`, `SHELL TYPE`.
+Current fixture coverage, for reference: `edge_cases`/`types` real `pg_dump`
+output produces `TABLE`, `TABLE DATA`, `CONSTRAINT`, `FK CONSTRAINT`,
+`FUNCTION`, `SCHEMA`, `TYPE`, `DOMAIN`, `SHELL TYPE`; `objects` (slice 3.1,
+`scripts/fixture_schema_objects.sql`) adds `ACL`, `AGGREGATE`, `BLOB
+METADATA`/`BLOB`, `BLOBS`, `CAST`, `COLLATION`, `COMMENT`, `CONVERSION`,
+`DEFAULT`, `DEFAULT ACL`, `EVENT TRIGGER`, `INDEX`, `INDEX ATTACH`,
+`MATERIALIZED VIEW`(`DATA`), `POLICY`, `PUBLICATION`(`TABLE`/`TABLES IN
+SCHEMA`), `ROW SECURITY`, `RULE`, `SEQUENCE`(`OWNED BY`/`SET`), `SERVER`,
+`STATISTICS`, `SUBSCRIPTION`, `TABLE ATTACH`, `TEXT SEARCH
+CONFIGURATION`/`DICTIONARY`, `TRIGGER`, `USER MAPPING`, `VIEW`. Still
+unexercised by any fixture, and why (see that file's header): `SECURITY
+LABEL` (needs a security-label provider extension), `ACCESS METHOD`,
+`OPERATOR`(`CLASS`/`FAMILY`), `TRANSFORM`, `TEXT SEARCH PARSER`/`TEMPLATE`
+(all need a C-level handler function), and the dump-level-metadata kinds
+`DATABASE`(` PROPERTIES`)/`ENCODING`/`SEARCHPATH`/`STDSTRINGS`.
 
 ## Module and layer assignment
 

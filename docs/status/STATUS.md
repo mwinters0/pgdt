@@ -19,14 +19,18 @@ already-landed slice's contract (2.2.1, 2.3.1, 2.3.2, 2.3.3). How it landed —
 module map, and the implementation facts later phases inherit — is in
 `docs/design/roadmap-phase2-typed-columns-notes.md`.
 
-Phase 3 (full DDL object inventory) is specified and not started:
-`docs/design/roadmap-phase3-object-inventory.md`, five slices, none landed.
+Phase 3 (full DDL object inventory) is specified, five slices,
+`docs/design/roadmap-phase3-object-inventory.md`. Slice 3.1 (fixture-only, no
+library code) is landed: `scripts/fixture_schema_objects.sql` plus
+`fixtures/<version>/objects/{default,verbose}.sql` for all 6 routine
+versions. Slices 3.2-3.5 (the span model, TOC enrichment, cross-reference
+set, CLI surface) are not started.
 
 Last updated: 2026-08-23.
 
 ## Not started
 
-- **Phase 3** — specified, no code. See
+- **Phase 3, slices 3.2-3.5** — specified, no code. See
   `docs/design/roadmap-phase3-object-inventory.md`.
 - **Phases 4-8** — not designed. See `docs/design/roadmap.md`.
 
@@ -55,3 +59,39 @@ Last updated: 2026-08-23.
   ambiguity before any streaming starts, since every candidate is already
   known. See `docs/design/roadmap-phase2-typed-columns-notes.md`, "One target
   per query".
+
+## Decisions worth a second look
+
+Made unattended while landing Phase 3 slice 3.1; flagging rather than
+treating as settled.
+
+- **`objects.sql`'s TOC coverage is broad but not exhaustive.** Six kinds are
+  deliberately left uncovered — `SECURITY LABEL` (needs a security-label
+  provider extension not present in a stock `postgres:*-alpine` image),
+  `ACCESS METHOD`/`OPERATOR`/`OPERATOR CLASS`/`OPERATOR FAMILY`/`TRANSFORM`/
+  `TEXT SEARCH PARSER`/`TEXT SEARCH TEMPLATE` (all need a C-level handler
+  function, realistically only available via an extension) — with the
+  rationale recorded in `scripts/fixture_schema_objects.sql`'s header and
+  `roadmap-phase3-object-inventory.md`'s slice-3.1 note. If any of these
+  turns out to matter to the sysadmin-inventory use case specifically, that's
+  a call for a person, not something the fixture gap forecloses — TOC
+  coverage is inherently reported per file (the doc's "graceful degradation"
+  design), so an uncovered kind degrades to "unrecognized," not a crash.
+- **`objects` schema's flag set is `{default, verbose}` only**, not the full
+  matrix `edge_cases` runs (`data-only`, `schema-only`, `binary-upgrade`,
+  etc.). The phase doc's ask for slice 3.1 was specifically "a `--verbose`
+  flag set," so this matches scope as specified — but if slice 3.2's tiling
+  test wants `objects` fixtures under other flag combinations, that's
+  additional fixture generation, not a code change.
+- **`generate_fixtures.py`'s `drop_fixture_db` now hardcodes cleanup for
+  `objects_sub`/`fixture_reader`** (a subscription blocks `dropdb` outright;
+  a role is cluster-global and would otherwise leak into whatever schema
+  runs next in the same container). Both commands are `IF EXISTS`, so this
+  is a no-op for `edge_cases`/`types` — confirmed by regenerating
+  `fixtures/18/{edge_cases,types}` and diffing against committed output
+  (identical except the fixtures' known non-determinism: the `\restrict`
+  token and `now()`-derived timestamp columns, both pre-existing and
+  unrelated to this change; that regenerated output was discarded, not
+  committed). If a future fixture schema adds its own
+  subscriptions/cluster-global objects, this cleanup will need to grow with
+  it rather than staying generic.

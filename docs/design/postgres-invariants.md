@@ -456,30 +456,46 @@ real definition; re-run the recipe above against the newest major.
 
 ---
 
-## I12 — Large-object data is one contiguous, line-oriented region that cannot contain a `COPY` block
+## I12 — Large-object data is a line-oriented region that cannot contain a `COPY` block
 
-**Claim.** In plain-format output, large-object *data* appears as a single
-contiguous region: after every `COPY` block, before post-data DDL, introduced
-by one `BLOBS` archive entry (hence one TOC comment, I3) and wrapped in
-`BEGIN;` / `COMMIT;`. Its contents are ordinary single-line SQL statements —
-`SELECT pg_catalog.lo_open(pg_catalog.lo_create('<oid>'), 131072);`, a run of
-`SELECT pg_catalog.lowrite(0, '\x…');`, `SELECT pg_catalog.lo_close(0);` per
-object. **No line inside it can be mistaken for a `COPY` header or a `\.`
-terminator**, because the payload is a bytea hex literal and hex cannot
-contain a line break. Large-object *definitions* (ownership, ACL, comments)
-are separate entries that sort ahead of the pre-data boundary.
+**Claim.** In plain-format output, large-object *data* sits after every
+`COPY` block and before post-data DDL, and its contents are ordinary
+single-line SQL statements — `SELECT pg_catalog.lo_open('<oid>', 131072);`, a
+run of `SELECT pg_catalog.lowrite(0, '\x…');`, `SELECT
+pg_catalog.lo_close(0);` — each `BEGIN;`/`COMMIT;`-wrapped. **No line inside
+it can be mistaken for a `COPY` header or a `\.` terminator**, because the
+payload is a bytea hex literal and hex cannot contain a line break.
+
+**How many archive entries this is split across changed at v17, and the
+routine version matrix (13-18) spans both shapes** — confirmed by
+`scripts/fixture_schema_objects.sql`'s two hand-built large objects, real
+`pg_dump` output, all 6 versions (`fixtures/<version>/objects/default.sql`):
+
+| | v13-16 | v17-18 |
+|---|---|---|
+| Definition entry (ownership/comment/ACL) | one `BLOB` entry per object | one `BLOB METADATA` entry per object |
+| Data entry | **one `BLOBS` entry for every large object in the dump**, one shared `BEGIN;`/`COMMIT;` wrapping every object's `lo_open`/`lowrite*`/`lo_close` run back to back | **one `BLOBS` entry per object**, each with its own `BEGIN;`/`COMMIT;` |
+| `lo_create` call | inside the `BLOB` definition entry | inside the `BLOB METADATA` definition entry (unchanged in *position*, only the entry's name) |
+
+Large-object *definitions* (ownership, ACL, comments) are separate entries
+that sort ahead of the pre-data boundary on both shapes.
 
 **Proof.** `dbObjectTypePriorities` (`pg_dump_sort.c`) places
 `PRIO_LARGE_OBJECT_DATA` between `PRIO_TABLE_DATA` and
 `PRIO_POST_DATA_BOUNDARY`, and `PRIO_LARGE_OBJECT` (the definition entries)
-before `PRIO_PRE_DATA_BOUNDARY` — so the data region is one block in a fixed
-position, never interleaved with table data. `pg_dump.c` creates exactly one
-archive entry named `BLOBS` with `.description = "BLOBS"` for all of it.
-`StartRestoreLOs()`/`EndRestoreLOs()` (`pg_backup_archiver.c`) emit the
-`BEGIN;`/`COMMIT;` wrapper when not restoring to a live connection;
-`_StartLO()` emits the `lo_open(lo_create(...))` line, and `dump_lo_buf()`'s
-no-connection branch emits each chunk through `appendByteaLiteralAHX()` as
-`SELECT pg_catalog.lowrite(0, %s);`.
+before `PRIO_PRE_DATA_BOUNDARY` — so the data region sits in a fixed position
+either way, never interleaved with table data. Through v16, `pg_dump.c`
+creates exactly one archive entry named `BLOBS` (`.description = "BLOBS"`)
+covering every large object in the database; v17 (`pg_dump.c`, "Create a
+BLOBS data item for the group, too") splits large objects into groups and
+gives each group its own `BLOBS` entry — a fixture with only two large
+objects never exercises more than one group, so this evidence doesn't pin
+down the grouping threshold, only that v17+ is no longer "always exactly
+one." `StartRestoreLOs()`/`EndRestoreLOs()` (`pg_backup_archiver.c`) emit the
+`BEGIN;`/`COMMIT;` wrapper (one per data entry, whatever it covers) when not
+restoring to a live connection; `_StartLO()` emits the `lo_open(...)` line,
+and `dump_lo_buf()`'s no-connection branch emits each chunk through
+`appendByteaLiteralAHX()` as `SELECT pg_catalog.lowrite(0, %s);`.
 
 **Size.** Chunks are `LOBBUFSIZE`-bounded but the region is not: hex encoding
 roughly doubles the on-disk size of the objects, so a dump of a
@@ -490,24 +506,38 @@ one inter-`COPY` gap that is **not** bounded by schema size.
 `crate::scan` steps over this region as ordinary outside-block lines and
 cannot be confused by it, which is why large objects have never been a
 correctness hazard despite being unmodelled. But Phase 3's full file map must
-recognize the region by its TOC header and skip to `COMMIT;` rather than
-running the keyword-dispatch grammar over every line — otherwise the "cheap
-tier costs a few thousand DDL lines" claim becomes a full-file parse. The
-per-object OID appears only in the `lo_create('<oid>')` opener; recovering it
-costs a walk of the whole region, which is why per-object spans are deferred.
+recognize the region by its TOC header and skip to each data entry's
+`COMMIT;` rather than running the keyword-dispatch grammar over every line —
+otherwise the "cheap tier costs a few thousand DDL lines" claim becomes a
+full-file parse. On v17+, treating "the large-object region" as one span
+(the phase's chosen design — see "Bulk regions" in
+`roadmap-phase3-object-inventory.md`) means recognizing that a `BLOBS`
+data entry's `COMMIT;` does not end the region if the next TOC header is
+another `BLOB METADATA`/`BLOBS` pair — the scan must walk past every
+consecutive one before treating the region as closed. On v13-16 this
+concern doesn't arise (there is only ever one such entry). The per-object
+OID is recoverable from the TOC header alone on v17+ (`-- Data for Name:
+<oid>; Type: BLOBS`) but only from the `lo_open('<oid>', ...)` line on
+v13-16, where every object's data shares one entry; per-object spans are
+deferred either way, since the phase's design treats the whole region as
+one span regardless of how cheaply an OID could be recovered.
 
-**Verified against:** v16.15 and v18.6 source (`pg_dump_sort.c` priorities;
-`dumpLOs`/`BLOBS` entry; `StartRestoreLOs`, `_StartLO`, `dump_lo_buf` in
-`pg_backup_archiver.c`); the `"BLOBS"` description string is unchanged from
-v13.23 through v18.6. No fixture or koji coverage — koji has no large
-objects.
+**Verified against:** v13.23 through v18.6 source (`pg_dump_sort.c`
+priorities; `dumpLOs`/`BLOBS`/`BLOB METADATA` entries; `StartRestoreLOs`,
+`_StartLO`, `dump_lo_buf` in `pg_backup_archiver.c`) and, since slice 3.1,
+real fixture output on all 6 routine versions
+(`fixtures/<version>/objects/default.sql`) — koji still has no large objects,
+so this remains fixture-only, no koji coverage.
 **Relied on by:** `roadmap.md` (Phase 3, "Large objects: ranges, not
-contents"); `pg-dump-compatibility.md`.
+contents"); `roadmap-phase3-object-inventory.md` ("Bulk regions");
+`pg-dump-compatibility.md`.
 **Re-verify:** `grep -n 'PRIO_LARGE_OBJECT_DATA' src/bin/pg_dump/pg_dump_sort.c`
 — confirm it still sits between `PRIO_TABLE_DATA` and
 `PRIO_POST_DATA_BOUNDARY`; `grep -n 'lowrite' src/bin/pg_dump/pg_backup_archiver.c`
 — confirm the no-connection branch still emits one bytea literal per
-statement.
+statement; `grep -n 'description = "BLOB' src/bin/pg_dump/pg_dump.c` — confirm
+whether a given major still uses `BLOB`/`BLOBS` per-database or `BLOB
+METADATA` per-object.
 
 ---
 
