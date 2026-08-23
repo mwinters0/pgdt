@@ -36,4 +36,5 @@ cargo run -p pgdump_query-cli -- info <dump.sql> --verbose
 - [`docs/design/pg-dump-compatibility.md`](docs/design/pg-dump-compatibility.md) — tracked `pg_dump` option support matrix.
 - [`docs/design/postgres-invariants.md`](docs/design/postgres-invariants.md) — `pg_dump` behaviours the design relies on, with source evidence and re-verification steps.
 - [`docs/design/historical/initial.md`](docs/design/historical/initial.md) — frozen original design handoff.
+- [`docs/process.md`](docs/process.md) — the phased development process this project follows (project-agnostic; written to be copied into other projects).
 - [`CLAUDE.md`](CLAUDE.md) — repo guidance for AI coding agents (full command reference, architecture detail).
