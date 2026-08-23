@@ -31,7 +31,8 @@ cargo run -p pgdump_query-cli -- info <dump.sql> --verbose
 - [`docs/manual/`](docs/manual/) — user manual, starting with [type handling](docs/manual/type-handling.md).
 - [`docs/design/roadmap.md`](docs/design/roadmap.md) — project goals and the Phase 1-8 overview; each specified phase gets its own `roadmap-phase<N>-*.md` doc.
 - [`docs/design/roadmap-phase1-mvp.md`](docs/design/roadmap-phase1-mvp.md) — full Phase 1 (MVP) spec, the source of truth for the built design. [`…-notes.md`](docs/design/roadmap-phase1-mvp-notes.md) records how it landed in code.
-- [`docs/design/roadmap-phase2-typed-columns.md`](docs/design/roadmap-phase2-typed-columns.md) — Phase 2 spec (current, in progress).
+- [`docs/design/roadmap-phase2-typed-columns.md`](docs/design/roadmap-phase2-typed-columns.md) — full Phase 2 (typed columns) spec. [`…-notes.md`](docs/design/roadmap-phase2-typed-columns-notes.md) records how it landed in code.
+- [`docs/design/roadmap-phase3-object-inventory.md`](docs/design/roadmap-phase3-object-inventory.md) — Phase 3 spec (current): the full file map and DDL object inventory.
 - [`docs/design/roadmap-phase7-scan-performance.md`](docs/design/roadmap-phase7-scan-performance.md) — performance design sketch for the local-file read path (Phase 7), and what it constrains earlier.
 - [`docs/design/pg-dump-compatibility.md`](docs/design/pg-dump-compatibility.md) — tracked `pg_dump` option support matrix.
 - [`docs/design/postgres-invariants.md`](docs/design/postgres-invariants.md) — `pg_dump` behaviours the design relies on, with source evidence and re-verification steps.

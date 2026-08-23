@@ -1,0 +1,450 @@
+# Phase 3 — Full DDL object inventory
+
+The binding specification for Phase 3: what it does and why. Indexed from
+[`roadmap.md`](roadmap.md), whose "Phase 3" section is the origin sketch and
+is kept for the reasoning it carries; where the two disagree, this doc wins.
+How it lands in code goes in `roadmap-phase3-object-inventory-notes.md`, not
+here.
+
+**Status: in specification.** Sections below are written as they are settled.
+
+## What this phase is for
+
+A second use case, distinct from the embeddable-query-source goal the rest of
+the roadmap is organized around: **a sysadmin or engineer handed a dump file
+of unknown origin, wanting to understand what it needs before loading it
+anywhere.** Concretely — which roles must exist on the restore target, which
+tablespaces, what objects the file contains, and whether any of it is
+something we don't understand.
+
+Its exit criterion is the **full file map**: an ordered set of spans that
+tiles the file, every byte belonging to exactly one span, spans summing to
+the file size, none overlapping, each attributed to something.
+
+## Scanning: one statement-driven pass, TOC comments as an enrichment layer
+
+**Decision.** A single pass parses DDL statements directly. TOC header
+comments (I3) are read as an *enrichment layer* over that pass, never as its
+only source of structure.
+
+The pass is statement-driven because a `pg_dump`-compatible dump from
+elsewhere in the ecosystem may carry no TOC comments at all, and a map that
+silently produces nothing on such a file is worse than one that produces a
+coarser map. TOC comments are read because three things are genuinely only
+available there.
+
+What the TOC layer contributes, and what is lost without it:
+
+| TOC contributes | Without it |
+|---|---|
+| **Owner for objects that emit no `OWNER TO`** — 81% of koji's entries (indexes, constraints, ACL, defaults, sequence-sets inherit ownership rather than setting it) | Owner known only for independently-owned objects. Role *discovery* is unaffected; "which objects does role X own" is not answerable |
+| **A kind label for statements the grammar doesn't recognize** — `POLICY`, `TRANSFORM`, `USER MAPPING`, … | Those spans classify as unknown rather than known-but-unhandled |
+| **Grouping** — a definition and its trailing `ALTER … OWNER TO` are one TOC entry | They tile as two adjacent spans instead of one |
+| **Kind for text-ambiguous statements** — `ALTER TABLE … ADD CONSTRAINT` is `CONSTRAINT` / `FK CONSTRAINT` / `CHECK CONSTRAINT` | Recoverable by parsing the constraint body; the comment is just cheaper |
+
+Tiling holds either way, so this is graceful degradation rather than a second
+code path, and there is no fallback implementation to defer.
+
+**Choosing TOC-driven segmentation as the primary structure was considered and
+rejected.** Its appeal is a closed, upstream-verifiable vocabulary (~63 `Type:`
+values — see the invariant register) and free tiling boundaries. It fails on
+input that isn't `pg_dump`'s own archiver, and I3's own caveat — a
+dollar-quoted function body can contain a line that looks like a TOC header —
+means the statement grammar has to corroborate regardless.
+
+**This is not a performance decision.** Both approaches are line-oriented
+passes over the same bytes; on koji that is 154KB of DDL against 784GB of
+data, unmeasurable either way. Bulk-region skipping — the one place cost is
+real — does not depend on TOC comments either; see "Bulk regions" below for
+how each region's end is found.
+
+**TOC coverage is recorded per file**, as the count of TOC headers seen
+against the number of spans produced. A file with zero of them is a normal,
+reported state — the signal that the map is running degraded — not an error
+and not a silent fall-through.
+
+Evidence: [`../status/history/2026-08-23.md`](../status/history/2026-08-23.md).
+
+## What a span carries
+
+**Decision.** Kind, name, schema, owner, byte span, and the raw statement
+text — plus a **modelled cross-reference set**, accumulated during the scan
+and cached: **referenced roles and referenced tablespaces, and nothing else.**
+
+The object model stays read-side: a classification plus raw text, not a
+write-compatible representation. Ordering/dependency fidelity, exact
+comment/whitespace preservation, and OID stability are writer concerns the
+sysadmin use case doesn't need. Storing the raw text is cheap and doesn't
+foreclose a future writer, but round-trip fidelity does not shape this design.
+
+The cross-reference set is modelled rather than derived at display time
+because the whole point is answering "which roles does this dump need" without
+rescanning the file — a grep over raw text at display time isn't cacheable.
+It is limited to roles and tablespaces because modelling per-kind detail
+(index definitions, constraint expressions, function signatures) is the
+write-compatible representation this phase rules out.
+
+Roles reach the set from three places, and koji needs all three: the TOC
+comment's `Owner:` field, `ALTER … OWNER TO`, and `GRANT`/`REVOKE`/`ALTER
+DEFAULT PRIVILEGES FOR ROLE`. koji's `backup` role is reachable *only* through
+post-data `GRANT` statements — the concrete case for scanning past the first
+`COPY` block. `PUBLIC` is a pseudo-role and is never reported as one.
+
+Tablespaces reach it from two: the TOC comment's optional `; Tablespace: <name>`
+suffix, which `_printTocEntry()` appends whenever the entry has a non-default
+tablespace and `--no-tablespaces` was not given, and the `SET default_tablespace
+= …;` statements `_selectTablespace()` emits ahead of a definition. `pg_default`
+is the implicit default and is never reported.
+
+Both sets are stored flat and per-file; a per-database view is a filter over
+each span's `database` attribution, not a second stored structure.
+
+## Bulk regions: one span kind, three producers
+
+**Decision.** A `Data` span kind covers every bulk region — `COPY` blocks,
+the `BLOBS` large-object region, and `INSERT` runs — each recognized at its
+opening line and skipped to the end of the region rather than walked
+statement by statement.
+
+Every gap between `COPY` blocks being schema-sized is what makes the scan
+cheap, and there are exactly two exceptions:
+
+- **Large objects** (I12) — hex encoding roughly doubles the objects' size, so
+  the region can run to hundreds of gigabytes. Contents are never parsed;
+  there is nothing in them a query engine wants. Per-object subdivision is
+  deferred: the only identity the region carries is the OID in each
+  `lo_create('<oid>')` opener, and recovering it costs a walk of the whole
+  region, which is exactly what one span avoids paying.
+- **`--inserts` / `--column-inserts` output**, which contains **zero** `COPY`
+  blocks — so "the gap between `COPY` blocks" is the entire file. A
+  koji-scale `--inserts` dump is ~1TB of `INSERT INTO` lines. Without this
+  span kind the scan would walk every one of them, making the phase's cost
+  claim false for an input the fixture tooling already generates.
+
+Treating all three as one kind generalizes the large-object fast path instead
+of adding a second special case, and makes the cost claim unconditional: the
+scan walks only schema-sized regions, for every `pg_dump` output rather than
+for koji-shaped ones. It also front-loads what Phase 8 Track A needs — an
+`INSERT` run already located and attributed to a table, so that phase adds a
+row parser, not a scanner.
+
+### The three regions do not share an end marker
+
+They are one span kind, but finding where each *ends* costs differently, and
+only two of the three have an invariant behind them:
+
+| Region | End marker | Guarantee |
+|---|---|---|
+| `COPY` block | `\.` alone on a line | I7 — `LF 5C 2E` cannot occur at the start of a data line |
+| `BLOBS` | `COMMIT;` | I12 — the payload is a bytea hex literal, which cannot contain a line break |
+| `INSERT` run | next TOC header | **none** — see below |
+
+**`INSERT` runs need a string-aware scan, not a line-anchored check.** A
+`pg_dump --inserts` value is a single-quoted SQL literal, and a value carrying
+a newline puts the rest of its statement on the next physical line, which
+begins `');` rather than `INSERT INTO`. So the run's end is found by tracking
+`'` (with `''` doubling; `standard_conforming_strings = on` means there are no
+backslash escapes) to locate real statement ends, then closing at the next TOC
+header. That is a `memchr`-class pass over the region rather than a memcmp per
+line — an order cheaper than parsing statements, and unconditionally correct,
+which is what the single-`Data`-kind argument depends on. Phase 8 Track A needs
+the same string-aware splitter to read `INSERT` rows at all, so this is not
+work that phase repeats.
+
+Closing an `INSERT` run at the next line-anchored `--` instead was rejected: a
+value containing a newline followed by `--` breaks it, and the difference never
+shows up at fixture scale, so the unsoundness would ship untested.
+
+An `INSERT`-format dump also emits a `TABLE DATA` TOC header for a table with
+**zero** rows, so a data span containing no data at all is a shape the map
+handles, not an anomaly.
+
+## The map is the structure, not a description of it
+
+**Decision.** `DumpIndex` grows an ordered `spans: Vec<Span>` as its **primary**
+structure. `Span::Data` holds a `CopyBlock` **inline**; `blocks()` becomes a
+derived iterator and `blocks_for` a filter over it. `CopyBlock` itself is
+unchanged, so Phase 7's reserved `sparse_index` and Phase 5's `column_stats`
+are unaffected.
+
+The alternative the roadmap sketch leaned toward — `spans` alongside `blocks`,
+with `Span::CopyData { block: usize }` indexing into it — was rejected because
+it gives the same byte offsets two owners. "Spans sum to the file size" could
+then be true while `blocks` disagreed, which is precisely the failure the
+tiling invariant exists to catch. The migration cost is a filter change in
+`stream.rs`'s segment planner, not a redesign.
+
+The cache format version bumps; pre-1.0 that is free.
+
+### The span is the container; `DumpMetadata` becomes a derived view
+
+**Decision.** Parsed content lives **in the span**, once. `DumpMetadata` /
+`DatabaseMetadata` survive as **derived view types** — built by filtering
+already-parsed spans, never by re-parsing raw text and never stored — so
+nothing is held in two places and nothing is thrown away to be re-derived.
+
+Shape: common fields on the span, per-kind payload in a body enum.
+
+```
+struct Span { start, end, database, toc: Option<TocHeader>, text: …, body: SpanBody }
+enum SpanBody { Table{columns}, TypeDef{…}, Extension{…}, Data(CopyBlock),
+                Framing{…}, Unparsed, Unscanned }
+```
+
+`SpanBody`'s vocabulary is small and is *not* the TOC's ~63 kinds; those are a
+label carried on `TocHeader` and attached to `Unparsed` spans, which is what
+distinguishes known-but-unhandled from unrecognized.
+
+**L2 is untouched.** `resolve.rs` only ever reads `metadata.databases` and
+filters it, so preserving `DumpMetadata`'s shape as a view keeps every L2
+signature identical; only `preamble.rs` (producer), `index.rs`, and `cache.rs`
+change. The view is built once when a `DumpIndex` is produced or loaded and
+memoized as `#[serde(skip)]`, the same treatment `diagnostics` gets — so it
+costs nothing per query and, being derived, cannot diverge from the spans.
+
+Storing the parse in a separate `DumpMetadata` *and* raw text in spans was
+rejected as holding one fact in two places; storing only raw text and
+re-parsing per query was rejected as throwing away work the scan already did.
+
+## Scan coverage is a prefix, expressed as a span
+
+**Decision.** Bytes no scan has walked are covered by an explicit `Unscanned`
+span, so **every** `DumpIndex` tiles the file — a partial one included. The
+tiling test therefore has no exemption for incremental scans, and exemptions
+are how invariants rot.
+
+**Coverage is a prefix, by construction.** `table_stream` never jumps forward
+over unread bytes: with no resume token it replays already-cached blocks and
+appends one `Segment::Live { start: scanned_through }`; with one it starts a
+single live segment at the token's offset, which may sit *below*
+`scanned_through` and re-walk, but never above it. So today there is exactly
+one `Unscanned` span and it is always trailing — informationally identical to
+`scanned_through`.
+
+The structure is nonetheless a span list rather than a watermark field,
+because prefix-ness is a property of the current scan strategy, not of the
+format. Phase 7's device-aware parallelism
+([`roadmap-phase7-scan-performance.md`](roadmap-phase7-scan-performance.md))
+scans an NVMe-backed file out of order, which is the plausible future source of
+interior holes; a watermark would have to be unwound to allow them, a span list
+would not.
+
+An `Unscanned` span later subdividing into real spans is the reference case for
+the monotonic-coverage rule below: specificity increases, coverage never
+decreases.
+
+## Span boundaries: object-anchored and greedy
+
+**Decision.** A span opens at the `--` of its TOC comment — or, where there is
+no TOC comment, at the first byte of its first statement — and runs to the byte
+before the next span opens. Interstitial blank lines are absorbed into the
+preceding span. **There are no whitespace or comment-run span kinds.**
+
+The roadmap sketch listed `comment-run (n lines)` and `whitespace-run` as span
+kinds. They are dropped: content-anchored spans force a rule for where trailing
+whitespace belongs that nothing upstream guarantees (the blank-line counts
+between objects are regular in practice but promised nowhere), and every extra
+span kind is another opportunity to leave a byte unattributed — the exact
+failure the tiling invariant exists to catch. Object-anchored spans make the
+boundary rule one sentence, make span count equal object count plus a handful
+of framing spans, and spare `pgdq info` from filtering noise out of its
+listing.
+
+The roadmap's stated motive for those kinds — making "this dump has zero
+comments" objectively queryable — is served instead by the TOC-coverage figure
+above plus a per-span record of whether it carried a TOC header. Byte-exact
+"how much of this file is blank" accounting is the one thing lost, and nothing
+needs it.
+
+**Framing spans.** The file prologue and epilogue carry no TOC header and are
+not archive entries: the `-- PostgreSQL database dump` banner, `\restrict`, the
+two version-header lines (I9), and the `SET`/`set_config` block written by
+`_doSetFixedOutputState()`; then the `-- PostgreSQL database dump complete`
+banner and `\unrestrict`. They are spans like any other, classified as framing.
+
+**`COPY` blocks are the one exception, deliberately.** A data span's outer
+boundary starts at its TOC comment, but a row reader needs to seek to the first
+byte of the first row and to know where the last row ends. `CopyBlock` already
+carries exactly this from Phase 1 — `header_offset`, `data_offset`,
+`terminator_offset`, `end_offset` — and `Span::Data` holds the block inline, so
+the invariant is:
+
+```
+span.start ≤ header_offset < data_offset ≤ terminator_offset < end_offset ≤ span.end
+```
+
+This is a one-off for `COPY`, not a design standard: no other span kind carries
+inner offsets, and none should acquire them without the same
+seek-into-the-middle justification.
+
+## Diagnostics: a file-level channel on `DumpIndex`
+
+**Decision.** `DumpIndex` grows `diagnostics: Vec<Diagnostic>`, marked
+`#[serde(skip)]` so it is **not persisted**. `Diagnostic` gains a severity and
+a kind, so Phase 2's per-column resolution outcomes, a cache-identity warning,
+the TOC-coverage figure, and an unrecognized span all speak one vocabulary.
+
+Phase 2's `Diagnostic` hangs off `ResolvedSchema` as a per-column outcome; a
+cache mtime mismatch has no column and no schema to attach to, and the library
+cannot `eprintln!` — it is destined to sit inside DataFusion. Not persisting
+the list matters: a cached diagnostic would replay a warning about a check that
+*this* run performed successfully. Recomputing on load is cheap and correct.
+
+Returning diagnostics alongside every result was rejected as changing every
+public signature for something most callers ignore. A caller-supplied sink (the
+`tracing-subscriber` shape) is the right long-term embedder story but belongs
+to Phase 6; a sink can drain this list, so nothing here forecloses it.
+
+## Cache: the dump file's identity is checked, not assumed
+
+**Decision.** The cache records the dump file's **size and mtime** as observed
+at scan time, and both are checked **whenever the source file is revisited** —
+continuing an incremental scan, replaying a `Segment::Known`, or reading a
+span's bytes.
+
+- **Size mismatch is an error.** Any byte in the file could have moved, so
+  every offset in the cache is meaningless. The whole cache is invalidated,
+  not repaired.
+- **mtime mismatch is a loud warning, not an error.** mtime handling varies too
+  much across filesystems and operating systems (granularity, preservation
+  across copies and restores, network filesystems) for a mismatch to be
+  conclusive evidence of a changed file.
+
+This closes what `roadmap-phase1-mvp.md` filed under "Configurable (future)".
+It becomes load-bearing here because a span records where its statement text
+lives, and Phase 5's statistics will need it for a stronger reason still — a
+stale statistic causes a wrong *answer* rather than a wasted scan
+([`roadmap.md`](roadmap.md), "The correctness asymmetry is the thing to get
+right").
+
+Span text is nonetheless **stored in the cache**, not re-read on demand, so
+that `pgdq info` answers from the cache alone and a stale cache is merely
+stale rather than misleading. Size is bounded by schema size — koji's entire
+DDL surface is 154KB — with a **per-span 64KB cap** above which the span keeps
+offsets plus a `truncated` marker, so one pathological function body cannot
+make the cache unbounded. `Data` spans never store text.
+
+## Span text comes from the file, not from the parser
+
+**Decision.** A span's text is **sliced from the file by offset** when the span
+closes, never accumulated from `Event::Line`.
+
+`scan.rs`'s outside-block arm `continue`s on any line inside, entering, or
+leaving a dollar-quoted string, so no `Event::Line` is emitted for it — which
+is why `preamble.rs` needs no defence against a `CREATE FUNCTION` body, and
+equally why an accumulated span text would be missing every function body in
+the file. Slicing by offset makes text a pure function of the span's
+boundaries rather than of parser state, which is the same property the tiling
+invariant wants, and costs nothing: the bytes are in the scan buffer already.
+
+Adding an event variant to surface dollar-quoted lines was rejected as leaking
+a Phase 3 concern into L1's event contract for no gain.
+
+The stored text is the **whole span**, TOC comment and trailing blank lines
+included — the span is the tiling unit, and the comment is context a reader
+wants.
+
+**The statement accumulator needs hardening first.**
+`preamble.rs`'s `statement_complete` tracks paren depth and single-quoted
+strings but treats an apostrophe inside a `--` comment or a double-quoted
+identifier as opening a string that never closes. Unreachable today (it starts
+only on five `CREATE`/`ALTER TYPE` keywords, for which `pg_dump` emits neither
+shape); Phase 3 absorbs arbitrary statements, which makes both reachable. Fixed
+in slice 3.2.
+
+## Tiling is verified at runtime and reported as a diagnostic
+
+**Decision.** Coverage is checked whenever a map is completed. A failure emits
+a high-severity `Diagnostic` and leaves the map usable. The tiling test over
+every fixture exists as well; the runtime check is not a substitute for it.
+
+Tiling is an assertion about *our own parser*, not about the input — a hole
+means we have a bug, not that the dump is bad. The check is O(spans) against a
+scan that just read the entire file, so it is free, and what it guards is a
+silently dropped region on a dump shape no fixture covers: exactly the case a
+test cannot catch, and exactly the case that matters when the input is "a dump
+file of unknown origin."
+
+Failing the scan outright was rejected — a map with a hole is still more useful
+than no map, and refusing to answer "which roles does this need" over an
+accounting discrepancy serves nobody.
+
+## Standing rule: coverage increases monotonically
+
+**From Phase 3 onward, a later phase may subdivide a span or attach detail to
+it, never reduce coverage.** Specificity increases monotonically; the tiling
+property does not degrade. Splitting the one large-object span into one span
+per object is the intended shape of "more specific"; introducing a span kind
+that leaves bytes unaccounted for is not. This outlives Phase 3 the way
+[`layering.md`](layering.md) outlives the phase that introduced it.
+
+The rule is only real if something checks it. A test asserts tiling over every
+fixture, and the cases that matter most are the degenerate ones: `--data-only`
+(no DDL), `--inserts` (no `COPY` blocks at all), `--schema-only` (no data at
+all), and the concatenated multi-database shape. Absent that test, "spans sum
+to file size" decays into an aspiration the first time a span kind is added.
+
+## Implementation slices
+
+Ordered so each slice makes the next one's mistakes visible; the cheap,
+no-code, evidence-gathering slice goes first.
+
+| Slice | Scope |
+|---|---|
+| **3.1** | A third fixture schema (`objects`) covering the TOC kinds neither existing schema produces, plus **large objects**, plus a `--verbose` flag set. No library code. |
+| **3.2** | `map.rs`: the span model, `Unscanned` coverage, the tiling invariant with its runtime check and its test over every fixture, cache identity checking, the hardened statement accumulator, and the string-aware `INSERT`-run scanner — statement-driven pass only, no TOC enrichment. Updates `layering.md`'s module table and Arrow-free check for `map.rs`. |
+| **3.3** | The TOC enrichment layer: owner, kind labels, the `Tablespace:` field, TOC-coverage reporting. |
+| **3.4** | The cross-reference set — referenced roles and tablespaces. `objects.rs` splits out of `preamble.rs` here or in 3.3 if that module passes ~1500 lines. |
+| **3.5** | CLI surface: `pgdq info` gains role, tablespace and object-kind summaries by default and a `--map` span listing; `docs/manual/` gains the dump-inspection page. |
+
+**3.1 must produce a large-object fixture**, generated by hand
+(`lo_from_bytea`/`lo_import` against a scratch database) since no `pg_dump`
+flag conjures one. I12's fast-path skip is currently asserted from source
+reading alone, and the large-object region is the only part of this phase's
+cost argument with no evidence behind it — koji has no large objects either.
+The `--verbose` flag set is there because it is the one documented way to make
+the TOC comment block taller than three lines.
+
+**Cache identity checking sits in 3.2, not later**, because it is the
+precondition for trusting any cached span offset and the tiling test is the
+first thing that reads them back.
+
+Current fixture coverage, for reference: across both existing schemas real
+`pg_dump` output produces only `TABLE`, `TABLE DATA`, `CONSTRAINT`,
+`FK CONSTRAINT`, `FUNCTION`, `SCHEMA`, `TYPE`, `DOMAIN`, `SHELL TYPE`.
+
+## Module and layer assignment
+
+**Decision.** A new `map.rs` owns `Span`, `SpanBody`, and the tiling check.
+`preamble.rs` keeps the DDL grammar and becomes its statement parser;
+`index.rs` keeps `DumpIndex`. All are **L1** — byte offsets, span structure,
+DDL text grammar and cache shape are L1 concerns by
+[`layering.md`](layering.md)'s own table, and no Arrow type appears in any of
+them.
+
+The widened grammar this phase adds — `GRANT`/`REVOKE`/`ALTER DEFAULT
+PRIVILEGES`, `OWNER TO`, `SET default_tablespace`, plus the hardened statement
+accumulator — is a lot to add to a `preamble.rs` already at 1014 lines, and the
+expected end state is a further split into `objects.rs`. That split is *not*
+made up front: guessing the seam before the grammar is written is how it lands
+in the wrong place. Slice 3.2 lands `map.rs`; if `preamble.rs` passes ~1500
+lines, 3.3 or 3.4 splits `objects.rs` out and updates `layering.md`'s table in
+the same change. All candidates are L1, so the split carries no layering
+consequence — which is why it is safe to defer.
+
+## Verification
+
+**Decision.** Two measurements gate the phase.
+
+- **A synthetic large-object dump**, a few GB, on the SSD. The large-object
+  fast path is the only part of the cost argument with no evidence behind it at
+  any size — I12 proves the region's *shape* from source, not that our skip is
+  cheap — and a few GB is enough to distinguish "skipped" from "walked" without
+  an hour of HDD time. Its generator is small: the region is three statement
+  forms.
+- **A koji full re-scan**, as a regression check against Phase 1's 243 MB/s
+  baseline. koji has neither large objects nor `INSERT` runs, so it tests only
+  that the map doesn't regress the ordinary case — which is worth knowing, and
+  is the case every user hits. This is a ~1 hour job and follows `CLAUDE.md`'s
+  long-running-job protocol: launch detached, record the log path, let a later
+  session read the result.

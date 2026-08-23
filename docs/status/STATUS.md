@@ -19,11 +19,16 @@ already-landed slice's contract (2.2.1, 2.3.1, 2.3.2, 2.3.3). How it landed —
 module map, and the implementation facts later phases inherit — is in
 `docs/design/roadmap-phase2-typed-columns-notes.md`.
 
+Phase 3 (full DDL object inventory) is specified and not started:
+`docs/design/roadmap-phase3-object-inventory.md`, five slices, none landed.
+
 Last updated: 2026-08-23.
 
 ## Not started
 
-- **Phases 3-7** — not designed. See `docs/design/roadmap.md`.
+- **Phase 3** — specified, no code. See
+  `docs/design/roadmap-phase3-object-inventory.md`.
+- **Phases 4-8** — not designed. See `docs/design/roadmap.md`.
 
 ## Known gaps
 

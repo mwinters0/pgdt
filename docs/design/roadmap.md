@@ -7,9 +7,10 @@ sketched here are at a level sufficient to keep earlier phases from painting us
 into a corner — **each gets its own full grilling session when it becomes
 current**, and the resulting spec becomes its own numbered doc.
 
-Phase 1 is complete (`docs/design/roadmap-phase1-mvp.md`,
-`docs/design/roadmap-phase1-mvp-notes.md`). Phase 2 is current
-(`docs/design/roadmap-phase2-typed-columns.md`).
+Phases 1 and 2 are complete (`docs/design/roadmap-phase1-mvp.md`,
+`docs/design/roadmap-phase1-mvp-notes.md`,
+`docs/design/roadmap-phase2-typed-columns.md`,
+`docs/design/roadmap-phase2-typed-columns-notes.md`). Phase 3 is current.
 
 `docs/design/layering.md` cuts across every phase below: it assigns each module
 to one of four layers and fixes the direction dependencies may point. Several
@@ -63,7 +64,7 @@ with a best-effort structural cache. Binary `pgdq`, library crate
 `pgdump_query`. Full spec: `docs/design/roadmap-phase1-mvp.md`; implementation
 notes: `docs/design/roadmap-phase1-mvp-notes.md`.
 
-## Phase 2 — Typed columns (current)
+## Phase 2 — Typed columns (complete)
 
 Specified in `docs/design/roadmap-phase2-typed-columns.md`; the sketch below is
 the origin of that spec and is kept for the reasoning it carries. Where the two
@@ -182,7 +183,11 @@ statistics under Phase 5 below — all three were reserved together in Phase 1
 precisely so populating one is not a format break. The reserved `DumpMetadata`
 type is a placeholder; its real shape is this phase's design work.
 
-## Phase 3 — Full DDL object inventory
+## Phase 3 — Full DDL object inventory (current)
+
+Specified in `docs/design/roadmap-phase3-object-inventory.md`; the sketch
+below is the origin of that spec and is kept for the reasoning it carries.
+Where the two disagree, the phase doc wins.
 
 `pg_dump` output is full of statements Phase 2's preamble pass never looks
 at — `GRANT`/`REVOKE`, `OWNER TO`, `ALTER DEFAULT PRIVILEGES FOR ROLE ...`,

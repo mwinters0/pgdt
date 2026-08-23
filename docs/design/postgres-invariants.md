@@ -653,3 +653,98 @@ major's source — confirm the mnemonic set and the "no octal/hex on output"
 shape are unchanged.
 
 ---
+
+## I16 — The TOC comment's `Type:` vocabulary is closed, and its `Owner:` field is the only owner record for most objects
+
+**Claim.** Two properties of the TOC header comment I3 guarantees is present.
+
+*Closed vocabulary.* The `Type:` field ranges over a finite, source-enumerable
+set: 57 string literals assigned to `ArchiveEntry.description` across
+`src/bin/pg_dump/*.c`, plus seven computed values — `reltypename` ∈ {`TABLE`,
+`VIEW`, `MATERIALIZED VIEW`, `FOREIGN TABLE`} and `keyword` ∈ {`FUNCTION`,
+`PROCEDURE`, `CHECK CONSTRAINT`, `CONSTRAINT`} — for a universe of ~63 kinds.
+No path constructs a description from catalog text, so the set cannot grow
+except by an upstream source change.
+
+*Owner is TOC-only for inherited-ownership objects.* `_printTocEntry()` emits
+`ALTER … OWNER TO` only for objects whose ownership is independently settable.
+Indexes, constraints, ACL entries, column defaults, `SEQUENCE OWNED BY` and
+`SEQUENCE SET` entries inherit ownership from their parent and emit no such
+statement, so their owner appears **only** in the comment's `Owner:` field.
+
+`--no-owner` suppresses both halves consistently — the TOC field becomes
+`Owner: -` and the statements are dropped — so the two sources can never
+disagree.
+
+**Proof.** Enumerable directly from source (see re-verify). Measured on the
+koji sample (`pg_dump 16.14`, 603 TOC entries): `TABLE` 75, `SEQUENCE` 30,
+`FUNCTION` 8, `SCHEMA` 2, `DATABASE` 1, `TYPE` 1 — all 117 emitting `OWNER TO`;
+`FK CONSTRAINT` 191, `CONSTRAINT` 112, `INDEX` 59, `ACL` 34,
+`SEQUENCE OWNED BY` 30, `DEFAULT` 30, `SEQUENCE SET` 30 — 486 entries, none
+emitting `OWNER TO`. `--no-owner` behaviour observed in
+`fixtures/18/edge_cases/no-owner.sql`: 22 `Owner: -` headers, zero `OWNER TO`.
+
+**Scope limit.** Both properties are about `pg_dump`'s own archiver. A
+`pg_dump`-compatible dump produced by other ecosystem tooling may carry no TOC
+comments at all, which is why `roadmap-phase3-object-inventory.md` treats them
+as an enrichment layer over a statement-driven pass rather than as the primary
+structure.
+
+**Verified against:** v18.6 source; koji (`pg_dump 16.14`); fixtures at 18.6.
+
+**Relied on by:** `roadmap-phase3-object-inventory.md` ("Scanning: one
+statement-driven pass, TOC comments as an enrichment layer"; "What a span
+carries").
+
+**Re-verify:**
+
+```sh
+grep -rhoP '\.description = "\K[^"]+' src/bin/pg_dump/*.c | sort -u   # the 57 literals
+grep -n 'reltypename = \|keyword = ' src/bin/pg_dump/pg_dump.c        # the computed 7
+```
+
+Confirm no new `.description =` assignment reads a catalog value, and that
+`_printTocEntry()`'s ownership branch still gates on the entry's own `owner`
+field rather than emitting unconditionally.
+
+---
+
+## I17 — `INSERT`-format table data has no line-anchored statement boundary
+
+**Claim.** In `pg_dump --inserts` / `--column-inserts` output, a statement can
+span multiple physical lines: values are single-quoted SQL literals, and a
+value containing a newline puts the remainder of its statement on the next
+line, which begins with the literal's continuation rather than `INSERT INTO`.
+There is therefore **no line-anchored marker** for the end of an `INSERT` run,
+unlike a `COPY` block (I7) or the large-object region (I12). Finding a real
+statement end requires tracking `'` with `''` doubling; `pg_dump` sets
+`standard_conforming_strings = on`, so backslash escapes are not a concern.
+
+A `TABLE DATA` TOC entry is also emitted for tables with **zero** rows, so an
+`INSERT` run may legitimately contain no statements at all.
+
+**Proof.** Observed directly in real `pg_dump` output.
+`fixtures/*/edge_cases/inserts.sql`'s `public.escapes` table holds one row per
+`chr(n)` codepoint; row 10 (`chr(10)`, a newline) emits
+
+```
+INSERT INTO public.escapes VALUES (10, '
+');
+```
+
+across two physical lines, the second beginning `');`. Row 13 (`chr(13)`) does
+the same. `public.empty_table` carries a `TABLE DATA` header with no statements
+under it.
+
+**Scope limit.** Applies to `INSERT`-format data only. `COPY` blocks and the
+large-object region keep their line-anchored guarantees; this invariant exists
+precisely because those two do not extend to the third bulk region.
+
+**Verified against:** fixtures at 13.23 through 18.6.
+**Relied on by:** `roadmap-phase3-object-inventory.md` ("The three regions do
+not share an end marker"), which is why `INSERT` runs get a string-aware scan
+rather than the prefix check the other two regions allow.
+**Re-verify:** `grep -A1 "VALUES (10, '$" fixtures/*/edge_cases/inserts.sql`
+— confirm the statement still breaks across lines on a newline-bearing value.
+
+---
