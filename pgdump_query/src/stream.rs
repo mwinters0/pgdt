@@ -158,6 +158,7 @@ fn splice(
             database: None,
             text: None,
             toc: None,
+            toc_owned: false,
             body: SpanBody::Unscanned,
         });
     }

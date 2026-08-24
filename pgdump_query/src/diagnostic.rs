@@ -69,11 +69,14 @@ pub enum DiagnosticKind {
     /// invalidation instead, and never reaches this channel because the
     /// cache is discarded outright.
     CacheMtimeChanged,
-    /// How much of the map carries a TOC header: `headers` spans out of
-    /// `spans` total (`roadmap-phase3-object-inventory.md`, "TOC coverage is
-    /// recorded per file"). Always `Info` — zero is a normal, reported state
-    /// (the map running in header-less degraded mode), not an error.
-    TocCoverage { headers: usize, spans: usize },
+    /// How much of the map is attributed to a TOC entry: `attributed` spans
+    /// out of `spans` total — a follow-on statement that inherited its
+    /// governing entry's header (`crate::map::Span::toc_owned` is `false`)
+    /// counts the same as one whose own comment carried it
+    /// (`roadmap-phase3-object-inventory.md`, "TOC coverage is recorded per
+    /// file"). Always `Info` — zero is a normal, reported state (the map
+    /// running in header-less degraded mode), not an error.
+    TocCoverage { attributed: usize, spans: usize },
 }
 
 /// One thing worth telling the caller about a file, with no `Result` to carry
@@ -93,7 +96,7 @@ impl Diagnostic {
         Self { severity: Severity::Warning, kind: DiagnosticKind::CacheMtimeChanged }
     }
 
-    pub(crate) fn toc_coverage(headers: usize, spans: usize) -> Self {
-        Self { severity: Severity::Info, kind: DiagnosticKind::TocCoverage { headers, spans } }
+    pub(crate) fn toc_coverage(attributed: usize, spans: usize) -> Self {
+        Self { severity: Severity::Info, kind: DiagnosticKind::TocCoverage { attributed, spans } }
     }
 }

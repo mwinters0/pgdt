@@ -56,7 +56,10 @@
 //! module's behavior: a definition and its ungrouped trailing statement tile
 //! as two adjacent spans, per the design doc's own "graceful degradation"
 //! framing. Grouping (via the TOC's `Dependencies:` field) is not in either
-//! 3.3's or 3.4's specified scope — it has no assigned slice yet.
+//! 3.3's or 3.4's specified scope — it has no assigned slice yet. **Not
+//! grouping is not the same as not attributing** — see "TOC inheritance"
+//! below: the two spans stay separate, but as of Phase 3.3.1 both carry the
+//! same [`Span::toc`].
 //!
 //! ## What has landed, slice by slice, and what's still outside
 //! - **The `Data`-span fast path for `INSERT` runs and the large-object
@@ -127,6 +130,23 @@
 //!   just `spans.iter().filter(|s| s.toc.is_some()).count()` against
 //!   `spans.len()` — no separate counter, since `Span::toc` already carries
 //!   the fact.
+//! - **TOC inheritance for follow-on statements — landed in Phase 3.3.1.**
+//!   3.3 shipped a coverage figure that read ~50% on a healthy, fully-TOC'd
+//!   dump: a TOC entry is not one statement, and every follow-on
+//!   (`ALTER ... OWNER TO`, `ALTER TEXT SEARCH CONFIGURATION ... ADD MAPPING
+//!   FOR`, ...) carried `toc: None`, uncovered. `Builder`'s `governing_toc`
+//!   field fixes this — it's the entry a comment-less statement inherits, updated
+//!   by every [`Builder::push_span`] call: set to that span's own `toc` for a
+//!   plain statement or `Data` span, cleared to `None` for `Framing`/
+//!   `Connect`/`VersionHeader`. [`Span::toc_owned`] is the "separate record
+//!   of whether it carried the header text itself" the design calls for —
+//!   `true` only for the span whose own comment `toc` came from, `false` for
+//!   every span that inherited it. Coverage now counts attribution
+//!   (`toc.is_some()`, unchanged code — inheritance alone makes the numerator
+//!   right); an object *census* (`pgdq info`'s `object kinds:`) counts
+//!   `toc_owned` spans instead, one per archive entry, since counting every
+//!   attributed span would double it. No grouping either way — see
+//!   "Consequence: no 'grouping'" above.
 //! - **The cross-reference set — landed in Phase 3.4.** [`Builder`] grows
 //!   `roles`/`tablespaces` (both [`crate::index::DumpIndex`] fields of the
 //!   same name), accumulated as spans close: [`Builder::push_span`] reads
@@ -170,16 +190,33 @@ pub struct Span {
     /// [`SpanBody::Unscanned`] spans, whose bytes are unbounded and carry
     /// nothing a reader wants.
     pub text: Option<SpanText>,
-    /// This span's own TOC header, if the comment preceding it parsed as one
-    /// — `None` for a span with no TOC comment at all (the header-less-input
-    /// fallback) and for the kinds `_printTocEntry()` never precedes with one
-    /// (`Connect`, `VersionHeader`, and the file's `\restrict`/banner framing
-    /// lines). Independent of, and not a substitute for, [`SpanBody`]'s own
-    /// per-kind fields: the TOC comment and the statement grammar are two
+    /// The TOC entry this span **belongs to** — not necessarily the comment
+    /// this span's own bytes start with. A follow-on statement with no TOC
+    /// comment of its own (`ALTER ... OWNER TO`, `ALTER TEXT SEARCH
+    /// CONFIGURATION ... ADD MAPPING FOR`, ...) **inherits** the governing
+    /// entry's header rather than carrying `None`
+    /// (`docs/design/roadmap-phase3-object-inventory.md`, "Span boundaries:
+    /// statement-anchored, object-attributed, greedy") — [`toc_owned`](Self::toc_owned)
+    /// is what distinguishes the two. `None` for a span with no governing
+    /// entry at all: the header-less-input fallback, or one of the kinds
+    /// inheritance never crosses (`Framing`, `Connect`, `VersionHeader`).
+    /// Independent of, and not a substitute for, [`SpanBody`]'s own per-kind
+    /// fields: the TOC comment and the statement grammar are two
     /// separately-sourced observations of the same object
     /// (`docs/design/roadmap-phase3-object-inventory.md`, "Scanning: one
     /// statement-driven pass, TOC comments as an enrichment layer").
     pub toc: Option<TocHeader>,
+    /// Whether *this span's own* preceding comment carried the TOC header
+    /// text (`true`), as opposed to `toc` being inherited from an earlier
+    /// entry's span (`false`) — always `false` when `toc` is `None`. This is
+    /// the "separate record of whether it carried the header text itself"
+    /// `roadmap-phase3-object-inventory.md`'s "Span boundaries" section calls
+    /// for: an object census (`pgdq info`'s `object kinds:`) counts
+    /// `toc_owned` spans, one per archive entry, while TOC-coverage counts
+    /// every attributed span (`toc.is_some()`), inherited ones included —
+    /// counting `toc.is_some()` for both would double-count every object that
+    /// has a follow-on statement.
+    pub toc_owned: bool,
     pub body: SpanBody,
 }
 
@@ -533,24 +570,27 @@ enum Mode {
         toc: Option<TocHeader>,
     },
     /// Absorbing a statement's lines via [`statement_complete`]. Started
-    /// either directly (no TOC comment) or right after a TOC comment block
-    /// closes with `saw_name` true — either way `start` is the *span's*
-    /// start, which for the TOC case is the comment block's start, not this
-    /// statement's own first line. `toc` carries forward whatever the
-    /// preceding comment block parsed, `None` when there was none.
-    Statement { start: u64, buf: String, toc: Option<TocHeader> },
+    /// either directly (no TOC comment — `toc`/`toc_owned` seeded from
+    /// [`Builder::governing_toc`], see "Span boundaries: statement-anchored,
+    /// object-attributed, greedy" in `roadmap-phase3-object-inventory.md`) or
+    /// right after a TOC comment block closes with `saw_name` true (`toc` is
+    /// that comment's own header, `toc_owned` true) — either way `start` is
+    /// the *span's* start, which for the TOC case is the comment block's
+    /// start, not this statement's own first line.
+    Statement { start: u64, buf: String, toc: Option<TocHeader>, toc_owned: bool },
     /// Accumulating a run of `INSERT INTO <table> ...;` statements for one
     /// table (`roadmap-phase3-object-inventory.md`, "Bulk regions") — entered
     /// from `Mode::Statement`'s first line instead of staying there, so the
     /// whole run becomes one `Data` span rather than one `Unparsed` span per
-    /// statement. `start`/`toc` are the span's own, same convention as
-    /// `Statement`. `table` is fixed at the run's first line; a later
-    /// statement targeting a different table ends the run (real `pg_dump`
-    /// output never does this — a TOC comment always separates two tables'
-    /// data — but a header-less input isn't guaranteed to). `buf` accumulates
-    /// the *current*, not-yet-complete statement only, empty between
-    /// statements — that's the signal a fresh line either continues the run
-    /// or ends it. `row_count` is complete statements folded in so far.
+    /// statement. `start`/`toc`/`toc_owned` are the span's own, same
+    /// convention as `Statement`. `table` is fixed at the run's first line; a
+    /// later statement targeting a different table ends the run (real
+    /// `pg_dump` output never does this — a TOC comment always separates two
+    /// tables' data — but a header-less input isn't guaranteed to). `buf`
+    /// accumulates the *current*, not-yet-complete statement only, empty
+    /// between statements — that's the signal a fresh line either continues
+    /// the run or ends it. `row_count` is complete statements folded in so
+    /// far.
     InsertRun {
         start: u64,
         table: String,
@@ -558,6 +598,7 @@ enum Mode {
         buf: String,
         row_count: u64,
         toc: Option<TocHeader>,
+        toc_owned: bool,
     },
 }
 
@@ -606,6 +647,18 @@ pub(crate) struct Builder {
     /// DEFAULT PRIVILEGES FOR ROLE`/`SET default_tablespace`).
     roles: BTreeSet<String>,
     tablespaces: BTreeSet<String>,
+    /// The TOC entry a follow-on statement with no comment of its own would
+    /// inherit — `roadmap-phase3-object-inventory.md`'s "Span boundaries:
+    /// statement-anchored, object-attributed, greedy". Updated by every
+    /// [`push_span`](Self::push_span) call: set to that span's own `toc` for
+    /// a plain statement or `Data` span (whether freshly parsed or itself
+    /// inherited — either way it's what the *next* follow-on should carry),
+    /// cleared to `None` for `Framing`/`Connect`/`VersionHeader`, which the
+    /// design says inheritance never crosses. Reset fresh by every new
+    /// `Builder` (including a live segment's — `crate::stream`'s mapping pass
+    /// always resumes exactly at a `Data` span's own boundary in practice, so
+    /// nothing real depends on this carrying across builder instances).
+    governing_toc: Option<TocHeader>,
 }
 
 /// Whether `-- Name: ...` (pg_dump's `_printTocEntry()` header, I3) is
@@ -692,6 +745,7 @@ impl Builder {
             pending_large_objects: None,
             roles: BTreeSet::new(),
             tablespaces: BTreeSet::new(),
+            governing_toc: None,
         }
     }
 
@@ -708,7 +762,19 @@ impl Builder {
     /// reading; closing that seam is the caller's job, and
     /// `crate::stream::splice` does it by extending the span before it — the
     /// same rule this method applies to every other boundary.
-    fn push_span(&mut self, start: u64, body: SpanBody, toc: Option<TocHeader>) {
+    ///
+    /// `toc_owned` is `true` iff *this span's own* preceding comment carried
+    /// the header text `toc` came from — `false` for a follow-on statement
+    /// inheriting [`governing_toc`](Self::governing_toc). Every call site
+    /// but [`push_statement_span`](Self::push_statement_span)'s inherited
+    /// path passes `toc.is_some()`, since nothing else in this module ever
+    /// carries a `toc` it didn't just parse from its own comment.
+    ///
+    /// Also where [`governing_toc`](Self::governing_toc) itself updates —
+    /// centralized here, alongside the cross-reference bookkeeping below,
+    /// because every span this module ever produces passes through this one
+    /// method.
+    fn push_span(&mut self, start: u64, body: SpanBody, toc: Option<TocHeader>, toc_owned: bool) {
         // Any new span — this one included, unless it *is* the flush itself
         // (which `flush_large_objects` already took `pending_large_objects`
         // out of `self` before calling back in here) — means the pending
@@ -727,6 +793,15 @@ impl Builder {
                 crate::preamble::insert_tablespace(&mut self.tablespaces, tablespace.clone());
             }
         }
+        // `Framing`/`Connect`/`VersionHeader` are the three kinds inheritance
+        // never crosses (`roadmap-phase3-object-inventory.md`, "Span
+        // boundaries"); everything else becomes the entry a following
+        // comment-less statement would inherit, whether this span's own
+        // `toc` was freshly parsed or itself inherited.
+        self.governing_toc = match &body {
+            SpanBody::Framing | SpanBody::Connect { .. } | SpanBody::VersionHeader { .. } => None,
+            _ => toc.clone(),
+        };
         if let Some(last) = self.spans.last_mut() {
             last.end = start;
         }
@@ -736,6 +811,7 @@ impl Builder {
             database: self.database.clone(),
             text: None,
             toc,
+            toc_owned,
             body,
         });
     }
@@ -748,9 +824,26 @@ impl Builder {
     /// Centralized here — rather than at each call site — so every statement
     /// this module ever classifies is scanned exactly once, the same way
     /// [`push_span`](Self::push_span) centralizes the TOC-sourced half.
-    fn push_statement_span(&mut self, start: u64, buf: &str, toc: Option<TocHeader>) {
+    ///
+    /// **A statement that classifies as `Framing`** (a mid-file `SET
+    /// default_tablespace = ...;`/`SET ...;` — [`looks_like_framing_statement`])
+    /// **never inherits**, even though `toc`/`toc_owned` may have arrived here
+    /// carrying an inherited value: `classify` is what decides the span's
+    /// final kind, and that decision has to happen before inheritance can be
+    /// vetoed, which is why the override lives here rather than at the
+    /// `Mode::Idle`→`Statement` transition that seeds it.
+    fn push_statement_span(
+        &mut self,
+        start: u64,
+        buf: &str,
+        toc: Option<TocHeader>,
+        toc_owned: bool,
+    ) {
         crate::preamble::extract_statement_cross_refs(buf, &mut self.roles, &mut self.tablespaces);
-        self.push_span(start, classify(buf), toc);
+        let body = classify(buf);
+        let (toc, toc_owned) =
+            if matches!(body, SpanBody::Framing) { (None, false) } else { (toc, toc_owned) };
+        self.push_span(start, body, toc, toc_owned);
     }
 
     /// The roles/tablespaces referenced so far — see the [`roles`](Self::roles)
@@ -795,16 +888,20 @@ impl Builder {
                     // but classifies the same way `step`'s own
                     // comment-close arm would have, had a closing line ever
                     // arrived.
+                    let owned = toc.is_some();
                     self.push_span(
                         start,
                         close_comment(saw_name, server_version, pg_dump_version),
                         toc,
+                        owned,
                     );
                 }
             }
-            Mode::Statement { start, buf, toc } => self.push_statement_span(start, &buf, toc),
-            Mode::InsertRun { start, table, database, row_count, toc, .. } => {
-                self.push_insert_run(start, table, database, row_count, toc)
+            Mode::Statement { start, buf, toc, toc_owned } => {
+                self.push_statement_span(start, &buf, toc, toc_owned)
+            }
+            Mode::InsertRun { start, table, database, row_count, toc, toc_owned, .. } => {
+                self.push_insert_run(start, table, database, row_count, toc, toc_owned)
             }
         }
     }
@@ -843,14 +940,14 @@ impl Builder {
                 }
                 if let Some(name) = parse_connect(line) {
                     self.database = Some(name.clone());
-                    self.push_span(offset, SpanBody::Connect { database: name }, None);
+                    self.push_span(offset, SpanBody::Connect { database: name }, None, false);
                     return None;
                 }
                 if trimmed.starts_with('\\') {
                     // Any other psql meta-command (`\restrict`,
                     // `\unrestrict`, ...): a single complete line, never
                     // continued, never real SQL.
-                    self.push_span(offset, SpanBody::Framing, None);
+                    self.push_span(offset, SpanBody::Framing, None, false);
                     return None;
                 }
                 if trimmed.starts_with("--") {
@@ -868,7 +965,17 @@ impl Builder {
                     };
                     return None;
                 }
-                self.mode = Mode::Statement { start: offset, buf: String::new(), toc: None };
+                // No comment precedes this statement: it inherits whatever
+                // entry is currently governing (`None` if none is), per
+                // `roadmap-phase3-object-inventory.md`'s "Span boundaries" —
+                // `push_statement_span` still vetoes this if the statement
+                // turns out to classify as `Framing`.
+                self.mode = Mode::Statement {
+                    start: offset,
+                    buf: String::new(),
+                    toc: self.governing_toc.clone(),
+                    toc_owned: false,
+                };
                 Some((offset, line.to_string()))
             }
             Mode::Comment { start, saw_name, server_version, pg_dump_version, toc } => {
@@ -906,16 +1013,18 @@ impl Builder {
                 if saw_name {
                     // The comment block was a real TOC entry: the span
                     // continues into the statement it precedes, starting at
-                    // the comment's own offset.
-                    self.mode = Mode::Statement { start, buf: String::new(), toc };
+                    // the comment's own offset. `toc_owned: true` — this
+                    // comment is where `toc` came from.
+                    self.mode = Mode::Statement { start, buf: String::new(), toc, toc_owned: true };
                 } else {
                     let body = close_comment(false, server_version.take(), pg_dump_version.take());
-                    self.push_span(start, body, toc);
+                    let owned = toc.is_some();
+                    self.push_span(start, body, toc, owned);
                     self.mode = Mode::Idle;
                 }
                 Some((offset, line.to_string()))
             }
-            Mode::Statement { start, buf, toc } => {
+            Mode::Statement { start, buf, toc, toc_owned } => {
                 // A `--`-prefixed line reasserts a fresh boundary even
                 // though `buf` never reached `statement_complete` — the
                 // case a dollar-quoted body's invisible closing line
@@ -933,8 +1042,9 @@ impl Builder {
                     let start = *start;
                     let buf = std::mem::take(buf);
                     let toc = toc.take();
+                    let toc_owned = *toc_owned;
                     self.mode = Mode::Idle;
-                    self.push_statement_span(start, &buf, toc);
+                    self.push_statement_span(start, &buf, toc, toc_owned);
                     return Some((offset, line.to_string()));
                 }
                 // The run's first line, recognized before it ever becomes a
@@ -947,6 +1057,7 @@ impl Builder {
                 {
                     let start = *start;
                     let toc = toc.take();
+                    let toc_owned = *toc_owned;
                     self.mode = Mode::InsertRun {
                         start,
                         table,
@@ -954,6 +1065,7 @@ impl Builder {
                         buf: String::new(),
                         row_count: 0,
                         toc,
+                        toc_owned,
                     };
                     return Some((offset, line.to_string()));
                 }
@@ -962,12 +1074,13 @@ impl Builder {
                     let start = *start;
                     let buf = std::mem::take(buf);
                     let toc = toc.take();
+                    let toc_owned = *toc_owned;
                     self.mode = Mode::Idle;
-                    self.push_statement_span(start, &buf, toc);
+                    self.push_statement_span(start, &buf, toc, toc_owned);
                 }
                 None
             }
-            Mode::InsertRun { start, table, database, buf, row_count, toc } => {
+            Mode::InsertRun { start, table, database, buf, row_count, toc, toc_owned } => {
                 // Closes the run in place — takes owned copies of everything
                 // first (mirroring `Mode::Statement`'s dangling-close arm
                 // above) so `self.mode = Mode::Idle` and the `self.push_span`
@@ -975,10 +1088,16 @@ impl Builder {
                 // borrow of `self.mode`.
                 macro_rules! close_and_reprocess {
                     () => {{
-                        let (start, table, database, row_count, toc) =
-                            (*start, table.clone(), database.clone(), *row_count, toc.take());
+                        let (start, table, database, row_count, toc, toc_owned) = (
+                            *start,
+                            table.clone(),
+                            database.clone(),
+                            *row_count,
+                            toc.take(),
+                            *toc_owned,
+                        );
                         self.mode = Mode::Idle;
-                        self.push_insert_run(start, table, database, row_count, toc);
+                        self.push_insert_run(start, table, database, row_count, toc, toc_owned);
                         return Some((offset, line.to_string()));
                     }};
                 }
@@ -1032,8 +1151,10 @@ impl Builder {
     /// line as its own small span. Coarser, still tiling — the same trade the
     /// rest of the fallback makes.
     pub(crate) fn on_dollar_quote_end(&mut self, _offset: u64) {
-        if let Mode::Statement { start, buf, toc } = std::mem::replace(&mut self.mode, Mode::Idle) {
-            self.push_statement_span(start, &buf, toc);
+        if let Mode::Statement { start, buf, toc, toc_owned } =
+            std::mem::replace(&mut self.mode, Mode::Idle)
+        {
+            self.push_statement_span(start, &buf, toc, toc_owned);
         }
     }
 
@@ -1053,8 +1174,8 @@ impl Builder {
             // Never observed in a well-formed dump (a statement never
             // precedes a `COPY` header with no separating blank line/TOC
             // comment of its own), but every byte must land somewhere.
-            Mode::Statement { start, buf, toc } => {
-                self.push_statement_span(start, &buf, toc);
+            Mode::Statement { start, buf, toc, toc_owned } => {
+                self.push_statement_span(start, &buf, toc, toc_owned);
                 (event.header_offset, None)
             }
             // Same reasoning: a `COPY` header never follows an `INSERT` run
@@ -1087,7 +1208,8 @@ impl Builder {
             sparse_index: None,
             column_stats: None,
         };
-        self.push_span(start, SpanBody::Data(DataBlock::Copy(block)), toc);
+        let owned = toc.is_some();
+        self.push_span(start, SpanBody::Data(DataBlock::Copy(block)), toc, owned);
     }
 
     /// A `BEGIN;` line opened a large-object data region (I12) — see
@@ -1116,8 +1238,8 @@ impl Builder {
             // Never observed in a well-formed dump (I12: nothing but a TOC
             // comment ever precedes a large-object entry's `BEGIN;`), but
             // every byte must land somewhere.
-            Mode::Statement { start, buf, toc } => {
-                self.push_statement_span(start, &buf, toc);
+            Mode::Statement { start, buf, toc, toc_owned } => {
+                self.push_statement_span(start, &buf, toc, toc_owned);
                 (offset, None)
             }
             Mode::InsertRun { .. } => {
@@ -1162,12 +1284,14 @@ impl Builder {
     /// last `COMMIT;` still closes it).
     fn flush_large_objects(&mut self) {
         if let Some((start, _end, toc)) = self.pending_large_objects.take() {
+            let owned = toc.is_some();
             self.push_span(
                 start,
                 SpanBody::Data(DataBlock::LargeObjects(LargeObjectRegion {
                     database: self.database.clone(),
                 })),
                 toc,
+                owned,
             );
         }
     }
@@ -1185,11 +1309,13 @@ impl Builder {
         database: Option<String>,
         row_count: u64,
         toc: Option<TocHeader>,
+        toc_owned: bool,
     ) {
         self.push_span(
             start,
             SpanBody::Data(DataBlock::InsertRun(InsertRun { database, table, row_count })),
             toc,
+            toc_owned,
         );
     }
 
@@ -1200,10 +1326,10 @@ impl Builder {
     /// `self.mode` unconditionally — every caller has already matched it as
     /// `Mode::InsertRun`; a no-op otherwise.
     fn close_insert_run(&mut self) {
-        if let Mode::InsertRun { start, table, database, row_count, toc, .. } =
+        if let Mode::InsertRun { start, table, database, row_count, toc, toc_owned, .. } =
             std::mem::replace(&mut self.mode, Mode::Idle)
         {
-            self.push_insert_run(start, table, database, row_count, toc);
+            self.push_insert_run(start, table, database, row_count, toc, toc_owned);
         }
     }
 
@@ -1510,12 +1636,162 @@ mod tests {
     }
 
     /// A statement with no preceding TOC comment at all — the header-less
-    /// fallback — carries no `toc`, which is the graceful-degradation case
-    /// the design expects rather than an error.
+    /// fallback — carries no `toc` and `toc_owned: false`, which is the
+    /// graceful-degradation case the design expects rather than an error:
+    /// there is no governing entry yet for it to inherit.
     #[test]
     fn a_statement_with_no_toc_comment_carries_no_toc_header() {
         let spans = spans_of(&["CREATE EXTENSION pgcrypto;"]);
         assert_eq!(spans[0].toc, None);
+        assert!(!spans[0].toc_owned);
+    }
+
+    /// Slice 3.3.1's core behavior: a follow-on statement with no TOC comment
+    /// of its own (`ALTER SCHEMA ... OWNER TO ...;`, mirroring
+    /// `fixtures/*/objects/default.sql`) inherits the governing entry's
+    /// header instead of carrying `None` — `roadmap-phase3-object-inventory.md`,
+    /// "Span boundaries: statement-anchored, object-attributed, greedy". The
+    /// two spans carry the *same* `toc` value, but only the first has
+    /// `toc_owned: true`.
+    #[test]
+    fn a_follow_on_statement_inherits_the_governing_toc_header() {
+        let spans = spans_of(&[
+            "--",
+            "-- Name: objects; Type: SCHEMA; Schema: -; Owner: postgres",
+            "--",
+            "",
+            "CREATE SCHEMA objects;",
+            "",
+            "ALTER SCHEMA objects OWNER TO postgres;",
+        ]);
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[1].body, SpanBody::Unparsed);
+        assert_eq!(spans[0].toc, spans[1].toc, "both spans belong to the same TOC entry");
+        assert!(spans[0].toc.is_some());
+        assert!(spans[0].toc_owned, "the first span's own comment carried the header");
+        assert!(!spans[1].toc_owned, "the second span inherited it");
+    }
+
+    /// Inheritance keeps propagating across more than one follow-on in a
+    /// row — every span until the next boundary carries the *same* governing
+    /// header, mirroring `fixtures/16/objects/default.sql`'s
+    /// `objects.simple_config` (several consecutive `ALTER TEXT SEARCH
+    /// CONFIGURATION ... ADD MAPPING FOR ...;` statements after one TOC
+    /// comment).
+    #[test]
+    fn several_consecutive_follow_ons_all_inherit_the_same_header() {
+        let spans = spans_of(&[
+            "--",
+            "-- Name: t; Type: TEXT SEARCH CONFIGURATION; Schema: public; Owner: postgres",
+            "--",
+            "",
+            "CREATE TEXT SEARCH CONFIGURATION public.t (COPY = simple);",
+            "",
+            "ALTER TEXT SEARCH CONFIGURATION public.t ALTER MAPPING FOR asciiword WITH simple;",
+            "",
+            "ALTER TEXT SEARCH CONFIGURATION public.t ALTER MAPPING FOR word WITH simple;",
+        ]);
+        assert_eq!(spans.len(), 3);
+        assert!(spans[0].toc_owned);
+        assert!(!spans[1].toc_owned);
+        assert!(!spans[2].toc_owned);
+        assert!(spans[0].toc.is_some());
+        assert_eq!(spans[0].toc, spans[1].toc);
+        assert_eq!(spans[1].toc, spans[2].toc);
+    }
+
+    /// A mid-file `SET default_tablespace = ...;` classifies as `Framing`
+    /// (`looks_like_framing_statement`) and — per "Span boundaries" — never
+    /// inherits, even when it directly follows a governed entry; and it
+    /// clears the governing header for whatever comes after it, since
+    /// `Framing` is one of the three kinds inheritance never crosses.
+    #[test]
+    fn a_mid_file_framing_statement_never_inherits_and_clears_the_governing_header() {
+        let spans = spans_of(&[
+            "--",
+            "-- Name: t; Type: TABLE; Schema: public; Owner: postgres",
+            "--",
+            "",
+            "CREATE TABLE public.t (id integer);",
+            "",
+            "SET default_tablespace = '';",
+            "",
+            "CREATE EXTENSION pgcrypto;",
+        ]);
+        assert_eq!(spans.len(), 3);
+        assert!(spans[0].toc.is_some());
+        assert_eq!(spans[1].body, SpanBody::Framing);
+        assert_eq!(spans[1].toc, None, "a Framing span never carries an inherited header");
+        assert!(!spans[1].toc_owned);
+        assert_eq!(
+            spans[2].toc, None,
+            "the Framing statement must clear the governing header for what follows it"
+        );
+    }
+
+    /// `\connect` clears the governing header the same way `Framing` does —
+    /// a statement in the newly-connected database has no TOC entry of its
+    /// own to inherit from the previous database's last one.
+    #[test]
+    fn connect_clears_the_governing_toc_header() {
+        let spans = spans_of(&[
+            "--",
+            "-- Name: t; Type: TABLE; Schema: public; Owner: postgres",
+            "--",
+            "",
+            "CREATE TABLE public.t (id integer);",
+            "\\connect two",
+            "CREATE EXTENSION pgcrypto;",
+        ]);
+        let last = spans.last().unwrap();
+        assert!(matches!(&last.body, SpanBody::Extension { name, .. } if name == "pgcrypto"));
+        assert_eq!(last.toc, None);
+    }
+
+    /// A `COPY` block with no TOC comment of its own (the header-less-input
+    /// fallback that `on_copy_start`'s `Mode::Idle` arm handles) resets
+    /// inheritance the same way `Framing`/`Connect` do: the entry governing
+    /// *before* the block does not leak past it, even though the `Data` span
+    /// itself ends up with `toc: None` too.
+    #[test]
+    fn a_copy_block_with_no_comment_of_its_own_resets_inheritance() {
+        let mut builder = Builder::new();
+        let mut offset = 0u64;
+        for line in [
+            "--",
+            "-- Name: t; Type: TABLE; Schema: public; Owner: postgres",
+            "--",
+            "",
+            "CREATE TABLE public.t (id integer);",
+            "",
+        ] {
+            builder.feed_line(offset, line.as_bytes());
+            offset += line.len() as u64 + 1;
+        }
+        let header_offset = offset;
+        builder.on_copy_start(crate::scan::CopyStart {
+            header: crate::copy::CopyHeader {
+                schema: Some("public".to_string()),
+                table: "t".to_string(),
+                columns: vec!["id".to_string()],
+            },
+            header_offset,
+            data_offset: header_offset + 32,
+        });
+        let terminator_offset = header_offset + 48;
+        let end_offset = terminator_offset + 3;
+        builder.on_copy_end(crate::scan::CopyEnd { terminator_offset, end_offset, row_count: 1 });
+        offset = end_offset;
+        builder.feed_line(offset, b"CREATE EXTENSION pgcrypto;");
+
+        let spans = builder.finish(offset + 27);
+        assert_eq!(spans.len(), 3, "table, COPY block, extension");
+        assert!(matches!(spans[1].body, SpanBody::Data(_)));
+        assert_eq!(spans[1].toc, None, "no comment preceded this COPY header");
+        assert_eq!(
+            spans[2].toc, None,
+            "the table's header must not leak across the uncommented COPY block"
+        );
     }
 
     #[test]

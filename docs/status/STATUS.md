@@ -20,13 +20,13 @@ module map, and the implementation facts later phases inherit — is in
 `docs/design/roadmap-phase2-typed-columns-notes.md`.
 
 Phase 3 (full DDL object inventory) has landed every slice its spec originally
-listed, but the phase's end-of-phase grilling earned two more — **3.1.1** and
-**3.3.1** — and three out-of-band items. The phase is **not yet wrapped**; see
-"Not started" for what remains and in what order.
+listed, plus two more the phase's end-of-phase grilling earned — **3.1.1** and
+**3.3.1**, both now landed — and three out-of-band items remain. The phase is
+**not yet wrapped**; see "Not started" for what remains and in what order.
 
-Last updated: 2026-08-24 (slice 3.1.1 landed: real fixtures for the TOC
-`Tablespace:` field, a `REVOKE`, and `TOC_PREFIX_STATS`, closing I18/I19 to
-fixture evidence).
+Last updated: 2026-08-24 (slice 3.3.1 landed: follow-on statements inherit
+their governing TOC entry, closing the ~50%-coverage defect 3.3's own tests
+surfaced).
 
 ## Phase 3 progress
 
@@ -105,19 +105,22 @@ fixture evidence).
       stop point rather than guess a still-pending comment's classification.
       Notes:
       [`roadmap-phase3.3-toc-enrichment-notes.md`](../design/roadmap-phase3.3-toc-enrichment-notes.md).
-- [ ] **3.3.1** TOC inheritance for follow-on statements — a span continuing
+- [x] **3.3.1** TOC inheritance for follow-on statements — a span continuing
       the object before it (`ALTER … OWNER TO`, `ADD MAPPING FOR`, `ALTER
       EVENT TRIGGER … DISABLE`) inherits the governing entry's `TocHeader`
-      instead of carrying `None`, with a separate record of whether it carried
-      the header text, and `toc_coverage_diagnostic` counts attributed spans.
-      `Framing`/`Connect`/`VersionHeader` never inherit. `pgdq info`'s
-      `object kinds:` breakdown moves to header-bearing spans in the same
-      slice — it is an object census, which inheritance would otherwise
-      double-count. Earned by a wrong contract: 3.3's coverage figure reads
-      ~50% on a healthy dump (52 of `fixtures/16/objects/default.sql`'s 137
-      spans are unattributed today). `docs/manual/dump-inspection.md` needs
-      updating with it, since `object kinds:` changes meaning. Decided at the
-      end-of-phase grilling; nothing landed yet.
+      instead of carrying `None` (`Span::toc_owned` records whether a span
+      carried the header text itself), and `toc_coverage_diagnostic` counts
+      attributed spans — no code change there, since its numerator was
+      already `toc.is_some()`. `Framing`/`Connect`/`VersionHeader` never
+      inherit; a mid-file `SET default_tablespace = ...;` (which classifies
+      as `Framing` only once `classify` runs) is vetoed after the fact in
+      `push_statement_span`. `pgdq info`'s `object kinds:` breakdown moved to
+      `toc_owned` spans in the same slice — verified against
+      `fixtures/16/objects/default.sql`: `TABLE: 8`, unchanged, not
+      double-counted. `docs/manual/dump-inspection.md` needed no change — its
+      "object kinds" description already reads as a census. Cache format
+      v8→v9. Notes:
+      [`roadmap-phase3.3.1-toc-inheritance-notes.md`](../design/roadmap-phase3.3.1-toc-inheritance-notes.md).
 - [x] **3.4** The cross-reference set — referenced roles and tablespaces.
       `DumpIndex::roles`/`tablespaces`, accumulated in `map::Builder` from
       `Span::toc` and (new) `preamble::extract_statement_cross_refs` over
@@ -151,16 +154,10 @@ fixture evidence).
 
 ## Not started
 
-Three items remain before Phase 3 wraps, in this order — each earlier one makes
+Two items remain before Phase 3 wraps, in this order — each earlier one makes
 the next one's mistakes visible, and no two share a review cycle unless they
 share a confidence level:
 
-- **Slice 3.3.1** — now the next slice; 3.1.1 landed first because it is the
-  evidence slice, and 3.3.1 reworks exactly the TOC-header parsing whose
-  previously-unverified shapes 3.1.1 exercised. Decisions:
-  [`roadmap-phase3-object-inventory.md`](../design/roadmap-phase3-object-inventory.md)
-  "Span boundaries" and "TOC coverage"; evidence:
-  [`history/2026-08-24.md`](history/2026-08-24.md).
 - **Out-of-band items M1 and M2**, together in one review cycle — the two
   `pgdq info` defects under "Known gaps" below. Both are CLI-only, small, and
   change no spec'd decision, so they land as out-of-band work rather than
@@ -168,9 +165,7 @@ share a confidence level:
 - **Out-of-band item M3** — the synthetic `INSERT`-run throughput
   measurement; see "Decisions worth another look".
 
-Then the wrap, and only then the step-6 roadmap re-grill: 3.3.1 changes what
-`Span::toc` means, so a Phase 4 grilling held now would be working from facts
-scheduled to change.
+Then the wrap, and only then the step-6 roadmap re-grill.
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; the resulting changes land as
   out-of-band items too.

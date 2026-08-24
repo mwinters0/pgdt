@@ -421,17 +421,23 @@ fn print_cross_references(index: &DumpIndex) -> bool {
     printed
 }
 
-/// Per-`Type:` object-kind counts, read off every span's TOC header
-/// (`Span::toc`) — the same closed ~63-value vocabulary the TOC-coverage
-/// diagnostic already counts against
+/// Per-`Type:` object-kind counts — one per archive entry, the same closed
+/// ~63-value vocabulary the TOC-coverage diagnostic counts against
 /// (`docs/design/roadmap-phase3-object-inventory.md`, "TOC coverage is
-/// recorded per file"). A span with no TOC comment (the header-less-input
+/// recorded per file"). Counts `toc_owned` spans, not every attributed one:
+/// this is an object *census*, and since slice 3.3.1 a follow-on statement
+/// (`ALTER ... OWNER TO`, etc.) inherits its governing entry's `toc` rather
+/// than carrying `None` — counting `span.toc.is_some()` here would count that
+/// object twice ("Span boundaries: statement-anchored, object-attributed,
+/// greedy"). A span with no TOC comment at all (the header-less-input
 /// fallback) contributes to no bucket here, since there is nothing typed to
 /// count it under. Returns whether anything was printed.
 fn print_object_kinds(index: &DumpIndex) -> bool {
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
     for span in &index.spans {
-        if let Some(toc) = &span.toc {
+        if span.toc_owned
+            && let Some(toc) = &span.toc
+        {
             *counts.entry(toc.kind.as_str()).or_default() += 1;
         }
     }

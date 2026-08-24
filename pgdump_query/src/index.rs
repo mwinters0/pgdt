@@ -217,17 +217,20 @@ pub(crate) fn tiling_diagnostics(
     }
 }
 
-/// The TOC-coverage figure for a finished map: how many `spans` carry a
-/// parsed [`crate::map::Span::toc`] against how many spans exist at all
+/// The TOC-coverage figure for a finished map: how many `spans` are
+/// attributed to a TOC entry (`crate::map::Span::toc.is_some()` — a follow-on
+/// statement that inherited its governing entry's header counts the same as
+/// one whose own comment carried it, per "Span boundaries: statement-anchored,
+/// object-attributed, greedy") against how many spans exist at all
 /// (`docs/design/roadmap-phase3-object-inventory.md`, "TOC coverage is
 /// recorded per file"). Always produced, never conditionally — a
 /// `pg_dump`-compatible file with zero TOC comments is a normal, reported
 /// state (the map running in header-less degraded mode), not an error, so
-/// `headers == 0` is a legitimate value here rather than something this
+/// `attributed == 0` is a legitimate value here rather than something this
 /// function special-cases away.
 pub(crate) fn toc_coverage_diagnostic(spans: &[Span]) -> crate::diagnostic::Diagnostic {
-    let headers = spans.iter().filter(|s| s.toc.is_some()).count();
-    crate::diagnostic::Diagnostic::toc_coverage(headers, spans.len())
+    let attributed = spans.iter().filter(|s| s.toc.is_some()).count();
+    crate::diagnostic::Diagnostic::toc_coverage(attributed, spans.len())
 }
 
 /// Scan only far enough to recover the first database's preamble — up to
@@ -352,6 +355,7 @@ pub async fn preamble_only<S: ByteRangeSource>(
                 database: None,
                 text: None,
                 toc: None,
+                toc_owned: false,
                 body: SpanBody::Unscanned,
             });
         }

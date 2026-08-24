@@ -294,8 +294,11 @@ async fn create_table_span_carries_name_and_columns() {
 
 /// A trailing `ALTER TABLE ... OWNER TO` (no TOC comment of its own) tiles
 /// as its own `Unparsed` span, immediately adjacent to its table's span —
-/// exactly the "no grouping in this slice" behavior the module docs
-/// describe.
+/// no grouping (`roadmap-phase3-object-inventory.md`'s "Consequence: no
+/// 'grouping'" still holds after slice 3.3.1) — but, since that slice, it
+/// **inherits** `objects.widgets`' own TOC header rather than carrying
+/// `None`: the two spans are attributed to the same entry, and only the
+/// first carries the header text itself.
 #[tokio::test]
 async fn alter_owner_to_is_its_own_adjacent_unparsed_span() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/objects/default.sql");
@@ -308,6 +311,9 @@ async fn alter_owner_to_is_its_own_adjacent_unparsed_span() {
     let next = &spans[i + 1];
     assert_eq!(next.body, SpanBody::Unparsed);
     assert_eq!(next.start, spans[i].end, "adjacent spans must share a boundary — no gap");
+    assert!(spans[i].toc_owned, "objects.widgets' own comment carried the header");
+    assert!(!next.toc_owned, "the OWNER TO follow-on inherited it instead");
+    assert_eq!(next.toc, spans[i].toc, "both spans belong to the same TOC entry");
 }
 
 /// The file prologue (banner, `\restrict`, version headers, the
@@ -325,8 +331,24 @@ async fn prologue_and_epilogue_classify_as_framing() {
 async fn tiling_issue_reports_a_gap() {
     use pgdump_query::{Span, SpanBody as Body};
     let spans = vec![
-        Span { start: 0, end: 10, database: None, text: None, toc: None, body: Body::Framing },
-        Span { start: 12, end: 20, database: None, text: None, toc: None, body: Body::Framing },
+        Span {
+            start: 0,
+            end: 10,
+            database: None,
+            text: None,
+            toc: None,
+            toc_owned: false,
+            body: Body::Framing,
+        },
+        Span {
+            start: 12,
+            end: 20,
+            database: None,
+            text: None,
+            toc: None,
+            toc_owned: false,
+            body: Body::Framing,
+        },
     ];
     let issues = check_tiling(&spans, 20);
     assert_eq!(
@@ -339,8 +361,24 @@ async fn tiling_issue_reports_a_gap() {
 async fn tiling_issue_reports_an_overlap() {
     use pgdump_query::{Span, SpanBody as Body};
     let spans = vec![
-        Span { start: 0, end: 10, database: None, text: None, toc: None, body: Body::Framing },
-        Span { start: 8, end: 20, database: None, text: None, toc: None, body: Body::Framing },
+        Span {
+            start: 0,
+            end: 10,
+            database: None,
+            text: None,
+            toc: None,
+            toc_owned: false,
+            body: Body::Framing,
+        },
+        Span {
+            start: 8,
+            end: 20,
+            database: None,
+            text: None,
+            toc: None,
+            toc_owned: false,
+            body: Body::Framing,
+        },
     ];
     let issues = check_tiling(&spans, 20);
     assert_eq!(
@@ -358,6 +396,7 @@ async fn tiling_issue_reports_a_short_final_span() {
         database: None,
         text: None,
         toc: None,
+        toc_owned: false,
         body: Body::Framing,
     }];
     let issues = check_tiling(&spans, 20);
@@ -371,8 +410,24 @@ async fn tiling_issue_reports_a_short_final_span() {
 async fn an_unscanned_tail_tiles_cleanly() {
     use pgdump_query::{Span, SpanBody as Body};
     let spans = vec![
-        Span { start: 0, end: 10, database: None, text: None, toc: None, body: Body::Framing },
-        Span { start: 10, end: 20, database: None, text: None, toc: None, body: Body::Unscanned },
+        Span {
+            start: 0,
+            end: 10,
+            database: None,
+            text: None,
+            toc: None,
+            toc_owned: false,
+            body: Body::Framing,
+        },
+        Span {
+            start: 10,
+            end: 20,
+            database: None,
+            text: None,
+            toc: None,
+            toc_owned: false,
+            body: Body::Unscanned,
+        },
     ];
     assert!(check_tiling(&spans, 20).is_empty());
 }
@@ -454,6 +509,7 @@ async fn text_over_the_cap_is_truncated_and_marked() {
         database: None,
         text: None,
         toc: None,
+        toc_owned: false,
         body: SpanBody::Framing,
     }];
     attach_text(&source, &mut spans).await.unwrap();
@@ -548,7 +604,10 @@ async fn no_owner_fixture_parses_every_toc_header_with_no_owner() {
 /// `build_index` reports the TOC-coverage figure as a file-level `Info`
 /// diagnostic (`docs/design/roadmap-phase3-object-inventory.md`, "TOC
 /// coverage is recorded per file"): every span accounted for in `spans`, and
-/// a nonzero `headers` count for a real `pg_dump` file.
+/// — since slice 3.3.1 — a strictly higher `attributed` count than the number
+/// of spans that carry their *own* header, because every follow-on statement
+/// (`ALTER ... OWNER TO`, etc.) now inherits its governing entry's `toc`
+/// rather than counting as uncovered.
 #[tokio::test]
 async fn build_index_reports_toc_coverage_for_a_real_dump() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/objects/default.sql");
@@ -558,13 +617,20 @@ async fn build_index_reports_toc_coverage_for_a_real_dump() {
         .diagnostics
         .iter()
         .find_map(|d| match &d.kind {
-            DiagnosticKind::TocCoverage { headers, spans } => Some((*headers, *spans)),
+            DiagnosticKind::TocCoverage { attributed, spans } => Some((*attributed, *spans)),
             _ => None,
         })
         .expect("build_index must report a TocCoverage diagnostic");
     assert_eq!(coverage.1, index.spans.len());
     assert!(coverage.0 > 0, "a real pg_dump file carries TOC headers");
     assert!(coverage.0 <= coverage.1);
+
+    let own_headers = index.spans.iter().filter(|s| s.toc_owned).count();
+    assert!(
+        coverage.0 > own_headers,
+        "inheritance must attribute more spans ({}) than carry their own header ({own_headers})",
+        coverage.0
+    );
 }
 
 /// A header-less file — no `-- Name: ...` comments anywhere — reports zero
@@ -578,7 +644,7 @@ async fn build_index_reports_zero_toc_coverage_for_a_header_less_dump() {
         .diagnostics
         .iter()
         .find_map(|d| match &d.kind {
-            DiagnosticKind::TocCoverage { headers, spans } => Some((*headers, *spans)),
+            DiagnosticKind::TocCoverage { attributed, spans } => Some((*attributed, *spans)),
             _ => None,
         })
         .expect("build_index must report a TocCoverage diagnostic");
