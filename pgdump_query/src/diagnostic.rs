@@ -77,6 +77,14 @@ pub enum DiagnosticKind {
     /// file"). Always `Info` — zero is a normal, reported state (the map
     /// running in header-less degraded mode), not an error.
     TocCoverage { attributed: usize, spans: usize },
+    /// The index was loaded from a retained `.dqcache` with no live dump file
+    /// to check it against (`roadmap-phase3-object-inventory.md`,
+    /// "Cache-only inspection") — unverified and historical as of whenever
+    /// the cache was last saved, since there is nothing to compare its
+    /// recorded size/mtime to. Pushed unconditionally by
+    /// [`crate::cache::CacheMode::load_offline`] on every successful
+    /// cache-only load, `Incomplete` included.
+    CacheOffline,
 }
 
 /// One thing worth telling the caller about a file, with no `Result` to carry
@@ -98,5 +106,9 @@ impl Diagnostic {
 
     pub(crate) fn toc_coverage(attributed: usize, spans: usize) -> Self {
         Self { severity: Severity::Info, kind: DiagnosticKind::TocCoverage { attributed, spans } }
+    }
+
+    pub(crate) fn cache_offline() -> Self {
+        Self { severity: Severity::Warning, kind: DiagnosticKind::CacheOffline }
     }
 }

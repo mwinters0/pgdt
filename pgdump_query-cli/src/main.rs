@@ -1,15 +1,16 @@
 use std::collections::BTreeMap;
 use std::ops::ControlFlow;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use arrow::array::RecordBatch;
 use clap::{Parser, Subcommand};
-use pgdump_query::cache::CacheMode;
+use pgdump_query::cache::{CacheMode, CacheStatus};
 use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdump_query::{
-    BatchOptions, DataBlock, DeferredKind, DumpIndex, DumpMetadata, LocalFileSource, Predicate,
-    PredicateOp, ScanOptions, Span, SpanBody, TypeKind, build_index, preamble_only, render_field,
+    BatchOptions, ByteRangeSource, DataBlock, DeferredKind, Diagnostic, DiagnosticKind, DumpIndex,
+    DumpMetadata, LocalFileSource, Predicate, PredicateOp, ScanOptions, Severity, Span, SpanBody,
+    TypeKind, build_index, preamble_only, render_field,
 };
 
 #[derive(Parser)]
@@ -44,19 +45,31 @@ impl From<CliSchemaMode> for SchemaMode {
 enum Command {
     /// Perform a full file scan and build the structure cache.
     Parse {
-        file: PathBuf,
+        /// The dump file to scan.
+        #[arg(long)]
+        source: PathBuf,
         /// Cache file path, or `none` to disable the cache. Since `parse`'s
         /// whole purpose is to write the cache, `none` is rejected.
         #[arg(long)]
-        cache_path: Option<PathBuf>,
+        dqcache: Option<PathBuf>,
     },
-    /// Print what is known about a dump file from its cache.
+    /// Print what is known about a dump file — from a fresh or cached scan
+    /// of the dump itself, or, with no `--source`, from a retained
+    /// `--dqcache` alone once the dump is gone
+    /// (`docs/design/roadmap-phase3-object-inventory.md`, "Cache-only
+    /// inspection").
     Info {
-        file: PathBuf,
-        /// Cache file path, or `none` to ignore any existing cache and
-        /// perform a fresh scan without persisting it.
+        /// The dump file to scan. Omit it to answer from `--dqcache` alone
+        /// — cache-only mode, which then requires `--dqcache`.
         #[arg(long)]
-        cache_path: Option<PathBuf>,
+        source: Option<PathBuf>,
+        /// Cache file path. With `--source`: `none` ignores any existing
+        /// cache and performs a fresh scan without persisting it, and
+        /// omitting this flag resolves to the colocated default
+        /// (`<source>.dqcache`). Without `--source`: required — this is the
+        /// cache-only entry point, and there is nothing else to answer from.
+        #[arg(long, required_unless_present = "source")]
+        dqcache: Option<PathBuf>,
         #[arg(long)]
         verbose: bool,
         /// Answer from the preamble alone (dump-level header only, no
@@ -76,13 +89,17 @@ enum Command {
     },
     /// Stream a table's rows, optionally filtered by a single-column predicate.
     Query {
-        file: PathBuf,
+        /// The dump file to scan. `query` can never answer from a cache
+        /// alone — row data is never cached — so this is always required.
+        #[arg(long)]
+        source: PathBuf,
         /// Table name, qualified (`schema.table`) or bare.
+        #[arg(long)]
         table: String,
         /// Cache file path, or `none` to ignore any existing cache and
         /// perform a fresh scan without persisting it.
         #[arg(long)]
-        cache_path: Option<PathBuf>,
+        dqcache: Option<PathBuf>,
         /// Single-column filter: `column=value`, `column!=value`,
         /// `column IS NULL`, or `column IS NOT NULL`, compared against each
         /// row's decoded field value.
@@ -163,16 +180,16 @@ fn print_batch(batch: &RecordBatch) {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Parse { file, cache_path } => {
+        Command::Parse { source: file, dqcache } => {
             // `parse` is the eager entry point: always scan fresh (ignoring
             // any existing cache) and (re)write it, per the CLI spec in
             // `roadmap-phase1-mvp.md`.
-            // Reject `--cache-path none` up front, before paying for a scan
-            // we won't be allowed to persist.
-            let mode = CacheMode::resolve(&file, cache_path.as_deref());
+            // Reject `--dqcache none` up front, before paying for a scan we
+            // won't be allowed to persist.
+            let mode = CacheMode::resolve(&file, dqcache.as_deref());
             let path = mode
                 .require_enabled("parse")
-                .context("`--cache-path none` cannot be combined with `parse`")?
+                .context("`--dqcache none` cannot be combined with `parse`")?
                 .to_path_buf();
             let source = LocalFileSource::open(&file)?;
             let index = build_index(&source, &ScanOptions::default()).await?;
@@ -181,25 +198,47 @@ async fn main() -> Result<()> {
             println!();
             println!("wrote cache to {}", path.display());
         }
-        Command::Info { file, cache_path, verbose, preamble_only: preamble_only_flag, map } => {
+        Command::Info {
+            source: file,
+            dqcache,
+            verbose,
+            preamble_only: preamble_only_flag,
+            map,
+        } => {
             if preamble_only_flag && map {
                 anyhow::bail!("--preamble-only and --map cannot be combined");
             }
-            let mode = CacheMode::resolve(&file, cache_path.as_deref());
+            let Some(file) = file else {
+                // Cache-only mode (`docs/design/roadmap-phase3-object-inventory.md`,
+                // "Cache-only inspection"): no live dump file at all, so
+                // clap already required `--dqcache` for us.
+                let path = dqcache.expect("clap requires --dqcache when --source is omitted");
+                return info_offline(&path, verbose, preamble_only_flag, map).await;
+            };
+            let mode = CacheMode::resolve(&file, dqcache.as_deref());
             let source = LocalFileSource::open(&file)?;
             if preamble_only_flag {
-                let metadata = preamble_only(&source, &ScanOptions::default(), &mode).await?;
+                let (metadata, diagnostics) =
+                    preamble_only(&source, &ScanOptions::default(), &mode).await?;
                 print_metadata(&metadata);
+                print_diagnostics(&diagnostics);
                 return Ok(());
             }
+            // A loaded cache is trusted for the full-file listing only once
+            // it actually covers the whole file — a preamble-only or
+            // still-incremental cache must trigger a fresh scan here rather
+            // than being reported as if it were complete (the former
+            // out-of-band item M1; `docs/design/roadmap-phase3-object-inventory.md`,
+            // "Cache-only inspection").
+            let file_size = source.size().await?;
             let index = match mode.load(&source).await? {
-                Some(index) => index,
-                None => {
-                    // No usable (or disabled) cache: scan, then persist what
-                    // we learned — a no-op under `CacheMode::Disabled` —
-                    // `roadmap-phase1-mvp.md`'s "cache is never required for
-                    // correctness" rule means this fallback must still
-                    // produce a correct answer.
+                Some(index) if index.scanned_through >= file_size => index,
+                _ => {
+                    // No usable cache, or one that doesn't cover the whole
+                    // file: scan, then persist what we learned — a no-op
+                    // under `CacheMode::Disabled` — `roadmap-phase1-mvp.md`'s
+                    // "cache is never required for correctness" rule means
+                    // this fallback must still produce a correct answer.
                     let index = build_index(&source, &ScanOptions::default()).await?;
                     mode.save(&source, &index).await?;
                     index
@@ -207,8 +246,8 @@ async fn main() -> Result<()> {
             };
             print_index(&index, verbose, map);
         }
-        Command::Query { file, table, cache_path, filter, database, schema_mode } => {
-            let mode = CacheMode::resolve(&file, cache_path.as_deref());
+        Command::Query { source: file, table, dqcache, filter, database, schema_mode } => {
+            let mode = CacheMode::resolve(&file, dqcache.as_deref());
             let predicate = filter.as_deref().map(parse_filter).transpose()?;
             let source = LocalFileSource::open(&file)?;
             let mut header_printed = false;
@@ -244,6 +283,52 @@ async fn main() -> Result<()> {
                 eprintln!("no rows found for {table} in {}", file.display());
             }
         }
+    }
+    Ok(())
+}
+
+/// `pgdq info` with no `--source`: answer strictly from the cache at `path`,
+/// erroring rather than falling back to a scan when it doesn't have enough
+/// (`docs/design/roadmap-phase3-object-inventory.md`, "Cache-only
+/// inspection"). `--preamble-only`'s completeness bar is the metadata's own
+/// `preamble_complete` flag rather than whole-file coverage, since a
+/// preamble-only cache is exactly the shape that flag exists to recognize;
+/// the default listing and `--map` both need the whole file mapped, so any
+/// `Incomplete` cache is an error for them.
+async fn info_offline(
+    path: &Path,
+    verbose: bool,
+    preamble_only_flag: bool,
+    map: bool,
+) -> Result<()> {
+    let mode = CacheMode::Offline(path.to_path_buf());
+    let index = match mode.load_offline().await? {
+        CacheStatus::Absent => {
+            anyhow::bail!("no usable cache found at {}", path.display());
+        }
+        CacheStatus::Incomplete { index, total_size, .. } => {
+            let preamble_complete = index
+                .metadata
+                .as_ref()
+                .and_then(|m| m.databases.first())
+                .is_some_and(|db| db.preamble_complete);
+            if !(preamble_only_flag && preamble_complete) {
+                anyhow::bail!(
+                    "cache at {} only covers {} of {} bytes — cache-only mode cannot extend it; re-run with --source to finish the scan",
+                    path.display(),
+                    index.scanned_through,
+                    total_size
+                );
+            }
+            index
+        }
+        CacheStatus::Valid { index, .. } => index,
+    };
+    if preamble_only_flag {
+        print_metadata(&index.metadata.clone().unwrap_or_default());
+        print_diagnostics(&index.diagnostics);
+    } else {
+        print_index(&index, verbose, map);
     }
     Ok(())
 }
@@ -302,6 +387,10 @@ fn print_metadata(metadata: &DumpMetadata) {
 fn print_index(index: &DumpIndex, verbose: bool, map: bool) {
     if let Some(metadata) = &index.metadata {
         print_metadata(metadata);
+        println!();
+    }
+
+    if print_diagnostics(&index.diagnostics) {
         println!();
     }
 
@@ -397,6 +486,49 @@ fn print_index(index: &DumpIndex, verbose: bool, map: bool) {
         println!(
             "{total_unmapped} of {total_columns} columns unmapped — run with --verbose for details"
         );
+    }
+}
+
+/// `DumpIndex::diagnostics` (or, for `--preamble-only`, the diagnostics
+/// `preamble_only` reports separately), printed unconditionally — this is
+/// M2 (`docs/design/roadmap-phase3-object-inventory.md`, "Cache-only
+/// inspection"): before slice 3.7, `pgdq info` had no code path that read
+/// `index.diagnostics` at all, in any mode. Cache-only mode's "unverified,
+/// historical" banner rides this same path (`DiagnosticKind::CacheOffline`).
+/// Returns whether anything was printed, matching `print_cross_references`'s
+/// and `print_object_kinds`' convention.
+fn print_diagnostics(diagnostics: &[Diagnostic]) -> bool {
+    if diagnostics.is_empty() {
+        return false;
+    }
+    println!("diagnostics:");
+    for d in diagnostics {
+        println!("    [{}] {}", severity_label(d.severity), diagnostic_message(&d.kind));
+    }
+    true
+}
+
+fn severity_label(severity: Severity) -> &'static str {
+    match severity {
+        Severity::Info => "info",
+        Severity::Warning => "warning",
+        Severity::Error => "error",
+    }
+}
+
+fn diagnostic_message(kind: &DiagnosticKind) -> String {
+    match kind {
+        DiagnosticKind::TilingBroken { issues } => format!(
+            "the file map has {} gap(s)/overlap(s) that don't tile the file — this is a pgdq bug, please report it",
+            issues.len()
+        ),
+        DiagnosticKind::CacheMtimeChanged => "the dump file's mtime has changed since the cache was saved (size still matches, so the cache was kept)".to_string(),
+        DiagnosticKind::TocCoverage { attributed, spans } => {
+            format!("TOC coverage: {attributed}/{spans} span(s) attributed to a TOC entry")
+        }
+        DiagnosticKind::CacheOffline => {
+            "answering from a cache with no source dump file to check it against — unverified, historical as of whenever the cache was last saved".to_string()
+        }
     }
 }
 

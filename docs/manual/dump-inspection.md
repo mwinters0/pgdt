@@ -6,15 +6,15 @@ before writing a query, or whenever you just want to know what a dump
 contains.
 
 ```sh
-pgdq info mydump.sql
+pgdq info --source mydump.sql
 ```
 
 The first time you run it against a file, it does a full scan and writes a
 cache next to the file (`mydump.sql.dqcache`) so every later `info` or
-`query` against the same file is instant. Pass `--cache-path <path>` to put
-the cache somewhere else, or `--cache-path none` to skip it. If the file
-changes size, the cache is invalidated automatically and pgdq scans again;
-you never need to delete it by hand.
+`query` against the same file is instant. Pass `--dqcache <path>` to put the
+cache somewhere else, or `--dqcache none` to skip it. If the file changes
+size, the cache is invalidated automatically and pgdq scans again; you never
+need to delete it by hand.
 
 ## The default view
 
@@ -23,6 +23,9 @@ server version: 16.4
 pg_dump version: 16.4
 extensions: 2
 user-defined types: 3
+
+diagnostics:
+    [info] TOC coverage: 213/224 span(s) attributed to a TOC entry
 
 roles: app_user, backup
 tablespaces: fast_ssd
@@ -47,6 +50,13 @@ public.events (98765 rows)
   it declares. A dump taken with `--create` (or `pg_dumpall`) that touches
   more than one database repeats this block once per database, each under
   its own `database: <name>` line.
+- **`diagnostics`** is anything worth telling you that isn't a table, role,
+  or object: how much of the map is explained by `pg_dump`'s own per-object
+  comments (`TOC coverage`), a cache whose recorded mtime no longer matches
+  the file's (still used — mtime alone isn't reliable enough to invalidate
+  on), or, in cache-only mode below, a reminder that you're looking at
+  historical data. Nothing appears here on an unremarkable run beyond the
+  coverage figure.
 - **`roles`/`tablespaces`** list every role and tablespace the scan found
   referenced anywhere — an object's owner, a `GRANT`/`REVOKE`, a non-default
   tablespace assignment. Neither line appears if the dump doesn't reference
@@ -72,7 +82,7 @@ publication, comment block, and stretch of framing) is there too; `--map`
 lists all of it, in file order, instead of just the tables:
 
 ```
-$ pgdq info mydump.sql --map
+$ pgdq info --source mydump.sql --map
 [0, 35) framing
 [35, 622) SCHEMA public
 [622, 981) TABLE public.accounts
@@ -110,3 +120,29 @@ the rest. Its cost does not depend on the dump's size: a preamble-only
 table's data. Roles, tablespaces, the object-kind summary and the table
 listing are all unavailable in this mode — they require having scanned the
 rest of the file, which is exactly what `--preamble-only` skips.
+
+## Inspecting a cache with the dump gone: no `--source`
+
+`pgdq info` can answer entirely from a saved `.dqcache` file, with no dump
+file in reach at all — deleted, moved elsewhere, or never local to this
+machine. Drop `--source` and pass `--dqcache <path>` on its own:
+
+```sh
+pgdq info --dqcache mydump.sql.dqcache
+```
+
+This works for the default listing, `--map`, and `--preamble-only` alike —
+whichever one you'd run against the live file. It's for exactly the
+sysadmin-facing use case this whole page is about: keep a folder of
+`.dqcache` files from dumps you no longer keep around, and still be able to
+answer "what tables did this have," "which roles did it need," "did the
+schema change since last time," without the multi-hundred-gigabyte file
+itself.
+
+Cache-only mode never falls back to scanning — there's no dump file to scan
+— so it's stricter than the live modes above. `pgdq info --dqcache <path>`
+(default or `--map`) needs a cache that covers the *whole* file; one written
+by `--preamble-only` doesn't qualify, and only `--preamble-only` itself will
+read it. Every cache-only answer also carries a `diagnostics:` line saying
+so — it's unverified, historical data from whenever the cache was last
+saved, since there's no live file left to check it against.

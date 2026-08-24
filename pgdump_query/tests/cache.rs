@@ -68,6 +68,7 @@ async fn saved_index_round_trips_exactly() {
             index
         }
         CacheStatus::Absent => panic!("a freshly saved cache must load"),
+        CacheStatus::Incomplete { .. } => panic!("build_index always scans the whole file"),
     };
 
     assert_eq!(loaded, index);
@@ -88,8 +89,15 @@ async fn preamble_only_persists_a_real_unscanned_tail() {
 
     preamble_only(&source, &ScanOptions::default(), &mode).await.unwrap();
 
+    // A preamble-only scan never reaches EOF (that's the point of it), so
+    // the cache it persists is `Incomplete` by the same completeness check
+    // `pgdq info`'s default listing uses to decide whether to trust a cache
+    // as the whole file's map — not `Valid`, and not `Absent` either, since
+    // it's a real, usable partial scan (`docs/design/roadmap-phase3-object-inventory.md`,
+    // "Cache-only inspection").
     let index = match cache::load(&path, &source).await.unwrap() {
-        CacheStatus::Valid { index, .. } => index,
+        CacheStatus::Incomplete { index, .. } => index,
+        CacheStatus::Valid { .. } => panic!("a preamble-only scan cannot reach EOF"),
         CacheStatus::Absent => panic!("preamble_only must persist a cache"),
     };
     let size = source.size().await.unwrap();
@@ -179,6 +187,7 @@ async fn mtime_mismatch_alone_does_not_invalidate_the_cache() {
             assert_eq!(loaded, index);
         }
         CacheStatus::Absent => panic!("an mtime-only mismatch must not invalidate the cache"),
+        CacheStatus::Incomplete { .. } => panic!("build_index always scans the whole file"),
     }
 }
 
@@ -293,4 +302,121 @@ async fn diagnostics_do_not_round_trip_through_the_cache() {
 
     let loaded = CacheMode::Enabled(cache_path).load(&source).await.unwrap().unwrap();
     assert!(loaded.diagnostics.is_empty(), "recomputed on load, never restored");
+}
+
+/// A cache whose `scanned_through` falls short of its recorded size loads as
+/// `Incomplete`, not `Valid` — the case `preamble_only_persists_a_real_unscanned_tail`
+/// already exercises through `preamble_only` — but `CacheMode::load` still
+/// hands it back as `Some`, the same as a `Valid` cache, since its callers
+/// (`table_stream`, `preamble_only`) want a partial map to build forward
+/// from rather than a signal to start over
+/// (`docs/design/roadmap-phase3-object-inventory.md`, "Cache-only
+/// inspection").
+#[tokio::test]
+async fn an_incomplete_cache_still_loads_as_some_through_cache_mode() {
+    let source = LocalFileSource::open(edge_cases()).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("edge_cases.sql.dqcache");
+    let mode = CacheMode::Enabled(path.clone());
+
+    preamble_only(&source, &ScanOptions::default(), &mode).await.unwrap();
+
+    let index = mode.load(&source).await.unwrap().expect("Incomplete still yields Some");
+    let size = source.size().await.unwrap();
+    assert!(index.scanned_through < size, "a preamble-only cache never reaches EOF");
+}
+
+/// `docs/design/roadmap-phase3-object-inventory.md`, "Cache-only
+/// inspection": `CacheMode::Offline` is rejected by every method that
+/// requires a live source, and `CacheMode::load_offline` rejects the other
+/// two variants the opposite way.
+#[tokio::test]
+async fn offline_mode_is_rejected_by_live_methods_and_vice_versa() {
+    let source = LocalFileSource::open(edge_cases()).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("edge_cases.sql.dqcache");
+
+    let offline = CacheMode::Offline(path.clone());
+    assert!(matches!(offline.load(&source).await, Err(Error::CacheModeMismatch(_))));
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    assert!(matches!(offline.save(&source, &index).await, Err(Error::CacheModeMismatch(_))));
+    assert!(matches!(offline.require_enabled("parse"), Err(Error::CacheModeMismatch(_))));
+
+    assert!(matches!(
+        CacheMode::Enabled(path).load_offline().await,
+        Err(Error::CacheModeMismatch(_))
+    ));
+    assert!(matches!(CacheMode::Disabled.load_offline().await, Err(Error::CacheModeMismatch(_))));
+}
+
+/// `load_offline` against a cache that was never fully scanned reports
+/// `Incomplete` with the total size it fell short of, the same way `load`
+/// does for a live source — the completeness check reads the cache's own
+/// recorded size, since there is no live file to stat
+/// (`docs/design/roadmap-phase3-object-inventory.md`, "Cache-only
+/// inspection", the former out-of-band item M1).
+#[tokio::test]
+async fn load_offline_reports_incomplete_for_a_partial_scan() {
+    let source = LocalFileSource::open(edge_cases()).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("edge_cases.sql.dqcache");
+    let mode = CacheMode::Enabled(path.clone());
+    preamble_only(&source, &ScanOptions::default(), &mode).await.unwrap();
+
+    let size = source.size().await.unwrap();
+    match CacheMode::Offline(path).load_offline().await.unwrap() {
+        CacheStatus::Incomplete { index, total_size, .. } => {
+            assert_eq!(total_size, size);
+            assert!(index.scanned_through < total_size);
+        }
+        other => panic!("expected Incomplete, got {other:?}"),
+    }
+}
+
+/// A cache-only load — `Valid` or `Incomplete` — always carries a
+/// `CacheOffline` diagnostic: there is no live file to check it against, so
+/// the result is unverified and historical regardless of completeness
+/// (`docs/design/roadmap-phase3-object-inventory.md`, "Cache-only
+/// inspection").
+#[tokio::test]
+async fn load_offline_always_pushes_the_cache_offline_diagnostic() {
+    use pgdump_query::DiagnosticKind;
+
+    let source = LocalFileSource::open(edge_cases()).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let full_path = dir.path().join("full.dqcache");
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    pgdump_query::cache::save(&full_path, &source, &index).await.unwrap();
+
+    let status = CacheMode::Offline(full_path).load_offline().await.unwrap();
+    let CacheStatus::Valid { index: loaded, .. } = status else {
+        panic!("expected Valid for a fully scanned cache");
+    };
+    assert!(
+        loaded.diagnostics.iter().any(|d| d.kind == DiagnosticKind::CacheOffline),
+        "diagnostics: {:?}",
+        loaded.diagnostics
+    );
+
+    let partial_path = dir.path().join("partial.dqcache");
+    let mode = CacheMode::Enabled(partial_path.clone());
+    preamble_only(&source, &ScanOptions::default(), &mode).await.unwrap();
+    let status = CacheMode::Offline(partial_path).load_offline().await.unwrap();
+    let CacheStatus::Incomplete { index: loaded, .. } = status else {
+        panic!("expected Incomplete for a preamble-only cache");
+    };
+    assert!(
+        loaded.diagnostics.iter().any(|d| d.kind == DiagnosticKind::CacheOffline),
+        "diagnostics: {:?}",
+        loaded.diagnostics
+    );
+}
+
+/// A cache path that doesn't exist loads as `Absent` offline too, and gets
+/// no diagnostic pushed onto it — there is no index to push one onto.
+#[tokio::test]
+async fn load_offline_missing_file_is_absent() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("nonexistent.dqcache");
+    assert_eq!(CacheMode::Offline(path).load_offline().await.unwrap(), CacheStatus::Absent);
 }

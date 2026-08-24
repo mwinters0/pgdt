@@ -56,6 +56,9 @@ use crate::{Error, Result};
 /// runs and the large-object region too; to 9 in Phase 3.3.1, for
 /// [`crate::map::Span::toc_owned`] — pre-1.0, so all of them are free
 /// (`CLAUDE.md`, "Pre-1.0").
+///
+/// Not bumped for [`CacheStatus::Incomplete`] (Phase 3.7): that's a new way
+/// of *reading* an existing on-disk shape, not a change to it.
 const FORMAT_VERSION: u32 = 9;
 
 /// The dump file's size and modification time as observed when a cache was
@@ -115,11 +118,29 @@ pub enum CacheStatus {
     /// contract, so callers that don't care why get exactly one case to
     /// handle.
     Absent,
-    /// A usable cache. `mtime_changed` is `true` when the source's current
-    /// mtime differs from the one recorded at save time — weaker evidence
-    /// than a size mismatch (see the module docs), so it does not itself
-    /// make the cache [`Absent`](CacheStatus::Absent).
+    /// A usable cache whose `index.scanned_through` reaches the file's
+    /// recorded size — the whole file is mapped. `mtime_changed` is `true`
+    /// when the source's current mtime differs from the one recorded at save
+    /// time — weaker evidence than a size mismatch (see the module docs), so
+    /// it does not itself make the cache [`Absent`](CacheStatus::Absent).
     Valid { index: DumpIndex, mtime_changed: bool },
+    /// A usable cache whose `index.scanned_through` falls short of
+    /// `total_size` — a real, not-yet-finished scan (e.g. a preamble-only
+    /// scan, or a query that stopped once its target settled), not a defect
+    /// (`docs/design/roadmap-phase3-object-inventory.md`, "Cache-only
+    /// inspection", the former out-of-band item M1). What "not enough"
+    /// means is caller-specific: a caller that wants the whole file's map
+    /// (`pgdq info`'s default listing) should treat this as a signal to
+    /// scan further; a caller that resumes an incremental scan from
+    /// wherever it left off (`crate::stream::table_stream`,
+    /// `crate::index::preamble_only`) wants exactly this partial index to
+    /// build on, the same as [`Valid`](CacheStatus::Valid) —
+    /// [`CacheMode::load`] treats it that way. `total_size` is the cache's
+    /// own recorded [`SourceIdentity::size`], which — once this case or
+    /// `Valid` is reached — is already known to equal the live source's size
+    /// when one is available, so it serves a cache-only caller (no live
+    /// source to stat) the same way it serves a live one.
+    Incomplete { index: DumpIndex, mtime_changed: bool, total_size: u64 },
 }
 
 /// Load a cache from `path` and validate it against `source`'s current
@@ -145,7 +166,47 @@ pub async fn load<S: ByteRangeSource>(path: &Path, source: &S) -> Result<CacheSt
         return Ok(CacheStatus::Absent);
     }
     let mtime_changed = file.identity.mtime != live.mtime;
-    Ok(CacheStatus::Valid { index: file.index, mtime_changed })
+    Ok(status_from_file(file, mtime_changed))
+}
+
+/// Load a cache from `path` with no live source to check it against — the
+/// cache-only counterpart to [`load`]
+/// (`docs/design/roadmap-phase3-object-inventory.md`, "Cache-only
+/// inspection"). There is nothing to compare the recorded mtime to, so
+/// `mtime_changed` is always `false` here; the "this is unverified,
+/// historical data" fact cache-only mode carries instead is a
+/// [`crate::diagnostic::DiagnosticKind::CacheOffline`] pushed by
+/// [`CacheMode::load_offline`], not this flag.
+pub async fn load_offline(path: &Path) -> Result<CacheStatus> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(CacheStatus::Absent),
+        Err(e) => return Err(Error::Io(e)),
+    };
+    let file: CacheFile =
+        match bincode::serde::decode_from_slice(&bytes, bincode::config::standard()) {
+            Ok((file, _)) => file,
+            Err(_) => return Ok(CacheStatus::Absent),
+        };
+    if file.format_version != FORMAT_VERSION || file.container_kind != ContainerKind::Plain {
+        return Ok(CacheStatus::Absent);
+    }
+    Ok(status_from_file(file, false))
+}
+
+/// Shared by [`load`] and [`load_offline`] once a `CacheFile` has passed its
+/// format/container/(when live) size checks: `Valid` when the index's own
+/// `scanned_through` reaches the file's recorded size, `Incomplete`
+/// otherwise. Reads `file.identity.size` rather than re-stating a live size
+/// — by the time either caller reaches this point the two are already known
+/// equal wherever a live one exists (a live-size mismatch returns `Absent`
+/// earlier in [`load`]), and `load_offline` has no live size to read at all.
+fn status_from_file(file: CacheFile, mtime_changed: bool) -> CacheStatus {
+    if file.index.scanned_through < file.identity.size {
+        CacheStatus::Incomplete { index: file.index, mtime_changed, total_size: file.identity.size }
+    } else {
+        CacheStatus::Valid { index: file.index, mtime_changed }
+    }
 }
 
 /// Write `index` to `path` (colocated or explicit — whichever the caller
@@ -177,6 +238,15 @@ pub enum CacheMode {
     /// otherwise be the resolved location is ignored, and a fresh scan is
     /// not persisted.
     Disabled,
+    /// No live dump source at all — answer strictly from the cache at this
+    /// path (`docs/design/roadmap-phase3-object-inventory.md`, "Cache-only
+    /// inspection"). Never constructed by [`CacheMode::resolve`]; a caller
+    /// builds it directly (`pgdq info` with no `--source`). Rejected by
+    /// every method below that takes a live `source` — being handed
+    /// `Offline` while a live source is in hand is a caller contract
+    /// violation, not a degenerate case to tolerate — and [`load_offline`]
+    /// is its own counterpart, rejecting `Enabled`/`Disabled` the other way.
+    Offline(PathBuf),
 }
 
 impl CacheMode {
@@ -198,11 +268,24 @@ impl CacheMode {
     /// what would otherwise be its resolved location, per
     /// [`CacheMode::Disabled`]'s contract that existing files are ignored,
     /// never read.
+    ///
+    /// `Incomplete` is treated exactly like `Valid` — returned as `Some`,
+    /// not folded into `None` — because this method's callers
+    /// (`crate::stream::table_stream`, `crate::index::preamble_only`) want
+    /// whatever partial map already exists to build forward from; a caller
+    /// that instead needs the whole file mapped (`pgdq info`'s default
+    /// listing) reads [`DumpIndex::scanned_through`] against the live
+    /// source's size itself rather than relying on this method to make that
+    /// call, since folding `Incomplete` into `None` here would make every
+    /// partial cache from an ordinary query invisible to the next one —
+    /// exactly the incremental caching `roadmap-phase3-object-inventory.md`,
+    /// "Mapping and streaming are separate passes" depends on.
     pub async fn load<S: ByteRangeSource>(&self, source: &S) -> Result<Option<DumpIndex>> {
         match self {
             CacheMode::Enabled(path) => match load(path, source).await? {
                 CacheStatus::Absent => Ok(None),
-                CacheStatus::Valid { mut index, mtime_changed } => {
+                CacheStatus::Valid { mut index, mtime_changed }
+                | CacheStatus::Incomplete { mut index, mtime_changed, .. } => {
                     // Reported rather than acted on: too weak to invalidate
                     // (see the module docs), and pointless to persist — the
                     // mismatch is between the cache and *this* run's
@@ -216,6 +299,38 @@ impl CacheMode {
                 }
             },
             CacheMode::Disabled => Ok(None),
+            CacheMode::Offline(_) => Err(Error::CacheModeMismatch(
+                "a live dump source requires CacheMode::Enabled or CacheMode::Disabled, not Offline",
+            )),
+        }
+    }
+
+    /// Load this mode's cache with no live source to check it against — the
+    /// cache-only counterpart to [`CacheMode::load`]
+    /// (`docs/design/roadmap-phase3-object-inventory.md`, "Cache-only
+    /// inspection"). Unlike `load`, this returns the full [`CacheStatus`]
+    /// rather than collapsing it to `Option<DumpIndex>`: cache-only mode has
+    /// no scan to fall back on, so a caller needs to tell `Valid` apart from
+    /// `Incomplete` to decide whether it has enough to answer from. Every
+    /// successful load (`Valid` or `Incomplete`) gets a
+    /// [`crate::diagnostic::DiagnosticKind::CacheOffline`] pushed onto it
+    /// unconditionally — there is no live file to compare against, so the
+    /// result is unverified and historical regardless of completeness.
+    pub async fn load_offline(&self) -> Result<CacheStatus> {
+        match self {
+            CacheMode::Offline(path) => {
+                let mut status = load_offline(path).await?;
+                match &mut status {
+                    CacheStatus::Absent => {}
+                    CacheStatus::Valid { index, .. } | CacheStatus::Incomplete { index, .. } => {
+                        index.diagnostics.push(crate::diagnostic::Diagnostic::cache_offline());
+                    }
+                }
+                Ok(status)
+            }
+            CacheMode::Enabled(_) | CacheMode::Disabled => {
+                Err(Error::CacheModeMismatch("cache-only access requires CacheMode::Offline"))
+            }
         }
     }
 
@@ -228,17 +343,23 @@ impl CacheMode {
         match self {
             CacheMode::Enabled(path) => save(path, source, index).await,
             CacheMode::Disabled => Ok(()),
+            CacheMode::Offline(_) => {
+                Err(Error::CacheModeMismatch("cache-only mode never has a fresh scan to persist"))
+            }
         }
     }
 
     /// The path this mode resolves to, or `Error::CacheDisabled` if the
     /// caller disabled the cache but `operation` requires one. Use this to
-    /// reject an incompatible `--cache-path none` up front, rather than
+    /// reject an incompatible `--dqcache none` up front, rather than
     /// discovering it only when a write silently no-ops.
     pub fn require_enabled(&self, operation: &'static str) -> Result<&Path> {
         match self {
             CacheMode::Enabled(path) => Ok(path),
             CacheMode::Disabled => Err(Error::CacheDisabled { operation }),
+            CacheMode::Offline(_) => Err(Error::CacheModeMismatch(
+                "cache-only mode has no live source to scan and persist",
+            )),
         }
     }
 }

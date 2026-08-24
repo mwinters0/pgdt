@@ -38,7 +38,7 @@
 //! (skipped once a cache already has it), regardless of which table was
 //! queried, whether it ever appears, or how far the live scan gets before a
 //! caller stops polling. This runs even under [`CacheMode::Disabled`] as of
-//! Phase 2.3 — `--cache-path none` disables *persistence*, not type
+//! Phase 2.3 — `--dqcache none` disables *persistence*, not type
 //! resolution (`docs/design/roadmap-phase2-typed-columns.md`, "The preamble
 //! pass") — but `cache.save` is a no-op there, so nothing is written to
 //! disk. Under [`CacheMode::Enabled`], a cache file's mere presence
@@ -520,7 +520,7 @@ where
         // `Typed`-mode query needs it for type resolution below, not just a
         // caller that goes on to persist a cache. `CacheMode::Disabled`
         // still runs the scan (`docs/design/roadmap-phase2-typed-columns.md`,
-        // "`--cache-path none` disables persistence, not typing") but
+        // "`--dqcache none` disables persistence, not typing") but
         // `cache.save` below is a no-op for it, so nothing is written.
         // Persisted immediately (not deferred to whenever the mapping pass
         // next saves) so it survives even a caller that polls the stream

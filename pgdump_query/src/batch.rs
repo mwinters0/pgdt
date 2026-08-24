@@ -562,6 +562,11 @@ pub fn render_field(column: &dyn Array, row: usize) -> Option<String> {
 /// batch delivered to it — see [`crate::stream::TableStream::resume_token`].
 /// `predicate` applies a post-parse row filter — see `table_stream`'s docs.
 /// `cache` controls structure-cache consulting — see `table_stream`'s docs.
+/// Rejects `CacheMode::Offline` up front: `source` is mandatory here, and a
+/// cache-only mode paired with a live source in hand is a caller contract
+/// violation (`docs/design/roadmap-phase3-object-inventory.md`, "Cache-only
+/// inspection" — `Span::text` is `None` for every `Data` span regardless, so
+/// `query` could never answer from a cache alone even if this were allowed).
 pub async fn read_table<S, F>(
     source: &S,
     table: &str,
@@ -576,6 +581,12 @@ where
     F: FnMut(RecordBatch) -> ControlFlow<()>,
 {
     use futures::StreamExt;
+
+    if matches!(cache, CacheMode::Offline(_)) {
+        return Err(crate::Error::CacheModeMismatch(
+            "query requires a live dump source; CacheMode::Offline is cache-only",
+        ));
+    }
 
     let mut stream = crate::stream::table_stream(
         source,

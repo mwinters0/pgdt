@@ -13,8 +13,9 @@ cargo test --workspace
 cargo insta review                                # accept changed snapshots
 cargo clippy --workspace
 cargo fmt --check                                 # config: rustfmt.toml
-cargo run -p pgdump_query-cli -- parse <file>      # binary is named `pgdq`
-cargo run -p pgdump_query-cli -- info <file> [--verbose]
+cargo run -p pgdump_query-cli -- parse --source <file>      # binary is named `pgdq`
+cargo run -p pgdump_query-cli -- info --source <file> [--verbose]
+cargo run -p pgdump_query-cli -- info --dqcache <path>       # cache-only, no dump file needed
 
 cd scripts && uv run generate_fixtures.py [--version 13|16|18]  # regenerate fixtures/
 ```
@@ -52,10 +53,10 @@ sudo nerdctl run -d --name pgdq-koji -m 512m --memory-swap 512m \
   -v "$PWD/runs:/out" \
   -v "/path/to/dump.sql:/dump.sql:ro" \
   postgres:16-alpine \
-  sh -c '/pgdq info /dump.sql --cache-path /out/koji.dqcache --verbose > /out/koji-scan.log 2>&1; echo "exit=$?" >> /out/koji-scan.log'
+  sh -c '/pgdq info --source /dump.sql --dqcache /out/koji.dqcache --verbose > /out/koji-scan.log 2>&1; echo "exit=$?" >> /out/koji-scan.log'
 ```
 
-**Pass `--cache-path` into the mounted `/out`.** The dump is mounted read-only,
+**Pass `--dqcache` into the mounted `/out`.** The dump is mounted read-only,
 so the colocated default (`/dump.sql.dqcache`) lands in the container's
 ephemeral writable layer and is destroyed with the container — throwing away an
 hour of scanning without an error, since the write itself succeeds.

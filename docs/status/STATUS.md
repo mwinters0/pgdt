@@ -21,14 +21,15 @@ module map, and the implementation facts later phases inherit — is in
 
 Phase 3 (full DDL object inventory) has landed every slice its spec originally
 listed, plus two more the phase's end-of-phase grilling earned — **3.1.1** and
-**3.3.1**, both now landed — and a third grilling-earned slice, **3.7**
-(cache-only inspection, absorbing what were out-of-band items M1 and M2),
-plus one remaining out-of-band item (M3). The phase is **not yet wrapped**;
-see "Not started" for what remains and in what order.
+**3.3.1** — and a third grilling-earned slice, **3.7** (cache-only inspection,
+absorbing what were out-of-band items M1 and M2), all now landed, plus one
+remaining out-of-band item (M3). The phase is **not yet wrapped**; see "Not
+started" for what remains and in what order.
 
-Last updated: 2026-08-24 (slice 3.3.1 landed: follow-on statements inherit
-their governing TOC entry, closing the ~50%-coverage defect 3.3's own tests
-surfaced).
+Last updated: 2026-08-24 (slice 3.7 landed: `pgdq info` answers from a
+retained `.dqcache` with no `--source`, `CacheMode` gains `Offline`, and
+`CacheStatus` gains `Incomplete` — folding in the former out-of-band items M1
+and M2).
 
 ## Phase 3 progress
 
@@ -153,19 +154,23 @@ surfaced).
       `type-handling.md`. Pure presentation over already-tested `DumpIndex`
       data — no library code changed. Notes:
       [`roadmap-phase3.5-cli-surface-notes.md`](../design/roadmap-phase3.5-cli-surface-notes.md).
+- [x] **3.7** Cache-only inspection: `pgdq info` (default, `--map`,
+      `--preamble-only`) answers from a retained `.dqcache` with its source
+      dump gone. All three subcommands move from a `file`
+      positional/`--cache-path` to `--source`/`--dqcache`; `query`'s `table`
+      positional becomes `--table`. `CacheMode` gains `Offline(PathBuf)`
+      with its own `load_offline`, rejected library-side (not just by the
+      CLI) by `load`/`save`/`require_enabled`/`read_table` the one way and
+      by `load_offline` the other. `CacheStatus` gains `Incomplete` (former
+      out-of-band item M1), and `pgdq info` prints `DumpIndex::diagnostics`
+      (former out-of-band item M2) — cache-only mode's "unverified,
+      historical" banner rides that same path. Notes:
+      [`roadmap-phase3.7-cache-only-inspection-notes.md`](../design/roadmap-phase3.7-cache-only-inspection-notes.md).
 
 ## Not started
 
-Two items remain before Phase 3 wraps, in this order — each earlier one makes
-the next one's mistakes visible, and no two share a review cycle unless they
-share a confidence level:
+One item remains before Phase 3 wraps:
 
-- **Slice 3.7, cache-only inspection** — `pgdq info` answers from a retained
-  `.dqcache` after its source dump is gone. Folds in what were queued as
-  out-of-band items M1 and M2 (the two `pgdq info` defects under "Known
-  gaps" below), since cache-only mode needs both mechanisms directly and a
-  slice that depends on them isn't a one-session CLI-only change anymore.
-  See `roadmap-phase3-object-inventory.md`, "Cache-only inspection".
 - **Out-of-band item M3** — the synthetic `INSERT`-run throughput
   measurement; see "Decisions worth another look".
 
@@ -175,7 +180,7 @@ Then the wrap, and only then the step-6 roadmap re-grill.
   out-of-band items too.
 - **A like-for-like koji throughput re-measurement** — deferred past Phase 3;
   the HDD is still contended. See "Decisions worth another look".
-- **Phase 3's wrap step** — every slice (3.1 through 3.6) is landed, but the
+- **Phase 3's wrap step** — every slice (3.1 through 3.7) is landed, but the
   phase itself isn't wrapped: the per-slice notes docs still need
   consolidating into one `roadmap-phase3-object-inventory-notes.md` (per-slice
   files deleted after) and this file's Phase 3 section rewritten to the
@@ -203,21 +208,6 @@ Then the wrap, and only then the step-6 roadmap re-grill.
   phase's cost argument. Filed into
   [`roadmap-phase6-inbox.md`](../design/roadmap-phase6-inbox.md) so the
   embedded API's promises get decided against it deliberately.
-- `pgdq info <file>` (no `--preamble-only`) trusts whatever cache
-  `CacheMode::load` finds without checking it actually covers the whole file:
-  running `pgdq info <file> --preamble-only` and then `pgdq info <file>`
-  prints the preamble-only cache's metadata but reports zero `COPY` blocks
-  instead of running a full scan. Predates Phase 3.2.1 (reproduced against
-  `main` before that slice's changes); not fixed there since it's unrelated
-  to span wiring — see
-  `docs/design/roadmap-phase3.2.1-span-wiring-notes.md`. Reachable more often
-  since 3.2.1.2.1, because an ordinary query now leaves a *partial* cache by
-  design rather than a whole-file one. Fix: compare `scanned_through` against
-  the cache's own recorded size (`SourceIdentity`) before trusting a loaded
-  cache as complete, as a new `CacheStatus` case rather than folding into
-  `Absent` — confirmed small (both values are already to hand). Lands as
-  part of slice **3.7** (cache-only inspection), not standalone — see
-  `roadmap-phase3-object-inventory.md`, "Cache-only inspection".
 - `map::parse_toc_header_line` does not recognize `TOC_PREFIX_STATS`
   (`"Statistics for "`, a v18+ `--statistics` component — not
   `--with-statistics`, which does not exist in any version). A deliberate
@@ -232,19 +222,6 @@ Then the wrap, and only then the step-6 roadmap re-grill.
   reaches a reference past the stopping point, which is exactly koji's
   `backup` role (granted only in a post-data `GRANT`). `ScanExtent::Full` (or
   a query after `pgdq parse`) gives the complete set.
-- `DumpIndex::diagnostics` (a tiling failure, the cache mtime warning, the
-  TOC-coverage figure) is fully populated by every scan but never printed by
-  the CLI — `pgdq info` has no code path that reads `index.diagnostics` at
-  all, in any mode. Found incidentally while building slice 3.5's output
-  (`docs/design/roadmap-phase3.5-cli-surface-notes.md`); not fixed there
-  since a proper drain point is Phase 6's caller-supplied-sink work
-  (`roadmap-phase3-object-inventory.md`, "Diagnostics: a file-level channel
-  on `DumpIndex`") and this slice's spec row didn't ask for it. A plain
-  `pgdq info` run today gives no visible signal if, say, the tiling check
-  ever fails on real input. Lands as part of slice **3.7** (cache-only
-  inspection), not standalone: cache-only mode's "unverified, historical"
-  banner rides this same printing path — printing what `index.diagnostics`
-  already holds is independent of Phase 6's sink design either way.
 
 ## Decisions worth another look
 
@@ -305,4 +282,24 @@ real users have tried it, and their feedback becomes its own work item. See
   back differently. **The maintainer has deferred the re-measurement past
   Phase 3** — the HDD is still contended — so this entry stays until that run
   happens.
+
+- **Slice 3.7's `CacheMode::load` does not fold `CacheStatus::Incomplete`
+  into `None`, despite the spec's "live mode still treats it like Absent
+  (falls back to a scan)".** Read literally at `CacheMode::load` — the
+  `Option<DumpIndex>`-returning method `table_stream` and `preamble_only`
+  both call to seed an incremental scan — that sentence would make every
+  ordinary query's partial cache invisible to the next query, discarding the
+  entire benefit of the structural cache: a cold query's map is *designed*
+  to stop short of the file's size once its target settles, so a partial
+  cache is the normal shape there, not a defect. `CacheMode::load` treats
+  `Incomplete` exactly like `Valid` instead; the one caller that actually
+  needs the "is this the *whole* file" distinction — `pgdq info`'s
+  default/`--map` fallback, which is what the M1 bug this slice fixes was
+  actually about — checks `scanned_through` against the live source's size
+  itself, which it already has to stat regardless. Reasoning:
+  [`roadmap-phase3.7-cache-only-inspection-notes.md`](../design/roadmap-phase3.7-cache-only-inspection-notes.md).
+  Made without the maintainer present; if reconsidered, the fix is
+  mechanical — fold `Incomplete` into `None` in `CacheMode::load` and accept
+  that `table_stream`/`preamble_only` lose incremental cache reuse, or add a
+  second entry point for them that bypasses the fold.
 

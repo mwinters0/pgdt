@@ -22,8 +22,10 @@ pub enum Error {
     Arrow(#[from] arrow::error::ArrowError),
     #[error("failed to encode structure cache: {0}")]
     CacheEncode(#[from] bincode::error::EncodeError),
-    #[error("cache is disabled (`--cache-path none`), but `{operation}` requires a cache file")]
+    #[error("cache is disabled (`--dqcache none`), but `{operation}` requires a cache file")]
     CacheDisabled { operation: &'static str },
+    #[error("cache mode mismatch: {0}")]
+    CacheModeMismatch(&'static str),
     #[error("predicate column `{column}` not found in COPY block at offset {header_offset}")]
     UnknownPredicateColumn { header_offset: u64, column: String },
     #[error(

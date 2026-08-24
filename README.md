@@ -22,7 +22,7 @@ state.
 cargo build --workspace
 
 # Scan a dump and list the COPY blocks it contains (binary is named `pgdq`).
-cargo run -p pgdump_query-cli -- info <dump.sql> --verbose
+cargo run -p pgdump_query-cli -- info --source <dump.sql> --verbose
 ```
 
 ## Documentation

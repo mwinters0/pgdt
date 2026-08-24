@@ -329,11 +329,18 @@ pub(crate) async fn scan_preamble<S: ByteRangeSource>(
 /// rather than only in `crate::map`'s own unit tests
 /// (`docs/design/roadmap-phase3-object-inventory.md`, "Scan coverage is a
 /// prefix, expressed as a span").
+///
+/// Also returns whatever [`CacheMode::load`] reported on the loaded index
+/// (e.g. a `CacheMtimeChanged` warning) — the one library entry point that
+/// answers with `DumpMetadata` alone rather than a whole `DumpIndex`, so its
+/// diagnostics have nowhere else to travel back to the caller
+/// (`roadmap-phase3-object-inventory.md`, "Diagnostics: a file-level channel
+/// on `DumpIndex`").
 pub async fn preamble_only<S: ByteRangeSource>(
     source: &S,
     options: &ScanOptions,
     cache: &CacheMode,
-) -> Result<DumpMetadata> {
+) -> Result<(DumpMetadata, Vec<crate::diagnostic::Diagnostic>)> {
     let mut base_index = cache.load(source).await?.unwrap_or_default();
     let known = base_index
         .metadata
@@ -363,5 +370,5 @@ pub async fn preamble_only<S: ByteRangeSource>(
         crate::map::attach_text(source, &mut base_index.spans).await?;
         cache.save(source, &base_index).await?;
     }
-    Ok(base_index.metadata.unwrap_or_default())
+    Ok((base_index.metadata.unwrap_or_default(), base_index.diagnostics))
 }
