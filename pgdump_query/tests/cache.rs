@@ -6,7 +6,11 @@
 use std::path::{Path, PathBuf};
 
 use pgdump_query::cache::{CacheMode, CacheStatus};
-use pgdump_query::{ByteRangeSource, Error, LocalFileSource, ScanOptions, build_index, cache};
+use pgdump_query::map::SpanBody;
+use pgdump_query::{
+    ByteRangeSource, Error, LocalFileSource, ScanOptions, build_index, cache, check_tiling,
+    preamble_only,
+};
 
 fn edge_cases() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/edge_cases.sql")
@@ -47,8 +51,8 @@ async fn foreign_bytes_at_the_cache_path_are_treated_as_absent() {
 async fn saved_index_round_trips_exactly() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
-    assert!(!index.blocks.is_empty());
-    assert!(index.blocks.iter().all(|b| b.sparse_index.is_none() && b.column_stats.is_none()));
+    assert!(index.blocks().next().is_some());
+    assert!(index.blocks().all(|b| b.sparse_index.is_none() && b.column_stats.is_none()));
     assert!(index.metadata.is_some());
 
     let dir = tempfile::tempdir().unwrap();
@@ -63,6 +67,35 @@ async fn saved_index_round_trips_exactly() {
     };
 
     assert_eq!(loaded, index);
+}
+
+/// `preamble_only` is a genuinely partial scan — unlike `build_index`, which
+/// always reaches EOF, it stops at the first `COPY` header — so it's the one
+/// place today that persists a real `SpanBody::Unscanned` tail, rather than
+/// the variant only ever appearing in `crate::map`'s own unit tests
+/// (`docs/design/roadmap-phase3-object-inventory.md`, "Scan coverage is a
+/// prefix, expressed as a span").
+#[tokio::test]
+async fn preamble_only_persists_a_real_unscanned_tail() {
+    let source = LocalFileSource::open(edge_cases()).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("edge_cases.sql.dqcache");
+    let mode = CacheMode::Enabled(path.clone());
+
+    preamble_only(&source, &ScanOptions::default(), &mode).await.unwrap();
+
+    let index = match cache::load(&path, &source).await.unwrap() {
+        CacheStatus::Valid { index, .. } => index,
+        CacheStatus::Absent => panic!("preamble_only must persist a cache"),
+    };
+    let size = source.size().await.unwrap();
+    assert!(index.scanned_through < size, "edge_cases.sql has COPY blocks past its preamble");
+
+    let last = index.spans.last().expect("a partial scan still produces spans");
+    assert_eq!(last.body, SpanBody::Unscanned);
+    assert_eq!(last.start, index.scanned_through);
+    assert_eq!(last.end, size);
+    assert!(check_tiling(&index.spans, size).is_empty(), "spans: {:?}", index.spans);
 }
 
 #[tokio::test]

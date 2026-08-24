@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use pgdump_query::map::{SpanBody, TilingIssue};
-use pgdump_query::{LocalFileSource, ScanOptions, build_map, check_tiling};
+use pgdump_query::{LocalFileSource, ScanOptions, build_index, build_map, check_tiling};
 
 fn edge_cases() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/edge_cases.sql")
@@ -64,6 +64,25 @@ async fn every_fixture_tiles_exactly() {
         }
     }
     assert!(failures.is_empty(), "tiling violations:\n{}", failures.join("\n"));
+}
+
+/// Phase 3.2.1: `build_index` builds its spans via the same `map::Builder`
+/// `build_map` drives, fed from the same scan pass as `build_index`'s own
+/// `CopyBlock`/metadata extraction — no second pass over the file, and
+/// `DumpIndex::blocks()` is a filter over the result rather than a second
+/// stored structure (`docs/design/roadmap-phase3-object-inventory.md`, "The
+/// map is the structure, not a description of it"). This pins the two
+/// producers from drifting apart across every fixture shape, including the
+/// hand-written `edge_cases.sql` this file's other tests single out for its
+/// TOC-comment-less dollar-quoted functions.
+#[tokio::test]
+async fn build_index_spans_match_build_map_exactly() {
+    for path in all_fixtures().into_iter().chain(std::iter::once(edge_cases())) {
+        let source = LocalFileSource::open(&path).unwrap();
+        let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+        let (spans, _size) = map_of(&path).await;
+        assert_eq!(index.spans, spans, "{}", path.display());
+    }
 }
 
 /// `tests/data/edge_cases.sql` is hand-written, not real `pg_dump` output —

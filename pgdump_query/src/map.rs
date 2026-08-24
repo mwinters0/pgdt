@@ -69,13 +69,29 @@
 //!   `lowrite` call) per span rather than one span per whole run. Phase 3.6;
 //!   see `docs/design/roadmap-phase3.2-span-model-notes.md` for the
 //!   verification this rests on.
-//! - **Wiring into `DumpIndex`/`crate::cache`/`crate::stream`** — Phase
-//!   3.2.1. [`build_map`] is a standalone, always-full scan, so producing
-//!   both an index and a map costs two passes today; it does not replace
-//!   `DumpIndex::blocks` as the primary structure the design's "The map is
-//!   the structure, not a description of it" section calls for, and
-//!   [`SpanBody::Unscanned`] is exercised only via [`check_tiling`]'s own
-//!   tests, not by a real incremental scan.
+//! - **Wiring into `DumpIndex`/`crate::cache`/`crate::stream` — landed in
+//!   Phase 3.2.1, with one gap left for a follow-up.** [`Builder`] (this
+//!   module's boundary/classification state machine) is now driven directly
+//!   by [`crate::index::build_index`] and [`crate::index::scan_preamble`],
+//!   fed the same [`crate::scan::Event`] stream those functions already walk
+//!   — [`build_map`] itself is now a thin wrapper over the same [`Builder`],
+//!   kept for callers (and this module's own tests) that just want a span
+//!   list. `DumpIndex::spans` is the primary, persisted structure;
+//!   `DumpIndex::blocks()`/`blocks_for` are filters over it, and
+//!   `crate::stream::table_stream`'s `Recorder` appends each live-discovered
+//!   block as its own [`SpanBody::Data`]. [`SpanBody::Unscanned`] is produced
+//!   for real by [`crate::index::preamble_only`], the one genuinely partial
+//!   scan today (`build_index` always reaches EOF).
+//!
+//!   **Left for a follow-up** (`docs/design/roadmap-phase3.2.1-span-wiring-notes.md`):
+//!   `DumpMetadata` is still populated by its own [`crate::preamble::PreambleBuilder`]
+//!   pass run alongside [`Builder`], not yet a derived view over `spans` the
+//!   way the design's "The span is the container" section calls for; and
+//!   `crate::stream::table_stream`'s live segment records `Data` spans
+//!   without classifying the DDL between them, so an index built by a query
+//!   (as opposed to `build_index`'s full scan) does not tile the file the way
+//!   `check_tiling` expects — an accepted gap since nothing yet reads
+//!   non-`Data` spans back out of a query-built `DumpIndex`.
 //! - **Span text storage** (`docs/design/roadmap-phase3-object-inventory.md`,
 //!   "Span text comes from the file, not from the parser"), the cache's
 //!   64KB-per-span cap, and the file-level `Diagnostic` channel
@@ -224,7 +240,14 @@ enum Mode {
     Statement { start: u64, buf: String },
 }
 
-struct Builder {
+/// The statement-driven boundary/classification pass, shared by
+/// [`build_map`] (a standalone, always-to-EOF scan) and
+/// [`crate::index::build_index`]/[`crate::index::scan_preamble`], which drive
+/// it directly so that producing spans costs no second pass over bytes
+/// [`crate::scan::scan`] already walked
+/// (`docs/design/roadmap-phase3-object-inventory.md`, "The map is the
+/// structure, not a description of it").
+pub(crate) struct Builder {
     mode: Mode,
     database: Option<String>,
     spans: Vec<Span>,
@@ -246,7 +269,7 @@ fn looks_like_toc_name_line(line: &str) -> bool {
 }
 
 impl Builder {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self { mode: Mode::Idle, database: None, spans: Vec::new(), pending_data: None }
     }
 
@@ -281,7 +304,7 @@ impl Builder {
     /// Feed one outside-block line. Loops internally to let a
     /// comment-block-close or statement-complete transition re-dispatch the
     /// *same* line under the new mode without the caller needing to know.
-    fn feed_line(&mut self, offset: u64, raw: &[u8]) {
+    pub(crate) fn feed_line(&mut self, offset: u64, raw: &[u8]) {
         let text = String::from_utf8_lossy(raw).into_owned();
         let mut current = Some((offset, text));
         while let Some((offset, line)) = current.take() {
@@ -372,7 +395,7 @@ impl Builder {
         }
     }
 
-    fn on_copy_start(&mut self, event: crate::scan::CopyStart) {
+    pub(crate) fn on_copy_start(&mut self, event: crate::scan::CopyStart) {
         let start = match std::mem::replace(&mut self.mode, Mode::Idle) {
             Mode::Idle => event.header_offset,
             // A TOC comment (`-- Data for Name: ...; Type: TABLE DATA`, or,
@@ -392,7 +415,7 @@ impl Builder {
         self.pending_data = Some((start, event));
     }
 
-    fn on_copy_end(&mut self, end: crate::scan::CopyEnd) {
+    pub(crate) fn on_copy_end(&mut self, end: crate::scan::CopyEnd) {
         // `on_copy_start` always runs first for a matching block
         // (`crate::scan::CopyScanner` never emits `CopyEnd` without a prior
         // `CopyStart`), so this is always `Some`.
@@ -414,7 +437,7 @@ impl Builder {
     /// Finish the scan: whatever's still pending is closed out using `end`
     /// (the scan's own end offset) as the trigger that would otherwise have
     /// opened the next span.
-    fn finish(mut self, end: u64) -> Vec<Span> {
+    pub(crate) fn finish(mut self, end: u64) -> Vec<Span> {
         self.flush_pending();
         let n = self.spans.len();
         for i in 0..n {

@@ -227,7 +227,7 @@ async fn cold_cache_gets_fully_populated_by_one_query() {
         .await
         .unwrap()
         .expect("a cache was written");
-    let mut tables: Vec<&str> = index.blocks.iter().map(|b| b.header.table.as_str()).collect();
+    let mut tables: Vec<&str> = index.blocks().map(|b| b.header.table.as_str()).collect();
     tables.sort_unstable();
     assert_eq!(tables, vec!["Odd Table", "empty_table", "no_column_list", "widgets"]);
     assert_eq!(index.scanned_through, source.size().await.unwrap());
@@ -265,8 +265,9 @@ async fn interrupted_scan_leaves_correct_partial_progress() {
         .await
         .unwrap()
         .expect("partial progress was persisted");
-    assert_eq!(index.blocks.len(), 1, "only the fully-completed empty_table block is recorded");
-    let empty_table = &index.blocks[0];
+    let blocks: Vec<_> = index.blocks().collect();
+    assert_eq!(blocks.len(), 1, "only the fully-completed empty_table block is recorded");
+    let empty_table = blocks[0];
     assert_eq!(empty_table.header.table, "empty_table");
     assert_eq!(index.scanned_through, empty_table.end_offset);
 
@@ -351,9 +352,10 @@ async fn no_duplication_on_repeat_queries() {
     .await;
     let after = CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap().unwrap();
 
-    assert_eq!(before.blocks.len(), after.blocks.len());
-    let mut offsets: Vec<u64> = after.blocks.iter().map(|b| b.header_offset).collect();
+    let after_count = after.blocks().count();
+    assert_eq!(before.blocks().count(), after_count);
+    let mut offsets: Vec<u64> = after.blocks().map(|b| b.header_offset).collect();
     offsets.sort_unstable();
     offsets.dedup();
-    assert_eq!(offsets.len(), after.blocks.len(), "no duplicate header_offsets");
+    assert_eq!(offsets.len(), after_count, "no duplicate header_offsets");
 }

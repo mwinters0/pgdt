@@ -53,6 +53,7 @@ use crate::cache::CacheMode;
 use crate::copy::{CopyHeader, DELIMITER};
 use crate::index::{CopyBlock, DumpIndex, scan_preamble};
 use crate::io::ByteRangeSource;
+use crate::map::{Span, SpanBody};
 use crate::preamble::DumpMetadata;
 use crate::predicate::Predicate;
 use crate::resolve::{ResolvedSchema, resolve_columns};
@@ -107,6 +108,13 @@ enum Segment {
 /// persists them back to the cache. Seeded from whatever the cache already
 /// had, so a persisted index stays complete rather than shrinking to just
 /// this call's discoveries.
+///
+/// Records each block as its own [`Span::Data`], but — unlike
+/// [`crate::index::build_index`] — never classifies the DDL between them, so
+/// the index this produces does not tile the file the way a full scan's does.
+/// That's an accepted interim gap for this slice, not a correctness problem:
+/// nothing yet reads non-`Data` spans back out of a `DumpIndex`
+/// (`docs/design/roadmap-phase3.2.1-span-wiring-notes.md`).
 struct Recorder {
     cache: CacheMode,
     index: DumpIndex,
@@ -119,8 +127,13 @@ impl Recorder {
     /// "Known gaps") — without this guard that would duplicate an entry rather
     /// than just redundantly re-read some bytes.
     fn record(&mut self, block: CopyBlock) {
-        if !self.index.blocks.iter().any(|b| b.header_offset == block.header_offset) {
-            self.index.blocks.push(block);
+        if !self.index.blocks().any(|b| b.header_offset == block.header_offset) {
+            self.index.spans.push(Span {
+                start: block.header_offset,
+                end: block.end_offset,
+                database: block.database.clone(),
+                body: SpanBody::Data(block),
+            });
         }
     }
 
@@ -374,7 +387,15 @@ where
             .and_then(|m| m.databases.first())
             .is_some_and(|db| db.preamble_complete);
         if !first_db_preamble_known {
-            let (metadata, preamble_end) = scan_preamble(source, &scan_options).await?;
+            // The spans this prepass could build (`[0, preamble_end)`) are
+            // discarded rather than merged into `base_index.spans`: they'd
+            // need a trailing `Unscanned` marker truncated the moment the
+            // live segment below starts recording `Data` spans past this
+            // point, and that bookkeeping isn't wired up in this slice — see
+            // `docs/design/roadmap-phase3.2.1-span-wiring-notes.md`. Losing
+            // them costs nothing today: nothing yet reads DDL spans back out
+            // of `DumpIndex`.
+            let (metadata, _spans, preamble_end) = scan_preamble(source, &scan_options).await?;
             base_index.metadata = Some(metadata);
             base_index.scanned_through = base_index.scanned_through.max(preamble_end);
             cache.save(source, &base_index).await?;
@@ -446,8 +467,7 @@ where
         let mut current_database: Option<String> = match &resume {
             Some(token) => token.database.clone(),
             None => base_index
-                .blocks
-                .iter()
+                .blocks()
                 .max_by_key(|b| b.end_offset)
                 .map(|b| b.database.clone())
                 .unwrap_or_else(|| {

@@ -294,7 +294,8 @@ fn print_index(index: &DumpIndex, verbose: bool) {
         println!();
     }
 
-    if index.blocks.is_empty() {
+    let blocks: Vec<_> = index.blocks().collect();
+    if blocks.is_empty() {
         println!("no COPY blocks found in {} scanned bytes", index.scanned_through);
         return;
     }
@@ -311,11 +312,10 @@ fn print_index(index: &DumpIndex, verbose: bool) {
     // this listing already showed (`docs/design/roadmap-phase2-typed-columns.md`,
     // "One target per query").
     let multi_database =
-        index.blocks.iter().map(|b| &b.database).collect::<std::collections::BTreeSet<_>>().len()
-            > 1;
+        blocks.iter().map(|b| &b.database).collect::<std::collections::BTreeSet<_>>().len() > 1;
     let mut current_database: Option<&Option<String>> = None;
 
-    for block in &index.blocks {
+    for block in &blocks {
         if multi_database && current_database != Some(&block.database) {
             current_database = Some(&block.database);
             match &block.database {
@@ -365,7 +365,7 @@ fn print_index(index: &DumpIndex, verbose: bool) {
     println!();
     println!(
         "{} COPY block(s), {} row(s), {} bytes scanned",
-        index.blocks.len(),
+        blocks.len(),
         index.total_rows(),
         index.scanned_through
     );

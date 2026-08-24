@@ -22,7 +22,7 @@ module map, and the implementation facts later phases inherit — is in
 Phase 3 (full DDL object inventory) is **in progress**,
 `docs/design/roadmap-phase3-object-inventory.md`.
 
-Last updated: 2026-08-23.
+Last updated: 2026-08-24.
 
 ## Phase 3 progress
 
@@ -35,12 +35,20 @@ Last updated: 2026-08-23.
       test over all 96 fixtures, cache identity checking (format v1→v2), the
       hardened statement accumulator. Notes:
       `docs/design/roadmap-phase3.2-span-model-notes.md`
-- [ ] **3.2.1** The map becomes `DumpIndex`'s primary structure — `spans`
-      primary with `blocks()` derived, `Span::Data` holding `CopyBlock`
-      inline, `DumpMetadata` as a derived view, spans persisted, `stream.rs`'s
-      planner reading spans, and `build_index` building the map in its
-      existing pass instead of `build_map` being a second one. Earned by
-      3.2's mis-sizing, not by a wrong contract.
+- [x] **3.2.1** The map becomes `DumpIndex`'s primary structure — `spans`
+      primary with `blocks()`/`blocks_for` derived, `Span::Data` holding
+      `CopyBlock` inline, spans persisted (cache format bump), and
+      `build_index` building spans in its existing pass instead of
+      `build_map` being a second one. `stream.rs`'s `Recorder` appends each
+      live-discovered block as its own `Span::Data`. `Unscanned` is now
+      produced for real by `preamble_only`. Earned by 3.2's mis-sizing, not
+      by a wrong contract. Notes:
+      `docs/design/roadmap-phase3.2.1-span-wiring-notes.md`.
+- [ ] **3.2.1.1** `DumpMetadata` as a derived view over `spans`, plus
+      `stream.rs`'s live segment classifying the DDL between discovered
+      blocks so a query-built `DumpIndex` tiles the way `build_index`'s does.
+      Earned by 3.2.1's mis-sizing — see its notes doc's "What this slice
+      does not do".
 - [ ] **3.2.2** Span text storage with its 64KB cap, and the file-level
       `Diagnostic` channel the runtime tiling check reports through. Earned
       the same way.
@@ -59,8 +67,8 @@ Last updated: 2026-08-23.
 
 ## Not started
 
-- **Phase 3, slices 3.3-3.5** — specified, no code. See the checklist above
-  and `docs/design/roadmap-phase3-object-inventory.md`.
+- **Phase 3, slices 3.2.1.1, 3.2.2-3.5** — specified, no code. See the
+  checklist above and `docs/design/roadmap-phase3-object-inventory.md`.
 - **Phases 4-8** — not designed. See `docs/design/roadmap.md`.
 
 ## Known gaps
@@ -91,6 +99,16 @@ Last updated: 2026-08-23.
   ambiguity before any streaming starts, since every candidate is already
   known. See `docs/design/roadmap-phase2-typed-columns-notes.md`, "One target
   per query".
+- `pgdq info <file>` (no `--preamble-only`) trusts whatever cache
+  `CacheMode::load` finds without checking it actually covers the whole file:
+  running `pgdq info <file> --preamble-only` and then `pgdq info <file>`
+  prints the preamble-only cache's metadata but reports zero `COPY` blocks
+  instead of running a full scan. Predates Phase 3.2.1 (reproduced against
+  `main` before that slice's changes); not fixed there since it's unrelated
+  to span wiring — see
+  `docs/design/roadmap-phase3.2.1-span-wiring-notes.md`. Likely fix: compare
+  `scanned_through` against the source's size before trusting a loaded cache
+  as complete.
 
 ## Decisions worth another look
 
@@ -98,4 +116,18 @@ Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
 
-None outstanding.
+- **Slice 3.2.1 was split into 3.2.1 + 3.2.1.1 mid-implementation, unattended.**
+  Landed: `spans` as `DumpIndex`'s primary structure, `build_index`/`build_map`
+  sharing one `Builder`, the cache format bump, and `preamble_only` producing a
+  real `Unscanned` tail. Deferred to 3.2.1.1: `DumpMetadata` as a derived view
+  over spans, and `stream.rs`'s live segment classifying DDL so a query-built
+  `DumpIndex` tiles. The call was made because both deferred pieces needed new
+  design decisions (a `SpanBody` shape for version headers and
+  `--binary-upgrade` enum-label folding; DDL classification added to the
+  per-row query hot path) rather than being mechanical follow-through on
+  already-settled shapes — see
+  `docs/design/roadmap-phase3.2.1-span-wiring-notes.md` and
+  `docs/status/history/2026-08-24.md`. Worth a look: whether the deferred
+  design decisions are as straightforward as the notes doc frames them, or
+  whether they change the `SpanBody` vocabulary enough to be worth folding
+  into 3.3's TOC-enrichment work instead of standing alone as 3.2.1.1.

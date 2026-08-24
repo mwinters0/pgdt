@@ -7,12 +7,13 @@ use std::ops::ControlFlow;
 
 use serde::{Deserialize, Serialize};
 
+use crate::Result;
 use crate::cache::CacheMode;
 use crate::copy::CopyHeader;
 use crate::io::ByteRangeSource;
+use crate::map::{Span, SpanBody};
 use crate::preamble::PreambleBuilder;
 use crate::scan::{Event, ScanOptions, scan};
-use crate::{CopyStart, Result};
 
 /// A block's sparse row index: the byte offset of every `interval`-th data
 /// row, letting a later reader seek into the middle of a large block instead
@@ -74,10 +75,13 @@ pub struct CopyBlock {
     pub column_stats: Option<RowGroupStats>,
 }
 
-/// The COPY blocks discovered in a dump, in file order.
+/// The full file map discovered in a dump, in file order
+/// (`docs/design/roadmap-phase3-object-inventory.md`, "The map is the
+/// structure, not a description of it"). [`DumpIndex::blocks`] is a derived
+/// filter over it, not a second stored structure.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DumpIndex {
-    pub blocks: Vec<CopyBlock>,
+    pub spans: Vec<Span>,
     /// How much of the file the scan covered. Equal to the file size after an
     /// eager scan.
     pub scanned_through: u64,
@@ -85,65 +89,76 @@ pub struct DumpIndex {
     /// for a `DumpIndex` a caller built by hand rather than through
     /// [`build_index`] (Phase 1's default), but every `build_index` scan now
     /// populates it.
+    ///
+    /// Not yet a derived view over `spans` (`docs/design/roadmap-phase3-object-inventory.md`'s
+    /// "The span is the container" describes the eventual shape) — this is
+    /// still populated by its own [`PreambleBuilder`] pass run alongside the
+    /// span builder, per `docs/design/roadmap-phase3.2.1-span-wiring-notes.md`'s
+    /// "What this slice does not do".
     pub metadata: Option<DumpMetadata>,
 }
 
 impl DumpIndex {
+    /// The `COPY` blocks among `spans`, in file order — a filtered view, not
+    /// a stored field, so a block's byte offsets have exactly one owner
+    /// (`docs/design/roadmap-phase3-object-inventory.md`, "The map is the
+    /// structure, not a description of it").
+    pub fn blocks(&self) -> impl Iterator<Item = &CopyBlock> {
+        self.spans.iter().filter_map(|s| match &s.body {
+            SpanBody::Data(block) => Some(block),
+            _ => None,
+        })
+    }
+
     /// Blocks whose table matches `name`, given qualified (`schema.table`) or
     /// bare (`table`, any schema).
     pub fn blocks_for(&self, name: &str) -> impl Iterator<Item = &CopyBlock> {
-        self.blocks.iter().filter(move |b| b.header.matches(name))
+        self.blocks().filter(move |b| b.header.matches(name))
     }
 
     pub fn total_rows(&self) -> u64 {
-        self.blocks.iter().map(|b| b.row_count).sum()
+        self.blocks().map(|b| b.row_count).sum()
     }
 }
 
-/// Scan `source` end to end and collect its COPY block structure, plus its
-/// dump-level metadata (`docs/design/roadmap-phase2-typed-columns.md`, "The
-/// preamble pass") — a single pass serves both, since the preamble builder
-/// only ever looks at the same outside-block lines this scan already walks.
+/// Scan `source` end to end and build its full file map, plus its dump-level
+/// metadata (`docs/design/roadmap-phase2-typed-columns.md`, "The preamble
+/// pass") — one pass serves both: [`crate::map::Builder`] and
+/// [`PreambleBuilder`] are fed the same [`Event`] stream, since both only
+/// ever look at the outside-block lines this scan already walks.
+/// [`DumpIndex::blocks`] is then a filter over the resulting spans, not a
+/// second scan (`docs/design/roadmap-phase3-object-inventory.md`, "The map is
+/// the structure, not a description of it").
 pub async fn build_index<S: ByteRangeSource>(
     source: &S,
     options: &ScanOptions,
 ) -> Result<DumpIndex> {
-    let mut index = DumpIndex::default();
-    let mut pending: Option<CopyStart> = None;
+    let mut spans = crate::map::Builder::new();
     let mut preamble = PreambleBuilder::new();
 
     scan(source, options, |event| {
         match event {
             Event::CopyStart(start) => {
                 preamble.on_copy_start();
-                pending = Some(start);
+                spans.on_copy_start(start);
             }
             Event::Row(_) => {}
-            Event::CopyEnd(end) => {
-                // A `CopyEnd` is only ever emitted after a `CopyStart`.
-                if let Some(start) = pending.take() {
-                    index.blocks.push(CopyBlock {
-                        header: start.header,
-                        database: preamble.current_database_name(),
-                        header_offset: start.header_offset,
-                        data_offset: start.data_offset,
-                        terminator_offset: end.terminator_offset,
-                        end_offset: end.end_offset,
-                        row_count: end.row_count,
-                        sparse_index: None,
-                        column_stats: None,
-                    });
-                }
+            Event::CopyEnd(end) => spans.on_copy_end(end),
+            Event::Line(line) => {
+                preamble.feed_line(line.raw);
+                spans.feed_line(line.offset, line.raw);
             }
-            Event::Line(line) => preamble.feed_line(line.raw),
         }
         ControlFlow::Continue(())
     })
     .await?;
 
-    index.scanned_through = source.size().await?;
-    index.metadata = Some(preamble.finish());
-    Ok(index)
+    let size = source.size().await?;
+    Ok(DumpIndex {
+        spans: spans.finish(size),
+        scanned_through: size,
+        metadata: Some(preamble.finish()),
+    })
 }
 
 /// Scan only far enough to recover the first database's preamble — up to
@@ -163,29 +178,38 @@ pub async fn build_index<S: ByteRangeSource>(
 /// `docs/design/roadmap-phase2-typed-columns.md`, "Companion: dump-level
 /// metadata".
 ///
-/// Returns the recovered metadata and the offset just past the scanned
-/// prefix — a safe watermark for a later scan to continue from, since no
-/// `COPY` block starts before it.
+/// Returns the recovered metadata, the spans tiling `[0, preamble_end)` (per
+/// `crate::map::Builder` — no `Data` span among them, since the scan stops at
+/// the first `COPY` header rather than walking into the block), and that
+/// offset itself — a safe watermark for a later scan to continue from, since
+/// no `COPY` block starts before it.
 pub(crate) async fn scan_preamble<S: ByteRangeSource>(
     source: &S,
     options: &ScanOptions,
-) -> Result<(DumpMetadata, u64)> {
+) -> Result<(DumpMetadata, Vec<Span>, u64)> {
     let mut preamble = PreambleBuilder::new();
+    let mut spans = crate::map::Builder::new();
     let mut end = source.size().await?;
     scan(source, options, |event| match event {
         Event::CopyStart(start) => {
+            // The map builder is deliberately not fed this event: it would
+            // open a `Data` span this scan never closes (it stops here
+            // rather than walking the block), and whatever TOC comment
+            // precedes the header is exactly what should flush as its own
+            // trailing span instead — see `finish` below.
             preamble.on_copy_start();
             end = start.header_offset;
             ControlFlow::Break(())
         }
         Event::Line(line) => {
             preamble.feed_line(line.raw);
+            spans.feed_line(line.offset, line.raw);
             ControlFlow::Continue(())
         }
         _ => ControlFlow::Continue(()),
     })
     .await?;
-    Ok((preamble.finish(), end))
+    Ok((preamble.finish(), spans.finish(end), end))
 }
 
 /// Answer from the preamble alone (`docs/design/roadmap-phase2-typed-columns.md`,
@@ -195,6 +219,14 @@ pub(crate) async fn scan_preamble<S: ByteRangeSource>(
 /// see [`CacheMode::save`]). Bounded to the file's first `COPY` block
 /// regardless of dump size (I1), independent of `build_index`'s full
 /// structural scan.
+///
+/// A fresh scan's spans are persisted alongside the metadata, with a
+/// trailing [`SpanBody::Unscanned`] span covering the rest of the file — this
+/// is a genuinely partial scan (unlike `build_index`, which always reaches
+/// EOF), so it's the one place today that produces that variant for real
+/// rather than only in `crate::map`'s own unit tests
+/// (`docs/design/roadmap-phase3-object-inventory.md`, "Scan coverage is a
+/// prefix, expressed as a span").
 pub async fn preamble_only<S: ByteRangeSource>(
     source: &S,
     options: &ScanOptions,
@@ -207,9 +239,19 @@ pub async fn preamble_only<S: ByteRangeSource>(
         .and_then(|m| m.databases.first())
         .is_some_and(|db| db.preamble_complete);
     if !known {
-        let (metadata, preamble_end) = scan_preamble(source, options).await?;
+        let (metadata, mut spans, preamble_end) = scan_preamble(source, options).await?;
         base_index.metadata = Some(metadata);
         base_index.scanned_through = base_index.scanned_through.max(preamble_end);
+        let file_size = source.size().await?;
+        if preamble_end < file_size {
+            spans.push(Span {
+                start: preamble_end,
+                end: file_size,
+                database: None,
+                body: SpanBody::Unscanned,
+            });
+        }
+        base_index.spans.extend(spans);
         cache.save(source, &base_index).await?;
     }
     Ok(base_index.metadata.unwrap_or_default())

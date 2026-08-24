@@ -95,8 +95,7 @@ async fn generated_fixtures_have_the_expected_structure() {
         let index = build_index(&source, &ScanOptions::default()).await.unwrap();
 
         let summary: Vec<(String, String, u64)> = index
-            .blocks
-            .iter()
+            .blocks()
             .map(|b| (b.header.qualified_name(), b.header.columns.join(","), b.row_count))
             .collect();
 
@@ -130,7 +129,7 @@ async fn recorded_offsets_address_the_right_bytes() {
         let source = LocalFileSource::open(&path).unwrap();
         let index = build_index(&source, &ScanOptions::default()).await.unwrap();
 
-        for block in &index.blocks {
+        for block in index.blocks() {
             let header = &bytes[block.header_offset as usize..block.data_offset as usize];
             assert!(header.starts_with(b"COPY "), "header_offset must land on `COPY `");
             assert!(header.ends_with(b"\n"), "data_offset must land just past the newline");
@@ -153,7 +152,7 @@ async fn dumps_without_copy_blocks_yield_no_blocks() {
         for variant in ["schema-only", "inserts", "column-inserts"] {
             let source = LocalFileSource::open(fixture(version, variant)).unwrap();
             let index = build_index(&source, &ScanOptions::default()).await.unwrap();
-            assert!(index.blocks.is_empty(), "pg_dump {version} {variant}");
+            assert!(index.blocks().next().is_none(), "pg_dump {version} {variant}");
         }
     }
 }
@@ -163,7 +162,7 @@ async fn data_only_dumps_carry_every_block() {
     for version in [13, 16, 18] {
         let source = LocalFileSource::open(fixture(version, "data-only")).unwrap();
         let index = build_index(&source, &ScanOptions::default()).await.unwrap();
-        assert_eq!(index.blocks.len(), 6, "pg_dump {version} data-only");
+        assert_eq!(index.blocks().count(), 6, "pg_dump {version} data-only");
         assert_eq!(index.total_rows(), 144);
     }
 }
@@ -252,7 +251,7 @@ async fn empty_file_scans_clean() {
     std::fs::write(&path, b"").unwrap();
     let source = LocalFileSource::open(&path).unwrap();
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
-    assert!(index.blocks.is_empty());
+    assert!(index.blocks().next().is_none());
     assert_eq!(index.scanned_through, 0);
 }
 
@@ -277,8 +276,9 @@ async fn missing_trailing_newline_is_tolerated() {
     std::fs::write(&path, b"COPY public.t (a) FROM stdin;\n1\n\\.").unwrap();
     let source = LocalFileSource::open(&path).unwrap();
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
-    assert_eq!(index.blocks.len(), 1);
-    assert_eq!(index.blocks[0].row_count, 1);
+    let blocks: Vec<_> = index.blocks().collect();
+    assert_eq!(blocks.len(), 1);
+    assert_eq!(blocks[0].row_count, 1);
 }
 
 #[tokio::test]

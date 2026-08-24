@@ -41,9 +41,11 @@ use crate::{Error, Result};
 /// the three fields reserved on [`DumpIndex`]/[`crate::index::CopyBlock`] are
 /// what let most future additions avoid needing a bump at all.
 ///
-/// Bumped to 2 in Phase 3.2 for [`SourceIdentity`] — pre-1.0, so this is
-/// free (`CLAUDE.md`, "Pre-1.0").
-const FORMAT_VERSION: u32 = 2;
+/// Bumped to 2 in Phase 3.2 for [`SourceIdentity`]; to 3 in Phase 3.2.1, when
+/// `DumpIndex::blocks` (a stored `Vec<CopyBlock>`) was replaced by
+/// `DumpIndex::spans` (a stored `Vec<Span>`, with `blocks()` now a derived
+/// filter over it) — pre-1.0, so both are free (`CLAUDE.md`, "Pre-1.0").
+const FORMAT_VERSION: u32 = 3;
 
 /// The dump file's size and modification time as observed when a cache was
 /// last saved — see the module docs.

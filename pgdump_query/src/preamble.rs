@@ -665,16 +665,6 @@ impl PreambleBuilder {
         self.current.preamble_complete = true;
     }
 
-    /// The database name in scope right now — `None` before any `\connect`
-    /// has been seen (a plain dump, or a `--create` dump's discarded
-    /// pre-`\connect` segment). Used to attribute a `CopyBlock` to the
-    /// database whose segment it falls in (`crate::index::build_index`,
-    /// `crate::stream::table_stream`'s live scan) — see "One target per
-    /// query" in `docs/design/roadmap-phase2-typed-columns.md`.
-    pub(crate) fn current_database_name(&self) -> Option<String> {
-        self.current.name.clone()
-    }
-
     fn on_connect(&mut self, name: String) {
         self.pending = None;
         if self.seen_connect {
