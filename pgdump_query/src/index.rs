@@ -157,6 +157,7 @@ pub async fn build_index<S: ByteRangeSource>(
             Event::Row(_) => {}
             Event::CopyEnd(end) => spans.on_copy_end(end),
             Event::Line(line) => spans.feed_line(line.offset, line.raw),
+            Event::DollarQuoteEnd(end) => spans.on_dollar_quote_end(end.offset),
         }
         ControlFlow::Continue(())
     })
@@ -232,6 +233,10 @@ pub(crate) async fn scan_preamble<S: ByteRangeSource>(
         }
         Event::Line(line) => {
             spans.feed_line(line.offset, line.raw);
+            ControlFlow::Continue(())
+        }
+        Event::DollarQuoteEnd(end) => {
+            spans.on_dollar_quote_end(end.offset);
             ControlFlow::Continue(())
         }
         _ => ControlFlow::Continue(()),

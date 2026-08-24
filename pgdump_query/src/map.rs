@@ -25,15 +25,22 @@
 //! `crate::scan::CopyScanner` never emits an [`crate::scan::Event::Line`]
 //! for a dollar-quoted line — not even the one that closes the tag with the
 //! statement's own terminating `;` on it (`docs/status/history/2026-08-23.md`,
-//! "Dollar-quoted lines never reach `Event::Line`"). So a statement-only
-//! completion tracker can never observe that such a statement closed at
-//! all: nothing in the visible line stream says so. Every real `pg_dump`
-//! entry — `CREATE FUNCTION` included — carries its own `-- Name: ...; Type:
-//! ...` TOC header, and that header can *never* appear inside a
-//! dollar-quoted body (the scanner already filters those lines out before
-//! any event reaches this module, fake-looking `-- Name:` text included), so
-//! recognizing the next entry's header is a sound, general "the previous
-//! span has ended" signal that sidesteps the dollar-quote problem entirely.
+//! "Dollar-quoted lines never reach `Event::Line`"). So a tracker watching
+//! only the visible line stream cannot observe that such a statement closed.
+//! Every real `pg_dump` entry — `CREATE FUNCTION` included — carries its own
+//! `-- Name: ...; Type: ...` TOC header, and that header can *never* appear
+//! inside a dollar-quoted body (the scanner already filters those lines out
+//! before any event reaches this module, fake-looking `-- Name:` text
+//! included), so recognizing the next entry's header is a sound, general
+//! "the previous span has ended" signal that sidesteps the problem entirely.
+//!
+//! For input carrying **no** TOC headers there is a second signal, added in
+//! Phase 3.2.3: [`crate::scan::Event::DollarQuoteEnd`], a position-only event
+//! marking where a dollar-quoted region closed, which
+//! [`Builder::on_dollar_quote_end`] treats as completing whatever statement
+//! is in flight. Without it the first dollar-quoted body in a header-less
+//! file absorbs every statement after it into one span. The lines themselves
+//! stay unsurfaced either way.
 //! The statement-grammar fallback (used for content with no TOC header —
 //! `\connect`/`\restrict`/framing lines, and any statement, like a trailing
 //! `ALTER ... OWNER TO`, that isn't its own TOC entry) is exactly
@@ -623,6 +630,29 @@ impl Builder {
         }
     }
 
+    /// A dollar-quoted region closed at `offset`
+    /// ([`crate::scan::Event::DollarQuoteEnd`]). Whatever statement is in
+    /// flight ends with it: `pg_dump` writes the statement's own terminating
+    /// `;` on the closing line (`AS $$ … $$;`), and that line never reaches
+    /// [`feed_line`](Self::feed_line), so nothing else will ever complete the
+    /// statement.
+    ///
+    /// Without this, the first dollar-quoted body in a file with no TOC
+    /// comments absorbs every statement after it into one span — measured, in
+    /// `docs/status/history/2026-08-23.md`. Real `pg_dump` output is
+    /// unaffected either way, because the next entry's `--` header already
+    /// reasserts a boundary; this is what makes the "graceful degradation"
+    /// claim true for a `pg_dump`-compatible dump from elsewhere.
+    ///
+    /// A producer that puts the `;` on a *later* line instead leaves that
+    /// line as its own small span. Coarser, still tiling — the same trade the
+    /// rest of the fallback makes.
+    pub(crate) fn on_dollar_quote_end(&mut self, _offset: u64) {
+        if let Mode::Statement { start, buf } = std::mem::replace(&mut self.mode, Mode::Idle) {
+            self.push_span(start, classify(&buf));
+        }
+    }
+
     pub(crate) fn on_copy_start(&mut self, event: crate::scan::CopyStart) {
         let start = match std::mem::replace(&mut self.mode, Mode::Idle) {
             Mode::Idle => event.header_offset,
@@ -750,6 +780,7 @@ pub async fn build_map<S: ByteRangeSource>(source: &S, options: &ScanOptions) ->
             Event::Row(_) => {}
             Event::CopyEnd(end) => builder.on_copy_end(end),
             Event::Line(line) => builder.feed_line(line.offset, line.raw),
+            Event::DollarQuoteEnd(end) => builder.on_dollar_quote_end(end.offset),
         }
         ControlFlow::Continue(())
     })

@@ -383,3 +383,51 @@ async fn text_over_the_cap_is_truncated_and_marked() {
     assert!(stored.truncated);
     assert_eq!(spans[0].end, body.len() as u64, "offsets are untouched by the cap");
 }
+
+/// The regression slice 3.2.3 exists for, measured in
+/// `docs/status/history/2026-08-23.md`: with no TOC comments, boundary
+/// detection used to work until the first dollar-quoted body and then stop
+/// working at all — the two functions and the table after them collapsed into
+/// **one** `Unparsed` span, because `scan.rs` emits no `Event::Line` for the
+/// line carrying a `CREATE FUNCTION`'s own closing `;`, so nothing ever told
+/// the accumulator the statement had ended.
+///
+/// `Event::DollarQuoteEnd` is what tells it. This is exactly the
+/// "`pg_dump`-compatible dump from elsewhere in the ecosystem" shape the
+/// phase's "Scanning" decision is justified by, and it is why "graceful
+/// degradation" is one span per object rather than one span for the rest of
+/// the file.
+#[tokio::test]
+async fn a_header_less_dump_degrades_to_one_span_per_object() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("no_toc.sql");
+    std::fs::write(
+        &path,
+        "CREATE TABLE public.a (id integer);\n\
+         CREATE FUNCTION public.f() RETURNS integer\n\
+         \x20   LANGUAGE sql\n\
+         \x20   AS $$ SELECT 1 $$;\n\
+         CREATE FUNCTION public.g() RETURNS integer\n\
+         \x20   LANGUAGE sql\n\
+         \x20   AS $_$ SELECT 2 $_$;\n\
+         CREATE TABLE public.c (id integer);\n",
+    )
+    .unwrap();
+
+    let (spans, size) = map_of(&path).await;
+    assert!(check_tiling(&spans, size).is_empty(), "{:?}", check_tiling(&spans, size));
+    assert_eq!(spans.len(), 4, "one span per object, not one span for the whole file");
+
+    let names: Vec<Option<&str>> = spans
+        .iter()
+        .map(|s| match &s.body {
+            SpanBody::Table { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        names,
+        vec![Some("public.a"), None, None, Some("public.c")],
+        "the table after two dollar-quoted bodies is still recognized as a table"
+    );
+}

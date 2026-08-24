@@ -72,10 +72,13 @@ Last updated: 2026-08-24.
       `DumpIndex::diagnostics` — through which the runtime tiling check and
       the cache's mtime warning now report. Notes:
       [`roadmap-phase3.2.2-span-text-diagnostics-notes.md`](../design/roadmap-phase3.2.2-span-text-diagnostics-notes.md).
-- [ ] **3.2.3** A position-only `scan.rs` event for the end of a
-      dollar-quoted region, so a TOC-comment-less dump degrades to one span
-      per object instead of one span for the rest of the file. Earned by a
-      wrong contract, not by mis-sizing.
+- [x] **3.2.3** `scan::Event::DollarQuoteEnd`, a position-only event for the
+      end of a dollar-quoted region, which `map::Builder` treats as
+      completing the statement in flight — so a TOC-comment-less dump
+      degrades to one span per object instead of one span for the rest of the
+      file. Real `pg_dump` output is unaffected. Earned by a wrong contract,
+      not by mis-sizing. Notes:
+      [`roadmap-phase3.2.3-dollar-quote-end-notes.md`](../design/roadmap-phase3.2.3-dollar-quote-end-notes.md).
 - [ ] **3.3** The TOC enrichment layer: owner, kind labels, the
       `Tablespace:` field, TOC-coverage reporting.
 - [ ] **3.4** The cross-reference set — referenced roles and tablespaces.
@@ -87,8 +90,10 @@ Last updated: 2026-08-24.
 
 ## Not started
 
-- **Phase 3, slices 3.2.3-3.5** — specified, no code. See the checklist
-  above and `docs/design/roadmap-phase3-object-inventory.md`.
+- **Phase 3, slices 3.3-3.6** — specified, no code. See the checklist above
+  and `docs/design/roadmap-phase3-object-inventory.md`. **All of 3.2 is
+  complete**: the span model, its wiring into `DumpIndex`/the cache/the query
+  path, span text, diagnostics, and the dollar-quote boundary.
 - **Phases 4-8** — not designed. See `docs/design/roadmap.md`.
 
 ## Known gaps

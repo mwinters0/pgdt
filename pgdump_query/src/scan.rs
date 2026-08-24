@@ -76,6 +76,25 @@ pub struct Line<'a> {
     pub raw: &'a [u8],
 }
 
+/// The point at which a dollar-quoted region closed, and nothing else.
+///
+/// **Position-only, deliberately.** `crate::map`'s statement accumulator
+/// cannot otherwise observe that a `CREATE FUNCTION` ended: no
+/// [`Event::Line`] is emitted for any line inside, entering or leaving a
+/// dollar-quoted string — including the one carrying the statement's own
+/// closing `;` — so without this the first such body in a TOC-comment-less
+/// file absorbs every statement after it into one span
+/// (`docs/status/history/2026-08-23.md`, measured). Surfacing the *lines*
+/// stays rejected: it would leak a Phase 3 concern into L1's event contract,
+/// and span text is sliced from the file by offset anyway
+/// (`docs/design/roadmap-phase3-object-inventory.md`, "Span boundaries").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DollarQuoteEnd {
+    /// Absolute file offset just past the line the region closed on — the
+    /// same watermark a following span would start at.
+    pub offset: u64,
+}
+
 /// An event emitted while scanning.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event<'a> {
@@ -83,6 +102,7 @@ pub enum Event<'a> {
     Row(Row<'a>),
     CopyEnd(CopyEnd),
     Line(Line<'a>),
+    DollarQuoteEnd(DollarQuoteEnd),
 }
 
 #[derive(Debug)]
@@ -199,11 +219,20 @@ impl CopyScanner {
             match self.state {
                 State::Outside => {
                     let (tag, touched) = scan_dollar_quotes(line, self.dollar_tag.take());
+                    let closed = touched && tag.is_none();
                     self.dollar_tag = tag;
                     if touched {
                         // Inside, entering, or leaving a dollar-quoted
                         // string: this line is body text or quoting syntax,
                         // never structure, regardless of what it looks like.
+                        // A line that leaves one still reports *where* it did
+                        // — see `DollarQuoteEnd`; the line itself stays
+                        // unsurfaced.
+                        if closed {
+                            return Ok(Some(Event::DollarQuoteEnd(DollarQuoteEnd {
+                                offset: self.position(),
+                            })));
+                        }
                         continue;
                     }
 

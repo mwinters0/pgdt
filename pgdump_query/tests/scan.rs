@@ -61,7 +61,7 @@ async fn render(path: &Path, chunk_size: usize) -> String {
             }
             // DDL/comment/meta-command lines outside a COPY block —
             // `crate::preamble`'s input, not the scanner's own concern.
-            Event::Line(_) => {}
+            Event::Line(_) | Event::DollarQuoteEnd(_) => {}
         }
         ControlFlow::Continue(())
     })
@@ -215,7 +215,7 @@ async fn copy_text_escaping_round_trips_through_postgres() {
                     checked += 1;
                 }
                 Event::Row(_) => {}
-                Event::Line(_) => {}
+                Event::Line(_) | Event::DollarQuoteEnd(_) => {}
             }
             ControlFlow::Continue(())
         })
@@ -316,4 +316,65 @@ async fn line_length_limit_is_enforced() {
     let options = ScanOptions { chunk_size: 64, max_line_bytes: 512 };
     let err = build_index(&source, &options).await.unwrap_err();
     assert!(matches!(err, pgdump_query::Error::LineTooLong { .. }), "unexpected error: {err}");
+}
+
+/// `Event::DollarQuoteEnd` reports **where** a dollar-quoted region closed
+/// and nothing else: the lines of the region — including the one that closes
+/// it, which carries the statement's own `;` — stay unsurfaced, so L1's event
+/// contract still says nothing about DDL text
+/// (`docs/design/roadmap-phase3-object-inventory.md`, "Span text comes from
+/// the file, not from the parser").
+#[tokio::test]
+async fn dollar_quote_end_reports_a_position_and_surfaces_no_lines() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fn.sql");
+    let text = "CREATE FUNCTION f() RETURNS void\n    AS $$\nbody line\n$$;\nSELECT 1;\n";
+    std::fs::write(&path, text).unwrap();
+    let source = LocalFileSource::open(&path).unwrap();
+
+    let mut lines = Vec::new();
+    let mut ends = Vec::new();
+    scan(&source, &ScanOptions::default(), |event| {
+        match event {
+            Event::Line(line) => lines.push(String::from_utf8_lossy(line.raw).into_owned()),
+            Event::DollarQuoteEnd(end) => ends.push(end.offset),
+            _ => {}
+        }
+        std::ops::ControlFlow::Continue(())
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(
+        lines,
+        vec!["CREATE FUNCTION f() RETURNS void".to_string(), "SELECT 1;".to_string()],
+        "neither `AS $$`, the body, nor the closing `$$;` is surfaced as a line"
+    );
+    // One region, closing just past the `$$;` line — which is exactly where
+    // the next span would start.
+    let closing_line_end = (text.find("$$;\n").unwrap() + "$$;\n".len()) as u64;
+    assert_eq!(ends, vec![closing_line_end]);
+}
+
+/// A region that opens and closes on the same line still reports its end —
+/// the `had a tag` / `has a tag` transition is not the signal, "touched and
+/// now closed" is.
+#[tokio::test]
+async fn a_single_line_dollar_quoted_region_reports_its_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("inline.sql");
+    let first = "CREATE FUNCTION f() RETURNS int AS $$ SELECT 1 $$;\n";
+    std::fs::write(&path, format!("{first}SELECT 2;\n")).unwrap();
+    let source = LocalFileSource::open(&path).unwrap();
+
+    let mut ends = Vec::new();
+    scan(&source, &ScanOptions::default(), |event| {
+        if let Event::DollarQuoteEnd(end) = event {
+            ends.push(end.offset);
+        }
+        std::ops::ControlFlow::Continue(())
+    })
+    .await
+    .unwrap();
+    assert_eq!(ends, vec![first.len() as u64], "just past the line the region closed on");
 }
