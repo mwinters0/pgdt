@@ -167,7 +167,8 @@ pub async fn build_index<S: ByteRangeSource>(
     let mut spans = spans.finish(size);
     let metadata = Some(crate::preamble::dump_metadata_from_spans(&spans));
     crate::map::attach_text(source, &mut spans).await?;
-    let diagnostics = tiling_diagnostics(&spans, size);
+    let mut diagnostics = tiling_diagnostics(&spans, size);
+    diagnostics.push(toc_coverage_diagnostic(&spans));
     Ok(DumpIndex { spans, scanned_through: size, metadata, diagnostics })
 }
 
@@ -191,6 +192,19 @@ pub(crate) fn tiling_diagnostics(
     } else {
         vec![crate::diagnostic::Diagnostic::tiling_broken(issues)]
     }
+}
+
+/// The TOC-coverage figure for a finished map: how many `spans` carry a
+/// parsed [`crate::map::Span::toc`] against how many spans exist at all
+/// (`docs/design/roadmap-phase3-object-inventory.md`, "TOC coverage is
+/// recorded per file"). Always produced, never conditionally — a
+/// `pg_dump`-compatible file with zero TOC comments is a normal, reported
+/// state (the map running in header-less degraded mode), not an error, so
+/// `headers == 0` is a legitimate value here rather than something this
+/// function special-cases away.
+pub(crate) fn toc_coverage_diagnostic(spans: &[Span]) -> crate::diagnostic::Diagnostic {
+    let headers = spans.iter().filter(|s| s.toc.is_some()).count();
+    crate::diagnostic::Diagnostic::toc_coverage(headers, spans.len())
 }
 
 /// Scan only far enough to recover the first database's preamble — up to
@@ -225,10 +239,15 @@ pub(crate) async fn scan_preamble<S: ByteRangeSource>(
         Event::CopyStart(start) => {
             // The map builder is deliberately not fed this event: it would
             // open a `Data` span this scan never closes (it stops here
-            // rather than walking the block), and whatever TOC comment
-            // precedes the header is exactly what should flush as its own
-            // trailing span instead — see `finish` below.
-            end = start.header_offset;
+            // rather than walking the block). If a TOC comment precedes the
+            // header, `finish` below must not swallow it either — since
+            // Phase 3.3, `map::Builder` absorbs such a comment straight into
+            // the `Data` span a later, unfed-truncated scan produces
+            // (`roadmap-phase3-object-inventory.md`, "COPY blocks are the
+            // one exception"), so retreating to the comment's own start
+            // leaves it for that scan rather than guessing it here as its
+            // own `Framing`/`Unparsed` span.
+            end = spans.pending_comment_start().unwrap_or(start.header_offset);
             ControlFlow::Break(())
         }
         Event::Line(line) => {
@@ -284,6 +303,7 @@ pub async fn preamble_only<S: ByteRangeSource>(
                 end: file_size,
                 database: None,
                 text: None,
+                toc: None,
                 body: SpanBody::Unscanned,
             });
         }

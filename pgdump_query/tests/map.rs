@@ -1,12 +1,13 @@
-//! The full file map (`crate::map`, Phase 3.2): the tiling invariant over
-//! every generated fixture plus the hand-written edge-case dump, and
-//! targeted classification checks.
+//! The full file map (`crate::map`): the tiling invariant over every
+//! generated fixture plus the hand-written edge-case dump, targeted
+//! classification checks (Phase 3.2), and TOC-enrichment checks (Phase 3.3).
 
 use std::path::{Path, PathBuf};
 
 use pgdump_query::map::{SpanBody, TilingIssue};
 use pgdump_query::{
-    LocalFileSource, ScanOptions, build_index, build_map, check_tiling, dump_metadata_from_spans,
+    DiagnosticKind, LocalFileSource, ScanOptions, build_index, build_map, check_tiling,
+    dump_metadata_from_spans,
 };
 
 fn edge_cases() -> PathBuf {
@@ -253,8 +254,8 @@ async fn prologue_and_epilogue_classify_as_framing() {
 async fn tiling_issue_reports_a_gap() {
     use pgdump_query::{Span, SpanBody as Body};
     let spans = vec![
-        Span { start: 0, end: 10, database: None, text: None, body: Body::Framing },
-        Span { start: 12, end: 20, database: None, text: None, body: Body::Framing },
+        Span { start: 0, end: 10, database: None, text: None, toc: None, body: Body::Framing },
+        Span { start: 12, end: 20, database: None, text: None, toc: None, body: Body::Framing },
     ];
     let issues = check_tiling(&spans, 20);
     assert_eq!(
@@ -267,8 +268,8 @@ async fn tiling_issue_reports_a_gap() {
 async fn tiling_issue_reports_an_overlap() {
     use pgdump_query::{Span, SpanBody as Body};
     let spans = vec![
-        Span { start: 0, end: 10, database: None, text: None, body: Body::Framing },
-        Span { start: 8, end: 20, database: None, text: None, body: Body::Framing },
+        Span { start: 0, end: 10, database: None, text: None, toc: None, body: Body::Framing },
+        Span { start: 8, end: 20, database: None, text: None, toc: None, body: Body::Framing },
     ];
     let issues = check_tiling(&spans, 20);
     assert_eq!(
@@ -280,7 +281,14 @@ async fn tiling_issue_reports_an_overlap() {
 #[tokio::test]
 async fn tiling_issue_reports_a_short_final_span() {
     use pgdump_query::{Span, SpanBody as Body};
-    let spans = vec![Span { start: 0, end: 10, database: None, text: None, body: Body::Framing }];
+    let spans = vec![Span {
+        start: 0,
+        end: 10,
+        database: None,
+        text: None,
+        toc: None,
+        body: Body::Framing,
+    }];
     let issues = check_tiling(&spans, 20);
     assert_eq!(issues, vec![TilingIssue::DoesNotReachEnd { last_end: 10, expected_end: 20 }]);
 }
@@ -292,8 +300,8 @@ async fn tiling_issue_reports_a_short_final_span() {
 async fn an_unscanned_tail_tiles_cleanly() {
     use pgdump_query::{Span, SpanBody as Body};
     let spans = vec![
-        Span { start: 0, end: 10, database: None, text: None, body: Body::Framing },
-        Span { start: 10, end: 20, database: None, text: None, body: Body::Unscanned },
+        Span { start: 0, end: 10, database: None, text: None, toc: None, body: Body::Framing },
+        Span { start: 10, end: 20, database: None, text: None, toc: None, body: Body::Unscanned },
     ];
     assert!(check_tiling(&spans, 20).is_empty());
 }
@@ -374,6 +382,7 @@ async fn text_over_the_cap_is_truncated_and_marked() {
         end: body.len() as u64,
         database: None,
         text: None,
+        toc: None,
         body: SpanBody::Framing,
     }];
     attach_text(&source, &mut spans).await.unwrap();
@@ -430,4 +439,77 @@ async fn a_header_less_dump_degrades_to_one_span_per_object() {
         vec![Some("public.a"), None, None, Some("public.c")],
         "the table after two dollar-quoted bodies is still recognized as a table"
     );
+}
+
+/// `objects.widgets`' own TOC comment (`fixtures/18/objects/default.sql`,
+/// `-- Name: widgets; Type: TABLE; Schema: objects; Owner: postgres`) fills
+/// its span's `toc` — the TOC's own (unqualified) name alongside
+/// `SpanBody::Table`'s schema-qualified one, per Phase 3.3's "TOC enrichment"
+/// (`docs/design/roadmap-phase3-object-inventory.md`, "What a span carries").
+#[tokio::test]
+async fn a_real_toc_header_fills_owner_kind_and_schema() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/objects/default.sql");
+    let (spans, _) = map_of(&path).await;
+    let widgets = spans
+        .iter()
+        .find(|s| matches!(&s.body, SpanBody::Table { name, .. } if name == "objects.widgets"))
+        .expect("objects.widgets must be a Table span");
+    let toc = widgets.toc.as_ref().expect("a real pg_dump TOC comment must have parsed");
+    assert_eq!(toc.name, "widgets", "the TOC tag is unqualified, unlike SpanBody::Table's name");
+    assert_eq!(toc.kind, "TABLE");
+    assert_eq!(toc.schema.as_deref(), Some("objects"));
+    assert_eq!(toc.owner.as_deref(), Some("postgres"));
+    assert_eq!(toc.tablespace, None);
+}
+
+/// `--no-owner` writes `Owner: -` on every entry (I16) — every parsed `toc`
+/// in the file has `owner: None`, and none is lost entirely (the header
+/// still parses; only the field is absent).
+#[tokio::test]
+async fn no_owner_fixture_parses_every_toc_header_with_no_owner() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/edge_cases/no-owner.sql");
+    let (spans, _) = map_of(&path).await;
+    let with_toc: Vec<_> = spans.iter().filter_map(|s| s.toc.as_ref()).collect();
+    assert!(!with_toc.is_empty(), "no-owner.sql still carries TOC comments, just no owners");
+    assert!(with_toc.iter().all(|t| t.owner.is_none()), "{with_toc:?}");
+}
+
+/// `build_index` reports the TOC-coverage figure as a file-level `Info`
+/// diagnostic (`docs/design/roadmap-phase3-object-inventory.md`, "TOC
+/// coverage is recorded per file"): every span accounted for in `spans`, and
+/// a nonzero `headers` count for a real `pg_dump` file.
+#[tokio::test]
+async fn build_index_reports_toc_coverage_for_a_real_dump() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/objects/default.sql");
+    let source = LocalFileSource::open(&path).unwrap();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let coverage = index
+        .diagnostics
+        .iter()
+        .find_map(|d| match &d.kind {
+            DiagnosticKind::TocCoverage { headers, spans } => Some((*headers, *spans)),
+            _ => None,
+        })
+        .expect("build_index must report a TocCoverage diagnostic");
+    assert_eq!(coverage.1, index.spans.len());
+    assert!(coverage.0 > 0, "a real pg_dump file carries TOC headers");
+    assert!(coverage.0 <= coverage.1);
+}
+
+/// A header-less file — no `-- Name: ...` comments anywhere — reports zero
+/// headers, the "running in degraded mode" signal the design calls a normal,
+/// reported state rather than an error.
+#[tokio::test]
+async fn build_index_reports_zero_toc_coverage_for_a_header_less_dump() {
+    let source = LocalFileSource::open(edge_cases()).unwrap();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let coverage = index
+        .diagnostics
+        .iter()
+        .find_map(|d| match &d.kind {
+            DiagnosticKind::TocCoverage { headers, spans } => Some((*headers, *spans)),
+            _ => None,
+        })
+        .expect("build_index must report a TocCoverage diagnostic");
+    assert_eq!(coverage.0, 0, "tests/data/edge_cases.sql has no TOC comments at all");
 }

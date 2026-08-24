@@ -21,7 +21,8 @@ pub use error::Error;
 pub use index::{CopyBlock, DumpIndex, RowGroupStats, SparseRowIndex, build_index, preamble_only};
 pub use io::{ByteRangeSource, LocalFileSource};
 pub use map::{
-    Span, SpanBody, SpanText, TEXT_CAP, TilingIssue, attach_text, build_map, check_tiling,
+    Span, SpanBody, SpanText, TEXT_CAP, TilingIssue, TocHeader, attach_text, build_map,
+    check_tiling,
 };
 pub use pgtype::{DeferredKind, TypeOutcome, resolve_declared_type};
 pub use preamble::{

@@ -80,8 +80,14 @@ Last updated: 2026-08-24.
       file. Real `pg_dump` output is unaffected. Earned by a wrong contract,
       not by mis-sizing. Notes:
       [`roadmap-phase3.2.3-dollar-quote-end-notes.md`](../design/roadmap-phase3.2.3-dollar-quote-end-notes.md).
-- [ ] **3.3** The TOC enrichment layer: owner, kind labels, the
-      `Tablespace:` field, TOC-coverage reporting.
+- [x] **3.3** The TOC enrichment layer: `Span::toc` (owner, kind label, the
+      `Tablespace:` field), TOC-coverage as an `Info` diagnostic. Also fixed
+      two pre-existing boundary bugs its own tests surfaced: a `Data` span's
+      TOC comment wasn't actually being absorbed into it (every real `COPY`
+      block, not an edge case), and `scan_preamble` needed to retreat its
+      stop point rather than guess a still-pending comment's classification.
+      Notes:
+      [`roadmap-phase3.3-toc-enrichment-notes.md`](../design/roadmap-phase3.3-toc-enrichment-notes.md).
 - [ ] **3.4** The cross-reference set — referenced roles and tablespaces.
 - [ ] **3.6** The `Data`-span fast path for `INSERT` runs and the
       large-object region, plus this phase's two gating measurements. Runs
@@ -91,10 +97,11 @@ Last updated: 2026-08-24.
 
 ## Not started
 
-- **Phase 3, slices 3.3-3.6** — specified, no code. See the checklist above
-  and `docs/design/roadmap-phase3-object-inventory.md`. **All of 3.2 is
+- **Phase 3, slices 3.4-3.6** — specified, no code. See the checklist above
+  and `docs/design/roadmap-phase3-object-inventory.md`. **3.2 and 3.3 are
   complete**: the span model, its wiring into `DumpIndex`/the cache/the query
-  path, span text, diagnostics, and the dollar-quote boundary.
+  path, span text, diagnostics, the dollar-quote boundary, and TOC
+  enrichment.
 - **Phases 4-8** — not designed. See `docs/design/roadmap.md`.
 
 ## Known gaps
@@ -134,6 +141,13 @@ Last updated: 2026-08-24.
   since 3.2.1.2.1, because an ordinary query now leaves a *partial* cache by
   design rather than a whole-file one. Likely fix: compare `scanned_through`
   against the source's size before trusting a loaded cache as complete.
+- `Span::toc`'s `Tablespace:` field and `TOC_PREFIX_STATS` ("Statistics for
+  Name: ...", a v18+ `--with-statistics` component) are parsed from source
+  reading alone (I18), with no fixture exercising either — creating a
+  non-default tablespace needs filesystem access the fixture generator
+  doesn't have. `parse_toc_header_line` degrades gracefully if either shape
+  is wrong (the field, or the whole header, just parses to `None`), but
+  neither claim has been checked against real `pg_dump` output.
 
 ## Decisions worth another look
 

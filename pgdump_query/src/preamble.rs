@@ -974,7 +974,7 @@ mod tests {
     /// A span with placeholder offsets — `dump_metadata_from_spans` never
     /// reads `start`/`end`/`database`, only `body`.
     fn span(body: SpanBody) -> crate::map::Span {
-        crate::map::Span { start: 0, end: 0, database: None, text: None, body }
+        crate::map::Span { start: 0, end: 0, database: None, text: None, toc: None, body }
     }
 
     fn dummy_data_span() -> crate::map::Span {

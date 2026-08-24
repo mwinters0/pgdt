@@ -69,6 +69,11 @@ pub enum DiagnosticKind {
     /// invalidation instead, and never reaches this channel because the
     /// cache is discarded outright.
     CacheMtimeChanged,
+    /// How much of the map carries a TOC header: `headers` spans out of
+    /// `spans` total (`roadmap-phase3-object-inventory.md`, "TOC coverage is
+    /// recorded per file"). Always `Info` — zero is a normal, reported state
+    /// (the map running in header-less degraded mode), not an error.
+    TocCoverage { headers: usize, spans: usize },
 }
 
 /// One thing worth telling the caller about a file, with no `Result` to carry
@@ -86,5 +91,9 @@ impl Diagnostic {
 
     pub(crate) fn cache_mtime_changed() -> Self {
         Self { severity: Severity::Warning, kind: DiagnosticKind::CacheMtimeChanged }
+    }
+
+    pub(crate) fn toc_coverage(headers: usize, spans: usize) -> Self {
+        Self { severity: Severity::Info, kind: DiagnosticKind::TocCoverage { headers, spans } }
     }
 }

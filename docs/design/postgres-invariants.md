@@ -852,3 +852,58 @@ rather than the prefix check the other two regions allow.
 — confirm the statement still breaks across lines on a newline-bearing value.
 
 ---
+
+## I18 — The TOC header line's field grammar: fixed order, optional trailing `Tablespace:`, two shapes of "no value"
+
+**Claim.** `_printTocEntry()` writes the header line (I3) as one `ahprintf`
+call with fields in a fixed order and literal separators:
+
+```
+-- [Data for |Statistics for ]Name: <tag>; Type: <desc>; Schema: <schema>; Owner: <owner>[; Tablespace: <tablespace>]
+```
+
+`Tablespace:` is appended only when `te->tablespace` is non-empty and
+`ropt->noTablespace` is unset — every other header lacks the suffix entirely,
+not an empty one.
+
+"No value" for `Schema:`/`Owner:` is written by `sanitize_line(str,
+want_hyphen)`, and which shape appears depends on the **caller's
+`want_hyphen`**, not on the field: `Schema:` always passes `want_hyphen =
+true` (so an absent schema is always `-`), while `Owner:` passes
+`ropt->noOwner ? NULL : te->owner` with `want_hyphen = true` too — **except**
+some entry kinds (observed: `COMMENT`) pass `te->owner = ""` (empty string,
+not `NULL`) directly, which `sanitize_line` leaves as `""` rather than
+substituting `-` (the hyphen substitution only fires on a true `NULL`). So a
+reader must treat both `-` and empty as "no value" for `Owner:`, but only `-`
+for `Schema:`.
+
+**Proof.** `pg_backup_archiver.c`'s `_printTocEntry()` (see re-verify for the
+exact `ahprintf` call) and `dumputils.c`'s `sanitize_line()`. Observed in
+fixtures: `fixtures/*/objects/verbose.sql` has `-- Name: EXTENSION
+postgres_fdw; Type: COMMENT; Schema: -; Owner: ` (trailing space, empty
+owner); `fixtures/*/edge_cases/no-owner.sql` (`--no-owner`) has `Owner: -`
+throughout instead.
+
+**Scope limit.** No fixture exercises `Tablespace:` (none creates a
+non-default tablespace — doing so needs filesystem access the fixture
+generator doesn't have) or `TOC_PREFIX_STATS` ("Statistics for ", a `pg_dump`
+18+ `--with-statistics` component). Both are taken on faith from source
+reading alone, unlike every other clause here.
+
+**Verified against:** v18.6 source; fixtures at 13.23 through 18.6 for the
+`Schema:`/`Owner:` placeholder shapes.
+**Relied on by:** `roadmap-phase3-object-inventory.md` ("What a span carries",
+"TOC coverage is recorded per file") — `map::parse_toc_header_line` splits the
+line on these exact literal separators in this exact order.
+**Re-verify:**
+
+```sh
+grep -n 'ahprintf(AH, "-- %sName: %s; Type: %s; Schema: %s; Owner: %s"' src/bin/pg_dump/pg_backup_archiver.c
+grep -n 'Tablespace: %s' src/bin/pg_dump/pg_backup_archiver.c
+grep -n "if (\*s == '\\\\n' || \*s == '\\\\r')" src/bin/pg_dump/dumputils.c
+```
+
+Confirm the field order and separators are unchanged, and that
+`sanitize_line`'s `NULL`-only hyphen substitution still holds.
+
+---

@@ -157,6 +157,7 @@ fn splice(
             end: size,
             database: None,
             text: None,
+            toc: None,
             body: SpanBody::Unscanned,
         });
     }
@@ -300,6 +301,7 @@ async fn map_forward<S: ByteRangeSource>(
     index.scanned_through = size;
     crate::map::attach_text(source, &mut index.spans).await?;
     index.diagnostics = crate::index::tiling_diagnostics(&index.spans, size);
+    index.diagnostics.push(crate::index::toc_coverage_diagnostic(&index.spans));
     cache.save(source, index).await
 }
 

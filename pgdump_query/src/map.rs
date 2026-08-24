@@ -3,11 +3,12 @@
 //! (`docs/design/roadmap-phase3-object-inventory.md`, "What this phase is
 //! for" and "The map is the structure, not a description of it").
 //!
-//! [`build_map`] is Phase 3.2's statement-driven pass: it classifies DDL
-//! statements directly, with **no TOC-comment enrichment** (owner, kind
-//! label, `Tablespace:`, TOC-coverage — that's Phase 3.3). A TOC comment
-//! block is still recognized here, but only as a **boundary** — see "Span
-//! boundaries" below — never for the fields it carries.
+//! [`build_map`] classifies DDL statements directly; a TOC comment block is
+//! recognized both as a **boundary** — see "Span boundaries" below — and, as
+//! of Phase 3.3, as an **enrichment layer** read off the same lines: owner,
+//! kind label, the `Tablespace:` field, and a per-file TOC-coverage count
+//! (`roadmap-phase3-object-inventory.md`, "Scanning: one statement-driven
+//! pass, TOC comments as an enrichment layer"). See "TOC enrichment" below.
 //!
 //! ## Span boundaries: TOC-block-anchored, with a statement-grammar fallback
 //!
@@ -48,20 +49,17 @@
 //! the double-quote/`--`-comment cases a five-keyword-triggered accumulator
 //! never used to reach.
 //!
-//! **Consequence: no "grouping" in this slice.** `docs/design/roadmap-phase3-object-inventory.md`
+//! **Consequence: no "grouping".** `docs/design/roadmap-phase3-object-inventory.md`
 //! lists grouping (folding an object's trailing `ALTER ... OWNER TO` into
 //! the same TOC entry) as something the TOC layer *contributes* — "Without
-//! it: They tile as two adjacent spans instead of one." That is exactly
-//! this slice's behavior: a definition and its ungrouped trailing statement
-//! become two spans, both correctly tiled, per the design doc's own
-//! "graceful degradation" framing. Grouping (via the TOC's `Dependencies:`
-//! field) is Phase 3.3/3.4 work.
+//! it: They tile as two adjacent spans instead of one." That remains this
+//! module's behavior: a definition and its ungrouped trailing statement tile
+//! as two adjacent spans, per the design doc's own "graceful degradation"
+//! framing. Grouping (via the TOC's `Dependencies:` field) is not in either
+//! 3.3's or 3.4's specified scope — it has no assigned slice yet.
 //!
-//! ## What is outside this slice, and which slice has it
-//!
-//! - **TOC enrichment** (owner, kind label, `Tablespace:`, TOC-coverage,
-//!   grouping) — Phase 3.3/3.4.
-//! - **A dedicated `Data`-span fast path for `INSERT` runs and the
+//! ## What has landed, slice by slice, and what's still outside
+//! - **Still outside: a dedicated `Data`-span fast path for `INSERT` runs and the
 //!   large-object (`BLOBS`/`BLOB METADATA`) region.** The design's "Bulk
 //!   regions" section frames grouping either into one span as a
 //!   *performance* optimization (avoiding a statement per row on a
@@ -109,6 +107,21 @@
 //!   report a failure as a [`crate::diagnostic::DiagnosticKind::TilingBroken`]
 //!   on the index and return the map anyway — a hole is a bug in this module,
 //!   never a reason to refuse the file.
+//! - **TOC enrichment — landed in Phase 3.3.** [`Span::toc`] is filled by
+//!   [`parse_toc_header_line`] whenever a comment block's TOC-Name line
+//!   parses: `-- Name: ...` or its `-- Data for Name: ...` sibling (I3),
+//!   through `; Type: ...; Schema: ...; Owner: ...` and the optional trailing
+//!   `; Tablespace: ...` (I16). A `-` or empty field parses to `None`, matching
+//!   `_printTocEntry()`'s two ways of writing "no value" (`sanitize_line`'s
+//!   `want_hyphen` argument differs by field and by caller). The verbose
+//!   `-- TOC entry N (class C OID O)` / `-- Dependencies: ...` lines that can
+//!   precede the Name line (`--verbose`) are ordinary comment lines to this
+//!   parser — recognized as such, contributing nothing, exactly like any
+//!   other line that fails to parse as a header. [`crate::index::DumpIndex`]'s
+//!   per-file TOC-coverage figure (`crate::index::toc_coverage_diagnostic`) is
+//!   just `spans.iter().filter(|s| s.toc.is_some()).count()` against
+//!   `spans.len()` — no separate counter, since `Span::toc` already carries
+//!   the fact.
 
 use std::ops::ControlFlow;
 
@@ -142,7 +155,90 @@ pub struct Span {
     /// [`SpanBody::Unscanned`] spans, whose bytes are unbounded and carry
     /// nothing a reader wants.
     pub text: Option<SpanText>,
+    /// This span's own TOC header, if the comment preceding it parsed as one
+    /// — `None` for a span with no TOC comment at all (the header-less-input
+    /// fallback) and for the kinds `_printTocEntry()` never precedes with one
+    /// (`Connect`, `VersionHeader`, and the file's `\restrict`/banner framing
+    /// lines). Independent of, and not a substitute for, [`SpanBody`]'s own
+    /// per-kind fields: the TOC comment and the statement grammar are two
+    /// separately-sourced observations of the same object
+    /// (`docs/design/roadmap-phase3-object-inventory.md`, "Scanning: one
+    /// statement-driven pass, TOC comments as an enrichment layer").
+    pub toc: Option<TocHeader>,
     pub body: SpanBody,
+}
+
+/// The fields of a TOC header comment (I3/I16) — `-- Name: <name>; Type:
+/// <kind>; Schema: <schema>; Owner: <owner>[; Tablespace: <tablespace>]`, or
+/// its `-- Data for Name: ...` sibling ahead of a `COPY` block. Parsed by
+/// [`parse_toc_header_line`]; see the module docs' "TOC enrichment" bullet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TocHeader {
+    /// `te->tag`, sanitized — the object's own name as `pg_dump` wrote it,
+    /// which for most kinds is unqualified (just `widgets`, not
+    /// `objects.widgets`) unlike a classified [`SpanBody`]'s own `name` field.
+    pub name: String,
+    /// `te->desc` — one of the closed ~63-value vocabulary I16 documents
+    /// (`TABLE`, `FK CONSTRAINT`, `POLICY`, `TABLE DATA`, ...). Never `None`:
+    /// `_printTocEntry()` always writes a `Type:` field.
+    pub kind: String,
+    /// `None` for `Schema: -` (no namespace — a database-level or
+    /// namespace-less object).
+    pub schema: Option<String>,
+    /// `None` for `Owner: -` (`--no-owner`, or an owner-less kind like
+    /// `COMMENT`) or `Owner: ` (empty — some entry kinds pass an empty string
+    /// rather than `NULL` through `sanitize_line`, observed on `COMMENT`
+    /// entries). Both mean "no owner recorded here" to a reader.
+    pub owner: Option<String>,
+    /// The `; Tablespace: <name>` suffix, present only when the entry has a
+    /// non-default tablespace and `--no-tablespaces` was not given.
+    pub tablespace: Option<String>,
+}
+
+/// Parse pg_dump's TOC header line into a [`TocHeader`] — `None` for any
+/// comment line that doesn't match, which is the graceful-degradation case
+/// the design already expects for header-less input: a line this doesn't
+/// recognize just leaves [`Span::toc`] `None`, exactly as if there were no
+/// TOC comment at all.
+///
+/// `trimmed` is expected to already have leading/trailing whitespace removed,
+/// matching every other caller in this module.
+///
+/// **Handles both `-- Name: ...` and `-- Data for Name: ...` with one code
+/// path** — `TOC_PREFIX_DATA` ("Data for ") is optional, and whether or not
+/// it's present, what follows must still be `Name: `. The third prefix
+/// `_printTocEntry()` can write, `TOC_PREFIX_STATS` ("Statistics for "), is
+/// left unrecognized: no fixture exercises it, so an entry using it degrades
+/// gracefully (span still tiles, this comment just isn't read as a header)
+/// rather than being handled.
+///
+/// **Splits on the field markers in the order `_printTocEntry()` writes
+/// them**, not on a fully general grammar — `sanitize_line` only strips
+/// newlines, never escapes a literal `; Type: ` (etc.) that might occur
+/// inside an object's own name, so a pathological name could in principle
+/// mis-split. I3's own caveat already treats the TOC comment as a hint, never
+/// a correctness guarantee, and this parser only ever feeds enrichment
+/// (`Span::toc`), never a span boundary — see "Span boundaries" above, whose
+/// boundary detection (`looks_like_toc_name_line`) doesn't call this at all.
+fn parse_toc_header_line(trimmed: &str) -> Option<TocHeader> {
+    let rest = trimmed.strip_prefix("-- ")?;
+    let rest = rest.strip_prefix("Data for ").unwrap_or(rest);
+    let rest = rest.strip_prefix("Name: ")?;
+    let (name, rest) = rest.split_once("; Type: ")?;
+    let (kind, rest) = rest.split_once("; Schema: ")?;
+    let (schema, rest) = rest.split_once("; Owner: ")?;
+    let (owner, tablespace) = match rest.split_once("; Tablespace: ") {
+        Some((owner, tablespace)) => (owner, Some(tablespace.to_string())),
+        None => (rest, None),
+    };
+    let none_if_placeholder = |s: &str| (!s.is_empty() && s != "-").then(|| s.to_string());
+    Some(TocHeader {
+        name: name.to_string(),
+        kind: kind.to_string(),
+        schema: none_if_placeholder(schema),
+        owner: none_if_placeholder(owner),
+        tablespace,
+    })
 }
 
 /// A span's stored bytes. Capped at [`TEXT_CAP`]: one pathological function
@@ -354,19 +450,24 @@ enum Mode {
     /// accumulate the two-line version-header block's fields (I9) as they're
     /// seen, so the block can close as a [`SpanBody::VersionHeader`] instead
     /// of generic [`SpanBody::Framing`] when it's neither a TOC entry nor
-    /// ordinary framing prose.
+    /// ordinary framing prose. `toc` is set the moment a line parses via
+    /// [`parse_toc_header_line`] — independent of `saw_name`, since a
+    /// `-- Data for Name: ...` line parses without matching
+    /// `looks_like_toc_name_line`'s stricter boundary check.
     Comment {
         start: u64,
         saw_name: bool,
         server_version: Option<String>,
         pg_dump_version: Option<String>,
+        toc: Option<TocHeader>,
     },
     /// Absorbing a statement's lines via [`statement_complete`]. Started
     /// either directly (no TOC comment) or right after a TOC comment block
     /// closes with `saw_name` true — either way `start` is the *span's*
     /// start, which for the TOC case is the comment block's start, not this
-    /// statement's own first line.
-    Statement { start: u64, buf: String },
+    /// statement's own first line. `toc` carries forward whatever the
+    /// preceding comment block parsed, `None` when there was none.
+    Statement { start: u64, buf: String, toc: Option<TocHeader> },
 }
 
 /// The statement-driven boundary/classification pass, shared by
@@ -386,8 +487,9 @@ pub(crate) struct Builder {
     /// span's own start offset, which for a TOC-commented block precedes
     /// `.1`'s `header_offset` — see [`Builder::on_copy_start`]. `.2` is the
     /// partition-root marker this block's header carried, consumed at
-    /// `CopyStart` so a later block cannot inherit it.
-    pending_data: Option<(u64, crate::scan::CopyStart, Option<String>)>,
+    /// `CopyStart` so a later block cannot inherit it. `.3` is the TOC header
+    /// the preceding `-- Data for Name: ...` comment (if any) parsed to.
+    pending_data: Option<(u64, crate::scan::CopyStart, Option<String>, Option<TocHeader>)>,
     /// The `-- load via partition root <name>` marker (I2) seen since the
     /// last TOC entry began, waiting for the `COPY` header it belongs to.
     /// Cleared by the header that consumes it, and by the next TOC `Name:`
@@ -479,7 +581,7 @@ impl Builder {
     /// reading; closing that seam is the caller's job, and
     /// `crate::stream::splice` does it by extending the span before it — the
     /// same rule this method applies to every other boundary.
-    fn push_span(&mut self, start: u64, body: SpanBody) {
+    fn push_span(&mut self, start: u64, body: SpanBody, toc: Option<TocHeader>) {
         if let Some(last) = self.spans.last_mut() {
             last.end = start;
         }
@@ -488,6 +590,7 @@ impl Builder {
             end: start,
             database: self.database.clone(),
             text: None,
+            toc,
             body,
         });
     }
@@ -496,19 +599,40 @@ impl Builder {
     /// analogous mid-scan case (a `CopyStart` interrupting something in
     /// flight) itself, since it needs the interrupted span's start offset
     /// to seed the `Data` span that follows.
-    fn flush_pending(&mut self) {
+    ///
+    /// `end` is the stop point [`finish`](Self::finish) is closing out at —
+    /// needed here (not just applied afterward) because
+    /// [`crate::index::scan_preamble`] can retreat that stop point to a
+    /// pending comment's own `start` (via [`pending_comment_start`](Self::pending_comment_start))
+    /// rather than let it guess the comment's classification. A comment with
+    /// `start >= end` is exactly that case — nothing about it was decided —
+    /// so it is dropped rather than pushed: pushing it would create a
+    /// zero-length span (`start == end`) and, being generic
+    /// `Framing`/`Unparsed`, would be the *wrong* guess besides, since the
+    /// whole reason to retreat is that a later, unfed-truncated scan is the
+    /// one that can classify it correctly (e.g. into a `Data` span).
+    fn flush_pending(&mut self, end: u64) {
         match std::mem::replace(&mut self.mode, Mode::Idle) {
             Mode::Idle => {}
-            // Only reachable for a comment block that runs to EOF (or is
-            // interrupted by a `CopyStart`) with no closing non-`--` line —
-            // never observed in a well-formed `pg_dump` file (every real
-            // TOC comment, and the version-header block, is followed by
-            // something else), but classifies the same way `step`'s own
-            // comment-close arm would have, had a closing line ever arrived.
-            Mode::Comment { start, saw_name, server_version, pg_dump_version } => {
-                self.push_span(start, close_comment(saw_name, server_version, pg_dump_version));
+            Mode::Comment { start, saw_name, server_version, pg_dump_version, toc } => {
+                if start < end {
+                    // Only reachable for a comment block that runs to EOF
+                    // (or is interrupted by a `CopyStart` with nothing
+                    // pending-comment-aware about the stop) with no closing
+                    // non-`--` line — never observed in a well-formed
+                    // `pg_dump` file (every real TOC comment, and the
+                    // version-header block, is followed by something else),
+                    // but classifies the same way `step`'s own
+                    // comment-close arm would have, had a closing line ever
+                    // arrived.
+                    self.push_span(
+                        start,
+                        close_comment(saw_name, server_version, pg_dump_version),
+                        toc,
+                    );
+                }
             }
-            Mode::Statement { start, buf } => self.push_span(start, classify(&buf)),
+            Mode::Statement { start, buf, toc } => self.push_span(start, classify(&buf), toc),
         }
     }
 
@@ -546,14 +670,14 @@ impl Builder {
                 }
                 if let Some(name) = parse_connect(line) {
                     self.database = Some(name.clone());
-                    self.push_span(offset, SpanBody::Connect { database: name });
+                    self.push_span(offset, SpanBody::Connect { database: name }, None);
                     return None;
                 }
                 if trimmed.starts_with('\\') {
                     // Any other psql meta-command (`\restrict`,
                     // `\unrestrict`, ...): a single complete line, never
                     // continued, never real SQL.
-                    self.push_span(offset, SpanBody::Framing);
+                    self.push_span(offset, SpanBody::Framing, None);
                     return None;
                 }
                 if trimmed.starts_with("--") {
@@ -567,13 +691,14 @@ impl Builder {
                         saw_name: looks_like_toc_name_line(trimmed),
                         server_version,
                         pg_dump_version,
+                        toc: parse_toc_header_line(trimmed),
                     };
                     return None;
                 }
-                self.mode = Mode::Statement { start: offset, buf: String::new() };
+                self.mode = Mode::Statement { start: offset, buf: String::new(), toc: None };
                 Some((offset, line.to_string()))
             }
-            Mode::Comment { start, saw_name, server_version, pg_dump_version } => {
+            Mode::Comment { start, saw_name, server_version, pg_dump_version, toc } => {
                 if trimmed.starts_with("--") {
                     *saw_name |= looks_like_toc_name_line(trimmed);
                     match version_header_field(trimmed) {
@@ -581,23 +706,43 @@ impl Builder {
                         Some((false, v)) => *pg_dump_version = Some(v),
                         None => {}
                     }
+                    if let Some(header) = parse_toc_header_line(trimmed) {
+                        *toc = Some(header);
+                    }
+                    return None;
+                }
+                if trimmed.is_empty() {
+                    // A blank line right after a comment block's closing
+                    // `--` is genuinely ambiguous — `_printTocEntry()` always
+                    // writes `--\n\n` (I3), whether a DDL statement or a
+                    // `COPY` header follows. Absorbed without deciding either
+                    // way: staying in `Mode::Comment` is what lets
+                    // `on_copy_start`'s `Mode::Comment` arm still see this
+                    // block (and its `toc`) when the very next thing is a
+                    // `COPY` header — `crate::scan::CopyScanner` intercepts
+                    // that line as `Event::CopyStart` and never routes it
+                    // through `feed_line` at all, so this arm never even runs
+                    // for the block-closing case; only a genuinely
+                    // non-blank, non-`--` line (a DDL statement) ever reaches
+                    // the close/transition logic below.
                     return None;
                 }
                 let start = *start;
                 let saw_name = *saw_name;
+                let toc = toc.take();
                 if saw_name {
                     // The comment block was a real TOC entry: the span
                     // continues into the statement it precedes, starting at
                     // the comment's own offset.
-                    self.mode = Mode::Statement { start, buf: String::new() };
+                    self.mode = Mode::Statement { start, buf: String::new(), toc };
                 } else {
                     let body = close_comment(false, server_version.take(), pg_dump_version.take());
-                    self.push_span(start, body);
+                    self.push_span(start, body, toc);
                     self.mode = Mode::Idle;
                 }
                 Some((offset, line.to_string()))
             }
-            Mode::Statement { start, buf } => {
+            Mode::Statement { start, buf, toc } => {
                 // A `--`-prefixed line reasserts a fresh boundary even
                 // though `buf` never reached `statement_complete` — the
                 // case a dollar-quoted body's invisible closing line
@@ -614,16 +759,18 @@ impl Builder {
                 if trimmed.starts_with("--") && !in_open_quote(buf) {
                     let start = *start;
                     let body = classify(buf);
+                    let toc = toc.take();
                     self.mode = Mode::Idle;
-                    self.push_span(start, body);
+                    self.push_span(start, body, toc);
                     return Some((offset, line.to_string()));
                 }
                 push_stmt_line(buf, line);
                 if statement_complete(buf) {
                     let start = *start;
                     let body = classify(buf);
+                    let toc = toc.take();
                     self.mode = Mode::Idle;
-                    self.push_span(start, body);
+                    self.push_span(start, body, toc);
                 }
                 None
             }
@@ -648,36 +795,38 @@ impl Builder {
     /// line as its own small span. Coarser, still tiling — the same trade the
     /// rest of the fallback makes.
     pub(crate) fn on_dollar_quote_end(&mut self, _offset: u64) {
-        if let Mode::Statement { start, buf } = std::mem::replace(&mut self.mode, Mode::Idle) {
-            self.push_span(start, classify(&buf));
+        if let Mode::Statement { start, buf, toc } = std::mem::replace(&mut self.mode, Mode::Idle) {
+            self.push_span(start, classify(&buf), toc);
         }
     }
 
     pub(crate) fn on_copy_start(&mut self, event: crate::scan::CopyStart) {
-        let start = match std::mem::replace(&mut self.mode, Mode::Idle) {
-            Mode::Idle => event.header_offset,
+        let (start, toc) = match std::mem::replace(&mut self.mode, Mode::Idle) {
+            Mode::Idle => (event.header_offset, None),
             // A TOC comment (`-- Data for Name: ...; Type: TABLE DATA`, or,
             // rarely, none at all) directly precedes the header: absorb it
             // into the `Data` span's outer boundary per
             // `roadmap-phase3-object-inventory.md`'s "COPY blocks are the
             // one exception" — `span.start <= header_offset`.
-            Mode::Comment { start, .. } => start,
+            Mode::Comment { start, toc, .. } => (start, toc),
             // Never observed in a well-formed dump (a statement never
             // precedes a `COPY` header with no separating blank line/TOC
             // comment of its own), but every byte must land somewhere.
-            Mode::Statement { start, buf } => {
-                self.push_span(start, classify(&buf));
-                event.header_offset
+            Mode::Statement { start, buf, toc } => {
+                self.push_span(start, classify(&buf), toc);
+                (event.header_offset, None)
             }
         };
-        self.pending_data = Some((start, event, self.pending_partition_root.take()));
+        self.pending_data = Some((start, event, self.pending_partition_root.take(), toc));
     }
 
     pub(crate) fn on_copy_end(&mut self, end: crate::scan::CopyEnd) {
         // `on_copy_start` always runs first for a matching block
         // (`crate::scan::CopyScanner` never emits `CopyEnd` without a prior
         // `CopyStart`), so this is always `Some`.
-        let Some((start, copy_start, partition_root)) = self.pending_data.take() else { return };
+        let Some((start, copy_start, partition_root, toc)) = self.pending_data.take() else {
+            return;
+        };
         let block = CopyBlock {
             header: copy_start.header,
             database: self.database.clone(),
@@ -690,14 +839,14 @@ impl Builder {
             sparse_index: None,
             column_stats: None,
         };
-        self.push_span(start, SpanBody::Data(block));
+        self.push_span(start, SpanBody::Data(block), toc);
     }
 
     /// Finish the scan: whatever's still pending is closed out using `end`
     /// (the scan's own end offset) as the trigger that would otherwise have
     /// opened the next span.
     pub(crate) fn finish(mut self, end: u64) -> Vec<Span> {
-        self.flush_pending();
+        self.flush_pending(end);
         if let Some(last) = self.spans.last_mut() {
             last.end = end;
         }
@@ -726,6 +875,26 @@ impl Builder {
             last.end = end;
         }
         spans
+    }
+
+    /// The start offset of a comment block currently being absorbed —
+    /// `None` unless `self.mode` is [`Mode::Comment`]. For a caller that must
+    /// stop scanning *before* the decision a `--`-prefixed run is waiting on
+    /// (a statement, or a `COPY` header this builder is never fed —
+    /// [`crate::index::scan_preamble`], the only such caller today), asking
+    /// [`finish`](Self::finish)/[`snapshot`](Self::snapshot) to close out at
+    /// the stopping point would swallow the still-open comment as a guessed
+    /// [`SpanBody::Framing`]/[`SpanBody::Unparsed`] span — permanently
+    /// wrong for a `-- Data for Name: ...` block, whose bytes belong to the
+    /// `Data` span a later, unfed-truncated scan is the one that can still
+    /// produce correctly. Retreating the stop point to this offset instead
+    /// leaves the comment's bytes for that later scan to absorb from
+    /// scratch.
+    pub(crate) fn pending_comment_start(&self) -> Option<u64> {
+        match &self.mode {
+            Mode::Comment { start, .. } => Some(*start),
+            _ => None,
+        }
     }
 }
 
@@ -848,6 +1017,128 @@ mod tests {
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].start, 0);
         assert!(matches!(&spans[0].body, SpanBody::Table { name, .. } if name == "public.t"));
+        assert_eq!(
+            spans[0].toc,
+            Some(TocHeader {
+                name: "t".to_string(),
+                kind: "TABLE".to_string(),
+                schema: Some("public".to_string()),
+                owner: Some("postgres".to_string()),
+                tablespace: None,
+            })
+        );
+    }
+
+    #[test]
+    fn parse_toc_header_line_handles_data_for_name_and_the_tablespace_suffix() {
+        assert_eq!(
+            parse_toc_header_line(
+                "-- Data for Name: t; Type: TABLE DATA; Schema: public; Owner: postgres; \
+                 Tablespace: fastspace"
+            ),
+            Some(TocHeader {
+                name: "t".to_string(),
+                kind: "TABLE DATA".to_string(),
+                schema: Some("public".to_string()),
+                owner: Some("postgres".to_string()),
+                tablespace: Some("fastspace".to_string()),
+            })
+        );
+    }
+
+    /// `-- Name: EXTENSION postgres_fdw; Type: COMMENT; Schema: -; Owner: `
+    /// (a real fixture line, `fixtures/16/objects/verbose.sql`) — `Schema:
+    /// -` and a trailing empty `Owner: ` both mean "none", per I16 and
+    /// `_printTocEntry()`'s two ways of writing it.
+    #[test]
+    fn a_hyphen_schema_and_an_empty_owner_both_parse_to_none() {
+        let header = parse_toc_header_line(
+            "-- Name: EXTENSION postgres_fdw; Type: COMMENT; Schema: -; Owner: ",
+        )
+        .unwrap();
+        assert_eq!(header.schema, None);
+        assert_eq!(header.owner, None);
+    }
+
+    /// `--no-owner` writes `Owner: -`, the other of `_printTocEntry()`'s two
+    /// "no owner" shapes (`fixtures/*/edge_cases/no-owner.sql`).
+    #[test]
+    fn a_hyphen_owner_parses_to_none() {
+        let header =
+            parse_toc_header_line("-- Name: sample_fn(); Type: FUNCTION; Schema: public; Owner: -")
+                .unwrap();
+        assert_eq!(header.owner, None);
+    }
+
+    #[test]
+    fn a_non_toc_comment_line_does_not_parse_as_a_toc_header() {
+        assert_eq!(parse_toc_header_line("-- PostgreSQL database dump"), None);
+        assert_eq!(parse_toc_header_line("-- TOC entry 7 (class 2615 OID 16386)"), None);
+        assert_eq!(parse_toc_header_line("-- Dependencies: 2"), None);
+    }
+
+    /// `--verbose` inserts `-- TOC entry ...`/`-- Dependencies: ...` lines
+    /// ahead of the Name line (`fixtures/*/objects/verbose.sql`) — they don't
+    /// parse as headers themselves, and don't stop the Name line after them
+    /// from being recognized.
+    #[test]
+    fn verbose_lines_ahead_of_the_name_line_do_not_prevent_it_parsing() {
+        let spans = spans_of(&[
+            "--",
+            "-- TOC entry 7 (class 2615 OID 16386)",
+            "-- Name: objects; Type: SCHEMA; Schema: -; Owner: postgres",
+            "--",
+            "",
+            "CREATE SCHEMA objects;",
+        ]);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].toc.as_ref().map(|t| t.name.as_str()), Some("objects"));
+    }
+
+    /// A `Data` span's `toc` comes from its own `-- Data for Name: ...`
+    /// comment, threaded through `pending_data` from `on_copy_start` to
+    /// `on_copy_end` — the one span kind [`Builder::push_span`] isn't called
+    /// for from inside [`Builder::step`] at all.
+    #[test]
+    fn a_data_span_carries_the_toc_header_its_data_for_name_comment_parsed_to() {
+        let mut builder = Builder::new();
+        let mut offset = 0u64;
+        for line in [
+            "--",
+            "-- Data for Name: t; Type: TABLE DATA; Schema: public; Owner: postgres",
+            "--",
+            "",
+        ] {
+            builder.feed_line(offset, line.as_bytes());
+            offset += line.len() as u64 + 1;
+        }
+        let header_offset = offset;
+        builder.on_copy_start(crate::scan::CopyStart {
+            header: crate::copy::CopyHeader {
+                schema: Some("public".to_string()),
+                table: "t".to_string(),
+                columns: vec!["id".to_string()],
+            },
+            header_offset,
+            data_offset: header_offset + 32,
+        });
+        let terminator_offset = header_offset + 48;
+        let end_offset = terminator_offset + 3;
+        builder.on_copy_end(crate::scan::CopyEnd { terminator_offset, end_offset, row_count: 1 });
+
+        let spans = builder.finish(end_offset);
+        assert_eq!(spans.len(), 1);
+        assert!(matches!(spans[0].body, SpanBody::Data(_)));
+        assert_eq!(spans[0].toc.as_ref().map(|t| t.kind.as_str()), Some("TABLE DATA"));
+    }
+
+    /// A statement with no preceding TOC comment at all — the header-less
+    /// fallback — carries no `toc`, which is the graceful-degradation case
+    /// the design expects rather than an error.
+    #[test]
+    fn a_statement_with_no_toc_comment_carries_no_toc_header() {
+        let spans = spans_of(&["CREATE EXTENSION pgcrypto;"]);
+        assert_eq!(spans[0].toc, None);
     }
 
     #[test]

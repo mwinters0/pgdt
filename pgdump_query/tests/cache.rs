@@ -50,10 +50,14 @@ async fn foreign_bytes_at_the_cache_path_are_treated_as_absent() {
 #[tokio::test]
 async fn saved_index_round_trips_exactly() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
-    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let mut index = build_index(&source, &ScanOptions::default()).await.unwrap();
     assert!(index.blocks().next().is_some());
     assert!(index.blocks().all(|b| b.sparse_index.is_none() && b.column_stats.is_none()));
     assert!(index.metadata.is_some());
+    // Diagnostics deliberately don't round-trip (`diagnostics_do_not_round_trip_through_the_cache`
+    // covers that directly) — `build_index` always reports a `TocCoverage`
+    // figure, so cleared here to isolate this test's own claim.
+    index.diagnostics.clear();
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql.dqcache");
@@ -101,7 +105,9 @@ async fn preamble_only_persists_a_real_unscanned_tail() {
 #[tokio::test]
 async fn save_overwrites_an_existing_cache() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
-    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let mut index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    // Diagnostics never round-trip (see `diagnostics_do_not_round_trip_through_the_cache`).
+    index.diagnostics.clear();
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql.dqcache");
@@ -157,7 +163,9 @@ async fn mtime_mismatch_alone_does_not_invalidate_the_cache() {
     let dump = dir.path().join("edge_cases.sql");
     std::fs::copy(edge_cases(), &dump).unwrap();
     let source = LocalFileSource::open(&dump).unwrap();
-    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let mut index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    // Diagnostics never round-trip (see `diagnostics_do_not_round_trip_through_the_cache`).
+    index.diagnostics.clear();
 
     let path = cache::colocated_path(&dump);
     cache::save(&path, &source, &index).await.unwrap();
@@ -275,7 +283,9 @@ async fn diagnostics_do_not_round_trip_through_the_cache() {
     let source = LocalFileSource::open(&dump).unwrap();
 
     let mut index = build_index(&source, &ScanOptions::default()).await.unwrap();
-    assert!(index.diagnostics.is_empty(), "a real fixture tiles, so nothing is reported");
+    // `build_index` always reports a `TocCoverage` figure — cleared here so
+    // this test's own pushed diagnostic is the only one in play.
+    index.diagnostics.clear();
     index
         .diagnostics
         .push(Diagnostic { severity: Severity::Warning, kind: DiagnosticKind::CacheMtimeChanged });
