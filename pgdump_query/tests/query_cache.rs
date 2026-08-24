@@ -31,6 +31,19 @@ fn sandboxed_edge_cases() -> (tempfile::TempDir, PathBuf) {
     (dir, dump)
 }
 
+fn objects_fixture() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/16/objects/default.sql")
+}
+
+/// A private copy of `fixtures/16/objects/default.sql`, the same convention
+/// as [`sandboxed_edge_cases`].
+fn sandboxed_objects_fixture() -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("objects.sql");
+    std::fs::copy(objects_fixture(), &dump).unwrap();
+    (dir, dump)
+}
+
 fn rows_of(batch: &arrow::array::RecordBatch) -> Vec<Vec<Option<String>>> {
     (0..batch.num_rows())
         .map(|row| batch.columns().iter().map(|c| render_field(c.as_ref(), row)).collect())
@@ -262,6 +275,57 @@ async fn scan_extent_full_maps_the_whole_file_from_a_query() {
     tables.sort_unstable();
     assert_eq!(tables, vec!["Odd Table", "empty_table", "no_column_list", "widgets"]);
     assert_eq!(index.scanned_through, source.size().await.unwrap());
+}
+
+/// The concrete case `docs/design/roadmap-phase3-object-inventory.md`'s
+/// "What a span carries" names for why the cross-reference set can't stop
+/// where the map does: `objects.widgets`' own `COPY` block closes long before
+/// the file's post-data `GRANT`/`ALTER DEFAULT PRIVILEGES` section
+/// (`fixtures/16/objects/default.sql`) grants `fixture_reader` access to it.
+/// A cold query that stops at its target never reaches that section, so its
+/// `roles` set is real but incomplete — `postgres` (every preceding object's
+/// owner) without `fixture_reader`. `ScanExtent::Full` is the way to the
+/// complete set, the same way it already is for `blocks()`.
+#[tokio::test]
+async fn a_cold_query_misses_post_data_grants_but_scan_extent_full_finds_them() {
+    let (_dir, dump) = sandboxed_objects_fixture();
+    let cache_path = cache::colocated_path(&dump);
+    let source = LocalFileSource::open(&dump).unwrap();
+
+    drain(
+        &source,
+        "objects.widgets",
+        BatchOptions::default(),
+        CacheMode::Enabled(cache_path.clone()),
+    )
+    .await;
+    let index = CacheMode::Enabled(cache_path.clone())
+        .load(&source)
+        .await
+        .unwrap()
+        .expect("a cache was written");
+    assert!(index.scanned_through < source.size().await.unwrap(), "stopped before EOF");
+    assert!(index.roles.contains("postgres"));
+    assert!(
+        !index.roles.contains("fixture_reader"),
+        "the GRANT that names it is past the stopping point: {:?}",
+        index.roles
+    );
+
+    drain(
+        &source,
+        "objects.widgets",
+        BatchOptions { scan_extent: ScanExtent::Full, ..Default::default() },
+        CacheMode::Enabled(cache_path.clone()),
+    )
+    .await;
+    let index = CacheMode::Enabled(cache_path).load(&source).await.unwrap().unwrap();
+    assert_eq!(index.scanned_through, source.size().await.unwrap());
+    assert!(
+        index.roles.contains("fixture_reader"),
+        "a full scan reaches the GRANT: {:?}",
+        index.roles
+    );
 }
 
 /// Dropping a stream partway through a block still leaves a valid, usable

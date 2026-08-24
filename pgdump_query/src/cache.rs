@@ -49,9 +49,10 @@ use crate::{Error, Result};
 /// filter over it); to 4 in Phase 3.2.1.2.1 for
 /// [`crate::index::CopyBlock::partition_root`]; to 5 in Phase 3.2.2 for
 /// [`crate::map::Span::text`]; to 6 in Phase 3.3 for
-/// [`crate::map::Span::toc`] — pre-1.0, so all of them are free (`CLAUDE.md`,
-/// "Pre-1.0").
-const FORMAT_VERSION: u32 = 6;
+/// [`crate::map::Span::toc`]; to 7 in Phase 3.4 for
+/// [`crate::index::DumpIndex::roles`]/[`crate::index::DumpIndex::tablespaces`]
+/// — pre-1.0, so all of them are free (`CLAUDE.md`, "Pre-1.0").
+const FORMAT_VERSION: u32 = 7;
 
 /// The dump file's size and modification time as observed when a cache was
 /// last saved — see the module docs.

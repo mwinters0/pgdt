@@ -22,7 +22,7 @@ module map, and the implementation facts later phases inherit — is in
 Phase 3 (full DDL object inventory) is **in progress**,
 `docs/design/roadmap-phase3-object-inventory.md`.
 
-Last updated: 2026-08-24.
+Last updated: 2026-08-24 (3.4 landed).
 
 ## Phase 3 progress
 
@@ -88,7 +88,14 @@ Last updated: 2026-08-24.
       stop point rather than guess a still-pending comment's classification.
       Notes:
       [`roadmap-phase3.3-toc-enrichment-notes.md`](../design/roadmap-phase3.3-toc-enrichment-notes.md).
-- [ ] **3.4** The cross-reference set — referenced roles and tablespaces.
+- [x] **3.4** The cross-reference set — referenced roles and tablespaces.
+      `DumpIndex::roles`/`tablespaces`, accumulated in `map::Builder` from
+      `Span::toc` and (new) `preamble::extract_statement_cross_refs` over
+      `OWNER TO`/`GRANT`/`REVOKE`/`ALTER DEFAULT PRIVILEGES FOR ROLE`/`SET
+      default_tablespace`; `PUBLIC`/`pg_default` filtered, cache format v6→v7.
+      `objects.rs` not split out — `preamble.rs` is still under the ~1500-line
+      threshold. Notes:
+      [`roadmap-phase3.4-cross-references-notes.md`](../design/roadmap-phase3.4-cross-references-notes.md).
 - [ ] **3.6** The `Data`-span fast path for `INSERT` runs and the
       large-object region, plus this phase's two gating measurements. Runs
       before 3.5.
@@ -97,11 +104,11 @@ Last updated: 2026-08-24.
 
 ## Not started
 
-- **Phase 3, slices 3.4-3.6** — specified, no code. See the checklist above
-  and `docs/design/roadmap-phase3-object-inventory.md`. **3.2 and 3.3 are
+- **Phase 3, slices 3.5-3.6** — specified, no code. See the checklist above
+  and `docs/design/roadmap-phase3-object-inventory.md`. **3.2, 3.3 and 3.4 are
   complete**: the span model, its wiring into `DumpIndex`/the cache/the query
-  path, span text, diagnostics, the dollar-quote boundary, and TOC
-  enrichment.
+  path, span text, diagnostics, the dollar-quote boundary, TOC enrichment, and
+  the referenced-roles/tablespaces cross-reference set.
 - **Phases 4-8** — not designed. See `docs/design/roadmap.md`.
 
 ## Known gaps
@@ -148,6 +155,16 @@ Last updated: 2026-08-24.
   doesn't have. `parse_toc_header_line` degrades gracefully if either shape
   is wrong (the field, or the whole header, just parses to `None`), but
   neither claim has been checked against real `pg_dump` output.
+- `DumpIndex::roles`/`tablespaces` are complete only once `scanned_through`
+  reaches the file's size — the same partiality `metadata`'s
+  `preamble_complete` already carries, for the same reason: a query that
+  stops at its target (`ScanExtent::UntilTargetSettled`, the default) never
+  reaches a reference past the stopping point, which is exactly koji's
+  `backup` role (granted only in a post-data `GRANT`). `ScanExtent::Full` (or
+  a query after `pgdq parse`) gives the complete set. `REVOKE` and a
+  non-default `SET default_tablespace` value are also unexercised by any
+  fixture (I19), the same gap I18 already names for the TOC's own
+  `Tablespace:` field.
 
 ## Decisions worth another look
 

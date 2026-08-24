@@ -270,6 +270,8 @@ async fn map_forward<S: ByteRangeSource>(
                     builder.on_copy_end(end);
                     index.spans =
                         splice(&prefix, builder.snapshot(watermark), seg_start, watermark, size);
+                    index.roles.extend(builder.roles().iter().cloned());
+                    index.tablespaces.extend(builder.tablespaces().iter().cloned());
                     index.scanned_through = index.scanned_through.max(watermark);
                     cache.save(source, index).await?;
                     if extent == ScanExtent::UntilTargetSettled
@@ -297,6 +299,8 @@ async fn map_forward<S: ByteRangeSource>(
         }
     }
 
+    index.roles.extend(builder.roles().iter().cloned());
+    index.tablespaces.extend(builder.tablespaces().iter().cloned());
     index.spans = splice(&prefix, builder.finish(size), seg_start, size, size);
     index.scanned_through = size;
     crate::map::attach_text(source, &mut index.spans).await?;
@@ -528,9 +532,12 @@ where
             // `[0, preamble_end)`, which is exactly the prefix `map_forward`
             // splices its own output onto. Without them the map would start
             // at the frontier with nothing beneath it and could not tile.
-            let (metadata, spans, preamble_end) = scan_preamble(source, &scan_options).await?;
+            let (metadata, spans, preamble_end, roles, tablespaces) =
+                scan_preamble(source, &scan_options).await?;
             index.metadata = Some(metadata);
             index.spans = splice(&[], spans, 0, preamble_end, size);
+            index.roles.extend(roles);
+            index.tablespaces.extend(tablespaces);
             index.scanned_through = index.scanned_through.max(preamble_end);
             crate::map::attach_text(source, &mut index.spans).await?;
             cache.save(source, &index).await?;

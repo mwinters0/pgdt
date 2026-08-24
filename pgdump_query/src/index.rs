@@ -3,6 +3,7 @@
 //! This is what the eager `pgdq parse` scan yields today and what the
 //! structure cache will persist once it exists.
 
+use std::collections::BTreeSet;
 use std::ops::ControlFlow;
 
 use serde::{Deserialize, Serialize};
@@ -107,6 +108,24 @@ pub struct DumpIndex {
     /// `docs/design/roadmap-phase3-object-inventory.md`, "The span is the
     /// container".
     pub metadata: Option<DumpMetadata>,
+    /// Roles referenced anywhere the scan has reached — the TOC `Owner:`
+    /// field, `ALTER ... OWNER TO`, and `GRANT`/`REVOKE`/`ALTER DEFAULT
+    /// PRIVILEGES FOR ROLE` (`docs/design/roadmap-phase3-object-inventory.md`,
+    /// "What a span carries"). `PUBLIC` is never included. Flat and per-file
+    /// — a per-database view is a filter over `Span::database`, not a second
+    /// stored structure. Persisted: unlike `metadata`/`diagnostics`, there's
+    /// no cheaper way to answer "which roles does this dump need" than
+    /// keeping what the scan already found, since re-deriving it means
+    /// re-parsing every span's raw text. Complete only once `scanned_through`
+    /// reaches the file's size — a query that stops at its target (`crate::stream`)
+    /// never sees a reference past the stopping point, the same partiality
+    /// `metadata`'s `preamble_complete` flags for its own data.
+    pub roles: BTreeSet<String>,
+    /// Tablespaces referenced anywhere the scan has reached — the TOC
+    /// `Tablespace:` field and `SET default_tablespace = ...;`. `pg_default`
+    /// is never included. Same flatness, persistence and partial-scan caveat
+    /// as [`roles`](Self::roles).
+    pub tablespaces: BTreeSet<String>,
     /// Things worth telling the caller that have no `Result` to travel in —
     /// a tiling failure, a cache mtime mismatch. **Not persisted**
     /// (`#[serde(skip)]`): a cached diagnostic would replay a warning about a
@@ -164,12 +183,14 @@ pub async fn build_index<S: ByteRangeSource>(
     .await?;
 
     let size = source.size().await?;
+    let roles = spans.roles().clone();
+    let tablespaces = spans.tablespaces().clone();
     let mut spans = spans.finish(size);
     let metadata = Some(crate::preamble::dump_metadata_from_spans(&spans));
     crate::map::attach_text(source, &mut spans).await?;
     let mut diagnostics = tiling_diagnostics(&spans, size);
     diagnostics.push(toc_coverage_diagnostic(&spans));
-    Ok(DumpIndex { spans, scanned_through: size, metadata, diagnostics })
+    Ok(DumpIndex { spans, scanned_through: size, metadata, roles, tablespaces, diagnostics })
 }
 
 /// Run the tiling check over a finished map and turn any failure into a
@@ -226,13 +247,15 @@ pub(crate) fn toc_coverage_diagnostic(spans: &[Span]) -> crate::diagnostic::Diag
 ///
 /// Returns the recovered metadata, the spans tiling `[0, preamble_end)` (per
 /// `crate::map::Builder` — no `Data` span among them, since the scan stops at
-/// the first `COPY` header rather than walking into the block), and that
-/// offset itself — a safe watermark for a later scan to continue from, since
-/// no `COPY` block starts before it.
+/// the first `COPY` header rather than walking into the block), that offset
+/// itself — a safe watermark for a later scan to continue from, since no
+/// `COPY` block starts before it — and whatever roles/tablespaces the
+/// preamble region referenced (`DumpIndex::roles`/`tablespaces`'s own
+/// partial-scan caveat applies here too).
 pub(crate) async fn scan_preamble<S: ByteRangeSource>(
     source: &S,
     options: &ScanOptions,
-) -> Result<(DumpMetadata, Vec<Span>, u64)> {
+) -> Result<(DumpMetadata, Vec<Span>, u64, BTreeSet<String>, BTreeSet<String>)> {
     let mut spans = crate::map::Builder::new();
     let mut end = source.size().await?;
     scan(source, options, |event| match event {
@@ -261,9 +284,11 @@ pub(crate) async fn scan_preamble<S: ByteRangeSource>(
         _ => ControlFlow::Continue(()),
     })
     .await?;
+    let roles = spans.roles().clone();
+    let tablespaces = spans.tablespaces().clone();
     let spans = spans.finish(end);
     let metadata = crate::preamble::dump_metadata_from_spans(&spans);
-    Ok((metadata, spans, end))
+    Ok((metadata, spans, end, roles, tablespaces))
 }
 
 /// Answer from the preamble alone (`docs/design/roadmap-phase2-typed-columns.md`,
@@ -293,8 +318,11 @@ pub async fn preamble_only<S: ByteRangeSource>(
         .and_then(|m| m.databases.first())
         .is_some_and(|db| db.preamble_complete);
     if !known {
-        let (metadata, mut spans, preamble_end) = scan_preamble(source, options).await?;
+        let (metadata, mut spans, preamble_end, roles, tablespaces) =
+            scan_preamble(source, options).await?;
         base_index.metadata = Some(metadata);
+        base_index.roles.extend(roles);
+        base_index.tablespaces.extend(tablespaces);
         base_index.scanned_through = base_index.scanned_through.max(preamble_end);
         let file_size = source.size().await?;
         if preamble_end < file_size {

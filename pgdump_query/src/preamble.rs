@@ -21,8 +21,16 @@
 //! `(base, typmod)` pair) — see "What the cache stores" in the phase doc.
 //! Resolving those strings into Arrow types is Phase 2.3's job
 //! (`crate::pgtype`, not yet built).
+//!
+//! [`extract_statement_cross_refs`] (Phase 3.4) is a second, independent kind
+//! of statement scan this module owns: unlike [`classify_statement`], it
+//! doesn't try to fully parse a statement into a `SpanBody` — it just pulls
+//! out whatever role/tablespace references `crate::map::Builder::push_statement_span`
+//! feeds it, from statement shapes this module otherwise leaves `Unparsed`
+//! (`OWNER TO`, `GRANT`/`REVOKE`/`ALTER DEFAULT PRIVILEGES FOR ROLE`, `SET
+//! default_tablespace`).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -473,6 +481,102 @@ fn fold_alter_type_add_value(types: &mut [TypeDef], type_name: &str, label: &str
         types.iter_mut().find(|t| t.name == type_name)
     {
         labels.push(label.to_string());
+    }
+}
+
+/// Case-insensitively find `marker` in `haystack` and parse the identifier
+/// (bare or double-quoted, `''`/`""`-doubled — [`Cursor::parse_ident`]'s two
+/// shapes, matching `fmtId()`'s two output forms) immediately following it.
+fn ident_after(haystack: &str, marker: &str) -> Option<String> {
+    let idx = find_ci(haystack, marker)?;
+    let rest = haystack[idx + marker.len()..].trim_start();
+    Cursor::new(rest.as_bytes()).parse_ident()
+}
+
+/// Filters out the pseudo-role `_printTocEntry`/`buildACLCommands` write
+/// literally as `PUBLIC` whenever a grant/revoke's grantee list is empty
+/// (`docs/design/roadmap-phase3-object-inventory.md`, "What a span carries":
+/// "`PUBLIC` is a pseudo-role and is never reported as one."). Case-insensitive
+/// because [`ident_after`]'s [`Cursor::parse_ident`] lowercases every
+/// *unquoted* identifier it parses (matching how Postgres itself folds one),
+/// so the literal keyword always arrives here as `public`, not `PUBLIC` — the
+/// same fold a role genuinely (and unusually) named `public` would go through
+/// if written unquoted, which is an irreducible ambiguity in the dump text
+/// itself: `GRANT ... TO public;` unquoted always means the pseudo-role to
+/// PostgreSQL's own parser too, never a same-named real role.
+pub(crate) fn insert_role(roles: &mut BTreeSet<String>, role: String) {
+    if !role.eq_ignore_ascii_case("PUBLIC") {
+        roles.insert(role);
+    }
+}
+
+/// Filters out `pg_default`, the reserved, uncreatable name for a database's
+/// implicit default tablespace (same design-doc section: "`pg_default` is the
+/// implicit default and is never reported"). Case-insensitive for the same
+/// reason [`insert_role`]'s `PUBLIC` check is.
+pub(crate) fn insert_tablespace(tablespaces: &mut BTreeSet<String>, tablespace: String) {
+    if !tablespace.eq_ignore_ascii_case("pg_default") {
+        tablespaces.insert(tablespace);
+    }
+}
+
+/// Extract every role/tablespace a complete statement (see
+/// [`statement_complete`]) references, per
+/// `docs/design/roadmap-phase3-object-inventory.md`'s "What a span carries" —
+/// the two sources [`crate::map::Span::toc`] alone can't cover, since none of
+/// these three statement shapes is its own TOC entry:
+///
+/// - `ALTER <object> OWNER TO <role>;` (`pg_backup_archiver.c`'s
+///   `_printTocEntry`, generic across every ownable object kind).
+/// - `GRANT ... TO <role>;` / `REVOKE ... FROM <role>;`, standalone or
+///   prefixed onto one line by `ALTER DEFAULT PRIVILEGES FOR ROLE <role> [IN
+///   SCHEMA <schema>] ` (`dumputils.c`'s `buildACLCommands`/
+///   `buildDefaultACLCommands`) — both the prefix's own role and the
+///   grant/revoke's grantee are recorded.
+/// - `SET default_tablespace = <tablespace>;` (`pg_backup_archiver.c`'s
+///   `_selectTablespace`) — **not** recorded when the value is the quoted
+///   empty string (`SET default_tablespace = '';`), which means "revert to
+///   the database's own default," not a reference to a real tablespace.
+///
+/// Matching is by marker substring, the same tolerance [`parse_toc_header_line`]
+/// documents for the TOC grammar: this only ever feeds enrichment, never a
+/// span boundary, so an identifier that happens to contain a marker text
+/// (`" TO "`, `" FROM "`) is a known, accepted source of a missed or
+/// mis-attributed reference rather than something this module defends
+/// against.
+pub(crate) fn extract_statement_cross_refs(
+    stmt: &str,
+    roles: &mut BTreeSet<String>,
+    tablespaces: &mut BTreeSet<String>,
+) {
+    if let Some(role) = ident_after(stmt, "OWNER TO ") {
+        insert_role(roles, role);
+    }
+    if let Some(rest) = strip_kw(stmt.trim_start(), "ALTER DEFAULT PRIVILEGES FOR ROLE")
+        && let Some(role) = Cursor::new(rest.as_bytes()).parse_ident()
+    {
+        insert_role(roles, role);
+    }
+    if find_ci(stmt, "GRANT ").is_some()
+        && let Some(role) = ident_after(stmt, " TO ")
+    {
+        insert_role(roles, role);
+    }
+    if find_ci(stmt, "REVOKE ").is_some()
+        && let Some(role) = ident_after(stmt, " FROM ")
+    {
+        insert_role(roles, role);
+    }
+    if let Some(idx) = find_ci(stmt, "SET default_tablespace") {
+        let rest = &stmt[idx..];
+        if let Some(eq) = rest.find('=') {
+            let value = rest[eq + 1..].trim_start();
+            if !value.starts_with('\'')
+                && let Some(tablespace) = Cursor::new(value.as_bytes()).parse_ident()
+            {
+                insert_tablespace(tablespaces, tablespace);
+            }
+        }
     }
 }
 
@@ -1150,5 +1254,84 @@ mod tests {
         ));
         assert!(classify_statement("ALTER TABLE t OWNER TO postgres;").is_none());
         assert!(classify_statement("ALTER TYPE t ADD VALUE 'x';").is_none());
+    }
+
+    /// [`extract_statement_cross_refs`]'s five recognized shapes — real
+    /// lines from `fixtures/16/objects/default.sql` (Phase 3.1) except where
+    /// noted, since no fixture generates a `REVOKE` or a non-default
+    /// tablespace (see `STATUS.md`'s "Known gaps").
+    fn refs_of(stmt: &str) -> (Vec<String>, Vec<String>) {
+        let mut roles = BTreeSet::new();
+        let mut tablespaces = BTreeSet::new();
+        extract_statement_cross_refs(stmt, &mut roles, &mut tablespaces);
+        (roles.into_iter().collect(), tablespaces.into_iter().collect())
+    }
+
+    #[test]
+    fn owner_to_is_recognized_across_every_ownable_object_kind() {
+        assert_eq!(
+            refs_of("ALTER FUNCTION objects.rgb_to_cmyk(objects.color_rgb) OWNER TO postgres;").0,
+            vec!["postgres".to_string()]
+        );
+        assert_eq!(refs_of("ALTER LARGE OBJECT 16490 OWNER TO postgres;").0, vec!["postgres"]);
+    }
+
+    #[test]
+    fn a_grant_records_its_grantee_but_not_public() {
+        assert_eq!(
+            refs_of("GRANT SELECT ON TABLE objects.events TO fixture_reader;").0,
+            vec!["fixture_reader".to_string()]
+        );
+        assert!(refs_of("GRANT SELECT ON TABLE objects.widgets TO PUBLIC;").0.is_empty());
+    }
+
+    #[test]
+    fn a_revoke_records_its_grantee_from_from() {
+        assert_eq!(
+            refs_of("REVOKE ALL ON TABLE objects.events FROM fixture_reader;").0,
+            vec!["fixture_reader".to_string()]
+        );
+    }
+
+    /// `ALTER DEFAULT PRIVILEGES` is one statement carrying two role
+    /// references — the role the default applies to, and the grant's own
+    /// grantee — both recorded from the single combined line
+    /// `buildDefaultACLCommands` writes.
+    #[test]
+    fn alter_default_privileges_records_both_its_for_role_and_its_grantee() {
+        let (roles, _) = refs_of(
+            "ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA objects GRANT SELECT ON TABLES \
+             TO fixture_reader;",
+        );
+        assert_eq!(roles, vec!["fixture_reader".to_string(), "postgres".to_string()]);
+    }
+
+    #[test]
+    fn set_default_tablespace_records_a_real_tablespace_but_not_a_reset() {
+        assert_eq!(refs_of("SET default_tablespace = fastspace;").1, vec!["fastspace".to_string()]);
+        assert!(refs_of("SET default_tablespace = '';").1.is_empty());
+    }
+
+    #[test]
+    fn pg_default_is_never_recorded_even_if_named_explicitly() {
+        assert!(refs_of("SET default_tablespace = pg_default;").1.is_empty());
+    }
+
+    /// `fmtId()`'s quoted form (a role/tablespace name that needs quoting,
+    /// with `""` doubling any literal `"`) is parsed the same way an
+    /// unquoted one is.
+    #[test]
+    fn a_quoted_role_name_is_unquoted() {
+        assert_eq!(
+            refs_of("ALTER SCHEMA public OWNER TO \"has a \"\"quote\"\" and space\";").0,
+            vec!["has a \"quote\" and space".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_plain_ddl_statement_records_nothing() {
+        let (roles, tablespaces) = refs_of("CREATE TABLE public.t (id integer);");
+        assert!(roles.is_empty());
+        assert!(tablespaces.is_empty());
     }
 }

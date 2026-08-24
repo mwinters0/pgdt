@@ -122,7 +122,17 @@
 //!   just `spans.iter().filter(|s| s.toc.is_some()).count()` against
 //!   `spans.len()` — no separate counter, since `Span::toc` already carries
 //!   the fact.
+//! - **The cross-reference set — landed in Phase 3.4.** [`Builder`] grows
+//!   `roles`/`tablespaces` (both [`crate::index::DumpIndex`] fields of the
+//!   same name), accumulated as spans close: [`Builder::push_span`] reads
+//!   `toc.owner`/`toc.tablespace`, and [`Builder::push_statement_span`] scans
+//!   the closing statement's own text via
+//!   [`crate::preamble::extract_statement_cross_refs`] for `OWNER TO`,
+//!   `GRANT`/`REVOKE`/`ALTER DEFAULT PRIVILEGES FOR ROLE`, and `SET
+//!   default_tablespace` — the two sources `Span::toc` alone can't cover
+//!   (`roadmap-phase3-object-inventory.md`, "What a span carries").
 
+use std::collections::BTreeSet;
 use std::ops::ControlFlow;
 
 use serde::{Deserialize, Serialize};
@@ -496,6 +506,15 @@ pub(crate) struct Builder {
     /// line — an entry that turned out not to be table data at all leaves
     /// nothing behind for the following one to pick up.
     pending_partition_root: Option<String>,
+    /// Roles/tablespaces referenced anywhere fed to this builder so far —
+    /// accumulated as spans close, per
+    /// `docs/design/roadmap-phase3-object-inventory.md`'s "What a span
+    /// carries" ("a modelled cross-reference set, accumulated during the
+    /// scan"). See [`Builder::push_span`] (TOC `Owner:`/`Tablespace:`) and
+    /// [`Builder::push_statement_span`] (`OWNER TO`/`GRANT`/`REVOKE`/`ALTER
+    /// DEFAULT PRIVILEGES FOR ROLE`/`SET default_tablespace`).
+    roles: BTreeSet<String>,
+    tablespaces: BTreeSet<String>,
 }
 
 /// Whether `-- Name: ...` (pg_dump's `_printTocEntry()` header, I3) is
@@ -565,6 +584,8 @@ impl Builder {
             spans: Vec::new(),
             pending_data: None,
             pending_partition_root: None,
+            roles: BTreeSet::new(),
+            tablespaces: BTreeSet::new(),
         }
     }
 
@@ -582,6 +603,19 @@ impl Builder {
     /// `crate::stream::splice` does it by extending the span before it — the
     /// same rule this method applies to every other boundary.
     fn push_span(&mut self, start: u64, body: SpanBody, toc: Option<TocHeader>) {
+        if let Some(t) = &toc {
+            // The TOC comment's own `Owner:`/`Tablespace:` fields — one of
+            // this span's two cross-reference sources regardless of its
+            // kind, since `_printTocEntry()` writes them ahead of every
+            // entry, not just the ones this module classifies
+            // (`roadmap-phase3-object-inventory.md`, "What a span carries").
+            if let Some(owner) = &t.owner {
+                crate::preamble::insert_role(&mut self.roles, owner.clone());
+            }
+            if let Some(tablespace) = &t.tablespace {
+                crate::preamble::insert_tablespace(&mut self.tablespaces, tablespace.clone());
+            }
+        }
         if let Some(last) = self.spans.last_mut() {
             last.end = start;
         }
@@ -593,6 +627,31 @@ impl Builder {
             toc,
             body,
         });
+    }
+
+    /// Classify a complete statement into a span, the way every
+    /// `classify(buf)` call site below does — but first scan `buf` itself
+    /// for the cross-references [`Span::toc`] can't cover: `OWNER TO`,
+    /// `GRANT`/`REVOKE`/`ALTER DEFAULT PRIVILEGES FOR ROLE`, and `SET
+    /// default_tablespace` (`crate::preamble::extract_statement_cross_refs`).
+    /// Centralized here — rather than at each call site — so every statement
+    /// this module ever classifies is scanned exactly once, the same way
+    /// [`push_span`](Self::push_span) centralizes the TOC-sourced half.
+    fn push_statement_span(&mut self, start: u64, buf: &str, toc: Option<TocHeader>) {
+        crate::preamble::extract_statement_cross_refs(buf, &mut self.roles, &mut self.tablespaces);
+        self.push_span(start, classify(buf), toc);
+    }
+
+    /// The roles/tablespaces referenced so far — see the [`roles`](Self::roles)
+    /// field's docs. Read before [`finish`](Self::finish) consumes the
+    /// builder (or any time, for [`snapshot`](Self::snapshot)'s non-consuming
+    /// caller).
+    pub(crate) fn roles(&self) -> &BTreeSet<String> {
+        &self.roles
+    }
+
+    pub(crate) fn tablespaces(&self) -> &BTreeSet<String> {
+        &self.tablespaces
     }
 
     /// Close whatever's pending at end of scan. `on_copy_start` handles the
@@ -632,7 +691,7 @@ impl Builder {
                     );
                 }
             }
-            Mode::Statement { start, buf, toc } => self.push_span(start, classify(&buf), toc),
+            Mode::Statement { start, buf, toc } => self.push_statement_span(start, &buf, toc),
         }
     }
 
@@ -758,19 +817,19 @@ impl Builder {
                 // every other case.
                 if trimmed.starts_with("--") && !in_open_quote(buf) {
                     let start = *start;
-                    let body = classify(buf);
+                    let buf = std::mem::take(buf);
                     let toc = toc.take();
                     self.mode = Mode::Idle;
-                    self.push_span(start, body, toc);
+                    self.push_statement_span(start, &buf, toc);
                     return Some((offset, line.to_string()));
                 }
                 push_stmt_line(buf, line);
                 if statement_complete(buf) {
                     let start = *start;
-                    let body = classify(buf);
+                    let buf = std::mem::take(buf);
                     let toc = toc.take();
                     self.mode = Mode::Idle;
-                    self.push_span(start, body, toc);
+                    self.push_statement_span(start, &buf, toc);
                 }
                 None
             }
@@ -796,7 +855,7 @@ impl Builder {
     /// rest of the fallback makes.
     pub(crate) fn on_dollar_quote_end(&mut self, _offset: u64) {
         if let Mode::Statement { start, buf, toc } = std::mem::replace(&mut self.mode, Mode::Idle) {
-            self.push_span(start, classify(&buf), toc);
+            self.push_statement_span(start, &buf, toc);
         }
     }
 
@@ -813,7 +872,7 @@ impl Builder {
             // precedes a `COPY` header with no separating blank line/TOC
             // comment of its own), but every byte must land somewhere.
             Mode::Statement { start, buf, toc } => {
-                self.push_span(start, classify(&buf), toc);
+                self.push_statement_span(start, &buf, toc);
                 (event.header_offset, None)
             }
         };
@@ -901,9 +960,11 @@ impl Builder {
 /// A bare `SET ...;` or `SELECT pg_catalog.set_config(...);` — the two
 /// statement shapes `_doSetFixedOutputState()` writes ahead of the archive
 /// proper (`docs/design/roadmap-phase3-object-inventory.md`, "Framing
-/// spans") and `_selectTablespace()` writes ahead of a definition (the
-/// `Tablespace:` cross-reference, not read until Phase 3.4). Neither is one
-/// of this module's three classified shapes, and treating both uniformly as
+/// spans") and `_selectTablespace()` writes ahead of a definition — read for
+/// its tablespace reference by `push_statement_span`'s
+/// `crate::preamble::extract_statement_cross_refs` call regardless of how
+/// this function classifies it. Neither is one of this module's three
+/// classified shapes, and treating both uniformly as
 /// framing (rather than `Unparsed`) matches the design doc regardless of
 /// which of the two producers wrote a given occurrence — this slice does no
 /// grouping, so a tablespace-setting `SET` ahead of an object still tiles

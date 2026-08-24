@@ -907,3 +907,68 @@ Confirm the field order and separators are unchanged, and that
 `sanitize_line`'s `NULL`-only hyphen substitution still holds.
 
 ---
+
+## I19 — The role/tablespace statement shapes `dumputils.c`/`_selectTablespace()` emit are fixed and never appear inside a TOC entry's own header
+
+**Claim.** Four statement shapes, each a single physical line ending in `;`,
+carry every role/tablespace reference a TOC header's `Owner:`/`Tablespace:`
+fields (I16/I18) don't already cover:
+
+- `GRANT <privs> ON <type> [<name>] TO <grantee>[ WITH GRANT OPTION];` —
+  `buildACLCommands()`'s `"%sGRANT %s ON %s "` + literal `"TO "` + either the
+  literal, unquoted, uppercase pseudo-role `PUBLIC` or `fmtId(grantee)`.
+- `REVOKE <privs> ON <type> [<name>] FROM <grantee>;` — the same function's
+  `"%sREVOKE %s ON %s "` + literal `"FROM "` + the same two grantee shapes.
+- `ALTER DEFAULT PRIVILEGES FOR ROLE <owner> [IN SCHEMA <nspname>] ` —
+  `buildDefaultACLCommands()`'s literal prefix, `fmtId(owner)`, concatenated
+  directly onto one of the two shapes above to form a single statement (one
+  line, one `;`) rather than two.
+- `SET default_tablespace = <value>;` — `_selectTablespace()`'s
+  `"SET default_tablespace = %s"`, where `<value>` is `fmtId(tablespace)` for
+  a real tablespace or the literal quoted empty string `''` when reverting to
+  the database's own default (`want == ""`).
+
+None of these four is itself a TOC entry (`_printTocEntry()` never assigns
+one of `_printTocEntry`'s own `ArchiveEntry.description` values to a
+`GRANT`/`REVOKE`/`SET` statement — a `GRANT`/`REVOKE` line is instead a `TOC`
+entry's own `defn` under kind `ACL`/`DEFAULT ACL`, and `SET default_tablespace`
+is framing pg_dump writes ahead of a definition, not a `defn` of its own), so
+none is reachable through I16/I18's `Owner:`/`Tablespace:` fields — a reader
+needs the statement text itself.
+
+**Proof.** `dumputils.c`'s `buildACLCommands()` (`"%sGRANT %s ON %s "`/
+`"%sREVOKE %s ON %s "`/`"TO "`/`"FROM "`/`"PUBLIC;\n"`) and
+`buildDefaultACLCommands()` (`"ALTER DEFAULT PRIVILEGES FOR ROLE %s "`);
+`pg_backup_archiver.c`'s `_selectTablespace()` (`"SET default_tablespace = %s"`
+/ the `want == ""` branch's literal `''`). Confirmed byte-identical across
+v13.23 through v18.6 (the `ALTER ... OWNER TO` emission point moved from
+`pg_backup_archiver.c` between v13 and v18 — a helper-buffer refactor — but
+the text it produces is unchanged; see I16). Observed in
+`fixtures/16/objects/default.sql`: `GRANT SELECT ON TABLE objects.events TO
+fixture_reader;`, `GRANT SELECT ON TABLE objects.widgets TO PUBLIC;`, `ALTER
+DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA objects GRANT SELECT ON TABLES
+TO fixture_reader;`, `SET default_tablespace = '';`.
+
+**Scope limit.** No fixture exercises `REVOKE` (nothing in the fixture schema
+revokes a previously-granted privilege) or a non-empty `SET default_tablespace`
+value (same filesystem-access gap I18 already names for `Tablespace:`) — both
+taken on faith from source reading alone.
+
+**Verified against:** v13.23 through v18.6 source; `fixtures/16/objects/default.sql`
+for the `GRANT`/`ALTER DEFAULT PRIVILEGES`/reset-`SET` shapes.
+
+**Relied on by:** `roadmap-phase3-object-inventory.md` ("What a span
+carries") — `preamble::extract_statement_cross_refs` matches these four
+shapes by marker substring rather than a full grammar.
+
+**Re-verify:**
+
+```sh
+grep -n '"%sGRANT %s ON %s \|"%sREVOKE %s ON %s \|appendPQExpBufferStr(thissql, "TO \|appendPQExpBufferStr(firstsql, "FROM ' src/bin/pg_dump/dumputils.c
+grep -n '"ALTER DEFAULT PRIVILEGES FOR ROLE %s "' src/bin/pg_dump/dumputils.c
+grep -n '"SET default_tablespace = %s"\|default_tablespace = ..' src/bin/pg_dump/pg_backup_archiver.c
+```
+
+Confirm the four literal shapes and their separators are unchanged.
+
+---
