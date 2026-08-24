@@ -96,6 +96,17 @@ monotonically" outlives the phase.
 `docs/design/roadmap-phase7-scan-performance.md` is the performance design for
 the local-file read path — read it before touching the batch layer or the cache
 format, which it constrains ahead of its own phase.
+`docs/design/roadmap-phase<N>-inbox.md` holds facts an *earlier* phase found
+that phase N will need — filed by destination, because a notes doc filed by
+origin never gets read at the right moment. Two triggers, and the second is
+the one that decays: **read a phase's inbox before grilling or specifying it**,
+and drain it (fold each entry into the spec, then delete the file) as part of
+that grilling; and **file into one whenever a slice turns up a fact a phase
+with no spec yet will need** — at the moment you find it, not at wrap. An
+entry is the fact, why that phase cares, and where it came from; if you can't
+name why that phase cares, it isn't an inbox entry. Most forward-looking
+remarks belong somewhere else instead — see `docs/process.md`, "Inboxes: facts
+filed by destination", for the threshold.
 `docs/design/pg-dump-compatibility.md` tracks which `pg_dump` options/variants
 are tested/untested/unsupported.
 `docs/design/postgres-invariants.md` is the evidence layer beneath the design

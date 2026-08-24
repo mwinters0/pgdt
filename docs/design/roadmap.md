@@ -453,6 +453,9 @@ defect.
 
 ## Phase 6 — Embeddable engine story
 
+**Inbox:** [`roadmap-phase6-inbox.md`](roadmap-phase6-inbox.md) — facts earlier
+phases filed for this one. Drain it when grilling this phase.
+
 The least-specified phase — the user has explicitly flagged unfamiliarity
 with this space, so treat its eventual grilling session as needing real
 research (prior art from `object_store`/DataFusion/similar embedded-source
@@ -471,6 +474,9 @@ decisions already made to keep this open:
 
 ## Phase 7 — Scan performance
 
+**Inbox:** [`roadmap-phase7-inbox.md`](roadmap-phase7-inbox.md) — facts earlier
+phases filed for this one. Drain it when grilling this phase.
+
 Concentrated optimization of the local-file read path: SIMD-accelerated
 structure discovery, zero-copy row extraction into Arrow buffers, bulk UTF-8
 validation, and device-aware parallelism (sequential on rotational media,
@@ -488,6 +494,9 @@ against, so the fast path should exist first and archive containers should be
 built to fit it.
 
 ## Phase 8 — Format coverage beyond plain COPY TEXT
+
+**Inbox:** [`roadmap-phase8-inbox.md`](roadmap-phase8-inbox.md) — facts earlier
+phases filed for this one. Drain it when grilling this phase.
 
 Everything that widens the set of `pg_dump` outputs we can read. Two
 independent tracks; A is listed first because it is cheap, not because it

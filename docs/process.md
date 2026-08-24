@@ -77,6 +77,10 @@ guesses about later phases. Re-grill the roadmap before specifying phase N+1,
 rather than trusting a plan written before the evidence existed. This is the
 step that keeps the roadmap from becoming fiction.
 
+**Drain the phase's inbox first.** If earlier phases filed facts for this one
+(see "Inboxes" below), that file is the first thing the grilling reads and the
+last thing it deletes.
+
 ---
 
 ## The doc set
@@ -91,6 +95,7 @@ step that keeps the roadmap from becoming fiction.
 | `docs/design/roadmap-phase<N>-<slug>.md` | **What** phase N does and **why** — the binding spec | How it landed in code |
 | `docs/design/roadmap-phase<N>-<slug>-notes.md` | **How** it landed: module map, and the facts later phases inherit | Restatement of the spec; a changelog |
 | `docs/design/roadmap-phase<N>.<M>-<slug>-notes.md` | The same, for one slice, until the phase wraps | Anything that should have gone in the spec |
+| `docs/design/roadmap-phase<N>-inbox.md` | Facts an *earlier* phase found that phase N's grilling must not miss | Anything with a proper home elsewhere; speculation about phase N's design |
 | `docs/design/<invariants>.md` | Every external behaviour a decision assumes, with proof | Assumptions without a re-verification step |
 | `docs/design/<compatibility>.md` | Which external variants are tested / untested / unsupported | Untracked "probably fine" rows |
 | `docs/design/<standing-constraint>.md` | A rule that cuts across all phases (e.g. layering) | Phase-scoped decisions |
@@ -213,6 +218,50 @@ external variants you have actually exercised. Its value is entirely in
 distinguishing *tested* from *assumed* — a row that says "untested
 (deliberately), because X" is doing more work than a row that says "supported".
 
+### Inboxes: facts filed by destination
+
+Notes docs are filed by **origin** — "what phase 3 learned". That works for
+the next phase and fails for a distant one: a fact phase 3 turned up that
+phase 7 needs ends up in phase 3's notes, and nothing prompts anyone to read
+those when phase 7 comes up. It is the "doc pointer with no trigger" failure,
+applied to facts instead of documents.
+
+So a fact addressed to a phase that has no spec yet goes in that phase's
+**inbox**, `roadmap-phase<N>-inbox.md`, created the moment it gets its first
+entry and never as an empty stub.
+
+Three fields per entry, and the third is what keeps it honest:
+
+- **Fact** — stated flatly, as the thing that is now true.
+- **Why this phase cares** — the decision it bears on. An entry that cannot
+  name one is not a fact for this phase; it is a note to nobody.
+- **Origin** — slice and date. A reader re-checks the origin rather than
+  trusting an entry that has aged; add **contingent on** when something
+  specific would falsify it.
+
+**The threshold is: no other home.** An external behaviour goes in the
+assumptions register. Something the *next* phase inherits goes in the phase
+notes. A rule that outlives phases is a standing constraint. A wanted feature
+is a roadmap "Future" item. An accepted deficiency is a `STATUS.md` known gap.
+What is left — evidence found in phase N that constrains a design decision in
+phase M, where M is far enough out to have no spec — is the only thing an
+inbox is for. Most forward-looking remarks fail this test, and filing them
+anyway is how the file stops being read.
+
+**An inbox is drained, not archived.** Step 6's grilling walks every entry,
+folds it into the spec or discards it as stale, and **deletes the file**. That
+lifecycle is the whole defence against a dumping ground: a document that is
+explicitly consumed cannot quietly accumulate forty entries nobody trusts, the
+way a permanent "future considerations" page does.
+
+**Both sides need a trigger**, and they go in `CLAUDE.md` like every other
+pointer: read the inbox before grilling or specifying a phase; file into one
+the moment a slice turns up a fact a later phase will need. The write-side
+trigger is the weaker of the two — it fires when you are mid-slice and
+thinking about something else — and a half-used inbox is worse than none,
+because the next session reads it as complete. Nothing in the process fixes
+that; it is a cost to accept knowingly.
+
 ---
 
 ## Where does this fact go?
@@ -227,6 +276,7 @@ Four questions settle almost every case.
 | Why we changed our mind, and the evidence | a **history** entry, linked from the doc holding the resulting decision |
 | Something outside our control that we now depend on | the **assumptions register** |
 | A rule that will still apply three phases from now | a **standing-constraint** doc, or a named roadmap section |
+| Something a *distant, unspecified* phase will need to know | that phase's **inbox** |
 | Something a *user* needs, with no rationale attached | the **manual** |
 | How the agent should behave in this repo | **CLAUDE.md** |
 | A path, a host, a piece of hardware, an operator preference | **CLAUDE.local.md** |
@@ -258,6 +308,7 @@ docs/
     roadmap-phase2-typed-columns.md
     roadmap-phase2.3-resolution-notes.md           deleted at phase 2 wrap
     roadmap-phase2-typed-columns-notes.md          consolidated at wrap
+    roadmap-phase7-inbox.md                        filed early, drained at phase 7's grilling
     layering.md                                    standing constraint
     postgres-invariants.md                         assumptions register
     pg-dump-compatibility.md                       coverage matrix
@@ -452,6 +503,7 @@ Then, each at its own trigger:
 | a standing-constraint doc | a rule shows up in two different phase discussions |
 | `docs/manual/` | something is usable by someone who did not build it |
 | a phase-notes doc | the first slice of that phase lands |
+| a phase **inbox** | you first find a fact a phase with no spec yet will need |
 
 ---
 
@@ -482,3 +534,9 @@ Each of these means a specific rule has stopped being followed.
   planning against evidence you do not have yet; that detail will be wrong and
   expensive to unwind.
 - **Slice notes surviving past the phase wrap.** Consolidation was skipped.
+- **An inbox that survived its phase's grilling.** It was read and not
+  drained, so it is now a permanent "future considerations" page — the exact
+  thing the delete-on-drain rule exists to prevent.
+- **An inbox entry that cannot say why its phase cares.** It is a passing
+  remark filed as evidence, and it is what turns the file into a dumping
+  ground nobody reads.

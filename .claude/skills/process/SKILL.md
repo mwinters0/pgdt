@@ -15,6 +15,10 @@ Then read, for the work at hand:
   binding statement of what this phase committed to.
 - `docs/status/STATUS.md` — what exists right now, and the phase's slice
   checklist.
+- `docs/design/roadmap-phase<N>-inbox.md`, if one exists — facts an earlier
+  phase filed for this one. **Specifying or grilling a phase means draining
+  its inbox**: fold each entry into the spec or discard it as stale, then
+  delete the file.
 - The notes docs for slices of this phase that already landed — they carry
   what this slice inherits.
 
@@ -35,6 +39,12 @@ Every one of these belongs in the *same* change as the code, not a follow-up:
    discovery that changed the plan. Not routine progress.
 5. **An invariants-register entry** if the slice made a decision depend on
    external behaviour that was not already recorded there.
+6. **An inbox entry** in `roadmap-phase<M>-inbox.md` for each fact the slice
+   turned up that a phase with no spec yet will need — filed now, not at wrap,
+   because that is when you know it. The fact, why *that* phase cares, and
+   where it came from; if you can't name why that phase cares, it isn't one.
+   Most forward-looking remarks belong somewhere else — see `docs/process.md`,
+   "Inboxes: facts filed by destination".
 
 ## What to do when a slice cannot be finished as specified
 
