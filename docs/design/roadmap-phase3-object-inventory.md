@@ -429,7 +429,8 @@ no-code, evidence-gathering slice goes first.
 | **3.1** | A third fixture schema (`objects`) covering the TOC kinds neither existing schema produces, plus **large objects**, plus a `--verbose` flag set. No library code. |
 | **3.2** | `map.rs` as a standalone module: the span model, the tiling invariant with its test over every fixture, cache identity checking, and the hardened statement accumulator — statement-driven pass only, no TOC enrichment. Updates `layering.md`'s module table and Arrow-free check for `map.rs`. |
 | **3.2.1** | The map becomes `DumpIndex`'s primary structure, per "The map is the structure, not a description of it": `spans` primary with `blocks()`/`blocks_for` derived, `Span::Data` holding `CopyBlock` inline, spans persisted (cache format bump), and `build_index` producing spans **in its existing pass**, driving the same `map::Builder` `build_map` does, rather than as a second one. `crate::stream::table_stream`'s `Recorder` appends each live-discovered block as its own `Span::Data`. `Unscanned` becomes a span a real incremental scan produces (`preamble_only`, the one genuinely partial scan today), not a reserved variant. |
-| **3.2.1.1** | `DumpMetadata` as a memoized derived view over `spans`, replacing the separate `PreambleBuilder` pass — needs a `SpanBody` shape for the two version-header lines and for folding a `--binary-upgrade` dump's `ALTER TYPE ADD VALUE` statements back into their `TypeDef` span, neither of which 3.2.1 addressed. Also: `stream.rs`'s live segment classifying the DDL between discovered blocks (the phase's own "cheap tier," described as running over any scan, full or incremental) so a query-built `DumpIndex` tiles the way `build_index`'s does. Earned by 3.2.1's mis-sizing, not by a wrong contract. |
+| **3.2.1.1** | `DumpMetadata` as a memoized derived view over `spans` (`dump_metadata_from_spans`), replacing the separate `PreambleBuilder` pass — `SpanBody` grows `Connect`, `VersionHeader` and `AlterTypeAddValue` to carry what `Framing`/`Unparsed` couldn't, verified against the old pass's output across every fixture before `PreambleBuilder` was deleted. |
+| **3.2.1.2** | `stream.rs`'s live segment classifying the DDL between discovered blocks (the phase's own "cheap tier," described as running over any scan, full or incremental) so a query-built `DumpIndex` tiles the way `build_index`'s does. Needs `map::Builder` to support an incremental, non-consuming snapshot (today `finish` consumes it and can only be called once, which conflicts with `Recorder`'s per-block persistence) — a capability gap found while scoping this slice, not yet designed around. Earned by 3.2.1's mis-sizing, not by a wrong contract. |
 | **3.2.2** | Additive remainder: span text sliced from the file and stored in the cache with its 64KB-per-span cap and `truncated` marker, and the file-level `Diagnostic` channel on `DumpIndex` — through which the runtime tiling check and the cache's mtime warning are reported. |
 | **3.2.3** | A position-only `scan.rs` event marking where a dollar-quoted region ended, and `map.rs` closing a statement on it — so a TOC-comment-less dump degrades to one span per object rather than to one span for the rest of the file. See "Span boundaries". |
 | **3.3** | The TOC enrichment layer: owner, kind labels, the `Tablespace:` field, TOC-coverage reporting. |
@@ -447,13 +448,18 @@ collapses on the header-less input the "Scanning" decision is justified by.
 Reasoning for all three:
 [`../status/history/2026-08-23.md`](../status/history/2026-08-23.md).
 
-**3.2.1.1 was earned the same way 3.2.1/3.2.2 were.** 3.2.1's own row bundled
-the mechanical span-primary/cache-format change with `DumpMetadata`'s
-derived-view rework and `stream.rs`'s live-segment DDL classification — the
-latter two turned out to need real design decisions (a `SpanBody` shape for
-version headers and `ALTER TYPE ADD VALUE` folding; DDL classification added
-to a per-row query hot path) rather than being plumbing over already-decided
-shapes. Reasoning: [`../status/history/2026-08-24.md`](../status/history/2026-08-24.md).
+**3.2.1.1 and 3.2.1.2 were earned the same way 3.2.1/3.2.2 were, in two
+rounds.** 3.2.1's own row first split off a combined 3.2.1.1 (`DumpMetadata`'s
+derived-view rework and `stream.rs`'s live-segment DDL classification bundled
+together) because both turned out to need real design decisions rather than
+being plumbing over already-decided shapes. Once inside that combined slice,
+the same mis-sizing pattern repeated: the `DumpMetadata` rework was
+self-contained and fully verifiable against the old implementation's output,
+while the `stream.rs` piece turned out to need a `map::Builder` capability
+(a non-consuming snapshot) that doesn't exist yet — a second, independent
+reason not to review it alongside the first. Its row above is the scope that
+landed as 3.2.1.1; the remainder became 3.2.1.2. Reasoning:
+[`../status/history/2026-08-24.md`](../status/history/2026-08-24.md).
 
 **3.6 is numbered out of order deliberately** — it was split out of 3.2 for
 the same sizing reason, but it is not a `<N>.<M>.<K>` follow-up to it: its

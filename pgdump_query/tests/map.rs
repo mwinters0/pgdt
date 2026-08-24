@@ -5,7 +5,9 @@
 use std::path::{Path, PathBuf};
 
 use pgdump_query::map::{SpanBody, TilingIssue};
-use pgdump_query::{LocalFileSource, ScanOptions, build_index, build_map, check_tiling};
+use pgdump_query::{
+    LocalFileSource, ScanOptions, build_index, build_map, check_tiling, dump_metadata_from_spans,
+};
 
 fn edge_cases() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/edge_cases.sql")
@@ -82,6 +84,23 @@ async fn build_index_spans_match_build_map_exactly() {
         let index = build_index(&source, &ScanOptions::default()).await.unwrap();
         let (spans, _size) = map_of(&path).await;
         assert_eq!(index.spans, spans, "{}", path.display());
+    }
+}
+
+/// Phase 3.2.1.1: `dump_metadata_from_spans` (span-driven) must recover
+/// exactly what `build_index`'s own `PreambleBuilder` pass (line-driven)
+/// does, across every fixture shape — multi-database `\connect` segmenting,
+/// version-header staging across that boundary, and `--binary-upgrade` enum
+/// label folding included. This is the equivalence this slice's cutover
+/// (removing the separate `PreambleBuilder` pass from `build_index`) rests
+/// on; see `docs/design/roadmap-phase3.2.1-span-wiring-notes.md`.
+#[tokio::test]
+async fn metadata_from_spans_matches_preamble_builder_exactly() {
+    for path in all_fixtures().into_iter().chain(std::iter::once(edge_cases())) {
+        let source = LocalFileSource::open(&path).unwrap();
+        let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+        let from_spans = dump_metadata_from_spans(&index.spans);
+        assert_eq!(from_spans, index.metadata.unwrap(), "{}", path.display());
     }
 }
 

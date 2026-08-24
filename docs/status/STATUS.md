@@ -44,11 +44,21 @@ Last updated: 2026-08-24.
       produced for real by `preamble_only`. Earned by 3.2's mis-sizing, not
       by a wrong contract. Notes:
       `docs/design/roadmap-phase3.2.1-span-wiring-notes.md`.
-- [ ] **3.2.1.1** `DumpMetadata` as a derived view over `spans`, plus
-      `stream.rs`'s live segment classifying the DDL between discovered
-      blocks so a query-built `DumpIndex` tiles the way `build_index`'s does.
-      Earned by 3.2.1's mis-sizing — see its notes doc's "What this slice
-      does not do".
+- [x] **3.2.1.1** `DumpMetadata` as a memoized derived view over `spans`
+      (`dump_metadata_from_spans`), replacing the separate `PreambleBuilder`
+      pass it used to run alongside the span builder — `SpanBody` grows
+      `Connect`, `VersionHeader` and `AlterTypeAddValue` to carry what
+      `Framing`/`Unparsed` couldn't. Verified against the old pass's output
+      across every fixture before `PreambleBuilder` was deleted. Earned by
+      3.2.1's mis-sizing, not by a wrong contract. Notes:
+      `docs/design/roadmap-phase3.2.1.1-metadata-derived-view-notes.md`.
+- [ ] **3.2.1.2** `stream.rs`'s live segment classifying the DDL between
+      discovered blocks so a query-built `DumpIndex` tiles the way
+      `build_index`'s does. Needs `map::Builder` to support a non-consuming
+      "spans so far" snapshot first (today `finish` consumes it and can only
+      run once, which conflicts with `Recorder`'s per-block persistence) — a
+      capability gap, not just a wiring gap. Earned by 3.2.1.1's mis-sizing —
+      see its notes doc's "What this slice does not do".
 - [ ] **3.2.2** Span text storage with its 64KB cap, and the file-level
       `Diagnostic` channel the runtime tiling check reports through. Earned
       the same way.
@@ -67,7 +77,7 @@ Last updated: 2026-08-24.
 
 ## Not started
 
-- **Phase 3, slices 3.2.1.1, 3.2.2-3.5** — specified, no code. See the
+- **Phase 3, slices 3.2.1.2, 3.2.2-3.5** — specified, no code. See the
   checklist above and `docs/design/roadmap-phase3-object-inventory.md`.
 - **Phases 4-8** — not designed. See `docs/design/roadmap.md`.
 
@@ -116,18 +126,18 @@ Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
 
-- **Slice 3.2.1 was split into 3.2.1 + 3.2.1.1 mid-implementation, unattended.**
-  Landed: `spans` as `DumpIndex`'s primary structure, `build_index`/`build_map`
-  sharing one `Builder`, the cache format bump, and `preamble_only` producing a
-  real `Unscanned` tail. Deferred to 3.2.1.1: `DumpMetadata` as a derived view
-  over spans, and `stream.rs`'s live segment classifying DDL so a query-built
-  `DumpIndex` tiles. The call was made because both deferred pieces needed new
-  design decisions (a `SpanBody` shape for version headers and
-  `--binary-upgrade` enum-label folding; DDL classification added to the
-  per-row query hot path) rather than being mechanical follow-through on
-  already-settled shapes — see
-  `docs/design/roadmap-phase3.2.1-span-wiring-notes.md` and
-  `docs/status/history/2026-08-24.md`. Worth a look: whether the deferred
-  design decisions are as straightforward as the notes doc frames them, or
-  whether they change the `SpanBody` vocabulary enough to be worth folding
-  into 3.3's TOC-enrichment work instead of standing alone as 3.2.1.1.
+- **Slices 3.2.1 and 3.2.1.1 were each split further mid-implementation,
+  unattended, both times along the same line: a self-contained mechanical
+  change bundled with `stream.rs`'s live-segment DDL classification.**
+  3.2.1.1 landed `DumpMetadata` as a derived view over spans standalone (not
+  folded into 3.3, resolving the previous round's open question — the
+  `SpanBody` additions it needed, `Connect`/`VersionHeader`/`AlterTypeAddValue`,
+  turned out narrow and didn't touch anything 3.3's TOC enrichment will add).
+  What's left, 3.2.1.2, is `stream.rs`'s DDL classification itself, now
+  blocked on a `map::Builder` capability gap (a non-consuming "spans so far"
+  snapshot — `finish` currently consumes the builder and can only run once,
+  but `Recorder` persists after every completed block) rather than only a
+  review-confidence one. Worth a look: whether that capability belongs on
+  `Builder` itself or suggests `Recorder`'s per-block persistence should
+  change instead — see `docs/design/roadmap-phase3.2.1.1-metadata-derived-view-notes.md`
+  and `docs/status/history/2026-08-24.md`.

@@ -3,12 +3,18 @@
 //! of a `pg_dump` plain-format file (`docs/design/roadmap-phase2-typed-columns.md`,
 //! "The preamble pass").
 //!
-//! [`PreambleBuilder`] is fed the [`crate::scan::Line`] events
-//! [`crate::index::build_index`] already receives from [`crate::scan::scan`]
-//! while it walks the file for `COPY` block structure — no second pass over
-//! the file is needed, since I1 (`docs/design/postgres-invariants.md`) means
-//! nothing this module cares about can appear after a database's first
-//! `COPY` block.
+//! **This module owns the DDL grammar, not a second pass over the file.**
+//! [`classify_statement`] and friends (`parse_create_table`, `parse_create_type`,
+//! …) are the shared parser [`crate::map::classify`] calls to turn a complete
+//! statement into a [`crate::map::SpanBody`] while it builds the full file
+//! map in its one pass over [`crate::scan::scan`]'s events. [`DumpMetadata`]
+//! is then [`dump_metadata_from_spans`] — a derived view over the resulting
+//! spans, computed once, never a second line-by-line scan
+//! (`docs/design/roadmap-phase3-object-inventory.md`, "The span is the
+//! container"). Before Phase 3.2.1.1 this module drove its own line-by-line
+//! state machine (`PreambleBuilder`) in parallel with the span builder; see
+//! `docs/design/roadmap-phase3.2.1-span-wiring-notes.md` for why the two
+//! were unified.
 //!
 //! **Store what the dump said, never what we concluded.** Declared types are
 //! kept as strings exactly as written (`character varying(16)`, not a parsed
@@ -33,7 +39,7 @@ pub struct DumpMetadata {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DatabaseMetadata {
     /// `None` for a plain `pg_dump` output, which has no `\connect` and so
-    /// names no database. Never guessed — see [`PreambleBuilder`]'s module
+    /// names no database. Never guessed — see [`dump_metadata_from_spans`]'s
     /// docs for how a `--create` dump's pre-`\connect` segment (which names
     /// no real database either, but for a different reason) is told apart
     /// from this case.
@@ -101,8 +107,8 @@ pub struct TypeDef {
 pub enum TypeKind {
     /// Fully determined by the DDL — labels in declaration order. A
     /// `--binary-upgrade` dump emits these via a separate `ALTER TYPE ADD
-    /// VALUE` per label (I6); [`PreambleBuilder`] folds them back in here so
-    /// both forms produce the same shape.
+    /// VALUE` per label (I6); [`fold_alter_type_add_value`] folds them back
+    /// in here so both forms produce the same shape.
     Enum { labels: Vec<String> },
     /// Reduces to a base type, resolved transitively by Phase 2.3 (a domain
     /// over a domain is legal). `NOT NULL` is discarded — Phase 2 makes
@@ -142,8 +148,9 @@ fn find_ci(haystack: &str, needle: &str) -> Option<usize> {
 }
 
 /// Case-insensitively strip a leading keyword, returning the (whitespace
-/// stripped) remainder.
-fn strip_kw<'a>(s: &'a str, kw: &str) -> Option<&'a str> {
+/// stripped) remainder. `pub(crate)` for [`crate::map::classify`]'s own
+/// `ALTER TYPE` check.
+pub(crate) fn strip_kw<'a>(s: &'a str, kw: &str) -> Option<&'a str> {
     if s.len() < kw.len() || !s.as_bytes()[..kw.len()].eq_ignore_ascii_case(kw.as_bytes()) {
         return None;
     }
@@ -437,33 +444,47 @@ fn parse_create_type(rest: &str) -> Option<TypeDef> {
     Some(TypeDef { name, kind: TypeKind::Base })
 }
 
-/// `ALTER TYPE <name> ADD VALUE '<label>' [BEFORE|AFTER '<other>'];` — the
-/// `--binary-upgrade` shape for enum labels (I6). `BEFORE`/`AFTER` is
-/// ignored: a `--binary-upgrade` dump only ever emits these in declaration
-/// order to recreate the type from scratch (confirmed:
+/// Parse the body of `ALTER TYPE <name> ADD VALUE '<label>' [BEFORE|AFTER
+/// '<other>'];` — the `--binary-upgrade` shape for enum labels (I6) — after
+/// `ALTER TYPE` has already been stripped. `BEFORE`/`AFTER` is ignored: a
+/// `--binary-upgrade` dump only ever emits these in declaration order to
+/// recreate the type from scratch (confirmed:
 /// `fixtures/*/types/binary-upgrade.sql`), so appending is equivalent to
-/// respecting them.
-fn apply_alter_type_add_value(types: &mut [TypeDef], rest: &str) {
-    let Some((name, consumed)) = parse_qualified_name(rest) else { return };
+/// respecting them. Used by [`crate::map::classify`] to recognize the
+/// statement as its own [`crate::map::SpanBody::AlterTypeAddValue`] span,
+/// since that module has no already-open `TypeDef` to fold into the way
+/// [`fold_alter_type_add_value`] does for [`dump_metadata_from_spans`].
+pub(crate) fn parse_alter_type_add_value_body(rest: &str) -> Option<(String, String)> {
+    let (name, consumed) = parse_qualified_name(rest)?;
     let after = &rest[consumed..];
-    let Some(idx) = find_ci(after, "ADD VALUE") else { return };
-    let Some(label) = parse_string_literal(after[idx + "ADD VALUE".len()..].trim_start()) else {
-        return;
-    };
+    let idx = find_ci(after, "ADD VALUE")?;
+    let label = parse_string_literal(after[idx + "ADD VALUE".len()..].trim_start())?;
+    Some((name, label))
+}
+
+/// Fold an already-parsed `ALTER TYPE <type_name> ADD VALUE '<label>'` (see
+/// [`parse_alter_type_add_value_body`]) into the matching `TypeDef` in
+/// `types`, if any — a no-op if the name isn't found or isn't an `Enum`.
+/// Used by [`dump_metadata_from_spans`], which encounters the label as its
+/// own [`crate::map::SpanBody::AlterTypeAddValue`] span, separate from the
+/// [`crate::map::SpanBody::TypeDef`] span it targets.
+fn fold_alter_type_add_value(types: &mut [TypeDef], type_name: &str, label: &str) {
     if let Some(TypeDef { kind: TypeKind::Enum { labels }, .. }) =
-        types.iter_mut().find(|t| t.name == name)
+        types.iter_mut().find(|t| t.name == type_name)
     {
-        labels.push(label);
+        labels.push(label.to_string());
     }
 }
 
-/// The three statement shapes [`classify_statement`] recognizes directly
-/// (out of this module's five triggers — `ALTER TYPE ADD VALUE` is the
-/// fourth, handled by [`apply_alter_type_add_value`] instead since it
-/// mutates an already-open [`TypeDef`] rather than introducing a new one).
-/// Shared by [`PreambleBuilder::dispatch`] and [`crate::map`]'s per-span
-/// classification, which has no open `TypeDef` to fold an `ADD VALUE` into
-/// (unlike `PreambleBuilder`, its span-level view treats one as [`crate::map::SpanBody::Unparsed`]).
+/// The three statement shapes [`classify_statement`] recognizes directly.
+/// `ALTER TYPE ADD VALUE` isn't among them: it doesn't introduce a new
+/// object, it mutates an already-declared one, which needs a different
+/// signature — [`parse_alter_type_add_value_body`] for
+/// [`crate::map::classify`] (no open `TypeDef` to fold into; gets its own
+/// [`crate::map::SpanBody::AlterTypeAddValue`] span instead) and
+/// [`fold_alter_type_add_value`] for [`dump_metadata_from_spans`] (which
+/// folds that span's label into the `TypeDef` it targets).
+#[derive(Debug)]
 pub(crate) enum StatementShape {
     Table { name: String, columns: Vec<(String, String)> },
     Type(TypeDef),
@@ -601,8 +622,7 @@ pub(crate) fn in_open_quote(buf: &str) -> bool {
 
 /// Append `line` to a statement buffer being accumulated line by line,
 /// joining with `\n` — but never a leading one before the buffer's first
-/// line. Shared by [`PreambleBuilder::feed_line`] and [`crate::map`]'s
-/// general statement scan.
+/// line. Used by [`crate::map`]'s general statement scan.
 pub(crate) fn push_stmt_line(buf: &mut String, line: &str) {
     if !buf.is_empty() {
         buf.push('\n');
@@ -610,194 +630,143 @@ pub(crate) fn push_stmt_line(buf: &mut String, line: &str) {
     buf.push_str(line);
 }
 
-struct PendingStmt {
-    buf: String,
+/// Mark a database's segment as read to completion — see
+/// [`DatabaseMetadata::preamble_complete`]'s docs for what that means and who
+/// relies on it. Shared by every place [`dump_metadata_from_spans`] closes
+/// out a segment: a `\connect` boundary, and end of input.
+fn finalize(mut db: DatabaseMetadata) -> DatabaseMetadata {
+    db.preamble_complete = true;
+    db
 }
 
-/// Incrementally builds a [`DumpMetadata`] from the [`crate::scan::Line`]
-/// events a scan yields for every non-header, non-dollar-quoted line outside
-/// a COPY block.
+/// Build a [`DumpMetadata`] by walking already-classified [`crate::map::Span`]s
+/// instead of raw lines — the derived view
+/// `docs/design/roadmap-phase3-object-inventory.md`'s "The span is the
+/// container" calls for: multi-database segmenting on
+/// [`crate::map::SpanBody::Connect`], version-header staging across that
+/// boundary on [`crate::map::SpanBody::VersionHeader`], and `--binary-upgrade`
+/// enum-label folding on [`crate::map::SpanBody::AlterTypeAddValue`] — see
+/// `docs/design/roadmap-phase3.2.1-span-wiring-notes.md` for why those three
+/// span kinds needed to exist before this could be written.
 ///
-/// **A `--create` dump's pre-`\connect` segment is dropped, not kept as a
-/// `name: None` database — but its version headers survive onto the
-/// database that follows.** Before the first `\connect`, `pg_dump --create`
-/// output is just `CREATE DATABASE ...;` — connected to whichever database
-/// initiated the dump, not the one being described — so it never carries a
-/// real table or type. `name: None` is reserved for the genuine case: a
-/// plain (non-`--create`) dump has no `\connect` at all, and its single
-/// implicit database *is* real. The two are told apart by whether a
-/// `\connect` is ever seen: only the segment open when the **first** one
-/// arrives is discarded; every later `\connect` pushes the segment it
-/// closes. The version headers are carried over specially because real
-/// `pg_dump --create` output (confirmed: the koji sample) prints them
-/// exactly once, ahead of the first `\connect`, never repeating them per
-/// database — so without this they would vanish for every `--create` dump.
-pub(crate) struct PreambleBuilder {
-    seen_connect: bool,
-    current: DatabaseMetadata,
-    databases: Vec<DatabaseMetadata>,
-    pending: Option<PendingStmt>,
-    /// A later database's version-header pair (I9), staged here because it
-    /// arrives — ahead of *that* database's own `\connect` — while `current`
-    /// is still the *previous* database's already-`preamble_complete`
-    /// segment. Consumed by the next `on_connect`. The first database needs
-    /// no staging: its headers land in `current` directly, since nothing has
-    /// set `preamble_complete` yet when they arrive.
-    pending_headers: (Option<String>, Option<String>),
-}
+/// `spans` must come from a scan that stops at one of two safe boundaries:
+/// end of file, or (per I1) the start of the current database's first `COPY`
+/// block — [`crate::map::build_map`] and `crate::index::scan_preamble`'s own
+/// span builder both only ever produce spans this way. A span list with an
+/// `Unscanned` tail cut off anywhere else (e.g. `crate::stream::table_stream`'s
+/// live segment) would make the trailing database's `preamble_complete` a lie.
+pub fn dump_metadata_from_spans(spans: &[crate::map::Span]) -> DumpMetadata {
+    use crate::map::SpanBody;
 
-impl PreambleBuilder {
-    pub(crate) fn new() -> Self {
-        Self {
-            seen_connect: false,
-            current: DatabaseMetadata::empty(None),
-            databases: Vec::new(),
-            pending: None,
-            pending_headers: (None, None),
-        }
-    }
+    let mut seen_connect = false;
+    let mut current = DatabaseMetadata::empty(None);
+    let mut databases = Vec::new();
+    let mut pending_headers: (Option<String>, Option<String>) = (None, None);
 
-    /// A `COPY` block just started: per I1, nothing this module cares about
-    /// can follow for the current database until (if ever) the next
-    /// `\connect`.
-    pub(crate) fn on_copy_start(&mut self) {
-        self.pending = None;
-        self.current.preamble_complete = true;
-    }
-
-    fn on_connect(&mut self, name: String) {
-        self.pending = None;
-        if self.seen_connect {
-            let mut next = DatabaseMetadata::empty(Some(name));
-            next.server_version = self.pending_headers.0.take();
-            next.pg_dump_version = self.pending_headers.1.take();
-            let finished = std::mem::replace(&mut self.current, next);
-            self.databases.push(Self::finalize(finished));
-        } else {
-            // Discard the pre-connect segment itself (see the struct docs)
-            // but carry its version headers forward: confirmed against the
-            // real koji sample (`pg_dump --create`, 16.14) that `RestoreArchive()`
-            // prints them exactly once, ahead of the first `\connect`, not
-            // per database — so they'd otherwise vanish entirely for every
-            // `--create` dump instead of merely being attributed to the
-            // dump's first real database, which is where a caller actually
-            // looks for them.
-            let mut next = DatabaseMetadata::empty(Some(name));
-            next.server_version = self.current.server_version.take();
-            next.pg_dump_version = self.current.pg_dump_version.take();
-            self.current = next;
-        }
-        self.seen_connect = true;
-    }
-
-    fn finalize(mut db: DatabaseMetadata) -> DatabaseMetadata {
-        db.preamble_complete = true;
-        db
-    }
-
-    /// Feed one outside-block line (already known not to be a COPY header
-    /// and not touched by dollar-quote tracking).
-    pub(crate) fn feed_line(&mut self, raw: &[u8]) {
-        let line = String::from_utf8_lossy(raw);
-
-        if let Some(name) = parse_connect(&line) {
-            self.on_connect(name);
-            return;
-        }
-
-        // A statement in progress absorbs this line regardless of
-        // `preamble_complete` — that flag can only be set between
-        // statements (`on_copy_start`/`on_connect` both clear `pending`
-        // first), so a line reaching here while `pending.is_some()` is
-        // always mid-statement.
-        if let Some(pending) = &mut self.pending {
-            push_stmt_line(&mut pending.buf, &line);
-            if statement_complete(&pending.buf) {
-                let stmt = self.pending.take().unwrap().buf;
-                self.dispatch(&stmt);
+    for span in spans {
+        match &span.body {
+            SpanBody::Connect { database } => {
+                if seen_connect {
+                    let mut next = DatabaseMetadata::empty(Some(database.clone()));
+                    next.server_version = pending_headers.0.take();
+                    next.pg_dump_version = pending_headers.1.take();
+                    let finished = std::mem::replace(&mut current, next);
+                    databases.push(finalize(finished));
+                } else {
+                    let mut next = DatabaseMetadata::empty(Some(database.clone()));
+                    next.server_version = current.server_version.take();
+                    next.pg_dump_version = current.pg_dump_version.take();
+                    current = next;
+                }
+                seen_connect = true;
             }
-            return;
-        }
-
-        if self.current.preamble_complete {
-            // Still worth checking for a *later* database's own version
-            // headers (I9) — they precede that database's `\connect`, so
-            // they arrive here, while `current` is the previous database's
-            // finished segment, not the new one they belong to.
-            if let Some(rest) = line.strip_prefix("-- Dumped from database version ") {
-                self.pending_headers.0 = Some(rest.trim().to_string());
-            } else if let Some(rest) = line.strip_prefix("-- Dumped by pg_dump version ") {
-                self.pending_headers.1 = Some(rest.trim().to_string());
-            }
-            return;
-        }
-
-        if let Some(rest) = line.strip_prefix("-- Dumped from database version ") {
-            self.current.server_version = Some(rest.trim().to_string());
-            return;
-        }
-        if let Some(rest) = line.strip_prefix("-- Dumped by pg_dump version ") {
-            self.current.pg_dump_version = Some(rest.trim().to_string());
-            return;
-        }
-
-        let trimmed = line.trim_start();
-        let triggers =
-            ["CREATE TABLE ", "CREATE TYPE ", "CREATE DOMAIN ", "CREATE EXTENSION ", "ALTER TYPE "];
-        if triggers.iter().any(|kw| {
-            trimmed.len() >= kw.len()
-                && trimmed.as_bytes()[..kw.len()].eq_ignore_ascii_case(kw.as_bytes())
-        }) {
-            let buf = trimmed.to_string();
-            if statement_complete(&buf) {
-                self.dispatch(&buf);
-            } else {
-                self.pending = Some(PendingStmt { buf });
-            }
-        }
-    }
-
-    fn dispatch(&mut self, stmt: &str) {
-        match classify_statement(stmt) {
-            Some(StatementShape::Table { name, columns }) => {
-                self.current.tables.insert(name, columns);
-            }
-            Some(StatementShape::Type(def)) => self.current.types.push(def),
-            Some(StatementShape::Extension(ext)) => self.current.extensions.push(ext),
-            None => {
-                if let Some(rest) = strip_kw(stmt.trim_start(), "ALTER TYPE") {
-                    apply_alter_type_add_value(&mut self.current.types, rest);
+            SpanBody::VersionHeader { server_version, pg_dump_version } => {
+                if current.preamble_complete {
+                    if server_version.is_some() {
+                        pending_headers.0 = server_version.clone();
+                    }
+                    if pg_dump_version.is_some() {
+                        pending_headers.1 = pg_dump_version.clone();
+                    }
+                } else {
+                    if server_version.is_some() {
+                        current.server_version = server_version.clone();
+                    }
+                    if pg_dump_version.is_some() {
+                        current.pg_dump_version = pg_dump_version.clone();
+                    }
                 }
             }
+            SpanBody::Data(_) => {
+                current.preamble_complete = true;
+            }
+            // I1 guarantees none of these four can genuinely follow a `Data`
+            // span for the current database before its next `Connect` — the
+            // guard is defensive, matching what a line-triggered scan would
+            // have done, rather than assuming the invariant holds.
+            SpanBody::Table { name, columns } if !current.preamble_complete => {
+                current.tables.insert(name.clone(), columns.clone());
+            }
+            SpanBody::TypeDef { name, kind } if !current.preamble_complete => {
+                current.types.push(TypeDef { name: name.clone(), kind: kind.clone() });
+            }
+            SpanBody::Extension { name, schema } if !current.preamble_complete => {
+                current.extensions.push(Extension { name: name.clone(), schema: schema.clone() });
+            }
+            SpanBody::AlterTypeAddValue { type_name, label } if !current.preamble_complete => {
+                fold_alter_type_add_value(&mut current.types, type_name, label);
+            }
+            SpanBody::Table { .. }
+            | SpanBody::TypeDef { .. }
+            | SpanBody::Extension { .. }
+            | SpanBody::AlterTypeAddValue { .. }
+            | SpanBody::Framing
+            | SpanBody::Unparsed
+            | SpanBody::Unscanned => {}
         }
     }
-
-    /// Finish the scan: whatever database is still open (the sole implicit
-    /// one for a non-`--create` dump, or the last `\connect`ed one) is
-    /// always real, so it is always pushed.
-    pub(crate) fn finish(mut self) -> DumpMetadata {
-        self.databases.push(Self::finalize(self.current));
-        DumpMetadata { databases: self.databases }
-    }
+    databases.push(finalize(current));
+    DumpMetadata { databases }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::map::SpanBody;
 
-    fn one_stmt(lines: &[&str]) -> DatabaseMetadata {
-        let mut b = PreambleBuilder::new();
-        for line in lines {
-            b.feed_line(line.as_bytes());
+    /// Feed `lines` (joined with `\n`, the same way `crate::map::Builder`
+    /// accumulates a statement) to [`classify_statement`] and unwrap the
+    /// result — these tests exercise the DDL grammar directly rather than
+    /// through a database-segmenting builder, since nothing about that
+    /// grammar depends on one.
+    fn parse(lines: &[&str]) -> StatementShape {
+        classify_statement(&lines.join("\n")).unwrap()
+    }
+
+    fn parse_table(lines: &[&str]) -> (String, Vec<(String, String)>) {
+        match parse(lines) {
+            StatementShape::Table { name, columns } => (name, columns),
+            other => panic!("expected a Table shape, got {other:?}"),
         }
-        let mut meta = b.finish();
-        assert_eq!(meta.databases.len(), 1);
-        meta.databases.pop().unwrap()
+    }
+
+    fn parse_type(lines: &[&str]) -> TypeDef {
+        match parse(lines) {
+            StatementShape::Type(def) => def,
+            other => panic!("expected a Type shape, got {other:?}"),
+        }
+    }
+
+    fn parse_extension(lines: &[&str]) -> Extension {
+        match parse(lines) {
+            StatementShape::Extension(ext) => ext,
+            other => panic!("expected an Extension shape, got {other:?}"),
+        }
     }
 
     #[test]
     fn parses_a_simple_table() {
-        let db = one_stmt(&[
+        let (_, columns) = parse_table(&[
             "CREATE TABLE public.t_int (",
             "    id integer NOT NULL,",
             "    v_smallint smallint,",
@@ -805,8 +774,8 @@ mod tests {
             ");",
         ]);
         assert_eq!(
-            db.tables.get("public.t_int").unwrap(),
-            &vec![
+            columns,
+            vec![
                 ("id".to_string(), "integer".to_string()),
                 ("v_smallint".to_string(), "smallint".to_string()),
                 ("v_bigint".to_string(), "bigint".to_string()),
@@ -816,7 +785,7 @@ mod tests {
 
     #[test]
     fn captures_multi_word_and_parameterized_types() {
-        let db = one_stmt(&[
+        let (_, cols) = parse_table(&[
             "CREATE TABLE public.t (",
             "    a character varying(16) NOT NULL,",
             "    b numeric(38,10),",
@@ -824,7 +793,6 @@ mod tests {
             "    d public.mood",
             ");",
         ]);
-        let cols = db.tables.get("public.t").unwrap();
         assert_eq!(cols[0], ("a".to_string(), "character varying(16)".to_string()));
         assert_eq!(cols[1], ("b".to_string(), "numeric(38,10)".to_string()));
         assert_eq!(cols[2], ("c".to_string(), "timestamp with time zone".to_string()));
@@ -838,7 +806,7 @@ mod tests {
         // typed column, quoting its mangled name and annotating the type
         // with a C-style comment neither of which is ordinary SQL syntax
         // elsewhere in this grammar.
-        let db = one_stmt(&[
+        let (_, cols) = parse_table(&[
             "CREATE TABLE public.dropped_column (",
             "    id integer NOT NULL,",
             "    keep_me text,",
@@ -846,20 +814,19 @@ mod tests {
             "    also_keep boolean",
             ");",
         ]);
-        let cols = db.tables.get("public.dropped_column").unwrap();
         assert_eq!(cols[2], ("........pg.dropped.3........".to_string(), "INTEGER".to_string()));
     }
 
     #[test]
     fn table_with_no_column_list_registers_with_zero_columns() {
         // I5: a typed table (`CREATE TABLE x OF t`) has no column list.
-        let db = one_stmt(&["CREATE TABLE public.typed OF public.point2d;"]);
-        assert_eq!(db.tables.get("public.typed").unwrap(), &Vec::new());
+        let (_, cols) = parse_table(&["CREATE TABLE public.typed OF public.point2d;"]);
+        assert_eq!(cols, Vec::new());
     }
 
     #[test]
     fn parses_an_enum() {
-        let db = one_stmt(&[
+        let def = parse_type(&[
             "CREATE TYPE public.mood AS ENUM (",
             "    'sad',",
             "    'has space',",
@@ -867,10 +834,9 @@ mod tests {
             "    'has''quote'",
             ");",
         ]);
-        assert_eq!(db.types.len(), 1);
-        assert_eq!(db.types[0].name, "public.mood");
+        assert_eq!(def.name, "public.mood");
         assert_eq!(
-            db.types[0].kind,
+            def.kind,
             TypeKind::Enum {
                 labels: vec![
                     "sad".to_string(),
@@ -882,40 +848,43 @@ mod tests {
         );
     }
 
+    /// The `--binary-upgrade` fold (I6) is [`dump_metadata_from_spans`]'s job
+    /// now, not `classify_statement`'s — it needs an already-open `TypeDef`
+    /// to fold the label into, which a span-level view of one statement at a
+    /// time doesn't have. Exercised here at the level it now lives at: a
+    /// `TypeDef` span for the empty enum, an unrelated `Unparsed` span for
+    /// the `binary_upgrade_set_next_pg_enum_oid` noise every real dump
+    /// interleaves (I6), and two `AlterTypeAddValue` spans.
     #[test]
     fn binary_upgrade_enum_labels_arrive_via_alter_type() {
-        let db = one_stmt(&[
-            "CREATE TYPE public.mood AS ENUM (",
-            ");",
-            "SELECT pg_catalog.binary_upgrade_set_next_pg_enum_oid('16438'::pg_catalog.oid);",
-            "ALTER TYPE public.mood ADD VALUE 'sad';",
-            "SELECT pg_catalog.binary_upgrade_set_next_pg_enum_oid('16440'::pg_catalog.oid);",
-            "ALTER TYPE public.mood ADD VALUE 'has''quote';",
-        ]);
+        let spans = vec![
+            span(SpanBody::TypeDef {
+                name: "public.mood".to_string(),
+                kind: TypeKind::Enum { labels: Vec::new() },
+            }),
+            span(SpanBody::Unparsed),
+            span(SpanBody::AlterTypeAddValue {
+                type_name: "public.mood".to_string(),
+                label: "sad".to_string(),
+            }),
+            span(SpanBody::Unparsed),
+            span(SpanBody::AlterTypeAddValue {
+                type_name: "public.mood".to_string(),
+                label: "has'quote".to_string(),
+            }),
+        ];
+        let meta = dump_metadata_from_spans(&spans);
         assert_eq!(
-            db.types[0].kind,
+            meta.databases[0].types[0].kind,
             TypeKind::Enum { labels: vec!["sad".to_string(), "has'quote".to_string()] }
         );
     }
 
     #[test]
-    fn binary_upgrade_oid_noise_between_comment_and_statement_is_skipped() {
-        // I6: every object's real statement is preceded by
-        // `binary_upgrade_set_next_*_oid` noise, not just enums'.
-        let db = one_stmt(&[
-            "-- For binary upgrade, must preserve pg_type oid",
-            "SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid('16450'::pg_catalog.oid);",
-            "",
-            "CREATE DOMAIN public.base_domain AS integer;",
-        ]);
-        assert_eq!(db.types[0].kind, TypeKind::Domain { base_type: "integer".to_string() });
-    }
-
-    #[test]
     fn parses_a_domain_over_a_domain() {
-        let db = one_stmt(&["CREATE DOMAIN public.derived AS public.base_domain NOT NULL;"]);
+        let def = parse_type(&["CREATE DOMAIN public.derived AS public.base_domain NOT NULL;"]);
         assert_eq!(
-            db.types[0],
+            def,
             TypeDef {
                 name: "public.derived".to_string(),
                 kind: TypeKind::Domain { base_type: "public.base_domain".to_string() },
@@ -925,9 +894,10 @@ mod tests {
 
     #[test]
     fn parses_a_composite_type() {
-        let db = one_stmt(&["CREATE TYPE public.point2d AS (", "\tx integer,", "\ty text", ");"]);
+        let def =
+            parse_type(&["CREATE TYPE public.point2d AS (", "\tx integer,", "\ty text", ");"]);
         assert_eq!(
-            db.types[0].kind,
+            def.kind,
             TypeKind::Composite {
                 fields: vec![
                     ("x".to_string(), "integer".to_string()),
@@ -939,28 +909,28 @@ mod tests {
 
     #[test]
     fn parses_a_shell_type() {
-        let db = one_stmt(&["CREATE TYPE public.shelly;"]);
-        assert_eq!(db.types[0].kind, TypeKind::Shell);
+        let def = parse_type(&["CREATE TYPE public.shelly;"]);
+        assert_eq!(def.kind, TypeKind::Shell);
     }
 
     #[test]
     fn parses_a_base_type() {
-        let db = one_stmt(&[
+        let def = parse_type(&[
             "CREATE TYPE public.mytype (",
             "    INPUT = mytype_in,",
             "    OUTPUT = mytype_out",
             ");",
         ]);
-        assert_eq!(db.types[0].kind, TypeKind::Base);
+        assert_eq!(def.kind, TypeKind::Base);
     }
 
     #[test]
     fn parses_a_range_type() {
-        let db = one_stmt(&[
+        let def = parse_type(&[
             "CREATE TYPE public.myrange AS RANGE (subtype = int4, subtype_diff = int4mi);",
         ]);
         assert_eq!(
-            db.types[0].kind,
+            def.kind,
             TypeKind::Range { subtype: Some("int4".to_string()), multirange_type_name: None }
         );
     }
@@ -971,14 +941,14 @@ mod tests {
     /// declares (I10).
     #[test]
     fn parses_a_range_type_with_a_multirange_companion() {
-        let db = one_stmt(&[
+        let def = parse_type(&[
             "CREATE TYPE public.myrange AS RANGE (",
             "    subtype = double precision,",
             "    multirange_type_name = public.myrange_multi",
             ");",
         ]);
         assert_eq!(
-            db.types[0].kind,
+            def.kind,
             TypeKind::Range {
                 subtype: Some("double precision".to_string()),
                 multirange_type_name: Some("public.myrange_multi".to_string()),
@@ -988,48 +958,71 @@ mod tests {
 
     #[test]
     fn parses_an_extension() {
-        let db = one_stmt(&["CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;"]);
+        let ext = parse_extension(&["CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;"]);
         assert_eq!(
-            db.extensions[0],
+            ext,
             Extension { name: "pgcrypto".to_string(), schema: Some("public".to_string()) }
         );
     }
 
     #[test]
     fn extension_without_a_schema_clause() {
-        let db = one_stmt(&["CREATE EXTENSION IF NOT EXISTS pgcrypto;"]);
-        assert_eq!(db.extensions[0], Extension { name: "pgcrypto".to_string(), schema: None });
+        let ext = parse_extension(&["CREATE EXTENSION IF NOT EXISTS pgcrypto;"]);
+        assert_eq!(ext, Extension { name: "pgcrypto".to_string(), schema: None });
     }
 
-    #[test]
-    fn version_headers_are_captured() {
-        let db = one_stmt(&[
-            "-- Dumped from database version 16.15",
-            "-- Dumped by pg_dump version 16.15",
-        ]);
-        assert_eq!(db.server_version.as_deref(), Some("16.15"));
-        assert_eq!(db.pg_dump_version.as_deref(), Some("16.15"));
+    /// A span with placeholder offsets — `dump_metadata_from_spans` never
+    /// reads `start`/`end`/`database`, only `body`.
+    fn span(body: SpanBody) -> crate::map::Span {
+        crate::map::Span { start: 0, end: 0, database: None, body }
+    }
+
+    fn dummy_data_span() -> crate::map::Span {
+        span(SpanBody::Data(crate::index::CopyBlock {
+            header: crate::copy::CopyHeader {
+                schema: None,
+                table: "placeholder".to_string(),
+                columns: Vec::new(),
+            },
+            database: None,
+            header_offset: 0,
+            data_offset: 0,
+            terminator_offset: 0,
+            end_offset: 0,
+            row_count: 0,
+            sparse_index: None,
+            column_stats: None,
+        }))
     }
 
     #[test]
     fn plain_dump_has_no_connect_and_names_no_database() {
-        let db = one_stmt(&["CREATE TABLE public.t (id integer);"]);
-        assert_eq!(db.name, None);
-        assert!(db.preamble_complete);
+        let meta = dump_metadata_from_spans(&[span(SpanBody::Table {
+            name: "public.t".to_string(),
+            columns: vec![("id".to_string(), "integer".to_string())],
+        })]);
+        assert_eq!(meta.databases.len(), 1);
+        assert_eq!(meta.databases[0].name, None);
+        assert!(meta.databases[0].preamble_complete);
     }
 
     #[test]
     fn connect_starts_a_new_named_database_and_drops_the_preconnect_segment() {
-        let mut b = PreambleBuilder::new();
-        for line in [
-            "-- Dumped from database version 16.14",
-            "CREATE DATABASE koji WITH TEMPLATE = template0;",
-        ] {
-            b.feed_line(line.as_bytes());
-        }
-        b.feed_line(b"\\connect koji");
-        b.feed_line(b"CREATE TABLE public.t (id integer);");
-        let meta = b.finish();
+        // `CREATE DATABASE koji ...;` isn't one of `classify`'s three shapes
+        // (I5: it never carries a real table or type), so it's `Unparsed`
+        // like any other statement this module doesn't model.
+        let meta = dump_metadata_from_spans(&[
+            span(SpanBody::VersionHeader {
+                server_version: Some("16.14".to_string()),
+                pg_dump_version: None,
+            }),
+            span(SpanBody::Unparsed),
+            span(SpanBody::Connect { database: "koji".to_string() }),
+            span(SpanBody::Table {
+                name: "public.t".to_string(),
+                columns: vec![("id".to_string(), "integer".to_string())],
+            }),
+        ]);
 
         assert_eq!(meta.databases.len(), 1, "the pre-connect segment must be dropped");
         assert_eq!(meta.databases[0].name.as_deref(), Some("koji"));
@@ -1046,16 +1039,16 @@ mod tests {
     fn a_copy_block_completes_the_current_database_and_a_later_connect_starts_a_new_one() {
         // Realistic shape: a `\connect` always precedes a database's first
         // real table (you can't create one before connecting to it), so the
-        // first database here starts via `\connect`, same as the second.
-        let mut b = PreambleBuilder::new();
-        b.feed_line(b"\\connect one");
-        b.feed_line(b"CREATE TABLE public.a (id integer);");
-        b.on_copy_start();
-        // Per I1, nothing more should be captured for this database now.
-        b.feed_line(b"CREATE TABLE public.ignored (id integer);");
-        b.feed_line(b"\\connect two");
-        b.feed_line(b"CREATE TABLE public.b (id integer);");
-        let meta = b.finish();
+        // first database here starts via `Connect`, same as the second.
+        let meta = dump_metadata_from_spans(&[
+            span(SpanBody::Connect { database: "one".to_string() }),
+            span(SpanBody::Table { name: "public.a".to_string(), columns: Vec::new() }),
+            dummy_data_span(),
+            // Per I1, nothing more should be captured for this database now.
+            span(SpanBody::Table { name: "public.ignored".to_string(), columns: Vec::new() }),
+            span(SpanBody::Connect { database: "two".to_string() }),
+            span(SpanBody::Table { name: "public.b".to_string(), columns: Vec::new() }),
+        ]);
 
         assert_eq!(meta.databases.len(), 2);
         assert_eq!(meta.databases[0].name.as_deref(), Some("one"));
@@ -1074,17 +1067,21 @@ mod tests {
     /// first database's already-`preamble_complete` segment.
     #[test]
     fn a_later_connect_segment_keeps_its_own_version_headers_too() {
-        let mut b = PreambleBuilder::new();
-        b.feed_line(b"-- Dumped from database version 16.14");
-        b.feed_line(b"-- Dumped by pg_dump version 16.14");
-        b.feed_line(b"\\connect one");
-        b.feed_line(b"CREATE TABLE public.a (id integer);");
-        b.on_copy_start();
-        b.feed_line(b"-- Dumped from database version 16.15");
-        b.feed_line(b"-- Dumped by pg_dump version 16.15");
-        b.feed_line(b"\\connect two");
-        b.feed_line(b"CREATE TABLE public.b (id integer);");
-        let meta = b.finish();
+        let meta = dump_metadata_from_spans(&[
+            span(SpanBody::VersionHeader {
+                server_version: Some("16.14".to_string()),
+                pg_dump_version: Some("16.14".to_string()),
+            }),
+            span(SpanBody::Connect { database: "one".to_string() }),
+            span(SpanBody::Table { name: "public.a".to_string(), columns: Vec::new() }),
+            dummy_data_span(),
+            span(SpanBody::VersionHeader {
+                server_version: Some("16.15".to_string()),
+                pg_dump_version: Some("16.15".to_string()),
+            }),
+            span(SpanBody::Connect { database: "two".to_string() }),
+            span(SpanBody::Table { name: "public.b".to_string(), columns: Vec::new() }),
+        ]);
 
         assert_eq!(meta.databases.len(), 2);
         assert_eq!(meta.databases[0].server_version.as_deref(), Some("16.14"));
@@ -1095,13 +1092,15 @@ mod tests {
 
     #[test]
     fn data_only_dump_has_no_tables_but_still_reports_versions() {
-        let db = one_stmt(&[
-            "-- Dumped from database version 16.15",
-            "-- Dumped by pg_dump version 16.15",
-        ]);
+        let meta = dump_metadata_from_spans(&[span(SpanBody::VersionHeader {
+            server_version: Some("16.15".to_string()),
+            pg_dump_version: Some("16.15".to_string()),
+        })]);
+        let db = &meta.databases[0];
         assert!(db.tables.is_empty());
         assert!(db.types.is_empty());
         assert_eq!(db.server_version.as_deref(), Some("16.15"));
+        assert!(db.preamble_complete);
     }
 
     /// The gap `docs/status/history/2026-08-23.md` flagged: an apostrophe in

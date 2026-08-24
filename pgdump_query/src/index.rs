@@ -12,7 +12,6 @@ use crate::cache::CacheMode;
 use crate::copy::CopyHeader;
 use crate::io::ByteRangeSource;
 use crate::map::{Span, SpanBody};
-use crate::preamble::PreambleBuilder;
 use crate::scan::{Event, ScanOptions, scan};
 
 /// A block's sparse row index: the byte offset of every `interval`-th data
@@ -88,13 +87,11 @@ pub struct DumpIndex {
     /// Dump-level preamble metadata — see [`DumpMetadata`]. Always `None`
     /// for a `DumpIndex` a caller built by hand rather than through
     /// [`build_index`] (Phase 1's default), but every `build_index` scan now
-    /// populates it.
-    ///
-    /// Not yet a derived view over `spans` (`docs/design/roadmap-phase3-object-inventory.md`'s
-    /// "The span is the container" describes the eventual shape) — this is
-    /// still populated by its own [`PreambleBuilder`] pass run alongside the
-    /// span builder, per `docs/design/roadmap-phase3.2.1-span-wiring-notes.md`'s
-    /// "What this slice does not do".
+    /// populates it. A derived view over `spans`
+    /// (`crate::preamble::dump_metadata_from_spans`), computed once when the
+    /// scan that produced `spans` finishes rather than stored twice — see
+    /// `docs/design/roadmap-phase3-object-inventory.md`, "The span is the
+    /// container".
     pub metadata: Option<DumpMetadata>,
 }
 
@@ -121,12 +118,10 @@ impl DumpIndex {
     }
 }
 
-/// Scan `source` end to end and build its full file map, plus its dump-level
-/// metadata (`docs/design/roadmap-phase2-typed-columns.md`, "The preamble
-/// pass") — one pass serves both: [`crate::map::Builder`] and
-/// [`PreambleBuilder`] are fed the same [`Event`] stream, since both only
-/// ever look at the outside-block lines this scan already walks.
-/// [`DumpIndex::blocks`] is then a filter over the resulting spans, not a
+/// Scan `source` end to end and build its full file map — [`crate::map::Builder`]
+/// is fed the same [`Event`] stream as `CopyBlock` discovery, so this is one
+/// pass, not two. `DumpIndex::metadata` is then [`crate::preamble::dump_metadata_from_spans`]
+/// over the result, and [`DumpIndex::blocks`] a filter over it — neither is a
 /// second scan (`docs/design/roadmap-phase3-object-inventory.md`, "The map is
 /// the structure, not a description of it").
 pub async fn build_index<S: ByteRangeSource>(
@@ -134,31 +129,22 @@ pub async fn build_index<S: ByteRangeSource>(
     options: &ScanOptions,
 ) -> Result<DumpIndex> {
     let mut spans = crate::map::Builder::new();
-    let mut preamble = PreambleBuilder::new();
 
     scan(source, options, |event| {
         match event {
-            Event::CopyStart(start) => {
-                preamble.on_copy_start();
-                spans.on_copy_start(start);
-            }
+            Event::CopyStart(start) => spans.on_copy_start(start),
             Event::Row(_) => {}
             Event::CopyEnd(end) => spans.on_copy_end(end),
-            Event::Line(line) => {
-                preamble.feed_line(line.raw);
-                spans.feed_line(line.offset, line.raw);
-            }
+            Event::Line(line) => spans.feed_line(line.offset, line.raw),
         }
         ControlFlow::Continue(())
     })
     .await?;
 
     let size = source.size().await?;
-    Ok(DumpIndex {
-        spans: spans.finish(size),
-        scanned_through: size,
-        metadata: Some(preamble.finish()),
-    })
+    let spans = spans.finish(size);
+    let metadata = Some(crate::preamble::dump_metadata_from_spans(&spans));
+    Ok(DumpIndex { spans, scanned_through: size, metadata })
 }
 
 /// Scan only far enough to recover the first database's preamble — up to
@@ -187,7 +173,6 @@ pub(crate) async fn scan_preamble<S: ByteRangeSource>(
     source: &S,
     options: &ScanOptions,
 ) -> Result<(DumpMetadata, Vec<Span>, u64)> {
-    let mut preamble = PreambleBuilder::new();
     let mut spans = crate::map::Builder::new();
     let mut end = source.size().await?;
     scan(source, options, |event| match event {
@@ -197,19 +182,19 @@ pub(crate) async fn scan_preamble<S: ByteRangeSource>(
             // rather than walking the block), and whatever TOC comment
             // precedes the header is exactly what should flush as its own
             // trailing span instead — see `finish` below.
-            preamble.on_copy_start();
             end = start.header_offset;
             ControlFlow::Break(())
         }
         Event::Line(line) => {
-            preamble.feed_line(line.raw);
             spans.feed_line(line.offset, line.raw);
             ControlFlow::Continue(())
         }
         _ => ControlFlow::Continue(()),
     })
     .await?;
-    Ok((preamble.finish(), spans.finish(end), end))
+    let spans = spans.finish(end);
+    let metadata = crate::preamble::dump_metadata_from_spans(&spans);
+    Ok((metadata, spans, end))
 }
 
 /// Answer from the preamble alone (`docs/design/roadmap-phase2-typed-columns.md`,

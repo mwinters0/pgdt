@@ -70,28 +70,33 @@
 //!   see `docs/design/roadmap-phase3.2-span-model-notes.md` for the
 //!   verification this rests on.
 //! - **Wiring into `DumpIndex`/`crate::cache`/`crate::stream` — landed in
-//!   Phase 3.2.1, with one gap left for a follow-up.** [`Builder`] (this
-//!   module's boundary/classification state machine) is now driven directly
-//!   by [`crate::index::build_index`] and [`crate::index::scan_preamble`],
-//!   fed the same [`crate::scan::Event`] stream those functions already walk
-//!   — [`build_map`] itself is now a thin wrapper over the same [`Builder`],
-//!   kept for callers (and this module's own tests) that just want a span
-//!   list. `DumpIndex::spans` is the primary, persisted structure;
-//!   `DumpIndex::blocks()`/`blocks_for` are filters over it, and
-//!   `crate::stream::table_stream`'s `Recorder` appends each live-discovered
-//!   block as its own [`SpanBody::Data`]. [`SpanBody::Unscanned`] is produced
-//!   for real by [`crate::index::preamble_only`], the one genuinely partial
-//!   scan today (`build_index` always reaches EOF).
+//!   Phase 3.2.1/3.2.1.1, with one gap left for a follow-up.** [`Builder`]
+//!   (this module's boundary/classification state machine) is now driven
+//!   directly by [`crate::index::build_index`] and
+//!   [`crate::index::scan_preamble`], fed the same [`crate::scan::Event`]
+//!   stream those functions already walk — [`build_map`] itself is now a
+//!   thin wrapper over the same [`Builder`], kept for callers (and this
+//!   module's own tests) that just want a span list. `DumpIndex::spans` is
+//!   the primary, persisted structure; `DumpIndex::blocks()`/`blocks_for`
+//!   are filters over it, and `crate::stream::table_stream`'s `Recorder`
+//!   appends each live-discovered block as its own [`SpanBody::Data`].
+//!   [`SpanBody::Unscanned`] is produced for real by
+//!   [`crate::index::preamble_only`], the one genuinely partial scan today
+//!   (`build_index` always reaches EOF). `DumpMetadata` is
+//!   [`crate::preamble::dump_metadata_from_spans`] — a derived view over
+//!   `spans`, computed once, the way the design's "The span is the
+//!   container" section calls for; it's what [`SpanBody::Connect`],
+//!   [`SpanBody::VersionHeader`] and [`SpanBody::AlterTypeAddValue`] exist
+//!   for, rather than folding into generic [`SpanBody::Framing`]/[`SpanBody::Unparsed`].
 //!
 //!   **Left for a follow-up** (`docs/design/roadmap-phase3.2.1-span-wiring-notes.md`):
-//!   `DumpMetadata` is still populated by its own [`crate::preamble::PreambleBuilder`]
-//!   pass run alongside [`Builder`], not yet a derived view over `spans` the
-//!   way the design's "The span is the container" section calls for; and
 //!   `crate::stream::table_stream`'s live segment records `Data` spans
 //!   without classifying the DDL between them, so an index built by a query
 //!   (as opposed to `build_index`'s full scan) does not tile the file the way
-//!   `check_tiling` expects — an accepted gap since nothing yet reads
-//!   non-`Data` spans back out of a query-built `DumpIndex`.
+//!   `check_tiling` expects, and its `metadata` still comes from
+//!   `scan_preamble`'s own spans rather than a merge into the query-built
+//!   index — an accepted gap since nothing yet reads non-`Data` spans back
+//!   out of a query-built `DumpIndex`.
 //! - **Span text storage** (`docs/design/roadmap-phase3-object-inventory.md`,
 //!   "Span text comes from the file, not from the parser"), the cache's
 //!   64KB-per-span cap, and the file-level `Diagnostic` channel
@@ -144,10 +149,34 @@ pub enum SpanBody {
     /// A `COPY` data block — the one span kind with inner offsets; see
     /// `docs/design/roadmap-phase3-object-inventory.md`, "Bulk regions".
     Data(CopyBlock),
+    /// A `\connect <name>` meta-command — kept distinct from [`Framing`](SpanBody::Framing)
+    /// because [`crate::preamble::dump_metadata_from_spans`] (Phase 3.2.1.1)
+    /// needs the database name itself, not just "this was framing", to
+    /// reconstruct `DumpMetadata`'s per-database segmenting.
+    Connect {
+        database: String,
+    },
+    /// The dump's (or a `\connect`ed database's) own two-line version-header
+    /// comment block (I9): `-- Dumped from database version ...` / `-- Dumped
+    /// by pg_dump version ...`. Distinct from [`Framing`](SpanBody::Framing)
+    /// for the same reason as [`Connect`](SpanBody::Connect) — the derived
+    /// view needs the actual version strings, not just "this was framing".
+    VersionHeader {
+        server_version: Option<String>,
+        pg_dump_version: Option<String>,
+    },
+    /// A `--binary-upgrade` dump's `ALTER TYPE <name> ADD VALUE '<label>'
+    /// ...;` (I6) — recognized so [`crate::preamble::dump_metadata_from_spans`]
+    /// can fold the label back into the [`TypeDef`](SpanBody::TypeDef) span
+    /// it targets.
+    AlterTypeAddValue {
+        type_name: String,
+        label: String,
+    },
     /// File prologue/epilogue framing (the `PostgreSQL database dump`
-    /// banner, `\restrict`/`\unrestrict`, version-header comments, the
-    /// `SET`/`set_config` preamble block, ...) and psql meta-commands
-    /// (`\connect`) — never a real database object.
+    /// banner, `\restrict`/`\unrestrict`, the `SET`/`set_config` preamble
+    /// block, ...) — never a real database object, and not one of this
+    /// module's other, more specific framing-adjacent kinds.
     Framing,
     /// A recognized statement (has a trailing `;`, parens/quotes balanced)
     /// that isn't one of this slice's three classified shapes — including
@@ -230,8 +259,17 @@ enum Mode {
     /// span.
     Idle,
     /// Absorbing a run of `--`-prefixed lines. `saw_name` is set the moment
-    /// one matches `-- Name: ...; Type: ...`.
-    Comment { start: u64, saw_name: bool },
+    /// one matches `-- Name: ...; Type: ...`; `server_version`/`pg_dump_version`
+    /// accumulate the two-line version-header block's fields (I9) as they're
+    /// seen, so the block can close as a [`SpanBody::VersionHeader`] instead
+    /// of generic [`SpanBody::Framing`] when it's neither a TOC entry nor
+    /// ordinary framing prose.
+    Comment {
+        start: u64,
+        saw_name: bool,
+        server_version: Option<String>,
+        pg_dump_version: Option<String>,
+    },
     /// Absorbing a statement's lines via [`statement_complete`]. Started
     /// either directly (no TOC comment) or right after a TOC comment block
     /// closes with `saw_name` true — either way `start` is the *span's*
@@ -268,6 +306,34 @@ fn looks_like_toc_name_line(line: &str) -> bool {
     line.starts_with("-- Name: ") && line.contains("; Type: ")
 }
 
+/// Whether `line` is one of the version-header block's two lines (I9), and
+/// if so, which field it fills (`true` for server version, `false` for
+/// `pg_dump` version).
+fn version_header_field(line: &str) -> Option<(bool, String)> {
+    if let Some(rest) = line.strip_prefix("-- Dumped from database version ") {
+        return Some((true, rest.trim().to_string()));
+    }
+    line.strip_prefix("-- Dumped by pg_dump version ").map(|rest| (false, rest.trim().to_string()))
+}
+
+/// What a closing comment block becomes: a TOC entry stays [`SpanBody::Unparsed`]
+/// (its span continues into the statement it precedes — see [`Builder::step`]'s
+/// `Mode::Comment` arm), the version-header block becomes [`SpanBody::VersionHeader`],
+/// and everything else is generic [`SpanBody::Framing`].
+fn close_comment(
+    saw_name: bool,
+    server_version: Option<String>,
+    pg_dump_version: Option<String>,
+) -> SpanBody {
+    if saw_name {
+        SpanBody::Unparsed
+    } else if server_version.is_some() || pg_dump_version.is_some() {
+        SpanBody::VersionHeader { server_version, pg_dump_version }
+    } else {
+        SpanBody::Framing
+    }
+}
+
 impl Builder {
     pub(crate) fn new() -> Self {
         Self { mode: Mode::Idle, database: None, spans: Vec::new(), pending_data: None }
@@ -287,15 +353,11 @@ impl Builder {
             // Only reachable for a comment block that runs to EOF (or is
             // interrupted by a `CopyStart`) with no closing non-`--` line —
             // never observed in a well-formed `pg_dump` file (every real
-            // TOC comment is followed by its object's definition), but a
-            // `saw_name` one still classifies as `Unparsed` rather than
-            // `Framing`, matching what `step`'s own comment-close arm would
-            // have done had a closing line ever arrived.
-            Mode::Comment { start, saw_name } => {
-                self.push_span(
-                    start,
-                    if saw_name { SpanBody::Unparsed } else { SpanBody::Framing },
-                );
+            // TOC comment, and the version-header block, is followed by
+            // something else), but classifies the same way `step`'s own
+            // comment-close arm would have, had a closing line ever arrived.
+            Mode::Comment { start, saw_name, server_version, pg_dump_version } => {
+                self.push_span(start, close_comment(saw_name, server_version, pg_dump_version));
             }
             Mode::Statement { start, buf } => self.push_span(start, classify(&buf)),
         }
@@ -323,8 +385,8 @@ impl Builder {
                     return None;
                 }
                 if let Some(name) = parse_connect(line) {
-                    self.database = Some(name);
-                    self.push_span(offset, SpanBody::Framing);
+                    self.database = Some(name.clone());
+                    self.push_span(offset, SpanBody::Connect { database: name });
                     return None;
                 }
                 if trimmed.starts_with('\\') {
@@ -335,18 +397,30 @@ impl Builder {
                     return None;
                 }
                 if trimmed.starts_with("--") {
+                    let (server_version, pg_dump_version) = match version_header_field(trimmed) {
+                        Some((true, v)) => (Some(v), None),
+                        Some((false, v)) => (None, Some(v)),
+                        None => (None, None),
+                    };
                     self.mode = Mode::Comment {
                         start: offset,
                         saw_name: looks_like_toc_name_line(trimmed),
+                        server_version,
+                        pg_dump_version,
                     };
                     return None;
                 }
                 self.mode = Mode::Statement { start: offset, buf: String::new() };
                 Some((offset, line.to_string()))
             }
-            Mode::Comment { start, saw_name } => {
+            Mode::Comment { start, saw_name, server_version, pg_dump_version } => {
                 if trimmed.starts_with("--") {
                     *saw_name |= looks_like_toc_name_line(trimmed);
+                    match version_header_field(trimmed) {
+                        Some((true, v)) => *server_version = Some(v),
+                        Some((false, v)) => *pg_dump_version = Some(v),
+                        None => {}
+                    }
                     return None;
                 }
                 let start = *start;
@@ -357,7 +431,8 @@ impl Builder {
                     // the comment's own offset.
                     self.mode = Mode::Statement { start, buf: String::new() };
                 } else {
-                    self.push_span(start, SpanBody::Framing);
+                    let body = close_comment(false, server_version.take(), pg_dump_version.take());
+                    self.push_span(start, body);
                     self.mode = Mode::Idle;
                 }
                 Some((offset, line.to_string()))
@@ -470,6 +545,11 @@ fn classify(stmt: &str) -> SpanBody {
     if looks_like_framing_statement(stmt) {
         return SpanBody::Framing;
     }
+    if let Some(rest) = crate::preamble::strip_kw(stmt.trim_start(), "ALTER TYPE")
+        && let Some((type_name, label)) = crate::preamble::parse_alter_type_add_value_body(rest)
+    {
+        return SpanBody::AlterTypeAddValue { type_name, label };
+    }
     match classify_statement(stmt) {
         Some(StatementShape::Table { name, columns }) => SpanBody::Table { name, columns },
         Some(StatementShape::Type(TypeDef { name, kind })) => SpanBody::TypeDef { name, kind },
@@ -578,9 +658,9 @@ mod tests {
     }
 
     #[test]
-    fn connect_opens_its_own_framing_span_and_switches_the_database() {
+    fn connect_opens_its_own_connect_span_and_switches_the_database() {
         let spans = spans_of(&["\\connect one", "CREATE EXTENSION pgcrypto;"]);
-        assert_eq!(spans[0].body, SpanBody::Framing);
+        assert_eq!(spans[0].body, SpanBody::Connect { database: "one".to_string() });
         assert_eq!(
             spans[0].database.as_deref(),
             Some("one"),
@@ -626,5 +706,43 @@ mod tests {
         let spans = spans_of(&["\\restrict aToken", "CREATE EXTENSION pgcrypto;"]);
         assert_eq!(spans[0].body, SpanBody::Framing);
         assert_eq!(spans[0].end, spans[1].start);
+    }
+
+    /// I9's two-line version-header block (`docs/design/roadmap-phase3.2.1-span-wiring-notes.md`,
+    /// Phase 3.2.1.1) gets its own span kind rather than generic `Framing`,
+    /// so `crate::preamble::dump_metadata_from_spans` can recover the
+    /// strings without re-reading the file.
+    #[test]
+    fn version_header_lines_become_their_own_span() {
+        let spans = spans_of(&[
+            "-- Dumped from database version 16.15",
+            "-- Dumped by pg_dump version 16.15",
+            "",
+            "CREATE EXTENSION pgcrypto;",
+        ]);
+        assert_eq!(spans.len(), 2);
+        assert_eq!(
+            spans[0].body,
+            SpanBody::VersionHeader {
+                server_version: Some("16.15".to_string()),
+                pg_dump_version: Some("16.15".to_string()),
+            }
+        );
+    }
+
+    /// A `--binary-upgrade` dump's `ALTER TYPE ... ADD VALUE ...;` (I6) gets
+    /// its own span kind rather than falling into the generic `Unparsed`
+    /// bucket, so `crate::preamble::dump_metadata_from_spans` can fold the
+    /// label into the `TypeDef` span it targets.
+    #[test]
+    fn binary_upgrade_add_value_becomes_its_own_span() {
+        let spans = spans_of(&["ALTER TYPE public.mood ADD VALUE 'sad';"]);
+        assert_eq!(
+            spans[0].body,
+            SpanBody::AlterTypeAddValue {
+                type_name: "public.mood".to_string(),
+                label: "sad".to_string(),
+            }
+        );
     }
 }

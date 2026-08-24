@@ -20,7 +20,9 @@ pub use index::{CopyBlock, DumpIndex, RowGroupStats, SparseRowIndex, build_index
 pub use io::{ByteRangeSource, LocalFileSource};
 pub use map::{Span, SpanBody, TilingIssue, build_map, check_tiling};
 pub use pgtype::{DeferredKind, TypeOutcome, resolve_declared_type};
-pub use preamble::{DatabaseMetadata, DumpMetadata, Extension, TypeDef, TypeKind};
+pub use preamble::{
+    DatabaseMetadata, DumpMetadata, Extension, TypeDef, TypeKind, dump_metadata_from_spans,
+};
 pub use predicate::{Predicate, PredicateOp};
 pub use resolve::{ColumnResolution, Diagnostic, ResolvedSchema, SchemaMode, resolve_columns};
 pub use scan::{CopyEnd, CopyScanner, CopyStart, Event, Line, Row, ScanOptions, scan};
