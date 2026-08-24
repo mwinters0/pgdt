@@ -39,10 +39,11 @@ Last updated: 2026-08-24.
       primary with `blocks()`/`blocks_for` derived, `Span::Data` holding
       `CopyBlock` inline, spans persisted (cache format bump), and
       `build_index` building spans in its existing pass instead of
-      `build_map` being a second one. `stream.rs`'s `Recorder` appends each
-      live-discovered block as its own `Span::Data`. `Unscanned` is now
-      produced for real by `preamble_only`. Earned by 3.2's mis-sizing, not
-      by a wrong contract. Notes:
+      `build_map` being a second one. `Unscanned` is now produced for real by
+      `preamble_only`. (Its `stream.rs` half — a `Recorder` appending each
+      live-discovered block as a bare `Span::Data` — was superseded by
+      3.2.1.2.1 and no longer exists.) Earned by 3.2's mis-sizing, not by a
+      wrong contract. Notes:
       `docs/design/roadmap-phase3.2.1-span-wiring-notes.md`.
 - [x] **3.2.1.1** `DumpMetadata` as a memoized derived view over `spans`
       (`dump_metadata_from_spans`), replacing the separate `PreambleBuilder`
