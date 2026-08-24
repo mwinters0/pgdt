@@ -13,8 +13,8 @@ use bytes::Bytes;
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
-    BatchOptions, ByteRangeSource, LocalFileSource, ScanOptions, build_index, cache, render_field,
-    table_stream,
+    BatchOptions, ByteRangeSource, LocalFileSource, ScanExtent, ScanOptions, build_index, cache,
+    check_tiling, render_field, table_stream,
 };
 
 fn edge_cases() -> PathBuf {
@@ -205,10 +205,15 @@ async fn disabled_cache_is_a_noop() {
     assert!(!cache::colocated_path(&dump).exists());
 }
 
-/// Querying one table against a cold (nonexistent) cache leaves behind a
-/// cache covering every table in the file, not just the one queried.
+/// A cold query maps only as far as it must: every block up to and including
+/// the queried table's, and nothing past it
+/// (`docs/design/roadmap-phase3-object-inventory.md`, "Mapping and streaming
+/// are separate passes"). `widgets` is the second of four blocks, so the
+/// cache it leaves knows two tables, not four — that bound is the whole
+/// point, since it is what keeps a query against an early table in a huge
+/// dump from costing a full scan.
 #[tokio::test]
-async fn cold_cache_gets_fully_populated_by_one_query() {
+async fn a_cold_query_maps_up_to_its_target_and_stops() {
     let (_dir, dump) = sandboxed_edge_cases();
     let cache_path = cache::colocated_path(&dump);
     let source = LocalFileSource::open(&dump).unwrap();
@@ -229,14 +234,46 @@ async fn cold_cache_gets_fully_populated_by_one_query() {
         .expect("a cache was written");
     let mut tables: Vec<&str> = index.blocks().map(|b| b.header.table.as_str()).collect();
     tables.sort_unstable();
+    assert_eq!(tables, vec!["empty_table", "widgets"]);
+    let widgets = index.blocks_for("public.widgets").next().expect("the queried block is mapped");
+    assert_eq!(index.scanned_through, widgets.end_offset, "stopped at the target, not at EOF");
+    assert!(index.scanned_through < source.size().await.unwrap());
+}
+
+/// `ScanExtent::Full` is the way back to a whole-file map from a query — the
+/// same coverage `pgdq parse` produces, at the cost of a full scan.
+#[tokio::test]
+async fn scan_extent_full_maps_the_whole_file_from_a_query() {
+    let (_dir, dump) = sandboxed_edge_cases();
+    let cache_path = cache::colocated_path(&dump);
+    let source = LocalFileSource::open(&dump).unwrap();
+
+    let rows = drain(
+        &source,
+        "public.widgets",
+        BatchOptions { scan_extent: ScanExtent::Full, ..Default::default() },
+        CacheMode::Enabled(cache_path.clone()),
+    )
+    .await;
+    assert_eq!(rows, widgets_expected(), "the row set is the same either way");
+
+    let index = CacheMode::Enabled(cache_path).load(&source).await.unwrap().unwrap();
+    let mut tables: Vec<&str> = index.blocks().map(|b| b.header.table.as_str()).collect();
+    tables.sort_unstable();
     assert_eq!(tables, vec!["Odd Table", "empty_table", "no_column_list", "widgets"]);
     assert_eq!(index.scanned_through, source.size().await.unwrap());
 }
 
 /// Dropping a stream partway through a block still leaves a valid, usable
-/// cache behind: only fully-completed blocks are recorded, and a later
-/// query against the same cache still finds everything — no bytes silently
-/// skipped because an earlier query stopped early.
+/// cache behind, and a later query against it still finds everything — no
+/// bytes silently skipped because an earlier query stopped early.
+///
+/// The queried block is **fully mapped before its first row is emitted**
+/// (`docs/design/roadmap-phase3-object-inventory.md`, "Mapping and streaming
+/// are separate passes"), so stopping mid-`widgets` still leaves `widgets`
+/// itself in the cache — the map can never be behind the rows a caller has
+/// already seen. That is the property the split exists for, and it is what
+/// lets a resume point always land inside mapped territory.
 #[tokio::test]
 async fn interrupted_scan_leaves_correct_partial_progress() {
     let (_dir, dump) = sandboxed_edge_cases();
@@ -265,11 +302,14 @@ async fn interrupted_scan_leaves_correct_partial_progress() {
         .await
         .unwrap()
         .expect("partial progress was persisted");
-    let blocks: Vec<_> = index.blocks().collect();
-    assert_eq!(blocks.len(), 1, "only the fully-completed empty_table block is recorded");
-    let empty_table = blocks[0];
-    assert_eq!(empty_table.header.table, "empty_table");
-    assert_eq!(index.scanned_through, empty_table.end_offset);
+    let tables: Vec<&str> = index.blocks().map(|b| b.header.table.as_str()).collect();
+    assert_eq!(
+        tables,
+        vec!["empty_table", "widgets"],
+        "the target block is mapped before any of its rows go out"
+    );
+    let widgets = index.blocks_for("public.widgets").next().unwrap();
+    assert_eq!(index.scanned_through, widgets.end_offset);
 
     // A second query against the same (partial) cache still finds
     // everything past where the first one stopped.
@@ -334,10 +374,12 @@ async fn no_duplication_on_repeat_queries() {
     let cache_path = cache::colocated_path(&dump);
     let source = LocalFileSource::open(&dump).unwrap();
 
+    // `ScanExtent::Full` is what makes the file *fully* cached, which is the
+    // precondition this test is about; the default stops at its target.
     drain(
         &source,
         "public.widgets",
-        BatchOptions::default(),
+        BatchOptions { scan_extent: ScanExtent::Full, ..Default::default() },
         CacheMode::Enabled(cache_path.clone()),
     )
     .await;
@@ -354,8 +396,130 @@ async fn no_duplication_on_repeat_queries() {
 
     let after_count = after.blocks().count();
     assert_eq!(before.blocks().count(), after_count);
+    assert_eq!(before.spans, after.spans, "a fully-mapped file is not remapped at all");
     let mut offsets: Vec<u64> = after.blocks().map(|b| b.header_offset).collect();
     offsets.sort_unstable();
     offsets.dedup();
     assert_eq!(offsets.len(), after_count, "no duplicate header_offsets");
+}
+
+/// **The claim slice 3.2.1.2.1 exists for.** A `DumpIndex` built by a query
+/// tiles its file exactly, the same way `build_index`'s does — every byte in
+/// exactly one span, no gaps, no overlaps — with no exemption for a partial
+/// scan, a warm cache, or a resumed stream
+/// (`docs/design/roadmap-phase3-object-inventory.md`, "Scan coverage is a
+/// prefix, expressed as a span").
+///
+/// Each state below stresses a different seam in the splice: the cold case
+/// joins the preamble prepass's spans to a live segment's; the warm case
+/// joins a *previously persisted* prefix to a new segment starting at the old
+/// frontier; and the `Full` case runs the segment all the way to EOF, where
+/// the trailing `Unscanned` span disappears entirely.
+#[tokio::test]
+async fn a_query_built_index_tiles_in_every_cache_state() {
+    for schema_dir in ["edge_cases", "objects", "partitions", "types"] {
+        for flag_set in ["default", "data-only"] {
+            let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../fixtures/16")
+                .join(schema_dir)
+                .join(format!("{flag_set}.sql"));
+            if !fixture.exists() {
+                continue;
+            }
+            let dir = tempfile::tempdir().unwrap();
+            let dump = dir.path().join("dump.sql");
+            std::fs::copy(&fixture, &dump).unwrap();
+            let cache_path = cache::colocated_path(&dump);
+            let source = LocalFileSource::open(&dump).unwrap();
+            let size = source.size().await.unwrap();
+            let label = format!("{schema_dir}/{flag_set}");
+
+            // Cold: nothing cached, so the prepass's spans are the only
+            // prefix the live segment has to splice onto.
+            drain(
+                &source,
+                "public.widgets",
+                BatchOptions::default(),
+                CacheMode::Enabled(cache_path.clone()),
+            )
+            .await;
+            let cold = CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap().unwrap();
+            assert_eq!(check_tiling(&cold.spans, size), vec![], "{label}: cold");
+
+            // Warm: a second query resumes mapping from the persisted
+            // frontier, splicing onto spans it did not build itself.
+            drain(
+                &source,
+                "public.no_column_list",
+                BatchOptions::default(),
+                CacheMode::Enabled(cache_path.clone()),
+            )
+            .await;
+            let warm = CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap().unwrap();
+            assert_eq!(check_tiling(&warm.spans, size), vec![], "{label}: warm");
+            assert!(warm.scanned_through >= cold.scanned_through, "{label}: coverage only grows");
+
+            // Full: the segment reaches EOF, so there is no `Unscanned` tail
+            // and the map should match what a full `build_index` scan gives.
+            drain(
+                &source,
+                "public.widgets",
+                BatchOptions { scan_extent: ScanExtent::Full, ..Default::default() },
+                CacheMode::Enabled(cache_path.clone()),
+            )
+            .await;
+            let full = CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap().unwrap();
+            assert_eq!(check_tiling(&full.spans, size), vec![], "{label}: full");
+            assert_eq!(full.scanned_through, size, "{label}");
+            let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
+            assert_eq!(
+                full.spans, eager.spans,
+                "{label}: a fully-mapped query agrees with build_index span for span"
+            );
+        }
+    }
+}
+
+/// A resumed stream replays out of the map rather than falling back to a
+/// live scan, so the index it leaves tiles like any other — the case that
+/// used to be the reason `check_tiling` was only ever exercised against
+/// `build_index`'s output.
+#[tokio::test]
+async fn a_resumed_query_leaves_a_tiling_index() {
+    let (_dir, dump) = sandboxed_edge_cases();
+    let cache_path = cache::colocated_path(&dump);
+    let source = LocalFileSource::open(&dump).unwrap();
+    let size = source.size().await.unwrap();
+
+    let token = {
+        let mut stream = table_stream(
+            &source,
+            "public.widgets",
+            ScanOptions::default(),
+            BatchOptions { max_rows: 1, max_bytes: None, ..Default::default() },
+            None,
+            None,
+            CacheMode::Enabled(cache_path.clone()),
+        );
+        stream.next().await.unwrap().unwrap();
+        stream.resume_token()
+    };
+
+    let mut resumed = table_stream(
+        &source,
+        "public.widgets",
+        ScanOptions::default(),
+        BatchOptions::default(),
+        None,
+        Some(token),
+        CacheMode::Enabled(cache_path.clone()),
+    );
+    let mut rows = Vec::new();
+    while let Some(batch) = resumed.next().await {
+        rows.extend(rows_of(&batch.unwrap()));
+    }
+    assert_eq!(rows, widgets_expected()[1..], "the rows the first stream hadn't delivered");
+
+    let index = CacheMode::Enabled(cache_path).load(&source).await.unwrap().unwrap();
+    assert_eq!(check_tiling(&index.spans, size), vec![]);
 }

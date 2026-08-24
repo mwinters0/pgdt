@@ -9,14 +9,28 @@
 //! holds no public fields (`roadmap-phase1-mvp.md` is explicit that it must
 //! stay opaque), so its representation is free to change without an API break.
 //!
-//! **Cache-consulting** (`roadmap-phase1-mvp.md`, "Index / structure
-//! cache"): a [`CacheMode::Enabled`] cache is consulted up front and turned
-//! into a sequence of [`Segment`]s — one [`Segment::Known`] per already-cached
-//! block matching the query table (replayed for its rows, at zero I/O cost
-//! for every non-matching block in between) plus one trailing
-//! [`Segment::Live`] covering whatever's past the cache's watermark, which
-//! is scanned as today, with every block it finds (matching or not) handed
-//! to a [`Recorder`] and persisted back after each one completes.
+//! **Mapping and streaming are separate passes**
+//! (`docs/design/roadmap-phase3-object-inventory.md`, the section of that
+//! name). A query runs in two phases, never interleaved:
+//!
+//! 1. [`map_forward`] extends the [`DumpIndex`]'s map from its own
+//!    `scanned_through` — recording every `COPY` block it passes and
+//!    classifying the DDL between them through a [`crate::map::Builder`] —
+//!    and **yields nothing**. It stops as soon as the queried table is
+//!    settled ([`ScanExtent::UntilTargetSettled`]), which is what keeps a
+//!    query against an early table in a huge dump from costing a full scan.
+//! 2. Every block the map holds for that table is then replayed for its
+//!    rows, in file order.
+//!
+//! The queried block's bytes are therefore read twice — once to find its
+//! extent, once to emit its rows — and that is the price of the split. What
+//! it buys: the map is never behind the rows, so a [`ResumeToken`] can only
+//! ever point inside already-mapped territory, and a query-built `DumpIndex`
+//! tiles the file exactly the way [`crate::index::build_index`]'s does, with
+//! no exemption for resumed streams. A [`CacheMode::Enabled`] cache is
+//! persisted after every completed block, so a caller that stops polling
+//! keeps what the map learned; [`CacheMode::Disabled`] runs the same way with
+//! `save` a no-op, mapping in memory only.
 //!
 //! **Preamble capture** (Phase 2.2.1,
 //! `docs/design/roadmap-phase2-typed-columns-notes.md`, "Preamble parsing"): before
@@ -48,7 +62,9 @@ use arrow::buffer::Buffer;
 use async_stream::try_stream;
 use futures::Stream;
 
-use crate::batch::{BatchOptions, RowBatcher, SourceChunk, column_names, invalidate_block_cache};
+use crate::batch::{
+    BatchOptions, RowBatcher, ScanExtent, SourceChunk, column_names, invalidate_block_cache,
+};
 use crate::cache::CacheMode;
 use crate::copy::{CopyHeader, DELIMITER};
 use crate::index::{CopyBlock, DumpIndex, scan_preamble};
@@ -57,7 +73,7 @@ use crate::map::{Span, SpanBody};
 use crate::preamble::DumpMetadata;
 use crate::predicate::Predicate;
 use crate::resolve::{ResolvedSchema, resolve_columns};
-use crate::scan::{CopyScanner, CopyStart, Event, ScanOptions};
+use crate::scan::{CopyScanner, Event, ScanOptions};
 use crate::{Error, Result};
 
 /// State for a `COPY` block whose table matches the query: the batcher
@@ -94,60 +110,188 @@ fn resolve_predicate_index(
         .ok_or(Error::UnknownPredicateColumn { header_offset, column: predicate.column.clone() })
 }
 
-/// One piece of a [`table_stream`] scan: either replaying a block the cache
-/// already knew about, or walking unscanned territory live. See the module
-/// docs.
-enum Segment {
-    /// `[start, end)`: an already-cached block matching the query table.
-    Known { start: u64, end: u64 },
-    /// `[start, size)`: unscanned territory, discovered as it's walked.
-    Live { start: u64 },
-}
-
-/// Accumulates newly-discovered blocks during a [`Segment::Live`] scan and
-/// persists them back to the cache. Seeded from whatever the cache already
-/// had, so a persisted index stays complete rather than shrinking to just
-/// this call's discoveries.
+/// Replace everything a mapping scan covered with what it built: `prefix`
+/// (the spans that already tiled `[0, seg_start)`, untouched) followed by
+/// `built` (a complete tiling of `[seg_start, watermark)` from
+/// [`crate::map::Builder`]), plus the trailing [`SpanBody::Unscanned`] span
+/// that makes the result tile the whole file even though the scan stopped
+/// early (`docs/design/roadmap-phase3-object-inventory.md`, "Scan coverage is
+/// a prefix, expressed as a span").
 ///
-/// Records each block as its own [`Span::Data`], but — unlike
-/// [`crate::index::build_index`] — never classifies the DDL between them, so
-/// the index this produces does not tile the file the way a full scan's does.
-/// That's an accepted interim gap for this slice, not a correctness problem:
-/// nothing yet reads non-`Data` spans back out of a `DumpIndex`
-/// (`docs/design/roadmap-phase3.2.1-span-wiring-notes.md`).
-struct Recorder {
-    cache: CacheMode,
-    index: DumpIndex,
+/// Whole-region replacement rather than an incremental merge because
+/// `Builder`'s output is already a complete tiling of everything the segment
+/// walked, so there is nothing to reconcile — only the seam at `seg_start`
+/// has to be closed, and it is closed the same way `Builder::push_span`
+/// closes every other boundary: **by extending the preceding span to where
+/// the next one starts**.
+///
+/// That is what keeps interstitial blank lines attributed to the span before
+/// them (`docs/design/roadmap-phase3-object-inventory.md`, "Span boundaries:
+/// object-anchored and greedy") even across a stopping point. A previous scan
+/// that stopped on a block's `end_offset` left that block's span ending
+/// exactly there; the blank line that follows belongs to it, not to whatever
+/// the next segment happens to recognize first.
+fn splice(
+    prefix: &[Span],
+    mut built: Vec<Span>,
+    seg_start: u64,
+    watermark: u64,
+    size: u64,
+) -> Vec<Span> {
+    let mut spans: Vec<Span> = prefix.to_vec();
+    match (spans.last_mut(), built.first_mut()) {
+        (Some(last), Some(first)) => last.end = first.start,
+        // The segment recognized nothing at all, so everything it walked
+        // belongs to the span that was already open at the seam.
+        (Some(last), None) => last.end = watermark,
+        // Nothing precedes this segment (the file's first bytes are already
+        // inside it), so its own start is the floor — otherwise leading blank
+        // lines, which open no span, would be left unattributed.
+        (None, Some(first)) => first.start = seg_start,
+        (None, None) => {}
+    }
+    spans.extend(built);
+    if watermark < size {
+        spans.push(Span { start: watermark, end: size, database: None, body: SpanBody::Unscanned });
+    }
+    spans
 }
 
-impl Recorder {
-    /// Record `block`, ignoring it if a block at the same `header_offset` is
-    /// already present. A resumed stream's live segment can re-walk bytes the
-    /// base index already covers (see `docs/design/roadmap-phase1-mvp.md`'s
-    /// "Known gaps") — without this guard that would duplicate an entry rather
-    /// than just redundantly re-read some bytes.
-    fn record(&mut self, block: CopyBlock) {
-        if !self.index.blocks().any(|b| b.header_offset == block.header_offset) {
-            self.index.spans.push(Span {
-                start: block.header_offset,
-                end: block.end_offset,
-                database: block.database.clone(),
-                body: SpanBody::Data(block),
-            });
+/// Whether `index`'s map now answers the query for good, so the mapping scan
+/// can stop short of EOF. Two things can make a further block share the
+/// queried name, and both have to be ruled out.
+///
+/// **A partition-root marker on a matching block.** Its `COPY` header names
+/// the partition's **root**, so other blocks in the same dump carry the same
+/// name — and they are *not* adjacent to it, since `TABLE DATA` entries sort
+/// by the partition's own name (I2). Only reaching EOF enumerates them.
+///
+/// **Any `\connect` at all.** The file is then a `pg_dumpall`, a
+/// concatenation, or a `--create` dump, and a qualified name can be defined
+/// again in a later database — the other route I2 names. Stopping early there
+/// would hand back one candidate's rows where
+/// `docs/design/roadmap-phase2-typed-columns.md`'s "One target per query"
+/// requires `Error::AmbiguousTable`, which is a wrong answer with no signal,
+/// exactly what that decision exists to prevent. A `batch_options.database`
+/// selector does not lift this: two `\connect` segments can name the *same*
+/// database. So any `Connect` span means map the whole file.
+///
+/// What neither test catches is a file whose *first* segment has no
+/// `\connect` — a plain dump with something concatenated after it. Nothing in
+/// the prefix announces that; see `STATUS.md`'s "Known gaps".
+fn target_settled(index: &DumpIndex, table: &str, selector: Option<&str>) -> bool {
+    if index.spans.iter().any(|s| matches!(s.body, SpanBody::Connect { .. })) {
+        return false;
+    }
+    let mut matched = false;
+    for block in index.blocks_for(table) {
+        if selector.is_some() && block.database.as_deref() != selector {
+            continue;
+        }
+        if block.partition_root.is_some() {
+            return false;
+        }
+        matched = true;
+    }
+    matched
+}
+
+/// Extend `index`'s map forward from its own `scanned_through`, persisting
+/// after every completed block, until the queried table is settled or EOF is
+/// reached. Emits no rows — see the module docs.
+///
+/// The [`crate::map::Builder`] is seeded with the segment's start offset (so
+/// its first span begins at the frontier rather than at the first non-blank
+/// line past it, which would leave the blank lines in between unattributed)
+/// and with the database in scope there, which it cannot infer: it never
+/// reads the `\connect` lines earlier in the file.
+#[allow(clippy::too_many_arguments)]
+async fn map_forward<S: ByteRangeSource>(
+    source: &S,
+    scan_options: &ScanOptions,
+    cache: &CacheMode,
+    index: &mut DumpIndex,
+    table: &str,
+    selector: Option<&str>,
+    extent: ScanExtent,
+    size: u64,
+) -> Result<()> {
+    if index.scanned_through >= size {
+        return Ok(());
+    }
+    if extent == ScanExtent::UntilTargetSettled && target_settled(index, table, selector) {
+        return Ok(());
+    }
+
+    let seg_start = index.scanned_through;
+    let prefix: Vec<Span> = index.spans.iter().filter(|s| s.end <= seg_start).cloned().collect();
+    // The prefix tiles `[0, seg_start)`, so its last span is the one ending
+    // exactly at the frontier and its `database` is the one in scope there.
+    // With no prefix at all, the preamble prepass has just run and I1 puts
+    // the frontier inside the first database it captured.
+    let database = prefix.last().and_then(|s| s.database.clone()).or_else(|| {
+        index.metadata.as_ref().and_then(|m| m.databases.first()).and_then(|db| db.name.clone())
+    });
+    let mut builder = crate::map::Builder::with_database(database);
+
+    let mut scanner = CopyScanner::resume(seg_start, None);
+    let mut read_pos = seg_start;
+    let mut buf: Vec<u8> = Vec::with_capacity(scan_options.chunk_size);
+
+    loop {
+        let want = scan_options.chunk_size.min((size - read_pos) as usize);
+        if want > 0 {
+            let bytes = source.read_range(read_pos, want).await?;
+            read_pos += bytes.len() as u64;
+            buf.extend_from_slice(&bytes);
+        }
+        let eof = read_pos >= size;
+
+        while let Some(event) = scanner.next_event(&buf, eof)? {
+            match event {
+                Event::CopyStart(start) => builder.on_copy_start(start),
+                // Rows are not parsed here at all: this pass only needs the
+                // block's extent, which the scanner finds from the `\.`
+                // terminator. Row bytes become batches in the replay phase.
+                Event::Row(_) => {}
+                Event::CopyEnd(end) => {
+                    // `end_offset` is always a safe, resumable watermark —
+                    // the scanner is back in its `Outside` state there — and
+                    // `on_copy_end` leaves the builder `Idle`, which is
+                    // exactly where `snapshot` is sound.
+                    let watermark = end.end_offset;
+                    builder.on_copy_end(end);
+                    index.spans =
+                        splice(&prefix, builder.snapshot(watermark), seg_start, watermark, size);
+                    index.scanned_through = index.scanned_through.max(watermark);
+                    cache.save(source, index).await?;
+                    if extent == ScanExtent::UntilTargetSettled
+                        && target_settled(index, table, selector)
+                    {
+                        return Ok(());
+                    }
+                }
+                Event::Line(line) => builder.feed_line(line.offset, line.raw),
+            }
+        }
+
+        let used = scanner.take_consumed();
+        buf.drain(..used);
+
+        if eof {
+            break;
+        }
+        if buf.len() > scan_options.max_line_bytes {
+            Err(Error::LineTooLong {
+                offset: scanner.position(),
+                limit: scan_options.max_line_bytes,
+            })?;
         }
     }
 
-    /// `end.end_offset` is always a safe, resumable watermark — the scanner
-    /// is back in its `Outside` state there — so every persisted
-    /// `scanned_through` is valid for a later query to replay from.
-    async fn persist<S: ByteRangeSource>(
-        &mut self,
-        source: &S,
-        scanned_through: u64,
-    ) -> Result<()> {
-        self.index.scanned_through = self.index.scanned_through.max(scanned_through);
-        self.cache.save(source, &self.index).await
-    }
+    index.spans = splice(&prefix, builder.finish(size), seg_start, size, size);
+    index.scanned_through = size;
+    cache.save(source, index).await
 }
 
 /// Opaque cursor into a [`table_stream`]/[`crate::batch::read_table`]
@@ -165,12 +309,6 @@ pub struct ResumeToken {
     #[allow(dead_code)]
     generation: u64,
     in_copy: Option<InCopyResume>,
-    /// The database in scope at `offset`, tracked from `\connect` lines the
-    /// live scan passes over (`crate::preamble::parse_connect`). Lets a
-    /// resumed stream keep attributing newly-discovered blocks correctly
-    /// without re-scanning from the file start — see "One target per query"
-    /// in `docs/design/roadmap-phase2-typed-columns.md`.
-    database: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -184,7 +322,7 @@ struct InCopyResume {
 
 impl ResumeToken {
     fn start() -> Self {
-        Self { offset: 0, rows_emitted: 0, generation: 0, in_copy: None, database: None }
+        Self { offset: 0, rows_emitted: 0, generation: 0, in_copy: None }
     }
 }
 
@@ -297,12 +435,7 @@ fn resume_state(
     Ok((scanner, active, resolved))
 }
 
-fn snapshot(
-    scanner: &CopyScanner,
-    active: &Option<Active>,
-    rows_emitted: u64,
-    current_database: Option<String>,
-) -> ResumeToken {
+fn snapshot(scanner: &CopyScanner, active: &Option<Active>, rows_emitted: u64) -> ResumeToken {
     let in_copy =
         active.as_ref().map(|(header_offset, header, batcher, _, database)| InCopyResume {
             header: header.clone(),
@@ -311,13 +444,7 @@ fn snapshot(
             field_count: batcher.field_count(),
             database: database.clone(),
         });
-    ResumeToken {
-        offset: scanner.position(),
-        rows_emitted,
-        generation: 0,
-        in_copy,
-        database: current_database,
-    }
+    ResumeToken { offset: scanner.position(), rows_emitted, generation: 0, in_copy }
 }
 
 /// Pull-mode entry point: stream `Utf8View` `RecordBatch`es for every row of
@@ -335,16 +462,15 @@ fn snapshot(
 /// `Error::UnknownPredicateColumn`.
 ///
 /// `cache` controls structure-cache consulting
-/// (`docs/design/roadmap-phase1-mvp.md`, "Index / structure cache"):
-/// `CacheMode::Disabled` is pure streaming with no side effects;
-/// `CacheMode::Enabled` replays already-cached blocks matching `table` at zero
-/// I/O cost for everything in between, then scans live from the cache's
-/// watermark, persisting each newly-discovered block (matching or not) as it
-/// completes — so a later query against the same dump gets progressively
-/// cheaper. `resume` takes priority over cache replay: it always starts a
-/// single live segment at the token's offset (see
-/// `docs/design/roadmap-phase1-mvp.md`'s "Known gaps" for what that costs in
-/// the rare case of resuming from inside a would-be replay).
+/// (`docs/design/roadmap-phase1-mvp.md`, "Index / structure cache").
+/// `CacheMode::Enabled` persists the map after every block the mapping pass
+/// completes, so a later query against the same dump starts from a nearer
+/// frontier; `CacheMode::Disabled` runs identically but writes nothing,
+/// mapping in memory for this call only. Either way rows come from replaying
+/// mapped blocks, never from the mapping pass itself — see the module docs.
+///
+/// `batch_options.scan_extent` decides how much of the file the mapping pass
+/// walks before any row comes back; see [`ScanExtent`].
 pub fn table_stream<'a, S>(
     source: &'a S,
     table: &str,
@@ -367,7 +493,7 @@ where
     let inner = try_stream! {
         let size = source.size().await?;
 
-        let mut base_index = cache.load(source).await?.unwrap_or_default();
+        let mut index = cache.load(source).await?.unwrap_or_default();
 
         // The first database's preamble always gets captured before
         // anything else runs, regardless of which table this particular
@@ -378,49 +504,62 @@ where
         // still runs the scan (`docs/design/roadmap-phase2-typed-columns.md`,
         // "`--cache-path none` disables persistence, not typing") but
         // `cache.save` below is a no-op for it, so nothing is written.
-        // Persisted immediately (not deferred to whenever a segment below
+        // Persisted immediately (not deferred to whenever the mapping pass
         // next saves) so it survives even a caller that polls the stream
         // once and drops it.
-        let first_db_preamble_known = base_index
+        let first_db_preamble_known = index
             .metadata
             .as_ref()
             .and_then(|m| m.databases.first())
             .is_some_and(|db| db.preamble_complete);
         if !first_db_preamble_known {
-            // The spans this prepass could build (`[0, preamble_end)`) are
-            // discarded rather than merged into `base_index.spans`: they'd
-            // need a trailing `Unscanned` marker truncated the moment the
-            // live segment below starts recording `Data` spans past this
-            // point, and that bookkeeping isn't wired up in this slice — see
-            // `docs/design/roadmap-phase3.2.1-span-wiring-notes.md`. Losing
-            // them costs nothing today: nothing yet reads DDL spans back out
-            // of `DumpIndex`.
-            let (metadata, _spans, preamble_end) = scan_preamble(source, &scan_options).await?;
-            base_index.metadata = Some(metadata);
-            base_index.scanned_through = base_index.scanned_through.max(preamble_end);
-            cache.save(source, &base_index).await?;
+            // The prepass's spans are kept, not discarded: they tile
+            // `[0, preamble_end)`, which is exactly the prefix `map_forward`
+            // splices its own output onto. Without them the map would start
+            // at the frontier with nothing beneath it and could not tile.
+            let (metadata, spans, preamble_end) = scan_preamble(source, &scan_options).await?;
+            index.metadata = Some(metadata);
+            index.spans = splice(&[], spans, 0, preamble_end, size);
+            index.scanned_through = index.scanned_through.max(preamble_end);
+            cache.save(source, &index).await?;
         }
-        // Captured before `base_index` is moved into `recorder` below —
-        // every call site that resolves a matching block's schema needs it.
-        let metadata = base_index.metadata.clone();
+        let metadata = index.metadata.clone();
+
+        // Phase 1: extend the map until this query's table is settled. No
+        // rows come out of this, and nothing is yielded until it returns.
+        let selector = batch_options.database.as_deref();
+        map_forward(
+            source,
+            &scan_options,
+            &cache,
+            &mut index,
+            &table,
+            selector,
+            batch_options.scan_extent,
+            size,
+        )
+        .await?;
 
         // One target per query (`docs/design/roadmap-phase2-typed-columns.md`,
-        // "One target per query"): narrow the name-only matches already
-        // known from the cache down to at most one `(database, qualified
-        // name)` candidate before touching any of them, so a would-be
-        // silent union across schemas or databases errors instead.
-        // `batch_options.database`, when given, is the way out of an
-        // otherwise-ambiguous bare or cross-database name — it filters
-        // candidates first, exactly like a `WHERE` clause narrowing matches
-        // rather than picking among them after the fact.
-        let selector = batch_options.database.as_deref();
-        let known_matches: Vec<CopyBlock> = base_index
+        // "One target per query"): narrow the name-only matches down to at
+        // most one `(database, qualified name)` candidate before reading any
+        // of them, so a would-be silent union across schemas or databases
+        // errors instead. `batch_options.database`, when given, is the way
+        // out of an otherwise-ambiguous bare or cross-database name — it
+        // filters candidates first, exactly like a `WHERE` clause narrowing
+        // matches rather than picking among them after the fact.
+        //
+        // Because the map is now complete before any row is emitted, this
+        // check runs over every candidate the scan reached rather than
+        // incrementally as blocks turn up — so an ambiguous name errors
+        // before a single row goes out, not partway through one candidate's.
+        let matches: Vec<CopyBlock> = index
             .blocks_for(&table)
             .filter(|b| selector.is_none() || b.database.as_deref() == selector)
             .cloned()
             .collect();
         let mut target: Option<(Option<String>, String)> = None;
-        for b in &known_matches {
+        for b in &matches {
             let key = (b.database.clone(), b.header.qualified_name());
             match &target {
                 None => target = Some(key),
@@ -434,54 +573,19 @@ where
             }
         }
 
-        let segments: Vec<Segment> = match &resume {
-            Some(token) => vec![Segment::Live { start: token.offset }],
-            None => {
-                let mut segs: Vec<Segment> = known_matches
-                    .iter()
-                    .map(|b| Segment::Known { start: b.header_offset, end: b.end_offset })
-                    .collect();
-                segs.push(Segment::Live { start: base_index.scanned_through });
-                segs
-            }
-        };
-        // The database in scope right now, tracked from `\connect` lines a
-        // live segment passes over (`crate::preamble::parse_connect`) so a
-        // newly-discovered block can be attributed correctly without
-        // "reading preamble as it goes" — see "One target per query".
-        // Resuming carries it over from the token directly (same reasoning
-        // as `InCopyResume`); starting fresh from a cache seeds it from
-        // whichever already-known block ends closest to `scanned_through`
-        // (always exactly the block immediately preceding it, since the
-        // watermark only ever advances to a block's own `end_offset` or to
-        // EOF) — correct at that exact byte, and self-correcting the moment
-        // this scan's own live segment passes a `\connect` beyond it. When no
-        // block is known yet — a cold start, or `CacheMode::Disabled`, where
-        // `scanned_through` only ever reflects the preamble prepass's own
-        // watermark (exactly the first `COPY` block's offset, or EOF) — the
-        // truth at that point is instead whichever database the prepass
-        // just finished capturing, `metadata.databases`' first entry (I1:
-        // nothing of interest precedes any database's first block, so the
-        // very first such stopping point in the file is necessarily still
-        // within that first database).
-        let mut current_database: Option<String> = match &resume {
-            Some(token) => token.database.clone(),
-            None => base_index
-                .blocks()
-                .max_by_key(|b| b.end_offset)
-                .map(|b| b.database.clone())
-                .unwrap_or_else(|| {
-                    metadata.as_ref().and_then(|m| m.databases.first()).and_then(|db| db.name.clone())
-                }),
-        };
-        let mut recorder: Option<Recorder> = (!matches!(cache, CacheMode::Disabled))
-            .then(|| Recorder { cache: cache.clone(), index: base_index });
+        // Phase 2: replay each matching block for its rows. A resumed stream
+        // picks up inside this same list — every resume point is inside a
+        // mapped block by construction, so there is no live-scan fallback and
+        // no cache bookkeeping left to do here.
+        let resume_offset = resume.as_ref().map_or(0, |t| t.offset);
+        let mut rows_emitted = resume.as_ref().map_or(0, |t| t.rows_emitted);
 
-        // Only the first segment can start mid-block (a resumed stream); a
-        // fresh `CopyScanner` for it is prebuilt here so `resume_state`'s
-        // logic isn't duplicated below.
+        // Only the first replayed block can start mid-block (a resumed
+        // stream paused between two of its rows); its scanner and in-flight
+        // batcher are prebuilt here so `resume_state`'s logic isn't
+        // duplicated below.
         let (mut active, mut first_scanner) = match &resume {
-            Some(token) => {
+            Some(token) if token.in_copy.is_some() => {
                 let (scanner, active, resolved) =
                     resume_state(token, &batch_options, predicate.as_ref(), metadata.as_ref())?;
                 if let Some(r) = resolved {
@@ -489,36 +593,24 @@ where
                 }
                 (active, Some(scanner))
             }
-            None => (None, None),
+            _ => (None, None),
         };
         // A matching header with no column list, waiting on its first row to
         // learn the field count. Never non-empty across a resume point: a
         // stream only yields right after a flush, and by then any pending
         // headerless block has already seen its first row (see `active`).
         let mut pending: Option<(CopyHeader, u64, Option<String>)> = None;
-        let mut rows_emitted = resume.as_ref().map_or(0, |t| t.rows_emitted);
 
-        for (segment_index, segment) in segments.into_iter().enumerate() {
-            let is_live = matches!(segment, Segment::Live { .. });
-            let (seg_start, seg_end) = match &segment {
-                Segment::Known { start, end } => (*start, *end),
-                Segment::Live { start } => (*start, size),
-            };
+        for block in matches.iter().filter(|b| b.end_offset > resume_offset) {
+            let seg_start = block.header_offset.max(resume_offset);
+            let seg_end = block.end_offset;
+            let block_database = block.database.clone();
 
-            let mut scanner = if segment_index == 0 {
-                first_scanner.take().unwrap_or_else(|| CopyScanner::resume(seg_start, None))
-            } else {
-                CopyScanner::resume(seg_start, None)
-            };
+            let mut scanner =
+                first_scanner.take().unwrap_or_else(|| CopyScanner::resume(seg_start, None));
             let mut read_pos = seg_start;
             let mut buf: Vec<u8> = Vec::with_capacity(scan_options.chunk_size);
             let mut chunks: VecDeque<SourceChunk> = VecDeque::new();
-            // The most recent `CopyStart` in this (live) segment, regardless
-            // of table match — mirrors `build_index`'s `pending`, tracked
-            // separately from the table-matching `pending`/`active` above
-            // since a live segment must record every block, not just ones
-            // the query cares about.
-            let mut block_start: Option<CopyStart> = None;
 
             loop {
                 let want = scan_options.chunk_size.min((seg_end - read_pos) as usize);
@@ -537,73 +629,35 @@ where
                 while let Some(event) = scanner.next_event(&buf, eof)? {
                     match event {
                         Event::CopyStart(start) => {
-                            // A known-segment replay is always exactly the
-                            // one target this call already confirmed before
-                            // the loop started; a live segment's attribution
-                            // instead tracks whatever `\connect` it has
-                            // itself passed over so far.
-                            let block_database = if is_live {
-                                current_database.clone()
+                            if start.header.columns.is_empty() {
+                                pending =
+                                    Some((start.header, start.header_offset, block_database.clone()));
                             } else {
-                                target.as_ref().and_then(|(db, _)| db.clone())
-                            };
-                            if is_live && recorder.is_some() {
-                                block_start = Some(start.clone());
-                            }
-                            let selector = batch_options.database.as_deref();
-                            let matches_table = start.header.matches(&table)
-                                && (selector.is_none() || block_database.as_deref() == selector);
-                            if matches_table && is_live {
-                                // A known-segment match was already checked
-                                // for ambiguity before the loop started; a
-                                // live discovery needs the same check applied
-                                // incrementally, since the full match set
-                                // isn't known until the scan reaches EOF.
-                                let key = (block_database.clone(), start.header.qualified_name());
-                                match &target {
-                                    None => target = Some(key),
-                                    Some(t) if *t != key => {
-                                        Err(Error::AmbiguousTable {
-                                            name: table.clone(),
-                                            candidates: vec![
-                                                render_candidate(t),
-                                                render_candidate(&key),
-                                            ],
-                                        })?;
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            if matches_table {
-                                if start.header.columns.is_empty() {
-                                    pending = Some((start.header, start.header_offset, block_database));
-                                } else {
-                                    let resolved = resolve_block(
-                                        &start.header,
-                                        start.header.columns.len(),
-                                        metadata.as_ref(),
-                                        block_database.as_deref(),
-                                        batch_options.schema_mode,
-                                    )?;
-                                    let predicate_index = resolve_predicate_index(
-                                        predicate.as_ref(),
-                                        &resolved.schema,
-                                        start.header_offset,
-                                    )?;
-                                    let batcher = RowBatcher::new(
-                                        &resolved,
-                                        start.header.qualified_name(),
-                                        batch_options.clone(),
-                                    );
-                                    *resolved_schema_for_stream.lock().unwrap() = resolved;
-                                    active = Some((
-                                        start.header_offset,
-                                        start.header,
-                                        batcher,
-                                        predicate_index,
-                                        block_database,
-                                    ));
-                                }
+                                let resolved = resolve_block(
+                                    &start.header,
+                                    start.header.columns.len(),
+                                    metadata.as_ref(),
+                                    block_database.as_deref(),
+                                    batch_options.schema_mode,
+                                )?;
+                                let predicate_index = resolve_predicate_index(
+                                    predicate.as_ref(),
+                                    &resolved.schema,
+                                    start.header_offset,
+                                )?;
+                                let batcher = RowBatcher::new(
+                                    &resolved,
+                                    start.header.qualified_name(),
+                                    batch_options.clone(),
+                                );
+                                *resolved_schema_for_stream.lock().unwrap() = resolved;
+                                active = Some((
+                                    start.header_offset,
+                                    start.header,
+                                    batcher,
+                                    predicate_index,
+                                    block_database.clone(),
+                                ));
                             }
                         }
                         Event::Row(row) => {
@@ -656,12 +710,12 @@ where
                                     invalidate_block_cache(&mut chunks);
                                     rows_emitted += batch.num_rows() as u64;
                                     *position_for_stream.lock().unwrap() =
-                                        snapshot(&scanner, &active, rows_emitted, current_database.clone());
+                                        snapshot(&scanner, &active, rows_emitted);
                                     yield batch;
                                 }
                             }
                         }
-                        Event::CopyEnd(end) => {
+                        Event::CopyEnd(_) => {
                             pending = None;
                             if let Some((_, _, mut batcher, _, _)) = active.take()
                                 && !batcher.is_empty()
@@ -670,51 +724,14 @@ where
                                 invalidate_block_cache(&mut chunks);
                                 rows_emitted += batch.num_rows() as u64;
                                 *position_for_stream.lock().unwrap() =
-                                    snapshot(&scanner, &active, rows_emitted, current_database.clone());
+                                    snapshot(&scanner, &active, rows_emitted);
                                 yield batch;
                             }
-                            if let (Some(start), Some(rec)) =
-                                (block_start.take(), recorder.as_mut())
-                            {
-                                rec.record(CopyBlock {
-                                    header: start.header,
-                                    // `block_start` is only ever set while
-                                    // `is_live`, so `current_database` here
-                                    // is this same segment's live tracking,
-                                    // unchanged since the matching `CopyStart`
-                                    // (a `\connect` cannot occur mid-block).
-                                    database: current_database.clone(),
-                                    header_offset: start.header_offset,
-                                    data_offset: start.data_offset,
-                                    terminator_offset: end.terminator_offset,
-                                    end_offset: end.end_offset,
-                                    row_count: end.row_count,
-                                    sparse_index: None,
-                                    column_stats: None,
-                                });
-                                rec.persist(source, end.end_offset).await?;
-                            }
                         }
-                        // The prepass above already captured the first
-                        // database's preamble (I1: nothing before its first
-                        // `COPY` block matters to `crate::preamble`), so a
-                        // `Line` reaching here is always past that boundary
-                        // — DDL for a later `\connect`ed database in a
-                        // multi-database dump included, which no incremental
-                        // path captures yet (only `build_index`'s full scan
-                        // does). A `\connect` on it is still worth tracking,
-                        // though — it's a database *name*, never a column
-                        // type, so reading it here isn't "reading preamble
-                        // as it goes" in the sense that section rules out;
-                        // it's what lets a live-discovered block still be
-                        // attributed to the right database.
-                        Event::Line(line) => {
-                            if let Some(name) =
-                                crate::preamble::parse_connect(&String::from_utf8_lossy(line.raw))
-                            {
-                                current_database = Some(name);
-                            }
-                        }
+                        // A replay segment covers exactly one block, so the
+                        // only non-row line in range is the `COPY` header
+                        // itself, which arrives as `CopyStart`.
+                        Event::Line(_) => {}
                     }
                 }
 
@@ -738,10 +755,6 @@ where
                         limit: scan_options.max_line_bytes,
                     })?;
                 }
-            }
-
-            if is_live && let Some(rec) = recorder.as_mut() {
-                rec.persist(source, size).await?;
             }
         }
     };

@@ -70,33 +70,30 @@
 //!   see `docs/design/roadmap-phase3.2-span-model-notes.md` for the
 //!   verification this rests on.
 //! - **Wiring into `DumpIndex`/`crate::cache`/`crate::stream` — landed in
-//!   Phase 3.2.1/3.2.1.1, with one gap left for a follow-up.** [`Builder`]
-//!   (this module's boundary/classification state machine) is now driven
-//!   directly by [`crate::index::build_index`] and
-//!   [`crate::index::scan_preamble`], fed the same [`crate::scan::Event`]
-//!   stream those functions already walk — [`build_map`] itself is now a
-//!   thin wrapper over the same [`Builder`], kept for callers (and this
-//!   module's own tests) that just want a span list. `DumpIndex::spans` is
-//!   the primary, persisted structure; `DumpIndex::blocks()`/`blocks_for`
-//!   are filters over it, and `crate::stream::table_stream`'s `Recorder`
-//!   appends each live-discovered block as its own [`SpanBody::Data`].
-//!   [`SpanBody::Unscanned`] is produced for real by
-//!   [`crate::index::preamble_only`], the one genuinely partial scan today
-//!   (`build_index` always reaches EOF). `DumpMetadata` is
+//!   Phase 3.2.1 through 3.2.1.2.1.** [`Builder`] (this module's
+//!   boundary/classification state machine) is driven directly by
+//!   [`crate::index::build_index`], [`crate::index::scan_preamble`] and
+//!   `crate::stream`'s mapping pass, fed the same [`crate::scan::Event`]
+//!   stream those already walk — [`build_map`] itself is a thin wrapper over
+//!   the same [`Builder`], kept for callers (and this module's own tests)
+//!   that just want a span list. `DumpIndex::spans` is the primary,
+//!   persisted structure; `DumpIndex::blocks()`/`blocks_for` are filters over
+//!   it. [`SpanBody::Unscanned`] covers whatever a partial scan has not
+//!   reached, so **every** `DumpIndex` tiles its file — one built by a query
+//!   included, with no exemption for a resumed stream. `DumpMetadata` is
 //!   [`crate::preamble::dump_metadata_from_spans`] — a derived view over
 //!   `spans`, computed once, the way the design's "The span is the
 //!   container" section calls for; it's what [`SpanBody::Connect`],
 //!   [`SpanBody::VersionHeader`] and [`SpanBody::AlterTypeAddValue`] exist
 //!   for, rather than folding into generic [`SpanBody::Framing`]/[`SpanBody::Unparsed`].
 //!
-//!   **Left for a follow-up** (`docs/design/roadmap-phase3.2.1-span-wiring-notes.md`):
-//!   `crate::stream::table_stream`'s live segment records `Data` spans
-//!   without classifying the DDL between them, so an index built by a query
-//!   (as opposed to `build_index`'s full scan) does not tile the file the way
-//!   `check_tiling` expects, and its `metadata` still comes from
-//!   `scan_preamble`'s own spans rather than a merge into the query-built
-//!   index — an accepted gap since nothing yet reads non-`Data` spans back
-//!   out of a query-built `DumpIndex`.
+//!   A [`Builder`] that starts partway through a file opens its first span at
+//!   its own first recognized content, **not** at the byte it began reading:
+//!   closing that seam against whatever already covers the bytes before it is
+//!   the caller's job, and `crate::stream::splice` does it by extending the
+//!   preceding span — the same rule [`Builder::push_span`] applies to every
+//!   other boundary, and what keeps a map assembled across several scans
+//!   identical to one built in a single pass.
 //! - **Span text storage** (`docs/design/roadmap-phase3-object-inventory.md`,
 //!   "Span text comes from the file, not from the parser"), the cache's
 //!   64KB-per-span cap, and the file-level `Diagnostic` channel
@@ -293,8 +290,16 @@ pub(crate) struct Builder {
     /// always `Idle` while a `CopyStart`/`CopyEnd` pair is in flight —
     /// `crate::scan::CopyScanner` never interleaves the two). `.0` is the
     /// span's own start offset, which for a TOC-commented block precedes
-    /// `.1`'s `header_offset` — see [`Builder::on_copy_start`].
-    pending_data: Option<(u64, crate::scan::CopyStart)>,
+    /// `.1`'s `header_offset` — see [`Builder::on_copy_start`]. `.2` is the
+    /// partition-root marker this block's header carried, consumed at
+    /// `CopyStart` so a later block cannot inherit it.
+    pending_data: Option<(u64, crate::scan::CopyStart, Option<String>)>,
+    /// The `-- load via partition root <name>` marker (I2) seen since the
+    /// last TOC entry began, waiting for the `COPY` header it belongs to.
+    /// Cleared by the header that consumes it, and by the next TOC `Name:`
+    /// line — an entry that turned out not to be table data at all leaves
+    /// nothing behind for the following one to pick up.
+    pending_partition_root: Option<String>,
 }
 
 /// Whether `-- Name: ...` (pg_dump's `_printTocEntry()` header, I3) is
@@ -304,6 +309,17 @@ pub(crate) struct Builder {
 /// TOC entry rather than framing prose.
 fn looks_like_toc_name_line(line: &str) -> bool {
     line.starts_with("-- Name: ") && line.contains("; Type: ")
+}
+
+/// The root table named by a `-- load via partition root <name>` marker
+/// line (I2), if `line` is one. `pg_dump` writes it into the `TABLE DATA`
+/// entry's `defn` whenever that entry's `COPY` header names the partition's
+/// **root** rather than the partition itself — which is the only shape in
+/// which one header name owns several blocks in one dump.
+fn partition_root_marker(line: &str) -> Option<String> {
+    let rest = line.strip_prefix("-- load via partition root ")?;
+    let rest = rest.trim();
+    (!rest.is_empty()).then(|| rest.to_string())
 }
 
 /// Whether `line` is one of the version-header block's two lines (I9), and
@@ -335,11 +351,44 @@ fn close_comment(
 }
 
 impl Builder {
+    /// A builder with no database in scope until a `\connect` establishes
+    /// one — right for a scan that starts at byte 0.
     pub(crate) fn new() -> Self {
-        Self { mode: Mode::Idle, database: None, spans: Vec::new(), pending_data: None }
+        Self::with_database(None)
     }
 
+    /// A builder with `database` already in scope — what
+    /// [`crate::stream::table_stream`]'s mapping pass needs, since it starts
+    /// at the map's frontier rather than at byte 0 and may be well inside an
+    /// already-`\connect`ed database's territory. Feeding it the file's
+    /// earlier `\connect` lines is not an option: it never reads those bytes.
+    pub(crate) fn with_database(database: Option<String>) -> Self {
+        Self {
+            mode: Mode::Idle,
+            database,
+            spans: Vec::new(),
+            pending_data: None,
+            pending_partition_root: None,
+        }
+    }
+
+    /// Push a newly-completed span, and — since the tiling invariant makes a
+    /// span's true end exactly the next span's start — fix up the
+    /// previously-pushed span's placeholder `end` at the same time. Only the
+    /// span still open when this call returns (`self.spans.last()`) carries
+    /// a not-yet-real `end`; [`finish`](Self::finish)/[`snapshot`](Self::snapshot)
+    /// are what close that one out, since nothing later has opened yet to
+    /// fix it up.
+    ///
+    /// A builder that starts partway through a file therefore opens its first
+    /// span at its first recognized content, not at the byte it began
+    /// reading; closing that seam is the caller's job, and
+    /// `crate::stream::splice` does it by extending the span before it — the
+    /// same rule this method applies to every other boundary.
     fn push_span(&mut self, start: u64, body: SpanBody) {
+        if let Some(last) = self.spans.last_mut() {
+            last.end = start;
+        }
         self.spans.push(Span { start, end: start, database: self.database.clone(), body });
     }
 
@@ -368,6 +417,17 @@ impl Builder {
     /// *same* line under the new mode without the caller needing to know.
     pub(crate) fn feed_line(&mut self, offset: u64, raw: &[u8]) {
         let text = String::from_utf8_lossy(raw).into_owned();
+        // Tracked here rather than inside `step`'s mode machine because the
+        // marker is separated from the `COPY` header it describes by a blank
+        // line, which closes whatever comment block held it — so by the time
+        // `on_copy_start` runs, no mode carries it any more. Recognized
+        // before dispatch so it is seen wherever the line lands.
+        let trimmed = text.trim();
+        if looks_like_toc_name_line(trimmed) {
+            self.pending_partition_root = None;
+        } else if let Some(root) = partition_root_marker(trimmed) {
+            self.pending_partition_root = Some(root);
+        }
         let mut current = Some((offset, text));
         while let Some((offset, line)) = current.take() {
             current = self.step(offset, &line);
@@ -487,14 +547,14 @@ impl Builder {
                 event.header_offset
             }
         };
-        self.pending_data = Some((start, event));
+        self.pending_data = Some((start, event, self.pending_partition_root.take()));
     }
 
     pub(crate) fn on_copy_end(&mut self, end: crate::scan::CopyEnd) {
         // `on_copy_start` always runs first for a matching block
         // (`crate::scan::CopyScanner` never emits `CopyEnd` without a prior
         // `CopyStart`), so this is always `Some`.
-        let Some((start, copy_start)) = self.pending_data.take() else { return };
+        let Some((start, copy_start, partition_root)) = self.pending_data.take() else { return };
         let block = CopyBlock {
             header: copy_start.header,
             database: self.database.clone(),
@@ -503,6 +563,7 @@ impl Builder {
             terminator_offset: end.terminator_offset,
             end_offset: end.end_offset,
             row_count: end.row_count,
+            partition_root,
             sparse_index: None,
             column_stats: None,
         };
@@ -514,11 +575,34 @@ impl Builder {
     /// opened the next span.
     pub(crate) fn finish(mut self, end: u64) -> Vec<Span> {
         self.flush_pending();
-        let n = self.spans.len();
-        for i in 0..n {
-            self.spans[i].end = if i + 1 < n { self.spans[i + 1].start } else { end };
+        if let Some(last) = self.spans.last_mut() {
+            last.end = end;
         }
         self.spans
+    }
+
+    /// The spans recognized so far, without consuming `self` — unlike
+    /// [`finish`](Self::finish), which a caller can only call once, at true
+    /// end of scan. `end` closes out the still-open last span, the same way
+    /// `finish`'s `end` does; the caller supplies it because this module
+    /// only ever decides where the *next* span starts, never a span's own
+    /// end (see the module docs).
+    ///
+    /// Only sound to call at a boundary where nothing is mid-classification
+    /// — i.e. `self.mode` is [`Mode::Idle`] — since otherwise the
+    /// last-pushed span in `self.spans` is not actually the span open at
+    /// `end`, it's the one before it, and stamping its `end` there would be
+    /// wrong. Right after [`on_copy_end`](Self::on_copy_end) is exactly such
+    /// a boundary (`on_copy_start` always leaves `mode` `Idle` for the
+    /// block's duration), which is the caller this exists for —
+    /// `crate::stream`'s mapping pass persists its progress after every
+    /// completed block, not just once at the true end of its scan.
+    pub(crate) fn snapshot(&self, end: u64) -> Vec<Span> {
+        let mut spans = self.spans.clone();
+        if let Some(last) = spans.last_mut() {
+            last.end = end;
+        }
+        spans
     }
 }
 
@@ -744,5 +828,82 @@ mod tests {
                 label: "sad".to_string(),
             }
         );
+    }
+
+    /// The case [`Builder::snapshot`] exists for: a caller (`stream.rs`'s
+    /// live segment, in the follow-up slice that wires this in) needs a
+    /// tiling span list *before* the scan reaches its true end, right after
+    /// each `CopyEnd` — the one point `on_copy_end` guarantees `mode` is
+    /// back to `Idle`. Drives the same `Builder` a real live segment would:
+    /// two DDL statements, a `COPY` block, then a trailing DDL statement,
+    /// checking `check_tiling` at every such boundary rather than only at
+    /// the very end.
+    #[test]
+    fn snapshot_tiles_the_prefix_seen_so_far_at_every_copy_end() {
+        fn feed(builder: &mut Builder, offset: &mut u64, line: &str) {
+            builder.feed_line(*offset, line.as_bytes());
+            *offset += line.len() as u64 + 1;
+        }
+
+        let mut builder = Builder::new();
+        let mut offset = 0u64;
+
+        feed(&mut builder, &mut offset, "CREATE EXTENSION pgcrypto;");
+        assert!(check_tiling(&builder.snapshot(offset), offset).is_empty());
+
+        feed(&mut builder, &mut offset, "CREATE SCHEMA g;");
+        assert!(check_tiling(&builder.snapshot(offset), offset).is_empty());
+
+        let header_offset = offset;
+        builder.on_copy_start(crate::scan::CopyStart {
+            header: crate::copy::CopyHeader {
+                schema: Some("public".to_string()),
+                table: "t".to_string(),
+                columns: vec!["id".to_string()],
+            },
+            header_offset,
+            data_offset: header_offset + 32,
+        });
+        let terminator_offset = header_offset + 48;
+        let end_offset = terminator_offset + 3;
+        builder.on_copy_end(crate::scan::CopyEnd { terminator_offset, end_offset, row_count: 1 });
+        offset = end_offset;
+
+        let snapshot = builder.snapshot(end_offset);
+        let issues = check_tiling(&snapshot, end_offset);
+        assert!(issues.is_empty(), "{issues:?}");
+        assert!(matches!(snapshot.last().unwrap().body, SpanBody::Data(_)));
+        assert_eq!(snapshot.last().unwrap().end, end_offset);
+
+        feed(&mut builder, &mut offset, "CREATE SCHEMA h;");
+        let finished = builder.finish(offset);
+        let issues = check_tiling(&finished, offset);
+        assert!(issues.is_empty(), "{issues:?}");
+        assert_eq!(finished.len(), 4, "extension, schema g, the COPY block, schema h");
+    }
+
+    /// `snapshot` and `finish`, called at the same watermark once nothing
+    /// more will ever be fed, must agree — `finish` just also takes
+    /// ownership, which a caller building an intermediate checkpoint (rather
+    /// than actually finishing the scan) can't afford to do.
+    #[test]
+    fn snapshot_agrees_with_finish_at_the_same_watermark() {
+        let lines = ["CREATE EXTENSION pgcrypto;", "", "CREATE SCHEMA g;"];
+        let drive = || {
+            let mut builder = Builder::new();
+            let mut offset = 0u64;
+            for line in lines {
+                builder.feed_line(offset, line.as_bytes());
+                offset += line.len() as u64 + 1;
+            }
+            (builder, offset)
+        };
+
+        let (builder, offset) = drive();
+        let via_snapshot = builder.snapshot(offset);
+        let (builder, offset) = drive();
+        let via_finish = builder.finish(offset);
+
+        assert_eq!(via_snapshot, via_finish);
     }
 }

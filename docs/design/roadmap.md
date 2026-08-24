@@ -563,3 +563,16 @@ this section when it acquires a phase number, not when it acquires a design.
   round-trip test against real `pg_dump` output rather than a hand-written
   literal — the pattern `public.escapes` already establishes. This is careful,
   case-by-case work; the value is in the test coverage, not in the mapping table.
+
+- **Let a live scan emit rows again, by carrying the map in the resume token.**
+  Phase 3.2.1.2.1 separated map-building from row emission
+  ([`roadmap-phase3-object-inventory.md`](roadmap-phase3-object-inventory.md),
+  "Mapping and streaming are separate passes"), which costs a second read of
+  the queried block: once to find its extent, once to emit its rows. The
+  interleaved form can be recovered without reintroducing the unmapped hole
+  that motivated the split, because `ResumeToken` is opaque and valid only
+  within the producing process — so it can carry the live segment's in-flight
+  spans and its open `CopyStart`, and a resumed stream can splice them in
+  rather than re-deriving them. Deliberately deferred: it is an optimization
+  over a query path still being iterated on, and it should be revisited once
+  the feature set is settled rather than designed around now.

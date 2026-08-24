@@ -990,6 +990,7 @@ mod tests {
             terminator_offset: 0,
             end_offset: 0,
             row_count: 0,
+            partition_root: None,
             sparse_index: None,
             column_stats: None,
         }))

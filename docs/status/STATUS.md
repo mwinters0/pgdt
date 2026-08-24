@@ -52,13 +52,20 @@ Last updated: 2026-08-24.
       across every fixture before `PreambleBuilder` was deleted. Earned by
       3.2.1's mis-sizing, not by a wrong contract. Notes:
       `docs/design/roadmap-phase3.2.1.1-metadata-derived-view-notes.md`.
-- [ ] **3.2.1.2** `stream.rs`'s live segment classifying the DDL between
-      discovered blocks so a query-built `DumpIndex` tiles the way
-      `build_index`'s does. Needs `map::Builder` to support a non-consuming
-      "spans so far" snapshot first (today `finish` consumes it and can only
-      run once, which conflicts with `Recorder`'s per-block persistence) — a
-      capability gap, not just a wiring gap. Earned by 3.2.1.1's mis-sizing —
-      see its notes doc's "What this slice does not do".
+- [x] **3.2.1.2** `map::Builder::snapshot` — a non-consuming "spans so far"
+      read, sound at any boundary where nothing is mid-classification (e.g.
+      right after `on_copy_end`). `push_span` now fixes up the previous
+      span's `end` at push time rather than deferring it to a single
+      end-of-scan pass. No caller yet. Notes:
+      [`roadmap-phase3.2.1.2-builder-snapshot-notes.md`](../design/roadmap-phase3.2.1.2-builder-snapshot-notes.md).
+- [x] **3.2.1.2.1** Mapping and streaming are separate passes in `stream.rs`:
+      `map_forward` classifies DDL and never yields, stopping once the
+      queried table is settled; rows come only from replaying already-mapped
+      blocks, resume included. `CopyBlock` gains `partition_root` (I2),
+      `BatchOptions` gains `ScanExtent`, cache format v3→v4, and a
+      `partitions` fixture schema lands. A query-built `DumpIndex` now tiles
+      — and matches `build_index` span for span. Notes:
+      [`roadmap-phase3.2.1.2.1-mapping-streaming-split-notes.md`](../design/roadmap-phase3.2.1.2.1-mapping-streaming-split-notes.md).
 - [ ] **3.2.2** Span text storage with its 64KB cap, and the file-level
       `Diagnostic` channel the runtime tiling check reports through. Earned
       the same way.
@@ -77,8 +84,8 @@ Last updated: 2026-08-24.
 
 ## Not started
 
-- **Phase 3, slices 3.2.1.2, 3.2.2-3.5** — specified, no code. See the
-  checklist above and `docs/design/roadmap-phase3-object-inventory.md`.
+- **Phase 3, slices 3.2.2-3.5** — specified, no code. See the checklist
+  above and `docs/design/roadmap-phase3-object-inventory.md`.
 - **Phases 4-8** — not designed. See `docs/design/roadmap.md`.
 
 ## Known gaps
@@ -94,21 +101,19 @@ Last updated: 2026-08-24.
   Grouping them into one `Data` span is slice 3.6. Their contents stay out of
   scope permanently regardless; see `docs/design/roadmap.md`, "Large objects:
   ranges, not contents".
-- Resuming a `ResumeToken` taken from partway through a cache replay treats
-  the rest of the file as unscanned live territory rather than continuing
-  the replay — see `docs/design/roadmap-phase1-mvp.md`'s "Index / structure
-  cache" for why. Correctness is unaffected; it only gives back some of the
-  I/O saving for that one combination.
-- A cold (uncached) query against an ambiguous table name can still emit
-  some rows before `Error::AmbiguousTable` surfaces, if the first matching
-  block sits earlier in the file than the conflicting one — the live scan
-  can't know a second candidate exists until it reaches it. The emitted rows
-  are genuinely correct (never a union), but a caller must treat any output
-  preceding a stream error as incomplete, same as any other mid-stream
-  error. A warm cache (or a query run after `pgdq parse`) catches the
-  ambiguity before any streaming starts, since every candidate is already
-  known. See `docs/design/roadmap-phase2-typed-columns-notes.md`, "One target
-  per query".
+- A query stops mapping once its target is settled, so a conflicting
+  candidate **past** the stopping point is never seen and
+  `Error::AmbiguousTable` is not raised for it — the query returns the
+  candidate it found, with no signal that another existed. The stop rule
+  (`stream::target_settled`) rules out the two shapes that announce
+  themselves: a matching block carrying a partition-root marker (I2), and a
+  file containing any `\connect` at all (`pg_dumpall`, concatenation,
+  `--create`). What is left undetectable is a file whose *first* segment is a
+  plain dump with something concatenated after it — nothing in the prefix says
+  so. `ScanExtent::Full` (or a query after `pgdq parse`) gives exact
+  detection. Rows are never a union either way, and ambiguity is now raised
+  *before* any row is emitted rather than partway through one candidate's,
+  which is what the previous form of this gap cost.
 - `pgdq info <file>` (no `--preamble-only`) trusts whatever cache
   `CacheMode::load` finds without checking it actually covers the whole file:
   running `pgdq info <file> --preamble-only` and then `pgdq info <file>`
@@ -116,9 +121,10 @@ Last updated: 2026-08-24.
   instead of running a full scan. Predates Phase 3.2.1 (reproduced against
   `main` before that slice's changes); not fixed there since it's unrelated
   to span wiring — see
-  `docs/design/roadmap-phase3.2.1-span-wiring-notes.md`. Likely fix: compare
-  `scanned_through` against the source's size before trusting a loaded cache
-  as complete.
+  `docs/design/roadmap-phase3.2.1-span-wiring-notes.md`. Reachable more often
+  since 3.2.1.2.1, because an ordinary query now leaves a *partial* cache by
+  design rather than a whole-file one. Likely fix: compare `scanned_through`
+  against the source's size before trusting a loaded cache as complete.
 
 ## Decisions worth another look
 
@@ -126,18 +132,8 @@ Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
 
-- **Slices 3.2.1 and 3.2.1.1 were each split further mid-implementation,
-  unattended, both times along the same line: a self-contained mechanical
-  change bundled with `stream.rs`'s live-segment DDL classification.**
-  3.2.1.1 landed `DumpMetadata` as a derived view over spans standalone (not
-  folded into 3.3, resolving the previous round's open question — the
-  `SpanBody` additions it needed, `Connect`/`VersionHeader`/`AlterTypeAddValue`,
-  turned out narrow and didn't touch anything 3.3's TOC enrichment will add).
-  What's left, 3.2.1.2, is `stream.rs`'s DDL classification itself, now
-  blocked on a `map::Builder` capability gap (a non-consuming "spans so far"
-  snapshot — `finish` currently consumes the builder and can only run once,
-  but `Recorder` persists after every completed block) rather than only a
-  review-confidence one. Worth a look: whether that capability belongs on
-  `Builder` itself or suggests `Recorder`'s per-block persistence should
-  change instead — see `docs/design/roadmap-phase3.2.1.1-metadata-derived-view-notes.md`
-  and `docs/status/history/2026-08-24.md`.
+*(Empty. The 3.2.1/3.2.1.1/3.2.1.2 splits that sat here have been reviewed
+and settled into the design docs — see
+[`roadmap-phase3-object-inventory.md`](../design/roadmap-phase3-object-inventory.md)'s
+"Mapping and streaming are separate passes" and
+[`history/2026-08-24.md`](history/2026-08-24.md).)*

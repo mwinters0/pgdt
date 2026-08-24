@@ -81,6 +81,16 @@ SCHEMAS: dict[str, dict[str, list[str] | None]] = {
         "default": [],
         "verbose": ["--verbose"],
     },
+    # roadmap-phase3-object-inventory.md's "Mapping and streaming are
+    # separate passes": the one shape where a single `COPY <name>` header
+    # owns several blocks (I2). `default` already produces it -- pg_dump
+    # forces load-via-partition-root for hash-on-enum partitioning with no
+    # flag -- and the explicit flag extends it to the LIST-partitioned
+    # table too, so both sets are needed to cover both routes.
+    "partitions": {
+        "default": [],
+        "load-via-partition-root": ["--load-via-partition-root"],
+    },
 }
 
 

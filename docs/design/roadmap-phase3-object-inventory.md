@@ -224,12 +224,10 @@ tiling test therefore has no exemption for incremental scans, and exemptions
 are how invariants rot.
 
 **Coverage is a prefix, by construction.** `table_stream` never jumps forward
-over unread bytes: with no resume token it replays already-cached blocks and
-appends one `Segment::Live { start: scanned_through }`; with one it starts a
-single live segment at the token's offset, which may sit *below*
-`scanned_through` and re-walk, but never above it. So today there is exactly
-one `Unscanned` span and it is always trailing — informationally identical to
-`scanned_through`.
+over unread bytes: a live segment always starts at `scanned_through` and walks
+contiguously from there (see "Mapping and streaming are separate passes"), so
+there is exactly one `Unscanned` span and it is always trailing —
+informationally identical to `scanned_through`.
 
 The structure is nonetheless a span list rather than a watermark field,
 because prefix-ness is a property of the current scan strategy, not of the
@@ -242,6 +240,76 @@ would not.
 An `Unscanned` span later subdividing into real spans is the reference case for
 the monotonic-coverage rule below: specificity increases, coverage never
 decreases.
+
+## Mapping and streaming are separate passes
+
+**Decision.** A live scan's only job is to **extend the map**. Rows are emitted
+only by replaying a block the map already contains — `Segment::Known`. A
+`Segment::Live` never yields a batch.
+
+A cold query therefore runs in two phases: walk forward from `scanned_through`,
+recording every block it passes and classifying the DDL between them, until the
+queried table's block **closes**; then replay that block for its rows. The
+target block's bytes are read twice — once to find its extent, once to emit its
+rows — and that is the price of the split.
+
+**Why the split.** Interleaving the two makes the map race the rows. A caller
+can pause anywhere, and a `ResumeToken` captured mid-block points at a byte the
+map has not reached: the recorder persists a block only when it *closes*, and a
+`yield` suspends the stream before that runs, so the bytes between the map's
+frontier and the pause point belong to no span. Reconciling a resumed segment's
+freshly-built spans against that hole is repair work with a case per pause
+shape, all of it on the path with the least test coverage, and all of it failing
+silently — as a cache that no longer tiles rather than as an error. Separating
+the passes deletes the hole instead of repairing it: every resume point is
+inside a fully mapped region by construction, so a resumed stream continues a
+replay rather than falling back to a live scan, which also closes the
+[`roadmap-phase1-mvp.md`](roadmap-phase1-mvp.md) known gap that said it could
+not.
+
+**A cold query stops at the queried table, not at EOF — unless the block says
+otherwise.** Today's live segment always runs to `size`, so a cold query
+against the first table of a 1TB file costs a full 1TB scan. Bounding it to
+`[0, target.end_offset)` is what makes this phase's "don't walk bytes you don't
+need" claim true of the query path and not just of the map, and it is also what
+pays for the split's second read rather than adding it on top.
+
+The exception is I2: one `COPY` header name can own several blocks in one dump,
+because every leaf partition of a load-via-partition-root table writes a header
+naming the **root**. Those blocks are *not* adjacent — entries sort by the
+partition's own name — so reading forward until the next block names a
+different table does not enumerate them; only EOF does. `pg_dump` marks exactly
+these blocks, with a `-- load via partition root <root>` line between the TOC
+comment and the header, and the marker survives `--no-comments`, `--data-only`
+and `--inserts`.
+
+**So the rule is: stop when the matching block closes, unless that block
+carried the marker, in which case continue to EOF.** `map::Builder` records the
+marker on the block it precedes — `CopyBlock` gains `partition_root:
+Option<String>`, read straight off the line, which is
+[`layering.md`](layering.md) rule 5's "store what the dump said, never what we
+concluded" and persists it for free. A caller that wants the full scan
+regardless asks for it explicitly rather than inferring it from cache state.
+
+Two residues, both in `STATUS.md`'s "Known gaps": a file concatenating two
+dumps of the *same* database name has no early signal at all, and ambiguity
+detection still sees only candidates the scan reached — see "One target per
+query" in
+[`roadmap-phase2-typed-columns.md`](roadmap-phase2-typed-columns.md), whose
+already-recorded gap this widens. A later slice can replace the marker rule
+with a provable one: I1 puts every `ALTER TABLE … ATTACH PARTITION` ahead of
+all data, so the leaf set of a queried root is knowable before the first block
+— but that needs partition DDL parsing, which belongs with 3.3/3.4's grammar,
+not here.
+
+**The deferred alternative, on purpose.** `ResumeToken` is opaque and valid only
+within the producing process, so it could instead carry the live segment's
+in-flight spans and its open `CopyStart` — which would close the hole with no
+repair *and* keep live emission, removing the double read. That is an
+optimization over a shape we are still iterating on, so it is deferred rather
+than rejected; it is filed under "Future — wanted, unscheduled" in
+[`roadmap.md`](roadmap.md) and should be revisited once the feature set is
+settled.
 
 ## Span boundaries: object-anchored and greedy
 
@@ -430,7 +498,8 @@ no-code, evidence-gathering slice goes first.
 | **3.2** | `map.rs` as a standalone module: the span model, the tiling invariant with its test over every fixture, cache identity checking, and the hardened statement accumulator — statement-driven pass only, no TOC enrichment. Updates `layering.md`'s module table and Arrow-free check for `map.rs`. |
 | **3.2.1** | The map becomes `DumpIndex`'s primary structure, per "The map is the structure, not a description of it": `spans` primary with `blocks()`/`blocks_for` derived, `Span::Data` holding `CopyBlock` inline, spans persisted (cache format bump), and `build_index` producing spans **in its existing pass**, driving the same `map::Builder` `build_map` does, rather than as a second one. `crate::stream::table_stream`'s `Recorder` appends each live-discovered block as its own `Span::Data`. `Unscanned` becomes a span a real incremental scan produces (`preamble_only`, the one genuinely partial scan today), not a reserved variant. |
 | **3.2.1.1** | `DumpMetadata` as a memoized derived view over `spans` (`dump_metadata_from_spans`), replacing the separate `PreambleBuilder` pass — `SpanBody` grows `Connect`, `VersionHeader` and `AlterTypeAddValue` to carry what `Framing`/`Unparsed` couldn't, verified against the old pass's output across every fixture before `PreambleBuilder` was deleted. |
-| **3.2.1.2** | `stream.rs`'s live segment classifying the DDL between discovered blocks (the phase's own "cheap tier," described as running over any scan, full or incremental) so a query-built `DumpIndex` tiles the way `build_index`'s does. Needs `map::Builder` to support an incremental, non-consuming snapshot (today `finish` consumes it and can only be called once, which conflicts with `Recorder`'s per-block persistence) — a capability gap found while scoping this slice, not yet designed around. Earned by 3.2.1's mis-sizing, not by a wrong contract. |
+| **3.2.1.2** | `map::Builder` gains `snapshot`, a non-consuming "spans so far" read at any boundary where `mode` is `Idle` (e.g. right after `on_copy_end`) — the capability gap `finish`'s once-only, consuming signature left, found while scoping this slice. `push_span` now fixes up the previous span's `end` at push time rather than deferring every span's `end` to a single end-of-scan pass, which is what makes `snapshot` possible without `finish`'s loop. No caller yet. |
+| **3.2.1.2.1** | Mapping and streaming become separate passes in `stream.rs` (see that section): a `Segment::Live` classifies the DDL between the blocks it discovers — the phase's own "cheap tier" — and never yields a batch, stopping once the queried table's block closes unless that block carried the partition-root marker; rows come only from a `Segment::Known` replay over an already-mapped block, resume included. `map::Builder` gains a seeded constructor (start offset plus in-scope database) so a segment beginning partway through the file tiles from its own first byte, and `Builder::snapshot` is spliced onto the base spans after each completed block. `CopyBlock` gains `partition_root` (I2). A `partitions` fixture schema lands with it, under `{default, --load-via-partition-root}` — the default flag set alone produces the multi-block shape, since `pg_dump` forces the mode for hash-on-enum partitioning. A query-built `DumpIndex` then tiles the way `build_index`'s does, with no exemption for resumed streams. Earned by 3.2.1.2's mis-sizing, not by a wrong contract. |
 | **3.2.2** | Additive remainder: span text sliced from the file and stored in the cache with its 64KB-per-span cap and `truncated` marker, and the file-level `Diagnostic` channel on `DumpIndex` — through which the runtime tiling check and the cache's mtime warning are reported. |
 | **3.2.3** | A position-only `scan.rs` event marking where a dollar-quoted region ended, and `map.rs` closing a statement on it — so a TOC-comment-less dump degrades to one span per object rather than to one span for the rest of the file. See "Span boundaries". |
 | **3.3** | The TOC enrichment layer: owner, kind labels, the `Tablespace:` field, TOC-coverage reporting. |
@@ -448,18 +517,27 @@ collapses on the header-less input the "Scanning" decision is justified by.
 Reasoning for all three:
 [`../status/history/2026-08-23.md`](../status/history/2026-08-23.md).
 
-**3.2.1.1 and 3.2.1.2 were earned the same way 3.2.1/3.2.2 were, in two
-rounds.** 3.2.1's own row first split off a combined 3.2.1.1 (`DumpMetadata`'s
-derived-view rework and `stream.rs`'s live-segment DDL classification bundled
-together) because both turned out to need real design decisions rather than
-being plumbing over already-decided shapes. Once inside that combined slice,
-the same mis-sizing pattern repeated: the `DumpMetadata` rework was
-self-contained and fully verifiable against the old implementation's output,
-while the `stream.rs` piece turned out to need a `map::Builder` capability
-(a non-consuming snapshot) that doesn't exist yet — a second, independent
-reason not to review it alongside the first. Its row above is the scope that
-landed as 3.2.1.1; the remainder became 3.2.1.2. Reasoning:
-[`../status/history/2026-08-24.md`](../status/history/2026-08-24.md).
+**3.2.1.1, 3.2.1.2 and 3.2.1.2.1 were earned the same way 3.2.1/3.2.2 were, in
+three rounds, each splitting off the same kind of remainder.** 3.2.1's own row
+first split off a combined 3.2.1.1 (`DumpMetadata`'s derived-view rework and
+`stream.rs`'s live-segment DDL classification bundled together) because both
+turned out to need real design decisions rather than being plumbing over
+already-decided shapes. Once inside that combined slice, the same mis-sizing
+pattern repeated: the `DumpMetadata` rework was self-contained and fully
+verifiable against the old implementation's output, while the `stream.rs`
+piece turned out to need a `map::Builder` capability (a non-consuming
+snapshot) that doesn't exist yet — a second, independent reason not to review
+it alongside the first. Its row above is the scope that landed as 3.2.1.1; the
+remainder became 3.2.1.2. Scoping 3.2.1.2 in turn found that even the
+`map::Builder` capability and its `stream.rs` wiring don't belong in one
+review: the capability is mechanical and directly testable against the
+existing `Builder` state machine, while wiring it into `stream.rs` is a rework
+of an already-tested core path (resume tokens, ambiguous-table detection, the
+`Recorder`). That remainder became 3.2.1.2.1, whose row above was then
+rewritten: the open questions it was carrying were all consequences of
+interleaving map-building with row emission, and the answer was to stop
+interleaving them rather than to reconcile them one pause shape at a time.
+Reasoning: [`../status/history/2026-08-24.md`](../status/history/2026-08-24.md).
 
 **3.6 is numbered out of order deliberately** — it was split out of 3.2 for
 the same sizing reason, but it is not a `<N>.<M>.<K>` follow-up to it: its

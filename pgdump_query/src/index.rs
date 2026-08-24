@@ -68,6 +68,20 @@ pub struct CopyBlock {
     /// Absolute file offset just past the terminator line.
     pub end_offset: u64,
     pub row_count: u64,
+    /// The root table named by this block's `-- load via partition root
+    /// <name>` marker, if it carried one (I2) — meaning `header` names that
+    /// root rather than the partition whose rows follow, and **other blocks
+    /// in this same dump carry the same header name**. Stored rather than
+    /// concluded from: it is a line the dump wrote, which is what
+    /// `layering.md` rule 5 asks L1 to keep.
+    ///
+    /// `crate::stream::table_stream` reads it to decide whether a cold query
+    /// may stop once the queried table's block closes, or must run to EOF
+    /// because more blocks can share the name — the blocks are *not*
+    /// adjacent, so nothing cheaper than EOF enumerates them
+    /// (`docs/design/roadmap-phase3-object-inventory.md`, "Mapping and
+    /// streaming are separate passes").
+    pub partition_root: Option<String>,
     /// Reserved — see [`SparseRowIndex`]. Always `None` in Phase 1.
     pub sparse_index: Option<SparseRowIndex>,
     /// Reserved — see [`RowGroupStats`]. Always `None` in Phase 1.

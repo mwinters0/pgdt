@@ -482,3 +482,120 @@ async fn selecting_a_later_databases_table_needs_strings_mode_or_a_prior_full_sc
         assert!(!rows.is_empty(), "pg_dump {version}: SchemaMode::Strings bypasses the check");
     }
 }
+
+fn partitions_fixture(version: u32, flag_set: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../fixtures")
+        .join(version.to_string())
+        .join("partitions")
+        .join(format!("{flag_set}.sql"))
+}
+
+/// I2's multi-block shape, end to end. `public.feel` is hash-partitioned on
+/// an enum column, so `pg_dump` forces load-via-partition-root with **no
+/// flag** and writes two `COPY public.feel` headers — with `public.feel_m`'s
+/// block sitting between them, since `TABLE DATA` entries sort by the
+/// partition's own name. A query must return every partition's rows, which
+/// means the `-- load via partition root` marker has to stop the scan from
+/// finishing early at the first match
+/// (`docs/design/roadmap-phase3-object-inventory.md`, "Mapping and streaming
+/// are separate passes").
+#[tokio::test]
+async fn a_partition_root_name_yields_every_partitions_rows() {
+    for version in [13, 16, 18] {
+        for flag_set in ["default", "load-via-partition-root"] {
+            let path = partitions_fixture(version, flag_set);
+            let source = LocalFileSource::open(&path).unwrap();
+            let mut stream = table_stream(
+                &source,
+                "public.feel",
+                ScanOptions::default(),
+                BatchOptions::default(),
+                None,
+                None,
+                CacheMode::Disabled,
+            );
+            let mut rows = Vec::new();
+            while let Some(batch) = stream.next().await {
+                rows.extend(rows_of(&batch.unwrap()));
+            }
+            rows.sort();
+            assert_eq!(
+                rows,
+                vec![
+                    vec![Some("1".to_string()), Some("sad".to_string())],
+                    vec![Some("2".to_string()), Some("ok".to_string())],
+                    vec![Some("3".to_string()), Some("happy".to_string())],
+                ],
+                "pg_dump {version}, {flag_set}: every partition's rows, not just the first block's"
+            );
+        }
+    }
+}
+
+/// The marker is recorded on the blocks that carry it and on no others, so
+/// the stop rule reads a stored fact rather than re-sniffing the file
+/// (`CopyBlock::partition_root`).
+#[tokio::test]
+async fn partition_root_is_recorded_only_on_marked_blocks() {
+    for version in [13, 16, 18] {
+        let path = partitions_fixture(version, "default");
+        let source = LocalFileSource::open(&path).unwrap();
+        let index = pgdump_query::build_index(&source, &ScanOptions::default()).await.unwrap();
+
+        let marked: Vec<(&str, &str)> = index
+            .blocks()
+            .filter_map(|b| b.partition_root.as_deref().map(|root| (b.header.table.as_str(), root)))
+            .collect();
+        assert_eq!(
+            marked,
+            vec![
+                ("feel", "public.feel"),
+                ("feel", "public.feel"),
+                ("spread", "public.spread"),
+                ("spread", "public.spread"),
+            ],
+            "pg_dump {version}"
+        );
+
+        // The LIST-partitioned table is not forced, so its partitions dump
+        // under their own names with no marker at all.
+        for block in index.blocks().filter(|b| b.header.table.starts_with("evt")) {
+            assert_eq!(block.partition_root, None, "pg_dump {version}: {}", block.header.table);
+        }
+    }
+}
+
+/// An ordinary table in a file that *also* contains partition-root blocks
+/// still stops early — the marker gates the stop per matched block, not per
+/// file. `evt_m` is the second of nine blocks, and the first marked block
+/// comes after it.
+#[tokio::test]
+async fn an_unmarked_target_still_stops_early_in_a_file_containing_marked_blocks() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("partitions.sql");
+    std::fs::copy(partitions_fixture(16, "default"), &dump).unwrap();
+    let cache_path = pgdump_query::cache::colocated_path(&dump);
+    let source = LocalFileSource::open(&dump).unwrap();
+
+    let mut stream = table_stream(
+        &source,
+        "public.evt_m",
+        ScanOptions::default(),
+        BatchOptions::default(),
+        None,
+        None,
+        CacheMode::Enabled(cache_path.clone()),
+    );
+    let mut rows = Vec::new();
+    while let Some(batch) = stream.next().await {
+        rows.extend(rows_of(&batch.unwrap()));
+    }
+    assert_eq!(rows, vec![vec![Some("unrelated".to_string())]]);
+
+    use pgdump_query::ByteRangeSource;
+    let index = CacheMode::Enabled(cache_path).load(&source).await.unwrap().unwrap();
+    let evt_m = index.blocks_for("public.evt_m").next().unwrap();
+    assert_eq!(index.scanned_through, evt_m.end_offset);
+    assert!(index.scanned_through < source.size().await.unwrap());
+}

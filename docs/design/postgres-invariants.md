@@ -44,27 +44,101 @@ arm, plus the `PRIO_*` ordering in `pg_dump_sort.c`.
 
 ---
 
-## I2 — A table produces at most one `COPY` block per dump
+## I2 — One `COPY` header name can own several blocks in one dump
 
-**Claim.** A given schema-qualified table name yields exactly zero or one
-`COPY` block in one `pg_dump` output. Several blocks under one name can only
-come from concatenation — `pg_dumpall`, or cat'ed dump files — i.e. from
-different databases.
+**Claim.** A schema-qualified name appearing in a `COPY ... FROM stdin;`
+header may own **more than one** `COPY` block within a single `pg_dump`
+output. This happens whenever load-via-partition-root is in effect for a
+partitioned table: each leaf partition gets its own `TABLE DATA` entry, but
+every one of them writes a header naming the **root** table. It is not
+opt-in — `pg_dump` forces the mode on its own for a table hash-partitioned on
+an enum column.
 
-**Proof.** `makeTableDataInfo()` in `pg_dump.c` returns immediately if
-`tbinfo->dataObj != NULL`, so at most one `TABLE DATA` entry is ever created
-per table. It also returns early for views, for partitioned tables
-(`/* Skip partitioned tables (data in partitions) */` — the partitions are
-separate tables with their own names), for non-selected foreign tables, for
-unlogged tables when those are excluded, and for tables in
-`tabledata_exclude_oids`.
+What *is* still one-per-table is the archive entry: `makeTableDataInfo()`
+returns immediately if `tbinfo->dataObj != NULL`, so at most one `TABLE DATA`
+entry exists per table, and it skips views, partitioned parents (`/* Skip
+partitioned tables (data in partitions) */`), unselected foreign tables,
+excluded unlogged tables, and `tabledata_exclude_oids`. The name in the entry
+and the name in the header are simply not the same name.
 
-**Verified against:** v18.6.
-**Relied on by:** `roadmap-phase2-typed-columns.md` (one schema per stream;
-multi-database detection).
-**Re-verify:** `awk '/^makeTableDataInfo\(DumpOptions/,/^}$/'
-src/bin/pg_dump/pg_dump.c` — confirm the `dataObj != NULL` early return and
-the `RELKIND_PARTITIONED_TABLE` skip.
+**Proof.** `dumpTableData()` in `pg_dump.c` builds the header from `copyFrom`,
+which is `fmtQualifiedDumpable(getRootTableInfo(tbinfo))` — not `tbinfo` —
+when `tbinfo->ispartition && (dopt->load_via_partition_root ||
+forcePartitionRootLoad(tbinfo))`. `getPartitioningInfo()` documents the forced
+case: *"the only case for which we force that is hash partitioning on enum
+columns, since the hash codes depend on enum value OIDs which won't be
+replicated across dump-and-reload."*
+
+Observed directly against a live server (pg_dump 16.15), with **no flags**:
+
+```
+-- Data for Name: feelings_0; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+-- load via partition root public.feelings
+COPY public.feelings (id, m) FROM stdin;
+...
+-- Data for Name: feelings_1; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+-- load via partition root public.feelings
+COPY public.feelings (id, m) FROM stdin;
+```
+
+Two consequences beyond the count, both load-bearing:
+
+- **The TOC entry's `Name:` is the partition; the `COPY` header's name is the
+  root.** Any code that assumes the two agree is wrong for this shape.
+- **Plain-format output carries a `-- load via partition root <root>` marker
+  line** between the TOC comment and the header (from the entry's `defn`
+  comment), so the shape is detectable in the file itself — and the pre-data
+  section lists every `ALTER TABLE ... ATTACH PARTITION`, so the set of leaf
+  partitions is knowable before any data is reached (I1). The marker survives
+  `--no-comments`, `--data-only`, both together, and `--inserts` (observed,
+  16.15): it is the entry's `defn`, not a `COMMENT ON` statement, so
+  `--no-comments` does not touch it.
+
+**The blocks are not contiguous, and must not be assumed to be.**
+`DOTypeNameCompare()` in `pg_dump_sort.c` orders entries by (type priority,
+namespace name, **object name**), and a `TABLE DATA` entry's object name is
+the *partition's* own name — not the root's. Any unrelated table whose name
+sorts between two partition names is emitted between their blocks. Observed,
+flagless, 16.15, with partitions `feel_a`/`feel_z` of root `feel` and an
+unrelated table `feel_m`:
+
+```
+-- Data for Name: feel_a; ...   COPY public.feel (id, m) FROM stdin;
+-- Data for Name: feel_m; ...   COPY public.feel_m (note) FROM stdin;
+-- Data for Name: feel_z; ...   COPY public.feel (id, m) FROM stdin;
+```
+
+So "read forward until the next block is a different table" does **not**
+enumerate a name's blocks; only reaching EOF does.
+
+**Scope limit.** Concatenation (`pg_dumpall`, cat'ed files) remains a
+*separate* way for one name to own several blocks, across databases. This
+entry is about a single database's dump.
+
+**Verified against:** v16.15 (observed), source read v16.15 and v18.6.
+**Relied on by:** `roadmap-phase2-typed-columns.md` (one target per query —
+several blocks under one key are legitimate, not an ambiguity);
+`roadmap-phase3-object-inventory.md` ("Mapping and streaming are separate
+passes" — a query cannot stop at the first matching block).
+**Re-verify:** against any live server,
+
+```sh
+psql -c "CREATE TYPE mood AS ENUM ('sad','ok','happy')" \
+     -c "CREATE TABLE feelings (id int, m mood) PARTITION BY HASH (m)" \
+     -c "CREATE TABLE feelings_0 PARTITION OF feelings FOR VALUES WITH (MODULUS 2, REMAINDER 0)" \
+     -c "CREATE TABLE feelings_1 PARTITION OF feelings FOR VALUES WITH (MODULUS 2, REMAINDER 1)" \
+     -c "INSERT INTO feelings VALUES (1,'sad'),(2,'ok'),(3,'happy')"
+pg_dump | grep -E '^COPY |^-- load via partition root'
+```
+
+expecting two `COPY public.feelings` headers. Add a table named to sort
+between the two partitions (`feelings_m`) and confirm its block still lands
+between them. Source side: confirm `dumpTableData()` still builds `copyFrom`
+from `getRootTableInfo()`, that `DOTypeNameCompare()` still sorts on
+`dobj.name` (the partition), and check `getPartitioningInfo()` for whether the
+forced-mode set has grown beyond hash enum_ops.
 
 ---
 

@@ -62,12 +62,48 @@ pub struct BatchOptions {
     /// query"). `None` is the common case: a single-database dump, or a
     /// cross-schema ambiguity a qualified name already resolves on its own.
     pub database: Option<String>,
+    /// How far a query's mapping scan walks before it starts returning rows
+    /// — see [`ScanExtent`].
+    pub scan_extent: ScanExtent,
 }
 
 impl Default for BatchOptions {
     fn default() -> Self {
-        Self { max_rows: 8192, max_bytes: None, schema_mode: SchemaMode::default(), database: None }
+        Self {
+            max_rows: 8192,
+            max_bytes: None,
+            schema_mode: SchemaMode::default(),
+            database: None,
+            scan_extent: ScanExtent::default(),
+        }
     }
+}
+
+/// How far [`crate::stream::table_stream`]'s mapping scan walks
+/// (`docs/design/roadmap-phase3-object-inventory.md`, "Mapping and streaming
+/// are separate passes"). Rows are always replayed from blocks the map
+/// already holds, so this controls how much of the file a query pays to map
+/// before any row comes back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScanExtent {
+    /// Stop as soon as the queried table is settled: at least one matching
+    /// block has closed, and none of the matching blocks carried a
+    /// partition-root marker (I2 — a marked block's name owns further blocks
+    /// that are *not* adjacent, so only EOF enumerates them). This is what
+    /// keeps a query against an early table in a huge dump from costing a
+    /// full scan.
+    ///
+    /// What it gives up is stated in `STATUS.md`'s "Known gaps": a second,
+    /// conflicting candidate past the stopping point is never seen, so
+    /// `Error::AmbiguousTable` reports only what the scan reached. A file
+    /// concatenating two dumps of the *same* database name is the case with
+    /// no early signal at all.
+    #[default]
+    UntilTargetSettled,
+    /// Map the whole file before returning anything. Costs a full scan and
+    /// gives exact ambiguity detection and a complete, reusable cache — the
+    /// same map `pgdq parse` builds.
+    Full,
 }
 
 /// A read chunk retained only long enough for zero-copy views to be taken

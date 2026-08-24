@@ -82,10 +82,15 @@ projection. Column projection is Phase 5.
 - **Resume/position tracking**: an opaque `ResumeToken` (file offset +
   in-table row index + a cache-generation stamp), with no public field
   access in MVP. Sufficient for a caller to stop consuming partway through a
-  stream and resume later within the same process. `resume` takes priority
-  over cache replay: it always starts live from the token's offset — see
-  "Index / structure cache" below for what that costs in the rare case of
-  resuming from inside a would-be replay.
+  stream and resume later within the same process. **Superseded by Phase
+  3.2.1.2.1**: this originally said `resume` takes priority over cache replay
+  and always starts a live scan from the token's offset, at the cost of
+  re-walking bytes when resuming from inside a would-be replay. Rows now come
+  only from replaying already-mapped blocks, so a resume point is inside the
+  map by construction and continues the replay — see
+  [`roadmap-phase3-object-inventory.md`](roadmap-phase3-object-inventory.md),
+  "Mapping and streaming are separate passes", and
+  [`../status/history/2026-08-24.md`](../status/history/2026-08-24.md).
 - **Cache consulting**: both entry points take a `CacheMode` — see "Index /
   structure cache" below.
 

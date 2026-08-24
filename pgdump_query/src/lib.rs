@@ -13,7 +13,7 @@ pub mod resolve;
 pub mod scan;
 pub mod stream;
 
-pub use batch::{BatchOptions, read_table, render_field};
+pub use batch::{BatchOptions, ScanExtent, read_table, render_field};
 pub use copy::CopyHeader;
 pub use error::Error;
 pub use index::{CopyBlock, DumpIndex, RowGroupStats, SparseRowIndex, build_index, preamble_only};

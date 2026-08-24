@@ -44,8 +44,10 @@ use crate::{Error, Result};
 /// Bumped to 2 in Phase 3.2 for [`SourceIdentity`]; to 3 in Phase 3.2.1, when
 /// `DumpIndex::blocks` (a stored `Vec<CopyBlock>`) was replaced by
 /// `DumpIndex::spans` (a stored `Vec<Span>`, with `blocks()` now a derived
-/// filter over it) — pre-1.0, so both are free (`CLAUDE.md`, "Pre-1.0").
-const FORMAT_VERSION: u32 = 3;
+/// filter over it); to 4 in Phase 3.2.1.2.1 for
+/// [`crate::index::CopyBlock::partition_root`] — pre-1.0, so all three are
+/// free (`CLAUDE.md`, "Pre-1.0").
+const FORMAT_VERSION: u32 = 4;
 
 /// The dump file's size and modification time as observed when a cache was
 /// last saved — see the module docs.
