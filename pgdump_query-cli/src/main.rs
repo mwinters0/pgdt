@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::ops::ControlFlow;
 use std::path::PathBuf;
 
@@ -7,8 +8,8 @@ use clap::{Parser, Subcommand};
 use pgdump_query::cache::CacheMode;
 use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdump_query::{
-    BatchOptions, DeferredKind, DumpIndex, DumpMetadata, LocalFileSource, Predicate, PredicateOp,
-    ScanOptions, build_index, preamble_only, render_field,
+    BatchOptions, DataBlock, DeferredKind, DumpIndex, DumpMetadata, LocalFileSource, Predicate,
+    PredicateOp, ScanOptions, Span, SpanBody, TypeKind, build_index, preamble_only, render_field,
 };
 
 #[derive(Parser)]
@@ -65,6 +66,13 @@ enum Command {
         /// "CLI").
         #[arg(long)]
         preamble_only: bool,
+        /// List every span the full file map found (`docs/design/roadmap-phase3-object-inventory.md`,
+        /// "The map is the structure, not a description of it") — DDL objects
+        /// and framing included, not just `COPY` blocks — instead of the
+        /// per-table listing. Implies a full scan; incompatible with
+        /// `--preamble-only`.
+        #[arg(long)]
+        map: bool,
     },
     /// Stream a table's rows, optionally filtered by a single-column predicate.
     Query {
@@ -168,12 +176,15 @@ async fn main() -> Result<()> {
                 .to_path_buf();
             let source = LocalFileSource::open(&file)?;
             let index = build_index(&source, &ScanOptions::default()).await?;
-            print_index(&index, false);
+            print_index(&index, false, false);
             pgdump_query::cache::save(&path, &source, &index).await?;
             println!();
             println!("wrote cache to {}", path.display());
         }
-        Command::Info { file, cache_path, verbose, preamble_only: preamble_only_flag } => {
+        Command::Info { file, cache_path, verbose, preamble_only: preamble_only_flag, map } => {
+            if preamble_only_flag && map {
+                anyhow::bail!("--preamble-only and --map cannot be combined");
+            }
             let mode = CacheMode::resolve(&file, cache_path.as_deref());
             let source = LocalFileSource::open(&file)?;
             if preamble_only_flag {
@@ -194,7 +205,7 @@ async fn main() -> Result<()> {
                     index
                 }
             };
-            print_index(&index, verbose);
+            print_index(&index, verbose, map);
         }
         Command::Query { file, table, cache_path, filter, database, schema_mode } => {
             let mode = CacheMode::resolve(&file, cache_path.as_deref());
@@ -288,10 +299,23 @@ fn print_metadata(metadata: &DumpMetadata) {
     }
 }
 
-fn print_index(index: &DumpIndex, verbose: bool) {
+fn print_index(index: &DumpIndex, verbose: bool, map: bool) {
     if let Some(metadata) = &index.metadata {
         print_metadata(metadata);
         println!();
+    }
+
+    let printed_roles = print_cross_references(index);
+    let printed_kinds = print_object_kinds(index);
+    if printed_roles || printed_kinds {
+        println!();
+    }
+
+    if map {
+        print_map(index);
+        println!();
+        println!("{} span(s), {} bytes scanned", index.spans.len(), index.scanned_through);
+        return;
     }
 
     let blocks: Vec<_> = index.blocks().collect();
@@ -373,5 +397,113 @@ fn print_index(index: &DumpIndex, verbose: bool) {
         println!(
             "{total_unmapped} of {total_columns} columns unmapped — run with --verbose for details"
         );
+    }
+}
+
+/// Referenced-role and referenced-tablespace summary
+/// (`docs/design/roadmap-phase3-object-inventory.md`, "What a span carries")
+/// — an empty set prints nothing, so a dump referencing neither leaves no
+/// trace here. Returns whether anything was printed, so the caller knows
+/// whether to add a separating blank line.
+fn print_cross_references(index: &DumpIndex) -> bool {
+    let mut printed = false;
+    if !index.roles.is_empty() {
+        println!("roles: {}", index.roles.iter().cloned().collect::<Vec<_>>().join(", "));
+        printed = true;
+    }
+    if !index.tablespaces.is_empty() {
+        println!(
+            "tablespaces: {}",
+            index.tablespaces.iter().cloned().collect::<Vec<_>>().join(", ")
+        );
+        printed = true;
+    }
+    printed
+}
+
+/// Per-`Type:` object-kind counts, read off every span's TOC header
+/// (`Span::toc`) — the same closed ~63-value vocabulary the TOC-coverage
+/// diagnostic already counts against
+/// (`docs/design/roadmap-phase3-object-inventory.md`, "TOC coverage is
+/// recorded per file"). A span with no TOC comment (the header-less-input
+/// fallback) contributes to no bucket here, since there is nothing typed to
+/// count it under. Returns whether anything was printed.
+fn print_object_kinds(index: &DumpIndex) -> bool {
+    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    for span in &index.spans {
+        if let Some(toc) = &span.toc {
+            *counts.entry(toc.kind.as_str()).or_default() += 1;
+        }
+    }
+    if counts.is_empty() {
+        return false;
+    }
+    println!("object kinds:");
+    for (kind, count) in counts {
+        println!("    {kind}: {count}");
+    }
+    true
+}
+
+/// `--map`: every span the full file map found, in file order — the raw
+/// structure `DumpIndex::spans` keeps, not the per-table view `blocks()`
+/// filters it down to (`docs/design/roadmap-phase3-object-inventory.md`,
+/// "The map is the structure, not a description of it"). Same
+/// database-header grouping convention as the ordinary block listing above.
+fn print_map(index: &DumpIndex) {
+    let multi_database =
+        index.spans.iter().map(|s| &s.database).collect::<std::collections::BTreeSet<_>>().len()
+            > 1;
+    let mut current_database: Option<&Option<String>> = None;
+    for span in &index.spans {
+        if multi_database && current_database != Some(&span.database) {
+            current_database = Some(&span.database);
+            match &span.database {
+                Some(name) => println!("database: {name}"),
+                None => println!("database: (unnamed)"),
+            }
+        }
+        println!("[{}, {}) {}", span.start, span.end, span_summary(span));
+    }
+}
+
+/// One-line label for a span in `--map` output.
+fn span_summary(span: &Span) -> String {
+    match &span.body {
+        SpanBody::Data(DataBlock::Copy(block)) => {
+            format!("COPY {} ({} rows)", block.header.qualified_name(), block.row_count)
+        }
+        SpanBody::Data(DataBlock::InsertRun(run)) => {
+            format!("INSERT run: {} ({} statements)", run.table, run.row_count)
+        }
+        SpanBody::Data(DataBlock::LargeObjects(_)) => "large objects".to_string(),
+        SpanBody::Table { name, .. } => format!("TABLE {name}"),
+        SpanBody::TypeDef { name, kind } => format!("TYPE {name} ({})", type_kind_label(kind)),
+        SpanBody::Extension { name, .. } => format!("EXTENSION {name}"),
+        SpanBody::Connect { database } => format!("\\connect {database}"),
+        SpanBody::VersionHeader { .. } => "version header".to_string(),
+        SpanBody::AlterTypeAddValue { type_name, label } => {
+            format!("ALTER TYPE {type_name} ADD VALUE {label:?}")
+        }
+        SpanBody::Framing => "framing".to_string(),
+        SpanBody::Unparsed => match &span.toc {
+            Some(toc) => format!("{} {}", toc.kind, toc.name),
+            None => "unparsed".to_string(),
+        },
+        SpanBody::Unscanned => "unscanned".to_string(),
+    }
+}
+
+/// Short label for a [`TypeKind`] — `--map`'s compact form of the same
+/// six-emission-shape vocabulary `docs/manual/type-handling.md` explains for
+/// readers.
+fn type_kind_label(kind: &TypeKind) -> &'static str {
+    match kind {
+        TypeKind::Enum { .. } => "enum",
+        TypeKind::Domain { .. } => "domain",
+        TypeKind::Composite { .. } => "composite",
+        TypeKind::Range { .. } => "range",
+        TypeKind::Base => "base",
+        TypeKind::Shell => "shell",
     }
 }

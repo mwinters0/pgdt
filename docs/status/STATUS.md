@@ -19,11 +19,15 @@ already-landed slice's contract (2.2.1, 2.3.1, 2.3.2, 2.3.3). How it landed —
 module map, and the implementation facts later phases inherit — is in
 `docs/design/roadmap-phase2-typed-columns-notes.md`.
 
-Phase 3 (full DDL object inventory) is **in progress**,
-`docs/design/roadmap-phase3-object-inventory.md`.
+Phase 3 (full DDL object inventory) has landed every slice in
+`docs/design/roadmap-phase3-object-inventory.md`'s checklist; the phase is
+**not yet wrapped** — its per-slice notes docs (3.1 through 3.6) still need
+consolidating into one `roadmap-phase3-object-inventory-notes.md` before this
+section can be rewritten the way Phase 1/2's are above.
 
-Last updated: 2026-08-24 (3.6 complete — koji regression scan finished, see
-the 3.6 checklist entry).
+Last updated: 2026-08-24 (3.5 complete — CLI surface and the dump-inspection
+manual page, see the 3.5 checklist entry. All of Phase 3's slices are now
+landed; phase wrap is still open, see "Not started").
 
 ## Phase 3 progress
 
@@ -111,17 +115,24 @@ the 3.6 checklist entry).
       baseline — see the notes doc for the full reasoning and evidence, and
       "Decisions worth another look" below. Notes:
       [`roadmap-phase3.6-bulk-region-fast-path-notes.md`](../design/roadmap-phase3.6-bulk-region-fast-path-notes.md).
-- [ ] **3.5** CLI surface: `pgdq info` role/tablespace/object-kind summaries
-      and a `--map` span listing; the `docs/manual/` dump-inspection page.
+- [x] **3.5** CLI surface: `pgdq info` gains `roles`/`tablespaces`/`object
+      kinds` summaries by default (empty sets print nothing) and a `--map`
+      flag listing every span in file order (not just `COPY` blocks),
+      mutually exclusive with `--preamble-only`. `docs/manual/dump-inspection.md`
+      is the new manual page; `README.md` links it alongside
+      `type-handling.md`. Pure presentation over already-tested `DumpIndex`
+      data — no library code changed. Notes:
+      [`roadmap-phase3.5-cli-surface-notes.md`](../design/roadmap-phase3.5-cli-surface-notes.md).
 
 ## Not started
 
-- **Phase 3, slice 3.5** — specified, no code. See the checklist above and
-  `docs/design/roadmap-phase3-object-inventory.md`. **3.2 through 3.6 are all
-  complete**: the span model, its wiring into `DumpIndex`/the cache/the query
-  path, span text, diagnostics, the dollar-quote boundary, TOC enrichment,
-  the referenced-roles/tablespaces cross-reference set, and the
-  `INSERT`-run/large-object `Data`-span fast path.
+- **Phase 3's wrap step** — every slice (3.1 through 3.6) is landed, but the
+  phase itself isn't wrapped: the per-slice notes docs still need
+  consolidating into one `roadmap-phase3-object-inventory-notes.md` (per-slice
+  files deleted after) and this file's Phase 3 section rewritten to the
+  terse "complete" form Phase 1/2 carry above, per `docs/process.md`'s step
+  5. Re-grilling the roadmap before Phase 4 gets a spec (step 6) follows the
+  wrap.
 - **Phases 4-8** — not designed. See `docs/design/roadmap.md`.
 
 ## Known gaps
@@ -167,6 +178,16 @@ the 3.6 checklist entry).
   non-default `SET default_tablespace` value are also unexercised by any
   fixture (I19), the same gap I18 already names for the TOC's own
   `Tablespace:` field.
+- `DumpIndex::diagnostics` (a tiling failure, the cache mtime warning, the
+  TOC-coverage figure) is fully populated by every scan but never printed by
+  the CLI — `pgdq info` has no code path that reads `index.diagnostics` at
+  all, in any mode. Found incidentally while building slice 3.5's output
+  (`docs/design/roadmap-phase3.5-cli-surface-notes.md`); not fixed there
+  since a proper drain point is Phase 6's caller-supplied-sink work
+  (`roadmap-phase3-object-inventory.md`, "Diagnostics: a file-level channel
+  on `DumpIndex`") and this slice's spec row didn't ask for it. A plain
+  `pgdq info` run today gives no visible signal if, say, the tiling check
+  ever fails on real input.
 
 ## Decisions worth another look
 
@@ -220,3 +241,20 @@ types rather than one enum — has been reviewed and settled into
   `runs/koji-3.6-scan.log`'s command once the HDD is uncontended; nothing
   about this call blocks that, and nothing found here suggests it would come
   back differently.
+
+- **Slice 3.5's `--map` output format and `object kinds:` bucketing are new
+  surface with no spec-level detail to check against.** The spec row says
+  only "role, tablespace and object-kind summaries" and "a `--map` span
+  listing" — every concrete choice (the `[start, end) label` line shape, the
+  per-`SpanBody`-variant label text, bucketing `object kinds:` by
+  `Span::toc.kind` rather than some other classification, printing
+  `roles`/`tablespaces`/`object kinds` unconditionally rather than behind
+  `--verbose`, rejecting `--map --preamble-only` outright rather than having
+  one flag win) was made this slice with no maintainer present to weigh in
+  on the CLI ergonomics. None of it is load-bearing for other code — it's
+  formatting over already-tested data, easy to change without touching
+  `pgdump_query` itself — but it's the first real user-facing surface this
+  phase produced, so it's worth a look. Full reasoning:
+  [`roadmap-phase3.5-cli-surface-notes.md`](../design/roadmap-phase3.5-cli-surface-notes.md).
+  What would change this: any maintainer preference on output shape, once
+  seen.

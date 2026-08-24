@@ -28,7 +28,7 @@ cargo run -p pgdump_query-cli -- info <dump.sql> --verbose
 ## Documentation
 
 - [`docs/status/STATUS.md`](docs/status/STATUS.md) — current implementation status (what's built vs. not). [`docs/status/history/`](docs/status/history/) holds dated notes for future-session pickup and plan-changing discoveries.
-- [`docs/manual/`](docs/manual/) — user manual, starting with [type handling](docs/manual/type-handling.md).
+- [`docs/manual/`](docs/manual/) — user manual: [type handling](docs/manual/type-handling.md), [dump inspection](docs/manual/dump-inspection.md).
 - [`docs/design/roadmap.md`](docs/design/roadmap.md) — project goals and the Phase 1-8 overview; each specified phase gets its own `roadmap-phase<N>-*.md` doc.
 - [`docs/design/roadmap-phase1-mvp.md`](docs/design/roadmap-phase1-mvp.md) — full Phase 1 (MVP) spec, the source of truth for the built design. [`…-notes.md`](docs/design/roadmap-phase1-mvp-notes.md) records how it landed in code.
 - [`docs/design/roadmap-phase2-typed-columns.md`](docs/design/roadmap-phase2-typed-columns.md) — full Phase 2 (typed columns) spec. [`…-notes.md`](docs/design/roadmap-phase2-typed-columns-notes.md) records how it landed in code.
