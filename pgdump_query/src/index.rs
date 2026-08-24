@@ -107,6 +107,13 @@ pub struct DumpIndex {
     /// `docs/design/roadmap-phase3-object-inventory.md`, "The span is the
     /// container".
     pub metadata: Option<DumpMetadata>,
+    /// Things worth telling the caller that have no `Result` to travel in —
+    /// a tiling failure, a cache mtime mismatch. **Not persisted**
+    /// (`#[serde(skip)]`): a cached diagnostic would replay a warning about a
+    /// check *this* run performed successfully. Recomputed wherever an index
+    /// is produced or loaded; see [`crate::diagnostic`].
+    #[serde(skip)]
+    pub diagnostics: Vec<crate::diagnostic::Diagnostic>,
 }
 
 impl DumpIndex {
@@ -156,9 +163,33 @@ pub async fn build_index<S: ByteRangeSource>(
     .await?;
 
     let size = source.size().await?;
-    let spans = spans.finish(size);
+    let mut spans = spans.finish(size);
     let metadata = Some(crate::preamble::dump_metadata_from_spans(&spans));
-    Ok(DumpIndex { spans, scanned_through: size, metadata })
+    crate::map::attach_text(source, &mut spans).await?;
+    let diagnostics = tiling_diagnostics(&spans, size);
+    Ok(DumpIndex { spans, scanned_through: size, metadata, diagnostics })
+}
+
+/// Run the tiling check over a finished map and turn any failure into a
+/// diagnostic (`docs/design/roadmap-phase3-object-inventory.md`, "Tiling is
+/// verified at runtime and reported as a diagnostic").
+///
+/// A hole means *we* have a bug, not that the dump is bad, so the map is
+/// still returned: refusing to answer "which roles does this file need" over
+/// an accounting discrepancy serves nobody. The check is O(spans) against a
+/// scan that just read the whole region, so it is free — and what it guards
+/// is a silently dropped region on a dump shape no fixture covers, which is
+/// exactly what a test cannot catch.
+pub(crate) fn tiling_diagnostics(
+    spans: &[Span],
+    expected_end: u64,
+) -> Vec<crate::diagnostic::Diagnostic> {
+    let issues = crate::map::check_tiling(spans, expected_end);
+    if issues.is_empty() {
+        Vec::new()
+    } else {
+        vec![crate::diagnostic::Diagnostic::tiling_broken(issues)]
+    }
 }
 
 /// Scan only far enough to recover the first database's preamble — up to
@@ -247,10 +278,12 @@ pub async fn preamble_only<S: ByteRangeSource>(
                 start: preamble_end,
                 end: file_size,
                 database: None,
+                text: None,
                 body: SpanBody::Unscanned,
             });
         }
         base_index.spans.extend(spans);
+        crate::map::attach_text(source, &mut base_index.spans).await?;
         cache.save(source, &base_index).await?;
     }
     Ok(base_index.metadata.unwrap_or_default())

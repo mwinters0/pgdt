@@ -2,6 +2,7 @@ pub mod batch;
 pub mod cache;
 pub mod copy;
 pub mod decode;
+pub mod diagnostic;
 mod error;
 pub mod index;
 mod io;
@@ -15,10 +16,13 @@ pub mod stream;
 
 pub use batch::{BatchOptions, ScanExtent, read_table, render_field};
 pub use copy::CopyHeader;
+pub use diagnostic::{Diagnostic as FileDiagnostic, DiagnosticKind, Severity};
 pub use error::Error;
 pub use index::{CopyBlock, DumpIndex, RowGroupStats, SparseRowIndex, build_index, preamble_only};
 pub use io::{ByteRangeSource, LocalFileSource};
-pub use map::{Span, SpanBody, TilingIssue, build_map, check_tiling};
+pub use map::{
+    Span, SpanBody, SpanText, TEXT_CAP, TilingIssue, attach_text, build_map, check_tiling,
+};
 pub use pgtype::{DeferredKind, TypeOutcome, resolve_declared_type};
 pub use preamble::{
     DatabaseMetadata, DumpMetadata, Extension, TypeDef, TypeKind, dump_metadata_from_spans,

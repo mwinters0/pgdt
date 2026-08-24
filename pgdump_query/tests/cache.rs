@@ -221,3 +221,67 @@ fn require_enabled_errors_when_disabled() {
         Err(Error::CacheDisabled { operation: "parse" })
     ));
 }
+
+/// An mtime that changed since the cache was saved is a **warning on the
+/// loaded index**, not an invalidation and not an error
+/// (`docs/design/roadmap-phase3-object-inventory.md`, "Cache: the dump file's
+/// identity is checked, not assumed"): mtime granularity and preservation
+/// vary too much across filesystems, copies and restores to be conclusive.
+/// The cache's contents come back intact.
+#[tokio::test]
+async fn a_changed_mtime_is_a_diagnostic_not_an_invalidation() {
+    use pgdump_query::{DiagnosticKind, Severity};
+
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("edge_cases.sql");
+    std::fs::copy(edge_cases(), &dump).unwrap();
+    let cache_path = pgdump_query::cache::colocated_path(&dump);
+    let source = LocalFileSource::open(&dump).unwrap();
+
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    pgdump_query::cache::save(&cache_path, &source, &index).await.unwrap();
+
+    // Same bytes, new mtime — exactly the ambiguous case the design refuses
+    // to treat as conclusive.
+    let bytes = std::fs::read(&dump).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    std::fs::write(&dump, &bytes).unwrap();
+
+    let loaded = CacheMode::Enabled(cache_path)
+        .load(&source)
+        .await
+        .unwrap()
+        .expect("an mtime change does not invalidate");
+    assert_eq!(loaded.blocks().count(), index.blocks().count(), "contents survive intact");
+    assert_eq!(
+        loaded.diagnostics,
+        vec![pgdump_query::FileDiagnostic {
+            severity: Severity::Warning,
+            kind: DiagnosticKind::CacheMtimeChanged,
+        }]
+    );
+}
+
+/// Diagnostics are never persisted: a stored one would replay a warning
+/// about a check *this* run performed successfully.
+#[tokio::test]
+async fn diagnostics_do_not_round_trip_through_the_cache() {
+    use pgdump_query::{DiagnosticKind, FileDiagnostic, Severity};
+
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("edge_cases.sql");
+    std::fs::copy(edge_cases(), &dump).unwrap();
+    let cache_path = pgdump_query::cache::colocated_path(&dump);
+    let source = LocalFileSource::open(&dump).unwrap();
+
+    let mut index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    assert!(index.diagnostics.is_empty(), "a real fixture tiles, so nothing is reported");
+    index.diagnostics.push(FileDiagnostic {
+        severity: Severity::Warning,
+        kind: DiagnosticKind::CacheMtimeChanged,
+    });
+    pgdump_query::cache::save(&cache_path, &source, &index).await.unwrap();
+
+    let loaded = CacheMode::Enabled(cache_path).load(&source).await.unwrap().unwrap();
+    assert!(loaded.diagnostics.is_empty(), "recomputed on load, never restored");
+}

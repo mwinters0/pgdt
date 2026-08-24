@@ -21,10 +21,12 @@
 //! best-effort contract, not as a hard error. An mtime mismatch is weaker
 //! evidence (mtime granularity and preservation vary too much across
 //! filesystems to be conclusive) and does **not** invalidate the cache; it
-//! is surfaced on [`CacheStatus::Valid`] for a caller that wants to report
-//! it, but [`CacheMode::load`] — the path every existing caller uses —
-//! discards that bit and treats the cache as good, matching a same-size
-//! same-mtime cache exactly.
+//! is surfaced on [`CacheStatus::Valid`], and [`CacheMode::load`] turns it
+//! into a [`crate::diagnostic::DiagnosticKind::CacheMtimeChanged`] on the
+//! loaded index rather than acting on it. That diagnostic is recomputed on
+//! every load and never persisted — the mismatch is between the cache and
+//! *this* run's observation, so a stored one would be a warning about a
+//! check that has since passed.
 
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -45,9 +47,10 @@ use crate::{Error, Result};
 /// `DumpIndex::blocks` (a stored `Vec<CopyBlock>`) was replaced by
 /// `DumpIndex::spans` (a stored `Vec<Span>`, with `blocks()` now a derived
 /// filter over it); to 4 in Phase 3.2.1.2.1 for
-/// [`crate::index::CopyBlock::partition_root`] — pre-1.0, so all three are
-/// free (`CLAUDE.md`, "Pre-1.0").
-const FORMAT_VERSION: u32 = 4;
+/// [`crate::index::CopyBlock::partition_root`]; to 5 in Phase 3.2.2 for
+/// [`crate::map::Span::text`] — pre-1.0, so all of them are free
+/// (`CLAUDE.md`, "Pre-1.0").
+const FORMAT_VERSION: u32 = 5;
 
 /// The dump file's size and modification time as observed when a cache was
 /// last saved — see the module docs.
@@ -193,7 +196,18 @@ impl CacheMode {
         match self {
             CacheMode::Enabled(path) => match load(path, source).await? {
                 CacheStatus::Absent => Ok(None),
-                CacheStatus::Valid { index, .. } => Ok(Some(index)),
+                CacheStatus::Valid { mut index, mtime_changed } => {
+                    // Reported rather than acted on: too weak to invalidate
+                    // (see the module docs), and pointless to persist — the
+                    // mismatch is between the cache and *this* run's
+                    // observation, so it is recomputed on every load.
+                    if mtime_changed {
+                        index
+                            .diagnostics
+                            .push(crate::diagnostic::Diagnostic::cache_mtime_changed());
+                    }
+                    Ok(Some(index))
+                }
             },
             CacheMode::Disabled => Ok(None),
         }

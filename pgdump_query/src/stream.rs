@@ -152,7 +152,13 @@ fn splice(
     }
     spans.extend(built);
     if watermark < size {
-        spans.push(Span { start: watermark, end: size, database: None, body: SpanBody::Unscanned });
+        spans.push(Span {
+            start: watermark,
+            end: size,
+            database: None,
+            text: None,
+            body: SpanBody::Unscanned,
+        });
     }
     spans
 }
@@ -291,6 +297,8 @@ async fn map_forward<S: ByteRangeSource>(
 
     index.spans = splice(&prefix, builder.finish(size), seg_start, size, size);
     index.scanned_through = size;
+    crate::map::attach_text(source, &mut index.spans).await?;
+    index.diagnostics = crate::index::tiling_diagnostics(&index.spans, size);
     cache.save(source, index).await
 }
 
@@ -521,6 +529,7 @@ where
             index.metadata = Some(metadata);
             index.spans = splice(&[], spans, 0, preamble_end, size);
             index.scanned_through = index.scanned_through.max(preamble_end);
+            crate::map::attach_text(source, &mut index.spans).await?;
             cache.save(source, &index).await?;
         }
         let metadata = index.metadata.clone();

@@ -253,8 +253,8 @@ async fn prologue_and_epilogue_classify_as_framing() {
 async fn tiling_issue_reports_a_gap() {
     use pgdump_query::{Span, SpanBody as Body};
     let spans = vec![
-        Span { start: 0, end: 10, database: None, body: Body::Framing },
-        Span { start: 12, end: 20, database: None, body: Body::Framing },
+        Span { start: 0, end: 10, database: None, text: None, body: Body::Framing },
+        Span { start: 12, end: 20, database: None, text: None, body: Body::Framing },
     ];
     let issues = check_tiling(&spans, 20);
     assert_eq!(
@@ -267,8 +267,8 @@ async fn tiling_issue_reports_a_gap() {
 async fn tiling_issue_reports_an_overlap() {
     use pgdump_query::{Span, SpanBody as Body};
     let spans = vec![
-        Span { start: 0, end: 10, database: None, body: Body::Framing },
-        Span { start: 8, end: 20, database: None, body: Body::Framing },
+        Span { start: 0, end: 10, database: None, text: None, body: Body::Framing },
+        Span { start: 8, end: 20, database: None, text: None, body: Body::Framing },
     ];
     let issues = check_tiling(&spans, 20);
     assert_eq!(
@@ -280,7 +280,7 @@ async fn tiling_issue_reports_an_overlap() {
 #[tokio::test]
 async fn tiling_issue_reports_a_short_final_span() {
     use pgdump_query::{Span, SpanBody as Body};
-    let spans = vec![Span { start: 0, end: 10, database: None, body: Body::Framing }];
+    let spans = vec![Span { start: 0, end: 10, database: None, text: None, body: Body::Framing }];
     let issues = check_tiling(&spans, 20);
     assert_eq!(issues, vec![TilingIssue::DoesNotReachEnd { last_end: 10, expected_end: 20 }]);
 }
@@ -292,8 +292,8 @@ async fn tiling_issue_reports_a_short_final_span() {
 async fn an_unscanned_tail_tiles_cleanly() {
     use pgdump_query::{Span, SpanBody as Body};
     let spans = vec![
-        Span { start: 0, end: 10, database: None, body: Body::Framing },
-        Span { start: 10, end: 20, database: None, body: Body::Unscanned },
+        Span { start: 0, end: 10, database: None, text: None, body: Body::Framing },
+        Span { start: 10, end: 20, database: None, text: None, body: Body::Unscanned },
     ];
     assert!(check_tiling(&spans, 20).is_empty());
 }
@@ -301,4 +301,85 @@ async fn an_unscanned_tail_tiles_cleanly() {
 #[tokio::test]
 async fn empty_span_list_against_a_zero_length_scan_tiles_cleanly() {
     assert!(check_tiling(&[], 0).is_empty());
+}
+
+/// Span text is **sliced from the file by offset**, so it survives the one
+/// thing an accumulator cannot: a dollar-quoted function body, for which
+/// `crate::scan` emits no `Event::Line` at all
+/// (`docs/design/roadmap-phase3-object-inventory.md`, "Span text comes from
+/// the file, not from the parser"). If text were accumulated from events,
+/// every function body in the file would be missing from it.
+#[tokio::test]
+async fn span_text_includes_dollar_quoted_bodies_events_never_surface() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/16/objects/default.sql");
+    let source = LocalFileSource::open(&path).unwrap();
+    let raw = std::fs::read_to_string(&path).unwrap();
+    let spans = build_map(&source, &ScanOptions::default()).await.unwrap();
+
+    let with_body =
+        spans.iter().filter(|s| s.text.as_ref().is_some_and(|t| t.text.contains("$$"))).count();
+    assert!(with_body > 0, "the objects fixture defines dollar-quoted function bodies");
+
+    // Every stored text is exactly the file's own bytes for that range.
+    for span in &spans {
+        let Some(stored) = &span.text else { continue };
+        assert!(!stored.truncated, "no fixture span is anywhere near the 64KB cap");
+        assert_eq!(
+            stored.text,
+            &raw[span.start as usize..span.end as usize],
+            "span at {}..{} does not match the file",
+            span.start,
+            span.end
+        );
+    }
+}
+
+/// `Data` spans never store text (their bytes are unbounded and carry
+/// nothing a reader of the *map* wants), and neither does `Unscanned` — its
+/// bytes are by definition unread.
+#[tokio::test]
+async fn data_and_unscanned_spans_store_no_text() {
+    for path in all_fixtures() {
+        let source = LocalFileSource::open(&path).unwrap();
+        let spans = build_map(&source, &ScanOptions::default()).await.unwrap();
+        for span in &spans {
+            let stores = !matches!(span.body, SpanBody::Data(_) | SpanBody::Unscanned);
+            assert_eq!(
+                span.text.is_some(),
+                stores,
+                "{}: span at {} ({:?})",
+                path.display(),
+                span.start,
+                std::mem::discriminant(&span.body)
+            );
+        }
+    }
+}
+
+/// The 64KB cap bounds one span's stored text and marks that it did, while
+/// the offsets stay whole — so a caller that needs the rest can still read
+/// the file.
+#[tokio::test]
+async fn text_over_the_cap_is_truncated_and_marked() {
+    use pgdump_query::{Span, TEXT_CAP, attach_text};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("big.sql");
+    let body = "x".repeat(TEXT_CAP * 2);
+    std::fs::write(&path, &body).unwrap();
+    let source = LocalFileSource::open(&path).unwrap();
+
+    let mut spans = vec![Span {
+        start: 0,
+        end: body.len() as u64,
+        database: None,
+        text: None,
+        body: SpanBody::Framing,
+    }];
+    attach_text(&source, &mut spans).await.unwrap();
+
+    let stored = spans[0].text.as_ref().unwrap();
+    assert_eq!(stored.text.len(), TEXT_CAP);
+    assert!(stored.truncated);
+    assert_eq!(spans[0].end, body.len() as u64, "offsets are untouched by the cap");
 }

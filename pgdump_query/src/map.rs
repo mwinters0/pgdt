@@ -94,11 +94,14 @@
 //!   preceding span — the same rule [`Builder::push_span`] applies to every
 //!   other boundary, and what keeps a map assembled across several scans
 //!   identical to one built in a single pass.
-//! - **Span text storage** (`docs/design/roadmap-phase3-object-inventory.md`,
-//!   "Span text comes from the file, not from the parser"), the cache's
-//!   64KB-per-span cap, and the file-level `Diagnostic` channel
-//!   [`check_tiling`] is meant to report through — Phase 3.2.2. [`Span`]
-//!   carries offsets only, and no production path calls [`check_tiling`].
+//! - **Span text and diagnostics — landed in Phase 3.2.2.** [`attach_text`]
+//!   fills [`Span::text`] by slicing the file at each span's own offsets,
+//!   capped at [`TEXT_CAP`] with a `truncated` marker; `Data` and `Unscanned`
+//!   spans store none. [`check_tiling`] now has production callers
+//!   ([`crate::index::build_index`] and `crate::stream`'s mapping pass), which
+//!   report a failure as a [`crate::diagnostic::DiagnosticKind::TilingBroken`]
+//!   on the index and return the map anyway — a hole is a bug in this module,
+//!   never a reason to refuse the file.
 
 use std::ops::ControlFlow;
 
@@ -124,7 +127,91 @@ pub struct Span {
     /// [`CopyBlock::database`]: the name from the governing `\connect`, or
     /// `None` for a plain dump (or content before any `\connect`).
     pub database: Option<String>,
+    /// The span's own bytes, sliced from the file by offset and stored in the
+    /// cache so `pgdq info` answers without re-reading the dump
+    /// (`docs/design/roadmap-phase3-object-inventory.md`, "Span text comes
+    /// from the file, not from the parser"). `None` until [`attach_text`] has
+    /// run, and permanently `None` for [`SpanBody::Data`] and
+    /// [`SpanBody::Unscanned`] spans, whose bytes are unbounded and carry
+    /// nothing a reader wants.
+    pub text: Option<SpanText>,
     pub body: SpanBody,
+}
+
+/// A span's stored bytes. Capped at [`TEXT_CAP`]: one pathological function
+/// body must not make the cache unbounded, and the offsets are kept
+/// regardless, so a caller that needs the rest can always read the file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpanText {
+    /// Lossy UTF-8 of the span's bytes — truncated to the cap, if it hit one.
+    pub text: String,
+    /// Whether bytes were dropped to fit the cap.
+    pub truncated: bool,
+}
+
+/// Per-span cap on stored text (`roadmap-phase3-object-inventory.md`, "Cache:
+/// the dump file's identity is checked, not assumed"). A whole schema's DDL
+/// is small — koji's entire surface is 154KB — so this only ever bites on a
+/// single enormous statement.
+pub const TEXT_CAP: usize = 64 * 1024;
+
+/// Whether a span of this kind stores its text at all. `Data` spans are
+/// excluded by the design ("`Data` spans never store text"); `Unscanned`
+/// covers bytes by definition unread, so there is nothing to slice.
+fn stores_text(body: &SpanBody) -> bool {
+    !matches!(body, SpanBody::Data(_) | SpanBody::Unscanned)
+}
+
+/// Fill in [`Span::text`] for every span that stores it, reading the bytes
+/// back from `source` by offset.
+///
+/// **Sliced from the file, never accumulated from [`crate::scan::Event::Line`]**
+/// — `crate::scan` emits no line at all for anything inside, entering or
+/// leaving a dollar-quoted string, so accumulated text would be missing every
+/// function body in the file. Slicing makes text a pure function of a span's
+/// boundaries, which is the same property the tiling invariant wants.
+///
+/// Runs as a pass over finished spans rather than at the moment each span
+/// closes, because only the caller owns the source. It costs far less than
+/// one read per span: spans tile, and the spans that store text are exactly
+/// the ones between `Data` blocks, so **contiguous runs are coalesced into a
+/// single `read_range`** — in a real dump that is one read per gap between
+/// data blocks, over schema-sized regions the scan just walked.
+pub async fn attach_text<S: ByteRangeSource>(source: &S, spans: &mut [Span]) -> Result<()> {
+    let mut i = 0;
+    while i < spans.len() {
+        if !stores_text(&spans[i].body) {
+            spans[i].text = None;
+            i += 1;
+            continue;
+        }
+        // Extend over the whole contiguous run of text-storing spans, so one
+        // read serves all of them.
+        let mut j = i;
+        while j + 1 < spans.len()
+            && stores_text(&spans[j + 1].body)
+            && spans[j + 1].start == spans[j].end
+        {
+            j += 1;
+        }
+        let (run_start, run_end) = (spans[i].start, spans[j].end);
+        // A run capped per span still reads only what it can store, so a
+        // multi-gigabyte `Unparsed` region is never pulled into memory whole.
+        let want = (run_end - run_start).min(((j - i + 1) * TEXT_CAP) as u64) as usize;
+        let bytes = source.read_range(run_start, want).await?;
+        for span in &mut spans[i..=j] {
+            let from = (span.start - run_start) as usize;
+            let to = ((span.end - run_start) as usize).min(bytes.len());
+            let slice = if from < to { &bytes[from..to] } else { &[][..] };
+            let truncated = slice.len() < (span.end - span.start) as usize
+                || (span.end - span.start) as usize > TEXT_CAP;
+            let slice = &slice[..slice.len().min(TEXT_CAP)];
+            span.text =
+                Some(SpanText { text: String::from_utf8_lossy(slice).into_owned(), truncated });
+        }
+        i = j + 1;
+    }
+    Ok(())
 }
 
 /// What a span is, at the granularity Phase 3.2's statement-driven pass (no
@@ -389,7 +476,13 @@ impl Builder {
         if let Some(last) = self.spans.last_mut() {
             last.end = start;
         }
-        self.spans.push(Span { start, end: start, database: self.database.clone(), body });
+        self.spans.push(Span {
+            start,
+            end: start,
+            database: self.database.clone(),
+            text: None,
+            body,
+        });
     }
 
     /// Close whatever's pending at end of scan. `on_copy_start` handles the
@@ -663,7 +756,9 @@ pub async fn build_map<S: ByteRangeSource>(source: &S, options: &ScanOptions) ->
     .await?;
 
     let end = source.size().await?;
-    Ok(builder.finish(end))
+    let mut spans = builder.finish(end);
+    attach_text(source, &mut spans).await?;
+    Ok(spans)
 }
 
 #[cfg(test)]

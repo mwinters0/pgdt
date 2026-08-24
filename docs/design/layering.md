@@ -14,7 +14,7 @@ split happening.
 
 | Layer | Concern | Modules |
 |---|---|---|
-| **L1 — Bytes and structure** | Byte-range I/O, line and `COPY` block structure, COPY TEXT field splitting/escaping/unescaping, DDL text grammar, the on-disk cache format, the full file map | `io.rs`, `copy.rs`, `scan.rs`, `index.rs`, `cache.rs`, `preamble.rs`, `map.rs` |
+| **L1 — Bytes and structure** | Byte-range I/O, line and `COPY` block structure, COPY TEXT field splitting/escaping/unescaping, DDL text grammar, the on-disk cache format, the full file map, the file-level diagnostic vocabulary | `io.rs`, `copy.rs`, `scan.rs`, `index.rs`, `cache.rs`, `preamble.rs`, `map.rs`, `diagnostic.rs` |
 | **L2 — PostgreSQL semantics** | Declared type string → Arrow `DataType`; domain/enum resolution; joining a `COPY` header against `DumpMetadata`; per-type field decode and render-back | `pgtype.rs`, `resolve.rs`, `decode.rs` |
 | **L3 — Arrow assembly** | Building Arrow arrays and `RecordBatch`es, including the zero-copy `Utf8View` path into the reader's buffers | `batch.rs` |
 | **L4 — Query and planning** | Which blocks to read, cache segment planning, resume, predicate application, the streaming API | `stream.rs`, `predicate.rs` |
@@ -68,7 +68,7 @@ Rules 2 and 3 are greps. Both must produce no output:
 
 ```sh
 # L1 is Arrow-free
-rg -n '^use arrow' pgdump_query/src/{io,copy,scan,index,cache,preamble,map}.rs
+rg -n '^use arrow' pgdump_query/src/{io,copy,scan,index,cache,preamble,map,diagnostic}.rs
 
 # L2 names Arrow types but does not build arrays
 rg -n '^use arrow::(array|buffer)' pgdump_query/src/{pgtype,resolve,decode}.rs

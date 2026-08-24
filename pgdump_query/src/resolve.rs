@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 use arrow::datatypes::{Field, Schema, SchemaRef};
 
+use crate::diagnostic::Severity;
 use crate::pgtype::{DeferredKind, TypeOutcome, resolve_declared_type};
 use crate::preamble::DumpMetadata;
 
@@ -59,11 +60,29 @@ pub enum ColumnResolution {
 /// string (if any DDL named one) alongside the outcome — what a human-facing
 /// display (`pgdq info`) needs in one place, for every column, not just the
 /// unmapped ones.
+///
+/// `severity` is [`crate::diagnostic::Severity`], the same scale
+/// [`crate::index::DumpIndex::diagnostics`] uses, so a caller draining both
+/// channels filters uniformly. The two are *not* one enum: `DumpIndex` is L1
+/// and [`ColumnResolution`] is an L2 conclusion about PostgreSQL type
+/// semantics, so an L1 variant carrying one would invert the layering — see
+/// `crate::diagnostic`'s module docs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Diagnostic {
+    pub severity: Severity,
     pub column: String,
     pub declared: Option<String>,
     pub resolution: ColumnResolution,
+}
+
+/// A column that resolved to a real Arrow type is `Info`; anything that fell
+/// back to `Utf8View` is a `Warning`, since the values come back unparsed and
+/// a caller may want to know which columns those were.
+fn severity_of(resolution: &ColumnResolution) -> Severity {
+    match resolution {
+        ColumnResolution::Mapped => Severity::Info,
+        _ => Severity::Warning,
+    }
 }
 
 /// A table query's resolved schema: the Arrow schema a fully-typed decoder
@@ -166,6 +185,7 @@ pub fn resolve_columns(
         // NULL` in the DDL -- see "Nullability" in the phase doc.
         fields.push(Field::new(name, arrow_type, true));
         notes.push(Diagnostic {
+            severity: severity_of(&resolution),
             column: name.clone(),
             declared: declared.map(|(_, ty)| ty.clone()),
             resolution: resolution.clone(),

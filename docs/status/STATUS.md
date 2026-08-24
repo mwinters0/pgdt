@@ -66,9 +66,12 @@ Last updated: 2026-08-24.
       `partitions` fixture schema lands. A query-built `DumpIndex` now tiles
       — and matches `build_index` span for span. Notes:
       [`roadmap-phase3.2.1.2.1-mapping-streaming-split-notes.md`](../design/roadmap-phase3.2.1.2.1-mapping-streaming-split-notes.md).
-- [ ] **3.2.2** Span text storage with its 64KB cap, and the file-level
-      `Diagnostic` channel the runtime tiling check reports through. Earned
-      the same way.
+- [x] **3.2.2** `Span::text` sliced from the file by offset (64KB cap +
+      `truncated` marker, no text on `Data`/`Unscanned` spans, cache format
+      v4→v5), and a new L1 `diagnostic.rs` carrying
+      `DumpIndex::diagnostics` — through which the runtime tiling check and
+      the cache's mtime warning now report. Notes:
+      [`roadmap-phase3.2.2-span-text-diagnostics-notes.md`](../design/roadmap-phase3.2.2-span-text-diagnostics-notes.md).
 - [ ] **3.2.3** A position-only `scan.rs` event for the end of a
       dollar-quoted region, so a TOC-comment-less dump degrades to one span
       per object instead of one span for the rest of the file. Earned by a
@@ -84,7 +87,7 @@ Last updated: 2026-08-24.
 
 ## Not started
 
-- **Phase 3, slices 3.2.2-3.5** — specified, no code. See the checklist
+- **Phase 3, slices 3.2.3-3.5** — specified, no code. See the checklist
   above and `docs/design/roadmap-phase3-object-inventory.md`.
 - **Phases 4-8** — not designed. See `docs/design/roadmap.md`.
 
@@ -132,8 +135,16 @@ Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
 
-*(Empty. The 3.2.1/3.2.1.1/3.2.1.2 splits that sat here have been reviewed
-and settled into the design docs — see
-[`roadmap-phase3-object-inventory.md`](../design/roadmap-phase3-object-inventory.md)'s
-"Mapping and streaming are separate passes" and
-[`history/2026-08-24.md`](history/2026-08-24.md).)*
+- **Slice 3.2.2's `Diagnostic` unification is one *vocabulary*, not one
+  enum.** The phase spec says `Diagnostic` should gain a severity and a kind
+  so the per-column resolution outcomes, the cache-identity warning, the
+  TOC-coverage figure and an unrecognized span all speak one language. Taken
+  literally that is a layering violation: `DumpIndex` is L1 and
+  `resolve::ColumnResolution` is an L2 conclusion about PostgreSQL type
+  semantics, so an L1 `DiagnosticKind` variant carrying one would have L1
+  name an L2 type. What landed instead: `Severity` and the `{severity, kind}`
+  shape live in L1 (`diagnostic.rs`) and `resolve::Diagnostic` keeps its
+  structured payload at L2 while carrying the same `Severity`. Reconsidering
+  would mean either moving `ColumnResolution` down to L1 (against L1's "never
+  interprets a declared type" premise) or amending the spec sentence. See
+  [`roadmap-phase3.2.2-span-text-diagnostics-notes.md`](../design/roadmap-phase3.2.2-span-text-diagnostics-notes.md).
