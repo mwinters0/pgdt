@@ -21,8 +21,10 @@ module map, and the implementation facts later phases inherit — is in
 
 Phase 3 (full DDL object inventory) has landed every slice its spec originally
 listed, plus two more the phase's end-of-phase grilling earned — **3.1.1** and
-**3.3.1**, both now landed — and three out-of-band items remain. The phase is
-**not yet wrapped**; see "Not started" for what remains and in what order.
+**3.3.1**, both now landed — and a third grilling-earned slice, **3.7**
+(cache-only inspection, absorbing what were out-of-band items M1 and M2),
+plus one remaining out-of-band item (M3). The phase is **not yet wrapped**;
+see "Not started" for what remains and in what order.
 
 Last updated: 2026-08-24 (slice 3.3.1 landed: follow-on statements inherit
 their governing TOC entry, closing the ~50%-coverage defect 3.3's own tests
@@ -158,10 +160,12 @@ Two items remain before Phase 3 wraps, in this order — each earlier one makes
 the next one's mistakes visible, and no two share a review cycle unless they
 share a confidence level:
 
-- **Out-of-band items M1 and M2**, together in one review cycle — the two
-  `pgdq info` defects under "Known gaps" below. Both are CLI-only, small, and
-  change no spec'd decision, so they land as out-of-band work rather than
-  slices; ledger: [`roadmap.md`](../design/roadmap.md), "Out-of-band work".
+- **Slice 3.7, cache-only inspection** — `pgdq info` answers from a retained
+  `.dqcache` after its source dump is gone. Folds in what were queued as
+  out-of-band items M1 and M2 (the two `pgdq info` defects under "Known
+  gaps" below), since cache-only mode needs both mechanisms directly and a
+  slice that depends on them isn't a one-session CLI-only change anymore.
+  See `roadmap-phase3-object-inventory.md`, "Cache-only inspection".
 - **Out-of-band item M3** — the synthetic `INSERT`-run throughput
   measurement; see "Decisions worth another look".
 
@@ -209,9 +213,11 @@ Then the wrap, and only then the step-6 roadmap re-grill.
   `docs/design/roadmap-phase3.2.1-span-wiring-notes.md`. Reachable more often
   since 3.2.1.2.1, because an ordinary query now leaves a *partial* cache by
   design rather than a whole-file one. Fix: compare `scanned_through` against
-  the source's size before trusting a loaded cache as complete — confirmed
-  small (both values are already to hand in `index.rs`). Scheduled as
-  out-of-band item **M1**, before the phase wraps.
+  the cache's own recorded size (`SourceIdentity`) before trusting a loaded
+  cache as complete, as a new `CacheStatus` case rather than folding into
+  `Absent` — confirmed small (both values are already to hand). Lands as
+  part of slice **3.7** (cache-only inspection), not standalone — see
+  `roadmap-phase3-object-inventory.md`, "Cache-only inspection".
 - `map::parse_toc_header_line` does not recognize `TOC_PREFIX_STATS`
   (`"Statistics for "`, a v18+ `--statistics` component — not
   `--with-statistics`, which does not exist in any version). A deliberate
@@ -235,9 +241,10 @@ Then the wrap, and only then the step-6 roadmap re-grill.
   (`roadmap-phase3-object-inventory.md`, "Diagnostics: a file-level channel
   on `DumpIndex`") and this slice's spec row didn't ask for it. A plain
   `pgdq info` run today gives no visible signal if, say, the tiling check
-  ever fails on real input. Scheduled as out-of-band item **M2**, before the
-  phase wraps: printing what `index.diagnostics` already holds is independent
-  of Phase 6's sink design.
+  ever fails on real input. Lands as part of slice **3.7** (cache-only
+  inspection), not standalone: cache-only mode's "unverified, historical"
+  banner rides this same printing path — printing what `index.diagnostics`
+  already holds is independent of Phase 6's sink design either way.
 
 ## Decisions worth another look
 

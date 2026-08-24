@@ -495,6 +495,119 @@ DDL surface is 154KB — with a **per-span 64KB cap** above which the span keeps
 offsets plus a `truncated` marker, so one pathological function body cannot
 make the cache unbounded. `Data` spans never store text.
 
+## Cache-only inspection
+
+**Decision.** `pgdq info` (default, `--map`, and `--preamble-only`) can
+answer from a retained `.dqcache` file after its source dump is gone:
+deleted, moved, or never local to this machine. This is the
+sysadmin-inspection use case this phase is organized around, applied to a
+cache file instead of a live dump — keeping a collection of `.dqcache` files
+to compare row counts or schema drift over time is exactly this project's
+audience, and every fact `info`/`--map` print already lives in
+`DumpIndex`/`DumpMetadata`, not in the dump's bytes: [`Span::text`](map.rs)
+is `None` for every `Data` span (`map.rs:189`), so `COPY`/`INSERT`/large-object
+bytes are **never** in the cache regardless of this decision — `query`
+cannot be cache-only under any design, full stop.
+
+**CLI shape.** All three subcommands drop their `file` positional in favor
+of two explicit flags: `--source <path>` (the dump file) and `--dqcache
+<path>` (the cache file) — one flag vocabulary project-wide, not just for
+`info`. `parse` and `query` both require `--source` (`parse`'s whole
+purpose is a fresh scan; `query` can't answer from cache per the `Data`-span
+fact above); only `info` may omit it. Omitting `--source` on `info` *is*
+the trigger for cache-only mode — deterministic, no separate flag, no
+"guess why the open failed" ambiguity — and `--dqcache` is then required
+(there is nothing else to answer from). `--dqcache` otherwise keeps today's
+`CacheMode::resolve` semantics exactly, just resolved from a named flag
+instead of a positional's colocated default: omitted with `--source` given
+still resolves to `<source>.dqcache`, and the literal value `none` still
+disables the cache. `query`'s `table` argument becomes `--table`, the same
+positional-args-out policy applied to the one remaining positional.
+
+Cache-only mode answers strictly from what the loaded index already has and
+**errors rather than falling back to a scan** when it doesn't have enough —
+e.g. `--preamble-only` without `--source` succeeds only if the cache's
+metadata already has `preamble_complete: true`.
+
+**The library enforces the split, not just the CLI.** `CacheMode` (`cache.rs`)
+gains a third variant, `Offline(PathBuf)`, alongside today's `Enabled`/
+`Disabled` — a `pgdq` embedder, not just the bundled CLI, must be unable to
+construct a query against a cache-only mode and have it silently do the
+wrong thing. Concretely:
+- `CacheMode::load` (takes `source: &S`, i.e. is only reachable when a live
+  source exists) rejects `Offline` with an error — being handed `Offline`
+  while a live source is in hand is a caller contract violation, not a
+  degenerate case to tolerate.
+- A new `CacheMode::load_offline` (no `source` parameter — cache-only mode
+  has none) is the cache-only counterpart, and rejects `Enabled`/`Disabled`
+  the other direction.
+- `CacheMode::save` rejects `Offline` too — cache-only mode never has a
+  fresh scan to persist.
+- `require_enabled` (already used by `parse` to reject a disabled cache up
+  front) rejects `Offline` as well, as defense in depth even though `parse`
+  requiring `--source` means the CLI itself never constructs `Offline` for
+  it.
+- `read_table` (L4, `query`'s entry point) already takes a `mode: CacheMode`
+  parameter separate from its mandatory `source: &S` — it rejects `Offline`
+  there too, for the same reason `CacheMode::load` does.
+
+**Incomplete caches get their own `CacheStatus` case.** Today's `CacheStatus`
+folds foreign bytes, wrong format version, and a size mismatch into one
+`Absent` bucket (`cache.rs:111-123`) — deliberately, since live-mode callers
+don't care why, only that a scan is needed. A cache that hasn't scanned the
+whole file (`scanned_through` short of the recorded size — **M1**'s defect)
+gets a new case instead of folding into `Absent`: live mode still treats it
+like `Absent` (falls back to a scan), but cache-only mode — which cannot
+fall back — needs to report "found a cache, but only 40% scanned" rather
+than the misleading "no cache found at all." The comparison itself reads
+`identity.size`, the size already recorded in the cache at save time
+(`SourceIdentity`, `cache.rs:64-70`): once `CacheStatus::Valid` is reached,
+`identity.size` and the live size are guaranteed equal (a mismatch would
+have produced `Absent` first), so the same recorded value serves both live
+and cache-only completeness checks — no separate live-stat path needed for
+this specific check.
+
+**Cache-only mode's "unverified, historical" framing rides the diagnostic
+channel M2 wires up**, the same way a live cache's mtime mismatch already
+does (`CacheMode::load`, `cache.rs:205-214`): entering cache-only mode
+pushes a diagnostic onto the loaded index — recomputed per load, never
+persisted, exactly like `CacheMtimeChanged` — rather than a CLI-only print
+statement, so it comes along for free once M2's diagnostic-printing path
+exists, regardless of whether the caller used the default listing or
+`--map`.
+
+**M1 and M2 fold into this slice** rather than landing separately first —
+cache-only mode needs both mechanisms directly (the completeness check and
+the diagnostic-printing path), so they stop being independent out-of-band
+ledger entries and become part of this slice's own scope, landing together
+in one review cycle. `roadmap.md`'s out-of-band ledger loses its M1/M2 rows
+accordingly, folded into slice **3.7** below.
+
+Exact output shape (what cache-only mode's banner says, whether recorded
+mtime is shown) is provisional pending the CLI-feedback pass already
+queued for this phase's `info`/`--map` output (`STATUS.md`, "Not started")
+— not decided here.
+
+**Open questions**, still being grilled:
+- How completeness is reported without a live file to stat: the cache
+  already records the source's size at save time (`SourceIdentity`,
+  `cache.rs:64-70`) but never exposes it without a live comparison
+  (`cache.rs:143`). Once `CacheStatus::Valid` is validated, `identity.size`
+  and the live size are guaranteed equal, so the completeness check
+  (`scanned_through` vs. that size) can read `identity.size` uniformly in
+  both live and cache-only mode — still deciding whether an incomplete cache
+  becomes a distinguishable `CacheStatus` case or folds into `Absent` like
+  the other three invalidation reasons.
+- Whether cache-only construction gets a new `CacheMode::Offline` variant
+  (so `load`/`save`/`require_enabled` all grow a third case, most of it
+  unreachable outside `info`) or bypasses `CacheMode` entirely — a separate
+  function `info`'s CLI handler calls directly when `--source` is absent,
+  since `CacheMode` is shared with `query`'s `read_table` (L4) which must
+  never see a cache-only mode.
+- Whether `query`'s `table` argument also moves from positional to a flag
+  (e.g. `--table`), per the general "get rid of positional arguments"
+  direction.
+
 ## Span text comes from the file, not from the parser
 
 **Decision.** A span's text is **sliced from the file by offset** when the span
@@ -578,6 +691,7 @@ no-code, evidence-gathering slice goes first.
 | **3.4** | The cross-reference set — referenced roles and tablespaces. `objects.rs` splits out of `preamble.rs` here or in 3.3 if that module passes ~1500 lines. |
 | **3.6** | The `Data`-span fast path for the two bulk regions the generic statement grammar merely tiles correctly rather than skipping: `INSERT` runs (the string-aware scanner this table originally placed in 3.2) and the large-object region, grouped into one `Data` span apiece. Carries this phase's two "Verification" measurements. Ordered before 3.5 so the CLI's span listing shows the shape the map keeps. |
 | **3.5** | CLI surface: `pgdq info` gains role, tablespace and object-kind summaries by default and a `--map` span listing; `docs/manual/` gains the dump-inspection page. |
+| **3.7** | Cache-only inspection: `pgdq info` (default, `--map`, `--preamble-only`) answers from a retained `.dqcache` with its source dump gone. All three subcommands move from a `file` positional/`--cache-path` to `--source`/`--dqcache`; `query`'s `table` positional becomes `--table`. `CacheMode` gains an `Offline(PathBuf)` variant with its own `load_offline`, enforced library-side (not just by the CLI) against `read_table`/live `load`/`save`. Folds in out-of-band items **M1** (a new `CacheStatus` case for an incomplete cache, keyed off the cache's own recorded size) and **M2** (`DumpIndex::diagnostics` printed by the CLI — cache-only mode's "unverified, historical" banner rides this). See "Cache-only inspection". |
 
 **3.2.1, 3.2.2 and 3.2.3 were earned, not planned.** The first two come from
 3.2 being mis-sized: as originally written it paired a self-contained new

@@ -571,9 +571,14 @@ dated history entry it points at.
 
 | # | Date | Change | Why |
 |---|---|---|---|
-| M1 | — | `pgdq info` rejects a cache that doesn't cover the whole file | not yet landed |
-| M2 | — | `pgdq info` prints `DumpIndex::diagnostics` | not yet landed |
 | M3 | — | Synthetic `INSERT`-run throughput measurement | not yet landed |
+
+**M1** (`pgdq info` rejects a cache that doesn't cover the whole file) and
+**M2** (`pgdq info` prints `DumpIndex::diagnostics`) were queued here but
+folded into `roadmap-phase3-object-inventory.md` slice **3.7**
+("Cache-only inspection") instead of landing as standalone out-of-band
+items — cache-only mode needs both mechanisms directly, so per the
+admission rule above they're no longer independent one-session changes.
 
 ## Future — wanted, unscheduled
 
