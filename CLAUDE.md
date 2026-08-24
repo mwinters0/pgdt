@@ -81,7 +81,12 @@ new code goes.
 `docs/design/roadmap.md` holds the project goals and indexes the phases; a
 phase that has been specified gets its own doc, named
 `docs/design/roadmap-phase<N>-<slug>.md`. Keep that convention when a new
-phase's plan is written.
+phase's plan is written. Its "Out-of-band work" section is the ledger for work
+that belongs to no phase — **add a one-line row there when landing a change
+that changes no spec'd decision and fits one session**, pointing at the
+history entry that says why. Such a change gets no spec and no notes doc. If
+it would change a decision, it is not out-of-band: grill it, amend the spec,
+and give it a slice number.
 
 `docs/design/roadmap-phase1-mvp.md` is the source of truth for the built
 architecture — read it before making architectural changes, rather than

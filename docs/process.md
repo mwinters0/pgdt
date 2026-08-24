@@ -262,6 +262,32 @@ thinking about something else — and a half-used inbox is worse than none,
 because the next session reads it as complete. Nothing in the process fixes
 that; it is a cost to accept knowingly.
 
+### Out-of-band work
+
+Not everything is a phase. A CLI ergonomics change after real users try the
+thing, a defect fix that changes no decision — these fit one session and
+belong to no phase's intent. Making them slices corrupts what a slice means:
+the phase's checklist stops being "what this phase committed to" the moment
+unrelated work is appended to it, and between phases there is nothing to
+append to at all.
+
+So the roadmap carries a standing **out-of-band ledger**: an item gets a
+number (`M1`, `M2`, …) and **one terse line** — date, what changed, and a
+pointer to the dated history entry that says why. No spec, because there was
+no intent doc; **no notes doc, because the history entry is the notes.** That
+last part is only sound because out-of-band work is by definition not
+something a later phase inherits — and where it turns out one does, the fact
+goes in that phase's *inbox*, the mechanism that already exists for it.
+
+**The admission rule is the load-bearing half.** An item is out-of-band only
+if it changes no decision any spec records *and* fits one session. Anything
+that changes a decision goes back through grilling → spec amendment → a
+numbered slice. Without that rule the ledger becomes where design work goes to
+avoid being reviewed, which is the failure mode it has to be built against.
+
+The ledger is an index, not an account: it grows for the life of the project,
+so its lines stay one line. Detail lives in the history entry.
+
 ---
 
 ## Where does this fact go?
@@ -277,6 +303,7 @@ Four questions settle almost every case.
 | Something outside our control that we now depend on | the **assumptions register** |
 | A rule that will still apply three phases from now | a **standing-constraint** doc, or a named roadmap section |
 | Something a *distant, unspecified* phase will need to know | that phase's **inbox** |
+| A one-session change that belongs to no phase | the roadmap's **out-of-band ledger**, one line, pointing at a history entry |
 | Something a *user* needs, with no rationale attached | the **manual** |
 | How the agent should behave in this repo | **CLAUDE.md** |
 | A path, a host, a piece of hardware, an operator preference | **CLAUDE.local.md** |

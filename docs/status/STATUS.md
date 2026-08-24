@@ -19,15 +19,14 @@ already-landed slice's contract (2.2.1, 2.3.1, 2.3.2, 2.3.3). How it landed —
 module map, and the implementation facts later phases inherit — is in
 `docs/design/roadmap-phase2-typed-columns-notes.md`.
 
-Phase 3 (full DDL object inventory) has landed every slice in
-`docs/design/roadmap-phase3-object-inventory.md`'s checklist; the phase is
-**not yet wrapped** — its per-slice notes docs (3.1 through 3.6) still need
-consolidating into one `roadmap-phase3-object-inventory-notes.md` before this
-section can be rewritten the way Phase 1/2's are above.
+Phase 3 (full DDL object inventory) has landed every slice its spec originally
+listed, but the phase's end-of-phase grilling earned two more — **3.1.1** and
+**3.3.1** — and three out-of-band items. The phase is **not yet wrapped**; see
+"Not started" for what remains and in what order.
 
-Last updated: 2026-08-24 (3.5 complete — CLI surface and the dump-inspection
-manual page, see the 3.5 checklist entry. All of Phase 3's slices are now
-landed; phase wrap is still open, see "Not started").
+Last updated: 2026-08-24 (end-of-phase grilling: slices 3.1.1 and 3.3.1
+earned, out-of-band items M1-M3 scheduled, the `DataBlock` shape and the 3.5
+CLI surface reviewed and settled).
 
 ## Phase 3 progress
 
@@ -35,6 +34,15 @@ landed; phase wrap is still open, see "Not started").
       existing schema produces, plus large objects, under a
       `{default, verbose}` flag set for all 6 routine versions. No library
       code. Notes: `docs/design/roadmap-phase3.1-objects-fixture-notes.md`
+- [ ] **3.1.1** Fixtures for the four shapes 3.1 never produced, all read out
+      of upstream source and never checked against real output: the TOC
+      comment's `Tablespace:` field and a non-default `SET
+      default_tablespace` (via a `CREATE TABLESPACE` in the generator's own
+      container), a `REVOKE`, and `TOC_PREFIX_STATS` — the last needing
+      version-conditional flag sets in `SCHEMAS`, since `--with-statistics`
+      is v18-only. Closes I18 and I19, whose register entries move from
+      source-reading to fixture evidence. Decided at the end-of-phase
+      grilling; nothing landed yet.
 - [x] **3.2** `map.rs` as a standalone module: `Span`/`SpanBody`, a
       statement-driven boundary/classification pass, `check_tiling` and its
       test over all 96 fixtures, cache identity checking (format v1→v2), the
@@ -93,6 +101,19 @@ landed; phase wrap is still open, see "Not started").
       stop point rather than guess a still-pending comment's classification.
       Notes:
       [`roadmap-phase3.3-toc-enrichment-notes.md`](../design/roadmap-phase3.3-toc-enrichment-notes.md).
+- [ ] **3.3.1** TOC inheritance for follow-on statements — a span continuing
+      the object before it (`ALTER … OWNER TO`, `ADD MAPPING FOR`, `ALTER
+      EVENT TRIGGER … DISABLE`) inherits the governing entry's `TocHeader`
+      instead of carrying `None`, with a separate record of whether it carried
+      the header text, and `toc_coverage_diagnostic` counts attributed spans.
+      `Framing`/`Connect`/`VersionHeader` never inherit. `pgdq info`'s
+      `object kinds:` breakdown moves to header-bearing spans in the same
+      slice — it is an object census, which inheritance would otherwise
+      double-count. Earned by a wrong contract: 3.3's coverage figure reads
+      ~50% on a healthy dump (52 of `fixtures/16/objects/default.sql`'s 137
+      spans are unattributed today). `docs/manual/dump-inspection.md` needs
+      updating with it, since `object kinds:` changes meaning. Decided at the
+      end-of-phase grilling; nothing landed yet.
 - [x] **3.4** The cross-reference set — referenced roles and tablespaces.
       `DumpIndex::roles`/`tablespaces`, accumulated in `map::Builder` from
       `Span::toc` and (new) `preamble::extract_statement_cross_refs` over
@@ -126,6 +147,32 @@ landed; phase wrap is still open, see "Not started").
 
 ## Not started
 
+Four items remain before Phase 3 wraps, in this order — each earlier one makes
+the next one's mistakes visible, and no two share a review cycle unless they
+share a confidence level:
+
+- **Slice 3.1.1**, then **slice 3.3.1** — see the checklist above. 3.1.1 is
+  first because it is the evidence slice: 3.3.1 reworks exactly the TOC-header
+  parsing whose unverified shapes 3.1.1 exercises. Decisions:
+  [`roadmap-phase3-object-inventory.md`](../design/roadmap-phase3-object-inventory.md)
+  "Span boundaries" and "TOC coverage"; evidence:
+  [`history/2026-08-24.md`](history/2026-08-24.md).
+- **Out-of-band items M1 and M2**, together in one review cycle — the two
+  `pgdq info` defects under "Known gaps" below. Both are CLI-only, small, and
+  change no spec'd decision, so they land as out-of-band work rather than
+  slices; ledger: [`roadmap.md`](../design/roadmap.md), "Out-of-band work".
+- **Out-of-band item M3** — the synthetic `INSERT`-run throughput
+  measurement; see "Decisions worth another look".
+
+Then the wrap, and only then the step-6 roadmap re-grill: 3.1.1 produces real
+`pg_dump` output for two shapes that have only ever been read out of source,
+and 3.3.1 changes what `Span::toc` means, so a Phase 4 grilling held now would
+be working from facts scheduled to change.
+- **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
+  as provisional pending real user trials; the resulting changes land as
+  out-of-band items too.
+- **A like-for-like koji throughput re-measurement** — deferred past Phase 3;
+  the HDD is still contended. See "Decisions worth another look".
 - **Phase 3's wrap step** — every slice (3.1 through 3.6) is landed, but the
   phase itself isn't wrapped: the per-slice notes docs still need
   consolidating into one `roadmap-phase3-object-inventory-notes.md` (per-slice
@@ -149,7 +196,11 @@ landed; phase wrap is still open, see "Not started").
   so. `ScanExtent::Full` (or a query after `pgdq parse`) gives exact
   detection. Rows are never a union either way, and ambiguity is now raised
   *before* any row is emitted rather than partway through one candidate's,
-  which is what the previous form of this gap cost.
+  which is what the previous form of this gap cost. Accepted, not
+  scheduled — closing it means abandoning early stopping, which is the
+  phase's cost argument. Filed into
+  [`roadmap-phase6-inbox.md`](../design/roadmap-phase6-inbox.md) so the
+  embedded API's promises get decided against it deliberately.
 - `pgdq info <file>` (no `--preamble-only`) trusts whatever cache
   `CacheMode::load` finds without checking it actually covers the whole file:
   running `pgdq info <file> --preamble-only` and then `pgdq info <file>`
@@ -159,15 +210,20 @@ landed; phase wrap is still open, see "Not started").
   to span wiring — see
   `docs/design/roadmap-phase3.2.1-span-wiring-notes.md`. Reachable more often
   since 3.2.1.2.1, because an ordinary query now leaves a *partial* cache by
-  design rather than a whole-file one. Likely fix: compare `scanned_through`
-  against the source's size before trusting a loaded cache as complete.
+  design rather than a whole-file one. Fix: compare `scanned_through` against
+  the source's size before trusting a loaded cache as complete — confirmed
+  small (both values are already to hand in `index.rs`). Scheduled as
+  out-of-band item **M1**, before the phase wraps.
 - `Span::toc`'s `Tablespace:` field and `TOC_PREFIX_STATS` ("Statistics for
   Name: ...", a v18+ `--with-statistics` component) are parsed from source
-  reading alone (I18), with no fixture exercising either — creating a
-  non-default tablespace needs filesystem access the fixture generator
-  doesn't have. `parse_toc_header_line` degrades gracefully if either shape
-  is wrong (the field, or the whole header, just parses to `None`), but
-  neither claim has been checked against real `pg_dump` output.
+  reading alone (I18), with no fixture exercising either — neither string
+  appears anywhere in `fixtures/`. `parse_toc_header_line` degrades
+  gracefully if either shape is wrong (the field, or the whole header, just
+  parses to `None`), which is the problem: a wrong claim shows up as silently
+  absent data rather than an error. Scheduled as **slice 3.1.1**, before the
+  phase wraps — `generate_fixtures.py` drives its per-version Postgres
+  through `docker exec`, so a `CREATE TABLESPACE` is reachable after one more
+  `exec`, and `--with-statistics` needs version-conditional flag sets.
 - `DumpIndex::roles`/`tablespaces` are complete only once `scanned_through`
   reaches the file's size — the same partiality `metadata`'s
   `preamble_complete` already carries, for the same reason: a query that
@@ -177,7 +233,7 @@ landed; phase wrap is still open, see "Not started").
   a query after `pgdq parse`) gives the complete set. `REVOKE` and a
   non-default `SET default_tablespace` value are also unexercised by any
   fixture (I19), the same gap I18 already names for the TOC's own
-  `Tablespace:` field.
+  `Tablespace:` field — both close in **slice 3.1.1**.
 - `DumpIndex::diagnostics` (a tiling failure, the cache mtime warning, the
   TOC-coverage figure) is fully populated by every scan but never printed by
   the CLI — `pgdq info` has no code path that reads `index.diagnostics` at
@@ -187,7 +243,9 @@ landed; phase wrap is still open, see "Not started").
   (`roadmap-phase3-object-inventory.md`, "Diagnostics: a file-level channel
   on `DumpIndex`") and this slice's spec row didn't ask for it. A plain
   `pgdq info` run today gives no visible signal if, say, the tiling check
-  ever fails on real input.
+  ever fails on real input. Scheduled as out-of-band item **M2**, before the
+  phase wraps: printing what `index.diagnostics` already holds is independent
+  of Phase 6's sink design.
 
 ## Decisions worth another look
 
@@ -200,29 +258,34 @@ types rather than one enum — has been reviewed and settled into
 [`roadmap-phase3-object-inventory.md`](../design/roadmap-phase3-object-inventory.md)'s
 "Diagnostics: a file-level channel on `DumpIndex`".
 
-- **Slice 3.6 gave `SpanBody::Data`'s payload a shape the spec didn't pin
-  down, and made two implementation calls the spec's prose left open.** The
-  design's "Bulk regions" section says one `Data` span kind covers `COPY`
-  blocks, `INSERT` runs and the large-object region, but a `CopyBlock`'s
-  shape (header offsets, a row terminator) genuinely doesn't fit the other
-  two — there was no single struct to hold all three. Landed as
-  `crate::map::DataBlock`, an enum (`Copy(CopyBlock)`/`InsertRun(_)`/
-  `LargeObjects(_)`) behind the one `SpanBody::Data` variant, keeping
-  `DumpIndex::blocks()`/`blocks_for`'s signature (`&CopyBlock`) unchanged by
-  filtering on `DataBlock::Copy`. This is the natural reading of "one span
-  *kind*, not one span *shape*", but it's an architectural call a reviewer
-  should confirm before Phase 8's `INSERT`-run reader or Phase 3.5's `--map`
-  listing build on it. Second: `INSERT` runs got a `map.rs`-only fast path
-  (reuse the existing statement accumulator, skip pushing a span per
-  statement) rather than a `crate::scan`-level one like the large-object
-  region got — deliberately, since the phase's "Verification" section only
-  gates large-object-region throughput, not `INSERT`-run throughput, but a
-  koji-scale `--inserts` dump's actual per-row cost was never measured this
-  slice. Both calls, and the reasoning, are in
+Slice 3.6's `DataBlock` shape — an enum (`Copy`/`InsertRun`/`LargeObjects`)
+behind the one `SpanBody::Data` variant rather than three sibling `SpanBody`
+variants — has been reviewed and settled into
+[`roadmap-phase3-object-inventory.md`](../design/roadmap-phase3-object-inventory.md)'s
+"Bulk regions", along with the evidence that decided it (two call sites want
+the generic *is this bulk row data* predicate).
+
+Slice 3.5's `--map` output format and `object kinds:` bucketing have been
+reviewed and accepted **as provisional**: the CLI surface stays as it is until
+real users have tried it, and their feedback becomes its own work item. See
+"Not started".
+
+- **Slice 3.6 put `INSERT` runs on a `map.rs`-only fast path, and never
+  measured one.** The large-object region got a `crate::scan`-level fast path
+  (lines skipped unread); `INSERT` runs instead reuse the existing statement
+  accumulator and skip pushing a span per statement, which removes the
+  per-statement span/text cost but still decodes every line into
+  `Event::Line`. Deliberate — the phase's "Verification" section gates only
+  large-object-region throughput — but a koji-scale `--inserts` dump's actual
+  per-row cost has never been measured, so the phase's cost claim for
+  `--inserts` input rests on argument rather than a number. Reasoning:
   [`roadmap-phase3.6-bulk-region-fast-path-notes.md`](../design/roadmap-phase3.6-bulk-region-fast-path-notes.md).
-  What would change this: if Phase 8's row reader turns out to want a
-  different `DataBlock` shape than what's landed, or if `INSERT`-run
-  throughput needs its own measurement before this phase wraps.
+  Scheduled as out-of-band item **M3**, before the phase wraps: a synthetic
+  `INSERT` run on the SSD, measured the way 3.6's large-object bench was
+  (`scripts/generate_large_object_bench.py` is the pattern). A confirming
+  number changes no decision; a bad one — `Event::Line` decode dominating —
+  earns `INSERT` runs a scanner-level path, which does change one, and
+  escalates M3 to a slice.
 
 - **Slice 3.6's koji regression check was accepted on a confounded
   throughput number, reasoned around rather than re-measured cleanly.** The
@@ -240,21 +303,7 @@ types rather than one enum — has been reviewed and settled into
   maintainer who wants a like-for-like throughput figure can re-run
   `runs/koji-3.6-scan.log`'s command once the HDD is uncontended; nothing
   about this call blocks that, and nothing found here suggests it would come
-  back differently.
+  back differently. **The maintainer has deferred the re-measurement past
+  Phase 3** — the HDD is still contended — so this entry stays until that run
+  happens.
 
-- **Slice 3.5's `--map` output format and `object kinds:` bucketing are new
-  surface with no spec-level detail to check against.** The spec row says
-  only "role, tablespace and object-kind summaries" and "a `--map` span
-  listing" — every concrete choice (the `[start, end) label` line shape, the
-  per-`SpanBody`-variant label text, bucketing `object kinds:` by
-  `Span::toc.kind` rather than some other classification, printing
-  `roles`/`tablespaces`/`object kinds` unconditionally rather than behind
-  `--verbose`, rejecting `--map --preamble-only` outright rather than having
-  one flag win) was made this slice with no maintainer present to weigh in
-  on the CLI ergonomics. None of it is load-bearing for other code — it's
-  formatting over already-tested data, easy to change without touching
-  `pgdump_query` itself — but it's the first real user-facing surface this
-  phase produced, so it's worth a look. Full reasoning:
-  [`roadmap-phase3.5-cli-surface-notes.md`](../design/roadmap-phase3.5-cli-surface-notes.md).
-  What would change this: any maintainer preference on output shape, once
-  seen.

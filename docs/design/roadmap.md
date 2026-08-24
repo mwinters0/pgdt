@@ -551,6 +551,30 @@ The Phase 1 decisions that keep all of this additive rather than a rewrite are
 listed under "Decisions that keep later phases open" in
 `docs/design/roadmap-phase1-mvp.md`.
 
+## Out-of-band work
+
+Small work that belongs to no phase: a CLI ergonomics change, a defect fix
+that changes no decision. It gets a number `M<k>` and **one terse ledger line
+below** — date, what changed, and the history entry that says why. Nothing
+else: no spec (there was no intent doc to write), and no notes doc, because
+the history entry *is* the notes. If out-of-band work turns up a fact an
+unspecified phase needs, that fact goes in that phase's inbox, as always.
+
+**Admission rule.** An item is out-of-band only if it changes no decision any
+spec records **and** fits one session. Anything that changes a decision goes
+back through grilling → spec amendment → a numbered slice; that rule is what
+keeps this section from becoming where design work goes to avoid review.
+
+**Ledger lines stay one line each.** This section grows for the life of the
+project and is read as an index, never as an account — the detail lives in the
+dated history entry it points at.
+
+| # | Date | Change | Why |
+|---|---|---|---|
+| M1 | — | `pgdq info` rejects a cache that doesn't cover the whole file | not yet landed |
+| M2 | — | `pgdq info` prints `DumpIndex::diagnostics` | not yet landed |
+| M3 | — | Synthetic `INSERT`-run throughput measurement | not yet landed |
+
 ## Future — wanted, unscheduled
 
 Work we intend to do without committing it to a phase. An item moves out of

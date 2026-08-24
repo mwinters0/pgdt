@@ -41,3 +41,40 @@ diagnostic vocabulary is a scale, not a type".
 **Contingent on.** `Severity` staying derivable for `ColumnNote` (it is a
 method, not a field, today) and on no third diagnostic producer appearing with
 a shape neither channel fits.
+
+---
+
+## A default query cannot detect every ambiguous table, and the API says nothing about it
+
+**Fact.** A query stops mapping once its target is settled
+(`stream::target_settled`, the `ScanExtent::UntilTargetSettled` default), so a
+second `COPY` block for the same qualified name **past** the stopping point is
+never seen and `Error::AmbiguousTable` is not raised for it — the query
+returns the candidate it found, silently. The stop rule catches the two shapes
+that announce themselves in the prefix: a matching block carrying the
+partition-root marker (I2), and a file containing any `\connect` at all
+(`pg_dumpall`, concatenation, `--create`). What stays undetectable is a file
+whose *first* segment is an ordinary dump with something concatenated after
+it — nothing before the stopping point says so. `ScanExtent::Full`, or any
+query against an already-`pgdq parse`d file, detects it exactly. Rows are
+never a union either way.
+
+**Why Phase 6 cares.** This is the one place where the default query path
+returns a *possibly wrong answer with no signal*, rather than an error or a
+degraded one — and Phase 6 is where what the embedded API promises a caller
+gets decided. Three shapes are open and only Phase 6 can pick: leave the
+default as-is and document it; make `ScanExtent::Full` the default and pay a
+full scan per cold query; or emit a `Diagnostic` on every early stop saying
+the answer is conditional on no concatenation, which costs nothing and turns
+silence into a filterable signal. The third interacts directly with the sink
+entry above, which is why both are filed here.
+
+**Origin.** Slice 3.2.1.2.1, 2026-08-24 (the decision), carried through
+Phase 3's end-of-phase grilling as an accepted gap. See `STATUS.md`'s "Known
+gaps" and
+[`roadmap-phase3-object-inventory.md`](roadmap-phase3-object-inventory.md),
+"Mapping and streaming are separate passes".
+
+**Contingent on.** Early stopping surviving as the default, and on no cheaper
+concatenation detector turning up — a prefix-visible marker would collapse the
+question entirely.

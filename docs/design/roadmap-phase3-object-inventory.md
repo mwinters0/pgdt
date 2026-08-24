@@ -58,12 +58,20 @@ data, unmeasurable either way. Bulk-region skipping — the one place cost is
 real — does not depend on TOC comments either; see "Bulk regions" below for
 how each region's end is found.
 
-**TOC coverage is recorded per file**, as the count of TOC headers seen
-against the number of spans produced. A file with zero of them is a normal,
-reported state — the signal that the map is running degraded — not an error
-and not a silent fall-through.
+**TOC coverage is recorded per file**, as the count of spans **attributed to a
+TOC entry** against the number of spans produced. A file with zero of them is
+a normal, reported state — the signal that the map is running degraded — not
+an error and not a silent fall-through.
 
-Evidence: [`../status/history/2026-08-23.md`](../status/history/2026-08-23.md).
+Attribution, not header-bearing: a span whose statement is a follow-on of the
+object before it (`ALTER … OWNER TO`, `ALTER TEXT SEARCH CONFIGURATION … ADD
+MAPPING FOR`, `ALTER EVENT TRIGGER … DISABLE`) inherits the governing entry's
+header and counts as covered. Counting only header-*bearing* spans reports
+~50% on a healthy, fully-TOC'd `pg_dump` file, which cannot distinguish the
+degraded case the figure exists to name — see "Span boundaries" below.
+
+Evidence: [`../status/history/2026-08-23.md`](../status/history/2026-08-23.md)
+and [`../status/history/2026-08-24.md`](../status/history/2026-08-24.md).
 
 ## What a span carries
 
@@ -120,6 +128,17 @@ cheap, and there are exactly two exceptions:
   koji-scale `--inserts` dump is ~1TB of `INSERT INTO` lines. Without this
   span kind the scan would walk every one of them, making the phase's cost
   claim false for an input the fixture tooling already generates.
+
+**One span *kind*, three payload shapes.** `SpanBody::Data` carries a
+`DataBlock` enum — `Copy(CopyBlock)` / `InsertRun` / `LargeObjects` — rather
+than three sibling `SpanBody` variants. The three genuinely do not share a
+shape (only `CopyBlock` carries the inner offsets a row reader seeks by, per
+"`COPY` blocks are the one exception" below), but two call sites want the
+predicate *is this span bulk row data* without caring which:
+`crate::map`'s text suppression and `crate::preamble`'s derived-view walk.
+Flattening turns each into a three-arm match that a future fourth bulk
+producer would silently miss, and it would change `blocks()`/`blocks_for`'s
+`&CopyBlock` signature for no gain.
 
 Treating all three as one kind generalizes the large-object fast path instead
 of adding a second special case, and makes the cost claim unconditional: the
@@ -311,22 +330,57 @@ than rejected; it is filed under "Future — wanted, unscheduled" in
 [`roadmap.md`](roadmap.md) and should be revisited once the feature set is
 settled.
 
-## Span boundaries: object-anchored and greedy
+## Span boundaries: statement-anchored, object-attributed, greedy
 
 **Decision.** A span opens at the `--` of its TOC comment — or, where there is
 no TOC comment, at the first byte of its first statement — and runs to the byte
 before the next span opens. Interstitial blank lines are absorbed into the
 preceding span. **There are no whitespace or comment-run span kinds.**
 
+**A span is one statement; a TOC entry may own several of them.** One archive
+entry routinely emits a `CREATE` plus its follow-on statements — `ALTER …
+OWNER TO`, `ALTER TEXT SEARCH CONFIGURATION … ADD MAPPING FOR` (one per
+mapping), `ALTER EVENT TRIGGER … DISABLE` — and only the first is preceded by
+the entry's `-- Name: …; Type: …` comment. Statement completion closes a span
+in all of them, so those follow-ons are spans of their own; **each inherits
+the governing entry's `TocHeader`** rather than carrying `None`.
+
+`Span::toc` therefore means *the TOC entry this span belongs to*, not *the TOC
+comment this span starts with*; a span records separately whether it carried
+the header text itself, which is what keeps "opens a new archive entry"
+answerable. Inheritance runs until the next TOC comment, `COPY` block, or
+large-object region opens — the same three signals that close a governing
+entry's own span — and is cleared by any span that is not a plain statement:
+`Framing`, `Connect` and `VersionHeader` never inherit, so mid-file framing is
+not attributed to the object before it.
+
+**An object census counts header-bearing spans**, not attributed ones — one
+per archive entry. `pgdq info`'s `object kinds:` breakdown is that census, so
+after inheritance it reads "seven tables", not "seven tables plus their owner
+statements". The figure that was wrong as *coverage* is exactly right as a
+*census*; 3.3.1 relocates it rather than discarding it.
+
+Merging those follow-ons into the object's span was rejected: it reduces
+specificity, which the standing rule below forbids, and it deletes the
+byte-exact statement boundaries a future writer or a `--filter` would need.
+Leaving them unattributed was also rejected: it puts object identity in
+adjacency, where only a reader's eye can recover it, and it is what made the
+TOC-coverage figure read ~50% on healthy input. Attribution by inheritance is
+enrichment, which is the direction the standing rule permits.
+
+Evidence and measurements:
+[`../status/history/2026-08-24.md`](../status/history/2026-08-24.md).
+
 The roadmap sketch listed `comment-run (n lines)` and `whitespace-run` as span
 kinds. They are dropped: content-anchored spans force a rule for where trailing
 whitespace belongs that nothing upstream guarantees (the blank-line counts
 between objects are regular in practice but promised nowhere), and every extra
 span kind is another opportunity to leave a byte unattributed — the exact
-failure the tiling invariant exists to catch. Object-anchored spans make the
-boundary rule one sentence, make span count equal object count plus a handful
-of framing spans, and spare `pgdq info` from filtering noise out of its
-listing.
+failure the tiling invariant exists to catch. Statement-anchored spans make the
+boundary rule one sentence, keep span count proportional to the DDL rather
+than to the whitespace between it, and — with the TOC inheritance above —
+let `pgdq info` group its listing by object without filtering noise out of
+it.
 
 The roadmap's stated motive for those kinds — making "this dump has zero
 comments" objectively queryable — is served instead by the TOC-coverage figure
@@ -353,9 +407,10 @@ event carries an offset and nothing else — the dollar-quoted lines themselves
 stay unsurfaced, so L1's event contract still says nothing about DDL text.
 
 This is what makes "graceful degradation" true rather than aspirational. The
-degraded map is *coarser* — no owner, no kind label, no grouping — but it is
-still one span per object, which is the claim the decision to reject
-TOC-driven segmentation rests on.
+degraded map is *coarser* — no owner, no kind label, no grouping, and nothing
+to inherit, so every statement stands alone — but it is still one span per
+statement rather than one span for the rest of the file, which is the claim
+the decision to reject TOC-driven segmentation rests on.
 
 **Framing spans.** The file prologue and epilogue carry no TOC header and are
 not archive entries: the `-- PostgreSQL database dump` banner, `\restrict`, the
@@ -510,6 +565,7 @@ no-code, evidence-gathering slice goes first.
 | Slice | Scope |
 |---|---|
 | **3.1** | A third fixture schema (`objects`) covering the TOC kinds neither existing schema produces, plus **large objects**, plus a `--verbose` flag set. No library code. |
+| **3.1.1** | Fixtures for the four shapes 3.1's set never produced, all of them read out of upstream source and never checked against real output: the TOC comment's `Tablespace:` field and a non-default `SET default_tablespace` (a `CREATE TABLESPACE` in the generator's own container, which `docker exec` already reaches), a `REVOKE`, and `TOC_PREFIX_STATS` — the last needing version-conditional flag sets in `SCHEMAS`, since `--with-statistics` is v18-only. Earned by a wrong contract: 3.1's set is what the enrichment layer and cross-reference set were built against, and it silently omits shapes both of them claim to parse. |
 | **3.2** | `map.rs` as a standalone module: the span model, the tiling invariant with its test over every fixture, cache identity checking, and the hardened statement accumulator — statement-driven pass only, no TOC enrichment. Updates `layering.md`'s module table and Arrow-free check for `map.rs`. |
 | **3.2.1** | The map becomes `DumpIndex`'s primary structure, per "The map is the structure, not a description of it": `spans` primary with `blocks()`/`blocks_for` derived, `Span::Data` holding `CopyBlock` inline, spans persisted (cache format bump), and `build_index` producing spans **in its existing pass**, driving the same `map::Builder` `build_map` does, rather than as a second one. `crate::stream::table_stream`'s `Recorder` appends each live-discovered block as its own `Span::Data`. `Unscanned` becomes a span a real incremental scan produces (`preamble_only`, the one genuinely partial scan today), not a reserved variant. |
 | **3.2.1.1** | `DumpMetadata` as a memoized derived view over `spans` (`dump_metadata_from_spans`), replacing the separate `PreambleBuilder` pass — `SpanBody` grows `Connect`, `VersionHeader` and `AlterTypeAddValue` to carry what `Framing`/`Unparsed` couldn't, verified against the old pass's output across every fixture before `PreambleBuilder` was deleted. |
@@ -518,6 +574,7 @@ no-code, evidence-gathering slice goes first.
 | **3.2.2** | Additive remainder: span text sliced from the file and stored in the cache with its 64KB-per-span cap and `truncated` marker, and the file-level `Diagnostic` channel on `DumpIndex` — through which the runtime tiling check and the cache's mtime warning are reported. |
 | **3.2.3** | A position-only `scan.rs` event marking where a dollar-quoted region ended, and `map.rs` closing a statement on it — so a TOC-comment-less dump degrades to one span per object rather than to one span for the rest of the file. See "Span boundaries". |
 | **3.3** | The TOC enrichment layer: owner, kind labels, the `Tablespace:` field, TOC-coverage reporting. |
+| **3.3.1** | TOC inheritance for follow-on statements: a span continuing the object before it carries the governing entry's `TocHeader` rather than `None`, with a separate record of whether it carried the header text itself, and `toc_coverage_diagnostic`'s numerator becomes attributed spans. `pgdq info`'s `object kinds:` breakdown switches to header-bearing spans in the same slice, since it is an object census rather than a span census and inheritance would otherwise double-count. Earned by a wrong contract, not by mis-sizing — 3.3 shipped a coverage figure that reads ~50% on a healthy, fully-TOC'd dump, which is the one case it exists to distinguish. See "Span boundaries" and "TOC coverage". |
 | **3.4** | The cross-reference set — referenced roles and tablespaces. `objects.rs` splits out of `preamble.rs` here or in 3.3 if that module passes ~1500 lines. |
 | **3.6** | The `Data`-span fast path for the two bulk regions the generic statement grammar merely tiles correctly rather than skipping: `INSERT` runs (the string-aware scanner this table originally placed in 3.2) and the large-object region, grouped into one `Data` span apiece. Carries this phase's two "Verification" measurements. Ordered before 3.5 so the CLI's span listing shows the shape the map keeps. |
 | **3.5** | CLI surface: `pgdq info` gains role, tablespace and object-kind summaries by default and a `--map` span listing; `docs/manual/` gains the dump-inspection page. |
