@@ -590,10 +590,12 @@ async fn build_index_reports_zero_toc_coverage_for_a_header_less_dump() {
 /// owner, via both `Span::toc.owner` and the file's many `ALTER ... OWNER
 /// TO`) and `fixture_reader` (the `GRANT`/`ALTER DEFAULT PRIVILEGES`
 /// grantee) are both present; `PUBLIC` — also a real grantee in this fixture
-/// (`GRANT SELECT ON TABLE objects.widgets TO PUBLIC;`) — is not. No fixture
-/// creates a non-default tablespace (`STATUS.md`'s "Known gaps"), so
-/// `tablespaces` is empty; the fixture's one `SET default_tablespace = '';`
-/// is the reset shape, which is never a reference either way.
+/// (`GRANT SELECT ON TABLE objects.widgets TO PUBLIC;`) — is not.
+/// `objects.tablespaced_table` (slice 3.1.1) is the fixture's one
+/// non-default tablespace, referenced both by its TOC header's `;
+/// Tablespace: fixture_ts` suffix and by the `SET default_tablespace =
+/// fixture_ts;` framing ahead of its definition; the surrounding `SET
+/// default_tablespace = '';` reset lines are never a reference either way.
 #[tokio::test]
 async fn build_index_records_referenced_roles_and_tablespaces() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/16/objects/default.sql");
@@ -602,5 +604,5 @@ async fn build_index_records_referenced_roles_and_tablespaces() {
     assert!(index.roles.contains("postgres"));
     assert!(index.roles.contains("fixture_reader"));
     assert!(!index.roles.iter().any(|r| r.eq_ignore_ascii_case("public")));
-    assert!(index.tablespaces.is_empty());
+    assert_eq!(index.tablespaces, ["fixture_ts".to_string()].into_iter().collect());
 }

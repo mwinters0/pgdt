@@ -25,8 +25,9 @@
 --     dump-level metadata already exercised by edge_cases/create.sql and
 --     the dumpall fixture (docs/design/pg-dump-compatibility.md) -- not a
 --     DDL object this phase's inventory is about.
---   - STATISTICS DATA: only emitted under --with-statistics (PG18+, not a
---     flag this project's routine matrix runs).
+--   - STATISTICS DATA: only emitted under --statistics (PG18+ -- see
+--     generate_fixtures.py's version-conditional "stats" flag set for this
+--     schema, objects/stats.sql, v18 only).
 --
 -- FOREIGN DATA WRAPPER / SERVER / USER MAPPING use postgres_fdw, which
 -- object creation never actually dials out for -- only querying through it
@@ -38,6 +39,14 @@
 -- single-database pg_dump never emits one. See
 -- docs/status/history/2026-08-23.md ("koji's role and privilege references").
 CREATE ROLE fixture_reader NOLOGIN;
+
+-- A non-default tablespace, for the TOC header's `; Tablespace: <name>`
+-- suffix (I18) and the `SET default_tablespace = ...;` framing (I19) --
+-- neither reachable through any pg_dump flag, since both need a real
+-- filesystem location. generate_fixtures.py's prepare_tablespace_dir
+-- mkdir/chowns the directory this LOCATION points at, in this schema's own
+-- container, before this script runs.
+CREATE TABLESPACE fixture_ts LOCATION '/var/lib/postgresql/fixture_tablespace';
 
 CREATE SCHEMA IF NOT EXISTS objects;
 
@@ -248,6 +257,25 @@ $$;
 CREATE EVENT TRIGGER objects_ddl_log ON ddl_command_start
     EXECUTE FUNCTION objects.noop_event_trigger();
 ALTER EVENT TRIGGER objects_ddl_log DISABLE;
+
+-- A table in the non-default tablespace created above: exercises the TOC
+-- header's `; Tablespace: <name>` suffix (I18) and, since a table's
+-- tablespace differs from the connection's own default, the
+-- `SET default_tablespace = fixture_ts;` / `SET default_tablespace = '';`
+-- framing pg_dump wraps its definition in (I19).
+CREATE TABLE objects.tablespaced_table (id integer) TABLESPACE fixture_ts;
+
+-- REVOKE: a function's EXECUTE privilege is granted to PUBLIC by default,
+-- so revoking it is the one ACL shape whose target state has *fewer*
+-- privileges than the default -- pg_dump's ACL diff then emits a solo
+-- REVOKE with no offsetting GRANT, I19's REVOKE shape, otherwise
+-- unexercised by any fixture. (Revoking a privilege from an *owner*
+-- instead, e.g. objects.widgets above, always pairs the REVOKE with a
+-- GRANT restoring the owner's remaining implicit privileges, which doesn't
+-- isolate the shape as cleanly.)
+CREATE FUNCTION objects.no_public_execute() RETURNS integer
+    LANGUAGE sql IMMUTABLE AS $$ SELECT 1; $$;
+REVOKE EXECUTE ON FUNCTION objects.no_public_execute() FROM PUBLIC;
 
 -- BLOBS, BLOB METADATA: large objects are never conjured by any pg_dump
 -- flag -- lo_from_bytea is the only way to get one into a fixture at all.

@@ -47,6 +47,12 @@ ROUTINE_VERSIONS = {
 DB_NAME = "pgdq_fixture"
 DB_USER = "postgres"
 
+# fixture_schema_objects.sql's non-default tablespace (roadmap-phase3-
+# object-inventory.md slice 3.1.1) needs a directory that exists and is
+# owned by the container's postgres OS user *before* its `CREATE TABLESPACE`
+# statement runs -- see prepare_tablespace_dir.
+TABLESPACE_DIR = "/var/lib/postgresql/fixture_tablespace"
+
 # Each schema exercises a different concern and so wants a different flag
 # list -- see docs/design/roadmap-phase2-typed-columns.md ("Fixtures") for
 # why the split exists and why each gets exactly this set.
@@ -54,7 +60,14 @@ DB_USER = "postgres"
 # `None` is a sentinel meaning "run pg_dumpall instead of pg_dump" -- see
 # dump_flag_set. It isn't a `pg_dump` flag set at all, so it can't be
 # expressed as a flag list.
-SCHEMAS: dict[str, dict[str, list[str] | None]] = {
+#
+# A flag-set value is normally a plain flags list (or None, above). It can
+# also be a `(min_version, flags)` pair restricting the run to versions >=
+# min_version -- introduced for objects/stats: `--statistics` (TOC_PREFIX_STATS,
+# roadmap-phase3-object-inventory.md slice 3.1.1) is PG18+ only, and the
+# routine matrix runs versions 13-18.
+FlagSet = list[str] | None
+SCHEMAS: dict[str, dict[str, FlagSet | tuple[str, FlagSet]]] = {
     "edge_cases": {
         "default": [],
         "data-only": ["--data-only"],
@@ -80,6 +93,7 @@ SCHEMAS: dict[str, dict[str, list[str] | None]] = {
     "objects": {
         "default": [],
         "verbose": ["--verbose"],
+        "stats": ("18", ["--statistics"]),
     },
     # roadmap-phase3-object-inventory.md's "Mapping and streaming are
     # separate passes": the one shape where a single `COPY <name>` header
@@ -142,6 +156,17 @@ def wait_ready(name: str, timeout: float = 30.0) -> None:
     raise TimeoutError(f"postgres in container {name} did not become ready in {timeout}s")
 
 
+def prepare_tablespace_dir(name: str) -> None:
+    # `docker exec` defaults to root in the official postgres image (the
+    # entrypoint drops to the postgres OS user itself via gosu, but that
+    # doesn't apply to a fresh exec) -- root can mkdir here, but CREATE
+    # TABLESPACE needs the directory owned by the user postgres itself
+    # connects as, so chown it explicitly rather than relying on the
+    # container's default exec user.
+    run(DOCKER + ["exec", name, "mkdir", "-p", TABLESPACE_DIR])
+    run(DOCKER + ["exec", name, "chown", "postgres:postgres", TABLESPACE_DIR])
+
+
 def create_fixture_db(name: str, schema: str, attempts: int = 10, delay: float = 1.0) -> None:
     # The official postgres image briefly starts a *temporary* instance to
     # run init scripts before restarting for real; pg_isready can succeed
@@ -158,6 +183,8 @@ def create_fixture_db(name: str, schema: str, attempts: int = 10, delay: float =
             time.sleep(delay)
     if last_error is not None:
         raise last_error
+    if schema == "objects":
+        prepare_tablespace_dir(name)
     schema_sql = schema_file(schema).read_text()
     run(
         DOCKER
@@ -169,14 +196,15 @@ def create_fixture_db(name: str, schema: str, attempts: int = 10, delay: float =
 
 
 def drop_fixture_db(name: str) -> None:
-    # fixture_schema_objects.sql creates a subscription and a role, both of
-    # which outlive `dropdb` unless cleared explicitly: a subscription
-    # blocks dropping its own database outright, and a role is cluster-
-    # global so it would otherwise leak into whatever schema runs next in
-    # this same container. Both commands are IF EXISTS, so they're safe
-    # no-ops for every other schema. The subscription's slot_name = NONE
-    # (see that file) is what makes DROP SUBSCRIPTION not need a reachable
-    # publisher here.
+    # fixture_schema_objects.sql creates a subscription, a role and a
+    # tablespace, all of which outlive `dropdb` unless cleared explicitly: a
+    # subscription blocks dropping its own database outright, and both a
+    # role and a tablespace are cluster-global so they'd otherwise leak into
+    # whatever schema runs next in this same container. All three commands
+    # are IF EXISTS, so they're safe no-ops for every other schema. The
+    # subscription's slot_name = NONE (see that file) is what makes DROP
+    # SUBSCRIPTION not need a reachable publisher here; the tablespace drops
+    # cleanly once `dropdb` below has removed the only objects using it.
     run(
         DOCKER
         + ["exec", name, "psql", "-U", DB_USER, "-d", DB_NAME, "-c", "DROP SUBSCRIPTION IF EXISTS objects_sub"],
@@ -185,6 +213,10 @@ def drop_fixture_db(name: str) -> None:
     run(DOCKER + ["exec", name, "dropdb", "-U", DB_USER, DB_NAME], capture_output=True)
     run(
         DOCKER + ["exec", name, "psql", "-U", DB_USER, "-c", "DROP ROLE IF EXISTS fixture_reader"],
+        capture_output=True,
+    )
+    run(
+        DOCKER + ["exec", name, "psql", "-U", DB_USER, "-c", "DROP TABLESPACE IF EXISTS fixture_ts"],
         capture_output=True,
     )
 
@@ -219,7 +251,13 @@ def generate_for_version(version: str, image: str, schemas: list[str]) -> None:
         wait_ready(name)
         for schema in schemas:
             create_fixture_db(name, schema)
-            for flag_name, flags in SCHEMAS[schema].items():
+            for flag_name, flag_spec in SCHEMAS[schema].items():
+                if isinstance(flag_spec, tuple):
+                    min_version, flags = flag_spec
+                    if int(version) < int(min_version):
+                        continue
+                else:
+                    flags = flag_spec
                 out_path = dump_flag_set(name, version, schema, flag_name, flags)
                 size = out_path.stat().st_size
                 print(f"  {schema}/{flag_name}: {out_path.relative_to(REPO_ROOT)} ({size} bytes)")

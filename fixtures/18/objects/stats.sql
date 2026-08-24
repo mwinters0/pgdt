@@ -2,16 +2,15 @@
 -- PostgreSQL database dump
 --
 
-\restrict rtzxps5hZo6cKfQS26C8ZzcbdDE3MkwF64Lbr1Tfz2pWgJ0smXkM4jaeWappadp
+\restrict ozEWsC86GdLRPf3RneQC38NP1cj1yUe3TFFaTBEnaZFGiIgMBfPiQbswf6B48dN
 
--- Dumped from database version 13.23
--- Dumped by pg_dump version 13.23
-
--- Started on 2026-08-24 22:23:00 UTC
+-- Dumped from database version 18.6
+-- Dumped by pg_dump version 18.6
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
+SET transaction_timeout = 0;
 SET client_encoding = 'UTF8';
 SET standard_conforming_strings = on;
 SELECT pg_catalog.set_config('search_path', '', false);
@@ -21,7 +20,6 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
--- TOC entry 6 (class 2615 OID 16387)
 -- Name: objects; Type: SCHEMA; Schema: -; Owner: postgres
 --
 
@@ -31,7 +29,6 @@ CREATE SCHEMA objects;
 ALTER SCHEMA objects OWNER TO postgres;
 
 --
--- TOC entry 2646 (class 3456 OID 16486)
 -- Name: c_collation; Type: COLLATION; Schema: objects; Owner: postgres
 --
 
@@ -41,7 +38,6 @@ CREATE COLLATION objects.c_collation (provider = libc, locale = 'C');
 ALTER COLLATION objects.c_collation OWNER TO postgres;
 
 --
--- TOC entry 2 (class 3079 OID 16460)
 -- Name: postgres_fdw; Type: EXTENSION; Schema: -; Owner: -
 --
 
@@ -49,8 +45,6 @@ CREATE EXTENSION IF NOT EXISTS postgres_fdw WITH SCHEMA public;
 
 
 --
--- TOC entry 3178 (class 0 OID 0)
--- Dependencies: 2
 -- Name: EXTENSION postgres_fdw; Type: COMMENT; Schema: -; Owner: 
 --
 
@@ -58,7 +52,6 @@ COMMENT ON EXTENSION postgres_fdw IS 'foreign-data wrapper for remote PostgreSQL
 
 
 --
--- TOC entry 677 (class 1247 OID 16474)
 -- Name: color_cmyk; Type: TYPE; Schema: objects; Owner: postgres
 --
 
@@ -73,7 +66,6 @@ CREATE TYPE objects.color_cmyk AS ENUM (
 ALTER TYPE objects.color_cmyk OWNER TO postgres;
 
 --
--- TOC entry 674 (class 1247 OID 16467)
 -- Name: color_rgb; Type: TYPE; Schema: objects; Owner: postgres
 --
 
@@ -87,7 +79,6 @@ CREATE TYPE objects.color_rgb AS ENUM (
 ALTER TYPE objects.color_rgb OWNER TO postgres;
 
 --
--- TOC entry 217 (class 1255 OID 16483)
 -- Name: rgb_to_cmyk(objects.color_rgb); Type: FUNCTION; Schema: objects; Owner: postgres
 --
 
@@ -105,7 +96,6 @@ $_$;
 ALTER FUNCTION objects.rgb_to_cmyk(objects.color_rgb) OWNER TO postgres;
 
 --
--- TOC entry 3000 (class 2605 OID 16484)
 -- Name: CAST (objects.color_rgb AS objects.color_cmyk); Type: CAST; Schema: -; Owner: -
 --
 
@@ -113,7 +103,6 @@ CREATE CAST (objects.color_rgb AS objects.color_cmyk) WITH FUNCTION objects.rgb_
 
 
 --
--- TOC entry 214 (class 1255 OID 16428)
 -- Name: log_widget_change(); Type: FUNCTION; Schema: objects; Owner: postgres
 --
 
@@ -130,7 +119,6 @@ $$;
 ALTER FUNCTION objects.log_widget_change() OWNER TO postgres;
 
 --
--- TOC entry 219 (class 1255 OID 16495)
 -- Name: no_public_execute(); Type: FUNCTION; Schema: objects; Owner: postgres
 --
 
@@ -142,7 +130,6 @@ CREATE FUNCTION objects.no_public_execute() RETURNS integer
 ALTER FUNCTION objects.no_public_execute() OWNER TO postgres;
 
 --
--- TOC entry 218 (class 1255 OID 16490)
 -- Name: noop_event_trigger(); Type: FUNCTION; Schema: objects; Owner: postgres
 --
 
@@ -157,7 +144,6 @@ $$;
 ALTER FUNCTION objects.noop_event_trigger() OWNER TO postgres;
 
 --
--- TOC entry 684 (class 1255 OID 16485)
 -- Name: my_sum(integer); Type: AGGREGATE; Schema: objects; Owner: postgres
 --
 
@@ -171,7 +157,6 @@ CREATE AGGREGATE objects.my_sum(integer) (
 ALTER AGGREGATE objects.my_sum(integer) OWNER TO postgres;
 
 --
--- TOC entry 2775 (class 2607 OID 16489)
 -- Name: latin1_to_utf8; Type: CONVERSION; Schema: objects; Owner: postgres
 --
 
@@ -181,7 +166,6 @@ CREATE CONVERSION objects.latin1_to_utf8 FOR 'LATIN1' TO 'UTF8' FROM iso8859_1_t
 ALTER CONVERSION objects.latin1_to_utf8 OWNER TO postgres;
 
 --
--- TOC entry 1744 (class 3600 OID 16487)
 -- Name: simple_dict; Type: TEXT SEARCH DICTIONARY; Schema: objects; Owner: postgres
 --
 
@@ -192,7 +176,6 @@ CREATE TEXT SEARCH DICTIONARY objects.simple_dict (
 ALTER TEXT SEARCH DICTIONARY objects.simple_dict OWNER TO postgres;
 
 --
--- TOC entry 1768 (class 3602 OID 16488)
 -- Name: simple_config; Type: TEXT SEARCH CONFIGURATION; Schema: objects; Owner: postgres
 --
 
@@ -260,7 +243,6 @@ ALTER TEXT SEARCH CONFIGURATION objects.simple_config
 ALTER TEXT SEARCH CONFIGURATION objects.simple_config OWNER TO postgres;
 
 --
--- TOC entry 1770 (class 1417 OID 16464)
 -- Name: objects_remote; Type: SERVER; Schema: -; Owner: postgres
 --
 
@@ -273,7 +255,6 @@ CREATE SERVER objects_remote FOREIGN DATA WRAPPER postgres_fdw OPTIONS (
 ALTER SERVER objects_remote OWNER TO postgres;
 
 --
--- TOC entry 3180 (class 0 OID 0)
 -- Name: USER MAPPING postgres SERVER objects_remote; Type: USER MAPPING; Schema: -; Owner: postgres
 --
 
@@ -286,7 +267,6 @@ CREATE USER MAPPING FOR postgres SERVER objects_remote OPTIONS (
 SET default_tablespace = '';
 
 --
--- TOC entry 211 (class 1259 OID 16449)
 -- Name: events; Type: TABLE; Schema: objects; Owner: postgres
 --
 
@@ -303,22 +283,19 @@ ALTER TABLE objects.events OWNER TO postgres;
 SET default_table_access_method = heap;
 
 --
--- TOC entry 212 (class 1259 OID 16452)
 -- Name: events_2024; Type: TABLE; Schema: objects; Owner: postgres
 --
 
 CREATE TABLE objects.events_2024 (
-    id bigint NOT NULL,
-    event_date date NOT NULL,
+    id bigint CONSTRAINT events_id_not_null NOT NULL,
+    event_date date CONSTRAINT events_event_date_not_null NOT NULL,
     payload text
 );
-ALTER TABLE ONLY objects.events ATTACH PARTITION objects.events_2024 FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
 
 
 ALTER TABLE objects.events_2024 OWNER TO postgres;
 
 --
--- TOC entry 204 (class 1259 OID 16400)
 -- Name: orders; Type: TABLE; Schema: objects; Owner: postgres
 --
 
@@ -332,7 +309,6 @@ CREATE TABLE objects.orders (
 ALTER TABLE objects.orders OWNER TO postgres;
 
 --
--- TOC entry 203 (class 1259 OID 16398)
 -- Name: orders_id_seq; Type: SEQUENCE; Schema: objects; Owner: postgres
 --
 
@@ -345,11 +321,9 @@ CREATE SEQUENCE objects.orders_id_seq
     CACHE 1;
 
 
-ALTER TABLE objects.orders_id_seq OWNER TO postgres;
+ALTER SEQUENCE objects.orders_id_seq OWNER TO postgres;
 
 --
--- TOC entry 3183 (class 0 OID 0)
--- Dependencies: 203
 -- Name: orders_id_seq; Type: SEQUENCE OWNED BY; Schema: objects; Owner: postgres
 --
 
@@ -357,7 +331,6 @@ ALTER SEQUENCE objects.orders_id_seq OWNED BY objects.orders.id;
 
 
 --
--- TOC entry 210 (class 1259 OID 16435)
 -- Name: secrets; Type: TABLE; Schema: objects; Owner: postgres
 --
 
@@ -370,7 +343,6 @@ CREATE TABLE objects.secrets (
 ALTER TABLE objects.secrets OWNER TO postgres;
 
 --
--- TOC entry 205 (class 1259 OID 16412)
 -- Name: standalone_seq; Type: SEQUENCE; Schema: objects; Owner: postgres
 --
 
@@ -382,12 +354,11 @@ CREATE SEQUENCE objects.standalone_seq
     CACHE 1;
 
 
-ALTER TABLE objects.standalone_seq OWNER TO postgres;
+ALTER SEQUENCE objects.standalone_seq OWNER TO postgres;
 
 SET default_tablespace = fixture_ts;
 
 --
--- TOC entry 213 (class 1259 OID 16492)
 -- Name: tablespaced_table; Type: TABLE; Schema: objects; Owner: postgres; Tablespace: fixture_ts
 --
 
@@ -401,7 +372,6 @@ ALTER TABLE objects.tablespaced_table OWNER TO postgres;
 SET default_tablespace = '';
 
 --
--- TOC entry 208 (class 1259 OID 16424)
 -- Name: widget_audit; Type: TABLE; Schema: objects; Owner: postgres
 --
 
@@ -414,7 +384,6 @@ CREATE TABLE objects.widget_audit (
 ALTER TABLE objects.widget_audit OWNER TO postgres;
 
 --
--- TOC entry 202 (class 1259 OID 16388)
 -- Name: widgets; Type: TABLE; Schema: objects; Owner: postgres
 --
 
@@ -428,8 +397,6 @@ CREATE TABLE objects.widgets (
 ALTER TABLE objects.widgets OWNER TO postgres;
 
 --
--- TOC entry 3185 (class 0 OID 0)
--- Dependencies: 202
 -- Name: TABLE widgets; Type: COMMENT; Schema: objects; Owner: postgres
 --
 
@@ -437,8 +404,6 @@ COMMENT ON TABLE objects.widgets IS 'canonical widget catalog';
 
 
 --
--- TOC entry 3186 (class 0 OID 0)
--- Dependencies: 202
 -- Name: COLUMN widgets.label; Type: COMMENT; Schema: objects; Owner: postgres
 --
 
@@ -446,7 +411,6 @@ COMMENT ON COLUMN objects.widgets.label IS 'human-readable widget name';
 
 
 --
--- TOC entry 206 (class 1259 OID 16415)
 -- Name: widget_orders; Type: VIEW; Schema: objects; Owner: postgres
 --
 
@@ -458,25 +422,23 @@ CREATE VIEW objects.widget_orders AS
      JOIN objects.orders o ON ((o.widget_id = w.id)));
 
 
-ALTER TABLE objects.widget_orders OWNER TO postgres;
+ALTER VIEW objects.widget_orders OWNER TO postgres;
 
 --
--- TOC entry 207 (class 1259 OID 16419)
 -- Name: widget_totals; Type: MATERIALIZED VIEW; Schema: objects; Owner: postgres
 --
 
 CREATE MATERIALIZED VIEW objects.widget_totals AS
- SELECT orders.widget_id,
-    sum(orders.quantity) AS total_quantity
+ SELECT widget_id,
+    sum(quantity) AS total_quantity
    FROM objects.orders
-  GROUP BY orders.widget_id
+  GROUP BY widget_id
   WITH NO DATA;
 
 
-ALTER TABLE objects.widget_totals OWNER TO postgres;
+ALTER MATERIALIZED VIEW objects.widget_totals OWNER TO postgres;
 
 --
--- TOC entry 209 (class 1259 OID 16430)
 -- Name: widgets_deleted_log; Type: TABLE; Schema: objects; Owner: postgres
 --
 
@@ -489,7 +451,13 @@ CREATE TABLE objects.widgets_deleted_log (
 ALTER TABLE objects.widgets_deleted_log OWNER TO postgres;
 
 --
--- TOC entry 3004 (class 2604 OID 16403)
+-- Name: events_2024; Type: TABLE ATTACH; Schema: objects; Owner: postgres
+--
+
+ALTER TABLE ONLY objects.events ATTACH PARTITION objects.events_2024 FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+
+
+--
 -- Name: orders id; Type: DEFAULT; Schema: objects; Owner: postgres
 --
 
@@ -497,7 +465,6 @@ ALTER TABLE ONLY objects.orders ALTER COLUMN id SET DEFAULT nextval('objects.ord
 
 
 --
--- TOC entry 3006 (class 2604 OID 16423)
 -- Name: widget_orders quantity; Type: DEFAULT; Schema: objects; Owner: postgres
 --
 
@@ -505,37 +472,6 @@ ALTER TABLE ONLY objects.widget_orders ALTER COLUMN quantity SET DEFAULT 0;
 
 
 --
--- TOC entry 3171 (class 2613 OID 16496)
--- Name: 16496; Type: BLOB; Schema: -; Owner: postgres
---
-
-SELECT pg_catalog.lo_create('16496');
-
-
-ALTER LARGE OBJECT 16496 OWNER TO postgres;
-
---
--- TOC entry 3188 (class 0 OID 0)
--- Dependencies: 3171
--- Name: LARGE OBJECT 16496; Type: COMMENT; Schema: -; Owner: postgres
---
-
-COMMENT ON LARGE OBJECT 16496 IS 'first large object';
-
-
---
--- TOC entry 3170 (class 2613 OID 16497)
--- Name: 16497; Type: BLOB; Schema: -; Owner: postgres
---
-
-SELECT pg_catalog.lo_create('16497');
-
-
-ALTER LARGE OBJECT 16497 OWNER TO postgres;
-
---
--- TOC entry 3168 (class 0 OID 16452)
--- Dependencies: 212
 -- Data for Name: events_2024; Type: TABLE DATA; Schema: objects; Owner: postgres
 --
 
@@ -546,8 +482,6 @@ COPY objects.events_2024 (id, event_date, payload) FROM stdin;
 
 
 --
--- TOC entry 3162 (class 0 OID 16400)
--- Dependencies: 204
 -- Data for Name: orders; Type: TABLE DATA; Schema: objects; Owner: postgres
 --
 
@@ -559,8 +493,6 @@ COPY objects.orders (id, widget_id, quantity) FROM stdin;
 
 
 --
--- TOC entry 3167 (class 0 OID 16435)
--- Dependencies: 210
 -- Data for Name: secrets; Type: TABLE DATA; Schema: objects; Owner: postgres
 --
 
@@ -569,8 +501,6 @@ COPY objects.secrets (owner_role, payload) FROM stdin;
 
 
 --
--- TOC entry 3169 (class 0 OID 16492)
--- Dependencies: 213
 -- Data for Name: tablespaced_table; Type: TABLE DATA; Schema: objects; Owner: postgres
 --
 
@@ -579,8 +509,6 @@ COPY objects.tablespaced_table (id) FROM stdin;
 
 
 --
--- TOC entry 3165 (class 0 OID 16424)
--- Dependencies: 208
 -- Data for Name: widget_audit; Type: TABLE DATA; Schema: objects; Owner: postgres
 --
 
@@ -589,20 +517,16 @@ COPY objects.widget_audit (widget_id, changed_at) FROM stdin;
 
 
 --
--- TOC entry 3160 (class 0 OID 16388)
--- Dependencies: 202
 -- Data for Name: widgets; Type: TABLE DATA; Schema: objects; Owner: postgres
 --
 
 COPY objects.widgets (id, label, created_at) FROM stdin;
-1	alpha	2026-08-24 22:22:59.796602+00
-2	beta	2026-08-24 22:22:59.796602+00
+1	alpha	2026-08-24 22:23:31.504291+00
+2	beta	2026-08-24 22:23:31.504291+00
 \.
 
 
 --
--- TOC entry 3166 (class 0 OID 16430)
--- Dependencies: 209
 -- Data for Name: widgets_deleted_log; Type: TABLE DATA; Schema: objects; Owner: postgres
 --
 
@@ -611,8 +535,6 @@ COPY objects.widgets_deleted_log (id, deleted_at) FROM stdin;
 
 
 --
--- TOC entry 3190 (class 0 OID 0)
--- Dependencies: 203
 -- Name: orders_id_seq; Type: SEQUENCE SET; Schema: objects; Owner: postgres
 --
 
@@ -620,8 +542,6 @@ SELECT pg_catalog.setval('objects.orders_id_seq', 3, true);
 
 
 --
--- TOC entry 3191 (class 0 OID 0)
--- Dependencies: 205
 -- Name: standalone_seq; Type: SEQUENCE SET; Schema: objects; Owner: postgres
 --
 
@@ -629,24 +549,187 @@ SELECT pg_catalog.setval('objects.standalone_seq', 100, true);
 
 
 --
--- TOC entry 3172 (class 0 OID 0)
--- Data for Name: BLOBS; Type: BLOBS; Schema: -; Owner: -
+-- Name: 16508; Type: BLOB METADATA; Schema: -; Owner: postgres
+--
+
+SELECT pg_catalog.lo_create('16508');
+
+ALTER LARGE OBJECT 16508 OWNER TO postgres;
+
+--
+-- Name: LARGE OBJECT 16508; Type: COMMENT; Schema: -; Owner: postgres
+--
+
+COMMENT ON LARGE OBJECT 16508 IS 'first large object';
+
+
+--
+-- Name: 16509; Type: BLOB METADATA; Schema: -; Owner: postgres
+--
+
+SELECT pg_catalog.lo_create('16509');
+
+ALTER LARGE OBJECT 16509 OWNER TO postgres;
+
+--
+-- Data for Name: 16508; Type: BLOBS; Schema: -; Owner: postgres
 --
 
 BEGIN;
 
-SELECT pg_catalog.lo_open('16496', 131072);
+SELECT pg_catalog.lo_open('16508', 131072);
 SELECT pg_catalog.lowrite(0, '\x48656c6c6f2c204c4f21');
 SELECT pg_catalog.lo_close(0);
 
-SELECT pg_catalog.lo_open('16497', 131072);
+COMMIT;
+
+--
+-- Data for Name: 16509; Type: BLOBS; Schema: -; Owner: postgres
+--
+
+BEGIN;
+
+SELECT pg_catalog.lo_open('16509', 131072);
 SELECT pg_catalog.lowrite(0, '\x00010203040506070809');
 SELECT pg_catalog.lo_close(0);
 
 COMMIT;
 
 --
--- TOC entry 3013 (class 2606 OID 16406)
+-- Statistics for Name: events; Type: STATISTICS DATA; Schema: objects; Owner: -
+--
+
+SELECT * FROM pg_catalog.pg_restore_relation_stats(
+	'version', '180006'::integer,
+	'schemaname', 'objects',
+	'relname', 'events',
+	'relpages', '0'::integer,
+	'reltuples', '-1'::real,
+	'relallvisible', '0'::integer,
+	'relallfrozen', '0'::integer
+);
+
+
+--
+-- Statistics for Name: events_2024; Type: STATISTICS DATA; Schema: objects; Owner: -
+--
+
+SELECT * FROM pg_catalog.pg_restore_relation_stats(
+	'version', '180006'::integer,
+	'schemaname', 'objects',
+	'relname', 'events_2024',
+	'relpages', '0'::integer,
+	'reltuples', '-1'::real,
+	'relallvisible', '0'::integer,
+	'relallfrozen', '0'::integer
+);
+
+
+--
+-- Statistics for Name: orders; Type: STATISTICS DATA; Schema: objects; Owner: -
+--
+
+SELECT * FROM pg_catalog.pg_restore_relation_stats(
+	'version', '180006'::integer,
+	'schemaname', 'objects',
+	'relname', 'orders',
+	'relpages', '0'::integer,
+	'reltuples', '-1'::real,
+	'relallvisible', '0'::integer,
+	'relallfrozen', '0'::integer
+);
+
+
+--
+-- Statistics for Name: secrets; Type: STATISTICS DATA; Schema: objects; Owner: -
+--
+
+SELECT * FROM pg_catalog.pg_restore_relation_stats(
+	'version', '180006'::integer,
+	'schemaname', 'objects',
+	'relname', 'secrets',
+	'relpages', '0'::integer,
+	'reltuples', '-1'::real,
+	'relallvisible', '0'::integer,
+	'relallfrozen', '0'::integer
+);
+
+
+--
+-- Statistics for Name: tablespaced_table; Type: STATISTICS DATA; Schema: objects; Owner: -
+--
+
+SELECT * FROM pg_catalog.pg_restore_relation_stats(
+	'version', '180006'::integer,
+	'schemaname', 'objects',
+	'relname', 'tablespaced_table',
+	'relpages', '0'::integer,
+	'reltuples', '-1'::real,
+	'relallvisible', '0'::integer,
+	'relallfrozen', '0'::integer
+);
+
+
+--
+-- Statistics for Name: widget_audit; Type: STATISTICS DATA; Schema: objects; Owner: -
+--
+
+SELECT * FROM pg_catalog.pg_restore_relation_stats(
+	'version', '180006'::integer,
+	'schemaname', 'objects',
+	'relname', 'widget_audit',
+	'relpages', '0'::integer,
+	'reltuples', '-1'::real,
+	'relallvisible', '0'::integer,
+	'relallfrozen', '0'::integer
+);
+
+
+--
+-- Statistics for Name: widgets; Type: STATISTICS DATA; Schema: objects; Owner: -
+--
+
+SELECT * FROM pg_catalog.pg_restore_relation_stats(
+	'version', '180006'::integer,
+	'schemaname', 'objects',
+	'relname', 'widgets',
+	'relpages', '1'::integer,
+	'reltuples', '2'::real,
+	'relallvisible', '0'::integer,
+	'relallfrozen', '0'::integer
+);
+
+
+--
+-- Statistics for Name: widgets_deleted_log; Type: STATISTICS DATA; Schema: objects; Owner: -
+--
+
+SELECT * FROM pg_catalog.pg_restore_relation_stats(
+	'version', '180006'::integer,
+	'schemaname', 'objects',
+	'relname', 'widgets_deleted_log',
+	'relpages', '0'::integer,
+	'reltuples', '-1'::real,
+	'relallvisible', '0'::integer,
+	'relallfrozen', '0'::integer
+);
+
+
+--
+-- Name: events_event_date_idx; Type: INDEX; Schema: objects; Owner: postgres
+--
+
+CREATE INDEX events_event_date_idx ON ONLY objects.events USING btree (event_date);
+
+
+--
+-- Name: events_2024_event_date_idx; Type: INDEX; Schema: objects; Owner: postgres
+--
+
+CREATE INDEX events_2024_event_date_idx ON objects.events_2024 USING btree (event_date);
+
+
+--
 -- Name: orders orders_pkey; Type: CONSTRAINT; Schema: objects; Owner: postgres
 --
 
@@ -655,7 +738,13 @@ ALTER TABLE ONLY objects.orders
 
 
 --
--- TOC entry 3011 (class 2606 OID 16397)
+-- Name: widgets_label_idx; Type: INDEX; Schema: objects; Owner: postgres
+--
+
+CREATE INDEX widgets_label_idx ON objects.widgets USING btree (label);
+
+
+--
 -- Name: widgets widgets_pkey; Type: CONSTRAINT; Schema: objects; Owner: postgres
 --
 
@@ -664,31 +753,6 @@ ALTER TABLE ONLY objects.widgets
 
 
 --
--- TOC entry 3014 (class 1259 OID 16458)
--- Name: events_event_date_idx; Type: INDEX; Schema: objects; Owner: postgres
---
-
-CREATE INDEX events_event_date_idx ON ONLY objects.events USING btree (event_date);
-
-
---
--- TOC entry 3015 (class 1259 OID 16459)
--- Name: events_2024_event_date_idx; Type: INDEX; Schema: objects; Owner: postgres
---
-
-CREATE INDEX events_2024_event_date_idx ON objects.events_2024 USING btree (event_date);
-
-
---
--- TOC entry 3009 (class 1259 OID 16414)
--- Name: widgets_label_idx; Type: INDEX; Schema: objects; Owner: postgres
---
-
-CREATE INDEX widgets_label_idx ON objects.widgets USING btree (label);
-
-
---
--- TOC entry 3016 (class 0 OID 0)
 -- Name: events_2024_event_date_idx; Type: INDEX ATTACH; Schema: objects; Owner: postgres
 --
 
@@ -696,7 +760,6 @@ ALTER INDEX objects.events_event_date_idx ATTACH PARTITION objects.events_2024_e
 
 
 --
--- TOC entry 3017 (class 3381 OID 16448)
 -- Name: orders_stats; Type: STATISTICS; Schema: objects; Owner: postgres
 --
 
@@ -706,7 +769,6 @@ CREATE STATISTICS objects.orders_stats (dependencies) ON widget_id, quantity FRO
 ALTER STATISTICS objects.orders_stats OWNER TO postgres;
 
 --
--- TOC entry 3152 (class 2618 OID 16434)
 -- Name: widgets widgets_log_delete; Type: RULE; Schema: objects; Owner: postgres
 --
 
@@ -716,7 +778,6 @@ CREATE RULE widgets_log_delete AS
 
 
 --
--- TOC entry 3019 (class 2620 OID 16429)
 -- Name: widgets widgets_audit_trigger; Type: TRIGGER; Schema: objects; Owner: postgres
 --
 
@@ -724,7 +785,6 @@ CREATE TRIGGER widgets_audit_trigger AFTER INSERT OR UPDATE ON objects.widgets F
 
 
 --
--- TOC entry 3018 (class 2606 OID 16407)
 -- Name: orders orders_widget_id_fkey; Type: FK CONSTRAINT; Schema: objects; Owner: postgres
 --
 
@@ -733,15 +793,12 @@ ALTER TABLE ONLY objects.orders
 
 
 --
--- TOC entry 3153 (class 0 OID 16435)
--- Dependencies: 210
 -- Name: secrets; Type: ROW SECURITY; Schema: objects; Owner: postgres
 --
 
 ALTER TABLE objects.secrets ENABLE ROW LEVEL SECURITY;
 
 --
--- TOC entry 3154 (class 3256 OID 16441)
 -- Name: secrets secrets_owner_only; Type: POLICY; Schema: objects; Owner: postgres
 --
 
@@ -749,7 +806,6 @@ CREATE POLICY secrets_owner_only ON objects.secrets USING ((owner_role = CURRENT
 
 
 --
--- TOC entry 3156 (class 6104 OID 16445)
 -- Name: objects_pub_schema; Type: PUBLICATION; Schema: -; Owner: postgres
 --
 
@@ -759,7 +815,6 @@ CREATE PUBLICATION objects_pub_schema WITH (publish = 'insert, update, delete, t
 ALTER PUBLICATION objects_pub_schema OWNER TO postgres;
 
 --
--- TOC entry 3155 (class 6104 OID 16443)
 -- Name: objects_pub_table; Type: PUBLICATION; Schema: -; Owner: postgres
 --
 
@@ -769,15 +824,6 @@ CREATE PUBLICATION objects_pub_table WITH (publish = 'insert, update, delete, tr
 ALTER PUBLICATION objects_pub_table OWNER TO postgres;
 
 --
--- TOC entry 3158 (class 6106 OID 16446)
--- Name: objects_pub_schema orders; Type: PUBLICATION TABLE; Schema: objects; Owner: postgres
---
-
-ALTER PUBLICATION objects_pub_schema ADD TABLE ONLY objects.orders;
-
-
---
--- TOC entry 3157 (class 6106 OID 16444)
 -- Name: objects_pub_table widgets; Type: PUBLICATION TABLE; Schema: objects; Owner: postgres
 --
 
@@ -785,18 +831,22 @@ ALTER PUBLICATION objects_pub_table ADD TABLE ONLY objects.widgets;
 
 
 --
--- TOC entry 3159 (class 6100 OID 16447)
+-- Name: objects_pub_schema objects; Type: PUBLICATION TABLES IN SCHEMA; Schema: objects; Owner: postgres
+--
+
+ALTER PUBLICATION objects_pub_schema ADD TABLES IN SCHEMA objects;
+
+
+--
 -- Name: objects_sub; Type: SUBSCRIPTION; Schema: -; Owner: postgres
 --
 
-CREATE SUBSCRIPTION objects_sub CONNECTION 'host=nonexistent dbname=nonexistent' PUBLICATION objects_pub_table WITH (connect = false, slot_name = NONE);
+CREATE SUBSCRIPTION objects_sub CONNECTION 'host=nonexistent dbname=nonexistent' PUBLICATION objects_pub_table WITH (connect = false, slot_name = NONE, streaming = parallel);
 
 
 ALTER SUBSCRIPTION objects_sub OWNER TO postgres;
 
 --
--- TOC entry 3179 (class 0 OID 0)
--- Dependencies: 219
 -- Name: FUNCTION no_public_execute(); Type: ACL; Schema: objects; Owner: postgres
 --
 
@@ -804,8 +854,6 @@ REVOKE ALL ON FUNCTION objects.no_public_execute() FROM PUBLIC;
 
 
 --
--- TOC entry 3181 (class 0 OID 0)
--- Dependencies: 211
 -- Name: TABLE events; Type: ACL; Schema: objects; Owner: postgres
 --
 
@@ -813,8 +861,6 @@ GRANT SELECT ON TABLE objects.events TO fixture_reader;
 
 
 --
--- TOC entry 3182 (class 0 OID 0)
--- Dependencies: 212
 -- Name: TABLE events_2024; Type: ACL; Schema: objects; Owner: postgres
 --
 
@@ -822,8 +868,6 @@ GRANT SELECT ON TABLE objects.events_2024 TO fixture_reader;
 
 
 --
--- TOC entry 3184 (class 0 OID 0)
--- Dependencies: 213
 -- Name: TABLE tablespaced_table; Type: ACL; Schema: objects; Owner: postgres
 --
 
@@ -831,8 +875,6 @@ GRANT SELECT ON TABLE objects.tablespaced_table TO fixture_reader;
 
 
 --
--- TOC entry 3187 (class 0 OID 0)
--- Dependencies: 202
 -- Name: TABLE widgets; Type: ACL; Schema: objects; Owner: postgres
 --
 
@@ -841,24 +883,117 @@ GRANT SELECT ON TABLE objects.widgets TO PUBLIC;
 
 
 --
--- TOC entry 3189 (class 0 OID 0)
--- Dependencies: 3171
--- Name: LARGE OBJECT 16496; Type: ACL; Schema: -; Owner: postgres
+-- Name: LARGE OBJECT 16508; Type: ACL; Schema: -; Owner: postgres
 --
 
-GRANT SELECT ON LARGE OBJECT 16496 TO fixture_reader;
+GRANT SELECT ON LARGE OBJECT 16508 TO fixture_reader;
 
 
 --
--- TOC entry 1771 (class 826 OID 16442)
 -- Name: DEFAULT PRIVILEGES FOR TABLES; Type: DEFAULT ACL; Schema: objects; Owner: postgres
 --
 
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA objects GRANT SELECT ON TABLES  TO fixture_reader;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA objects GRANT SELECT ON TABLES TO fixture_reader;
 
 
 --
--- TOC entry 3001 (class 3466 OID 16491)
+-- Statistics for Name: events_2024_event_date_idx; Type: STATISTICS DATA; Schema: objects; Owner: -
+--
+
+SELECT * FROM pg_catalog.pg_restore_relation_stats(
+	'version', '180006'::integer,
+	'schemaname', 'objects',
+	'relname', 'events_2024_event_date_idx',
+	'relpages', '1'::integer,
+	'reltuples', '0'::real,
+	'relallvisible', '0'::integer,
+	'relallfrozen', '0'::integer
+);
+
+
+--
+-- Statistics for Name: events_event_date_idx; Type: STATISTICS DATA; Schema: objects; Owner: -
+--
+
+SELECT * FROM pg_catalog.pg_restore_relation_stats(
+	'version', '180006'::integer,
+	'schemaname', 'objects',
+	'relname', 'events_event_date_idx',
+	'relpages', '0'::integer,
+	'reltuples', '0'::real,
+	'relallvisible', '0'::integer,
+	'relallfrozen', '0'::integer
+);
+
+
+--
+-- Statistics for Name: orders_pkey; Type: STATISTICS DATA; Schema: objects; Owner: -
+--
+
+SELECT * FROM pg_catalog.pg_restore_relation_stats(
+	'version', '180006'::integer,
+	'schemaname', 'objects',
+	'relname', 'orders_pkey',
+	'relpages', '1'::integer,
+	'reltuples', '0'::real,
+	'relallvisible', '0'::integer,
+	'relallfrozen', '0'::integer
+);
+
+
+--
+-- Name: widget_totals; Type: MATERIALIZED VIEW DATA; Schema: objects; Owner: postgres
+--
+
+REFRESH MATERIALIZED VIEW objects.widget_totals;
+
+
+--
+-- Statistics for Name: widget_totals; Type: STATISTICS DATA; Schema: objects; Owner: -
+--
+
+SELECT * FROM pg_catalog.pg_restore_relation_stats(
+	'version', '180006'::integer,
+	'schemaname', 'objects',
+	'relname', 'widget_totals',
+	'relpages', '0'::integer,
+	'reltuples', '-1'::real,
+	'relallvisible', '0'::integer,
+	'relallfrozen', '0'::integer
+);
+
+
+--
+-- Statistics for Name: widgets_label_idx; Type: STATISTICS DATA; Schema: objects; Owner: -
+--
+
+SELECT * FROM pg_catalog.pg_restore_relation_stats(
+	'version', '180006'::integer,
+	'schemaname', 'objects',
+	'relname', 'widgets_label_idx',
+	'relpages', '2'::integer,
+	'reltuples', '2'::real,
+	'relallvisible', '0'::integer,
+	'relallfrozen', '0'::integer
+);
+
+
+--
+-- Statistics for Name: widgets_pkey; Type: STATISTICS DATA; Schema: objects; Owner: -
+--
+
+SELECT * FROM pg_catalog.pg_restore_relation_stats(
+	'version', '180006'::integer,
+	'schemaname', 'objects',
+	'relname', 'widgets_pkey',
+	'relpages', '1'::integer,
+	'reltuples', '0'::real,
+	'relallvisible', '0'::integer,
+	'relallfrozen', '0'::integer
+);
+
+
+--
 -- Name: objects_ddl_log; Type: EVENT TRIGGER; Schema: -; Owner: postgres
 --
 
@@ -871,19 +1006,8 @@ ALTER EVENT TRIGGER objects_ddl_log DISABLE;
 ALTER EVENT TRIGGER objects_ddl_log OWNER TO postgres;
 
 --
--- TOC entry 3164 (class 0 OID 16419)
--- Dependencies: 207 3174
--- Name: widget_totals; Type: MATERIALIZED VIEW DATA; Schema: objects; Owner: postgres
---
-
-REFRESH MATERIALIZED VIEW objects.widget_totals;
-
-
--- Completed on 2026-08-24 22:23:00 UTC
-
---
 -- PostgreSQL database dump complete
 --
 
-\unrestrict rtzxps5hZo6cKfQS26C8ZzcbdDE3MkwF64Lbr1Tfz2pWgJ0smXkM4jaeWappadp
+\unrestrict ozEWsC86GdLRPf3RneQC38NP1cj1yUe3TFFaTBEnaZFGiIgMBfPiQbswf6B48dN
 

@@ -24,9 +24,9 @@ listed, but the phase's end-of-phase grilling earned two more — **3.1.1** and
 **3.3.1** — and three out-of-band items. The phase is **not yet wrapped**; see
 "Not started" for what remains and in what order.
 
-Last updated: 2026-08-24 (end-of-phase grilling: slices 3.1.1 and 3.3.1
-earned, out-of-band items M1-M3 scheduled, the `DataBlock` shape and the 3.5
-CLI surface reviewed and settled).
+Last updated: 2026-08-24 (slice 3.1.1 landed: real fixtures for the TOC
+`Tablespace:` field, a `REVOKE`, and `TOC_PREFIX_STATS`, closing I18/I19 to
+fixture evidence).
 
 ## Phase 3 progress
 
@@ -34,15 +34,19 @@ CLI surface reviewed and settled).
       existing schema produces, plus large objects, under a
       `{default, verbose}` flag set for all 6 routine versions. No library
       code. Notes: `docs/design/roadmap-phase3.1-objects-fixture-notes.md`
-- [ ] **3.1.1** Fixtures for the four shapes 3.1 never produced, all read out
-      of upstream source and never checked against real output: the TOC
-      comment's `Tablespace:` field and a non-default `SET
-      default_tablespace` (via a `CREATE TABLESPACE` in the generator's own
-      container), a `REVOKE`, and `TOC_PREFIX_STATS` — the last needing
-      version-conditional flag sets in `SCHEMAS`, since `--with-statistics`
-      is v18-only. Closes I18 and I19, whose register entries move from
-      source-reading to fixture evidence. Decided at the end-of-phase
-      grilling; nothing landed yet.
+- [x] **3.1.1** Fixtures for the four shapes 3.1 never produced, all read out
+      of upstream source and never checked against real output before now:
+      the TOC comment's `Tablespace:` field and a non-default `SET
+      default_tablespace` (`objects.tablespaced_table`, via
+      `generate_fixtures.py`'s `prepare_tablespace_dir` `mkdir`/`chown` plus
+      a `CREATE TABLESPACE` in the schema SQL), a `REVOKE`
+      (`objects.no_public_execute()`'s default-PUBLIC-`EXECUTE` revoke), and
+      `TOC_PREFIX_STATS` (`fixtures/18/objects/stats.sql`, a new
+      version-conditional `stats` flag set in `SCHEMAS`, v18 only — the real
+      flag is `--statistics`, not `--with-statistics`, which does not exist).
+      Closed I18 and I19, whose register entries moved from source-reading to
+      fixture evidence. Notes:
+      [`roadmap-phase3.1.1-toc-shape-fixtures-notes.md`](../design/roadmap-phase3.1.1-toc-shape-fixtures-notes.md).
 - [x] **3.2** `map.rs` as a standalone module: `Span`/`SpanBody`, a
       statement-driven boundary/classification pass, `check_tiling` and its
       test over all 96 fixtures, cache identity checking (format v1→v2), the
@@ -147,13 +151,13 @@ CLI surface reviewed and settled).
 
 ## Not started
 
-Four items remain before Phase 3 wraps, in this order — each earlier one makes
+Three items remain before Phase 3 wraps, in this order — each earlier one makes
 the next one's mistakes visible, and no two share a review cycle unless they
 share a confidence level:
 
-- **Slice 3.1.1**, then **slice 3.3.1** — see the checklist above. 3.1.1 is
-  first because it is the evidence slice: 3.3.1 reworks exactly the TOC-header
-  parsing whose unverified shapes 3.1.1 exercises. Decisions:
+- **Slice 3.3.1** — now the next slice; 3.1.1 landed first because it is the
+  evidence slice, and 3.3.1 reworks exactly the TOC-header parsing whose
+  previously-unverified shapes 3.1.1 exercised. Decisions:
   [`roadmap-phase3-object-inventory.md`](../design/roadmap-phase3-object-inventory.md)
   "Span boundaries" and "TOC coverage"; evidence:
   [`history/2026-08-24.md`](history/2026-08-24.md).
@@ -164,10 +168,9 @@ share a confidence level:
 - **Out-of-band item M3** — the synthetic `INSERT`-run throughput
   measurement; see "Decisions worth another look".
 
-Then the wrap, and only then the step-6 roadmap re-grill: 3.1.1 produces real
-`pg_dump` output for two shapes that have only ever been read out of source,
-and 3.3.1 changes what `Span::toc` means, so a Phase 4 grilling held now would
-be working from facts scheduled to change.
+Then the wrap, and only then the step-6 roadmap re-grill: 3.3.1 changes what
+`Span::toc` means, so a Phase 4 grilling held now would be working from facts
+scheduled to change.
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; the resulting changes land as
   out-of-band items too.
@@ -214,26 +217,20 @@ be working from facts scheduled to change.
   the source's size before trusting a loaded cache as complete — confirmed
   small (both values are already to hand in `index.rs`). Scheduled as
   out-of-band item **M1**, before the phase wraps.
-- `Span::toc`'s `Tablespace:` field and `TOC_PREFIX_STATS` ("Statistics for
-  Name: ...", a v18+ `--with-statistics` component) are parsed from source
-  reading alone (I18), with no fixture exercising either — neither string
-  appears anywhere in `fixtures/`. `parse_toc_header_line` degrades
-  gracefully if either shape is wrong (the field, or the whole header, just
-  parses to `None`), which is the problem: a wrong claim shows up as silently
-  absent data rather than an error. Scheduled as **slice 3.1.1**, before the
-  phase wraps — `generate_fixtures.py` drives its per-version Postgres
-  through `docker exec`, so a `CREATE TABLESPACE` is reachable after one more
-  `exec`, and `--with-statistics` needs version-conditional flag sets.
+- `map::parse_toc_header_line` does not recognize `TOC_PREFIX_STATS`
+  (`"Statistics for "`, a v18+ `--statistics` component — not
+  `--with-statistics`, which does not exist in any version). A deliberate
+  deferral rather than a gap: fixture evidence now exists
+  (`fixtures/18/objects/stats.sql`, slice 3.1.1) and the entry just degrades
+  gracefully, tiling as an ordinary `Unparsed` span with `toc: None`, the
+  same as any other unhandled TOC comment shape.
 - `DumpIndex::roles`/`tablespaces` are complete only once `scanned_through`
   reaches the file's size — the same partiality `metadata`'s
   `preamble_complete` already carries, for the same reason: a query that
   stops at its target (`ScanExtent::UntilTargetSettled`, the default) never
   reaches a reference past the stopping point, which is exactly koji's
   `backup` role (granted only in a post-data `GRANT`). `ScanExtent::Full` (or
-  a query after `pgdq parse`) gives the complete set. `REVOKE` and a
-  non-default `SET default_tablespace` value are also unexercised by any
-  fixture (I19), the same gap I18 already names for the TOC's own
-  `Tablespace:` field — both close in **slice 3.1.1**.
+  a query after `pgdq parse`) gives the complete set.
 - `DumpIndex::diagnostics` (a tiling failure, the cache mtime warning, the
   TOC-coverage figure) is fully populated by every scan but never printed by
   the CLI — `pgdq info` has no code path that reads `index.diagnostics` at

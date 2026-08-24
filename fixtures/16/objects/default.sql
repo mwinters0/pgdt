@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict IhLtFnCUMbT6rNvYdlQTEinRQXJr7ACj8TOr7s5zlg3G6My0JkmIKDJsVwQuP3Y
+\restrict xYhDNffZfJJfteunYSqPkYfEKILAETnK4I3Ue8nIWFEWFidacXyKS0gmlIrlNxJ
 
 -- Dumped from database version 16.15
 -- Dumped by pg_dump version 16.15
@@ -116,6 +116,17 @@ $$;
 
 
 ALTER FUNCTION objects.log_widget_change() OWNER TO postgres;
+
+--
+-- Name: no_public_execute(); Type: FUNCTION; Schema: objects; Owner: postgres
+--
+
+CREATE FUNCTION objects.no_public_execute() RETURNS integer
+    LANGUAGE sql IMMUTABLE
+    AS $$ SELECT 1; $$;
+
+
+ALTER FUNCTION objects.no_public_execute() OWNER TO postgres;
 
 --
 -- Name: noop_event_trigger(); Type: FUNCTION; Schema: objects; Owner: postgres
@@ -344,6 +355,21 @@ CREATE SEQUENCE objects.standalone_seq
 
 ALTER SEQUENCE objects.standalone_seq OWNER TO postgres;
 
+SET default_tablespace = fixture_ts;
+
+--
+-- Name: tablespaced_table; Type: TABLE; Schema: objects; Owner: postgres; Tablespace: fixture_ts
+--
+
+CREATE TABLE objects.tablespaced_table (
+    id integer
+);
+
+
+ALTER TABLE objects.tablespaced_table OWNER TO postgres;
+
+SET default_tablespace = '';
+
 --
 -- Name: widget_audit; Type: TABLE; Schema: objects; Owner: postgres
 --
@@ -445,29 +471,29 @@ ALTER TABLE ONLY objects.widget_orders ALTER COLUMN quantity SET DEFAULT 0;
 
 
 --
--- Name: 16490; Type: BLOB; Schema: -; Owner: postgres
+-- Name: 16494; Type: BLOB; Schema: -; Owner: postgres
 --
 
-SELECT pg_catalog.lo_create('16490');
+SELECT pg_catalog.lo_create('16494');
 
 
-ALTER LARGE OBJECT 16490 OWNER TO postgres;
-
---
--- Name: LARGE OBJECT 16490; Type: COMMENT; Schema: -; Owner: postgres
---
-
-COMMENT ON LARGE OBJECT 16490 IS 'first large object';
-
+ALTER LARGE OBJECT 16494 OWNER TO postgres;
 
 --
--- Name: 16491; Type: BLOB; Schema: -; Owner: postgres
+-- Name: LARGE OBJECT 16494; Type: COMMENT; Schema: -; Owner: postgres
 --
 
-SELECT pg_catalog.lo_create('16491');
+COMMENT ON LARGE OBJECT 16494 IS 'first large object';
 
 
-ALTER LARGE OBJECT 16491 OWNER TO postgres;
+--
+-- Name: 16495; Type: BLOB; Schema: -; Owner: postgres
+--
+
+SELECT pg_catalog.lo_create('16495');
+
+
+ALTER LARGE OBJECT 16495 OWNER TO postgres;
 
 --
 -- Data for Name: events_2024; Type: TABLE DATA; Schema: objects; Owner: postgres
@@ -499,6 +525,14 @@ COPY objects.secrets (owner_role, payload) FROM stdin;
 
 
 --
+-- Data for Name: tablespaced_table; Type: TABLE DATA; Schema: objects; Owner: postgres
+--
+
+COPY objects.tablespaced_table (id) FROM stdin;
+\.
+
+
+--
 -- Data for Name: widget_audit; Type: TABLE DATA; Schema: objects; Owner: postgres
 --
 
@@ -511,8 +545,8 @@ COPY objects.widget_audit (widget_id, changed_at) FROM stdin;
 --
 
 COPY objects.widgets (id, label, created_at) FROM stdin;
-1	alpha	2026-08-23 05:50:08.148416+00
-2	beta	2026-08-23 05:50:08.148416+00
+1	alpha	2026-08-24 22:23:18.869803+00
+2	beta	2026-08-24 22:23:18.869803+00
 \.
 
 
@@ -544,11 +578,11 @@ SELECT pg_catalog.setval('objects.standalone_seq', 100, true);
 
 BEGIN;
 
-SELECT pg_catalog.lo_open('16490', 131072);
+SELECT pg_catalog.lo_open('16494', 131072);
 SELECT pg_catalog.lowrite(0, '\x48656c6c6f2c204c4f21');
 SELECT pg_catalog.lo_close(0);
 
-SELECT pg_catalog.lo_open('16491', 131072);
+SELECT pg_catalog.lo_open('16495', 131072);
 SELECT pg_catalog.lowrite(0, '\x00010203040506070809');
 SELECT pg_catalog.lo_close(0);
 
@@ -686,6 +720,13 @@ CREATE SUBSCRIPTION objects_sub CONNECTION 'host=nonexistent dbname=nonexistent'
 ALTER SUBSCRIPTION objects_sub OWNER TO postgres;
 
 --
+-- Name: FUNCTION no_public_execute(); Type: ACL; Schema: objects; Owner: postgres
+--
+
+REVOKE ALL ON FUNCTION objects.no_public_execute() FROM PUBLIC;
+
+
+--
 -- Name: TABLE events; Type: ACL; Schema: objects; Owner: postgres
 --
 
@@ -700,6 +741,13 @@ GRANT SELECT ON TABLE objects.events_2024 TO fixture_reader;
 
 
 --
+-- Name: TABLE tablespaced_table; Type: ACL; Schema: objects; Owner: postgres
+--
+
+GRANT SELECT ON TABLE objects.tablespaced_table TO fixture_reader;
+
+
+--
 -- Name: TABLE widgets; Type: ACL; Schema: objects; Owner: postgres
 --
 
@@ -708,10 +756,10 @@ GRANT SELECT ON TABLE objects.widgets TO PUBLIC;
 
 
 --
--- Name: LARGE OBJECT 16490; Type: ACL; Schema: -; Owner: postgres
+-- Name: LARGE OBJECT 16494; Type: ACL; Schema: -; Owner: postgres
 --
 
-GRANT SELECT ON LARGE OBJECT 16490 TO fixture_reader;
+GRANT SELECT ON LARGE OBJECT 16494 TO fixture_reader;
 
 
 --
@@ -744,5 +792,5 @@ REFRESH MATERIALIZED VIEW objects.widget_totals;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict IhLtFnCUMbT6rNvYdlQTEinRQXJr7ACj8TOr7s5zlg3G6My0JkmIKDJsVwQuP3Y
+\unrestrict xYhDNffZfJJfteunYSqPkYfEKILAETnK4I3Ue8nIWFEWFidacXyKS0gmlIrlNxJ
 

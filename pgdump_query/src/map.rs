@@ -222,10 +222,14 @@ pub struct TocHeader {
 /// **Handles both `-- Name: ...` and `-- Data for Name: ...` with one code
 /// path** — `TOC_PREFIX_DATA` ("Data for ") is optional, and whether or not
 /// it's present, what follows must still be `Name: `. The third prefix
-/// `_printTocEntry()` can write, `TOC_PREFIX_STATS` ("Statistics for "), is
-/// left unrecognized: no fixture exercises it, so an entry using it degrades
-/// gracefully (span still tiles, this comment just isn't read as a header)
-/// rather than being handled.
+/// `_printTocEntry()` can write, `TOC_PREFIX_STATS` ("Statistics for ", a
+/// `pg_dump` 18+ `--statistics` component — real flag name; the register
+/// entry that first named it said `--with-statistics`, which does not exist,
+/// see I18), is left unrecognized: fixture evidence now exists
+/// (`fixtures/18/objects/stats.sql`, slice 3.1.1), but recognizing it is a
+/// deliberate deferral, not a gap — an entry using it just degrades
+/// gracefully (span still tiles, this comment isn't read as a header) the
+/// same way any other unhandled shape does.
 ///
 /// **Splits on the field markers in the order `_printTocEntry()` writes
 /// them**, not on a fully general grammar — `sanitize_line` only strips

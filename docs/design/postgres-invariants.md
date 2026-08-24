@@ -895,14 +895,30 @@ postgres_fdw; Type: COMMENT; Schema: -; Owner: ` (trailing space, empty
 owner); `fixtures/*/edge_cases/no-owner.sql` (`--no-owner`) has `Owner: -`
 throughout instead.
 
-**Scope limit.** No fixture exercises `Tablespace:` (none creates a
-non-default tablespace — doing so needs filesystem access the fixture
-generator doesn't have) or `TOC_PREFIX_STATS` ("Statistics for ", a `pg_dump`
-18+ `--with-statistics` component). Both are taken on faith from source
-reading alone, unlike every other clause here.
+**Scope limit.** None — closed by slice 3.1.1's fixtures. `Tablespace:` is
+exercised by `fixtures/<version>/objects/default.sql`'s
+`objects.tablespaced_table` (all 6 routine versions:
+`-- Name: tablespaced_table; Type: TABLE; Schema: objects; Owner: postgres;
+Tablespace: fixture_ts`), created via `generate_fixtures.py`'s
+`prepare_tablespace_dir` (`mkdir`/`chown` in the fixture container, then
+`CREATE TABLESPACE fixture_ts LOCATION ...` in
+`scripts/fixture_schema_objects.sql`). `TOC_PREFIX_STATS` is exercised by
+`fixtures/18/objects/stats.sql` (`-- Statistics for Name: stats_table;
+Type: STATISTICS DATA; Schema: public; Owner: -` — note the empty-owner
+shape, distinct from `Owner: -`; not yet explained by I18's own
+`Owner:`/`Schema:` grammar above, since `dumpRelationStats` doesn't set an
+owner at all). **The flag that produces it is `--statistics`, not
+`--with-statistics`** — the name this entry originally used, before slice
+3.1.1's fixture generation went looking for the literal flag in `pg_dump.c`
+and found no such option; `--with-statistics` does not exist in any version.
+`map::parse_toc_header_line` does not recognize `TOC_PREFIX_STATS` — a
+deliberate deferral (see that function's doc comment), not something this
+fixture closes.
 
 **Verified against:** v18.6 source; fixtures at 13.23 through 18.6 for the
-`Schema:`/`Owner:` placeholder shapes.
+`Schema:`/`Owner:` placeholder shapes and the `Tablespace:` suffix; v18.6
+fixture for `TOC_PREFIX_STATS` (PG18+ only, per `--statistics`'s own
+availability).
 **Relied on by:** `roadmap-phase3-object-inventory.md` ("What a span carries",
 "TOC coverage is recorded per file") — `map::parse_toc_header_line` splits the
 line on these exact literal separators in this exact order.
@@ -960,13 +976,22 @@ fixture_reader;`, `GRANT SELECT ON TABLE objects.widgets TO PUBLIC;`, `ALTER
 DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA objects GRANT SELECT ON TABLES
 TO fixture_reader;`, `SET default_tablespace = '';`.
 
-**Scope limit.** No fixture exercises `REVOKE` (nothing in the fixture schema
-revokes a previously-granted privilege) or a non-empty `SET default_tablespace`
-value (same filesystem-access gap I18 already names for `Tablespace:`) — both
-taken on faith from source reading alone.
+**Scope limit.** None — closed by slice 3.1.1. `REVOKE` is exercised by
+`objects.no_public_execute()`: revoking a function's default PUBLIC `EXECUTE`
+privilege is the one ACL shape whose target state has *fewer* privileges than
+the default, so `pg_dump`'s ACL diff emits a solo `REVOKE ALL ON FUNCTION
+objects.no_public_execute() FROM PUBLIC;` with no offsetting `GRANT` —
+confirmed across all 6 routine versions. (Revoking a privilege from an
+*owner* instead pairs the `REVOKE` with a `GRANT` restoring the owner's
+remaining implicit privileges — still both of I19's shapes, but not a solo
+`REVOKE`.) A non-empty `SET default_tablespace` value is exercised by
+`objects.tablespaced_table` (`SET default_tablespace = fixture_ts;` ahead of
+its definition, `SET default_tablespace = '';` after) — same fixture I18's
+`Tablespace:` entry now cites.
 
 **Verified against:** v13.23 through v18.6 source; `fixtures/16/objects/default.sql`
-for the `GRANT`/`ALTER DEFAULT PRIVILEGES`/reset-`SET` shapes.
+for the `GRANT`/`REVOKE`/`ALTER DEFAULT PRIVILEGES`/`SET default_tablespace`
+(both a real tablespace and the reset) shapes.
 
 **Relied on by:** `roadmap-phase3-object-inventory.md` ("What a span
 carries") — `preamble::extract_statement_cross_refs` matches these four

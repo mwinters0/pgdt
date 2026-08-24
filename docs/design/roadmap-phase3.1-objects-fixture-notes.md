@@ -81,7 +81,8 @@ Still unexercised by any fixture, all needing an extension or an unavailable
 provider: `SECURITY LABEL`, `ACCESS METHOD`, `OPERATOR`(`CLASS`/`FAMILY`),
 `TRANSFORM`, `TEXT SEARCH PARSER`/`TEMPLATE`. Plus the dump-level metadata
 kinds (`DATABASE`(` PROPERTIES`)/`ENCODING`/`SEARCHPATH`/`STDSTRINGS`), which
-are not DDL objects this phase inventories, and `STATISTICS DATA`
-(`--with-statistics`, PG18+, outside the routine matrix). TOC coverage is
-reported per file by design, so an uncovered kind degrades to "unrecognized",
-never a crash.
+are not DDL objects this phase inventories, and — at the time this schema
+landed — `STATISTICS DATA` (`--statistics`, PG18+, outside the routine
+matrix; now covered, see slice 3.1.1's notes). TOC coverage is reported per
+file by design, so an uncovered kind degrades to "unrecognized", never a
+crash.

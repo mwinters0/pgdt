@@ -1259,9 +1259,10 @@ mod tests {
     }
 
     /// [`extract_statement_cross_refs`]'s five recognized shapes — real
-    /// lines from `fixtures/16/objects/default.sql` (Phase 3.1) except where
-    /// noted, since no fixture generates a `REVOKE` or a non-default
-    /// tablespace (see `STATUS.md`'s "Known gaps").
+    /// lines from `fixtures/16/objects/default.sql`, either from Phase 3.1
+    /// or, for the `REVOKE` and non-default-tablespace shapes, slice 3.1.1
+    /// (`objects.no_public_execute()`'s `REVOKE`, `objects.tablespaced_table`'s
+    /// `SET default_tablespace = fixture_ts;`).
     fn refs_of(stmt: &str) -> (Vec<String>, Vec<String>) {
         let mut roles = BTreeSet::new();
         let mut tablespaces = BTreeSet::new();
