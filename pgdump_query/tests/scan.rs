@@ -62,6 +62,12 @@ async fn render(path: &Path, chunk_size: usize) -> String {
             // DDL/comment/meta-command lines outside a COPY block —
             // `crate::preamble`'s input, not the scanner's own concern.
             Event::Line(_) | Event::DollarQuoteEnd(_) => {}
+            Event::LargeObjectStart(start) => {
+                let _ = writeln!(out, "LOSTART @{}", start.start_offset);
+            }
+            Event::LargeObjectEnd(end) => {
+                let _ = writeln!(out, "LOEND @{}", end.end_offset);
+            }
         }
         ControlFlow::Continue(())
     })
@@ -216,6 +222,7 @@ async fn copy_text_escaping_round_trips_through_postgres() {
                 }
                 Event::Row(_) => {}
                 Event::Line(_) | Event::DollarQuoteEnd(_) => {}
+                Event::LargeObjectStart(_) | Event::LargeObjectEnd(_) => {}
             }
             ControlFlow::Continue(())
         })
@@ -316,6 +323,93 @@ async fn line_length_limit_is_enforced() {
     let options = ScanOptions { chunk_size: 64, max_line_bytes: 512 };
     let err = build_index(&source, &options).await.unwrap_err();
     assert!(matches!(err, pgdump_query::Error::LineTooLong { .. }), "unexpected error: {err}");
+}
+
+/// A `BEGIN;`/`COMMIT;`-wrapped large-object region (I12) is recognized at
+/// its opening line and skipped: no `Event::Line` for anything in between,
+/// including the `lo_open`/`lowrite`/`lo_close` calls themselves — the same
+/// "contents are never parsed" treatment `Event::Row` gets inside a `COPY`
+/// block, but with nothing surfaced at all rather than one event per line,
+/// since nothing downstream wants those lines
+/// (`docs/design/roadmap-phase3-object-inventory.md`, "Bulk regions").
+#[tokio::test]
+async fn large_object_region_is_skipped_without_surfacing_lines() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("lo.sql");
+    let text = "SELECT 1;\n\
+                BEGIN;\n\
+                SELECT pg_catalog.lo_open('16490', 131072);\n\
+                SELECT pg_catalog.lowrite(0, '\\x48656c6c6f');\n\
+                SELECT pg_catalog.lo_close(0);\n\
+                COMMIT;\n\
+                SELECT 2;\n";
+    std::fs::write(&path, text).unwrap();
+    let source = LocalFileSource::open(&path).unwrap();
+
+    let mut lines = Vec::new();
+    let mut starts = Vec::new();
+    let mut ends = Vec::new();
+    scan(&source, &ScanOptions::default(), |event| {
+        match event {
+            Event::Line(line) => lines.push(String::from_utf8_lossy(line.raw).into_owned()),
+            Event::LargeObjectStart(start) => starts.push(start.start_offset),
+            Event::LargeObjectEnd(end) => ends.push(end.end_offset),
+            _ => {}
+        }
+        ControlFlow::Continue(())
+    })
+    .await
+    .unwrap();
+
+    assert_eq!(
+        lines,
+        vec!["SELECT 1;".to_string(), "SELECT 2;".to_string()],
+        "nothing between BEGIN; and COMMIT; is surfaced as a line"
+    );
+    assert_eq!(starts, vec![text.find("BEGIN;").unwrap() as u64]);
+    let commit_end = (text.find("COMMIT;\n").unwrap() + "COMMIT;\n".len()) as u64;
+    assert_eq!(ends, vec![commit_end]);
+}
+
+/// A large-object region with no closing `COMMIT;` is an error, the same way
+/// an unterminated `COPY` block is.
+#[tokio::test]
+async fn unterminated_large_object_region_is_an_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("truncated_lo.sql");
+    std::fs::write(&path, b"BEGIN;\nSELECT pg_catalog.lo_open('1', 131072);\n").unwrap();
+    let source = LocalFileSource::open(&path).unwrap();
+    let err = build_index(&source, &ScanOptions::default()).await.unwrap_err();
+    assert!(
+        matches!(err, pgdump_query::Error::UnterminatedLargeObjectRegion { .. }),
+        "unexpected error: {err}"
+    );
+}
+
+/// Real `pg_dump` v17+ output splits large-object data into one `BLOBS`
+/// archive entry per object, each with its own `BEGIN;`/`COMMIT;` (I12) — the
+/// scanner reports both pairs, not one merged region: merging them into one
+/// `Data` span is `crate::map`'s job (`tests/map.rs`), not the scanner's.
+#[tokio::test]
+async fn v17_plus_reports_one_large_object_region_per_blobs_entry() {
+    let source = LocalFileSource::open(fixture18_objects("default")).unwrap();
+    let mut starts = 0;
+    let mut ends = 0;
+    scan(&source, &ScanOptions::default(), |event| {
+        match event {
+            Event::LargeObjectStart(_) => starts += 1,
+            Event::LargeObjectEnd(_) => ends += 1,
+            _ => {}
+        }
+        ControlFlow::Continue(())
+    })
+    .await
+    .unwrap();
+    assert_eq!((starts, ends), (2, 2), "fixtures/18/objects/default.sql has two large objects");
+}
+
+fn fixture18_objects(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/objects").join(format!("{name}.sql"))
 }
 
 /// `Event::DollarQuoteEnd` reports **where** a dollar-quoted region closed

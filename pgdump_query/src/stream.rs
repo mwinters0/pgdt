@@ -282,6 +282,8 @@ async fn map_forward<S: ByteRangeSource>(
                 }
                 Event::Line(line) => builder.feed_line(line.offset, line.raw),
                 Event::DollarQuoteEnd(end) => builder.on_dollar_quote_end(end.offset),
+                Event::LargeObjectStart(start) => builder.on_large_object_start(start.start_offset),
+                Event::LargeObjectEnd(end) => builder.on_large_object_end(end.end_offset),
             }
         }
 
@@ -750,9 +752,10 @@ where
                         // A replay segment covers exactly one block, so the
                         // only non-row line in range is the `COPY` header
                         // itself, which arrives as `CopyStart`. Nothing
-                        // outside a block — a dollar-quoted region included —
-                        // can fall inside one.
+                        // outside a block — a dollar-quoted region or a
+                        // large-object region included — can fall inside one.
                         Event::Line(_) | Event::DollarQuoteEnd(_) => {}
+                        Event::LargeObjectStart(_) | Event::LargeObjectEnd(_) => {}
                     }
                 }
 

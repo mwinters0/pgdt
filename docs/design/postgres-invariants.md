@@ -576,25 +576,36 @@ roughly doubles the on-disk size of the objects, so a dump of a
 large-object-heavy database can carry hundreds of gigabytes here. This is the
 one inter-`COPY` gap that is **not** bounded by schema size.
 
-**Consequence.** Two, in opposite directions. The scanner needs no defence:
-`crate::scan` steps over this region as ordinary outside-block lines and
-cannot be confused by it, which is why large objects have never been a
-correctness hazard despite being unmodelled. But Phase 3's full file map must
-recognize the region by its TOC header and skip to each data entry's
-`COMMIT;` rather than running the keyword-dispatch grammar over every line —
-otherwise the "cheap tier costs a few thousand DDL lines" claim becomes a
-full-file parse. On v17+, treating "the large-object region" as one span
-(the phase's chosen design — see "Bulk regions" in
-`roadmap-phase3-object-inventory.md`) means recognizing that a `BLOBS`
-data entry's `COMMIT;` does not end the region if the next TOC header is
-another `BLOB METADATA`/`BLOBS` pair — the scan must walk past every
-consecutive one before treating the region as closed. On v13-16 this
-concern doesn't arise (there is only ever one such entry). The per-object
-OID is recoverable from the TOC header alone on v17+ (`-- Data for Name:
-<oid>; Type: BLOBS`) but only from the `lo_open('<oid>', ...)` line on
-v13-16, where every object's data shares one entry; per-object spans are
-deferred either way, since the phase's design treats the whole region as
-one span regardless of how cheaply an OID could be recovered.
+**Consequence.** Two, in opposite directions. The scanner itself needs no
+*correctness* defence: a bytea hex literal cannot contain a line break, so no
+`COPY` header or `\.` terminator can hide inside the region. But a bare
+`BEGIN;`/`COMMIT;` pair is line-anchored recognizable on its own — through
+Phase 3.5, `StartRestoreLOs()`/`EndRestoreLOs()` are the *only* emitter of one
+anywhere in plain `pg_dump` output, confirmed across the fixture set used to
+verify this entry — so Phase 3.6's `crate::scan::CopyScanner` recognizes
+`BEGIN;` as a large-object region opener at the scanner level (a new
+`State::InLargeObjectRegion`, the same tier `State::InCopy` sits at) and skips
+every line up to `COMMIT;` unread, rather than emitting `Event::Line` for each
+one and paying the DDL keyword-dispatch grammar over what can be hundreds of
+gigabytes.
+
+On v17+, `crate::map::Builder` merges what the scanner reports as several
+separate `BEGIN;`/`COMMIT;` regions back into **one** `Data(LargeObjects)`
+span — not by re-reading each entry's TOC `Type:` field, but by the general
+rule "any span push closes the pending region" plus the priority-band fact
+above: since `BLOB METADATA`/`ACL`/`COMMENT` definition entries sort entirely
+*before* the pre-data boundary and every `BLOBS` data entry sorts together in
+its own contiguous band, nothing else can legitimately arrive between two of
+a v17+ file's `BLOBS` entries, so a second `BEGIN;` arriving before anything
+else has been pushed is unambiguously "the same region, continuing." A
+malformed or non-`pg_dump` input that violates this ordering degrades to
+several smaller spans instead of one (still correctly tiled) rather than
+silently merging across unrelated content. The per-object OID is recoverable
+from the TOC header alone on v17+ (`-- Data for Name: <oid>; Type: BLOBS`) but
+only from the `lo_open('<oid>', ...)` line on v13-16, where every object's
+data shares one entry; per-object spans are deferred either way, since the
+phase's design treats the whole region as one span regardless of how cheaply
+an OID could be recovered.
 
 **Verified against:** v13.23 through v18.6 source (`pg_dump_sort.c`
 priorities; `dumpLOs`/`BLOBS`/`BLOB METADATA` entries; `StartRestoreLOs`,

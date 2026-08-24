@@ -169,8 +169,10 @@ pub(crate) fn strip_kw<'a>(s: &'a str, kw: &str) -> Option<&'a str> {
 /// same folding rules as [`crate::copy::parse_copy_header`]'s table names —
 /// so the result matches [`crate::copy::CopyHeader::qualified_name`] exactly
 /// for the same object. Returns the qualified name and how many bytes of `s`
-/// it consumed.
-fn parse_qualified_name(s: &str) -> Option<(String, usize)> {
+/// it consumed. `pub(crate)` for [`crate::map`]'s `INSERT INTO` target
+/// parsing, which needs the same identifier grammar this module already
+/// hardened.
+pub(crate) fn parse_qualified_name(s: &str) -> Option<(String, usize)> {
     let mut cur = Cursor::new(s.as_bytes());
     cur.skip_spaces();
     let first = cur.parse_ident()?;
@@ -1082,7 +1084,7 @@ mod tests {
     }
 
     fn dummy_data_span() -> crate::map::Span {
-        span(SpanBody::Data(crate::index::CopyBlock {
+        span(SpanBody::Data(crate::map::DataBlock::Copy(crate::index::CopyBlock {
             header: crate::copy::CopyHeader {
                 schema: None,
                 table: "placeholder".to_string(),
@@ -1097,7 +1099,7 @@ mod tests {
             partition_root: None,
             sparse_index: None,
             column_stats: None,
-        }))
+        })))
     }
 
     #[test]

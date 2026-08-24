@@ -50,9 +50,12 @@ use crate::{Error, Result};
 /// [`crate::index::CopyBlock::partition_root`]; to 5 in Phase 3.2.2 for
 /// [`crate::map::Span::text`]; to 6 in Phase 3.3 for
 /// [`crate::map::Span::toc`]; to 7 in Phase 3.4 for
-/// [`crate::index::DumpIndex::roles`]/[`crate::index::DumpIndex::tablespaces`]
-/// — pre-1.0, so all of them are free (`CLAUDE.md`, "Pre-1.0").
-const FORMAT_VERSION: u32 = 7;
+/// [`crate::index::DumpIndex::roles`]/[`crate::index::DumpIndex::tablespaces`];
+/// to 8 in Phase 3.6, when [`crate::map::SpanBody::Data`]'s payload widened
+/// from `CopyBlock` alone to [`crate::map::DataBlock`], covering `INSERT`
+/// runs and the large-object region too — pre-1.0, so all of them are free
+/// (`CLAUDE.md`, "Pre-1.0").
+const FORMAT_VERSION: u32 = 8;
 
 /// The dump file's size and modification time as observed when a cache was
 /// last saved — see the module docs.

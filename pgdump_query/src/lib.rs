@@ -21,8 +21,8 @@ pub use error::Error;
 pub use index::{CopyBlock, DumpIndex, RowGroupStats, SparseRowIndex, build_index, preamble_only};
 pub use io::{ByteRangeSource, LocalFileSource};
 pub use map::{
-    Span, SpanBody, SpanText, TEXT_CAP, TilingIssue, TocHeader, attach_text, build_map,
-    check_tiling,
+    DataBlock, InsertRun, LargeObjectRegion, Span, SpanBody, SpanText, TEXT_CAP, TilingIssue,
+    TocHeader, attach_text, build_map, check_tiling,
 };
 pub use pgtype::{DeferredKind, TypeOutcome, resolve_declared_type};
 pub use preamble::{
@@ -30,7 +30,10 @@ pub use preamble::{
 };
 pub use predicate::{Predicate, PredicateOp};
 pub use resolve::{ColumnNote, ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
-pub use scan::{CopyEnd, CopyScanner, CopyStart, Event, Line, Row, ScanOptions, scan};
+pub use scan::{
+    CopyEnd, CopyScanner, CopyStart, Event, LargeObjectEnd, LargeObjectStart, Line, Row,
+    ScanOptions, scan,
+};
 pub use stream::{BlockingTableIter, ResumeToken, TableStream, table_stream};
 
 pub type Result<T> = std::result::Result<T, Error>;

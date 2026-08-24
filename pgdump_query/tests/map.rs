@@ -146,20 +146,49 @@ async fn data_only_dump_tiles_exactly() {
     assert!(spans.iter().any(|s| matches!(s.body, SpanBody::Data(_))));
 }
 
-/// `--inserts` output has zero `COPY` blocks and, per the module docs,
-/// no dedicated `Data`-span fast path in this slice — every `INSERT`
-/// becomes its own `Unparsed` span via the generic statement grammar. The
-/// value that matters here is tiling across the embedded-raw-newline row
-/// (`public.escapes` row 10, `docs/status/history/2026-08-23.md`).
+/// `--inserts` output has zero `COPY` blocks; per Phase 3.6's `Data`-span
+/// fast path, a whole table's run of `INSERT INTO` statements is one `Data`
+/// span rather than one `Unparsed` span per statement — this fixture has six
+/// `TABLE DATA` entries (`logs.events`, `public.dropped_column`,
+/// `public.empty_table` [zero rows — absorbed into the next entry's span, per
+/// `crate::map`'s comment-boundary rules, rather than getting one of its
+/// own], `public.escapes`, `public.generated_column`, `public.widgets`), so
+/// five `Data(InsertRun)` spans, not 132-plus `Unparsed` ones. The value that
+/// matters here is tiling across the embedded-raw-newline row
+/// (`public.escapes` row 10, `docs/status/history/2026-08-23.md`) and the
+/// zero-row table.
 #[tokio::test]
 async fn inserts_dump_with_an_embedded_newline_value_still_tiles() {
+    use pgdump_query::DataBlock;
+
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/edge_cases/inserts.sql");
     let (spans, size) = map_of(&path).await;
     assert!(check_tiling(&spans, size).is_empty());
-    assert!(!spans.iter().any(|s| matches!(s.body, SpanBody::Data(_))));
+
+    let runs: Vec<&pgdump_query::InsertRun> = spans
+        .iter()
+        .filter_map(|s| match &s.body {
+            SpanBody::Data(DataBlock::InsertRun(run)) => Some(run),
+            _ => None,
+        })
+        .collect();
+    let tables: Vec<&str> = runs.iter().map(|r| r.table.as_str()).collect();
+    assert_eq!(
+        tables,
+        vec![
+            "logs.events",
+            "public.dropped_column",
+            "public.escapes",
+            "public.generated_column",
+            "public.widgets",
+        ]
+    );
+    let escapes = runs.iter().find(|r| r.table == "public.escapes").unwrap();
+    assert_eq!(escapes.row_count, 132, "the same 132 codepoint rows tests/scan.rs checks");
+
     assert!(
-        spans.iter().filter(|s| matches!(s.body, SpanBody::Unparsed)).count() > 100,
-        "expected roughly one Unparsed span per INSERT statement"
+        spans.iter().filter(|s| matches!(s.body, SpanBody::Unparsed)).count() < 20,
+        "no more Unparsed spans than framing/DDL lines — INSERT rows must not leak into it"
     );
 }
 
@@ -203,6 +232,48 @@ async fn objects_fixture_with_dollar_quoted_function_bodies_tiles_exactly() {
             .iter()
             .find(|s| matches!(&s.body, SpanBody::Table { name, .. } if name == "objects.widgets"));
         assert!(table_span.is_some(), "{flavor}: objects.widgets must classify as a Table span");
+    }
+}
+
+/// The large-object data region (I12) is one `Data(LargeObjects)` span
+/// regardless of how many archive entries `pg_dump` split it across: v13-16
+/// wraps every object's `lo_open`/`lowrite`/`lo_close` run in a single
+/// `BEGIN;`/`COMMIT;` pair, v17+ gives each object its own pair — both
+/// fixtures define exactly two large objects
+/// (`scripts/fixture_schema_objects.sql`), and both must produce exactly one
+/// merged span, not two.
+#[tokio::test]
+async fn the_large_object_region_is_one_data_span_on_every_routine_version() {
+    use pgdump_query::DataBlock;
+
+    for version in [13, 14, 15, 16, 17, 18] {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures")
+            .join(version.to_string())
+            .join("objects/default.sql");
+        let (spans, size) = map_of(&path).await;
+        assert!(check_tiling(&spans, size).is_empty(), "pg_dump {version}");
+
+        let large_object_spans: Vec<_> = spans
+            .iter()
+            .filter(|s| matches!(&s.body, SpanBody::Data(DataBlock::LargeObjects(_))))
+            .collect();
+        assert_eq!(
+            large_object_spans.len(),
+            1,
+            "pg_dump {version}: exactly one merged large-object span, found {large_object_spans:?}"
+        );
+
+        // Nothing from inside the region — `BEGIN;`, `lo_open`/`lowrite`/
+        // `lo_close`, `COMMIT;` — leaks out as its own `Unparsed` span.
+        assert!(
+            !spans.iter().any(|s| {
+                s.text
+                    .as_ref()
+                    .is_some_and(|t| t.text.contains("lowrite") || t.text.trim() == "BEGIN;")
+            }),
+            "pg_dump {version}: large-object region content must not appear in any stored span text"
+        );
     }
 }
 

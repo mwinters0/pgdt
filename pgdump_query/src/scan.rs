@@ -76,6 +76,28 @@ pub struct Line<'a> {
     pub raw: &'a [u8],
 }
 
+/// The start of a large-object data region — a `BEGIN;` line outside any
+/// COPY block. `pg_backup_archiver.c`'s `StartRestoreLOs()`/`EndRestoreLOs()`
+/// are the only emitter of a bare `BEGIN;`/`COMMIT;` pair anywhere in plain
+/// `pg_dump` output (I12): a `plpgsql` `BEGIN`/`END` block never reaches this
+/// arm at all, since it always sits inside a dollar-quoted function body,
+/// which the scanner's dollar-quote tracking already filters out before this
+/// check ever runs. Line-anchored and exact, the same rigor
+/// [`is_terminator`] applies to `\.`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LargeObjectStart {
+    /// Absolute file offset of the `BEGIN;` line.
+    pub start_offset: u64,
+}
+
+/// The end of a large-object data region — the `COMMIT;` line closing a
+/// `BEGIN;` opened by a prior [`LargeObjectStart`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LargeObjectEnd {
+    /// Absolute file offset just past the `COMMIT;` line.
+    pub end_offset: u64,
+}
+
 /// The point at which a dollar-quoted region closed, and nothing else.
 ///
 /// **Position-only, deliberately.** `crate::map`'s statement accumulator
@@ -103,12 +125,25 @@ pub enum Event<'a> {
     CopyEnd(CopyEnd),
     Line(Line<'a>),
     DollarQuoteEnd(DollarQuoteEnd),
+    LargeObjectStart(LargeObjectStart),
+    LargeObjectEnd(LargeObjectEnd),
 }
 
 #[derive(Debug)]
 enum State {
     Outside,
-    InCopy { rows: u64, header_offset: u64 },
+    InCopy {
+        rows: u64,
+        header_offset: u64,
+    },
+    /// Between a `BEGIN;` and its `COMMIT;` — the large-object data region
+    /// (`docs/design/roadmap-phase3-object-inventory.md`, "Bulk regions").
+    /// Every line in between is skipped unread, the same way [`State::InCopy`]
+    /// skips row bytes: I12 guarantees a bytea hex literal can never contain a
+    /// line break, so nothing in here can be mistaken for structure.
+    InLargeObjectRegion {
+        start_offset: u64,
+    },
 }
 
 /// Incremental, zero-copy scanner over a `pg_dump` plain-format file.
@@ -174,7 +209,7 @@ impl CopyScanner {
     pub fn in_copy_rows(&self) -> Option<u64> {
         match self.state {
             State::InCopy { rows, .. } => Some(rows),
-            State::Outside => None,
+            State::Outside | State::InLargeObjectRegion { .. } => None,
         }
     }
 
@@ -199,6 +234,9 @@ impl CopyScanner {
             if self.pos >= buf.len() {
                 if eof && let State::InCopy { header_offset, .. } = self.state {
                     return Err(Error::UnterminatedCopyBlock { header_offset });
+                }
+                if eof && let State::InLargeObjectRegion { start_offset } = self.state {
+                    return Err(Error::UnterminatedLargeObjectRegion { start_offset });
                 }
                 return Ok(None);
             }
@@ -248,6 +286,15 @@ impl CopyScanner {
                             data_offset: self.position(),
                         })));
                     }
+                    // Line-anchored and exact, the same as `\.` below — see
+                    // `LargeObjectStart`'s docs for why a bare `BEGIN;` is
+                    // unambiguous.
+                    if line == b"BEGIN;" {
+                        self.state = State::InLargeObjectRegion { start_offset: line_offset };
+                        return Ok(Some(Event::LargeObjectStart(LargeObjectStart {
+                            start_offset: line_offset,
+                        })));
+                    }
                     return Ok(Some(Event::Line(Line { offset: line_offset, raw: line })));
                 }
                 State::InCopy { rows, header_offset } => {
@@ -265,6 +312,19 @@ impl CopyScanner {
                         index: rows,
                         raw: line,
                     })));
+                }
+                State::InLargeObjectRegion { .. } => {
+                    if line == b"COMMIT;" {
+                        self.state = State::Outside;
+                        return Ok(Some(Event::LargeObjectEnd(LargeObjectEnd {
+                            end_offset: self.position(),
+                        })));
+                    }
+                    // Contents are never parsed — see the design doc's "Bulk
+                    // regions": there is nothing in a `lo_open`/`lowrite`/
+                    // `lo_close` line a query engine wants, so it is skipped
+                    // unread rather than surfaced as an event.
+                    continue;
                 }
             }
         }

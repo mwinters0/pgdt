@@ -59,21 +59,26 @@
 //! 3.3's or 3.4's specified scope — it has no assigned slice yet.
 //!
 //! ## What has landed, slice by slice, and what's still outside
-//! - **Still outside: a dedicated `Data`-span fast path for `INSERT` runs and the
-//!   large-object (`BLOBS`/`BLOB METADATA`) region.** The design's "Bulk
-//!   regions" section frames grouping either into one span as a
-//!   *performance* optimization (avoiding a statement per row on a
-//!   koji-scale `--inserts` dump or a multi-GB large object), not a
-//!   correctness requirement. This slice's generic statement-grammar
-//!   fallback already tiles both shapes correctly today — including the
-//!   embedded-raw-newline `INSERT` case
-//!   (`fixtures/*/edge_cases/inserts.sql`'s `escapes` row 10), since
-//!   [`crate::preamble::statement_complete`] re-scans its whole buffer
-//!   (parens/quotes included) on every appended line regardless of how many
-//!   physical lines a value spans — it just does it one statement (or one
-//!   `lowrite` call) per span rather than one span per whole run. Phase 3.6;
-//!   see `docs/design/roadmap-phase3.2-span-model-notes.md` for the
-//!   verification this rests on.
+//! - **The `Data`-span fast path for `INSERT` runs and the large-object
+//!   region — landed in Phase 3.6.** [`DataBlock`] is what [`SpanBody::Data`]
+//!   holds now: [`DataBlock::Copy`] for a `COPY` block (unchanged),
+//!   [`DataBlock::InsertRun`] for a run of `INSERT INTO <table> ...;`
+//!   statements (`Mode::InsertRun`, entered from `Mode::Statement`'s first
+//!   line), and [`DataBlock::LargeObjects`] for the whole
+//!   `BEGIN;`/`COMMIT;`-wrapped large-object region (I12), merged across
+//!   however many archive entries `pg_dump` split it into
+//!   ([`Builder::on_large_object_start`]). `crate::scan` recognizes a bare
+//!   `BEGIN;`/`COMMIT;` pair at the scanner level, the same way it recognizes
+//!   a `COPY` header/`\.` pair, and skips everything in between unread — see
+//!   [`crate::scan::Event::LargeObjectStart`]/[`crate::scan::Event::LargeObjectEnd`].
+//!   `INSERT` runs stay a `feed_line`-level concern instead (no new scanner
+//!   state): the win there is not re-parsing/re-storing text per row, which
+//!   reusing [`statement_complete`]'s already-hardened quote/paren tracking
+//!   already gets, and the phase's own gating measurements don't cover
+//!   `INSERT`-run throughput specifically (see "Verification" in
+//!   `roadmap-phase3-object-inventory.md`). Neither kind carries the inner
+//!   offsets `DataBlock::Copy` does — nothing reads their rows yet
+//!   (Phase 8, unscheduled). Notes: `docs/design/roadmap-phase3.6-bulk-region-fast-path-notes.md`.
 //! - **Wiring into `DumpIndex`/`crate::cache`/`crate::stream` — landed in
 //!   Phase 3.2.1 through 3.2.1.2.1.** [`Builder`] (this module's
 //!   boundary/classification state machine) is driven directly by
@@ -327,6 +332,53 @@ pub async fn attach_text<S: ByteRangeSource>(source: &S, spans: &mut [Span]) -> 
     Ok(())
 }
 
+/// The payload behind [`SpanBody::Data`] — see that variant's docs for why
+/// one `Data` span kind covers all three producers despite them not sharing a
+/// shape.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DataBlock {
+    Copy(CopyBlock),
+    InsertRun(InsertRun),
+    LargeObjects(LargeObjectRegion),
+}
+
+/// A run of `pg_dump --inserts`/`--column-inserts` output for one table —
+/// `INSERT INTO <table> ...;` statements, one per row, merged into a single
+/// `Data` span instead of one `Unparsed` span per statement
+/// (`roadmap-phase3-object-inventory.md`, "Bulk regions": "a koji-scale
+/// `--inserts` dump is ~1TB of `INSERT INTO` lines"). No inner offsets: unlike
+/// a `CopyBlock`, nothing reads rows out of this yet — Phase 8 Track A adds
+/// that reader, using the same quote-tracking [`Builder`] already does to
+/// find the run's own boundaries.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InsertRun {
+    /// Same convention as [`CopyBlock::database`].
+    pub database: Option<String>,
+    /// The table every statement in this run targets, as its own first
+    /// `INSERT INTO` line named it — schema-qualified when the line was,
+    /// matching [`CopyHeader::qualified_name`](crate::copy::CopyHeader::qualified_name)'s
+    /// convention for the same object.
+    pub table: String,
+    /// Number of `INSERT` statements folded into this span. Free to compute:
+    /// finding the run's end already means recognizing each statement's own
+    /// completion.
+    pub row_count: u64,
+}
+
+/// The large-object data region (I12) — every `BEGIN;`/`COMMIT;`-wrapped
+/// `lo_open`/`lowrite`/`lo_close` run in the file, merged into a single `Data`
+/// span regardless of how many archive entries `pg_dump` split it across (one
+/// on v13-16, one per object on v17+ — see [`Builder::on_large_object_start`]).
+/// No identity at all: "the only identity the region carries is the OID in
+/// each `lo_create('<oid>')` opener, and recovering it costs a walk of the
+/// whole region, which is exactly what one span avoids paying"
+/// (`roadmap-phase3-object-inventory.md`, "Bulk regions").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LargeObjectRegion {
+    /// Same convention as [`CopyBlock::database`].
+    pub database: Option<String>,
+}
+
 /// What a span is, at the granularity Phase 3.2's statement-driven pass (no
 /// TOC enrichment) can tell — see the module docs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -343,9 +395,14 @@ pub enum SpanBody {
         name: String,
         schema: Option<String>,
     },
-    /// A `COPY` data block — the one span kind with inner offsets; see
-    /// `docs/design/roadmap-phase3-object-inventory.md`, "Bulk regions".
-    Data(CopyBlock),
+    /// A bulk region — a `COPY` block, an `INSERT` run, or the large-object
+    /// data region; see `docs/design/roadmap-phase3-object-inventory.md`,
+    /// "Bulk regions". One span kind for all three, per that section's
+    /// "Treating all three as one kind" — [`DataBlock`] is where they stop
+    /// sharing a shape: only [`DataBlock::Copy`] carries the inner offsets a
+    /// row reader seeks by, since it is the only one of the three a reader
+    /// exists for yet (Phase 8, unscheduled, adds one for `INSERT` runs).
+    Data(DataBlock),
     /// A `\connect <name>` meta-command — kept distinct from [`Framing`](SpanBody::Framing)
     /// because [`crate::preamble::dump_metadata_from_spans`] (Phase 3.2.1.1)
     /// needs the database name itself, not just "this was framing", to
@@ -478,6 +535,26 @@ enum Mode {
     /// statement's own first line. `toc` carries forward whatever the
     /// preceding comment block parsed, `None` when there was none.
     Statement { start: u64, buf: String, toc: Option<TocHeader> },
+    /// Accumulating a run of `INSERT INTO <table> ...;` statements for one
+    /// table (`roadmap-phase3-object-inventory.md`, "Bulk regions") — entered
+    /// from `Mode::Statement`'s first line instead of staying there, so the
+    /// whole run becomes one `Data` span rather than one `Unparsed` span per
+    /// statement. `start`/`toc` are the span's own, same convention as
+    /// `Statement`. `table` is fixed at the run's first line; a later
+    /// statement targeting a different table ends the run (real `pg_dump`
+    /// output never does this — a TOC comment always separates two tables'
+    /// data — but a header-less input isn't guaranteed to). `buf` accumulates
+    /// the *current*, not-yet-complete statement only, empty between
+    /// statements — that's the signal a fresh line either continues the run
+    /// or ends it. `row_count` is complete statements folded in so far.
+    InsertRun {
+        start: u64,
+        table: String,
+        database: Option<String>,
+        buf: String,
+        row_count: u64,
+        toc: Option<TocHeader>,
+    },
 }
 
 /// The statement-driven boundary/classification pass, shared by
@@ -506,6 +583,16 @@ pub(crate) struct Builder {
     /// line — an entry that turned out not to be table data at all leaves
     /// nothing behind for the following one to pick up.
     pending_partition_root: Option<String>,
+    /// The in-progress merged large-object `Data` span, if a `BEGIN;` has
+    /// been seen with no flush since — see [`on_large_object_start`](Self::on_large_object_start).
+    /// `.0` is the span's own start (the first region's preceding TOC
+    /// comment, if it had one, else its own `BEGIN;` line); `.1` is the
+    /// offset just past the most recently closed `COMMIT;`, which becomes the
+    /// span's `end` once nothing extends it further; `.2` is the first
+    /// region's own TOC header, kept as the merged span's single
+    /// representative `toc` (`Span::toc` holds one header; a v17+ run can
+    /// carry several — see [`on_large_object_start`](Self::on_large_object_start)).
+    pending_large_objects: Option<(u64, u64, Option<TocHeader>)>,
     /// Roles/tablespaces referenced anywhere fed to this builder so far —
     /// accumulated as spans close, per
     /// `docs/design/roadmap-phase3-object-inventory.md`'s "What a span
@@ -535,6 +622,20 @@ fn partition_root_marker(line: &str) -> Option<String> {
     let rest = line.strip_prefix("-- load via partition root ")?;
     let rest = rest.trim();
     (!rest.is_empty()).then(|| rest.to_string())
+}
+
+/// The table an `INSERT INTO <table> ...` line targets, if `line` is one —
+/// `pg_dump`'s `dumpTableData_insert()` always emits exactly this fixed
+/// casing (`--inserts`/`--column-inserts`, with or without a column list
+/// after the table name; both parse the same, since only the identifier
+/// right after `INSERT INTO ` is read). `None` for anything else, including a
+/// line that merely starts with this text as multi-line *string content* —
+/// guarded the same way [`looks_like_toc_name_line`]/[`partition_root_marker`]
+/// are, by the caller only ever checking this on a fresh statement's first
+/// line (`Mode::Statement`'s `buf.is_empty()` gate, `Mode::InsertRun`'s own).
+fn parse_insert_target(line: &str) -> Option<String> {
+    let rest = line.strip_prefix("INSERT INTO ")?;
+    crate::preamble::parse_qualified_name(rest).map(|(name, _consumed)| name)
 }
 
 /// Whether `line` is one of the version-header block's two lines (I9), and
@@ -584,6 +685,7 @@ impl Builder {
             spans: Vec::new(),
             pending_data: None,
             pending_partition_root: None,
+            pending_large_objects: None,
             roles: BTreeSet::new(),
             tablespaces: BTreeSet::new(),
         }
@@ -603,6 +705,11 @@ impl Builder {
     /// `crate::stream::splice` does it by extending the span before it — the
     /// same rule this method applies to every other boundary.
     fn push_span(&mut self, start: u64, body: SpanBody, toc: Option<TocHeader>) {
+        // Any new span — this one included, unless it *is* the flush itself
+        // (which `flush_large_objects` already took `pending_large_objects`
+        // out of `self` before calling back in here) — means the pending
+        // large-object region isn't being extended, so it closes now.
+        self.flush_large_objects();
         if let Some(t) = &toc {
             // The TOC comment's own `Owner:`/`Tablespace:` fields — one of
             // this span's two cross-reference sources regardless of its
@@ -692,6 +799,9 @@ impl Builder {
                 }
             }
             Mode::Statement { start, buf, toc } => self.push_statement_span(start, &buf, toc),
+            Mode::InsertRun { start, table, database, row_count, toc, .. } => {
+                self.push_insert_run(start, table, database, row_count, toc)
+            }
         }
     }
 
@@ -823,6 +933,26 @@ impl Builder {
                     self.push_statement_span(start, &buf, toc);
                     return Some((offset, line.to_string()));
                 }
+                // The run's first line, recognized before it ever becomes a
+                // one-statement `Unparsed` span — `roadmap-phase3-object-inventory.md`,
+                // "Bulk regions": grouping the whole run into one `Data` span
+                // is what keeps a koji-scale `--inserts` dump from allocating
+                // (and, pre-3.6, text-storing) one span per row.
+                if buf.is_empty()
+                    && let Some(table) = parse_insert_target(line)
+                {
+                    let start = *start;
+                    let toc = toc.take();
+                    self.mode = Mode::InsertRun {
+                        start,
+                        table,
+                        database: self.database.clone(),
+                        buf: String::new(),
+                        row_count: 0,
+                        toc,
+                    };
+                    return Some((offset, line.to_string()));
+                }
                 push_stmt_line(buf, line);
                 if statement_complete(buf) {
                     let start = *start;
@@ -830,6 +960,50 @@ impl Builder {
                     let toc = toc.take();
                     self.mode = Mode::Idle;
                     self.push_statement_span(start, &buf, toc);
+                }
+                None
+            }
+            Mode::InsertRun { start, table, database, buf, row_count, toc } => {
+                // Closes the run in place — takes owned copies of everything
+                // first (mirroring `Mode::Statement`'s dangling-close arm
+                // above) so `self.mode = Mode::Idle` and the `self.push_span`
+                // call inside `push_insert_run` don't overlap this arm's
+                // borrow of `self.mode`.
+                macro_rules! close_and_reprocess {
+                    () => {{
+                        let (start, table, database, row_count, toc) =
+                            (*start, table.clone(), database.clone(), *row_count, toc.take());
+                        self.mode = Mode::Idle;
+                        self.push_insert_run(start, table, database, row_count, toc);
+                        return Some((offset, line.to_string()));
+                    }};
+                }
+                if buf.is_empty() {
+                    if trimmed.is_empty() {
+                        // Absorbed the same way `Mode::Comment` absorbs a
+                        // blank line between two entries — waiting to see
+                        // whether the run continues or the next TOC comment
+                        // (or EOF) closes it.
+                        return None;
+                    }
+                    let continues = parse_insert_target(line).as_deref() == Some(table.as_str());
+                    if !continues {
+                        close_and_reprocess!();
+                    }
+                    // Falls through to accumulate this line as the run's next
+                    // statement.
+                }
+                // Defensive dangling-close, mirroring `Mode::Statement`'s —
+                // not expected in real `pg_dump` output (a `--` line always
+                // arrives with `buf` empty, handled above), kept for the same
+                // graceful-degradation reason.
+                if trimmed.starts_with("--") && !in_open_quote(buf) {
+                    close_and_reprocess!();
+                }
+                push_stmt_line(buf, line);
+                if statement_complete(buf) {
+                    *row_count += 1;
+                    buf.clear();
                 }
                 None
             }
@@ -860,6 +1034,10 @@ impl Builder {
     }
 
     pub(crate) fn on_copy_start(&mut self, event: crate::scan::CopyStart) {
+        // I12 puts the large-object region after every `COPY` block, so a
+        // pending one here would mean malformed/non-`pg_dump` input — flush
+        // it rather than silently absorbing whatever follows into it.
+        self.flush_large_objects();
         let (start, toc) = match std::mem::replace(&mut self.mode, Mode::Idle) {
             Mode::Idle => (event.header_offset, None),
             // A TOC comment (`-- Data for Name: ...; Type: TABLE DATA`, or,
@@ -873,6 +1051,13 @@ impl Builder {
             // comment of its own), but every byte must land somewhere.
             Mode::Statement { start, buf, toc } => {
                 self.push_statement_span(start, &buf, toc);
+                (event.header_offset, None)
+            }
+            // Same reasoning: a `COPY` header never follows an `INSERT` run
+            // in real `pg_dump` output (data format is dump-wide, not
+            // per-table), but every byte must land somewhere.
+            Mode::InsertRun { .. } => {
+                self.close_insert_run();
                 (event.header_offset, None)
             }
         };
@@ -898,7 +1083,124 @@ impl Builder {
             sparse_index: None,
             column_stats: None,
         };
-        self.push_span(start, SpanBody::Data(block), toc);
+        self.push_span(start, SpanBody::Data(DataBlock::Copy(block)), toc);
+    }
+
+    /// A `BEGIN;` line opened a large-object data region (I12) — see
+    /// [`crate::scan::Event::LargeObjectStart`].
+    ///
+    /// **This is where v13-16's single archive entry and v17+'s
+    /// one-per-object entries end up producing the same map.** Neither this
+    /// method nor [`on_large_object_end`](Self::on_large_object_end) push a
+    /// span directly: the region stays *pending* until
+    /// [`flush_large_objects`](Self::flush_large_objects) closes it, which
+    /// only happens when something else is about to open — a new statement,
+    /// a `COPY` header, or end of scan. So as long as nothing but more
+    /// `BEGIN;`/`COMMIT;` pairs (each with, at most, its own TOC comment)
+    /// arrives in between, a v17+ file's several consecutive `BLOBS` entries
+    /// merge into the exact same single span a v13-16 file's one entry
+    /// already produces. I12 is what makes this sound without checking each
+    /// entry's own TOC `Type:` field: the large-object data region is its own
+    /// contiguous priority band, so nothing else — not a `COPY` block, not
+    /// ordinary DDL — can appear between two of its entries in real `pg_dump`
+    /// output; whatever *does* arrive in between (this module never assumes
+    /// I12 holds) closes the region via `flush_large_objects` the normal way.
+    pub(crate) fn on_large_object_start(&mut self, offset: u64) {
+        let (open_start, toc) = match std::mem::replace(&mut self.mode, Mode::Idle) {
+            Mode::Idle => (offset, None),
+            Mode::Comment { start, toc, .. } => (start, toc),
+            // Never observed in a well-formed dump (I12: nothing but a TOC
+            // comment ever precedes a large-object entry's `BEGIN;`), but
+            // every byte must land somewhere.
+            Mode::Statement { start, buf, toc } => {
+                self.push_statement_span(start, &buf, toc);
+                (offset, None)
+            }
+            Mode::InsertRun { .. } => {
+                self.close_insert_run();
+                (offset, None)
+            }
+        };
+        // The TOC `Owner:`/`Tablespace:` fields feed the cross-reference set
+        // regardless of whether this entry becomes its own span or merges
+        // into an already-open one — the same rule `push_span` applies to
+        // every other span's `toc`.
+        if let Some(t) = &toc {
+            if let Some(owner) = &t.owner {
+                crate::preamble::insert_role(&mut self.roles, owner.clone());
+            }
+            if let Some(tablespace) = &t.tablespace {
+                crate::preamble::insert_tablespace(&mut self.tablespaces, tablespace.clone());
+            }
+        }
+        match &mut self.pending_large_objects {
+            // Continuing an already-open region: keep its own start/toc, not
+            // this entry's.
+            Some(_) => {}
+            None => self.pending_large_objects = Some((open_start, offset, toc)),
+        }
+    }
+
+    /// A `COMMIT;` line closed the large-object entry [`on_large_object_start`](Self::on_large_object_start)
+    /// opened — see [`crate::scan::Event::LargeObjectEnd`]. Extends the
+    /// pending region's running end; does not push a span (see that method's
+    /// docs for why).
+    pub(crate) fn on_large_object_end(&mut self, offset: u64) {
+        if let Some(region) = &mut self.pending_large_objects {
+            region.1 = offset;
+        }
+    }
+
+    /// Close the pending large-object region, if one is open, into a real
+    /// span. Called at the top of every [`push_span`](Self::push_span) (so
+    /// any *other* span implies this one isn't being extended further) and at
+    /// [`finish`](Self::finish) (so a file ending right after the region's
+    /// last `COMMIT;` still closes it).
+    fn flush_large_objects(&mut self) {
+        if let Some((start, _end, toc)) = self.pending_large_objects.take() {
+            self.push_span(
+                start,
+                SpanBody::Data(DataBlock::LargeObjects(LargeObjectRegion {
+                    database: self.database.clone(),
+                })),
+                toc,
+            );
+        }
+    }
+
+    /// Push the finished span for a [`Mode::InsertRun`] that has ended,
+    /// however its caller found that out — [`step`](Self::step) itself
+    /// (the run ends the ordinary way), [`flush_pending`](Self::flush_pending)
+    /// (already holds the destructured `Mode::InsertRun` fields from its own
+    /// `end`-of-scan match), or [`close_insert_run`](Self::close_insert_run)
+    /// (a non-`push_span` entry point interrupts a still-open run).
+    fn push_insert_run(
+        &mut self,
+        start: u64,
+        table: String,
+        database: Option<String>,
+        row_count: u64,
+        toc: Option<TocHeader>,
+    ) {
+        self.push_span(
+            start,
+            SpanBody::Data(DataBlock::InsertRun(InsertRun { database, table, row_count })),
+            toc,
+        );
+    }
+
+    /// Close whatever [`Mode::InsertRun`] has accumulated so far into a real
+    /// span — called from the non-`push_span` entry points that can
+    /// interrupt a run ([`on_copy_start`](Self::on_copy_start),
+    /// [`on_large_object_start`](Self::on_large_object_start)). Takes
+    /// `self.mode` unconditionally — every caller has already matched it as
+    /// `Mode::InsertRun`; a no-op otherwise.
+    fn close_insert_run(&mut self) {
+        if let Mode::InsertRun { start, table, database, row_count, toc, .. } =
+            std::mem::replace(&mut self.mode, Mode::Idle)
+        {
+            self.push_insert_run(start, table, database, row_count, toc);
+        }
     }
 
     /// Finish the scan: whatever's still pending is closed out using `end`
@@ -906,6 +1208,10 @@ impl Builder {
     /// opened the next span.
     pub(crate) fn finish(mut self, end: u64) -> Vec<Span> {
         self.flush_pending(end);
+        // A separate field from `mode` (see its docs), so `flush_pending`
+        // doesn't already cover it — a file ending right after the
+        // large-object region's last `COMMIT;` still needs this to close it.
+        self.flush_large_objects();
         if let Some(last) = self.spans.last_mut() {
             last.end = end;
         }
@@ -920,15 +1226,19 @@ impl Builder {
     /// end (see the module docs).
     ///
     /// Only sound to call at a boundary where nothing is mid-classification
-    /// — i.e. `self.mode` is [`Mode::Idle`] — since otherwise the
-    /// last-pushed span in `self.spans` is not actually the span open at
-    /// `end`, it's the one before it, and stamping its `end` there would be
-    /// wrong. Right after [`on_copy_end`](Self::on_copy_end) is exactly such
-    /// a boundary (`on_copy_start` always leaves `mode` `Idle` for the
-    /// block's duration), which is the caller this exists for —
-    /// `crate::stream`'s mapping pass persists its progress after every
-    /// completed block, not just once at the true end of its scan.
+    /// — i.e. `self.mode` is [`Mode::Idle`] **and** no large-object region is
+    /// pending — since otherwise the last-pushed span in `self.spans` is not
+    /// actually the span open at `end`, it's the one before it, and stamping
+    /// its `end` there would be wrong. Right after [`on_copy_end`](Self::on_copy_end)
+    /// is exactly such a boundary (`on_copy_start` always leaves `mode`
+    /// `Idle` for the block's duration, and I12 puts the large-object region
+    /// strictly after every `COPY` block, so nothing pends one yet either),
+    /// which is the caller this exists for — `crate::stream`'s mapping pass
+    /// persists its progress after every completed block, not just once at
+    /// the true end of its scan.
     pub(crate) fn snapshot(&self, end: u64) -> Vec<Span> {
+        debug_assert!(matches!(self.mode, Mode::Idle));
+        debug_assert!(self.pending_large_objects.is_none());
         let mut spans = self.spans.clone();
         if let Some(last) = spans.last_mut() {
             last.end = end;
@@ -1011,6 +1321,8 @@ pub async fn build_map<S: ByteRangeSource>(source: &S, options: &ScanOptions) ->
             Event::CopyEnd(end) => builder.on_copy_end(end),
             Event::Line(line) => builder.feed_line(line.offset, line.raw),
             Event::DollarQuoteEnd(end) => builder.on_dollar_quote_end(end.offset),
+            Event::LargeObjectStart(start) => builder.on_large_object_start(start.start_offset),
+            Event::LargeObjectEnd(end) => builder.on_large_object_end(end.end_offset),
         }
         ControlFlow::Continue(())
     })

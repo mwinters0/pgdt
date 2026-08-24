@@ -12,7 +12,7 @@ use crate::Result;
 use crate::cache::CacheMode;
 use crate::copy::CopyHeader;
 use crate::io::ByteRangeSource;
-use crate::map::{Span, SpanBody};
+use crate::map::{DataBlock, Span, SpanBody};
 use crate::scan::{Event, ScanOptions, scan};
 
 /// A block's sparse row index: the byte offset of every `interval`-th data
@@ -142,7 +142,7 @@ impl DumpIndex {
     /// structure, not a description of it").
     pub fn blocks(&self) -> impl Iterator<Item = &CopyBlock> {
         self.spans.iter().filter_map(|s| match &s.body {
-            SpanBody::Data(block) => Some(block),
+            SpanBody::Data(DataBlock::Copy(block)) => Some(block),
             _ => None,
         })
     }
@@ -177,6 +177,8 @@ pub async fn build_index<S: ByteRangeSource>(
             Event::CopyEnd(end) => spans.on_copy_end(end),
             Event::Line(line) => spans.feed_line(line.offset, line.raw),
             Event::DollarQuoteEnd(end) => spans.on_dollar_quote_end(end.offset),
+            Event::LargeObjectStart(start) => spans.on_large_object_start(start.start_offset),
+            Event::LargeObjectEnd(end) => spans.on_large_object_end(end.end_offset),
         }
         ControlFlow::Continue(())
     })
@@ -281,7 +283,25 @@ pub(crate) async fn scan_preamble<S: ByteRangeSource>(
             spans.on_dollar_quote_end(end.offset);
             ControlFlow::Continue(())
         }
-        _ => ControlFlow::Continue(()),
+        // I1: nothing this scan stops for (the first `COPY` header) can
+        // follow a large-object region either — it sits even later in the
+        // file (I12) — so in practice this scan always breaks before
+        // reaching one. Fed through anyway rather than dropped by a bare `_`,
+        // so a file with large objects but no `COPY` blocks at all still maps
+        // that region as its own `Data` span instead of losing it into
+        // whatever DDL span precedes it.
+        Event::LargeObjectStart(start) => {
+            spans.on_large_object_start(start.start_offset);
+            ControlFlow::Continue(())
+        }
+        Event::LargeObjectEnd(end) => {
+            spans.on_large_object_end(end.end_offset);
+            ControlFlow::Continue(())
+        }
+        // Never actually reached: `CopyStart` above always breaks first. Kept
+        // explicit rather than a bare `_` so a new `Event` variant fails to
+        // compile here instead of silently falling through.
+        Event::Row(_) | Event::CopyEnd(_) => ControlFlow::Continue(()),
     })
     .await?;
     let roles = spans.roles().clone();

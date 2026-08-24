@@ -8,6 +8,8 @@ pub enum Error {
     Join(#[from] tokio::task::JoinError),
     #[error("COPY block at offset {header_offset} has no terminating `\\.` line")]
     UnterminatedCopyBlock { header_offset: u64 },
+    #[error("large-object data region at offset {start_offset} has no terminating `COMMIT;` line")]
+    UnterminatedLargeObjectRegion { start_offset: u64 },
     #[error("line at offset {offset} exceeds the {limit}-byte line limit")]
     LineTooLong { offset: u64, limit: usize },
     #[error("value is not valid UTF-8 (valid up to byte {valid_up_to})")]

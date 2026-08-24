@@ -22,7 +22,8 @@ module map, and the implementation facts later phases inherit — is in
 Phase 3 (full DDL object inventory) is **in progress**,
 `docs/design/roadmap-phase3-object-inventory.md`.
 
-Last updated: 2026-08-24 (3.4 landed).
+Last updated: 2026-08-24 (3.6 complete — koji regression scan finished, see
+the 3.6 checklist entry).
 
 ## Phase 3 progress
 
@@ -96,34 +97,35 @@ Last updated: 2026-08-24 (3.4 landed).
       `objects.rs` not split out — `preamble.rs` is still under the ~1500-line
       threshold. Notes:
       [`roadmap-phase3.4-cross-references-notes.md`](../design/roadmap-phase3.4-cross-references-notes.md).
-- [ ] **3.6** The `Data`-span fast path for `INSERT` runs and the
-      large-object region, plus this phase's two gating measurements. Runs
-      before 3.5.
+- [x] **3.6** The `Data`-span fast path for `INSERT` runs and the
+      large-object region, plus this phase's two gating measurements.
+      `SpanBody::Data` now holds `crate::map::DataBlock`
+      (`Copy`/`InsertRun`/`LargeObjects`), a new `crate::scan::CopyScanner`
+      state skips the large-object region at the scanner level, cache format
+      v7→v8. The synthetic large-object measurement: ~1.9GB/s on a 3GB
+      region, an order of magnitude above the 243MB/s `COPY`-decode baseline.
+      The koji full re-scan: `exit=0`, output byte-for-byte identical to the
+      pre-3.6 baseline (74 blocks, same row counts, same offsets); its raw
+      throughput figure was confounded by a concurrent Postgres restore on
+      the same HDD and is not a like-for-like comparison against the 243MB/s
+      baseline — see the notes doc for the full reasoning and evidence, and
+      "Decisions worth another look" below. Notes:
+      [`roadmap-phase3.6-bulk-region-fast-path-notes.md`](../design/roadmap-phase3.6-bulk-region-fast-path-notes.md).
 - [ ] **3.5** CLI surface: `pgdq info` role/tablespace/object-kind summaries
       and a `--map` span listing; the `docs/manual/` dump-inspection page.
 
 ## Not started
 
-- **Phase 3, slices 3.5-3.6** — specified, no code. See the checklist above
-  and `docs/design/roadmap-phase3-object-inventory.md`. **3.2, 3.3 and 3.4 are
+- **Phase 3, slice 3.5** — specified, no code. See the checklist above and
+  `docs/design/roadmap-phase3-object-inventory.md`. **3.2 through 3.6 are all
   complete**: the span model, its wiring into `DumpIndex`/the cache/the query
-  path, span text, diagnostics, the dollar-quote boundary, TOC enrichment, and
-  the referenced-roles/tablespaces cross-reference set.
+  path, span text, diagnostics, the dollar-quote boundary, TOC enrichment,
+  the referenced-roles/tablespaces cross-reference set, and the
+  `INSERT`-run/large-object `Data`-span fast path.
 - **Phases 4-8** — not designed. See `docs/design/roadmap.md`.
 
 ## Known gaps
 
-- Large objects in plain-format dumps (`lo_create`/`lowrite` calls, not
-  `COPY` blocks) are tiled but not grouped: `crate::map` (Phase 3.2) covers
-  their bytes as a run of `Unparsed` spans (one per statement — `lo_open`,
-  each `lowrite`, `lo_close`) rather than the single `Data` span the full
-  design calls for, since the region is ordinary line-oriented SQL whose
-  bytea hex literals cannot contain a line break, so no `COPY` header or
-  `\.` terminator can hide inside it (I12) — the generic statement grammar
-  handles it correctly, just not at the cost a dedicated fast path would.
-  Grouping them into one `Data` span is slice 3.6. Their contents stay out of
-  scope permanently regardless; see `docs/design/roadmap.md`, "Large objects:
-  ranges, not contents".
 - A query stops mapping once its target is settled, so a conflicting
   candidate **past** the stopping point is never seen and
   `Error::AmbiguousTable` is not raised for it — the query returns the
@@ -172,7 +174,49 @@ Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
 
-*(Empty. Slice 3.2.2's `Diagnostic` unification — one severity scale and two
+Slice 3.2.2's `Diagnostic` unification — one severity scale and two
 types rather than one enum — has been reviewed and settled into
 [`roadmap-phase3-object-inventory.md`](../design/roadmap-phase3-object-inventory.md)'s
-"Diagnostics: a file-level channel on `DumpIndex`".)*
+"Diagnostics: a file-level channel on `DumpIndex`".
+
+- **Slice 3.6 gave `SpanBody::Data`'s payload a shape the spec didn't pin
+  down, and made two implementation calls the spec's prose left open.** The
+  design's "Bulk regions" section says one `Data` span kind covers `COPY`
+  blocks, `INSERT` runs and the large-object region, but a `CopyBlock`'s
+  shape (header offsets, a row terminator) genuinely doesn't fit the other
+  two — there was no single struct to hold all three. Landed as
+  `crate::map::DataBlock`, an enum (`Copy(CopyBlock)`/`InsertRun(_)`/
+  `LargeObjects(_)`) behind the one `SpanBody::Data` variant, keeping
+  `DumpIndex::blocks()`/`blocks_for`'s signature (`&CopyBlock`) unchanged by
+  filtering on `DataBlock::Copy`. This is the natural reading of "one span
+  *kind*, not one span *shape*", but it's an architectural call a reviewer
+  should confirm before Phase 8's `INSERT`-run reader or Phase 3.5's `--map`
+  listing build on it. Second: `INSERT` runs got a `map.rs`-only fast path
+  (reuse the existing statement accumulator, skip pushing a span per
+  statement) rather than a `crate::scan`-level one like the large-object
+  region got — deliberately, since the phase's "Verification" section only
+  gates large-object-region throughput, not `INSERT`-run throughput, but a
+  koji-scale `--inserts` dump's actual per-row cost was never measured this
+  slice. Both calls, and the reasoning, are in
+  [`roadmap-phase3.6-bulk-region-fast-path-notes.md`](../design/roadmap-phase3.6-bulk-region-fast-path-notes.md).
+  What would change this: if Phase 8's row reader turns out to want a
+  different `DataBlock` shape than what's landed, or if `INSERT`-run
+  throughput needs its own measurement before this phase wraps.
+
+- **Slice 3.6's koji regression check was accepted on a confounded
+  throughput number, reasoned around rather than re-measured cleanly.** The
+  re-scan's raw throughput (~110MB/s wall-clock, ~120-130MB/s by
+  `node_exporter`'s disk-read counter) came in well under the 243MB/s
+  baseline. Investigation (this session) found a concurrent Postgres restore
+  writing ~30MB/s to the same physical HDD throughout the scan — confirmed by
+  `koji-pg`'s own checkpoint-frequency logs and `node_exporter`'s
+  `node_disk_written_bytes_total`, and directly by the maintainer mid-session
+  — fully accounting for the gap on a disk that was ~93-95% busy either way.
+  The regression check was still called a pass, on the strength of the
+  scanned output being byte-for-byte identical to the pre-3.6 baseline (same
+  74 blocks, same row counts, same every offset) plus the unchanged
+  control-flow argument, rather than on a clean throughput number. A
+  maintainer who wants a like-for-like throughput figure can re-run
+  `runs/koji-3.6-scan.log`'s command once the HDD is uncontended; nothing
+  about this call blocks that, and nothing found here suggests it would come
+  back differently.
