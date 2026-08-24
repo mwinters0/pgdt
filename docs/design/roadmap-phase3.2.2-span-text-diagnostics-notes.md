@@ -48,22 +48,33 @@ updated in the same change). `DumpIndex::diagnostics: Vec<Diagnostic>`,
 `#[serde(skip)]`. Two producers today: `TilingBroken` from `check_tiling`, and
 `CacheMtimeChanged` from `CacheMode::load`.
 
-**The spec asked for one enum; it got one *vocabulary*, and the difference is
-layering.** "`Diagnostic` gains a severity and a kind, so Phase 2's per-column
-resolution outcomes, a cache-identity warning, the TOC-coverage figure and an
-unrecognized span all speak one vocabulary" cannot be taken literally:
-`DumpIndex` is L1, `resolve::ColumnResolution` is an L2 conclusion about
-PostgreSQL type semantics, and a `DiagnosticKind` variant carrying one would
-make L1 name an L2 type — [`layering.md`](layering.md) rule 1, and against
-L1's whole "parses a declared type as an opaque string and never interprets
-it" premise.
+**The spec asked for one enum; the answer is one *vocabulary*, and the
+difference is layering.** `DumpIndex` is L1, `resolve::ColumnResolution` is an
+L2 conclusion about PostgreSQL type semantics, and a `DiagnosticKind` variant
+carrying one would make L1 name an L2 type — [`layering.md`](layering.md) rule
+1, and against L1's whole "parses a declared type as an opaque string and
+never interprets it" premise. Moving `ColumnResolution` down to L1 contradicts
+that same premise; flattening the column payload into a rendered string trades
+structure `pgdq info` needs for a uniformity nothing consumes yet.
 
 So `Severity` and the `{severity, kind}` shape are the shared vocabulary, in
-L1; `resolve::Diagnostic` keeps its structured per-column payload at L2 and
-gains the same `Severity` (`Mapped` → `Info`, anything falling back to
-`Utf8View` → `Warning`). A caller draining both channels filters on one scale.
-Flagged in `STATUS.md`'s "Decisions worth another look" as a departure from
-the spec sentence.
+L1; `resolve::ColumnNote` is the per-column record at L2, reporting on the
+same scale through `ColumnNote::severity()`. The spec sentence was amended to
+say so — see its "Diagnostics" section and
+[`../status/history/2026-08-24.md`](../status/history/2026-08-24.md).
+
+Two consequences worth carrying forward:
+
+- **The L2 type is a `ColumnNote`, not a `Diagnostic`.** There is one per
+  column, always, and the ordinary case is a column that resolved cleanly —
+  a record, not an exception report; the field holding them was already
+  called `notes`. That also frees the name `Diagnostic` for the file-level
+  type, which had been exported as `FileDiagnostic` with the aliasing
+  backwards.
+- **Severity is derived, not stored.** It is a pure function of `resolution`,
+  so a field would hold one fact twice — the thing this project rejects for
+  `DumpMetadata` (a view over spans) and `blocks()` (a filter, not a field).
+  A note whose severity is *not* derivable earns a field when one exists.
 
 **Not persisting is load-bearing, and the test says why.** A stored
 `CacheMtimeChanged` would replay a warning about a check *this* run performed

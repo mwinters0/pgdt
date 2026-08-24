@@ -255,7 +255,7 @@ async fn a_changed_mtime_is_a_diagnostic_not_an_invalidation() {
     assert_eq!(loaded.blocks().count(), index.blocks().count(), "contents survive intact");
     assert_eq!(
         loaded.diagnostics,
-        vec![pgdump_query::FileDiagnostic {
+        vec![pgdump_query::Diagnostic {
             severity: Severity::Warning,
             kind: DiagnosticKind::CacheMtimeChanged,
         }]
@@ -266,7 +266,7 @@ async fn a_changed_mtime_is_a_diagnostic_not_an_invalidation() {
 /// about a check *this* run performed successfully.
 #[tokio::test]
 async fn diagnostics_do_not_round_trip_through_the_cache() {
-    use pgdump_query::{DiagnosticKind, FileDiagnostic, Severity};
+    use pgdump_query::{Diagnostic, DiagnosticKind, Severity};
 
     let dir = tempfile::tempdir().unwrap();
     let dump = dir.path().join("edge_cases.sql");
@@ -276,10 +276,9 @@ async fn diagnostics_do_not_round_trip_through_the_cache() {
 
     let mut index = build_index(&source, &ScanOptions::default()).await.unwrap();
     assert!(index.diagnostics.is_empty(), "a real fixture tiles, so nothing is reported");
-    index.diagnostics.push(FileDiagnostic {
-        severity: Severity::Warning,
-        kind: DiagnosticKind::CacheMtimeChanged,
-    });
+    index
+        .diagnostics
+        .push(Diagnostic { severity: Severity::Warning, kind: DiagnosticKind::CacheMtimeChanged });
     pgdump_query::cache::save(&cache_path, &source, &index).await.unwrap();
 
     let loaded = CacheMode::Enabled(cache_path).load(&source).await.unwrap().unwrap();

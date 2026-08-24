@@ -61,40 +61,53 @@ pub enum ColumnResolution {
 /// display (`pgdq info`) needs in one place, for every column, not just the
 /// unmapped ones.
 ///
-/// `severity` is [`crate::diagnostic::Severity`], the same scale
-/// [`crate::index::DumpIndex::diagnostics`] uses, so a caller draining both
-/// channels filters uniformly. The two are *not* one enum: `DumpIndex` is L1
-/// and [`ColumnResolution`] is an L2 conclusion about PostgreSQL type
-/// semantics, so an L1 variant carrying one would invert the layering — see
-/// `crate::diagnostic`'s module docs.
+/// **A note, not a diagnostic.** There is exactly one of these per column,
+/// always, and the ordinary case is a column that resolved cleanly — so this
+/// is a per-column record, not an exception report. The file-level exception
+/// channel is [`crate::diagnostic::Diagnostic`], and the two deliberately
+/// stay separate types: `DumpIndex` is L1 while [`ColumnResolution`] is an L2
+/// conclusion about PostgreSQL type semantics, so one enum spanning both
+/// would have L1 name an L2 type
+/// (`docs/design/roadmap-phase3-object-inventory.md`, "Diagnostics: a
+/// file-level channel on `DumpIndex`"). What they share is the
+/// [`Severity`] scale, so a caller reading both filters uniformly.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Diagnostic {
-    pub severity: Severity,
+pub struct ColumnNote {
     pub column: String,
     pub declared: Option<String>,
     pub resolution: ColumnResolution,
 }
 
-/// A column that resolved to a real Arrow type is `Info`; anything that fell
-/// back to `Utf8View` is a `Warning`, since the values come back unparsed and
-/// a caller may want to know which columns those were.
-fn severity_of(resolution: &ColumnResolution) -> Severity {
-    match resolution {
-        ColumnResolution::Mapped => Severity::Info,
-        _ => Severity::Warning,
+impl ColumnNote {
+    /// Where this column sits on the shared [`Severity`] scale: a column that
+    /// resolved to a real Arrow type is `Info`; anything that fell back to
+    /// `Utf8View` is a `Warning`, since its values come back unparsed and a
+    /// caller may want to know which columns those were.
+    ///
+    /// Derived rather than stored, for the reason
+    /// [`crate::preamble::DumpMetadata`] is a view over spans and
+    /// [`crate::index::DumpIndex::blocks`] is a filter rather than a field:
+    /// it is a pure function of `resolution`, and a stored copy could
+    /// disagree with it. A note whose severity is *not* derivable earns a
+    /// field when one exists.
+    pub fn severity(&self) -> Severity {
+        match self.resolution {
+            ColumnResolution::Mapped => Severity::Info,
+            _ => Severity::Warning,
+        }
     }
 }
 
 /// A table query's resolved schema: the Arrow schema a fully-typed decoder
 /// would eventually produce (see the module docs for why that's not yet what
-/// `RecordBatch`es actually carry), plus per-column diagnostics.
+/// `RecordBatch`es actually carry), plus one [`ColumnNote`] per column.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResolvedSchema {
     pub schema: SchemaRef,
     /// Positional, parallel to `schema.fields()`.
     pub columns: Vec<ColumnResolution>,
     /// Named, one entry per column, in the same order.
-    pub notes: Vec<Diagnostic>,
+    pub notes: Vec<ColumnNote>,
 }
 
 impl Default for ResolvedSchema {
@@ -184,8 +197,7 @@ pub fn resolve_columns(
         // Every Arrow field is nullable in Phase 2, regardless of a `NOT
         // NULL` in the DDL -- see "Nullability" in the phase doc.
         fields.push(Field::new(name, arrow_type, true));
-        notes.push(Diagnostic {
-            severity: severity_of(&resolution),
+        notes.push(ColumnNote {
             column: name.clone(),
             declared: declared.map(|(_, ty)| ty.clone()),
             resolution: resolution.clone(),
@@ -313,5 +325,39 @@ mod tests {
         let resolved_b =
             resolve_columns("public.t", &cols, Some(&meta), Some("b"), SchemaMode::Typed);
         assert_eq!(resolved_b.schema.field(0).data_type(), &arrow::datatypes::DataType::Int32);
+    }
+
+    /// A [`ColumnNote`]'s severity is derived from its resolution, never
+    /// stored — so it cannot drift out of agreement with the outcome it
+    /// describes, the same reason `DumpMetadata` is a view over spans.
+    #[test]
+    fn column_note_severity_follows_its_resolution() {
+        let note = |resolution| ColumnNote { column: "c".to_string(), declared: None, resolution };
+        assert_eq!(note(ColumnResolution::Mapped).severity(), Severity::Info);
+        for fell_back in [
+            ColumnResolution::UnknownType,
+            ColumnResolution::NotDeclared,
+            ColumnResolution::OpaqueBaseType,
+            ColumnResolution::EmptyEnum,
+        ] {
+            assert_eq!(note(fell_back.clone()).severity(), Severity::Warning, "{fell_back:?}");
+        }
+    }
+
+    /// The two channels share one scale, which is the whole point of keeping
+    /// them separate types: a caller can filter both by the same threshold
+    /// without knowing which produced what.
+    #[test]
+    fn both_channels_order_on_one_severity_scale() {
+        use crate::diagnostic::{Diagnostic, DiagnosticKind};
+
+        let file = Diagnostic::tiling_broken(vec![crate::map::TilingIssue::Empty { index: 0 }]);
+        let column = ColumnNote {
+            column: "c".to_string(),
+            declared: None,
+            resolution: ColumnResolution::UnknownType,
+        };
+        assert!(file.severity > column.severity());
+        assert!(matches!(file.kind, DiagnosticKind::TilingBroken { .. }));
     }
 }

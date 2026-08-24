@@ -381,15 +381,30 @@ seek-into-the-middle justification.
 ## Diagnostics: a file-level channel on `DumpIndex`
 
 **Decision.** `DumpIndex` grows `diagnostics: Vec<Diagnostic>`, marked
-`#[serde(skip)]` so it is **not persisted**. `Diagnostic` gains a severity and
-a kind, so Phase 2's per-column resolution outcomes, a cache-identity warning,
-the TOC-coverage figure, and an unrecognized span all speak one vocabulary.
+`#[serde(skip)]` so it is **not persisted**. A cache-identity warning, a
+tiling failure, the TOC-coverage figure and an unrecognized span all report
+there, as a `{severity, kind}` pair.
 
-Phase 2's `Diagnostic` hangs off `ResolvedSchema` as a per-column outcome; a
-cache mtime mismatch has no column and no schema to attach to, and the library
-cannot `eprintln!` — it is destined to sit inside DataFusion. Not persisting
-the list matters: a cached diagnostic would replay a warning about a check that
-*this* run performed successfully. Recomputing on load is cheap and correct.
+Phase 2's per-column outcome hangs off `ResolvedSchema` instead; a cache mtime
+mismatch has no column and no schema to attach to, and the library cannot
+`eprintln!` — it is destined to sit inside DataFusion. Not persisting the list
+matters: a cached diagnostic would replay a warning about a check that *this*
+run performed successfully. Recomputing on load is cheap and correct.
+
+**One severity scale, two types — not one enum.** This originally read "…so
+Phase 2's per-column resolution outcomes … all speak one vocabulary", meaning
+a single type. That cannot be built: `DumpIndex` is L1 and
+`resolve::ColumnResolution` is an L2 conclusion about PostgreSQL type
+semantics, so a `DiagnosticKind` variant carrying one would have L1 name an L2
+type — [`layering.md`](layering.md) rule 1, and against L1's premise that it
+parses a declared type as an opaque string and never interprets it. What is
+genuinely shared is the `Severity` scale and the shape, so that is what is
+shared: `Diagnostic` is the file-level channel in L1, and `ColumnNote` is the
+per-column record in L2 (one per column, always present — a record, not an
+exception report), reporting its severity through the same scale. Unifying at
+the *drain* point stays open: the Phase 6 caller-supplied sink below can take
+both. Reasoning:
+[`../status/history/2026-08-24.md`](../status/history/2026-08-24.md).
 
 Returning diagnostics alongside every result was rejected as changing every
 public signature for something most callers ignore. A caller-supplied sink (the

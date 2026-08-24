@@ -141,16 +141,7 @@ Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
 
-- **Slice 3.2.2's `Diagnostic` unification is one *vocabulary*, not one
-  enum.** The phase spec says `Diagnostic` should gain a severity and a kind
-  so the per-column resolution outcomes, the cache-identity warning, the
-  TOC-coverage figure and an unrecognized span all speak one language. Taken
-  literally that is a layering violation: `DumpIndex` is L1 and
-  `resolve::ColumnResolution` is an L2 conclusion about PostgreSQL type
-  semantics, so an L1 `DiagnosticKind` variant carrying one would have L1
-  name an L2 type. What landed instead: `Severity` and the `{severity, kind}`
-  shape live in L1 (`diagnostic.rs`) and `resolve::Diagnostic` keeps its
-  structured payload at L2 while carrying the same `Severity`. Reconsidering
-  would mean either moving `ColumnResolution` down to L1 (against L1's "never
-  interprets a declared type" premise) or amending the spec sentence. See
-  [`roadmap-phase3.2.2-span-text-diagnostics-notes.md`](../design/roadmap-phase3.2.2-span-text-diagnostics-notes.md).
+*(Empty. Slice 3.2.2's `Diagnostic` unification — one severity scale and two
+types rather than one enum — has been reviewed and settled into
+[`roadmap-phase3-object-inventory.md`](../design/roadmap-phase3-object-inventory.md)'s
+"Diagnostics: a file-level channel on `DumpIndex`".)*

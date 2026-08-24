@@ -16,7 +16,7 @@ pub mod stream;
 
 pub use batch::{BatchOptions, ScanExtent, read_table, render_field};
 pub use copy::CopyHeader;
-pub use diagnostic::{Diagnostic as FileDiagnostic, DiagnosticKind, Severity};
+pub use diagnostic::{Diagnostic, DiagnosticKind, Severity};
 pub use error::Error;
 pub use index::{CopyBlock, DumpIndex, RowGroupStats, SparseRowIndex, build_index, preamble_only};
 pub use io::{ByteRangeSource, LocalFileSource};
@@ -28,7 +28,7 @@ pub use preamble::{
     DatabaseMetadata, DumpMetadata, Extension, TypeDef, TypeKind, dump_metadata_from_spans,
 };
 pub use predicate::{Predicate, PredicateOp};
-pub use resolve::{ColumnResolution, Diagnostic, ResolvedSchema, SchemaMode, resolve_columns};
+pub use resolve::{ColumnNote, ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 pub use scan::{CopyEnd, CopyScanner, CopyStart, Event, Line, Row, ScanOptions, scan};
 pub use stream::{BlockingTableIter, ResumeToken, TableStream, table_stream};
 

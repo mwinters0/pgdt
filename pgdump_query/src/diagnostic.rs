@@ -19,20 +19,21 @@
 //!
 //! ## Why [`Severity`] is here but the per-column outcome is not
 //!
-//! The phase doc asks for one vocabulary across Phase 2's per-column
-//! resolution outcomes, the cache-identity warning, the TOC-coverage figure
-//! and an unrecognized span. What it did not account for is
-//! [`layering.md`](../../docs/design/layering.md): `DumpIndex` is **L1**, and
-//! `crate::resolve::ColumnResolution` is an **L2** conclusion about
-//! PostgreSQL type semantics — a `DiagnosticKind` variant carrying one would
-//! make L1 name an L2 type, which rule 1 forbids and which L1's whole
-//! "parses a declared type as an opaque string and never interprets it"
-//! premise rules out.
+//! The shared vocabulary across this project's diagnostic producers is
+//! [`Severity`] and the `{severity, kind}` shape — **not** a single enum.
+//! `DumpIndex` is **L1**, and `crate::resolve::ColumnResolution` is an **L2**
+//! conclusion about PostgreSQL type semantics, so a [`DiagnosticKind`]
+//! variant carrying one would make L1 name an L2 type: rule 1 in
+//! `docs/design/layering.md`, and against L1's whole "parses a declared type
+//! as an opaque string and never interprets it" premise.
 //!
-//! So the shared vocabulary is [`Severity`] and the `{severity, kind}` shape,
-//! not a single enum: L1 owns this file-level channel, and
-//! `crate::resolve::Diagnostic` keeps its structured per-column payload at L2
-//! while carrying the same `Severity`. A caller draining both sees one scale.
+//! So L1 owns this file-level channel, and `crate::resolve::ColumnNote` is
+//! the per-column record at L2 — one per column, always present, reporting
+//! its position on this same scale through `ColumnNote::severity`. A caller
+//! reading both filters uniformly. Unifying at the *drain* point stays open:
+//! the Phase 6 caller-supplied sink can take both
+//! (`docs/design/roadmap-phase3-object-inventory.md`, "Diagnostics: a
+//! file-level channel on `DumpIndex`").
 
 use crate::map::TilingIssue;
 
