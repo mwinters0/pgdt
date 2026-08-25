@@ -34,11 +34,13 @@
 //! both
 //! (`docs/design/architecture.md`, "Diagnostics: one severity scale, two types").
 
+use serde::Serialize;
+
 use crate::map::TilingIssue;
 
 /// How much a diagnostic matters. One scale for every producer, so a caller
 /// draining several channels can filter uniformly.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub enum Severity {
     /// Worth reporting, nothing is wrong (a fully-mapped column, a
     /// TOC-coverage figure).
@@ -52,7 +54,7 @@ pub enum Severity {
 }
 
 /// What a [`Diagnostic`] is about.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum DiagnosticKind {
     /// The map does not tile its file: a gap, an overlap, an empty span, or
     /// a span list that doesn't reach the scanned end. Always a bug in
@@ -85,7 +87,7 @@ pub enum DiagnosticKind {
 
 /// One thing worth telling the caller about a file, with no `Result` to carry
 /// it — see the module docs.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Diagnostic {
     pub severity: Severity,
     pub kind: DiagnosticKind,

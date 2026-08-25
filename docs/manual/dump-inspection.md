@@ -121,6 +121,25 @@ table's data. Roles, tablespaces, the object-kind summary and the table
 listing are all unavailable in this mode — they require having scanned the
 rest of the file, which is exactly what `--preamble-only` skips.
 
+## Scripting against the output: `--json`
+
+Every mode above (the default listing, `--map`, `--preamble-only`, and
+cache-only) also takes `--json`, which prints the same information as one
+JSON object on stdout instead of formatted text:
+
+```sh
+pgdq info --source mydump.sql --json | jq '.spans | length'
+```
+
+**This is a raw dump of pgdq's internal representation, not a designed API.**
+There's no schema, no compatibility promise across versions, and no attempt
+to make the shape convenient — field names, nesting, and what's included can
+all change as the underlying code does. Reach for it when you need something
+the text views above don't show (or don't show in a shape you can parse),
+and expect to adjust your `jq`/script when you upgrade pgdq. `--json` can't
+be combined with `--verbose` or `--map`, since the full structure already
+contains everything either would add.
+
 ## Inspecting a cache with the dump gone: no `--source`
 
 `pgdq info` can answer entirely from a saved `.dqcache` file, with no dump

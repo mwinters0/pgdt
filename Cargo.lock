@@ -971,6 +971,8 @@ dependencies = [
  "arrow",
  "clap",
  "pgdump_query",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 

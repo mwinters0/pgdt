@@ -465,7 +465,7 @@ pub enum SpanBody {
 }
 
 /// What [`check_tiling`] found wrong, if anything.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum TilingIssue {
     /// `spans[i]` and `spans[i + 1]` overlap or leave a gap between them.
     Discontinuity { after_index: usize, span_end: u64, next_start: u64 },

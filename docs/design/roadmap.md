@@ -371,6 +371,7 @@ dated history entry it points at.
 | # | Date | Change | Why |
 |---|---|---|---|
 | M3 | 2026-08-25 | Synthetic `INSERT`-run throughput measurement (`scripts/generate_insert_run_bench.py`) | [`../status/history/2026-08-25.md`](../status/history/2026-08-25.md) |
+| M4 | 2026-08-25 | `pgdq info --json` — raw `DumpIndex`/`DumpMetadata` export, no schema promise | [`../status/history/2026-08-25.md`](../status/history/2026-08-25.md) |
 
 **M3's result is not itself out-of-band work.** The measurement fit one
 session and changed no decision, which is what admitted it here; the number it

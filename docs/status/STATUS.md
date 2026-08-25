@@ -20,7 +20,7 @@ per-phase checklist here any more. How the system works is
 | Full byte-exact file map — every byte in exactly one span, verified over every fixture | working |
 | DDL object inventory: TOC enrichment, referenced roles and tablespaces, object census | working |
 | Best-effort structural cache (v9) with source-identity checking and cache-only inspection | working |
-| CLI `pgdq parse` / `info` / `query`, including `--map` and cache-only `info` | working, output shape provisional |
+| CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, and cache-only `info` | working, text output shape provisional; `--json` carries no shape promise at all |
 | Arrays, composites, ranges, multiranges | resolve as strings — decoder is Phase 4 |
 | Predicate and projection pushdown; per-row-group statistics | not started — Phase 5 |
 | `object_store` I/O, Python bindings, DataFusion `TableProvider` | not started — Phase 6 |
@@ -39,8 +39,11 @@ into `architecture.md` and `measurements.md` and removed).
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; the resulting changes land as
   out-of-band items.
-- **A like-for-like koji throughput re-measurement** — the HDD is still
-  contended. Command and current (unusable) figure:
+- **A like-for-like koji throughput re-measurement** — launched 2026-08-25
+  now that the HDD is uncontended (the earlier restore that confounded the
+  3.6 run has finished). Detached, per `CLAUDE.md`; see
+  `docs/status/history/2026-08-25.md` for the log path and what to check.
+  Command and prior (unusable) figure:
   [`../design/measurements.md`](../design/measurements.md). See "Decisions
   worth another look".
 
@@ -111,10 +114,9 @@ it has been looked at: settled into the design docs, or reversed.
   output being byte-for-byte identical to the pre-3.6 baseline (same 74
   blocks, same row counts, same every offset) plus the unchanged
   control-flow argument, rather than on a clean throughput number. A
-  maintainer who wants a like-for-like figure can re-run
-  `runs/koji-3.6-scan.log`'s command once the HDD is uncontended. The
-  maintainer has deferred the re-measurement — the HDD is still contended —
-  so this entry stays until that run happens.
+  like-for-like re-run was launched 2026-08-25 now that the HDD is
+  uncontended; see `docs/status/history/2026-08-25.md` for the log path.
+  This entry stays until that run's figure has been looked at.
 
 - **`CacheMode::load` does not fold `CacheStatus::Incomplete` into `None`,
   departing from the spec's "live mode still treats it like Absent (falls back

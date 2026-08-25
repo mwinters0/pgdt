@@ -992,6 +992,27 @@ that matches every `SpanBody`/`DataBlock` variant for display, and a future
 `--filter-kind` should extend it rather than duplicate the match. `--map` and
 `--preamble-only` are mutually exclusive, rejected before any scan runs.
 
+**`pgdq info --json` dumps the internal struct, not a designed format.**
+`IndexJson`/`MetadataJson` (`pgdump_query-cli/src/main.rs`) flatten
+`DumpIndex` (or, with `--preamble-only`, `DumpMetadata`) and add back
+`diagnostics` — the one field `#[serde(skip)]` drops for the cache's own
+reasons (above, "`diagnostics: Vec<Diagnostic>` is `#[serde(skip)]`"), which
+don't apply to a one-shot export. This is deliberately **not** a second
+output shape to maintain: it carries zero compatibility promise, so renaming
+or restructuring a field on `DumpIndex` for internal reasons is free to
+change its JSON along with it, same as any other refactor. It exists so an
+alpha user can get everything the human-readable listing shows (and more —
+the raw span/TOC detail no text view surfaces) without pgdq committing to a
+CLI flag for their specific need before enough of those needs have converged
+(`docs/design/roadmap.md`, out-of-band ledger M4). `--json` is incompatible
+with `--verbose`/`--map`: both only add formatting detail to the text view,
+all of which the full struct already carries.
+
+*Rejected:* a hand-shaped JSON schema (renamed/pruned fields, a stable
+top-level contract). That is exactly the CLI-output work this project is
+deferring pending real trials — the text output above carries the same
+"provisional" label for the same reason.
+
 **`query`'s text output is byte-identical whether typing is on or off**: every
 value is rendered back to the PostgreSQL text `pg_dump` itself wrote. The point
 is that the two `--schema-mode`s stay comparable, which is exactly what you want

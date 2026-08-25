@@ -85,6 +85,16 @@ enum Command {
         /// `--preamble-only`.
         #[arg(long)]
         map: bool,
+        /// Print the internal index as JSON instead of the human-readable
+        /// listing: the whole `DumpIndex` plus diagnostics, or, with
+        /// `--preamble-only`, just the metadata plus diagnostics. No schema
+        /// stability is promised — this is a raw dump of our internal
+        /// representation, not a supported interchange format
+        /// (`docs/design/architecture.md`, "CLI surface"). Incompatible with
+        /// `--verbose`/`--map`, which format detail this already carries in
+        /// full.
+        #[arg(long)]
+        json: bool,
     },
     /// Stream a table's rows, optionally filtered by a single-column predicate.
     Query {
@@ -203,24 +213,34 @@ async fn main() -> Result<()> {
             verbose,
             preamble_only: preamble_only_flag,
             map,
+            json,
         } => {
             if preamble_only_flag && map {
                 anyhow::bail!("--preamble-only and --map cannot be combined");
+            }
+            if json && (verbose || map) {
+                anyhow::bail!(
+                    "--json already carries everything --verbose/--map would add — combine it with --preamble-only instead, or drop --json"
+                );
             }
             let Some(file) = file else {
                 // Cache-only mode (`docs/design/architecture.md`,
                 // "The cache"): no live dump file at all, so
                 // clap already required `--dqcache` for us.
                 let path = dqcache.expect("clap requires --dqcache when --source is omitted");
-                return info_offline(&path, verbose, preamble_only_flag, map).await;
+                return info_offline(&path, verbose, preamble_only_flag, map, json).await;
             };
             let mode = CacheMode::resolve(&file, dqcache.as_deref());
             let source = LocalFileSource::open(&file)?;
             if preamble_only_flag {
                 let (metadata, diagnostics) =
                     preamble_only(&source, &ScanOptions::default(), &mode).await?;
-                print_metadata(&metadata);
-                print_diagnostics(&diagnostics);
+                if json {
+                    print_metadata_json(&metadata, &diagnostics);
+                } else {
+                    print_metadata(&metadata);
+                    print_diagnostics(&diagnostics);
+                }
                 return Ok(());
             }
             // A loaded cache is trusted for the full-file listing only once
@@ -244,7 +264,11 @@ async fn main() -> Result<()> {
                     index
                 }
             };
-            print_index(&index, verbose, map);
+            if json {
+                print_index_json(&index);
+            } else {
+                print_index(&index, verbose, map);
+            }
         }
         Command::Query { source: file, table, dqcache, filter, database, schema_mode } => {
             let mode = CacheMode::resolve(&file, dqcache.as_deref());
@@ -299,6 +323,7 @@ async fn info_offline(
     verbose: bool,
     preamble_only_flag: bool,
     map: bool,
+    json: bool,
 ) -> Result<()> {
     let mode = CacheMode::Offline(path.to_path_buf());
     let index = match mode.load_offline().await? {
@@ -324,8 +349,15 @@ async fn info_offline(
         CacheStatus::Valid { index, .. } => index,
     };
     if preamble_only_flag {
-        print_metadata(&index.metadata.clone().unwrap_or_default());
-        print_diagnostics(&index.diagnostics);
+        let metadata = index.metadata.clone().unwrap_or_default();
+        if json {
+            print_metadata_json(&metadata, &index.diagnostics);
+        } else {
+            print_metadata(&metadata);
+            print_diagnostics(&index.diagnostics);
+        }
+    } else if json {
+        print_index_json(&index);
     } else {
         print_index(&index, verbose, map);
     }
@@ -381,6 +413,41 @@ fn print_metadata(metadata: &DumpMetadata) {
         println!("{indent}extensions: {}", db.extensions.len());
         println!("{indent}user-defined types: {}", db.types.len());
     }
+}
+
+/// `--json`'s full-scan shape: the whole [`DumpIndex`] flattened to one
+/// object, with diagnostics added back in — `DumpIndex::diagnostics` is
+/// `#[serde(skip)]` for the cache's own reasons (`docs/design/architecture.md`,
+/// "The cache"), which don't apply here, so this wrapper is the convenient
+/// way to get them back without touching that skip. No schema stability is
+/// promised for any of this — see the `--json` flag's help text.
+#[derive(serde::Serialize)]
+struct IndexJson<'a> {
+    #[serde(flatten)]
+    index: &'a DumpIndex,
+    diagnostics: &'a [Diagnostic],
+}
+
+/// `--json --preamble-only`'s shape: just the metadata plus diagnostics,
+/// matching what the human-readable preamble-only path prints.
+#[derive(serde::Serialize)]
+struct MetadataJson<'a> {
+    #[serde(flatten)]
+    metadata: &'a DumpMetadata,
+    diagnostics: &'a [Diagnostic],
+}
+
+fn print_index_json(index: &DumpIndex) {
+    let wrapped = IndexJson { index, diagnostics: &index.diagnostics };
+    println!("{}", serde_json::to_string_pretty(&wrapped).expect("DumpIndex is always valid JSON"));
+}
+
+fn print_metadata_json(metadata: &DumpMetadata, diagnostics: &[Diagnostic]) {
+    let wrapped = MetadataJson { metadata, diagnostics };
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&wrapped).expect("DumpMetadata is always valid JSON")
+    );
 }
 
 fn print_index(index: &DumpIndex, verbose: bool, map: bool) {
