@@ -32,7 +32,7 @@ scan ordering has to either keep coverage prefix-shaped or rework `splice`'s
 seam rule, and that should be a decision, not a discovery.
 
 **Origin.** Slice 3.2.1.2.1, 2026-08-24. See
-[`roadmap-phase3.2.1.2.1-mapping-streaming-split-notes.md`](roadmap-phase3.2.1.2.1-mapping-streaming-split-notes.md),
+[`roadmap-phase3-object-inventory-notes.md`](roadmap-phase3-object-inventory-notes.md),
 "What the next slice inherits".
 
 ---
@@ -79,4 +79,35 @@ is a shape worth deciding whether to care about rather than assuming away.
 Phase 7's "Measurement discipline" section is the right place to settle it.
 
 **Origin.** Slice 3.2.2, 2026-08-24. See
-[`roadmap-phase3.2.2-span-text-diagnostics-notes.md`](roadmap-phase3.2.2-span-text-diagnostics-notes.md).
+[`roadmap-phase3-object-inventory-notes.md`](roadmap-phase3-object-inventory-notes.md).
+
+---
+
+## An `INSERT`-run scan is CPU-bound at ~5× a `COPY` scan's per-byte cost
+
+**Fact.** Three 3.00 GiB synthetic dumps, same disk, same session, three runs
+each (`pgdq info --dqcache none`, 512MB-limited container): a `COPY` block
+scans in 2.55–3.27 s, a large-object region in 3.61–4.99 s, an `INSERT` run in
+14.55–14.79 s, against a 3.67–3.85 s `cat`-to-`/dev/null` floor for the same
+files. The first two are at the I/O floor; the `INSERT` scan is four times
+above it, ~11 s of CPU per 3 GiB. The cause is structural, not incidental:
+slice 3.6 gave the large-object region a `crate::scan`-level fast path (lines
+skipped unread) but left `INSERT` runs decoding every line into `Event::Line`
+and pushing it through `preamble::statement_complete`, folding only the
+*spans* into one.
+
+**Why Phase 7 cares.** This is a second scanner-level fast path — the same
+mechanism `State::InLargeObjectRegion` already is — and Phase 7 owns scan
+performance and the "two workloads, two algorithms" split. It is also the one
+place where this project's cost claim is currently false in the direction that
+matters: `--inserts` output is a shape the fixture tooling generates routinely,
+and a koji-scale `--inserts` dump maps in ~75 minutes against the ~15 the
+`COPY` rate implies. The design constraint to carry in: an `INSERT` run's end
+has no invariant behind it the way `COPY`'s `\.` (I7) and `BLOBS`' `COMMIT;`
+(I12) do, so a skip-and-count path needs the string-aware `'`-tracking scan
+[`roadmap-phase3-object-inventory.md`](roadmap-phase3-object-inventory.md)
+("The three regions do not share an end marker") specifies — which Phase 8
+Track A's row reader needs anyway.
+
+**Origin.** Out-of-band item M3, 2026-08-25. Measurement and full numbers:
+[`../status/history/2026-08-25.md`](../status/history/2026-08-25.md).

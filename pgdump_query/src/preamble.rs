@@ -13,7 +13,7 @@
 //! (`docs/design/roadmap-phase3-object-inventory.md`, "The span is the
 //! container"). Before Phase 3.2.1.1 this module drove its own line-by-line
 //! state machine (`PreambleBuilder`) in parallel with the span builder; see
-//! `docs/design/roadmap-phase3.2.1-span-wiring-notes.md` for why the two
+//! `docs/design/roadmap-phase3-object-inventory-notes.md` for why the two
 //! were unified.
 //!
 //! **Store what the dump said, never what we concluded.** Declared types are
@@ -752,7 +752,7 @@ fn finalize(mut db: DatabaseMetadata) -> DatabaseMetadata {
 /// [`crate::map::SpanBody::Connect`], version-header staging across that
 /// boundary on [`crate::map::SpanBody::VersionHeader`], and `--binary-upgrade`
 /// enum-label folding on [`crate::map::SpanBody::AlterTypeAddValue`] — see
-/// `docs/design/roadmap-phase3.2.1-span-wiring-notes.md` for why those three
+/// `docs/design/roadmap-phase3-object-inventory-notes.md` for why those three
 /// span kinds needed to exist before this could be written.
 ///
 /// `spans` must come from a scan that stops at one of two safe boundaries:

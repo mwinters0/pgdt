@@ -94,7 +94,7 @@ async fn build_index_spans_match_build_map_exactly() {
 /// version-header staging across that boundary, and `--binary-upgrade` enum
 /// label folding included. This is the equivalence this slice's cutover
 /// (removing the separate `PreambleBuilder` pass from `build_index`) rests
-/// on; see `docs/design/roadmap-phase3.2.1-span-wiring-notes.md`.
+/// on; see `docs/design/roadmap-phase3-object-inventory-notes.md`.
 #[tokio::test]
 async fn metadata_from_spans_matches_preamble_builder_exactly() {
     for path in all_fixtures().into_iter().chain(std::iter::once(edge_cases())) {

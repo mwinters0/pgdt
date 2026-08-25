@@ -81,7 +81,7 @@
 //!   `INSERT`-run throughput specifically (see "Verification" in
 //!   `roadmap-phase3-object-inventory.md`). Neither kind carries the inner
 //!   offsets `DataBlock::Copy` does — nothing reads their rows yet
-//!   (Phase 8, unscheduled). Notes: `docs/design/roadmap-phase3.6-bulk-region-fast-path-notes.md`.
+//!   (Phase 8, unscheduled). Notes: `docs/design/roadmap-phase3-object-inventory-notes.md`.
 //! - **Wiring into `DumpIndex`/`crate::cache`/`crate::stream` — landed in
 //!   Phase 3.2.1 through 3.2.1.2.1.** [`Builder`] (this module's
 //!   boundary/classification state machine) is driven directly by
@@ -1862,7 +1862,7 @@ mod tests {
         assert_eq!(spans[0].end, spans[1].start);
     }
 
-    /// I9's two-line version-header block (`docs/design/roadmap-phase3.2.1-span-wiring-notes.md`,
+    /// I9's two-line version-header block (`docs/design/roadmap-phase3-object-inventory-notes.md`,
     /// Phase 3.2.1.1) gets its own span kind rather than generic `Framing`,
     /// so `crate::preamble::dump_metadata_from_spans` can recover the
     /// strings without re-reading the file.

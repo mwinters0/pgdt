@@ -183,9 +183,10 @@ statistics under Phase 5 below — all three were reserved together in Phase 1
 precisely so populating one is not a format break. The reserved `DumpMetadata`
 type is a placeholder; its real shape is this phase's design work.
 
-## Phase 3 — Full DDL object inventory (current)
+## Phase 3 — Full DDL object inventory (complete)
 
-Specified in `docs/design/roadmap-phase3-object-inventory.md`; the sketch
+Specified in `docs/design/roadmap-phase3-object-inventory.md`; implementation
+notes: `docs/design/roadmap-phase3-object-inventory-notes.md`. The sketch
 below is the origin of that spec and is kept for the reasoning it carries.
 Where the two disagree, the phase doc wins.
 
@@ -571,7 +572,14 @@ dated history entry it points at.
 
 | # | Date | Change | Why |
 |---|---|---|---|
-| M3 | — | Synthetic `INSERT`-run throughput measurement | not yet landed |
+| M3 | 2026-08-25 | Synthetic `INSERT`-run throughput measurement (`scripts/generate_insert_run_bench.py`) | [`../status/history/2026-08-25.md`](../status/history/2026-08-25.md) |
+
+**M3's result is not itself out-of-band work.** The measurement fit one
+session and changed no decision, which is what admitted it here; the number it
+produced — an `INSERT`-run scan costs ~5× a `COPY` scan per byte, CPU-bound —
+argues for a scanner-level `INSERT` path, which *does* change a decision. That
+goes through grilling → spec amendment → a numbered slice, and is filed in
+`roadmap-phase7-inbox.md` until then.
 
 **M1** (`pgdq info` rejects a cache that doesn't cover the whole file) and
 **M2** (`pgdq info` prints `DumpIndex::diagnostics`) were queued here but

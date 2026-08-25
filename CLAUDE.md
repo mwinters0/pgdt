@@ -94,11 +94,15 @@ architecture — read it before making architectural changes, rather than
 inferring intent from code alone; its companion
 `docs/design/roadmap-phase1-mvp-notes.md` records how that phase landed in code
 (module map, and the implementation facts later phases inherit).
-`docs/design/roadmap-phase3-object-inventory.md` is the current phase's spec —
-the full file map, its tiling invariant, and the DDL object inventory. **Read
-it before touching `DumpIndex`, the cache format, the preamble grammar, or
-anything that adds a span kind**; its "Standing rule: coverage increases
-monotonically" outlives the phase.
+`docs/design/roadmap-phase3-object-inventory.md` is the spec for the full file
+map, its tiling invariant, and the DDL object inventory. **Read it before
+touching `DumpIndex`, the cache format, the preamble grammar, or anything that
+adds a span kind**; its "Standing rule: coverage increases monotonically"
+outlives the phase. Its companion
+`docs/design/roadmap-phase3-object-inventory-notes.md` records how that phase
+landed — the span model, the mapping/streaming split, and the facts later
+phases inherit — and is the faster read when the question is *how it works*
+rather than *what was decided*.
 `docs/design/roadmap-phase7-scan-performance.md` is the performance design for
 the local-file read path — read it before touching the batch layer or the cache
 format, which it constrains ahead of its own phase.
