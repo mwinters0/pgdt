@@ -652,7 +652,7 @@ almost every column in a real 75-table schema.
 | `inet`, `cidr`, `macaddr`, `macaddr8` | `Utf8View` | |
 | enum (`CREATE TYPE … AS ENUM`) | `Dictionary(Int32, Utf8)` | Only when the label set is non-empty |
 | domain (`CREATE DOMAIN`) | base type's mapping | Resolved transitively |
-| array, composite, range, multirange | `Utf8View` | Deferred — they share one nested-quoting decoder |
+| array, composite, range, multirange | `Utf8View` | Deferred — `roadmap-phase4-composite-decoding.md`. They do **not** share a quoting rule (I20); one parameterized scanner covers all three forms |
 
 Microsecond precision throughout, because that is PostgreSQL's storage
 resolution. **Every Arrow field is nullable**, regardless of a `NOT NULL` in
@@ -688,11 +688,12 @@ distinction yet. Whoever writes the range decoder will need the *subtype*, held
 in `TypeDef::Range::subtype` for a user-defined range and **absent entirely**
 for a built-in one (PostgreSQL encodes it in the catalog, not in DDL text).
 
-**Array dimensionality is not in the catalog.** `integer[][]` in DDL comes back
-from `pg_dump` as plain `integer[]`, identical to a one-dimensional column —
-PostgreSQL arrays carry no fixed dimensionality in the type system. An array
-decoder must infer nesting from the literal's own brace structure
-(`{{1,2},{3,4}}`), not from the declared type.
+**Array dimensionality is not in the catalog** (I21). `integer[][]` and
+`integer[3]` both come back from `pg_dump` as plain `integer[]`, identical to a
+one-dimensional column — PostgreSQL arrays carry no fixed dimensionality in the
+type system, and one column may hold values of differing dimensionality and
+lower bound. An array decoder must infer nesting from the literal's own brace
+structure (`{{1,2},{3,4}}`), not from the declared type.
 
 ### Joining a header against the metadata
 

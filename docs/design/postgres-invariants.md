@@ -1000,3 +1000,123 @@ grep -n '"SET default_tablespace = %s"\|default_tablespace = ..' src/bin/pg_dump
 Confirm the four literal shapes and their separators are unchanged.
 
 ---
+
+## I20 — The three nested literal forms use two different escape conventions, not one
+
+**Claim.** Inside a `COPY` field, the container literals `pg_dump` can emit for
+a non-scalar value quote and escape their parts by three closely related but
+**non-identical** rules. Specifically:
+
+| Form | Wrapper | Separator | Quote when a part… | Inside a quoted part |
+|---|---|---|---|---|
+| array (`array_out`) | `{`…`}` | the element type's `typdelim`, `,` for every type except `box` | is empty, is `NULL` case-insensitively, or contains `"` `\` `{` `}` the delimiter, or whitespace | `"` → `\"`, `\` → `\\` (**backslash**) |
+| composite (`record_out`) | `(`…`)` | `,` | is empty, or contains `"` `\` `(` `)` `,` or whitespace | `"` → `""`, `\` → `\\` (**doubling**) |
+| range bound (`range_bound_escape`) | `[`/`(` … `]`/`)` | `,` | is empty, or contains `"` `\` `(` `)` `[` `]` `,` or whitespace | `"` → `""`, `\` → `\\` (**doubling**) |
+
+Three further asymmetries follow from the same functions:
+
+- **An array distinguishes a NULL element from the string `NULL` by quoting
+  alone** — a SQL NULL element is emitted as bare `NULL`, and a element whose
+  text is `NULL` is force-quoted to `"NULL"`. A composite instead spells a NULL
+  field as *nothing at all* between its separators, and force-quotes an empty
+  string to `""`. A range bound cannot be NULL; an absent bound is likewise
+  nothing at all, and `""` is an empty-string bound.
+- **`array_out` prefixes the literal with `[lb:ub]`… `=` for every dimension
+  whenever any dimension's lower bound is not 1**, and returns the bare `{}`
+  for any array with zero elements regardless of its dimensionality.
+- **A multirange (`multirange_out`) does not quote or escape its member ranges
+  at all** — it concatenates each `range_out` result inside `{`…`}`, separated
+  by `,`. The member's own bracket characters are what make it re-parseable.
+
+All of this sits *inside* the COPY TEXT field escaping of I15, which is undone
+first: `copy::decode_field` returns the literal exactly as the `*_out` function
+produced it.
+
+**Proof.** `array_out()` in `src/backend/utils/adt/arrayfuncs.c` — the
+`needquote` computation (empty string, `pg_strcasecmp(values[i], "NULL")`, then
+the per-character scan for `"`/`\`/`{`/`}`/`typdelim`/`array_isspace`), the
+`needdims` loop over `AARR_LBOUND`, and the emit loop that writes `*p++ = '\\'`
+before a `"` or `\`. `record_out()` in `rowtypes.c` — the `nq` scan over
+`"`/`\`/`(`/`)`/`,`/`isspace`, and its emit loop, which appends the character
+*itself* before re-appending it. `range_bound_escape()` in `rangetypes.c` — the
+same doubling emit loop, over a scan that adds `[` and `]`.
+`multirange_out()` in `multirangetypes.c` appends `OutputFunctionCall` results
+with no escaping step between them.
+
+**Scope limit.** These are the *output* functions, so the invariant is about
+what a dump contains, not about what the corresponding `*_in` functions accept
+(they are considerably more permissive — `array_in` accepts unquoted whitespace
+padding, for instance). A reader must handle what is emitted; a *renderer* that
+claims to reproduce a dump byte-for-byte must reproduce the `needquote`
+predicates exactly, including the `NULL` case-fold and the whitespace test.
+
+**Verified against:** v13.23, v16.15, v18.6 — the `needquote`/`nq` predicates
+and both emit loops are character-for-character identical across all three.
+
+**Relied on by:** `roadmap-phase4-composite-decoding.md` — the nested decoder's
+parameterization, and the exactness requirement on render-back.
+
+**Re-verify:**
+
+```sh
+grep -n 'force quotes for literal NULL' -B12 -A30 src/backend/utils/adt/arrayfuncs.c
+grep -n 'sprintf(ptr, "\[%d:%d\]"' -B12 src/backend/utils/adt/arrayfuncs.c
+grep -n 'Detect whether we need double quotes' -A30 src/backend/utils/adt/rowtypes.c
+grep -n 'range_bound_escape' -A35 src/backend/utils/adt/rangetypes.c
+grep -n 'multirange_out' -A30 src/backend/utils/adt/multirangetypes.c
+```
+
+Confirm array still backslash-escapes while composite and range bound still
+double, and that the quote-forcing character sets are unchanged.
+
+---
+
+## I21 — An array's dimensionality and lower bounds are per *value*, and appear nowhere in the DDL
+
+**Claim.** `pg_dump` writes an array column's declared type with exactly one
+trailing `[]` however it was declared — `integer[][]` and `integer[3]` both
+come back as `integer[]` — because PostgreSQL's type system does not record
+dimensionality. The number of dimensions and the lower bound of each are
+properties of the individual stored value, and **two rows of the same column
+may legitimately disagree about both**.
+
+**Proof.** `doc/src/sgml/array.sgml:62` — "The current implementation does not
+enforce the declared number of dimensions either." `pg_dump` writes a column's
+type with `format_type(atttypid, atttypmod)`, which reconstructs an array as
+the element type plus a single `[]`: columns declared `int[][]`, `int[3]` and
+`int[]` all print `integer[]`, and the `attndims` that did record the
+declaration (2, 1, 1 respectively) is discarded. Observed directly: a single
+`int[]` column accepts `{1,2}`, `{{1,2},{3,4}}` and `[0:2]={7,8,9}` in three
+consecutive rows, and `COPY … TO STDOUT` emits each one back in the shape it
+was stored (see the re-verify script below).
+
+**Scope limit.** A domain over an array (`CREATE DOMAIN d AS int[]`) can carry a
+`CHECK` constraint that pins dimensionality, but the constraint text is not
+something type resolution interprets — the invariant holds for anything this
+project reads out of the declared type.
+
+**Verified against:** v16.15 (behaviour, live server); the `format_type`
+reconstruction is unchanged v13.23 through v18.6.
+
+**Relied on by:** `architecture.md` ("Type resolution", the array paragraph) and
+`roadmap-phase4-composite-decoding.md` — it is the reason an array column's
+Arrow type cannot be settled from the DDL alone.
+
+**Re-verify:**
+
+```sh
+grep -n 'does not enforce the declared' -A3 doc/src/sgml/array.sgml
+psql -X -q <<'SQL'
+create temp table i21 (v int[][]);
+insert into i21 values ('{1,2}'), ('{{1,2},{3,4}}'), ('[0:2]={7,8,9}');
+select format_type(atttypid, atttypmod), attndims from pg_attribute
+  where attrelid = 'i21'::regclass and attname = 'v';
+copy i21 to stdout;
+SQL
+```
+
+The declared type must print as `integer[]` (with `attndims` 2, showing the
+declaration was recorded and then discarded) and the three values must come
+back in three different shapes.
+
+---

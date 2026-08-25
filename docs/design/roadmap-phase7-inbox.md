@@ -111,3 +111,32 @@ Track A's row reader needs anyway.
 
 **Origin.** Out-of-band item M3, 2026-08-25. Measurement and full numbers:
 [`../status/history/2026-08-25.md`](../status/history/2026-08-25.md).
+
+---
+
+## Nested Arrow values are built by copying, and a large share of them are viewable
+
+**Fact.** Phase 4 builds every `List`/`Struct` value by copying, including the
+`List<Utf8View>` that an array of a string-ish element type resolves to. A good
+share of those elements could be views instead: `copy::decode_field` returns a
+borrow of the read chunk whenever the field carries no COPY escapes, and `"` is
+not in COPY TEXT's escape set (I15), so an ordinary quoted array literal
+(`{"a,b","c d"}`) arrives borrowed and each element's content is a contiguous
+sub-slice `append_view_unchecked` could point at. Only an element whose text
+contains `\` — which forces COPY escaping and makes the whole field owned — or
+one needing unescaping has to be copied.
+
+**Why Phase 7 cares.** It owns the zero-copy path and its three sharp edges
+(chunk retention in the deque, `StringViewBuilder` block-index invalidation on
+every flush, the straddling-field case), and widening that path into a
+*recursive* builder means honouring all three at every level of `List` and
+`Struct` nesting. Phase 4 deliberately declined to do that so a new family's
+correctness would not ride on the most delicate machinery in the codebase, and
+left its own array measurement as an honest copying baseline to improve on. The
+measurement to take first is that baseline against a viewing variant on the
+array-heavy stress section — the gap is what says whether the nesting
+complexity is worth it.
+
+**Origin.** Phase 4 grilling, 2026-08-25. Decision and its rationale:
+[`roadmap-phase4-composite-decoding.md`](roadmap-phase4-composite-decoding.md),
+"Nested elements copy".

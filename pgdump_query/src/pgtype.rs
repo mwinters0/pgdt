@@ -159,7 +159,7 @@ fn resolve_user_type(name: &str, types: &[TypeDef]) -> TypeOutcome {
 ///
 /// The array check runs first because a declared array type still carries
 /// its element type's own qualification (`public.mood[]` contains a `.` too)
-/// — I6: `pg_dump` never preserves dimensionality, so a single trailing
+/// — I21: `pg_dump` never preserves dimensionality, so a single trailing
 /// `[]` covers every array shape regardless of underlying dimensions.
 pub fn resolve_declared_type(declared: &str, types: &[TypeDef]) -> TypeOutcome {
     let declared = declared.trim();

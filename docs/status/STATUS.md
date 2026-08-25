@@ -30,12 +30,35 @@ per-phase checklist here any more. How the system works is
 Last updated: 2026-08-25 (keystone review: phase 1-3 specs and notes distilled
 into `architecture.md` and `measurements.md` and removed).
 
+## Phase 4 progress
+
+Specified in
+[`../design/roadmap-phase4-composite-decoding.md`](../design/roadmap-phase4-composite-decoding.md).
+Nothing has landed.
+
+- [ ] **4.1** The fixture value shapes the phase needs — lower-bound
+      decoration, a mixed-dimensionality column, array-of-composite and
+      composite-containing-array, a text-subtype range, array-of-enum,
+      `mybase[]`. Generator plus regenerated fixtures; no library code.
+- [ ] **4.2** The nested literal codec (`nested.rs`, L2): parameterized
+      quoted-token scanner plus array/record/range instantiations, decode and
+      render, round-tripped against 4.1's literals.
+- [ ] **4.3** `ColumnBuilder`'s `List`/`Struct` arms, unit-tested directly;
+      nothing resolves to them yet.
+- [ ] **4.4** Flip type resolution: recursive mapping, built-in range
+      subtypes, opaque-element refusal, new diagnostics, compact `info`
+      rendering, and the `type-handling.md` rewrite (what each family becomes,
+      the three ways one is still a string, the shape error and its remedies,
+      and that predicates still match literal text). Nested columns decode
+      end-to-end on the optimistic path.
+- [ ] **4.5** The shape census: cache v10, per-block per-column recording, the
+      whole-file completeness rule, and the manual's statement of the
+      optimistic and exact paths plus the planned representation knob.
+- [ ] **4.6** The array stress section in `generate_perf_data.py` and the
+      `measurements.md` ratio.
+
 ## Not started
 
-- **Phase 4's grilling and spec** — `docs/process.md`'s step 6. The roadmap is
-  re-grilled before Phase 4 is specified, since the object-inventory work
-  outdates guesses made before it. Phases 4-8 are sketched only to
-  corner-avoidance depth in `docs/design/roadmap.md`.
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; the resulting changes land as
   out-of-band items.
@@ -85,8 +108,7 @@ into `architecture.md` and `measurements.md` and removed).
   rate implies. Correctness is unaffected — the map, the tiling and the row counts
   are the same either way. Not scheduled: the fix is a scanner-level
   `INSERT` path, which changes a decision and so needs a slice, filed into
-  [`roadmap-phase7-inbox.md`](../design/roadmap-phase7-inbox.md) and flagged
-  below.
+  [`roadmap-phase7-inbox.md`](../design/roadmap-phase7-inbox.md).
 
 ## Decisions worth another look
 
@@ -113,31 +135,3 @@ it has been looked at: settled into the design docs, or reversed.
   that `table_stream`/`preamble_only` lose incremental cache reuse, or add a
   second entry point for them that bypasses the fold.
 
-- **The `INSERT`-run measurement contradicted what the map's cost argument
-  assumed, and the response needs a decision no unattended session could
-  make.** Three
-  3.00 GiB synthetic dumps, same disk, same session, three runs each: a
-  `COPY` block scans in ~2.6-3.3s, a large-object region in ~3.6-5.0s, an
-  `INSERT` run in **~14.6s**, against a ~3.7-3.9s `cat`-to-`/dev/null` floor
-  for the same files. The first two are at the I/O floor; the `INSERT` scan
-  is four times above it, ~11s of CPU per 3 GiB. So `Event::Line` decode plus
-  the statement accumulator *does* dominate, which is exactly what earns
-  `INSERT` runs a scanner-level fast path of their own. Building that path
-  changes a decision, so it is not out-of-band work and was not started; it
-  wants grilling and a slice number, with the maintainer looking at this number
-  first. Filed as a Phase 7 inbox entry (scan performance is where a second
-  scanner-level fast path gets decided) and as a known gap above. Figures and
-  re-run commands: [`../design/measurements.md`](../design/measurements.md);
-  evidence: [`history/2026-08-25.md`](history/2026-08-25.md).
-
-- **The once-recorded ~1.9GB/s large-object figure is page-cache-warm, not a
-  disk throughput.** Cold, the same 3GB bench measures ~560MB/s; warm again,
-  ~890MB/s — which is the `cat` floor for that file, i.e. the scan is
-  I/O-bound either way. 1.9GB/s is more than twice what this disk gives
-  `cat`, so it can only have been served from cache. The conclusion is
-  unaffected (the skip is still several times cheaper per byte than walking
-  the same bytes, and the `INSERT` figure above now measures what walking
-  costs), but the figure should be read as a ratio against a same-cache-state
-  number, never as throughput. Both figures and the floor are in
-  [`../design/measurements.md`](../design/measurements.md), which now states
-  the ratio rule for every figure it carries.

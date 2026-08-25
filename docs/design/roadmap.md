@@ -126,21 +126,13 @@ out of it. See
 
 ## Phase 4 — Composite value decoding
 
-Arrays, composite types, and ranges — the three type families type resolution
-deliberately leaves as `Utf8View`. They are grouped into one phase because they
-are one piece of work: each is a value rendered by COPY TEXT with **its own
-nested quoting rules, inside the field escaping `copy.rs` already decodes**
-(`{a,b,"c,d"}`, `(a,b,"c,d")`, `[a,b)`). Writing that nested decoder once
-unlocks all three; writing it three times is how it goes wrong.
+**Spec:** [`roadmap-phase4-composite-decoding.md`](roadmap-phase4-composite-decoding.md).
 
-Arrays are the reason this is worth a phase rather than a footnote — koji has
-6 `text[]` columns and they are ordinary in real schemas. The synthetic
-performance dataset (`scripts/generate_perf_data.py`)
-grows an array-heavy stress section here, so array decoding is measured against
-something that surfaces a regression rather than averaging it away. Composites and ranges
-follow for free once the decoder exists, and the metadata pass already
-recovers the field types and subtype needed to give them Arrow `Struct` and
-range representations rather than strings.
+Arrays, composites, ranges and multiranges — the four families type resolution
+deliberately leaves as `Utf8View` — get structured Arrow representations and an
+exact render-back. One phase because they are three parameter sets over one
+quoted-token scanner rather than three decoders, which is **not** the same as
+their sharing a quoting rule: they do not (I20).
 
 Placed here, ahead of pushdown, because Phase 5 is designed *against the type
 set*: "min/max for collation-independent orderable types" is a different table
@@ -399,6 +391,23 @@ this section when it acquires a phase number, not when it acquires a design.
   schema** against the drift that progressive type coverage otherwise causes, by mapping everything to a string type and getting the unparsed
   values, CSV-style. That makes it the mitigation named under "Pre-1.0" above.
   `SchemaMode::Strings` is the crude version of this that ships today.
+
+- **The shape-general array representation, as a selectable alternative.**
+  `Struct{dims: List<Int32>, lbounds: List<Int32>, elements: List<T>}` is
+  lossless for every array PostgreSQL can produce — any dimensionality, any
+  lower bound, varying freely from row to row — where Phase 4's `List<T>`
+  covers only the uniform 1-D case and degrades the rest to `Utf8View`
+  ([`roadmap-phase4-composite-decoding.md`](roadmap-phase4-composite-decoding.md),
+  "What the census says"). Phase 4 chose `List<T>` on koji-shaped evidence: short,
+  uniform, one-dimensional arrays, where the struct costs +16 bytes per row and
+  the loss of `List` as the signal every generic Arrow consumer reads as "this
+  is an array". **A schema of matrices or scientific data inverts that
+  arithmetic**, and those users should get the struct rather than a string. So
+  this is a *knob*, not a replacement: the caller selects which representation
+  an array column resolves to. It belongs beside **caller-supplied type
+  mapping** above, which is the same knob at a different granularity, and
+  adding it breaks nothing — it only ever changes columns that Phase 4 left as
+  `Utf8View` or as a shape the caller has told us to represent differently.
 
 - **Exhaustive built-in type coverage, with tests to match.** The mapping
   covers the types that carry real data in real schemas and leaves the rest as
