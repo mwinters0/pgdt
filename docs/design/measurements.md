@@ -100,13 +100,18 @@ check is for.
 stdout;` substring — must parse as one correct block. That is the case that
 motivated line-anchored detection.
 
-**The throughput figure is currently unusable.** The last run measured ~110
-MB/s wall-clock (~120–130 MB/s by `node_exporter`'s disk-read counter) against
-a ~240–256 MB/s baseline, but a Postgres restore was writing ~30 MB/s to the
-same physical HDD throughout, on a disk ~93–95% busy either way. A
-like-for-like re-measurement is pending an uncontended disk; see `STATUS.md`,
-"Decisions worth another look". The command is in `runs/koji-3.6-scan.log`,
-and the container recipe is in `CLAUDE.md`.
+**Throughput, re-measured clean.** A 2026-08-25 re-run on an uncontended disk
+(container `pgdq-koji`, `runs/koji-throughput-scan.log`) reproduced the same
+74 blocks/19,575,829,920 rows/784,019,857,152 bytes, and measured 54m9.97s
+wall-clock — **~241 MB/s**, against the original 2026-08-22 baseline's ~243
+MB/s. The two independent runs agree to within ~1%, which is inside the noise
+this kind of wall-clock measurement carries; no `cat`-to-`/dev/null` floor was
+taken for this file specifically (impractical at 784GB on the HDD for a
+one-point confirmation), but the close agreement between two runs that were
+each I/O-bound at ~33% of one core is itself the evidence that the 2026-08-24
+run's ~110 MB/s figure was the outlier, caused by the concurrent restore
+documented below, not a real regression. Command and container recipe are in
+`CLAUDE.md`.
 
 ## Decoder and whole-file benchmarks
 

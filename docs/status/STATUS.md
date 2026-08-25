@@ -39,13 +39,6 @@ into `architecture.md` and `measurements.md` and removed).
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; the resulting changes land as
   out-of-band items.
-- **A like-for-like koji throughput re-measurement** — launched 2026-08-25
-  now that the HDD is uncontended (the earlier restore that confounded the
-  3.6 run has finished). Detached, per `CLAUDE.md`; see
-  `docs/status/history/2026-08-25.md` for the log path and what to check.
-  Command and prior (unusable) figure:
-  [`../design/measurements.md`](../design/measurements.md). See "Decisions
-  worth another look".
 
 ## Known gaps
 
@@ -100,23 +93,6 @@ into `architecture.md` and `measurements.md` and removed).
 Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
-
-- **The last koji regression check was accepted on a confounded throughput
-  number, reasoned around rather than re-measured cleanly.** The
-  re-scan's raw throughput (~110MB/s wall-clock, ~120-130MB/s by
-  `node_exporter`'s disk-read counter) came in well under the 243MB/s
-  baseline. Investigation found a concurrent Postgres restore writing
-  ~30MB/s to the same physical HDD throughout the scan — confirmed by
-  `koji-pg`'s own checkpoint-frequency logs and `node_exporter`'s
-  `node_disk_written_bytes_total`, and directly by the maintainer — fully
-  accounting for the gap on a disk that was ~93-95% busy either way. The
-  regression check was still called a pass, on the strength of the scanned
-  output being byte-for-byte identical to the pre-3.6 baseline (same 74
-  blocks, same row counts, same every offset) plus the unchanged
-  control-flow argument, rather than on a clean throughput number. A
-  like-for-like re-run was launched 2026-08-25 now that the HDD is
-  uncontended; see `docs/status/history/2026-08-25.md` for the log path.
-  This entry stays until that run's figure has been looked at.
 
 - **`CacheMode::load` does not fold `CacheStatus::Incomplete` into `None`,
   departing from the spec's "live mode still treats it like Absent (falls back
