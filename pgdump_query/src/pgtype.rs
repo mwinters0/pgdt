@@ -41,6 +41,47 @@ pub enum TypeOutcome {
     EmptyEnum,
 }
 
+/// Which PostgreSQL literal form fills a resolved Arrow type, at every
+/// position in it.
+///
+/// **The Arrow type alone cannot say.** `int4range[]` and `int4multirange`
+/// both resolve to `List<Struct{lower, upper, …}>`, and they are written
+/// differently — `{"[1,10)","[2,3)"}` with array quoting versus `{[1,10),
+/// [2,3)}` with none at all. A composite that happens to have the range
+/// struct's five fields is the same collision one level down. So "which of
+/// [`crate::nested`]'s codecs applies here" travels beside the `DataType`
+/// rather than being inferred from it, and it is a tree because the answer
+/// differs per nesting level.
+///
+/// A `Scalar` leaf is anything [`crate::decode`] handles (`Utf8View`
+/// included), which is where every branch bottoms out.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum NestedPlan {
+    /// Filled by `crate::decode`'s per-type decoders, or held as text.
+    #[default]
+    Scalar,
+    /// `array_out` → `List<child>`. Nested `Array`s are the multi-dimensional
+    /// case: the plan's depth is the dimensionality the column was resolved
+    /// at, and a value that disagrees is a decode failure.
+    Array(Box<NestedPlan>),
+    /// `record_out` → `Struct<…>`, one plan per declared field, in
+    /// declaration order.
+    Record(Vec<NestedPlan>),
+    /// `range_out` → the five-field range struct. The plan is the *bound*
+    /// type's, shared by `lower` and `upper`; the three flags are always
+    /// `Boolean`.
+    Range(Box<NestedPlan>),
+    /// `multirange_out` → `List<` the range struct `>`. The plan is again the
+    /// bound type's.
+    Multirange(Box<NestedPlan>),
+}
+
+/// The field names of the range struct, in order. Reserved: a composite type
+/// resolves to a `Struct` too, and only the [`NestedPlan`] tells them apart —
+/// these names are for a human reading `pgdq info`, never for dispatch.
+pub const RANGE_STRUCT_FIELDS: [&str; 5] =
+    ["lower", "upper", "lower_inclusive", "upper_inclusive", "empty"];
+
 /// Split `declared` into its base type name and typmod contents, if any
 /// (`numeric(38,10)` -> `("numeric", Some("38,10"))`). Only `numeric` cares
 /// about the typmod's *value* — every other typed mapping below is

@@ -49,7 +49,7 @@ through.
 | `DumpIndex`, `CopyBlock`, `build_index`/`scan_preamble`/`preamble_only` | `pgdump_query/src/index.rs` | L1 |
 | Structure cache (envelope, `CacheMode`, `CacheStatus`, source identity) | `pgdump_query/src/cache.rs` | L1 |
 | `Diagnostic`/`DiagnosticKind`/`Severity` — the file-level channel | `pgdump_query/src/diagnostic.rs` | L1 |
-| Declared-type string → Arrow `DataType`; domain/enum/range/multirange resolution | `pgdump_query/src/pgtype.rs` | L2 |
+| Declared-type string → Arrow `DataType`; domain/enum/range/multirange resolution; `NestedPlan` | `pgdump_query/src/pgtype.rs` | L2 |
 | `ResolvedSchema`/`ColumnResolution`/`ColumnNote` — joins a `COPY` header against `DumpMetadata` | `pgdump_query/src/resolve.rs` | L2 |
 | Per-type field decode + render-back | `pgdump_query/src/decode.rs` | L2 |
 | Array / record / range / multirange literal decode + render-back | `pgdump_query/src/nested.rs` | L2 |
@@ -845,6 +845,55 @@ path. Around that:
   block list. Anything adding a new flush trigger must honour this.
 - Non-UTF8 field bytes are a hard `Error::InvalidUtf8`, never a lossy
   conversion.
+
+### Nested columns: `NestedPlan` travels beside the `DataType`
+
+`List` and `Struct` builders recurse: a `ColumnBuilder::Array`/`Multirange`
+holds a child builder and its own offsets and validity, a
+`ColumnBuilder::Record`/`Range` holds one child per struct field. `finish`
+assembles a `ListArray`/`StructArray` from the schema's own `FieldRef`/`Fields`,
+so the built array's type matches what the schema promised —
+`RecordBatch::try_new` checks exactly that.
+
+**The Arrow type does not say which literal fills it**, and that is not a
+detail: `int4range[]` and `int4multirange` both resolve to
+`List<Struct{lower, upper, …}>` and are written `{"[1,10)","[2,3)"}` and
+`{[1,10),[2,3)}` respectively. So `pgtype::NestedPlan` — a small tree of
+`Scalar`/`Array`/`Record`/`Range`/`Multirange` — is passed alongside the
+`DataType` into `new_column_builder` and `render_field_with_plan`, and is what
+picks the `nested.rs` codec at each level. `render_field` is the `Scalar` case
+of the latter.
+
+*Rejected:* inferring the literal form from the Arrow type. It is not merely
+fragile, it is impossible for the array-of-range/multirange pair. *Rejected:*
+smuggling the marker into Arrow `Field` metadata. Metadata is part of `Field`
+equality and so of the enclosing `DataType`, which makes every schema
+comparison carry it; and the marker for "this struct is a range" would have to
+live on a *child* field, since a `DataType::Struct` describes its children and
+not itself.
+
+Three rules the arms enforce, all of them the same asymmetry the `COPY`
+grammar already chose — not recognizing something is recoverable, misreading it
+is not:
+
+- **A value whose dimensionality does not match the column's `List` depth is
+  refused**, not flattened or wrapped. `{}` is the exception: `array_out`
+  emits it for a zero-element array of any dimensionality, so it fits any
+  depth.
+- **An `[lb:ub]=` prefix is refused.** Arrow lists are 0-based with no lower
+  bound, so the index origin has nowhere to go, and dropping it would make
+  render-back inexact.
+- **A composite literal whose field count disagrees with the declared type is
+  refused.**
+
+A failure anywhere inside a nested literal is reported against the **whole
+field**, not the fragment that tripped it, because that is what
+`Error::FieldDecode`'s `value` means everywhere else.
+
+**Nested values always copy, `Utf8View` elements included.** Widening the
+zero-copy view path into a recursive builder means honouring its three sharp
+edges at every level of nesting; that is a scan-performance change Phase 7 owns
+and should measure first (`roadmap-phase7-inbox.md`).
 
 A `COPY` header with no explicit column list gets placeholder names
 (`column1`, `column2`, …) sized to the **first row's** field count, so **a

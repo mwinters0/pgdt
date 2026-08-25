@@ -21,14 +21,14 @@ per-phase checklist here any more. How the system works is
 | DDL object inventory: TOC enrichment, referenced roles and tablespaces, object census | working |
 | Best-effort structural cache (v9) with source-identity checking and cache-only inspection | working |
 | CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, and cache-only `info` | working, text output shape provisional; `--json` carries no shape promise at all |
-| Arrays, composites, ranges, multiranges | still resolve as strings; the literal codec (`nested.rs`) is built and round-trips every fixture value, but nothing resolves to it yet — Phase 4.3/4.4 |
+| Arrays, composites, ranges, multiranges | still resolve as strings; the literal codec (`nested.rs`) and `ColumnBuilder`'s `List`/`Struct` arms are built and tested, but nothing resolves to them yet — Phase 4.4 |
 | Predicate and projection pushdown; per-row-group statistics | not started — Phase 5 |
 | `object_store` I/O, Python bindings, DataFusion `TableProvider` | not started — Phase 6 |
 | Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-25 (phase 4.2: `nested.rs`, the array/record/range/
-multirange literal codec, landed unreached).
+Last updated: 2026-08-25 (phase 4.3: `ColumnBuilder`'s `List`/`Struct` arms,
+landed unreached).
 
 ## Phase 4 progress
 
@@ -44,8 +44,9 @@ Specified in
       quoted-token scanner plus array/record/range instantiations, decode and
       render, round-tripped against 4.1's literals. Notes:
       [`../design/roadmap-phase4.2-nested-codec-notes.md`](../design/roadmap-phase4.2-nested-codec-notes.md)
-- [ ] **4.3** `ColumnBuilder`'s `List`/`Struct` arms, unit-tested directly;
-      nothing resolves to them yet.
+- [x] **4.3** `ColumnBuilder`'s `List`/`Struct` arms, unit-tested directly;
+      nothing resolves to them yet. Notes:
+      [`../design/roadmap-phase4.3-nested-builders-notes.md`](../design/roadmap-phase4.3-nested-builders-notes.md)
 - [ ] **4.4** Flip type resolution: recursive mapping, built-in range
       subtypes, opaque-element refusal, new diagnostics, compact `info`
       rendering, and the `type-handling.md` rewrite (what each family becomes,
@@ -116,6 +117,26 @@ Specified in
 Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
+
+- **A nested column's literal form travels beside its Arrow type as
+  `pgtype::NestedPlan`, and `render_field` gained a sibling that takes one.**
+  The phase spec's mapping table stops at the Arrow type, which turns out not
+  to determine the value: `int4range[]` and `int4multirange` both resolve to
+  `List<Struct{lower, upper, …}>` and are written `{"[1,10)","[2,3)"}` and
+  `{[1,10),[2,3)}`. Nothing in the Arrow type separates them, so the builder
+  and the renderer both take a small `Scalar`/`Array`/`Record`/`Range`/
+  `Multirange` tree alongside it. The two alternatives are worse: inferring
+  the form from the type is impossible for that pair, and hiding the marker in
+  Arrow `Field` metadata puts it inside `DataType` equality (so every schema
+  comparison carries it) and, for "this struct is a range", on the wrong node
+  entirely. Reasoning:
+  [`../design/architecture.md`](../design/architecture.md), "Nested columns:
+  `NestedPlan` travels beside the `DataType`". Made without the maintainer
+  present. **What it costs if reconsidered:** 4.4 is where the plan starts
+  being produced and threaded through `ResolvedSchema`, so reversing it is
+  cheapest now; the fallback would be a distinct Arrow type per literal form
+  (e.g. a multirange as something other than `List<range struct>`), which
+  changes the spec's mapping table.
 
 - **`CacheMode::load` does not fold `CacheStatus::Incomplete` into `None`,
   departing from the spec's "live mode still treats it like Absent (falls back
