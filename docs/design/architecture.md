@@ -52,6 +52,7 @@ through.
 | Declared-type string → Arrow `DataType`; domain/enum/range/multirange resolution | `pgdump_query/src/pgtype.rs` | L2 |
 | `ResolvedSchema`/`ColumnResolution`/`ColumnNote` — joins a `COPY` header against `DumpMetadata` | `pgdump_query/src/resolve.rs` | L2 |
 | Per-type field decode + render-back | `pgdump_query/src/decode.rs` | L2 |
+| Array / record / range / multirange literal decode + render-back | `pgdump_query/src/nested.rs` | L2 |
 | Arrow batch assembly (`ColumnBuilder`, `RowBatcher`), push-mode `read_table` | `pgdump_query/src/batch.rs` | L3 |
 | Pull-mode `table_stream`, `map_forward`, replay, `ResumeToken`, `ScanExtent` | `pgdump_query/src/stream.rs` | L4 |
 | Post-parse predicate | `pgdump_query/src/predicate.rs` | L4 |
@@ -62,7 +63,7 @@ module is in constrains what it may depend on and what it may know:
 [`layering.md`](layering.md), which also records the two known deviations and
 the greps that enforce the rest.
 
-Integration tests mirror the split: `tests/{scan,map,preamble,pgtype,decode,batch,stream,cache,query_cache}.rs`,
+Integration tests mirror the split: `tests/{scan,map,preamble,pgtype,decode,nested,batch,stream,cache,query_cache}.rs`,
 plus an `insta` snapshot of the whole event stream over `tests/data/edge_cases.sql`.
 
 The `objects.rs` split that was once conditioned on `preamble.rs` passing
@@ -778,6 +779,43 @@ a future reader to re-derive:
   `json` preserves source text verbatim. Affects neither the mapping (both stay
   `Utf8View`) nor round-trip testing, which compares against what the dump
   emits rather than the original `INSERT`.
+
+### The nested literal codec
+
+`nested.rs` is the same contract one level in: `decode_array`/`decode_record`/
+`decode_range`/`decode_multirange` take the COPY-unescaped field text and
+return `ArrayLiteral`/`RecordLiteral`/`RangeLiteral`, and each `render_*` puts
+it back byte-for-byte. It is **one quoted-token scanner parameterized four
+ways** — separator, force-quote set, escape convention, and whether SQL NULL is
+spelled as a bare `NULL` or as nothing at all — because I20 records that the
+three container forms genuinely disagree on all four. A composite inside an
+array carries both escape conventions at once, one per nesting level, and that
+is the case a single-convention decoder passes every other value on and still
+gets wrong. A multirange needs no parameter set of its own: `multirange_out`
+concatenates its members' `range_out` results unescaped, so the split walks
+brackets and steps over quoted bounds.
+
+Three properties are load-bearing and easy to lose:
+
+- **`ArrayLiteral` carries the shape, not just the elements.** `dims` and
+  `lower_bounds` belong to the value (I21); the elements are flattened
+  row-major. `{}` is `dims: []` whatever the array's dimensionality was, which
+  is what `array_out` emits.
+- **Decode rejects anything the matching `*_out` would not have written**,
+  including an unquoted token that would have been force-quoted, whitespace
+  padding, a ragged nesting, and an inner `{}`. That strictness is what makes
+  decode and render inverses rather than merely compatible — the alternative
+  is a value that decodes and renders back differently.
+- **A range's `empty` flag is not redundant with its bounds.** `empty` and
+  `(,)` both have absent bounds; only the flag separates them. A bound is never
+  SQL NULL, so `None` unambiguously means unbounded and `Some("")` is the
+  empty-string bound.
+
+`tests/nested.rs` is the conformance test: every nested column of every
+`types` fixture, on all six majors, read in `SchemaMode::Strings` and required
+to round-trip. A force-quote predicate transcribed even slightly wrong from
+`arrayfuncs.c`/`rowtypes.c`/`rangetypes.c` fails there against values
+PostgreSQL itself wrote.
 
 `docs/manual/type-handling.md` is the user-facing statement of what recovers
 exactly and what stays a string; this section covers only what an implementer

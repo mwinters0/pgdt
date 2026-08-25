@@ -21,14 +21,14 @@ per-phase checklist here any more. How the system works is
 | DDL object inventory: TOC enrichment, referenced roles and tablespaces, object census | working |
 | Best-effort structural cache (v9) with source-identity checking and cache-only inspection | working |
 | CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, and cache-only `info` | working, text output shape provisional; `--json` carries no shape promise at all |
-| Arrays, composites, ranges, multiranges | resolve as strings — decoder is Phase 4 |
+| Arrays, composites, ranges, multiranges | still resolve as strings; the literal codec (`nested.rs`) is built and round-trips every fixture value, but nothing resolves to it yet — Phase 4.3/4.4 |
 | Predicate and projection pushdown; per-row-group statistics | not started — Phase 5 |
 | `object_store` I/O, Python bindings, DataFusion `TableProvider` | not started — Phase 6 |
 | Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-25 (phase 4.1: the `types` fixture tree regenerated with
-the nested value shapes phase 4 needs).
+Last updated: 2026-08-25 (phase 4.2: `nested.rs`, the array/record/range/
+multirange literal codec, landed unreached).
 
 ## Phase 4 progress
 
@@ -40,9 +40,10 @@ Specified in
       composite-containing-array, a text-subtype range, array-of-enum,
       `mybase[]`. Generator plus regenerated fixtures; no library code. Notes:
       [`../design/roadmap-phase4.1-fixture-shapes-notes.md`](../design/roadmap-phase4.1-fixture-shapes-notes.md)
-- [ ] **4.2** The nested literal codec (`nested.rs`, L2): parameterized
+- [x] **4.2** The nested literal codec (`nested.rs`, L2): parameterized
       quoted-token scanner plus array/record/range instantiations, decode and
-      render, round-tripped against 4.1's literals.
+      render, round-tripped against 4.1's literals. Notes:
+      [`../design/roadmap-phase4.2-nested-codec-notes.md`](../design/roadmap-phase4.2-nested-codec-notes.md)
 - [ ] **4.3** `ColumnBuilder`'s `List`/`Struct` arms, unit-tested directly;
       nothing resolves to them yet.
 - [ ] **4.4** Flip type resolution: recursive mapping, built-in range

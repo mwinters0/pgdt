@@ -7,6 +7,7 @@ mod error;
 pub mod index;
 mod io;
 pub mod map;
+pub mod nested;
 pub mod pgtype;
 pub mod preamble;
 pub mod predicate;
