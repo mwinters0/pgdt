@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Generate pg_dump fixture files across PostgreSQL versions and flag combos.
 
-Backs docs/design/roadmap-phase1-mvp.md ("Testing & fixtures"), the
+Backs docs/design/architecture.md ("Fixtures"), the
 tested/untested matrix in docs/design/pg-dump-compatibility.md, and
-docs/design/roadmap-phase2-typed-columns.md ("Fixtures"). Spins up a
+same doc's fixture-tree rules. Spins up a
 throwaway, memory-limited Postgres container per version (never a host-run
 process, per this repo's CPU-heavy-machine / glibc-arena caution), loads one
 of two fixture schemas, runs pg_dump across each schema's own flag matrix, and
@@ -29,7 +29,7 @@ DOCKER = ["sudo", "-n", "docker"]
 
 # Routine version set: the latest minor release of every PostgreSQL major
 # from 13 onward (13 being the oldest still-supported major) -- see
-# docs/design/roadmap-phase1-mvp.md ("Testing & fixtures") for the policy.
+# docs/design/architecture.md ("Fixtures") for the policy.
 # Pinned to exact minors (not floating "16-alpine"-style tags) so a
 # regeneration is reproducible instead of silently drifting to whatever
 # minor the tag resolves to that day. This list changes as new minors ship;
@@ -47,14 +47,14 @@ ROUTINE_VERSIONS = {
 DB_NAME = "pgdq_fixture"
 DB_USER = "postgres"
 
-# fixture_schema_objects.sql's non-default tablespace (roadmap-phase3-
-# object-inventory.md slice 3.1.1) needs a directory that exists and is
+# fixture_schema_objects.sql's non-default tablespace (architecture.md,
+# "Fixtures") needs a directory that exists and is
 # owned by the container's postgres OS user *before* its `CREATE TABLESPACE`
 # statement runs -- see prepare_tablespace_dir.
 TABLESPACE_DIR = "/var/lib/postgresql/fixture_tablespace"
 
 # Each schema exercises a different concern and so wants a different flag
-# list -- see docs/design/roadmap-phase2-typed-columns.md ("Fixtures") for
+# list -- see docs/design/architecture.md ("Fixtures") for
 # why the split exists and why each gets exactly this set.
 #
 # `None` is a sentinel meaning "run pg_dumpall instead of pg_dump" -- see
@@ -64,7 +64,7 @@ TABLESPACE_DIR = "/var/lib/postgresql/fixture_tablespace"
 # A flag-set value is normally a plain flags list (or None, above). It can
 # also be a `(min_version, flags)` pair restricting the run to versions >=
 # min_version -- introduced for objects/stats: `--statistics` (TOC_PREFIX_STATS,
-# roadmap-phase3-object-inventory.md slice 3.1.1) is PG18+ only, and the
+# architecture.md, "Fixtures") is PG18+ only, and the
 # routine matrix runs versions 13-18.
 FlagSet = list[str] | None
 SCHEMAS: dict[str, dict[str, FlagSet | tuple[str, FlagSet]]] = {
@@ -86,7 +86,7 @@ SCHEMAS: dict[str, dict[str, FlagSet | tuple[str, FlagSet]]] = {
         "data-only": ["--data-only"],
         "binary-upgrade": ["--binary-upgrade"],
     },
-    # roadmap-phase3-object-inventory.md's slice 3.1: `--verbose` is the one
+    # architecture.md, "Fixtures": `--verbose` is the one
     # documented way to widen the TOC comment block past three lines (the
     # `-- TOC entry ... (class OID)` / `-- Dependencies: ...` lines), so it's
     # this schema's whole reason for a flag set beyond the default.
@@ -95,7 +95,7 @@ SCHEMAS: dict[str, dict[str, FlagSet | tuple[str, FlagSet]]] = {
         "verbose": ["--verbose"],
         "stats": ("18", ["--statistics"]),
     },
-    # roadmap-phase3-object-inventory.md's "Mapping and streaming are
+    # architecture.md's "Query: mapping and streaming are
     # separate passes": the one shape where a single `COPY <name>` header
     # owns several blocks (I2). `default` already produces it -- pg_dump
     # forces load-via-partition-root for hash-on-enum partitioning with no

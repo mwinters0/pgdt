@@ -1,14 +1,13 @@
 //! Row/batch assembly: turns rows inside a `COPY` block into typed Arrow
 //! `RecordBatch`es, one column builder per [`crate::resolve::ResolvedSchema`]
-//! field (Phase 2.4, "Output model" in
-//! `docs/design/roadmap-phase2-typed-columns.md`).
+//! field (`docs/design/architecture.md`, "Arrow assembly and the zero-copy
+//! path").
 //!
 //! Per `docs/design/roadmap-phase7-scan-performance.md`, a `Utf8View` field
 //! that needs no unescaping is appended as a zero-copy view into the Arrow
 //! `Buffer` backing the read chunk it came from, rather than copied into the
 //! builder's own storage — retrofitting that later would be expensive, so
-//! it's built in even though the rest of the performance work (roadmap Phase
-//! 7) is not. Every other mapped type always copies: its decoded value has
+//! it's built in even though the rest of the performance work is not. Every other mapped type always copies: its decoded value has
 //! its own representation (an `i32`, a `[u8; 16]`, …), not a byte range of
 //! the original field.
 
@@ -50,7 +49,7 @@ pub struct BatchOptions {
     /// or `max_rows` is hit first flushes the batch.
     pub max_bytes: Option<usize>,
     /// Whether to resolve column types against the dump's DDL — see
-    /// `docs/design/roadmap-phase2-typed-columns.md`, "Output model". Every
+    /// `docs/design/architecture.md`, "Arrow assembly and the zero-copy path". Every
     /// `RecordBatch` this build produces carries the same schema as its
     /// query's [`crate::resolve::ResolvedSchema`] — a column this build has
     /// no mapping for stays `Utf8View`, same as `SchemaMode::Strings` maps
@@ -58,8 +57,7 @@ pub struct BatchOptions {
     pub schema_mode: SchemaMode,
     /// Selects which database's table to query when the name alone is
     /// ambiguous — matched against `DatabaseMetadata::name`
-    /// (`docs/design/roadmap-phase2-typed-columns.md`, "One target per
-    /// query"). `None` is the common case: a single-database dump, or a
+    /// (`docs/design/architecture.md`, "One target per query"). `None` is the common case: a single-database dump, or a
     /// cross-schema ambiguity a qualified name already resolves on its own.
     pub database: Option<String>,
     /// How far a query's mapping scan walks before it starts returning rows
@@ -80,8 +78,7 @@ impl Default for BatchOptions {
 }
 
 /// How far [`crate::stream::table_stream`]'s mapping scan walks
-/// (`docs/design/roadmap-phase3-object-inventory.md`, "Mapping and streaming
-/// are separate passes"). Rows are always replayed from blocks the map
+/// (`docs/design/architecture.md`, "Query: mapping and streaming are separate passes"). Rows are always replayed from blocks the map
 /// already holds, so this controls how much of the file a query pays to map
 /// before any row comes back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -153,7 +150,7 @@ pub(crate) fn invalidate_block_cache(chunks: &mut VecDeque<SourceChunk>) {
 
 /// The column names a `COPY` header implies: its own list, or — when it
 /// carried none, meaning "all columns, in table order" — placeholder names
-/// sized to `field_count` (the first row's field count). Phase 1 had no DDL
+/// sized to `field_count` (the first row's field count) — there is no DDL
 /// to name them from; this is also what a headerless block's
 /// [`crate::resolve::resolve_columns`] lookup is keyed against.
 pub(crate) fn column_names(header: &CopyHeader, field_count: usize) -> Vec<String> {
@@ -484,7 +481,7 @@ fn push_utf8view_field(
 
 /// Render one row of `column` back to the same PostgreSQL text form
 /// `crate::copy::decode_field` would have produced for it — `pgdq query`'s
-/// job (`docs/design/roadmap-phase2-typed-columns.md`, "CLI": output must be
+/// job (`docs/design/architecture.md`, "CLI surface": output must be
 /// byte-identical whether typing is on or off) and the round-trip tests'
 /// oracle. `None` for SQL NULL. Covers exactly the [`DataType`]s
 /// [`crate::resolve::resolve_columns`] can ever produce.
@@ -555,7 +552,7 @@ pub fn render_field(column: &dyn Array, row: usize) -> Option<String> {
 /// of every `COPY` block whose table matches `table` (qualified or bare — see
 /// [`CopyHeader::matches`]). A table with zero rows produces no batches.
 ///
-/// Push-mode entry point (`roadmap-phase1-mvp.md`, "Streaming API"):
+/// Push-mode entry point (`docs/design/architecture.md`, "Execution model and API surface"):
 /// internally drains the pull-mode [`crate::stream::table_stream`], so the two
 /// share one scan loop. The callback may return [`ControlFlow::Break`] to stop
 /// early, in which case the returned token resumes from just past the last
@@ -564,8 +561,7 @@ pub fn render_field(column: &dyn Array, row: usize) -> Option<String> {
 /// `cache` controls structure-cache consulting — see `table_stream`'s docs.
 /// Rejects `CacheMode::Offline` up front: `source` is mandatory here, and a
 /// cache-only mode paired with a live source in hand is a caller contract
-/// violation (`docs/design/roadmap-phase3-object-inventory.md`, "Cache-only
-/// inspection" — `Span::text` is `None` for every `Data` span regardless, so
+/// violation (`docs/design/architecture.md`, "The cache" — `Span::text` is `None` for every `Data` span regardless, so
 /// `query` could never answer from a cache alone even if this were allowed).
 pub async fn read_table<S, F>(
     source: &S,

@@ -1,5 +1,5 @@
 -- Type-mapping fixture schema: one table per mappable type family, plus the
--- boundary values from docs/design/roadmap-phase2-typed-columns.md's
+-- boundary values from docs/design/architecture.md's
 -- "Boundary values worth building in" table.
 --
 -- Deliberately NOT koji-derived: koji contains no numeric, date, uuid, bytea,

@@ -1,6 +1,5 @@
 //! The file-level diagnostic channel
-//! (`docs/design/roadmap-phase3-object-inventory.md`, "Diagnostics: a
-//! file-level channel on `DumpIndex`").
+//! (`docs/design/architecture.md`, "Diagnostics: one severity scale, two types").
 //!
 //! Two things have no good home in a `Result`. A tiling failure means *our*
 //! parser dropped a region — evidence of a bug, never a reason to refuse the
@@ -31,9 +30,9 @@
 //! the per-column record at L2 — one per column, always present, reporting
 //! its position on this same scale through `ColumnNote::severity`. A caller
 //! reading both filters uniformly. Unifying at the *drain* point stays open:
-//! the Phase 6 caller-supplied sink can take both
-//! (`docs/design/roadmap-phase3-object-inventory.md`, "Diagnostics: a
-//! file-level channel on `DumpIndex`").
+//! a future caller-supplied sink (`docs/design/roadmap.md`, Phase 6) can take
+//! both
+//! (`docs/design/architecture.md`, "Diagnostics: one severity scale, two types").
 
 use crate::map::TilingIssue;
 
@@ -58,14 +57,12 @@ pub enum DiagnosticKind {
     /// The map does not tile its file: a gap, an overlap, an empty span, or
     /// a span list that doesn't reach the scanned end. Always a bug in
     /// `crate::map`, never a property of the input
-    /// (`roadmap-phase3-object-inventory.md`, "Tiling is verified at runtime
-    /// and reported as a diagnostic").
+    /// (`docs/design/architecture.md`, "Testing philosophy").
     TilingBroken { issues: Vec<TilingIssue> },
     /// A loaded cache recorded a different mtime than the source now has.
     /// Deliberately not an invalidation: mtime granularity and preservation
     /// vary too much across filesystems, copies and restores to be
-    /// conclusive (`roadmap-phase3-object-inventory.md`, "Cache: the dump
-    /// file's identity is checked, not assumed"). A *size* mismatch is an
+    /// conclusive (`docs/design/architecture.md`, "The cache"). A *size* mismatch is an
     /// invalidation instead, and never reaches this channel because the
     /// cache is discarded outright.
     CacheMtimeChanged,
@@ -73,13 +70,12 @@ pub enum DiagnosticKind {
     /// out of `spans` total — a follow-on statement that inherited its
     /// governing entry's header (`crate::map::Span::toc_owned` is `false`)
     /// counts the same as one whose own comment carried it
-    /// (`roadmap-phase3-object-inventory.md`, "TOC coverage is recorded per
-    /// file"). Always `Info` — zero is a normal, reported state (the map
+    /// (`docs/design/architecture.md`, "TOC enrichment"). Always `Info` — zero is a normal, reported state (the map
     /// running in header-less degraded mode), not an error.
     TocCoverage { attributed: usize, spans: usize },
     /// The index was loaded from a retained `.dqcache` with no live dump file
-    /// to check it against (`roadmap-phase3-object-inventory.md`,
-    /// "Cache-only inspection") — unverified and historical as of whenever
+    /// to check it against (`docs/design/architecture.md`,
+    /// "The cache") — unverified and historical as of whenever
     /// the cache was last saved, since there is nothing to compare its
     /// recorded size/mtime to. Pushed unconditionally by
     /// [`crate::cache::CacheMode::load_offline`] on every successful

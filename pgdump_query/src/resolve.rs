@@ -1,9 +1,8 @@
 //! `ResolvedSchema`: the join of a `COPY` header's column list against
-//! `DumpMetadata` (Phase 2.3, "Failure and diagnostics" /
-//! "API shape changes" in `docs/design/roadmap-phase2-typed-columns.md`).
+//! `DumpMetadata` (`docs/design/architecture.md`, "Joining a header against
+//! the metadata").
 //!
-//! This is a *preview*, not what actually decodes a row yet — Phase 2.4
-//! builds the decoders. The real `RecordBatch` schema built in `batch.rs`
+//! This is a *preview*, not what decodes a row — `decode.rs` does that. The real `RecordBatch` schema built in `batch.rs`
 //! stays every-column-`Utf8View` regardless of what a [`ResolvedSchema`]
 //! reports here (its `RowBatcher` only ever builds `StringViewArray`s, and
 //! `RecordBatch::try_new` would reject a schema/array type mismatch if that
@@ -28,7 +27,7 @@ pub enum SchemaMode {
     /// stays `Utf8View` with a diagnostic naming why.
     #[default]
     Typed,
-    /// Every column is `Utf8View`, byte-for-byte what Phase 1 produced, and
+    /// Every column is `Utf8View`, byte-for-byte the untyped path, and
     /// no DDL lookup is attempted — the escape hatch for a caller who
     /// distrusts the mapping or wants a schema stable across releases.
     Strings,
@@ -47,7 +46,7 @@ pub enum ColumnResolution {
     /// No DDL explained this column — `--data-only`, a typed table (`CREATE
     /// TABLE x OF t`), or `SchemaMode::Strings` (which never looks).
     NotDeclared,
-    /// Decodable in principle; Phase 4's job.
+    /// Decodable in principle; deferred until the nested-quoting decoder exists.
     Deferred {
         kind: DeferredKind,
     },
@@ -68,8 +67,7 @@ pub enum ColumnResolution {
 /// stay separate types: `DumpIndex` is L1 while [`ColumnResolution`] is an L2
 /// conclusion about PostgreSQL type semantics, so one enum spanning both
 /// would have L1 name an L2 type
-/// (`docs/design/roadmap-phase3-object-inventory.md`, "Diagnostics: a
-/// file-level channel on `DumpIndex`"). What they share is the
+/// (`docs/design/architecture.md`, "Diagnostics: one severity scale, two types"). What they share is the
 /// [`Severity`] scale, so a caller reading both filters uniformly.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ColumnNote {
@@ -133,7 +131,7 @@ impl ResolvedSchema {
 ///
 /// This used to be "the first database whose DDL mentions `qualified_table`"
 /// — a guess, since nothing tracked which database a `CopyBlock` actually
-/// belonged to. Per-block attribution (`docs/design/roadmap-phase2-typed-columns.md`,
+/// belonged to. Per-block attribution (`docs/design/architecture.md`,
 /// "One target per query") turns it into a fact: the caller already knows,
 /// from the block it matched, which database's DDL applies.
 fn database_for_name<'a>(
@@ -150,7 +148,7 @@ fn database_for_name<'a>(
 /// dump's single unnamed database).
 ///
 /// `SchemaMode::Strings` never looks anything up: every column comes back
-/// `NotDeclared`/`Utf8View`, matching Phase 1 exactly and at zero cost.
+/// `NotDeclared`/`Utf8View`, matching the untyped path exactly and at zero cost.
 pub fn resolve_columns(
     qualified_table: &str,
     columns: &[String],
@@ -194,7 +192,7 @@ pub fn resolve_columns(
                 }
             }
         };
-        // Every Arrow field is nullable in Phase 2, regardless of a `NOT
+        // Every Arrow field is nullable, regardless of a `NOT
         // NULL` in the DDL -- see "Nullability" in the phase doc.
         fields.push(Field::new(name, arrow_type, true));
         notes.push(ColumnNote {
@@ -303,11 +301,11 @@ mod tests {
     /// by which database's DDL happens to mention the table first — proven
     /// here by giving the two databases genuinely different declared types
     /// for the same qualified table name, so the outcome differs observably
-    /// depending on which name is passed. This is what slice 2.3.3
-    /// (`docs/design/roadmap-phase2-typed-columns.md`, "One target per
-    /// query") turned the old first-match guess into: the caller already
+    /// depending on which name is passed. This is what the one-target-per-query
+    /// rule
+    /// (`docs/design/architecture.md`, "One target per query") turned the old first-match guess into: the caller already
     /// knows, from the matched `CopyBlock`'s own attribution, which database
-    /// applies — see `docs/design/roadmap-phase2-typed-columns-notes.md`,
+    /// applies — see `docs/design/architecture.md`,
     /// "One target per query", for the guess this test used to pin down.
     #[test]
     fn database_selects_by_attributed_name_not_by_first_match() {

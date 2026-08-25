@@ -24,7 +24,7 @@ struct Cli {
 }
 
 /// CLI spelling of [`SchemaMode`] — see "Output model" in
-/// `docs/design/roadmap-phase2-typed-columns.md`.
+/// `docs/design/architecture.md`.
 #[derive(Clone, Copy, Default, clap::ValueEnum)]
 enum CliSchemaMode {
     #[default]
@@ -56,8 +56,7 @@ enum Command {
     /// Print what is known about a dump file — from a fresh or cached scan
     /// of the dump itself, or, with no `--source`, from a retained
     /// `--dqcache` alone once the dump is gone
-    /// (`docs/design/roadmap-phase3-object-inventory.md`, "Cache-only
-    /// inspection").
+    /// (`docs/design/architecture.md`, "The cache").
     Info {
         /// The dump file to scan. Omit it to answer from `--dqcache` alone
         /// — cache-only mode, which then requires `--dqcache`.
@@ -75,12 +74,12 @@ enum Command {
         /// Answer from the preamble alone (dump-level header only, no
         /// per-block listing or row counts) instead of a full structural
         /// scan — cost is independent of dump size regardless of how much
-        /// `COPY` data follows (`docs/design/roadmap-phase2-typed-columns.md`,
-        /// "CLI").
+        /// `COPY` data follows (`docs/design/architecture.md`,
+        /// "CLI surface").
         #[arg(long)]
         preamble_only: bool,
-        /// List every span the full file map found (`docs/design/roadmap-phase3-object-inventory.md`,
-        /// "The map is the structure, not a description of it") — DDL objects
+        /// List every span the full file map found (`docs/design/architecture.md`,
+        /// "`DumpIndex`: one owner per fact") — DDL objects
         /// and framing included, not just `COPY` blocks — instead of the
         /// per-table listing. Implies a full scan; incompatible with
         /// `--preamble-only`.
@@ -106,12 +105,12 @@ enum Command {
         #[arg(long)]
         filter: Option<String>,
         /// Select which database to query when `table` is ambiguous across
-        /// a multi-`\connect` dump (`docs/design/roadmap-phase2-typed-columns.md`,
+        /// a multi-`\connect` dump (`docs/design/architecture.md`,
         /// "One target per query").
         #[arg(long)]
         database: Option<String>,
         /// `typed` (default) resolves column types against the dump's DDL;
-        /// `strings` skips that lookup entirely, matching Phase 1's
+        /// `strings` skips that lookup entirely, matching the untyped
         /// byte-for-byte output — the way out of `Error::MetadataNotScanned`
         /// for a database an incremental scan hasn't read the DDL for yet.
         #[arg(long, value_enum, default_value_t)]
@@ -122,7 +121,7 @@ enum Command {
 /// Parse a `--filter` argument into a [`Predicate`]: `column=value`,
 /// `column!=value`, `column IS NULL`, or `column IS NOT NULL` (the `IS`
 /// forms matched case-insensitively after the column name — see
-/// `docs/design/roadmap-phase2-typed-columns.md`, "Predicates"). `!=` is
+/// `docs/design/architecture.md`, "Predicates"). `!=` is
 /// checked before `=` since it contains that byte.
 fn parse_filter(spec: &str) -> Result<Predicate> {
     let trimmed = spec.trim_end();
@@ -163,8 +162,8 @@ fn strip_ci_suffix<'a>(s: &'a str, suffix: &str) -> Option<&'a str> {
 /// Print one batch's rows tab-separated, `\N` for NULL — mirroring COPY
 /// TEXT's own NULL marker. Each field is rendered back to PostgreSQL text via
 /// [`render_field`], so output is byte-identical whether `--schema-mode` is
-/// `typed` or `strings` (`docs/design/roadmap-phase2-typed-columns.md`,
-/// "CLI").
+/// `typed` or `strings` (`docs/design/architecture.md`,
+/// "CLI surface").
 fn print_batch(batch: &RecordBatch) {
     for row in 0..batch.num_rows() {
         let fields: Vec<String> = batch
@@ -183,7 +182,7 @@ async fn main() -> Result<()> {
         Command::Parse { source: file, dqcache } => {
             // `parse` is the eager entry point: always scan fresh (ignoring
             // any existing cache) and (re)write it, per the CLI spec in
-            // `roadmap-phase1-mvp.md`.
+            // `docs/design/architecture.md`.
             // Reject `--dqcache none` up front, before paying for a scan we
             // won't be allowed to persist.
             let mode = CacheMode::resolve(&file, dqcache.as_deref());
@@ -209,8 +208,8 @@ async fn main() -> Result<()> {
                 anyhow::bail!("--preamble-only and --map cannot be combined");
             }
             let Some(file) = file else {
-                // Cache-only mode (`docs/design/roadmap-phase3-object-inventory.md`,
-                // "Cache-only inspection"): no live dump file at all, so
+                // Cache-only mode (`docs/design/architecture.md`,
+                // "The cache"): no live dump file at all, so
                 // clap already required `--dqcache` for us.
                 let path = dqcache.expect("clap requires --dqcache when --source is omitted");
                 return info_offline(&path, verbose, preamble_only_flag, map).await;
@@ -228,16 +227,17 @@ async fn main() -> Result<()> {
             // it actually covers the whole file — a preamble-only or
             // still-incremental cache must trigger a fresh scan here rather
             // than being reported as if it were complete (the former
-            // out-of-band item M1; `docs/design/roadmap-phase3-object-inventory.md`,
-            // "Cache-only inspection").
+            // out-of-band item M1; `docs/design/architecture.md`,
+            // "The cache").
             let file_size = source.size().await?;
             let index = match mode.load(&source).await? {
                 Some(index) if index.scanned_through >= file_size => index,
                 _ => {
                     // No usable cache, or one that doesn't cover the whole
                     // file: scan, then persist what we learned — a no-op
-                    // under `CacheMode::Disabled` — `roadmap-phase1-mvp.md`'s
-                    // "cache is never required for correctness" rule means
+                    // under `CacheMode::Disabled` — the cache is never
+                    // required for correctness (`docs/design/architecture.md`,
+                    // "The cache"), which means
                     // this fallback must still produce a correct answer.
                     let index = build_index(&source, &ScanOptions::default()).await?;
                     mode.save(&source, &index).await?;
@@ -289,8 +289,7 @@ async fn main() -> Result<()> {
 
 /// `pgdq info` with no `--source`: answer strictly from the cache at `path`,
 /// erroring rather than falling back to a scan when it doesn't have enough
-/// (`docs/design/roadmap-phase3-object-inventory.md`, "Cache-only
-/// inspection"). `--preamble-only`'s completeness bar is the metadata's own
+/// (`docs/design/architecture.md`, "The cache"). `--preamble-only`'s completeness bar is the metadata's own
 /// `preamble_complete` flag rather than whole-file coverage, since a
 /// preamble-only cache is exactly the shape that flag exists to recognize;
 /// the default listing and `--map` both need the whole file mapped, so any
@@ -335,7 +334,7 @@ async fn info_offline(
 
 /// Human-readable label for one column's resolution outcome — the `info
 /// --verbose` per-column diagnostic line
-/// (`docs/design/roadmap-phase2-typed-columns.md`, "CLI").
+/// (`docs/design/architecture.md`, "CLI surface").
 fn resolution_label(r: &ColumnResolution) -> String {
     match r {
         ColumnResolution::Mapped => "mapped".to_string(),
@@ -357,8 +356,8 @@ fn resolution_label(r: &ColumnResolution) -> String {
 }
 
 /// Dump-level metadata header: server/`pg_dump` versions, extension and
-/// user-defined-type counts (`docs/design/roadmap-phase2-typed-columns.md`,
-/// "CLI"). The `database: <name>` line is only shown when it's informative —
+/// user-defined-type counts (`docs/design/architecture.md`,
+/// "CLI surface"). The `database: <name>` line is only shown when it's informative —
 /// a single unnamed database (a plain, non-`--create` dump: the overwhelming
 /// common case) is printed with no header line, since one would just be
 /// noise.
@@ -422,7 +421,7 @@ fn print_index(index: &DumpIndex, verbose: bool, map: bool) {
     // in the file, so a header line whenever the database changes is enough
     // — no need to sort or bucket first. This is also what makes an
     // `AmbiguousTable` error's candidate names actionable: they're names
-    // this listing already showed (`docs/design/roadmap-phase2-typed-columns.md`,
+    // this listing already showed (`docs/design/architecture.md`,
     // "One target per query").
     let multi_database =
         blocks.iter().map(|b| &b.database).collect::<std::collections::BTreeSet<_>>().len() > 1;
@@ -491,10 +490,8 @@ fn print_index(index: &DumpIndex, verbose: bool, map: bool) {
 
 /// `DumpIndex::diagnostics` (or, for `--preamble-only`, the diagnostics
 /// `preamble_only` reports separately), printed unconditionally — this is
-/// M2 (`docs/design/roadmap-phase3-object-inventory.md`, "Cache-only
-/// inspection"): before slice 3.7, `pgdq info` had no code path that read
-/// `index.diagnostics` at all, in any mode. Cache-only mode's "unverified,
-/// historical" banner rides this same path (`DiagnosticKind::CacheOffline`).
+/// (`docs/design/architecture.md`, "The cache"). Cache-only mode's
+/// "unverified, historical" banner rides this same path (`DiagnosticKind::CacheOffline`).
 /// Returns whether anything was printed, matching `print_cross_references`'s
 /// and `print_object_kinds`' convention.
 fn print_diagnostics(diagnostics: &[Diagnostic]) -> bool {
@@ -533,7 +530,7 @@ fn diagnostic_message(kind: &DiagnosticKind) -> String {
 }
 
 /// Referenced-role and referenced-tablespace summary
-/// (`docs/design/roadmap-phase3-object-inventory.md`, "What a span carries")
+/// (`docs/design/architecture.md`, "TOC enrichment")
 /// — an empty set prints nothing, so a dump referencing neither leaves no
 /// trace here. Returns whether anything was printed, so the caller knows
 /// whether to add a separating blank line.
@@ -555,9 +552,9 @@ fn print_cross_references(index: &DumpIndex) -> bool {
 
 /// Per-`Type:` object-kind counts — one per archive entry, the same closed
 /// ~63-value vocabulary the TOC-coverage diagnostic counts against
-/// (`docs/design/roadmap-phase3-object-inventory.md`, "TOC coverage is
-/// recorded per file"). Counts `toc_owned` spans, not every attributed one:
-/// this is an object *census*, and since slice 3.3.1 a follow-on statement
+/// (`docs/design/architecture.md`, "TOC enrichment"). Counts `toc_owned`
+/// spans, not every attributed one: this is an object *census*, and a
+/// follow-on statement
 /// (`ALTER ... OWNER TO`, etc.) inherits its governing entry's `toc` rather
 /// than carrying `None` — counting `span.toc.is_some()` here would count that
 /// object twice ("Span boundaries: statement-anchored, object-attributed,
@@ -585,8 +582,8 @@ fn print_object_kinds(index: &DumpIndex) -> bool {
 
 /// `--map`: every span the full file map found, in file order — the raw
 /// structure `DumpIndex::spans` keeps, not the per-table view `blocks()`
-/// filters it down to (`docs/design/roadmap-phase3-object-inventory.md`,
-/// "The map is the structure, not a description of it"). Same
+/// filters it down to (`docs/design/architecture.md`,
+/// "`DumpIndex`: one owner per fact"). Same
 /// database-header grouping convention as the ordinary block listing above.
 fn print_map(index: &DumpIndex) {
     let multi_database =

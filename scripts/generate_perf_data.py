@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Generate a synthetic pg_dump-shaped plain-text dump for throughput benchmarks.
 
-Backs docs/design/roadmap-phase2-typed-columns.md ("Synthetic performance
-dataset") and docs/design/roadmap-phase7-scan-performance.md ("Measurement
-discipline"). Unlike generate_fixtures.py, this is *not* a correctness
+Backs docs/design/measurements.md ("Decoder and whole-file benchmarks") and
+docs/design/roadmap-phase7-scan-performance.md ("Measurement discipline"). Unlike generate_fixtures.py, this is *not* a correctness
 fixture: its output is never checked against real pg_dump, only shaped
 closely enough to satisfy this codebase's own COPY/DDL grammar so pgdq can
 read it back. Two different runs producing different bytes is fine -- this
@@ -25,9 +24,9 @@ from pathlib import Path
 
 TABLE = "public.perf"
 
-# One column per mapped type family this codebase decodes (Phase 2.4), plus
+# One column per mapped type family this codebase decodes, plus
 # three text columns carrying the stress shapes
-# roadmap-phase2-typed-columns.md ("Synthetic performance dataset") calls
+# measurements.md ("Decoder and whole-file benchmarks") calls
 # for: high-escape-density fields, very long values, and -- the whole row,
 # together -- a wide table.
 COLUMNS: list[tuple[str, str]] = [

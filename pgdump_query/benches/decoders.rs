@@ -1,6 +1,5 @@
 //! Decoder microbenchmarks, one `criterion_group` function per mapped type
-//! family (Phase 2.5, "Benchmarks" in
-//! `docs/design/roadmap-phase2-typed-columns.md`). A regression tripwire for
+//! family (`docs/design/architecture.md`, "Testing philosophy"). A regression tripwire for
 //! `decode.rs`'s own per-byte CPU cost, not a throughput number for the
 //! reader — see `benches/whole_file.rs` for that, and
 //! `docs/design/roadmap-phase7-scan-performance.md` for the wider

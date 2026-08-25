@@ -1,5 +1,5 @@
-//! Per-type field decode and render-back (Phase 2.4, "Type mapping" /
-//! "Failure and diagnostics" in `docs/design/roadmap-phase2-typed-columns.md`).
+//! Per-type field decode and render-back (`docs/design/architecture.md`,
+//! "Decoders and render-back").
 //!
 //! Pure, synchronous, no I/O — see `docs/design/layering.md`, L2. A decode
 //! function takes an already-COPY-unescaped `&str` field (what

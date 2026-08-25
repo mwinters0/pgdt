@@ -6,8 +6,8 @@
 //! events zero-copy and lets the same state machine serve both the async
 //! driver here ([`scan`]) and any future pull-mode stream.
 //!
-//! Robustness rules this implements (see `docs/design/roadmap-phase1-mvp.md`,
-//! "Parser robustness requirements"):
+//! Robustness rules this implements (see `docs/design/architecture.md`,
+//! "Parser robustness requirements (hardcoded)"):
 //!
 //! * `COPY` detection is line-anchored. Row data may contain a literal
 //!   `COPY ... TO stdout;` mid-line, and a non-anchored search would misfire.
@@ -107,9 +107,9 @@ pub struct LargeObjectEnd {
 /// closing `;` — so without this the first such body in a TOC-comment-less
 /// file absorbs every statement after it into one span
 /// (`docs/status/history/2026-08-23.md`, measured). Surfacing the *lines*
-/// stays rejected: it would leak a Phase 3 concern into L1's event contract,
+/// stays rejected: it would leak a mapping concern into L1's event contract,
 /// and span text is sliced from the file by offset anyway
-/// (`docs/design/roadmap-phase3-object-inventory.md`, "Span boundaries").
+/// (`docs/design/architecture.md`, "Three things close a statement").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DollarQuoteEnd {
     /// Absolute file offset just past the line the region closed on — the
@@ -137,7 +137,7 @@ enum State {
         header_offset: u64,
     },
     /// Between a `BEGIN;` and its `COMMIT;` — the large-object data region
-    /// (`docs/design/roadmap-phase3-object-inventory.md`, "Bulk regions").
+    /// (`docs/design/architecture.md`, "Bulk regions: one span kind, three payloads").
     /// Every line in between is skipped unread, the same way [`State::InCopy`]
     /// skips row bytes: I12 guarantees a bytea hex literal can never contain a
     /// line break, so nothing in here can be mistaken for structure.

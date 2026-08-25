@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""Generate a synthetic pg_dump-shaped large-object data region for the
-Phase 3.6 gating measurement.
+"""Generate a synthetic pg_dump-shaped large-object data region.
 
-Backs docs/design/roadmap-phase3-object-inventory.md ("Verification"): "A
+Backs docs/design/measurements.md ("Scan throughput by input shape"): "A
 synthetic large-object dump, a few GB, on the SSD... enough to distinguish
 'skipped' from 'walked' without an hour of HDD time." Unlike
 generate_fixtures.py, this is *not* a correctness fixture -- its output is
 never run against real pg_dump, only shaped closely enough to satisfy this
 codebase's own scanner grammar (three statement forms: `lo_open`, `lowrite`,
-`lo_close`, `BEGIN;`/`COMMIT;`-wrapped) to measure whether the Phase 3.6 fast
+`lo_close`, `BEGIN;`/`COMMIT;`-wrapped) to measure whether the scanner-level fast
 path actually skips the region rather than walking it statement by statement.
 Real pg_dump chunks large-object writes at LOBBUFSIZE (4096 raw bytes, ~8200
 hex chars per `lowrite` line) -- reproduced here rather than shelling out to

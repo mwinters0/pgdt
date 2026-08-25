@@ -12,16 +12,15 @@ use crate::{Error, Result};
 ///
 /// Shaped to mirror `object_store`'s `get_range`/`head` semantics so a real
 /// `object_store`-backed implementation can be added later (behind a Cargo
-/// feature flag, see docs/design/roadmap-phase1-mvp.md) without changing this
-/// trait.
+/// feature flag — see `docs/design/architecture.md`, "Execution model and API
+/// surface") without changing this trait.
 pub trait ByteRangeSource: Send + Sync {
     fn read_range(&self, offset: u64, len: usize) -> impl Future<Output = Result<Bytes>> + Send;
     fn size(&self) -> impl Future<Output = Result<u64>> + Send;
     /// Last-modified time, if the source exposes one — `object_store`'s
     /// `head` carries this too. `None` rather than an error for a source
     /// that genuinely has no notion of one; the structure cache
-    /// (`docs/design/roadmap-phase3-object-inventory.md`, "Cache: the dump
-    /// file's identity is checked, not assumed") treats an absent mtime as
+    /// (`docs/design/architecture.md`, "The cache") treats an absent mtime as
     /// nothing to compare against, never as a mismatch.
     fn modified(&self) -> impl Future<Output = Result<Option<SystemTime>>> + Send;
 }

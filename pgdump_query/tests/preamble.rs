@@ -1,7 +1,6 @@
 //! Preamble/metadata extraction against real `pg_dump` output — the
 //! `fixture_schema_types.sql` fixtures across all three routine versions and
-//! flag sets (`docs/design/roadmap-phase2-typed-columns.md`, "The preamble
-//! pass"). Unlike `pgdump_query/src/preamble.rs`'s unit tests (hand-written
+//! flag sets (`docs/design/architecture.md`, "The preamble grammar and `DumpMetadata`"). Unlike `pgdump_query/src/preamble.rs`'s unit tests (hand-written
 //! statement text), this pins the parser against what `pg_dump` actually
 //! emits.
 
@@ -29,7 +28,7 @@ fn edge_cases_fixture(version: u32, flag_set: &str) -> PathBuf {
 /// Two copies of `edge_cases/create.sql`, concatenated: a real
 /// `\connect`-delimited multi-database dump, the shape `pg_dumpall` and
 /// hand-concatenated dump files produce ("Multi-database dumps" in
-/// `docs/design/roadmap-phase2-typed-columns.md`). `--create` is the only
+/// `docs/design/architecture.md`). `--create` is the only
 /// flag combination in the fixture matrix that emits a `\connect` at all
 /// (plain `pg_dump` never does), so it's the only one two copies of can be
 /// concatenated into this shape.
@@ -130,7 +129,7 @@ async fn default_dump_declares_every_mapped_column_type() {
             "pg_dump {version}"
         );
 
-        // Domain over a domain (transitive resolution is Phase 2.3's job;
+        // Domain over a domain (transitive resolution is `pgtype.rs`'s job;
         // this just needs the immediate base type recorded).
         assert_eq!(
             find_type(&db, "public.base_domain").kind,
@@ -252,10 +251,9 @@ async fn edge_cases_binary_upgrade_dump_recreates_the_dropped_column_as_a_dummy(
     }
 }
 
-/// Phase 2.3.1: real fixture coverage for a concatenated/`pg_dumpall`-shaped
-/// multi-database dump — previously only exercised by hand-written
-/// `\connect` input in `pgdump_query/src/preamble.rs`'s unit tests (see
-/// `docs/status/STATUS.md`, "Decisions worth a second look").
+/// Real fixture coverage for a concatenated/`pg_dumpall`-shaped
+/// multi-database dump, as opposed to the hand-written `\connect` input in
+/// `pgdump_query/src/preamble.rs`'s unit tests.
 #[tokio::test]
 async fn concatenated_create_dumps_yield_two_named_databases_each_fully_parsed() {
     for version in [13, 16, 18] {

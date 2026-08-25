@@ -1,6 +1,6 @@
 //! The full file map (`crate::map`): the tiling invariant over every
 //! generated fixture plus the hand-written edge-case dump, targeted
-//! classification checks (Phase 3.2), and TOC-enrichment checks (Phase 3.3).
+//! targeted classification checks, and TOC-enrichment checks.
 
 use std::path::{Path, PathBuf};
 
@@ -53,9 +53,9 @@ async fn map_of(path: &Path) -> (Vec<pgdump_query::Span>, u64) {
     (spans, size)
 }
 
-/// The standing rule (`roadmap-phase3-object-inventory.md`, "Standing rule:
-/// coverage increases monotonically") made concrete: every span list this
-/// module can produce tiles its file exactly, with no exemptions.
+/// The standing rule (`docs/design/roadmap.md`, "Coverage increases
+/// monotonically") made concrete: every span list this module can produce
+/// tiles its file exactly, with no exemptions.
 #[tokio::test]
 async fn every_fixture_tiles_exactly() {
     let mut failures = Vec::new();
@@ -69,12 +69,11 @@ async fn every_fixture_tiles_exactly() {
     assert!(failures.is_empty(), "tiling violations:\n{}", failures.join("\n"));
 }
 
-/// Phase 3.2.1: `build_index` builds its spans via the same `map::Builder`
+/// `build_index` builds its spans via the same `map::Builder`
 /// `build_map` drives, fed from the same scan pass as `build_index`'s own
 /// `CopyBlock`/metadata extraction — no second pass over the file, and
 /// `DumpIndex::blocks()` is a filter over the result rather than a second
-/// stored structure (`docs/design/roadmap-phase3-object-inventory.md`, "The
-/// map is the structure, not a description of it"). This pins the two
+/// stored structure (`docs/design/architecture.md`, "`DumpIndex`: one owner per fact"). This pins the two
 /// producers from drifting apart across every fixture shape, including the
 /// hand-written `edge_cases.sql` this file's other tests single out for its
 /// TOC-comment-less dollar-quoted functions.
@@ -88,13 +87,12 @@ async fn build_index_spans_match_build_map_exactly() {
     }
 }
 
-/// Phase 3.2.1.1: `dump_metadata_from_spans` (span-driven) must recover
-/// exactly what `build_index`'s own `PreambleBuilder` pass (line-driven)
-/// does, across every fixture shape — multi-database `\connect` segmenting,
+/// `dump_metadata_from_spans` (span-driven) must recover exactly what a
+/// line-driven preamble pass does, across every fixture shape — multi-database `\connect` segmenting,
 /// version-header staging across that boundary, and `--binary-upgrade` enum
 /// label folding included. This is the equivalence this slice's cutover
 /// (removing the separate `PreambleBuilder` pass from `build_index`) rests
-/// on; see `docs/design/roadmap-phase3-object-inventory-notes.md`.
+/// on; see `docs/design/architecture.md`.
 #[tokio::test]
 async fn metadata_from_spans_matches_preamble_builder_exactly() {
     for path in all_fixtures().into_iter().chain(std::iter::once(edge_cases())) {
@@ -110,7 +108,7 @@ async fn metadata_from_spans_matches_preamble_builder_exactly() {
 /// fixture — so it's exactly the "statement-grammar fallback, no TOC
 /// header" path, and its two dollar-quoted `CREATE FUNCTION`s (including
 /// one whose adversarial body contains lines that look exactly like `COPY`
-/// headers, `docs/design/roadmap-phase1-mvp.md`'s dollar-quote-tracking
+/// headers, `docs/design/architecture.md`'s dollar-quote-tracking
 /// motivation) still have to tile.
 #[tokio::test]
 async fn edge_cases_dump_tiles_exactly() {
@@ -146,8 +144,7 @@ async fn data_only_dump_tiles_exactly() {
     assert!(spans.iter().any(|s| matches!(s.body, SpanBody::Data(_))));
 }
 
-/// `--inserts` output has zero `COPY` blocks; per Phase 3.6's `Data`-span
-/// fast path, a whole table's run of `INSERT INTO` statements is one `Data`
+/// `--inserts` output has zero `COPY` blocks; per the `Data`-span fast path, a whole table's run of `INSERT INTO` statements is one `Data`
 /// span rather than one `Unparsed` span per statement — this fixture has six
 /// `TABLE DATA` entries (`logs.events`, `public.dropped_column`,
 /// `public.empty_table` [zero rows — absorbed into the next entry's span, per
@@ -294,8 +291,7 @@ async fn create_table_span_carries_name_and_columns() {
 
 /// A trailing `ALTER TABLE ... OWNER TO` (no TOC comment of its own) tiles
 /// as its own `Unparsed` span, immediately adjacent to its table's span —
-/// no grouping (`roadmap-phase3-object-inventory.md`'s "Consequence: no
-/// 'grouping'" still holds after slice 3.3.1) — but, since that slice, it
+/// no grouping (`docs/design/architecture.md`, "TOC enrichment") — but it
 /// **inherits** `objects.widgets`' own TOC header rather than carrying
 /// `None`: the two spans are attributed to the same entry, and only the
 /// first carries the header text itself.
@@ -404,8 +400,7 @@ async fn tiling_issue_reports_a_short_final_span() {
 }
 
 /// An `Unscanned` tail is a legitimate, tiling shape — a prefix-covering
-/// partial scan (`roadmap-phase3-object-inventory.md`, "Scan coverage is a
-/// prefix, expressed as a span") is not exempt from the invariant.
+/// partial scan (`docs/design/architecture.md`, "The file map") is not exempt from the invariant.
 #[tokio::test]
 async fn an_unscanned_tail_tiles_cleanly() {
     use pgdump_query::{Span, SpanBody as Body};
@@ -440,8 +435,7 @@ async fn empty_span_list_against_a_zero_length_scan_tiles_cleanly() {
 /// Span text is **sliced from the file by offset**, so it survives the one
 /// thing an accumulator cannot: a dollar-quoted function body, for which
 /// `crate::scan` emits no `Event::Line` at all
-/// (`docs/design/roadmap-phase3-object-inventory.md`, "Span text comes from
-/// the file, not from the parser"). If text were accumulated from events,
+/// (`docs/design/architecture.md`, "Span text"). If text were accumulated from events,
 /// every function body in the file would be missing from it.
 #[tokio::test]
 async fn span_text_includes_dollar_quoted_bodies_events_never_surface() {
@@ -520,8 +514,8 @@ async fn text_over_the_cap_is_truncated_and_marked() {
     assert_eq!(spans[0].end, body.len() as u64, "offsets are untouched by the cap");
 }
 
-/// The regression slice 3.2.3 exists for, measured in
-/// `docs/status/history/2026-08-23.md`: with no TOC comments, boundary
+/// The regression `Event::DollarQuoteEnd` exists for: with no TOC comments,
+/// boundary
 /// detection used to work until the first dollar-quoted body and then stop
 /// working at all — the two functions and the table after them collapsed into
 /// **one** `Unparsed` span, because `scan.rs` emits no `Event::Line` for the
@@ -571,8 +565,8 @@ async fn a_header_less_dump_degrades_to_one_span_per_object() {
 /// `objects.widgets`' own TOC comment (`fixtures/18/objects/default.sql`,
 /// `-- Name: widgets; Type: TABLE; Schema: objects; Owner: postgres`) fills
 /// its span's `toc` — the TOC's own (unqualified) name alongside
-/// `SpanBody::Table`'s schema-qualified one, per Phase 3.3's "TOC enrichment"
-/// (`docs/design/roadmap-phase3-object-inventory.md`, "What a span carries").
+/// `SpanBody::Table`'s schema-qualified one
+/// (`docs/design/architecture.md`, "TOC enrichment").
 #[tokio::test]
 async fn a_real_toc_header_fills_owner_kind_and_schema() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/objects/default.sql");
@@ -602,9 +596,9 @@ async fn no_owner_fixture_parses_every_toc_header_with_no_owner() {
 }
 
 /// `build_index` reports the TOC-coverage figure as a file-level `Info`
-/// diagnostic (`docs/design/roadmap-phase3-object-inventory.md`, "TOC
-/// coverage is recorded per file"): every span accounted for in `spans`, and
-/// — since slice 3.3.1 — a strictly higher `attributed` count than the number
+/// diagnostic (`docs/design/architecture.md`, "TOC enrichment"): every span
+/// accounted for in `spans`, and a strictly higher `attributed` count than
+/// the number
 /// of spans that carry their *own* header, because every follow-on statement
 /// (`ALTER ... OWNER TO`, etc.) now inherits its governing entry's `toc`
 /// rather than counting as uncovered.
@@ -651,13 +645,13 @@ async fn build_index_reports_zero_toc_coverage_for_a_header_less_dump() {
     assert_eq!(coverage.0, 0, "tests/data/edge_cases.sql has no TOC comments at all");
 }
 
-/// The cross-reference set (`docs/design/roadmap-phase3-object-inventory.md`,
-/// "What a span carries") over a real fixture: `postgres` (every object's
+/// The cross-reference set (`docs/design/architecture.md`,
+/// "TOC enrichment") over a real fixture: `postgres` (every object's
 /// owner, via both `Span::toc.owner` and the file's many `ALTER ... OWNER
 /// TO`) and `fixture_reader` (the `GRANT`/`ALTER DEFAULT PRIVILEGES`
 /// grantee) are both present; `PUBLIC` — also a real grantee in this fixture
 /// (`GRANT SELECT ON TABLE objects.widgets TO PUBLIC;`) — is not.
-/// `objects.tablespaced_table` (slice 3.1.1) is the fixture's one
+/// `objects.tablespaced_table` is the fixture's one
 /// non-default tablespace, referenced both by its TOC header's `;
 /// Tablespace: fixture_ts` suffix and by the `SET default_tablespace =
 /// fixture_ts;` framing ahead of its definition; the surrounding `SET

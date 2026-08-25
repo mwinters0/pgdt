@@ -1,5 +1,5 @@
 //! Type resolution against real `pg_dump` output — `fixtures/*/types/default.sql`
-//! (`docs/design/roadmap-phase2-typed-columns.md`, "Type mapping"). Unlike
+//! (`docs/design/architecture.md`, "Type resolution"). Unlike
 //! `pgdump_query/src/pgtype.rs`'s and `resolve.rs`'s unit tests (hand-written
 //! `TypeDef`s), this exercises the whole "declared type string, as `pg_dump`
 //! actually wrote it, resolved against that same dump's `CREATE TYPE` list"

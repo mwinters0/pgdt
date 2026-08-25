@@ -1,15 +1,14 @@
-//! One warm-cache whole-file run (Phase 2.5, "Benchmarks" in
-//! `docs/design/roadmap-phase2-typed-columns.md`): an end-to-end regression
-//! tripwire for Phase 2's own typed-decode CPU cost, complementing
-//! `benches/decoders.rs`'s per-family microbenchmarks. It is deliberately
-//! narrow — Phase 7's device-bound campaign
+//! One warm-cache whole-file run (`docs/design/architecture.md`, "Testing
+//! philosophy"): an end-to-end regression tripwire for typed-decode CPU cost,
+//! complementing `benches/decoders.rs`'s per-family microbenchmarks. It is
+//! deliberately narrow — the device-bound campaign
 //! (`docs/design/roadmap-phase7-scan-performance.md`) is where the dial
 //! turns up to koji-sized (~100 GB) runs and CPU%/bytes-per-second tracking;
 //! this only has to catch a regression on data that fits page cache.
 //!
 //! `SchemaMode::Typed` (`BatchOptions::default()`) is used deliberately: it's
 //! the mode that walks every field through `decode.rs`, which
-//! `SchemaMode::Strings` (Phase 1's untouched zero-copy path) does not, so
+//! `SchemaMode::Strings` (the pure zero-copy path) does not, so
 //! only `Typed` can see a decode regression at all.
 //!
 //! The dataset is generated on first run via `scripts/generate_perf_data.py`

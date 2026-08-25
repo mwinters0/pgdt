@@ -1,16 +1,15 @@
-//! Pull-mode streaming API (`docs/design/roadmap-phase1-mvp.md`, "Streaming
-//! API").
+//! Pull-mode streaming API (`docs/design/architecture.md`, "Execution model and API surface").
 //!
 //! [`table_stream`] is the primitive: an async `Stream<Item =
 //! Result<RecordBatch>>` built directly on [`CopyScanner`]/[`RowBatcher`], the
 //! same machinery [`crate::batch::read_table`] (push mode) now drives
 //! internally rather than duplicating. [`ResumeToken`] lets a caller stop
 //! consuming partway through and pick back up later in the same process — it
-//! holds no public fields (`roadmap-phase1-mvp.md` is explicit that it must
+//! holds no public fields (`docs/design/architecture.md` is explicit that it must
 //! stay opaque), so its representation is free to change without an API break.
 //!
 //! **Mapping and streaming are separate passes**
-//! (`docs/design/roadmap-phase3-object-inventory.md`, the section of that
+//! (`docs/design/architecture.md`, the section of that
 //! name). A query runs in two phases, never interleaved:
 //!
 //! 1. [`map_forward`] extends the [`DumpIndex`]'s map from its own
@@ -32,21 +31,20 @@
 //! keeps what the map learned; [`CacheMode::Disabled`] runs the same way with
 //! `save` a no-op, mapping in memory only.
 //!
-//! **Preamble capture** (Phase 2.2.1,
-//! `docs/design/roadmap-phase2-typed-columns-notes.md`, "Preamble parsing"): before
+//! **Preamble capture** (`docs/design/architecture.md`, "Bounded
+//! preamble-only reads"): before
 //! any of that, [`table_stream`] runs [`crate::index::scan_preamble`] once
 //! (skipped once a cache already has it), regardless of which table was
 //! queried, whether it ever appears, or how far the live scan gets before a
-//! caller stops polling. This runs even under [`CacheMode::Disabled`] as of
-//! Phase 2.3 — `--dqcache none` disables *persistence*, not type
-//! resolution (`docs/design/roadmap-phase2-typed-columns.md`, "The preamble
-//! pass") — but `cache.save` is a no-op there, so nothing is written to
-//! disk. Under [`CacheMode::Enabled`], a cache file's mere presence
+//! caller stops polling. This runs even under [`CacheMode::Disabled`]:
+//! `--dqcache none` disables *persistence*, not type resolution
+//! (`docs/design/architecture.md`, "Bounded preamble-only reads") — but
+//! `cache.save` is a no-op there, so nothing is written to disk. Under [`CacheMode::Enabled`], a cache file's mere presence
 //! therefore does *not* mean its metadata is complete for every database (a
 //! later `\connect`-ed one is still full-scan-only), but it does always mean
 //! the first one is.
 //!
-//! **Type resolution** (Phase 2.2.1's successor): once a query's matching
+//! **Type resolution**: once a query's matching
 //! `COPY` block is found, its column list is resolved against that captured
 //! metadata into a [`crate::resolve::ResolvedSchema`], retrievable via
 //! [`TableStream::resolved_schema`]. This is a preview, not what actually
@@ -80,8 +78,7 @@ use crate::{Error, Result};
 /// accumulating its rows, the column index a [`Predicate`] was resolved to
 /// against this block's own schema (schemas can differ block-to-block, e.g.
 /// a headerless block's placeholder names), and the database this block is
-/// attributed to (`docs/design/roadmap-phase2-typed-columns.md`, "One target
-/// per query").
+/// attributed to (`docs/design/architecture.md`, "One target per query").
 type Active = (u64, CopyHeader, RowBatcher, Option<usize>, Option<String>);
 
 /// `database`, rendered as `database.schema.table`, or just `schema.table`
@@ -115,8 +112,7 @@ fn resolve_predicate_index(
 /// `built` (a complete tiling of `[seg_start, watermark)` from
 /// [`crate::map::Builder`]), plus the trailing [`SpanBody::Unscanned`] span
 /// that makes the result tile the whole file even though the scan stopped
-/// early (`docs/design/roadmap-phase3-object-inventory.md`, "Scan coverage is
-/// a prefix, expressed as a span").
+/// early (`docs/design/architecture.md`, "The file map").
 ///
 /// Whole-region replacement rather than an incremental merge because
 /// `Builder`'s output is already a complete tiling of everything the segment
@@ -126,8 +122,7 @@ fn resolve_predicate_index(
 /// the next one starts**.
 ///
 /// That is what keeps interstitial blank lines attributed to the span before
-/// them (`docs/design/roadmap-phase3-object-inventory.md`, "Span boundaries:
-/// object-anchored and greedy") even across a stopping point. A previous scan
+/// them (`docs/design/architecture.md`, "Three things close a statement") even across a stopping point. A previous scan
 /// that stopped on a block's `end_offset` left that block's span ending
 /// exactly there; the blank line that follows belongs to it, not to whatever
 /// the next segment happens to recognize first.
@@ -178,7 +173,7 @@ fn splice(
 /// concatenation, or a `--create` dump, and a qualified name can be defined
 /// again in a later database — the other route I2 names. Stopping early there
 /// would hand back one candidate's rows where
-/// `docs/design/roadmap-phase2-typed-columns.md`'s "One target per query"
+/// `docs/design/architecture.md`'s "One target per query"
 /// requires `Error::AmbiguousTable`, which is a wrong answer with no signal,
 /// exactly what that decision exists to prevent. A `batch_options.database`
 /// selector does not lift this: two `\connect` segments can name the *same*
@@ -315,13 +310,13 @@ async fn map_forward<S: ByteRangeSource>(
 /// Opaque cursor into a [`table_stream`]/[`crate::batch::read_table`]
 /// consumption, sufficient to resume from just past the last batch a caller
 /// accepted. Valid only within the process that produced it — persisting it
-/// across a restart is out of scope for Phase 1 (`roadmap-phase1-mvp.md`).
+/// across a restart is out of scope (`docs/design/roadmap.md`).
 #[derive(Debug, Clone)]
 pub struct ResumeToken {
     offset: u64,
     rows_emitted: u64,
     /// Reserved for the structural cache's generation stamp. The cache
-    /// doesn't stamp generations in Phase 1, so this is always 0; carrying
+    /// doesn't stamp generations, so this is always 0; carrying
     /// the field now avoids a later breaking change to this already-opaque
     /// type.
     #[allow(dead_code)]
@@ -372,7 +367,7 @@ impl<'a> TableStream<'a> {
     }
 
     /// This query's resolved schema and diagnostics
-    /// (`docs/design/roadmap-phase2-typed-columns.md`, "Schema resolution":
+    /// (`docs/design/architecture.md`, "Type resolution":
     /// "one schema per stream"). The empty schema (`ResolvedSchema::default`)
     /// until the query's matching `COPY` block has been found — which, for a
     /// table that never appears in the dump, is forever; a caller checking
@@ -384,10 +379,10 @@ impl<'a> TableStream<'a> {
 }
 
 /// Build the [`ResolvedSchema`] for a table-matching block — the actual
-/// batch schema a [`RowBatcher`] built from it carries, as of Phase 2.4 (see
+/// batch schema a [`RowBatcher`] built from it carries (see
 /// [`TableStream::resolved_schema`]'s docs) — scoped to `database`, the
 /// block's own attribution, never a guess
-/// (`docs/design/roadmap-phase2-typed-columns.md`, "One target per query").
+/// (`docs/design/architecture.md`, "One target per query").
 ///
 /// `Typed` mode against metadata that doesn't (yet) have a *complete* entry
 /// for `database` is `Error::MetadataNotScanned` rather than a silent
@@ -472,15 +467,15 @@ fn snapshot(scanner: &CopyScanner, active: &Option<Active>, rows_emitted: u64) -
 /// `resume` continues a previous consumption from a [`ResumeToken`] it
 /// produced; `None` starts from the beginning of `source`.
 ///
-/// `predicate` applies `docs/design/roadmap-phase1-mvp.md`'s post-parse row
-/// filter (`docs/design/roadmap-phase1-mvp.md`, "Predicate filtering"): `None`
+/// `predicate` applies `docs/design/architecture.md`'s post-parse row
+/// filter (`docs/design/architecture.md`, "Predicates"): `None`
 /// yields every row, as before; `Some` drops any row whose named column
 /// doesn't satisfy it, after that row has been fully unescaped. Referencing a
 /// column absent from a matching block's own schema is
 /// `Error::UnknownPredicateColumn`.
 ///
 /// `cache` controls structure-cache consulting
-/// (`docs/design/roadmap-phase1-mvp.md`, "Index / structure cache").
+/// (`docs/design/architecture.md`, "The cache").
 /// `CacheMode::Enabled` persists the map after every block the mapping pass
 /// completes, so a later query against the same dump starts from a nearer
 /// frontier; `CacheMode::Disabled` runs identically but writes nothing,
@@ -519,7 +514,7 @@ where
         // block itself (`crate::index::scan_preamble`'s docs) — every
         // `Typed`-mode query needs it for type resolution below, not just a
         // caller that goes on to persist a cache. `CacheMode::Disabled`
-        // still runs the scan (`docs/design/roadmap-phase2-typed-columns.md`,
+        // still runs the scan (`docs/design/architecture.md`,
         // "`--dqcache none` disables persistence, not typing") but
         // `cache.save` below is a no-op for it, so nothing is written.
         // Persisted immediately (not deferred to whenever the mapping pass
@@ -547,7 +542,7 @@ where
         }
         let metadata = index.metadata.clone();
 
-        // Phase 1: extend the map until this query's table is settled. No
+        // Pass 1: extend the map until this query's table is settled. No
         // rows come out of this, and nothing is yielded until it returns.
         let selector = batch_options.database.as_deref();
         map_forward(
@@ -562,7 +557,7 @@ where
         )
         .await?;
 
-        // One target per query (`docs/design/roadmap-phase2-typed-columns.md`,
+        // One target per query (`docs/design/architecture.md`,
         // "One target per query"): narrow the name-only matches down to at
         // most one `(database, qualified name)` candidate before reading any
         // of them, so a would-be silent union across schemas or databases
@@ -595,7 +590,7 @@ where
             }
         }
 
-        // Phase 2: replay each matching block for its rows. A resumed stream
+        // Pass 2: replay each matching block for its rows. A resumed stream
         // picks up inside this same list — every resume point is inside a
         // mapped block by construction, so there is no live-scan fallback and
         // no cache bookkeeping left to do here.

@@ -1,6 +1,6 @@
 //! On-disk structure cache: round-tripping, the "unusable cache is treated
-//! as absent" contract `docs/design/roadmap-phase1-mvp.md` requires, and the
-//! source-identity check `docs/design/roadmap-phase3-object-inventory.md`
+//! as absent" contract `docs/design/architecture.md` requires, and the
+//! source-identity check `docs/design/architecture.md`
 //! ("Cache: the dump file's identity is checked, not assumed") adds on top.
 
 use std::path::{Path, PathBuf};
@@ -78,8 +78,7 @@ async fn saved_index_round_trips_exactly() {
 /// always reaches EOF, it stops at the first `COPY` header — so it's the one
 /// place today that persists a real `SpanBody::Unscanned` tail, rather than
 /// the variant only ever appearing in `crate::map`'s own unit tests
-/// (`docs/design/roadmap-phase3-object-inventory.md`, "Scan coverage is a
-/// prefix, expressed as a span").
+/// (`docs/design/architecture.md`, "The file map").
 #[tokio::test]
 async fn preamble_only_persists_a_real_unscanned_tail() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
@@ -93,8 +92,8 @@ async fn preamble_only_persists_a_real_unscanned_tail() {
     // the cache it persists is `Incomplete` by the same completeness check
     // `pgdq info`'s default listing uses to decide whether to trust a cache
     // as the whole file's map — not `Valid`, and not `Absent` either, since
-    // it's a real, usable partial scan (`docs/design/roadmap-phase3-object-inventory.md`,
-    // "Cache-only inspection").
+    // it's a real, usable partial scan (`docs/design/architecture.md`,
+    // "The cache").
     let index = match cache::load(&path, &source).await.unwrap() {
         CacheStatus::Incomplete { index, .. } => index,
         CacheStatus::Valid { .. } => panic!("a preamble-only scan cannot reach EOF"),
@@ -241,8 +240,7 @@ fn require_enabled_errors_when_disabled() {
 
 /// An mtime that changed since the cache was saved is a **warning on the
 /// loaded index**, not an invalidation and not an error
-/// (`docs/design/roadmap-phase3-object-inventory.md`, "Cache: the dump file's
-/// identity is checked, not assumed"): mtime granularity and preservation
+/// (`docs/design/architecture.md`, "The cache"): mtime granularity and preservation
 /// vary too much across filesystems, copies and restores to be conclusive.
 /// The cache's contents come back intact.
 #[tokio::test]
@@ -310,8 +308,7 @@ async fn diagnostics_do_not_round_trip_through_the_cache() {
 /// hands it back as `Some`, the same as a `Valid` cache, since its callers
 /// (`table_stream`, `preamble_only`) want a partial map to build forward
 /// from rather than a signal to start over
-/// (`docs/design/roadmap-phase3-object-inventory.md`, "Cache-only
-/// inspection").
+/// (`docs/design/architecture.md`, "The cache").
 #[tokio::test]
 async fn an_incomplete_cache_still_loads_as_some_through_cache_mode() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
@@ -326,8 +323,7 @@ async fn an_incomplete_cache_still_loads_as_some_through_cache_mode() {
     assert!(index.scanned_through < size, "a preamble-only cache never reaches EOF");
 }
 
-/// `docs/design/roadmap-phase3-object-inventory.md`, "Cache-only
-/// inspection": `CacheMode::Offline` is rejected by every method that
+/// `docs/design/architecture.md`, "The cache": `CacheMode::Offline` is rejected by every method that
 /// requires a live source, and `CacheMode::load_offline` rejects the other
 /// two variants the opposite way.
 #[tokio::test]
@@ -353,8 +349,7 @@ async fn offline_mode_is_rejected_by_live_methods_and_vice_versa() {
 /// `Incomplete` with the total size it fell short of, the same way `load`
 /// does for a live source — the completeness check reads the cache's own
 /// recorded size, since there is no live file to stat
-/// (`docs/design/roadmap-phase3-object-inventory.md`, "Cache-only
-/// inspection", the former out-of-band item M1).
+/// (`docs/design/architecture.md`, "The cache", the former out-of-band item M1).
 #[tokio::test]
 async fn load_offline_reports_incomplete_for_a_partial_scan() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
@@ -376,8 +371,7 @@ async fn load_offline_reports_incomplete_for_a_partial_scan() {
 /// A cache-only load — `Valid` or `Incomplete` — always carries a
 /// `CacheOffline` diagnostic: there is no live file to check it against, so
 /// the result is unverified and historical regardless of completeness
-/// (`docs/design/roadmap-phase3-object-inventory.md`, "Cache-only
-/// inspection").
+/// (`docs/design/architecture.md`, "The cache").
 #[tokio::test]
 async fn load_offline_always_pushes_the_cache_offline_diagnostic() {
     use pgdump_query::DiagnosticKind;

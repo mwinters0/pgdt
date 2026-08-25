@@ -341,7 +341,7 @@ originally claimed a later `\connect`-ed database's own pair needs no such
 handling, "held within that database's own segment" — reasoning about
 `pg_dumpall`'s child-process structure without a concatenated fixture to
 check it against. The fixture tree has one (two `--create` fixtures
-concatenated — `docs/design/architecture.md`, "Fixture
+concatenated — `docs/design/architecture.md`, "Fixtures
 tree") and found the opposite: a later child's version-header pair prints ahead of
 *its own* `\connect`, exactly like the first child's does ahead of its
 `\connect` — which puts those lines in `PreambleBuilder::feed_line` while
@@ -366,7 +366,7 @@ contains both shapes. A hand-built concatenation of `--create` outputs
 produces only the first, which is why a genuine `pg_dumpall` fixture is
 added later.
 
-**Slice 2.3.2 confirmed both segment shapes against a real `pg_dumpall`
+**Both segment shapes are confirmed against a real `pg_dumpall`
 run**, not just the hand-concatenated stand-in: `fixtures/{13,18}/edge_cases/dumpall.sql`
 (`pg_dumpall --no-role-passwords` against the fixture cluster) show, on both
 the oldest and newest routine versions, `template1`/`postgres` printing
@@ -497,7 +497,7 @@ CREATE TYPE public.mybase (INPUT = public.mybase_in,
 `pg_dump` then emits `mybase` twice (SHELL TYPE, then TYPE), `shellonly` once,
 and `myrange` with its multirange parameter (I10).
 
-**Slice 2.3.2 promoted this from a one-off probe to permanent fixture
+**This was promoted from a one-off probe to permanent fixture
 coverage**: the same three statements are now in
 `scripts/fixture_schema_types.sql`, generated across all six routine
 versions (`fixtures/<version>/types/default.sql`), backed by tables

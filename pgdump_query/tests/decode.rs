@@ -1,7 +1,7 @@
-//! End-to-end round-trip over real `pg_dump` output (Phase 2.4, "Testing the
-//! mapping's correctness" in `docs/design/roadmap-phase2-typed-columns.md`):
+//! End-to-end round-trip over real `pg_dump` output
+//! (`docs/design/architecture.md`, "Testing philosophy"):
 //! every mapped, always-decodable column family must render back to exactly
-//! what `SchemaMode::Strings` (Phase 1's untouched, byte-for-byte behavior)
+//! what `SchemaMode::Strings` (the untyped, byte-for-byte path)
 //! already decoded for that same field — that's what "the original bytes"
 //! means once `SchemaMode::Strings` is available as a trustworthy oracle,
 //! rather than re-deriving expected values by hand.

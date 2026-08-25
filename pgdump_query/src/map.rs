@@ -1,104 +1,63 @@
-//! The full file map: an ordered, tiling set of [`Span`]s covering every
-//! byte of a `pg_dump` plain-format file
-//! (`docs/design/roadmap-phase3-object-inventory.md`, "What this phase is
-//! for" and "The map is the structure, not a description of it").
+//! The full file map: an ordered, tiling set of [`Span`]s covering every byte
+//! of a `pg_dump` plain-format file (`docs/design/architecture.md`, "The file
+//! map").
 //!
-//! [`build_map`] classifies DDL statements directly; a TOC comment block is
-//! recognized both as a **boundary** — see "Span boundaries" below — and, as
-//! of Phase 3.3, as an **enrichment layer** read off the same lines: owner,
-//! kind label, the `Tablespace:` field, and a per-file TOC-coverage count
-//! (`roadmap-phase3-object-inventory.md`, "Scanning: one statement-driven
-//! pass, TOC comments as an enrichment layer"). See "TOC enrichment" below.
+//! [`build_map`] classifies DDL statements directly. A TOC comment block is
+//! recognized both as a **boundary** — see below — and as an **enrichment
+//! layer** read off the same lines: owner, kind label, the `Tablespace:`
+//! field, and a per-file TOC-coverage count.
 //!
 //! ## Span boundaries: TOC-block-anchored, with a statement-grammar fallback
 //!
 //! A span opens at the `--` of a TOC comment block (recognized lexically —
 //! any run of `--`-prefixed lines containing one that matches `-- Name: ...;
 //! Type: ...`) or, absent one, at the first byte of a recognized statement.
-//! It runs greedily to the byte before the next span opens
-//! (`roadmap-phase3-object-inventory.md`, "Span boundaries: object-anchored
-//! and greedy") — this module never computes a span's `end` directly; it
-//! only ever decides where the *next* span starts, and a caller-side pass
-//! derives `end` as `next.start` (or the scan's end, for the last span).
+//! It runs greedily to the byte before the next span opens. **This module
+//! never computes a span's `end` directly**; it only ever decides where the
+//! *next* span starts, and a caller-side pass derives `end` as `next.start`
+//! (or the scan's end, for the last span).
 //!
 //! **Why TOC-block boundaries, not pure statement-completion tracking.** A
 //! `CREATE FUNCTION`/`PROCEDURE` body is dollar-quoted, and
-//! `crate::scan::CopyScanner` never emits an [`crate::scan::Event::Line`]
+//! [`crate::scan::CopyScanner`] never emits an [`crate::scan::Event::Line`]
 //! for a dollar-quoted line — not even the one that closes the tag with the
-//! statement's own terminating `;` on it (`docs/status/history/2026-08-23.md`,
-//! "Dollar-quoted lines never reach `Event::Line`"). So a tracker watching
-//! only the visible line stream cannot observe that such a statement closed.
-//! Every real `pg_dump` entry — `CREATE FUNCTION` included — carries its own
-//! `-- Name: ...; Type: ...` TOC header, and that header can *never* appear
-//! inside a dollar-quoted body (the scanner already filters those lines out
-//! before any event reaches this module, fake-looking `-- Name:` text
-//! included), so recognizing the next entry's header is a sound, general
-//! "the previous span has ended" signal that sidesteps the problem entirely.
+//! statement's own terminating `;` on it. So a tracker watching only the
+//! visible line stream cannot observe that such a statement closed. Every real
+//! `pg_dump` entry — `CREATE FUNCTION` included — carries its own `-- Name:
+//! ...; Type: ...` TOC header, and that header can *never* appear inside a
+//! dollar-quoted body (the scanner filters those lines out before any event
+//! reaches this module, fake-looking `-- Name:` text included), so recognizing
+//! the next entry's header is a sound, general "the previous span has ended"
+//! signal that sidesteps the problem entirely.
 //!
-//! For input carrying **no** TOC headers there is a second signal, added in
-//! Phase 3.2.3: [`crate::scan::Event::DollarQuoteEnd`], a position-only event
-//! marking where a dollar-quoted region closed, which
-//! [`Builder::on_dollar_quote_end`] treats as completing whatever statement
-//! is in flight. Without it the first dollar-quoted body in a header-less
-//! file absorbs every statement after it into one span. The lines themselves
-//! stay unsurfaced either way.
-//! The statement-grammar fallback (used for content with no TOC header —
-//! `\connect`/`\restrict`/framing lines, and any statement, like a trailing
-//! `ALTER ... OWNER TO`, that isn't its own TOC entry) is exactly
-//! [`crate::preamble::statement_complete`], hardened in this same slice for
-//! the double-quote/`--`-comment cases a five-keyword-triggered accumulator
-//! never used to reach.
+//! For input carrying **no** TOC headers there is a second signal:
+//! [`crate::scan::Event::DollarQuoteEnd`], a position-only event marking where
+//! a dollar-quoted region closed, which [`Builder::on_dollar_quote_end`]
+//! treats as completing whatever statement is in flight. Without it the first
+//! dollar-quoted body in a header-less file absorbs every statement after it
+//! into one span. The lines themselves stay unsurfaced either way.
 //!
-//! **Consequence: no "grouping".** `docs/design/roadmap-phase3-object-inventory.md`
-//! lists grouping (folding an object's trailing `ALTER ... OWNER TO` into
-//! the same TOC entry) as something the TOC layer *contributes* — "Without
-//! it: They tile as two adjacent spans instead of one." That remains this
-//! module's behavior: a definition and its ungrouped trailing statement tile
-//! as two adjacent spans, per the design doc's own "graceful degradation"
-//! framing. Grouping (via the TOC's `Dependencies:` field) is not in either
-//! 3.3's or 3.4's specified scope — it has no assigned slice yet. **Not
-//! grouping is not the same as not attributing** — see "TOC inheritance"
-//! below: the two spans stay separate, but as of Phase 3.3.1 both carry the
-//! same [`Span::toc`].
+//! The statement-grammar fallback — used for content with no TOC header:
+//! `\connect`/`\restrict`/framing lines, and any statement, such as a
+//! trailing `ALTER ... OWNER TO`, that is not its own TOC entry — is exactly
+//! [`crate::preamble::statement_complete`], which tracks double-quoted
+//! identifiers and `--` line comments as well as string literals.
 //!
-//! ## What has landed, slice by slice, and what's still outside
-//! - **The `Data`-span fast path for `INSERT` runs and the large-object
-//!   region — landed in Phase 3.6.** [`DataBlock`] is what [`SpanBody::Data`]
-//!   holds now: [`DataBlock::Copy`] for a `COPY` block (unchanged),
-//!   [`DataBlock::InsertRun`] for a run of `INSERT INTO <table> ...;`
-//!   statements (`Mode::InsertRun`, entered from `Mode::Statement`'s first
-//!   line), and [`DataBlock::LargeObjects`] for the whole
-//!   `BEGIN;`/`COMMIT;`-wrapped large-object region (I12), merged across
-//!   however many archive entries `pg_dump` split it into
-//!   ([`Builder::on_large_object_start`]). `crate::scan` recognizes a bare
-//!   `BEGIN;`/`COMMIT;` pair at the scanner level, the same way it recognizes
-//!   a `COPY` header/`\.` pair, and skips everything in between unread — see
-//!   [`crate::scan::Event::LargeObjectStart`]/[`crate::scan::Event::LargeObjectEnd`].
-//!   `INSERT` runs stay a `feed_line`-level concern instead (no new scanner
-//!   state): the win there is not re-parsing/re-storing text per row, which
-//!   reusing [`statement_complete`]'s already-hardened quote/paren tracking
-//!   already gets, and the phase's own gating measurements don't cover
-//!   `INSERT`-run throughput specifically (see "Verification" in
-//!   `roadmap-phase3-object-inventory.md`). Neither kind carries the inner
-//!   offsets `DataBlock::Copy` does — nothing reads their rows yet
-//!   (Phase 8, unscheduled). Notes: `docs/design/roadmap-phase3-object-inventory-notes.md`.
-//! - **Wiring into `DumpIndex`/`crate::cache`/`crate::stream` — landed in
-//!   Phase 3.2.1 through 3.2.1.2.1.** [`Builder`] (this module's
-//!   boundary/classification state machine) is driven directly by
-//!   [`crate::index::build_index`], [`crate::index::scan_preamble`] and
-//!   `crate::stream`'s mapping pass, fed the same [`crate::scan::Event`]
-//!   stream those already walk — [`build_map`] itself is a thin wrapper over
-//!   the same [`Builder`], kept for callers (and this module's own tests)
-//!   that just want a span list. `DumpIndex::spans` is the primary,
-//!   persisted structure; `DumpIndex::blocks()`/`blocks_for` are filters over
-//!   it. [`SpanBody::Unscanned`] covers whatever a partial scan has not
-//!   reached, so **every** `DumpIndex` tiles its file — one built by a query
-//!   included, with no exemption for a resumed stream. `DumpMetadata` is
-//!   [`crate::preamble::dump_metadata_from_spans`] — a derived view over
-//!   `spans`, computed once, the way the design's "The span is the
-//!   container" section calls for; it's what [`SpanBody::Connect`],
-//!   [`SpanBody::VersionHeader`] and [`SpanBody::AlterTypeAddValue`] exist
-//!   for, rather than folding into generic [`SpanBody::Framing`]/[`SpanBody::Unparsed`].
+//! **Consequence: no "grouping".** A definition and its ungrouped trailing
+//! statement tile as two adjacent spans rather than one. That is the design's
+//! own graceful-degradation position, not an oversight; grouping via the TOC's
+//! `Dependencies:` field is unimplemented and unassigned. **Not grouping is
+//! not the same as not attributing** — see "TOC inheritance" below: the two
+//! spans stay separate, but both carry the same [`Span::toc`].
+//!
+//! ## What this module owns
+//!
+//! - **Boundaries and classification.** [`Builder`] is the state machine, and
+//!   it is driven directly by [`crate::index::build_index`],
+//!   [`crate::index::scan_preamble`] and `crate::stream`'s mapping pass, fed
+//!   the same [`crate::scan::Event`] stream those already walk. [`build_map`]
+//!   is a thin wrapper over the same [`Builder`], kept for callers (and this
+//!   module's own tests) that just want a span list.
 //!
 //!   A [`Builder`] that starts partway through a file opens its first span at
 //!   its own first recognized content, **not** at the byte it began reading:
@@ -107,55 +66,75 @@
 //!   preceding span — the same rule [`Builder::push_span`] applies to every
 //!   other boundary, and what keeps a map assembled across several scans
 //!   identical to one built in a single pass.
-//! - **Span text and diagnostics — landed in Phase 3.2.2.** [`attach_text`]
-//!   fills [`Span::text`] by slicing the file at each span's own offsets,
-//!   capped at [`TEXT_CAP`] with a `truncated` marker; `Data` and `Unscanned`
-//!   spans store none. [`check_tiling`] now has production callers
-//!   ([`crate::index::build_index`] and `crate::stream`'s mapping pass), which
-//!   report a failure as a [`crate::diagnostic::DiagnosticKind::TilingBroken`]
-//!   on the index and return the map anyway — a hole is a bug in this module,
-//!   never a reason to refuse the file.
-//! - **TOC enrichment — landed in Phase 3.3.** [`Span::toc`] is filled by
-//!   [`parse_toc_header_line`] whenever a comment block's TOC-Name line
-//!   parses: `-- Name: ...` or its `-- Data for Name: ...` sibling (I3),
-//!   through `; Type: ...; Schema: ...; Owner: ...` and the optional trailing
-//!   `; Tablespace: ...` (I16). A `-` or empty field parses to `None`, matching
-//!   `_printTocEntry()`'s two ways of writing "no value" (`sanitize_line`'s
-//!   `want_hyphen` argument differs by field and by caller). The verbose
-//!   `-- TOC entry N (class C OID O)` / `-- Dependencies: ...` lines that can
-//!   precede the Name line (`--verbose`) are ordinary comment lines to this
-//!   parser — recognized as such, contributing nothing, exactly like any
-//!   other line that fails to parse as a header. [`crate::index::DumpIndex`]'s
-//!   per-file TOC-coverage figure (`crate::index::toc_coverage_diagnostic`) is
-//!   just `spans.iter().filter(|s| s.toc.is_some()).count()` against
-//!   `spans.len()` — no separate counter, since `Span::toc` already carries
-//!   the fact.
-//! - **TOC inheritance for follow-on statements — landed in Phase 3.3.1.**
-//!   3.3 shipped a coverage figure that read ~50% on a healthy, fully-TOC'd
-//!   dump: a TOC entry is not one statement, and every follow-on
-//!   (`ALTER ... OWNER TO`, `ALTER TEXT SEARCH CONFIGURATION ... ADD MAPPING
-//!   FOR`, ...) carried `toc: None`, uncovered. `Builder`'s `governing_toc`
-//!   field fixes this — it's the entry a comment-less statement inherits, updated
-//!   by every [`Builder::push_span`] call: set to that span's own `toc` for a
-//!   plain statement or `Data` span, cleared to `None` for `Framing`/
-//!   `Connect`/`VersionHeader`. [`Span::toc_owned`] is the "separate record
-//!   of whether it carried the header text itself" the design calls for —
-//!   `true` only for the span whose own comment `toc` came from, `false` for
-//!   every span that inherited it. Coverage now counts attribution
-//!   (`toc.is_some()`, unchanged code — inheritance alone makes the numerator
-//!   right); an object *census* (`pgdq info`'s `object kinds:`) counts
-//!   `toc_owned` spans instead, one per archive entry, since counting every
-//!   attributed span would double it. No grouping either way — see
-//!   "Consequence: no 'grouping'" above.
-//! - **The cross-reference set — landed in Phase 3.4.** [`Builder`] grows
-//!   `roles`/`tablespaces` (both [`crate::index::DumpIndex`] fields of the
-//!   same name), accumulated as spans close: [`Builder::push_span`] reads
-//!   `toc.owner`/`toc.tablespace`, and [`Builder::push_statement_span`] scans
-//!   the closing statement's own text via
-//!   [`crate::preamble::extract_statement_cross_refs`] for `OWNER TO`,
+//!
+//! - **Bulk regions.** [`SpanBody::Data`] holds a [`DataBlock`]:
+//!   [`DataBlock::Copy`] for a `COPY` block, [`DataBlock::InsertRun`] for a run
+//!   of `INSERT INTO <table> ...;` statements (`Mode::InsertRun`, entered from
+//!   `Mode::Statement`'s first line), and [`DataBlock::LargeObjects`] for the
+//!   whole `BEGIN;`/`COMMIT;`-wrapped large-object region (I12), merged across
+//!   however many archive entries `pg_dump` split it into
+//!   ([`Builder::on_large_object_start`]).
+//!
+//!   The two get different treatment on purpose. `crate::scan` recognizes a
+//!   bare `BEGIN;`/`COMMIT;` pair at the scanner level, the same way it
+//!   recognizes a `COPY` header/`\.` pair, and skips everything between
+//!   **unread**. `INSERT` runs stay a `feed_line`-level concern with no new
+//!   scanner state, reusing [`statement_complete`]'s quote/paren tracking —
+//!   which costs about 5× a `COPY` scan per byte
+//!   (`docs/design/measurements.md`). Neither carries the inner offsets
+//!   [`DataBlock::Copy`] does, because nothing reads their rows yet.
+//!
+//! - **TOC enrichment.** [`Span::toc`] is filled by [`parse_toc_header_line`]
+//!   whenever a comment block's TOC-Name line parses: `-- Name: ...` or its
+//!   `-- Data for Name: ...` sibling (I3), through `; Type: ...; Schema: ...;
+//!   Owner: ...` and the optional trailing `; Tablespace: ...` (I16). A `-` or
+//!   empty field parses to `None`, matching `_printTocEntry()`'s two ways of
+//!   writing "no value" (`sanitize_line`'s `want_hyphen` argument differs by
+//!   field and by caller). The verbose `-- TOC entry N (class C OID O)` /
+//!   `-- Dependencies: ...` lines that can precede the Name line are ordinary
+//!   comment lines to this parser — contributing nothing, exactly like any
+//!   other line that fails to parse as a header.
+//!
+//! - **TOC inheritance for follow-on statements.** A TOC entry is not one
+//!   statement: every follow-on (`ALTER ... OWNER TO`, `ALTER TEXT SEARCH
+//!   CONFIGURATION ... ADD MAPPING FOR`, ...) would otherwise carry
+//!   `toc: None` and read as uncovered — which made the coverage figure report
+//!   ~50% on a healthy, fully-TOC'd dump. `Builder`'s `governing_toc` field is
+//!   the entry a comment-less statement inherits, updated by every
+//!   [`Builder::push_span`] call: set to that span's own `toc` for a plain
+//!   statement or `Data` span, cleared to `None` for
+//!   `Framing`/`Connect`/`VersionHeader`.
+//!
+//!   [`Span::toc_owned`] records whether a span carried the header text itself
+//!   — `true` only for the span the `toc` came from. Coverage counts
+//!   attribution (`toc.is_some()`); an object *census* (`pgdq info`'s `object
+//!   kinds:`) counts `toc_owned` spans instead, one per archive entry, since
+//!   counting every attributed span would double it.
+//!
+//! - **The cross-reference set.** [`Builder`] accumulates `roles`/`tablespaces`
+//!   (both [`crate::index::DumpIndex`] fields of the same name) as spans close:
+//!   [`Builder::push_span`] reads `toc.owner`/`toc.tablespace`, and
+//!   [`Builder::push_statement_span`] scans the closing statement's own text
+//!   via [`crate::preamble::extract_statement_cross_refs`] for `OWNER TO`,
 //!   `GRANT`/`REVOKE`/`ALTER DEFAULT PRIVILEGES FOR ROLE`, and `SET
-//!   default_tablespace` — the two sources `Span::toc` alone can't cover
-//!   (`roadmap-phase3-object-inventory.md`, "What a span carries").
+//!   default_tablespace` — the sources `Span::toc` alone cannot cover.
+//!
+//! - **Span text and the tiling check.** [`attach_text`] fills [`Span::text`]
+//!   by slicing the file at each span's own offsets, capped at [`TEXT_CAP`]
+//!   with a `truncated` marker; `Data` and `Unscanned` spans store none.
+//!   [`check_tiling`]'s production callers ([`crate::index::build_index`] and
+//!   `crate::stream`'s mapping pass) report a failure as a
+//!   [`crate::diagnostic::DiagnosticKind::TilingBroken`] on the index and
+//!   return the map anyway — a hole is a bug in this module, never a reason to
+//!   refuse the file.
+//!
+//! [`SpanBody::Unscanned`] covers whatever a partial scan has not reached, so
+//! **every** `DumpIndex` tiles its file — one built by a query included, with
+//! no exemption for a resumed stream. `DumpMetadata` is
+//! [`crate::preamble::dump_metadata_from_spans`], a derived view over `spans`
+//! computed once, which is what [`SpanBody::Connect`],
+//! [`SpanBody::VersionHeader`] and [`SpanBody::AlterTypeAddValue`] exist for
+//! rather than folding into generic [`SpanBody::Framing`]/[`SpanBody::Unparsed`].
 
 use std::collections::BTreeSet;
 use std::ops::ControlFlow;
@@ -184,8 +163,7 @@ pub struct Span {
     pub database: Option<String>,
     /// The span's own bytes, sliced from the file by offset and stored in the
     /// cache so `pgdq info` answers without re-reading the dump
-    /// (`docs/design/roadmap-phase3-object-inventory.md`, "Span text comes
-    /// from the file, not from the parser"). `None` until [`attach_text`] has
+    /// (`docs/design/architecture.md`, "Span text"). `None` until [`attach_text`] has
     /// run, and permanently `None` for [`SpanBody::Data`] and
     /// [`SpanBody::Unscanned`] spans, whose bytes are unbounded and carry
     /// nothing a reader wants.
@@ -195,22 +173,20 @@ pub struct Span {
     /// comment of its own (`ALTER ... OWNER TO`, `ALTER TEXT SEARCH
     /// CONFIGURATION ... ADD MAPPING FOR`, ...) **inherits** the governing
     /// entry's header rather than carrying `None`
-    /// (`docs/design/roadmap-phase3-object-inventory.md`, "Span boundaries:
-    /// statement-anchored, object-attributed, greedy") — [`toc_owned`](Self::toc_owned)
+    /// (`docs/design/architecture.md`, "Three things close a statement") — [`toc_owned`](Self::toc_owned)
     /// is what distinguishes the two. `None` for a span with no governing
     /// entry at all: the header-less-input fallback, or one of the kinds
     /// inheritance never crosses (`Framing`, `Connect`, `VersionHeader`).
     /// Independent of, and not a substitute for, [`SpanBody`]'s own per-kind
     /// fields: the TOC comment and the statement grammar are two
     /// separately-sourced observations of the same object
-    /// (`docs/design/roadmap-phase3-object-inventory.md`, "Scanning: one
-    /// statement-driven pass, TOC comments as an enrichment layer").
+    /// (`docs/design/architecture.md`, "The file map").
     pub toc: Option<TocHeader>,
     /// Whether *this span's own* preceding comment carried the TOC header
     /// text (`true`), as opposed to `toc` being inherited from an earlier
     /// entry's span (`false`) — always `false` when `toc` is `None`. This is
     /// the "separate record of whether it carried the header text itself"
-    /// `roadmap-phase3-object-inventory.md`'s "Span boundaries" section calls
+    /// `docs/design/architecture.md`'s "Three things close a statement" section calls
     /// for: an object census (`pgdq info`'s `object kinds:`) counts
     /// `toc_owned` spans, one per archive entry, while TOC-coverage counts
     /// every attributed span (`toc.is_some()`), inherited ones included —
@@ -263,7 +239,7 @@ pub struct TocHeader {
 /// `pg_dump` 18+ `--statistics` component — real flag name; the register
 /// entry that first named it said `--with-statistics`, which does not exist,
 /// see I18), is left unrecognized: fixture evidence now exists
-/// (`fixtures/18/objects/stats.sql`, slice 3.1.1), but recognizing it is a
+/// (`fixtures/18/objects/stats.sql`), but recognizing it is a
 /// deliberate deferral, not a gap — an entry using it just degrades
 /// gracefully (span still tiles, this comment isn't read as a header) the
 /// same way any other unhandled shape does.
@@ -308,8 +284,7 @@ pub struct SpanText {
     pub truncated: bool,
 }
 
-/// Per-span cap on stored text (`roadmap-phase3-object-inventory.md`, "Cache:
-/// the dump file's identity is checked, not assumed"). A whole schema's DDL
+/// Per-span cap on stored text (`docs/design/architecture.md`, "The cache"). A whole schema's DDL
 /// is small — koji's entire surface is 154KB — so this only ever bites on a
 /// single enormous statement.
 pub const TEXT_CAP: usize = 64 * 1024;
@@ -386,9 +361,10 @@ pub enum DataBlock {
 /// A run of `pg_dump --inserts`/`--column-inserts` output for one table —
 /// `INSERT INTO <table> ...;` statements, one per row, merged into a single
 /// `Data` span instead of one `Unparsed` span per statement
-/// (`roadmap-phase3-object-inventory.md`, "Bulk regions": "a koji-scale
+/// (`docs/design/architecture.md`, "Bulk regions: one span kind, three payloads": "a koji-scale
 /// `--inserts` dump is ~1TB of `INSERT INTO` lines"). No inner offsets: unlike
-/// a `CopyBlock`, nothing reads rows out of this yet — Phase 8 Track A adds
+/// a `CopyBlock`, nothing reads rows out of this yet — `docs/design/roadmap.md`,
+/// Phase 8 Track A adds
 /// that reader, using the same quote-tracking [`Builder`] already does to
 /// find the run's own boundaries.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -413,14 +389,14 @@ pub struct InsertRun {
 /// No identity at all: "the only identity the region carries is the OID in
 /// each `lo_create('<oid>')` opener, and recovering it costs a walk of the
 /// whole region, which is exactly what one span avoids paying"
-/// (`roadmap-phase3-object-inventory.md`, "Bulk regions").
+/// (`docs/design/architecture.md`, "Bulk regions: one span kind, three payloads").
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LargeObjectRegion {
     /// Same convention as [`CopyBlock::database`].
     pub database: Option<String>,
 }
 
-/// What a span is, at the granularity Phase 3.2's statement-driven pass (no
+/// What a span is, at the granularity the statement-driven pass (no
 /// TOC enrichment) can tell — see the module docs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SpanBody {
@@ -437,15 +413,16 @@ pub enum SpanBody {
         schema: Option<String>,
     },
     /// A bulk region — a `COPY` block, an `INSERT` run, or the large-object
-    /// data region; see `docs/design/roadmap-phase3-object-inventory.md`,
-    /// "Bulk regions". One span kind for all three, per that section's
+    /// data region; see `docs/design/architecture.md`,
+    /// "Bulk regions: one span kind, three payloads". One span kind for all three, per that section's
     /// "Treating all three as one kind" — [`DataBlock`] is where they stop
     /// sharing a shape: only [`DataBlock::Copy`] carries the inner offsets a
     /// row reader seeks by, since it is the only one of the three a reader
-    /// exists for yet (Phase 8, unscheduled, adds one for `INSERT` runs).
+    /// exists for yet (`docs/design/roadmap.md`, Phase 8 Track A adds one for
+    /// `INSERT` runs).
     Data(DataBlock),
     /// A `\connect <name>` meta-command — kept distinct from [`Framing`](SpanBody::Framing)
-    /// because [`crate::preamble::dump_metadata_from_spans`] (Phase 3.2.1.1)
+    /// because [`crate::preamble::dump_metadata_from_spans`]
     /// needs the database name itself, not just "this was framing", to
     /// reconstruct `DumpMetadata`'s per-database segmenting.
     Connect {
@@ -481,9 +458,8 @@ pub enum SpanBody {
     Unparsed,
     /// Bytes no scan has walked yet — always a single trailing span, since
     /// `build_map` always scans to its target's end
-    /// (`docs/design/roadmap-phase3-object-inventory.md`, "Scan coverage is
-    /// a prefix, expressed as a span"). Not produced by [`build_map`] today
-    /// (which always scans to EOF); Phase 3.2.1 wires the incremental scan
+    /// (`docs/design/architecture.md`, "The file map"). Not produced by [`build_map`] today
+    /// (which always scans to EOF); the incremental scan
     /// that emits one.
     Unscanned,
 }
@@ -507,8 +483,7 @@ pub enum TilingIssue {
 
 /// Verify that `spans` tiles `[0, expected_end)` exactly: sorted, contiguous,
 /// no gaps or overlaps, starting at 0 and ending at `expected_end`
-/// (`docs/design/roadmap-phase3-object-inventory.md`, "Tiling is verified at
-/// runtime and reported as a diagnostic"). Returns every issue found, not
+/// (`docs/design/architecture.md`, "Testing philosophy"). Returns every issue found, not
 /// just the first — a caller still gets a usable (if incomplete) map either
 /// way; per the design, a tiling failure is evidence of a bug in this
 /// module, never a reason to refuse the file.
@@ -572,14 +547,14 @@ enum Mode {
     /// Absorbing a statement's lines via [`statement_complete`]. Started
     /// either directly (no TOC comment — `toc`/`toc_owned` seeded from
     /// [`Builder::governing_toc`], see "Span boundaries: statement-anchored,
-    /// object-attributed, greedy" in `roadmap-phase3-object-inventory.md`) or
+    /// object-attributed, greedy" in `docs/design/architecture.md`) or
     /// right after a TOC comment block closes with `saw_name` true (`toc` is
     /// that comment's own header, `toc_owned` true) — either way `start` is
     /// the *span's* start, which for the TOC case is the comment block's
     /// start, not this statement's own first line.
     Statement { start: u64, buf: String, toc: Option<TocHeader>, toc_owned: bool },
     /// Accumulating a run of `INSERT INTO <table> ...;` statements for one
-    /// table (`roadmap-phase3-object-inventory.md`, "Bulk regions") — entered
+    /// table (`docs/design/architecture.md`, "Bulk regions: one span kind, three payloads") — entered
     /// from `Mode::Statement`'s first line instead of staying there, so the
     /// whole run becomes one `Data` span rather than one `Unparsed` span per
     /// statement. `start`/`toc`/`toc_owned` are the span's own, same
@@ -607,8 +582,7 @@ enum Mode {
 /// [`crate::index::build_index`]/[`crate::index::scan_preamble`], which drive
 /// it directly so that producing spans costs no second pass over bytes
 /// [`crate::scan::scan`] already walked
-/// (`docs/design/roadmap-phase3-object-inventory.md`, "The map is the
-/// structure, not a description of it").
+/// (`docs/design/architecture.md`, "`DumpIndex`: one owner per fact").
 pub(crate) struct Builder {
     mode: Mode,
     database: Option<String>,
@@ -640,16 +614,14 @@ pub(crate) struct Builder {
     pending_large_objects: Option<(u64, u64, Option<TocHeader>)>,
     /// Roles/tablespaces referenced anywhere fed to this builder so far —
     /// accumulated as spans close, per
-    /// `docs/design/roadmap-phase3-object-inventory.md`'s "What a span
-    /// carries" ("a modelled cross-reference set, accumulated during the
+    /// `docs/design/architecture.md`'s "TOC enrichment" ("a modelled cross-reference set, accumulated during the
     /// scan"). See [`Builder::push_span`] (TOC `Owner:`/`Tablespace:`) and
     /// [`Builder::push_statement_span`] (`OWNER TO`/`GRANT`/`REVOKE`/`ALTER
     /// DEFAULT PRIVILEGES FOR ROLE`/`SET default_tablespace`).
     roles: BTreeSet<String>,
     tablespaces: BTreeSet<String>,
     /// The TOC entry a follow-on statement with no comment of its own would
-    /// inherit — `roadmap-phase3-object-inventory.md`'s "Span boundaries:
-    /// statement-anchored, object-attributed, greedy". Updated by every
+    /// inherit — `docs/design/architecture.md`'s "Three things close a statement". Updated by every
     /// [`push_span`](Self::push_span) call: set to that span's own `toc` for
     /// a plain statement or `Data` span (whether freshly parsed or itself
     /// inherited — either way it's what the *next* follow-on should carry),
@@ -785,7 +757,7 @@ impl Builder {
             // this span's two cross-reference sources regardless of its
             // kind, since `_printTocEntry()` writes them ahead of every
             // entry, not just the ones this module classifies
-            // (`roadmap-phase3-object-inventory.md`, "What a span carries").
+            // (`docs/design/architecture.md`, "TOC enrichment").
             if let Some(owner) = &t.owner {
                 crate::preamble::insert_role(&mut self.roles, owner.clone());
             }
@@ -794,8 +766,7 @@ impl Builder {
             }
         }
         // `Framing`/`Connect`/`VersionHeader` are the three kinds inheritance
-        // never crosses (`roadmap-phase3-object-inventory.md`, "Span
-        // boundaries"); everything else becomes the entry a following
+        // never crosses (`docs/design/architecture.md`, "Three things close a statement"); everything else becomes the entry a following
         // comment-less statement would inherit, whether this span's own
         // `toc` was freshly parsed or itself inherited.
         self.governing_toc = match &body {
@@ -967,7 +938,7 @@ impl Builder {
                 }
                 // No comment precedes this statement: it inherits whatever
                 // entry is currently governing (`None` if none is), per
-                // `roadmap-phase3-object-inventory.md`'s "Span boundaries" —
+                // `docs/design/architecture.md`'s "Three things close a statement" —
                 // `push_statement_span` still vetoes this if the statement
                 // turns out to classify as `Framing`.
                 self.mode = Mode::Statement {
@@ -1048,8 +1019,8 @@ impl Builder {
                     return Some((offset, line.to_string()));
                 }
                 // The run's first line, recognized before it ever becomes a
-                // one-statement `Unparsed` span — `roadmap-phase3-object-inventory.md`,
-                // "Bulk regions": grouping the whole run into one `Data` span
+                // one-statement `Unparsed` span — `docs/design/architecture.md`,
+                // "Bulk regions: one span kind, three payloads": grouping the whole run into one `Data` span
                 // is what keeps a koji-scale `--inserts` dump from allocating
                 // (and, pre-3.6, text-storing) one span per row.
                 if buf.is_empty()
@@ -1168,8 +1139,7 @@ impl Builder {
             // A TOC comment (`-- Data for Name: ...; Type: TABLE DATA`, or,
             // rarely, none at all) directly precedes the header: absorb it
             // into the `Data` span's outer boundary per
-            // `roadmap-phase3-object-inventory.md`'s "COPY blocks are the
-            // one exception" — `span.start <= header_offset`.
+            // `docs/design/architecture.md`'s "Bulk regions: one span kind, three payloads" — `span.start <= header_offset`.
             Mode::Comment { start, toc, .. } => (start, toc),
             // Never observed in a well-formed dump (a statement never
             // precedes a `COPY` header with no separating blank line/TOC
@@ -1399,7 +1369,7 @@ impl Builder {
 
 /// A bare `SET ...;` or `SELECT pg_catalog.set_config(...);` — the two
 /// statement shapes `_doSetFixedOutputState()` writes ahead of the archive
-/// proper (`docs/design/roadmap-phase3-object-inventory.md`, "Framing
+/// proper (`docs/design/architecture.md`, "Framing
 /// spans") and `_selectTablespace()` writes ahead of a definition — read for
 /// its tablespace reference by `push_statement_span`'s
 /// `crate::preamble::extract_statement_cross_refs` call regardless of how
@@ -1439,7 +1409,7 @@ fn classify(stmt: &str) -> SpanBody {
 
 /// Scan `source` end to end and build its full file map — see the module
 /// docs for what this slice does and doesn't classify. Always scans to EOF;
-/// there is no partial/incremental form until Phase 3.2.1, so
+/// there is no partial/incremental form here, so
 /// [`SpanBody::Unscanned`] never appears in the result.
 pub async fn build_map<S: ByteRangeSource>(source: &S, options: &ScanOptions) -> Result<Vec<Span>> {
     let mut builder = Builder::new();
@@ -1646,11 +1616,11 @@ mod tests {
         assert!(!spans[0].toc_owned);
     }
 
-    /// Slice 3.3.1's core behavior: a follow-on statement with no TOC comment
+    /// TOC inheritance: a follow-on statement with no TOC comment
     /// of its own (`ALTER SCHEMA ... OWNER TO ...;`, mirroring
     /// `fixtures/*/objects/default.sql`) inherits the governing entry's
-    /// header instead of carrying `None` — `roadmap-phase3-object-inventory.md`,
-    /// "Span boundaries: statement-anchored, object-attributed, greedy". The
+    /// header instead of carrying `None` — `docs/design/architecture.md`,
+    /// "Three things close a statement". The
     /// two spans carry the *same* `toc` value, but only the first has
     /// `toc_owned: true`.
     #[test]
@@ -1862,8 +1832,8 @@ mod tests {
         assert_eq!(spans[0].end, spans[1].start);
     }
 
-    /// I9's two-line version-header block (`docs/design/roadmap-phase3-object-inventory-notes.md`,
-    /// Phase 3.2.1.1) gets its own span kind rather than generic `Framing`,
+    /// I9's two-line version-header block gets its own span kind rather than
+    /// generic `Framing`,
     /// so `crate::preamble::dump_metadata_from_spans` can recover the
     /// strings without re-reading the file.
     #[test]

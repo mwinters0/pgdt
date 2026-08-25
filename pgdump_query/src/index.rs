@@ -18,9 +18,8 @@ use crate::scan::{Event, ScanOptions, scan};
 /// A block's sparse row index: the byte offset of every `interval`-th data
 /// row, letting a later reader seek into the middle of a large block instead
 /// of scanning from its start. Reserved in the cache format from the first
-/// release; not populated until roadmap Phase 7
-/// (`docs/design/roadmap-phase7-scan-performance.md`, "Cache: a sparse row
-/// index") — no code constructs one yet.
+/// release; not populated yet — `docs/design/roadmap-phase7-scan-performance.md`,
+/// "Cache: a sparse row index", defines its real shape.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SparseRowIndex {
     /// Rows between checkpoints (matches the default batch size, 8192 — see
@@ -33,17 +32,16 @@ pub struct SparseRowIndex {
 
 /// Per-row-group column statistics for one block, keyed to its
 /// [`SparseRowIndex`] checkpoints. Reserved in the cache format from the
-/// first release; not populated until roadmap Phase 5
-/// (`docs/design/roadmap.md`, "Companion: per-row-group column statistics")
-/// defines its real shape (null counts, sortedness, min/max, the type each
-/// was computed as) — no code constructs one yet.
+/// first release; not populated yet — `docs/design/roadmap.md`, "Companion:
+/// per-row-group column statistics", defines its real shape (null counts,
+/// sortedness, min/max, the type each was computed as).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RowGroupStats {}
 
 /// Dump-level preamble: source server version, `pg_dump` version, extension
 /// list, user-defined type definitions. Populated by [`build_index`] via
-/// `crate::preamble` (roadmap Phase 2.2,
-/// `docs/design/roadmap-phase2-typed-columns.md`, "The preamble pass").
+/// `crate::preamble` (`docs/design/architecture.md`, "The preamble grammar
+/// and `DumpMetadata`").
 pub use crate::preamble::DumpMetadata;
 
 /// One located COPY block.
@@ -57,8 +55,7 @@ pub struct CopyBlock {
     /// into `metadata.databases`: an incremental scan's metadata can hold
     /// just one entry no matter how many databases the file contains, so an
     /// index would be unresolvable in exactly the case this field exists for
-    /// (`docs/design/roadmap-phase2-typed-columns.md`, "One target per
-    /// query").
+    /// (`docs/design/architecture.md`, "One target per query").
     pub database: Option<String>,
     /// Absolute file offset of the `C` in `COPY`.
     pub header_offset: u64,
@@ -80,18 +77,16 @@ pub struct CopyBlock {
     /// may stop once the queried table's block closes, or must run to EOF
     /// because more blocks can share the name — the blocks are *not*
     /// adjacent, so nothing cheaper than EOF enumerates them
-    /// (`docs/design/roadmap-phase3-object-inventory.md`, "Mapping and
-    /// streaming are separate passes").
+    /// (`docs/design/architecture.md`, "Query: mapping and streaming are separate passes").
     pub partition_root: Option<String>,
-    /// Reserved — see [`SparseRowIndex`]. Always `None` in Phase 1.
+    /// Reserved — see [`SparseRowIndex`]. Always `None`.
     pub sparse_index: Option<SparseRowIndex>,
-    /// Reserved — see [`RowGroupStats`]. Always `None` in Phase 1.
+    /// Reserved — see [`RowGroupStats`]. Always `None`.
     pub column_stats: Option<RowGroupStats>,
 }
 
 /// The full file map discovered in a dump, in file order
-/// (`docs/design/roadmap-phase3-object-inventory.md`, "The map is the
-/// structure, not a description of it"). [`DumpIndex::blocks`] is a derived
+/// (`docs/design/architecture.md`, "`DumpIndex`: one owner per fact"). [`DumpIndex::blocks`] is a derived
 /// filter over it, not a second stored structure.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DumpIndex {
@@ -101,17 +96,16 @@ pub struct DumpIndex {
     pub scanned_through: u64,
     /// Dump-level preamble metadata — see [`DumpMetadata`]. Always `None`
     /// for a `DumpIndex` a caller built by hand rather than through
-    /// [`build_index`] (Phase 1's default), but every `build_index` scan now
+    /// [`build_index`], but every `build_index` scan
     /// populates it. A derived view over `spans`
     /// (`crate::preamble::dump_metadata_from_spans`), computed once when the
     /// scan that produced `spans` finishes rather than stored twice — see
-    /// `docs/design/roadmap-phase3-object-inventory.md`, "The span is the
-    /// container".
+    /// `docs/design/architecture.md`, "`DumpIndex`: one owner per fact".
     pub metadata: Option<DumpMetadata>,
     /// Roles referenced anywhere the scan has reached — the TOC `Owner:`
     /// field, `ALTER ... OWNER TO`, and `GRANT`/`REVOKE`/`ALTER DEFAULT
-    /// PRIVILEGES FOR ROLE` (`docs/design/roadmap-phase3-object-inventory.md`,
-    /// "What a span carries"). `PUBLIC` is never included. Flat and per-file
+    /// PRIVILEGES FOR ROLE` (`docs/design/architecture.md`,
+    /// "TOC enrichment"). `PUBLIC` is never included. Flat and per-file
     /// — a per-database view is a filter over `Span::database`, not a second
     /// stored structure. Persisted: unlike `metadata`/`diagnostics`, there's
     /// no cheaper way to answer "which roles does this dump need" than
@@ -138,8 +132,7 @@ pub struct DumpIndex {
 impl DumpIndex {
     /// The `COPY` blocks among `spans`, in file order — a filtered view, not
     /// a stored field, so a block's byte offsets have exactly one owner
-    /// (`docs/design/roadmap-phase3-object-inventory.md`, "The map is the
-    /// structure, not a description of it").
+    /// (`docs/design/architecture.md`, "`DumpIndex`: one owner per fact").
     pub fn blocks(&self) -> impl Iterator<Item = &CopyBlock> {
         self.spans.iter().filter_map(|s| match &s.body {
             SpanBody::Data(DataBlock::Copy(block)) => Some(block),
@@ -162,8 +155,7 @@ impl DumpIndex {
 /// is fed the same [`Event`] stream as `CopyBlock` discovery, so this is one
 /// pass, not two. `DumpIndex::metadata` is then [`crate::preamble::dump_metadata_from_spans`]
 /// over the result, and [`DumpIndex::blocks`] a filter over it — neither is a
-/// second scan (`docs/design/roadmap-phase3-object-inventory.md`, "The map is
-/// the structure, not a description of it").
+/// second scan (`docs/design/architecture.md`, "`DumpIndex`: one owner per fact").
 pub async fn build_index<S: ByteRangeSource>(
     source: &S,
     options: &ScanOptions,
@@ -196,8 +188,7 @@ pub async fn build_index<S: ByteRangeSource>(
 }
 
 /// Run the tiling check over a finished map and turn any failure into a
-/// diagnostic (`docs/design/roadmap-phase3-object-inventory.md`, "Tiling is
-/// verified at runtime and reported as a diagnostic").
+/// diagnostic (`docs/design/architecture.md`, "Testing philosophy").
 ///
 /// A hole means *we* have a bug, not that the dump is bad, so the map is
 /// still returned: refusing to answer "which roles does this file need" over
@@ -222,8 +213,7 @@ pub(crate) fn tiling_diagnostics(
 /// statement that inherited its governing entry's header counts the same as
 /// one whose own comment carried it, per "Span boundaries: statement-anchored,
 /// object-attributed, greedy") against how many spans exist at all
-/// (`docs/design/roadmap-phase3-object-inventory.md`, "TOC coverage is
-/// recorded per file"). Always produced, never conditionally — a
+/// (`docs/design/architecture.md`, "TOC enrichment"). Always produced, never conditionally — a
 /// `pg_dump`-compatible file with zero TOC comments is a normal, reported
 /// state (the map running in header-less degraded mode), not an error, so
 /// `attributed == 0` is a legitimate value here rather than something this
@@ -242,13 +232,12 @@ pub(crate) fn toc_coverage_diagnostic(spans: &[Span]) -> crate::diagnostic::Diag
 /// either — so this one offset always closes out the *first* database's
 /// preamble, incidentally finishing any earlier, table-less database's too.
 ///
-/// Phase 2.2.1 (`docs/design/roadmap-phase2-typed-columns-notes.md`,
-/// "Preamble parsing"): exists so an incremental scan
+/// This bounded prepass (`docs/design/architecture.md`, "Bounded
+/// preamble-only reads") exists so an incremental scan
 /// (`crate::stream::table_stream`) can
 /// guarantee this metadata gets captured even when the query's own target
 /// table starts later in the file (or never appears at all) — see also
-/// `docs/design/roadmap-phase2-typed-columns.md`, "Companion: dump-level
-/// metadata".
+/// `docs/design/architecture.md`, "The preamble grammar and `DumpMetadata`".
 ///
 /// Returns the recovered metadata, the spans tiling `[0, preamble_end)` (per
 /// `crate::map::Builder` — no `Data` span among them, since the scan stops at
@@ -269,10 +258,9 @@ pub(crate) async fn scan_preamble<S: ByteRangeSource>(
             // open a `Data` span this scan never closes (it stops here
             // rather than walking the block). If a TOC comment precedes the
             // header, `finish` below must not swallow it either — since
-            // Phase 3.3, `map::Builder` absorbs such a comment straight into
+            // `map::Builder` absorbs such a comment straight into
             // the `Data` span a later, unfed-truncated scan produces
-            // (`roadmap-phase3-object-inventory.md`, "COPY blocks are the
-            // one exception"), so retreating to the comment's own start
+            // (`docs/design/architecture.md`, "Bulk regions: one span kind, three payloads"), so retreating to the comment's own start
             // leaves it for that scan rather than guessing it here as its
             // own `Framing`/`Unparsed` span.
             end = spans.pending_comment_start().unwrap_or(start.header_offset);
@@ -314,8 +302,8 @@ pub(crate) async fn scan_preamble<S: ByteRangeSource>(
     Ok((metadata, spans, end, roles, tablespaces))
 }
 
-/// Answer from the preamble alone (`docs/design/roadmap-phase2-typed-columns.md`,
-/// "CLI", `--preamble-only`): reuse a cache's already-known metadata when
+/// Answer from the preamble alone (`docs/design/architecture.md`,
+/// "CLI surface", `--preamble-only`): reuse a cache's already-known metadata when
 /// present, falling back to a fresh [`scan_preamble`] otherwise and
 /// persisting the result when the cache is enabled (a no-op when it isn't —
 /// see [`CacheMode::save`]). Bounded to the file's first `COPY` block
@@ -327,15 +315,13 @@ pub(crate) async fn scan_preamble<S: ByteRangeSource>(
 /// is a genuinely partial scan (unlike `build_index`, which always reaches
 /// EOF), so it's the one place today that produces that variant for real
 /// rather than only in `crate::map`'s own unit tests
-/// (`docs/design/roadmap-phase3-object-inventory.md`, "Scan coverage is a
-/// prefix, expressed as a span").
+/// (`docs/design/architecture.md`, "The file map").
 ///
 /// Also returns whatever [`CacheMode::load`] reported on the loaded index
 /// (e.g. a `CacheMtimeChanged` warning) — the one library entry point that
 /// answers with `DumpMetadata` alone rather than a whole `DumpIndex`, so its
 /// diagnostics have nowhere else to travel back to the caller
-/// (`roadmap-phase3-object-inventory.md`, "Diagnostics: a file-level channel
-/// on `DumpIndex`").
+/// (`docs/design/architecture.md`, "Diagnostics: one severity scale, two types").
 pub async fn preamble_only<S: ByteRangeSource>(
     source: &S,
     options: &ScanOptions,

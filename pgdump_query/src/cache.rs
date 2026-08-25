@@ -1,10 +1,10 @@
 //! On-disk structure cache: a serialized [`DumpIndex`], colocated with the
 //! dump file by default or at an explicit path
-//! (`docs/design/roadmap-phase1-mvp.md`, "Index / structure cache").
+//! (`docs/design/architecture.md`, "The cache").
 //!
 //! Reading is best-effort — the cache is never required for correctness, so
-//! a missing, foreign, unrecognised-version, or (as of Phase 3.2, see below)
-//! size-mismatched file just means "scan instead," never a hard error.
+//! a missing, foreign, unrecognised-version, or size-mismatched file just
+//! means "scan instead," never a hard error.
 //! Writing is not best-effort: [`save`] propagates I/O failures rather than
 //! silently falling back to running without a cache, since a write failure
 //! (read-only mount, permissions, disk full) means something is actually
@@ -12,8 +12,7 @@
 //! same command back to a full scan.
 //!
 //! **The dump file's identity is checked, not assumed**
-//! (`docs/design/roadmap-phase3-object-inventory.md`, "Cache: the dump
-//! file's identity is checked, not assumed"). Every cache records the
+//! (`docs/design/architecture.md`, "The cache"). Every cache records the
 //! source's size and mtime as observed at save time; [`load`] re-observes
 //! the live source and compares. A size mismatch means every byte offset in
 //! the cache could be wrong, so the cache is invalidated the same way a
@@ -38,27 +37,20 @@ use crate::io::ByteRangeSource;
 use crate::{Error, Result};
 
 /// Bumped whenever the on-disk shape changes incompatibly. A cache written
-/// under a different version is treated as absent (`roadmap-phase1-mvp.md`,
-/// "Decisions that keep later phases open") rather than partially trusted —
+/// under a different version is treated as absent (`docs/design/roadmap.md`,
+/// "Four decisions that keep later phases additive") rather than partially
+/// trusted —
 /// the three fields reserved on [`DumpIndex`]/[`crate::index::CopyBlock`] are
 /// what let most future additions avoid needing a bump at all.
 ///
-/// Bumped to 2 in Phase 3.2 for [`SourceIdentity`]; to 3 in Phase 3.2.1, when
-/// `DumpIndex::blocks` (a stored `Vec<CopyBlock>`) was replaced by
-/// `DumpIndex::spans` (a stored `Vec<Span>`, with `blocks()` now a derived
-/// filter over it); to 4 in Phase 3.2.1.2.1 for
-/// [`crate::index::CopyBlock::partition_root`]; to 5 in Phase 3.2.2 for
-/// [`crate::map::Span::text`]; to 6 in Phase 3.3 for
-/// [`crate::map::Span::toc`]; to 7 in Phase 3.4 for
-/// [`crate::index::DumpIndex::roles`]/[`crate::index::DumpIndex::tablespaces`];
-/// to 8 in Phase 3.6, when [`crate::map::SpanBody::Data`]'s payload widened
-/// from `CopyBlock` alone to [`crate::map::DataBlock`], covering `INSERT`
-/// runs and the large-object region too; to 9 in Phase 3.3.1, for
-/// [`crate::map::Span::toc_owned`] — pre-1.0, so all of them are free
-/// (`CLAUDE.md`, "Pre-1.0").
+/// Pre-1.0, a bump is free and nothing migrates (`CLAUDE.md`, "Pre-1.0"), so
+/// the rule is simply: **bump whenever a persisted field is added, removed or
+/// reshaped.** `git log -p` on this constant is the version history.
 ///
-/// Not bumped for [`CacheStatus::Incomplete`] (Phase 3.7): that's a new way
-/// of *reading* an existing on-disk shape, not a change to it.
+/// What does *not* need a bump: a new way of *reading* an existing on-disk
+/// shape. [`CacheStatus::Incomplete`] is the worked example — it reinterprets
+/// `scanned_through` against a size already stored, changing nothing on
+/// disk.
 const FORMAT_VERSION: u32 = 9;
 
 /// The dump file's size and modification time as observed when a cache was
@@ -85,7 +77,8 @@ impl SourceIdentity {
 }
 
 /// What produced the indexed blocks' byte offsets. Plain-format offsets are
-/// raw file positions; a future archive format's (roadmap Phase 8, Track B)
+/// raw file positions; a future archive format's (`docs/design/roadmap.md`,
+/// Phase 8 Track B)
 /// are entry-relative, so the two must never be silently conflated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum ContainerKind {
@@ -127,8 +120,7 @@ pub enum CacheStatus {
     /// A usable cache whose `index.scanned_through` falls short of
     /// `total_size` — a real, not-yet-finished scan (e.g. a preamble-only
     /// scan, or a query that stopped once its target settled), not a defect
-    /// (`docs/design/roadmap-phase3-object-inventory.md`, "Cache-only
-    /// inspection", the former out-of-band item M1). What "not enough"
+    /// (`docs/design/architecture.md`, "The cache", the former out-of-band item M1). What "not enough"
     /// means is caller-specific: a caller that wants the whole file's map
     /// (`pgdq info`'s default listing) should treat this as a signal to
     /// scan further; a caller that resumes an incremental scan from
@@ -171,8 +163,7 @@ pub async fn load<S: ByteRangeSource>(path: &Path, source: &S) -> Result<CacheSt
 
 /// Load a cache from `path` with no live source to check it against — the
 /// cache-only counterpart to [`load`]
-/// (`docs/design/roadmap-phase3-object-inventory.md`, "Cache-only
-/// inspection"). There is nothing to compare the recorded mtime to, so
+/// (`docs/design/architecture.md`, "The cache"). There is nothing to compare the recorded mtime to, so
 /// `mtime_changed` is always `false` here; the "this is unverified,
 /// historical data" fact cache-only mode carries instead is a
 /// [`crate::diagnostic::DiagnosticKind::CacheOffline`] pushed by
@@ -239,8 +230,7 @@ pub enum CacheMode {
     /// not persisted.
     Disabled,
     /// No live dump source at all — answer strictly from the cache at this
-    /// path (`docs/design/roadmap-phase3-object-inventory.md`, "Cache-only
-    /// inspection"). Never constructed by [`CacheMode::resolve`]; a caller
+    /// path (`docs/design/architecture.md`, "The cache"). Never constructed by [`CacheMode::resolve`]; a caller
     /// builds it directly (`pgdq info` with no `--source`). Rejected by
     /// every method below that takes a live `source` — being handed
     /// `Offline` while a live source is in hand is a caller contract
@@ -278,8 +268,8 @@ impl CacheMode {
     /// source's size itself rather than relying on this method to make that
     /// call, since folding `Incomplete` into `None` here would make every
     /// partial cache from an ordinary query invisible to the next one —
-    /// exactly the incremental caching `roadmap-phase3-object-inventory.md`,
-    /// "Mapping and streaming are separate passes" depends on.
+    /// exactly the incremental caching `docs/design/architecture.md`,
+    /// "Query: mapping and streaming are separate passes" depends on.
     pub async fn load<S: ByteRangeSource>(&self, source: &S) -> Result<Option<DumpIndex>> {
         match self {
             CacheMode::Enabled(path) => match load(path, source).await? {
@@ -307,8 +297,7 @@ impl CacheMode {
 
     /// Load this mode's cache with no live source to check it against — the
     /// cache-only counterpart to [`CacheMode::load`]
-    /// (`docs/design/roadmap-phase3-object-inventory.md`, "Cache-only
-    /// inspection"). Unlike `load`, this returns the full [`CacheStatus`]
+    /// (`docs/design/architecture.md`, "The cache"). Unlike `load`, this returns the full [`CacheStatus`]
     /// rather than collapsing it to `Option<DumpIndex>`: cache-only mode has
     /// no scan to fall back on, so a caller needs to tell `Valid` apart from
     /// `Incomplete` to decide whether it has enough to answer from. Every

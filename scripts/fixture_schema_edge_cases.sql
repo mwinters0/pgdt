@@ -1,7 +1,7 @@
 -- Scanner edge-case fixture schema: structural and escaping cases.
 --
 -- Deliberately not koji-derived: covers the edge-case breadth called out in
--- docs/design/roadmap-phase1-mvp.md (multiple schemas, NULLs, an empty table,
+-- docs/design/architecture.md, "Fixtures" (multiple schemas, NULLs, an empty table,
 -- COPY TEXT escaping of newlines/tabs/backslashes/quotes, and a data value
 -- containing a COPY-directive-like substring mid-line) rather than koji's
 -- specific structure.
@@ -93,8 +93,7 @@ INSERT INTO public.generated_column (id, a, b) VALUES
     (2, 10, -4);
 
 -- Dollar-quoted function bodies, pg_dump's own way of writing a value out
--- verbatim (docs/design/roadmap-phase2-typed-columns.md, "Dollar-quote
--- tracking closes the Phase 1 known gap"). check_function_bodies is off for
+-- verbatim (docs/design/architecture.md, "Three things close a statement"). check_function_bodies is off for
 -- sample_fn only, so PostgreSQL doesn't reject its deliberately-invalid
 -- pseudo-PL/pgSQL body at CREATE time -- pg_dump doesn't re-validate, so
 -- whatever prosrc stored comes back out unchanged.

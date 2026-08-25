@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
-"""Generate a synthetic pg_dump --inserts-shaped data region for the
-out-of-band item M3 measurement.
+"""Generate a synthetic pg_dump --inserts-shaped data region.
 
-Backs docs/design/roadmap.md's out-of-band ledger item M3, which asks what
-Phase 3.6 never measured: an `INSERT` run's actual per-byte scan cost. Slice
-3.6 gave the large-object region a scanner-level fast path (lines skipped
-unread) but left `INSERT` runs on a map-level one -- folded into a single
+Backs docs/design/measurements.md ("Scan throughput by input shape"): the
+large-object region gets a scanner-level fast path (lines skipped unread)
+while `INSERT` runs get a map-level one -- folded into a single
 `Data(InsertRun)` span, but with every line still decoded into
 `crate::scan::Event::Line` and pushed through the statement accumulator. This
-generator produces the input that turns that argument into a number.
+generator produces the input that turns that asymmetry into a number.
 
 Like generate_large_object_bench.py and generate_perf_data.py, and unlike
 generate_fixtures.py, this is *not* a correctness fixture: its output is never

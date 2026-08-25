@@ -1,5 +1,4 @@
-//! Post-parse row filtering (`docs/design/roadmap-phase1-mvp.md`, "Predicate
-//! filtering").
+//! Post-parse row filtering (`docs/design/architecture.md`, "Predicates").
 
 use crate::Result;
 use crate::copy::{decode_field, split_fields};
@@ -7,7 +6,8 @@ use crate::copy::{decode_field, split_fields};
 /// Comparison operator for [`Predicate`]. Ordering operators are
 /// deliberately excluded: on unparsed strings they'd be actively misleading
 /// for numeric/date columns (`"9" < "10"` is false lexicographically), and
-/// are deferred until Phase 2 typed columns can do them correctly.
+/// are deferred; typed/ordering predicates need pushdown to do them
+/// correctly (`docs/design/roadmap.md`, Phase 5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PredicateOp {
     Eq,
@@ -23,14 +23,14 @@ pub enum PredicateOp {
 /// matched against the queried table's column names (the `COPY` header list,
 /// or the `column1`, `column2`, ... placeholders used when the header has
 /// none). `value` is compared against each row's decoded (unescaped) field
-/// as a plain string — not typed, since Phase 2's post-parse predicates are
-/// unchanged from Phase 1 (typed/ordering predicates are Phase 5, where
+/// as a plain string — not typed: filtering happens after a row is parsed
+/// (typed/ordering predicates are Phase 5, where
 /// pushdown lands). `value` is `None` for `IsNull`/`IsNotNull`, which need
 /// no comparison value; it is always `Some` for `Eq`/`Ne`.
 ///
 /// A NULL field matches neither `Eq` nor `Ne` — SQL's own three-valued
 /// logic collapses both to "excluded" — which is exactly why `IsNull`/
-/// `IsNotNull` exist: before Phase 2 there was no way to ask for a NULL
+/// `IsNotNull` exist: without them there is no way to ask for a NULL
 /// explicitly (`docs/status/history/2026-08-22.md`).
 #[derive(Debug, Clone)]
 pub struct Predicate {

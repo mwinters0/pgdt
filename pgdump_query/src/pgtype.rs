@@ -1,5 +1,5 @@
-//! Declared PostgreSQL type string -> Arrow `DataType` (Phase 2.3, "Type
-//! mapping" in `docs/design/roadmap-phase2-typed-columns.md`).
+//! Declared PostgreSQL type string -> Arrow `DataType`
+//! (`docs/design/architecture.md`, "Type resolution").
 //!
 //! Pure, synchronous, no I/O — see `docs/design/layering.md`, L2. A declared
 //! type is resolved against a single database's [`TypeDef`] list (already
@@ -10,7 +10,8 @@ use arrow::datatypes::DataType;
 
 use crate::preamble::{TypeDef, TypeKind};
 
-/// What Phase 4 will decode, once its nested-quoting decoder exists — see
+/// What a future nested-quoting decoder will handle (`docs/design/roadmap.md`,
+/// Phase 4) — see
 /// "`CREATE TYPE`: six emitted forms" in `docs/status/history/2026-08-22.md`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeferredKind {
@@ -30,7 +31,7 @@ pub enum TypeOutcome {
     /// A declared type string this build has no mapping for at all — neither
     /// a built-in nor found in the database's `CREATE TYPE`/`DOMAIN` list.
     Unknown,
-    /// Decodable in principle; Phase 4's job.
+    /// Decodable in principle; deferred until the nested-quoting decoder exists.
     Deferred(DeferredKind),
     /// A C-level base type or a shell/undefined type — genuinely
     /// information-free, not merely unimplemented (see the phase doc's
@@ -163,7 +164,7 @@ fn resolve_user_type(name: &str, types: &[TypeDef]) -> TypeOutcome {
 pub fn resolve_declared_type(declared: &str, types: &[TypeDef]) -> TypeOutcome {
     let declared = declared.trim();
     if let Some(base) = declared.strip_suffix("[]") {
-        let _ = base; // element type is Phase 4's concern, not recorded here
+        let _ = base; // element type is the array decoder's concern, not recorded here
         return TypeOutcome::Deferred(DeferredKind::Array);
     }
     let (base, typmod) = split_typmod(declared);

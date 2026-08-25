@@ -1,7 +1,7 @@
 //! Dump-level preamble parsing: `CREATE TABLE`/`TYPE`/`DOMAIN`/`EXTENSION`
 //! DDL and the two version header lines, recovered from the pre-data region
-//! of a `pg_dump` plain-format file (`docs/design/roadmap-phase2-typed-columns.md`,
-//! "The preamble pass").
+//! of a `pg_dump` plain-format file (`docs/design/architecture.md`,
+//! "The preamble grammar and `DumpMetadata`").
 //!
 //! **This module owns the DDL grammar, not a second pass over the file.**
 //! [`classify_statement`] and friends (`parse_create_table`, `parse_create_type`,
@@ -10,19 +10,18 @@
 //! map in its one pass over [`crate::scan::scan`]'s events. [`DumpMetadata`]
 //! is then [`dump_metadata_from_spans`] — a derived view over the resulting
 //! spans, computed once, never a second line-by-line scan
-//! (`docs/design/roadmap-phase3-object-inventory.md`, "The span is the
-//! container"). Before Phase 3.2.1.1 this module drove its own line-by-line
-//! state machine (`PreambleBuilder`) in parallel with the span builder; see
-//! `docs/design/roadmap-phase3-object-inventory-notes.md` for why the two
-//! were unified.
+//! (`docs/design/architecture.md`, "`DumpIndex`: one owner per fact").
+//! A second line-by-line state machine running in parallel with the span
+//! builder is the shape this deliberately replaced — it held the same fact
+//! twice and the two could diverge.
 //!
 //! **Store what the dump said, never what we concluded.** Declared types are
 //! kept as strings exactly as written (`character varying(16)`, not a parsed
-//! `(base, typmod)` pair) — see "What the cache stores" in the phase doc.
-//! Resolving those strings into Arrow types is Phase 2.3's job
-//! (`crate::pgtype`, not yet built).
+//! `(base, typmod)` pair) — the cache is L1 and cannot hold an L2 conclusion
+//! (`docs/design/layering.md`, rule 5). Resolving those strings into Arrow
+//! types is [`crate::pgtype`]'s job.
 //!
-//! [`extract_statement_cross_refs`] (Phase 3.4) is a second, independent kind
+//! [`extract_statement_cross_refs`] is a second, independent kind
 //! of statement scan this module owns: unlike [`classify_statement`], it
 //! doesn't try to fully parse a statement into a `SpanBody` — it just pulls
 //! out whatever role/tablespace references `crate::map::Builder::push_statement_span`
@@ -37,7 +36,7 @@ use serde::{Deserialize, Serialize};
 use crate::copy::Cursor;
 
 /// Everything the preamble pass recovered, per database. See "Multi-database
-/// dumps" in `docs/design/roadmap-phase2-typed-columns.md`.
+/// dumps" in `docs/design/architecture.md`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DumpMetadata {
     pub databases: Vec<DatabaseMetadata>,
@@ -58,9 +57,8 @@ pub struct DatabaseMetadata {
     /// finish a database's segment, never leave one half-read. What it
     /// composes with is `DumpIndex::scanned_through`: the *first* database's
     /// metadata is guaranteed present after any scan that persists a cache
-    /// (`crate::stream::table_stream`'s Phase 2.2.1 prepass — see
-    /// `docs/design/roadmap-phase2-typed-columns-notes.md`, "Preamble
-    /// parsing"), but a
+    /// (`crate::stream::table_stream`'s prepass — see
+    /// `docs/design/architecture.md`, "The preamble grammar and `DumpMetadata`"), but a
     /// later `\connect`-ed database's is only ever populated by a full scan
     /// — so a caller walking `DumpIndex::metadata` still needs to check this
     /// per-database rather than assume the whole list is complete just
@@ -118,13 +116,13 @@ pub enum TypeKind {
     /// VALUE` per label (I6); [`fold_alter_type_add_value`] folds them back
     /// in here so both forms produce the same shape.
     Enum { labels: Vec<String> },
-    /// Reduces to a base type, resolved transitively by Phase 2.3 (a domain
-    /// over a domain is legal). `NOT NULL` is discarded — Phase 2 makes
-    /// every field nullable regardless (see "Nullability" in the phase doc).
+    /// Reduces to a base type, resolved transitively by [`crate::pgtype`] (a
+    /// domain over a domain is legal). `NOT NULL` is discarded — every Arrow
+    /// field is nullable regardless.
     Domain { base_type: String },
     /// Field name -> declared type, in declaration order. Decoding COPY
-    /// TEXT's record literal is Phase 4's job; this is what that decoder
-    /// will need.
+    /// TEXT's record literal is deferred (`docs/design/roadmap.md`, Phase 4);
+    /// this is what that decoder will need.
     Composite { fields: Vec<(String, String)> },
     /// The subtype named in the `CREATE TYPE ... AS RANGE (...)` parameter
     /// list, if the grammar found one, plus the name of its auto-created
@@ -497,7 +495,7 @@ fn ident_after(haystack: &str, marker: &str) -> Option<String> {
 
 /// Filters out the pseudo-role `_printTocEntry`/`buildACLCommands` write
 /// literally as `PUBLIC` whenever a grant/revoke's grantee list is empty
-/// (`docs/design/roadmap-phase3-object-inventory.md`, "What a span carries":
+/// (`docs/design/architecture.md`, "TOC enrichment":
 /// "`PUBLIC` is a pseudo-role and is never reported as one."). Case-insensitive
 /// because [`ident_after`]'s [`Cursor::parse_ident`] lowercases every
 /// *unquoted* identifier it parses (matching how Postgres itself folds one),
@@ -524,7 +522,7 @@ pub(crate) fn insert_tablespace(tablespaces: &mut BTreeSet<String>, tablespace: 
 
 /// Extract every role/tablespace a complete statement (see
 /// [`statement_complete`]) references, per
-/// `docs/design/roadmap-phase3-object-inventory.md`'s "What a span carries" —
+/// `docs/design/architecture.md`'s "TOC enrichment" —
 /// the two sources [`crate::map::Span::toc`] alone can't cover, since none of
 /// these three statement shapes is its own TOC entry:
 ///
@@ -621,8 +619,8 @@ pub(crate) fn classify_statement(stmt: &str) -> Option<StatementShape> {
 }
 
 /// `\connect <name>` — a bare prefix check on a line the scanner already
-/// holds. Exposed to `crate::stream`'s live scan too (Phase 2.3.3,
-/// `docs/design/roadmap-phase2-typed-columns.md`, "One target per query"):
+/// holds. Exposed to `crate::stream`'s live scan too
+/// (`docs/design/architecture.md`, "One target per query"):
 /// tracking which database a `CopyBlock` belongs to needs only the name a
 /// `\connect` yields, never a column type, so it isn't "reading preamble as
 /// it goes" in the sense that section rules out.
@@ -645,8 +643,7 @@ pub(crate) fn parse_connect(line: &str) -> Option<String> {
 /// pending statement forever — unreachable through this module's five
 /// `CREATE`/`ALTER TYPE` triggers (`pg_dump` emits neither shape for them),
 /// but reachable by [`crate::map`]'s general statement scan, which is what
-/// this hardening is for (`docs/status/history/2026-08-23.md`, "The Phase 2
-/// statement accumulator is not yet safe for arbitrary statements").
+/// this hardening is for.
 /// `E'…'` escapes are not a concern: `pg_dump` sets
 /// `standard_conforming_strings = on`, so `''` is the only in-string escape.
 /// Where [`statement_complete`]'s scan over `buf` ends up: whether it's
@@ -747,12 +744,11 @@ fn finalize(mut db: DatabaseMetadata) -> DatabaseMetadata {
 
 /// Build a [`DumpMetadata`] by walking already-classified [`crate::map::Span`]s
 /// instead of raw lines — the derived view
-/// `docs/design/roadmap-phase3-object-inventory.md`'s "The span is the
-/// container" calls for: multi-database segmenting on
+/// `docs/design/architecture.md`'s "`DumpIndex`: one owner per fact" calls for: multi-database segmenting on
 /// [`crate::map::SpanBody::Connect`], version-header staging across that
 /// boundary on [`crate::map::SpanBody::VersionHeader`], and `--binary-upgrade`
 /// enum-label folding on [`crate::map::SpanBody::AlterTypeAddValue`] — see
-/// `docs/design/roadmap-phase3-object-inventory-notes.md` for why those three
+/// `docs/design/architecture.md` for why those three
 /// span kinds needed to exist before this could be written.
 ///
 /// `spans` must come from a scan that stops at one of two safe boundaries:
@@ -1176,8 +1172,8 @@ mod tests {
     /// I9: every `\connect`-segment in a real `pg_dumpall`/concatenated dump
     /// carries its own version-header pair ahead of its own `\connect`, not
     /// just the first one — see `postgres-invariants.md`. Regression test
-    /// for the gap phase 2.3.1's fixture (`fixtures/*/edge_cases/create.sql`
-    /// x2, concatenated) surfaced: a second database's headers used to be
+    /// for the gap the concatenated fixture (`fixtures/*/edge_cases/create.sql`
+    /// x2) surfaced: a second database's headers used to be
     /// silently dropped because they land while `current` is still the
     /// first database's already-`preamble_complete` segment.
     #[test]
@@ -1267,10 +1263,9 @@ mod tests {
     }
 
     /// [`extract_statement_cross_refs`]'s five recognized shapes — real
-    /// lines from `fixtures/16/objects/default.sql`, either from Phase 3.1
-    /// or, for the `REVOKE` and non-default-tablespace shapes, slice 3.1.1
-    /// (`objects.no_public_execute()`'s `REVOKE`, `objects.tablespaced_table`'s
-    /// `SET default_tablespace = fixture_ts;`).
+    /// lines from `fixtures/16/objects/default.sql`, including
+    /// `objects.no_public_execute()`'s `REVOKE` and
+    /// `objects.tablespaced_table`'s `SET default_tablespace = fixture_ts;`.
     fn refs_of(stmt: &str) -> (Vec<String>, Vec<String>) {
         let mut roles = BTreeSet::new();
         let mut tablespaces = BTreeSet::new();

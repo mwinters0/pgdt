@@ -220,8 +220,7 @@ async fn resume_at_a_block_boundary() {
 }
 
 /// `TableStream::resolved_schema` reports the same typing the actual
-/// `RecordBatch`es carry (Phase 2.4 wired the decoders in — see
-/// `batch.rs`'s module docs) — `resolved_schema` is a preview available
+/// `RecordBatch`es carry (see `batch.rs`'s module docs) — `resolved_schema` is a preview available
 /// before/during consumption, not a second, independent schema.
 #[tokio::test]
 async fn resolved_schema_matches_the_batches_it_describes() {
@@ -257,7 +256,7 @@ async fn resolved_schema_matches_the_batches_it_describes() {
 }
 
 /// `SchemaMode::Strings` never looks at the DDL at all — every column comes
-/// back `NotDeclared`, matching Phase 1 exactly.
+/// back `NotDeclared`, matching the untyped path exactly.
 #[tokio::test]
 async fn strings_mode_never_resolves_types() {
     let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
@@ -277,8 +276,7 @@ async fn strings_mode_never_resolves_types() {
 }
 
 /// `--cache-path none` (`CacheMode::Disabled`) disables persistence, not
-/// typing (`docs/design/roadmap-phase2-typed-columns.md`, "The preamble
-/// pass") — the preamble is still scanned fresh, so typing works identically
+/// typing (`docs/design/architecture.md`, "The preamble grammar and `DumpMetadata`") — the preamble is still scanned fresh, so typing works identically
 /// to `CacheMode::Enabled`, just without leaving a cache file behind.
 #[tokio::test]
 async fn disabled_cache_still_resolves_types() {
@@ -301,7 +299,7 @@ async fn disabled_cache_still_resolves_types() {
 
 /// The blocking `Iterator` wrapper drives the same stream to the same result
 /// with no ambient `tokio` runtime — the sync-caller path
-/// `roadmap-phase1-mvp.md` calls for.
+/// `docs/design/architecture.md` calls for.
 #[test]
 fn blocking_iterator_matches_async_stream() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
@@ -356,8 +354,8 @@ async fn all_rows(source: &LocalFileSource, table: &str) -> Vec<Vec<Option<Strin
 /// `table_stream` used to match `COPY` blocks by qualified table name alone,
 /// with no notion of which `\connect` segment a block belongs to, and
 /// silently unioned both databases' rows for a name genuinely defined
-/// twice. Slice 2.3.3 (`docs/design/roadmap-phase2-typed-columns.md`, "One
-/// target per query") closed that: the query now errors, naming both
+/// twice. The one-target-per-query rule (`docs/design/architecture.md`)
+/// closed that: the query now errors, naming both
 /// candidates, instead of returning a union of two unrelated tables.
 #[tokio::test]
 async fn querying_a_table_name_shared_by_two_databases_errors_without_a_database_selector() {
@@ -498,8 +496,7 @@ fn partitions_fixture(version: u32, flag_set: &str) -> PathBuf {
 /// partition's own name. A query must return every partition's rows, which
 /// means the `-- load via partition root` marker has to stop the scan from
 /// finishing early at the first match
-/// (`docs/design/roadmap-phase3-object-inventory.md`, "Mapping and streaming
-/// are separate passes").
+/// (`docs/design/architecture.md`, "Query: mapping and streaming are separate passes").
 #[tokio::test]
 async fn a_partition_root_name_yields_every_partitions_rows() {
     for version in [13, 16, 18] {
