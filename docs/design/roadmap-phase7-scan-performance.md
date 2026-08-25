@@ -212,7 +212,7 @@ Phase 1 and must survive any change to those layers; the third is standing.
    arrays as views over it**, rather than copying field bytes into fresh
    allocations. This is the one item with a real cost to deferring. See the
    sharp edges around that path in
-   `docs/design/roadmap-phase1-mvp-notes.md`.
+   `docs/design/architecture.md`.
 2. **The serialized cache leaves room for the optional sparse row index**, so
    adding it later is not a format break — `CopyBlock::sparse_index`, reserved
    and always `None`.

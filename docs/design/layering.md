@@ -21,8 +21,8 @@ split happening.
 
 `error.rs` and `lib.rs` are cross-cutting and belong to no layer.
 
-L2 and L3 modules are Phase 2 work; see "Module layout" in
-[`roadmap-phase2-typed-columns.md`](roadmap-phase2-typed-columns.md).
+Which concern lives in which module, and why: [`architecture.md`](architecture.md),
+"Module map".
 
 ### What each layer must not know
 
@@ -52,10 +52,10 @@ L2 and L3 modules are Phase 2 work; see "Module layout" in
    wrong, not the function.
 
 5. **Anything persisted to the cache is expressible in L1's vocabulary.**
-   The cache format is L1's, so it cannot hold an L2 conclusion. Phase 2 states
-   this as "store what the dump said, never what we concluded" — declared type
-   strings, not resolved Arrow types. That is rule 5 applied to `DumpMetadata`;
-   it applies identically to everything the cache grows later.
+   The cache format is L1's, so it cannot hold an L2 conclusion. Stated positively: "store what
+   the dump said, never what we concluded" — declared type strings, not resolved
+   Arrow types. That is rule 5 applied to `DumpMetadata`; it applies identically
+   to everything the cache grows later.
 
 6. **A trait crossing a layer boundary is defined in the lower layer and
    implemented in the higher one.** `ByteRangeSource` is the existing instance:
@@ -113,7 +113,7 @@ neither may introduce an Arrow dependency into it.
 
 ## Known deviations
 
-Two pieces of Phase 1 code sit outside their layer. They are recorded so that
+Two pieces of code sit outside their layer. They are recorded so that
 nobody treats them as precedent, and nobody "fixes" them opportunistically —
 move them only as part of work that reworks the module anyway.
 

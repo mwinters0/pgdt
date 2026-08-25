@@ -33,7 +33,7 @@ of the two channels re-opens a question that was already settled the other
 way.
 
 **Origin.** Slice 3.2.2 and its follow-up, 2026-08-24. See
-[`roadmap-phase3-object-inventory.md`](roadmap-phase3-object-inventory.md),
+[`architecture.md`](architecture.md),
 "Diagnostics: a file-level channel on `DumpIndex`", and
 [`../status/history/2026-08-24.md`](../status/history/2026-08-24.md), "The
 diagnostic vocabulary is a scale, not a type".
@@ -72,7 +72,7 @@ entry above, which is why both are filed here.
 **Origin.** Slice 3.2.1.2.1, 2026-08-24 (the decision), carried through
 Phase 3's end-of-phase grilling as an accepted gap. See `STATUS.md`'s "Known
 gaps" and
-[`roadmap-phase3-object-inventory.md`](roadmap-phase3-object-inventory.md),
+[`architecture.md`](architecture.md),
 "Mapping and streaming are separate passes".
 
 **Contingent on.** Early stopping surviving as the default, and on no cheaper

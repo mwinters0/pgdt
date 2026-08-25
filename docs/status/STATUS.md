@@ -6,44 +6,43 @@ session should pick up, or on discoveries that changed the plan, see `history/`
 (one file per day, `YYYY-MM-DD.md`) — not a changelog, only entries worth
 keeping.
 
-Phase 1 (MVP) is complete: every functional item in
-`docs/design/roadmap-phase1-mvp.md` is implemented; what remains under "Not
-started" is groundwork that phase specified but never required. How
-it landed — module map, and the implementation facts later phases inherit — is
-in `docs/design/roadmap-phase1-mvp-notes.md`.
+## What exists
 
-Phase 2 (typed columns) is complete: every functional item in
-`docs/design/roadmap-phase2-typed-columns.md` is implemented, across five
-slices plus the `<N>.<M>` follow-ups each earned by changing an
-already-landed slice's contract (2.2.1, 2.3.1, 2.3.2, 2.3.3). How it landed —
-module map, and the implementation facts later phases inherit — is in
-`docs/design/roadmap-phase2-typed-columns-notes.md`.
+Phases 1-3 are complete and were struck at the keystone review, so there is no
+per-phase checklist here any more. How the system works is
+[`../design/architecture.md`](../design/architecture.md); what is still ahead is
+[`../design/roadmap.md`](../design/roadmap.md).
 
-Phase 3 (full DDL object inventory) is complete: every functional item in
-`docs/design/roadmap-phase3-object-inventory.md` is implemented, and both
-measurements its "Verification" section gates the phase on are done. It landed
-in fifteen slices — the six its spec originally listed, plus nine earned: six
-by mid-slice re-sizing (3.2.1, 3.2.1.1, 3.2.1.2, 3.2.1.2.1, 3.2.2) or a wrong
-contract (3.2.3), and three by the end-of-phase grilling (3.1.1, 3.3.1,
-3.7). How it landed — module map, the span model, the mapping/streaming
-split, and the implementation facts later phases inherit — is in
-`docs/design/roadmap-phase3-object-inventory-notes.md`.
+| Capability | State |
+|---|---|
+| Streaming row extraction from plain-format dumps, push and pull mode, resumable | working |
+| Typed Arrow columns from `CREATE TABLE` DDL, with per-column resolution diagnostics; `SchemaMode::Strings` for the untyped path | working |
+| Full byte-exact file map — every byte in exactly one span, verified over every fixture | working |
+| DDL object inventory: TOC enrichment, referenced roles and tablespaces, object census | working |
+| Best-effort structural cache (v9) with source-identity checking and cache-only inspection | working |
+| CLI `pgdq parse` / `info` / `query`, including `--map` and cache-only `info` | working, output shape provisional |
+| Arrays, composites, ranges, multiranges | resolve as strings — decoder is Phase 4 |
+| Predicate and projection pushdown; per-row-group statistics | not started — Phase 5 |
+| `object_store` I/O, Python bindings, DataFusion `TableProvider` | not started — Phase 6 |
+| Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
+| `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-25 (Phase 3 wrapped: per-slice notes consolidated;
-out-of-band item M3 measured, with a result that argues for work Phase 3
-declined to do — see "Decisions worth another look").
+Last updated: 2026-08-25 (keystone review: phase 1-3 specs and notes distilled
+into `architecture.md` and `measurements.md` and removed).
 
 ## Not started
 
 - **Phase 4's grilling and spec** — `docs/process.md`'s step 6. The roadmap is
-  re-grilled before Phase 4 is specified, since Phase 3's evidence outdates
-  guesses made before it. Phases 4-8 are sketched only to
+  re-grilled before Phase 4 is specified, since the object-inventory work
+  outdates guesses made before it. Phases 4-8 are sketched only to
   corner-avoidance depth in `docs/design/roadmap.md`.
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; the resulting changes land as
   out-of-band items.
-- **A like-for-like koji throughput re-measurement** — deferred past Phase 3;
-  the HDD is still contended. See "Decisions worth another look".
+- **A like-for-like koji throughput re-measurement** — the HDD is still
+  contended. Command and current (unusable) figure:
+  [`../design/measurements.md`](../design/measurements.md). See "Decisions
+  worth another look".
 
 ## Known gaps
 
@@ -60,17 +59,18 @@ declined to do — see "Decisions worth another look").
   detection. Rows are never a union either way, and ambiguity is raised
   *before* any row is emitted rather than partway through one candidate's,
   which is what the previous form of this gap cost. Accepted, not
-  scheduled — closing it means abandoning early stopping, which is the
-  phase's cost argument. Filed into
+  scheduled — closing it means abandoning early stopping, which is what makes a
+  cold query on a large dump affordable. Filed into
   [`roadmap-phase6-inbox.md`](../design/roadmap-phase6-inbox.md) so the
   embedded API's promises get decided against it deliberately.
 - `map::parse_toc_header_line` does not recognize `TOC_PREFIX_STATS`
   (`"Statistics for "`, a v18+ `--statistics` component — not
   `--with-statistics`, which does not exist in any version). A deliberate
   deferral rather than a gap: fixture evidence exists
-  (`fixtures/18/objects/stats.sql`, slice 3.1.1) and the entry just degrades
+  (`fixtures/18/objects/stats.sql`) and the entry just degrades
   gracefully, tiling as an ordinary `Unparsed` span with `toc: None`, the
-  same as any other unhandled TOC comment shape.
+  same as any other unhandled TOC comment shape. Detail:
+  [`../design/architecture.md`](../design/architecture.md), "TOC enrichment".
 - `DumpIndex::roles`/`tablespaces` are complete only once `scanned_through`
   reaches the file's size — the same partiality `metadata`'s
   `preamble_complete` already carries, for the same reason: a query that
@@ -81,12 +81,12 @@ declined to do — see "Decisions worth another look").
 - An `INSERT` run is folded into one `Data` span, but every line in it is
   still decoded into `Event::Line` and pushed through the statement
   accumulator — unlike the large-object region, which is skipped unread at
-  the scanner level. Measured (out-of-band item M3): **~218MB/s against
-  ~1.0GB/s for a `COPY` dump of the same size on the same disk**, i.e. about
-  5× the per-byte cost, and CPU-bound rather than I/O-bound. What this costs
-  is the phase's cost claim for `--inserts` input: a koji-scale 1TB
-  `--inserts` dump maps in ~75 minutes rather than the ~15 the `COPY` rate
-  implies. Correctness is unaffected — the map, the tiling and the row counts
+  the scanner level. Measured at **~218MB/s against ~1.0GB/s for a `COPY` dump
+  of the same size on the same disk**, i.e. about 5× the per-byte cost, and
+  CPU-bound rather than I/O-bound; figures and re-run commands in
+  [`../design/measurements.md`](../design/measurements.md). A koji-scale 1TB
+  `--inserts` dump therefore maps in ~75 minutes rather than the ~15 the `COPY`
+  rate implies. Correctness is unaffected — the map, the tiling and the row counts
   are the same either way. Not scheduled: the fix is a scanner-level
   `INSERT` path, which changes a decision and so needs a slice, filed into
   [`roadmap-phase7-inbox.md`](../design/roadmap-phase7-inbox.md) and flagged
@@ -98,8 +98,8 @@ Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
 
-- **Slice 3.6's koji regression check was accepted on a confounded
-  throughput number, reasoned around rather than re-measured cleanly.** The
+- **The last koji regression check was accepted on a confounded throughput
+  number, reasoned around rather than re-measured cleanly.** The
   re-scan's raw throughput (~110MB/s wall-clock, ~120-130MB/s by
   `node_exporter`'s disk-read counter) came in well under the 243MB/s
   baseline. Investigation found a concurrent Postgres restore writing
@@ -112,13 +112,13 @@ it has been looked at: settled into the design docs, or reversed.
   blocks, same row counts, same every offset) plus the unchanged
   control-flow argument, rather than on a clean throughput number. A
   maintainer who wants a like-for-like figure can re-run
-  `runs/koji-3.6-scan.log`'s command once the HDD is uncontended. **The
-  maintainer has deferred the re-measurement past Phase 3** — the HDD is
-  still contended — so this entry stays until that run happens.
+  `runs/koji-3.6-scan.log`'s command once the HDD is uncontended. The
+  maintainer has deferred the re-measurement — the HDD is still contended —
+  so this entry stays until that run happens.
 
-- **Slice 3.7's `CacheMode::load` does not fold `CacheStatus::Incomplete`
-  into `None`, despite the spec's "live mode still treats it like Absent
-  (falls back to a scan)".** Read literally at `CacheMode::load` — the
+- **`CacheMode::load` does not fold `CacheStatus::Incomplete` into `None`,
+  departing from the spec's "live mode still treats it like Absent (falls back
+  to a scan)".** Read literally at `CacheMode::load` — the
   `Option<DumpIndex>`-returning method `table_stream` and `preamble_only`
   both call to seed an incremental scan — that sentence would make every
   ordinary query's partial cache invisible to the next query, discarding the
@@ -129,34 +129,37 @@ it has been looked at: settled into the design docs, or reversed.
   needs the "is this the *whole* file" distinction — `pgdq info`'s
   default/`--map` fallback — checks `scanned_through` against the live
   source's size itself, which it already has to stat regardless. Reasoning:
-  [`roadmap-phase3-object-inventory-notes.md`](../design/roadmap-phase3-object-inventory-notes.md),
-  "Cache". Made without the maintainer present; if reconsidered, the fix is
+  [`../design/architecture.md`](../design/architecture.md), "The cache". Made
+  without the maintainer present; if reconsidered, the fix is
   mechanical — fold `Incomplete` into `None` in `CacheMode::load` and accept
   that `table_stream`/`preamble_only` lose incremental cache reuse, or add a
   second entry point for them that bypasses the fold.
 
-- **Out-of-band item M3 measured what slice 3.6 assumed, and contradicted
-  it — the response needs a decision this session could not make.** Three
+- **The `INSERT`-run measurement contradicted what the map's cost argument
+  assumed, and the response needs a decision no unattended session could
+  make.** Three
   3.00 GiB synthetic dumps, same disk, same session, three runs each: a
   `COPY` block scans in ~2.6-3.3s, a large-object region in ~3.6-5.0s, an
   `INSERT` run in **~14.6s**, against a ~3.7-3.9s `cat`-to-`/dev/null` floor
   for the same files. The first two are at the I/O floor; the `INSERT` scan
   is four times above it, ~11s of CPU per 3 GiB. So `Event::Line` decode plus
-  the statement accumulator *does* dominate, which is exactly the outcome
-  3.6's notes named as earning `INSERT` runs a scanner-level fast path.
-  Building that path changes a decision, so it is not out-of-band work and
-  was not started here; it wants grilling and a slice number, with the
-  maintainer looking at this number first. Filed as a Phase 7 inbox entry
-  (scan performance is where a second scanner-level fast path gets decided)
-  and as a known gap above. Evidence:
-  [`history/2026-08-25.md`](history/2026-08-25.md).
+  the statement accumulator *does* dominate, which is exactly what earns
+  `INSERT` runs a scanner-level fast path of their own. Building that path
+  changes a decision, so it is not out-of-band work and was not started; it
+  wants grilling and a slice number, with the maintainer looking at this number
+  first. Filed as a Phase 7 inbox entry (scan performance is where a second
+  scanner-level fast path gets decided) and as a known gap above. Figures and
+  re-run commands: [`../design/measurements.md`](../design/measurements.md);
+  evidence: [`history/2026-08-25.md`](history/2026-08-25.md).
 
-- **3.6's recorded ~1.9GB/s large-object figure is page-cache-warm, not a
+- **The once-recorded ~1.9GB/s large-object figure is page-cache-warm, not a
   disk throughput.** Cold, the same 3GB bench measures ~560MB/s; warm again,
   ~890MB/s — which is the `cat` floor for that file, i.e. the scan is
   I/O-bound either way. 1.9GB/s is more than twice what this disk gives
-  `cat`, so it can only have been served from cache. 3.6's conclusion is
+  `cat`, so it can only have been served from cache. The conclusion is
   unaffected (the skip is still several times cheaper per byte than walking
-  the same bytes, and M3 above now measures what walking costs), but the
-  figure should be read as a ratio against a same-cache-state number, never
-  as throughput. Both figures and the floor are recorded in the phase notes.
+  the same bytes, and the `INSERT` figure above now measures what walking
+  costs), but the figure should be read as a ratio against a same-cache-state
+  number, never as throughput. Both figures and the floor are in
+  [`../design/measurements.md`](../design/measurements.md), which now states
+  the ratio rule for every figure it carries.

@@ -32,7 +32,7 @@ scan ordering has to either keep coverage prefix-shaped or rework `splice`'s
 seam rule, and that should be a decision, not a discovery.
 
 **Origin.** Slice 3.2.1.2.1, 2026-08-24. See
-[`roadmap-phase3-object-inventory-notes.md`](roadmap-phase3-object-inventory-notes.md),
+[`architecture.md`](architecture.md),
 "What the next slice inherits".
 
 ---
@@ -57,7 +57,7 @@ up under "Future — wanted, unscheduled" in [`roadmap.md`](roadmap.md). Phase 7
 is where it should be measured before it is built.
 
 **Origin.** Slice 3.2.1.2.1, 2026-08-24. Decision in
-[`roadmap-phase3-object-inventory.md`](roadmap-phase3-object-inventory.md),
+[`architecture.md`](architecture.md),
 "Mapping and streaming are separate passes".
 
 ---
@@ -79,7 +79,7 @@ is a shape worth deciding whether to care about rather than assuming away.
 Phase 7's "Measurement discipline" section is the right place to settle it.
 
 **Origin.** Slice 3.2.2, 2026-08-24. See
-[`roadmap-phase3-object-inventory-notes.md`](roadmap-phase3-object-inventory-notes.md).
+[`architecture.md`](architecture.md).
 
 ---
 
@@ -105,7 +105,7 @@ and a koji-scale `--inserts` dump maps in ~75 minutes against the ~15 the
 `COPY` rate implies. The design constraint to carry in: an `INSERT` run's end
 has no invariant behind it the way `COPY`'s `\.` (I7) and `BLOBS`' `COMMIT;`
 (I12) do, so a skip-and-count path needs the string-aware `'`-tracking scan
-[`roadmap-phase3-object-inventory.md`](roadmap-phase3-object-inventory.md)
+[`architecture.md`](architecture.md)
 ("The three regions do not share an end marker") specifies — which Phase 8
 Track A's row reader needs anyway.
 

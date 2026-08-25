@@ -37,7 +37,7 @@ preamble legitimately follows an earlier one's data. Hence re-arming the
 preamble search at each `\connect`.
 
 **Verified against:** v13.0, v16.0, v18.6 — identical.
-**Relied on by:** `roadmap-phase2-typed-columns.md` (preamble pass, early exit).
+**Relied on by:** `architecture.md` ("Bounded preamble-only reads").
 **Re-verify:** `grep -n 'addBoundaryDependencies' -A40 src/bin/pg_dump/pg_dump.c`
 and confirm `DO_EXTENSION`/`DO_TYPE`/`DO_SHELL_TYPE` are still in the pre-data
 arm, plus the `PRIO_*` ordering in `pg_dump_sort.c`.
@@ -118,10 +118,9 @@ enumerate a name's blocks; only reaching EOF does.
 entry is about a single database's dump.
 
 **Verified against:** v16.15 (observed), source read v16.15 and v18.6.
-**Relied on by:** `roadmap-phase2-typed-columns.md` (one target per query —
-several blocks under one key are legitimate, not an ambiguity);
-`roadmap-phase3-object-inventory.md` ("Mapping and streaming are separate
-passes" — a query cannot stop at the first matching block).
+**Relied on by:** `architecture.md` ("One target per query" — several blocks
+under one key are legitimate, not an ambiguity; "Query: mapping and streaming
+are separate passes" — a query cannot stop at the first matching block).
 **Re-verify:** against any live server,
 
 ```sh
@@ -165,7 +164,7 @@ segmentation hint, never a correctness guarantee: the statement grammar
 validates what the comment announced.
 
 **Verified against:** v18.6.
-**Relied on by:** `roadmap-phase2-typed-columns.md` (TOC comment as segmenter).
+**Relied on by:** `architecture.md` ("TOC enrichment").
 **Re-verify:** `grep -rn 'noTocComments' src/bin/pg_dump/` — confirm the only
 assignment is still the direct-connection one in `RestoreArchive()`.
 
@@ -194,7 +193,7 @@ seconds trailing-trimmed to between 0 and 6 digits (`…10.41925+00`,
 `…52.27108+00`). Booleans render as `t`/`f`.
 
 **Verified against:** v18.6 source; koji (`pg_dump 16.14`) data.
-**Relied on by:** `roadmap-phase2-typed-columns.md` (temporal mapping;
+**Relied on by:** `architecture.md` ("Type resolution" — temporal mapping;
 `interval` left as a string), `docs/manual/type-handling.md`.
 **Re-verify:** `grep -n 'DATESTYLE\|extra_float_digits' src/bin/pg_dump/pg_dump.c`
 and `awk '/_doSetFixedOutputState\(ArchiveHandle/,/^}$/'
@@ -219,8 +218,8 @@ all — when that leaves no columns. Separately, under `--binary-upgrade`,
 tables in `scripts/fixture_schema_edge_cases.sql` reproduce both shapes in
 real `pg_dump` output on 13.23/16.15/18.6 — the dummy column only appears
 under `--binary-upgrade`, matching the gate above.
-**Relied on by:** `roadmap-phase2-typed-columns.md` ("the `COPY` header is
-authoritative; the DDL is a by-name type lookup").
+**Relied on by:** `architecture.md` ("Joining a header against the metadata" —
+the `COPY` header is authoritative; the DDL is a by-name type lookup).
 **Re-verify:** `awk '/^fmtCopyColumnList\(/,/^}$/' src/bin/pg_dump/pg_dump.c`.
 
 ---
@@ -249,7 +248,7 @@ interspersed before *every* object's real statement (tables included, not
 just types) — worth knowing for the 2.2 preamble parser, since the "TOC
 comment segments, then a strict grammar parses the statement" design needs
 to tolerate that noise between the two under `--binary-upgrade`.
-**Relied on by:** `roadmap-phase2-typed-columns.md` (enum resolution).
+**Relied on by:** `architecture.md` ("Type resolution", enums).
 **Re-verify:** `awk '/^dumpEnumType\(Archive/,/^}$/' src/bin/pg_dump/pg_dump.c`.
 
 ---
@@ -296,7 +295,7 @@ through the same path. No koji *column* uses a user-defined type, so
 
 **Verified against:** v18.6 source; koji and all three fixture versions emit
 the empty-`search_path` line.
-**Relied on by:** `roadmap-phase2-typed-columns.md` (type resolution).
+**Relied on by:** `architecture.md` ("Type resolution").
 **Re-verify:** `grep -n 'dumpSearchPath' -A45 src/bin/pg_dump/pg_dump.c`, and
 confirm fixtures still contain `set_config('search_path', '', false)`.
 
@@ -341,8 +340,8 @@ instead.
 originally claimed a later `\connect`-ed database's own pair needs no such
 handling, "held within that database's own segment" — reasoning about
 `pg_dumpall`'s child-process structure without a concatenated fixture to
-check it against. Phase 2.3.1 built one (two `--create` fixtures
-concatenated — `docs/design/roadmap-phase2-typed-columns-notes.md`, "Fixture
+check it against. The fixture tree has one (two `--create` fixtures
+concatenated — `docs/design/architecture.md`, "Fixture
 tree") and found the opposite: a later child's version-header pair prints ahead of
 *its own* `\connect`, exactly like the first child's does ahead of its
 `\connect` — which puts those lines in `PreambleBuilder::feed_line` while
@@ -365,7 +364,7 @@ afterwards, into a segment that is already `current` and not yet
 Both databases are always dumped, so **every** real `pg_dumpall` file
 contains both shapes. A hand-built concatenation of `--create` outputs
 produces only the first, which is why a genuine `pg_dumpall` fixture is
-added in slice 2.3.2.
+added later.
 
 **Slice 2.3.2 confirmed both segment shapes against a real `pg_dumpall`
 run**, not just the hand-concatenated stand-in: `fixtures/{13,18}/edge_cases/dumpall.sql`
@@ -381,8 +380,8 @@ from source reading alone.
 (`pg_dump 16.14`); two concatenated `--create` fixtures
 (`pgdump_query/tests/preamble.rs`'s `multidb_fixture`, versions 13/16/18);
 `fixtures/{13,18}/edge_cases/dumpall.sql`, a real `pg_dumpall` run (2.3.2).
-**Relied on by:** `roadmap-phase2-typed-columns.md` (preamble pass);
-`roadmap-phase2-typed-columns-notes.md` ("Preamble parsing", "Fixture tree").
+**Relied on by:** `architecture.md` ("The preamble grammar and `DumpMetadata`",
+"Multi-database (`\connect`) segmentation", "Fixtures").
 **Re-verify:** `grep -n 'Dumped from database version' -B5
 src/bin/pg_dump/pg_backup_archiver.c` — confirm it's still inside
 `RestoreArchive()` and still unconditional-per-call; `grep -n
@@ -440,8 +439,8 @@ probed `pg_dump` 16.15; `fixtures/{13..18}/types/default.sql`'s
 `public.myrange`/`public.myrange_multi` (2.3.2) — all six routine versions,
 not just one probed container, and confirms the PG13/PG14+ split in the
 `multirange_type_name` parameter's presence exactly.
-**Relied on by:** `roadmap-phase2-typed-columns.md` ("Multiranges", type
-mapping table); `roadmap-phase2-typed-columns-notes.md` ("Type resolution")
+**Relied on by:** `architecture.md` ("Type resolution" — the mapping table and
+"Ranges and multiranges")
 — `pgtype.rs`'s companion lookup and `TypeKind::Range::multirange_type_name`
 are built directly on this invariant, not just tested against it.
 **Re-verify:** `grep -n 'skip auto-generated array and multirange types' -A 4
@@ -521,9 +520,7 @@ that these shapes cannot be fixture-generated.
 `DefineType()`); probed `pg_dump` 16.15; `fixtures/{13..18}/types/default.sql`
 (2.3.2) — the same recipe as permanent fixture coverage across all six
 routine versions, not a single probed container.
-**Relied on by:** `roadmap-phase2-typed-columns.md` ("Fixtures");
-`roadmap-phase2-typed-columns-notes.md` ("Evidence carried forward for later
-phases").
+**Relied on by:** `architecture.md` ("Fixtures", "Type resolution").
 **Re-verify:** `grep -n '"SHELL TYPE"' -B 12 src/bin/pg_dump/pg_dump.c` —
 confirm `dumpShellType()` still emits a bare `CREATE TYPE x;` ahead of the
 real definition; re-run the recipe above against the newest major.
@@ -580,9 +577,9 @@ one inter-`COPY` gap that is **not** bounded by schema size.
 *correctness* defence: a bytea hex literal cannot contain a line break, so no
 `COPY` header or `\.` terminator can hide inside the region. But a bare
 `BEGIN;`/`COMMIT;` pair is line-anchored recognizable on its own — through
-Phase 3.5, `StartRestoreLOs()`/`EndRestoreLOs()` are the *only* emitter of one
+`StartRestoreLOs()`/`EndRestoreLOs()` are the *only* emitter of one
 anywhere in plain `pg_dump` output, confirmed across the fixture set used to
-verify this entry — so Phase 3.6's `crate::scan::CopyScanner` recognizes
+verify this entry — so `crate::scan::CopyScanner` recognizes
 `BEGIN;` as a large-object region opener at the scanner level (a new
 `State::InLargeObjectRegion`, the same tier `State::InCopy` sits at) and skips
 every line up to `COMMIT;` unread, rather than emitting `Event::Line` for each
@@ -609,13 +606,12 @@ an OID could be recovered.
 
 **Verified against:** v13.23 through v18.6 source (`pg_dump_sort.c`
 priorities; `dumpLOs`/`BLOBS`/`BLOB METADATA` entries; `StartRestoreLOs`,
-`_StartLO`, `dump_lo_buf` in `pg_backup_archiver.c`) and, since slice 3.1,
+`_StartLO`, `dump_lo_buf` in `pg_backup_archiver.c`) and
 real fixture output on all 6 routine versions
 (`fixtures/<version>/objects/default.sql`) — koji still has no large objects,
 so this remains fixture-only, no koji coverage.
-**Relied on by:** `roadmap.md` (Phase 3, "Large objects: ranges, not
-contents"); `roadmap-phase3-object-inventory.md` ("Bulk regions");
-`pg-dump-compatibility.md`.
+**Relied on by:** `architecture.md` ("Bulk regions: one span kind, three
+payloads"); `pg-dump-compatibility.md`.
 **Re-verify:** `grep -n 'PRIO_LARGE_OBJECT_DATA' src/bin/pg_dump/pg_dump_sort.c`
 — confirm it still sits between `PRIO_TABLE_DATA` and
 `PRIO_POST_DATA_BOUNDARY`; `grep -n 'lowrite' src/bin/pg_dump/pg_backup_archiver.c`
@@ -725,12 +721,11 @@ crossing 15 is. Confirmed against a running `postgres:16-alpine`
 (`extra_float_digits = 3`) as well as the source above.
 
 **Relied on by:** `pgdump_query/src/decode.rs`'s `render_f32`/`render_f64`
-(`docs/design/roadmap-phase2-typed-columns-notes.md`, "Decoders and
+(`docs/design/architecture.md`, "Decoders and
 render-back"), whose own fixed/scientific
 decision uses `FLT_DIG`/`DBL_DIG` (6/15) as the threshold for exactly this
 reason — matching digit-for-digit is necessary but not sufficient for the
-round-trip test in "Testing the mapping's correctness"
-(`roadmap-phase2-typed-columns.md`) to pass.
+round-trip test under `architecture.md`'s "Testing philosophy" to pass.
 **Re-verify:** `grep -n 'exp >= -4' src/common/f2s.c src/common/d2s.c` —
 confirm the literal thresholds are still `6` and `15`.
 
@@ -801,15 +796,13 @@ emitting `OWNER TO`. `--no-owner` behaviour observed in
 
 **Scope limit.** Both properties are about `pg_dump`'s own archiver. A
 `pg_dump`-compatible dump produced by other ecosystem tooling may carry no TOC
-comments at all, which is why `roadmap-phase3-object-inventory.md` treats them
+comments at all, which is why `architecture.md` treats them
 as an enrichment layer over a statement-driven pass rather than as the primary
 structure.
 
 **Verified against:** v18.6 source; koji (`pg_dump 16.14`); fixtures at 18.6.
 
-**Relied on by:** `roadmap-phase3-object-inventory.md` ("Scanning: one
-statement-driven pass, TOC comments as an enrichment layer"; "What a span
-carries").
+**Relied on by:** `architecture.md` ("The file map"; "TOC enrichment").
 
 **Re-verify:**
 
@@ -856,8 +849,8 @@ large-object region keep their line-anchored guarantees; this invariant exists
 precisely because those two do not extend to the third bulk region.
 
 **Verified against:** fixtures at 13.23 through 18.6.
-**Relied on by:** `roadmap-phase3-object-inventory.md` ("The three regions do
-not share an end marker"), which is why `INSERT` runs get a string-aware scan
+**Relied on by:** `architecture.md` ("Bulk regions: one span kind, three
+payloads"), which is why `INSERT` runs get a string-aware scan
 rather than the prefix check the other two regions allow.
 **Re-verify:** `grep -A1 "VALUES (10, '$" fixtures/*/edge_cases/inserts.sql`
 — confirm the statement still breaks across lines on a newline-bearing value.
@@ -895,7 +888,7 @@ postgres_fdw; Type: COMMENT; Schema: -; Owner: ` (trailing space, empty
 owner); `fixtures/*/edge_cases/no-owner.sql` (`--no-owner`) has `Owner: -`
 throughout instead.
 
-**Scope limit.** None — closed by slice 3.1.1's fixtures. `Tablespace:` is
+**Scope limit.** None — closed by the `objects` fixtures. `Tablespace:` is
 exercised by `fixtures/<version>/objects/default.sql`'s
 `objects.tablespaced_table` (all 6 routine versions:
 `-- Name: tablespaced_table; Type: TABLE; Schema: objects; Owner: postgres;
@@ -919,8 +912,7 @@ fixture closes.
 `Schema:`/`Owner:` placeholder shapes and the `Tablespace:` suffix; v18.6
 fixture for `TOC_PREFIX_STATS` (PG18+ only, per `--statistics`'s own
 availability).
-**Relied on by:** `roadmap-phase3-object-inventory.md` ("What a span carries",
-"TOC coverage is recorded per file") — `map::parse_toc_header_line` splits the
+**Relied on by:** `architecture.md` ("TOC enrichment") — `map::parse_toc_header_line` splits the
 line on these exact literal separators in this exact order.
 **Re-verify:**
 
@@ -976,7 +968,7 @@ fixture_reader;`, `GRANT SELECT ON TABLE objects.widgets TO PUBLIC;`, `ALTER
 DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA objects GRANT SELECT ON TABLES
 TO fixture_reader;`, `SET default_tablespace = '';`.
 
-**Scope limit.** None — closed by slice 3.1.1. `REVOKE` is exercised by
+**Scope limit.** None — closed by the `objects` fixtures. `REVOKE` is exercised by
 `objects.no_public_execute()`: revoking a function's default PUBLIC `EXECUTE`
 privilege is the one ACL shape whose target state has *fewer* privileges than
 the default, so `pg_dump`'s ACL diff emits a solo `REVOKE ALL ON FUNCTION
@@ -993,8 +985,8 @@ its definition, `SET default_tablespace = '';` after) — same fixture I18's
 for the `GRANT`/`REVOKE`/`ALTER DEFAULT PRIVILEGES`/`SET default_tablespace`
 (both a real tablespace and the reset) shapes.
 
-**Relied on by:** `roadmap-phase3-object-inventory.md` ("What a span
-carries") — `preamble::extract_statement_cross_refs` matches these four
+**Relied on by:** `architecture.md` ("Cross-references (roles and
+tablespaces)") — `preamble::extract_statement_cross_refs` matches these four
 shapes by marker substring rather than a full grammar.
 
 **Re-verify:**

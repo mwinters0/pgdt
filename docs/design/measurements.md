@@ -1,0 +1,129 @@
+# Measurements
+
+Every performance figure the design relies on, with the command that
+reproduces it. A baseline nobody can re-run is a rumour with a decimal point,
+so **a figure that loses its regeneration command should be deleted, not
+kept**.
+
+All figures are on the hardware `CLAUDE.local.md` describes. Synthetic inputs
+are regenerable with `--seed 42` and are **never committed** — they measure
+throughput, not correctness, which stays entirely fixture-based.
+
+Two standing rules for reading anything below:
+
+- **Every figure is a ratio, never a disk throughput.** Page-cache state
+  dominates. A number taken warm on a freshly generated file can be twice what
+  the disk delivers to `cat`, which is exactly how the large-object figure was
+  once misread. Always take the `cat`-to-`/dev/null` floor for the same file on
+  the same disk in the same session, and compare against that.
+- **Long runs are detached.** A koji-scale scan is roughly an hour; see
+  `CLAUDE.md`, "Long-running processes", for why waiting on one is expensive
+  and what to do instead.
+
+## Scan throughput by input shape
+
+Three 3.00 GiB synthetic dumps on the SSD, `pgdq info --dqcache none` in a
+512MB-limited container, three consecutive runs each in one session so
+page-cache state is comparable.
+
+| Input | Wall | Rate | Against the floor |
+|---|---|---|---|
+| `COPY` block | 2.55–3.27 s | ~1.0–1.26 GB/s | at the I/O floor |
+| Large-object region | 3.61–4.99 s | ~645–890 MB/s | at the I/O floor |
+| `INSERT` run | 14.55–14.79 s | ~218–221 MB/s | **4× above it** |
+| `cat` → `/dev/null` | 3.67–3.85 s | ~840–880 MB/s | — |
+
+Max RSS is ~35–42 MB across all three.
+
+**What this says.** The `COPY` and large-object paths are device-bound. The
+`INSERT` path is not: it spends roughly 11 s of CPU per 3 GiB that the other
+two do not, because every line is still decoded into `Event::Line` and pushed
+through the statement accumulator (see
+[`architecture.md`](architecture.md), "Bulk regions"). Mapping an `--inserts`
+file costs about what *decoding* a `COPY` file costs, not what *scanning* one
+costs — so a koji-scale 1 TB `--inserts` dump maps in ~75 minutes rather than
+the ~15 the `COPY` rate implies. Correctness, tiling and row counts are
+unaffected. The fix is a scanner-level `INSERT` path;
+[`roadmap-phase7-inbox.md`](roadmap-phase7-inbox.md) holds it.
+
+Regenerate the three inputs:
+
+```sh
+cd scripts
+uv run generate_perf_data.py         --size-mb 3072 --seed 42   # COPY control
+uv run generate_large_object_bench.py --size-mb 3072 --seed 42
+uv run generate_insert_run_bench.py   --size-mb 3072 --seed 42
+```
+
+The `INSERT` generator writes one `INSERT INTO public.bench_inserts VALUES
+(…);` per line under an ordinary `TABLE DATA` TOC comment — 7,656,060 rows,
+with an apostrophe doubled the way `pg_dump` writes one in ~15% of them, so
+the accumulator's quote tracker is genuinely exercised. The large-object
+generator is `LOBBUFSIZE`-chunked to match real `pg_dump`.
+
+Measure each the same way:
+
+```sh
+cargo build --release --target x86_64-unknown-linux-musl -p pgdump_query-cli
+sudo nerdctl run --rm -m 512m --memory-swap 512m \
+  -v "$PWD/target/x86_64-unknown-linux-musl/release/pgdq:/pgdq:ro" \
+  -v "/path/to/bench.sql:/dump.sql:ro" \
+  postgres:16-alpine \
+  sh -c 'time /pgdq info --source /dump.sql --dqcache none --verbose'
+```
+
+**The large-object skip is the measurement that justifies it.** Completing a
+3GB region inside a 512MB limit, an order of magnitude faster per byte than
+the `INSERT` path walks the same kind of bytes, is the "skipped, not walked"
+evidence: walking it statement by statement would mean one span *and one
+stored text string* per `lowrite` call, hundreds of thousands of them.
+
+## koji full scan — the regression check
+
+The 784GB real sample (`CLAUDE.local.md` has the path). Roughly an hour on the
+HDD; run it detached per `CLAUDE.md`.
+
+| | |
+|---|---|
+| `COPY` blocks | 74 |
+| Rows | 19,575,829,920 |
+| Bytes accounted for | 784,019,857,152 |
+| RSS | flat, ~9 MiB (untyped scan) |
+| `UnterminatedCopyBlock` | none |
+
+**The regression check is byte-for-byte identity, not throughput**: every
+block's header/data/terminator/end offset must match the previous run. That
+identity over a change touching only what happens *between* blocks is what the
+check is for.
+
+`lock_monitor.activity` — whose row data contains a literal `COPY … TO
+stdout;` substring — must parse as one correct block. That is the case that
+motivated line-anchored detection.
+
+**The throughput figure is currently unusable.** The last run measured ~110
+MB/s wall-clock (~120–130 MB/s by `node_exporter`'s disk-read counter) against
+a ~240–256 MB/s baseline, but a Postgres restore was writing ~30 MB/s to the
+same physical HDD throughout, on a disk ~93–95% busy either way. A
+like-for-like re-measurement is pending an uncontended disk; see `STATUS.md`,
+"Decisions worth another look". The command is in `runs/koji-3.6-scan.log`,
+and the container recipe is in `CLAUDE.md`.
+
+## Decoder and whole-file benchmarks
+
+`criterion`, `harness = false`. A regression tripwire for per-byte CPU cost,
+not an optimization campaign.
+
+```sh
+cargo bench -p pgdump_query
+```
+
+- `benches/decoders.rs` — one `decode`/`render` pair per mapped type family.
+- `benches/whole_file.rs` — one warm-cache end-to-end `SchemaMode::Typed`
+  scan. It warms the page cache before measuring, deliberately: the figure is
+  meant to move when decode cost moves, not when the disk is busy.
+
+Its input comes from `generate_perf_data.py` (default `--size-mb 256`, sized
+to fit page cache): one wide table, one column per family the decoders cover,
+plus `v_long_text` (very long values) and `v_escaped` (high escape density).
+Its escaping is a Python reimplementation of `copy::encode_field` (I15), since
+the script has no Rust runtime to call into.

@@ -26,6 +26,10 @@ answered.
 ```
 initial.md  →  roadmap  →  ┌─ grill phase N ─→ spec ─→ slice ─→ land ─→ notes ─┐
                            └────────── wrap phase N ←── consolidate ←──────────┘
+                                                │
+                                       (at the keystone)
+                                                ↓
+                            strike the centering ─→ subject-filed docs ─→ resume
 ```
 
 **0. Bootstrap.** Write the initial design handoff — problem, philosophy, use
@@ -81,6 +85,14 @@ step that keeps the roadmap from becoming fiction.
 (see "Inboxes" below), that file is the first thing the grilling reads and the
 last thing it deletes.
 
+**7. At the keystone, strike the centering.** Once the system's *shape* stops
+being in question, the phase-by-phase record becomes scaffolding around a
+structure that no longer leans on it. Re-file the doc set by subject, retarget
+the read-triggers, and delete the phase docs. This happens once or twice in a
+project's life, not every phase — see "The keystone: striking the centering"
+below. Then the loop resumes: the next phase is grilled and specified exactly
+as before.
+
 ---
 
 ## The doc set
@@ -96,6 +108,7 @@ last thing it deletes.
 | `docs/design/roadmap-phase<N>-<slug>-notes.md` | **How** it landed: module map, and the facts later phases inherit | Restatement of the spec; a changelog |
 | `docs/design/roadmap-phase<N>.<M>-<slug>-notes.md` | The same, for one slice, until the phase wraps | Anything that should have gone in the spec |
 | `docs/design/roadmap-phase<N>-inbox.md` | Facts an *earlier* phase found that phase N's grilling must not miss | Anything with a proper home elsewhere; speculation about phase N's design |
+| `docs/design/<architecture>.md` | How the built system works, filed by **subject** — exists only after a keystone | Phase history; what any phase was committed to |
 | `docs/design/<invariants>.md` | Every external behaviour a decision assumes, with proof | Assumptions without a re-verification step |
 | `docs/design/<compatibility>.md` | Which external variants are tested / untested / unsupported | Untracked "probably fine" rows |
 | `docs/design/<standing-constraint>.md` | A rule that cuts across all phases (e.g. layering) | Phase-scoped decisions |
@@ -290,6 +303,151 @@ so its lines stay one line. Detail lives in the history entry.
 
 ---
 
+## The keystone: striking the centering
+
+A masonry arch is built over *centering* — a temporary wooden frame that holds
+every stone in place while the arch is incomplete. The frame is not part of the
+arch and was never meant to be. When the keystone drops in, the arch carries
+itself, and the centering is struck: removed entirely, because from that moment
+it holds nothing up and only obstructs the space beneath.
+
+Phase docs are centering. While a phase is in flight its spec is a contract
+under review and its notes are how a slice hands off before the phase can
+consolidate; while the system is half-built, "module C is here because phase 6
+will consume it" is the only thing making module C legible. Both stop being
+true at the same moment, and it is not a phase boundary.
+
+### When
+
+The **keystone** is when the system's *shape* stops being in question: every
+use case has an implementation, however crude, and everything remaining is
+expansion (more of a thing that exists) or ergonomics (a nicer way to reach
+it), not structure.
+
+The test is a reader, not a checklist: **can someone who knows the problem
+domain read the code and predict where a new feature goes?** If yes, the
+scaffolding is load-bearing for nobody. If a module still only makes sense
+once you know which phase is going to consume it, the keystone has not landed
+and striking the centering early will cost more than it saves.
+
+This happens once or twice in a project's life. It is close to a 1.0, but it
+is about the *doc set*, not about the public interface — a project can reach a
+keystone with its API still openly in flux, which is exactly the pre-1.0 case.
+
+### What it changes
+
+**The doc set stops being filed by *when* and starts being filed by *what*.**
+
+Filed-by-time is right while the system is being built, because the questions
+are "what did we commit to" and "did we deliver it", and both are scoped to a
+phase. Filed-by-subject is right once it is built, because every question a
+reader now brings is about a mechanism — how does the cache decide staleness,
+what closes a statement — and a mechanism assembled over four phases has its
+answer smeared across four documents, none of which is wrong and none of which
+is complete.
+
+That smearing is the actual cost, and it is worse than the page count
+suggests: a reader who finds the phase-2 answer has no way to know a phase-3
+document amended it.
+
+### The test each artifact must pass
+
+An artifact survives the review if **it answers a question a future session
+will actually ask, *and* reading it here costs less than re-deriving the answer
+from the code plus `git log`.**
+
+Both halves. Something that fails the first is dead weight however expensive it
+was to produce. Something that fails the second is a cache of a value that is
+cheaper to recompute — and a stale one, since the code moves and the doc does
+not.
+
+Applied to the material, six categories fall out. The dispositions differ, and
+the mistake is treating the whole phase record as one thing:
+
+| Category | Looks like | Disposition |
+|---|---|---|
+| **Provenance** | "landed in 3.3", "bumped to v5 in 3.2.2", "Phase 1's default" | **Delete.** It answers *when*, `git log` answers *when*, and nobody asks. |
+| **Citation** | "(`roadmap-phase3.md`, "Span boundaries")" | **Retarget, or inline the sentence.** A pointer into a deleted doc is worse than no pointer: a session spends a tool call following it. |
+| **Rationale in situ** | "rejected — it would leak a mapping concern into L1's event contract" | **Keep; strip the phase number.** The reason is durable, the number is not. |
+| **Negative result** | "an earlier attempt put a start floor on `Builder`; it tiles, but…" | **Keep, and promote.** Not recoverable from the code *at any price* — the code records what was built, never what was tried and abandoned. |
+| **External fact** | the assumptions register; "`--with-statistics` does not exist" | **Keep untouched.** Never phase-filed to begin with. |
+| **Live obligation** | "reserved; not populated until phase 7" | **Keep; re-point by name, not by number.** The obligation is stable; the numbering ahead of the keystone is about to be re-grilled. |
+
+Measurements are the one category needing a judgement call rather than a rule:
+keep a figure only if the command that reproduces it survives with it. A
+baseline nobody can re-run is not a baseline, it is a rumour with a decimal
+point.
+
+**Negative results are the reason this is a distillation and not a deletion.**
+Everything else in the phase record is either recoverable from the code or
+already filed elsewhere. What was *tried and rejected* is recoverable from
+nothing, and losing it has a silent failure mode: the next session does not
+know to look, so it re-derives the rejected design, implements it, and finds
+out the hard way. Harvest these first, before touching anything.
+
+### Order of operations
+
+Deletion is last, and it is not where the saving comes from.
+
+1. **Distill.** Write the subject-filed docs *first*, with the phase docs still
+   in front of you. A section per mechanism, each carrying its own rejected
+   alternatives.
+2. **Retarget.** Repoint `CLAUDE.md`'s read-triggers at the new docs. **This is
+   where the token cost actually drops.** Orientation cost is set by what the
+   triggers pull into context at the moment of work, not by what exists on
+   disk; an untriggered file costs nothing. A trigger that says "read this
+   50KB spec before touching the cache format" is the expense, and it is paid
+   on every visit.
+3. **Sweep the code.** Strip provenance, repoint or inline citations, de-number
+   forward references.
+4. **Delete.** Now. Deletion's job is to remove the *second authority* — so
+   that nobody, human or agent, has to decide whether the spec or the
+   distillate wins, and so that no future edit lands in the copy nothing reads.
+
+Doing it in the other order is the tempting mistake: deleting first feels like
+the point, saves nothing, and destroys the source you were about to distil
+from.
+
+### What a keystone review must not do
+
+- **Renumber the remaining phases.** Same reason the process already prefers
+  earning an `<N>.<M>.<K>` over renumbering a tail: it invalidates every
+  surviving reference — inbox filenames especially — and erases the record
+  that anything happened. Phases keep their numbers; the sequence just starts
+  further in.
+- **Touch the assumptions register or the compatibility matrix.** Neither was
+  ever phase-filed, and the register is precisely what makes discarding the
+  rest affordable: it is the external evidence that would otherwise have to be
+  re-established from upstream source.
+- **Rewrite or delete history.** Dated entries have no read-trigger, so they
+  cost nothing to keep, and they are the raw evidence beneath the distillate —
+  including the evidence for the review itself.
+- **Freeze the distillate.** `initial.md` is frozen because it records what we
+  thought at the start. The architecture doc records what is true *now*; it is
+  edited like any live doc, and a keystone that produces a second frozen
+  artifact has just moved the problem.
+- **Rewrite the manual.** It was written for someone who will never read the
+  source, which means it was already subject-filed.
+
+### What it costs
+
+The record of **intent** goes. After this you can no longer ask "what did phase
+3 commit to, and did it deliver?" — and there is no reconstructing it from a
+document that describes the result, because the whole point of the spec/notes
+split was that the two are allowed to differ.
+
+Accept that deliberately rather than discovering it later. It is affordable
+only because the question expires at the keystone: once the shape is settled,
+"did the phase deliver what it promised" has been answered by the system
+existing, and every remaining question is about what the code does now.
+
+The failure mode in the other direction is worse and more common — a project
+that keeps its full phase archive read-triggered forever, where orientation
+gets steadily more expensive and every mechanism must be reassembled from the
+four documents that each hold a quarter of it.
+
+---
+
 ## Where does this fact go?
 
 Four questions settle almost every case.
@@ -297,7 +455,8 @@ Four questions settle almost every case.
 | If the fact is… | It goes in… |
 |---|---|
 | What we intend to build | the phase **spec** |
-| What we built, that a later phase inherits | the phase **notes** |
+| What we built, that a later phase inherits | the phase **notes** — or, after a keystone, the **architecture** doc's section for that mechanism |
+| Something we tried and rejected | beside the mechanism it would have replaced, wherever that lives |
 | What exists right now | **STATUS.md** |
 | Why we changed our mind, and the evidence | a **history** entry, linked from the doc holding the resulting decision |
 | Something outside our control that we now depend on | the **assumptions register** |
@@ -368,6 +527,13 @@ the finished half is legitimately ticked.
 slice's detail has somewhere to go while it is fresh, without waiting on the
 phase; leaving five of them behind means the next phase reads five overlapping
 partial accounts instead of one.
+
+**After a keystone**, the `roadmap-phase<N>-*` files for completed phases are
+gone and `architecture.md` stands in their place; `roadmap.md` carries only
+goals, standing policies and the phases still ahead. The standing-constraint,
+assumptions-register, compatibility and manual files are unaffected — they were
+already filed by subject, which is why they survive a transition that removes
+40% of the tree.
 
 **Freezing.** `initial.md` moves to `historical/` and is never edited again.
 Mark it frozen in the file, in the roadmap, and in `CLAUDE.md`. The point is
@@ -567,3 +733,13 @@ Each of these means a specific rule has stopped being followed.
 - **An inbox entry that cannot say why its phase cares.** It is a passing
   remark filed as evidence, and it is what turns the file into a dumping
   ground nobody reads.
+- **Answering "how does X work" requires reading four phase docs and knowing
+  which one amended the others.** The keystone has passed and the centering is
+  still up. Re-file by subject.
+- **A code comment cites a phase number for something already built.** Either
+  it is provenance (delete it) or it is a citation whose target should be a
+  doc about the mechanism, not about a month.
+- **A keystone review that deleted the phase docs without harvesting the
+  rejected alternatives out of them first.** Those were the only category that
+  could not be rebuilt, and they were the reason not to simply `rm` the
+  directory.

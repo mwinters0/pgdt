@@ -8,8 +8,8 @@ PostgreSQL type does not survive the trip into a dump file intact.
 Every column gets the narrowest Arrow type we can decode from the type the dump
 declares for it. A type we cannot decode **falls back to a string column**
 rather than failing — so a dump always reads, and coverage improves release to
-release. Pass `SchemaMode::Strings` to get every column as a string, which is
-what Phase 1 did and what you want if you would rather do your own parsing.
+release. Pass `SchemaMode::Strings` to get every column as a string, which is what you
+want if you would rather do your own parsing.
 
 You can see exactly what happened to each column: `pgdq info --verbose` lists
 per-column resolutions, and the library exposes the same thing as diagnostics
@@ -81,8 +81,7 @@ those exact spellings and are parsed as such.
 `text[]` arrives as `{a,b,"c,d"}` — a value with its own quoting rules nested
 inside the escaping COPY TEXT already applies. Decoding it correctly is real
 work, shared with composite types, ranges, and multiranges (including a
-range type's own auto-created multirange companion), and it is scheduled as
-its own phase. Until then these come back as strings **with their outer COPY
+range type's own auto-created multirange companion), and it is scheduled. Until then these come back as strings **with their outer COPY
 escaping already removed**, so what you get is the literal array text
 PostgreSQL would print.
 
@@ -121,8 +120,8 @@ gives you every column unparsed.
 Some columns have no type information available:
 
 - A `--data-only` dump has no DDL in it at all, so **every** column is
-  untyped. This is not an error; you get the Phase 1 behaviour and one
-  diagnostic explaining why.
+  untyped. This is not an error; you get string columns and one diagnostic
+  explaining why.
 - A table with no undropped columns emits a `COPY` header with no column list,
   and its columns are named `column1`, `column2`, …
 - A C-level base type (`CREATE TYPE x (INPUT = …, OUTPUT = …)`) tells us how the
