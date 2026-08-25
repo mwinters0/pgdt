@@ -154,6 +154,48 @@ async fn default_dump_declares_every_mapped_column_type() {
             "pg_dump {version}"
         );
 
+        // A composite whose own field is an array — the nested shape the
+        // nested-literal codec is parameterized for. The field's declared
+        // type keeps its `[]` exactly as `format_type` wrote it.
+        assert_eq!(
+            find_type(&db, "public.tagged").kind,
+            TypeKind::Composite {
+                fields: vec![
+                    ("label".to_string(), "text".to_string()),
+                    ("tags".to_string(), "text[]".to_string()),
+                ]
+            },
+            "pg_dump {version}"
+        );
+
+        // A user-defined range over a non-numeric subtype, carrying a
+        // `collation` parameter the range grammar must step over without
+        // mistaking it for the subtype. On PG14+ a `multirange_type_name`
+        // parameter sits between the two (I10).
+        assert_eq!(
+            find_type(&db, "public.textrange").kind,
+            TypeKind::Range {
+                subtype: Some("text".to_string()),
+                multirange_type_name: (version >= 14).then(|| "public.textmultirange".to_string()),
+            },
+            "pg_dump {version}"
+        );
+
+        // I21, as pg_dump actually writes it: `integer[][]` in the DDL comes
+        // back as plain `integer[]`, indistinguishable from the column beside
+        // it that holds 1-D values. This is the whole reason an array
+        // column's Arrow type cannot be settled from the declared type.
+        let shape_cols = db.tables.get("public.t_array_shape").unwrap();
+        assert_eq!(
+            shape_cols[1..],
+            [
+                ("v_multidim".to_string(), "integer[]".to_string()),
+                ("v_mixed_dim".to_string(), "integer[]".to_string()),
+                ("v_lbound".to_string(), "integer[]".to_string()),
+            ],
+            "pg_dump {version}"
+        );
+
         // A user-defined type used as a column's declared type is recorded
         // schema-qualified (I8), matching the type's own name.
         let enum_domain_cols = db.tables.get("public.t_enum_domain").unwrap();

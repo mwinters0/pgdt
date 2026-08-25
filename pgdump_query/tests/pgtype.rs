@@ -107,13 +107,56 @@ async fn every_mapped_column_family_resolves_as_the_mapping_table_says() {
             "pg_dump {v}: t_range.v_range (int4range)"
         );
 
-        // A user-defined composite type's column.
+        // A range over a text subtype resolves the same way a numeric one
+        // does — the subtype is not what decides it.
+        assert_eq!(
+            m("public.t_text_range")[1],
+            ColumnResolution::Deferred { kind: DeferredKind::Range },
+            "pg_dump {v}: t_text_range.v_textrange"
+        );
+
+        // Every column of the array-shape table is `Deferred(Array)` from the
+        // declared type alone — `integer[][]`, a column whose rows disagree
+        // about dimensionality, and one carrying an `[lb:ub]=` prefix are
+        // indistinguishable here (I21). Only the data separates them.
+        let shape_res = m("public.t_array_shape");
+        assert_eq!(shape_res[0], Mapped, "pg_dump {v}: t_array_shape.id");
+        for r in &shape_res[1..] {
+            assert_eq!(*r, ColumnResolution::Deferred { kind: DeferredKind::Array }, "pg_dump {v}");
+        }
+
+        // A user-defined composite type's column, an array *of* that
+        // composite, and a composite with an array *field*: the array-ness
+        // is read off the trailing `[]`, so the nesting order decides which
+        // deferral is reported, not the depth.
         let composite_res = m("public.t_composite");
         assert_eq!(composite_res[0], Mapped, "pg_dump {v}: t_composite.id");
         assert_eq!(
             composite_res[1],
             ColumnResolution::Deferred { kind: DeferredKind::Composite },
             "pg_dump {v}: t_composite.v_point"
+        );
+        assert_eq!(
+            composite_res[2],
+            ColumnResolution::Deferred { kind: DeferredKind::Array },
+            "pg_dump {v}: t_composite.v_points (public.point2d[])"
+        );
+        assert_eq!(
+            composite_res[3],
+            ColumnResolution::Deferred { kind: DeferredKind::Composite },
+            "pg_dump {v}: t_composite.v_tagged (composite with a text[] field)"
+        );
+
+        // `mybase` itself is opaque, but `mybase[]` still defers as an array
+        // — the refusal this phase commits to for a `TypeKind::Base` element
+        // is 4.4's, decided on the element type, not something the declared
+        // type string settles here.
+        let base_res = m("public.t_base_type");
+        assert_eq!(base_res[1], ColumnResolution::OpaqueBaseType, "pg_dump {v}: v_mybase");
+        assert_eq!(
+            base_res[2],
+            ColumnResolution::Deferred { kind: DeferredKind::Array },
+            "pg_dump {v}: t_base_type.v_mybase_array"
         );
 
         // Enum and domain-over-domain columns both resolve `Mapped` -- the

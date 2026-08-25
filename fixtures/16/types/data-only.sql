@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict lJJjf3fxHB5IGfGGRzIGVeEq5ztOowlrgRxzay4IspN9tFXNiPdShhaGOVJ46FX
+\restrict hYtkDCMZWW1D81Pls6Hj1eTxWZUpQgaT1Vczn4lkWlBIIOulNB5xNGASpg61fWl
 
 -- Dumped from database version 16.15
 -- Dumped by pg_dump version 16.15
@@ -22,9 +22,20 @@ SET row_security = off;
 -- Data for Name: t_array; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
-COPY public.t_array (id, v_empty, v_with_null, v_null_array, v_text_special, v_multidim) FROM stdin;
-1	{}	{NULL}	\N	{"a,b","c{d}","e\\"f","g\\\\h"}	{{1,2},{3,4}}
-2	{1,2,3}	{1,NULL,3}	{1,2}	{NULL,plain}	\N
+COPY public.t_array (id, v_empty, v_with_null, v_null_array, v_text_special, v_enum_array) FROM stdin;
+1	{}	{NULL}	\N	{"a,b","c{d}","e\\"f","g\\\\h"}	{sad,"has space","has,comma",has'quote}
+2	{1,2,3}	{1,NULL,3}	{1,2}	{NULL,plain}	{NULL,ok}
+\.
+
+
+--
+-- Data for Name: t_array_shape; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_array_shape (id, v_multidim, v_mixed_dim, v_lbound) FROM stdin;
+1	{{1,2},{3,4}}	{1,2}	[0:2]={7,8,9}
+2	\N	{{1,2},{3,4}}	[-1:0]={10,11}
+3	{{5,6},{7,8}}	\N	\N
 \.
 
 
@@ -32,9 +43,9 @@ COPY public.t_array (id, v_empty, v_with_null, v_null_array, v_text_special, v_m
 -- Data for Name: t_base_type; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
-COPY public.t_base_type (id, v_mybase) FROM stdin;
-1	hello
-2	\N
+COPY public.t_base_type (id, v_mybase, v_mybase_array) FROM stdin;
+1	hello	{hello,"a,b"}
+2	\N	\N
 \.
 
 
@@ -54,9 +65,10 @@ COPY public.t_bytea (id, v_bytea) FROM stdin;
 -- Data for Name: t_composite; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
-COPY public.t_composite (id, v_point) FROM stdin;
-1	(1,"a,b""c")
-2	\N
+COPY public.t_composite (id, v_point, v_points, v_tagged) FROM stdin;
+1	(1,"a,b""c")	{"(1,\\"a,b\\"\\"c\\")","(2,plain)"}	("a,b","{""x\\\\""y"",""p q"",NULL}")
+2	\N	\N	\N
+3	(,"")	{NULL,"(3,)"}	("",{})
 \.
 
 
@@ -199,6 +211,20 @@ COPY public.t_text (id, v_text, v_varchar, v_char) FROM stdin;
 
 
 --
+-- Data for Name: t_text_range; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_text_range (id, v_textrange) FROM stdin;
+1	["a,b","c""d")
+2	[" lead","trail ")
+3	["",a)
+4	(,z)
+5	empty
+6	\N
+\.
+
+
+--
 -- Data for Name: t_time; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
@@ -251,5 +277,5 @@ COPY public.t_uuid (id, v_uuid) FROM stdin;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict lJJjf3fxHB5IGfGGRzIGVeEq5ztOowlrgRxzay4IspN9tFXNiPdShhaGOVJ46FX
+\unrestrict hYtkDCMZWW1D81Pls6Hj1eTxWZUpQgaT1Vczn4lkWlBIIOulNB5xNGASpg61fWl
 

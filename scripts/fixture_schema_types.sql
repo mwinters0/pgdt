@@ -174,31 +174,69 @@ INSERT INTO public.t_enum_domain VALUES
     (3, 'has,comma', -5),
     (4, 'has''quote', 100);
 
--- Deferred to Phase 3 -- kept here (not in edge_cases) because the boundary
--- values matter to that future decoder and the schema is already set up for
--- it. {}, {NULL} and a NULL array are three distinct values that look
--- similar and are the classic way an array decoder goes wrong.
+-- Every array column here is one-dimensional with lower bound 1, so the whole
+-- table decodes on the optimistic (no-census) array path; the shapes that
+-- vary live in t_array_shape, below. {}, {NULL} and a NULL
+-- array are three distinct values that look similar and are the classic way an
+-- array decoder goes wrong; v_enum_array is array_out's quoting rules (I20)
+-- applied to element text that contains a space, a comma and a quote.
 CREATE TABLE public.t_array (
     id integer PRIMARY KEY,
     v_empty integer[],
     v_with_null integer[],
     v_null_array integer[],
     v_text_special text[],
-    v_multidim integer[][]
+    v_enum_array public.mood[]
 );
 INSERT INTO public.t_array VALUES
-    (1, '{}', '{NULL}', NULL, ARRAY['a,b', 'c{d}', 'e"f', 'g\h'], '{{1,2},{3,4}}'),
-    (2, '{1,2,3}', '{1,NULL,3}', '{1,2}', ARRAY[NULL, 'plain'], NULL);
+    (1, '{}', '{NULL}', NULL, ARRAY['a,b', 'c{d}', 'e"f', 'g\h'],
+        ARRAY['sad', 'has space', 'has,comma', 'has''quote']::public.mood[]),
+    (2, '{1,2,3}', '{1,NULL,3}', '{1,2}', ARRAY[NULL, 'plain'],
+        ARRAY[NULL, 'ok']::public.mood[]);
+
+-- Array *shape* varies per value, never per column (I21) -- this table is the
+-- input to the shape census, not to the decoder. v_multidim is uniformly 2-D,
+-- v_mixed_dim disagrees between two rows of one column, and v_lbound carries
+-- array_out's `[lb:ub]=` decoration (I20). All three are declared `integer[]`
+-- in the dump whatever the DDL said, which is the whole point.
+--
+-- Do not "fix" these into plain 1-D values. Each is a deliberate
+-- FieldDecode on the optimistic path, and with a census v_mixed_dim and
+-- v_lbound are a deliberate degradation back to text.
+CREATE TABLE public.t_array_shape (
+    id integer PRIMARY KEY,
+    v_multidim integer[][],
+    v_mixed_dim integer[],
+    v_lbound integer[]
+);
+INSERT INTO public.t_array_shape VALUES
+    (1, '{{1,2},{3,4}}', '{1,2}', '[0:2]={7,8,9}'),
+    (2, NULL, '{{1,2},{3,4}}', '[-1:0]={10,11}'),
+    (3, '{{5,6},{7,8}}', NULL, NULL);
 
 CREATE TYPE public.point2d AS (x integer, y text);
 
+-- A composite with an array field: record_out's doubling convention wrapped
+-- around array_out's backslash convention. Together with t_composite's
+-- v_points (an array of composites) this is I20's both-escape-conventions-at-
+-- once case in both nesting orders -- the one shape a single-convention
+-- decoder passes every other fixture value on and still gets wrong.
+CREATE TYPE public.tagged AS (label text, tags text[]);
+
 CREATE TABLE public.t_composite (
     id integer PRIMARY KEY,
-    v_point public.point2d
+    v_point public.point2d,
+    v_points public.point2d[],
+    v_tagged public.tagged
 );
 INSERT INTO public.t_composite VALUES
-    (1, ROW(1, 'a,b"c')),
-    (2, NULL);
+    (1, ROW(1, 'a,b"c'),
+        ARRAY[ROW(1, 'a,b"c')::public.point2d, ROW(2, 'plain')::public.point2d],
+        ROW('a,b', ARRAY['x"y', 'p q', NULL])::public.tagged),
+    (2, NULL, NULL, NULL),
+    (3, ROW(NULL, ''),
+        ARRAY[NULL::public.point2d, ROW(3, NULL)::public.point2d],
+        ROW('', ARRAY[]::text[])::public.tagged);
 
 CREATE TABLE public.t_range (
     id integer PRIMARY KEY,
@@ -226,13 +264,18 @@ CREATE TYPE public.mybase (INPUT = public.mybase_in,
     OUTPUT = public.mybase_out, INTERNALLENGTH = VARIABLE,
     STORAGE = extended);
 
+-- v_mybase_array is the element type this project declines to decode: a
+-- TypeKind::Base element carries its own typdelim, so splitting its array on
+-- a hardcoded `,` would be a guess. The column exists so that refusal has a
+-- real pg_dump value to be tested against, not so it eventually resolves.
 CREATE TABLE public.t_base_type (
     id integer PRIMARY KEY,
-    v_mybase public.mybase
+    v_mybase public.mybase,
+    v_mybase_array public.mybase[]
 );
 INSERT INTO public.t_base_type VALUES
-    (1, 'hello'),
-    (2, NULL);
+    (1, 'hello', '{hello,"a,b"}'),
+    (2, NULL, NULL);
 
 -- User-defined range type: pg_dump has never been observed emitting this
 -- grammar for real -- the existing coverage (t_range, above) is a built-in
@@ -262,6 +305,34 @@ INSERT INTO public.t_user_range VALUES
     (1, '[1.5,10.5)'),
     (2, 'empty'),
     (3, NULL);
+
+-- The only range in the tree whose bounds ever need quoting: int4range,
+-- myrange and the multiranges all have numeric bounds, so range_bound_escape's
+-- doubling convention (I20 -- `"` -> `""`, unlike an array's `\"`) appears
+-- nowhere else. An absent bound and an empty-string bound are both "nothing
+-- visible between the separators" unless one of them is quoted, which is the
+-- pair a range decoder most easily conflates.
+--
+-- `collation` is pinned to C rather than left to default: pg_dump emits the
+-- clause only when the range's collation differs from the subtype's default,
+-- so pinning it both fixes the emitted text across container locales and
+-- gives the range grammar a qualified, quoted parameter value to parse.
+CREATE TYPE public.textrange AS RANGE (
+    subtype = text,
+    collation = pg_catalog."C"
+);
+
+CREATE TABLE public.t_text_range (
+    id integer PRIMARY KEY,
+    v_textrange public.textrange
+);
+INSERT INTO public.t_text_range VALUES
+    (1, '["a,b","c""d")'),
+    (2, '[" lead","trail ")'),
+    (3, '["","a")'),
+    (4, '(,"z")'),
+    (5, 'empty'),
+    (6, NULL);
 
 -- Multirange types (PG14+). The six built-ins appear bare, exactly like the
 -- six built-in range types; `myrange`'s auto-created companion has no

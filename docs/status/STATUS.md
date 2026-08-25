@@ -27,19 +27,19 @@ per-phase checklist here any more. How the system works is
 | Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-25 (keystone review: phase 1-3 specs and notes distilled
-into `architecture.md` and `measurements.md` and removed).
+Last updated: 2026-08-25 (phase 4.1: the `types` fixture tree regenerated with
+the nested value shapes phase 4 needs).
 
 ## Phase 4 progress
 
 Specified in
 [`../design/roadmap-phase4-composite-decoding.md`](../design/roadmap-phase4-composite-decoding.md).
-Nothing has landed.
 
-- [ ] **4.1** The fixture value shapes the phase needs — lower-bound
+- [x] **4.1** The fixture value shapes the phase needs — lower-bound
       decoration, a mixed-dimensionality column, array-of-composite and
       composite-containing-array, a text-subtype range, array-of-enum,
-      `mybase[]`. Generator plus regenerated fixtures; no library code.
+      `mybase[]`. Generator plus regenerated fixtures; no library code. Notes:
+      [`../design/roadmap-phase4.1-fixture-shapes-notes.md`](../design/roadmap-phase4.1-fixture-shapes-notes.md)
 - [ ] **4.2** The nested literal codec (`nested.rs`, L2): parameterized
       quoted-token scanner plus array/record/range instantiations, decode and
       render, round-tripped against 4.1's literals.

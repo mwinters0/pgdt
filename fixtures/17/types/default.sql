@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict ctLmnUFzEBCoF4WWc6wYXkPZqvMcjHeyrEx7JEMd5ohJAkC1i7kF6y0aCxHjsg0
+\restrict T55F23E7Wamv13s9tDI4tOkEA4g0D3IsGNhXgwpmClOrsyd4p78hmLlpceQwAhb
 
 -- Dumped from database version 17.11
 -- Dumped by pg_dump version 17.11
@@ -130,6 +130,31 @@ CREATE TYPE public.shellonly;
 
 ALTER TYPE public.shellonly OWNER TO postgres;
 
+--
+-- Name: tagged; Type: TYPE; Schema: public; Owner: postgres
+--
+
+CREATE TYPE public.tagged AS (
+	label text,
+	tags text[]
+);
+
+
+ALTER TYPE public.tagged OWNER TO postgres;
+
+--
+-- Name: textrange; Type: TYPE; Schema: public; Owner: postgres
+--
+
+CREATE TYPE public.textrange AS RANGE (
+    subtype = text,
+    multirange_type_name = public.textmultirange,
+    collation = pg_catalog."C"
+);
+
+
+ALTER TYPE public.textrange OWNER TO postgres;
+
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
@@ -144,11 +169,25 @@ CREATE TABLE public.t_array (
     v_with_null integer[],
     v_null_array integer[],
     v_text_special text[],
-    v_multidim integer[]
+    v_enum_array public.mood[]
 );
 
 
 ALTER TABLE public.t_array OWNER TO postgres;
+
+--
+-- Name: t_array_shape; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.t_array_shape (
+    id integer NOT NULL,
+    v_multidim integer[],
+    v_mixed_dim integer[],
+    v_lbound integer[]
+);
+
+
+ALTER TABLE public.t_array_shape OWNER TO postgres;
 
 --
 -- Name: t_base_type; Type: TABLE; Schema: public; Owner: postgres
@@ -156,7 +195,8 @@ ALTER TABLE public.t_array OWNER TO postgres;
 
 CREATE TABLE public.t_base_type (
     id integer NOT NULL,
-    v_mybase public.mybase
+    v_mybase public.mybase,
+    v_mybase_array public.mybase[]
 );
 
 
@@ -180,7 +220,9 @@ ALTER TABLE public.t_bytea OWNER TO postgres;
 
 CREATE TABLE public.t_composite (
     id integer NOT NULL,
-    v_point public.point2d
+    v_point public.point2d,
+    v_points public.point2d[],
+    v_tagged public.tagged
 );
 
 
@@ -333,6 +375,18 @@ CREATE TABLE public.t_text (
 ALTER TABLE public.t_text OWNER TO postgres;
 
 --
+-- Name: t_text_range; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.t_text_range (
+    id integer NOT NULL,
+    v_textrange public.textrange
+);
+
+
+ALTER TABLE public.t_text_range OWNER TO postgres;
+
+--
 -- Name: t_time; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -386,9 +440,20 @@ ALTER TABLE public.t_uuid OWNER TO postgres;
 -- Data for Name: t_array; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
-COPY public.t_array (id, v_empty, v_with_null, v_null_array, v_text_special, v_multidim) FROM stdin;
-1	{}	{NULL}	\N	{"a,b","c{d}","e\\"f","g\\\\h"}	{{1,2},{3,4}}
-2	{1,2,3}	{1,NULL,3}	{1,2}	{NULL,plain}	\N
+COPY public.t_array (id, v_empty, v_with_null, v_null_array, v_text_special, v_enum_array) FROM stdin;
+1	{}	{NULL}	\N	{"a,b","c{d}","e\\"f","g\\\\h"}	{sad,"has space","has,comma",has'quote}
+2	{1,2,3}	{1,NULL,3}	{1,2}	{NULL,plain}	{NULL,ok}
+\.
+
+
+--
+-- Data for Name: t_array_shape; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_array_shape (id, v_multidim, v_mixed_dim, v_lbound) FROM stdin;
+1	{{1,2},{3,4}}	{1,2}	[0:2]={7,8,9}
+2	\N	{{1,2},{3,4}}	[-1:0]={10,11}
+3	{{5,6},{7,8}}	\N	\N
 \.
 
 
@@ -396,9 +461,9 @@ COPY public.t_array (id, v_empty, v_with_null, v_null_array, v_text_special, v_m
 -- Data for Name: t_base_type; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
-COPY public.t_base_type (id, v_mybase) FROM stdin;
-1	hello
-2	\N
+COPY public.t_base_type (id, v_mybase, v_mybase_array) FROM stdin;
+1	hello	{hello,"a,b"}
+2	\N	\N
 \.
 
 
@@ -418,9 +483,10 @@ COPY public.t_bytea (id, v_bytea) FROM stdin;
 -- Data for Name: t_composite; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
-COPY public.t_composite (id, v_point) FROM stdin;
-1	(1,"a,b""c")
-2	\N
+COPY public.t_composite (id, v_point, v_points, v_tagged) FROM stdin;
+1	(1,"a,b""c")	{"(1,\\"a,b\\"\\"c\\")","(2,plain)"}	("a,b","{""x\\\\""y"",""p q"",NULL}")
+2	\N	\N	\N
+3	(,"")	{NULL,"(3,)"}	("",{})
 \.
 
 
@@ -563,6 +629,20 @@ COPY public.t_text (id, v_text, v_varchar, v_char) FROM stdin;
 
 
 --
+-- Data for Name: t_text_range; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_text_range (id, v_textrange) FROM stdin;
+1	["a,b","c""d")
+2	[" lead","trail ")
+3	["",a)
+4	(,z)
+5	empty
+6	\N
+\.
+
+
+--
 -- Data for Name: t_time; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
@@ -617,6 +697,14 @@ COPY public.t_uuid (id, v_uuid) FROM stdin;
 
 ALTER TABLE ONLY public.t_array
     ADD CONSTRAINT t_array_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: t_array_shape t_array_shape_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.t_array_shape
+    ADD CONSTRAINT t_array_shape_pkey PRIMARY KEY (id);
 
 
 --
@@ -732,6 +820,14 @@ ALTER TABLE ONLY public.t_text
 
 
 --
+-- Name: t_text_range t_text_range_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.t_text_range
+    ADD CONSTRAINT t_text_range_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: t_time t_time_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -767,5 +863,5 @@ ALTER TABLE ONLY public.t_uuid
 -- PostgreSQL database dump complete
 --
 
-\unrestrict ctLmnUFzEBCoF4WWc6wYXkPZqvMcjHeyrEx7JEMd5ohJAkC1i7kF6y0aCxHjsg0
+\unrestrict T55F23E7Wamv13s9tDI4tOkEA4g0D3IsGNhXgwpmClOrsyd4p78hmLlpceQwAhb
 
