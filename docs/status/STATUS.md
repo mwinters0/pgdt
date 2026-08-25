@@ -27,8 +27,8 @@ per-phase checklist here any more. How the system works is
 | Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-25 (phase 4.3: `ColumnBuilder`'s `List`/`Struct` arms,
-landed unreached).
+Last updated: 2026-08-25 (phase 4.1.1: the domain-over-`box` array and
+zero-field composite fixture values).
 
 ## Phase 4 progress
 
@@ -40,11 +40,12 @@ Specified in
       composite-containing-array, a text-subtype range, array-of-enum,
       `mybase[]`. Generator plus regenerated fixtures; no library code. Notes:
       [`../design/roadmap-phase4.1-fixture-shapes-notes.md`](../design/roadmap-phase4.1-fixture-shapes-notes.md)
-- [ ] **4.1.1** Two fixture values found after 4.1 landed: an array over a
+- [x] **4.1.1** Two fixture values found after 4.1 landed: an array over a
       domain whose base is `box` (I22 — a domain inherits its base type's
       array delimiter, so the value is semicolon-separated and escapes the
-      opaque-element refusal as 4.1 knew it), and a zero-field composite.
-      Generator plus regenerated fixtures; must land before 4.4.
+      opaque-element refusal as 4.1 knew it), and a zero-field composite
+      (I23). Generator plus regenerated fixtures; no library code. Notes:
+      [`../design/roadmap-phase4.1.1-delimiter-and-empty-composite-notes.md`](../design/roadmap-phase4.1.1-delimiter-and-empty-composite-notes.md)
 - [x] **4.2** The nested literal codec (`nested.rs`, L2): parameterized
       quoted-token scanner plus array/record/range instantiations, decode and
       render, round-tripped against 4.1's literals. Notes:

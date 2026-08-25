@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict hYtkDCMZWW1D81Pls6Hj1eTxWZUpQgaT1Vczn4lkWlBIIOulNB5xNGASpg61fWl
+\restrict kfhMiJQMwkZuXz7Hdv4fRpOTGleTjzYVPmc0ZZ6ifq1lc8tbNjrQN2FY58fMEev
 
 -- Dumped from database version 16.15
 -- Dumped by pg_dump version 16.15
@@ -65,10 +65,10 @@ COPY public.t_bytea (id, v_bytea) FROM stdin;
 -- Data for Name: t_composite; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
-COPY public.t_composite (id, v_point, v_points, v_tagged) FROM stdin;
-1	(1,"a,b""c")	{"(1,\\"a,b\\"\\"c\\")","(2,plain)"}	("a,b","{""x\\\\""y"",""p q"",NULL}")
-2	\N	\N	\N
-3	(,"")	{NULL,"(3,)"}	("",{})
+COPY public.t_composite (id, v_point, v_points, v_tagged, v_empty_comp) FROM stdin;
+1	(1,"a,b""c")	{"(1,\\"a,b\\"\\"c\\")","(2,plain)"}	("a,b","{""x\\\\""y"",""p q"",NULL}")	()
+2	\N	\N	\N	\N
+3	(,"")	{NULL,"(3,)"}	("",{})	()
 \.
 
 
@@ -84,6 +84,16 @@ COPY public.t_date (id, v_date) FROM stdin;
 5	0044-01-01 BC
 6	10000-01-01
 7	\N
+\.
+
+
+--
+-- Data for Name: t_delimiter; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_delimiter (id, v_box_domain, v_box_domain_array) FROM stdin;
+1	(1,1),(0,0)	{(1,1),(0,0);(3,3),(2,2)}
+2	\N	\N
 \.
 
 
@@ -277,5 +287,5 @@ COPY public.t_uuid (id, v_uuid) FROM stdin;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict hYtkDCMZWW1D81Pls6Hj1eTxWZUpQgaT1Vczn4lkWlBIIOulNB5xNGASpg61fWl
+\unrestrict kfhMiJQMwkZuXz7Hdv4fRpOTGleTjzYVPmc0ZZ6ifq1lc8tbNjrQN2FY58fMEev
 

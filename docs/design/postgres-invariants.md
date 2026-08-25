@@ -1174,3 +1174,60 @@ SQL
 
 The first grep must return exactly one line (`box`). The `COPY` output must
 separate the two elements with `;`, not `,`.
+
+---
+
+## I23 — A zero-field composite is legal, and `()` is what both it and a one-field NULL are written as
+
+**Claim.** `CREATE TYPE x AS ();` is accepted, `pg_dump` re-emits it with an
+empty body (`CREATE TYPE public.x AS (\n);`), and `record_out` writes its
+value as `()`. **That literal is not unique to it**: a composite with one
+field holding SQL NULL is written `()` as well, and so is a composite whose
+every field has been dropped. So the literal alone cannot say how many fields
+a record has, and **the declared field list is the only thing that can** —
+arity has to be joined in from the type definition, never inferred from the
+text.
+
+**Proof.** `record_out()` in `src/backend/utils/adt/rowtypes.c` writes `(`,
+loops over the tuple descriptor's columns, and writes `)`. A zero-column
+descriptor runs the loop zero times. A NULL column takes the `if (nulls[i]) {
+/* emit nothing... */ continue; }` arm, and `needComma` is still false for the
+first column, so a one-column NULL record emits nothing between the
+parentheses either. A dropped column is `continue`d over before `needComma` is
+set. `dumpCompositeType()` in `src/bin/pg_dump/pg_dump.c` writes `CREATE TYPE
+%s AS (`, appends one `\n\t<name> <type>` per non-dropped attribute, and
+closes with `appendPQExpBufferStr(q, "\n);\n")` — no attribute writes nothing
+between them.
+
+**Scope limit.** This is about the *output* form only. It says nothing about
+whether a zero-field composite is useful, and note that under
+`--binary-upgrade` a dropped attribute is *not* skipped: it becomes an
+`INTEGER /* dummy */ ` placeholder (I5's shape), so a type whose fields were
+all dropped has a non-empty body in that dump and an empty one in an ordinary
+dump.
+
+**Verified against:** v13.23, v16.15, v18.6, master (`rowtypes.c` byte-identical
+in the relevant loop; `pg_dump.c` identical modulo line numbers), plus
+`fixtures/{13..18}/types/default.sql`'s `public.empty_comp` /
+`t_composite.v_empty_comp`, whose DDL and `()` values are identical on all six.
+
+**Relied on by:** `roadmap-phase4-composite-decoding.md`, "A zero-field
+composite maps" — and, with it, the rule that a composite's field list is
+all-or-nothing, since "no fields parsed" and "no fields declared" have to stay
+distinguishable in the type definition when the literal cannot tell them apart.
+
+**Re-verify:**
+
+```sh
+grep -n 'emit nothing' -B8 src/backend/utils/adt/rowtypes.c
+grep -n 'CREATE TYPE %s AS (' -A50 src/bin/pg_dump/pg_dump.c
+psql -X -q <<'SQL'
+create type i23 as ();
+create temp table i23t (a i23, b i23);
+insert into i23t values ('()', null);
+copy i23t to stdout;
+drop table i23t; drop type i23;
+SQL
+```
+
+The `COPY` output must be `()` followed by `\N`.

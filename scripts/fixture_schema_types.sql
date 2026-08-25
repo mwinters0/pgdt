@@ -223,20 +223,30 @@ CREATE TYPE public.point2d AS (x integer, y text);
 -- decoder passes every other fixture value on and still gets wrong.
 CREATE TYPE public.tagged AS (label text, tags text[]);
 
+-- A composite with no fields at all. Legal SQL, and record_out writes it `()`
+-- -- which is also exactly what a one-field composite holding SQL NULL writes,
+-- so the literal alone cannot say which it is. The declared field list is the
+-- only discriminator, and this column is what proves the zero-field side of
+-- that ambiguity is a real value rather than a curiosity.
+CREATE TYPE public.empty_comp AS ();
+
 CREATE TABLE public.t_composite (
     id integer PRIMARY KEY,
     v_point public.point2d,
     v_points public.point2d[],
-    v_tagged public.tagged
+    v_tagged public.tagged,
+    v_empty_comp public.empty_comp
 );
 INSERT INTO public.t_composite VALUES
     (1, ROW(1, 'a,b"c'),
         ARRAY[ROW(1, 'a,b"c')::public.point2d, ROW(2, 'plain')::public.point2d],
-        ROW('a,b', ARRAY['x"y', 'p q', NULL])::public.tagged),
-    (2, NULL, NULL, NULL),
+        ROW('a,b', ARRAY['x"y', 'p q', NULL])::public.tagged,
+        '()'),
+    (2, NULL, NULL, NULL, NULL),
     (3, ROW(NULL, ''),
         ARRAY[NULL::public.point2d, ROW(3, NULL)::public.point2d],
-        ROW('', ARRAY[]::text[])::public.tagged);
+        ROW('', ARRAY[]::text[])::public.tagged,
+        '()');
 
 CREATE TABLE public.t_range (
     id integer PRIMARY KEY,
@@ -275,6 +285,31 @@ CREATE TABLE public.t_base_type (
 );
 INSERT INTO public.t_base_type VALUES
     (1, 'hello', '{hello,"a,b"}'),
+    (2, NULL, NULL);
+
+-- The delimiter trap in disguise (I22). `box` is the only built-in whose
+-- typdelim is `;` rather than `,`, and a domain over it inherits that
+-- delimiter while its own DDL records nothing about it -- `CREATE DOMAIN
+-- public.box_domain AS box;` is the whole trace. So v_box_domain_array's
+-- literal is semicolon-separated with commas *inside* every element, and a
+-- decoder splitting it on a hardcoded `,` produces seven element boundaries
+-- where the value has two -- silently, since the wrong split still re-renders
+-- byte-for-byte. This is the case an array-element refusal that tests the
+-- declared spelling (`box`, TypeKind::Base) rather than the domain walk's
+-- terminal gets wrong; v_box_domain is the same type undisguised, one level
+-- up, where nothing is at stake because a scalar box is a string either way.
+--
+-- Do not "fix" this into a comma-separated array. There is no such value:
+-- PostgreSQL writes what the element type's typdelim says.
+CREATE DOMAIN public.box_domain AS box;
+
+CREATE TABLE public.t_delimiter (
+    id integer PRIMARY KEY,
+    v_box_domain public.box_domain,
+    v_box_domain_array public.box_domain[]
+);
+INSERT INTO public.t_delimiter VALUES
+    (1, '(1,1),(0,0)', '{"(1,1),(0,0)";"(3,3),(2,2)"}'),
     (2, NULL, NULL);
 
 -- User-defined range type: pg_dump has never been observed emitting this

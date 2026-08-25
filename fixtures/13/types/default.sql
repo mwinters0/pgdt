@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict XxoWNrHdbI2aPaCW8Dfn7A5ab1yHDEQZWYRyLZblYt9L9J3mHDcqTucuG83CFdr
+\restrict 1lYwudqslq3jd4oKieeVNx3g4D77OwfnfOQsA2ZxeK2FqN1BTV93IXNmwTMgKul
 
 -- Dumped from database version 13.23
 -- Dumped by pg_dump version 13.23
@@ -28,6 +28,15 @@ CREATE DOMAIN public.base_domain AS integer;
 ALTER DOMAIN public.base_domain OWNER TO postgres;
 
 --
+-- Name: box_domain; Type: DOMAIN; Schema: public; Owner: postgres
+--
+
+CREATE DOMAIN public.box_domain AS box;
+
+
+ALTER DOMAIN public.box_domain OWNER TO postgres;
+
+--
 -- Name: derived_domain; Type: DOMAIN; Schema: public; Owner: postgres
 --
 
@@ -35,6 +44,16 @@ CREATE DOMAIN public.derived_domain AS public.base_domain NOT NULL;
 
 
 ALTER DOMAIN public.derived_domain OWNER TO postgres;
+
+--
+-- Name: empty_comp; Type: TYPE; Schema: public; Owner: postgres
+--
+
+CREATE TYPE public.empty_comp AS (
+);
+
+
+ALTER TYPE public.empty_comp OWNER TO postgres;
 
 --
 -- Name: mood; Type: TYPE; Schema: public; Owner: postgres
@@ -219,7 +238,8 @@ CREATE TABLE public.t_composite (
     id integer NOT NULL,
     v_point public.point2d,
     v_points public.point2d[],
-    v_tagged public.tagged
+    v_tagged public.tagged,
+    v_empty_comp public.empty_comp
 );
 
 
@@ -236,6 +256,19 @@ CREATE TABLE public.t_date (
 
 
 ALTER TABLE public.t_date OWNER TO postgres;
+
+--
+-- Name: t_delimiter; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.t_delimiter (
+    id integer NOT NULL,
+    v_box_domain public.box_domain,
+    v_box_domain_array public.box_domain[]
+);
+
+
+ALTER TABLE public.t_delimiter OWNER TO postgres;
 
 --
 -- Name: t_enum_domain; Type: TABLE; Schema: public; Owner: postgres
@@ -467,10 +500,10 @@ COPY public.t_bytea (id, v_bytea) FROM stdin;
 -- Data for Name: t_composite; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
-COPY public.t_composite (id, v_point, v_points, v_tagged) FROM stdin;
-1	(1,"a,b""c")	{"(1,\\"a,b\\"\\"c\\")","(2,plain)"}	("a,b","{""x\\\\""y"",""p q"",NULL}")
-2	\N	\N	\N
-3	(,"")	{NULL,"(3,)"}	("",{})
+COPY public.t_composite (id, v_point, v_points, v_tagged, v_empty_comp) FROM stdin;
+1	(1,"a,b""c")	{"(1,\\"a,b\\"\\"c\\")","(2,plain)"}	("a,b","{""x\\\\""y"",""p q"",NULL}")	()
+2	\N	\N	\N	\N
+3	(,"")	{NULL,"(3,)"}	("",{})	()
 \.
 
 
@@ -486,6 +519,16 @@ COPY public.t_date (id, v_date) FROM stdin;
 5	0044-01-01 BC
 6	10000-01-01
 7	\N
+\.
+
+
+--
+-- Data for Name: t_delimiter; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_delimiter (id, v_box_domain, v_box_domain_array) FROM stdin;
+1	(1,1),(0,0)	{(1,1),(0,0);(3,3),(2,2)}
+2	\N	\N
 \.
 
 
@@ -713,6 +756,14 @@ ALTER TABLE ONLY public.t_date
 
 
 --
+-- Name: t_delimiter t_delimiter_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.t_delimiter
+    ADD CONSTRAINT t_delimiter_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: t_enum_domain t_enum_domain_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -828,5 +879,5 @@ ALTER TABLE ONLY public.t_uuid
 -- PostgreSQL database dump complete
 --
 
-\unrestrict XxoWNrHdbI2aPaCW8Dfn7A5ab1yHDEQZWYRyLZblYt9L9J3mHDcqTucuG83CFdr
+\unrestrict 1lYwudqslq3jd4oKieeVNx3g4D77OwfnfOQsA2ZxeK2FqN1BTV93IXNmwTMgKul
 

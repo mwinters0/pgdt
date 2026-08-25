@@ -46,6 +46,7 @@ const NESTED_COLUMNS: &[(&str, &str, Kind, u32)] = &[
     ("public.t_composite", "v_point", Kind::Record, 13),
     ("public.t_composite", "v_points", Kind::Array, 13),
     ("public.t_composite", "v_tagged", Kind::Record, 13),
+    ("public.t_composite", "v_empty_comp", Kind::Record, 13),
     ("public.t_base_type", "v_mybase_array", Kind::Array, 13),
     ("public.t_range", "v_range", Kind::Range, 13),
     ("public.t_user_range", "v_myrange", Kind::Range, 13),
@@ -172,6 +173,48 @@ async fn a_nested_layer_round_trips_through_the_other_conventions_codec() {
             assert_eq!(render_record(&outer), value, "pg_dump {version}: v_tagged");
         }
         assert!(arrays_seen >= 2, "pg_dump {version}: {arrays_seen} nested arrays");
+    }
+}
+
+/// `()` is what `record_out` writes for a composite with no fields *and* for
+/// a one-field composite holding SQL NULL, so the literal cannot say which it
+/// is — this codec answers "one NULL field" because that is all the text
+/// supports. The declared field list is the only discriminator, which is why
+/// arity is the caller's join and not a check made here.
+#[tokio::test]
+async fn a_zero_field_composite_is_indistinguishable_from_a_one_field_null() {
+    for version in [13, 16, 18] {
+        let path = types_fixture(version);
+        let values = column_values(&path, "public.t_composite", "v_empty_comp").await;
+        assert_eq!(values, vec!["()".to_string(), "()".to_string()], "pg_dump {version}");
+        for value in &values {
+            let record = decode_record(value).unwrap();
+            assert_eq!(record.fields, vec![None], "pg_dump {version}: {value}");
+            assert_eq!(render_record(&record), *value, "pg_dump {version}: {value}");
+        }
+    }
+}
+
+/// The delimiter trap (I22), and why no round-trip test can catch it. `box`'s
+/// `typdelim` is `;`, a domain over it inherits that, and this codec's
+/// separator is a hardcoded `,` — so a two-element array comes apart into
+/// seven elements whose commas are then *not* force-quoted, and re-renders
+/// byte-for-byte identical. Wrong element boundaries, an exact round trip, no
+/// error anywhere: the refusal has to happen at resolution, on the element
+/// type after the domain walk, because nothing downstream of it can tell.
+#[tokio::test]
+async fn the_delimiter_trap_round_trips_while_splitting_on_the_wrong_character() {
+    for version in [13, 16, 18] {
+        let path = types_fixture(version);
+        let values = column_values(&path, "public.t_delimiter", "v_box_domain_array").await;
+        assert_eq!(
+            values,
+            vec!["{(1,1),(0,0);(3,3),(2,2)}".to_string()],
+            "pg_dump {version}: two boxes, semicolon-separated"
+        );
+        let decoded = decode_array(&values[0]).unwrap();
+        assert_eq!(decoded.elements.len(), 7, "pg_dump {version}: a comma split of two boxes");
+        assert_eq!(render_array(&decoded), values[0], "pg_dump {version}");
     }
 }
 

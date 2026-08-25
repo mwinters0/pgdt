@@ -168,6 +168,28 @@ async fn default_dump_declares_every_mapped_column_type() {
             "pg_dump {version}"
         );
 
+        // A composite with no fields at all. `pg_dump` writes the body as an
+        // empty parenthesized block over two lines, which has to reach the
+        // grammar as an empty field list rather than as a parse failure —
+        // the two are the same `TypeKind` today and must not be after 4.4,
+        // where an unparseable body has to refuse the column and this has to
+        // map.
+        assert_eq!(
+            find_type(&db, "public.empty_comp").kind,
+            TypeKind::Composite { fields: vec![] },
+            "pg_dump {version}"
+        );
+
+        // A domain over `box`, the one built-in whose array delimiter is `;`
+        // (I22). The DDL records the base type's *name* and nothing about its
+        // delimiter, which is exactly why an element-type refusal has to run
+        // after the domain walk rather than over the declared spelling.
+        assert_eq!(
+            find_type(&db, "public.box_domain").kind,
+            TypeKind::Domain { base_type: "box".to_string() },
+            "pg_dump {version}"
+        );
+
         // A user-defined range over a non-numeric subtype, carrying a
         // `collation` parameter the range grammar must step over without
         // mistaking it for the subtype. On PG14+ a `multirange_type_name`
@@ -192,6 +214,19 @@ async fn default_dump_declares_every_mapped_column_type() {
                 ("v_multidim".to_string(), "integer[]".to_string()),
                 ("v_mixed_dim".to_string(), "integer[]".to_string()),
                 ("v_lbound".to_string(), "integer[]".to_string()),
+            ],
+            "pg_dump {version}"
+        );
+
+        // Neither the domain-over-`box` column nor its array says anything
+        // about the `;` delimiter its values are actually written with — the
+        // declared strings are indistinguishable from any other domain's.
+        let delim_cols = db.tables.get("public.t_delimiter").unwrap();
+        assert_eq!(
+            delim_cols[1..],
+            [
+                ("v_box_domain".to_string(), "public.box_domain".to_string()),
+                ("v_box_domain_array".to_string(), "public.box_domain[]".to_string()),
             ],
             "pg_dump {version}"
         );

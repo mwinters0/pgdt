@@ -146,6 +146,13 @@ async fn every_mapped_column_family_resolves_as_the_mapping_table_says() {
             ColumnResolution::Deferred { kind: DeferredKind::Composite },
             "pg_dump {v}: t_composite.v_tagged (composite with a text[] field)"
         );
+        // A zero-field composite defers like any other: an empty field list
+        // is a composite, not an absent one.
+        assert_eq!(
+            composite_res[4],
+            ColumnResolution::Deferred { kind: DeferredKind::Composite },
+            "pg_dump {v}: t_composite.v_empty_comp (CREATE TYPE ... AS ())"
+        );
 
         // `mybase` itself is opaque, but `mybase[]` still defers as an array
         // — the refusal this phase commits to for a `TypeKind::Base` element
@@ -157,6 +164,26 @@ async fn every_mapped_column_family_resolves_as_the_mapping_table_says() {
             base_res[2],
             ColumnResolution::Deferred { kind: DeferredKind::Array },
             "pg_dump {v}: t_base_type.v_mybase_array"
+        );
+
+        // The delimiter trap wearing a domain (I22). Resolution unwraps
+        // `public.box_domain` to `box`, which this build's table has no entry
+        // for, so the scalar is `UnknownType` — *not* `OpaqueBaseType`, which
+        // is what makes an element-type refusal that only recognizes `box`
+        // and `TypeKind::Base` miss it. The array defers exactly like every
+        // other array, with nothing in the outcome hinting that its literal
+        // is semicolon-separated.
+        let delim_res = m("public.t_delimiter");
+        assert_eq!(delim_res[0], Mapped, "pg_dump {v}: t_delimiter.id");
+        assert_eq!(
+            delim_res[1],
+            ColumnResolution::UnknownType,
+            "pg_dump {v}: t_delimiter.v_box_domain (domain over box)"
+        );
+        assert_eq!(
+            delim_res[2],
+            ColumnResolution::Deferred { kind: DeferredKind::Array },
+            "pg_dump {v}: t_delimiter.v_box_domain_array"
         );
 
         // Enum and domain-over-domain columns both resolve `Mapped` -- the
