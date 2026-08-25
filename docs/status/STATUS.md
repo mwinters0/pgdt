@@ -40,6 +40,11 @@ Specified in
       composite-containing-array, a text-subtype range, array-of-enum,
       `mybase[]`. Generator plus regenerated fixtures; no library code. Notes:
       [`../design/roadmap-phase4.1-fixture-shapes-notes.md`](../design/roadmap-phase4.1-fixture-shapes-notes.md)
+- [ ] **4.1.1** Two fixture values found after 4.1 landed: an array over a
+      domain whose base is `box` (I22 — a domain inherits its base type's
+      array delimiter, so the value is semicolon-separated and escapes the
+      opaque-element refusal as 4.1 knew it), and a zero-field composite.
+      Generator plus regenerated fixtures; must land before 4.4.
 - [x] **4.2** The nested literal codec (`nested.rs`, L2): parameterized
       quoted-token scanner plus array/record/range instantiations, decode and
       render, round-tripped against 4.1's literals. Notes:
@@ -48,11 +53,16 @@ Specified in
       nothing resolves to them yet. Notes:
       [`../design/roadmap-phase4.3-nested-builders-notes.md`](../design/roadmap-phase4.3-nested-builders-notes.md)
 - [ ] **4.4** Flip type resolution: recursive mapping, built-in range
-      subtypes, opaque-element refusal, new diagnostics, compact `info`
-      rendering, and the `type-handling.md` rewrite (what each family becomes,
-      the three ways one is still a string, the shape error and its remedies,
-      and that predicates still match literal text). Nested columns decode
-      end-to-end on the optimistic path.
+      subtypes, opaque-element refusal, the `ColumnResolution` surgery
+      (`OpaqueElementType` in, `Deferred`/`DeferredKind` out), the
+      `(DataType, NestedPlan)` pair threaded through `ResolvedSchema` and
+      `RowBatcher::new`, and `render_field`'s deletion in favour of the
+      plan-taking one. Nested columns decode end-to-end on the optimistic
+      path.
+- [ ] **4.4.1** The presentation half: compact `info` rendering,
+      `resolution_label`'s new arms, and the `type-handling.md` rewrite (what
+      each family becomes, the three ways one is still a string, the shape
+      error and its remedies, and that predicates still match literal text).
 - [ ] **4.5** The shape census: cache v10, per-block per-column recording, the
       whole-file completeness rule, and the manual's statement of the
       optimistic and exact paths plus the planned representation knob.
@@ -63,7 +73,14 @@ Specified in
 
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; the resulting changes land as
-  out-of-band items.
+  out-of-band items. Pooled here so far: **per-column resolution has no
+  machine-readable path.** `--json` exports `DumpIndex`, which carries no
+  resolved schema, so `pgdq info --verbose`'s per-column outcomes are
+  human-only. Phase 4 sharpens this — after 4.4 "why is this column a string"
+  has five distinct answers a script might branch on — but does not answer it:
+  resolution is per `COPY` *block*, not per table (a header-less block gets
+  placeholder column names from its first row), so "a resolved schema per
+  table" is not well-formed without deciding what to do about that.
 
 ## Known gaps
 
@@ -118,42 +135,6 @@ Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
 
-- **A nested column's literal form travels beside its Arrow type as
-  `pgtype::NestedPlan`, and `render_field` gained a sibling that takes one.**
-  The phase spec's mapping table stops at the Arrow type, which turns out not
-  to determine the value: `int4range[]` and `int4multirange` both resolve to
-  `List<Struct{lower, upper, …}>` and are written `{"[1,10)","[2,3)"}` and
-  `{[1,10),[2,3)}`. Nothing in the Arrow type separates them, so the builder
-  and the renderer both take a small `Scalar`/`Array`/`Record`/`Range`/
-  `Multirange` tree alongside it. The two alternatives are worse: inferring
-  the form from the type is impossible for that pair, and hiding the marker in
-  Arrow `Field` metadata puts it inside `DataType` equality (so every schema
-  comparison carries it) and, for "this struct is a range", on the wrong node
-  entirely. Reasoning:
-  [`../design/architecture.md`](../design/architecture.md), "Nested columns:
-  `NestedPlan` travels beside the `DataType`". Made without the maintainer
-  present. **What it costs if reconsidered:** 4.4 is where the plan starts
-  being produced and threaded through `ResolvedSchema`, so reversing it is
-  cheapest now; the fallback would be a distinct Arrow type per literal form
-  (e.g. a multirange as something other than `List<range struct>`), which
-  changes the spec's mapping table.
-
-- **`CacheMode::load` does not fold `CacheStatus::Incomplete` into `None`,
-  departing from the spec's "live mode still treats it like Absent (falls back
-  to a scan)".** Read literally at `CacheMode::load` — the
-  `Option<DumpIndex>`-returning method `table_stream` and `preamble_only`
-  both call to seed an incremental scan — that sentence would make every
-  ordinary query's partial cache invisible to the next query, discarding the
-  entire benefit of the structural cache: a cold query's map is *designed*
-  to stop short of the file's size once its target settles, so a partial
-  cache is the normal shape there, not a defect. `CacheMode::load` treats
-  `Incomplete` exactly like `Valid` instead; the one caller that actually
-  needs the "is this the *whole* file" distinction — `pgdq info`'s
-  default/`--map` fallback — checks `scanned_through` against the live
-  source's size itself, which it already has to stat regardless. Reasoning:
-  [`../design/architecture.md`](../design/architecture.md), "The cache". Made
-  without the maintainer present; if reconsidered, the fix is
-  mechanical — fold `Incomplete` into `None` in `CacheMode::load` and accept
-  that `table_stream`/`preamble_only` lose incremental cache reuse, or add a
-  second entry point for them that bypasses the fold.
+None outstanding — both Phase 4 entries were reviewed on 2026-08-25 and
+ratified as built. See [`history/2026-08-25.md`](history/2026-08-25.md).
 

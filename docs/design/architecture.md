@@ -1058,10 +1058,14 @@ generator to learn that `query` never accepts a cache-only mode.
 `Option<DumpIndex>`, because a cache-only caller has to tell `Valid` from
 `Incomplete` to know whether it has enough.
 
-**The completeness check is a reusable primitive**, not CLI plumbing: an
-embedder asking "does this cache already cover what I need" matches on
-`CacheStatus::Incomplete` rather than re-deriving it from `scanned_through` and
-a live stat.
+**The completeness check has two forms, one per kind of caller.** A cache-only
+caller has no live source to compare against, so `CacheStatus::Incomplete` is
+the primitive it matches on — that is why `load_offline` returns the full
+status. A caller holding a live source (`pgdq info`'s default listing,
+`table_stream`) instead compares `DumpIndex::scanned_through` against the
+size it already had to stat; `CacheMode::load` deliberately does not make that
+call on its behalf. Neither form is CLI plumbing: an embedder asking "does this
+cache already cover what I need" reaches for whichever matches what it holds.
 
 **Anything persisted is expressible in L1's vocabulary** — declared type
 strings, not resolved Arrow types. That is `layering.md`'s rule 5 and it

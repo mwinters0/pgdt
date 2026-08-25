@@ -409,6 +409,21 @@ this section when it acquires a phase number, not when it acquires a design.
   adding it breaks nothing — it only ever changes columns that Phase 4 left as
   `Utf8View` or as a shape the caller has told us to represent differently.
 
+- **A per-path shape census, so nested arrays get the same treatment as
+  top-level ones.** Phase 4's census records a shape per *column*, which fixes
+  a top-level array column's dimensionality exactly and leaves an array
+  *inside* a composite (or inside another array's element type) on the
+  optimistic path permanently: its shape has nowhere to be recorded, so a
+  multi-dimensional or `[lb:ub]`-decorated value there stays a hard
+  `FieldDecode` even after `pgdq parse`
+  ([`roadmap-phase4-composite-decoding.md`](roadmap-phase4-composite-decoding.md),
+  "What the census stores"). Keying the census by a *path* within the column
+  rather than by the column closes that, at the cost of a bigger cache record
+  and a per-path walk. Deferred on frequency — a composite with a
+  multi-dimensional array field is rare even by that phase's standards — and it
+  is purely additive whenever it lands: it only ever converts a hard error into
+  a resolved type, so nothing that works before it works differently after.
+
 - **Exhaustive built-in type coverage, with tests to match.** The mapping
   covers the types that carry real data in real schemas and leaves the rest as
   strings.

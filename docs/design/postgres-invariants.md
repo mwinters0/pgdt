@@ -1120,3 +1120,57 @@ declaration was recorded and then discarded) and the three values must come
 back in three different shapes.
 
 ---
+
+## I22 — A domain inherits its base type's array delimiter, and `box` is the only built-in whose delimiter is not `,`
+
+**Claim.** Two halves, and the decision below needs both:
+
+1. **`box` is the only entry in `pg_type.dat` with a non-default `typdelim`.**
+   Every other built-in separates array elements with `,`.
+2. **`CREATE DOMAIN` copies `typdelim` from its base type**, so a domain over
+   `box` has delimiter `;`, and so does a domain over a domain over `box`. The
+   DDL `pg_dump` writes for that domain records nothing about it — `CREATE
+   DOMAIN` has no `DELIMITER` clause — so **the base type's name is the only
+   trace of the delimiter in the file.**
+
+**Proof.** `src/include/catalog/pg_type.dat` contains exactly one `typdelim =>
+';'` line, on `box`, identical in v13.23 through master.
+`src/backend/commands/typecmds.c`, in the domain-definition path: `/* Array
+element Delimiter */ delimiter = baseType->typdelim;` — alongside the same
+copy-from-base treatment given to alignment, storage, category and the output
+function. A user-defined base type may also set one (`CREATE TYPE … DELIMITER =
+';'`), and there `pg_dump` *does* emit the clause — but such a type resolves as
+`TypeKind::Base` and is refused on its own account, so the clause never has to
+be parsed.
+
+**Scope limit.** Composites are unaffected: `record_out`
+(`src/backend/utils/adt/rowtypes.c`) writes `appendStringInfoChar(&buf, ',')`
+unconditionally, with no reference to any field type's `typdelim`. Ranges and
+multiranges likewise separate with a literal `,`. **Arrays are the entire
+exposure.**
+
+**Verified against:** v13.23, v18.6 and master (`pg_type.dat`); v18.6
+(`typecmds.c`, `rowtypes.c`).
+
+**Relied on by:** `roadmap-phase4-composite-decoding.md`, "Render-back must be
+exact" — it is why the opaque-element refusal tests the element type *after*
+domain unwrapping rather than the declared string, and why the array separator
+can stay hardcoded to `,` once it does.
+
+**Re-verify:**
+
+```sh
+grep -rn "typdelim => ';'" src/include/catalog/pg_type.dat
+grep -n 'Array element Delimiter' -A1 src/backend/commands/typecmds.c
+grep -n "appendStringInfoChar(&buf, ',')" src/backend/utils/adt/rowtypes.c
+psql -X -q <<'SQL'
+create domain dbox as box;
+create temp table i22 (v dbox[]);
+insert into i22 values (array['(1,2),(3,4)'::dbox, '(5,6),(7,8)'::dbox]);
+copy i22 to stdout;
+drop domain dbox cascade;
+SQL
+```
+
+The first grep must return exactly one line (`box`). The `COPY` output must
+separate the two elements with `;`, not `,`.

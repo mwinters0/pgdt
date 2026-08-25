@@ -53,19 +53,57 @@ whole-column `Utf8View` fallback otherwise. The depth check is more code than
 the recursion it forbids, and it would strand `text[]`-inside-a-composite —
 which the recursion handles for free.
 
+**A composite's field list must be all-or-nothing.** `parse_create_type` builds
+`Composite { fields }` with a `filter_map`, so a field fragment it cannot parse
+is dropped and the type keeps a short list. That is harmless while composites
+are strings and unacceptable after the flip, because **`record_out` is
+positional with no field names**: unlike a `CREATE TABLE` column list, which
+`resolve_columns` joins against the `COPY` header *by name* — so a dropped
+column merely resolves `NotDeclared` and stays a string — a composite has no
+join to fall back on. A three-field type parsed as two makes the field-count
+refusal below fire on every row of entirely valid data, and any later
+relaxation of that check turns the same defect into a silent type shift, with
+field 3's text decoded as field 2's type.
+
+So a `CREATE TYPE … AS (…)` whose body contains any unparseable fragment
+yields **no** field list, and the column resolves to `Utf8View` with a reason,
+like anything else the grammar does not recognize. The `CREATE TABLE` path
+keeps its `filter_map` — the name-join is what makes a dropped column safe
+there, and the asymmetry is deliberate rather than an oversight to be tidied.
+
+**A zero-field composite maps.** `CREATE TYPE x AS ();` is legal, the parser
+already yields `Composite { fields: [] }`, `record_out` writes `()`, and a
+zero-field `StructArray` is well-formed Arrow. *Rejected:* refusing it as an
+`EmptyComposite` by analogy with `EmptyEnum`. The analogy fails: a zero-label
+enum is refused because there is no value its dictionary can ever hold, whereas
+`()` is a real value that round-trips exactly.
+
 **The range struct's fifth field is not redundant.** `empty` and `(,)` are
 different ranges and both have absent bounds, so inclusivity flags alone cannot
 tell them apart. A range bound can never be SQL NULL (I20), which is what makes
 a null `lower`/`upper` mean "unbounded" without ambiguity.
 
-**The six built-in ranges need their subtypes hardcoded.**
+**Twelve built-in names need subtypes hardcoded, not six.**
 `TypeDef::Range::subtype` is populated only for a user-defined range, because
 PostgreSQL keeps a built-in's subtype in the catalog rather than in DDL text.
 So `int4range`→`integer`, `int8range`→`bigint`, `numrange`→`numeric`,
 `tsrange`→`timestamp without time zone`, `tstzrange`→`timestamp with time
-zone`, `daterange`→`date`, alongside the bare-name recognition `map_builtin`
-already does for them. `numrange`'s bounds land on `Utf8View`, since bare
-`numeric` does.
+zone`, `daterange`→`date` — **and the same six subtypes again for the PG14+
+multirange companions** `int4multirange`, `int8multirange`, `nummultirange`,
+`tsmultirange`, `tstzmultirange`, `datemultirange`, which `map_builtin` already
+recognizes by bare name (I10). `numrange`'s bounds land on `Utf8View`, since
+bare `numeric` does.
+
+**The flip must introduce a range/multirange distinction the current code does
+not carry.** All twelve names answer `Deferred(DeferredKind::Range)` today,
+because nothing downstream needed them told apart; after 4.4 they produce
+different Arrow types and different plans. The same holds one level over: a
+name with no `CREATE TYPE` of its own that `resolve_user_type` recognizes as a
+range's auto-created multirange companion (via `multirange_type_name`, I10)
+also answers `Deferred(Range)` today and must answer a multirange after the
+flip. Hardcoding the six range entries and letting the other six inherit them
+produces a `Struct` where the file holds `{[1,10),[2,3)}`, and fails at the
+first row.
 
 *Rejected:* leaving ranges and multiranges as `Utf8View` on the grounds that
 Arrow has no range type and the struct is our invention. It is an invention,
@@ -100,8 +138,10 @@ project spends it as an **option the caller already owns**, not a precondition.
 - **No census** — an ordinary cold query. The column is `List<T>`, optimistic
   1-D, and a value that disagrees is the hard `FieldDecode` above.
 - **Census present** — because `pgdq parse` ran, or the query ran
-  `ScanExtent::Full`. Every array column's shape is known before the schema is
-  fixed, and the error becomes unreachable.
+  `ScanExtent::Full`. Every top-level array column's shape is known before the
+  schema is fixed, and the error becomes unreachable *for those columns*; an
+  array nested inside a composite keeps the optimistic path, for the reason
+  below.
 
 This is the same shape as `Error::MetadataNotScanned`: two paths, the cheap one
 default, the exact one reached by a command the user already has a reason to
@@ -172,10 +212,31 @@ type's* `typdelim`, not always `,`. `box` is the only built-in that sets `;`,
 and a user-defined base type can set one too (`pg_dump` does emit `DELIMITER =`
 in its `CREATE TYPE` when it is not the default).
 
-**So an array whose element type is `box`, or any `TypeKind::Base`, stays
-`Utf8View`, and the separator stays hardcoded to `,`.** Such an element resolves
-to `Utf8View` anyway, so `List<Utf8View>` would recover nothing a plain string
-does not — it would only add a way to split on the wrong character.
+**So an array stays `Utf8View` when its element type — resolved through any
+chain of domains — is `box`, `TypeKind::Base` or `TypeKind::Shell`; and the
+separator stays hardcoded to `,`.** Such an element resolves to `Utf8View`
+anyway, so `List<Utf8View>` would recover nothing a plain string does not — it
+would only add a way to split on the wrong character.
+
+**The refusal tests the element *after* domain unwrapping, not the declared
+string**, because a domain inherits its base type's `typdelim` and its own DDL
+records nothing about it (I22). `CREATE DOMAIN d AS box` makes `d[]` a
+semicolon-separated literal that is named neither `box` nor `TypeKind::Base`;
+resolution already unwraps domains transitively, so the fix is for that walk to
+report its terminal rather than only its outcome. Unwrapping preserves
+`OpaqueBaseType`, so a domain over a *user-defined* base type is already
+refused — the built-in `box` is the only leak, because it is the only one
+recognized by name.
+
+I22 also bounds the problem: `box` is the only built-in with a non-default
+delimiter in any supported version, and `record_out` writes `,` unconditionally,
+so arrays are the entire exposure.
+
+*Rejected:* refusing any array whose element does not resolve to a mapped Arrow
+type. It closes the same hole, but pays for it by degrading `interval[]`,
+`money[]` and every unknown-element array to a whole-column string, where
+`List<Utf8View>` recovers real information — the element boundaries — and splits
+on the right character.
 
 *Rejected:* hardcoding `box` and parsing `DELIMITER` out of `CREATE TYPE` into
 `TypeKind::Base`. It handles the trap instead of removing it, and buys a
@@ -183,13 +244,39 @@ does not — it would only add a way to split on the wrong character.
 
 ## What the census stores, and when it may be believed
 
-Per `CopyBlock`, per column: the maximum dimension count seen, and whether any
-value carried an `[lb:ub]=` prefix. Per-block is what lets the same splice that
-already extends the map write it incrementally.
+Per `CopyBlock`, per column: the **minimum and maximum** dimension count seen,
+and whether any value carried an `[lb:ub]=` prefix. Per-block is what lets the
+same splice that already extends the map write it incrementally, and combining
+blocks is min-of-mins, max-of-maxes.
+
+**A maximum alone is not enough**, which is the whole reason both are stored: a
+column holding `{1,2}` and `{{1,2},{3,4}}` records `max = 2` and so does a
+column holding only 2-D values. With max alone the mixed column resolves to
+`List<List<T>>` and every 1-D value then fails the decoder's dimensionality
+refusal — a confidently wrong schema, the outcome this section's
+"believing a partial census" paragraph exists to rule out. Uniform is
+`min == max`. Values that carry no dimensionality contribute to neither bound:
+SQL NULL, and `{}`, which fits any depth (I20).
+
+**The census is per column, so a nested array's shape is never learned.** An
+array-typed *field* of a composite has per-value dimensionality exactly as
+unfixed as a top-level array column — I21 is a fact about values, not about
+positions — but the census has nowhere to record it. So an array inside a
+composite, or inside another array's element type, **stays on the optimistic
+path permanently**: a multi-dimensional or `[lb:ub]`-decorated value there is a
+hard `FieldDecode` whether or not a census exists, and `--schema-mode strings`
+is the only remedy. Only a top-level array column's error becomes unreachable.
+Keying the census by path instead of by column is filed under the roadmap's
+"Future"; it is purely additive whenever it lands.
 
 **A table's census may be consumed only once `scanned_through` has reached the
 file's size** — the test `pgdq info` already performs against the live source.
-Anything less falls back to the optimistic path. The reason is I2: one table's
+Anything less falls back to the optimistic path. The consumer holds both
+operands already: `table_stream` stats the source before mapping, so the check
+is free where the census is read. 4.5 gives it a name —
+`DumpIndex::is_complete(size)` — because that is the point a third call site
+appears (the two CLI ones, plus this) and the rule becomes worth citing rather
+than open-coding. The reason is I2: one table's
 data can occupy several blocks, so a table's census can be partial even when
 every block that *was* scanned is completely censused, and a query that stops
 at its target never learns what the blocks past it hold. This is the same
@@ -216,6 +303,49 @@ before it widens; filed to
 [`roadmap-phase7-inbox.md`](roadmap-phase7-inbox.md). Copying also leaves this
 phase's own measurement an honest baseline rather than a moving target.
 
+## The literal form travels beside the Arrow type, from one producer
+
+The mapping table above stops at the Arrow type, which does not determine the
+value: `int4range[]` and `int4multirange` both resolve to
+`List<Struct{lower, upper, …}>` and are written `{"[1,10)","[2,3)"}` and
+`{[1,10),[2,3)}`. So a `pgtype::NestedPlan` — a `Scalar`/`Array`/`Record`/
+`Range`/`Multirange` tree — is passed alongside the `DataType` into the builder
+and the renderer, and is what picks a `nested.rs` codec at each level. The
+mechanism and its rejected alternatives are in
+[`architecture.md`](architecture.md), "Nested columns: `NestedPlan` travels
+beside the `DataType`".
+
+The type and the plan are two trees that must agree, and a disagreement is a
+panic rather than a wrong value. Two rules keep them agreeing rather than a
+third tree structure enforcing it:
+
+- **One producer.** `resolve_declared_type` returns a `(DataType, NestedPlan)`
+  pair; nothing else constructs either half of a nested column's pairing.
+  `ResolvedSchema` carries the result as a third positional vector,
+  `plans: Vec<NestedPlan>`, parallel to `schema.fields()` like `columns` and
+  `notes` already are. *Rejected:* a field on `ColumnNote`, which is the
+  human-facing per-column record and would become two things, since no display
+  ever reads a plan; and a payload on `ColumnResolution::Mapped`, which
+  expresses "a plan exists exactly when a column mapped" but breaks the three
+  sites that compare the enum by equality, to buy a coupling one producer
+  already gives.
+- **Transform the pair, never a half.** 4.5's census retypes a column — to
+  `List<List<T>>`, or down to `Utf8View` — by rewriting the pair, which is the
+  only place after resolution that either half changes.
+
+*Rejected:* a single tree owning both (`Scalar(DataType)` / `Array(Box<…>)` /
+…, with a `data_type()` accessor), which makes disagreement unrepresentable.
+The drift it defends against is narrow — one producer, one transform site, both
+in this phase — and it costs a rewrite of `pgtype.rs`'s public surface plus a
+`.data_type()` at every existing `DataType`-shaped call site. It is the fallback
+if the pairing ever gains a third writer.
+
+**`render_field` is deleted in 4.4 and `render_field_with_plan` takes its
+name.** Two entry points where the plan-less one panics on a nested column
+makes "did every caller switch?" a review question; one entry point makes it a
+compile error. A scalar caller passes `&NestedPlan::Scalar`, which is its
+`Default`.
+
 ## Fixtures and what `pgdq info` shows
 
 `fixtures/*/types/default.sql` gains the shapes nothing currently exercises, in
@@ -231,7 +361,16 @@ duplicate the generator plumbing to hold ten rows.
   both-conventions-at-once case;
 - a range over a text-ish subtype, so quoted bounds using the doubling
   convention appear at all;
-- array-of-enum; and `mybase[]`, the opaque-element case this phase declines.
+- array-of-enum; and `mybase[]`, the opaque-element case this phase declines;
+- **an array over a domain whose base is `box`** — the delimiter trap wearing a
+  disguise (I22). It is the one fixture value whose *separator* is not `,`, and
+  without it the refusal above has no test that distinguishes it from the
+  `mybase[]` case it is easily confused with;
+- a **zero-field composite** and its `()` value.
+
+The twelve-name table needs no new fixture: `t_multirange` already carries a
+bare built-in (`int4multirange`) and `myrange`'s companion, with `{}` and NULL
+rows, behind the schema's existing `\if :has_multirange` (PG14+) gate.
 
 `pgdq info` prints a resolved nested type in compact lowercase —
 `list<struct<a: int32, b: string>>` — not Arrow's `DataType` Debug, which is
@@ -240,10 +379,28 @@ unreadable in a column listing.
 **The three ways a column can still be a string are told apart**, and only the
 first is a success: a resolved nested type; a census-driven degradation
 (varying dimensionality or a lower-bound prefix); an opaque element type. The
-last two get their own `DiagnosticKind` variants so they are distinguishable in
-`--json` and not only in prose. The optimistic path emits **no diagnostic** —
-there is nothing to report, and inventing one would imply a check that did not
-happen.
+last two become **`ColumnResolution` variants** — `OpaqueElementType` in 4.4,
+`VaryingArrayShape` in 4.5 — beside the existing `UnknownType`,
+`OpaqueBaseType` and `NotDeclared`.
+
+*Rejected:* `DiagnosticKind` variants. There is exactly one of these per
+column and the ordinary case is success, which is what
+[`architecture.md`](architecture.md), "Diagnostics: one severity scale, two
+types" defines a *note* to be; every `DiagnosticKind` variant that exists is a
+property of the file (tiling, cache, TOC coverage), so routing a type-semantics
+conclusion there also puts an L2 fact in L1's channel. The visibility argument
+for it does not hold either: `--json` exports `DumpIndex`, which carries no
+`ResolvedSchema`, so a column-level fact is absent from it whichever type
+holds the fact. Widening that export is a separate question this phase does not
+answer, and nothing here changes what `DumpIndex` holds.
+
+**`ColumnResolution::Deferred` and `pgtype::DeferredKind` are deleted in 4.4.**
+These four families are the only things that defer, so after the flip nothing
+produces one and the variant would read as a live option that no input can
+reach.
+
+The optimistic path emits **no diagnostic** — there is nothing to report, and
+inventing one would imply a check that did not happen.
 
 ## Predicates are unchanged
 
@@ -283,6 +440,18 @@ array-heavy column will not stay device-bound; a gate demanding it would be one
 the phase cannot pass, and a looser one would never fire. The `INSERT`-run
 measurement is the precedent for why the ratio is the useful artifact: it is
 what tells a later reader, and Phase 7, what the per-element cost actually is.
+
+**The consumer is Phase 7, so the figure is filed there too.** This phase
+decides that nested values always copy and defers the zero-copy widening to
+Phase 7 "which should measure before it widens" — a decision that cannot be
+made without knowing what per-element copying costs. So 4.6 files its ratio
+into [`roadmap-phase7-inbox.md`](roadmap-phase7-inbox.md) as well as
+[`measurements.md`](measurements.md); a figure whose only consumer is in
+another phase does not reach that phase through `measurements.md` alone. It is
+also why the slice is worth building now rather than leaving to Phase 7: the
+generator section is cheapest to write while the array code is fresh, and koji
+cannot supply the data at any later date — it holds no non-scalar values at
+all.
 
 ## Where the code goes
 
@@ -330,8 +499,11 @@ user hits without warning otherwise.
 - the default is optimistic — fast, no extra reading, and it can fail on an
   array shape it did not expect;
 - after `pgdq parse` (or a full scan), the shapes are known: the failure
-  becomes impossible, and a column whose arrays genuinely vary comes back as
-  text instead;
+  becomes impossible for an array **column**, and a column whose arrays
+  genuinely vary comes back as text instead;
+- that an array **inside a composite** is not covered by that — it stays on the
+  optimistic path however much scanning has happened, and `--schema-mode
+  strings` is its remedy;
 - how to tell which path a given run is on.
 
 **Also with 4.5**, one sentence — no more — that a column whose arrays vary in
@@ -348,14 +520,27 @@ rather than scope.
 | # | Slice |
 |---|---|
 | 4.1 | The fixture shapes above — generator plus regenerated fixtures. No library code |
+| 4.1.1 | The two fixture values found after 4.1 landed — domain-over-`box` array, zero-field composite. Generator plus regenerated fixtures; must precede 4.4, which is where both are acted on |
 | 4.2 | The nested literal codec: parameterized quoted-token scanner, three instantiations, decode **and** render, round-tripped against 4.1's literals. Pure L2, no Arrow |
 | 4.3 | `ColumnBuilder`'s `List`/`Struct` arms, unit-tested by constructing nested values directly. Nothing resolves to them yet |
-| 4.4 | Flip resolution: recursive mapping, built-in range subtypes, opaque-element refusal, the new diagnostics, compact `info` rendering, **the manual rewrite above**. Nested columns decode end-to-end on the optimistic path |
+| 4.4 | Flip resolution: recursive mapping, built-in range subtypes, opaque-element refusal, the `ColumnResolution` surgery, the `(DataType, NestedPlan)` pair threaded through `ResolvedSchema` and `RowBatcher::new`, `render_field`'s deletion. Nested columns decode end-to-end on the optimistic path |
+| 4.4.1 | The presentation half: compact `info` rendering, `resolution_label`'s new arms, **the manual rewrite above** |
 | 4.5 | The shape census: cache v10, per-block per-column recording, the completeness rule, and **the manual's statement of both paths plus the planned representation knob** |
 | 4.6 | The array stress section in `generate_perf_data.py`, and the `measurements.md` ratio |
 
 **4.2 keeps decode and render together deliberately** — they are inverses, and
 landing decode alone leaves it with no oracle.
+
+**4.4.1 is a third level made at grilling rather than earned mid-slice**, which
+is off-label and deliberate: the seam was visible here, and the alternative —
+renumbering the census to 4.6 and the measurement to 4.7 — invalidates every
+reference to those numbers and erases the record that a split happened at all.
+The seam is review confidence. Everything in 4.4 is one rework of
+`pgtype.rs`/`resolve.rs`/`batch.rs` judged against "does a nested column decode
+end-to-end"; the presentation half can only be written once that half has
+determined what there is to render, and it is judged against a human reading
+`pgdq info` and the manual. Bundling them forces one review to accept both at
+one confidence.
 
 **4.3 before 4.4 is the load-bearing ordering.** Resolution returning `List<T>`
 while `ColumnBuilder` has no `List` arm is a broken intermediate: the schema
@@ -377,7 +562,15 @@ piece that genuinely belongs to arrays alone, and it is already its own slice.
   I20 conformance test, and the reason 4.2 is one slice.
 - `every_fixture_tiles_exactly` still passes. Nothing here touches the map.
 - The mixed-dimension fixture column resolves to `Utf8View` **with** a census
-  and raises `FieldDecode` **without** one, pinning both paths.
+  and raises `FieldDecode` **without** one, pinning both paths — and it is the
+  test that fails if the census stores only a maximum.
+- The domain-over-`box` array column resolves to `Utf8View`, distinguishably
+  from `mybase[]`: the refusal must survive the domain indirection, not just
+  the two spellings it recognizes directly.
+- A built-in multirange column and an `int4range[]` column resolve to the
+  *same* Arrow type and different plans, and each renders back to its own
+  literal — the twelve-name distinction, asserted where it would otherwise be
+  invisible.
 - The koji scan still reports identical block, row and byte counts.
 - **A column resolving to a nested type never silently changes what a predicate
   matched** — the existing predicate tests run against the fixture's array
