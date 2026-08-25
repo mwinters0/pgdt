@@ -9,7 +9,8 @@ use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::resolve::{ColumnResolution, SchemaMode};
 use pgdump_query::{
-    BatchOptions, BlockingTableIter, LocalFileSource, ScanOptions, render_field, table_stream,
+    BatchOptions, BlockingTableIter, LocalFileSource, NestedPlan, ScanOptions, render_field,
+    table_stream,
 };
 
 fn edge_cases() -> PathBuf {
@@ -34,7 +35,15 @@ fn types_fixture(version: u32, flag_set: &str) -> PathBuf {
 
 fn rows_of(batch: &RecordBatch) -> Vec<Vec<Option<String>>> {
     (0..batch.num_rows())
-        .map(|row| batch.columns().iter().map(|c| render_field(c.as_ref(), row)).collect())
+        // Every fixture this file queries is scalar-typed, so the plan is
+        // `Scalar` for every column (`crate::pgtype::NestedPlan`'s default).
+        .map(|row| {
+            batch
+                .columns()
+                .iter()
+                .map(|c| render_field(c.as_ref(), row, &NestedPlan::Scalar))
+                .collect()
+        })
         .collect()
 }
 

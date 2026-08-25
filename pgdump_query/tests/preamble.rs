@@ -146,10 +146,10 @@ async fn default_dump_declares_every_mapped_column_type() {
         assert_eq!(
             find_type(&db, "public.point2d").kind,
             TypeKind::Composite {
-                fields: vec![
+                fields: Some(vec![
                     ("x".to_string(), "integer".to_string()),
                     ("y".to_string(), "text".to_string()),
-                ]
+                ])
             },
             "pg_dump {version}"
         );
@@ -160,23 +160,23 @@ async fn default_dump_declares_every_mapped_column_type() {
         assert_eq!(
             find_type(&db, "public.tagged").kind,
             TypeKind::Composite {
-                fields: vec![
+                fields: Some(vec![
                     ("label".to_string(), "text".to_string()),
                     ("tags".to_string(), "text[]".to_string()),
-                ]
+                ])
             },
             "pg_dump {version}"
         );
 
         // A composite with no fields at all. `pg_dump` writes the body as an
-        // empty parenthesized block over two lines, which has to reach the
-        // grammar as an empty field list rather than as a parse failure —
-        // the two are the same `TypeKind` today and must not be after 4.4,
-        // where an unparseable body has to refuse the column and this has to
-        // map.
+        // empty parenthesized block over two lines, which reaches the grammar
+        // as an empty field list rather than as a parse failure — the
+        // distinction the field list's `Option` carries, and what lets this
+        // map to a zero-field `Struct` while an unparseable body refuses the
+        // column.
         assert_eq!(
             find_type(&db, "public.empty_comp").kind,
-            TypeKind::Composite { fields: vec![] },
+            TypeKind::Composite { fields: Some(vec![]) },
             "pg_dump {version}"
         );
 

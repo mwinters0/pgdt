@@ -19,16 +19,15 @@ per-phase checklist here any more. How the system works is
 | Typed Arrow columns from `CREATE TABLE` DDL, with per-column resolution diagnostics; `SchemaMode::Strings` for the untyped path | working |
 | Full byte-exact file map — every byte in exactly one span, verified over every fixture | working |
 | DDL object inventory: TOC enrichment, referenced roles and tablespaces, object census | working |
-| Best-effort structural cache (v9) with source-identity checking and cache-only inspection | working |
+| Best-effort structural cache (v10) with source-identity checking and cache-only inspection | working |
 | CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, and cache-only `info` | working, text output shape provisional; `--json` carries no shape promise at all |
-| Arrays, composites, ranges, multiranges | still resolve as strings; the literal codec (`nested.rs`) and `ColumnBuilder`'s `List`/`Struct` arms are built and tested, but nothing resolves to them yet — Phase 4.4 |
+| Arrays, composites, ranges, multiranges | typed and decoded end to end on the optimistic path: `List<T>`, `Struct<…>`, the five-field range struct, `List<` range struct `>`. An array whose element type is opaque (`box`, a C base type, a shell type, through any chain of domains) stays a string, and so does a multi-dimensional or `[lb:ub]=`-decorated *value* — which is a `FieldDecode` error until Phase 4.5's census |
 | Predicate and projection pushdown; per-row-group statistics | not started — Phase 5 |
 | `object_store` I/O, Python bindings, DataFusion `TableProvider` | not started — Phase 6 |
 | Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-25 (phase 4.1.1: the domain-over-`box` array and
-zero-field composite fixture values).
+Last updated: 2026-08-25 (phase 4.4: the resolution flip).
 
 ## Phase 4 progress
 
@@ -53,18 +52,23 @@ Specified in
 - [x] **4.3** `ColumnBuilder`'s `List`/`Struct` arms, unit-tested directly;
       nothing resolves to them yet. Notes:
       [`../design/roadmap-phase4.3-nested-builders-notes.md`](../design/roadmap-phase4.3-nested-builders-notes.md)
-- [ ] **4.4** Flip type resolution: recursive mapping, built-in range
+- [x] **4.4** Flip type resolution: recursive mapping, built-in range
       subtypes, opaque-element refusal, the `ColumnResolution` surgery
       (`OpaqueElementType` in, `Deferred`/`DeferredKind` out), the
       `(DataType, NestedPlan)` pair threaded through `ResolvedSchema` and
       `RowBatcher::new`, and `render_field`'s deletion in favour of the
       plan-taking one. Nested columns decode end-to-end on the optimistic
-      path.
+      path. Notes:
+      [`../design/roadmap-phase4.4-resolution-flip-notes.md`](../design/roadmap-phase4.4-resolution-flip-notes.md)
 - [ ] **4.4.1** The presentation half: compact `info` rendering,
       `resolution_label`'s new arms, and the `type-handling.md` rewrite (what
       each family becomes, the three ways one is still a string, the shape
       error and its remedies, and that predicates still match literal text).
-- [ ] **4.5** The shape census: cache v10, per-block per-column recording, the
+      4.4 left `resolution_label` with a compile-only `OpaqueElementType` arm
+      and did not touch the manual, which is **wrong until this lands** — see
+      "Known gaps".
+- [ ] **4.5** The shape census: cache v11 (4.4 consumed v10 — see its notes),
+      per-block per-column recording, the
       whole-file completeness rule, and the manual's statement of the
       optimistic and exact paths plus the planned representation knob.
 - [ ] **4.6** The array stress section in `generate_perf_data.py` and the
@@ -85,6 +89,21 @@ Specified in
 
 ## Known gaps
 
+- **`docs/manual/type-handling.md` is wrong about the four container
+  families.** Its "Arrays, composites, ranges, and multiranges are strings for
+  now" section describes the world before 4.4; they now resolve to real Arrow
+  types. The spec puts the rewrite in **4.4.1**, the next slice, deliberately —
+  the presentation half is judged against a human reading the manual, and
+  bundling it with the resolution rework would force one review to accept both
+  at one confidence. Nothing else in the manual is affected.
+- A multi-dimensional array value, or one carrying an `[lb:ub]=` prefix, is a
+  hard `Error::FieldDecode` naming the column. Deliberate, not a defect: an
+  array's dimensionality belongs to the *value* (I21) and `List<T>` has to
+  commit before the first batch, so the choice is between erroring and
+  silently losing the shape. `--schema-mode strings` returns the literal
+  verbatim, and **4.5's census** makes the error unreachable for a top-level
+  array column (an array nested inside a composite keeps the optimistic path
+  permanently — the census has nowhere to record its shape).
 - A query stops mapping once its target is settled, so a conflicting
   candidate **past** the stopping point is never seen and
   `Error::AmbiguousTable` is not raised for it — the query returns the
@@ -136,6 +155,25 @@ Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
 
-None outstanding — both Phase 4 entries were reviewed on 2026-08-25 and
-ratified as built. See [`history/2026-08-25.md`](history/2026-08-25.md).
+- **`TypeKind::Composite::fields` became an `Option`, which cost a cache
+  format bump (v9 → v10) in 4.4 rather than in 4.5.** The spec's all-or-nothing
+  rule needs "no fields parsed" and "no fields declared" to stay apart in the
+  type definition (I23), and the persisted `TypeDef` is where that lives. The
+  alternative was dropping the whole `TypeDef` for an unparseable body — no
+  bump, but the type then vanishes from `pgdq info`'s census and the column's
+  reason becomes indistinguishable from a type the dump never declared. If
+  reconsidered, the census in 4.5 takes v10 instead of v11 and the reason for
+  an unparseable composite has to go somewhere else. Nothing migrates pre-1.0
+  either way.
+- **An unparseable composite body resolves `UnknownType` rather than earning
+  its own `ColumnResolution` variant.** The spec's surgery for 4.4 was
+  `OpaqueElementType` in and `Deferred` out, and no real `pg_dump` output
+  reaches this arm — the label would name a shape nobody has seen. If a dump
+  ever does produce one, the reason a user sees ("no mapping for this build")
+  is true but not specific.
+- **`pgdq query` moved from push mode to pull mode** so it can reach the
+  stream's `NestedPlan`s while rendering. Same scan underneath, and the
+  architecture doc already points a caller who needs the schema during the
+  callback at pull mode — but it means the CLI no longer exercises
+  `read_table`, the push-mode entry point, at all. The tests still do.
 

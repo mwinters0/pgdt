@@ -17,9 +17,13 @@
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 
+use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::resolve::SchemaMode;
-use pgdump_query::{BatchOptions, Error, LocalFileSource, ScanOptions, read_table, render_field};
+use pgdump_query::{
+    BatchOptions, Error, LocalFileSource, NestedPlan, ScanOptions, read_table, render_field,
+    table_stream,
+};
 
 fn types_fixture(version: u32, flag_set: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -29,27 +33,49 @@ fn types_fixture(version: u32, flag_set: &str) -> PathBuf {
         .join(format!("{flag_set}.sql"))
 }
 
+/// Every row of `table`, rendered back to PostgreSQL text.
+///
+/// Pull mode, not `read_table`: rendering a nested column needs the stream's
+/// own `NestedPlan`s, which push mode only hands back once the whole stream
+/// has been drained. The scan underneath is the same one — `read_table`
+/// drains this stream internally.
 async fn rows(path: &Path, table: &str, mode: SchemaMode) -> Vec<Vec<Option<String>>> {
+    try_rows(path, table, mode).await.unwrap()
+}
+
+async fn try_rows(
+    path: &Path,
+    table: &str,
+    mode: SchemaMode,
+) -> pgdump_query::Result<Vec<Vec<Option<String>>>> {
     let source = LocalFileSource::open(path).unwrap();
     let options = BatchOptions { schema_mode: mode, ..Default::default() };
-    let mut out = Vec::new();
-    read_table(
+    let mut stream = table_stream(
         &source,
         table,
-        &ScanOptions::default(),
-        &options,
+        ScanOptions::default(),
+        options,
+        None,
         None,
         CacheMode::Disabled,
-        |batch| {
-            for row in 0..batch.num_rows() {
-                out.push(batch.columns().iter().map(|c| render_field(c.as_ref(), row)).collect());
-            }
-            ControlFlow::Continue(())
-        },
-    )
-    .await
-    .unwrap();
-    out
+    );
+    let mut out = Vec::new();
+    while let Some(batch) = stream.next().await.transpose()? {
+        let plans = stream.resolved_schema().plans;
+        for row in 0..batch.num_rows() {
+            out.push(
+                batch
+                    .columns()
+                    .iter()
+                    .enumerate()
+                    .map(|(col, c)| {
+                        render_field(c.as_ref(), row, plans.get(col).unwrap_or(&NestedPlan::Scalar))
+                    })
+                    .collect(),
+            );
+        }
+    }
+    Ok(out)
 }
 
 /// Every type family that always decodes successfully on this fixture (no
@@ -76,6 +102,77 @@ async fn round_trip_matches_strings_mode_for_every_always_decodable_table() {
             assert_eq!(typed, strings, "pg_dump {version}: {table}");
             assert!(!typed.is_empty(), "pg_dump {version}: {table} unexpectedly empty");
         }
+    }
+}
+
+/// The four container families, end to end on the optimistic path: decoded
+/// into `List`/`Struct` columns and rendered back, against `SchemaMode::
+/// Strings`'s byte-for-byte text for the same fields.
+///
+/// `tests/nested.rs` proves the codec is its own inverse; this proves the
+/// *typed* path is — that resolution picked the plan the values are actually
+/// written in, that the builders filled the type resolution promised, and
+/// that nothing was lost between them. A plan/type disagreement (an array of
+/// ranges read as a multirange, say) shows up here and nowhere else.
+#[tokio::test]
+async fn nested_columns_round_trip_against_strings_mode() {
+    for version in [13, 16, 18] {
+        let path = types_fixture(version, "default");
+        let mut tables = vec![
+            "public.t_array",
+            "public.t_composite",
+            "public.t_range",
+            "public.t_user_range",
+            "public.t_text_range",
+            // The two refusals: still text, and still identical text.
+            "public.t_base_type",
+            "public.t_delimiter",
+        ];
+        if version >= 14 {
+            tables.push("public.t_multirange");
+        }
+        for table in tables {
+            let typed = rows(&path, table, SchemaMode::Typed).await;
+            let strings = rows(&path, table, SchemaMode::Strings).await;
+            assert_eq!(typed, strings, "pg_dump {version}: {table}");
+            assert!(!typed.is_empty(), "pg_dump {version}: {table} unexpectedly empty");
+        }
+    }
+}
+
+/// The optimistic path's failure mode, stated as a test because it is the one
+/// thing about arrays a user meets without warning: `List<T>` means 1-D, and
+/// a value that disagrees is refused rather than reshaped (I21 — the DDL
+/// cannot say, so the first row that disagrees is where it surfaces).
+///
+/// 4.5's census removes this for a top-level array *column* by resolving the
+/// shape before the schema is fixed; until then — and permanently for an
+/// array nested inside a composite — `--schema-mode strings` is the remedy,
+/// which is why the same query is asserted to succeed there.
+#[tokio::test]
+async fn a_multidimensional_or_decorated_array_is_refused_on_the_optimistic_path() {
+    for version in [13, 16, 18] {
+        let path = types_fixture(version, "default");
+        let err = try_rows(&path, "public.t_array_shape", SchemaMode::Typed).await.unwrap_err();
+        match err {
+            Error::FieldDecode { table, column, declared_type, value, .. } => {
+                assert_eq!(table, "public.t_array_shape", "pg_dump {version}");
+                // Column order decides which one is reported first; both the
+                // multi-dimensional value and the `[lb:ub]=` prefix are
+                // refusals, and `v_multidim` is the first column with one.
+                assert_eq!(column, "v_multidim", "pg_dump {version}");
+                assert_eq!(declared_type, "integer[]", "pg_dump {version}");
+                // The whole field, not the fragment that tripped it.
+                assert_eq!(value, "{{1,2},{3,4}}", "pg_dump {version}");
+            }
+            other => panic!("pg_dump {version}: expected FieldDecode, got {other:?}"),
+        }
+
+        let strings = try_rows(&path, "public.t_array_shape", SchemaMode::Strings).await.unwrap();
+        assert!(
+            strings.iter().any(|row| row.iter().any(|f| f.as_deref() == Some("[0:2]={7,8,9}"))),
+            "pg_dump {version}: Strings mode returns the decorated literal verbatim"
+        );
     }
 }
 

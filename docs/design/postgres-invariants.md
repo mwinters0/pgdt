@@ -1231,3 +1231,53 @@ SQL
 ```
 
 The `COPY` output must be `()` followed by `\N`.
+
+---
+
+## I24 — A dump's type graph is acyclic: no type can contain itself, through any nesting
+
+**Claim.** Following a declared type through composite fields, domain base
+types, range subtypes and array element types always terminates. PostgreSQL
+refuses to create a composite type that contains itself by any of those
+routes, directly (`i24` with a field of type `i24[]`) or mutually (`a` with a
+field of `b`, then `b` given a field of `a`), so no dump can hold one.
+
+**Proof.** `CheckAttributeType()` in `src/backend/catalog/heap.c` carries a
+`containing_rowtypes` list and errors — `"composite type %s cannot be made a
+member of itself"` — when it re-enters a rowtype already on it. Its recursion
+covers every route this project's resolution walks: `TYPTYPE_DOMAIN` recurses
+on `getBaseType`, `TYPTYPE_COMPOSITE` on each attribute, `TYPTYPE_RANGE` on
+`get_range_subtype`, `TYPTYPE_MULTIRANGE` on `get_multirange_range`, and a
+final `get_element_type` arm recurses into an array's element type "in case
+they are composite". Domains have their own separate guarantee, already relied
+on: a domain's base type must exist before the domain does.
+
+**Scope limit.** This is a property of what PostgreSQL will *create*, so it
+holds for every real dump and says nothing about a hand-edited file. It is
+also silent about `RECORD`/`ANYARRAY` pseudo-types, which the same function
+exempts and which never appear as a column's declared type in `pg_dump`
+output.
+
+**Verified against:** v13.23 and v18.6 (`heap.c`, same check and message),
+plus both rejections observed live on the local PostgreSQL 16 instance.
+
+**Relied on by:** `architecture.md`, "Type resolution" — it is why
+`resolve_declared_type` recurses through composites, ranges and array elements
+with no cycle guard and no depth limit, exactly as it already did through
+domains.
+
+**Re-verify:**
+
+```sh
+grep -n 'cannot be made a member of itself' -A6 src/backend/catalog/heap.c
+grep -n 'Must recurse into array types' -A6 src/backend/catalog/heap.c
+psql -X -q <<'SQL'
+begin;
+create type i24 as (x integer);
+alter type i24 add attribute y i24[];
+rollback;
+SQL
+```
+
+The `ALTER TYPE` must fail with `composite type i24 cannot be made a member of
+itself`; a version that accepted it would make unbounded recursion reachable.

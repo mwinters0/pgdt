@@ -970,6 +970,7 @@ dependencies = [
  "anyhow",
  "arrow",
  "clap",
+ "futures",
  "pgdump_query",
  "serde",
  "serde_json",

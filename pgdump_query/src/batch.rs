@@ -503,6 +503,17 @@ fn append_typed(builder: &mut ColumnBuilder, text: &str) -> std::result::Result<
         }
         ColumnBuilder::Record(parts) => {
             let literal = nested::decode_record(text).ok_or_else(fail)?;
+            if parts.children.is_empty() {
+                // A zero-field composite is written `()`, and so is a
+                // one-field composite holding NULL — the literal cannot tell
+                // them apart, so `decode_record` reports the only thing the
+                // text supports and the declared field list decides (I23).
+                if literal.fields != [None] {
+                    return Err(fail());
+                }
+                parts.validity.push(true);
+                return Ok(());
+            }
             // A composite's field count comes from its `CREATE TYPE`; a
             // literal that disagrees is not a value of this type.
             if literal.fields.len() != parts.children.len() {
@@ -581,7 +592,14 @@ fn finish_column(builder: &mut ColumnBuilder) -> ArrayRef {
         ColumnBuilder::Record(parts) | ColumnBuilder::Range(parts) => {
             let children: Vec<ArrayRef> = parts.children.iter_mut().map(finish_column).collect();
             let nulls = NullBuffer::from(std::mem::take(&mut parts.validity));
-            Arc::new(StructArray::new(parts.fields.clone(), children, Some(nulls))) as ArrayRef
+            // `try_new_with_length`, not `new`: a zero-field composite (I23)
+            // has no child to read the row count off, and Arrow refuses to
+            // guess one.
+            let len = nulls.len();
+            Arc::new(
+                StructArray::try_new_with_length(parts.fields.clone(), children, Some(nulls), len)
+                    .expect("children are built one per struct row, from the schema's own fields"),
+            ) as ArrayRef
         }
     }
 }
@@ -606,14 +624,15 @@ impl RowBatcher {
     pub(crate) fn new(resolved: &ResolvedSchema, table: String, options: BatchOptions) -> Self {
         let schema = resolved.schema.clone();
         let declared_types = resolved.notes.iter().map(|n| n.declared.clone()).collect();
-        // Every column is `NestedPlan::Scalar` until resolution learns to
-        // produce a plan: `resolve_declared_type` still answers `Deferred`
-        // for the four container families, so nothing here is ever a `List`
-        // or a `Struct` yet.
+        // `plans` is positional and parallel to `schema.fields()`, from the
+        // same producer — `resolve_columns` fills one entry per column,
+        // `NestedPlan::Scalar` included, so the two can only disagree if
+        // something built a `ResolvedSchema` by hand.
         let columns = schema
             .fields()
             .iter()
-            .map(|f| new_column_builder(f.data_type(), &NestedPlan::Scalar))
+            .zip(&resolved.plans)
+            .map(|(f, plan)| new_column_builder(f.data_type(), plan))
             .collect();
         Self {
             schema,
@@ -765,13 +784,6 @@ fn push_utf8view_field(
     }
 }
 
-/// Render one row of a scalar column — [`render_field_with_plan`] with
-/// [`NestedPlan::Scalar`]. Every column `resolve_columns` currently produces
-/// is one, so this is what the CLI and the round-trip tests call.
-pub fn render_field(column: &dyn Array, row: usize) -> Option<String> {
-    render_field_with_plan(column, row, &NestedPlan::Scalar)
-}
-
 /// Render one row of `column` back to the same PostgreSQL text form
 /// `crate::copy::decode_field` would have produced for it — `pgdq query`'s
 /// job (`docs/design/architecture.md`, "CLI surface": output must be
@@ -781,8 +793,15 @@ pub fn render_field(column: &dyn Array, row: usize) -> Option<String> {
 ///
 /// `plan` is needed for the same reason [`ColumnBuilder`] needs it: the Arrow
 /// type does not say which literal form a nested value is written in, and
-/// `int4range[]` and `int4multirange` share one.
-pub fn render_field_with_plan(column: &dyn Array, row: usize, plan: &NestedPlan) -> Option<String> {
+/// `int4range[]` and `int4multirange` share one. It comes from
+/// [`crate::resolve::ResolvedSchema::plans`], positionally; a caller that
+/// knows its column is scalar passes `&NestedPlan::Scalar`, which is
+/// [`NestedPlan`]'s `Default`.
+///
+/// **There is deliberately no plan-less entry point.** One that panicked on a
+/// nested column would make "did every caller switch?" a review question
+/// rather than a compile error.
+pub fn render_field(column: &dyn Array, row: usize, plan: &NestedPlan) -> Option<String> {
     if column.is_null(row) {
         return None;
     }
@@ -795,7 +814,7 @@ pub fn render_field_with_plan(column: &dyn Array, row: usize, plan: &NestedPlan)
             let range = NestedPlan::Range(bound.clone());
             let rendered: Vec<String> = (0..members.len())
                 .map(|i| {
-                    render_field_with_plan(members.as_ref(), i, &range)
+                    render_field(members.as_ref(), i, &range)
                         .expect("a multirange's members are never SQL NULL")
                 })
                 .collect();
@@ -807,7 +826,7 @@ pub fn render_field_with_plan(column: &dyn Array, row: usize, plan: &NestedPlan)
                 .columns()
                 .iter()
                 .zip(field_plans)
-                .map(|(child, p)| render_field_with_plan(child.as_ref(), row, p))
+                .map(|(child, p)| render_field(child.as_ref(), row, p))
                 .collect();
             return Some(nested::render_record(&nested::RecordLiteral { fields }));
         }
@@ -817,8 +836,8 @@ pub fn render_field_with_plan(column: &dyn Array, row: usize, plan: &NestedPlan)
                 |i: usize| s.column(i).as_any().downcast_ref::<BooleanArray>().unwrap().value(row);
             return Some(nested::render_range(&RangeLiteral {
                 empty: flag(4),
-                lower: render_field_with_plan(s.column(0).as_ref(), row, bound),
-                upper: render_field_with_plan(s.column(1).as_ref(), row, bound),
+                lower: render_field(s.column(0).as_ref(), row, bound),
+                upper: render_field(s.column(1).as_ref(), row, bound),
                 lower_inclusive: flag(2),
                 upper_inclusive: flag(3),
             }));
@@ -904,7 +923,7 @@ fn collect_array(
             NestedPlan::Array(inner) => {
                 collect_array(values.as_ref(), i, inner, depth + 1, dims, elements);
             }
-            _ => elements.push(render_field_with_plan(values.as_ref(), i, child_plan)),
+            _ => elements.push(render_field(values.as_ref(), i, child_plan)),
         }
     }
 }
@@ -1032,7 +1051,7 @@ mod tests {
         assert_eq!(array.data_type(), &data_type, "built array's type must match the schema");
         assert_eq!(array.len(), values.len());
         let rendered: Vec<Option<String>> =
-            (0..array.len()).map(|i| render_field_with_plan(array.as_ref(), i, &plan)).collect();
+            (0..array.len()).map(|i| render_field(array.as_ref(), i, &plan)).collect();
         let expected: Vec<Option<String>> = values.iter().map(|v| v.map(str::to_string)).collect();
         assert_eq!(rendered, expected);
         array

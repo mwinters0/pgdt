@@ -1,15 +1,15 @@
 use std::collections::BTreeMap;
-use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use arrow::array::RecordBatch;
 use clap::{Parser, Subcommand};
+use futures::StreamExt;
 use pgdump_query::cache::{CacheMode, CacheStatus};
 use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdump_query::{
-    BatchOptions, ByteRangeSource, DataBlock, DeferredKind, Diagnostic, DiagnosticKind, DumpIndex,
-    DumpMetadata, LocalFileSource, Predicate, PredicateOp, ScanOptions, Severity, Span, SpanBody,
+    BatchOptions, ByteRangeSource, DataBlock, Diagnostic, DiagnosticKind, DumpIndex, DumpMetadata,
+    LocalFileSource, NestedPlan, Predicate, PredicateOp, ScanOptions, Severity, Span, SpanBody,
     TypeKind, build_index, preamble_only, render_field,
 };
 
@@ -174,12 +174,21 @@ fn strip_ci_suffix<'a>(s: &'a str, suffix: &str) -> Option<&'a str> {
 /// [`render_field`], so output is byte-identical whether `--schema-mode` is
 /// `typed` or `strings` (`docs/design/architecture.md`,
 /// "CLI surface").
-fn print_batch(batch: &RecordBatch) {
+///
+/// `plans` is the stream's own [`pgdump_query::ResolvedSchema::plans`], which
+/// is what says whether a `List<Struct{…}>` column is written as an array of
+/// ranges or as a multirange. A column with no entry falls back to
+/// `NestedPlan::Scalar`, which is right for every non-nested type.
+fn print_batch(batch: &RecordBatch, plans: &[NestedPlan]) {
     for row in 0..batch.num_rows() {
         let fields: Vec<String> = batch
             .columns()
             .iter()
-            .map(|c| render_field(c.as_ref(), row).unwrap_or_else(|| "\\N".to_string()))
+            .enumerate()
+            .map(|(col, c)| {
+                let plan = plans.get(col).unwrap_or(&NestedPlan::Scalar);
+                render_field(c.as_ref(), row, plan).unwrap_or_else(|| "\\N".to_string())
+            })
             .collect();
         println!("{}", fields.join("\t"));
     }
@@ -281,26 +290,35 @@ async fn main() -> Result<()> {
                 schema_mode: schema_mode.into(),
                 ..BatchOptions::default()
             };
-            let (_resolved_schema, _resume) = pgdump_query::read_table(
+            // Pull mode, not `read_table`: rendering a nested column back to
+            // its literal needs the stream's `NestedPlan`s, and push mode
+            // only hands the resolved schema back once the whole stream has
+            // been drained (`docs/design/architecture.md`, "Arrow assembly
+            // and the zero-copy path"). The scan itself is the same one —
+            // `read_table` drains this stream internally.
+            let mut stream = pgdump_query::table_stream(
                 &source,
                 &table,
-                &ScanOptions::default(),
-                &batch_options,
+                ScanOptions::default(),
+                batch_options,
                 predicate,
+                None,
                 mode,
-                |batch| {
-                    if !header_printed {
-                        let names: Vec<String> =
-                            batch.schema().fields().iter().map(|f| f.name().clone()).collect();
-                        println!("{}", names.join("\t"));
-                        header_printed = true;
-                    }
-                    print_batch(&batch);
-                    rows += batch.num_rows() as u64;
-                    ControlFlow::Continue(())
-                },
-            )
-            .await?;
+            );
+            while let Some(batch) = stream.next().await.transpose()? {
+                if !header_printed {
+                    let names: Vec<String> =
+                        batch.schema().fields().iter().map(|f| f.name().clone()).collect();
+                    println!("{}", names.join("\t"));
+                    header_printed = true;
+                }
+                // Re-read per batch: a table's blocks each carry their own
+                // schema (a header-less block names its columns from its
+                // first row), so the plans belong to the block the batch came
+                // from, not to the query.
+                print_batch(&batch, &stream.resolved_schema().plans);
+                rows += batch.num_rows() as u64;
+            }
             if header_printed {
                 eprintln!("{rows} row(s)");
             } else {
@@ -372,13 +390,9 @@ fn resolution_label(r: &ColumnResolution) -> String {
         ColumnResolution::Mapped => "mapped".to_string(),
         ColumnResolution::UnknownType => "unknown type — no mapping for this build".to_string(),
         ColumnResolution::NotDeclared => "not declared — no DDL explained this column".to_string(),
-        ColumnResolution::Deferred { kind } => {
-            let kind = match kind {
-                DeferredKind::Array => "array",
-                DeferredKind::Composite => "composite",
-                DeferredKind::Range => "range",
-            };
-            format!("deferred ({kind}) — decodable, not yet implemented")
+        ColumnResolution::OpaqueElementType => {
+            "opaque element type — the array's element type is information-free in the dump"
+                .to_string()
         }
         ColumnResolution::OpaqueBaseType => {
             "opaque base type — information-free in the dump".to_string()

@@ -7,10 +7,11 @@
 //! grammar against.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use arrow::datatypes::DataType;
+use arrow::datatypes::{DataType, Field, Fields};
 use pgdump_query::resolve::{ColumnResolution, SchemaMode, resolve_columns};
-use pgdump_query::{DeferredKind, DumpMetadata, LocalFileSource, ScanOptions, build_index};
+use pgdump_query::{DumpMetadata, LocalFileSource, NestedPlan, ScanOptions, build_index};
 
 fn types_fixture(version: u32, flag_set: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -44,18 +45,40 @@ async fn metadata(path: &Path) -> DumpMetadata {
     index.metadata.expect("build_index always populates metadata")
 }
 
-/// Resolve every declared column of `qualified` (in DDL order — this fixture
+/// Resolve every declared column of `qualified`, in DDL order — this fixture
 /// never drops or generates a column, so DDL order matches `COPY` header
-/// order) and return just the resolutions, for a terse per-table assertion.
-fn resolutions(meta: &DumpMetadata, qualified: &str) -> Vec<ColumnResolution> {
+/// order.
+fn resolve_table(meta: &DumpMetadata, qualified: &str) -> pgdump_query::ResolvedSchema {
     let db = meta.databases.first().unwrap();
     let cols: Vec<String> =
         db.tables.get(qualified).unwrap().iter().map(|(n, _)| n.clone()).collect();
-    resolve_columns(qualified, &cols, Some(meta), db.name.as_deref(), SchemaMode::Typed).columns
+    resolve_columns(qualified, &cols, Some(meta), db.name.as_deref(), SchemaMode::Typed)
+}
+
+/// Just the resolutions, for a terse per-table assertion.
+fn resolutions(meta: &DumpMetadata, qualified: &str) -> Vec<ColumnResolution> {
+    resolve_table(meta, qualified).columns
+}
+
+fn list_of(child: DataType) -> DataType {
+    DataType::List(Arc::new(Field::new("item", child, true)))
+}
+
+/// The five-field range struct as `crate::pgtype` builds it — restated here
+/// rather than exported, so a change to the field names or nullability has to
+/// be made in two places deliberately.
+fn range_struct(bound: DataType) -> DataType {
+    DataType::Struct(Fields::from(vec![
+        Field::new("lower", bound.clone(), true),
+        Field::new("upper", bound, true),
+        Field::new("lower_inclusive", DataType::Boolean, false),
+        Field::new("upper_inclusive", DataType::Boolean, false),
+        Field::new("empty", DataType::Boolean, false),
+    ]))
 }
 
 #[tokio::test]
-async fn every_mapped_column_family_resolves_as_the_mapping_table_says() {
+async fn every_column_family_resolves_as_the_mapping_table_says() {
     use ColumnResolution::Mapped;
     for version in [13, 16, 18] {
         let meta = metadata(&types_fixture(version, "default")).await;
@@ -89,90 +112,57 @@ async fn every_mapped_column_family_resolves_as_the_mapping_table_says() {
         // `interval` maps to `Utf8View` deliberately too.
         assert!(m("public.t_interval").iter().all(|r| *r == Mapped), "pg_dump {v}");
 
-        // Arrays: `id` is mapped, every array column is `Deferred(Array)`
-        // regardless of element type or declared dimensionality (I6).
+        // Arrays: every array column maps to a `List` of its element type,
+        // whatever that element is (I21 — the declared type never says how
+        // many dimensions the values have; that is the decoder's problem, not
+        // resolution's).
         let array_res = m("public.t_array");
-        assert_eq!(array_res[0], Mapped, "pg_dump {v}: t_array.id");
-        for r in &array_res[1..] {
-            assert_eq!(*r, ColumnResolution::Deferred { kind: DeferredKind::Array }, "pg_dump {v}");
-        }
+        assert!(array_res.iter().all(|r| *r == Mapped), "pg_dump {v}: t_array = {array_res:?}");
 
-        // A built-in range type (`int4range`, no dot) must resolve the same
-        // way a user-defined range would, not fall through to `UnknownType`.
+        // A built-in range type (`int4range`, no dot) resolves through the
+        // hardcoded subtype table, since PostgreSQL keeps a built-in's
+        // subtype in the catalog rather than in DDL text.
         let range_res = m("public.t_range");
-        assert_eq!(range_res[0], Mapped, "pg_dump {v}: t_range.id");
-        assert_eq!(
-            range_res[1],
-            ColumnResolution::Deferred { kind: DeferredKind::Range },
-            "pg_dump {v}: t_range.v_range (int4range)"
-        );
+        assert!(range_res.iter().all(|r| *r == Mapped), "pg_dump {v}: t_range = {range_res:?}");
 
-        // A range over a text subtype resolves the same way a numeric one
-        // does — the subtype is not what decides it.
-        assert_eq!(
-            m("public.t_text_range")[1],
-            ColumnResolution::Deferred { kind: DeferredKind::Range },
-            "pg_dump {v}: t_text_range.v_textrange"
-        );
+        // A range over a text subtype maps the same way a numeric one does —
+        // the subtype decides the bound type, not whether it resolves.
+        assert_eq!(m("public.t_text_range")[1], Mapped, "pg_dump {v}: t_text_range.v_textrange");
 
-        // Every column of the array-shape table is `Deferred(Array)` from the
-        // declared type alone — `integer[][]`, a column whose rows disagree
-        // about dimensionality, and one carrying an `[lb:ub]=` prefix are
-        // indistinguishable here (I21). Only the data separates them.
+        // Every column of the array-shape table maps from the declared type
+        // alone — `integer[][]`, a column whose rows disagree about
+        // dimensionality, and one carrying an `[lb:ub]=` prefix are
+        // indistinguishable here (I21). Only the data separates them, and it
+        // does so at decode time, not here.
         let shape_res = m("public.t_array_shape");
-        assert_eq!(shape_res[0], Mapped, "pg_dump {v}: t_array_shape.id");
-        for r in &shape_res[1..] {
-            assert_eq!(*r, ColumnResolution::Deferred { kind: DeferredKind::Array }, "pg_dump {v}");
-        }
+        assert!(shape_res.iter().all(|r| *r == Mapped), "pg_dump {v}: t_array_shape");
 
-        // A user-defined composite type's column, an array *of* that
-        // composite, and a composite with an array *field*: the array-ness
-        // is read off the trailing `[]`, so the nesting order decides which
-        // deferral is reported, not the depth.
+        // A composite, an array *of* that composite, a composite with an
+        // array *field*, and a zero-field composite (I23) — the recursion
+        // composes in both nesting orders and bottoms out on an empty field
+        // list without special-casing it.
         let composite_res = m("public.t_composite");
-        assert_eq!(composite_res[0], Mapped, "pg_dump {v}: t_composite.id");
-        assert_eq!(
-            composite_res[1],
-            ColumnResolution::Deferred { kind: DeferredKind::Composite },
-            "pg_dump {v}: t_composite.v_point"
-        );
-        assert_eq!(
-            composite_res[2],
-            ColumnResolution::Deferred { kind: DeferredKind::Array },
-            "pg_dump {v}: t_composite.v_points (public.point2d[])"
-        );
-        assert_eq!(
-            composite_res[3],
-            ColumnResolution::Deferred { kind: DeferredKind::Composite },
-            "pg_dump {v}: t_composite.v_tagged (composite with a text[] field)"
-        );
-        // A zero-field composite defers like any other: an empty field list
-        // is a composite, not an absent one.
-        assert_eq!(
-            composite_res[4],
-            ColumnResolution::Deferred { kind: DeferredKind::Composite },
-            "pg_dump {v}: t_composite.v_empty_comp (CREATE TYPE ... AS ())"
-        );
+        assert!(composite_res.iter().all(|r| *r == Mapped), "pg_dump {v}: {composite_res:?}");
 
-        // `mybase` itself is opaque, but `mybase[]` still defers as an array
-        // — the refusal this phase commits to for a `TypeKind::Base` element
-        // is 4.4's, decided on the element type, not something the declared
-        // type string settles here.
+        // `mybase` is opaque on its own account; `mybase[]` is refused for
+        // its *element*, and the two are told apart so `pgdq info` can say
+        // which happened.
         let base_res = m("public.t_base_type");
         assert_eq!(base_res[1], ColumnResolution::OpaqueBaseType, "pg_dump {v}: v_mybase");
         assert_eq!(
             base_res[2],
-            ColumnResolution::Deferred { kind: DeferredKind::Array },
+            ColumnResolution::OpaqueElementType,
             "pg_dump {v}: t_base_type.v_mybase_array"
         );
 
         // The delimiter trap wearing a domain (I22). Resolution unwraps
         // `public.box_domain` to `box`, which this build's table has no entry
-        // for, so the scalar is `UnknownType` — *not* `OpaqueBaseType`, which
-        // is what makes an element-type refusal that only recognizes `box`
-        // and `TypeKind::Base` miss it. The array defers exactly like every
-        // other array, with nothing in the outcome hinting that its literal
-        // is semicolon-separated.
+        // for, so the scalar is `UnknownType`. The array is refused for its
+        // element — and the refusal has to survive the domain indirection,
+        // since a domain's own DDL records nothing about the `;` separator it
+        // inherited. Getting this wrong yields `List<Utf8View>` and a
+        // literal split on the wrong character, which round-trips exactly and
+        // is wrong.
         let delim_res = m("public.t_delimiter");
         assert_eq!(delim_res[0], Mapped, "pg_dump {v}: t_delimiter.id");
         assert_eq!(
@@ -182,7 +172,7 @@ async fn every_mapped_column_family_resolves_as_the_mapping_table_says() {
         );
         assert_eq!(
             delim_res[2],
-            ColumnResolution::Deferred { kind: DeferredKind::Array },
+            ColumnResolution::OpaqueElementType,
             "pg_dump {v}: t_delimiter.v_box_domain_array"
         );
 
@@ -190,6 +180,135 @@ async fn every_mapped_column_family_resolves_as_the_mapping_table_says() {
         // enum via `Dictionary`, the domain transitively through its base.
         let enum_domain_res = m("public.t_enum_domain");
         assert!(enum_domain_res.iter().all(|r| *r == Mapped), "pg_dump {v}: {enum_domain_res:?}");
+    }
+}
+
+/// The Arrow types and [`NestedPlan`]s the four container families resolve
+/// to, against real `pg_dump` output rather than hand-built `TypeDef`s — the
+/// mapping table's own statement, one level down from
+/// `every_column_family_resolves_as_the_mapping_table_says`'s outcomes.
+#[tokio::test]
+async fn the_container_families_resolve_to_the_arrow_types_the_mapping_table_names() {
+    for version in [13, 16, 18] {
+        let meta = metadata(&types_fixture(version, "default")).await;
+        let v = version;
+
+        let arrays = resolve_table(&meta, "public.t_array");
+        let field = |r: &pgdump_query::ResolvedSchema, name: &str| {
+            let i = r.schema.index_of(name).unwrap();
+            (r.schema.field(i).data_type().clone(), r.plans[i].clone())
+        };
+        let flat = NestedPlan::Array(Box::new(NestedPlan::Scalar));
+        assert_eq!(
+            field(&arrays, "v_empty"),
+            (list_of(DataType::Int32), flat.clone()),
+            "pg_dump {v}: integer[]"
+        );
+        assert_eq!(
+            field(&arrays, "v_text_special"),
+            (list_of(DataType::Utf8View), flat.clone()),
+            "pg_dump {v}: text[]"
+        );
+        assert_eq!(
+            field(&arrays, "v_enum_array"),
+            (
+                list_of(DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8))),
+                flat.clone()
+            ),
+            "pg_dump {v}: an enum element keeps its dictionary inside the list"
+        );
+
+        // A composite is a `Struct` in declaration order; an array of one and
+        // a composite with an array field are the same recursion, two ways up.
+        let composites = resolve_table(&meta, "public.t_composite");
+        let point2d = DataType::Struct(Fields::from(vec![
+            Field::new("x", DataType::Int32, true),
+            Field::new("y", DataType::Utf8View, true),
+        ]));
+        let point_plan = NestedPlan::Record(vec![NestedPlan::Scalar, NestedPlan::Scalar]);
+        assert_eq!(
+            field(&composites, "v_point"),
+            (point2d.clone(), point_plan.clone()),
+            "pg_dump {v}: public.point2d"
+        );
+        assert_eq!(
+            field(&composites, "v_points"),
+            (list_of(point2d), NestedPlan::Array(Box::new(point_plan))),
+            "pg_dump {v}: public.point2d[]"
+        );
+        assert_eq!(
+            field(&composites, "v_tagged"),
+            (
+                DataType::Struct(Fields::from(vec![
+                    Field::new("label", DataType::Utf8View, true),
+                    Field::new("tags", list_of(DataType::Utf8View), true),
+                ])),
+                NestedPlan::Record(vec![NestedPlan::Scalar, flat.clone()])
+            ),
+            "pg_dump {v}: a composite with a text[] field"
+        );
+        // A zero-field composite is a zero-field `Struct` (I23), not a
+        // refusal — the analogy with `EmptyEnum` does not hold, because `()`
+        // is a real value that round-trips.
+        assert_eq!(
+            field(&composites, "v_empty_comp"),
+            (DataType::Struct(Fields::empty()), NestedPlan::Record(Vec::new())),
+            "pg_dump {v}: CREATE TYPE ... AS ()"
+        );
+
+        // A built-in range's subtype is hardcoded; a user-defined one's comes
+        // from its own DDL.
+        let bound_plan = NestedPlan::Range(Box::new(NestedPlan::Scalar));
+        assert_eq!(
+            field(&resolve_table(&meta, "public.t_range"), "v_range"),
+            (range_struct(DataType::Int32), bound_plan.clone()),
+            "pg_dump {v}: int4range"
+        );
+        assert_eq!(
+            field(&resolve_table(&meta, "public.t_user_range"), "v_myrange"),
+            (range_struct(DataType::Float64), bound_plan.clone()),
+            "pg_dump {v}: CREATE TYPE ... AS RANGE (subtype = double precision)"
+        );
+        assert_eq!(
+            field(&resolve_table(&meta, "public.t_text_range"), "v_textrange"),
+            (range_struct(DataType::Utf8View), bound_plan),
+            "pg_dump {v}: a range over text"
+        );
+
+        // Multiranges are PG14+ (I10). The companion of a user range has no
+        // `CREATE TYPE` of its own anywhere in the file, so its bound type
+        // can only come from the range that names it.
+        if version >= 14 {
+            let multi = resolve_table(&meta, "public.t_multirange");
+            assert_eq!(
+                field(&multi, "v_int4multirange"),
+                (
+                    list_of(range_struct(DataType::Int32)),
+                    NestedPlan::Multirange(Box::new(NestedPlan::Scalar))
+                ),
+                "pg_dump {v}: int4multirange"
+            );
+            assert_eq!(
+                field(&multi, "v_myrange_multi"),
+                (
+                    list_of(range_struct(DataType::Float64)),
+                    NestedPlan::Multirange(Box::new(NestedPlan::Scalar))
+                ),
+                "pg_dump {v}: public.myrange_multi"
+            );
+        }
+
+        // The two refusals stay `Utf8View`, with nothing nested behind them.
+        for (table, column) in
+            [("public.t_base_type", "v_mybase_array"), ("public.t_delimiter", "v_box_domain_array")]
+        {
+            let resolved = resolve_table(&meta, table);
+            assert_eq!(
+                field(&resolved, column),
+                (DataType::Utf8View, NestedPlan::Scalar),
+                "pg_dump {v}: {table}.{column}"
+            );
+        }
     }
 }
 

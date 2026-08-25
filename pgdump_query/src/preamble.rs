@@ -120,10 +120,20 @@ pub enum TypeKind {
     /// domain over a domain is legal). `NOT NULL` is discarded — every Arrow
     /// field is nullable regardless.
     Domain { base_type: String },
-    /// Field name -> declared type, in declaration order. Decoding COPY
-    /// TEXT's record literal is deferred (`docs/design/roadmap.md`, Phase 4);
-    /// this is what that decoder will need.
-    Composite { fields: Vec<(String, String)> },
+    /// Field name -> declared type, in declaration order — or `None` when the
+    /// body held a fragment this grammar could not parse.
+    ///
+    /// **All-or-nothing, unlike `CREATE TABLE`'s column list**, which keeps
+    /// its `filter_map`. `record_out` is positional and carries no field
+    /// names (I23), so there is no join to recover a dropped field the way
+    /// `crate::resolve::resolve_columns` recovers a dropped column by name:
+    /// a three-field type parsed as two would make every valid row of it
+    /// fail the field-count check, and relaxing that check would decode
+    /// field 3's text as field 2's type. `Some(vec![])` is a real
+    /// zero-field composite (`CREATE TYPE x AS ();`, I23) and maps to a
+    /// zero-field `Struct`; `None` resolves the column to `Utf8View`, like
+    /// anything else the grammar does not recognize.
+    Composite { fields: Option<Vec<(String, String)>> },
     /// The subtype named in the `CREATE TYPE ... AS RANGE (...)` parameter
     /// list, if the grammar found one, plus the name of its auto-created
     /// companion multirange type (PG14+), if the DDL named one explicitly
@@ -439,10 +449,15 @@ fn parse_create_type(rest: &str) -> Option<TypeDef> {
         let body = body.trim_start();
         if body.starts_with('(') {
             let close = matching_paren(body.as_bytes(), 0)?;
-            let fields = split_top_level_commas(&body[1..close])
-                .into_iter()
-                .filter_map(parse_column_fragment)
-                .collect();
+            let inner = &body[1..close];
+            // All-or-nothing (see [`TypeKind::Composite`]): one unparseable
+            // fragment discards the whole list rather than shortening it. An
+            // empty body is a zero-field composite, not a failure (I23).
+            let fields = if inner.trim().is_empty() {
+                Some(Vec::new())
+            } else {
+                split_top_level_commas(inner).into_iter().map(parse_column_fragment).collect()
+            };
             return Some(TypeDef { name, kind: TypeKind::Composite { fields } });
         }
         return Some(TypeDef { name, kind: TypeKind::Base });
@@ -1001,12 +1016,25 @@ mod tests {
         assert_eq!(
             def.kind,
             TypeKind::Composite {
-                fields: vec![
+                fields: Some(vec![
                     ("x".to_string(), "integer".to_string()),
                     ("y".to_string(), "text".to_string())
-                ]
+                ])
             }
         );
+    }
+
+    /// The field list is all-or-nothing: `record_out` is positional, so a
+    /// type parsed with one field missing would refuse every valid row of it
+    /// (see [`TypeKind::Composite`]). An empty body stays a real zero-field
+    /// composite, which is a different thing entirely (I23).
+    #[test]
+    fn a_composite_with_an_unparseable_fragment_keeps_no_fields_at_all() {
+        let def = parse_type(&["CREATE TYPE public.broken AS (", "\tx integer,", "\t?!", ");"]);
+        assert_eq!(def.kind, TypeKind::Composite { fields: None });
+
+        let empty = parse_type(&["CREATE TYPE public.empty_comp AS (", ");"]);
+        assert_eq!(empty.kind, TypeKind::Composite { fields: Some(vec![]) });
     }
 
     #[test]

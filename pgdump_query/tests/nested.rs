@@ -20,7 +20,9 @@ use pgdump_query::nested::{
     render_range, render_record,
 };
 use pgdump_query::resolve::SchemaMode;
-use pgdump_query::{BatchOptions, LocalFileSource, ScanOptions, read_table, render_field};
+use pgdump_query::{
+    BatchOptions, LocalFileSource, NestedPlan, ScanOptions, read_table, render_field,
+};
 
 /// Which codec a column's literals belong to. Resolution does not choose this
 /// yet — that is 4.4's job — so this file names it per column.
@@ -80,7 +82,11 @@ async fn column_values(path: &Path, table: &str, column: &str) -> Vec<String> {
         |batch| {
             let index = batch.schema().index_of(column).expect("column is in the COPY header");
             for row in 0..batch.num_rows() {
-                if let Some(value) = render_field(batch.column(index).as_ref(), row) {
+                // `Strings` mode resolves every column `Utf8View`/`Scalar`,
+                // which is the point: what comes back is the codec's input,
+                // not something the typed path has already parsed.
+                let column = batch.column(index).as_ref();
+                if let Some(value) = render_field(column, row, &NestedPlan::Scalar) {
                     out.push(value);
                 }
             }

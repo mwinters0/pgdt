@@ -617,9 +617,27 @@ against the querying database's own `CREATE TYPE`/`CREATE DOMAIN` list,
 recursing through domains with **no cycle guard needed** (PostgreSQL cannot
 create a domain over a type that does not exist yet).
 
-`TypeOutcome` is `Mapped(DataType)`, `Unknown`,
-`Deferred(DeferredKind::{Array,Composite,Range})`, `OpaqueBaseType`, or
-`EmptyEnum`.
+`TypeOutcome` is `Mapped(DataType, NestedPlan)`, `Unknown`,
+`OpaqueElementType`, `OpaqueBaseType`, or `EmptyEnum`. The `Mapped` pair has
+**one producer** — nothing outside `pgtype.rs` builds either half of a nested
+column's pairing, which is what keeps the two trees in agreement without a
+third structure enforcing it (see "Nested columns" below for what the plan is
+for).
+
+**The four container families resolve through this same function,
+recursively**, so nesting composes with no special case: `public.comp[]` is
+`List<Struct<…>>`, a composite with a `text[]` field is
+`Struct<…, List<Utf8View>>`. A leaf whose own type does not map — `interval`,
+an opaque base type, an unknown — is `Utf8View` **in that position**, exactly
+as it would be at top level, so the recursion introduces no failure mode of
+its own. The walk needs no cycle guard and no depth limit for the same reason
+the domain walk never did: PostgreSQL refuses to create a type that contains
+itself through composites, ranges, domains or array elements (I24).
+
+*Rejected:* one-level-only containers, with a scalar-element requirement and a
+whole-column `Utf8View` fallback otherwise. The depth check is more code than
+the recursion it forbids, and it strands `text[]`-inside-a-composite, which
+the recursion handles for free.
 
 ### The bar: "the dump alone determines the value"
 
@@ -653,7 +671,11 @@ almost every column in a real 75-table schema.
 | `inet`, `cidr`, `macaddr`, `macaddr8` | `Utf8View` | |
 | enum (`CREATE TYPE … AS ENUM`) | `Dictionary(Int32, Utf8)` | Only when the label set is non-empty |
 | domain (`CREATE DOMAIN`) | base type's mapping | Resolved transitively |
-| array, composite, range, multirange | `Utf8View` | Deferred — `roadmap-phase4-composite-decoding.md`. They do **not** share a quoting rule (I20); one parameterized scanner covers all three forms |
+| `T[]` | `List<resolve(T)>` | Optimistic 1-D: dimensionality belongs to the *value* (I21), so a value that disagrees is a `FieldDecode`, not a reshape |
+| composite (`CREATE TYPE … AS (…)`) | `Struct<` one field per declared field, in declaration order `>` | Zero fields included (I23) — `()` is a real value that round-trips |
+| range (built-in or `AS RANGE`) | `Struct{lower: S, upper: S, lower_inclusive, upper_inclusive, empty}` | The fifth field is not redundant: `empty` and `(,)` both have absent bounds |
+| multirange | `List<` the range struct `>` | Same Arrow type as `S[]`-of-range, different literal — see `NestedPlan` |
+| an array whose element is opaque | `Utf8View` | `box`, `TypeKind::Base`, `TypeKind::Shell`, through any chain of domains — `ColumnResolution::OpaqueElementType`, below |
 
 Microsecond precision throughout, because that is PostgreSQL's storage
 resolution. **Every Arrow field is nullable**, regardless of a `NOT NULL` in
@@ -682,12 +704,48 @@ range's own DDL, so `TypeKind::Range` carries the companion name and the lookup
 honours it. Discarding that parameter would make the information unrecoverable
 without re-scanning.
 
-`ColumnResolution::Deferred`'s `kind` does not distinguish a built-in range
-from a user-defined one, and both multirange shapes land in
-`DeferredKind::Range` rather than a new kind — nothing downstream needs the
-distinction yet. Whoever writes the range decoder will need the *subtype*, held
-in `TypeDef::Range::subtype` for a user-defined range and **absent entirely**
-for a built-in one (PostgreSQL encodes it in the catalog, not in DDL text).
+**Twelve built-in names carry hardcoded subtypes, not six.**
+`TypeDef::Range::subtype` is populated only for a user-defined range;
+PostgreSQL keeps a built-in's subtype in the catalog rather than in DDL text,
+so `int4range`→`integer` … `daterange`→`date` live in `builtin_range_subtype`
+— **and the same six subtypes again for the PG14+ multirange companions**,
+which produce a different Arrow type and a different plan from the same
+subtype. Letting the multirange half inherit the range half's answer yields a
+`Struct` where the file holds `{[1,10),[2,3)}`, and fails at the first row.
+A user range's auto-created companion has no `CREATE TYPE` of its own at all,
+so its bound type comes from the range that names it in
+`multirange_type_name`. A range whose parameter list the grammar could not
+read keeps the struct with `Utf8View` bounds rather than losing the shape.
+
+**A composite's declared field list is all-or-nothing.** `parse_create_type`
+yields `Composite { fields: None }` for a body holding any unparseable
+fragment, and the column then resolves `Unknown`/`Utf8View` like anything else
+the grammar does not recognize. `record_out` is positional and carries no
+field names (I23), so — unlike a `CREATE TABLE` column list, which
+`resolve_columns` joins against the `COPY` header *by name*, making a dropped
+column merely `NotDeclared` — there is no join to recover a dropped field: a
+three-field type parsed as two would refuse every row of entirely valid data,
+and relaxing the field-count check would decode field 3's text as field 2's
+type. The `CREATE TABLE` path keeps its `filter_map`; the asymmetry is
+deliberate.
+
+**An array whose element type is opaque stays a whole-column string**, and the
+separator stays hardcoded to `,`. The refusal tests the element **after domain
+unwrapping, not the declared string** (I22): a domain inherits its base type's
+`typdelim` and its own DDL records nothing about it, so `CREATE DOMAIN d AS
+box` makes `d[]` semicolon-separated while being named neither `box` nor
+`TypeKind::Base`. Such an element resolves to `Utf8View` anyway, so
+`List<Utf8View>` would recover nothing a plain string does not — it would only
+add a way to split on the wrong character, which round-trips byte-for-byte
+while being wrong.
+
+*Rejected:* refusing any array whose element does not resolve to a mapped
+Arrow type. It closes the same hole and pays for it by degrading `interval[]`,
+`money[]` and every unknown-element array to a whole-column string, where
+`List<Utf8View>` recovers the element boundaries and splits on the right
+character. *Rejected:* parsing `DELIMITER` out of `CREATE TYPE` into
+`TypeKind::Base`. It handles the trap instead of removing it, and buys a
+`List<Utf8View>` over values that are opaque by construction.
 
 **Array dimensionality is not in the catalog** (I21). `integer[][]` and
 `integer[3]` both come back from `pg_dump` as plain `integer[]`, identical to a
@@ -703,10 +761,24 @@ ResolvedSchema` joins a `COPY` header's column list against `DumpMetadata` by
 name, requiring the caller's `database` — resolved from the matched block's own
 attribution, **never guessed** — to pick the right `DatabaseMetadata`.
 
-`ResolvedSchema { schema, columns, notes }`: `columns` is positional (parallel
-to `schema.fields()`); `notes` carries one `ColumnNote` per column, mapped and
-unmapped alike, with the raw declared-type string attached, since `pgdq info`'s
-display needs both.
+`ResolvedSchema { schema, columns, notes, plans }`: `columns` and `plans` are
+positional (parallel to `schema.fields()`); `notes` carries one `ColumnNote`
+per column, mapped and unmapped alike, with the raw declared-type string
+attached, since `pgdq info`'s display needs both. Every column has a `plans`
+entry, `NestedPlan::Scalar` included, so no consumer has to ask whether the
+vector applies to it.
+
+*Rejected:* hanging the plan off `ColumnNote`, which is the human-facing
+per-column record and would become two things, since no display ever reads a
+plan; and making it a payload on `ColumnResolution::Mapped`, which expresses
+"a plan exists exactly when a column mapped" but breaks the sites that compare
+that enum by equality, to buy a coupling one producer already gives.
+
+`ColumnResolution` is `Mapped`, `UnknownType`, `NotDeclared`,
+`OpaqueElementType`, `OpaqueBaseType` or `EmptyEnum` — **the three ways a
+column of a container type can still be a string are told apart**, since after
+the flip "why is this column text" has more than one answer a reader will
+want.
 
 `SchemaMode::Strings` never looks anything up — every column is
 `NotDeclared`/`Utf8View`, at zero lookup cost. In `SchemaMode::Typed` only,
@@ -860,9 +932,14 @@ detail: `int4range[]` and `int4multirange` both resolve to
 `List<Struct{lower, upper, …}>` and are written `{"[1,10)","[2,3)"}` and
 `{[1,10),[2,3)}` respectively. So `pgtype::NestedPlan` — a small tree of
 `Scalar`/`Array`/`Record`/`Range`/`Multirange` — is passed alongside the
-`DataType` into `new_column_builder` and `render_field_with_plan`, and is what
-picks the `nested.rs` codec at each level. `render_field` is the `Scalar` case
-of the latter.
+`DataType` into `new_column_builder` and `render_field`, and is what picks the
+`nested.rs` codec at each level. It comes from `ResolvedSchema::plans`,
+positionally.
+
+`render_field(column, row, plan)` is the single entry point: there is
+deliberately **no plan-less sibling**, because one that panicked on a nested
+column would make "did every caller switch?" a review question rather than a
+compile error. A scalar caller passes `&NestedPlan::Scalar`, its `Default`.
 
 *Rejected:* inferring the literal form from the Arrow type. It is not merely
 fragile, it is impossible for the array-of-range/multirange pair. *Rejected:*
@@ -884,7 +961,12 @@ is not:
   bound, so the index origin has nowhere to go, and dropping it would make
   render-back inexact.
 - **A composite literal whose field count disagrees with the declared type is
-  refused.**
+  refused.** A zero-field composite is the one place the count is not read off
+  the literal: `()` is what `record_out` writes both for it and for a
+  one-field composite holding NULL (I23), so the declared list decides and the
+  builder accepts exactly that literal. Finishing one needs
+  `StructArray::try_new_with_length` — with no children there is nothing to
+  read the row count off, and Arrow refuses to guess.
 
 A failure anywhere inside a nested literal is reported against the **whole
 field**, not the fragment that tripped it, because that is what
@@ -1004,7 +1086,7 @@ future work; it inverts control, not dependency (see `layering.md`).
 A **best-effort accelerator, never required for correctness**: a stale
 structural index costs a rescan and nothing else.
 
-Format version **v9**. Pre-1.0 each bump is free and nothing migrates; the
+Format version **v10**. Pre-1.0 each bump is free and nothing migrates; the
 `format_version` envelope exists so a stale cache is *detected* rather than
 misread.
 

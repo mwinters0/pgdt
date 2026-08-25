@@ -2,20 +2,19 @@
 //! `DumpMetadata` (`docs/design/architecture.md`, "Joining a header against
 //! the metadata").
 //!
-//! This is a *preview*, not what decodes a row — `decode.rs` does that. The real `RecordBatch` schema built in `batch.rs`
-//! stays every-column-`Utf8View` regardless of what a [`ResolvedSchema`]
-//! reports here (its `RowBatcher` only ever builds `StringViewArray`s, and
-//! `RecordBatch::try_new` would reject a schema/array type mismatch if that
-//! changed without the decoder to back it) — so a caller sees the *target*
-//! typing this build already understands, ahead of the code that would
-//! apply it.
+//! This is what a query's `RecordBatch`es actually carry, not a preview:
+//! `crate::batch::RowBatcher` builds one column builder per field of the
+//! [`ResolvedSchema`] it was constructed from, and `RecordBatch::try_new`
+//! rejects any array whose type disagrees with the schema's. Deciding *how*
+//! a field's text becomes a value is `crate::decode`'s and `crate::nested`'s
+//! job; this module decides *what* each column is.
 
 use std::sync::Arc;
 
 use arrow::datatypes::{Field, Schema, SchemaRef};
 
 use crate::diagnostic::Severity;
-use crate::pgtype::{DeferredKind, TypeOutcome, resolve_declared_type};
+use crate::pgtype::{NestedPlan, TypeOutcome, resolve_declared_type};
 use crate::preamble::DumpMetadata;
 
 /// Whether a query resolves column types at all. See "Output model" in the
@@ -46,10 +45,12 @@ pub enum ColumnResolution {
     /// No DDL explained this column — `--data-only`, a typed table (`CREATE
     /// TABLE x OF t`), or `SchemaMode::Strings` (which never looks).
     NotDeclared,
-    /// Decodable in principle; deferred until the nested-quoting decoder exists.
-    Deferred {
-        kind: DeferredKind,
-    },
+    /// An array whose element type is opaque by construction — `box`, a
+    /// C-level base type or a shell type, through any chain of domains. Held
+    /// apart from [`Self::OpaqueBaseType`] because the column's *own* type is
+    /// perfectly well understood; it is the element that is not, and the
+    /// array's separator is the element type's (I22).
+    OpaqueElementType,
     /// A C-level base type or a shell/undefined type.
     OpaqueBaseType,
     EmptyEnum,
@@ -106,13 +107,28 @@ pub struct ResolvedSchema {
     pub columns: Vec<ColumnResolution>,
     /// Named, one entry per column, in the same order.
     pub notes: Vec<ColumnNote>,
+    /// Which PostgreSQL literal form fills each field — positional, parallel
+    /// to `schema.fields()` like `columns`.
+    ///
+    /// **The Arrow type cannot say**: `int4range[]` and `int4multirange`
+    /// share one (`crate::pgtype::NestedPlan`), so the plan travels beside it
+    /// from resolution — the pair's one producer — into
+    /// `crate::batch::RowBatcher` and `crate::batch::render_field`. A scalar
+    /// column's entry is `NestedPlan::Scalar`, so every column has one and no
+    /// caller has to ask whether this vector applies to it.
+    pub plans: Vec<NestedPlan>,
 }
 
 impl Default for ResolvedSchema {
     /// The empty schema — what a caller sees before a matching block has
     /// been found (or if the table never appears at all).
     fn default() -> Self {
-        Self { schema: Arc::new(Schema::empty()), columns: Vec::new(), notes: Vec::new() }
+        Self {
+            schema: Arc::new(Schema::empty()),
+            columns: Vec::new(),
+            notes: Vec::new(),
+            plans: Vec::new(),
+        }
     }
 }
 
@@ -165,30 +181,26 @@ pub fn resolve_columns(
     let mut fields = Vec::with_capacity(columns.len());
     let mut resolutions = Vec::with_capacity(columns.len());
     let mut notes = Vec::with_capacity(columns.len());
+    let mut plans = Vec::with_capacity(columns.len());
 
+    let string = || (arrow::datatypes::DataType::Utf8View, NestedPlan::Scalar);
     for name in columns {
         let declared = declared_cols.and_then(|cols| cols.iter().find(|(n, _)| n == name));
-        let (resolution, arrow_type) = match declared {
-            None => (ColumnResolution::NotDeclared, arrow::datatypes::DataType::Utf8View),
+        let (resolution, (arrow_type, plan)) = match declared {
+            None => (ColumnResolution::NotDeclared, string()),
             Some((_, ty)) => {
                 // `db` is always `Some` here: `declared_cols` only came from
                 // `db.tables`, so `db.types` is the right list to resolve
                 // this same database's `CREATE TYPE`/`DOMAIN` references
                 // against.
                 match resolve_declared_type(ty, &db.unwrap().types) {
-                    TypeOutcome::Mapped(dt) => (ColumnResolution::Mapped, dt),
-                    TypeOutcome::Unknown => {
-                        (ColumnResolution::UnknownType, arrow::datatypes::DataType::Utf8View)
+                    TypeOutcome::Mapped(dt, plan) => (ColumnResolution::Mapped, (dt, plan)),
+                    TypeOutcome::Unknown => (ColumnResolution::UnknownType, string()),
+                    TypeOutcome::OpaqueElementType => {
+                        (ColumnResolution::OpaqueElementType, string())
                     }
-                    TypeOutcome::Deferred(kind) => {
-                        (ColumnResolution::Deferred { kind }, arrow::datatypes::DataType::Utf8View)
-                    }
-                    TypeOutcome::OpaqueBaseType => {
-                        (ColumnResolution::OpaqueBaseType, arrow::datatypes::DataType::Utf8View)
-                    }
-                    TypeOutcome::EmptyEnum => {
-                        (ColumnResolution::EmptyEnum, arrow::datatypes::DataType::Utf8View)
-                    }
+                    TypeOutcome::OpaqueBaseType => (ColumnResolution::OpaqueBaseType, string()),
+                    TypeOutcome::EmptyEnum => (ColumnResolution::EmptyEnum, string()),
                 }
             }
         };
@@ -201,9 +213,10 @@ pub fn resolve_columns(
             resolution: resolution.clone(),
         });
         resolutions.push(resolution);
+        plans.push(plan);
     }
 
-    ResolvedSchema { schema: Arc::new(Schema::new(fields)), columns: resolutions, notes }
+    ResolvedSchema { schema: Arc::new(Schema::new(fields)), columns: resolutions, notes, plans }
 }
 
 #[cfg(test)]
@@ -262,8 +275,11 @@ mod tests {
         assert_eq!(resolved.columns, [ColumnResolution::NotDeclared]);
     }
 
+    /// Every non-`Mapped` outcome `crate::pgtype` can produce, seen through
+    /// the join — and the plan a `Utf8View` fallback carries, which is
+    /// `Scalar` whichever reason put it there.
     #[test]
-    fn unknown_deferred_opaque_and_empty_enum_outcomes() {
+    fn unknown_opaque_and_empty_enum_outcomes() {
         let types = vec![
             TypeDef { name: "public.gtype".to_string(), kind: TypeKind::Base },
             TypeDef { name: "public.mood".to_string(), kind: TypeKind::Enum { labels: vec![] } },
@@ -271,7 +287,12 @@ mod tests {
         let meta = one_db(
             &[(
                 "public.t",
-                &[("a", "money"), ("b", "integer[]"), ("c", "public.gtype"), ("d", "public.mood")],
+                &[
+                    ("a", "money"),
+                    ("b", "public.gtype[]"),
+                    ("c", "public.gtype"),
+                    ("d", "public.mood"),
+                ],
             )],
             types,
         );
@@ -281,11 +302,49 @@ mod tests {
             resolved.columns,
             [
                 ColumnResolution::UnknownType,
-                ColumnResolution::Deferred { kind: DeferredKind::Array },
+                ColumnResolution::OpaqueElementType,
                 ColumnResolution::OpaqueBaseType,
                 ColumnResolution::EmptyEnum,
             ]
         );
+        assert!(
+            resolved
+                .schema
+                .fields()
+                .iter()
+                .all(|f| *f.data_type() == arrow::datatypes::DataType::Utf8View),
+            "every unmapped outcome falls back to text"
+        );
+        assert_eq!(resolved.plans, vec![NestedPlan::Scalar; 4]);
+    }
+
+    /// The `(DataType, NestedPlan)` pair reaches the schema positionally,
+    /// with one entry per column whether or not the column is nested — so no
+    /// consumer has to ask whether `plans` applies to it.
+    #[test]
+    fn a_nested_column_carries_its_plan_beside_its_type() {
+        let types = vec![TypeDef {
+            name: "public.point2d".to_string(),
+            kind: TypeKind::Composite {
+                fields: Some(vec![("x".to_string(), "integer".to_string())]),
+            },
+        }];
+        let meta = one_db(
+            &[("public.t", &[("id", "integer"), ("v", "integer[]"), ("p", "public.point2d")])],
+            types,
+        );
+        let cols = vec!["id".to_string(), "v".to_string(), "p".to_string()];
+        let resolved = resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Typed);
+        assert!(resolved.columns.iter().all(|c| *c == ColumnResolution::Mapped));
+        assert_eq!(
+            resolved.plans,
+            [
+                NestedPlan::Scalar,
+                NestedPlan::Array(Box::new(NestedPlan::Scalar)),
+                NestedPlan::Record(vec![NestedPlan::Scalar]),
+            ]
+        );
+        assert_eq!(resolved.plans.len(), resolved.schema.fields().len());
     }
 
     #[test]

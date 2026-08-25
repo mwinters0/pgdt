@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use arrow::array::RecordBatch;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
-    BatchOptions, LocalFileSource, Predicate, PredicateOp, ScanOptions, read_table, render_field,
+    BatchOptions, LocalFileSource, NestedPlan, Predicate, PredicateOp, ScanOptions, read_table,
+    render_field,
 };
 
 fn edge_cases() -> PathBuf {
@@ -23,6 +24,14 @@ fn fixture(version: u32, name: &str) -> PathBuf {
         .join(format!("{name}.sql"))
 }
 
+fn types_fixture(version: u32, flag_set: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../fixtures")
+        .join(version.to_string())
+        .join("types")
+        .join(format!("{flag_set}.sql"))
+}
+
 /// Every column rendered back to text via [`render_field`] — works
 /// regardless of `SchemaMode`: a hand-written fixture with no DDL (like
 /// `edge_cases()`) resolves every column `Utf8View` either way, so this reads
@@ -32,7 +41,15 @@ fn fixture(version: u32, name: &str) -> PathBuf {
 /// exactly this build's own decode/render round trip).
 fn rows_of(batch: &RecordBatch) -> Vec<Vec<Option<String>>> {
     (0..batch.num_rows())
-        .map(|row| batch.columns().iter().map(|c| render_field(c.as_ref(), row)).collect())
+        // Every fixture this file queries is scalar-typed, so the plan is
+        // `Scalar` for every column (`crate::pgtype::NestedPlan`'s default).
+        .map(|row| {
+            batch
+                .columns()
+                .iter()
+                .map(|c| render_field(c.as_ref(), row, &NestedPlan::Scalar))
+                .collect()
+        })
         .collect()
 }
 
@@ -195,6 +212,69 @@ async fn predicate_is_null_and_is_not_null() {
     .unwrap();
     let expected: Vec<_> = widgets_expected().into_iter().filter(|r| r[2].is_some()).collect();
     assert_eq!(not_null_rows, expected);
+}
+
+/// A predicate on a column that Phase 4 retyped from `Utf8View` to
+/// `List<Utf8View>` still matches the same rows, because it compares the
+/// COPY-unescaped *field text* — the `array_out` literal — and never the
+/// decoded value. This is the one place the flip could have changed
+/// behaviour invisibly, so it is asserted against the untyped path, which by
+/// construction cannot have changed.
+#[tokio::test]
+async fn a_predicate_on_a_nested_column_matches_the_literal_text_in_either_schema_mode() {
+    use futures::StreamExt;
+    use pgdump_query::table_stream;
+
+    async fn ids(path: &Path, mode: pgdump_query::SchemaMode, value: &str) -> Vec<Option<String>> {
+        let source = LocalFileSource::open(path).unwrap();
+        let options = BatchOptions { schema_mode: mode, ..Default::default() };
+        let predicate = Predicate {
+            column: "v_text_special".into(),
+            op: PredicateOp::Eq,
+            value: Some(value.to_string()),
+        };
+        let mut stream = table_stream(
+            &source,
+            "public.t_array",
+            ScanOptions::default(),
+            options,
+            Some(predicate),
+            None,
+            CacheMode::Disabled,
+        );
+        let mut ids = Vec::new();
+        while let Some(batch) = stream.next().await {
+            let batch = batch.unwrap();
+            for row in 0..batch.num_rows() {
+                // `id` is `integer` in both modes; only the array column's
+                // type changed underneath.
+                ids.push(render_field(batch.column(0).as_ref(), row, &NestedPlan::Scalar));
+            }
+        }
+        ids
+    }
+
+    for version in [13, 16, 18] {
+        let path = types_fixture(version, "default");
+        let matched = r#"{NULL,plain}"#;
+        assert_eq!(
+            ids(&path, pgdump_query::SchemaMode::Typed, matched).await,
+            vec![Some("2".to_string())],
+            "pg_dump {version}"
+        );
+        assert_eq!(
+            ids(&path, pgdump_query::SchemaMode::Typed, matched).await,
+            ids(&path, pgdump_query::SchemaMode::Strings, matched).await,
+            "pg_dump {version}: typing a column must not change what a predicate matched"
+        );
+        // And a non-canonical spelling matches nothing in either mode, which
+        // is the documented divergence from PostgreSQL rather than a
+        // consequence of the flip.
+        assert!(
+            ids(&path, pgdump_query::SchemaMode::Typed, "{NULL, plain}").await.is_empty(),
+            "pg_dump {version}"
+        );
+    }
 }
 
 #[tokio::test]
