@@ -21,13 +21,14 @@ per-phase checklist here any more. How the system works is
 | DDL object inventory: TOC enrichment, referenced roles and tablespaces, object census | working |
 | Best-effort structural cache with source-identity checking and cache-only inspection | working |
 | CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, and cache-only `info` | working, text output shape provisional; `--json` carries no shape promise at all |
-| Arrays, composites, ranges, multiranges | typed and decoded end to end on the optimistic path: `List<T>`, `Struct<…>`, the five-field range struct, `List<` range struct `>`. An array whose element type is opaque (`box`, a C base type, a shell type, through any chain of domains) stays a string, and so does a multi-dimensional or `[lb:ub]=`-decorated *value* — which is a `FieldDecode` error until Phase 4.5's census |
+| Arrays, composites, ranges, multiranges | typed and decoded end to end on the optimistic path: `List<T>`, `Struct<…>`, the five-field range struct, `List<` range struct `>`. An array whose element type is opaque (`box`, a C base type, a shell type, through any chain of domains) stays a string, and so does a multi-dimensional or `[lb:ub]=`-decorated *value* — which is a `FieldDecode` error until Phase 4.5.1 consumes the census |
+| Array shape census | recorded by every full scan (`CopyBlock::array_shapes`), **not yet consumed** — the optimistic path's `FieldDecode` refusal is unchanged until Phase 4.5.1 |
 | Predicate and projection pushdown; per-row-group statistics | not started — Phase 5 |
 | `object_store` I/O, Python bindings, DataFusion `TableProvider` | not started — Phase 6 |
 | Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-26 (4.4.1: `info --verbose` states the Arrow schema; manual rewritten).
+Last updated: 2026-08-26 (4.5: the array-shape census is recorded; nothing consumes it yet).
 
 ## Phase 4 progress
 
@@ -65,14 +66,24 @@ Specified in
       rendered with arrow's `Display` except the range struct, which collapses
       to `Range<T>`; and the `type-handling.md` rewrite. The manual documents
       **two** ways a column of these types is still a string, not the spec's
-      three — "arrays vary in shape" becomes true only with 4.5's census, and
+      three — "arrays vary in shape" becomes true only once 4.5.1 consumes the
+      census, and
       until then that case is the `FieldDecode` error the same section
       documents. Notes:
       [`../design/roadmap-phase4.4.1-presentation-notes.md`](../design/roadmap-phase4.4.1-presentation-notes.md)
-- [ ] **4.5** The shape census: a cache format bump,
-      per-block per-column recording, the
-      whole-file completeness rule, and the manual's statement of the
-      optimistic and exact paths plus the planned representation knob.
+- [x] **4.5** The shape census, **recording half**: `ArrayShape` on every
+      `CopyBlock`, recorded per column by any scan that reaches EOF; cache
+      format 11; `DumpIndex::is_complete`. Nothing consumes it — resolution
+      is untouched and the optimistic path still refuses a multi-dimensional
+      value. The slice was specified as one row and split mid-slice; the
+      spec's table carries the earned `4.5.1`. Notes:
+      [`../design/roadmap-phase4.5-census-recording-notes.md`](../design/roadmap-phase4.5-census-recording-notes.md)
+- [ ] **4.5.1** The shape census, **consuming half**: retype the `(DataType,
+      NestedPlan)` pair from a block's census (uniform depth → `List<List<T>>`;
+      mixed, or any `[lb:ub]=` prefix → `Utf8View`),
+      `ColumnResolution::VaryingArrayShape` and its `resolution_label` arm,
+      and the manual's statement of both paths plus the planned
+      representation knob.
 - [ ] **4.6** The array stress section in `generate_perf_data.py` and the
       `measurements.md` ratio.
 
@@ -97,7 +108,7 @@ Specified in
   array's dimensionality belongs to the *value* (I21) and `List<T>` has to
   commit before the first batch, so the choice is between erroring and
   silently losing the shape. `--schema-mode strings` returns the literal
-  verbatim, and **4.5's census** makes the error unreachable for a top-level
+  verbatim, and **4.5.1's use of the census** makes the error unreachable for a top-level
   array column (an array nested inside a composite keeps the optimistic path
   permanently — the census has nowhere to record its shape).
 - A query stops mapping once its target is settled, so a conflicting
@@ -151,13 +162,26 @@ Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
 
+- **A block mapped by a cold query can never acquire a census, so one file
+  can hold both kinds of block.** Only a scan that will reach EOF censuses,
+  and `map_forward` splices new spans onto a prefix it does not re-read — so
+  a dump mapped by a cold query and *then* by a full one comes out
+  `is_complete` with its early blocks uncensused. `array_shapes` is an
+  `Option` per block for exactly this, and 4.5.1 checks both it and
+  `is_complete`. The alternative is censusing unconditionally, which makes
+  every index identical regardless of query history and charges every cold
+  query for a feature it is not using; the measured cost is nil on brace-free
+  data, so that is a live option if you would rather have the simpler
+  invariant. It also cost one test its exact-equality assertion
+  (`tests/query_cache.rs`, now compares through `without_census`). Reasoning:
+  [`../design/roadmap-phase4.5-census-recording-notes.md`](../design/roadmap-phase4.5-census-recording-notes.md).
 - **The manual says "Two ways one of these columns is still a string", where
   the spec's 4.4 bullet says three.** The third — a column whose arrays vary
-  in shape coming back as text — is not true until 4.5's census exists; today
-  that case is a `FieldDecode` error, which the same manual section states two
-  paragraphs later, so writing all three would have had the page contradict
-  itself. If you would rather the manual named the case now and said it errors
-  today, the fix is one bullet plus a heading; either way 4.5 has to touch that
-  heading. Reasoning:
+  in shape coming back as text — is not true until 4.5.1 consumes the census;
+  today that case is a `FieldDecode` error, which the same manual section
+  states two paragraphs later, so writing all three would have had the page
+  contradict itself. If you would rather the manual named the case now and
+  said it errors today, the fix is one bullet plus a heading; either way 4.5.1
+  has to touch that heading. Reasoning:
   [`../design/roadmap-phase4.4.1-presentation-notes.md`](../design/roadmap-phase4.4.1-presentation-notes.md).
 

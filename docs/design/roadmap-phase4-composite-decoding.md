@@ -525,7 +525,8 @@ rather than scope.
 | 4.3 | `ColumnBuilder`'s `List`/`Struct` arms, unit-tested by constructing nested values directly. Nothing resolves to them yet |
 | 4.4 | Flip resolution: recursive mapping, built-in range subtypes, opaque-element refusal, the `ColumnResolution` surgery, the `(DataType, NestedPlan)` pair threaded through `ResolvedSchema` and `RowBatcher::new`, `render_field`'s deletion. Nested columns decode end-to-end on the optimistic path |
 | 4.4.1 | The presentation half: the resolved Arrow type in `pgdq info --verbose`, **the manual rewrite above** |
-| 4.5 | The shape census: a cache format bump, per-block per-column recording, the completeness rule, and **the manual's statement of both paths plus the planned representation knob** |
+| 4.5 | The shape census, **recording half**: a cache format bump, per-block per-column recording, and the completeness rule. Nothing consumes it yet |
+| 4.5.1 | The shape census, **consuming half**: retyping the `(DataType, NestedPlan)` pair from a block's census, `ColumnResolution::VaryingArrayShape`, and **the manual's statement of both paths plus the planned representation knob** |
 | 4.6 | The array stress section in `generate_perf_data.py`, and the `measurements.md` ratio |
 
 **4.2 keeps decode and render together deliberately** — they are inverses, and
@@ -567,6 +568,14 @@ A built-in multirange and an array of the matching range render *identically*
 (`List(Range<Int32>)`), which is correct rather than a collision to fix: they
 are the same Arrow type, the plans differ, and the declared PostgreSQL type
 sits on the same line.
+
+**4.5.1 was earned mid-slice, not planned.** The census was specified as one
+row and is two: recording is new, type-blind, L1-only machinery that nothing
+reads, while consuming it retypes an already-tested resolution path and
+rewrites the test that pins the optimistic path's refusal. Bundling them would
+force one review to accept both at one confidence — the same seam 4.3/4.4 was
+split at, and the spec's own reason for that split applies here unchanged. The
+reasoning is in `docs/status/history/2026-08-26.md`.
 
 **4.4.1 is a third level made at grilling rather than earned mid-slice**, which
 is off-label and deliberate: the seam was visible here, and the alternative —

@@ -44,6 +44,80 @@ pub struct RowGroupStats {}
 /// and `DumpMetadata`").
 pub use crate::preamble::DumpMetadata;
 
+/// The most dimensions PostgreSQL can give an array — `MAXDIM` in
+/// `src/include/utils/array.h`, 6 in every supported version. A literal whose
+/// leading brace run is longer than this did not come out of `array_out`
+/// (I25), so a consumer must treat it as unusable rather than as a depth.
+pub const MAX_ARRAY_DIMS: u8 = 6;
+
+/// What one column's array values look like within one `COPY` block — the
+/// shape census (`docs/design/architecture.md`, "The array shape census").
+///
+/// Recorded per column because an array's dimensionality belongs to the
+/// *value* (I21), so a column's Arrow type cannot be settled from the DDL
+/// alone. Recorded per block because that is what the map already extends
+/// incrementally; combining blocks is min-of-mins, max-of-maxes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArrayShape {
+    /// Fewest and most dimensions any value in this column carried, as
+    /// `(min, max)`. `None` until a value contributes one — a SQL NULL never
+    /// does, and neither does `{}`, which is what `array_out` writes for an
+    /// empty array of *any* dimensionality (I25) and so fits every depth.
+    ///
+    /// **Both bounds, not just the maximum**, is the whole reason this is a
+    /// pair. A column holding `{1,2}` and `{{1,2},{3,4}}` records `(1, 2)`
+    /// where a column holding only 2-D values records `(2, 2)`; with a
+    /// maximum alone the two are indistinguishable, and the mixed column
+    /// would resolve to a confidently wrong `List<List<T>>` that then fails
+    /// on every 1-D value in it.
+    pub dims: Option<(u8, u8)>,
+    /// Whether any value carried an explicit `[lb:ub]=` lower-bound prefix.
+    /// Kept apart from `dims` because it disqualifies a column on its own:
+    /// Arrow lists are 0-based and have nowhere to record an index origin,
+    /// however uniform the dimensionality is.
+    pub lower_bound_prefix: bool,
+}
+
+impl ArrayShape {
+    /// Fold one still-COPY-escaped field into this column's census.
+    ///
+    /// **The field is not decoded first, and does not need to be.** Neither
+    /// `{` nor anything the `[lb:ub]=` prefix is made of is in COPY TEXT's
+    /// escape set (I15), so both the prefix and the leading brace run are
+    /// visible in the raw bytes. A field that is not an array literal — a
+    /// number, a `\N`, a composite's `(…)` — contributes nothing and costs
+    /// one byte comparison.
+    ///
+    /// Dimensionality is the **leading brace run** (I25): `array_out` opens
+    /// with exactly `ndim` braces and force-quotes any element containing a
+    /// `{`, so no element can extend the run.
+    pub(crate) fn observe(&mut self, field: &[u8]) {
+        let mut rest = field;
+        if rest.first() == Some(&b'[') {
+            // `[lb:ub]…=` — the prefix runs to the `=` that introduces the
+            // value proper. `array_out` returns a bare `{}` before it ever
+            // formats dimensions, so a prefix always has a real array after
+            // it; anything else here is not array output and is left alone.
+            let Some(eq) = rest.iter().position(|&b| b == b'=') else { return };
+            if rest.get(eq + 1) != Some(&b'{') {
+                return;
+            }
+            self.lower_bound_prefix = true;
+            rest = &rest[eq + 1..];
+        }
+        if rest.first() != Some(&b'{') {
+            return;
+        }
+        // The empty array fits any depth, so it constrains neither bound.
+        if rest == b"{}" {
+            return;
+        }
+        let depth = rest.iter().take_while(|&&b| b == b'{').count().min(u8::MAX as usize) as u8;
+        let (min, max) = self.dims.unwrap_or((depth, depth));
+        self.dims = Some((min.min(depth), max.max(depth)));
+    }
+}
+
 /// One located COPY block.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CopyBlock {
@@ -83,6 +157,21 @@ pub struct CopyBlock {
     pub sparse_index: Option<SparseRowIndex>,
     /// Reserved — see [`RowGroupStats`]. Always `None`.
     pub column_stats: Option<RowGroupStats>,
+    /// This block's array-shape census, one [`ArrayShape`] per column in
+    /// `header.columns` order — or `None` when **this block was not
+    /// censused**, which is not the same as a census that saw no arrays.
+    ///
+    /// Only a scan that will reach EOF censuses (`build_index`, or a query
+    /// running `crate::batch::ScanExtent::Full`): a cold query that stops at
+    /// its target would pay per-row work for a census nothing may believe.
+    /// So a file mapped incrementally can hold both kinds of block, and a
+    /// consumer must check *this* field as well as
+    /// [`DumpIndex::is_complete`] — the file-level test cannot speak for a
+    /// block that a partial earlier pass mapped without censusing.
+    ///
+    /// Longer than `header.columns` only for a header-less block, whose
+    /// field count comes from the rows themselves.
+    pub array_shapes: Option<Vec<ArrayShape>>,
 }
 
 /// The full file map discovered in a dump, in file order
@@ -149,6 +238,26 @@ impl DumpIndex {
     pub fn total_rows(&self) -> u64 {
         self.blocks().map(|b| b.row_count).sum()
     }
+
+    /// Whether this scan reached the end of a `size`-byte file — the test
+    /// that decides when a whole-file fact may be believed.
+    ///
+    /// Three facts carry the same partiality and so share this one rule:
+    /// [`roles`](Self::roles), [`tablespaces`](Self::tablespaces), and a
+    /// block's [`array_shapes`](CopyBlock::array_shapes). A query that stops
+    /// at its target (`crate::batch::ScanExtent::UntilTargetSettled`, the
+    /// default) never reaches what lies past the stopping point, and one
+    /// table's data can occupy several blocks (I2) — so a table's census can
+    /// be partial even when every block that *was* scanned is completely
+    /// censused. Believing it anyway would produce a *confidently wrong*
+    /// schema, which is strictly worse than the optimistic path: that reaches
+    /// the same answer while still treating a disagreeing value as an error.
+    ///
+    /// The caller always has `size` already — `crate::stream` stats the
+    /// source before mapping, and the CLI before listing.
+    pub fn is_complete(&self, size: u64) -> bool {
+        self.scanned_through >= size
+    }
 }
 
 /// Scan `source` end to end and build its full file map — [`crate::map::Builder`]
@@ -160,12 +269,14 @@ pub async fn build_index<S: ByteRangeSource>(
     source: &S,
     options: &ScanOptions,
 ) -> Result<DumpIndex> {
-    let mut spans = crate::map::Builder::new();
+    // Reaches EOF by construction, so its census is one `is_complete` can
+    // vouch for — see `CopyBlock::array_shapes`.
+    let mut spans = crate::map::Builder::new().censusing();
 
     scan(source, options, |event| {
         match event {
             Event::CopyStart(start) => spans.on_copy_start(start),
-            Event::Row(_) => {}
+            Event::Row(row) => spans.on_row(row.raw),
             Event::CopyEnd(end) => spans.on_copy_end(end),
             Event::Line(line) => spans.feed_line(line.offset, line.raw),
             Event::DollarQuoteEnd(end) => spans.on_dollar_quote_end(end.offset),
@@ -357,4 +468,75 @@ pub async fn preamble_only<S: ByteRangeSource>(
         cache.save(source, &base_index).await?;
     }
     Ok((base_index.metadata.unwrap_or_default(), base_index.diagnostics))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn shape_of(fields: &[&str]) -> ArrayShape {
+        let mut shape = ArrayShape::default();
+        for field in fields {
+            shape.observe(field.as_bytes());
+        }
+        shape
+    }
+
+    #[test]
+    fn dimensionality_is_the_leading_brace_run() {
+        assert_eq!(shape_of(&["{1,2}"]).dims, Some((1, 1)));
+        assert_eq!(shape_of(&["{{1,2},{3,4}}"]).dims, Some((2, 2)));
+        assert_eq!(shape_of(&["{{{1}}}"]).dims, Some((3, 3)));
+    }
+
+    /// The case a naive brace count gets wrong. `array_out` force-quotes any
+    /// element containing a `{` (I25), so an element that *looks* like a
+    /// nested array cannot extend the run — `{"c{d}"}` is one-dimensional
+    /// and its single element is the four-character text `c{d}`.
+    #[test]
+    fn a_quoted_element_containing_a_brace_does_not_deepen_the_run() {
+        assert_eq!(shape_of(&[r#"{"a,b","c{d}"}"#]).dims, Some((1, 1)));
+        assert_eq!(shape_of(&[r#"{"{a}"}"#]).dims, Some((1, 1)));
+    }
+
+    /// The census's reason for storing both bounds: these two columns are
+    /// indistinguishable by maximum alone, and only the first may become
+    /// `List<List<T>>`.
+    #[test]
+    fn a_mixed_column_is_told_apart_from_a_uniformly_deep_one() {
+        assert_eq!(shape_of(&["{{1,2},{3,4}}", "{{5,6}}"]).dims, Some((2, 2)));
+        assert_eq!(shape_of(&["{1,2}", "{{1,2},{3,4}}"]).dims, Some((1, 2)));
+    }
+
+    /// Neither a SQL NULL nor the empty array constrains a column: `{}` is
+    /// what `array_out` writes for an empty array of *any* dimensionality
+    /// (I25), so a column holding only those two is still unconstrained —
+    /// and a real value alongside them settles it alone.
+    #[test]
+    fn nulls_and_empty_arrays_contribute_no_dimensionality() {
+        assert_eq!(shape_of(&["\\N", "{}"]).dims, None);
+        assert_eq!(shape_of(&["{}", "{1,2,3}", "\\N"]).dims, Some((1, 1)));
+    }
+
+    #[test]
+    fn a_lower_bound_prefix_is_recorded_beside_the_dimensionality() {
+        let shape = shape_of(&["[0:2]={7,8,9}"]);
+        assert!(shape.lower_bound_prefix);
+        assert_eq!(shape.dims, Some((1, 1)));
+        // Multi-dimensional, one bracket pair per dimension.
+        let shape = shape_of(&["[1:2][0:1]={{1,2},{3,4}}"]);
+        assert!(shape.lower_bound_prefix);
+        assert_eq!(shape.dims, Some((2, 2)));
+    }
+
+    /// The census runs over every field of a row it did not type-check, so
+    /// the values of non-array columns reach it too. None of them may
+    /// contribute: a composite opens with `(`, and a text value that merely
+    /// starts with `[` has no `=`-then-`{` after it.
+    #[test]
+    fn a_field_that_is_not_an_array_literal_contributes_nothing() {
+        for field in ["", "\\N", "42", "(1,2)", "[hello]", "[a=b]", "hello {world}", "[1:2]=x"] {
+            assert_eq!(shape_of(&[field]), ArrayShape::default(), "{field}");
+        }
+    }
 }

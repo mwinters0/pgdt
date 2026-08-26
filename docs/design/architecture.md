@@ -27,6 +27,7 @@ through.
 | `scan.rs`, `copy.rs`, a new `Event` variant | [Bytes and structure](#bytes-and-structure) |
 | `map.rs`, spans, tiling, TOC headers, `INSERT`/large-object regions | [The file map](#the-file-map) |
 | `index.rs`, what the index owns, diagnostics | [`DumpIndex`: one owner per fact](#dumpindex-one-owner-per-fact) |
+| array dimensionality, `ArrayShape`, what a full scan records per row | [The array shape census](#the-array-shape-census) |
 | `preamble.rs`, the DDL grammar, `\connect` handling | [The preamble grammar and `DumpMetadata`](#the-preamble-grammar-and-dumpmetadata) |
 | `pgtype.rs`, `resolve.rs`, the type mapping table | [Type resolution](#type-resolution) |
 | `decode.rs`, a new type's decode/render pair | [Decoders and render-back](#decoders-and-render-back) |
@@ -498,7 +499,9 @@ fact in two places), and storing only raw text and re-parsing per query
 nothing per query and cannot diverge from the spans.
 
 `roles`/`tablespaces` are **complete only once `scanned_through` reaches the
-file's size** — the same partiality `metadata`'s `preamble_complete` carries,
+file's size** — `DumpIndex::is_complete(size)`, the test they share with a
+block's array-shape census — the same partiality `metadata`'s
+`preamble_complete` carries,
 for the same reason: a query that stops at its target
 (`ScanExtent::UntilTargetSettled`, the default) never reaches a reference past
 the stopping point. koji's `backup` role, the motivating case, is granted only
@@ -535,6 +538,75 @@ Two `CopyBlock` fields are serialized but never constructed:
 Populating either is additive, not a format-version bump — that is why they
 were reserved. The types are placeholders; their real shape is the design work
 of whoever fills them. See [`roadmap.md`](roadmap.md) for what each is for.
+
+### The array shape census
+
+An array column's Arrow type cannot be settled from the DDL: dimensionality
+and lower bounds belong to the *value* (I21), and one column may hold `{1,2}`,
+`{{1,2},{3,4}}` and `[0:2]={7,8,9}` in three consecutive rows. A full scan
+therefore records what the file actually holds, so the schema can be decided
+against evidence rather than optimism.
+
+`CopyBlock::array_shapes` is `Option<Vec<ArrayShape>>`, one entry per column in
+`header.columns` order, and each `ArrayShape` is the **minimum and maximum**
+dimension count seen plus whether any value carried an `[lb:ub]=` prefix.
+Combining blocks is min-of-mins, max-of-maxes.
+
+**Both bounds, never just the maximum.** A column holding `{1,2}` and
+`{{1,2},{3,4}}` records `(1, 2)`; a column holding only 2-D values records
+`(2, 2)`. With a maximum alone the two are indistinguishable, so the mixed
+column would resolve to `List<List<T>>` and then fail on every 1-D value in
+it — a confidently wrong schema, which is strictly worse than the optimistic
+path that reaches the same type while still treating a disagreeing value as an
+error.
+
+**Dimensionality is read off the raw field, with no array parser.** I25: an
+`array_out` literal opens with exactly `ndim` braces, and any element whose
+text contains a `{` is force-quoted, so no element can extend the run —
+`{"c{d}"}` is one-dimensional. Neither `{` nor anything in the `[lb:ub]=`
+prefix is in COPY TEXT's escape set (I15), so `ArrayShape::observe` reads a
+still-escaped field directly. `{}` is what `array_out` writes for an empty
+array of any dimensionality, so it constrains neither bound; a SQL NULL
+likewise. A run longer than `MAX_ARRAY_DIMS` (PostgreSQL's `MAXDIM`, 6) did
+not come from `array_out` at all.
+
+*Rejected:* a quote-aware walk of the literal, or reusing the `nested.rs`
+codec. Both are L2, both need the field decoded first, and I25 makes the
+leading run exact — there is nothing for a parser to add.
+
+**The census is type-blind, so it runs over every field.** `map::Builder` is
+L1 and cannot know which columns are arrays; it records what each literal
+looks like and leaves the interpretation to whoever consumes it. A composite's
+`(…)` and a `json` column's `{…}` therefore reach `observe` too — the first
+contributes nothing, the second records a depth nothing will ever read,
+because a `json` column does not resolve to a list.
+
+**A row is rejected wholesale before it is split.** An array literal always
+contains a `{`, and only an `[lb:ub]=` prefix can precede it, so a row holding
+neither byte costs one pass over its bytes and no field splitting at all. On
+brace-free data — the koji shape — the census is free at the resolution
+[`measurements.md`](measurements.md) can measure.
+
+**Only a scan that will reach EOF censuses**, and that is a property of the
+*block*, not of the file. `build_index` and `build_map` always census;
+`stream::map_forward` censuses only under `ScanExtent::Full`. A cold query
+that stops at its target would otherwise pay per-row work for a census
+`DumpIndex::is_complete` must then reject. The consequence to keep in mind: a
+file mapped by a cold query and *then* by a full one holds both kinds of
+block, because a block's bytes are read once and there is no second visit at
+which it could acquire a census. That is why the field is an `Option` — "not
+censused" and "censused, saw no arrays" are different answers, and a consumer
+must check both this field and `is_complete`.
+
+**`DumpIndex::is_complete(size)` is the whole-file half of that test**, shared
+with `roles`/`tablespaces`, which carry the same partiality for the same
+reason: a query that stops at its target never reaches what lies past the
+stopping point, and one table's data can occupy several blocks (I2), so a
+*table's* census can be partial even when every block that was scanned is
+completely censused.
+
+The cache format bumps whenever this shape changes, like any other persisted
+field ([The cache](#the-cache)).
 
 ## The preamble grammar and `DumpMetadata`
 

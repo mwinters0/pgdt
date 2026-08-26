@@ -262,7 +262,7 @@ async fn main() -> Result<()> {
             // "The cache").
             let file_size = source.size().await?;
             let index = match mode.load(&source).await? {
-                Some(index) if index.scanned_through >= file_size => index,
+                Some(index) if index.is_complete(file_size) => index,
                 _ => {
                     // No usable cache, or one that doesn't cover the whole
                     // file: scan, then persist what we learned — a no-op

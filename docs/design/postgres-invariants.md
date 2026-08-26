@@ -1282,3 +1282,67 @@ SQL
 
 The `ALTER TYPE` must fail with `composite type i24 cannot be made a member of
 itself`; a version that accepted it would make unbounded recursion reachable.
+
+---
+
+## I25 — An `array_out` literal's dimensionality is exactly its leading `{` run
+
+**Claim.** For any value `array_out` writes, the number of `{` characters at
+the start of the literal — after an optional `[lb:ub]…=` prefix — is exactly
+the array's dimension count, and **no element can extend that run**. Three
+sub-claims, all from the same function:
+
+1. The output opens with exactly `ndim` braces.
+2. Any element whose text contains `{` is force-quoted, so an unquoted element
+   can never begin with one.
+3. An empty array is written `{}` whatever its dimensionality, so that literal
+   carries no dimension count at all — and it is emitted before the
+   lower-bound prefix is ever formatted, so `{}` never carries one.
+
+A fourth, from the header: `MAXDIM` is **6**, so a run longer than that did not
+come from `array_out`.
+
+**Proof.** `src/backend/utils/adt/arrayfuncs.c`, `array_out()`. The output
+loop is `APPENDCHAR('{')` once, then `for (i = j; i < ndim - 1; i++)
+APPENDCHAR('{')` with `j == 0` on the first iteration — `1 + (ndim - 1)`
+braces. The quoting test is `else if (ch == '{' || ch == '}' || ch == typdelim
+|| array_isspace(ch)) needquote = true`, applied to every character of every
+element. The empty case is `if (nitems == 0) { retval = pstrdup("{}");
+PG_RETURN_CSTRING(retval); }`, which returns before the `needdims` block that
+formats `[lb:ub]`. `MAXDIM` is `#define MAXDIM 6` in
+`src/include/utils/array.h`.
+
+**Scope limit.** This is a property of `array_out`'s *output*, which is what a
+dump contains. Array *input* syntax is far more permissive — whitespace
+between braces, unquoted elements containing braces are rejected rather than
+accepted, and so on — so nothing here licenses reading a hand-written literal.
+A file edited by hand can therefore carry a brace run this rule misreads;
+`MAXDIM` bounds how far a consumer should trust it.
+
+**Verified against:** v13.23 through v18.6 — the brace loop, the quoting test
+and the `{}` early return are byte-identical across all six; only
+`array_isspace` was renamed to `scanner_isspace` (v18), which does not change
+the character set. All four output shapes observed live on the local
+PostgreSQL 16 instance.
+
+**Relied on by:** `architecture.md`, "The array shape census" — it is why
+`crate::index::ArrayShape::observe` can read a value's dimensionality off the
+raw, still-COPY-escaped field with no array parser at all, and why `{}`
+constrains neither bound.
+
+**Re-verify:**
+
+```sh
+grep -n "for (i = j; i < ndim - 1; i++)" -A1 src/backend/utils/adt/arrayfuncs.c
+grep -n "ch == '{' || ch == '}' || ch == typdelim" -A1 src/backend/utils/adt/arrayfuncs.c
+grep -n 'retval = pstrdup("{}")' -B2 src/backend/utils/adt/arrayfuncs.c
+grep -n '#define MAXDIM' src/include/utils/array.h
+psql -X -q <<'SQL'
+copy (select '{{1,2},{3,4}}'::int[], '{"c{d}"}'::text[],
+             '{}'::int[], '[0:1]={7,8}'::int[]) to stdout;
+SQL
+```
+
+The four values must come back as `{{1,2},{3,4}}` (run 2), `{"c{d}"}` (run 1 —
+the brace inside the element is quoted, not structural), `{}` and
+`[0:1]={7,8}` (run 1, after the prefix).

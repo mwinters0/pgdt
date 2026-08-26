@@ -72,6 +72,47 @@ sudo nerdctl run --rm -m 512m --memory-swap 512m \
   sh -c 'time /pgdq info --source /dump.sql --dqcache none --verbose'
 ```
 
+## The array-shape census costs nothing on brace-free data
+
+The census walks every data row of every block a full scan maps
+([`architecture.md`](architecture.md), "The array shape census"), so it is a
+change to the scan hot path. Same 3.00 GiB `COPY` control as above, same
+container, the pre-census binary and the census binary alternating in one
+session so page-cache state is shared:
+
+| Run | Pre-census | With census |
+|---|---|---|
+| 1 (cold) | 5.89 s | 5.92 s |
+| 2 | 4.45 s | 4.31 s |
+| 3 (warm) | 3.18 s | 3.26 s |
+
+Max RSS ~41–47 MB either way. The pairs track each other as the cache warms
+and the differences (−3% to +2.5%) fall on both sides of zero, so the census
+is **free at this measurement's resolution**.
+
+**What this figure does and does not cover.** The control holds no `{` or `[`
+in any data row, so every row is rejected by the census's own pre-filter after
+one pass over its bytes, and no row is ever split into fields. That is
+deliberately the koji shape — koji's six array columns are entirely NULL — and
+it is the case worth knowing is free, since it is what a `pgdq parse` over a
+real dump mostly does. **The cost on array-bearing rows, where the pre-filter
+passes and every field is inspected, is not measured here**; it belongs with
+the array stress data (`roadmap-phase4-composite-decoding.md`, slice 4.6).
+
+Reproduce by building both binaries — the census one from the working tree,
+the other from the commit before it — and alternating:
+
+```sh
+cargo build --release --target x86_64-unknown-linux-musl -p pgdump_query-cli
+for i in 1 2 3; do for w in baseline census; do
+  /usr/bin/time -f "$w run$i %e s maxrss=%MkB" sudo nerdctl run --rm \
+    -m 512m --memory-swap 512m \
+    -v "$PWD/runs/pgdq-$w:/pgdq:ro" \
+    -v "/path/to/copy_control.sql:/dump.sql:ro" \
+    postgres:16-alpine /pgdq info --source /dump.sql --dqcache none
+done; done
+```
+
 **The large-object skip is the measurement that justifies it.** Completing a
 3GB region inside a 512MB limit, an order of magnitude faster per byte than
 the `INSERT` path walks the same kind of bytes, is the "skipped, not walked"

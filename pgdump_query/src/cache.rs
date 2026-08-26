@@ -51,7 +51,7 @@ use crate::{Error, Result};
 /// shape. [`CacheStatus::Incomplete`] is the worked example — it reinterprets
 /// `scanned_through` against a size already stored, changing nothing on
 /// disk.
-const FORMAT_VERSION: u32 = 10;
+const FORMAT_VERSION: u32 = 11;
 
 /// The dump file's size and modification time as observed when a cache was
 /// last saved — see the module docs.
@@ -193,7 +193,7 @@ pub async fn load_offline(path: &Path) -> Result<CacheStatus> {
 /// equal wherever a live one exists (a live-size mismatch returns `Absent`
 /// earlier in [`load`]), and `load_offline` has no live size to read at all.
 fn status_from_file(file: CacheFile, mtime_changed: bool) -> CacheStatus {
-    if file.index.scanned_through < file.identity.size {
+    if !file.index.is_complete(file.identity.size) {
         CacheStatus::Incomplete { index: file.index, mtime_changed, total_size: file.identity.size }
     } else {
         CacheStatus::Valid { index: file.index, mtime_changed }

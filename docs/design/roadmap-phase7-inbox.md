@@ -37,14 +37,20 @@ seam rule, and that should be a decision, not a discovery.
 
 ---
 
-## The mapping pass does no per-row work, and reads the target block twice
+## The mapping pass reads the target block twice, and does almost no per-row work
 
 **Fact.** Since 3.2.1.2.1, a query is two passes. The mapping pass walks bytes
-with `Event::Row(_) => {}` — it allocates no `SourceChunk`s, takes no
-zero-copy views, and parses no fields; all it needs from a block is the extent
-the `\.` terminator gives it. The row pass then re-reads the queried block's
-bytes to build batches. So a cold query reads the target block twice, and the
-first read is far cheaper per byte than the second.
+allocating no `SourceChunk`s, taking no zero-copy views, and building no
+batches; all it needs from a block is the extent the `\.` terminator gives it.
+The row pass then re-reads the queried block's bytes to build batches. So a
+cold query reads the target block twice, and the first read is far cheaper per
+byte than the second.
+
+**Amended by 4.5** (entry below): the mapping pass is no longer *entirely*
+per-row-free. A `ScanExtent::Full` query, and every `build_index`/`build_map`
+scan, now records the array-shape census from `Event::Row`. A cold
+`UntilTargetSettled` query — the default, and the one this entry is about —
+still does no per-row work at all.
 
 **Why Phase 7 cares.** [`roadmap-phase7-scan-performance.md`](roadmap-phase7-scan-performance.md)'s
 "Two workloads, two algorithms" splits structure discovery from row
@@ -140,3 +146,38 @@ complexity is worth it.
 **Origin.** Phase 4 grilling, 2026-08-25. Decision and its rationale:
 [`roadmap-phase4-composite-decoding.md`](roadmap-phase4-composite-decoding.md),
 "Nested elements copy".
+
+---
+
+## The mapping pass now does per-row work on a full scan, and its cost is only half measured
+
+**Fact.** Slice 4.5 put the array-shape census in `map::Builder::on_row`, fed
+from `Event::Row` by `build_index`, `build_map`, and `stream::map_forward`
+under `ScanExtent::Full`. Every data row of every block such a scan maps is now
+inspected. A row containing neither `{` nor `[` is rejected after one pass over
+its bytes and never split into fields; a row containing either is split by
+`copy::split_fields` and every field's first bytes examined.
+
+Measured on the 3.00 GiB `COPY` control, alternating pre-census and census
+binaries in one session: **free at the available resolution** (differences of
+−3% to +2.5%, falling on both sides of zero, while both tracked the warming
+page cache from 5.9 s to 3.2 s). But that control holds **no `{` or `[` in any
+data row**, so it measures the pre-filter and nothing else. The cost on
+array-bearing rows — where every field is inspected — is unmeasured;
+[`measurements.md`](measurements.md), "The array shape census costs nothing on
+brace-free data", says so explicitly.
+
+**Why Phase 7 cares.** The double-read entry above recorded that the mapping
+pass did no per-row work; that is no longer true for a full scan, and the phase's
+device-bound targets are set against a scan loop that has since grown a
+per-row stage. Two specific consequences: a parallel or reordered scan has to
+carry the census with whatever unit it splits the file into (it accumulates
+per block and is finalized at `CopyEnd`), and any decision to widen the census
+— per-path keying, or the per-row-group statistics `RowGroupStats` reserves —
+lands on the same per-row stage and should be measured against array-bearing
+data, which does not exist as a benchmark input until slice 4.6 generates it.
+
+**Origin.** Slice 4.5, 2026-08-26. See
+[`roadmap-phase4.5-census-recording-notes.md`](roadmap-phase4.5-census-recording-notes.md)
+and [`architecture.md`](architecture.md), "The array shape census".
+

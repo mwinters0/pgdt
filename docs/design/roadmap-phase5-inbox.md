@@ -57,3 +57,37 @@ belongs with typed predicates, not smeared across two phases.
 **Origin.** Phase 4 grilling, 2026-08-25. Decision and rationale:
 [`roadmap-phase4-composite-decoding.md`](roadmap-phase4-composite-decoding.md),
 "Predicates are unchanged"; register entry I20.
+
+---
+
+## Per-block, per-column recording during the scan exists, and it avoided the L1/L2 injection it looked like it needed
+
+**Fact.** Slice 4.5 added the array-shape census: `CopyBlock::array_shapes`, an
+`Option<Vec<ArrayShape>>` written per column during the scan by
+`map::Builder::on_row` and finalized at `CopyEnd`, persisted in the cache and
+believable only when the block was censused *and* `DumpIndex::is_complete`.
+
+It is the first per-block per-column fact gathered during the scan, and the
+`layering.md` problem it faced is the one `RowGroupStats` faces: L1 does the
+scanning and cannot know a column's type, which is L2's. The layering doc
+pre-answers this with rule 6 (inject the parse function downward). **The census
+did not need to.** I25 makes an array's dimensionality readable off the raw,
+still-COPY-escaped field — a leading brace run — so the recording stayed
+type-blind and entirely inside L1, and the *interpretation* (which columns are
+arrays, what a depth means) sits wholly in the consumer.
+
+**Why Phase 5 cares.** Per-row-group column statistics are the same shape of
+problem and reach for the same rule 6 answer, which `layering.md` already
+records as the intended one. Two things transfer. First, the cheaper option is
+worth checking first: a statistic that can be computed from the literal's
+lexical form alone needs no injection and no type knowledge, and stays in L1
+where the scan already is. Second, where injection genuinely is needed, the
+census is the worked example of what the *storage* side then looks like —
+per-block, `Option` to distinguish "not gathered" from "gathered, saw nothing",
+and a two-sided believability test, because a scan reads a block's bytes once
+and a partial earlier pass leaves blocks that can never be back-filled.
+
+**Origin.** Slice 4.5, 2026-08-26. See
+[`architecture.md`](architecture.md), "The array shape census", and
+[`roadmap-phase4.5-census-recording-notes.md`](roadmap-phase4.5-census-recording-notes.md).
+

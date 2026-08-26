@@ -19,7 +19,10 @@ pub use batch::{BatchOptions, ScanExtent, read_table, render_field};
 pub use copy::CopyHeader;
 pub use diagnostic::{Diagnostic, DiagnosticKind, Severity};
 pub use error::Error;
-pub use index::{CopyBlock, DumpIndex, RowGroupStats, SparseRowIndex, build_index, preamble_only};
+pub use index::{
+    ArrayShape, CopyBlock, DumpIndex, MAX_ARRAY_DIMS, RowGroupStats, SparseRowIndex, build_index,
+    preamble_only,
+};
 pub use io::{ByteRangeSource, LocalFileSource};
 pub use map::{
     DataBlock, InsertRun, LargeObjectRegion, Span, SpanBody, SpanText, TEXT_CAP, TilingIssue,

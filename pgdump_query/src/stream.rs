@@ -236,6 +236,12 @@ async fn map_forward<S: ByteRangeSource>(
         index.metadata.as_ref().and_then(|m| m.databases.first()).and_then(|db| db.name.clone())
     });
     let mut builder = crate::map::Builder::with_database(database);
+    // Only a scan that will reach EOF can produce an array-shape census
+    // anything may believe (`crate::index::CopyBlock::array_shapes`), so a
+    // cold query's mapping pass declines the per-row work outright.
+    if extent == ScanExtent::Full {
+        builder = builder.censusing();
+    }
 
     let mut scanner = CopyScanner::resume(seg_start, None);
     let mut read_pos = seg_start;
@@ -253,10 +259,12 @@ async fn map_forward<S: ByteRangeSource>(
         while let Some(event) = scanner.next_event(&buf, eof)? {
             match event {
                 Event::CopyStart(start) => builder.on_copy_start(start),
-                // Rows are not parsed here at all: this pass only needs the
-                // block's extent, which the scanner finds from the `\.`
-                // terminator. Row bytes become batches in the replay phase.
-                Event::Row(_) => {}
+                // This pass needs only the block's extent, which the
+                // scanner finds from the `\.` terminator — row bytes become
+                // batches in the replay phase. The one thing rows are read
+                // for here is the array-shape census, and only under
+                // `ScanExtent::Full`; `on_row` is a no-op otherwise.
+                Event::Row(row) => builder.on_row(row.raw),
                 Event::CopyEnd(end) => {
                     // `end_offset` is always a safe, resumable watermark —
                     // the scanner is back in its `Outside` state there — and
