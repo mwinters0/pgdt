@@ -467,7 +467,7 @@ independent of the types that instantiate it, and the split would put two
 modules where the rule that motivates it ("a module that seems to belong to two
 layers is two modules") is not actually triggered.
 
-The cache format goes **v9 → v10**. The census lives on `CopyBlock`, not in a
+The cache format bumps. The census lives on `CopyBlock`, not in a
 parallel map keyed by block — `DumpIndex`'s one-owner-per-fact rule, and the
 block is what the census is a property of.
 
@@ -524,12 +524,49 @@ rather than scope.
 | 4.2 | The nested literal codec: parameterized quoted-token scanner, three instantiations, decode **and** render, round-tripped against 4.1's literals. Pure L2, no Arrow |
 | 4.3 | `ColumnBuilder`'s `List`/`Struct` arms, unit-tested by constructing nested values directly. Nothing resolves to them yet |
 | 4.4 | Flip resolution: recursive mapping, built-in range subtypes, opaque-element refusal, the `ColumnResolution` surgery, the `(DataType, NestedPlan)` pair threaded through `ResolvedSchema` and `RowBatcher::new`, `render_field`'s deletion. Nested columns decode end-to-end on the optimistic path |
-| 4.4.1 | The presentation half: compact `info` rendering, `resolution_label`'s new arms, **the manual rewrite above** |
-| 4.5 | The shape census: cache v10, per-block per-column recording, the completeness rule, and **the manual's statement of both paths plus the planned representation knob** |
+| 4.4.1 | The presentation half: the resolved Arrow type in `pgdq info --verbose`, **the manual rewrite above** |
+| 4.5 | The shape census: a cache format bump, per-block per-column recording, the completeness rule, and **the manual's statement of both paths plus the planned representation knob** |
 | 4.6 | The array stress section in `generate_perf_data.py`, and the `measurements.md` ratio |
 
 **4.2 keeps decode and render together deliberately** — they are inverses, and
 landing decode alone leaves it with no oracle.
+
+**What 4.4.1 renders, precisely.** `pgdq info` prints each column's *declared
+PostgreSQL* type and, under `--verbose`, a `resolution_label` for columns that
+did not map. After the flip that leaves one thing unanswerable: a column that
+mapped does not say what it mapped *to*, so `payload text[]` reads the same
+whether it became `List<Utf8View>` or stayed a string. 4.4.1 adds the resolved
+Arrow type to the `--verbose` per-column line **for every column whose type is
+not `Utf8View`** — `Utf8View` being the no-information answer, and already
+explained by the resolution label wherever it is a refusal. So `--verbose`
+becomes a complete statement of the Arrow schema rather than a nested-column
+annex, and it picks up the scalar mappings that were never visible either
+(`numeric` → `Decimal128`, `timestamp` → `Timestamp(Microsecond)`).
+
+*Rejected:* printing only where the column's `NestedPlan` is not `Scalar`. It
+keeps every existing line's width untouched, which is its whole appeal, but
+"what does this column become in Arrow" is not a question only a nested schema
+raises — a `numeric` column's `Decimal128` precision is exactly as invisible
+and exactly as consequential to a caller building against the schema.
+
+**Rendering is arrow's own `Display`, with one substitution.** `arrow-schema`'s
+`Display` is terse and reversible (`List(Utf8View)`, `Struct("x": Int32, "y":
+Utf8View)`), and a composite's field names are the user's own, so it carries
+real information. The five-field range struct does not: it is identical for
+every range column in every dump, and renders as 137 characters saying so. It
+collapses to `Range<T>`, `T` being the bound type — the only part that varies —
+so an `int4range` column reads `Range<Int32>` and `int4range[]` reads
+`List(Range<Int32>)`. The manual states the struct's real layout once, which is
+what makes the elision lossless; that sentence is a 4.4.1 deliverable, not the
+census slice's.
+
+Detecting the substitution is the `NestedPlan`'s job, never the field names' —
+a user composite is free to declare five fields with exactly those names, and
+`RANGE_STRUCT_FIELDS`'s own doc comment already reserves dispatch to the plan.
+A built-in multirange and an array of the matching range render *identically*
+(`List(Range<Int32>)`), which is correct rather than a collision to fix: they
+are the same Arrow type, the plans differ, and the declared PostgreSQL type
+sits on the same line.
 
 **4.4.1 is a third level made at grilling rather than earned mid-slice**, which
 is off-label and deliberate: the seam was visible here, and the alternative —
@@ -571,7 +608,11 @@ piece that genuinely belongs to arrays alone, and it is already its own slice.
   *same* Arrow type and different plans, and each renders back to its own
   literal — the twelve-name distinction, asserted where it would otherwise be
   invisible.
-- The koji scan still reports identical block, row and byte counts.
+- The koji scan still reports identical block, row and byte counts — **run
+  once at phase wrap, not per slice**. Six identical count checks are one
+  check, and koji holds no non-scalar values at all, so its value here is
+  precisely that it exercises nothing this phase builds: an identity failure
+  means a slice touched the scanner by accident. Detached, per `CLAUDE.md`.
 - **A column resolving to a nested type never silently changes what a predicate
   matched** — the existing predicate tests run against the fixture's array
   columns both before and after 4.4 flips their Arrow type. This is the one

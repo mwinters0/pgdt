@@ -78,3 +78,33 @@ gaps" and
 **Contingent on.** Early stopping surviving as the default, and on no cheaper
 concatenation detector turning up — a prefix-visible marker would collapse the
 question entirely.
+
+---
+
+## Push mode has no non-test consumer left
+
+**Fact.** `batch::read_table`, the push-mode entry point, is a ~20-line drain
+over the pull-mode `stream::table_stream` — it forwards each batch to the
+callback and returns `(ResolvedSchema, Option<ResumeToken>)`. Since 4.4 moved
+`pgdq query` to pull mode (it needs the stream's `NestedPlan`s while
+rendering), nothing outside `pgdump_query/tests/` and
+`pgdump_query/benches/whole_file.rs` calls it. The shared scan loop is
+unaffected and still exercised by every CLI invocation; what has no
+non-test caller is the drain itself and the `ControlFlow::Break` →
+resume-token path.
+
+**Why Phase 6 cares.** Phase 6 is where a push consumer would appear or fail
+to: a DataFusion `TableProvider` pulls, and the Python binding's shape is
+undecided. So Phase 6 is the point at which push mode either acquires its
+first real caller or is deleted as an API surface kept alive by its own tests.
+Pre-1.0 there is no compatibility reason to keep it (`roadmap.md`, "Pre-1.0"),
+and no correctness reason either — anything it does, draining the stream does.
+Deciding this before the binding is designed avoids designing a binding
+*around* a function that should not have survived.
+
+**Origin.** Reviewing 4.4's unattended calls, 2026-08-26. See
+[`../status/history/2026-08-26.md`](../status/history/2026-08-26.md).
+
+**Contingent on.** `read_table` staying a thin drain — if it ever regains
+logic of its own, it is no longer free to delete, and the coverage question
+comes back with it.

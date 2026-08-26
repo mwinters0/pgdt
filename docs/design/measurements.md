@@ -91,6 +91,14 @@ HDD; run it detached per `CLAUDE.md`.
 | RSS | flat, ~9 MiB (untyped scan) |
 | `UnterminatedCopyBlock` | none |
 
+**The `.dqcache` a run leaves behind dies at the next cache-format bump**, and
+those are free and frequent pre-1.0 (`architecture.md`, "The cache"). Treat the
+koji cache as a byproduct of a scan run for another reason, never as an asset:
+the cache left by the 2026-08-25 run was already unreadable by the time 4.4
+landed. Nothing plans around keeping one alive — cache-only inspection of koji
+(`pgdq info --dqcache`) is available only between a scan and the next bump, and
+regaining it costs the full ~54-minute scan.
+
 **The regression check is byte-for-byte identity, not throughput**: every
 block's header/data/terminator/end offset must match the previous run. That
 identity over a change touching only what happens *between* blocks is what the

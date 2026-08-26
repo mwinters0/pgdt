@@ -1212,9 +1212,10 @@ in the relevant loop; `pg_dump.c` identical modulo line numbers), plus
 `t_composite.v_empty_comp`, whose DDL and `()` values are identical on all six.
 
 **Relied on by:** `roadmap-phase4-composite-decoding.md`, "A zero-field
-composite maps" — and, with it, the rule that a composite's field list is
-all-or-nothing, since "no fields parsed" and "no fields declared" have to stay
-distinguishable in the type definition when the literal cannot tell them apart.
+composite maps", and `architecture.md`, "Type resolution" (the all-or-nothing
+field list) — "no fields parsed" and "no fields declared" have to stay
+distinguishable in the type definition when the literal cannot tell them apart,
+which is why `TypeKind::Composite::fields` is an `Option`.
 
 **Re-verify:**
 

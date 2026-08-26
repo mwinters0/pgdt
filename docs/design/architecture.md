@@ -729,6 +729,21 @@ and relaxing the field-count check would decode field 3's text as field 2's
 type. The `CREATE TABLE` path keeps its `filter_map`; the asymmetry is
 deliberate.
 
+The field is `Option<Vec<…>>` because two states must stay apart and only one
+of them is reachable: `Some(vec![])` is a zero-field composite, a real type
+whose `()` values round-trip (I23), while `None` is a body the grammar could
+not read — which `pg_dump` does not emit, since `parse_column_fragment`
+returns `None` only for an empty fragment, a non-identifier name, or an empty
+type-word list. So the `None` arm is a representable state with no input
+behind it, and it deliberately earns **no `ColumnResolution` variant of its
+own**: the column reports the ordinary "no mapping for this build" reason,
+which is true but not specific, rather than a label naming a shape nobody has
+seen. *Rejected:* dropping the whole `TypeDef` when the body will not parse,
+which needs no unreachable state at all — but then the type vanishes from
+`pgdq info`'s census and the column's reason becomes indistinguishable from a
+type the dump never declared, which is strictly less information for a case
+that cannot occur.
+
 **An array whose element type is opaque stays a whole-column string**, and the
 separator stays hardcoded to `,`. The refusal tests the element **after domain
 unwrapping, not the declared string** (I22): a domain inherits its base type's
@@ -1086,9 +1101,12 @@ future work; it inverts control, not dependency (see `layering.md`).
 A **best-effort accelerator, never required for correctness**: a stale
 structural index costs a rescan and nothing else.
 
-Format version **v10**. Pre-1.0 each bump is free and nothing migrates; the
-`format_version` envelope exists so a stale cache is *detected* rather than
-misread.
+**The format-version integer is not tracked in any document.** Pre-1.0 a bump
+is free and nothing migrates, so the number carries no information a reader can
+act on; `cache.rs`'s `FORMAT_VERSION` is the only place it exists, and `git log
+-p` on that constant is its history. The envelope exists so a stale cache is
+*detected* rather than misread — the rule is to bump whenever a persisted field
+is added, removed or reshaped, and never to record which bump that was.
 
 **Reads and writes have deliberately opposite failure modes.** An unrecognised
 `format_version`/`container_kind`, or bytes that do not parse as a cache at

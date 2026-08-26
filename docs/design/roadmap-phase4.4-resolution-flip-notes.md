@@ -8,12 +8,12 @@ Arrow types and decode end to end on the optimistic path; `Deferred` and
 
 ## The three decisions this slice had to make that the spec did not settle
 
-**The cache format is now v10, so 4.5's census bump is v11.** The spec says
-the census takes the cache "v9 → v10"; this slice got there first, because
-`TypeKind::Composite`'s field list had to become an `Option` (below) and that
-reshapes a persisted field. The decision the spec records — the census bumps
-the format — is unchanged; only the integer moved. Nothing migrates pre-1.0,
-so a v9 cache written before this slice is simply treated as absent.
+**This slice already bumped the cache format, so 4.5's census is the bump
+after it.** `TypeKind::Composite`'s field list had to become an `Option`
+(below), which reshapes a persisted field. The decision the spec records — the
+census bumps the format — is unchanged, and any cache written before this slice
+is simply treated as absent. The version integer itself is deliberately not
+tracked anywhere but `cache.rs` (`architecture.md`, "The cache").
 
 **A zero-field composite needed two things the spec's "it already works"
 reading did not cover.** `decode_record("()")` reports *one NULL field* (I23 —
@@ -117,7 +117,7 @@ typed decoding landed, and doubly so now.
   the whole field text. With a census, `v_multidim` becomes `List<List<Int32>>`
   and `v_mixed_dim`/`v_lbound` become `Utf8View`, so that test is the one that
   has to change shape — deliberately, not incidentally.
-- The cache bump is **v11**, per the first section.
+- The census still bumps the cache format, per the first section.
 
 ## Verification
 
