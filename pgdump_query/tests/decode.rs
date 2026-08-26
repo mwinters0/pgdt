@@ -147,6 +147,16 @@ async fn nested_columns_round_trip_against_strings_mode() {
             // The two refusals: still text, and still identical text.
             "public.t_base_type",
             "public.t_delimiter",
+            // The multi-hop shapes: five that map (a domain over a
+            // composite, an array of that domain, a composite whose field is
+            // a composite, an array of a user range, a domain over a range)
+            // beside the third refusal, an array whose element type is itself
+            // an array (I26). Before that refusal existed this table was a
+            // `FieldDecode` on every row of `v_nested_array`, since the
+            // literal is one brace deep and the type it resolved to was two
+            // `List`s deep; the table round-tripping is what says the column
+            // now comes back as the text it always was.
+            "public.t_nested_array",
         ];
         if version >= 14 {
             tables.push("public.t_multirange");

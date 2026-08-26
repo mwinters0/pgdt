@@ -406,6 +406,9 @@ fn resolution_label(r: &ColumnResolution) -> String {
             "opaque element type — the array's element type is information-free in the dump"
                 .to_string()
         }
+        ColumnResolution::NestedArrayElement => {
+            "nested array element — the array's element type is itself an array".to_string()
+        }
         ColumnResolution::VaryingArrayShape => {
             "varying array shape — dimensionality differs between rows, or a value carries an explicit lower bound"
                 .to_string()

@@ -52,6 +52,12 @@ pub enum ColumnResolution {
     /// perfectly well understood; it is the element that is not, and the
     /// array's separator is the element type's (I22).
     OpaqueElementType,
+    /// An array column whose element type is itself an array, through any
+    /// chain of domains (I26). Held apart from [`Self::OpaqueElementType`]
+    /// because the label would lie: `integer[]` is not opaque, it is
+    /// understood and declined — opaque means *never improves*, this means
+    /// *yes, if anyone needs it*.
+    NestedArrayElement,
     /// An array column whose values do not share one Arrow list shape: the
     /// dimensionality differs between rows, or some value carries an
     /// `[lb:ub]=` lower-bound prefix. Both are properties of the *value*
@@ -209,14 +215,19 @@ fn shape_verdict(shape: ArrayShape) -> ShapeVerdict {
 /// columns: `NestedPlan` travels beside the `DataType`"). This is the only
 /// place after `resolve_declared_type` where either changes.
 ///
-/// Only a column the DDL resolved to a *one-dimensional* array is touched.
-/// The census is keyed by column and records the shape of the whole field, so
-/// it says nothing about an array nested inside a composite or inside another
-/// array's element type — and a column already resolved to `List<List<…>>`
-/// got there from a declared type (`integer[][]`, or an array of a domain
-/// over an array) whose values the census cannot distinguish from a plain
-/// 1-D array's. Leaving both on the optimistic path is what keeps this
-/// transform from misreading them.
+/// Only a column the DDL resolved to an array is touched. The census is keyed
+/// by column and records the shape of the whole field, so it says nothing
+/// about an array nested inside a composite or inside another array's element
+/// type; leaving those on the optimistic path is what keeps this transform
+/// from misreading them.
+///
+/// **The plan reaching here is always `Array(non-array)`.** The one declared
+/// shape that resolves to a nested `Array` — an array whose element type is
+/// itself an array, whose literal is one brace deep and whose census therefore
+/// reads `(1, 1)` (I26) — is refused at resolution
+/// ([`crate::pgtype::TypeOutcome::NestedArrayElement`]), so this function has
+/// no such plan to guard against and never needs to ask how the depth it is
+/// looking at was arrived at.
 fn retype_from_census(
     shape: ArrayShape,
     resolution: ColumnResolution,
@@ -224,10 +235,7 @@ fn retype_from_census(
 ) -> (ColumnResolution, (arrow::datatypes::DataType, NestedPlan)) {
     use arrow::datatypes::DataType;
 
-    let NestedPlan::Array(element_plan) = &pair.1 else { return (resolution, pair) };
-    if matches!(**element_plan, NestedPlan::Array(_)) {
-        return (resolution, pair);
-    }
+    let NestedPlan::Array(_) = &pair.1 else { return (resolution, pair) };
     match shape_verdict(shape) {
         ShapeVerdict::Keep => (resolution, pair),
         ShapeVerdict::Varying => {
@@ -298,6 +306,9 @@ pub fn resolve_columns(
                     TypeOutcome::Unknown => (ColumnResolution::UnknownType, string()),
                     TypeOutcome::OpaqueElementType => {
                         (ColumnResolution::OpaqueElementType, string())
+                    }
+                    TypeOutcome::NestedArrayElement => {
+                        (ColumnResolution::NestedArrayElement, string())
                     }
                     TypeOutcome::OpaqueBaseType => (ColumnResolution::OpaqueBaseType, string()),
                     TypeOutcome::EmptyEnum => (ColumnResolution::EmptyEnum, string()),
@@ -542,12 +553,16 @@ mod tests {
     }
 
     /// The census is type-blind and keyed by column, so it constrains exactly
-    /// one thing: a column the DDL resolved to a **one-dimensional** array.
-    /// A composite, a multirange (whose `List` is filled by
-    /// `multirange_out`, not `array_out`) and an already-nested array plan
-    /// all read the same census entry and must ignore it.
+    /// one thing: a column the DDL resolved to an array. A composite and a
+    /// multirange (whose `List` is filled by `multirange_out`, not
+    /// `array_out`) read the same census entry and must ignore it.
+    ///
+    /// The third column is what makes that list complete: a plan already
+    /// nested — the only shape whose census would have to be *disbelieved*
+    /// rather than merely ignored — cannot reach the transform at all, because
+    /// an array-typed element is refused at resolution (I26).
     #[test]
-    fn the_census_only_speaks_for_a_top_level_one_dimensional_array_column() {
+    fn the_census_only_speaks_for_a_column_the_ddl_resolved_to_an_array() {
         let types = vec![TypeDef {
             name: "public.point2d".to_string(),
             kind: TypeKind::Composite {
@@ -565,7 +580,14 @@ mod tests {
         let census = vec![shape(Some((2, 2)), true); 3];
         let resolved =
             resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Typed, &census);
-        assert_eq!(resolved.columns, vec![ColumnResolution::Mapped; 3]);
+        assert_eq!(
+            resolved.columns,
+            [
+                ColumnResolution::Mapped,
+                ColumnResolution::Mapped,
+                ColumnResolution::NestedArrayElement
+            ]
+        );
         let untouched =
             resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Typed, &[]);
         assert_eq!(resolved.schema, untouched.schema);

@@ -10,6 +10,14 @@
 
 CREATE TYPE public.mood AS ENUM ('sad', 'ok', 'happy', 'has space', 'has,comma', 'has''quote');
 
+-- An enum with no labels at all. Legal SQL, and the one CREATE TYPE form that
+-- carries no information a column could ever be decoded from: only SQL NULL
+-- fits such a column. It exists so the EmptyEnum resolution outcome has a real
+-- pg_dump value behind it (roadmap.md, "Expand the generated fixtures freely")
+-- -- pg_dump writes it `CREATE TYPE public.empty_enum AS ENUM (\n);`, an empty
+-- label list spread over two lines, which is also the grammar's empty-body case.
+CREATE TYPE public.empty_enum AS ENUM ();
+
 -- Domain over a domain, with a NOT NULL refinement on the outer one.
 CREATE DOMAIN public.base_domain AS integer;
 CREATE DOMAIN public.derived_domain AS public.base_domain NOT NULL;
@@ -166,13 +174,14 @@ INSERT INTO public.t_net VALUES
 CREATE TABLE public.t_enum_domain (
     id integer PRIMARY KEY,
     v_mood public.mood,
-    v_domain public.derived_domain
+    v_domain public.derived_domain,
+    v_empty_enum public.empty_enum
 );
 INSERT INTO public.t_enum_domain VALUES
-    (1, 'sad', 5),
-    (2, 'has space', 0),
-    (3, 'has,comma', -5),
-    (4, 'has''quote', 100);
+    (1, 'sad', 5, NULL),
+    (2, 'has space', 0, NULL),
+    (3, 'has,comma', -5, NULL),
+    (4, 'has''quote', 100, NULL);
 
 -- Every array column here is one-dimensional with lower bound 1, so the whole
 -- table decodes on the optimistic (no-census) array path; the shapes that
@@ -385,3 +394,59 @@ INSERT INTO public.t_multirange VALUES
     (2, '{}', '{}'),
     (3, NULL, NULL);
 \endif
+
+-- Nesting that goes through more than one hop. Two of these columns are a
+-- *refusal* we make at resolution; the other five work and were pinned by
+-- nothing until this table existed (roadmap.md, "Expand the generated
+-- fixtures freely; never infer what pg_dump writes").
+--
+-- v_nested_array is the shape whose literal depth and resolved type depth
+-- disagree (I26). `public.intarr[]` is an array whose *element* is an array,
+-- and array_out writes it ONE brace deep -- `{"{1,2}","{3}"}` -- because it
+-- force-quotes any element whose text contains `{` (I25). Its census entry is
+-- therefore (1, 1): correct, and the one place where reading it as an ordinary
+-- one-dimensional array is exactly the mistake. That is why this column is here
+-- and not on t_array_shape, which is read as "the shapes the census reports".
+-- v_arr_holder is the same shape reached through a composite field, where the
+-- refusal has to compose rather than be handled again.
+--
+-- Do not "fix" either into a plain array. There is no such value: pg_dump
+-- writes what array_out writes, and the point of the columns is that we
+-- decline the shape instead of mis-decoding it.
+CREATE DOMAIN public.intarr AS integer[];
+CREATE TYPE public.arr_holder AS (label text, arr public.intarr[]);
+
+-- The five that already worked. Each composes two mechanisms the recursion
+-- handles separately elsewhere, and "the recursion handles it" is exactly the
+-- reasoning that let the two columns above through.
+CREATE DOMAIN public.pointdom AS public.point2d;
+CREATE TYPE public.boxed_point AS (label text, pt public.point2d);
+CREATE DOMAIN public.rangedom AS public.myrange;
+
+CREATE TABLE public.t_nested_array (
+    id integer PRIMARY KEY,
+    v_nested_array public.intarr[],
+    v_arr_holder public.arr_holder,
+    v_pointdom public.pointdom,
+    v_pointdom_array public.pointdom[],
+    v_boxed_point public.boxed_point,
+    v_myrange_array public.myrange[],
+    v_rangedom public.rangedom
+);
+INSERT INTO public.t_nested_array VALUES
+    (1, ARRAY['{1,2}'::public.intarr, '{3}'::public.intarr],
+        ROW('L', ARRAY['{1,2}'::public.intarr])::public.arr_holder,
+        ROW(1, 'a,b"c')::public.point2d,
+        ARRAY[ROW(1, 'a,b"c')::public.point2d,
+              ROW(2, 'plain')::public.point2d]::public.pointdom[],
+        ROW('outer', ROW(3, 'x y')::public.point2d)::public.boxed_point,
+        ARRAY['[1.5,10.5)'::public.myrange, 'empty'::public.myrange],
+        '[2.5,3.5)'),
+    (2, '{"{}","{5,NULL}"}',
+        ROW('', NULL)::public.arr_holder,
+        ROW(NULL, '')::public.point2d,
+        ARRAY[NULL::public.point2d]::public.pointdom[],
+        ROW(NULL, NULL)::public.boxed_point,
+        ARRAY[NULL::public.myrange],
+        NULL),
+    (3, NULL, NULL, NULL, NULL, NULL, NULL, NULL);

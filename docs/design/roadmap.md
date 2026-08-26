@@ -99,14 +99,24 @@ on it. We have paid the second price more than once.
   composing the mapping rules. No such column exists in the fixtures, so six
   majors of round-trip tests passed over a column no value can fill; the real
   literal is one brace deep (I26), and finding that cost a slice (4.4.2).
-- The sweep that found it also found five shapes that work today and are
-  pinned by nothing at all — domain over composite, array of that, composite
-  inside composite, array of a user range, domain over a range.
+- The sweep that found it also found five shapes that worked and were pinned
+  by nothing at all — domain over composite, array of that, composite inside
+  composite, array of a user range, domain over a range. 4.4.2's
+  `t_nested_array` holds all five.
 
 The corollary is the part that is easy to skip: **a shape observed to work is
 not covered until a fixture holds it.** "The recursion handles it" is the
 reasoning that failed above, and it will keep failing, because the recursion is
 right about the type and says nothing about the bytes.
+
+**Half the rule is mechanical.**
+`tests/pgtype.rs::every_resolution_outcome_is_produced_by_a_real_fixture_column`
+requires each `ColumnResolution` variant to have a real fixture column behind
+it, and its exhaustive match makes a new variant a compile error until it is
+listed — so a new refusal cannot land without the `pg_dump` output that
+reaches it. The other half, a shape that resolves to an existing outcome and
+merely works, stays a judgement call; naming that limit beats a check implying
+coverage it does not have.
 
 The cost is real and bounded — regeneration needs Docker and the six
 PostgreSQL images (`CLAUDE.md`), and added columns widen literals other tests

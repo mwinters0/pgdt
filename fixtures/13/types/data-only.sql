@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict hBMQYbFcMirdtHmNtga62y41r7FB0VnRgXMRt68XlOfvy5Ss600BA3WeNFvpeah
+\restrict XhZqE9zn6PoZCQqfZDqXsH7fe1rSuH8iDHwTjYmuJkEaAQ9OmSXAbpJXrk8o9Rr
 
 -- Dumped from database version 13.23
 -- Dumped by pg_dump version 13.23
@@ -101,11 +101,11 @@ COPY public.t_delimiter (id, v_box_domain, v_box_domain_array) FROM stdin;
 -- Data for Name: t_enum_domain; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
-COPY public.t_enum_domain (id, v_mood, v_domain) FROM stdin;
-1	sad	5
-2	has space	0
-3	has,comma	-5
-4	has'quote	100
+COPY public.t_enum_domain (id, v_mood, v_domain, v_empty_enum) FROM stdin;
+1	sad	5	\N
+2	has space	0	\N
+3	has,comma	-5	\N
+4	has'quote	100	\N
 \.
 
 
@@ -157,6 +157,17 @@ COPY public.t_json (id, v_json, v_jsonb) FROM stdin;
 1	{"a":1,"b":[1,2,3]}	{"a": 1, "b": [1, 2, 3]}
 2	null	null
 3	\N	\N
+\.
+
+
+--
+-- Data for Name: t_nested_array; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_nested_array (id, v_nested_array, v_arr_holder, v_pointdom, v_pointdom_array, v_boxed_point, v_myrange_array, v_rangedom) FROM stdin;
+1	{"{1,2}","{3}"}	(L,"{""{1,2}""}")	(1,"a,b""c")	{"(1,\\"a,b\\"\\"c\\")","(2,plain)"}	(outer,"(3,""x y"")")	{"[1.5,10.5)",empty}	[2.5,3.5)
+2	{"{}","{5,NULL}"}	("",)	(,"")	{NULL}	(,)	{NULL}	\N
+3	\N	\N	\N	\N	\N	\N	\N
 \.
 
 
@@ -276,5 +287,5 @@ COPY public.t_uuid (id, v_uuid) FROM stdin;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict hBMQYbFcMirdtHmNtga62y41r7FB0VnRgXMRt68XlOfvy5Ss600BA3WeNFvpeah
+\unrestrict XhZqE9zn6PoZCQqfZDqXsH7fe1rSuH8iDHwTjYmuJkEaAQ9OmSXAbpJXrk8o9Rr
 

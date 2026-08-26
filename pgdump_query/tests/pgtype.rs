@@ -182,8 +182,37 @@ async fn every_column_family_resolves_as_the_mapping_table_says() {
 
         // Enum and domain-over-domain columns both resolve `Mapped` -- the
         // enum via `Dictionary`, the domain transitively through its base.
+        // A label-less enum is the one `CREATE TYPE ... AS ENUM` form with
+        // nothing to map to.
         let enum_domain_res = m("public.t_enum_domain");
-        assert!(enum_domain_res.iter().all(|r| *r == Mapped), "pg_dump {v}: {enum_domain_res:?}");
+        assert_eq!(
+            enum_domain_res,
+            [Mapped, Mapped, Mapped, ColumnResolution::EmptyEnum],
+            "pg_dump {v}: t_enum_domain"
+        );
+
+        // An array whose element type is itself an array, through a domain
+        // (I26): refused, and told apart from the opaque-element refusal
+        // above because `integer[]` is understood, not opaque. Every other
+        // column of this table is a shape that composes two mechanisms and
+        // maps -- including the composite whose `arr` *field* carries the
+        // refused type, which is a `Utf8View` field inside a mapped `Struct`
+        // rather than a refusal of the whole column.
+        let nested_res = m("public.t_nested_array");
+        assert_eq!(
+            nested_res,
+            [
+                Mapped,
+                ColumnResolution::NestedArrayElement,
+                Mapped,
+                Mapped,
+                Mapped,
+                Mapped,
+                Mapped,
+                Mapped
+            ],
+            "pg_dump {v}: t_nested_array"
+        );
     }
 }
 
@@ -376,4 +405,129 @@ async fn resolution_still_works_against_metadata_with_more_than_one_database() {
             );
         }
     }
+}
+
+/// Every real `pg_dump` output file the fixture generator produced — a
+/// private copy of `tests/map.rs`'s helper, since each `tests/*.rs` file is
+/// its own crate with no shared support module.
+fn all_fixtures() -> Vec<PathBuf> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures");
+    let mut out = Vec::new();
+    for version in std::fs::read_dir(&root).unwrap() {
+        let version = version.unwrap().path();
+        if !version.is_dir() {
+            continue;
+        }
+        for schema in std::fs::read_dir(&version).unwrap() {
+            let schema = schema.unwrap().path();
+            if !schema.is_dir() {
+                continue;
+            }
+            for entry in std::fs::read_dir(&schema).unwrap() {
+                let path = entry.unwrap().path();
+                if path.extension().is_some_and(|e| e == "sql") {
+                    out.push(path);
+                }
+            }
+        }
+    }
+    assert!(!out.is_empty(), "fixture discovery found nothing — did the tree move?");
+    out
+}
+
+/// One resolution outcome's name.
+///
+/// **The match is deliberately exhaustive, with no wildcard arm.** Adding a
+/// [`ColumnResolution`] variant stops this file compiling, which is what turns
+/// the check below from a habit into a rule the build enforces.
+fn outcome_name(resolution: &ColumnResolution) -> &'static str {
+    match resolution {
+        ColumnResolution::Mapped => "Mapped",
+        ColumnResolution::UnknownType => "UnknownType",
+        ColumnResolution::NotDeclared => "NotDeclared",
+        ColumnResolution::OpaqueElementType => "OpaqueElementType",
+        ColumnResolution::NestedArrayElement => "NestedArrayElement",
+        ColumnResolution::VaryingArrayShape => "VaryingArrayShape",
+        ColumnResolution::OpaqueBaseType => "OpaqueBaseType",
+        ColumnResolution::EmptyEnum => "EmptyEnum",
+    }
+}
+
+/// Every outcome that must have a fixture column behind it, in the order they
+/// are declared. Kept beside `outcome_name`, whose exhaustive match is what
+/// catches a variant missing from this list.
+const EVERY_OUTCOME: [ColumnResolution; 8] = [
+    ColumnResolution::Mapped,
+    ColumnResolution::UnknownType,
+    ColumnResolution::NotDeclared,
+    ColumnResolution::OpaqueElementType,
+    ColumnResolution::NestedArrayElement,
+    ColumnResolution::VaryingArrayShape,
+    ColumnResolution::OpaqueBaseType,
+    ColumnResolution::EmptyEnum,
+];
+
+/// **`roadmap.md`'s fixture rule, made mechanical.** "A shape observed to work
+/// is not covered until a fixture holds it" is a rule with nothing enforcing
+/// it, and the price of that has been paid twice — 4.1's reasoned-out array
+/// shapes and 4.4's composed `List<List<T>>` for `intarr[]`, each of which
+/// earned a follow-up slice once a real literal turned up. So: resolve every
+/// column of every `COPY` block of every generated fixture, and require each
+/// `ColumnResolution` variant to be produced by at least one of them.
+///
+/// The census is the block's own, so an outcome only the census can produce
+/// (`VaryingArrayShape`) is reachable here — this walk sees the same evidence
+/// `pgdq info` does on a fully scanned file.
+///
+/// **The check is partial and says so.** A shape that resolves to an outcome
+/// already covered and merely *works* still passes without a fixture; that
+/// half stays a judgement call, and naming the limit beats a check that
+/// implies coverage it does not have.
+///
+/// **An outcome no fixture *can* produce is left out of `EVERY_OUTCOME`, and
+/// that is the only legitimate exemption.** It applies to an outcome that is a
+/// property of how much of the file was read rather than of a declared type —
+/// `MetadataNotScanned` (`roadmap-phase9-partial-reporting.md`, 9.4) is the
+/// one coming, and every fixture here is scanned to EOF. `outcome_name`'s
+/// exhaustive match still forces the exemption to be written down.
+#[tokio::test]
+async fn every_resolution_outcome_is_produced_by_a_real_fixture_column() {
+    use std::collections::BTreeMap;
+
+    let mut witnesses: BTreeMap<&'static str, String> = BTreeMap::new();
+    for path in all_fixtures() {
+        let source = LocalFileSource::open(&path).unwrap();
+        let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+        for block in index.blocks() {
+            if block.header.columns.is_empty() {
+                continue;
+            }
+            let qualified = block.header.qualified_name();
+            let resolved = resolve_columns(
+                &qualified,
+                &block.header.columns,
+                index.metadata.as_ref(),
+                block.database.as_deref(),
+                SchemaMode::Typed,
+                &block.array_shapes,
+            );
+            for note in &resolved.notes {
+                witnesses
+                    .entry(outcome_name(&note.resolution))
+                    .or_insert_with(|| format!("{}: {qualified}.{}", path.display(), note.column));
+            }
+        }
+    }
+
+    let missing: Vec<&str> = EVERY_OUTCOME
+        .iter()
+        .map(outcome_name)
+        .filter(|name| !witnesses.contains_key(name))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "no fixture column produces {missing:?} — add one to scripts/fixture_schema_*.sql and \
+         regenerate, rather than exempting the outcome (docs/design/roadmap.md, \"Expand the \
+         generated fixtures freely\").\nCovered: {witnesses:#?}"
+    );
 }

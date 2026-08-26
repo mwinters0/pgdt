@@ -21,14 +21,14 @@ per-phase checklist here any more. How the system works is
 | DDL object inventory: TOC enrichment, referenced roles and tablespaces, object census | working |
 | Best-effort structural cache with source-identity checking and cache-only inspection | working |
 | CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, and cache-only `info` | working, text output shape provisional; `--json` carries no shape promise at all |
-| Arrays, composites, ranges, multiranges | typed and decoded end to end: `List<T>`, `Struct<…>`, the five-field range struct, `List<` range struct `>`, and `List<List<T>>` for a uniformly multi-dimensional array column. An array whose element type is opaque (`box`, a C base type, a shell type, through any chain of domains) stays a string, and so does an array column whose values disagree on shape |
+| Arrays, composites, ranges, multiranges | typed and decoded end to end: `List<T>`, `Struct<…>`, the five-field range struct, `List<` range struct `>`, and `List<List<T>>` for a uniformly multi-dimensional array column. Three shapes stay a string, each with its own resolution outcome: an array whose element type is opaque (`box`, a C base type, a shell type, through any chain of domains), an array whose element type is itself an array (I26), and an array column whose values disagree on shape |
 | Array shape census | recorded by every mapping pass (`CopyBlock::array_shapes`) and **consumed**: a query retypes its top-level array columns from the union over the blocks it will replay, before the first batch |
 | Predicate and projection pushdown; per-row-group statistics | not started — Phase 5 |
 | `object_store` I/O, Python bindings, DataFusion `TableProvider` | not started — Phase 6 |
 | Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-26 (4.5.1: the census is unconditional and resolution consumes it).
+Last updated: 2026-08-26 (4.4.2: an array-typed element is refused, and every resolution outcome has a fixture).
 
 ## Phase 4 progress
 
@@ -68,19 +68,15 @@ Specified in
       **two** ways a column of these types is still a string, not the spec's
       three; 4.5.1 added the third. Notes:
       [`../design/roadmap-phase4.4.1-presentation-notes.md`](../design/roadmap-phase4.4.1-presentation-notes.md)
-- [ ] **4.4.2** The array-of-array-typed-element refusal, earned from a defect
-      4.4 shipped: `x public.intarr[]` where `CREATE DOMAIN intarr AS
-      integer[]` types as `List<List<Int32>>` and no value can fill it (I26).
-      The same defect reaches a composite with a field of that type, and a
-      domain-over-domain chain. Fixture first — `types/default.sql` gains
-      `t_nested_array` on all six majors, carrying both faces plus the five
-      working-but-unpinned shapes the sweep found — then the
-      refusal and its `ColumnResolution::NestedArrayElement`, a `pgtype.rs`
-      unit test for the chain, the manual line, and the deletion of
-      `retype_from_census`'s now-unreachable guard. Plus the
-      resolution-outcome coverage test — every `ColumnResolution` variant must
-      be produced by at least one real fixture column — which is what makes
-      `roadmap.md`'s fixture rule mechanical. Lands before 4.6.
+- [x] **4.4.2** The array-of-array-typed-element refusal, earned from a defect
+      4.4 shipped (I26): the shape resolves `Utf8View` with
+      `ColumnResolution::NestedArrayElement`, `retype_from_census`'s guard is
+      gone, and the resolution-outcome coverage test now enforces
+      `roadmap.md`'s fixture rule. `types/default.sql` gained
+      `t_nested_array` (both faces of the refusal plus the five
+      working-but-unpinned shapes) and `t_enum_domain.v_empty_enum`, which the
+      coverage test needed and which produced I27. Notes:
+      [`../design/roadmap-phase4.4.2-nested-array-refusal-notes.md`](../design/roadmap-phase4.4.2-nested-array-refusal-notes.md)
 - [x] **4.5** The shape census, **recording half**: `ArrayShape` on every
       `CopyBlock`, recorded per column, and the cache format bump that
       persists it; `DumpIndex::is_complete`. Nothing consumed it — that is
@@ -128,30 +124,26 @@ Nothing has started; the phase runs after Phase 4 wraps.
 
 ## Known gaps
 
-- **An array column whose element type is itself an array does not decode at
-  all** — `x public.intarr[]` where `CREATE DOMAIN intarr AS integer[]` (I26).
-  It resolves to `List<List<Int32>>` from the DDL, correctly, but the value is
-  written one brace deep (`{"{1,2}","{3}"}`, elements force-quoted per I25)
-  and `batch::append_typed` reads a nested `List` chain as *dimensionality*
-  only, so every row is an `Error::FieldDecode`. `--schema-mode strings`
-  returns it verbatim. Present since 4.4's resolution flip, not introduced by
-  the census; found on 2026-08-26 while reviewing 4.5.1 against real `pg_dump`
-  output. **Not accepted, not yet scheduled**: the fix changes what
-  `NestedPlan::Array(Array(…))` means, so it needs a spec amendment and a
-  slice rather than an out-of-band patch. **Scheduled as 4.4.2**, before 4.6:
-  the shape is refused at resolution and comes back as text with its own
-  resolution label, the way `box[]` already does. Reasoning:
-  [`history/2026-08-26.md`](history/2026-08-26.md).
-
-- **An array nested inside a composite** — or inside another array's element
-  type — is still decided optimistically, so a multi-dimensional or
-  `[lb:ub]=`-decorated value there is a hard `Error::FieldDecode` naming the
-  column. Deliberate and permanent as things stand: the census is keyed by
-  column and has nowhere to record a shape at that depth, so scanning more of
-  the file cannot help. `--schema-mode strings`, which the message now names,
-  returns the literal verbatim. A *top-level* array column no longer reaches
-  this — 4.5.1 retypes it from the census on any query, cold or full. Keying
-  the census by path is a roadmap "Future" item and would be purely additive.
+- **An array nested inside a composite** is still decided optimistically, so a
+  multi-dimensional or `[lb:ub]=`-decorated value there is a hard
+  `Error::FieldDecode` naming the column. Deliberate and permanent as things
+  stand: the census is keyed by column and has nowhere to record a shape at
+  that depth, so scanning more of the file cannot help. `--schema-mode
+  strings`, which the message now names, returns the literal verbatim. A
+  *top-level* array column no longer reaches this — 4.5.1 retypes it from the
+  census on any query, cold or full — and an array whose *element type* is an
+  array no longer reaches it either, since 4.4.2 refuses that shape outright
+  (I26). Keying the census by path is a roadmap "Future" item and would be
+  purely additive.
+- **An array type this build declines to represent comes back as text with no
+  way to ask for more.** Two shapes are in that state: an array whose element
+  type is itself an array (`ColumnResolution::NestedArrayElement`) and an
+  array column whose values disagree on shape (`VaryingArrayShape`). Neither
+  is opaque — both are fully understood, and a representation that is lossless
+  for every array (dimensions, lower bounds and elements in one value) would
+  cover both. Accepted, not scheduled: it is a roadmap "Future" item, and
+  adding it later only ever touches columns these two refusals leave as
+  `Utf8View`, so it strictly widens coverage.
 - A query stops mapping once its target is settled, so a conflicting
   candidate **past** the stopping point is never seen and
   `Error::AmbiguousTable` is not raised for it — the query returns the
@@ -203,7 +195,25 @@ Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
 
-*Empty.* 4.5.1's two entries were reviewed on 2026-08-26. The
+- **`integer[][]` is now refused, where it used to resolve to
+  `List<List<Int32>>` and decode a 2-D literal.** It follows from the spec's
+  rule — its element is `integer[]`, which is an array — and `pg_dump` never
+  writes the spelling (I21), so no fixture and no real dump reaches it. It is
+  called out because it is the one behaviour this slice *narrowed* rather than
+  widened, and because it is what makes "no nested `Array` plan comes from the
+  DDL" a property of the code rather than of the dumps we happen to have,
+  which is what let `retype_from_census`'s guard go. Reversing it means
+  reinstating that guard.
+- **`t_enum_domain` gained `v_empty_enum`, which the slice's spec row does not
+  name.** The resolution-outcome coverage test cannot pass without it —
+  `EmptyEnum` was the only outcome no generated fixture reached — and the
+  alternative was exempting the outcome, which would have put a hole in the
+  check on the day it landed. `roadmap.md`'s "Expand the generated fixtures
+  freely" covers it. It also produced **I27**, a real ambiguity worth having
+  written down: a plain dump writes a label-less enum with the same empty body
+  `--binary-upgrade` writes for *every* enum.
+
+*4.5.1's two entries were reviewed on 2026-08-26.* The
 `MAX_ARRAY_DIMS` verdict **stands** — a run past `MAXDIM` is not evidence, so
 the column keeps its optimistic type and the row surfaces as a `FieldDecode`;
 the durable half is in [`../design/architecture.md`](../design/architecture.md),

@@ -1389,18 +1389,18 @@ composite *containing* an array — but there the outer literal is a record, not
 an array, so it reaches a different code path. This entry is about the
 array-of-array-typed-element case specifically.
 
-**Verified against:** PostgreSQL 16, live, with real `pg_dump` output. The
+**Verified against:** PostgreSQL 13.23, 14.24, 15.19, 16.15, 17.11 and 18.6,
+with real `pg_dump` output — `fixtures/*/types/default.sql`'s
+`public.t_nested_array.v_nested_array`, byte-identical on all six. The
 `array_out` half is I25, verified v13.23–v18.6 from source.
 
-**Relied on by:** `roadmap-phase4-composite-decoding.md`, "An array whose
-element type is itself an array is refused too" — this entry is the whole
-reason that shape cannot be typed as nested `List`s: the literal's depth and
-the column's resolved depth are independent, so one `NestedPlan::Array` chain
-would have to mean two different things. Until 4.4.2 lands it is also the shape
-behind `STATUS.md`'s known gap on such columns failing to decode, and the
-reason `resolve::retype_from_census` guards against retyping an
-already-nested `Array` plan — a guard that becomes unreachable, and is deleted,
-once the refusal is in.
+**Relied on by:** `architecture.md`, "Type resolution" — this entry is the
+whole reason the shape cannot be typed as nested `List`s: the literal's depth
+and the column's resolved depth are independent, so one `NestedPlan::Array`
+chain would have to mean two different things. The column therefore resolves
+to `Utf8View` with `ColumnResolution::NestedArrayElement`, which in turn is
+what lets `resolve::retype_from_census` assume every plan it sees is
+`Array(non-array)`.
 
 **Re-verify:**
 
@@ -1411,4 +1411,50 @@ CREATE TABLE t_nested_array (id int, x intarr[]);
 INSERT INTO t_nested_array VALUES (1, ARRAY['{1,2}'::intarr,'{3}'::intarr]);
 SQL
 pg_dump -d scratch | grep -A2 -e 'CREATE DOMAIN' -e '^COPY public.t_nested_array'
+```
+
+Equivalently, on all six routine majors at once: `cd scripts && uv run
+generate_fixtures.py --schema types`, then diff `public.t_nested_array`'s
+`COPY` block, which carries this exact value in every one.
+
+---
+
+## I27 — A label-less enum is written `AS ENUM (\n);`, the same body `--binary-upgrade` writes for *every* enum
+
+**Claim.** `CREATE TYPE x AS ENUM ()` is legal SQL, and a plain `pg_dump`
+writes it as `CREATE TYPE x AS ENUM (\n);` — an empty body, byte-identical to
+the body I6 says `--binary-upgrade` writes for an enum that *does* have
+labels. So an empty body means "this enum has no labels" only in a dump that
+is not `--binary-upgrade`; in one that is, the labels follow as `ALTER TYPE
+... ADD VALUE` and the empty body means nothing at all.
+
+**Proof.** `dumpEnumType()` in `pg_dump.c` opens the body unconditionally and
+gates the label loop on `if (!dopt->binary_upgrade)`; a type with no labels
+contributes no loop iterations, which is the same output the gate produces.
+There is no marker distinguishing the two cases in the `CREATE TYPE` statement
+itself — only the presence or absence of the `ALTER TYPE` lines that follow,
+and the `-- For binary upgrade` comments around them.
+
+**Scope limit.** About the enum body only. Everything about where the labels
+go under `--binary-upgrade` is I6.
+
+**Verified against:** PostgreSQL 13.23, 14.24, 15.19, 16.15, 17.11 and 18.6,
+with real `pg_dump` output — `scripts/fixture_schema_types.sql`'s
+`public.empty_enum` in `fixtures/*/types/default.sql` *and*
+`fixtures/*/types/binary-upgrade.sql`, beside `public.mood` in the same files,
+which is the pair that makes the ambiguity visible.
+
+**Relied on by:** `architecture.md` ("Type resolution", enums) — an enum whose
+label set is empty resolves to `ColumnResolution::EmptyEnum` rather than a
+`Dictionary`, and that conclusion is only sound because the label folding I6
+describes runs first. Reading the body alone would report every
+`--binary-upgrade` enum as empty.
+
+**Re-verify:**
+
+```sh
+psql -X -q -d scratch -c 'CREATE TYPE empty_enum AS ENUM ()' \
+  -c "CREATE TYPE mood AS ENUM ('sad','ok')"
+pg_dump -d scratch                    | grep -A3 'AS ENUM'
+pg_dump -d scratch --binary-upgrade   | grep -A3 'AS ENUM'
 ```

@@ -21,9 +21,10 @@ the lower-bound-prefix test in `shape_verdict`, not after. A census of
 `(1, 200)` is mixed by the plain reading and would otherwise degrade the
 column silently.
 
-**Only a plan of exactly `Array(non-array)` is retyped**, and the case it
-protects is **reachable, not hypothetical** — confirmed live on PostgreSQL 16
-while reviewing this slice:
+**Every plan the transform sees is `Array(non-array)`, and 4.4.2 is what
+makes that true.** 4.5.1 shipped a guard in `retype_from_census` refusing to
+retype an already-nested `Array` plan, because such a plan was reachable —
+confirmed live on PostgreSQL 16 while reviewing this slice:
 
 ```
 CREATE DOMAIN intarr AS int[];  CREATE TABLE tt (x intarr[]);
@@ -31,26 +32,17 @@ INSERT INTO tt VALUES (ARRAY['{1,2}'::intarr,'{3}'::intarr]);
 COPY tt TO STDOUT;   -->   {"{1,2}","{3}"}
 ```
 
-*(4.4.2 removes the need for this guard: the shape below is refused at
-resolution, after which no nested `Array` plan can reach the transform at all.
-Until then the guard is what keeps the census from making the column worse.)*
+The value is **one brace deep** because `array_out` force-quotes any element
+containing a `{` (I25), so the census reads `(1, 1)` — correct, and unusable:
+the census records the shape of a whole field and cannot tell an array of
+arrays from a plain 1-D array. Rebuilding to that depth would have collapsed
+the column to `List<Int32>` and failed on every row.
 
-PostgreSQL allows an array *of a domain over an array*, `resolve_declared_type`
-gives that column `List<List<Int32>>`, and the value is **one brace deep**
-because `array_out` force-quotes any element containing a `{` (I25). So its
-census reads `(1, 1)`, and an implementation that stripped every `Array` level
-and rebuilt to the census's depth would collapse the column to `List<Int32>`
-and then fail on every row of it. The census records
-the shape of a whole field, so it cannot distinguish an array of arrays —
-written `{"{1,2}","{3}"}`, one brace deep, because `array_out` force-quotes
-any element containing a `{` (I25) — from a plain 1-D array. A column already
-resolved to `List<List<…>>` therefore reads a census entry that says `(1, 1)`
-and must ignore it, or a declared `integer[][]`, or an array of a domain over
-an array, would be collapsed to a single list level. The guard is one match
-arm in `retype_from_census` and it is load-bearing;
-`the_census_only_speaks_for_a_top_level_one_dimensional_array_column` pins it
-alongside the composite and multirange cases, which the same guard excludes
-for their own reasons.
+4.4.2 refuses the shape at resolution instead (`NestedArrayElement`), which
+removes the reachable case rather than guarding it, and the guard went with
+it. What survives for a reader of the transform is the *reason* a census depth
+may be believed at all: the plan can only be one this transform built, never
+one the DDL produced.
 
 ## Non-obvious calls
 
@@ -120,14 +112,13 @@ shape.
 
 ## What a later slice inherits
 
-- **The manual states one path, where the spec's "What the manual must say"
-  still describes two.** The spec's manual bullets were written before the
-  2026-08-26 reversal that made the census unconditional and freed a streamed
-  schema from `is_complete`; after it, a query is on the same path whether the
-  file has been fully parsed or not, so "how to tell which path a given run is
-  on" has no answer to give a user. The spec's census section was rewritten
-  that day and its manual section was not. Flagged in `STATUS.md`, "Decisions
-  worth another look", rather than amended unattended.
+- **The manual states one path, and the spec now agrees.** Its manual bullets
+  were written before the 2026-08-26 reversal that made the census
+  unconditional and freed a streamed schema from `is_complete`; after it, a
+  query is on the same path whether the file has been fully parsed or not, so
+  "how to tell which path a given run is on" has no answer to give a user. The
+  spec's "What the manual must say" section was amended to match rather than
+  the manual being widened back ([`../status/history/2026-08-26.md`](../status/history/2026-08-26.md)).
 - **4.6's array stress data is now measuring a wider path.** Every mapping
   pass censuses, so the unmeasured cost — array-bearing rows, where the
   pre-filter passes and every field is split — now falls on a cold query too,

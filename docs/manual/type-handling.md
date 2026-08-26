@@ -129,7 +129,7 @@ A range bound is never SQL NULL, which is what lets a null `lower` mean
 "unbounded" without ambiguity — and `empty` is not redundant with the two
 flags, since `empty` and `(,)` are different ranges and neither has bounds.
 
-#### Three ways one of these columns is still a string
+#### Four ways one of these columns is still a string
 
 - **The array's element type is opaque.** `box[]`, an array of a C-level base
   or shell type, or an array of a domain over any of those. PostgreSQL lets an
@@ -141,6 +141,16 @@ flags, since `empty` and `(,)` are different ranges and neither has bounds.
   the elements it recovered would be opaque text anyway, so the whole value
   stays one string. `pgdq info --verbose` reports this as `opaque element
   type`.
+- **The array's element type is itself an array.** `CREATE DOMAIN intarr AS
+  integer[]` and a column of `intarr[]` is legal, and PostgreSQL writes such a
+  value one brace deep — `{"{1,2}","{3}"}`, each element an array literal in
+  its own right, quoted — rather than as a two-dimensional array. So the
+  literal's shape and the column's declared depth say different things, and we
+  decline the column rather than guess which. It comes back as text, and `pgdq
+  info --verbose` reports `nested array element`. Unlike an opaque element
+  type, nothing about this one is unknowable: it is a shape we have not chosen
+  to represent, and the lossless array representation planned in the next
+  bullet would cover it too.
 - **Its arrays do not all have the same shape.** PostgreSQL does not record an
   array's dimensionality in its type — `integer[]`, `integer[][]` and
   `integer[3]` are all written `integer[]` — so we read the column's actual

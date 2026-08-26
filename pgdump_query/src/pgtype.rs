@@ -40,6 +40,22 @@ pub enum TypeOutcome {
     /// anyway. Held apart from [`Self::OpaqueBaseType`] so `pgdq info` can
     /// say which of the two happened.
     OpaqueElementType,
+    /// An array whose element type is *itself* an array, through any chain of
+    /// domains — `CREATE DOMAIN d AS integer[]` and a column of `d[]`, the
+    /// only DDL shape that reaches a nested [`NestedPlan::Array`] in real
+    /// dump output (I26; `integer[][]` does not, per I21).
+    ///
+    /// Refused for the same reason as [`Self::OpaqueElementType`]: the
+    /// element's own literal grammar is not what the outer split assumes.
+    /// The value is written **one brace deep** — `{"{1,2}","{3}"}`, since
+    /// `array_out` force-quotes any element whose text contains `{` (I25) —
+    /// so the literal's leading brace run and the column's resolved `List`
+    /// depth are independent for this shape alone, and
+    /// `NestedPlan::Array(Array(…))` would have to mean both *one literal,
+    /// two dimensions* and *one literal whose elements are literals*. Held
+    /// apart from `OpaqueElementType` because the label would lie:
+    /// `integer[]` is not opaque, it is understood and declined.
+    NestedArrayElement,
     /// A C-level base type or a shell/undefined type — genuinely
     /// information-free, not merely unimplemented (see the phase doc's
     /// "`CREATE TYPE`: six emitted forms").
@@ -68,8 +84,12 @@ pub enum NestedPlan {
     #[default]
     Scalar,
     /// `array_out` → `List<child>`. Nested `Array`s are the multi-dimensional
-    /// case: the plan's depth is the dimensionality the column was resolved
-    /// at, and a value that disagrees is a decode failure.
+    /// case, and **only** that: the plan's depth is the dimensionality the
+    /// column was resolved at, and a value that disagrees is a decode
+    /// failure. The one declared shape whose literal would contradict that —
+    /// an array whose element type is an array (I26) — is refused at
+    /// resolution as [`TypeOutcome::NestedArrayElement`], so a nested `Array`
+    /// can only ever come from the shape census.
     Array(Box<NestedPlan>),
     /// `record_out` → `Struct<…>`, one plan per declared field, in
     /// declaration order.
@@ -312,23 +332,49 @@ fn range_bound(subtype: Option<&str>, types: &[TypeDef]) -> (DataType, Box<Neste
 /// its own; a user-defined base type sets its delimiter in DDL this build
 /// does not read, so `TypeKind::Base`/`Shell` are refused wholesale.
 fn element_is_opaque(element: &str, types: &[TypeDef]) -> bool {
-    let mut name = element.trim();
-    // A domain chain visits each `CREATE DOMAIN` at most once, so the type
-    // list's own length bounds the walk. `resolve_declared_type` recurses
-    // through domains unbounded on the grounds that PostgreSQL cannot create
-    // a cycle; the bound here costs nothing and keeps a hand-edited file from
-    // spinning rather than merely failing.
+    let terminal = domain_terminal(element, types);
+    terminal.eq_ignore_ascii_case("box")
+        || matches!(
+            types.iter().find(|t| t.name == terminal).map(|t| &t.kind),
+            Some(TypeKind::Base | TypeKind::Shell)
+        )
+}
+
+/// Whether an array of `element` must stay a whole-column string because its
+/// element type is *itself* an array, through any chain of domains (I26).
+///
+/// Runs on the terminal of the same walk `element_is_opaque` uses, for the
+/// same reason: `CREATE DOMAIN d AS integer[]` records the array-ness in the
+/// domain's base type, so `d[]` is spelled like any other array of a named
+/// type. See [`TypeOutcome::NestedArrayElement`] for why the shape is refused
+/// rather than typed as nested `List`s.
+fn element_is_array(element: &str, types: &[TypeDef]) -> bool {
+    domain_terminal(element, types).ends_with("[]")
+}
+
+/// Walk a chain of domains to the type name it bottoms out at — the declared
+/// spelling of the first non-domain it reaches, or of `name` itself when that
+/// is not a domain.
+///
+/// **Both element refusals test this terminal rather than the declared
+/// spelling** (I22, I26): a domain's own DDL records neither the `typdelim` it
+/// inherited nor the array-ness of its base, so the property that decides the
+/// refusal is only visible at the end of the walk.
+///
+/// A domain chain visits each `CREATE DOMAIN` at most once, so the type list's
+/// own length bounds it. `resolve_declared_type` recurses through domains
+/// unbounded on the grounds that PostgreSQL cannot create a cycle; the bound
+/// here costs nothing and keeps a hand-edited file from spinning rather than
+/// merely failing.
+fn domain_terminal<'a>(name: &'a str, types: &'a [TypeDef]) -> &'a str {
+    let mut name = name.trim();
     for _ in 0..=types.len() {
-        if name.eq_ignore_ascii_case("box") {
-            return true;
-        }
         match types.iter().find(|t| t.name == name).map(|t| &t.kind) {
             Some(TypeKind::Domain { base_type }) => name = base_type.trim(),
-            Some(TypeKind::Base | TypeKind::Shell) => return true,
-            _ => return false,
+            _ => break,
         }
     }
-    false
+    name
 }
 
 /// Map one declared type string — exactly as `pg_dump` wrote it, e.g. from
@@ -344,10 +390,15 @@ pub fn resolve_declared_type(declared: &str, types: &[TypeDef]) -> TypeOutcome {
     if let Some(element) = declared.strip_suffix("[]") {
         // The element resolves through this same function, so nesting
         // composes with no special case: `public.comp[]` is
-        // `List<Struct<…>>` and `integer[][]` (which `pg_dump` never writes,
-        // I21) would be `List<List<Int32>>`.
+        // `List<Struct<…>>`.
         if element_is_opaque(element, types) {
             return TypeOutcome::OpaqueElementType;
+        }
+        // …with one exception, and it is the reason no nested `Array` plan is
+        // reachable at all: an element that is itself an array is written one
+        // brace deep, so a `List<List<T>>` here could never be filled (I26).
+        if element_is_array(element, types) {
+            return TypeOutcome::NestedArrayElement;
         }
         let (data_type, plan) = resolve_nested(element, types);
         return TypeOutcome::Mapped(list_of(data_type), NestedPlan::Array(Box::new(plan)));
@@ -583,6 +634,69 @@ mod tests {
             resolve_declared_type("public.box_domain", &types),
             TypeOutcome::Unknown,
             "a domain resolves through to its base, which this build has no mapping for"
+        );
+    }
+
+    /// I26, and the transitive half the fixture deliberately does not carry:
+    /// a domain over a domain over an array produces a literal byte-identical
+    /// to the single-hop case, so there is no `pg_dump` output shape left to
+    /// predict and the walk is pinned here instead.
+    #[test]
+    fn an_array_over_an_array_typed_element_is_refused_through_any_chain_of_domains() {
+        let types = [
+            ty("public.intarr", TypeKind::Domain { base_type: "integer[]".to_string() }),
+            ty("public.intarr2", TypeKind::Domain { base_type: "public.intarr".to_string() }),
+            ty("public.intarr3", TypeKind::Domain { base_type: "public.intarr2".to_string() }),
+        ];
+        for declared in ["public.intarr[]", "public.intarr2[]", "public.intarr3[]", "integer[][]"] {
+            assert_eq!(
+                resolve_declared_type(declared, &types),
+                TypeOutcome::NestedArrayElement,
+                "{declared}"
+            );
+        }
+        // Only the outer array is refused. The domain itself is an ordinary
+        // `integer[]` column at every depth of the chain, and nothing about
+        // it changed: its literal is one brace deep and means one dimension.
+        for declared in ["public.intarr", "public.intarr2", "public.intarr3"] {
+            assert_eq!(
+                resolve_declared_type(declared, &types),
+                TypeOutcome::Mapped(
+                    list_of(DataType::Int32),
+                    NestedPlan::Array(Box::new(NestedPlan::Scalar))
+                ),
+                "{declared}"
+            );
+        }
+    }
+
+    /// The refusal composes into a composite for free: `resolve_nested` maps
+    /// every non-`Mapped` outcome to `Utf8View` *in that position*, so a field
+    /// of the refused type is one string field inside an otherwise typed
+    /// `Struct` — not a refusal of the whole column.
+    #[test]
+    fn a_composite_field_of_the_refused_array_type_is_a_string_field_only() {
+        let types = [
+            ty("public.intarr", TypeKind::Domain { base_type: "integer[]".to_string() }),
+            ty(
+                "public.arr_holder",
+                TypeKind::Composite {
+                    fields: Some(vec![
+                        ("label".to_string(), "text".to_string()),
+                        ("arr".to_string(), "public.intarr[]".to_string()),
+                    ]),
+                },
+            ),
+        ];
+        assert_eq!(
+            resolve_declared_type("public.arr_holder", &types),
+            TypeOutcome::Mapped(
+                DataType::Struct(Fields::from(vec![
+                    Field::new("label", DataType::Utf8View, true),
+                    Field::new("arr", DataType::Utf8View, true),
+                ])),
+                NestedPlan::Record(vec![NestedPlan::Scalar, NestedPlan::Scalar])
+            )
         );
     }
 

@@ -617,8 +617,7 @@ with no evidence passes `&[]`, which reads as "nothing constrained anything"
 and leaves every column optimistically typed; that is the same answer an
 all-default census gives, so the two never need telling apart.
 
-Per column, and only for a column the DDL resolved to a *one-dimensional*
-array:
+Per column, and only for a column the DDL resolved to an array:
 
 - uniform depth *d* → *d* nested `List` levels (`List<List<T>>` for `d = 2`);
 - **mixed dimensionality, or any `[lb:ub]=` prefix → `Utf8View`**, with
@@ -634,13 +633,18 @@ array:
   that behind a text column, and believing it would build a `List` nested as
   deep as the file asked for.
 
-**A composite, a multirange and an already-nested array plan are untouched**,
-though the type-blind census records entries for them. A multirange's `List`
-is filled by `multirange_out`, not `array_out`; and a column already resolved
-to `List<List<…>>` got there from a declared type (`integer[][]`, or an array
-of a domain over an array) whose values the census cannot distinguish from a
-plain 1-D array's — an array of arrays is written `{"{1,2}","{3}"}`, one
-brace deep.
+**A composite and a multirange are untouched**, though the type-blind census
+records entries for them: a multirange's `List` is filled by `multirange_out`,
+not `array_out`.
+
+**The plan reaching the transform is always `Array(non-array)`**, and that is
+a consequence of the refusal rather than a check here. The one declared shape
+that would resolve to a nested `Array` — an array whose element type is itself
+an array, whose literal is one brace deep and whose census therefore reads
+`(1, 1)`, correctly (I26) — never gets that far: [type
+resolution](#type-resolution) refuses it as `NestedArrayElement`. So the
+transform never has to ask how the depth it is looking at was arrived at, and
+a nested `Array` plan can only ever be one this transform built.
 
 **A streamed schema needs no completeness test.** `table_stream` finishes
 `map_forward`, then collects `matches` — every block bearing the target's
@@ -759,7 +763,7 @@ recursing through domains with **no cycle guard needed** (PostgreSQL cannot
 create a domain over a type that does not exist yet).
 
 `TypeOutcome` is `Mapped(DataType, NestedPlan)`, `Unknown`,
-`OpaqueElementType`, `OpaqueBaseType`, or `EmptyEnum`. The `Mapped` pair has
+`OpaqueElementType`, `NestedArrayElement`, `OpaqueBaseType`, or `EmptyEnum`. The `Mapped` pair has
 **one producer** — nothing outside `pgtype.rs` builds either half of a nested
 column's pairing, which is what keeps the two trees in agreement without a
 third structure enforcing it (see "Nested columns" below for what the plan is
@@ -817,6 +821,7 @@ almost every column in a real 75-table schema.
 | range (built-in or `AS RANGE`) | `Struct{lower: S, upper: S, lower_inclusive, upper_inclusive, empty}` | The fifth field is not redundant: `empty` and `(,)` both have absent bounds |
 | multirange | `List<` the range struct `>` | Same Arrow type as `S[]`-of-range, different literal — see `NestedPlan` |
 | an array whose element is opaque | `Utf8View` | `box`, `TypeKind::Base`, `TypeKind::Shell`, through any chain of domains — `ColumnResolution::OpaqueElementType`, below |
+| an array whose element is itself an array | `Utf8View` | `CREATE DOMAIN d AS T[]` and a column of `d[]`, through any chain of domains — the literal is one brace deep (I26), so its depth and the column's would disagree; `ColumnResolution::NestedArrayElement`, below |
 | an array column whose values disagree on shape | `Utf8View` | Mixed dimensionality or an `[lb:ub]=` prefix, read off [the census](#the-array-shape-census) — `ColumnResolution::VaryingArrayShape` |
 
 Microsecond precision throughout, because that is PostgreSQL's storage
@@ -904,6 +909,43 @@ character. *Rejected:* parsing `DELIMITER` out of `CREATE TYPE` into
 `TypeKind::Base`. It handles the trap instead of removing it, and buys a
 `List<Utf8View>` over values that are opaque by construction.
 
+**An array whose element type is itself an array stays a whole-column string
+too**, and it is the refusal that keeps `NestedPlan::Array` meaning one thing.
+`CREATE DOMAIN d AS integer[]` with a column of `d[]` is the only DDL shape
+that reaches a nested `Array` plan in real dump output (I26 — `integer[][]`
+does not, since PostgreSQL collapses it in the catalog and `pg_dump` writes
+`integer[]`, I21). Its value is written **one brace deep** —
+`{"{1,2}","{3}"}`, because `array_out` force-quotes any element whose text
+contains `{` (I25) — so the literal's leading brace run and the column's
+resolved `List` depth are independent for this shape alone, and
+`Array(Array(…))` would have to mean both *one literal, two dimensions* (what
+the census produces) and *one literal whose elements are literals*. That is
+the collision `NestedPlan` exists to prevent, one level down.
+
+The test runs on the same domain-walk terminal the opaque refusal uses
+(`domain_terminal`), for the same reason: a domain's own DDL records neither
+the delimiter it inherited nor the array-ness of its base.
+
+**The refusal composes into a composite for free**, and *removes* a subtlety
+rather than documenting one. A composite field of the refused type is a
+`Utf8View` field inside an otherwise typed `Struct` — the rule every unmapped
+leaf already follows — and with no nested `Array` plan reachable from the DDL,
+[the census's](#the-array-shape-census) transform has no such shape to guard
+against.
+
+*Rejected:* reusing `OpaqueElementType`. The mechanism matches — both refuse an
+array because the element's own literal grammar is not what the outer split
+assumes — but the label would lie: `integer[]` is not opaque, it is understood
+and declined. Opaque means *never improves*; this means *yes, if anyone needs
+it*. *Rejected:* splitting the plan variant into a dimensional `Array` beside
+an element-is-a-literal one, and teaching `append_typed` to recurse into
+`decode_array` per element with `render_field` inverting it. It is the
+complete answer and it is contained, but it buys `List<List<T>>` over a shape
+almost nobody declares by putting a second meaning into the one type whose
+whole purpose is keeping meanings apart, and it lands in `batch.rs`. It stays
+available and is strictly additive: it would only ever touch columns this
+refusal leaves as `Utf8View`.
+
 **Array dimensionality is not in the catalog** (I21). `integer[][]` and
 `integer[3]` both come back from `pg_dump` as plain `integer[]`, identical to a
 one-dimensional column — PostgreSQL arrays carry no fixed dimensionality in the
@@ -934,11 +976,13 @@ and making it a payload on `ColumnResolution::Mapped`, which expresses
 that enum by equality, to buy a coupling one producer already gives.
 
 `ColumnResolution` is `Mapped`, `UnknownType`, `NotDeclared`,
-`OpaqueElementType`, `VaryingArrayShape`, `OpaqueBaseType` or `EmptyEnum` —
-**the three ways a column of a container type can still be a string are told
-apart**, since "why is this column text" has more than one answer a reader
-will want: its element type is opaque, its arrays do not share one shape, or
-strings were asked for.
+`OpaqueElementType`, `NestedArrayElement`, `VaryingArrayShape`,
+`OpaqueBaseType` or `EmptyEnum` — **the ways a column of a container type can
+still be a string are told apart**, since "why is this column text" has more
+than one answer a reader will want: its element type is opaque, its element
+type is itself an array, its arrays do not share one shape, or strings were
+asked for. The first never improves; the second is a shape we decline to
+represent and could; the third is what the file holds.
 
 `resolve_columns` also takes the block's array-shape census, positional like
 the column list — see [The array shape census](#the-array-shape-census) for
@@ -1437,6 +1481,17 @@ a message naming one remedy would have been wrong half the time.
 decision that turns on the exact bytes `pg_dump` emits gets a fixture column;
 reasoning out what the output must be is what produced I22's, I23's and I26's
 late discoveries.
+
+**Half of that rule is enforced.** `tests/pgtype.rs`'s
+`every_resolution_outcome_is_produced_by_a_real_fixture_column` resolves every
+column of every `COPY` block of every fixture and requires each
+`ColumnResolution` variant to have at least one real column behind it — so a
+new refusal cannot land without the `pg_dump` output that reaches it, and its
+exhaustive match makes a new variant a compile error until it is listed. The
+other half — a shape that resolves to an outcome already covered and merely
+*works* — stays a judgement call, which is exactly the five multi-hop shapes
+`t_nested_array` collects. Naming that limit beats a check implying coverage
+it does not have.
 `fixtures/<version>/<schema>/<flag-set>.sql`, real `pg_dump` output across the
 six routine versions (13–18). **"Absent" in this tree always means
 "deliberately absent", never "not yet generated."**

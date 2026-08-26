@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict tHkR7EIJ54Rre3SxNJ4pjodf7jhIddScc4rOLCM8HbM0KaocsacWTFGffpN3Trd
+\restrict L35RlyigHF4EsmTquzcvWZWSkJu9Vtbbc58vH5NnUQyYKcO1ci3ofKH9bYGSVKa
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -18,6 +18,27 @@ SET check_function_bodies = false;
 SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
+
+--
+-- Name: intarr; Type: DOMAIN; Schema: public; Owner: postgres
+--
+
+CREATE DOMAIN public.intarr AS integer[];
+
+
+ALTER DOMAIN public.intarr OWNER TO postgres;
+
+--
+-- Name: arr_holder; Type: TYPE; Schema: public; Owner: postgres
+--
+
+CREATE TYPE public.arr_holder AS (
+	label text,
+	arr public.intarr[]
+);
+
+
+ALTER TYPE public.arr_holder OWNER TO postgres;
 
 --
 -- Name: base_domain; Type: DOMAIN; Schema: public; Owner: postgres
@@ -38,6 +59,30 @@ CREATE DOMAIN public.box_domain AS box;
 ALTER DOMAIN public.box_domain OWNER TO postgres;
 
 --
+-- Name: point2d; Type: TYPE; Schema: public; Owner: postgres
+--
+
+CREATE TYPE public.point2d AS (
+	x integer,
+	y text
+);
+
+
+ALTER TYPE public.point2d OWNER TO postgres;
+
+--
+-- Name: boxed_point; Type: TYPE; Schema: public; Owner: postgres
+--
+
+CREATE TYPE public.boxed_point AS (
+	label text,
+	pt public.point2d
+);
+
+
+ALTER TYPE public.boxed_point OWNER TO postgres;
+
+--
 -- Name: derived_domain; Type: DOMAIN; Schema: public; Owner: postgres
 --
 
@@ -55,6 +100,16 @@ CREATE TYPE public.empty_comp AS (
 
 
 ALTER TYPE public.empty_comp OWNER TO postgres;
+
+--
+-- Name: empty_enum; Type: TYPE; Schema: public; Owner: postgres
+--
+
+CREATE TYPE public.empty_enum AS ENUM (
+);
+
+
+ALTER TYPE public.empty_enum OWNER TO postgres;
 
 --
 -- Name: mood; Type: TYPE; Schema: public; Owner: postgres
@@ -129,16 +184,22 @@ CREATE TYPE public.myrange AS RANGE (
 ALTER TYPE public.myrange OWNER TO postgres;
 
 --
--- Name: point2d; Type: TYPE; Schema: public; Owner: postgres
+-- Name: pointdom; Type: DOMAIN; Schema: public; Owner: postgres
 --
 
-CREATE TYPE public.point2d AS (
-	x integer,
-	y text
-);
+CREATE DOMAIN public.pointdom AS public.point2d;
 
 
-ALTER TYPE public.point2d OWNER TO postgres;
+ALTER DOMAIN public.pointdom OWNER TO postgres;
+
+--
+-- Name: rangedom; Type: DOMAIN; Schema: public; Owner: postgres
+--
+
+CREATE DOMAIN public.rangedom AS public.myrange;
+
+
+ALTER DOMAIN public.rangedom OWNER TO postgres;
 
 --
 -- Name: shellonly; Type: TYPE; Schema: public; Owner: postgres
@@ -280,7 +341,8 @@ ALTER TABLE public.t_delimiter OWNER TO postgres;
 CREATE TABLE public.t_enum_domain (
     id integer NOT NULL,
     v_mood public.mood,
-    v_domain public.derived_domain
+    v_domain public.derived_domain,
+    v_empty_enum public.empty_enum
 );
 
 
@@ -350,6 +412,24 @@ CREATE TABLE public.t_multirange (
 
 
 ALTER TABLE public.t_multirange OWNER TO postgres;
+
+--
+-- Name: t_nested_array; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.t_nested_array (
+    id integer NOT NULL,
+    v_nested_array public.intarr[],
+    v_arr_holder public.arr_holder,
+    v_pointdom public.pointdom,
+    v_pointdom_array public.pointdom[],
+    v_boxed_point public.boxed_point,
+    v_myrange_array public.myrange[],
+    v_rangedom public.rangedom
+);
+
+
+ALTER TABLE public.t_nested_array OWNER TO postgres;
 
 --
 -- Name: t_net; Type: TABLE; Schema: public; Owner: postgres
@@ -552,11 +632,11 @@ COPY public.t_delimiter (id, v_box_domain, v_box_domain_array) FROM stdin;
 -- Data for Name: t_enum_domain; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
-COPY public.t_enum_domain (id, v_mood, v_domain) FROM stdin;
-1	sad	5
-2	has space	0
-3	has,comma	-5
-4	has'quote	100
+COPY public.t_enum_domain (id, v_mood, v_domain, v_empty_enum) FROM stdin;
+1	sad	5	\N
+2	has space	0	\N
+3	has,comma	-5	\N
+4	has'quote	100	\N
 \.
 
 
@@ -619,6 +699,17 @@ COPY public.t_multirange (id, v_int4multirange, v_myrange_multi) FROM stdin;
 1	{[1,10)}	{[1.5,10.5)}
 2	{}	{}
 3	\N	\N
+\.
+
+
+--
+-- Data for Name: t_nested_array; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_nested_array (id, v_nested_array, v_arr_holder, v_pointdom, v_pointdom_array, v_boxed_point, v_myrange_array, v_rangedom) FROM stdin;
+1	{"{1,2}","{3}"}	(L,"{""{1,2}""}")	(1,"a,b""c")	{"(1,\\"a,b\\"\\"c\\")","(2,plain)"}	(outer,"(3,""x y"")")	{"[1.5,10.5)",empty}	[2.5,3.5)
+2	{"{}","{5,NULL}"}	("",)	(,"")	{NULL}	(,)	{NULL}	\N
+3	\N	\N	\N	\N	\N	\N	\N
 \.
 
 
@@ -839,6 +930,14 @@ ALTER TABLE ONLY public.t_multirange
 
 
 --
+-- Name: t_nested_array t_nested_array_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.t_nested_array
+    ADD CONSTRAINT t_nested_array_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: t_net t_net_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -914,5 +1013,5 @@ ALTER TABLE ONLY public.t_uuid
 -- PostgreSQL database dump complete
 --
 
-\unrestrict tHkR7EIJ54Rre3SxNJ4pjodf7jhIddScc4rOLCM8HbM0KaocsacWTFGffpN3Trd
+\unrestrict L35RlyigHF4EsmTquzcvWZWSkJu9Vtbbc58vH5NnUQyYKcO1ci3ofKH9bYGSVKa
 
