@@ -1310,7 +1310,9 @@ braces. The quoting test is `else if (ch == '{' || ch == '}' || ch == typdelim
 element. The empty case is `if (nitems == 0) { retval = pstrdup("{}");
 PG_RETURN_CSTRING(retval); }`, which returns before the `needdims` block that
 formats `[lb:ub]`. `MAXDIM` is `#define MAXDIM 6` in
-`src/include/utils/array.h`.
+`src/include/utils/array.h` on v14+ and in `src/include/c.h` on v13 — the
+same value, a moved `#define`, which is why the re-verification below greps
+both.
 
 **Scope limit.** This is a property of `array_out`'s *output*, which is what a
 dump contains. Array *input* syntax is far more permissive — whitespace
@@ -1336,7 +1338,7 @@ constrains neither bound.
 grep -n "for (i = j; i < ndim - 1; i++)" -A1 src/backend/utils/adt/arrayfuncs.c
 grep -n "ch == '{' || ch == '}' || ch == typdelim" -A1 src/backend/utils/adt/arrayfuncs.c
 grep -n 'retval = pstrdup("{}")' -B2 src/backend/utils/adt/arrayfuncs.c
-grep -n '#define MAXDIM' src/include/utils/array.h
+grep -rn '#define MAXDIM' src/include/utils/array.h src/include/c.h
 psql -X -q <<'SQL'
 copy (select '{{1,2},{3,4}}'::int[], '{"c{d}"}'::text[],
              '{}'::int[], '[0:1]={7,8}'::int[]) to stdout;
@@ -1346,3 +1348,67 @@ SQL
 The four values must come back as `{{1,2},{3,4}}` (run 2), `{"c{d}"}` (run 1 —
 the brace inside the element is quoted, not structural), `{}` and
 `[0:1]={7,8}` (run 1, after the prefix).
+
+---
+
+## I26 — An array of a domain over an array is legal, and its literal is one brace deep
+
+**Claim.** PostgreSQL accepts `CREATE DOMAIN d AS T[]` followed by a column of
+type `d[]`, and `pg_dump` writes that column's declared type as `d[]` with the
+domain declared separately as `CREATE DOMAIN d AS T[]`. The **value** of such a
+column is a one-dimensional `array_out` literal whose elements are themselves
+array literals, force-quoted and backslash-escaped one layer — `{"{1,2}","{3}"}`
+— **not** a two-dimensional literal.
+
+So its *leading brace run is 1* while the type it resolves to is two `List`
+levels deep. Literal depth and resolved Arrow depth are independent here, which
+is what makes this the one DDL shape that reaches a nested
+`NestedPlan::Array(Array(…))` in a dump `pg_dump` actually wrote. (`integer[][]`
+does not: PostgreSQL collapses it to `integer[]` in the catalog and `pg_dump`
+writes `integer[]`, per I21.)
+
+**Proof.** Observed live on PostgreSQL 16 (`pg_dump` 16.x), end to end:
+
+```
+CREATE DOMAIN public.intarr AS integer[];
+CREATE TABLE public.t_nested_array (id integer, x public.intarr[]);
+
+COPY public.t_nested_array (id, x) FROM stdin;
+1	{"{1,2}","{3}"}
+\.
+```
+
+The one-brace-deep shape is not an accident of this example: it follows from
+I25, whose force-quote test quotes any element whose text contains `{`, so an
+element that is itself an array literal is always quoted and can never extend
+the outer run.
+
+**Scope limit.** The chain may be longer (a domain over a domain over an
+array), and the same shape arises for an array whose element type is a
+composite *containing* an array — but there the outer literal is a record, not
+an array, so it reaches a different code path. This entry is about the
+array-of-array-typed-element case specifically.
+
+**Verified against:** PostgreSQL 16, live, with real `pg_dump` output. The
+`array_out` half is I25, verified v13.23–v18.6 from source.
+
+**Relied on by:** `roadmap-phase4-composite-decoding.md`, "An array whose
+element type is itself an array is refused too" — this entry is the whole
+reason that shape cannot be typed as nested `List`s: the literal's depth and
+the column's resolved depth are independent, so one `NestedPlan::Array` chain
+would have to mean two different things. Until 4.4.2 lands it is also the shape
+behind `STATUS.md`'s known gap on such columns failing to decode, and the
+reason `resolve::retype_from_census` guards against retyping an
+already-nested `Array` plan — a guard that becomes unreachable, and is deleted,
+once the refusal is in.
+
+**Re-verify:**
+
+```sh
+psql -X -q -d scratch <<'SQL'
+CREATE DOMAIN intarr AS int[];
+CREATE TABLE t_nested_array (id int, x intarr[]);
+INSERT INTO t_nested_array VALUES (1, ARRAY['{1,2}'::intarr,'{3}'::intarr]);
+SQL
+pg_dump -d scratch | grep -A2 -e 'CREATE DOMAIN' -e '^COPY public.t_nested_array'
+```

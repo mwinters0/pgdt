@@ -21,7 +21,26 @@ the lower-bound-prefix test in `shape_verdict`, not after. A census of
 `(1, 200)` is mixed by the plain reading and would otherwise degrade the
 column silently.
 
-**Only a plan of exactly `Array(non-array)` is retyped.** The census records
+**Only a plan of exactly `Array(non-array)` is retyped**, and the case it
+protects is **reachable, not hypothetical** — confirmed live on PostgreSQL 16
+while reviewing this slice:
+
+```
+CREATE DOMAIN intarr AS int[];  CREATE TABLE tt (x intarr[]);
+INSERT INTO tt VALUES (ARRAY['{1,2}'::intarr,'{3}'::intarr]);
+COPY tt TO STDOUT;   -->   {"{1,2}","{3}"}
+```
+
+*(4.4.2 removes the need for this guard: the shape below is refused at
+resolution, after which no nested `Array` plan can reach the transform at all.
+Until then the guard is what keeps the census from making the column worse.)*
+
+PostgreSQL allows an array *of a domain over an array*, `resolve_declared_type`
+gives that column `List<List<Int32>>`, and the value is **one brace deep**
+because `array_out` force-quotes any element containing a `{` (I25). So its
+census reads `(1, 1)`, and an implementation that stripped every `Array` level
+and rebuilt to the census's depth would collapse the column to `List<Int32>`
+and then fail on every row of it. The census records
 the shape of a whole field, so it cannot distinguish an array of arrays —
 written `{"{1,2}","{3}"}`, one brace deep, because `array_out` force-quotes
 any element containing a `{` (I25) — from a plain 1-D array. A column already
@@ -50,6 +69,12 @@ with no evidence passes `&[]`.
 mean "nothing constrained anything, keep the optimistic type". Nothing needs
 to tell them apart, which is what the `Option`'s removal bought: there is no
 longer a state where a consumer must ask whether a block was censused at all.
+*Reviewed 2026-08-26 and kept.* The two callers' intents do differ —
+`print_index` passes `&[]` to mean "I may not believe this index", a query
+passes a census that happens to constrain nothing — but the correct answer does
+not, and an `Option<&[ArrayShape]>` that distinguishes states nothing acts on
+is the `Option` just deleted, one layer up. Caller intent belongs in
+`print_index`'s `complete` flag, where it already is.
 
 **The union is computed once per stream, not per block.** `table_stream`
 collects `matches`, folds `index::union_census` over it, and passes one

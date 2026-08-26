@@ -36,7 +36,7 @@ so nesting composes without a special case:
 
 | Declared | Arrow |
 |---|---|
-| `T[]` | `List<resolve(T)>` |
+| `T[]` | `List<resolve(T)>` — unless `T` resolves to an array or an opaque type, which are refused (below) |
 | composite (`CREATE TYPE … AS (…)`) | `Struct<` one field per declared field, in declaration order `>` |
 | range (built-in or `CREATE TYPE … AS RANGE`) | `Struct{lower: S, upper: S, lower_inclusive: Boolean, upper_inclusive: Boolean, empty: Boolean}` |
 | multirange | `List<` the range struct `>` |
@@ -271,6 +271,64 @@ on the right character.
 `TypeKind::Base`. It handles the trap instead of removing it, and buys a
 `List<Utf8View>` over values that are opaque by construction.
 
+## An array whose element type is itself an array is refused too
+
+*Added 2026-08-26, after 4.4 shipped this shape broken; reasoning in
+[`../status/history/2026-08-26.md`](../status/history/2026-08-26.md).*
+
+`CREATE DOMAIN d AS integer[]` followed by a column of type `d[]` is legal, and
+`pg_dump` writes exactly that (I26). It is the **only** DDL shape that reaches
+a nested `Array` plan in real dump output — `integer[][]` does not, because
+PostgreSQL collapses it in the catalog and `pg_dump` writes `integer[]` (I21).
+
+The value is written **one brace deep** — `{"{1,2}","{3}"}` — because
+`array_out` force-quotes any element whose text contains `{` (I25). So a
+literal's leading brace run and its column's resolved `List` depth are
+independent for this shape alone, and `NestedPlan::Array(Array(…))` acquires a
+second meaning: *one literal whose elements are themselves literals*, beside
+the *one literal, two dimensions* meaning the census produces. That is the
+collision `NestedPlan` exists to prevent, one level down.
+
+**So an array whose element type — resolved through any chain of domains — is
+itself an array stays `Utf8View`,** with its own `ColumnResolution`
+(`NestedArrayElement`) beside `OpaqueElementType`. The precedent for the
+refusal is exact: that one exists because the element's own literal grammar is
+not what the outer split assumes, which is this case in a different disguise.
+
+*Rejected:* reusing `OpaqueElementType` rather than adding a variant. The
+mechanism matches but the label would lie — `integer[]` is not opaque, it is
+perfectly well understood and we are declining to represent it. That is the
+same distinction 4.4 drew when it split `OpaqueElementType` out of
+`OpaqueBaseType`, and it is the one a reader acts on: opaque means *never*
+improves, this means *yes, if anyone needs it*, since the split-plan option
+above stays open and additive.
+
+**The refusal composes into a composite for free.** A composite *field* of this
+type fails today for the same reason (`(L,"{""{1,2}""}")` — confirmed against
+real `pg_dump` output, `../status/history/2026-08-26.md`), and needs no
+separate handling: `resolve_nested` maps any non-`Mapped` outcome to `Utf8View`
+in that position, which is the rule "Type mapping" already states for every
+leaf that does not map. Producing the outcome in `resolve_declared_type` is the
+whole change.
+
+**The test belongs beside `element_is_opaque`**, which already walks domains
+transitively — a domain over a domain over an array reaches the same shape and
+must be refused too.
+
+The refusal also *removes* a subtlety rather than documenting one. With no
+nested `Array` plan reachable, the census's transform has no shape to guard
+against: `resolve::retype_from_census`'s "only a plan of exactly
+`Array(non-array)`" test exists solely for this case and goes with it.
+
+*Rejected:* splitting the plan variant — a dimensional `Array` beside an
+element-is-a-literal one — and teaching `append_typed` to recurse into
+`decode_array` per element, with `render_field` inverting it. It is the
+complete answer and it is contained, but it buys `List<List<T>>` over a shape
+almost nobody declares by putting a second meaning into the one type whose
+whole purpose is keeping meanings apart, and it lands in `batch.rs`, the
+already-tested core path. It stays available: adding it later only ever touches
+columns this refusal leaves as `Utf8View`, so it strictly widens coverage.
+
 ## What the census stores, and when it may be believed
 
 Per `CopyBlock`, per column: the **minimum and maximum** dimension count seen,
@@ -422,7 +480,26 @@ duplicate the generator plumbing to hold ten rows.
   disguise (I22). It is the one fixture value whose *separator* is not `,`, and
   without it the refusal above has no test that distinguishes it from the
   `mybase[]` case it is easily confused with;
-- a **zero-field composite** and its `()` value.
+- a **zero-field composite** and its `()` value;
+- **with 4.4.2**, `t_nested_array`: a column of `intarr[]` (an array over a
+  domain over an array, I26) *and* a composite with a field of that type — the
+  two faces of the same refusal. It is deliberately **not** a column of
+  `t_array_shape`: that table is the census's fixture and is read as "these are
+  the shapes the census reports", and this column's census entry is `(1, 1)`,
+  correct but the one place where reading it as an ordinary 1-D array is wrong.
+  The domain-over-domain chain earns **no** fixture column — the literal it
+  produces is identical, so there is no `pg_dump` output shape left to predict;
+  `pgtype.rs` pins the transitive walk as a unit test instead.
+
+  **The same table also picks up the five shapes that already work and are
+  pinned by nothing** — a domain over a composite, an array of that, a
+  composite whose field is a composite, an array of a user range, and a domain
+  over a range. All five were observed to round-trip during the sweep that
+  found the defect (`../status/history/2026-08-26.md`), and none appears in
+  any fixture. They ride along because the generator is already being run:
+  "the recursion handles it" is precisely the reasoning that let `intarr[]`
+  through, and a shape observed to work is not covered until a fixture holds
+  it (`roadmap.md`, "Expand the generated fixtures freely").
 
 The twelve-name table needs no new fixture: `t_multirange` already carries a
 bare built-in (`int4multirange`) and `myrange`'s companion, with `{}` and NULL
@@ -550,17 +627,24 @@ user hits without warning otherwise.
   would match it. This is the one behaviour a user would otherwise have to
   discover by getting zero rows back.
 
-**With 4.5**, the two paths are stated together in one place:
+**With 4.5**, there is one path for a query and the manual states it as one
+*(amended 2026-08-26; this section previously promised a two-path statement,
+which the census reversal below made false —
+[`../status/history/2026-08-26.md`](../status/history/2026-08-26.md))*:
 
-- the default is optimistic — fast, no extra reading, and it can fail on an
-  array shape it did not expect;
-- after `pgdq parse` (or a full scan), the shapes are known: the failure
-  becomes impossible for an array **column**, and a column whose arrays
-  genuinely vary comes back as text instead;
+- an array column's shape is read from the values while the file is mapped, on
+  every query — there is no faster path that skips it and no slower path that
+  improves it, so a user has nothing to choose between and nothing to check;
+- what that produces: uniform depth becomes nested lists, and a column whose
+  arrays genuinely vary — or that carries a lower bound — comes back as text
+  instead;
 - that an array **inside a composite** is not covered by that — it stays on the
   optimistic path however much scanning has happened, and `--schema-mode
-  strings` is its remedy;
-- how to tell which path a given run is on.
+  strings` is its remedy.
+
+The two-path statement survives only for a **reported** schema over a partial
+index, which no CLI surface can reach until Phase 9.2; it belongs in that
+phase's manual work, not this one's.
 
 **Also with 4.5**, one sentence — no more — that a column whose arrays vary in
 shape is returned as text today, and that a selectable structured
@@ -581,6 +665,7 @@ rather than scope.
 | 4.3 | `ColumnBuilder`'s `List`/`Struct` arms, unit-tested by constructing nested values directly. Nothing resolves to them yet |
 | 4.4 | Flip resolution: recursive mapping, built-in range subtypes, opaque-element refusal, the `ColumnResolution` surgery, the `(DataType, NestedPlan)` pair threaded through `ResolvedSchema` and `RowBatcher::new`, `render_field`'s deletion. Nested columns decode end-to-end on the optimistic path |
 | 4.4.1 | The presentation half: the resolved Arrow type in `pgdq info --verbose`, **the manual rewrite above** |
+| 4.4.2 | The array-of-array-typed-element refusal above, **earned**: 4.4 typed the shape `List<List<T>>` and nothing can fill it. Fixture first — `types/default.sql` gains `t_nested_array` across all six majors, since the shape's absence is why six majors of round-trip tests went green over a broken column — then the resolution refusal and its `ColumnResolution::NestedArrayElement`, a `pgtype.rs` unit test for the domain chain, the manual line, and the deletion of the census transform's now-unreachable guard. The table also picks up the five working-but-unpinned shapes the sweep found, and the slice lands the resolution-outcome coverage test that makes `roadmap.md`'s fixture rule mechanical |
 | 4.5 | The shape census, **recording half**: a cache format bump, per-block per-column recording, and the completeness rule. Nothing consumes it yet |
 | 4.5.1 | The shape census, **consuming half**: making the census unconditional (above), retyping the `(DataType, NestedPlan)` pair from a block's census, `ColumnResolution::VaryingArrayShape`, and **the manual's statement of both paths plus the planned representation knob** |
 | 4.6 | The array stress section in `generate_perf_data.py`, and the `measurements.md` ratio |
@@ -624,6 +709,14 @@ A built-in multirange and an array of the matching range render *identically*
 (`List(Range<Int32>)`), which is correct rather than a collision to fix: they
 are the same Arrow type, the plans differ, and the declared PostgreSQL type
 sits on the same line.
+
+**4.4.2 was earned after 4.4 landed, from a defect.** 4.4's contract was
+"nested columns decode end-to-end on the optimistic path", and for one declared
+shape it does not — the type resolves and no value can fill it. That is a slice
+that shipped the wrong contract, which the numbering rule answers with a third
+level rather than a renumber. It lands **before 4.6**: 4.6 measures the array
+path, and measuring it while a declared array shape is known-broken measures
+something about to change.
 
 **4.5.1 was earned mid-slice, not planned.** The census was specified as one
 row and is two: recording is new, type-blind, L1-only machinery that nothing

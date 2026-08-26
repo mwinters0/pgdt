@@ -1431,6 +1431,12 @@ a message naming one remedy would have been wrong half the time.
 
 ## Fixtures
 
+
+**Adding a shape is the default, not a last resort** — see `roadmap.md`,
+"Expand the generated fixtures freely; never infer what `pg_dump` writes". A
+decision that turns on the exact bytes `pg_dump` emits gets a fixture column;
+reasoning out what the output must be is what produced I22's, I23's and I26's
+late discoveries.
 `fixtures/<version>/<schema>/<flag-set>.sql`, real `pg_dump` output across the
 six routine versions (13–18). **"Absent" in this tree always means
 "deliberately absent", never "not yet generated."**

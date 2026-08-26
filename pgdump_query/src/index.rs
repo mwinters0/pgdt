@@ -44,8 +44,9 @@ pub struct RowGroupStats {}
 /// and `DumpMetadata`").
 pub use crate::preamble::DumpMetadata;
 
-/// The most dimensions PostgreSQL can give an array — `MAXDIM` in
-/// `src/include/utils/array.h`, 6 in every supported version. A literal whose
+/// The most dimensions PostgreSQL can give an array — `MAXDIM`, 6 in every
+/// supported version (`src/include/utils/array.h` on v14+, `src/include/c.h`
+/// on v13; see I25). A literal whose
 /// leading brace run is longer than this did not come out of `array_out`
 /// (I25), so a consumer must treat it as unusable rather than as a depth.
 pub const MAX_ARRAY_DIMS: u8 = 6;

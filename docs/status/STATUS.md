@@ -68,6 +68,19 @@ Specified in
       **two** ways a column of these types is still a string, not the spec's
       three; 4.5.1 added the third. Notes:
       [`../design/roadmap-phase4.4.1-presentation-notes.md`](../design/roadmap-phase4.4.1-presentation-notes.md)
+- [ ] **4.4.2** The array-of-array-typed-element refusal, earned from a defect
+      4.4 shipped: `x public.intarr[]` where `CREATE DOMAIN intarr AS
+      integer[]` types as `List<List<Int32>>` and no value can fill it (I26).
+      The same defect reaches a composite with a field of that type, and a
+      domain-over-domain chain. Fixture first — `types/default.sql` gains
+      `t_nested_array` on all six majors, carrying both faces plus the five
+      working-but-unpinned shapes the sweep found — then the
+      refusal and its `ColumnResolution::NestedArrayElement`, a `pgtype.rs`
+      unit test for the chain, the manual line, and the deletion of
+      `retype_from_census`'s now-unreachable guard. Plus the
+      resolution-outcome coverage test — every `ColumnResolution` variant must
+      be produced by at least one real fixture column — which is what makes
+      `roadmap.md`'s fixture rule mechanical. Lands before 4.6.
 - [x] **4.5** The shape census, **recording half**: `ArrayShape` on every
       `CopyBlock`, recorded per column, and the cache format bump that
       persists it; `DumpIndex::is_complete`. Nothing consumed it — that is
@@ -114,6 +127,21 @@ Nothing has started; the phase runs after Phase 4 wraps.
   not started — see the checklist above.
 
 ## Known gaps
+
+- **An array column whose element type is itself an array does not decode at
+  all** — `x public.intarr[]` where `CREATE DOMAIN intarr AS integer[]` (I26).
+  It resolves to `List<List<Int32>>` from the DDL, correctly, but the value is
+  written one brace deep (`{"{1,2}","{3}"}`, elements force-quoted per I25)
+  and `batch::append_typed` reads a nested `List` chain as *dimensionality*
+  only, so every row is an `Error::FieldDecode`. `--schema-mode strings`
+  returns it verbatim. Present since 4.4's resolution flip, not introduced by
+  the census; found on 2026-08-26 while reviewing 4.5.1 against real `pg_dump`
+  output. **Not accepted, not yet scheduled**: the fix changes what
+  `NestedPlan::Array(Array(…))` means, so it needs a spec amendment and a
+  slice rather than an out-of-band patch. **Scheduled as 4.4.2**, before 4.6:
+  the shape is refused at resolution and comes back as text with its own
+  resolution label, the way `box[]` already does. Reasoning:
+  [`history/2026-08-26.md`](history/2026-08-26.md).
 
 - **An array nested inside a composite** — or inside another array's element
   type — is still decided optimistically, so a multi-dimensional or
@@ -175,28 +203,12 @@ Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
 
-- **The manual states one path for a query, where the phase spec's "What the
-  manual must say" still describes two.** Those bullets ("the default is
-  optimistic… after `pgdq parse`, the shapes are known… how to tell which path
-  a given run is on") were written before the 2026-08-26 reversal that made
-  the census unconditional and freed a streamed schema from `is_complete`.
-  After it there is only one path for a query, so the manual states that
-  instead, plus the array-inside-a-composite case that genuinely still differs.
-  The spec's census section was rewritten that day; its manual section was
-  not, and amending a spec unattended is the call being flagged rather than
-  taken. **If reconsidered:** either the spec's manual bullets are brought in
-  line with its own census section, or the manual regains a two-path statement
-  that would now describe `pgdq info` on a partial index — a state no CLI
-  surface can currently reach.
-
-- **A brace run longer than `MAX_ARRAY_DIMS` keeps the column optimistically
-  typed rather than degrading it to text.** 4.5's notes required only that it
-  be treated as "unusable rather than as a depth", which admits both. Such a
-  literal did not come out of `array_out` (I25), so the file is damaged or
-  hand-edited: degrading hides that behind a column that reads fine, while
-  keeping `List<T>` makes the row a `FieldDecode` naming table, column, offset
-  and value — what every other value contradicting its declared type gets.
-  **If reconsidered:** the test moves after the prefix/mixed tests in
-  `resolve::shape_verdict` and such a column comes back as text instead.
-  Reasoning:
-  [`../design/roadmap-phase4.5.1-census-consumption-notes.md`](../design/roadmap-phase4.5.1-census-consumption-notes.md).
+*Empty.* 4.5.1's two entries were reviewed on 2026-08-26. The
+`MAX_ARRAY_DIMS` verdict **stands** — a run past `MAXDIM` is not evidence, so
+the column keeps its optimistic type and the row surfaces as a `FieldDecode`;
+the durable half is in [`../design/architecture.md`](../design/architecture.md),
+"The array shape census", and the scan-time diagnostic it does *not* raise is
+now a roadmap "Future" item. The spec/manual divergence is **resolved by
+amending the spec**: its "What the manual must say" section now describes one
+path, matching the census section the same reversal rewrote. Reasoning:
+[`history/2026-08-26.md`](history/2026-08-26.md).

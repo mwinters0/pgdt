@@ -81,6 +81,50 @@ degenerate ones: `--data-only` (no DDL), `--schema-only` (no data),
 shape. Absent that test, "spans sum to file size" decays into an aspiration the
 first time a span kind is added.
 
+### Expand the generated fixtures freely; never infer what `pg_dump` writes
+
+**When a decision depends on the exact bytes `pg_dump` produces for some
+shape, put that shape in `scripts/fixture_schema_*.sql` and regenerate, rather
+than reasoning out what the output must be.** This is closed, and the bias is
+deliberately lopsided: a fixture column costs one generator run across six
+majors and a few lines of schema, while a wrong inference costs a design built
+on it. We have paid the second price more than once.
+
+- 4.1 specified the array and composite fixture shapes by reasoning about
+  `array_out`; two values it did not know it needed surfaced only afterwards
+  and earned 4.1.1 — an array over a domain whose base is `box`, whose
+  separator is `;` and which therefore walks straight through a refusal written
+  against the declared spelling (I22), and a zero-field composite (I23).
+- 4.4 typed `d[]` where `d` is a domain over an array as `List<List<T>>` by
+  composing the mapping rules. No such column exists in the fixtures, so six
+  majors of round-trip tests passed over a column no value can fill; the real
+  literal is one brace deep (I26), and finding that cost a slice (4.4.2).
+- The sweep that found it also found five shapes that work today and are
+  pinned by nothing at all — domain over composite, array of that, composite
+  inside composite, array of a user range, domain over a range.
+
+The corollary is the part that is easy to skip: **a shape observed to work is
+not covered until a fixture holds it.** "The recursion handles it" is the
+reasoning that failed above, and it will keep failing, because the recursion is
+right about the type and says nothing about the bytes.
+
+The cost is real and bounded — regeneration needs Docker and the six
+PostgreSQL images (`CLAUDE.md`), and added columns widen literals other tests
+read. Pay it. The alternative is discovering the shape from a user's dump.
+
+**The check.** Every standing rule here carries one, and this rule's is
+partial by nature: a test walks every fixture, resolves every column of every
+block, and asserts that **each `ColumnResolution` variant is produced by at
+least one real fixture column**. Adding a resolution outcome without a fixture
+that reaches it then fails a test instead of relying on discipline — which is
+exactly what 4.4 would have hit. It lands with 4.4.2, reusing the fixture-walk
+helper `tests/map.rs` already has.
+
+What it does *not* check is the other half: a shape that resolves to an
+existing outcome and merely works — the five the sweep found — is still a
+judgement call. That gap is named rather than papered over, because a check
+claiming more coverage than it has is worse than one that states its limit.
+
 ### Four decisions that keep later phases additive
 
 Plain-format-only and single-threaded is a deliberate scope, not a limitation
@@ -432,6 +476,16 @@ this section when it acquires a phase number, not when it acquires a design.
   mapping** above, which is the same knob at a different granularity, and
   adding it breaks nothing — it only ever changes columns that Phase 4 left as
   `Utf8View` or as a shape the caller has told us to represent differently.
+
+- **A diagnostic for a brace run past `MAXDIM`.** `array_out` cannot emit more
+  than 6 leading braces (I25), so a longer run means the file is not `pg_dump`
+  output — hand-edited, concatenated, or damaged. The census records it and
+  resolution deliberately declines to treat it as evidence, so the column keeps
+  its optimistic type and the row surfaces as an ordinary `Error::FieldDecode`
+  when something reads it. Nothing reports it at *scan* time, so a file nobody
+  queries that column of stays silently damaged. The file-level `Diagnostic`
+  channel is where this belongs; it is unscheduled because no fixture produces
+  the shape and Phase 9 is the phase that grows the reporting surface for it.
 
 - **A per-path shape census, so nested arrays get the same treatment as
   top-level ones.** Phase 4's census records a shape per *column*, which fixes
