@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict CFCleaf3VTY1XdO7qqIRh0oAfK0JC8698MGK8MxtnGD2HXZbfMWl51qu3MvGQ07
+\restrict n8W1FeX8BHnufert8mROg1r010jG4sw7vb5KpCZauvXPLbiK7f6ijSvlzgWiC1N
 
 -- Dumped from database version 18.6
 -- Dumped by pg_dump version 18.6
@@ -37,6 +37,17 @@ COPY public.t_array_shape (id, v_multidim, v_mixed_dim, v_lbound) FROM stdin;
 1	{{1,2},{3,4}}	{1,2}	[0:2]={7,8,9}
 2	\N	{{1,2},{3,4}}	[-1:0]={10,11}
 3	{{5,6},{7,8}}	\N	\N
+\.
+
+
+--
+-- Data for Name: t_array_spelling; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_array_spelling (id, v_bounded, v_bounded_2d, v_array_kw, v_array_kw_n) FROM stdin;
+1	{1,2,3,4}	{5,6}	{7,8}	{9}
+2	{}	\N	{NULL,10}	{}
+3	\N	\N	\N	\N
 \.
 
 
@@ -299,5 +310,5 @@ COPY public.t_uuid (id, v_uuid) FROM stdin;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict CFCleaf3VTY1XdO7qqIRh0oAfK0JC8698MGK8MxtnGD2HXZbfMWl51qu3MvGQ07
+\unrestrict n8W1FeX8BHnufert8mROg1r010jG4sw7vb5KpCZauvXPLbiK7f6ijSvlzgWiC1N
 

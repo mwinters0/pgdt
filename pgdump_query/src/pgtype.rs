@@ -42,8 +42,9 @@ pub enum TypeOutcome {
     OpaqueElementType,
     /// An array whose element type is *itself* an array, through any chain of
     /// domains — `CREATE DOMAIN d AS integer[]` and a column of `d[]`, the
-    /// only DDL shape that reaches a nested [`NestedPlan::Array`] in real
-    /// dump output (I26; `integer[][]` does not, per I21).
+    /// only DDL shape there is for it (I26). `integer[][]` is **not** one: it
+    /// is a spelling of `integer[]`, whose element is `integer` (I28), and it
+    /// resolves like any other array.
     ///
     /// Refused for the same reason as [`Self::OpaqueElementType`]: the
     /// element's own literal grammar is not what the outer split assumes.
@@ -353,8 +354,91 @@ fn element_is_opaque(element: &str, types: &[TypeDef]) -> bool {
 /// domain's base type, so `d[]` is spelled like any other array of a named
 /// type. See [`TypeOutcome::NestedArrayElement`] for why the shape is refused
 /// rather than typed as nested `List`s.
+///
+/// The terminal is read through [`array_element`] rather than for a trailing
+/// `[]`, because `CREATE DOMAIN d AS integer ARRAY` is as legal as any other
+/// spelling (I28) and the walk stops on whatever the DDL wrote. That is the
+/// second of the normalization's two call sites; the first is
+/// [`resolve_declared_type`]'s entry, which every other position — a
+/// composite field, a range bound, a domain's own base type — reaches through.
 fn element_is_array(element: &str, types: &[TypeDef]) -> bool {
-    domain_terminal(element, types).ends_with("[]")
+    array_element(domain_terminal(element, types)).is_some()
+}
+
+/// The element type of an array declaration, in any of the six spellings
+/// PostgreSQL's `Typename` production accepts — or `None` when `declared` is
+/// not an array declaration at all.
+///
+/// **All six are one type, one array level deep** (I28): the parser keeps
+/// "array of the element" and discards both the bracket count and the bounds,
+/// so `integer[]`, `integer[3]`, `integer[][]`, `integer[3][4]`,
+/// `integer ARRAY` and `integer ARRAY[4]` all answer `Some("integer")`.
+/// `pg_dump` writes only the first (I21); the rest reach us from hand-written
+/// SQL or another producer, which is inside the input contract
+/// (`roadmap.md`, "The input contract is valid PostgreSQL").
+///
+/// The grammar is followed rather than approximated, in both directions.
+/// `opt_array_bounds` is left-recursive with no cap, so a bracket run of any
+/// length is still one array level even though `MAXDIM` is 6. But the `ARRAY`
+/// alternatives take *at most one* bound, so `integer ARRAY[4][5]` is not a
+/// declaration and answers `None` — as does text a server would reject
+/// outright (`integer[abc]`, `integer[`). Inventing an array type for input
+/// PostgreSQL refuses is the same mistake as reading a spelling more
+/// literally than PostgreSQL does, pointed the other way.
+///
+/// **Not quote-aware**, which is pre-existing: a quoted identifier may contain
+/// brackets, so `CREATE DOMAIN "weird[]" AS integer` reads as an array of
+/// `"weird`. Fixing it means a real type-name tokenizer.
+fn array_element(declared: &str) -> Option<&str> {
+    let declared = declared.trim();
+    // `SimpleTypename ARRAY '[' Iconst ']'` and `SimpleTypename ARRAY`: at
+    // most one bound and only in the `[n]` form, since the production spells
+    // out `Iconst`. Tried before the unbounded run below and never after it.
+    let head = match strip_bound(declared) {
+        Some((head, true)) => head,
+        _ => declared,
+    };
+    if let Some(element) = strip_array_keyword(head) {
+        // What precedes the keyword is a bare `SimpleTypename`: a bracket of
+        // its own or a second `ARRAY` is a syntax error, not a deeper array.
+        return (strip_bound(element).is_none() && strip_array_keyword(element).is_none())
+            .then_some(element);
+    }
+    // `SimpleTypename opt_array_bounds`: one or more `[]`/`[n]` pairs.
+    let (mut element, _) = strip_bound(declared)?;
+    while let Some((head, _)) = strip_bound(element) {
+        element = head;
+    }
+    // `integer ARRAY[4][5]` arrives here, having shed both bounds: the
+    // keyword took a second one, which the grammar has no production for.
+    strip_array_keyword(element).is_none().then_some(element)
+}
+
+/// Strip one trailing `[]` or `[n]`, answering the head and whether the bound
+/// was an `Iconst`: `opt_array_bounds` takes either form, the `ARRAY`
+/// alternatives only the second. A bound that is neither empty nor an
+/// unsigned integer is not a bound at all, and is left in place.
+fn strip_bound(declared: &str) -> Option<(&str, bool)> {
+    let inner = declared.trim_end().strip_suffix(']')?;
+    let open = inner.rfind('[')?;
+    let bound = inner[open + 1..].trim();
+    let iconst = !bound.is_empty() && bound.bytes().all(|b| b.is_ascii_digit());
+    (iconst || bound.is_empty()).then(|| (inner[..open].trim_end(), iconst))
+}
+
+/// Strip a trailing `ARRAY` keyword, case-insensitively — it is a keyword, so
+/// `INTEGER ARRAY` and `Integer Array` are the same declaration (I28) — and
+/// only where it stands as its own token, so the type name `myarray` is not
+/// mistaken for an array of `my`.
+fn strip_array_keyword(declared: &str) -> Option<&str> {
+    let head = declared.trim_end();
+    let split = head.len().checked_sub("ARRAY".len())?;
+    let (element, keyword) = (head.get(..split)?, head.get(split..)?);
+    if !keyword.eq_ignore_ascii_case("ARRAY") {
+        return None;
+    }
+    let trimmed = element.trim_end();
+    (trimmed.len() < split && !trimmed.is_empty()).then_some(trimmed)
 }
 
 /// Walk a chain of domains to the type name it bottoms out at — the declared
@@ -364,7 +448,9 @@ fn element_is_array(element: &str, types: &[TypeDef]) -> bool {
 /// **Both element refusals test this terminal rather than the declared
 /// spelling** (I22, I26): a domain's own DDL records neither the `typdelim` it
 /// inherited nor the array-ness of its base, so the property that decides the
-/// refusal is only visible at the end of the walk.
+/// refusal is only visible at the end of the walk. The terminal is returned as
+/// the DDL spelled it — normalizing the array-bounds production here would
+/// have to allocate, and [`element_is_array`] is the only reader that cares.
 ///
 /// A domain chain visits each `CREATE DOMAIN` at most once, so the type list's
 /// own length bounds it. `resolve_declared_type` recurses through domains
@@ -389,10 +475,13 @@ fn domain_terminal<'a>(name: &'a str, types: &'a [TypeDef]) -> &'a str {
 /// The array check runs first because a declared array type still carries
 /// its element type's own qualification (`public.mood[]` contains a `.` too)
 /// — I21: `pg_dump` never preserves dimensionality, so a single trailing
-/// `[]` covers every array shape regardless of underlying dimensions.
+/// `[]` covers every array shape regardless of underlying dimensions. It runs
+/// through [`array_element`], so every spelling of the array-bounds production
+/// collapses to the element type plus one array level (I28) before anything
+/// else looks at the string.
 pub fn resolve_declared_type(declared: &str, types: &[TypeDef]) -> TypeOutcome {
     let declared = declared.trim();
-    if let Some(element) = declared.strip_suffix("[]") {
+    if let Some(element) = array_element(declared) {
         // The element resolves through this same function, so nesting
         // composes with no special case: `public.comp[]` is
         // `List<Struct<…>>`.
@@ -653,7 +742,7 @@ mod tests {
             ty("public.intarr2", TypeKind::Domain { base_type: "public.intarr".to_string() }),
             ty("public.intarr3", TypeKind::Domain { base_type: "public.intarr2".to_string() }),
         ];
-        for declared in ["public.intarr[]", "public.intarr2[]", "public.intarr3[]", "integer[][]"] {
+        for declared in ["public.intarr[]", "public.intarr2[]", "public.intarr3[]"] {
             assert_eq!(
                 resolve_declared_type(declared, &types),
                 TypeOutcome::NestedArrayElement,
@@ -671,6 +760,93 @@ mod tests {
                     NestedPlan::Array(Box::new(NestedPlan::Scalar))
                 ),
                 "{declared}"
+            );
+        }
+    }
+
+    /// I28: PostgreSQL accepts six spellings for an array-typed column and
+    /// every one is the same type — the parser keeps "array of the element"
+    /// and discards the bracket count and the bounds — so all six resolve
+    /// exactly as `integer[]` does, one array level deep.
+    ///
+    /// Five of the six survive no round trip through `format_type`, so
+    /// `pg_dump` can never write them (I21) and no generated fixture can
+    /// reach this. That is `roadmap.md`'s "Where a fixture is impossible"
+    /// carve-out, and the I28 citation here is its check: it puts the
+    /// behaviour inside the register's re-verify ritual at each new major.
+    #[test]
+    fn every_array_declaration_spelling_is_one_array_of_the_element_type() {
+        let expected = TypeOutcome::Mapped(
+            list_of(DataType::Int32),
+            NestedPlan::Array(Box::new(NestedPlan::Scalar)),
+        );
+        for declared in [
+            // The six of I28's table.
+            "integer[]",
+            "integer[3]",
+            "integer[][]",
+            "integer[3][4]",
+            "integer ARRAY",
+            "integer ARRAY[4]",
+            // The bracket run is unbounded in the DDL even though `MAXDIM`
+            // is 6; `ARRAY` is a keyword, so its case carries nothing; and
+            // the lexer is free with whitespace. All observed on 16.15.
+            "integer[][][][][][][][][]",
+            "INTEGER array[4]",
+            "integer  Array",
+            "integer [ 3 ] [ ]",
+        ] {
+            assert_eq!(resolve_declared_type(declared, &[]), expected, "{declared}");
+        }
+    }
+
+    /// The other direction of the same rule: a declaration PostgreSQL rejects
+    /// gets no array type invented for it. `ARRAY` takes at most one bound and
+    /// only in the `[n]` form, what precedes it is a bare type name, and a
+    /// malformed bound is not a bound. Every string here is a syntax error on
+    /// 16.15, and the outcome that says so is the honest `Unknown` — not a
+    /// refusal, which would state something false about the column the way
+    /// `integer[][]` did before this normalization existed.
+    #[test]
+    fn a_declaration_postgresql_would_reject_is_not_read_as_an_array() {
+        for declared in [
+            "integer ARRAY[4][5]",
+            "integer ARRAY[]",
+            "integer ARRAY ARRAY",
+            "integer[] ARRAY",
+            "integer[abc]",
+            "integer[-1]",
+            "integer[",
+            "integerARRAY",
+            "ARRAY",
+        ] {
+            assert_eq!(resolve_declared_type(declared, &[]), TypeOutcome::Unknown, "{declared}");
+        }
+    }
+
+    /// The normalization's second call site. A domain's base type is spelled
+    /// by whoever wrote the `CREATE DOMAIN`, so the array-ness the I26 refusal
+    /// tests for can arrive in any spelling — and the domain walk stops on the
+    /// raw text. `d[]` over `CREATE DOMAIN d AS integer ARRAY` is the same
+    /// array-of-arrays as `d[]` over `integer[]`, and is refused the same way,
+    /// while `d` itself is an ordinary `integer[]` column.
+    #[test]
+    fn a_domain_over_an_array_is_recognized_in_every_spelling() {
+        for base in ["integer[]", "integer[3]", "integer[][]", "integer ARRAY", "integer ARRAY[4]"]
+        {
+            let types = [ty("public.d", TypeKind::Domain { base_type: base.to_string() })];
+            assert_eq!(
+                resolve_declared_type("public.d[]", &types),
+                TypeOutcome::NestedArrayElement,
+                "{base}"
+            );
+            assert_eq!(
+                resolve_declared_type("public.d", &types),
+                TypeOutcome::Mapped(
+                    list_of(DataType::Int32),
+                    NestedPlan::Array(Box::new(NestedPlan::Scalar))
+                ),
+                "{base}"
             );
         }
     }

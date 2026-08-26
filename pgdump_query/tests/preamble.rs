@@ -218,6 +218,24 @@ async fn default_dump_declares_every_mapped_column_type() {
             "pg_dump {version}"
         );
 
+        // I28, as pg_dump actually writes it: the four array-declaration
+        // spellings nothing else in the tree covers all come back plain
+        // `integer[]`. The bracket count and the bounds are discarded by the
+        // parser, never reach `pg_type`, and so cannot reach the file — which
+        // is why the spellings themselves are pinned by unit test over a
+        // hand-built type list, and this table pins the collapse.
+        let spelling_cols = db.tables.get("public.t_array_spelling").unwrap();
+        assert_eq!(
+            spelling_cols[1..],
+            [
+                ("v_bounded".to_string(), "integer[]".to_string()),
+                ("v_bounded_2d".to_string(), "integer[]".to_string()),
+                ("v_array_kw".to_string(), "integer[]".to_string()),
+                ("v_array_kw_n".to_string(), "integer[]".to_string()),
+            ],
+            "pg_dump {version}"
+        );
+
         // Neither the domain-over-`box` column nor its array says anything
         // about the `;` delimiter its values are actually written with — the
         // declared strings are indistinguishable from any other domain's.

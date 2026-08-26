@@ -223,6 +223,37 @@ INSERT INTO public.t_array_shape VALUES
     (2, NULL, '{{1,2},{3,4}}', '[-1:0]={10,11}'),
     (3, '{{5,6},{7,8}}', NULL, NULL);
 
+-- The array-declaration spellings pg_dump never writes. PostgreSQL accepts
+-- six ways of declaring an array-typed column and every one is the same type
+-- (I28): the bounds and the dimension count are discarded by the parser, so
+-- format_type -- and therefore pg_dump -- writes all six back as `integer[]`.
+-- These four columns are the four spellings no other fixture covers, and the
+-- prediction this table carries is that the dumped DDL reads `integer[]` for
+-- every one of them, on every major. That collapse is the repo's own proof of
+-- I28, in checked-in bytes; the spellings themselves survive only here, in the
+-- SQL the generator loads.
+--
+-- Deliberately NOT columns of t_array_shape. Every value here is an ordinary
+-- one-dimensional array with lower bound 1, so the census has nothing to say
+-- about them; t_array_shape is read as "the shapes the census reports", which
+-- is the same reason t_nested_array is its own table too.
+--
+-- Do not "fix" a spelling into `integer[]`. The declaration is the whole
+-- content of the table, and a bound constrains nothing about the values --
+-- v_bounded is declared `integer[3]` and row 1 holds four elements, which
+-- PostgreSQL accepts (I28).
+CREATE TABLE public.t_array_spelling (
+    id integer PRIMARY KEY,
+    v_bounded integer[3],
+    v_bounded_2d integer[3][4],
+    v_array_kw integer ARRAY,
+    v_array_kw_n integer ARRAY[4]
+);
+INSERT INTO public.t_array_spelling VALUES
+    (1, '{1,2,3,4}', '{5,6}', '{7,8}', '{9}'),
+    (2, '{}', NULL, '{NULL,10}', '{}'),
+    (3, NULL, NULL, NULL, NULL);
+
 CREATE TYPE public.point2d AS (x integer, y text);
 
 -- A composite with an array field: record_out's doubling convention wrapped

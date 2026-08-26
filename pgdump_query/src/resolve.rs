@@ -665,19 +665,28 @@ mod tests {
     /// The third column is what makes that list complete: a plan already
     /// nested — the only shape whose census would have to be *disbelieved*
     /// rather than merely ignored — cannot reach the transform at all, because
-    /// an array-typed element is refused at resolution (I26).
+    /// an array-typed element is refused at resolution (I26). It is spelled as
+    /// a domain over an array, which is the only DDL shape that reaches the
+    /// refusal: `integer[][]` is a spelling of `integer[]` (I28) and resolves
+    /// to a plain `List<Int32>` the census is free to deepen.
     #[test]
     fn the_census_only_speaks_for_a_column_the_ddl_resolved_to_an_array() {
-        let types = vec![TypeDef {
-            name: "public.point2d".to_string(),
-            kind: TypeKind::Composite {
-                fields: Some(vec![("x".to_string(), "integer".to_string())]),
+        let types = vec![
+            TypeDef {
+                name: "public.point2d".to_string(),
+                kind: TypeKind::Composite {
+                    fields: Some(vec![("x".to_string(), "integer".to_string())]),
+                },
             },
-        }];
+            TypeDef {
+                name: "public.intarr".to_string(),
+                kind: TypeKind::Domain { base_type: "integer[]".to_string() },
+            },
+        ];
         let meta = one_db(
             &[(
                 "public.t",
-                &[("c", "public.point2d"), ("m", "int4multirange"), ("n", "integer[][]")],
+                &[("c", "public.point2d"), ("m", "int4multirange"), ("n", "public.intarr[]")],
             )],
             types,
         );

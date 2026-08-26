@@ -816,12 +816,12 @@ almost every column in a real 75-table schema.
 | `inet`, `cidr`, `macaddr`, `macaddr8` | `Utf8View` | |
 | enum (`CREATE TYPE … AS ENUM`) | `Dictionary(Int32, Utf8)` | Only when the label set is non-empty |
 | domain (`CREATE DOMAIN`) | base type's mapping | Resolved transitively |
-| `T[]` | `List<resolve(T)>`, retyped from the census | Dimensionality belongs to the *value* (I21), so the DDL's answer is optimistically 1-D and [the census](#the-array-shape-census) settles it; a value that disagrees with what commits is a `FieldDecode`, not a reshape |
+| `T[]`, in any of the six spellings (I28) | `List<resolve(T)>`, retyped from the census | Dimensionality belongs to the *value* (I21), so the DDL's answer is optimistically 1-D and [the census](#the-array-shape-census) settles it; a value that disagrees with what commits is a `FieldDecode`, not a reshape |
 | composite (`CREATE TYPE … AS (…)`) | `Struct<` one field per declared field, in declaration order `>` | Zero fields included (I23) — `()` is a real value that round-trips |
 | range (built-in or `AS RANGE`) | `Struct{lower: S, upper: S, lower_inclusive, upper_inclusive, empty}` | The fifth field is not redundant: `empty` and `(,)` both have absent bounds |
 | multirange | `List<` the range struct `>` | Same Arrow type as `S[]`-of-range, different literal — see `NestedPlan` |
 | an array whose element is opaque | `Utf8View` | `box`, `TypeKind::Base`, `TypeKind::Shell`, through any chain of domains — `ColumnResolution::OpaqueElementType`, below |
-| an array whose element is itself an array | `Utf8View` | `CREATE DOMAIN d AS T[]` and a column of `d[]`, through any chain of domains — the literal is one brace deep (I26), so its depth and the column's would disagree; `ColumnResolution::NestedArrayElement`, below |
+| an array whose element is itself an array | `Utf8View` | `CREATE DOMAIN d AS T[]` and a column of `d[]`, through any chain of domains — the literal is one brace deep (I26), so its depth and the column's would disagree; `ColumnResolution::NestedArrayElement`, below. **Not** `integer[][]`, which is a spelling of `integer[]` (I28) |
 | an array column whose values disagree on shape | `Utf8View` | Mixed dimensionality or an `[lb:ub]=` prefix, read off [the census](#the-array-shape-census) — `ColumnResolution::VaryingArrayShape` |
 
 Microsecond precision throughout, because that is PostgreSQL's storage
@@ -912,9 +912,9 @@ character. *Rejected:* parsing `DELIMITER` out of `CREATE TYPE` into
 **An array whose element type is itself an array stays a whole-column string
 too**, and it is the refusal that keeps `NestedPlan::Array` meaning one thing.
 `CREATE DOMAIN d AS integer[]` with a column of `d[]` is the only DDL shape
-that reaches a nested `Array` plan in real dump output (I26 — `integer[][]`
-does not, since PostgreSQL collapses it in the catalog and `pg_dump` writes
-`integer[]`, I21). Its value is written **one brace deep** —
+that reaches a nested `Array` plan at all (I26 — `integer[][]` does not: it is
+a spelling of `integer[]`, whose element is `integer`, and it is normalized to
+one array level before the refusal is tested, I28). Its value is written **one brace deep** —
 `{"{1,2}","{3}"}`, because `array_out` force-quotes any element whose text
 contains `{` (I25) — so the literal's leading brace run and the column's
 resolved `List` depth are independent for this shape alone, and
@@ -952,6 +952,40 @@ one-dimensional column — PostgreSQL arrays carry no fixed dimensionality in th
 type system, and one column may hold values of differing dimensionality and
 lower bound. An array decoder must infer nesting from the literal's own brace
 structure (`{{1,2},{3,4}}`), not from the declared type.
+
+**So every array declaration is normalized to its element type plus one array
+level** before anything else reads the string — `integer[]`, `integer[3]`,
+`integer[][]`, `integer[3][4]`, `integer ARRAY` and `integer ARRAY[4]` are one
+type, and the parser discards the bracket count and the bounds rather than
+recording them anywhere a dump could carry them (I28). `pg_dump` writes only
+the first spelling, so this is entirely the hand-written and other-producer
+input path (`roadmap.md`, "The input contract is valid PostgreSQL"); reading a
+spelling more literally than PostgreSQL does is how `integer[][]` came to be
+refused as an array of arrays, which said something false about the column
+rather than declining to answer it.
+
+The normalization follows the `Typename` grammar rather than approximating it,
+in both directions: the bracket run is unbounded (a declaration's bracket count
+is not `MAXDIM`-limited and carries no meaning), while the `ARRAY` keyword
+takes at most one bound, in the `[n]` form only, over a bare type name. Text a
+server would reject — `integer ARRAY[4][5]`, `integer[abc]` — resolves
+`Unknown`, because inventing an array type for input PostgreSQL refuses is the
+same mistake pointed the other way.
+
+It lives in `pgtype.rs` at two call sites: `resolve_declared_type`'s entry,
+which a composite field, a range bound and a domain's base type all reach
+through, and `element_is_array`, which reads the domain walk's terminal —
+`CREATE DOMAIN d AS integer ARRAY` is as legal as any other spelling and the
+walk stops on whatever the DDL wrote. *Rejected:* normalizing in `preamble.rs`
+at parse time. `ColumnNote::declared` carries the raw declared string so `pgdq
+info --verbose` can print what the file says beside what we made of it, and a
+parse-time rewrite would have pgdq quietly editing the user's DDL in the one
+place the raw text is the entire point.
+
+A known limit, pre-existing and not widened: the suffix test is not
+quote-aware, so a quoted identifier containing brackets (`CREATE DOMAIN
+"weird[]" AS integer`) reads as an array. Fixing it means a real type-name
+tokenizer.
 
 ### Joining a header against the metadata
 

@@ -113,6 +113,14 @@ a composite array is `List(Struct(…))`, a composite with a `text[]` field is
 same shape; the declared PostgreSQL type on the same `pgdq info` line is what
 tells them apart.
 
+However an array column was declared, it is the same type: PostgreSQL accepts
+`integer[]`, `integer[3]`, `integer[][]`, `integer[3][4]`, `integer ARRAY` and
+`integer ARRAY[4]`, discards the bounds and the dimension count, and keeps
+"array of `integer`". pgdq reads all six that way. `pg_dump` only ever writes
+the first, so this matters for SQL written by hand or by another tool; what
+shape the *values* have is a separate question, answered under "Its arrays do
+not all have the same shape" below.
+
 A part that has no mapping of its own becomes a string **in that position**
 only: a composite field of type `interval` is a `Utf8View` field inside an
 otherwise typed `Struct`, exactly as an `interval` column would be at top
@@ -154,9 +162,11 @@ flags, since `empty` and `(,)` are different ranges and neither has bounds.
   to represent, and the lossless array representation planned in the next
   bullet would cover it too.
 - **Its arrays do not all have the same shape.** PostgreSQL does not record an
-  array's dimensionality in its type — `integer[]`, `integer[][]` and
-  `integer[3]` are all written `integer[]` — so we read the column's actual
-  values while mapping the file and give it the shape they have. A column
+  array's dimensionality in its type — `integer[]`, `integer[3]`,
+  `integer[][]`, `integer[3][4]`, `integer ARRAY` and `integer ARRAY[4]` are
+  six spellings of one type, and `pg_dump` writes every one of them back as
+  `integer[]` — so we read the column's actual values while mapping the file
+  and give it the shape they have. A column
   holding only 2-D values becomes `List(List(Int32))`. A column holding
   `{1,2}` in one row and `{{1,2},{3,4}}` in the next has no honest Arrow list
   type, and neither does one holding a value with an explicit lower bound

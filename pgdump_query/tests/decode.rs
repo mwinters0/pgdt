@@ -157,6 +157,10 @@ async fn nested_columns_round_trip_against_strings_mode() {
             // `List`s deep; the table round-tripping is what says the column
             // now comes back as the text it always was.
             "public.t_nested_array",
+            // Four array-declaration spellings that reached `pg_dump` as
+            // `integer[]` and are indistinguishable here (I28). The table is
+            // ordinary once written, which is exactly its claim.
+            "public.t_array_spelling",
         ];
         if version >= 14 {
             tables.push("public.t_multirange");
@@ -222,6 +226,80 @@ async fn the_census_retypes_an_array_column_before_the_schema_commits() {
             );
         }
     }
+}
+
+/// **The spellings `pg_dump` cannot write, through the whole pipeline.**
+/// PostgreSQL accepts six ways of declaring an array-typed column and every
+/// one is the same type (I28); `format_type` keeps only the first, so a
+/// generated fixture can never carry the other five and this dump is built by
+/// hand. `t_array_spelling` in `fixtures/*/types/default.sql` is the other
+/// half of the evidence — it proves the collapse in `pg_dump`'s own bytes.
+///
+/// The seam this crosses is resolution → census → `retype_from_census`, which
+/// no unit test reaches: `v_2d` is declared `integer[][]` and holds uniformly
+/// 2-D values, so it must resolve to `List(Int32)` — one array level, per the
+/// normalization — and then be *deepened by the census* to `List(List(Int32))`
+/// exactly as a column spelled `integer[]` would be. Before the normalization
+/// it was refused outright as an array of arrays, which is what the refusal
+/// stating something false about a column looks like from the outside.
+#[tokio::test]
+async fn an_array_declaration_pg_dump_never_writes_resolves_and_takes_its_census() {
+    use arrow::datatypes::{DataType, Field};
+    use pgdump_query::ColumnResolution;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("spellings.sql");
+    std::fs::write(
+        &path,
+        "--\n\
+         -- Name: t_spelling; Type: TABLE; Schema: public; Owner: postgres\n\
+         --\n\
+         \n\
+         CREATE TABLE public.t_spelling (\n\
+         \x20   id integer,\n\
+         \x20   v_2d integer[][],\n\
+         \x20   v_kw integer ARRAY[4],\n\
+         \x20   v_bounded integer[3]\n\
+         );\n\
+         \n\
+         \n\
+         --\n\
+         -- Data for Name: t_spelling; Type: TABLE DATA; Schema: public; Owner: postgres\n\
+         --\n\
+         \n\
+         COPY public.t_spelling (id, v_2d, v_kw, v_bounded) FROM stdin;\n\
+         1\t{{1,2},{3,4}}\t{5,6}\t{7}\n\
+         2\t{{5,6},{7,8}}\t\\N\t{}\n\
+         \\.\n\
+         \n",
+    )
+    .unwrap();
+
+    // Exact, in both directions: what the typed path renders back is what the
+    // untyped path read, for a declaration no fixture can hold.
+    assert_eq!(
+        rows(&path, "public.t_spelling", SchemaMode::Typed).await,
+        rows(&path, "public.t_spelling", SchemaMode::Strings).await,
+    );
+
+    let list_of = |inner| DataType::List(Arc::new(Field::new("item", inner, true)));
+    let resolved = resolved_schema(&path, "public.t_spelling").await;
+    assert_eq!(
+        resolved.schema.field(1).data_type(),
+        &list_of(list_of(DataType::Int32)),
+        "`integer[][]` is one array level from the DDL, deepened by the census"
+    );
+    assert_eq!(
+        resolved.schema.field(2).data_type(),
+        &list_of(DataType::Int32),
+        "`integer ARRAY[4]`"
+    );
+    assert_eq!(resolved.schema.field(3).data_type(), &list_of(DataType::Int32), "`integer[3]`");
+    assert!(
+        resolved.columns.iter().all(|r| *r == ColumnResolution::Mapped),
+        "no spelling is a refusal: {:?}",
+        resolved.columns
+    );
 }
 
 /// **The one cause the refusal still has.** The census is keyed by column, so

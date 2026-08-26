@@ -29,7 +29,7 @@ per-phase checklist here any more. How the system works is
 | Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-26 (Phase 9: `parse` resumes and is the only scanner; `info` reports from the cache, coverage line included; `--json` carries per-block resolution).
+Last updated: 2026-08-26 (Phase 9: `parse` resumes and is the only scanner; `info` reports from the cache, coverage line included; `--json` carries per-block resolution. Phase 4.4.3: every array-declaration spelling resolves as `integer[]` does).
 
 ## Phase 4 progress
 
@@ -78,14 +78,16 @@ Specified in
       working-but-unpinned shapes) and `t_enum_domain.v_empty_enum`, which the
       coverage test needed and which produced I27. Notes:
       [`../design/roadmap-phase4.4.2-nested-array-refusal-notes.md`](../design/roadmap-phase4.4.2-nested-array-refusal-notes.md)
-- [ ] **4.4.3** The array-declaration spellings, earned from 4.4.2: normalize
-      the whole `Typename` array-bounds production (`[]`, `[n]`, repeated,
-      `ARRAY`, `ARRAY[n]` — I28) to the element type plus one array level, so
-      `integer[][]` resolves as `integer[]` does and the census decides its
-      depth. The I26 refusal is unchanged. Nothing here is reachable from
-      `pg_dump` output; it is the hand-written and other-producer input path.
-      Includes a fixture regeneration — a new `t_array_spelling` table, one
-      column per non-`[]` spelling, all of which must dump as `integer[]`.
+- [x] **4.4.3** The array-declaration spellings, earned from 4.4.2:
+      `pgtype::array_element` normalizes the whole `Typename` array-bounds
+      production (`[]`, `[n]`, repeated, `ARRAY`, `ARRAY[n]` — I28) to the
+      element type plus one array level, so `integer[][]` resolves as
+      `integer[]` does and the census decides its depth; a declaration
+      PostgreSQL rejects stays `Unknown`. The I26 refusal is unchanged and is
+      now the only shape that reaches it. `t_array_spelling` (four spellings,
+      all dumping as `integer[]` on all six majors) is the fixture half.
+      Notes:
+      [`../design/roadmap-phase4.4.3-array-spellings-notes.md`](../design/roadmap-phase4.4.3-array-spellings-notes.md)
 - [x] **4.5** The shape census, **recording half**: `ArrayShape` on every
       `CopyBlock`, recorded per column, and the cache format bump that
       persists it; `DumpIndex::is_complete`. Nothing consumed it — that is
@@ -244,15 +246,16 @@ it has been looked at: settled into the design docs, or reversed.
   phase's one formatting decision and the one most likely to come back — 9.3
   is a separate slice precisely so it can.
 
-- **`integer[][]` is now refused, where it used to resolve to
-  `List<List<Int32>>` and decode a 2-D literal.** It follows from the spec's
-  rule — its element is `integer[]`, which is an array — and `pg_dump` never
-  writes the spelling (I21), so no fixture and no real dump reaches it. It is
-  called out because it is the one behaviour this slice *narrowed* rather than
-  widened, and because it is what makes "no nested `Array` plan comes from the
-  DDL" a property of the code rather than of the dumps we happen to have,
-  which is what let `retype_from_census`'s guard go. Reversing it means
-  reinstating that guard.
+- **The array-bounds normalization sits at `element_is_array`, where the spec
+  says "inside `domain_terminal`".** Same two call sites in effect — the
+  terminal is read through the same helper — but the walk keeps returning a
+  borrowed `&str` rather than allocating a normalized one, and
+  `element_is_array` is its only reader whose question the spelling changes.
+  `element_is_opaque` reads the same terminal and is unaffected: a spelling
+  never hides an opaque terminal, it only ever adds an array level, and the
+  array refusal answers first for anything it would have caught. Reversing it
+  means `domain_terminal` returning `Cow`.
+
 - **`t_enum_domain` gained `v_empty_enum`, which the slice's spec row does not
   name.** The resolution-outcome coverage test cannot pass without it —
   `EmptyEnum` was the only outcome no generated fixture reached — and the
@@ -261,6 +264,10 @@ it has been looked at: settled into the design docs, or reversed.
   freely" covers it. It also produced **I27**, a real ambiguity worth having
   written down: a plain dump writes a label-less enum with the same empty body
   `--binary-upgrade` writes for *every* enum.
+
+*4.4.2's `integer[][]` entry was reversed by 4.4.3* — the spelling resolves as
+`integer[]` does again, and the refusal it was flagging now has exactly one
+DDL shape behind it (I26).
 
 *4.5.1's two entries were reviewed on 2026-08-26.* The
 `MAX_ARRAY_DIMS` verdict **stands** — a run past `MAXDIM` is not evidence, so

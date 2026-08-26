@@ -141,6 +141,16 @@ async fn every_column_family_resolves_as_the_mapping_table_says() {
         let shape_res = m("public.t_array_shape");
         assert!(shape_res.iter().all(|r| *r == Mapped), "pg_dump {v}: t_array_shape");
 
+        // Every spelling collapsed to `integer[]` before the file was
+        // written (I28), so by the time resolution sees them there is nothing
+        // left to tell apart — which is the point of the table, and the
+        // reason the spellings need a unit test rather than a fixture.
+        let spelling_res = m("public.t_array_spelling");
+        assert!(
+            spelling_res.iter().all(|r| *r == Mapped),
+            "pg_dump {v}: t_array_spelling = {spelling_res:?}"
+        );
+
         // A composite, an array *of* that composite, a composite with an
         // array *field*, and a zero-field composite (I23) — the recursion
         // composes in both nesting orders and bottoms out on an empty field

@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict VpQcGPC58ourfe6RlGuPcFAv3V5Q42JYJQLkOxWLctt3mZtUCVbAxzv1KIwTLNf
+\restrict DhaJYyb5G4h1yVh7C7pKcHEXkuOs9acOofYbKLfzrHeGoOmx3mco5luEuhJIfMu
 
 -- Dumped from database version 16.15
 -- Dumped by pg_dump version 16.15
@@ -267,6 +267,21 @@ CREATE TABLE public.t_array_shape (
 
 
 ALTER TABLE public.t_array_shape OWNER TO postgres;
+
+--
+-- Name: t_array_spelling; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.t_array_spelling (
+    id integer NOT NULL,
+    v_bounded integer[],
+    v_bounded_2d integer[],
+    v_array_kw integer[],
+    v_array_kw_n integer[]
+);
+
+
+ALTER TABLE public.t_array_spelling OWNER TO postgres;
 
 --
 -- Name: t_base_type; Type: TABLE; Schema: public; Owner: postgres
@@ -570,6 +585,17 @@ COPY public.t_array_shape (id, v_multidim, v_mixed_dim, v_lbound) FROM stdin;
 
 
 --
+-- Data for Name: t_array_spelling; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_array_spelling (id, v_bounded, v_bounded_2d, v_array_kw, v_array_kw_n) FROM stdin;
+1	{1,2,3,4}	{5,6}	{7,8}	{9}
+2	{}	\N	{NULL,10}	{}
+3	\N	\N	\N	\N
+\.
+
+
+--
 -- Data for Name: t_base_type; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
@@ -841,6 +867,14 @@ ALTER TABLE ONLY public.t_array_shape
 
 
 --
+-- Name: t_array_spelling t_array_spelling_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.t_array_spelling
+    ADD CONSTRAINT t_array_spelling_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: t_base_type t_base_type_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -1012,5 +1046,5 @@ ALTER TABLE ONLY public.t_uuid
 -- PostgreSQL database dump complete
 --
 
-\unrestrict VpQcGPC58ourfe6RlGuPcFAv3V5Q42JYJQLkOxWLctt3mZtUCVbAxzv1KIwTLNf
+\unrestrict DhaJYyb5G4h1yVh7C7pKcHEXkuOs9acOofYbKLfzrHeGoOmx3mco5luEuhJIfMu
 

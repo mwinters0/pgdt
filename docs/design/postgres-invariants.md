@@ -1531,12 +1531,22 @@ producer's output (`roadmap.md`, "The input contract is valid PostgreSQL").
 `pg_dump`'s own output only ever contains the first spelling, which is I21.
 
 **Verified against:** the grammar productions are identical in v13.23, v16.15
-and v18.6; the six-column observation is v16.15, live.
+and v18.6; the six-column observation is v16.15, live. The collapse is also in
+the repo's checked-in bytes on all six routine majors:
+`fixtures/*/types/default.sql`'s `public.t_array_spelling` is declared
+`integer[3]`, `integer[3][4]`, `integer ARRAY` and `integer ARRAY[4]` and dumps
+as four `integer[]` columns. The rejections above — `integer ARRAY[4][5]`,
+`integer ARRAY[]`, `integer[] ARRAY`, `integer ARRAY ARRAY`, `integer[abc]`,
+`integer[-1]`, `integerARRAY`, a bare `ARRAY` — are v16.15, live, and are what
+`a_declaration_postgresql_would_reject_is_not_read_as_an_array` pins.
 
 **Relied on by:** `architecture.md` ("Type resolution") — it is why resolution
 normalizes an array declaration to its element type plus one level rather than
 reading the spelling literally, and why no spelling is allowed to imply a
-nested array.
+nested array. `pgtype.rs`'s
+`every_array_declaration_spelling_is_one_array_of_the_element_type` is the
+unit-test stand-in for the fixture five of the six spellings can never have
+(`roadmap.md`, "Where a fixture is impossible").
 
 **Re-verify:**
 
@@ -1553,3 +1563,17 @@ SQL
 All six rows must print `integer[]`, with `attndims` varying — that difference
 is the record of the declaration, and the point is that nothing downstream
 reads it.
+
+The rejections, each of which must be a syntax error (`integerARRAY` an
+unknown type):
+
+```sh
+for d in 'int ARRAY[4][5]' 'int ARRAY[]' 'int[] ARRAY' 'int ARRAY ARRAY' \
+         'int[abc]' 'int[-1]' 'integerARRAY' 'ARRAY'; do
+  psql -X -q -c "create temp table chk (a $d);"
+done
+```
+
+And on all six routine majors at once: `cd scripts && uv run
+generate_fixtures.py --schema types`, then check `public.t_array_spelling`'s
+`CREATE TABLE` — all four columns must read `integer[]`.
