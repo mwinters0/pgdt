@@ -3,9 +3,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use arrow::array::RecordBatch;
+use arrow::datatypes::DataType;
 use clap::{Parser, Subcommand};
 use futures::StreamExt;
 use pgdump_query::cache::{CacheMode, CacheStatus};
+use pgdump_query::pgtype::RANGE_STRUCT_FIELDS;
 use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdump_query::{
     BatchOptions, ByteRangeSource, DataBlock, Diagnostic, DiagnosticKind, DumpIndex, DumpMetadata,
@@ -401,6 +403,63 @@ fn resolution_label(r: &ColumnResolution) -> String {
     }
 }
 
+/// What one column became in Arrow — the other half of `info --verbose`'s
+/// per-column line (`docs/design/architecture.md`, "CLI surface").
+///
+/// Arrow's own `Display` is terse and reversible (`List(Utf8View)`,
+/// `Struct("x": Int32, "y": Utf8View)`), and a composite's field names are the
+/// user's own, so it carries real information and is what prints — with one
+/// substitution. The five-field range struct is identical for every range
+/// column in every dump and renders as 137 characters saying so, so it
+/// collapses to `Range<T>`, `T` being the bound type: the only part that
+/// varies. The manual states the struct's real layout once, which is what
+/// makes the elision lossless.
+///
+/// **The substitution is detected from the [`NestedPlan`], never from the
+/// field names** — a user composite is free to declare five fields with
+/// exactly those names, and `pgtype::RANGE_STRUCT_FIELDS` reserves dispatch to
+/// the plan. A built-in multirange and an array of the matching range render
+/// *identically* (`List(Range<Int32>)`), which is correct rather than a
+/// collision to fix: they are the same Arrow type, the plans differ, and the
+/// declared PostgreSQL type sits on the same line.
+///
+/// The type and the plan come from one producer and cannot disagree; this
+/// being display code, a disagreeing pair falls back to plain `Display`
+/// rather than panicking the way the builder does.
+fn arrow_type_label(data_type: &DataType, plan: &NestedPlan) -> String {
+    match (plan, data_type) {
+        (NestedPlan::Array(element), DataType::List(field)) => {
+            format!("List({})", arrow_type_label(field.data_type(), element))
+        }
+        (NestedPlan::Record(field_plans), DataType::Struct(fields))
+            if field_plans.len() == fields.len() =>
+        {
+            let rendered: Vec<String> = fields
+                .iter()
+                .zip(field_plans)
+                .map(|(f, p)| format!("{:?}: {}", f.name(), arrow_type_label(f.data_type(), p)))
+                .collect();
+            format!("Struct({})", rendered.join(", "))
+        }
+        (NestedPlan::Range(bound), _) => range_label(data_type, bound),
+        (NestedPlan::Multirange(bound), DataType::List(field)) => {
+            format!("List({})", range_label(field.data_type(), bound))
+        }
+        _ => data_type.to_string(),
+    }
+}
+
+/// The `Range<T>` substitution itself, shared by the `Range` and `Multirange`
+/// plans — the latter is a `List` of exactly this struct.
+fn range_label(data_type: &DataType, bound: &NestedPlan) -> String {
+    match data_type {
+        DataType::Struct(fields) if fields.len() == RANGE_STRUCT_FIELDS.len() => {
+            format!("Range<{}>", arrow_type_label(fields[0].data_type(), bound))
+        }
+        _ => data_type.to_string(),
+    }
+}
+
 /// Dump-level metadata header: server/`pg_dump` versions, extension and
 /// user-defined-type counts (`docs/design/architecture.md`,
 /// "CLI surface"). The `database: <name>` line is only shown when it's informative —
@@ -538,10 +597,23 @@ fn print_index(index: &DumpIndex, verbose: bool, map: bool) {
                 .collect();
             println!("    columns: {}", columns.join(", "));
             if verbose {
-                for note in
-                    resolved.notes.iter().filter(|d| d.resolution != ColumnResolution::Mapped)
-                {
-                    println!("    {}: {}", note.column, resolution_label(&note.resolution));
+                // One line per column that has something to say. A column
+                // that did not map says why; a column that mapped says what
+                // it mapped *to*, unless that is `Utf8View` — the
+                // no-information answer, and the only Arrow type a
+                // non-`Mapped` resolution ever produces, so the two arms
+                // never both fire.
+                for (i, note) in resolved.notes.iter().enumerate() {
+                    let data_type = resolved.schema.field(i).data_type();
+                    if note.resolution != ColumnResolution::Mapped {
+                        println!("    {}: {}", note.column, resolution_label(&note.resolution));
+                    } else if *data_type != DataType::Utf8View {
+                        println!(
+                            "    {}: {}",
+                            note.column,
+                            arrow_type_label(data_type, &resolved.plans[i])
+                        );
+                    }
                 }
             }
             total_columns += resolved.notes.len();
@@ -721,5 +793,100 @@ fn type_kind_label(kind: &TypeKind) -> &'static str {
         TypeKind::Range { .. } => "range",
         TypeKind::Base => "base",
         TypeKind::Shell => "shell",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow::datatypes::{Field, Fields};
+    use std::sync::Arc;
+
+    fn list_of(child: DataType) -> DataType {
+        DataType::List(Arc::new(Field::new("item", child, true)))
+    }
+
+    fn range_struct(bound: DataType) -> DataType {
+        DataType::Struct(Fields::from(vec![
+            Field::new(RANGE_STRUCT_FIELDS[0], bound.clone(), true),
+            Field::new(RANGE_STRUCT_FIELDS[1], bound, true),
+            Field::new(RANGE_STRUCT_FIELDS[2], DataType::Boolean, false),
+            Field::new(RANGE_STRUCT_FIELDS[3], DataType::Boolean, false),
+            Field::new(RANGE_STRUCT_FIELDS[4], DataType::Boolean, false),
+        ]))
+    }
+
+    /// A scalar column's Arrow type is arrow's own `Display`, unmodified —
+    /// which is the half of the line that was never visible before, and the
+    /// reason the line is printed for every mapped non-`Utf8View` column
+    /// rather than only for nested ones.
+    #[test]
+    fn a_scalar_column_renders_as_arrows_own_display() {
+        assert_eq!(
+            arrow_type_label(&DataType::Decimal128(38, 10), &NestedPlan::Scalar),
+            "Decimal128(38, 10)"
+        );
+    }
+
+    #[test]
+    fn arrays_and_composites_render_through_arrows_display() {
+        assert_eq!(
+            arrow_type_label(
+                &list_of(DataType::Utf8View),
+                &NestedPlan::Array(Box::new(NestedPlan::Scalar))
+            ),
+            "List(Utf8View)"
+        );
+        let point = DataType::Struct(Fields::from(vec![
+            Field::new("x", DataType::Int32, true),
+            Field::new("y", DataType::Utf8View, true),
+        ]));
+        assert_eq!(
+            arrow_type_label(&point, &NestedPlan::Record(vec![NestedPlan::Scalar; 2])),
+            r#"Struct("x": Int32, "y": Utf8View)"#
+        );
+    }
+
+    /// The one substitution: the five-field range struct is identical in
+    /// every dump, so only its bound type is worth printing.
+    #[test]
+    fn the_range_struct_collapses_to_its_bound_type() {
+        assert_eq!(
+            arrow_type_label(
+                &range_struct(DataType::Int32),
+                &NestedPlan::Range(Box::new(NestedPlan::Scalar))
+            ),
+            "Range<Int32>"
+        );
+    }
+
+    /// A built-in multirange and an array of the matching range are the
+    /// *same* Arrow type and different plans, so rendering identically is
+    /// correct rather than a collision — the declared PostgreSQL type sits on
+    /// the same line and tells them apart.
+    #[test]
+    fn a_multirange_and_an_array_of_the_matching_range_render_identically() {
+        let multirange = arrow_type_label(
+            &list_of(range_struct(DataType::Int32)),
+            &NestedPlan::Multirange(Box::new(NestedPlan::Scalar)),
+        );
+        let array_of_range = arrow_type_label(
+            &list_of(range_struct(DataType::Int32)),
+            &NestedPlan::Array(Box::new(NestedPlan::Range(Box::new(NestedPlan::Scalar)))),
+        );
+        assert_eq!(multirange, "List(Range<Int32>)");
+        assert_eq!(array_of_range, multirange);
+    }
+
+    /// Dispatch is the plan's, never the field names' — a user composite may
+    /// declare five fields with exactly the range struct's names, and it must
+    /// still print as the struct it is.
+    #[test]
+    fn a_composite_wearing_the_range_structs_field_names_is_not_collapsed() {
+        let impostor = range_struct(DataType::Int32);
+        let rendered =
+            arrow_type_label(&impostor, &NestedPlan::Record(vec![NestedPlan::Scalar; 5]));
+        assert!(rendered.starts_with(r#"Struct("lower": Int32"#), "{rendered}");
+        assert!(!rendered.contains("Range<"), "{rendered}");
     }
 }

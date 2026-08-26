@@ -784,8 +784,10 @@ entry, `NestedPlan::Scalar` included, so no consumer has to ask whether the
 vector applies to it.
 
 *Rejected:* hanging the plan off `ColumnNote`, which is the human-facing
-per-column record and would become two things, since no display ever reads a
-plan; and making it a payload on `ColumnResolution::Mapped`, which expresses
+per-column record and would become two things — the one display that reads a
+plan (`--verbose`'s `Range<T>` substitution, above) reads it positionally
+beside the `DataType` it renders, which is where the pairing already puts it;
+and making it a payload on `ColumnResolution::Mapped`, which expresses
 "a plan exists exactly when a column mapped" but breaks the sites that compare
 that enum by equality, to buy a coupling one producer already gives.
 
@@ -1183,6 +1185,33 @@ same way the block listing is. `span_summary` is the one place in the codebase
 that matches every `SpanBody`/`DataBlock` variant for display, and a future
 `--filter-kind` should extend it rather than duplicate the match. `--map` and
 `--preamble-only` are mutually exclusive, rejected before any scan runs.
+
+**`--verbose`'s per-column line is a complete statement of the Arrow schema.**
+One line per column that has something to say: a column that did not map gets
+`resolution_label`'s sentence, and a column that mapped gets its Arrow type —
+unless that type is `Utf8View`, the no-information answer, which is also the
+only type a non-`Mapped` resolution ever produces, so the two never both fire.
+The type is rendered by `arrow_type_label`
+(`pgdump_query-cli/src/main.rs`) as arrow-schema's own `Display` —
+terse, reversible, and carrying a composite's real field names — with one
+substitution: the five-field range struct is identical for every range column
+in every dump, so it collapses to `Range<T>`, `T` being the bound type. The
+substitution is dispatched on the [`NestedPlan`](#nested-columns-nestedplan-travels-beside-the-datatype),
+never on the field names, since a user composite may declare five fields with
+exactly those names. A built-in multirange and an array of the matching range
+therefore render identically (`List(Range<Int32>)`) — correct, not a
+collision: they are the same Arrow type, and the declared PostgreSQL type sits
+on the same line. `docs/manual/type-handling.md` states the range struct's
+real layout once, which is what makes the elision lossless.
+
+*Rejected:* printing the type only where the plan is not `Scalar`. It keeps
+every existing line's width untouched, which is its whole appeal, but "what
+does this column become in Arrow" is not a question only a nested schema
+raises — a `numeric` column's `Decimal128` precision is exactly as invisible
+and exactly as consequential to a caller building against the schema.
+*Rejected:* a compact lowercase rendering of our own
+(`list<struct<a: int32>>`). It is a second spelling of a type vocabulary the
+reader already meets everywhere else Arrow is named.
 
 **`pgdq info --json` dumps the internal struct, not a designed format.**
 `IndexJson`/`MetadataJson` (`pgdump_query-cli/src/main.rs`) flatten

@@ -69,10 +69,10 @@ public.events (98765 rows)
   block, in file order, with its row count and column list. This is the
   view to read when you're deciding what to query.
 
-Add `--verbose` to also see each block's byte offsets and, for any column
-whose type could not be resolved, why (see
-[type handling](type-handling.md) for what "resolved" means and why a column
-sometimes isn't).
+Add `--verbose` to also see each block's byte offsets and, per column, what
+it became: the Arrow type it resolved to, or — for a column that came back as
+a string — why (see [type handling](type-handling.md) for what "resolved"
+means and why a column sometimes isn't).
 
 ## Everything else in the file: `--map`
 
@@ -138,7 +138,10 @@ all change as the underlying code does. Reach for it when you need something
 the text views above don't show (or don't show in a shape you can parse),
 and expect to adjust your `jq`/script when you upgrade pgdq. `--json` can't
 be combined with `--verbose` or `--map`, since the full structure already
-contains everything either would add.
+carries the spans and offsets those two format for a human. The one thing it
+does not carry is `--verbose`'s per-column outcome — resolving a column's
+Arrow type is not part of what a scan records — so that detail is available
+in the text listing only.
 
 ## Inspecting a cache with the dump gone: no `--source`
 

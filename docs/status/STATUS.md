@@ -27,7 +27,7 @@ per-phase checklist here any more. How the system works is
 | Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-26 (4.4's unattended calls reviewed).
+Last updated: 2026-08-26 (4.4.1: `info --verbose` states the Arrow schema; manual rewritten).
 
 ## Phase 4 progress
 
@@ -60,15 +60,15 @@ Specified in
       plan-taking one. Nested columns decode end-to-end on the optimistic
       path. Notes:
       [`../design/roadmap-phase4.4-resolution-flip-notes.md`](../design/roadmap-phase4.4-resolution-flip-notes.md)
-- [ ] **4.4.1** The presentation half: the resolved Arrow type on `pgdq info
+- [x] **4.4.1** The presentation half: the resolved Arrow type on `pgdq info
       --verbose`'s per-column line for every column that is not `Utf8View`,
       rendered with arrow's `Display` except the range struct, which collapses
-      to `Range<T>`; and the `type-handling.md` rewrite (what each family becomes, the three
-      ways one is still a string, the shape error and its remedies, and that
-      predicates still match literal text). `info`'s output is *correct*
-      today — `resolution_label` covers every arm and the declared PostgreSQL
-      type is what it prints; the manual is the only thing wrong, see "Known
-      gaps".
+      to `Range<T>`; and the `type-handling.md` rewrite. The manual documents
+      **two** ways a column of these types is still a string, not the spec's
+      three — "arrays vary in shape" becomes true only with 4.5's census, and
+      until then that case is the `FieldDecode` error the same section
+      documents. Notes:
+      [`../design/roadmap-phase4.4.1-presentation-notes.md`](../design/roadmap-phase4.4.1-presentation-notes.md)
 - [ ] **4.5** The shape census: a cache format bump,
       per-block per-column recording, the
       whole-file completeness rule, and the manual's statement of the
@@ -83,7 +83,8 @@ Specified in
   out-of-band items. Pooled here so far: **per-column resolution has no
   machine-readable path.** `--json` exports `DumpIndex`, which carries no
   resolved schema, so `pgdq info --verbose`'s per-column outcomes are
-  human-only. Phase 4 sharpens this — after 4.4 "why is this column a string"
+  human-only — and so is the resolved Arrow type it prints beside them since
+  4.4.1. Phase 4 sharpens this — after 4.4 "why is this column a string"
   has five distinct answers a script might branch on — but does not answer it:
   resolution is per `COPY` *block*, not per table (a header-less block gets
   placeholder column names from its first row), so "a resolved schema per
@@ -91,13 +92,6 @@ Specified in
 
 ## Known gaps
 
-- **`docs/manual/type-handling.md` is wrong about the four container
-  families.** Its "Arrays, composites, ranges, and multiranges are strings for
-  now" section describes the world before 4.4; they now resolve to real Arrow
-  types. The spec puts the rewrite in **4.4.1**, the next slice, deliberately —
-  the presentation half is judged against a human reading the manual, and
-  bundling it with the resolution rework would force one review to accept both
-  at one confidence. Nothing else in the manual is affected.
 - A multi-dimensional array value, or one carrying an `[lb:ub]=` prefix, is a
   hard `Error::FieldDecode` naming the column. Deliberate, not a defect: an
   array's dimensionality belongs to the *value* (I21) and `List<T>` has to
@@ -157,5 +151,13 @@ Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
 
-None outstanding.
+- **The manual says "Two ways one of these columns is still a string", where
+  the spec's 4.4 bullet says three.** The third — a column whose arrays vary
+  in shape coming back as text — is not true until 4.5's census exists; today
+  that case is a `FieldDecode` error, which the same manual section states two
+  paragraphs later, so writing all three would have had the page contradict
+  itself. If you would rather the manual named the case now and said it errors
+  today, the fix is one bullet plus a heading; either way 4.5 has to touch that
+  heading. Reasoning:
+  [`../design/roadmap-phase4.4.1-presentation-notes.md`](../design/roadmap-phase4.4.1-presentation-notes.md).
 

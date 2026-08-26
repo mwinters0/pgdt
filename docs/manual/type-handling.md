@@ -11,10 +11,21 @@ rather than failing — so a dump always reads, and coverage improves release to
 release. Pass `SchemaMode::Strings` to get every column as a string, which is what you
 want if you would rather do your own parsing.
 
-You can see exactly what happened to each column: `pgdq info --verbose` lists
-per-column resolutions, and the library exposes the same thing as diagnostics
-on the resolved schema (`TableStream::resolved_schema`, or `read_table`'s
-returned `ResolvedSchema`).
+You can see exactly what happened to each column: `pgdq info --verbose` prints
+one line per column, giving the Arrow type it resolved to — or, for a column
+that came back as a string, the reason. A column that is a string because
+that is simply what it is (`text`, `json`, `interval`) gets no line, since
+`Utf8View` is the answer that carries no information. The library exposes the
+same thing on the resolved schema (`TableStream::resolved_schema`, or
+`read_table`'s returned `ResolvedSchema`).
+
+```
+public.t_composite (3 rows)
+    columns: id integer, v_point public.point2d, v_points public.point2d[]
+    id: Int32
+    v_point: Struct("x": Int32, "y": Utf8View)
+    v_points: List(Struct("x": Int32, "y": Utf8View))
+```
 
 `pgdq query`'s text output is identical whether typing is on or off: every
 value is rendered back to the same PostgreSQL text `pg_dump` itself would
@@ -76,14 +87,87 @@ Precision above 76 digits also falls back to a string (`Decimal256`'s limit).
 to round-trip without loss. `NaN`, `Infinity` and `-Infinity` are written in
 those exact spellings and are parsed as such.
 
-### Arrays, composites, ranges, and multiranges are strings for now
+### Arrays, composites, ranges, and multiranges
 
-`text[]` arrives as `{a,b,"c,d"}` — a value with its own quoting rules nested
-inside the escaping COPY TEXT already applies. Decoding it correctly is real
-work, shared with composite types, ranges, and multiranges (including a
-range type's own auto-created multirange companion), and it is scheduled. Until then these come back as strings **with their outer COPY
-escaping already removed**, so what you get is the literal array text
-PostgreSQL would print.
+All four map to real Arrow types, and they nest in any combination:
+
+| Declared | Arrow | A value in the dump |
+|---|---|---|
+| `text[]` | `List(Utf8View)` | `{a,b,"c,d"}` — three elements, the third containing a comma |
+| a composite `(x integer, y text)` | `Struct("x": Int32, "y": Utf8View)` | `(1,"a,b""c")` |
+| `int4range` | `Range<Int32>` (see below) | `[1,10)` |
+| `int4multirange` | `List(Range<Int32>)` | `{[1,10),[20,30)}` |
+
+A range type's auto-created multirange companion is recognized too, even
+though the dump never declares it. Nesting composes without special cases:
+a composite array is `List(Struct(…))`, a composite with a `text[]` field is
+`Struct("label": Utf8View, "tags": List(Utf8View))`, and an array of ranges is
+`List(Range<…>)` — the same Arrow type a multirange gets, since they are the
+same shape; the declared PostgreSQL type on the same `pgdq info` line is what
+tells them apart.
+
+A part that has no mapping of its own becomes a string **in that position**
+only: a composite field of type `interval` is a `Utf8View` field inside an
+otherwise typed `Struct`, exactly as an `interval` column would be at top
+level.
+
+**A range is five fields**, and `pgdq info` prints them as `Range<T>` because
+they are the same five for every range column in every dump:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `lower`, `upper` | the bound type (`T`) | null means unbounded |
+| `lower_inclusive`, `upper_inclusive` | `Boolean`, never null | `[` / `(` and `]` / `)` |
+| `empty` | `Boolean`, never null | the `empty` range |
+
+A range bound is never SQL NULL, which is what lets a null `lower` mean
+"unbounded" without ambiguity — and `empty` is not redundant with the two
+flags, since `empty` and `(,)` are different ranges and neither has bounds.
+
+#### Two ways one of these columns is still a string
+
+- **The array's element type is opaque.** `box[]`, an array of a C-level base
+  or shell type, or an array of a domain over any of those. PostgreSQL lets an
+  element type choose the separator its arrays are written with — `box` uses
+  `;`, not `,` — and for exactly these types the dump does not say which:
+  `box` is built in and has no `CREATE TYPE` in the file at all, and a domain
+  inherits its base type's separator while recording nothing about it. Splitting
+  such a literal on `,` would invent element boundaries that are not there, and
+  the elements it recovered would be opaque text anyway, so the whole value
+  stays one string. `pgdq info --verbose` reports this as `opaque element
+  type`.
+- **You asked for strings.** `--schema-mode strings` (`SchemaMode::Strings`)
+  returns every column, nested ones included, as the literal text `pg_dump`
+  wrote.
+
+#### A multi-dimensional array, or one with an `[lb:ub]=` prefix, is an error
+
+PostgreSQL does not record an array's dimensionality in its type. `integer[]`,
+`integer[][]` and `integer[3]` are all written `integer[]`, and one column may
+hold `{1,2}` in one row and `{{1,2},{3,4}}` in the next. An Arrow list type has
+to commit before the first batch arrives, so we commit to one dimension, and a
+value that disagrees is an **error** rather than a silently flattened list:
+
+```
+public.t_array_shape.v_multidim at row offset 9311: value `{{1,2},{3,4}}`
+does not parse as its mapped type `integer[]`
+```
+
+The same applies to a value carrying an explicit lower bound
+(`[0:2]={7,8,9}`): Arrow lists start at 0 and have nowhere to record an index
+origin, and dropping it would make the value un-round-trippable.
+
+The remedy is `--schema-mode strings` (`SchemaMode::Strings`), which hands the
+literal back verbatim, prefix and all.
+
+#### A predicate still matches the literal text
+
+A filter on one of these columns compares the value's **PostgreSQL text**, as
+it appears in the dump, not its decoded elements. `--filter 'tags={a,b}'`
+works exactly as it did when the column was a string. The consequence worth
+knowing: a spelling PostgreSQL would accept but never write — `{a, b}`, with a
+space — matches nothing, because the dump holds the canonical form and that is
+what is being compared.
 
 ### `json` and `jsonb` are strings
 
