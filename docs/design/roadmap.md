@@ -81,11 +81,34 @@ degenerate ones: `--data-only` (no DDL), `--schema-only` (no data),
 shape. Absent that test, "spans sum to file size" decays into an aspiration the
 first time a span kind is added.
 
-### Expand the generated fixtures freely; never infer what `pg_dump` writes
+### The input contract is valid PostgreSQL, not `pg_dump`'s output
 
-**When a decision depends on the exact bytes `pg_dump` produces for some
-shape, put that shape in `scripts/fixture_schema_*.sql` and regenerate, rather
-than reasoning out what the output must be.** This is closed, and the bias is
+**pgdq reads plain SQL that a PostgreSQL server would accept, whoever wrote
+it.** `pg_dump` is the producer we verify against because it is the one we can
+run six versions of, not the boundary of what we accept. A file that is
+hand-written, hand-edited, or emitted by another `pg_dump`-compatible tool is
+in scope, and a wrong answer on one is a defect like any other.
+
+Two consequences, and the second is what the rule is really for:
+
+- **A declared type is read the way PostgreSQL's own type system reads it**,
+  because that is the type the values in the `COPY` block were written by.
+  `resolve_declared_type` is already nothing but this — `int4` → `Int32`,
+  typmod splitting, the domain walk — so a spelling read *more literally* than
+  the server reads it is the anomaly, not the interpretation.
+- **A resolution outcome states only what the DDL supports.** Refusing a
+  column is always available; refusing it under a label that makes a false
+  claim about the column is not.
+
+When another producer is identified, its output is incorporated into the
+fixture generators the same way `pg_dump`'s is — the rule below is about the
+method, not about `pg_dump`.
+
+### Expand the generated fixtures freely; verify objectively wherever possible
+
+**When a decision depends on the exact bytes some producer writes for a shape,
+put that shape in `scripts/fixture_schema_*.sql` and regenerate, rather than
+reasoning out what the output must be.** This is closed, and the bias is
 deliberately lopsided: a fixture column costs one generator run across six
 majors and a few lines of schema, while a wrong inference costs a design built
 on it. We have paid the second price more than once.
@@ -121,6 +144,23 @@ coverage it does not have.
 The cost is real and bounded — regeneration needs Docker and the six
 PostgreSQL images (`CLAUDE.md`), and added columns widen literals other tests
 read. Pay it. The alternative is discovering the shape from a user's dump.
+
+**Where a fixture is impossible, the invariant proving it impossible stands in
+for one.** Some behaviour is reachable only from input a producer we can run
+provably never emits — `integer[][]` survives no round trip through
+`format_type` (I21), so no generator input makes `pg_dump` write it. That is
+not an exemption from the rule but a case of satisfying it: the objective
+evidence exists, it is in the invariants register, and it is stronger than a
+fixture would be. Such behaviour is pinned by unit test over a hand-built
+`TypeDef` list, and the entry it rests on is cited at the test. The rule's
+target is *guessing*, and a verified invariant is the opposite of a guess.
+
+**The citation is the check.** A test claiming this carve-out names its `I<n>`
+at the test site, or it is not covered by it — which puts the behaviour inside
+the register's own ritual, where every entry carries a re-verify command that
+gets walked at each new PostgreSQL major. That is a stronger guarantee than a
+second enforcement mechanism would be, and it is what stops the carve-out from
+becoming a way to skip a fixture that was perfectly possible.
 
 **The check.** Every standing rule here carries one, and this rule's is
 partial by nature: a test walks every fixture, resolves every column of every
@@ -172,11 +212,8 @@ out of it. See
 - **A full SQL/DDL parser** — only enough recognition to locate `COPY` blocks,
   classify statements into spans, and extract columns and types from
   `CREATE TABLE`.
-- **CSV-format `COPY` blocks.** `pg_dump` has no CSV mode at all (I13), so
-  there is no such output to support; `--format` names the archive container,
-  which is Phase 8 Track B. Reading CSV would mean accepting input `pg_dump`
-  never emits — a new input source, to be argued on its own merits rather than
-  inherited from a superseded sketch.
+Note that CSV-format `COPY` blocks are **not** on this list. They are a Future
+item; see below.
 
 ## Phase 4 — Composite value decoding
 
@@ -205,15 +242,17 @@ is stated once as a completion line. `--json` gains per-`COPY`-block resolution
 — the per-column outcomes `pgdq info --verbose` already computes and discards
 at the JSON boundary — with no stability promise attached.
 
-**Runs next, after Phase 4 and before Phase 5.** It carries number 9 because
+**Ran ahead of Phase 4's last slice, and before Phase 5** — 4.6 (the array
+stress data) is all that remains behind it. It carries number 9 because
 5–8 are taken and this project does not renumber a tail
 ([`../process.md`](../process.md), "Slice numbering"): a phase's number is its
 identity, its position in this file is its order.
 
 Placed ahead of pushdown because it is the first phase whose subject is the
 *output contract* rather than the engine, and because Phase 4 is what makes
-that contract worth stating: after 4.5.1 there are six distinct answers to "why
-is this column a string", none of them reachable by a script. It is also the
+that contract worth stating: after 4.5.1 there were six distinct answers to
+"why is this column a string" and no script could reach any of them (9.4 added
+a seventh, and made all of them machine-readable). It is also the
 phase that pays off the incremental machinery `query` already has — every
 mechanism it needs exists and is reachable from exactly one command.
 
@@ -461,6 +500,15 @@ independent one-session changes.
 
 Work we intend to do without committing it to a phase. An item moves out of
 this section when it acquires a phase number, not when it acquires a design.
+
+- **CSV-format `COPY` blocks, as part of alternate-format support, post-1.0.**
+  `pg_dump` has no CSV mode at all (I13), but `psql` writes `COPY ... WITH
+  (FORMAT csv)` and that is valid PostgreSQL, so it is inside the input
+  contract — just not built. What it costs is a second field decoder with its
+  own quoting rules, plus the fixtures to pin it, and `copy.rs`'s independence
+  from its byte source ("Four decisions that keep later phases additive") is
+  what makes it a variant rather than a rework. Not to be confused with
+  `--format`, which names the archive container and is Phase 8 Track B.
 
 - **Caller-supplied type mapping.** Let a caller override the
   PostgreSQL-type→Arrow-type resolution: per column, per declared type, or

@@ -24,21 +24,43 @@ fn colocated_path_appends_the_cache_suffix() {
     );
 }
 
+/// The four unusable outcomes are told apart, not collapsed: each is a
+/// different sentence `pgdq info` has to print, even though every one of them
+/// ends in `pgdq parse` (`docs/design/architecture.md`, "The cache").
+/// `SourceChanged` has its own test below, since producing it needs a second
+/// file.
 #[tokio::test]
-async fn missing_cache_file_is_treated_as_absent() {
+async fn an_unusable_cache_says_which_kind_of_unusable_it_is() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("nonexistent.dqcache");
     let source = LocalFileSource::open(edge_cases()).unwrap();
-    assert_eq!(cache::load(&path, &source).await.unwrap(), CacheStatus::Absent);
+
+    let missing = dir.path().join("nonexistent.dqcache");
+    assert_eq!(cache::load(&missing, &source).await.unwrap(), CacheStatus::Missing);
+
+    let foreign = dir.path().join("garbage.dqcache");
+    std::fs::write(&foreign, b"not a cache file").unwrap();
+    assert_eq!(cache::load(&foreign, &source).await.unwrap(), CacheStatus::Unreadable);
 }
 
+/// A cache whose envelope decodes but whose `format_version` is not this
+/// build's is `UnsupportedVersion`, not `Unreadable` — different advice: the
+/// path is right, the build that wrote it was not. Produced by corrupting the
+/// version field in place, which is the first thing the envelope encodes.
 #[tokio::test]
-async fn foreign_bytes_at_the_cache_path_are_treated_as_absent() {
+async fn a_cache_from_another_build_is_told_apart_from_foreign_bytes() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("garbage.dqcache");
-    std::fs::write(&path, b"not a cache file").unwrap();
     let source = LocalFileSource::open(edge_cases()).unwrap();
-    assert_eq!(cache::load(&path, &source).await.unwrap(), CacheStatus::Absent);
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let path = dir.path().join("edge_cases.sql.dqcache");
+    cache::save(&path, &source, &index).await.unwrap();
+
+    let mut bytes = std::fs::read(&path).unwrap();
+    // bincode's standard config writes a `u32` as a varint; a small value is
+    // one byte, so bumping it keeps the rest of the envelope decodable.
+    bytes[0] = bytes[0].wrapping_add(1);
+    std::fs::write(&path, &bytes).unwrap();
+
+    assert_eq!(cache::load(&path, &source).await.unwrap(), CacheStatus::UnsupportedVersion);
 }
 
 /// A saved index round-trips exactly, including the still-reserved-and-
@@ -50,27 +72,29 @@ async fn foreign_bytes_at_the_cache_path_are_treated_as_absent() {
 #[tokio::test]
 async fn saved_index_round_trips_exactly() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
-    let mut index = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
     assert!(index.blocks().next().is_some());
     assert!(index.blocks().all(|b| b.sparse_index.is_none() && b.column_stats.is_none()));
     assert!(index.metadata.is_some());
-    // Diagnostics deliberately don't round-trip (`diagnostics_do_not_round_trip_through_the_cache`
-    // covers that directly) — `build_index` always reports a `TocCoverage`
-    // figure, so cleared here to isolate this test's own claim.
-    index.diagnostics.clear();
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql.dqcache");
     cache::save(&path, &source, &index).await.unwrap();
     let loaded = match cache::load(&path, &source).await.unwrap() {
-        CacheStatus::Valid { index, mtime_changed } => {
+        CacheStatus::Valid { index, mtime_changed, total_size } => {
             assert!(!mtime_changed, "just-saved cache must match the source's current mtime");
+            assert_eq!(total_size, source.size().await.unwrap());
             index
         }
-        CacheStatus::Absent => panic!("a freshly saved cache must load"),
         CacheStatus::Incomplete { .. } => panic!("build_index always scans the whole file"),
+        unusable => panic!("a freshly saved cache must load, got {unusable:?}"),
     };
 
+    // Diagnostics are the one field that does not travel through the file —
+    // they are recomputed on load from the spans it just read, and
+    // `build_index` derives its own from the same spans by the same pure
+    // function, so the two agree without anything being persisted
+    // (`diagnostics_do_not_round_trip_through_the_cache` pins that directly).
     assert_eq!(loaded, index);
 }
 
@@ -97,7 +121,7 @@ async fn preamble_only_persists_a_real_unscanned_tail() {
     let index = match cache::load(&path, &source).await.unwrap() {
         CacheStatus::Incomplete { index, .. } => index,
         CacheStatus::Valid { .. } => panic!("a preamble-only scan cannot reach EOF"),
-        CacheStatus::Absent => panic!("preamble_only must persist a cache"),
+        unusable => panic!("preamble_only must persist a cache, got {unusable:?}"),
     };
     let size = source.size().await.unwrap();
     assert!(index.scanned_through < size, "edge_cases.sql has COPY blocks past its preamble");
@@ -112,18 +136,17 @@ async fn preamble_only_persists_a_real_unscanned_tail() {
 #[tokio::test]
 async fn save_overwrites_an_existing_cache() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
-    let mut index = build_index(&source, &ScanOptions::default()).await.unwrap();
-    // Diagnostics never round-trip (see `diagnostics_do_not_round_trip_through_the_cache`).
-    index.diagnostics.clear();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql.dqcache");
     std::fs::write(&path, b"stale placeholder").unwrap();
     cache::save(&path, &source, &index).await.unwrap();
 
+    let total_size = source.size().await.unwrap();
     assert_eq!(
         cache::load(&path, &source).await.unwrap(),
-        CacheStatus::Valid { index, mtime_changed: false }
+        CacheStatus::Valid { index, mtime_changed: false, total_size }
     );
 }
 
@@ -139,8 +162,10 @@ async fn save_propagates_write_failures() {
     assert!(matches!(cache::save(&path, &source, &index).await, Err(Error::Io(_))));
 }
 
-/// A cache saved against a differently-sized file is invalidated outright
-/// (`Absent`) — every offset it holds could be wrong.
+/// A cache saved against a differently-sized file is invalidated outright —
+/// every offset it holds could be wrong. It reports **which** sizes
+/// disagreed, because "your file changed since you parsed it" is the sentence
+/// a reporting caller has to print and those two numbers are its evidence.
 #[tokio::test]
 async fn size_mismatch_invalidates_the_cache() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
@@ -158,7 +183,13 @@ async fn size_mismatch_invalidates_the_cache() {
     let grown_source = LocalFileSource::open(&grown).unwrap();
     assert_ne!(grown_source.size().await.unwrap(), source.size().await.unwrap());
 
-    assert_eq!(cache::load(&path, &grown_source).await.unwrap(), CacheStatus::Absent);
+    assert_eq!(
+        cache::load(&path, &grown_source).await.unwrap(),
+        CacheStatus::SourceChanged {
+            cached_size: source.size().await.unwrap(),
+            live_size: grown_source.size().await.unwrap(),
+        }
+    );
 }
 
 /// An mtime mismatch alone is a loud warning, not grounds for invalidation
@@ -170,9 +201,7 @@ async fn mtime_mismatch_alone_does_not_invalidate_the_cache() {
     let dump = dir.path().join("edge_cases.sql");
     std::fs::copy(edge_cases(), &dump).unwrap();
     let source = LocalFileSource::open(&dump).unwrap();
-    let mut index = build_index(&source, &ScanOptions::default()).await.unwrap();
-    // Diagnostics never round-trip (see `diagnostics_do_not_round_trip_through_the_cache`).
-    index.diagnostics.clear();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
 
     let path = cache::colocated_path(&dump);
     cache::save(&path, &source, &index).await.unwrap();
@@ -181,12 +210,17 @@ async fn mtime_mismatch_alone_does_not_invalidate_the_cache() {
     std::fs::File::options().write(true).open(&dump).unwrap().set_modified(future).unwrap();
 
     match cache::load(&path, &source).await.unwrap() {
-        CacheStatus::Valid { index: loaded, mtime_changed } => {
+        CacheStatus::Valid { index: loaded, mtime_changed, .. } => {
             assert!(mtime_changed);
+            // Diagnostics are recomputed on load rather than restored, and
+            // `build_index`'s own are the same pure function of the same
+            // spans, so the two agree without either being persisted.
             assert_eq!(loaded, index);
         }
-        CacheStatus::Absent => panic!("an mtime-only mismatch must not invalidate the cache"),
         CacheStatus::Incomplete { .. } => panic!("build_index always scans the whole file"),
+        unusable => {
+            panic!("an mtime-only mismatch must not invalidate the cache, got {unusable:?}")
+        }
     }
 }
 
@@ -268,12 +302,13 @@ async fn a_changed_mtime_is_a_diagnostic_not_an_invalidation() {
         .unwrap()
         .expect("an mtime change does not invalidate");
     assert_eq!(loaded.blocks().count(), index.blocks().count(), "contents survive intact");
-    assert_eq!(
-        loaded.diagnostics,
-        vec![pgdump_query::Diagnostic {
+    assert!(
+        loaded.diagnostics.contains(&pgdump_query::Diagnostic {
             severity: Severity::Warning,
             kind: DiagnosticKind::CacheMtimeChanged,
-        }]
+        }),
+        "diagnostics: {:?}",
+        loaded.diagnostics
     );
 }
 
@@ -299,7 +334,20 @@ async fn diagnostics_do_not_round_trip_through_the_cache() {
     pgdump_query::cache::save(&cache_path, &source, &index).await.unwrap();
 
     let loaded = CacheMode::Enabled(cache_path).load(&source).await.unwrap().unwrap();
-    assert!(loaded.diagnostics.is_empty(), "recomputed on load, never restored");
+    // The saved `CacheMtimeChanged` is gone: the mismatch was between the
+    // cache and *that* run's observation, and this run's mtime check passed.
+    // What is present is recomputed, not restored — the TOC-coverage figure
+    // the load derives from the spans it just read.
+    assert!(
+        !loaded.diagnostics.iter().any(|d| d.kind == DiagnosticKind::CacheMtimeChanged),
+        "a persisted diagnostic must not be restored: {:?}",
+        loaded.diagnostics
+    );
+    assert!(
+        loaded.diagnostics.iter().any(|d| matches!(d.kind, DiagnosticKind::TocCoverage { .. })),
+        "the file-level figures are recomputed on load: {:?}",
+        loaded.diagnostics
+    );
 }
 
 /// A cache whose `scanned_through` falls short of its recorded size loads as
@@ -406,11 +454,11 @@ async fn load_offline_always_pushes_the_cache_offline_diagnostic() {
     );
 }
 
-/// A cache path that doesn't exist loads as `Absent` offline too, and gets
-/// no diagnostic pushed onto it — there is no index to push one onto.
+/// A cache path that doesn't exist is `Missing` offline too, and gets no
+/// diagnostic pushed onto it — there is no index to push one onto.
 #[tokio::test]
-async fn load_offline_missing_file_is_absent() {
+async fn load_offline_missing_file_is_missing() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("nonexistent.dqcache");
-    assert_eq!(CacheMode::Offline(path).load_offline().await.unwrap(), CacheStatus::Absent);
+    assert_eq!(CacheMode::Offline(path).load_offline().await.unwrap(), CacheStatus::Missing);
 }

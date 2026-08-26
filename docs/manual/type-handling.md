@@ -20,9 +20,11 @@ You can see exactly what happened to each column: `pgdq info --verbose` prints
 one line per column, giving the Arrow type it resolved to — or, for a column
 that came back as a string, the reason. A column that is a string because
 that is simply what it is (`text`, `json`, `interval`) gets no line, since
-`Utf8View` is the answer that carries no information. The library exposes the
-same thing on the resolved schema (`TableStream::resolved_schema`, or
-`read_table`'s returned `ResolvedSchema`).
+`Utf8View` is the answer that carries no information. `pgdq info --json`
+carries the same per-column outcomes in machine-readable form (see
+[dump inspection](dump-inspection.md), "Scripting against the output"), and the
+library exposes them on the resolved schema
+(`TableStream::resolved_schema`, or `read_table`'s returned `ResolvedSchema`).
 
 ```
 public.t_composite (3 rows)

@@ -12,7 +12,7 @@ use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolv
 use pgdump_query::{
     ArrayShape, BatchOptions, ByteRangeSource, DataBlock, Diagnostic, DiagnosticKind, DumpIndex,
     DumpMetadata, LocalFileSource, NestedPlan, Predicate, PredicateOp, ScanOptions, Severity, Span,
-    SpanBody, TypeKind, build_index, preamble_only, render_field,
+    SpanBody, TypeKind, preamble_only, render_field,
 };
 
 #[derive(Parser)]
@@ -45,7 +45,12 @@ impl From<CliSchemaMode> for SchemaMode {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Perform a full file scan and build the structure cache.
+    /// Scan a dump file and build the structure cache — the only command
+    /// that reads the dump for its structure (`pgdq info` reports from the
+    /// cache this leaves). Resumes from a matching cache rather than
+    /// restarting, and persists after every completed `COPY` block, so an
+    /// interrupted scan is not wasted work. Remove the cache file to force a
+    /// scan from byte 0.
     Parse {
         /// The dump file to scan.
         #[arg(long)]
@@ -54,44 +59,46 @@ enum Command {
         /// whole purpose is to write the cache, `none` is rejected.
         #[arg(long)]
         dqcache: Option<PathBuf>,
+        /// Scan only the dump's preamble — the dump-level header alone, no
+        /// per-block listing or row counts — instead of the whole file. Cost
+        /// is independent of dump size regardless of how much `COPY` data
+        /// follows (`docs/design/architecture.md`, "Bounded preamble-only
+        /// reads"). The cache this leaves is a partial one that `pgdq info`
+        /// reads like any other.
+        #[arg(long)]
+        preamble_only: bool,
     },
-    /// Print what is known about a dump file — from a fresh or cached scan
-    /// of the dump itself, or, with no `--source`, from a retained
-    /// `--dqcache` alone once the dump is gone
-    /// (`docs/design/architecture.md`, "The cache").
+    /// Report what a dump's cache holds. **`info` never scans** — it reads the
+    /// cache `pgdq parse` wrote and errors if there is not one, rather than
+    /// starting an hours-long scan on your behalf
+    /// (`docs/design/architecture.md`, "CLI surface"). A cache from an
+    /// unfinished scan is reported for as far as it got, with the coverage
+    /// stated at the top.
     Info {
-        /// The dump file to scan. Omit it to answer from `--dqcache` alone
-        /// — cache-only mode, which then requires `--dqcache`.
+        /// The dump file the cache belongs to: its size is checked against
+        /// the cache's, so a changed file is caught. Omit it to answer from
+        /// `--dqcache` alone — cache-only mode, which then requires
+        /// `--dqcache` and cannot check anything.
         #[arg(long)]
         source: Option<PathBuf>,
-        /// Cache file path. With `--source`: `none` ignores any existing
-        /// cache and performs a fresh scan without persisting it, and
-        /// omitting this flag resolves to the colocated default
-        /// (`<source>.dqcache`). Without `--source`: required — this is the
-        /// cache-only entry point, and there is nothing else to answer from.
+        /// Cache file path, defaulting to the colocated `<source>.dqcache`.
+        /// Required when `--source` is omitted — that is the cache-only entry
+        /// point, and there is nothing else to answer from.
         #[arg(long, required_unless_present = "source")]
         dqcache: Option<PathBuf>,
         #[arg(long)]
         verbose: bool,
-        /// Answer from the preamble alone (dump-level header only, no
-        /// per-block listing or row counts) instead of a full structural
-        /// scan — cost is independent of dump size regardless of how much
-        /// `COPY` data follows (`docs/design/architecture.md`,
-        /// "CLI surface").
-        #[arg(long)]
-        preamble_only: bool,
-        /// List every span the full file map found (`docs/design/architecture.md`,
+        /// List every span the map holds (`docs/design/architecture.md`,
         /// "`DumpIndex`: one owner per fact") — DDL objects
         /// and framing included, not just `COPY` blocks — instead of the
-        /// per-table listing. Implies a full scan; incompatible with
-        /// `--preamble-only`.
+        /// per-table listing.
         #[arg(long)]
         map: bool,
         /// Print the internal index as JSON instead of the human-readable
-        /// listing: the whole `DumpIndex` plus diagnostics, or, with
-        /// `--preamble-only`, just the metadata plus diagnostics. No schema
-        /// stability is promised — this is a raw dump of our internal
-        /// representation, not a supported interchange format
+        /// listing: the whole `DumpIndex`, its coverage, its diagnostics, and
+        /// the per-`COPY`-block type resolution `--verbose` renders as text.
+        /// No schema stability is promised — this is a raw dump of our
+        /// internal representation, not a supported interchange format
         /// (`docs/design/architecture.md`, "CLI surface"). Incompatible with
         /// `--verbose`/`--map`, which format detail this already carries in
         /// full.
@@ -171,6 +178,24 @@ fn strip_ci_suffix<'a>(s: &'a str, suffix: &str) -> Option<&'a str> {
     tail.eq_ignore_ascii_case(suffix).then_some(head)
 }
 
+/// The one line `pgdq parse` prints about *this invocation* rather than about
+/// the file: where the scan picked up. `None` for a scan that started at byte
+/// 0, which is the case that needs no explanation.
+///
+/// A run that found the cache already complete scanned nothing at all, and
+/// says so rather than reporting a resume point equal to the file's size —
+/// the two are different facts to a user checking whether an interrupted scan
+/// finished.
+fn resume_notice(resumed_from: u64, size: u64) -> Option<String> {
+    match resumed_from {
+        0 => None,
+        n if n >= size => {
+            Some(format!("nothing to scan: the cache already covers all {size} byte(s)"))
+        }
+        n => Some(format!("resumed a previous scan at byte {n} of {size}")),
+    }
+}
+
 /// Print one batch's rows tab-separated, `\N` for NULL — mirroring COPY
 /// TEXT's own NULL marker. Each field is rendered back to PostgreSQL text via
 /// [`render_field`], so output is byte-identical whether `--schema-mode` is
@@ -200,40 +225,46 @@ fn print_batch(batch: &RecordBatch, plans: &[NestedPlan]) {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Parse { source: file, dqcache } => {
-            // `parse` is the eager entry point: always scan fresh (ignoring
-            // any existing cache) and (re)write it, per the CLI spec in
-            // `docs/design/architecture.md`.
-            // Reject `--dqcache none` up front, before paying for a scan we
-            // won't be allowed to persist.
+        Command::Parse { source: file, dqcache, preamble_only: preamble_only_flag } => {
+            // `parse` is the only scanner (`docs/design/architecture.md`,
+            // "CLI surface"). Reject `--dqcache none` up front, before paying
+            // for a scan we won't be allowed to persist.
             let mode = CacheMode::resolve(&file, dqcache.as_deref());
             let path = mode
                 .require_enabled("parse")
                 .context("`--dqcache none` cannot be combined with `parse`")?
                 .to_path_buf();
             let source = LocalFileSource::open(&file)?;
-            let index = build_index(&source, &ScanOptions::default()).await?;
-            // `build_index` always reaches EOF, so its censuses cover the
-            // whole file.
+            if preamble_only_flag {
+                let (metadata, diagnostics) =
+                    preamble_only(&source, &ScanOptions::default(), &mode).await?;
+                print_metadata(&metadata);
+                print_diagnostics(&diagnostics);
+                println!();
+                println!("wrote cache to {}", path.display());
+                return Ok(());
+            }
+            let size = source.size().await?;
+            let (index, resumed_from) =
+                pgdump_query::map_file(&source, &ScanOptions::default(), &mode).await?;
+            // The listing describes the file's state after this run, not this
+            // invocation's diff — so the one line that *is* about the
+            // invocation goes above it, where a user checking on an
+            // interrupted scan looks first.
+            if let Some(notice) = resume_notice(resumed_from, size) {
+                println!("{notice}");
+                println!();
+            }
+            // `map_file` always reaches EOF, so its censuses cover the whole
+            // file.
             print_index(&index, false, false, true);
-            pgdump_query::cache::save(&path, &source, &index).await?;
             println!();
             println!("wrote cache to {}", path.display());
         }
-        Command::Info {
-            source: file,
-            dqcache,
-            verbose,
-            preamble_only: preamble_only_flag,
-            map,
-            json,
-        } => {
-            if preamble_only_flag && map {
-                anyhow::bail!("--preamble-only and --map cannot be combined");
-            }
+        Command::Info { source: file, dqcache, verbose, map, json } => {
             if json && (verbose || map) {
                 anyhow::bail!(
-                    "--json already carries everything --verbose/--map would add — combine it with --preamble-only instead, or drop --json"
+                    "--json already carries everything --verbose/--map would add — drop one of them"
                 );
             }
             let Some(file) = file else {
@@ -241,50 +272,28 @@ async fn main() -> Result<()> {
                 // "The cache"): no live dump file at all, so
                 // clap already required `--dqcache` for us.
                 let path = dqcache.expect("clap requires --dqcache when --source is omitted");
-                return info_offline(&path, verbose, preamble_only_flag, map, json).await;
+                return info_offline(&path, verbose, map, json).await;
             };
+            // `info` never scans, so `--dqcache none` — "ignore the cache" —
+            // would leave nothing at all to answer from.
             let mode = CacheMode::resolve(&file, dqcache.as_deref());
+            let path = mode
+                .require_enabled("info")
+                .context("`--dqcache none` cannot be combined with `info`, which never scans")?
+                .to_path_buf();
             let source = LocalFileSource::open(&file)?;
-            if preamble_only_flag {
-                let (metadata, diagnostics) =
-                    preamble_only(&source, &ScanOptions::default(), &mode).await?;
-                if json {
-                    print_metadata_json(&metadata, &diagnostics);
-                } else {
-                    print_metadata(&metadata);
-                    print_diagnostics(&diagnostics);
+            let status = pgdump_query::cache::load(&path, &source).await?;
+            let (mut index, mtime_changed, total_size) = match status {
+                CacheStatus::Valid { index, mtime_changed, total_size }
+                | CacheStatus::Incomplete { index, mtime_changed, total_size } => {
+                    (index, mtime_changed, total_size)
                 }
-                return Ok(());
-            }
-            // A loaded cache is trusted for the full-file listing only once
-            // it actually covers the whole file — a preamble-only or
-            // still-incremental cache must trigger a fresh scan here rather
-            // than being reported as if it were complete (the former
-            // out-of-band item M1; `docs/design/architecture.md`,
-            // "The cache").
-            let file_size = source.size().await?;
-            let index = match mode.load(&source).await? {
-                Some(index) if index.is_complete(file_size) => index,
-                _ => {
-                    // No usable cache, or one that doesn't cover the whole
-                    // file: scan, then persist what we learned — a no-op
-                    // under `CacheMode::Disabled` — the cache is never
-                    // required for correctness (`docs/design/architecture.md`,
-                    // "The cache"), which means
-                    // this fallback must still produce a correct answer.
-                    let index = build_index(&source, &ScanOptions::default()).await?;
-                    mode.save(&source, &index).await?;
-                    index
-                }
+                unusable => anyhow::bail!(unusable_cache_message(&unusable, &path, &file)),
             };
-            if json {
-                print_index_json(&index);
-            } else {
-                // Either the loaded cache covered the whole file or the
-                // fallback above just scanned it, so this listing always has
-                // a complete map to report from.
-                print_index(&index, verbose, map, index.is_complete(file_size));
+            if mtime_changed {
+                index.diagnostics.push(Diagnostic::cache_mtime_changed());
             }
+            report(&index, total_size, verbose, map, json);
         }
         Command::Query { source: file, table, dqcache, filter, database, schema_mode } => {
             let mode = CacheMode::resolve(&file, dqcache.as_deref());
@@ -336,88 +345,121 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// `pgdq info` with no `--source`: answer strictly from the cache at `path`,
-/// erroring rather than falling back to a scan when it doesn't have enough
-/// (`docs/design/architecture.md`, "The cache"). `--preamble-only`'s completeness bar is the metadata's own
-/// `preamble_complete` flag rather than whole-file coverage, since a
-/// preamble-only cache is exactly the shape that flag exists to recognize;
-/// the default listing and `--map` both need the whole file mapped, so any
-/// `Incomplete` cache is an error for them.
-async fn info_offline(
-    path: &Path,
-    verbose: bool,
-    preamble_only_flag: bool,
-    map: bool,
-    json: bool,
-) -> Result<()> {
-    let mode = CacheMode::Offline(path.to_path_buf());
-    // Whether the cache covers the whole file — see `print_index`. Only the
-    // `--preamble-only` branch below survives an `Incomplete` cache, and it
-    // prints no per-column resolution at all.
-    let mut complete = true;
-    let index = match mode.load_offline().await? {
-        CacheStatus::Absent => {
-            anyhow::bail!("no usable cache found at {}", path.display());
+/// The sentence `pgdq info` prints for a cache it cannot use. All four causes
+/// end in `pgdq parse`, and they are still four different sentences: the
+/// remedy is the same, the fact the user needs to know is not — "you have
+/// never parsed this file" and "your file changed since you parsed it" send a
+/// reader to different places.
+///
+/// Takes the whole [`CacheStatus`] rather than a narrowed type so the match
+/// stays exhaustive: a usable status reaching here is a caller bug, and it says
+/// so rather than printing a plausible error.
+fn unusable_cache_message(status: &CacheStatus, path: &Path, source: &Path) -> String {
+    let parse = format!("run `pgdq parse --source {}`", source.display());
+    match status {
+        CacheStatus::Missing => {
+            format!("no cache at {} — {parse} first", path.display())
         }
-        CacheStatus::Incomplete { index, total_size, .. } => {
-            let preamble_complete = index
-                .metadata
-                .as_ref()
-                .and_then(|m| m.databases.first())
-                .is_some_and(|db| db.preamble_complete);
-            if !(preamble_only_flag && preamble_complete) {
-                anyhow::bail!(
-                    "cache at {} only covers {} of {} bytes — cache-only mode cannot extend it; re-run with --source to finish the scan",
-                    path.display(),
-                    index.scanned_through,
-                    total_size
-                );
-            }
-            complete = false;
-            index
+        CacheStatus::Unreadable => {
+            format!("{} is not a pgdq cache — check the path, or {parse}", path.display())
         }
-        CacheStatus::Valid { index, .. } => index,
-    };
-    if preamble_only_flag {
-        let metadata = index.metadata.clone().unwrap_or_default();
-        if json {
-            print_metadata_json(&metadata, &index.diagnostics);
-        } else {
-            print_metadata(&metadata);
-            print_diagnostics(&index.diagnostics);
+        CacheStatus::UnsupportedVersion => format!(
+            "the cache at {} was written by a different pgdq build and cannot be read — {parse}",
+            path.display()
+        ),
+        CacheStatus::SourceChanged { cached_size, live_size } => format!(
+            "{} has changed since it was parsed ({live_size} bytes now, {cached_size} when the \
+             cache at {} was written), so every offset in the cache could be wrong — {parse}",
+            source.display(),
+            path.display()
+        ),
+        CacheStatus::Valid { .. } | CacheStatus::Incomplete { .. } => {
+            unreachable!("a usable cache is reported, not refused")
         }
-    } else if json {
-        print_index_json(&index);
-    } else {
-        print_index(&index, verbose, map, complete);
     }
+}
+
+/// The cache-only counterpart, with no `--source` to name. Cache-only mode
+/// cannot reach [`CacheStatus::SourceChanged`] at all — there is no live file
+/// to compare against, which is exactly what its `CacheOffline` diagnostic
+/// warns about.
+fn unusable_offline_cache_message(status: &CacheStatus, path: &Path) -> String {
+    match status {
+        CacheStatus::Missing => format!("no cache at {}", path.display()),
+        CacheStatus::Unreadable => format!("{} is not a pgdq cache", path.display()),
+        CacheStatus::UnsupportedVersion => format!(
+            "the cache at {} was written by a different pgdq build and cannot be read",
+            path.display()
+        ),
+        CacheStatus::SourceChanged { .. } => {
+            unreachable!("cache-only mode has no live source to compare against")
+        }
+        CacheStatus::Valid { .. } | CacheStatus::Incomplete { .. } => {
+            unreachable!("a usable cache is reported, not refused")
+        }
+    }
+}
+
+/// `pgdq info` with no `--source`: answer strictly from the cache at `path`
+/// (`docs/design/architecture.md`, "The cache"). An `Incomplete` cache is
+/// reported like any other, with its coverage stated — cache-only mode has no
+/// scan to extend it with, but "as far as the scan got" is still an answer,
+/// and refusing it was what this phase removed.
+async fn info_offline(path: &Path, verbose: bool, map: bool, json: bool) -> Result<()> {
+    let mode = CacheMode::Offline(path.to_path_buf());
+    let (index, total_size) = match mode.load_offline().await? {
+        CacheStatus::Valid { index, total_size, .. }
+        | CacheStatus::Incomplete { index, total_size, .. } => (index, total_size),
+        unusable => anyhow::bail!(unusable_offline_cache_message(&unusable, path)),
+    };
+    report(&index, total_size, verbose, map, json);
     Ok(())
 }
 
-/// Human-readable label for one column's resolution outcome — the `info
-/// --verbose` per-column diagnostic line
+/// One column's resolution outcome, in both spellings: a stable token for
+/// `--json` and the sentence `info --verbose` prints
 /// (`docs/design/architecture.md`, "CLI surface").
-fn resolution_label(r: &ColumnResolution) -> String {
+///
+/// **One match, two renderings.** Splitting them into two functions is how the
+/// machine-readable export and the text listing drift into describing
+/// different vocabularies; a single exhaustive match makes a new
+/// [`ColumnResolution`] variant a compile error that has to answer both.
+fn resolution_words(r: &ColumnResolution) -> (&'static str, &'static str) {
     match r {
-        ColumnResolution::Mapped => "mapped".to_string(),
-        ColumnResolution::UnknownType => "unknown type — no mapping for this build".to_string(),
-        ColumnResolution::NotDeclared => "not declared — no DDL explained this column".to_string(),
-        ColumnResolution::OpaqueElementType => {
-            "opaque element type — the array's element type is information-free in the dump"
-                .to_string()
+        ColumnResolution::Mapped => ("mapped", "mapped"),
+        ColumnResolution::UnknownType => {
+            ("unknown_type", "unknown type — no mapping for this build")
         }
-        ColumnResolution::NestedArrayElement => {
-            "nested array element — the array's element type is itself an array".to_string()
+        ColumnResolution::NotDeclared => {
+            ("not_declared", "not declared — no DDL explained this column")
         }
-        ColumnResolution::VaryingArrayShape => {
-            "varying array shape — dimensionality differs between rows, or a value carries an explicit lower bound"
-                .to_string()
-        }
+        ColumnResolution::MetadataNotScanned => (
+            "metadata_not_scanned",
+            "metadata not scanned — the scan never reached this database's DDL; finish the parse",
+        ),
+        ColumnResolution::OpaqueElementType => (
+            "opaque_element_type",
+            "opaque element type — the array's element type is information-free in the dump",
+        ),
+        ColumnResolution::NestedArrayElement => (
+            "nested_array_element",
+            "nested array element — the array's element type is itself an array",
+        ),
+        ColumnResolution::VaryingArrayShape => (
+            "varying_array_shape",
+            "varying array shape — dimensionality differs between rows, or a value carries an explicit lower bound",
+        ),
         ColumnResolution::OpaqueBaseType => {
-            "opaque base type — information-free in the dump".to_string()
+            ("opaque_base_type", "opaque base type — information-free in the dump")
         }
-        ColumnResolution::EmptyEnum => "empty enum".to_string(),
+        ColumnResolution::EmptyEnum => ("empty_enum", "empty enum"),
     }
+}
+
+/// The sentence half of [`resolution_words`] — `info --verbose`'s per-column
+/// line.
+fn resolution_label(r: &ColumnResolution) -> &'static str {
+    resolution_words(r).1
 }
 
 /// What one column became in Arrow — the other half of `info --verbose`'s
@@ -505,51 +547,157 @@ fn print_metadata(metadata: &DumpMetadata) {
     }
 }
 
-/// `--json`'s full-scan shape: the whole [`DumpIndex`] flattened to one
-/// object, with diagnostics added back in — `DumpIndex::diagnostics` is
-/// `#[serde(skip)]` for the cache's own reasons (`docs/design/architecture.md`,
-/// "The cache"), which don't apply here, so this wrapper is the convenient
-/// way to get them back without touching that skip. No schema stability is
-/// promised for any of this — see the `--json` flag's help text.
+/// One `COPY` block's resolved schema, paired back with the block it came
+/// from — the single resolution pass `--verbose`'s text and `--json`'s export
+/// both render (`docs/design/architecture.md`, "CLI surface"). Two passes is
+/// the failure mode here: the export would quietly become a second
+/// implementation of what the listing says.
+///
+/// `complete` says whether `index` covers the file
+/// ([`DumpIndex::is_complete`]), which is what decides whether a block's
+/// array-shape census may be believed. A *mapped* block's census is always
+/// total for that block, but a reported schema answers "what is this table",
+/// and one table's data can occupy several blocks (I2) — so a map that
+/// stopped short cannot speak for a block past its frontier, and every column
+/// resolves optimistically until it can
+/// (`docs/design/architecture.md`, "The array shape census").
+///
+/// A header-less block resolves to an empty schema: its column names come from
+/// its first data row, which no index records. It is still listed, so the
+/// export's shape does not vary per block.
+fn block_resolutions(
+    index: &DumpIndex,
+    complete: bool,
+) -> Vec<(&pgdump_query::CopyBlock, ResolvedSchema)> {
+    index
+        .blocks()
+        .map(|block| {
+            let census: &[ArrayShape] = if complete { &block.array_shapes } else { &[] };
+            let resolved = resolve_columns(
+                &block.header.qualified_name(),
+                &block.header.columns,
+                index.metadata.as_ref(),
+                block.database.as_deref(),
+                SchemaMode::Typed,
+                census,
+            );
+            (block, resolved)
+        })
+        .collect()
+}
+
+/// `--json`'s shape: the whole [`DumpIndex`] flattened to one object, plus the
+/// three things it does not itself carry — how much of the file it covers, the
+/// diagnostics `#[serde(skip)]` drops for the cache's own reasons
+/// (`docs/design/architecture.md`, "The cache"), and the per-block type
+/// resolution, which is an L2 conclusion an L1 index has no field for. No
+/// schema stability is promised for any of this — see the `--json` flag's help
+/// text.
+///
+/// **Coverage is components, not a rendered percentage.** `scanned_through`
+/// comes flattened out of the index and `total_size` sits beside it, so a
+/// script computes whatever ratio it wants instead of parsing the text
+/// listing's line back apart.
 #[derive(serde::Serialize)]
 struct IndexJson<'a> {
     #[serde(flatten)]
     index: &'a DumpIndex,
+    total_size: u64,
     diagnostics: &'a [Diagnostic],
+    resolution: Vec<BlockResolutionJson<'a>>,
 }
 
-/// `--json --preamble-only`'s shape: just the metadata plus diagnostics,
-/// matching what the human-readable preamble-only path prints.
+/// One `COPY` block's resolution, keyed by the block rather than rolled up per
+/// table. A table can span blocks (I2) and a header-less block names its
+/// columns from its first row, so a per-table rollup needs a merge rule that
+/// does not exist yet; leaving the grouping to the consumer is where it
+/// honestly sits (`docs/design/architecture.md`, "CLI surface").
 #[derive(serde::Serialize)]
-struct MetadataJson<'a> {
-    #[serde(flatten)]
-    metadata: &'a DumpMetadata,
-    diagnostics: &'a [Diagnostic],
+struct BlockResolutionJson<'a> {
+    database: Option<&'a str>,
+    table: String,
+    header_offset: u64,
+    columns: Vec<ColumnResolutionJson<'a>>,
 }
 
-fn print_index_json(index: &DumpIndex) {
-    let wrapped = IndexJson { index, diagnostics: &index.diagnostics };
+/// One column's resolution: what the DDL declared, what it became, and why.
+/// `arrow_type` is the exact string `info --verbose` prints for the same
+/// column, so the two renderings cannot disagree about the type either.
+#[derive(serde::Serialize)]
+struct ColumnResolutionJson<'a> {
+    name: &'a str,
+    declared: Option<&'a str>,
+    outcome: &'static str,
+    arrow_type: String,
+    plan: &'a NestedPlan,
+}
+
+fn print_index_json(index: &DumpIndex, total_size: u64, complete: bool) {
+    let resolutions = block_resolutions(index, complete);
+    let resolution = resolutions
+        .iter()
+        .map(|(block, resolved)| BlockResolutionJson {
+            database: block.database.as_deref(),
+            table: block.header.qualified_name(),
+            header_offset: block.header_offset,
+            columns: resolved
+                .notes
+                .iter()
+                .enumerate()
+                .map(|(i, note)| ColumnResolutionJson {
+                    name: &note.column,
+                    declared: note.declared.as_deref(),
+                    outcome: resolution_words(&note.resolution).0,
+                    arrow_type: arrow_type_label(
+                        resolved.schema.field(i).data_type(),
+                        &resolved.plans[i],
+                    ),
+                    plan: &resolved.plans[i],
+                })
+                .collect(),
+        })
+        .collect();
+    let wrapped = IndexJson { index, total_size, diagnostics: &index.diagnostics, resolution };
     println!("{}", serde_json::to_string_pretty(&wrapped).expect("DumpIndex is always valid JSON"));
 }
 
-fn print_metadata_json(metadata: &DumpMetadata, diagnostics: &[Diagnostic]) {
-    let wrapped = MetadataJson { metadata, diagnostics };
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&wrapped).expect("DumpMetadata is always valid JSON")
-    );
+/// How much of the file the index covers, stated **once, at the top**, with
+/// nothing below it qualified (`docs/design/architecture.md`, "CLI surface").
+///
+/// A partial index lacks *records*, not confidence: a block enters the map
+/// only at a `CopyEnd` watermark and every mapping pass censuses, so every
+/// record it holds is complete in itself. There is no half-known block, only
+/// blocks past the frontier that are not there at all — which is why this line
+/// is the only qualification the listing carries.
+///
+/// The percentage floors, so it reads 100% only for a genuinely finished scan.
+fn completion_line(scanned_through: u64, total_size: u64) -> String {
+    // A zero-byte file is trivially covered in full, and has no ratio.
+    let percent = (scanned_through.min(total_size) * 100).checked_div(total_size).unwrap_or(100);
+    format!("Scan completion: {percent}% ({scanned_through} bytes)")
 }
 
-/// Print the whole listing. `complete` says whether `index` covers the file
-/// (`DumpIndex::is_complete`), which is what decides whether a block's
-/// array-shape census may be believed here.
+/// Every `pgdq info` rendering goes through here: the coverage line, then the
+/// listing or the export.
+fn report(index: &DumpIndex, total_size: u64, verbose: bool, map: bool, json: bool) {
+    let complete = index.is_complete(total_size);
+    if json {
+        print_index_json(index, total_size, complete);
+        return;
+    }
+    println!("{}", completion_line(index.scanned_through, total_size));
+    println!();
+    print_index(index, verbose, map, complete);
+}
+
+/// Print the whole listing, below whatever coverage line [`report`] already
+/// stated. `complete` is passed straight through to [`block_resolutions`],
+/// which is where it means something.
 ///
-/// A *mapped* block's census is always total for that block, but this listing
-/// answers "what is this table's schema", and one table's data can occupy
-/// several blocks (I2) — so a map that stopped short cannot speak for a block
-/// past its frontier, and every column resolves optimistically until it can
-/// (`docs/design/architecture.md`, "The array shape census"). A streamed
-/// schema is bounded by the rows it hands back and needs no such test.
+/// **Nothing here is qualified by how much of the file was scanned.** The
+/// coverage line above says it once; a partial index's records are each
+/// complete in themselves (see [`completion_line`]), so repeating the caveat
+/// per block would suggest a variation that does not exist.
 fn print_index(index: &DumpIndex, verbose: bool, map: bool, complete: bool) {
     if let Some(metadata) = &index.metadata {
         print_metadata(metadata);
@@ -569,13 +717,14 @@ fn print_index(index: &DumpIndex, verbose: bool, map: bool, complete: bool) {
     if map {
         print_map(index);
         println!();
-        println!("{} span(s), {} bytes scanned", index.spans.len(), index.scanned_through);
+        println!("{} span(s)", index.spans.len());
         return;
     }
 
-    let blocks: Vec<_> = index.blocks().collect();
+    // One resolution pass, shared with `--json` — see `block_resolutions`.
+    let blocks = block_resolutions(index, complete);
     if blocks.is_empty() {
-        println!("no COPY blocks found in {} scanned bytes", index.scanned_through);
+        println!("no COPY blocks found");
         return;
     }
 
@@ -591,10 +740,11 @@ fn print_index(index: &DumpIndex, verbose: bool, map: bool, complete: bool) {
     // this listing already showed (`docs/design/architecture.md`,
     // "One target per query").
     let multi_database =
-        blocks.iter().map(|b| &b.database).collect::<std::collections::BTreeSet<_>>().len() > 1;
+        blocks.iter().map(|(b, _)| &b.database).collect::<std::collections::BTreeSet<_>>().len()
+            > 1;
     let mut current_database: Option<&Option<String>> = None;
 
-    for block in &blocks {
+    for (block, resolved) in &blocks {
         if multi_database && current_database != Some(&block.database) {
             current_database = Some(&block.database);
             match &block.database {
@@ -606,16 +756,6 @@ fn print_index(index: &DumpIndex, verbose: bool, map: bool, complete: bool) {
         if block.header.columns.is_empty() {
             println!("    columns: (not listed in COPY header)");
         } else {
-            let qualified = block.header.qualified_name();
-            let census: &[ArrayShape] = if complete { &block.array_shapes } else { &[] };
-            let resolved: ResolvedSchema = resolve_columns(
-                &qualified,
-                &block.header.columns,
-                index.metadata.as_ref(),
-                block.database.as_deref(),
-                SchemaMode::Typed,
-                census,
-            );
             let columns: Vec<String> = resolved
                 .notes
                 .iter()
@@ -657,12 +797,9 @@ fn print_index(index: &DumpIndex, verbose: bool, map: bool, complete: bool) {
     }
 
     println!();
-    println!(
-        "{} COPY block(s), {} row(s), {} bytes scanned",
-        blocks.len(),
-        index.total_rows(),
-        index.scanned_through
-    );
+    // No byte count here: the coverage line above owns that, and stating it
+    // twice invites the two to disagree.
+    println!("{} COPY block(s), {} row(s)", blocks.len(), index.total_rows());
     if total_unmapped > 0 {
         println!(
             "{total_unmapped} of {total_columns} columns unmapped — run with --verbose for details"

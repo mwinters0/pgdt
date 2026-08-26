@@ -98,7 +98,13 @@ impl Diagnostic {
         Self { severity: Severity::Error, kind: DiagnosticKind::TilingBroken { issues } }
     }
 
-    pub(crate) fn cache_mtime_changed() -> Self {
+    /// Public, unlike its siblings, because a caller that matches on
+    /// [`crate::cache::CacheStatus`] itself — rather than going through
+    /// [`crate::cache::CacheMode::load`], which pushes this for it — still has
+    /// to turn the `mtime_changed` bit into the same reported warning. `pgdq
+    /// info` is that caller. Which severity the mismatch carries stays a
+    /// library decision either way.
+    pub fn cache_mtime_changed() -> Self {
         Self { severity: Severity::Warning, kind: DiagnosticKind::CacheMtimeChanged }
     }
 

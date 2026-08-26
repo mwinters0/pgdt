@@ -46,6 +46,23 @@ pub enum ColumnResolution {
     /// No DDL explained this column — `--data-only`, a typed table (`CREATE
     /// TABLE x OF t`), or `SchemaMode::Strings` (which never looks).
     NotDeclared,
+    /// The scan never read this block's database's DDL, so nothing is yet
+    /// known about *any* of its columns. Reachable only from a partial index:
+    /// `scan_preamble` always captures the first database (I1), so this needs
+    /// a `pg_dumpall`/`--create` dump whose scan stopped inside a later one.
+    ///
+    /// **Held apart from [`Self::NotDeclared`], which it would otherwise look
+    /// exactly like.** `NotDeclared` means the dump never explained this
+    /// column and is final; this means "finish the parse and ask again" —
+    /// identical-looking output, opposite advice.
+    ///
+    /// The streaming path refuses this outright
+    /// (`crate::Error::MetadataNotScanned`) rather than degrading, because a
+    /// stream hands back rows and a wrongly-typed one is a wrong answer. A
+    /// *reported* schema cannot refuse: one unresolvable block must not sink
+    /// the whole listing, so it reports the reason instead
+    /// (`docs/design/architecture.md`, "CLI surface").
+    MetadataNotScanned,
     /// An array whose element type is opaque by construction — `box`, a
     /// C-level base type or a shell type, through any chain of domains. Held
     /// apart from [`Self::OpaqueBaseType`] because the column's *own* type is
@@ -268,6 +285,11 @@ fn retype_from_census(
 /// That is the same answer a census of unconstrained shapes produces, so the
 /// two need not be told apart.
 ///
+/// A column of a database whose DDL the scan never reached comes back
+/// [`ColumnResolution::MetadataNotScanned`] rather than `NotDeclared` — see
+/// that variant. This needs `metadata` to be `Some`: a caller with no metadata
+/// at all has no DDL for *any* database, which is exactly `NotDeclared`.
+///
 /// `SchemaMode::Strings` never looks anything up: every column comes back
 /// `NotDeclared`/`Utf8View`, matching the untyped path exactly and at zero
 /// cost — and with no `NestedPlan::Array` anywhere, the census cannot reach
@@ -284,6 +306,13 @@ pub fn resolve_columns(
         SchemaMode::Strings => None,
         SchemaMode::Typed => metadata.and_then(|m| database_for_name(m, database)),
     };
+    // Metadata exists, but not for *this* block's database — a scan that
+    // stopped inside a later `\connect`ed segment never read its DDL, so
+    // nothing is known about any column here and saying "not declared" would
+    // be a different, final claim. `metadata: None` is left alone: that is a
+    // caller with no DDL at all, which is exactly `NotDeclared`.
+    let unscanned_database =
+        mode == SchemaMode::Typed && metadata.is_some() && !db.is_some_and(|d| d.preamble_complete);
     let declared_cols = db.and_then(|d| d.tables.get(qualified_table));
 
     let mut fields = Vec::with_capacity(columns.len());
@@ -295,6 +324,7 @@ pub fn resolve_columns(
     for (i, name) in columns.iter().enumerate() {
         let declared = declared_cols.and_then(|cols| cols.iter().find(|(n, _)| n == name));
         let (resolution, pair) = match declared {
+            None if unscanned_database => (ColumnResolution::MetadataNotScanned, string()),
             None => (ColumnResolution::NotDeclared, string()),
             Some((_, ty)) => {
                 // `db` is always `Some` here: `declared_cols` only came from
@@ -389,6 +419,81 @@ mod tests {
     fn no_metadata_at_all_is_every_column_not_declared() {
         let cols = vec!["id".to_string()];
         let resolved = resolve_columns("public.t", &cols, None, None, SchemaMode::Typed, &[]);
+        assert_eq!(resolved.columns, [ColumnResolution::NotDeclared]);
+    }
+
+    /// A block attributed to a database the metadata does not cover — a scan
+    /// that stopped inside a later `\connect`ed segment — is
+    /// `MetadataNotScanned`, not `NotDeclared`. The two look identical in the
+    /// output and mean opposite things: one is final, the other says "finish
+    /// the parse and ask again".
+    ///
+    /// The contrast that makes it a real distinction is the third case below:
+    /// with *no* metadata at all there is no scan to finish, so `NotDeclared`
+    /// stands.
+    #[test]
+    fn a_database_the_scan_never_reached_is_told_apart_from_undeclared_columns() {
+        let mut first = one_db(&[("public.t", &[("id", "integer")])], vec![]).databases.remove(0);
+        first.name = Some("first".to_string());
+        let meta = DumpMetadata { databases: vec![first] };
+        let cols = vec!["id".to_string()];
+
+        let later =
+            resolve_columns("public.t", &cols, Some(&meta), Some("second"), SchemaMode::Typed, &[]);
+        assert_eq!(later.columns, [ColumnResolution::MetadataNotScanned]);
+        assert_eq!(later.schema.field(0).data_type(), &arrow::datatypes::DataType::Utf8View);
+        assert_eq!(later.notes[0].severity(), Severity::Warning);
+
+        // The same metadata, asked about a table the database it *did* read
+        // never declared: final, and says so.
+        let undeclared = resolve_columns(
+            "public.absent",
+            &cols,
+            Some(&meta),
+            Some("first"),
+            SchemaMode::Typed,
+            &[],
+        );
+        assert_eq!(undeclared.columns, [ColumnResolution::NotDeclared]);
+    }
+
+    /// A database entry that exists but is not `preamble_complete` is the same
+    /// case: the scan reached it and stopped inside it, so whatever DDL it
+    /// holds is a fragment rather than an answer.
+    #[test]
+    fn an_incomplete_database_entry_is_also_metadata_not_scanned() {
+        let mut db = one_db(&[("public.t", &[("id", "integer")])], vec![]).databases.remove(0);
+        db.preamble_complete = false;
+        let meta = DumpMetadata { databases: vec![db] };
+        let cols = vec!["id".to_string(), "other".to_string()];
+        let resolved =
+            resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Typed, &[]);
+        // The column the fragment *does* declare still resolves — what the
+        // dump said is what the dump said. Only the unexplained one carries
+        // the "ask again later" outcome.
+        assert_eq!(
+            resolved.columns,
+            [ColumnResolution::Mapped, ColumnResolution::MetadataNotScanned]
+        );
+    }
+
+    /// `SchemaMode::Strings` never looks, so it never reaches this outcome
+    /// either — every column is `NotDeclared`, matching the untyped path
+    /// exactly.
+    #[test]
+    fn strings_mode_never_reports_metadata_not_scanned() {
+        let mut first = one_db(&[("public.t", &[("id", "integer")])], vec![]).databases.remove(0);
+        first.name = Some("first".to_string());
+        let meta = DumpMetadata { databases: vec![first] };
+        let cols = vec!["id".to_string()];
+        let resolved = resolve_columns(
+            "public.t",
+            &cols,
+            Some(&meta),
+            Some("second"),
+            SchemaMode::Strings,
+            &[],
+        );
         assert_eq!(resolved.columns, [ColumnResolution::NotDeclared]);
     }
 
@@ -667,6 +772,7 @@ mod tests {
         for fell_back in [
             ColumnResolution::UnknownType,
             ColumnResolution::NotDeclared,
+            ColumnResolution::MetadataNotScanned,
             ColumnResolution::OpaqueBaseType,
             ColumnResolution::EmptyEnum,
         ] {

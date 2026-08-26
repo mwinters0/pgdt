@@ -32,7 +32,7 @@ through.
 | `pgtype.rs`, `resolve.rs`, the type mapping table | [Type resolution](#type-resolution) |
 | `decode.rs`, a new type's decode/render pair | [Decoders and render-back](#decoders-and-render-back) |
 | `batch.rs`, the zero-copy `Utf8View` path | [Arrow assembly and the zero-copy path](#arrow-assembly-and-the-zero-copy-path) |
-| `stream.rs`, `map_forward`, replay, resume, predicates | [Query: mapping and streaming are separate passes](#query-mapping-and-streaming-are-separate-passes) |
+| `stream.rs`, `map_forward`/`map_file`, replay, resume, predicates | [Query: mapping and streaming are separate passes](#query-mapping-and-streaming-are-separate-passes) |
 | `cache.rs`, the format version, cache modes | [The cache](#the-cache) |
 | the CLI's flags or output | [CLI surface](#cli-surface) |
 | `scripts/`, a new fixture schema | [Fixtures](#fixtures) |
@@ -55,7 +55,7 @@ through.
 | Per-type field decode + render-back | `pgdump_query/src/decode.rs` | L2 |
 | Array / record / range / multirange literal decode + render-back | `pgdump_query/src/nested.rs` | L2 |
 | Arrow batch assembly (`ColumnBuilder`, `RowBatcher`), push-mode `read_table` | `pgdump_query/src/batch.rs` | L3 |
-| Pull-mode `table_stream`, `map_forward`, replay, `ResumeToken`, `ScanExtent` | `pgdump_query/src/stream.rs` | L4 |
+| Pull-mode `table_stream`, `map_forward`, `map_file` (`pgdq parse`'s scan), replay, `ResumeToken`, `ScanExtent` | `pgdump_query/src/stream.rs` | L4 |
 | Post-parse predicate | `pgdump_query/src/predicate.rs` | L4 |
 | CLI (`pgdq parse` / `info` / `query`) | `pgdump_query-cli/src/main.rs` | above L4 |
 
@@ -740,7 +740,7 @@ caching is enabled and the first database's `preamble_complete` is not already
 known, persisting immediately (not deferred to a later segment's save) so even
 a caller that polls once and drops the stream leaves a cache with that
 metadata. Skipped under `CacheMode::Disabled` (pure streaming, no side
-effects). This is also what makes `pgdq info --preamble-only` cheap.
+effects). This is also what makes `pgdq parse --preamble-only` cheap.
 
 **A later `\connect`-ed database's preamble is populated only by a full scan** —
 there is no incremental equivalent for anything past the first database.
@@ -976,13 +976,25 @@ and making it a payload on `ColumnResolution::Mapped`, which expresses
 that enum by equality, to buy a coupling one producer already gives.
 
 `ColumnResolution` is `Mapped`, `UnknownType`, `NotDeclared`,
-`OpaqueElementType`, `NestedArrayElement`, `VaryingArrayShape`,
-`OpaqueBaseType` or `EmptyEnum` — **the ways a column of a container type can
-still be a string are told apart**, since "why is this column text" has more
-than one answer a reader will want: its element type is opaque, its element
-type is itself an array, its arrays do not share one shape, or strings were
-asked for. The first never improves; the second is a shape we decline to
-represent and could; the third is what the file holds.
+`MetadataNotScanned`, `OpaqueElementType`, `NestedArrayElement`,
+`VaryingArrayShape`, `OpaqueBaseType` or `EmptyEnum` — **the ways a column of a
+container type can still be a string are told apart**, since "why is this
+column text" has more than one answer a reader will want: its element type is
+opaque, its element type is itself an array, its arrays do not share one shape,
+or strings were asked for. The first never improves; the second is a shape we
+decline to represent and could; the third is what the file holds.
+
+`MetadataNotScanned` is the odd one: it is a property of **how much of the file
+was read**, not of a declared type, and it is the only outcome no fixture can
+produce (`tests/pgtype.rs` names it as the sole legitimate exemption from the
+fixture rule, since every fixture is scanned to EOF). It needs a
+`pg_dumpall`/`--create` dump whose scan stopped inside a *later* database:
+`scan_preamble` always captures the first (I1), so the earlier ones are never
+in doubt.
+
+*Rejected:* reporting such a column as `NotDeclared`. It means "the dump never
+explained this column" and is final, where this one means "finish the parse and
+ask again" — identical-looking output, opposite advice.
 
 `resolve_columns` also takes the block's array-shape census, positional like
 the column list — see [The array shape census](#the-array-shape-census) for
@@ -993,12 +1005,23 @@ otherwise be free to disagree about one stream's schema.
 
 `SchemaMode::Strings` never looks anything up — every column is
 `NotDeclared`/`Utf8View`, at zero lookup cost. In `SchemaMode::Typed` only,
-`resolve.rs` checks that the block's attributed database is both present in
-`metadata.databases` and `preamble_complete`; otherwise
-`Error::MetadataNotScanned { database }`, reachable only through the
-incremental path since a full scan always leaves every database it found
-`preamble_complete`. Its remedy is real: `--schema-mode strings` bypasses the
-check entirely.
+the block's attributed database has to be both present in `metadata.databases`
+and `preamble_complete`, and **the two paths answer that differently on
+purpose**:
+
+- **Streaming** refuses: `stream::resolve_block` raises
+  `Error::MetadataNotScanned { database }` before a batch exists, because a
+  stream hands back rows and a wrongly-typed one is a wrong answer with no
+  signal. Reachable only through the incremental path, since a full scan
+  leaves every database it found `preamble_complete`. Its remedy is real:
+  `--schema-mode strings` bypasses the check entirely.
+- **Reporting** degrades and says so: `resolve_columns` marks the block's
+  unexplained columns `ColumnResolution::MetadataNotScanned`. A listing covers
+  every block in the index, so one unresolvable block must not sink the
+  document.
+
+A caller with `metadata: None` is left on `NotDeclared`: it has no DDL for any
+database, so there is no scan to finish.
 
 ### One schema per stream, resolved up front
 
@@ -1215,7 +1238,11 @@ yields until the first is done**:
    `index.scanned_through`, drives a `map::Builder`, and after every `CopyEnd`
    splices `snapshot` onto the base spans, advances `scanned_through`, merges
    the builder's `roles()`/`tablespaces()`, and persists. Returns when the
-   target is settled or at EOF.
+   target is settled or at EOF. Its stop rule is
+   `target: Option<(&str, Option<&str>)>` — `None` means "run to EOF", which is
+   what `ScanExtent::Full` asks for and what `map_file` always wants. An
+   `Option` rather than a `ScanExtent` beside an unused table name, since a
+   sentinel would be dead data every later reader has to prove is unused.
 2. **Replay** — a scanner over exactly `[block.header_offset, block.end_offset)`
    per matching block, in file order, producing batches.
 
@@ -1235,6 +1262,13 @@ after a block to the *following* span where a single-pass scan hands it to the
 block, so a map assembled from several scans stopped agreeing with one built in
 a single pass. `full.spans == eager.spans` is now a test, and the property to
 preserve is: **how a map was assembled must not be visible in it.**
+
+**`map_forward` has a second caller: `map_file`**, which is `pgdq parse`'s
+scan — see "`parse` resumes, and saves as it goes" under [CLI
+surface](#cli-surface). It is what keeps the two whole-file producers from
+drifting: `tests/map.rs`'s `build_index_spans_match_build_map_exactly` and
+`tests/map_file.rs` exist because that drift is a failure this codebase has
+already had to defend against once.
 
 **`target_settled` is deliberately conservative.** Two things veto an early
 stop: a matching block carrying `partition_root` (I2 — those blocks are not
@@ -1306,8 +1340,18 @@ is added, removed or reshaped, and never to record which bump that was.
 
 **Reads and writes have deliberately opposite failure modes.** An unrecognised
 `format_version`/`container_kind`, or bytes that do not parse as a cache at
-all, load as `Ok(None)` — indistinguishable from a missing file. `cache::save`
-propagates I/O failures as `Error::Io`.
+all, are as unusable as a missing file, and `CacheMode::load` folds all of them
+into `Ok(None)`. `cache::save` propagates I/O failures as `Error::Io`.
+
+**Unusable is four named outcomes, not one.** `CacheStatus` distinguishes
+`Missing`, `Unreadable` (bytes that do not decode), `UnsupportedVersion`
+(another build's envelope), and `SourceChanged { cached_size, live_size }`.
+Every caller that can respond by *scanning* treats them alike — which is why
+they were collapsed originally — but `pgdq info` cannot scan, and has a
+different sentence for each: a wrong path, a stale build, and "your file
+changed since you parsed it" send a reader to three different places even
+though all four end in `pgdq parse`. `CacheMode::load`'s single `Ok(None)` arm
+is where the collapse still happens, for the callers that want it.
 
 **A cache *write* failure is a hard error.** If the resolved path cannot be
 written (read-only mount, permissions, disk full), the library returns an error
@@ -1323,25 +1367,37 @@ knowing about when the dump is mounted read-only — see `CLAUDE.md`,
 "Long-running processes".
 
 **Source identity.** Every cache records the source's size and mtime at save
-time and re-observes on load. Size mismatch invalidates (folded into the
-best-effort `Absent` bucket, not a new hard-error path); mtime mismatch
-surfaces as a `CacheMtimeChanged` diagnostic on an otherwise `Valid` cache.
-`ByteRangeSource::modified()` exists for this.
+time and re-observes on load. Size mismatch invalidates (`SourceChanged` — an
+unusable outcome, not a new hard-error path); mtime mismatch surfaces as a
+`CacheMtimeChanged` diagnostic on an otherwise usable cache.
+`ByteRangeSource::modified()` exists for this. That diagnostic matters more
+than it used to: under the old `info` a suspicious cache was about to be
+overwritten by a rescan anyway, and now it is the answer being reported.
 
-**`CacheStatus::Incomplete { index, mtime_changed, total_size }`** is
-`scanned_through` short of the cache's *own recorded* `SourceIdentity::size` —
-sound because once `Valid` is reached, the recorded and live sizes are
-guaranteed equal (a mismatch would have produced `Absent` first). One helper,
-`status_from_file`, serves both `load` and `load_offline`.
+**`CacheStatus::Valid`/`Incomplete` both carry `total_size`**, the cache's
+*own recorded* `SourceIdentity::size` — sound because a live-size mismatch
+produces `SourceChanged` before either is reached, and a cache-only caller has
+no live size to stat at all. `Incomplete` is `scanned_through` short of it.
+One helper, `status_from_file`, serves both `load` and `load_offline`.
+
+**Diagnostics are recomputed on load, not persisted.**
+`DumpIndex::diagnostics` is `#[serde(skip)]`, so `status_from_file` re-derives
+the tiling check and the TOC-coverage figure from the spans it just read —
+both are pure functions of those spans and O(spans), which is what makes
+recomputation cheaper than storage. A stored one would also be a warning about
+a check *this* run performed successfully. The consequence that made this
+load-bearing: `pgdq info` reports from a cache without ever scanning, so
+anything not recomputed there is simply lost.
 
 **`CacheMode::load` treats `Incomplete` exactly like `Valid`.** Folding it into
-`None` would break the two `Option`-returning callers (`table_stream`,
-`preamble_only`): a cold query's map is *designed* to stop short of the file's
-size once its target settles, so a partial cache is the normal shape there, not
-a defect, and `map_forward` would restart from byte 0 on every subsequent
-query. The one caller that genuinely needs "is this the whole file" — `pgdq
-info`'s default/`--map` fallback — makes that check itself against the live
-source's size, which it stats regardless.
+`None` would break all three `Option`-returning callers (`map_file`,
+`table_stream`, `preamble_only`): a cold query's map is *designed* to stop
+short of the file's size once its target settles, and a resumed `parse` builds
+on exactly such a cache, so a partial cache is the normal shape there rather
+than a defect. Folding would make `map_forward` restart from byte 0 every
+time. A caller that instead *reports* what a cache holds reaches for
+`cache::load`/`CacheMode::load_offline` and the full `CacheStatus`, which is
+what `pgdq info` does.
 
 **`CacheMode::Offline(PathBuf)`** is never produced by `CacheMode::resolve`;
 the CLI constructs it directly when `pgdq info` gets no `--source`. The split
@@ -1351,17 +1407,19 @@ is enforced library-side, not just by the CLI: `load`, `save` and
 `table_stream`'s own `load` call, so a caller does not have to trace through a
 generator to learn that `query` never accepts a cache-only mode.
 `load_offline` returns the full `CacheStatus` rather than `load`'s collapsed
-`Option<DumpIndex>`, because a cache-only caller has to tell `Valid` from
-`Incomplete` to know whether it has enough.
+`Option<DumpIndex>`, because a cache-only caller has to tell the usable
+outcomes from the unusable ones with no scan to fall back on. It cannot reach
+`SourceChanged` at all — there is no live file to compare against, which is
+exactly what its `CacheOffline` diagnostic warns about.
 
 **The completeness check has two forms, one per kind of caller.** A cache-only
 caller has no live source to compare against, so `CacheStatus::Incomplete` is
 the primitive it matches on — that is why `load_offline` returns the full
-status. A caller holding a live source (`pgdq info`'s default listing,
-`table_stream`) instead compares `DumpIndex::scanned_through` against the
-size it already had to stat; `CacheMode::load` deliberately does not make that
-call on its behalf. Neither form is CLI plumbing: an embedder asking "does this
-cache already cover what I need" reaches for whichever matches what it holds.
+status. A caller holding a live source (`map_file`, `table_stream`) instead
+compares `DumpIndex::scanned_through` against the size it already had to stat;
+`CacheMode::load` deliberately does not make that call on its behalf. Neither
+form is CLI plumbing: an embedder asking "does this cache already cover what I
+need" reaches for whichever matches what it holds.
 
 **Anything persisted is expressible in L1's vocabulary** — declared type
 strings, not resolved Arrow types. That is `layering.md`'s rule 5 and it
@@ -1372,17 +1430,84 @@ applies to everything the cache grows later.
 **The output shape is provisional**, pending real user trials. Nothing depends
 on it.
 
+### `info` reads; `parse` scans
+
+Three verbs, and the boundary between them is drawn once: **`parse` is the only
+command that reads a dump for its structure, and `info` never does.**
+
+`info` reports whatever the cache holds, however partial, and marks the
+coverage. With no usable cache it errors and names `pgdq parse` rather than
+starting an hours-long scan on the user's behalf. `--dqcache none` — "ignore
+the cache" — is rejected for the same reason `parse` rejects it: it leaves the
+command with nothing to do.
+
+*Rejected:* keeping a scanning fallback on `info --source` while `--dqcache`
+alone kept refusing, or a `--no-scan` flag to opt into the cheap answer. The
+first silently changes what an existing command answers; the second adds a flag
+whose behaviour duplicates a command that already exists. The surprise a user
+reports is not the *duration* of an unrequested scan but that one happened at
+all.
+
+`--preamble-only` therefore hangs off `parse`: its name states a scan extent,
+and after this `info` has none. `index::preamble_only` is unchanged; only the
+verb moved, and `info` reads the partial cache it leaves like any other.
+*Rejected:* keeping it on `info` as the one documented exception (a rule with
+one exception is a rule nobody can state), and keeping it as a pure display
+filter against a complete cache (`--verbose`/`--map` already control detail,
+and the name would talk about scanning while doing none).
+
+`query` is untouched, and the asymmetry is deliberate: `query` is asked for
+rows that exist only in the file, where `info` is asked what is known. Its
+two-path model is what makes a cold query on a 784GB dump affordable.
+
+### `parse` resumes, and saves as it goes
+
+`stream::map_file` is `map_forward` with no stop target plus the three
+whole-file facts only a scan reaching EOF may state — metadata recomputed over
+every span (so every `\connect`ed database ends `preamble_complete`, not just
+the first), diagnostics recomputed, and a final save. It returns the frontier
+it started from, which is the one line `parse` prints *about the invocation*
+before the listing that describes the file.
+
+**Resume is the default**, and removing the cache file is how to force a fresh
+scan. *Rejected:* a `--restart` flag — deleting the file says the same thing
+without one.
+
+The cache is persisted **after every completed block**, which is what makes
+resuming worth building: `map_forward` already saved at a `CopyEnd` watermark
+(a resumable point by construction — the scanner is back in `Outside` there),
+so `parse` is a second caller for an existing loop, not new machinery.
+*Rejected:* teaching `index::build_index` to resume. It is the eager,
+whole-file producer; giving it a frontier makes it a second implementation of
+`map_forward`'s splice-onto-a-prefix logic with a different set of bugs.
+
+### Coverage is stated once, at the top
+
+`Scan completion: 76% (12345 bytes)` heads every `info` listing — partial or
+complete — and **nothing below it is qualified**. `--json` carries the
+components (`scanned_through`, already on the index, beside `total_size`)
+rather than the rendered string, so a script computes its own ratio. The
+percentage floors, so it reads 100% only for a genuinely finished scan; the
+block and span summaries below it no longer repeat a byte count.
+
+*Rejected:* a per-record partiality flag. It would always carry the same value,
+which reads as if it could vary. **A partial index lacks records, not
+confidence**: a block enters the map only at a `CopyEnd` watermark and every
+mapping pass censuses, so every record it holds is complete in itself. There is
+no half-known block, only blocks past the frontier that are not there at all.
+That is the non-obvious part — "partial" suggests every answer is provisional,
+where here the file's extent is the only thing that is.
+
 `pgdq info` prints `roles`/`tablespaces`/`object kinds` summaries by default
 (nothing at all when a set is empty), plus `diagnostics:`. `--map` lists every
 span as `[start, end) <one-line label>` in file order, grouped by database the
 same way the block listing is. `span_summary` is the one place in the codebase
 that matches every `SpanBody`/`DataBlock` variant for display, and a future
-`--filter-kind` should extend it rather than duplicate the match. `--map` and
-`--preamble-only` are mutually exclusive, rejected before any scan runs.
+`--filter-kind` should extend it rather than duplicate the match. 
 
 **`--verbose`'s per-column line is a complete statement of the Arrow schema.**
 One line per column that has something to say: a column that did not map gets
-`resolution_label`'s sentence, and a column that mapped gets its Arrow type —
+`resolution_words`' sentence, and a column that mapped gets its Arrow type —
 unless that type is `Utf8View`, the no-information answer, which is also the
 only type a non-`Mapped` resolution ever produces, so the two never both fire.
 The type is rendered by `arrow_type_label`
@@ -1408,11 +1533,10 @@ and exactly as consequential to a caller building against the schema.
 reader already meets everywhere else Arrow is named.
 
 **`pgdq info --json` dumps the internal struct, not a designed format.**
-`IndexJson`/`MetadataJson` (`pgdump_query-cli/src/main.rs`) flatten
-`DumpIndex` (or, with `--preamble-only`, `DumpMetadata`) and add back
-`diagnostics` — the one field `#[serde(skip)]` drops for the cache's own
-reasons (above, "`diagnostics: Vec<Diagnostic>` is `#[serde(skip)]`"), which
-don't apply to a one-shot export. This is deliberately **not** a second
+`IndexJson` (`pgdump_query-cli/src/main.rs`) flattens `DumpIndex` and adds the
+three things it does not itself carry: `total_size` (see "Coverage is stated
+once" above), `diagnostics` — the one field `#[serde(skip)]` drops for the
+cache's own reasons — and `resolution`. This is deliberately **not** a second
 output shape to maintain: it carries zero compatibility promise, so renaming
 or restructuring a field on `DumpIndex` for internal reasons is free to
 change its JSON along with it, same as any other refactor. It exists so an
@@ -1426,7 +1550,39 @@ all of which the full struct already carries.
 *Rejected:* a hand-shaped JSON schema (renamed/pruned fields, a stable
 top-level contract). That is exactly the CLI-output work this project is
 deferring pending real trials — the text output above carries the same
-"provisional" label for the same reason.
+"provisional" label for the same reason. **No `version` field either**: that is
+precisely the compatibility shim `roadmap.md`'s "Pre-1.0" forbids, and it would
+be the only one in the tree.
+
+### Machine-readable resolution
+
+`resolution` is what `--verbose` prints per column, in a form a script can
+branch on: per column the name, the declared PostgreSQL type, the outcome as a
+stable token, the Arrow type as the *exact string* `--verbose` renders, and the
+`NestedPlan` structurally (which is the one thing the Arrow type cannot say —
+`int4range[]` and `int4multirange` share it).
+
+**One resolution pass, two renderings.** `block_resolutions` is the single
+pass; `print_index` and `print_index_json` both consume its output, and
+`resolution_words` returns the token and the sentence from *one* exhaustive
+match. A second implementation is the failure mode here — the export would
+quietly drift into describing a different vocabulary from the listing.
+
+**Keyed by `COPY` block** — `(database, qualified name, header_offset)` — not
+rolled up per table. *Rejected:* keying by table, which is what a script most
+likely wants and is not well-formed yet: one table can span blocks (I2), and a
+header-less block takes placeholder `column1…N` names from its first row, so a
+rollup needs a rule for disagreeing blocks and for column identity. Phase 6's
+`TableProvider` has no choice but to write that rule, so guessing at one here
+would mean the embedded API had to contradict it; per-block keying leaves the
+grouping with the consumer, where it honestly sits. *Rejected:* shipping both,
+which is the same guess with a fallback bolted on — a rollup is purely additive
+once the merge rule exists.
+
+A header-less block is exported with an empty column list rather than omitted,
+so the document's shape does not vary per block. Same reason
+`MetadataNotScanned` is a value rather than an absent key: a value a consumer
+can branch on is worth more than a hole.
 
 **`query`'s text output is byte-identical whether typing is on or off**: every
 value is rendered back to the PostgreSQL text `pg_dump` itself wrote. The point
@@ -1446,11 +1602,15 @@ All three subcommands take `--source <path>` and `--dqcache <path>`; `query`'s
 table argument is `--table`. There are no positional arguments. **Omitting
 `--source` on `info` *is* the cache-only trigger** (clap's
 `required_unless_present = "source"` then requires `--dqcache`), so there is no
-separate flag and no "guess why the open failed" ambiguity. `info_offline`
-errors on `Absent`, errors on `Incomplete` for the default/`--map` listing, and
-succeeds on `Incomplete` for `--preamble-only` when the index's own
-`preamble_complete` is set — a preamble-only cache is always `Incomplete` in
-the whole-file sense, so that flag is load-bearing, not redundant.
+separate flag and no "guess why the open failed" ambiguity.
+
+**Both `info` invocation forms stay**, because they answer different questions.
+`--source X` locates and validates against `X.dqcache` — only this form can
+detect that the file changed. `--dqcache P` alone reads P with no live file to
+check against, and says so (`CacheOffline`). The cache records the source's
+size, so the coverage line works either way. `info_offline` refuses the same
+three unusable outcomes and reports `Incomplete` like any other cache;
+refusing a partial one was what this phase removed.
 
 `preamble_only` returns `(DumpMetadata, Vec<Diagnostic>)`: it was the one
 library entry point answering with `DumpMetadata` alone, so its diagnostics had

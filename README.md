@@ -24,7 +24,11 @@ state, known gaps included.
 ```sh
 cargo build --workspace
 
-# Scan a dump and list the COPY blocks it contains (binary is named `pgdq`).
+# Scan a dump once, writing a structure cache beside it (binary is `pgdq`).
+cargo run -p pgdump_query-cli -- parse --source <dump.sql>
+
+# Report what that cache holds. `info` never reads the dump itself, so this
+# is instant however large the file is.
 cargo run -p pgdump_query-cli -- info --source <dump.sql> --verbose
 ```
 

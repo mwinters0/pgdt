@@ -203,26 +203,30 @@ fn target_settled(index: &DumpIndex, table: &str, selector: Option<&str>) -> boo
 /// after every completed block, until the queried table is settled or EOF is
 /// reached. Emits no rows — see the module docs.
 ///
+/// `target` is the `(table, database selector)` a query may stop early for
+/// once [`target_settled`] says so. **`None` means "run to EOF"** — what
+/// [`ScanExtent::Full`] asks for, and what [`map_file`] always wants. It is an
+/// `Option` rather than a `ScanExtent` beside an ignored table name because a
+/// stop rule with no target is not a rule: a sentinel table name would be dead
+/// data that any later reader has to prove is unused.
+///
 /// The [`crate::map::Builder`] is seeded with the segment's start offset (so
 /// its first span begins at the frontier rather than at the first non-blank
 /// line past it, which would leave the blank lines in between unattributed)
 /// and with the database in scope there, which it cannot infer: it never
 /// reads the `\connect` lines earlier in the file.
-#[allow(clippy::too_many_arguments)]
 async fn map_forward<S: ByteRangeSource>(
     source: &S,
     scan_options: &ScanOptions,
     cache: &CacheMode,
     index: &mut DumpIndex,
-    table: &str,
-    selector: Option<&str>,
-    extent: ScanExtent,
+    target: Option<(&str, Option<&str>)>,
     size: u64,
 ) -> Result<()> {
     if index.scanned_through >= size {
         return Ok(());
     }
-    if extent == ScanExtent::UntilTargetSettled && target_settled(index, table, selector) {
+    if target.is_some_and(|(table, selector)| target_settled(index, table, selector)) {
         return Ok(());
     }
 
@@ -272,8 +276,8 @@ async fn map_forward<S: ByteRangeSource>(
                     index.tablespaces.extend(builder.tablespaces().iter().cloned());
                     index.scanned_through = index.scanned_through.max(watermark);
                     cache.save(source, index).await?;
-                    if extent == ScanExtent::UntilTargetSettled
-                        && target_settled(index, table, selector)
+                    if target
+                        .is_some_and(|(table, selector)| target_settled(index, table, selector))
                     {
                         return Ok(());
                     }
@@ -307,6 +311,64 @@ async fn map_forward<S: ByteRangeSource>(
     index.diagnostics = crate::index::tiling_diagnostics(&index.spans, size);
     index.diagnostics.push(crate::index::toc_coverage_diagnostic(&index.spans));
     cache.save(source, index).await
+}
+
+/// Map `source` end to end, **continuing from whatever `cache` already
+/// holds** — `pgdq parse`'s scan (`docs/design/architecture.md`, "CLI
+/// surface"). Returns the finished [`DumpIndex`] and the frontier this run
+/// started from: `0` for a scan that began at byte 0, and the cache's
+/// `scanned_through` for one that resumed.
+///
+/// This is [`map_forward`] with no stop target, plus the three whole-file
+/// facts that only a scan reaching EOF may state. It is a second caller for
+/// the incremental loop, not a second implementation of it: `crate::index::build_index`
+/// stays the eager, cache-blind producer, and teaching *it* to resume would
+/// duplicate the splice-onto-a-prefix logic here with a different set of bugs.
+///
+/// **The three finishing steps are this function's, not `map_forward`'s.**
+///
+/// - `metadata` is recomputed over the whole span list. A query only ever has
+///   `crate::index::scan_preamble`'s first-database capture, because that is
+///   all a scan stopping at its target may honestly claim
+///   ([`crate::preamble::dump_metadata_from_spans`] names the two boundaries
+///   it may be called at, and a `CopyEnd` watermark is not one of them). A
+///   scan that reached EOF is at the other boundary, so every `\connect`ed
+///   database's DDL is recovered here — which is what makes "a full `pgdq
+///   parse` leaves every database `preamble_complete`" true.
+/// - `diagnostics` are recomputed rather than inherited: they are
+///   `#[serde(skip)]`, so an index that came wholly from the cache carries
+///   none, and whatever [`CacheMode::load`] reported about the cache *file*
+///   (an mtime mismatch) is kept ahead of them rather than overwritten.
+/// - The cache is saved once more at the end. `map_forward` already saved at
+///   EOF, but with the pre-EOF metadata; this is the save that persists the
+///   finished index, and it is also the only save when the cache already
+///   covered the file and nothing was scanned at all.
+pub async fn map_file<S: ByteRangeSource>(
+    source: &S,
+    scan_options: &ScanOptions,
+    cache: &CacheMode,
+) -> Result<(DumpIndex, u64)> {
+    let size = source.size().await?;
+    let mut index = cache.load(source).await?.unwrap_or_default();
+    // The one diagnostic about the cache *file* rather than about the map:
+    // everything else the load computed is recomputed below over the finished
+    // spans, and `map_forward` assigns `diagnostics` wholesale at EOF anyway.
+    let carried: Vec<crate::diagnostic::Diagnostic> = index
+        .diagnostics
+        .drain(..)
+        .filter(|d| d.kind == crate::diagnostic::DiagnosticKind::CacheMtimeChanged)
+        .collect();
+    let resumed_from = index.scanned_through.min(size);
+
+    map_forward(source, scan_options, cache, &mut index, None, size).await?;
+
+    index.metadata = Some(crate::preamble::dump_metadata_from_spans(&index.spans));
+    let mut diagnostics = carried;
+    diagnostics.extend(crate::index::tiling_diagnostics(&index.spans, size));
+    diagnostics.push(crate::index::toc_coverage_diagnostic(&index.spans));
+    index.diagnostics = diagnostics;
+    cache.save(source, &index).await?;
+    Ok((index, resumed_from))
 }
 
 /// Opaque cursor into a [`table_stream`]/[`crate::batch::read_table`]
@@ -558,17 +620,11 @@ where
         // Pass 1: extend the map until this query's table is settled. No
         // rows come out of this, and nothing is yielded until it returns.
         let selector = batch_options.database.as_deref();
-        map_forward(
-            source,
-            &scan_options,
-            &cache,
-            &mut index,
-            &table,
-            selector,
-            batch_options.scan_extent,
-            size,
-        )
-        .await?;
+        let target = match batch_options.scan_extent {
+            ScanExtent::UntilTargetSettled => Some((table.as_str(), selector)),
+            ScanExtent::Full => None,
+        };
+        map_forward(source, &scan_options, &cache, &mut index, target, size).await?;
 
         // One target per query (`docs/design/architecture.md`,
         // "One target per query"): narrow the name-only matches down to at

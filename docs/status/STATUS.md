@@ -20,7 +20,8 @@ per-phase checklist here any more. How the system works is
 | Full byte-exact file map — every byte in exactly one span, verified over every fixture | working |
 | DDL object inventory: TOC enrichment, referenced roles and tablespaces, object census | working |
 | Best-effort structural cache with source-identity checking and cache-only inspection | working |
-| CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, and cache-only `info` | working, text output shape provisional; `--json` carries no shape promise at all |
+| CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, and cache-only `info` | working, text output shape provisional; `--json` carries no shape promise at all. **`parse` is the only scanner** — it resumes from a matching cache and persists after every completed block; `info` reports from the cache and never scans |
+| Partial reporting | `info` reports a cache from an unfinished scan for as far as it got, with `Scan completion: N% (M bytes)` stated once at the top; `--json` carries the coverage components and per-`COPY`-block type resolution |
 | Arrays, composites, ranges, multiranges | typed and decoded end to end: `List<T>`, `Struct<…>`, the five-field range struct, `List<` range struct `>`, and `List<List<T>>` for a uniformly multi-dimensional array column. Three shapes stay a string, each with its own resolution outcome: an array whose element type is opaque (`box`, a C base type, a shell type, through any chain of domains), an array whose element type is itself an array (I26), and an array column whose values disagree on shape |
 | Array shape census | recorded by every mapping pass (`CopyBlock::array_shapes`) and **consumed**: a query retypes its top-level array columns from the union over the blocks it will replay, before the first batch |
 | Predicate and projection pushdown; per-row-group statistics | not started — Phase 5 |
@@ -28,7 +29,7 @@ per-phase checklist here any more. How the system works is
 | Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-26 (4.4.2: an array-typed element is refused, and every resolution outcome has a fixture).
+Last updated: 2026-08-26 (Phase 9: `parse` resumes and is the only scanner; `info` reports from the cache, coverage line included; `--json` carries per-block resolution).
 
 ## Phase 4 progress
 
@@ -77,6 +78,14 @@ Specified in
       working-but-unpinned shapes) and `t_enum_domain.v_empty_enum`, which the
       coverage test needed and which produced I27. Notes:
       [`../design/roadmap-phase4.4.2-nested-array-refusal-notes.md`](../design/roadmap-phase4.4.2-nested-array-refusal-notes.md)
+- [ ] **4.4.3** The array-declaration spellings, earned from 4.4.2: normalize
+      the whole `Typename` array-bounds production (`[]`, `[n]`, repeated,
+      `ARRAY`, `ARRAY[n]` — I28) to the element type plus one array level, so
+      `integer[][]` resolves as `integer[]` does and the census decides its
+      depth. The I26 refusal is unchanged. Nothing here is reachable from
+      `pg_dump` output; it is the hand-written and other-producer input path.
+      Includes a fixture regeneration — a new `t_array_spelling` table, one
+      column per non-`[]` spelling, all of which must dump as `integer[]`.
 - [x] **4.5** The shape census, **recording half**: `ArrayShape` on every
       `CopyBlock`, recorded per column, and the cache format bump that
       persists it; `DumpIndex::is_complete`. Nothing consumed it — that is
@@ -100,18 +109,29 @@ Specified in
 
 Specified in
 [`../design/roadmap-phase9-partial-reporting.md`](../design/roadmap-phase9-partial-reporting.md).
-Nothing has started; the phase runs after Phase 4 wraps.
+Taken ahead of the rest of Phase 4 (only **4.6** remains there).
 
 - [ ] **9.1** `parse` resumes from a matching cache and persists after every
-      completed block, via `stream::map_forward`; the resume-point line. Plus
-      the koji write-amplification measurement. No output shape changes.
-- [ ] **9.2** `info` stops scanning: `CacheStatus::Absent` splits, the "run
-      `pgdq parse`" errors, the mtime warning, `--preamble-only` moves to
-      `parse`. Both invocation forms unchanged.
-- [ ] **9.3** The coverage line — `Scan completion: 76% (12345 bytes)` in
-      text, the components as separate fields in JSON.
-- [ ] **9.4** `--json` carries per-block resolution, including
-      `ColumnResolution::MetadataNotScanned`.
+      completed block, via `stream::map_forward`; the resume-point line. **The
+      code landed** (`stream::map_file`, the CLI's resume line,
+      `pgdump_query/tests/map_file.rs`); **the koji write-amplification
+      measurement did not** — a full koji `parse` is ~54 minutes, so the run
+      was launched detached and a later session reads
+      `runs/koji-9.1-scan.log`, then adds the figure to
+      [`../design/measurements.md`](../design/measurements.md) and ticks this
+      box. See [`history/2026-08-26.md`](history/2026-08-26.md). Notes:
+      [`../design/roadmap-phase9.1-parse-resume-notes.md`](../design/roadmap-phase9.1-parse-resume-notes.md)
+- [x] **9.2** `info` stops scanning: `CacheStatus::Absent` splits four ways,
+      the "run `pgdq parse`" errors, the mtime warning, `--preamble-only`
+      moves to `parse`. Both invocation forms unchanged, and cache-only mode
+      now reports an incomplete cache instead of refusing it. Notes:
+      [`../design/roadmap-phase9.2-info-stops-scanning-notes.md`](../design/roadmap-phase9.2-info-stops-scanning-notes.md)
+- [x] **9.3** The coverage line — `Scan completion: 76% (12345 bytes)` in
+      text, the components as separate fields in JSON. Notes:
+      [`../design/roadmap-phase9.3-coverage-line-notes.md`](../design/roadmap-phase9.3-coverage-line-notes.md)
+- [x] **9.4** `--json` carries per-block resolution, including
+      `ColumnResolution::MetadataNotScanned`. Notes:
+      [`../design/roadmap-phase9.4-machine-readable-resolution-notes.md`](../design/roadmap-phase9.4-machine-readable-resolution-notes.md)
 
 ## Not started
 
@@ -119,8 +139,9 @@ Nothing has started; the phase runs after Phase 4 wraps.
   as provisional pending real user trials; the resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 
-- **Phase 9 — partial reporting and machine-readable resolution.** Specified,
-  not started — see the checklist above.
+- **The koji write-amplification measurement** (slice 9.1) — launched
+  detached, not yet read. Nothing depends on it; it decides only whether
+  per-block cache saves need a throttle.
 
 ## Known gaps
 
@@ -194,6 +215,34 @@ Nothing has started; the phase runs after Phase 4 wraps.
 Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
+
+- **A full scan now recomputes `DumpMetadata` over every span, so `pgdq parse`
+  types every `\connect`ed database, not just the first.** Phase 9 needed it
+  (a resumed `parse` must produce what `build_index` produces), and it is
+  strictly more information — but it means a `pg_dumpall` cache written by
+  `parse` now answers typed queries against later databases where before only
+  `--schema-mode strings` would. It lives in `stream::map_file`, not in
+  `map_forward`, so the streaming path is untouched; reversing it means
+  `parse`'s index no longer equals `build_index`'s.
+
+- **Loading a cache now recomputes the tiling and TOC-coverage diagnostics.**
+  `diagnostic.rs` always said they are recomputed rather than persisted, but
+  nothing did it on the load path until `info` stopped scanning and would
+  otherwise have lost the TOC-coverage figure. Cost is O(spans) per load,
+  including every query's. It also makes `save`→`load` round-trip
+  `DumpIndex` exactly, diagnostics included, which three `tests/cache.rs`
+  assertions previously had to work around.
+
+- **`info --dqcache none` is now an error.** With no scan to fall back on it
+  would have nothing to report, so it is rejected the same way `parse`
+  rejects it. The spec did not name this case; the alternative was reporting
+  an empty index, which reads as "this dump has no tables".
+
+- **The coverage percentage floors and the byte counts left the summary
+  lines.** `N COPY block(s), M row(s)` and `N span(s)` no longer restate
+  `scanned_through`, since the coverage line above owns it. This is the
+  phase's one formatting decision and the one most likely to come back — 9.3
+  is a separate slice precisely so it can.
 
 - **`integer[][]` is now refused, where it used to resolve to
   `List<List<Int32>>` and decode a 2-D literal.** It follows from the spec's

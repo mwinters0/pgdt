@@ -445,6 +445,10 @@ fn outcome_name(resolution: &ColumnResolution) -> &'static str {
         ColumnResolution::Mapped => "Mapped",
         ColumnResolution::UnknownType => "UnknownType",
         ColumnResolution::NotDeclared => "NotDeclared",
+        // Exempt from `EVERY_OUTCOME` below: a property of how much of the
+        // file was read, not of a declared type, and every fixture here is
+        // scanned to EOF. See this test's docs.
+        ColumnResolution::MetadataNotScanned => "MetadataNotScanned",
         ColumnResolution::OpaqueElementType => "OpaqueElementType",
         ColumnResolution::NestedArrayElement => "NestedArrayElement",
         ColumnResolution::VaryingArrayShape => "VaryingArrayShape",
@@ -486,10 +490,13 @@ const EVERY_OUTCOME: [ColumnResolution; 8] = [
 ///
 /// **An outcome no fixture *can* produce is left out of `EVERY_OUTCOME`, and
 /// that is the only legitimate exemption.** It applies to an outcome that is a
-/// property of how much of the file was read rather than of a declared type —
-/// `MetadataNotScanned` (`roadmap-phase9-partial-reporting.md`, 9.4) is the
-/// one coming, and every fixture here is scanned to EOF. `outcome_name`'s
-/// exhaustive match still forces the exemption to be written down.
+/// property of how much of the file was read rather than of a declared type.
+/// `ColumnResolution::MetadataNotScanned` is the one instance: it needs a
+/// `pg_dumpall`/`--create` dump whose scan stopped inside a later database,
+/// and every fixture here is scanned to EOF. `outcome_name`'s exhaustive match
+/// still forces the exemption to be written down, and
+/// `tests/partial_reporting.rs` covers the outcome against a real truncated
+/// index instead.
 #[tokio::test]
 async fn every_resolution_outcome_is_produced_by_a_real_fixture_column() {
     use std::collections::BTreeMap;

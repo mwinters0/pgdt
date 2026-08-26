@@ -4,7 +4,9 @@
 //!
 //! Reading is best-effort — the cache is never required for correctness, so
 //! a missing, foreign, unrecognised-version, or size-mismatched file just
-//! means "scan instead," never a hard error.
+//! means "scan instead," never a hard error. Which of the four it was is
+//! still reported — see [`CacheStatus`] — because `pgdq info` has no "scan
+//! instead" to fall back on and has to say what went wrong.
 //! Writing is not best-effort: [`save`] propagates I/O failures rather than
 //! silently falling back to running without a cache, since a write failure
 //! (read-only mount, permissions, disk full) means something is actually
@@ -37,9 +39,9 @@ use crate::io::ByteRangeSource;
 use crate::{Error, Result};
 
 /// Bumped whenever the on-disk shape changes incompatibly. A cache written
-/// under a different version is treated as absent (`docs/design/roadmap.md`,
-/// "Four decisions that keep later phases additive") rather than partially
-/// trusted —
+/// under a different version is unusable ([`CacheStatus::UnsupportedVersion`])
+/// rather than partially trusted (`docs/design/roadmap.md`,
+/// "Four decisions that keep later phases additive") —
 /// the three fields reserved on [`DumpIndex`]/[`crate::index::CopyBlock`] are
 /// what let most future additions avoid needing a bump at all.
 ///
@@ -103,28 +105,49 @@ pub fn colocated_path(dump_path: &Path) -> PathBuf {
 
 /// What [`load`] found at a cache path, once checked against the live
 /// source's identity — see the module docs.
+///
+/// **The four unusable outcomes are named separately, not collapsed.** Every
+/// caller that can only respond by scanning treats them alike and says so
+/// ([`CacheMode::load`] folds all four into `None`), but a caller that cannot
+/// scan — `pgdq info`, which reports from the cache and never reads the dump —
+/// has a different sentence to say for each, and "you have never parsed this
+/// file" is not the same fact as "your file changed since you parsed it" even
+/// though both end in `pgdq parse`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CacheStatus {
-    /// No usable cache: absent, foreign bytes, an unrecognised
-    /// format/container version, or a source-size mismatch. All four are
-    /// the same "not trustworthy" outcome under this module's best-effort
-    /// contract, so callers that don't care why get exactly one case to
-    /// handle.
-    Absent,
+    /// Nothing at this path.
+    Missing,
+    /// Something is at this path, but it does not decode as a cache at all —
+    /// foreign bytes, or a truncated write.
+    Unreadable,
+    /// A cache written by a build whose on-disk shape this one does not
+    /// recognise (`format_version`/`container_kind`). Pre-1.0 these are free
+    /// and frequent, and nothing migrates
+    /// (`docs/design/roadmap.md`, "Pre-1.0").
+    UnsupportedVersion,
+    /// A readable cache whose recorded source size disagrees with the live
+    /// source's, so every byte offset in it could be wrong. Both sizes are
+    /// carried because "the file changed" is the fact a reporting caller
+    /// states, and the two numbers are the evidence for it.
+    SourceChanged { cached_size: u64, live_size: u64 },
     /// A usable cache whose `index.scanned_through` reaches the file's
     /// recorded size — the whole file is mapped. `mtime_changed` is `true`
     /// when the source's current mtime differs from the one recorded at save
     /// time — weaker evidence than a size mismatch (see the module docs), so
-    /// it does not itself make the cache [`Absent`](CacheStatus::Absent).
-    Valid { index: DumpIndex, mtime_changed: bool },
+    /// it does not itself make the cache unusable. `total_size` is the
+    /// recorded [`SourceIdentity::size`], carried for the same reason
+    /// [`Incomplete`](CacheStatus::Incomplete) carries it: a reporting caller
+    /// states coverage against it, and a cache-only caller has no live source
+    /// to stat.
+    Valid { index: DumpIndex, mtime_changed: bool, total_size: u64 },
     /// A usable cache whose `index.scanned_through` falls short of
     /// `total_size` — a real, not-yet-finished scan (e.g. a preamble-only
     /// scan, or a query that stopped once its target settled), not a defect
     /// (`docs/design/architecture.md`, "The cache", the former out-of-band item M1). What "not enough"
-    /// means is caller-specific: a caller that wants the whole file's map
-    /// (`pgdq info`'s default listing) should treat this as a signal to
-    /// scan further; a caller that resumes an incremental scan from
-    /// wherever it left off (`crate::stream::table_stream`,
+    /// means is caller-specific: `pgdq info` reports whatever this holds and
+    /// states the coverage (`docs/design/architecture.md`, "CLI surface"),
+    /// while a caller that resumes an incremental scan from wherever it left
+    /// off (`crate::stream::map_file`, `crate::stream::table_stream`,
     /// `crate::index::preamble_only`) wants exactly this partial index to
     /// build on, the same as [`Valid`](CacheStatus::Valid) —
     /// [`CacheMode::load`] treats it that way. `total_size` is the cache's
@@ -140,25 +163,42 @@ pub enum CacheStatus {
 /// means. A hard I/O error reading `path` (anything but "not found") still
 /// propagates — only the cache's own *content* is best-effort.
 pub async fn load<S: ByteRangeSource>(path: &Path, source: &S) -> Result<CacheStatus> {
+    let file = match read_cache_file(path)? {
+        Ok(file) => file,
+        Err(status) => return Ok(status),
+    };
+    let live = SourceIdentity::observe(source).await?;
+    if file.identity.size != live.size {
+        return Ok(CacheStatus::SourceChanged {
+            cached_size: file.identity.size,
+            live_size: live.size,
+        });
+    }
+    let mtime_changed = file.identity.mtime != live.mtime;
+    Ok(status_from_file(file, mtime_changed))
+}
+
+/// Read and envelope-check the cache at `path`, shared by [`load`] and
+/// [`load_offline`]. `Err(status)` is one of the three unusable outcomes that
+/// need no live source to reach; only a size mismatch does, and that is
+/// [`load`]'s alone.
+fn read_cache_file(path: &Path) -> Result<std::result::Result<CacheFile, CacheStatus>> {
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(CacheStatus::Absent),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Err(CacheStatus::Missing));
+        }
         Err(e) => return Err(Error::Io(e)),
     };
     let file: CacheFile =
         match bincode::serde::decode_from_slice(&bytes, bincode::config::standard()) {
             Ok((file, _)) => file,
-            Err(_) => return Ok(CacheStatus::Absent),
+            Err(_) => return Ok(Err(CacheStatus::Unreadable)),
         };
     if file.format_version != FORMAT_VERSION || file.container_kind != ContainerKind::Plain {
-        return Ok(CacheStatus::Absent);
+        return Ok(Err(CacheStatus::UnsupportedVersion));
     }
-    let live = SourceIdentity::observe(source).await?;
-    if file.identity.size != live.size {
-        return Ok(CacheStatus::Absent);
-    }
-    let mtime_changed = file.identity.mtime != live.mtime;
-    Ok(status_from_file(file, mtime_changed))
+    Ok(Ok(file))
 }
 
 /// Load a cache from `path` with no live source to check it against — the
@@ -169,34 +209,35 @@ pub async fn load<S: ByteRangeSource>(path: &Path, source: &S) -> Result<CacheSt
 /// [`crate::diagnostic::DiagnosticKind::CacheOffline`] pushed by
 /// [`CacheMode::load_offline`], not this flag.
 pub async fn load_offline(path: &Path) -> Result<CacheStatus> {
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(CacheStatus::Absent),
-        Err(e) => return Err(Error::Io(e)),
-    };
-    let file: CacheFile =
-        match bincode::serde::decode_from_slice(&bytes, bincode::config::standard()) {
-            Ok((file, _)) => file,
-            Err(_) => return Ok(CacheStatus::Absent),
-        };
-    if file.format_version != FORMAT_VERSION || file.container_kind != ContainerKind::Plain {
-        return Ok(CacheStatus::Absent);
+    match read_cache_file(path)? {
+        Ok(file) => Ok(status_from_file(file, false)),
+        Err(status) => Ok(status),
     }
-    Ok(status_from_file(file, false))
 }
 
 /// Shared by [`load`] and [`load_offline`] once a `CacheFile` has passed its
 /// format/container/(when live) size checks: `Valid` when the index's own
 /// `scanned_through` reaches the file's recorded size, `Incomplete`
-/// otherwise. Reads `file.identity.size` rather than re-stating a live size
+/// otherwise, with the index's unpersisted diagnostics recomputed either
+/// way. Reads `file.identity.size` rather than re-stating a live size
 /// — by the time either caller reaches this point the two are already known
-/// equal wherever a live one exists (a live-size mismatch returns `Absent`
-/// earlier in [`load`]), and `load_offline` has no live size to read at all.
+/// equal wherever a live one exists (a live-size mismatch returns
+/// [`CacheStatus::SourceChanged`] earlier in [`load`]), and `load_offline` has no live size to read at all.
 fn status_from_file(file: CacheFile, mtime_changed: bool) -> CacheStatus {
-    if !file.index.is_complete(file.identity.size) {
-        CacheStatus::Incomplete { index: file.index, mtime_changed, total_size: file.identity.size }
+    let total_size = file.identity.size;
+    let mut index = file.index;
+    // `DumpIndex::diagnostics` is `#[serde(skip)]`, so a loaded index arrives
+    // with none. Both file-level figures are pure functions of the spans and
+    // O(spans) to compute, which is what lets them be recomputed on load
+    // rather than persisted (`crate::diagnostic`, "Not persisted") — and a
+    // caller that reports from a cache without ever scanning (`pgdq info`)
+    // would otherwise silently lose the TOC-coverage figure.
+    index.diagnostics = crate::index::tiling_diagnostics(&index.spans, total_size);
+    index.diagnostics.push(crate::index::toc_coverage_diagnostic(&index.spans));
+    if index.is_complete(total_size) {
+        CacheStatus::Valid { index, mtime_changed, total_size }
     } else {
-        CacheStatus::Valid { index: file.index, mtime_changed }
+        CacheStatus::Incomplete { index, mtime_changed, total_size }
     }
 }
 
@@ -260,21 +301,28 @@ impl CacheMode {
     /// never read.
     ///
     /// `Incomplete` is treated exactly like `Valid` — returned as `Some`,
-    /// not folded into `None` — because this method's callers
-    /// (`crate::stream::table_stream`, `crate::index::preamble_only`) want
-    /// whatever partial map already exists to build forward from; a caller
-    /// that instead needs the whole file mapped (`pgdq info`'s default
-    /// listing) reads [`DumpIndex::scanned_through`] against the live
-    /// source's size itself rather than relying on this method to make that
-    /// call, since folding `Incomplete` into `None` here would make every
-    /// partial cache from an ordinary query invisible to the next one —
+    /// not folded into `None` — because every caller of this method
+    /// (`crate::stream::map_file`, `crate::stream::table_stream`,
+    /// `crate::index::preamble_only`) wants whatever partial map already
+    /// exists to build forward from. Folding `Incomplete` into `None` here
+    /// would make every partial cache invisible to the next scan, which is
     /// exactly the incremental caching `docs/design/architecture.md`,
-    /// "Query: mapping and streaming are separate passes" depends on.
+    /// "Query: mapping and streaming are separate passes" depends on. A
+    /// caller that instead *reports* what a cache holds reaches for
+    /// [`load`]/[`CacheMode::load_offline`] and the full [`CacheStatus`],
+    /// which is what `pgdq info` does.
     pub async fn load<S: ByteRangeSource>(&self, source: &S) -> Result<Option<DumpIndex>> {
         match self {
             CacheMode::Enabled(path) => match load(path, source).await? {
-                CacheStatus::Absent => Ok(None),
-                CacheStatus::Valid { mut index, mtime_changed }
+                // All four unusable outcomes collapse here: this method's
+                // callers can only respond by scanning, so telling them apart
+                // would be information with no consumer. `pgdq info`, which
+                // has no such response, matches on [`CacheStatus`] directly.
+                CacheStatus::Missing
+                | CacheStatus::Unreadable
+                | CacheStatus::UnsupportedVersion
+                | CacheStatus::SourceChanged { .. } => Ok(None),
+                CacheStatus::Valid { mut index, mtime_changed, .. }
                 | CacheStatus::Incomplete { mut index, mtime_changed, .. } => {
                     // Reported rather than acted on: too weak to invalidate
                     // (see the module docs), and pointless to persist — the
@@ -310,7 +358,10 @@ impl CacheMode {
             CacheMode::Offline(path) => {
                 let mut status = load_offline(path).await?;
                 match &mut status {
-                    CacheStatus::Absent => {}
+                    CacheStatus::Missing
+                    | CacheStatus::Unreadable
+                    | CacheStatus::UnsupportedVersion
+                    | CacheStatus::SourceChanged { .. } => {}
                     CacheStatus::Valid { index, .. } | CacheStatus::Incomplete { index, .. } => {
                         index.diagnostics.push(crate::diagnostic::Diagnostic::cache_offline());
                     }

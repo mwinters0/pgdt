@@ -1,8 +1,10 @@
 # PostgreSQL invariants we rely on
 
-Every entry is a property of `pg_dump`'s output that some design decision
-treats as guaranteed. Each records what the invariant is, the source that
-proves it, the versions it was verified against, and how to re-verify it.
+Every entry is a property of `pg_dump`'s output — or, where a decision turns on
+what the *server* accepts rather than on what `pg_dump` emits, of PostgreSQL
+itself — that some design decision treats as guaranteed. Each records what the
+invariant is, the source that proves it, the versions it was verified against,
+and how to re-verify it.
 
 **This exists because a new PostgreSQL major release can quietly invalidate
 one of these**, and the resulting bug would surface as wrong data rather than
@@ -37,7 +39,11 @@ preamble legitimately follows an earlier one's data. Hence re-arming the
 preamble search at each `\connect`.
 
 **Verified against:** v13.0, v16.0, v18.6 — identical.
-**Relied on by:** `architecture.md` ("Bounded preamble-only reads").
+**Relied on by:** `architecture.md` ("Bounded preamble-only reads"), and —
+through the scope limit above — `ColumnResolution::MetadataNotScanned`
+(`architecture.md`, "Joining a header against the metadata"), which can only
+ever name a *later* database: the first one's preamble is captured before
+anything else runs, so it is never the one in doubt.
 **Re-verify:** `grep -n 'addBoundaryDependencies' -A40 src/bin/pg_dump/pg_dump.c`
 and confirm `DO_EXTENSION`/`DO_TYPE`/`DO_SHELL_TYPE` are still in the pre-data
 arm, plus the `PRIO_*` ordering in `pg_dump_sort.c`.
@@ -1458,3 +1464,92 @@ psql -X -q -d scratch -c 'CREATE TYPE empty_enum AS ENUM ()' \
 pg_dump -d scratch                    | grep -A3 'AS ENUM'
 pg_dump -d scratch --binary-upgrade   | grep -A3 'AS ENUM'
 ```
+
+---
+
+## I28 — PostgreSQL accepts six spellings for an array-typed column, and all six are the same type
+
+**Claim.** A column, composite field, or domain base type may be declared as an
+array in six ways, and every one produces the identical `pg_type` entry —
+`integer[]`, `integer[3]`, `integer[][]`, `integer[3][4]`, `integer ARRAY`, and
+`integer ARRAY[4]` all yield `_int4`. Neither the dimension count nor the
+bounds survive into the type; `attndims` records what was written and is
+discarded by `format_type`, so `pg_dump` writes all six back as `integer[]`
+(I21).
+
+The consequence a reader must not miss: **the spelling constrains nothing about
+the values.** A column declared `integer[3]` may hold a four-element array, and
+one declared `integer[]` may hold `{{1,2},{3,4}}`. Only the census over actual
+values says what a column's shape is.
+
+**Proof.** `src/backend/parser/gram.y`, the `Typename` production:
+
+```
+Typename:	SimpleTypename opt_array_bounds
+		|	SETOF SimpleTypename opt_array_bounds
+		|	SimpleTypename ARRAY '[' Iconst ']'
+		|	SETOF SimpleTypename ARRAY '[' Iconst ']'
+		|	SimpleTypename ARRAY
+		|	SETOF SimpleTypename ARRAY
+
+opt_array_bounds:
+			opt_array_bounds '[' ']'
+		|	opt_array_bounds '[' Iconst ']'
+		|	/*EMPTY*/
+```
+
+`opt_array_bounds` is left-recursive, so any number of `[]`/`[n]` pairs is
+accepted; every alternative sets only `arrayBounds`, which `transformTypeName`
+turns into "one array type over the element", discarding the count. The
+`ARRAY`/`ARRAY[n]` alternatives are the SQL-standard spelling and are
+documented for user use (`doc/src/sgml/array.sgml`, "the keyword `ARRAY`, can
+be used for one-dimensional arrays").
+
+Observed live on PostgreSQL 16.15:
+
+```
+ attname | format_type | attndims
+---------+-------------+----------
+ a       | integer[]   |        1     -- int[]
+ b       | integer[]   |        1     -- int[3]
+ c       | integer[]   |        2     -- int[][]
+ d       | integer[]   |        2     -- int[3][4]
+ e       | integer[]   |        1     -- int ARRAY
+ f       | integer[]   |        1     -- int ARRAY[4]
+```
+
+Two details a normalizer needs. **The bracket run is unbounded in the DDL even
+though `MAXDIM` is 6**: `int[][][][][][][][][]` is accepted and yields
+`integer[]` with `attndims` 9, so a declaration's bracket count needs no cap
+and carries no meaning. And **`ARRAY` is a keyword, so it is case-insensitive**
+— `INTEGER ARRAY` and `Integer Array[4]` are the same declaration. Both
+observed on 16.15 alongside the table above.
+
+**Scope limit.** This is about the *input* grammar, so it bears only on SQL
+`pg_dump` did not write — a hand-written or hand-edited file, or another
+producer's output (`roadmap.md`, "The input contract is valid PostgreSQL").
+`pg_dump`'s own output only ever contains the first spelling, which is I21.
+
+**Verified against:** the grammar productions are identical in v13.23, v16.15
+and v18.6; the six-column observation is v16.15, live.
+
+**Relied on by:** `architecture.md` ("Type resolution") — it is why resolution
+normalizes an array declaration to its element type plus one level rather than
+reading the spelling literally, and why no spelling is allowed to imply a
+nested array.
+
+**Re-verify:**
+
+```sh
+grep -n 'opt_array_bounds:' -A 8 src/backend/parser/gram.y
+grep -n 'SimpleTypename ARRAY$' -A 4 src/backend/parser/gram.y
+psql -X -q <<'SQL'
+create temp table i28 (a int[], b int[3], c int[][], d int[3][4], e int ARRAY, f int ARRAY[4]);
+select attname, format_type(atttypid, atttypmod), attndims from pg_attribute
+  where attrelid = 'i28'::regclass and attnum > 0 order by attnum;
+SQL
+```
+
+All six rows must print `integer[]`, with `attndims` varying — that difference
+is the record of the declaration, and the point is that nothing downstream
+reads it.

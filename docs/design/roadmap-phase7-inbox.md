@@ -94,7 +94,7 @@ Phase 7's "Measurement discipline" section is the right place to settle it.
 ## An `INSERT`-run scan is CPU-bound at ~5× a `COPY` scan's per-byte cost
 
 **Fact.** Three 3.00 GiB synthetic dumps, same disk, same session, three runs
-each (`pgdq info --dqcache none`, 512MB-limited container): a `COPY` block
+each (a whole-file `pgdq` scan, 512MB-limited container): a `COPY` block
 scans in 2.55–3.27 s, a large-object region in 3.61–4.99 s, an `INSERT` run in
 14.55–14.79 s, against a 3.67–3.85 s `cat`-to-`/dev/null` floor for the same
 files. The first two are at the I/O floor; the `INSERT` scan is four times

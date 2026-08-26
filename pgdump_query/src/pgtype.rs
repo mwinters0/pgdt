@@ -78,7 +78,12 @@ pub enum TypeOutcome {
 ///
 /// A `Scalar` leaf is anything [`crate::decode`] handles (`Utf8View`
 /// included), which is where every branch bottoms out.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+/// `Serialize` so `pgdq info --json` can export a resolved schema's plans
+/// structurally rather than inventing a second spelling for them
+/// (`docs/design/architecture.md`, "CLI surface"). **Not `Deserialize`, and
+/// never persisted**: the cache holds what the dump said, never what we
+/// concluded (`docs/design/layering.md`, rule 5).
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize)]
 pub enum NestedPlan {
     /// Filled by `crate::decode`'s per-type decoders, or held as text.
     #[default]

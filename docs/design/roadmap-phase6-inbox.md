@@ -150,3 +150,35 @@ per-table rollup in the CLI export is purely additive once the rule exists.
 
 **Origin.** Grilling 4.5's open decisions, 2026-08-26. See
 [`../status/history/2026-08-26.md`](../status/history/2026-08-26.md).
+
+---
+
+## A reported schema degrades where a streamed one refuses, and the CLI now does both
+
+**Fact.** The same "this database's DDL was never read" condition has two
+answers in the tree, deliberately. `stream::resolve_block` raises
+`Error::MetadataNotScanned` before a batch exists, because a stream hands back
+rows and a wrongly-typed one is a wrong answer with no signal.
+`resolve::resolve_columns` marks the column
+`ColumnResolution::MetadataNotScanned` and carries on, because a *listing*
+covers every block in the index and one unresolvable block must not sink the
+document. `pgdq info --json` exports the second form; `pgdq query` gets the
+first.
+
+**Why Phase 6 cares.** A `TableProvider`'s `schema()` and a Python binding's
+"give me the schema of table T" are the *reported* kind of claim, but the scan
+they front is the *streaming* kind — so Phase 6 has to pick which of the two
+existing answers an embedder gets, or a third, and it cannot inherit one by
+accident. This sharpens the "a partial `DumpIndex`'s blocks are each fully
+censused" entry above: that one asks what a schema says about array shape when
+the map is partial; this one asks what it says when a whole database's DDL is
+missing, and the tree already contains both answers rather than none.
+
+**Origin.** Slice 9.4, 2026-08-26. See
+[`roadmap-phase9.4-machine-readable-resolution-notes.md`](roadmap-phase9.4-machine-readable-resolution-notes.md)
+and [`architecture.md`](architecture.md), "Joining a header against the
+metadata".
+
+**Contingent on** `stream::resolve_block` keeping its pre-resolution check —
+if that ever moved into `resolve_columns`, the two answers would collapse into
+one and the question would be settled by default rather than deliberately.

@@ -666,6 +666,7 @@ rather than scope.
 | 4.4 | Flip resolution: recursive mapping, built-in range subtypes, opaque-element refusal, the `ColumnResolution` surgery, the `(DataType, NestedPlan)` pair threaded through `ResolvedSchema` and `RowBatcher::new`, `render_field`'s deletion. Nested columns decode end-to-end on the optimistic path |
 | 4.4.1 | The presentation half: the resolved Arrow type in `pgdq info --verbose`, **the manual rewrite above** |
 | 4.4.2 | The array-of-array-typed-element refusal above, **earned**: 4.4 typed the shape `List<List<T>>` and nothing can fill it. Fixture first — `types/default.sql` gains `t_nested_array` across all six majors, since the shape's absence is why six majors of round-trip tests went green over a broken column — then the resolution refusal and its `ColumnResolution::NestedArrayElement`, a `pgtype.rs` unit test for the domain chain, the manual line, and the deletion of the census transform's now-unreachable guard. The table also picks up the five working-but-unpinned shapes the sweep found, and the slice lands the resolution-outcome coverage test that makes `roadmap.md`'s fixture rule mechanical |
+| 4.4.3 | The array-declaration spellings, **earned**: 4.4.2 refused `integer[][]` as a nested array, which PostgreSQL does not agree it is. Fixture first, as its own commit — a new `t_array_spelling` table with one column per non-`[]` spelling (`integer[3]`, `integer[3][4]`, `integer ARRAY`, `integer ARRAY[4]`), whose dumped DDL must read `integer[]` on all six majors, which is the repo's own proof of I28's collapse. Its own table rather than `t_array_shape`, whose contract is "the shapes the census reports" and which these columns have no opinion about. Then, as a second commit, one `pgtype.rs` helper normalizing the whole `Typename` array-bounds production (any number of `[]`/`[n]` pairs, no cap; `ARRAY`/`ARRAY[n]`, case-insensitively; well-formed bounds only) to the element type plus one array level, applied at `resolve_declared_type`'s entry and inside `domain_terminal`. The I26 refusal is untouched. Pinned by a unit table over the six spellings, citing I28, and one hand-built dump exercising the resolution→census→builder seam no generated fixture can reach |
 | 4.5 | The shape census, **recording half**: a cache format bump, per-block per-column recording, and the completeness rule. Nothing consumes it yet |
 | 4.5.1 | The shape census, **consuming half**: making the census unconditional (above), retyping the `(DataType, NestedPlan)` pair from a block's census, `ColumnResolution::VaryingArrayShape`, and **the manual's statement of both paths plus the planned representation knob** |
 | 4.6 | The array stress section in `generate_perf_data.py`, and the `measurements.md` ratio |
@@ -717,6 +718,25 @@ that shipped the wrong contract, which the numbering rule answers with a third
 level rather than a renumber. It lands **before 4.6**: 4.6 measures the array
 path, and measuring it while a declared array shape is known-broken measures
 something about to change.
+
+**4.4.3 was earned from 4.4.2, the same way 4.4.2 was earned from 4.4.** 4.4.2's
+contract was "an array whose element type is itself an array is refused"; it
+implemented "an array whose element type is *spelled* with `[]` is refused",
+and `integer[][]` is not the former — PostgreSQL collapses every array-bounds
+spelling to one array level and discards the rest (I21, I28), so that column's
+element type is `integer`. The refusal therefore states something false about
+the column rather than declining to answer, which is the defect. It lands
+**before 4.6** for 4.4.2's own reason: 4.6 measures the array path, and the
+phase-wrap koji run validates it.
+
+Two things it deliberately does not do. It does not revisit the I26 shape —
+`d[]` over `CREATE DOMAIN d AS integer[]` really is an array of arrays, really
+is written one brace deep, and stays refused with `NestedPlan::Array` still
+meaning one thing. And it does not narrow to the one reported spelling: five of
+the six the server accepts fail to resolve today (`integer[3]`, `integer[3][4]`,
+`integer ARRAY` and `integer ARRAY[4]` as `Unknown`, `integer[][]` as the false
+refusal), and under `roadmap.md`'s input-contract rule they are one defect, at
+one code site, not five.
 
 **4.5.1 was earned mid-slice, not planned.** The census was specified as one
 row and is two: recording is new, type-blind, L1-only machinery that nothing

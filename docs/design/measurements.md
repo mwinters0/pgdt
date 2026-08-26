@@ -22,7 +22,7 @@ Two standing rules for reading anything below:
 
 ## Scan throughput by input shape
 
-Three 3.00 GiB synthetic dumps on the SSD, `pgdq info --dqcache none` in a
+Three 3.00 GiB synthetic dumps on the SSD, a whole-file `pgdq` scan in a
 512MB-limited container, three consecutive runs each in one session so
 page-cache state is comparable.
 
@@ -69,8 +69,14 @@ sudo nerdctl run --rm -m 512m --memory-swap 512m \
   -v "$PWD/target/x86_64-unknown-linux-musl/release/pgdq:/pgdq:ro" \
   -v "/path/to/bench.sql:/dump.sql:ro" \
   postgres:16-alpine \
-  sh -c 'time /pgdq info --source /dump.sql --dqcache none --verbose'
+  sh -c 'time /pgdq parse --source /dump.sql --dqcache /tmp/x.dqcache'
 ```
+
+`parse` is the only command that reads the dump
+([`architecture.md`](architecture.md), "CLI surface"), and the cache it must
+write goes to the container's ephemeral layer — a few hundred KB against 3 GiB
+read, which is why these figures are comparable to the ones taken before that
+split existed.
 
 ## The array-shape census costs nothing on brace-free data
 
@@ -101,7 +107,10 @@ passes and every field is inspected, is not measured here**; it belongs with
 the array stress data (`roadmap-phase4-composite-decoding.md`, slice 4.6).
 
 Reproduce by building both binaries — the census one from the working tree,
-the other from the commit before it — and alternating:
+the other from the commit before it — and alternating. **The pre-census binary
+predates the `parse`/`info` split**, so it takes `info --source /dump.sql
+--dqcache none` where the current one takes the line below; both drive the same
+whole-file scan.
 
 ```sh
 cargo build --release --target x86_64-unknown-linux-musl -p pgdump_query-cli
@@ -110,7 +119,7 @@ for i in 1 2 3; do for w in baseline census; do
     -m 512m --memory-swap 512m \
     -v "$PWD/runs/pgdq-$w:/pgdq:ro" \
     -v "/path/to/copy_control.sql:/dump.sql:ro" \
-    postgres:16-alpine /pgdq info --source /dump.sql --dqcache none
+    postgres:16-alpine /pgdq parse --source /dump.sql --dqcache /tmp/x.dqcache
 done; done
 ```
 
@@ -137,9 +146,9 @@ HDD; run it detached per `CLAUDE.md`.
 those are free and frequent pre-1.0 (`architecture.md`, "The cache"). Treat the
 koji cache as a byproduct of a scan run for another reason, never as an asset:
 the cache left by the 2026-08-25 run was already unreadable by the time 4.4
-landed. Nothing plans around keeping one alive — cache-only inspection of koji
-(`pgdq info --dqcache`) is available only between a scan and the next bump, and
-regaining it costs the full ~54-minute scan.
+landed. Nothing plans around keeping one alive — inspecting koji at all
+(`pgdq info`, with or without `--source`) is available only between a scan and
+the next bump, and regaining it costs the full ~54-minute scan.
 
 **The regression check is byte-for-byte identity, not throughput**: every
 block's header/data/terminator/end offset must match the previous run. That

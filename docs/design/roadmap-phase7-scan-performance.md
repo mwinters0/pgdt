@@ -11,7 +11,7 @@ a plan, not a description of implemented behaviour; nothing here is built.
 
 ## Baseline
 
-From the koji sample (784GB, HDD, `pgdq info --verbose`): **243 MB/s sustained
+From the koji sample (784GB, HDD, a whole-file scan — `pgdq parse` today): **243 MB/s sustained
 at ~33% of one core**, RSS flat at ~9 MiB. That is device-bound, not
 parse-bound — the HDD is the limit and the current scanner has roughly
 3× headroom over it, implying a single-core parse ceiling near **700 MB/s**.

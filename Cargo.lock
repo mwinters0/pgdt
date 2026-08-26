@@ -974,6 +974,7 @@ dependencies = [
  "pgdump_query",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 
