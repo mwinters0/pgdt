@@ -1515,6 +1515,15 @@ so `parse` is a second caller for an existing loop, not new machinery.
 whole-file producer; giving it a frontier makes it a second implementation of
 `map_forward`'s splice-onto-a-prefix logic with a different set of bugs.
 
+**There is no save throttle**, and the measurement is why: each save
+serializes the whole cache, so koji's 74 of them cost +1.5% wall and under
+18.3 MB written against 784 GB read (`measurements.md`, "koji full scan").
+*Rejected:* saving at most every N seconds or N bytes. It is the obvious knob
+and it was reserved deliberately until there was a number; the number says the
+interval would be chosen to save nothing. Total bytes written are O(blocks²)
+— the cache grows with the block count and is written once per block — so a
+dump with thousands of small `COPY` blocks is where the question reopens.
+
 ### Coverage is stated once, at the top
 
 `Scan completion: 76% (12345 bytes)` heads every `info` listing — partial or

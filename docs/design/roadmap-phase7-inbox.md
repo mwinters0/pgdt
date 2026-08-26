@@ -184,3 +184,29 @@ data, which does not exist as a benchmark input until slice 4.6 generates it.
 [`roadmap-phase4.5.1-census-consumption-notes.md`](roadmap-phase4.5.1-census-consumption-notes.md)
 and [`architecture.md`](architecture.md), "The array shape census".
 
+
+---
+
+## The per-block cache save has no throttle, and its byte cost is quadratic in block count
+
+**Fact.** `pgdq parse` serializes the **whole** cache at every `CopyEnd`
+watermark. Measured on koji: 74 saves cost **+50 s on a 3300 s scan (~1.5%)**
+and under 18.3 MB written against 784 GB read — negligible, so the throttle
+Phase 9 reserved as a tuning knob was deliberately not built. But the cache
+grows with the block count while the number of saves *is* the block count, so
+total bytes written are O(B²): koji's 74 blocks hide a cost a dump with
+thousands of small `COPY` blocks would not. No such sample exists here, so the
+quadratic half is reasoned, not measured.
+
+**Why Phase 7 cares.** The phase's target is a device-bound scan path, and
+this is a write the scan path now performs that the baseline it is measured
+against (243 MB/s, the koji figure the phase doc opens with) does not
+separate out. Two consequences: any parallel or reordered scan has to decide
+what a save even means when the frontier is not a single watermark, and if the
+phase adds a many-small-block benchmark input it is the first thing that would
+make the throttle decision real. Reversing the no-throttle call is cheap and
+purely local to the save site.
+
+**Origin.** Slice 9.1, 2026-08-26. Figures and container recipe:
+[`measurements.md`](measurements.md), "koji full scan"; the decision:
+[`roadmap-phase9.1-parse-resume-notes.md`](roadmap-phase9.1-parse-resume-notes.md).

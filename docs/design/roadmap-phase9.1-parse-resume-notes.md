@@ -62,13 +62,19 @@ spans *at* the watermark instead. So a hand-built partial index (as
 then clamp the last one's `end` to the frontier — filtering on `end <=
 frontier` silently drops the very block the scan had just banked.
 
-## What is not here
+## The write amplification, and why there is no throttle
 
-**The koji write-amplification measurement.** A full koji `parse` is ~54
-minutes; the run was launched detached (`runs/koji-9.1-scan.log`, container
-`pgdq-koji-9.1`) and a later session reads it. The slice's box stays unticked
-until the figure is in [`measurements.md`](measurements.md). What the run
-already shows, from the cache file growing during it, is that per-block
-persistence works at koji scale; what it has to answer is whether 74 whole-cache
-serializations cost anything measurable against the 54m09.97s baseline the same
-file/container/command already has there.
+Serializing the whole cache at every `CopyEnd` is 74 whole-cache writes on
+koji against the one the previous build did, and it costs **+50 s on a 3300 s
+scan, about 1.5%** — inside the spread between the two independent baseline
+scans of the same file. The saves' total bytes are bounded above by 18.3 MB
+against 784 GB read. The figure, its table and its container recipe are in
+[`measurements.md`](measurements.md), "koji full scan".
+
+So the save throttle the phase reserved as a tuning knob **is not built**, and
+nothing downstream should assume a save interval exists. What would change the
+answer is a dump with orders of magnitude more `COPY` blocks than koji's 74,
+since the cost is per block and each save is the *whole* cache: a file with
+10,000 small blocks pays 10,000 serializations of a cache that is itself
+proportional to the block count, which is quadratic where koji's is not. No
+such sample exists here to measure against.

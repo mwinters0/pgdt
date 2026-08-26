@@ -172,6 +172,51 @@ run's ~110 MB/s figure was the outlier, caused by the concurrent restore
 documented below, not a real regression. Command and container recipe are in
 `CLAUDE.md`.
 
+**Per-block cache persistence costs ~1.5%, and needs no throttle.** `pgdq
+parse` serializes the whole cache at every `CopyEnd` watermark, so a koji scan
+writes it 74 times where the build before it wrote it once. Container
+`pgdq-koji-9.1`, launched 2026-08-26T04:21:17Z, `runs/koji-9.1-scan.log`,
+`exit=0`:
+
+| | |
+|---|---|
+| Wall | 3300 s |
+| Rate | ~238 MB/s |
+| Against the no-per-block-save run above (3250 s) | +50 s, +1.5% |
+| Final cache | 247,380 bytes |
+| Bytes the saves wrote | under 74 x 247,380 = 18.3 MB |
+| Amplification against 784 GB read | ~2.3e-5 |
+
+The +1.5% sits inside the run-to-run spread the two baseline scans above
+already show (~241 against ~243 MB/s), and the byte bound is an over-estimate
+twice over: every save is charged the *final* cache size, which only the last
+block's save actually pays. So the save interval the phase reserved as a
+tuning knob is not worth turning — **there is no throttle**, and a figure this
+far from mattering is the reason to record it rather than the reason not to.
+
+This run agreed with the one above on the block list, the per-block row counts
+and the byte total. It did **not** re-run the byte-for-byte offset identity
+check, which needs `--verbose`; that check runs on its own.
+
+```sh
+cargo build --release --target x86_64-unknown-linux-musl -p pgdump_query-cli
+mkdir -p runs
+sudo nerdctl run -d --name pgdq-koji-9.1 -m 512m --memory-swap 512m \
+  -v "$PWD/target/x86_64-unknown-linux-musl/release/pgdq:/pgdq:ro" \
+  -v "$PWD/runs:/out" \
+  -v "/path/to/koji.dump:/dump.sql:ro" \
+  postgres:16-alpine \
+  sh -c 'L=/out/koji-9.1-scan.log; S=$(date +%s); \
+    echo "started=$(date -Iseconds)" > $L; \
+    /pgdq parse --source /dump.sql --dqcache /out/koji-9.1.dqcache >> $L 2>&1; \
+    echo "exit=$?" >> $L; echo "seconds=$(( $(date +%s) - S ))" >> $L; \
+    ls -l /out/koji-9.1.dqcache >> $L'
+```
+
+The comparison's other half is the throughput row above: the same recipe on a
+build predating the per-block save, so reproducing the *delta* means checking
+out one of each.
+
 ## Decoder and whole-file benchmarks
 
 `criterion`, `harness = false`. A regression tripwire for per-byte CPU cost,

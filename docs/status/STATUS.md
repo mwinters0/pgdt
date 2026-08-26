@@ -29,7 +29,7 @@ per-phase checklist here any more. How the system works is
 | Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-26 (Phase 9: `parse` resumes and is the only scanner; `info` reports from the cache, coverage line included; `--json` carries per-block resolution. Phase 4.4.3: every array-declaration spelling resolves as `integer[]` does).
+Last updated: 2026-08-26 (Phase 9 complete: `parse` resumes and is the only scanner; `info` reports from the cache, coverage line included; `--json` carries per-block resolution; the koji write-amplification figure is in `measurements.md` and no save throttle is built. Phase 4.4.3: every array-declaration spelling resolves as `integer[]` does).
 
 ## Phase 4 progress
 
@@ -119,17 +119,16 @@ Specified in
 
 Specified in
 [`../design/roadmap-phase9-partial-reporting.md`](../design/roadmap-phase9-partial-reporting.md).
-Taken ahead of the rest of Phase 4 (only **4.6** remains there).
+Taken ahead of the rest of Phase 4 (**4.4.4** and **4.6** remain there).
 
-- [ ] **9.1** `parse` resumes from a matching cache and persists after every
-      completed block, via `stream::map_forward`; the resume-point line. **The
-      code landed** (`stream::map_file`, the CLI's resume line,
-      `pgdump_query/tests/map_file.rs`); **the koji write-amplification
-      measurement did not** — a full koji `parse` is ~54 minutes, so the run
-      was launched detached and a later session reads
-      `runs/koji-9.1-scan.log`, then adds the figure to
-      [`../design/measurements.md`](../design/measurements.md) and ticks this
-      box. See [`history/2026-08-26.md`](history/2026-08-26.md). Notes:
+- [x] **9.1** `parse` resumes from a matching cache and persists after every
+      completed block, via `stream::map_forward`; the resume-point line
+      (`stream::map_file`, the CLI's resume line,
+      `pgdump_query/tests/map_file.rs`). The koji write-amplification figure —
+      +1.5% wall and 18 MB written against 784 GB read, so **no save
+      throttle** — is in
+      [`../design/measurements.md`](../design/measurements.md), "koji full
+      scan". Notes:
       [`../design/roadmap-phase9.1-parse-resume-notes.md`](../design/roadmap-phase9.1-parse-resume-notes.md)
 - [x] **9.2** `info` stops scanning: `CacheStatus::Absent` splits four ways,
       the "run `pgdq parse`" errors, the mtime warning, `--preamble-only`
@@ -148,10 +147,6 @@ Taken ahead of the rest of Phase 4 (only **4.6** remains there).
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; the resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-
-- **The koji write-amplification measurement** (slice 9.1) — launched
-  detached, not yet read. Nothing depends on it; it decides only whether
-  per-block cache saves need a throttle.
 
 ## Known gaps
 
@@ -269,6 +264,17 @@ it has been looked at: settled into the design docs, or reversed.
   `scanned_through`, since the coverage line above owns it. This is the
   phase's one formatting decision and the one most likely to come back — 9.3
   is a separate slice precisely so it can.
+
+- **No save throttle is built, and the quadratic half of the reason is
+  reasoned rather than measured.** The koji figure (+1.5% wall, 18.3 MB
+  written against 784 GB read) is what the spec asked for and it says the knob
+  would save nothing, so it was not built. What no sample here can show is the
+  other regime: each save serializes the whole cache, so total bytes written
+  are O(blocks²), and koji has 74 blocks. A dump with thousands of small
+  `COPY` blocks would pay differently. Reversing this is local to the save
+  site and costs nothing already landed; filed into
+  [`../design/roadmap-phase7-inbox.md`](../design/roadmap-phase7-inbox.md) so
+  the scan-performance phase decides it against its own benchmark inputs.
 
 - **`t_enum_domain` gained `v_empty_enum`, which the slice's spec row does not
   name.** The resolution-outcome coverage test cannot pass without it —
