@@ -39,7 +39,7 @@ pub enum Error {
     )]
     MetadataNotScanned { database: Option<String> },
     #[error(
-        "{table}.{column} at row offset {row_offset}: value `{value}` does not parse as its mapped type `{declared_type}`"
+        "{table}.{column} at row offset {row_offset}: value `{value}` does not parse as its mapped type `{declared_type}` — use --schema-mode strings to read this column verbatim"
     )]
     FieldDecode {
         table: String,

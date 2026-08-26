@@ -139,6 +139,30 @@ set*: "min/max for collation-independent orderable types" is a different table
 when arrays and ranges are still strings, so designing pushdown and statistics
 against a partial type set means designing them twice.
 
+## Phase 9 — Partial reporting and machine-readable resolution
+
+**Spec:** [`roadmap-phase9-partial-reporting.md`](roadmap-phase9-partial-reporting.md).
+
+What pgdq can say about a dump it has only partly read, and in what form.
+`info` becomes a pure cache reader and never scans; `parse` becomes the only
+scanner, resumes by default, and persists after every completed block, so an
+interrupted scan leaves something to resume and something to report. Coverage
+is stated once as a completion line. `--json` gains per-`COPY`-block resolution
+— the per-column outcomes `pgdq info --verbose` already computes and discards
+at the JSON boundary — with no stability promise attached.
+
+**Runs next, after Phase 4 and before Phase 5.** It carries number 9 because
+5–8 are taken and this project does not renumber a tail
+([`../process.md`](../process.md), "Slice numbering"): a phase's number is its
+identity, its position in this file is its order.
+
+Placed ahead of pushdown because it is the first phase whose subject is the
+*output contract* rather than the engine, and because Phase 4 is what makes
+that contract worth stating: after 4.5.1 there are six distinct answers to "why
+is this column a string", none of them reachable by a script. It is also the
+phase that pays off the incremental machinery `query` already has — every
+mechanism it needs exists and is reachable from exactly one command.
+
 ## Phase 5 — Pushdown
 
 - **Predicate pushdown**: evaluate predicates *during* the scan/parse, so

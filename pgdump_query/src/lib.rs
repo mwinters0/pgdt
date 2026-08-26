@@ -21,7 +21,7 @@ pub use diagnostic::{Diagnostic, DiagnosticKind, Severity};
 pub use error::Error;
 pub use index::{
     ArrayShape, CopyBlock, DumpIndex, MAX_ARRAY_DIMS, RowGroupStats, SparseRowIndex, build_index,
-    preamble_only,
+    preamble_only, union_census,
 };
 pub use io::{ByteRangeSource, LocalFileSource};
 pub use map::{

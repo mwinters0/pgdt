@@ -116,6 +116,41 @@ impl ArrayShape {
         let (min, max) = self.dims.unwrap_or((depth, depth));
         self.dims = Some((min.min(depth), max.max(depth)));
     }
+
+    /// Fold another block's census for the same column into this one —
+    /// min-of-mins, max-of-maxes, and a lower-bound prefix anywhere counts
+    /// everywhere. One table's data can occupy several blocks (I2), so a
+    /// consumer that resolves a *table*'s type combines them this way.
+    pub fn merge(&mut self, other: &ArrayShape) {
+        self.dims = match (self.dims, other.dims) {
+            (Some((a_min, a_max)), Some((b_min, b_max))) => {
+                Some((a_min.min(b_min), a_max.max(b_max)))
+            }
+            (some, None) | (None, some) => some,
+        };
+        self.lower_bound_prefix |= other.lower_bound_prefix;
+    }
+}
+
+/// The census of several blocks read as one — what a table spanning more than
+/// one `COPY` block (I2) resolves against, and what a query's schema commits
+/// to over exactly the blocks it will replay
+/// (`docs/design/architecture.md`, "The array shape census").
+///
+/// The result is as long as the longest census in `blocks`; a column absent
+/// from a shorter one contributes nothing, which is what a default
+/// [`ArrayShape`] already means.
+pub fn union_census<'a>(blocks: impl IntoIterator<Item = &'a CopyBlock>) -> Vec<ArrayShape> {
+    let mut out: Vec<ArrayShape> = Vec::new();
+    for block in blocks {
+        if block.array_shapes.len() > out.len() {
+            out.resize(block.array_shapes.len(), ArrayShape::default());
+        }
+        for (slot, shape) in out.iter_mut().zip(&block.array_shapes) {
+            slot.merge(shape);
+        }
+    }
+    out
 }
 
 /// One located COPY block.
@@ -158,20 +193,19 @@ pub struct CopyBlock {
     /// Reserved — see [`RowGroupStats`]. Always `None`.
     pub column_stats: Option<RowGroupStats>,
     /// This block's array-shape census, one [`ArrayShape`] per column in
-    /// `header.columns` order — or `None` when **this block was not
-    /// censused**, which is not the same as a census that saw no arrays.
+    /// `header.columns` order.
     ///
-    /// Only a scan that will reach EOF censuses (`build_index`, or a query
-    /// running `crate::batch::ScanExtent::Full`): a cold query that stops at
-    /// its target would pay per-row work for a census nothing may believe.
-    /// So a file mapped incrementally can hold both kinds of block, and a
-    /// consumer must check *this* field as well as
-    /// [`DumpIndex::is_complete`] — the file-level test cannot speak for a
-    /// block that a partial earlier pass mapped without censusing.
+    /// **Every mapping pass censuses**, under either
+    /// `crate::batch::ScanExtent`, so a block in the map always carries one:
+    /// `scanned_through` advances at a `CopyEnd` watermark or at EOF and
+    /// nowhere else, which means a block that reached the map was walked end
+    /// to end. An empty vector is therefore "censused, saw no array-shaped
+    /// literal", the same answer as a vector of unconstrained
+    /// [`ArrayShape`]s, and needs no separate representation.
     ///
-    /// Longer than `header.columns` only for a header-less block, whose
-    /// field count comes from the rows themselves.
-    pub array_shapes: Option<Vec<ArrayShape>>,
+    /// Shorter than `header.columns` never happens; *longer* only for a
+    /// header-less block, whose field count comes from the rows themselves.
+    pub array_shapes: Vec<ArrayShape>,
 }
 
 /// The full file map discovered in a dump, in file order
@@ -242,16 +276,17 @@ impl DumpIndex {
     /// Whether this scan reached the end of a `size`-byte file — the test
     /// that decides when a whole-file fact may be believed.
     ///
-    /// Three facts carry the same partiality and so share this one rule:
-    /// [`roles`](Self::roles), [`tablespaces`](Self::tablespaces), and a
-    /// block's [`array_shapes`](CopyBlock::array_shapes). A query that stops
-    /// at its target (`crate::batch::ScanExtent::UntilTargetSettled`, the
-    /// default) never reaches what lies past the stopping point, and one
-    /// table's data can occupy several blocks (I2) — so a table's census can
-    /// be partial even when every block that *was* scanned is completely
-    /// censused. Believing it anyway would produce a *confidently wrong*
-    /// schema, which is strictly worse than the optimistic path: that reaches
-    /// the same answer while still treating a disagreeing value as an error.
+    /// [`roles`](Self::roles) and [`tablespaces`](Self::tablespaces) carry
+    /// the same partiality and share this one rule: a query that stops at
+    /// its target (`crate::batch::ScanExtent::UntilTargetSettled`, the
+    /// default) never reaches what lies past the stopping point.
+    ///
+    /// It qualifies a **reported** table schema for the same reason — one
+    /// table's data can occupy several blocks (I2), so a partial map cannot
+    /// speak for the census of a block past its frontier. It does *not*
+    /// qualify a **streamed** schema: that commits over exactly the blocks
+    /// it will replay, every one of which is in the map and so censused
+    /// (`docs/design/architecture.md`, "The array shape census").
     ///
     /// The caller always has `size` already — `crate::stream` stats the
     /// source before mapping, and the CLI before listing.
@@ -269,9 +304,7 @@ pub async fn build_index<S: ByteRangeSource>(
     source: &S,
     options: &ScanOptions,
 ) -> Result<DumpIndex> {
-    // Reaches EOF by construction, so its census is one `is_complete` can
-    // vouch for — see `CopyBlock::array_shapes`.
-    let mut spans = crate::map::Builder::new().censusing();
+    let mut spans = crate::map::Builder::new();
 
     scan(source, options, |event| {
         match event {
@@ -527,6 +560,31 @@ mod tests {
         let shape = shape_of(&["[1:2][0:1]={{1,2},{3,4}}"]);
         assert!(shape.lower_bound_prefix);
         assert_eq!(shape.dims, Some((2, 2)));
+    }
+
+    /// Combining blocks is min-of-mins, max-of-maxes, and a prefix anywhere
+    /// counts everywhere — what a table occupying several blocks (I2)
+    /// resolves against.
+    #[test]
+    fn merging_two_blocks_widens_the_bounds_rather_than_replacing_them() {
+        let mut a = shape_of(&["{1,2}"]);
+        a.merge(&shape_of(&["{{1,2},{3,4}}"]));
+        assert_eq!(a.dims, Some((1, 2)));
+        assert!(!a.lower_bound_prefix);
+
+        // A block that constrained nothing leaves the answer alone, from
+        // either side.
+        let mut b = shape_of(&["{1,2}"]);
+        b.merge(&shape_of(&["\\N", "{}"]));
+        assert_eq!(b.dims, Some((1, 1)));
+        let mut c = shape_of(&["\\N"]);
+        c.merge(&shape_of(&["{{1,2}}"]));
+        assert_eq!(c.dims, Some((2, 2)));
+
+        // A prefix in one block disqualifies the column in every block.
+        let mut d = shape_of(&["{1,2}"]);
+        d.merge(&shape_of(&["[0:1]={7,8}"]));
+        assert!(d.lower_bound_prefix);
     }
 
     /// The census runs over every field of a row it did not type-check, so

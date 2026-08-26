@@ -65,7 +65,7 @@ use crate::batch::{
 };
 use crate::cache::CacheMode;
 use crate::copy::{CopyHeader, DELIMITER};
-use crate::index::{CopyBlock, DumpIndex, scan_preamble};
+use crate::index::{ArrayShape, CopyBlock, DumpIndex, scan_preamble, union_census};
 use crate::io::ByteRangeSource;
 use crate::map::{Span, SpanBody};
 use crate::preamble::DumpMetadata;
@@ -236,12 +236,6 @@ async fn map_forward<S: ByteRangeSource>(
         index.metadata.as_ref().and_then(|m| m.databases.first()).and_then(|db| db.name.clone())
     });
     let mut builder = crate::map::Builder::with_database(database);
-    // Only a scan that will reach EOF can produce an array-shape census
-    // anything may believe (`crate::index::CopyBlock::array_shapes`), so a
-    // cold query's mapping pass declines the per-row work outright.
-    if extent == ScanExtent::Full {
-        builder = builder.censusing();
-    }
 
     let mut scanner = CopyScanner::resume(seg_start, None);
     let mut read_pos = seg_start;
@@ -262,8 +256,8 @@ async fn map_forward<S: ByteRangeSource>(
                 // This pass needs only the block's extent, which the
                 // scanner finds from the `\.` terminator — row bytes become
                 // batches in the replay phase. The one thing rows are read
-                // for here is the array-shape census, and only under
-                // `ScanExtent::Full`; `on_row` is a no-op otherwise.
+                // for here is the array-shape census, which every mapping
+                // pass records (`crate::index::CopyBlock::array_shapes`).
                 Event::Row(row) => builder.on_row(row.raw),
                 Event::CopyEnd(end) => {
                     // `end_offset` is always a safe, resumable watermark —
@@ -392,6 +386,14 @@ impl<'a> TableStream<'a> {
 /// block's own attribution, never a guess
 /// (`docs/design/architecture.md`, "One target per query").
 ///
+/// `census` is the union of the array-shape censuses of **every block this
+/// stream will replay**, which is what lets a top-level array column commit
+/// to the shape the file actually holds rather than to an optimistic
+/// `List<T>` (`docs/design/architecture.md`, "The array shape census"). It is
+/// a parameter rather than something `resolve_columns` looks up so that all
+/// three call sites below — the resumed one included — cannot silently
+/// disagree about a stream's schema.
+///
 /// `Typed` mode against metadata that doesn't (yet) have a *complete* entry
 /// for `database` is `Error::MetadataNotScanned` rather than a silent
 /// `NotDeclared` degradation — reachable only via `table_stream`'s
@@ -404,6 +406,7 @@ fn resolve_block(
     metadata: Option<&DumpMetadata>,
     database: Option<&str>,
     schema_mode: crate::resolve::SchemaMode,
+    census: &[ArrayShape],
 ) -> Result<ResolvedSchema> {
     if schema_mode == crate::resolve::SchemaMode::Typed
         && let Some(meta) = metadata
@@ -412,7 +415,7 @@ fn resolve_block(
         return Err(Error::MetadataNotScanned { database: database.map(str::to_string) });
     }
     let names = column_names(header, field_count);
-    Ok(resolve_columns(&header.qualified_name(), &names, metadata, database, schema_mode))
+    Ok(resolve_columns(&header.qualified_name(), &names, metadata, database, schema_mode, census))
 }
 
 /// Reconstruct the in-progress block state a [`ResumeToken`] captured, if
@@ -424,6 +427,7 @@ fn resume_state(
     batch_options: &BatchOptions,
     predicate: Option<&Predicate>,
     metadata: Option<&DumpMetadata>,
+    census: &[ArrayShape],
 ) -> Result<(CopyScanner, Option<Active>, Option<ResolvedSchema>)> {
     let scanner = CopyScanner::resume(
         token.offset,
@@ -440,6 +444,7 @@ fn resume_state(
                 metadata,
                 ic.database.as_deref(),
                 batch_options.schema_mode,
+                census,
             )?;
             let predicate_index = resolve_predicate_index(predicate, &r.schema, ic.header_offset)?;
             let batcher = RowBatcher::new(&r, ic.header.qualified_name(), batch_options.clone());
@@ -602,6 +607,13 @@ where
         // picks up inside this same list — every resume point is inside a
         // mapped block by construction, so there is no live-scan fallback and
         // no cache bookkeeping left to do here.
+        // **A streamed schema needs no completeness test.** The mapping pass
+        // has finished, `matches` is fixed, and every block in it carries a
+        // census — so the union below is the evidence for exactly the rows
+        // this stream will hand back, on a cold query as much as on a full
+        // scan (`docs/design/architecture.md`, "The array shape census").
+        let census = union_census(matches.iter());
+
         let resume_offset = resume.as_ref().map_or(0, |t| t.offset);
         let mut rows_emitted = resume.as_ref().map_or(0, |t| t.rows_emitted);
 
@@ -611,8 +623,13 @@ where
         // duplicated below.
         let (mut active, mut first_scanner) = match &resume {
             Some(token) if token.in_copy.is_some() => {
-                let (scanner, active, resolved) =
-                    resume_state(token, &batch_options, predicate.as_ref(), metadata.as_ref())?;
+                let (scanner, active, resolved) = resume_state(
+                    token,
+                    &batch_options,
+                    predicate.as_ref(),
+                    metadata.as_ref(),
+                    &census,
+                )?;
                 if let Some(r) = resolved {
                     *resolved_schema_for_stream.lock().unwrap() = r;
                 }
@@ -664,6 +681,7 @@ where
                                     metadata.as_ref(),
                                     block_database.as_deref(),
                                     batch_options.schema_mode,
+                                    &census,
                                 )?;
                                 let predicate_index = resolve_predicate_index(
                                     predicate.as_ref(),
@@ -695,6 +713,7 @@ where
                                     metadata.as_ref(),
                                     block_database.as_deref(),
                                     batch_options.schema_mode,
+                                    &census,
                                 )?;
                                 let predicate_index = resolve_predicate_index(
                                     predicate.as_ref(),

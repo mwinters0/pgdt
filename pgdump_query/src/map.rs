@@ -631,18 +631,16 @@ pub(crate) struct Builder {
     /// always resumes exactly at a `Data` span's own boundary in practice, so
     /// nothing real depends on this carrying across builder instances).
     governing_toc: Option<TocHeader>,
-    /// Whether this builder records the array-shape census
-    /// (`crate::index::ArrayShape`). Off by default: only a scan that will
-    /// reach EOF can produce a census anything may believe, so a cold
-    /// query's mapping pass declines the per-row work rather than paying it
-    /// for a result [`crate::index::DumpIndex::is_complete`] will reject.
-    censusing: bool,
-    /// The census accumulating for the open `COPY` block — `Some` exactly
-    /// when [`censusing`](Self::censusing) is set and a block is open. Sized
-    /// at `CopyStart` from the header's column list, and grown by any row
-    /// that turns out to have more fields (a header-less block, whose column
-    /// count only the rows know).
-    pending_census: Option<Vec<crate::index::ArrayShape>>,
+    /// The census accumulating for the open `COPY` block
+    /// (`crate::index::ArrayShape`). Sized at `CopyStart` from the header's
+    /// column list, and grown by any row that turns out to have more fields
+    /// (a header-less block, whose column count only the rows know).
+    ///
+    /// **Every mapping pass censuses**, under either
+    /// `crate::batch::ScanExtent`: a block reaches the map only once it has
+    /// been walked end to end, so there is no such thing as a half-censused
+    /// block and no state a later pass could repair.
+    pending_census: Vec<crate::index::ArrayShape>,
 }
 
 /// Whether `-- Name: ...` (pg_dump's `_printTocEntry()` header, I3) is
@@ -730,17 +728,8 @@ impl Builder {
             roles: BTreeSet::new(),
             tablespaces: BTreeSet::new(),
             governing_toc: None,
-            censusing: false,
-            pending_census: None,
+            pending_census: Vec::new(),
         }
-    }
-
-    /// Turn on the array-shape census — see
-    /// [`censusing`](Self::censusing). Only `crate::index::build_index` and a
-    /// `ScanExtent::Full` query's mapping pass ask for it.
-    pub(crate) fn censusing(mut self) -> Self {
-        self.censusing = true;
-        self
     }
 
     /// Push a newly-completed span, and — since the tiling invariant makes a
@@ -1178,30 +1167,26 @@ impl Builder {
                 (event.header_offset, None)
             }
         };
-        if self.censusing {
-            self.pending_census = Some(vec![Default::default(); event.header.columns.len()]);
-        }
+        self.pending_census = vec![Default::default(); event.header.columns.len()];
         self.pending_data = Some((start, event, self.pending_partition_root.take(), toc));
     }
 
     /// Fold one data row of the open `COPY` block into its array-shape
-    /// census — see [`crate::index::ArrayShape`]. A no-op unless this
-    /// builder is [`censusing`](Self::censusing), which is what keeps a cold
-    /// query's mapping pass free of per-row work.
+    /// census — see [`crate::index::ArrayShape`].
     ///
     /// **The row is rejected wholesale before it is split.** An array
     /// literal always contains a `{`, and the only other thing that can
     /// start one is an `[lb:ub]=` prefix, so a row holding neither byte has
     /// nothing to contribute and costs one pass over its bytes — which is
     /// the overwhelming majority of rows in the overwhelming majority of
-    /// dumps, koji's included.
+    /// dumps, koji's included. That pre-filter is the whole of what a
+    /// mapping pass pays for the census on brace-free data
+    /// (`docs/design/measurements.md`).
     pub(crate) fn on_row(&mut self, raw: &[u8]) {
-        let Some(census) = self.pending_census.as_mut() else {
-            return;
-        };
         if !raw.iter().any(|&b| b == b'{' || b == b'[') {
             return;
         }
+        let census = &mut self.pending_census;
         for (i, field) in crate::copy::split_fields(raw).enumerate() {
             if i >= census.len() {
                 census.resize(i + 1, Default::default());
@@ -1228,7 +1213,7 @@ impl Builder {
             partition_root,
             sparse_index: None,
             column_stats: None,
-            array_shapes: self.pending_census.take(),
+            array_shapes: std::mem::take(&mut self.pending_census),
         };
         let owned = toc.is_some();
         self.push_span(start, SpanBody::Data(DataBlock::Copy(block)), toc, owned);
@@ -1464,11 +1449,7 @@ fn classify(stmt: &str) -> SpanBody {
 /// there is no partial/incremental form here, so
 /// [`SpanBody::Unscanned`] never appears in the result.
 pub async fn build_map<S: ByteRangeSource>(source: &S, options: &ScanOptions) -> Result<Vec<Span>> {
-    // Censusing for the same reason `crate::index::build_index` does — this
-    // always reaches EOF — and because the two must stay byte-identical:
-    // `tests/map.rs::build_index_spans_match_build_map_exactly` is what pins
-    // them to one producer.
-    let mut builder = Builder::new().censusing();
+    let mut builder = Builder::new();
 
     scan(source, options, |event| {
         match event {

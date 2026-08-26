@@ -27,7 +27,7 @@ through.
 | `scan.rs`, `copy.rs`, a new `Event` variant | [Bytes and structure](#bytes-and-structure) |
 | `map.rs`, spans, tiling, TOC headers, `INSERT`/large-object regions | [The file map](#the-file-map) |
 | `index.rs`, what the index owns, diagnostics | [`DumpIndex`: one owner per fact](#dumpindex-one-owner-per-fact) |
-| array dimensionality, `ArrayShape`, what a full scan records per row | [The array shape census](#the-array-shape-census) |
+| array dimensionality, `ArrayShape`, what a scan records per row and what retypes a column from it | [The array shape census](#the-array-shape-census) |
 | `preamble.rs`, the DDL grammar, `\connect` handling | [The preamble grammar and `DumpMetadata`](#the-preamble-grammar-and-dumpmetadata) |
 | `pgtype.rs`, `resolve.rs`, the type mapping table | [Type resolution](#type-resolution) |
 | `decode.rs`, a new type's decode/render pair | [Decoders and render-back](#decoders-and-render-back) |
@@ -547,10 +547,12 @@ and lower bounds belong to the *value* (I21), and one column may hold `{1,2}`,
 therefore records what the file actually holds, so the schema can be decided
 against evidence rather than optimism.
 
-`CopyBlock::array_shapes` is `Option<Vec<ArrayShape>>`, one entry per column in
+`CopyBlock::array_shapes` is `Vec<ArrayShape>`, one entry per column in
 `header.columns` order, and each `ArrayShape` is the **minimum and maximum**
 dimension count seen plus whether any value carried an `[lb:ub]=` prefix.
-Combining blocks is min-of-mins, max-of-maxes.
+Combining blocks is `ArrayShape::merge` — min-of-mins, max-of-maxes, and a
+prefix anywhere counts everywhere — which `index::union_census` folds over a
+set of blocks.
 
 **Both bounds, never just the maximum.** A column holding `{1,2}` and
 `{{1,2},{3,4}}` records `(1, 2)`; a column holding only 2-D values records
@@ -587,23 +589,90 @@ neither byte costs one pass over its bytes and no field splitting at all. On
 brace-free data — the koji shape — the census is free at the resolution
 [`measurements.md`](measurements.md) can measure.
 
-**Only a scan that will reach EOF censuses**, and that is a property of the
-*block*, not of the file. `build_index` and `build_map` always census;
-`stream::map_forward` censuses only under `ScanExtent::Full`. A cold query
-that stops at its target would otherwise pay per-row work for a census
-`DumpIndex::is_complete` must then reject. The consequence to keep in mind: a
-file mapped by a cold query and *then* by a full one holds both kinds of
-block, because a block's bytes are read once and there is no second visit at
-which it could acquire a census. That is why the field is an `Option` — "not
-censused" and "censused, saw no arrays" are different answers, and a consumer
-must check both this field and `is_complete`.
+**Every mapping pass censuses, so a mapped block always carries one.**
+`build_index`, `build_map` and `stream::map_forward` all census, under either
+`ScanExtent`. `scanned_through` advances only at a `CopyEnd` watermark or at
+EOF, so a `CopyBlock` that reached the map was walked end to end — there is no
+such thing as a half-censused block, and no state a later pass could repair.
+An empty vector means "censused, saw no array-shaped literal", which is the
+same answer as a vector of unconstrained `ArrayShape`s and needs no separate
+representation.
 
-**`DumpIndex::is_complete(size)` is the whole-file half of that test**, shared
-with `roles`/`tablespaces`, which carry the same partiality for the same
-reason: a query that stops at its target never reaches what lies past the
-stopping point, and one table's data can occupy several blocks (I2), so a
-*table's* census can be partial even when every block that was scanned is
-completely censused.
+*Rejected:* censusing only under `ScanExtent::Full`, so a cold query declines
+the per-row work. A cold query already receives every row of every block it
+maps — `map_forward` calls `on_row` unconditionally and the queried block's
+bytes are read twice regardless — so the saving is the pre-filter alone, which
+is free on brace-free data. What it cost was a state no user could observe or
+repair: a dump mapped by a cold query and *then* by a full one came out
+`is_complete` with its early blocks permanently uncensused, because
+`map_forward` splices onto a prefix it does not re-read. Reasoning:
+[`../status/history/2026-08-26.md`](../status/history/2026-08-26.md).
+
+### What the census decides, and who may believe it
+
+`resolve_columns` takes the census beside the DDL and retypes each column's
+`(DataType, NestedPlan)` pair from it — **the pair, never a half**, which is
+the only place after `resolve_declared_type` where either changes. A caller
+with no evidence passes `&[]`, which reads as "nothing constrained anything"
+and leaves every column optimistically typed; that is the same answer an
+all-default census gives, so the two never need telling apart.
+
+Per column, and only for a column the DDL resolved to a *one-dimensional*
+array:
+
+- uniform depth *d* → *d* nested `List` levels (`List<List<T>>` for `d = 2`);
+- **mixed dimensionality, or any `[lb:ub]=` prefix → `Utf8View`**, with
+  `ColumnResolution::VaryingArrayShape` saying so. Arrow lists are 0-based and
+  have no lower bound, and no fixed list type is honest about a column holding
+  both `{1,2}` and `{{1,2},{3,4}}`. The degradation is decided before the
+  schema is fixed rather than discovered at row 40 million, and the column
+  round-trips exactly as the string it already is;
+- a leading brace run past `MAX_ARRAY_DIMS` → **not evidence at all**, so the
+  column keeps its optimistic type and the offending row is an ordinary
+  `FieldDecode`. Such a literal did not come from `array_out` (I25), which
+  means the file is damaged or hand-edited; degrading the column would hide
+  that behind a text column, and believing it would build a `List` nested as
+  deep as the file asked for.
+
+**A composite, a multirange and an already-nested array plan are untouched**,
+though the type-blind census records entries for them. A multirange's `List`
+is filled by `multirange_out`, not `array_out`; and a column already resolved
+to `List<List<…>>` got there from a declared type (`integer[][]`, or an array
+of a domain over an array) whose values the census cannot distinguish from a
+plain 1-D array's — an array of arrays is written `{"{1,2}","{3}"}`, one
+brace deep.
+
+**A streamed schema needs no completeness test.** `table_stream` finishes
+`map_forward`, then collects `matches` — every block bearing the target's
+`(database, qualified name)` — and commits one schema from the union of their
+censuses before emitting a row. So the evidence covers exactly the rows the
+stream will hand back, on a cold query as much as on a full scan. That holds
+even where the stop rule is fooled: the shape `stream::target_settled` cannot
+detect (`STATUS.md`'s known gap) is also one whose extra blocks the stream
+never replays.
+
+*Rejected:* gating the streamed schema on `DumpIndex::is_complete` too. A cold
+query can never satisfy it, so every query against a large dump would keep the
+optimistic path and the `FieldDecode` refusal the census exists to remove —
+while the evidence it needed sat in the blocks it had just walked.
+
+**`is_complete` qualifies a *reported* schema instead.** `pgdq info` answers
+"what is this table's schema" from an index alone, with no replay to bound the
+claim; a mapped block's own census is total, but one table's data can occupy
+several blocks (I2), so a map that stopped short cannot speak for a block past
+its frontier. `print_index` therefore passes `&[]` unless the index covers the
+file. No CLI surface reaches that case today — `info --source` rescans
+whenever the cache falls short and cache-only mode refuses an incomplete
+cache — which is what makes the reported half a rule rather than a second code
+path.
+
+**What survives all this is the array nested inside a composite**, or inside
+another array's element type. The census is keyed by column and has nowhere to
+record a shape at that depth, so those stay on the optimistic path however
+much of the file has been scanned: a multi-dimensional value there is a hard
+`FieldDecode`, and `--schema-mode strings` — which the message names — is the
+only route to the data. Keying the census by path is a roadmap "Future" item
+and is purely additive whenever it lands.
 
 The cache format bumps whenever this shape changes, like any other persisted
 field ([The cache](#the-cache)).
@@ -743,11 +812,12 @@ almost every column in a real 75-table schema.
 | `inet`, `cidr`, `macaddr`, `macaddr8` | `Utf8View` | |
 | enum (`CREATE TYPE … AS ENUM`) | `Dictionary(Int32, Utf8)` | Only when the label set is non-empty |
 | domain (`CREATE DOMAIN`) | base type's mapping | Resolved transitively |
-| `T[]` | `List<resolve(T)>` | Optimistic 1-D: dimensionality belongs to the *value* (I21), so a value that disagrees is a `FieldDecode`, not a reshape |
+| `T[]` | `List<resolve(T)>`, retyped from the census | Dimensionality belongs to the *value* (I21), so the DDL's answer is optimistically 1-D and [the census](#the-array-shape-census) settles it; a value that disagrees with what commits is a `FieldDecode`, not a reshape |
 | composite (`CREATE TYPE … AS (…)`) | `Struct<` one field per declared field, in declaration order `>` | Zero fields included (I23) — `()` is a real value that round-trips |
 | range (built-in or `AS RANGE`) | `Struct{lower: S, upper: S, lower_inclusive, upper_inclusive, empty}` | The fifth field is not redundant: `empty` and `(,)` both have absent bounds |
 | multirange | `List<` the range struct `>` | Same Arrow type as `S[]`-of-range, different literal — see `NestedPlan` |
 | an array whose element is opaque | `Utf8View` | `box`, `TypeKind::Base`, `TypeKind::Shell`, through any chain of domains — `ColumnResolution::OpaqueElementType`, below |
+| an array column whose values disagree on shape | `Utf8View` | Mixed dimensionality or an `[lb:ub]=` prefix, read off [the census](#the-array-shape-census) — `ColumnResolution::VaryingArrayShape` |
 
 Microsecond precision throughout, because that is PostgreSQL's storage
 resolution. **Every Arrow field is nullable**, regardless of a `NOT NULL` in
@@ -864,10 +934,18 @@ and making it a payload on `ColumnResolution::Mapped`, which expresses
 that enum by equality, to buy a coupling one producer already gives.
 
 `ColumnResolution` is `Mapped`, `UnknownType`, `NotDeclared`,
-`OpaqueElementType`, `OpaqueBaseType` or `EmptyEnum` — **the three ways a
-column of a container type can still be a string are told apart**, since after
-the flip "why is this column text" has more than one answer a reader will
-want.
+`OpaqueElementType`, `VaryingArrayShape`, `OpaqueBaseType` or `EmptyEnum` —
+**the three ways a column of a container type can still be a string are told
+apart**, since "why is this column text" has more than one answer a reader
+will want: its element type is opaque, its arrays do not share one shape, or
+strings were asked for.
+
+`resolve_columns` also takes the block's array-shape census, positional like
+the column list — see [The array shape census](#the-array-shape-census) for
+what it changes and who may believe it. It is a parameter rather than
+something this module looks up so that a caller cannot silently skip it: the
+three `stream::resolve_block` call sites, the resumed one included, would
+otherwise be free to disagree about one stream's schema.
 
 `SchemaMode::Strings` never looks anything up — every column is
 `NotDeclared`/`Utf8View`, at zero lookup cost. In `SchemaMode::Typed` only,
@@ -1344,6 +1422,12 @@ nowhere to travel.
 A value that contradicts its declared type is an **error, not a null**: a dump
 is machine-generated, so the file is damaged or the mapping is wrong, and both
 are worth hearing about with the byte offset.
+
+`FieldDecode`'s message names `--schema-mode strings`, which is a real remedy
+for every cause it has: reading more of the file cannot help any of them. The
+array-shape refusal is the case that made this true — before the census was
+consumed, scanning further *was* the answer for a top-level array column, and
+a message naming one remedy would have been wrong half the time.
 
 ## Fixtures
 

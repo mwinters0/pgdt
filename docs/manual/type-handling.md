@@ -11,6 +11,11 @@ rather than failing — so a dump always reads, and coverage improves release to
 release. Pass `SchemaMode::Strings` to get every column as a string, which is what you
 want if you would rather do your own parsing.
 
+Array columns get one extra step: an array's dimensionality is a property of
+each **value**, not of the declared type, so we take it from the values
+themselves as the file is read rather than guessing from the DDL. That happens
+on any query — see "Arrays, composites, ranges, and multiranges" below.
+
 You can see exactly what happened to each column: `pgdq info --verbose` prints
 one line per column, giving the Arrow type it resolved to — or, for a column
 that came back as a string, the reason. A column that is a string because
@@ -124,7 +129,7 @@ A range bound is never SQL NULL, which is what lets a null `lower` mean
 "unbounded" without ambiguity — and `empty` is not redundant with the two
 flags, since `empty` and `(,)` are different ranges and neither has bounds.
 
-#### Two ways one of these columns is still a string
+#### Three ways one of these columns is still a string
 
 - **The array's element type is opaque.** `box[]`, an array of a C-level base
   or shell type, or an array of a domain over any of those. PostgreSQL lets an
@@ -136,29 +141,40 @@ flags, since `empty` and `(,)` are different ranges and neither has bounds.
   the elements it recovered would be opaque text anyway, so the whole value
   stays one string. `pgdq info --verbose` reports this as `opaque element
   type`.
+- **Its arrays do not all have the same shape.** PostgreSQL does not record an
+  array's dimensionality in its type — `integer[]`, `integer[][]` and
+  `integer[3]` are all written `integer[]` — so we read the column's actual
+  values while mapping the file and give it the shape they have. A column
+  holding only 2-D values becomes `List(List(Int32))`. A column holding
+  `{1,2}` in one row and `{{1,2},{3,4}}` in the next has no honest Arrow list
+  type, and neither does one holding a value with an explicit lower bound
+  (`[0:2]={7,8,9}`) — Arrow lists start at 0 and have nowhere to record an
+  index origin. Both come back as text, and `pgdq info --verbose` reports
+  `varying array shape`.
+
+  A structured representation that is lossless for *every* array — dimensions,
+  lower bounds and elements in one value — is planned as a selectable
+  alternative for these columns. Today the answer is text.
 - **You asked for strings.** `--schema-mode strings` (`SchemaMode::Strings`)
   returns every column, nested ones included, as the literal text `pg_dump`
   wrote.
 
-#### A multi-dimensional array, or one with an `[lb:ub]=` prefix, is an error
+#### An array inside a composite is the one shape still decided optimistically
 
-PostgreSQL does not record an array's dimensionality in its type. `integer[]`,
-`integer[][]` and `integer[3]` are all written `integer[]`, and one column may
-hold `{1,2}` in one row and `{{1,2},{3,4}}` in the next. An Arrow list type has
-to commit before the first batch arrives, so we commit to one dimension, and a
-value that disagrees is an **error** rather than a silently flattened list:
+The shapes above are read per **column**, which is the level at which a query
+can act on them before it hands back its first batch. An array that is a
+*field* of a composite — or the element type of another array — has no such
+record, so we assume one dimension and find out at the value:
 
 ```
-public.t_array_shape.v_multidim at row offset 9311: value `{{1,2},{3,4}}`
-does not parse as its mapped type `integer[]`
+public.t_shipments.v at row offset 9311: value `(a,"{{1,2},{3,4}}")`
+does not parse as its mapped type `public.boxed` — use --schema-mode strings
+to read this column verbatim
 ```
 
-The same applies to a value carrying an explicit lower bound
-(`[0:2]={7,8,9}`): Arrow lists start at 0 and have nowhere to record an index
-origin, and dropping it would make the value un-round-trippable.
-
-The remedy is `--schema-mode strings` (`SchemaMode::Strings`), which hands the
-literal back verbatim, prefix and all.
+Reading more of the file will not change this one, which is why the message
+names the remedy it does: `--schema-mode strings` (`SchemaMode::Strings`)
+hands the literal back verbatim, braces and all.
 
 #### A predicate still matches the literal text
 

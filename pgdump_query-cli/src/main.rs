@@ -10,9 +10,9 @@ use pgdump_query::cache::{CacheMode, CacheStatus};
 use pgdump_query::pgtype::RANGE_STRUCT_FIELDS;
 use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdump_query::{
-    BatchOptions, ByteRangeSource, DataBlock, Diagnostic, DiagnosticKind, DumpIndex, DumpMetadata,
-    LocalFileSource, NestedPlan, Predicate, PredicateOp, ScanOptions, Severity, Span, SpanBody,
-    TypeKind, build_index, preamble_only, render_field,
+    ArrayShape, BatchOptions, ByteRangeSource, DataBlock, Diagnostic, DiagnosticKind, DumpIndex,
+    DumpMetadata, LocalFileSource, NestedPlan, Predicate, PredicateOp, ScanOptions, Severity, Span,
+    SpanBody, TypeKind, build_index, preamble_only, render_field,
 };
 
 #[derive(Parser)]
@@ -213,7 +213,9 @@ async fn main() -> Result<()> {
                 .to_path_buf();
             let source = LocalFileSource::open(&file)?;
             let index = build_index(&source, &ScanOptions::default()).await?;
-            print_index(&index, false, false);
+            // `build_index` always reaches EOF, so its censuses cover the
+            // whole file.
+            print_index(&index, false, false, true);
             pgdump_query::cache::save(&path, &source, &index).await?;
             println!();
             println!("wrote cache to {}", path.display());
@@ -278,7 +280,10 @@ async fn main() -> Result<()> {
             if json {
                 print_index_json(&index);
             } else {
-                print_index(&index, verbose, map);
+                // Either the loaded cache covered the whole file or the
+                // fallback above just scanned it, so this listing always has
+                // a complete map to report from.
+                print_index(&index, verbose, map, index.is_complete(file_size));
             }
         }
         Command::Query { source: file, table, dqcache, filter, database, schema_mode } => {
@@ -346,6 +351,10 @@ async fn info_offline(
     json: bool,
 ) -> Result<()> {
     let mode = CacheMode::Offline(path.to_path_buf());
+    // Whether the cache covers the whole file — see `print_index`. Only the
+    // `--preamble-only` branch below survives an `Incomplete` cache, and it
+    // prints no per-column resolution at all.
+    let mut complete = true;
     let index = match mode.load_offline().await? {
         CacheStatus::Absent => {
             anyhow::bail!("no usable cache found at {}", path.display());
@@ -364,6 +373,7 @@ async fn info_offline(
                     total_size
                 );
             }
+            complete = false;
             index
         }
         CacheStatus::Valid { index, .. } => index,
@@ -379,7 +389,7 @@ async fn info_offline(
     } else if json {
         print_index_json(&index);
     } else {
-        print_index(&index, verbose, map);
+        print_index(&index, verbose, map, complete);
     }
     Ok(())
 }
@@ -394,6 +404,10 @@ fn resolution_label(r: &ColumnResolution) -> String {
         ColumnResolution::NotDeclared => "not declared — no DDL explained this column".to_string(),
         ColumnResolution::OpaqueElementType => {
             "opaque element type — the array's element type is information-free in the dump"
+                .to_string()
+        }
+        ColumnResolution::VaryingArrayShape => {
+            "varying array shape — dimensionality differs between rows, or a value carries an explicit lower bound"
                 .to_string()
         }
         ColumnResolution::OpaqueBaseType => {
@@ -523,7 +537,17 @@ fn print_metadata_json(metadata: &DumpMetadata, diagnostics: &[Diagnostic]) {
     );
 }
 
-fn print_index(index: &DumpIndex, verbose: bool, map: bool) {
+/// Print the whole listing. `complete` says whether `index` covers the file
+/// (`DumpIndex::is_complete`), which is what decides whether a block's
+/// array-shape census may be believed here.
+///
+/// A *mapped* block's census is always total for that block, but this listing
+/// answers "what is this table's schema", and one table's data can occupy
+/// several blocks (I2) — so a map that stopped short cannot speak for a block
+/// past its frontier, and every column resolves optimistically until it can
+/// (`docs/design/architecture.md`, "The array shape census"). A streamed
+/// schema is bounded by the rows it hands back and needs no such test.
+fn print_index(index: &DumpIndex, verbose: bool, map: bool, complete: bool) {
     if let Some(metadata) = &index.metadata {
         print_metadata(metadata);
         println!();
@@ -580,12 +604,14 @@ fn print_index(index: &DumpIndex, verbose: bool, map: bool) {
             println!("    columns: (not listed in COPY header)");
         } else {
             let qualified = block.header.qualified_name();
+            let census: &[ArrayShape] = if complete { &block.array_shapes } else { &[] };
             let resolved: ResolvedSchema = resolve_columns(
                 &qualified,
                 &block.header.columns,
                 index.metadata.as_ref(),
                 block.database.as_deref(),
                 SchemaMode::Typed,
+                census,
             );
             let columns: Vec<String> = resolved
                 .notes

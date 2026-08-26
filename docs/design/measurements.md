@@ -74,7 +74,8 @@ sudo nerdctl run --rm -m 512m --memory-swap 512m \
 
 ## The array-shape census costs nothing on brace-free data
 
-The census walks every data row of every block a full scan maps
+The census walks every data row of every block any mapping pass maps — a cold
+query's included, since a mapped block always carries one
 ([`architecture.md`](architecture.md), "The array shape census"), so it is a
 change to the scan hot path. Same 3.00 GiB `COPY` control as above, same
 container, the pre-census binary and the census binary alternating in one

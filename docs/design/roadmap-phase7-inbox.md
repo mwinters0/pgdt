@@ -46,11 +46,13 @@ The row pass then re-reads the queried block's bytes to build batches. So a
 cold query reads the target block twice, and the first read is far cheaper per
 byte than the second.
 
-**Amended by 4.5** (entry below): the mapping pass is no longer *entirely*
-per-row-free. A `ScanExtent::Full` query, and every `build_index`/`build_map`
-scan, now records the array-shape census from `Event::Row`. A cold
-`UntilTargetSettled` query — the default, and the one this entry is about —
-still does no per-row work at all.
+**Amended by 4.5/4.5.1** (entry below): the mapping pass is no longer
+per-row-free at all. Every mapping pass records the array-shape census from
+`Event::Row` — `build_index`, `build_map` and `stream::map_forward` under
+either `ScanExtent`, a cold `UntilTargetSettled` query included. The first
+read is still far cheaper per byte than the second, but "no per-row work" is
+now "a brace/bracket pre-filter per row, and a field split on the rows that
+pass it".
 
 **Why Phase 7 cares.** [`roadmap-phase7-scan-performance.md`](roadmap-phase7-scan-performance.md)'s
 "Two workloads, two algorithms" splits structure discovery from row
@@ -149,11 +151,12 @@ complexity is worth it.
 
 ---
 
-## The mapping pass now does per-row work on a full scan, and its cost is only half measured
+## Every mapping pass now does per-row work, and its cost is only half measured
 
 **Fact.** Slice 4.5 put the array-shape census in `map::Builder::on_row`, fed
-from `Event::Row` by `build_index`, `build_map`, and `stream::map_forward`
-under `ScanExtent::Full`. Every data row of every block such a scan maps is now
+from `Event::Row` by `build_index`, `build_map` and `stream::map_forward`;
+4.5.1 removed the `ScanExtent::Full` gate, so **a cold query's mapping pass
+censuses too**. Every data row of every block any mapping pass maps is now
 inspected. A row containing neither `{` nor `[` is rejected after one pass over
 its bytes and never split into fields; a row containing either is split by
 `copy::split_fields` and every field's first bytes examined.
@@ -168,7 +171,7 @@ array-bearing rows — where every field is inspected — is unmeasured;
 brace-free data", says so explicitly.
 
 **Why Phase 7 cares.** The double-read entry above recorded that the mapping
-pass did no per-row work; that is no longer true for a full scan, and the phase's
+pass did no per-row work; that is no longer true of any mapping pass, and the phase's
 device-bound targets are set against a scan loop that has since grown a
 per-row stage. Two specific consequences: a parallel or reordered scan has to
 carry the census with whatever unit it splits the file into (it accumulates
@@ -177,7 +180,7 @@ per block and is finalized at `CopyEnd`), and any decision to widen the census
 lands on the same per-row stage and should be measured against array-bearing
 data, which does not exist as a benchmark input until slice 4.6 generates it.
 
-**Origin.** Slice 4.5, 2026-08-26. See
-[`roadmap-phase4.5-census-recording-notes.md`](roadmap-phase4.5-census-recording-notes.md)
+**Origin.** Slices 4.5 and 4.5.1, 2026-08-26. See
+[`roadmap-phase4.5.1-census-consumption-notes.md`](roadmap-phase4.5.1-census-consumption-notes.md)
 and [`architecture.md`](architecture.md), "The array shape census".
 

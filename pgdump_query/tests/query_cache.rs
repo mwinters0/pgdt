@@ -473,31 +473,6 @@ async fn no_duplication_on_repeat_queries() {
     assert_eq!(offsets.len(), after_count, "no duplicate header_offsets");
 }
 
-/// The same spans with every block's array-shape census dropped.
-///
-/// A block is censused only by the pass that *maps* it, and only when that
-/// pass will reach EOF (`CopyBlock::array_shapes`). The index above is built
-/// by three queries in sequence, so the cold and warm passes map most of the
-/// file without a census and the final `Full` pass finds nothing left to
-/// re-map — a block's bytes are read once, and there is no second visit at
-/// which it could acquire one. `build_index` censuses everything, so the two
-/// legitimately differ in exactly this field and in nothing else, which is
-/// what comparing without it asserts.
-fn without_census(spans: &[pgdump_query::Span]) -> Vec<pgdump_query::Span> {
-    spans
-        .iter()
-        .cloned()
-        .map(|mut span| {
-            if let pgdump_query::SpanBody::Data(pgdump_query::DataBlock::Copy(block)) =
-                &mut span.body
-            {
-                block.array_shapes = None;
-            }
-            span
-        })
-        .collect()
-}
-
 /// **The claim the mapping/streaming split exists for.** A `DumpIndex` built
 /// by a query
 /// tiles its file exactly, the same way `build_index`'s does — every byte in
@@ -567,9 +542,12 @@ async fn a_query_built_index_tiles_in_every_cache_state() {
             assert_eq!(check_tiling(&full.spans, size), vec![], "{label}: full");
             assert_eq!(full.scanned_through, size, "{label}");
             let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
+            // Span for span, array-shape census included: every mapping pass
+            // censuses, so the three queries that built this index agree
+            // with a single eager scan in every field
+            // (`docs/design/architecture.md`, "The array shape census").
             assert_eq!(
-                without_census(&full.spans),
-                without_census(&eager.spans),
+                full.spans, eager.spans,
                 "{label}: a fully-mapped query agrees with build_index span for span"
             );
         }

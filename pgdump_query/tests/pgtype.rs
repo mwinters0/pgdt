@@ -52,7 +52,11 @@ fn resolve_table(meta: &DumpMetadata, qualified: &str) -> pgdump_query::Resolved
     let db = meta.databases.first().unwrap();
     let cols: Vec<String> =
         db.tables.get(qualified).unwrap().iter().map(|(n, _)| n.clone()).collect();
-    resolve_columns(qualified, &cols, Some(meta), db.name.as_deref(), SchemaMode::Typed)
+    // No census: this file pins what the *DDL alone* resolves to, which is
+    // the optimistic type every array column starts from
+    // (`docs/design/architecture.md`, "The array shape census" — consuming
+    // one is `tests/census.rs`'s subject).
+    resolve_columns(qualified, &cols, Some(meta), db.name.as_deref(), SchemaMode::Typed, &[])
 }
 
 /// Just the resolutions, for a terse per-table assertion.
@@ -324,6 +328,7 @@ async fn enum_column_maps_to_a_dictionary_and_domain_to_its_base_type() {
             Some(&meta),
             db.name.as_deref(),
             SchemaMode::Typed,
+            &[],
         );
         assert_eq!(
             resolved.schema.field(0).data_type(),
@@ -361,6 +366,7 @@ async fn resolution_still_works_against_metadata_with_more_than_one_database() {
                 Some(&meta),
                 db.name.as_deref(),
                 SchemaMode::Typed,
+                &[],
             );
             assert!(
                 resolved.columns.iter().all(|r| *r == Mapped),

@@ -30,7 +30,12 @@ and `{"c{d}"}` is unambiguously one-dimensional. That collapses the whole
 question to counting bytes at the front of a still-COPY-escaped field, which
 is L1 work with no dependency on `nested.rs` at all.
 
-**A census belongs to a block, not to a file, because a scan cannot revisit.**
+**A census belongs to a block, not to a file.** *(Per-block storage stands.
+The rest of this paragraph — the `ScanExtent::Full` gate and the `Option` it
+forced — was reversed in 4.5.1: every mapping pass censuses, `array_shapes` is
+a plain `Vec`, and there is no second test for a consumer to make. See "What
+4.5.1 inherits" below and
+[`roadmap-phase4.5.1-census-consumption-notes.md`](roadmap-phase4.5.1-census-consumption-notes.md).)*
 The spec's believability rule is file-level (`is_complete`). That is necessary
 but not sufficient: `map_forward` splices new spans onto a prefix it does not
 re-read, so a file mapped by a cold query and *then* by a `ScanExtent::Full`
@@ -46,13 +51,14 @@ where this surfaced. It asserted a fully-mapped query's spans equal
 `build_index`'s span for span; they now legitimately differ in this one field,
 so it compares through a `without_census` normalizer that says why.
 
-**Only a scan that will reach EOF censuses.** `build_index` and `build_map`
-always; `map_forward` only under `ScanExtent::Full`. A cold query would
-otherwise pay per-row work for a census `is_complete` then discards. The
-alternative — census unconditionally, so every index is identical regardless
-of query history — was rejected: it charges every cold query for a feature it
-is not using, against the spec's two-path model where the cheap path stays
-cheap.
+**Only a scan that will reach EOF censuses** — *reversed on 2026-08-26, and
+4.5.1 undoes it.* As landed, `build_index` and `build_map` always census and
+`map_forward` only under `ScanExtent::Full`. The premise was that a cold query
+would otherwise pay per-row work for a census `is_complete` then discards; in
+fact the cold query already receives every row it would need, so the saving is
+the pre-filter alone, and the cost is a permanently uncensused prefix in any
+dump mapped by a cold query before a full one. `docs/status/history/2026-08-26.md`,
+"The census is unconditional", carries the whole argument.
 
 ## Non-obvious calls
 
@@ -84,9 +90,40 @@ the failure this constant exists to prevent.
 
 ## What 4.5.1 inherits
 
-- **The consumption test is two-sided.** A block is usable only when
-  `block.array_shapes.is_some() && index.is_complete(size)`. Either alone is
-  wrong, for the two different reasons above.
+- **Make the census unconditional first.** Delete `Builder::censusing` and the
+  `ScanExtent::Full` gate in `stream::map_forward`; `CopyBlock::array_shapes`
+  becomes a plain `Vec<ArrayShape>`, since a block only ever reaches the map
+  fully walked (`scanned_through` advances at `CopyEnd` watermarks and at EOF,
+  nowhere else). `tests/census.rs::only_a_scan_that_reaches_eof_censuses`
+  inverts into "every mapping pass censuses", and
+  `tests/query_cache.rs::a_query_built_index_tiles_in_every_cache_state` drops
+  its `without_census` normalizer for span-for-span equality again.
+- **A streamed schema needs no completeness test at all.** `table_stream`
+  finishes `map_forward`, then collects `matches` — every block in the map
+  bearing the target's `(database, qualified name)` — and commits one schema
+  from that set before emitting a row. Union those blocks' censuses
+  (min-of-mins, max-of-maxes) and the evidence covers exactly the rows the
+  stream will hand back, on a cold query as much as on a full scan.
+  `index.is_complete(size)` survives only for a *reported* schema — `pgdq
+  info`, which answers from an index with no replay to bound the claim.
+- **All three `resolve_block` call sites must retype, `resume_state`'s
+  included.** It currently takes only `metadata`, so a stream resumed
+  mid-block would rebuild an optimistic schema where the original had a
+  retyped one — the same query returning two different Arrow schemas depending
+  on whether it was interrupted. The index is in scope at every call site
+  (`src/stream.rs`), so the block's census can be passed down; putting the
+  shape in the `ResumeToken` is the alternative and costs a persisted-shape
+  change to an opaque type for no gain.
+- **The census vector is pre-sized from the header, and only a header-less
+  block's can end up short.** `on_copy_start` allocates
+  `header.columns.len()` entries, so a headered block's census is index-aligned
+  with its columns whatever the rows held. A header-less block starts empty and
+  grows by field index, but only on rows that pass the `{`/`[` pre-filter, so
+  its vector ends at the highest brace-bearing field — shorter than the true
+  field count whenever the trailing columns never held an array. A missing
+  entry reads as the default `ArrayShape`, i.e. `dims: None`, which is exactly
+  the "nothing constrained this column, keep the optimistic type" answer, so a
+  consumer indexing defensively needs no special case.
 - **`dims: None` means "no value constrained this column"** — every row was
   NULL or `{}` — not "no arrays here". A column with `None` has nothing to
   retype from and keeps the optimistic `List<T>`, which is right: `{}` and
@@ -101,8 +138,8 @@ the failure this constant exists to prevent.
 - **A table's census is the union of its blocks'** — min-of-mins,
   max-of-maxes, per I2. `blocks_for` is the enumeration; nothing in this slice
   performs the union, because nothing consumes it yet.
-- The cache format is now **11**. 4.5.1 changes no persisted shape, so it
-  needs no further bump.
+- **4.5.1 reshapes a persisted field** (`array_shapes` loses its `Option`), so
+  it bumps the cache format like any other change to a stored shape.
 
 ## Verification
 

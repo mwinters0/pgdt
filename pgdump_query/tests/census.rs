@@ -2,9 +2,11 @@
 //! (`docs/design/architecture.md`, "The array shape census").
 //!
 //! `src/index.rs`'s unit tests pin what a single field contributes. These
-//! pin the two things only a real dump can show: that the shapes recorded
+//! pin the three things only a real dump can show: that the shapes recorded
 //! for `fixtures/*/types/default.sql` are the ones its literals actually
-//! carry, and that a census exists exactly where a scan reached EOF.
+//! carry, that every mapping pass records them whatever its
+//! `ScanExtent`, and that a query's schema is retyped from them before its
+//! first batch.
 
 use std::path::{Path, PathBuf};
 
@@ -12,8 +14,9 @@ use futures::StreamExt;
 
 use pgdump_query::cache::CacheMode;
 use pgdump_query::index::ArrayShape;
+use pgdump_query::resolve::ColumnResolution;
 use pgdump_query::{
-    BatchOptions, LocalFileSource, ScanExtent, ScanOptions, build_index, table_stream,
+    BatchOptions, LocalFileSource, ScanExtent, ScanOptions, build_index, table_stream, union_census,
 };
 
 fn types_fixture(version: &str) -> PathBuf {
@@ -33,8 +36,7 @@ async fn census_of(path: &Path, table: &str) -> Vec<(String, ArrayShape)> {
     let source = LocalFileSource::open(path).unwrap();
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
     let block = index.blocks_for(table).next().unwrap_or_else(|| panic!("no block for {table}"));
-    let shapes = block.array_shapes.as_ref().expect("a full scan censuses every block it maps");
-    block.header.columns.iter().cloned().zip(shapes.iter().copied()).collect()
+    block.header.columns.iter().cloned().zip(block.array_shapes.iter().copied()).collect()
 }
 
 fn shape(census: &[(String, ArrayShape)], column: &str) -> ArrayShape {
@@ -111,20 +113,18 @@ async fn a_composite_column_contributes_no_dimensionality() {
     assert_eq!(shape(&census, "v_points").dims, Some((1, 1)));
 }
 
-/// **The two paths, as a property of the block rather than of the file.**
-/// Only a scan that will reach EOF censuses, so a cold query leaves the
-/// blocks it maps with no census at all — which is not the same answer as a
-/// census that saw nothing, and is why the field is an `Option`.
-///
-/// `t_array` rather than `t_array_shape`: the latter is the column set the
-/// optimistic path deliberately refuses, so streaming it is a `FieldDecode`
-/// error until a census is consumed, which is 4.5.1's.
+/// **Every mapping pass censuses, under either `ScanExtent`.** A cold query
+/// that stops at its target already receives every row of every block it
+/// maps, so the census rides a read that happens anyway — and the block it
+/// leaves in the map is indistinguishable from the one a full scan leaves,
+/// which is what lets a consumer read `array_shapes` without a second test
+/// beside it.
 #[tokio::test]
-async fn only_a_scan_that_reaches_eof_censuses() {
+async fn every_mapping_pass_censuses_whatever_its_extent() {
     let path = types_fixture("16");
     let source = LocalFileSource::open(&path).unwrap();
 
-    for (extent, censused) in [(ScanExtent::UntilTargetSettled, false), (ScanExtent::Full, true)] {
+    for extent in [ScanExtent::UntilTargetSettled, ScanExtent::Full] {
         // A fresh cache per pass: the index a query leaves is only readable
         // through the cache it persisted, and a shared one would let the
         // first pass answer for the second.
@@ -145,6 +145,70 @@ async fn only_a_scan_that_reaches_eof_censuses() {
         }
         let index = cache.load(&source).await.unwrap().unwrap();
         let block = index.blocks_for("public.t_array").next().unwrap();
-        assert_eq!(block.array_shapes.is_some(), censused, "{extent:?}");
+        assert_eq!(block.array_shapes.len(), block.header.columns.len(), "{extent:?}");
+        // `v_empty` holds `{}` then `{1,2,3}`: a real shape, recorded by a
+        // pass that stopped at this table as much as by one that ran to EOF.
+        let census: Vec<(String, ArrayShape)> =
+            block.header.columns.iter().cloned().zip(block.array_shapes.iter().copied()).collect();
+        assert_eq!(shape(&census, "v_empty").dims, Some((1, 1)), "{extent:?}");
     }
+}
+
+/// **A streamed schema needs no completeness test.** `table_stream` fixes its
+/// schema after mapping and before emitting, over exactly the blocks it will
+/// replay — so a cold query that stopped at its target retypes as confidently
+/// as a full scan, and the `FieldDecode` refusal a multi-dimensional value
+/// used to earn is unreachable for a top-level array column on either path
+/// (`docs/design/architecture.md`, "The array shape census").
+#[tokio::test]
+async fn a_cold_query_retypes_from_the_census_it_just_recorded() {
+    let path = types_fixture("16");
+    let source = LocalFileSource::open(&path).unwrap();
+
+    for extent in [ScanExtent::UntilTargetSettled, ScanExtent::Full] {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = CacheMode::Enabled(dir.path().join("dump.dqcache"));
+        let options = BatchOptions { scan_extent: extent, ..Default::default() };
+        let mut stream = table_stream(
+            &source,
+            "public.t_array_shape",
+            ScanOptions::default(),
+            options,
+            None,
+            None,
+            cache,
+        );
+        while let Some(batch) = stream.next().await {
+            batch.unwrap_or_else(|e| panic!("{extent:?}: {e}"));
+        }
+        let resolved = stream.resolved_schema();
+        assert_eq!(
+            &resolved.columns[1..],
+            &[
+                ColumnResolution::Mapped,
+                ColumnResolution::VaryingArrayShape,
+                ColumnResolution::VaryingArrayShape,
+            ],
+            "{extent:?}"
+        );
+    }
+}
+
+/// The union a table spanning several blocks (I2) resolves against, read off
+/// a real partitioned dump: `blocks_for` enumerates them and every one
+/// carries a census, so the combined answer covers every row the table has.
+#[tokio::test]
+async fn a_partitioned_table_unions_the_censuses_of_all_its_blocks() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/16/partitions/default.sql");
+    let source = LocalFileSource::open(&path).unwrap();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+
+    let blocks: Vec<_> = index.blocks_for("public.spread").collect();
+    assert!(blocks.len() > 1, "`spread` is written as two blocks under one name (I2)");
+    let union = union_census(blocks.iter().copied());
+    assert_eq!(union.len(), blocks[0].header.columns.len());
+    // No column in this fixture holds an array, so the union constrains
+    // nothing — which is the answer that leaves every column optimistically
+    // typed.
+    assert!(union.iter().all(|s| *s == ArrayShape::default()));
 }

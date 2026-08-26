@@ -16,6 +16,7 @@
 
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
@@ -41,6 +42,25 @@ fn types_fixture(version: u32, flag_set: &str) -> PathBuf {
 /// drains this stream internally.
 async fn rows(path: &Path, table: &str, mode: SchemaMode) -> Vec<Vec<Option<String>>> {
     try_rows(path, table, mode).await.unwrap()
+}
+
+/// The schema one query commits to — the census-retyped one, since
+/// `table_stream` fixes it after mapping and before its first batch.
+async fn resolved_schema(path: &Path, table: &str) -> pgdump_query::ResolvedSchema {
+    let source = LocalFileSource::open(path).unwrap();
+    let mut stream = table_stream(
+        &source,
+        table,
+        ScanOptions::default(),
+        BatchOptions::default(),
+        None,
+        None,
+        CacheMode::Disabled,
+    );
+    while let Some(batch) = stream.next().await {
+        batch.unwrap();
+    }
+    stream.resolved_schema()
 }
 
 async fn try_rows(
@@ -140,40 +160,154 @@ async fn nested_columns_round_trip_against_strings_mode() {
     }
 }
 
-/// The optimistic path's failure mode, stated as a test because it is the one
-/// thing about arrays a user meets without warning: `List<T>` means 1-D, and
-/// a value that disagrees is refused rather than reshaped (I21 — the DDL
-/// cannot say, so the first row that disagrees is where it surfaces).
+/// **What the census buys, end to end.** `t_array_shape` is the column set
+/// the optimistic path refuses — a uniformly 2-D column, one that mixes 1-D
+/// and 2-D across rows, and one carrying `[lb:ub]=` prefixes. A query over it
+/// used to be a `FieldDecode`; now the schema commits against what the
+/// mapping pass actually saw, so the uniform column becomes
+/// `List(List(Int32))` and the two that no Arrow list type is honest about
+/// come back as text — decided before the first batch, not at row 40 million
+/// (`docs/design/architecture.md`, "The array shape census").
 ///
-/// 4.5's census removes this for a top-level array *column* by resolving the
-/// shape before the schema is fixed; until then — and permanently for an
-/// array nested inside a composite — `--schema-mode strings` is the remedy,
-/// which is why the same query is asserted to succeed there.
+/// It round-trips against `Strings` mode like every other table, which is
+/// what says the retyped column is still exact: `{{1,2},{3,4}}` in, the same
+/// bytes back out.
 #[tokio::test]
-async fn a_multidimensional_or_decorated_array_is_refused_on_the_optimistic_path() {
+async fn the_census_retypes_an_array_column_before_the_schema_commits() {
+    use arrow::datatypes::{DataType, Field};
+    use pgdump_query::ColumnResolution;
+
     for version in [13, 16, 18] {
         let path = types_fixture(version, "default");
-        let err = try_rows(&path, "public.t_array_shape", SchemaMode::Typed).await.unwrap_err();
-        match err {
-            Error::FieldDecode { table, column, declared_type, value, .. } => {
-                assert_eq!(table, "public.t_array_shape", "pg_dump {version}");
-                // Column order decides which one is reported first; both the
-                // multi-dimensional value and the `[lb:ub]=` prefix are
-                // refusals, and `v_multidim` is the first column with one.
-                assert_eq!(column, "v_multidim", "pg_dump {version}");
-                assert_eq!(declared_type, "integer[]", "pg_dump {version}");
-                // The whole field, not the fragment that tripped it.
-                assert_eq!(value, "{{1,2},{3,4}}", "pg_dump {version}");
-            }
-            other => panic!("pg_dump {version}: expected FieldDecode, got {other:?}"),
-        }
+        let typed = rows(&path, "public.t_array_shape", SchemaMode::Typed).await;
+        let strings = rows(&path, "public.t_array_shape", SchemaMode::Strings).await;
+        assert_eq!(typed, strings, "pg_dump {version}");
+        assert!(!typed.is_empty(), "pg_dump {version}");
 
-        let strings = try_rows(&path, "public.t_array_shape", SchemaMode::Strings).await.unwrap();
-        assert!(
-            strings.iter().any(|row| row.iter().any(|f| f.as_deref() == Some("[0:2]={7,8,9}"))),
-            "pg_dump {version}: Strings mode returns the decorated literal verbatim"
+        let resolved = resolved_schema(&path, "public.t_array_shape").await;
+        let list_of_list = DataType::List(Arc::new(Field::new(
+            "item",
+            DataType::List(Arc::new(Field::new("item", DataType::Int32, true))),
+            true,
+        )));
+        assert_eq!(
+            resolved.schema.field(1).data_type(),
+            &list_of_list,
+            "pg_dump {version}: v_multidim is uniformly 2-D"
         );
+        assert_eq!(
+            &resolved.columns[1..],
+            &[
+                ColumnResolution::Mapped,
+                ColumnResolution::VaryingArrayShape,
+                ColumnResolution::VaryingArrayShape,
+            ],
+            "pg_dump {version}: v_mixed_dim varies, v_lbound is decorated"
+        );
+        for i in [2, 3] {
+            assert_eq!(
+                resolved.schema.field(i).data_type(),
+                &DataType::Utf8View,
+                "pg_dump {version}: column {i}"
+            );
+        }
     }
+}
+
+/// **The one cause the refusal still has.** The census is keyed by column, so
+/// it records the shape of a whole field and has nowhere to put the shape of
+/// an array nested *inside* a composite. Such a column therefore stays on the
+/// optimistic path however much of the file has been scanned, and a
+/// multi-dimensional value there is a `FieldDecode` — with
+/// `--schema-mode strings`, which the message names, as its only remedy.
+///
+/// Hand-written rather than a fixture: `pg_dump` writes what it is given, and
+/// no fixture schema inserts a 2-D array into a composite field.
+/// `t_nested_ok` is the control that says the literal below really is
+/// `record_out`'s form — it round-trips through the typed path unchanged, so
+/// the failure on `t_nested_bad` is the nested array's and not a misquoted
+/// composite's.
+#[tokio::test]
+async fn an_array_inside_a_composite_keeps_the_optimistic_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("nested.sql");
+    std::fs::write(
+        &path,
+        "--\n\
+         -- Name: boxed; Type: TYPE; Schema: public; Owner: postgres\n\
+         --\n\
+         \n\
+         CREATE TYPE public.boxed AS (\n\
+         \tlabel text,\n\
+         \tgrid integer[]\n\
+         );\n\
+         \n\
+         \n\
+         --\n\
+         -- Name: t_nested_ok; Type: TABLE; Schema: public; Owner: postgres\n\
+         --\n\
+         \n\
+         CREATE TABLE public.t_nested_ok (\n\
+         \x20   id integer,\n\
+         \x20   v public.boxed\n\
+         );\n\
+         \n\
+         \n\
+         --\n\
+         -- Name: t_nested_bad; Type: TABLE; Schema: public; Owner: postgres\n\
+         --\n\
+         \n\
+         CREATE TABLE public.t_nested_bad (\n\
+         \x20   id integer,\n\
+         \x20   v public.boxed\n\
+         );\n\
+         \n\
+         \n\
+         --\n\
+         -- Data for Name: t_nested_ok; Type: TABLE DATA; Schema: public; Owner: postgres\n\
+         --\n\
+         \n\
+         COPY public.t_nested_ok (id, v) FROM stdin;\n\
+         1\t(a,\"{1,2}\")\n\
+         \\.\n\
+         \n\
+         \n\
+         --\n\
+         -- Data for Name: t_nested_bad; Type: TABLE DATA; Schema: public; Owner: postgres\n\
+         --\n\
+         \n\
+         COPY public.t_nested_bad (id, v) FROM stdin;\n\
+         1\t(a,\"{{1,2},{3,4}}\")\n\
+         \\.\n\
+         \n",
+    )
+    .unwrap();
+
+    // The control: a 1-D array in the same composite field decodes and
+    // renders back byte for byte.
+    assert_eq!(
+        rows(&path, "public.t_nested_ok", SchemaMode::Typed).await,
+        rows(&path, "public.t_nested_ok", SchemaMode::Strings).await,
+    );
+
+    let err = try_rows(&path, "public.t_nested_bad", SchemaMode::Typed).await.unwrap_err();
+    // The message names the remedy, and the remedy works.
+    assert!(
+        format!("{err}").contains("--schema-mode strings"),
+        "the error names its one remaining remedy: {err}"
+    );
+    match err {
+        Error::FieldDecode { table, column, declared_type, value, .. } => {
+            assert_eq!(table, "public.t_nested_bad");
+            assert_eq!(column, "v");
+            assert_eq!(declared_type, "public.boxed");
+            // The whole field, not the fragment that tripped it.
+            assert_eq!(value, r#"(a,"{{1,2},{3,4}}")"#);
+        }
+        other => panic!("expected FieldDecode, got {other:?}"),
+    }
+    let strings = try_rows(&path, "public.t_nested_bad", SchemaMode::Strings).await.unwrap();
+    assert_eq!(strings[0][1].as_deref(), Some(r#"(a,"{{1,2},{3,4}}")"#));
 }
 
 /// `NaN` bypasses `numeric(p,s)`'s own precision/scale check and has no

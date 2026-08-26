@@ -1131,7 +1131,7 @@ mod tests {
             partition_root: None,
             sparse_index: None,
             column_stats: None,
-            array_shapes: None,
+            array_shapes: Vec::new(),
         })))
     }
 

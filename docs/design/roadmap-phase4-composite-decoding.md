@@ -130,38 +130,67 @@ the shape silently, which is the one failure mode this project does not accept.
 Dropping an `[lb:ub]=` prefix is the same defect in smaller print: the elements
 survive, the index origin does not, and render-back stops being exact.
 
+**After 4.5.1 the error has one reachable cause and one remedy, and says so.**
+A top-level array column is retyped from the census before the schema commits,
+so the refusal cannot fire there. What survives is an array nested inside a
+composite, or inside another array's element type: the census is keyed by
+column and has no slot for a value at that depth (see "Only arrays need the
+census"). Scanning more of the file cannot help — the evidence has nowhere to
+go — so `--schema-mode strings` is the only way to the data, and the message
+names it. Stating it unconditionally is safe precisely because the other cause
+is gone; while both were reachable, a message naming one remedy would have been
+wrong half the time.
+
 ### The shape census is an upgrade, not a gate
 
-A full data scan buys exact dimensionality across every `COPY` block, and the
-project spends it as an **option the caller already owns**, not a precondition.
+The mapping pass already reads every row of every block it maps, so the census
+rides a read that happens anyway: a caller does not opt into it, does not
+choose a slower command to get it, and does not pay a second pass for it. What
+varies is not whether a census exists but **how much of the file it covers**,
+and that only matters where a claim outruns the rows being handed back.
 
-- **No census** — an ordinary cold query. The column is `List<T>`, optimistic
-  1-D, and a value that disagrees is the hard `FieldDecode` above.
-- **Census present** — because `pgdq parse` ran, or the query ran
-  `ScanExtent::Full`. Every top-level array column's shape is known before the
-  schema is fixed, and the error becomes unreachable *for those columns*; an
-  array nested inside a composite keeps the optimistic path, for the reason
-  below.
+- **A streamed schema is censused, always.** `table_stream` fixes its schema
+  after mapping and before emitting, over exactly the blocks it will replay
+  (see "What the census stores, and when it may be believed"). So every
+  top-level array column's shape is known before the schema commits, and the
+  `FieldDecode` refusal above is unreachable for those columns — on a cold
+  query as much as on a full scan. An array nested inside a composite keeps the
+  optimistic path, for the reason below.
+- **A reported schema is censused only as far as the map reaches.** `pgdq info`
+  answers "what is this table's schema" from an index alone, with no replay to
+  bound the claim, so a block past the frontier has no census and its columns
+  read back optimistically. `pgdq parse`, or a query run with
+  `ScanExtent::Full`, closes the gap — the same two-path shape as
+  `Error::MetadataNotScanned`, and **both paths belong in
+  `docs/manual/type-handling.md`**, the optimistic case and its remedy stated
+  together rather than left to be discovered.
 
-This is the same shape as `Error::MetadataNotScanned`: two paths, the cheap one
-default, the exact one reached by a command the user already has a reason to
-run. **Both paths are the user's to choose, so both belong in
-`docs/manual/type-handling.md`** — the optimistic path's failure mode and its
-remedy stated together, not left to be discovered.
+  Today no CLI surface can reach this case: `pgdq info --source` re-scans
+  whenever the cache does not cover the file, and cache-only mode refuses an
+  incomplete cache outright. That is being reversed — `info` will report what a
+  partial index knows and mark it partial — as part of the machine-readable
+  resolution work, which has no spec yet (`STATUS.md`, "Not started"). Neither
+  the census nor 4.5.1 waits on it.
 
 *Rejected:* gating — erroring up front with `ShapeNotScanned` unless a census
 exists. koji's array columns are certainly 1-D (they are entirely NULL), so
 gating would fail a cold query and demand an hour of `pgdq parse` to learn
-nothing. *Rejected:* a transparent query-time prepass over the target blocks.
-It needs no user action and silently doubles the read of every cold array
-query, which is the cost this project is least willing to hide.
+nothing.
+
+*Rejected:* a transparent query-time prepass over the target blocks. That is a
+*second* read added for the census's sake, and it silently doubles the cost of
+every cold array query — the cost this project is least willing to hide. What
+lands instead is not that: the mapping pass exists regardless (mapping and
+streaming are separate passes, so the target block's bytes are read twice
+whatever the census does), and the census is per-row work folded into a read
+already being performed.
 
 **Only arrays need the census.** A composite's shape is fixed by its `CREATE
 TYPE` and a range's is fixed outright, so the scan is spent entirely on array
-dimensionality and lower bounds. It cannot avoid per-row work — reaching field
-*N* means splitting the row — so censusing a block then streaming it costs
-about twice streaming it, which is why the result is persisted in the cache
-beside `DumpIndex` (a `format_version` bump) and paid once per file.
+dimensionality and lower bounds. Its per-row cost is a `{`/`[` test over the
+row's bytes, and a field split only on the rows that pass it. The result is
+persisted in the cache beside `DumpIndex` (a format bump) so that even that is
+paid once per file.
 
 ### What the census says
 
@@ -269,23 +298,50 @@ is the only remedy. Only a top-level array column's error becomes unreachable.
 Keying the census by path instead of by column is filed under the roadmap's
 "Future"; it is purely additive whenever it lands.
 
-**A table's census may be consumed only once `scanned_through` has reached the
-file's size** — the test `pgdq info` already performs against the live source.
-Anything less falls back to the optimistic path. The consumer holds both
-operands already: `table_stream` stats the source before mapping, so the check
-is free where the census is read. 4.5 gives it a name —
-`DumpIndex::is_complete(size)` — because that is the point a third call site
-appears (the two CLI ones, plus this) and the rule becomes worth citing rather
-than open-coding. The reason is I2: one table's
-data can occupy several blocks, so a table's census can be partial even when
-every block that *was* scanned is completely censused, and a query that stops
-at its target never learns what the blocks past it hold. This is the same
-partiality `DumpIndex::roles`/`tablespaces` already carry, for the same reason.
+**Every mapping pass censuses, so a mapped block always carries one.**
+`build_index`, `build_map` and `stream::map_forward` all census, under either
+`ScanExtent`. `scanned_through` advances only at a `CopyEnd` watermark or at
+EOF, so a `CopyBlock` that reached the map was walked end to end — there is no
+such thing as a half-censused block, and `array_shapes` is therefore a plain
+`Vec<ArrayShape>`, never an `Option`. An empty vector means "censused, saw no
+array-shaped literal", which is the same answer as a vector of unconstrained
+`ArrayShape`s and needs no separate representation.
 
-Believing a partial census would produce a *confidently wrong* schema — a
-column typed `List<T>` because the one block that was walked happened to be
-uniform. That is strictly worse than the optimistic path, which reaches the
-same schema while still treating a disagreeing value as an error.
+*Rejected:* censusing only under `ScanExtent::Full`, so a cold query declines
+the per-row work. A cold query already receives every row of every block it
+maps — the mapping pass calls `on_row` unconditionally and the queried block's
+bytes are read twice regardless — so the saving is the pre-filter alone, which
+is free on brace-free data. What it costs is a state no user can observe or
+repair: a dump mapped by a cold query and *then* by a full one comes out
+`is_complete` with its early blocks permanently uncensused, because
+`map_forward` splices onto a prefix it does not re-read. Reasoning:
+[`../status/history/2026-08-26.md`](../status/history/2026-08-26.md).
+
+**A stream's census is the union over the blocks it will replay, and needs no
+completeness test.** `table_stream` finishes its mapping pass before it emits
+anything and then collects `matches` — every block in the map bearing the
+target's `(database, qualified name)` — so at the moment the schema commits,
+the set of blocks whose rows the stream will hand back is fixed and every one
+of them carries a census. Min-of-mins, max-of-maxes over that set is exactly
+the evidence for exactly those rows. A cold query that stopped at its target
+therefore retypes as confidently as a full scan: `stream::target_settled`
+fires only once no further block can share the name (I2), and where it is
+fooled — the undetectable concatenation in `STATUS.md`'s known gaps — the
+unseen block's rows are not emitted either, so the schema stays true of the
+stream's own output.
+
+**`is_complete` qualifies a *reported* schema, not a streamed one.** `pgdq
+info` answers "what is this table's schema" from an index alone, with no replay
+to bound the claim, and a partial map genuinely cannot speak for blocks past
+its frontier. That is where the test belongs, and it is the same partiality
+`DumpIndex::roles`/`tablespaces` already carry, for the same reason.
+
+*Rejected:* gating the streamed schema on `DumpIndex::is_complete` too. It
+reads the file-level rule one scope too wide: a cold query can never satisfy
+it, so every query against a large dump would keep the optimistic path and the
+`FieldDecode` refusal this census exists to remove — while the evidence it
+needed sat in the blocks it had just walked. Reasoning:
+[`../status/history/2026-08-26.md`](../status/history/2026-08-26.md).
 
 ## Nested elements copy; the zero-copy path is not widened here
 
@@ -526,7 +582,7 @@ rather than scope.
 | 4.4 | Flip resolution: recursive mapping, built-in range subtypes, opaque-element refusal, the `ColumnResolution` surgery, the `(DataType, NestedPlan)` pair threaded through `ResolvedSchema` and `RowBatcher::new`, `render_field`'s deletion. Nested columns decode end-to-end on the optimistic path |
 | 4.4.1 | The presentation half: the resolved Arrow type in `pgdq info --verbose`, **the manual rewrite above** |
 | 4.5 | The shape census, **recording half**: a cache format bump, per-block per-column recording, and the completeness rule. Nothing consumes it yet |
-| 4.5.1 | The shape census, **consuming half**: retyping the `(DataType, NestedPlan)` pair from a block's census, `ColumnResolution::VaryingArrayShape`, and **the manual's statement of both paths plus the planned representation knob** |
+| 4.5.1 | The shape census, **consuming half**: making the census unconditional (above), retyping the `(DataType, NestedPlan)` pair from a block's census, `ColumnResolution::VaryingArrayShape`, and **the manual's statement of both paths plus the planned representation knob** |
 | 4.6 | The array stress section in `generate_perf_data.py`, and the `measurements.md` ratio |
 
 **4.2 keeps decode and render together deliberately** — they are inverses, and
@@ -576,6 +632,13 @@ rewrites the test that pins the optimistic path's refusal. Bundling them would
 force one review to accept both at one confidence — the same seam 4.3/4.4 was
 split at, and the spec's own reason for that split applies here unchanged. The
 reasoning is in `docs/status/history/2026-08-26.md`.
+
+**The census's unconditional rule rides in 4.5.1 rather than earning a
+`4.5.2`.** It reverses a call 4.5 made, which is the shape that normally earns
+its own increment — but what it reverses *is* 4.5.1's consumption test,
+collapsing it from two operands to one. Splitting them would put the same
+question in two reviews and force the second to be written against a rule the
+first had just deleted.
 
 **4.4.1 is a third level made at grilling rather than earned mid-slice**, which
 is off-label and deliberate: the seam was visible here, and the alternative —

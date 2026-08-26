@@ -62,10 +62,11 @@ belongs with typed predicates, not smeared across two phases.
 
 ## Per-block, per-column recording during the scan exists, and it avoided the L1/L2 injection it looked like it needed
 
-**Fact.** Slice 4.5 added the array-shape census: `CopyBlock::array_shapes`, an
-`Option<Vec<ArrayShape>>` written per column during the scan by
-`map::Builder::on_row` and finalized at `CopyEnd`, persisted in the cache and
-believable only when the block was censused *and* `DumpIndex::is_complete`.
+**Fact.** Slice 4.5 added the array-shape census: `CopyBlock::array_shapes`, a
+`Vec<ArrayShape>` written per column during the scan by
+`map::Builder::on_row`, finalized at `CopyEnd` and persisted in the cache.
+Every mapping pass records one, so a block in the map always carries a total
+census (4.5.1).
 
 It is the first per-block per-column fact gathered during the scan, and the
 `layering.md` problem it faced is the one `RowGroupStats` faces: L1 does the

@@ -108,3 +108,45 @@ Deciding this before the binding is designed avoids designing a binding
 **Contingent on.** `read_table` staying a thin drain — if it ever regains
 logic of its own, it is no longer free to delete, and the coverage question
 comes back with it.
+
+---
+
+## A partial `DumpIndex`'s blocks are each fully censused; the *table's* set may not be
+
+**Fact.** After Phase 4.5.1 every `COPY` block in a map carries a complete
+array-shape census — a block enters the map only at a `CopyEnd` watermark, and
+every mapping pass censuses. `stream::table_stream` exploits this by unioning
+the censuses of exactly the blocks it will replay, which needs no completeness
+test: it is a claim about the rows being handed back, and nothing outside that
+set is emitted. A caller holding the `DumpIndex` directly has no such bound.
+
+**Why Phase 6 cares.** A DataFusion `TableProvider` states a schema *before*
+and independently of any scan, and a Python binding will be asked for "the
+schema of table T". Both are the reported kind of claim, not the streamed kind,
+so both need to decide what to say when the index is partial and a block past
+the frontier could disagree: report the optimistic type, refuse, or expose the
+partiality to the caller. Phase 9 answers this for the CLI (report, and mark
+the coverage); the embedded API has no equivalent place to put a mark.
+
+**Origin.** Grilling 4.5's open decisions, 2026-08-26. See
+[`../status/history/2026-08-26.md`](../status/history/2026-08-26.md).
+
+---
+
+## Machine-readable resolution is keyed by `COPY` block, and block-to-table is left to Phase 6
+
+**Fact.** Phase 9's `--json` export emits one resolution record per `COPY`
+block, identified by `(database, qualified name, header_offset)`, and does not
+roll blocks up into tables. Per-table is not well-formed today: one table can
+span blocks (I2), and a header-less block takes placeholder `column1…N` names
+from its first row (`batch::column_names`), so a rollup needs a rule for
+disagreeing blocks and for column identity.
+
+**Why Phase 6 cares.** A `TableProvider` has no choice — it must present one
+schema per table — so Phase 6 is where that merge rule gets written, and it
+cannot be deferred again. Phase 9 deliberately left the question open rather
+than guessing at a rollup the embedded API would then have to contradict. A
+per-table rollup in the CLI export is purely additive once the rule exists.
+
+**Origin.** Grilling 4.5's open decisions, 2026-08-26. See
+[`../status/history/2026-08-26.md`](../status/history/2026-08-26.md).
