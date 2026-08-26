@@ -88,6 +88,14 @@ Specified in
       all dumping as `integer[]` on all six majors) is the fixture half.
       Notes:
       [`../design/roadmap-phase4.4.3-array-spellings-notes.md`](../design/roadmap-phase4.4.3-array-spellings-notes.md)
+- [ ] **4.4.4** The array arm folded into one function, earned from 4.4.3's
+      unattended call: `resolve_array(element, types) -> TypeOutcome` replaces
+      `element_is_opaque`/`element_is_array` and holds the whole array
+      decision over one domain walk, so which function normalizes the
+      array-bounds production stops being a question. Behaviour-preserving —
+      no existing test may change. Also corrects `array_element`'s
+      "Not quote-aware" paragraph, which documents a limit the code does not
+      have (I29).
 - [x] **4.5** The shape census, **recording half**: `ArrayShape` on every
       `CopyBlock`, recorded per column, and the cache format bump that
       persists it; `DumpIndex::is_complete`. Nothing consumed it — that is
@@ -167,6 +175,22 @@ Taken ahead of the rest of Phase 4 (only **4.6** remains there).
   cover both. Accepted, not scheduled: it is a roadmap "Future" item, and
   adding it later only ever touches columns these two refusals leave as
   `Utf8View`, so it strictly widens coverage.
+- **A type name that needs quoting comes back `Unknown`.** A type or domain
+  whose name contains a space, a bracket, or the `ARRAY` keyword is legal, and
+  `pg_dump` writes it quoted in both its `CREATE` statement and every column
+  declaration using it (I29). `parse_ident` dequotes it into `TypeDef.name`
+  while the declaration keeps its quotes, so the lookup never matches: the
+  column resolves `Unknown` and stays `Utf8View`, and an array *of* such a type
+  resolves `List<Utf8View>` — the array-ness is still read correctly, since the
+  `[]` falls outside the quotes. **No spelling is misread**: a column of a type
+  named `"x ARRAY"` or `"d[3]"` is not mistaken for an array, because
+  `array_element`'s strip helpers bail on the trailing `"`. So the cost is a
+  weaker type, never a wrong one, and every value still decodes as the text the
+  file holds. Unreachable from any dump whose type names are ordinary
+  identifiers, which is every fixture and the koji sample. The fix is the
+  roadmap "Future" item "A real type-name tokenizer", and it is strictly
+  additive.
+
 - A query stops mapping once its target is settled, so a conflicting
   candidate **past** the stopping point is never seen and
   `Error::AmbiguousTable` is not raised for it — the query returns the
@@ -246,16 +270,6 @@ it has been looked at: settled into the design docs, or reversed.
   phase's one formatting decision and the one most likely to come back — 9.3
   is a separate slice precisely so it can.
 
-- **The array-bounds normalization sits at `element_is_array`, where the spec
-  says "inside `domain_terminal`".** Same two call sites in effect — the
-  terminal is read through the same helper — but the walk keeps returning a
-  borrowed `&str` rather than allocating a normalized one, and
-  `element_is_array` is its only reader whose question the spelling changes.
-  `element_is_opaque` reads the same terminal and is unaffected: a spelling
-  never hides an opaque terminal, it only ever adds an array level, and the
-  array refusal answers first for anything it would have caught. Reversing it
-  means `domain_terminal` returning `Cow`.
-
 - **`t_enum_domain` gained `v_empty_enum`, which the slice's spec row does not
   name.** The resolution-outcome coverage test cannot pass without it —
   `EmptyEnum` was the only outcome no generated fixture reached — and the
@@ -264,6 +278,16 @@ it has been looked at: settled into the design docs, or reversed.
   freely" covers it. It also produced **I27**, a real ambiguity worth having
   written down: a plain dump writes a label-less enum with the same empty body
   `--binary-upgrade` writes for *every* enum.
+
+*4.4.3's normalization-placement entry was reviewed on 2026-08-26 and is
+**settled by refactor**.* Grilling established that both placements produce
+identical outcomes on every input — normalization can only add an array level,
+and no normalized terminal is ever the literal name `box` or a `TypeDef.name` —
+so the choice was free and the real finding was that two predicates walking the
+domain chain separately is what made placement a question. Slice **4.4.4** folds
+the array arm into one function; the reasoning is in
+[`history/2026-08-26.md`](history/2026-08-26.md), and the policy it was decided
+under is `roadmap.md`, "Refactor when the shape stops fitting".
 
 *4.4.2's `integer[][]` entry was reversed by 4.4.3* — the spelling resolves as
 `integer[]` does again, and the refusal it was flagging now has exactly one

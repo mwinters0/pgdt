@@ -175,6 +175,28 @@ existing outcome and merely works — the five the sweep found — is still a
 judgement call. That gap is named rather than papered over, because a check
 claiming more coverage than it has is worse than one that states its limit.
 
+### Refactor when the shape stops fitting
+
+**A refactor that would survive the roadmap — or at least its next several
+phases — and that reduces complexity or increases flexibility is taken when it
+is noticed, not deferred to a tidying pass that never comes.** The 1.0
+architecture is meant to be as clean and elegant as we can make it, and rushing
+to a done state without periodic refactoring is how a codebase turns to
+spaghetti.
+
+The rule is a tie-breaker, not a licence. It applies when the alternative is
+choosing between two acceptable placements of the same logic, or when a slice
+has just added the second special case to something that wanted one. It does
+not license rewriting a mechanism whose shape is merely unfamiliar, and it
+never widens a slice's behaviour: a refactor taken under this rule is
+behaviour-preserving, and anything that changes what the code *does* is a
+decision, so it needs the ordinary treatment — grill it, amend the spec, give
+it a slice number.
+
+**The check.** A refactor taken under this rule names, at the point it lands,
+which later phases it expects to survive and what it made simpler. If neither
+can be stated, the rule did not apply and the change is a preference.
+
 ### Four decisions that keep later phases additive
 
 Plain-format-only and single-threaded is a deliberate scope, not a limitation
@@ -509,6 +531,19 @@ this section when it acquires a phase number, not when it acquires a design.
   from its byte source ("Four decisions that keep later phases additive") is
   what makes it a variant rather than a rework. Not to be confused with
   `--format`, which names the archive container and is Phase 8 Track B.
+
+- **A real type-name tokenizer, shared by the preamble grammar and `pgtype`.**
+  Today `preamble::extract_type_words` captures a declared type as
+  whitespace-delimited words and `parse_ident` dequotes an identifier, so a
+  type name needing quotes (I29) is stored dequoted in `TypeDef.name` while the
+  declaration that uses it keeps its quotes — the two never compare equal, and
+  the column degrades to `Unknown` (`STATUS.md`, "Known gaps"). A tokenizer
+  that understands quoted identifiers would let the name and the declaration
+  agree, and would also let `array_element` decide quoting deliberately rather
+  than by the accident that its strip helpers bail on a trailing `"`. Strictly
+  additive: it only ever promotes a column that is `Utf8View` today. Not
+  scheduled because no `pg_dump` of a database with ordinary type names reaches
+  it, and it is the input contract rather than the output that makes it wanted.
 
 - **Caller-supplied type mapping.** Let a caller override the
   PostgreSQL-type→Arrow-type resolution: per column, per declared type, or

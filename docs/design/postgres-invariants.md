@@ -1577,3 +1577,69 @@ done
 And on all six routine majors at once: `cd scripts && uv run
 generate_fixtures.py --schema types`, then check `public.t_array_spelling`'s
 `CREATE TABLE` — all four columns must read `integer[]`.
+
+## I29 — A type name needing quotes is legal, and `pg_dump` writes it back quoted
+
+**Claim.** A type or domain name may contain any character, including the
+array-declaration metacharacters — `[`, `]`, a space, and the `ARRAY` keyword.
+Such a name must be double-quoted wherever it is written, and `pg_dump` quotes
+it on the way out (`fmtId()`), in the `CREATE TYPE`/`CREATE DOMAIN` statement
+and in every column declaration that uses it. An array *of* such a type is the
+quoted name followed by an unquoted `[]`.
+
+The consequence a reader must not miss: **the quotes are what keep the
+array-bounds production unambiguous.** `s."x ARRAY"` is a scalar column of a
+domain, and `s."x ARRAY"[]` is an array of it; the two are told apart only by
+whether the trailing `ARRAY`/`[]` falls inside the quotes. A normalizer that
+strips a trailing bound or keyword without checking for a closing quote first
+would read the former as an array of `s."x`.
+
+**Proof.** Observed live on PostgreSQL 16.15. All four `CREATE`s are accepted,
+and this is `pg_dump 16.14`'s own output for the table that uses them:
+
+```sql
+CREATE DOMAIN s."d[3]" AS integer;
+CREATE DOMAIN s."my type" AS integer;
+CREATE TYPE s."weird[]" AS ENUM ('a', 'b');
+CREATE DOMAIN s."x ARRAY" AS integer;
+
+CREATE TABLE s.t (
+    a s."weird[]",
+    b s."my type",
+    c s."x ARRAY",
+    d s."d[3]",
+    e s."weird[]"[],
+    f s."my type"[],
+    g s."x ARRAY"[]
+);
+```
+
+**Scope limit.** Nothing here is reachable from a dump of a database whose type
+names are all ordinary identifiers, which is every fixture and the koji sample.
+It bears on the input contract (`roadmap.md`, "The input contract is valid
+PostgreSQL"), and on what this build does with such a file — see `STATUS.md`,
+"Known gaps".
+
+**Verified against:** v16.15, live, `pg_dump 16.14`. Not re-checked on other
+majors: `fmtId()` and the quoting rule are not version-varying, and the
+`Typename` grammar this interacts with is identical across v13-v18 (I28).
+
+**Relied on by:** `pgtype.rs`'s `array_element` — its bound- and
+keyword-stripping helpers bail on a trailing `"`, which is what makes the
+quoted spellings safe rather than merely untested. `STATUS.md`'s "Known gaps"
+entry for quoted type names rests on the second half of the claim: because
+`pg_dump` quotes the name in the *declaration* while `parse_ident` dequotes it
+in `TypeDef.name`, the two never compare equal and the column degrades to
+`Unknown` instead of being misread.
+
+**Re-verify:**
+
+```sh
+psql -X -q -c 'CREATE SCHEMA s' \
+  -c 'CREATE DOMAIN s."x ARRAY" AS integer' \
+  -c 'CREATE TABLE s.t (c s."x ARRAY", g s."x ARRAY"[])'
+pg_dump --schema=s | grep -A 3 'CREATE TABLE s.t'
+```
+
+The two columns must print as `c s."x ARRAY",` and `g s."x ARRAY"[]` — the
+keyword inside the quotes, the array marker outside.
