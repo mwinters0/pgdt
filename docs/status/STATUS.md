@@ -197,19 +197,26 @@ filed.
     | 3 | Census on array-bearing rows — cold pair | cold SSD | pre-`M11` reading |
     | 4 | Census on brace-free rows — warm pair | warm tmpfs | ✅ |
     | 5 | Census on array-bearing rows — warm pair | warm tmpfs | ✅ |
-    | 6 | Warm `INSERT` CPU | warm tmpfs | **never taken** |
-    | 7 | Warm large-object CPU | warm tmpfs | **never taken** |
-    | 8 | Nested end-to-end, three files × two modes | warm tmpfs | ✅ |
-    | 9 | Cross-file floor, seed-42 against seed-43 | warm tmpfs | ✅ |
-    | 10 | Census attribution, census on/off × two files | warm tmpfs | ✅ |
-    | 11 | Per-block quadratic — before/after/save counts | warm tmpfs | ✅ |
-    | 12 | Map alone, cache disabled | warm tmpfs | ✅ |
-    | 13 | Preamble prepass | — | host, **no container at all** |
-    | 14 | Nested decode micro — decode/render/÷copy/÷view | `criterion` | conforming; harness emits it |
+    | 6 | **Warm** scan throughput by input shape — row 1's twin | warm tmpfs | **never taken** |
+    | 7 | Nested end-to-end, three files × two modes | warm tmpfs | ✅ |
+    | 8 | Cross-file floor, seed-42 against seed-43 | warm tmpfs | ✅ |
+    | 9 | Census attribution, census on/off × two files | warm tmpfs | ✅ |
+    | 10 | Per-block quadratic — before/after/save counts | warm tmpfs | ✅ |
+    | 11 | Map alone, cache disabled | warm tmpfs | ✅ |
+    | 12 | Preamble prepass | — | host, **no container at all** |
+    | 13 | Nested decode micro — decode/render/÷copy/÷view | `criterion` | conforming; harness emits it |
 
-    Row 13 runs `/usr/bin/time` around a **host** `pgdq`, so it obeys neither
-    the timer nor the cgroup rule; nobody had counted it until 2026-08-27. Row
-    6 is the reason `M17` was allocated at all.
+    Row 12 runs `/usr/bin/time` around a **host** `pgdq`, so it obeys neither
+    the timer nor the cgroup rule; nobody had counted it until 2026-08-27.
+
+    **Row 6 is the reason `M17` was allocated**, and its shape is settled: the
+    cold table's twin — same four rows (`COPY` block, large-object region,
+    `INSERT` run, `dd` floor), same columns, tmpfs instead of a cold SSD. That
+    makes the `INSERT` path's per-byte CPU a division **within one table**
+    rather than the cross-regime comparison it has been since it was written,
+    which is the defect that allocated `M17`. Its `COPY` row is not a new
+    measurement: it is row 4's census-on column, same binary, same command,
+    same input.
 
     **Two things are deliberately not tables.** koji is a byte-for-byte
     regression check on another medium — the harness owns its invocation and
@@ -282,6 +289,29 @@ filed.
     diff is exactly what "never mix high- and low-confidence work in one review
     cycle" forbids, and `M13`'s four-figure fold-in already produced two
     withdrawn readings and three flagged calls.
+
+    **The prose recipes it executes are deleted, not left alongside.** Each of
+    `measurements.md`'s thirteen `sh` blocks is tested by one question — does
+    the harness execute it? If yes, the block becomes the one-line invocation
+    that reproduces that figure. Leaving both is the second-authority problem
+    the keystone doctrine is written against, and `M19` proved it is not
+    hypothetical: a recipe drifted out of runnability and nothing noticed,
+    because nothing executes prose. **Three kinds of block stay**, because the
+    harness genuinely does not own them: koji's detached recipe, the census-off
+    **source patch** (`return;` at the top of `map::Builder::on_row`, which no
+    harness can perform), and generator invocations a reader may want on their
+    own.
+
+    **It is tested where a silent error would be worst.** Median, spread and
+    table formatting get stdlib `unittest` — `uv run python -m unittest`, no
+    dependency added to a repo that has none — because a wrong median produces
+    a confidently wrong table, which is the failure `M17` exists to prevent. No
+    container-level smoke test: that would need root and a runtime to run the
+    suite, a cost this project has consistently refused. The second guard is
+    free and already obligatory: the ninth standing rule requires the observed
+    per-rep readings beside every median, so each emitted table carries its own
+    audit trail and a wrong median is visible against the numbers that produced
+    it.
 
     **The box ticks only when every table above is harness-emitted**, per the
     rule that a tick meaning "about half" makes every other tick worthless. The
