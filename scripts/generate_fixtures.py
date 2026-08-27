@@ -47,6 +47,16 @@ ROUTINE_VERSIONS = {
 DB_NAME = "pgdq_fixture"
 DB_USER = "postgres"
 
+# A second database, loaded for the `edge_cases` schema only, so that its
+# `dumpall` flag set produces a file in which *two* `\connect` segments carry
+# `COPY` blocks -- the only shape that exercises I1's recurring
+# metadata boundary (architecture.md, "Fixtures"). By I30 this name sorts
+# between DB_NAME and `postgres`, so the segment order is fixed by naming
+# rather than observed. See scripts/fixture_schema_edge_cases_tenant.sql for
+# why its tables look the way they do.
+TENANT_DB_NAME = "pgdq_tenant"
+TENANT_SCHEMA = "edge_cases"
+
 # fixture_schema_objects.sql's non-default tablespace (architecture.md,
 # "Fixtures") needs a directory that exists and is
 # owned by the container's postgres OS user *before* its `CREATE TABLESPACE`
@@ -112,6 +122,13 @@ def schema_file(schema: str) -> Path:
     return SCRIPT_DIR / f"fixture_schema_{schema}.sql"
 
 
+def tenant_schema_file() -> Path:
+    # Named for the fixture set it belongs to, not as a fifth fixture set:
+    # nothing dumps `pgdq_tenant` on its own, it only ever shows up inside
+    # `edge_cases/dumpall.sql`.
+    return SCRIPT_DIR / f"fixture_schema_{TENANT_SCHEMA}_tenant.sql"
+
+
 def run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, check=True, **kwargs)
 
@@ -167,6 +184,16 @@ def prepare_tablespace_dir(name: str) -> None:
     run(DOCKER + ["exec", name, "chown", "postgres:postgres", TABLESPACE_DIR])
 
 
+def load_sql(name: str, database: str, sql: str) -> None:
+    run(
+        DOCKER
+        + ["exec", "-i", name, "psql", "-U", DB_USER, "-d", database, "-v", "ON_ERROR_STOP=1"],
+        input=sql,
+        text=True,
+        stdout=subprocess.DEVNULL,
+    )
+
+
 def create_fixture_db(name: str, schema: str, attempts: int = 10, delay: float = 1.0) -> None:
     # The official postgres image briefly starts a *temporary* instance to
     # run init scripts before restarting for real; pg_isready can succeed
@@ -185,14 +212,13 @@ def create_fixture_db(name: str, schema: str, attempts: int = 10, delay: float =
         raise last_error
     if schema == "objects":
         prepare_tablespace_dir(name)
-    schema_sql = schema_file(schema).read_text()
-    run(
-        DOCKER
-        + ["exec", "-i", name, "psql", "-U", DB_USER, "-d", DB_NAME, "-v", "ON_ERROR_STOP=1"],
-        input=schema_sql,
-        text=True,
-        stdout=subprocess.DEVNULL,
-    )
+    load_sql(name, DB_NAME, schema_file(schema).read_text())
+    if schema == TENANT_SCHEMA:
+        # A second database in the same cluster, so this schema's `dumpall`
+        # flag set has two `COPY`-carrying segments. Gated here rather than in
+        # dump_flag_set, which stays a pure dump-and-write function.
+        run(DOCKER + ["exec", name, "createdb", "-U", DB_USER, TENANT_DB_NAME], capture_output=True)
+        load_sql(name, TENANT_DB_NAME, tenant_schema_file().read_text())
 
 
 def drop_fixture_db(name: str) -> None:
@@ -211,6 +237,12 @@ def drop_fixture_db(name: str) -> None:
         capture_output=True,
     )
     run(DOCKER + ["exec", name, "dropdb", "-U", DB_USER, DB_NAME], capture_output=True)
+    # `--if-exists`, so this is a no-op for every schema but TENANT_SCHEMA:
+    # a leaked database would appear in a later schema's `pg_dumpall` output.
+    run(
+        DOCKER + ["exec", name, "dropdb", "-U", DB_USER, "--if-exists", TENANT_DB_NAME],
+        capture_output=True,
+    )
     run(
         DOCKER + ["exec", name, "psql", "-U", DB_USER, "-c", "DROP ROLE IF EXISTS fixture_reader"],
         capture_output=True,

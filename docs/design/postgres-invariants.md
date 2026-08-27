@@ -1684,7 +1684,9 @@ entirely; that is orthogonal to the ordering of those present. Says nothing
 about `pg_dump --create`, which emits one database and no ordering question.
 
 **Verified against:** v13.23, v18.6, master — the query is byte-identical in
-all three.
+all three; and observed in output on all six routine majors, where
+`pgdq_tenant` lands between `pgdq_fixture` and `postgres` in every
+`edge_cases/dumpall.sql`.
 **Relied on by:** `architecture.md` ("Fixtures"). The `edge_cases/dumpall`
 fixture's database sequence is chosen by naming, not observed: a second
 data-carrying database named `pgdq_tenant` lands between `pgdq_fixture` and

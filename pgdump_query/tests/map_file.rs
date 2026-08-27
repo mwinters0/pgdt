@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use arrow::datatypes::{DataType, TimeUnit};
 use futures::StreamExt;
 use pgdump_query::cache::{CacheMode, CacheStatus};
 use pgdump_query::resolve::{ColumnResolution, SchemaMode, resolve_columns};
@@ -384,10 +385,12 @@ async fn a_cancelled_query_errors_rather_than_returning_a_prefix() {
 }
 
 /// Two copies of `edge_cases/create.sql` concatenated, the second's database
-/// renamed — a real `\connect`-delimited multi-database file in which *both*
-/// databases have `COPY` blocks, which the genuine `pg_dumpall` fixture does
-/// not (its `template1`/`postgres` segments carry none, so its first block's
-/// offset already closes out every database that could matter).
+/// renamed. A `pg_dumpall` and a bare `cat a.sql b.sql` are different shapes
+/// (I9) and this is the only fixture for the second one, so it stays beside
+/// the real dump rather than being replaced by it. The name is deliberately
+/// not `pgdq_fixture_2`, which the synthetic multi-database helpers elsewhere
+/// in the suite use: with both constructions in one file, a failure naming
+/// `pgdq_fixture_2` would not say which it came from.
 fn multidb(version: u32) -> (tempfile::TempDir, PathBuf) {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../fixtures")
@@ -472,50 +475,156 @@ async fn an_interrupted_scans_banked_blocks_resolve_against_real_ddl() {
 /// Without it a `parse` interrupted inside database 2 holds DDL for database 1
 /// alone — having read database 2's entire preamble on the way past — and
 /// every one of database 2's banked blocks reports `MetadataNotScanned`.
+///
+/// `dump` must hold at least two `COPY`-carrying databases, `second` naming
+/// the later one; the scan is cut at the end of that database's first block,
+/// so the boundary has been crossed exactly twice when the cache is banked.
+async fn assert_an_interrupt_inside(dump: &Path, second: &str, label: &str) {
+    let source = LocalFileSource::open(dump).unwrap();
+    let mode = CacheMode::Enabled(cache::colocated_path(dump));
+
+    let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let trip = eager
+        .blocks()
+        .find(|b| b.database.as_deref() == Some(second))
+        .unwrap_or_else(|| panic!("{label}: {second} has blocks"))
+        .end_offset;
+
+    let cancel = Arc::new(AtomicBool::new(false));
+    let tripping = CancelsPast { inner: &source, trip, cancel: Arc::clone(&cancel) };
+    let options =
+        ScanOptions { chunk_size: 1, cancel: Some(Arc::clone(&cancel)), ..ScanOptions::default() };
+    let run = map_file(&tripping, &options, &mode).await.unwrap();
+    assert!(run.interrupted, "{label}");
+
+    // Every database that banked a block has that database's own DDL — not
+    // merely *some* DDL, which is what an index carrying only database 1's
+    // would also satisfy. A segment with no blocks (`template1`, and
+    // `postgres` past the stopping point) is not this test's subject: it has
+    // no rows to type.
+    let banked: std::collections::BTreeSet<String> =
+        run.index.blocks().filter_map(|b| b.database.clone()).collect();
+    assert!(banked.contains(second), "{label}: the scan banked a {second} block");
+    let metadata = run.index.metadata.as_ref().unwrap_or_else(|| panic!("{label}: metadata"));
+    for name in &banked {
+        let db = metadata
+            .databases
+            .iter()
+            .find(|d| d.name.as_deref() == Some(name.as_str()))
+            .unwrap_or_else(|| panic!("{label}: {name} has an entry in {metadata:?}"));
+        assert!(db.preamble_complete, "{label}: {name}");
+        assert!(!db.tables.is_empty(), "{label}: {name} has DDL");
+    }
+
+    for (table, columns) in outcomes(&run.index) {
+        assert!(
+            !columns.contains(&ColumnResolution::MetadataNotScanned),
+            "{label}: {table}: {columns:?}"
+        );
+    }
+
+    // And finishing it is still span for span what one eager pass gives.
+    let resumed = map_file(&source, &ScanOptions::default(), &mode).await.unwrap();
+    assert_matches_eager(&resumed.index, &eager, &format!("{label}: resumed"));
+}
+
+/// The boundary against a file `pg_dump` actually wrote. `edge_cases/dumpall`
+/// carries `COPY` blocks in two consecutive segments — `pgdq_fixture` and
+/// `pgdq_tenant`, in that order by I30 — and `pgdq_tenant.public.widgets`
+/// repeats the earlier database's table name with a different type on every
+/// column, so an index that resolved these blocks against `pgdq_fixture`'s DDL
+/// would answer wrongly rather than merely fall silent.
 #[tokio::test]
 async fn an_interrupt_inside_a_later_database_types_the_segments_it_finished() {
     for version in [13, 16, 18] {
-        let (_dir, dump) = multidb(version);
+        // Copied out of `fixtures/`, since the run writes a colocated cache.
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures")
+            .join(version.to_string())
+            .join("edge_cases/dumpall.sql");
+        let dir = tempfile::tempdir().unwrap();
+        let dump = dir.path().join("dumpall.sql");
+        std::fs::copy(&fixture, &dump).unwrap();
+        assert_an_interrupt_inside(&dump, "pgdq_tenant", &format!("pg_dump {version} dumpall"))
+            .await;
+    }
+}
+
+/// **Resolution keys by database, and the fixture can now show it.**
+/// `edge_cases/dumpall` holds `public.widgets` in *both* data-carrying
+/// databases with a different type on every column, so the same qualified name
+/// must answer differently depending on which segment the block came from. A
+/// resolver that reached for the first database's DDL — or for whichever entry
+/// happened to be last — fails here rather than passing quietly; on a file
+/// whose segments share a schema it could not be caught at all.
+#[tokio::test]
+async fn one_table_name_in_two_databases_resolves_to_each_databases_own_types() {
+    for version in [13, 16, 18] {
+        let dump = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures")
+            .join(version.to_string())
+            .join("edge_cases/dumpall.sql");
         let source = LocalFileSource::open(&dump).unwrap();
-        let mode = CacheMode::Enabled(cache::colocated_path(&dump));
+        let index =
+            map_file(&source, &ScanOptions::default(), &CacheMode::Disabled).await.unwrap().index;
 
-        let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
-        let trip = eager
-            .blocks()
-            .find(|b| b.database.as_deref() == Some("pgdq_2"))
-            .expect("the second database has blocks")
-            .end_offset;
-
-        let cancel = Arc::new(AtomicBool::new(false));
-        let tripping = CancelsPast { inner: &source, trip, cancel: Arc::clone(&cancel) };
-        let options = ScanOptions {
-            chunk_size: 1,
-            cancel: Some(Arc::clone(&cancel)),
-            ..ScanOptions::default()
-        };
-        let run = map_file(&tripping, &options, &mode).await.unwrap();
-        assert!(run.interrupted, "pg_dump {version}");
-        assert!(
-            run.index.blocks().any(|b| b.database.as_deref() == Some("pgdq_2")),
-            "pg_dump {version}: the scan banked a second-database block"
-        );
-
-        let metadata = run.index.metadata.as_ref().expect("pg_dump {version}: metadata");
-        assert_eq!(metadata.databases.len(), 2, "pg_dump {version}: {metadata:?}");
-        for db in &metadata.databases {
-            assert!(db.preamble_complete, "pg_dump {version}: {:?}", db.name);
-            assert!(!db.tables.is_empty(), "pg_dump {version}: {:?} has DDL", db.name);
-        }
-
-        for (table, columns) in outcomes(&run.index) {
-            assert!(
-                !columns.contains(&ColumnResolution::MetadataNotScanned),
-                "pg_dump {version}: {table}: {columns:?}"
+        let types_of = |database: &str| {
+            let block = index
+                .blocks()
+                .find(|b| {
+                    b.database.as_deref() == Some(database)
+                        && b.header.qualified_name() == "public.widgets"
+                })
+                .unwrap_or_else(|| panic!("pg_dump {version}: {database} has a widgets block"));
+            let schema = resolve_columns(
+                &block.header.qualified_name(),
+                &block.header.columns,
+                index.metadata.as_ref(),
+                block.database.as_deref(),
+                SchemaMode::Typed,
+                &[],
             );
-        }
+            assert!(
+                schema.columns.iter().all(|c| *c == ColumnResolution::Mapped),
+                "pg_dump {version}: {database}: {:?}",
+                schema.columns
+            );
+            schema.schema.fields().iter().map(|f| f.data_type().clone()).collect::<Vec<_>>()
+        };
 
-        // And finishing it is still span for span what one eager pass gives.
-        let resumed = map_file(&source, &ScanOptions::default(), &mode).await.unwrap();
-        assert_matches_eager(&resumed.index, &eager, &format!("pg_dump {version}: resumed"));
+        assert_eq!(
+            types_of("pgdq_fixture"),
+            vec![
+                DataType::Int32,
+                DataType::Utf8View,
+                DataType::Utf8View,
+                DataType::Boolean,
+                DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
+            ],
+            "pg_dump {version}"
+        );
+        assert_eq!(
+            types_of("pgdq_tenant"),
+            vec![
+                DataType::Int64,
+                DataType::FixedSizeBinary(16),
+                DataType::Binary,
+                DataType::Int16,
+                DataType::Date32,
+            ],
+            "pg_dump {version}"
+        );
+    }
+}
+
+/// The same boundary in a *concatenated* file, which I9 makes a different
+/// shape from a `pg_dumpall` — two whole dumps, each with its own header and
+/// trailer, rather than one cluster's segments. Nothing else covers it.
+#[tokio::test]
+async fn an_interrupt_inside_a_later_database_of_a_concatenated_file_types_what_it_finished() {
+    for version in [13, 16, 18] {
+        let (_dir, dump) = multidb(version);
+        assert_an_interrupt_inside(&dump, "pgdq_2", &format!("pg_dump {version} concatenated"))
+            .await;
     }
 }

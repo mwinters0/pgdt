@@ -1935,6 +1935,17 @@ six routine versions (13–18). **"Absent" in this tree always means
 everything across all six versions is roughly two minutes in throwaway 512MB
 containers, never a host-run Postgres.
 
+**A regeneration is not byte-reproducible, and three things move on their
+own.** `\restrict`/`\unrestrict` carry a random token per dump (v17.6+/v18+);
+`logs.events.logged_at` defaults to `now()`; and `--binary-upgrade`'s OIDs can
+shift by one, because `create_fixture_db` retries `createdb` against the
+image's transient init instance and a failed attempt still consumes an OID. The
+first two move on every run, the third only sometimes and per version — two
+consecutive runs agreed while both differed from what was committed. So a
+regeneration diff is expected to touch every flag set of the schema, not only
+the fixture that motivated it, and **nothing may assert on those three**. No
+insta snapshot covers any of them.
+
 | Schema | Flag sets | What it is for |
 |---|---|---|
 | `edge_cases` | `default`, `create`, `no-comments`, `dumpall`, … | Scanner and preamble robustness shapes; `public.escapes` holds one row per codepoint |
@@ -1955,15 +1966,41 @@ partitions of one root; `feel` is hash-partitioned on an enum column, which
 makes `pg_dump` force load-via-partition-root with no flag at all, so the
 `default` set exercises the multi-block shape on all six majors.
 
-**Multi-database coverage does not need a second real fixture.**
-`tests/{preamble,pgtype,stream}.rs` each build a two-database shape at test
-time by reading `create.sql`, writing a byte-substituted copy with the database
-name changed, and concatenating — the parser only cares about the
-`\connect`-delimited shape, not which process produced it. A real
-`pg_dumpall` fixture exists separately because `pg_dumpall` is *not* just
-several `pg_dump --create` outputs concatenated: it passes `--create` for
-ordinary databases but writes `template1`/`postgres`'s `\connect` itself, ahead
-of their version headers rather than after (I9).
+**Multi-database coverage comes in two shapes and needs both.** A
+`pg_dumpall` is *not* several `pg_dump --create` outputs concatenated: it
+passes `--create` for ordinary databases but writes `template1`/`postgres`'s
+`\connect` itself, ahead of their version headers rather than after (I9). So
+`edge_cases/dumpall.sql` covers the cluster shape, and
+`tests/{map_file,preamble,pgtype,stream}.rs` cover the concatenated one by
+building it at test time — reading `create.sql`, writing a byte-substituted
+copy with the database name changed, and appending it. The parser cares only
+about the `\connect`-delimited shape, not which process produced it, which is
+what makes the synthetic half legitimate.
+
+**The `dumpall` fixture carries two data-bearing databases**, `pgdq_fixture`
+and `pgdq_tenant` (`scripts/fixture_schema_edge_cases_tenant.sql`, created and
+dropped for the `edge_cases` schema only). One is not enough: I1's *recurring*
+metadata boundary — the mapping pass restating a database's DDL at that
+database's first `COPY` block — is reached more than once only by a file whose
+second segment also has data, and `template1`/`postgres` carry none, so a
+single-data-segment file has every database that matters closed out by the
+first block's offset. By I30 the segments follow `datname` order, so the name
+alone lands the tenant between `pgdq_fixture` and `postgres`: two data-bearing
+segments, then an empty one, which leaves the EOF recompute a case of its own.
+
+`pgdq_tenant.public.widgets` repeats the other database's table name under the
+same five column names with a **different type on every one of them** —
+`Int64`/`FixedSizeBinary(16)`/`Binary`/`Int16`/`Date32` against
+`Int32`/`Utf8View`/`Utf8View`/`Boolean`/`Timestamp`. That turns resolving a
+block against the wrong database's DDL into a wrong answer a test asserts on,
+rather than an absent error it has to infer from silence
+(`tests/map_file.rs`'s
+`one_table_name_in_two_databases_resolves_to_each_databases_own_types`, which
+covers block-to-database attribution end to end where `resolve.rs`'s
+`database_selects_by_attributed_name_not_by_first_match` covers the lookup
+against hand-built metadata). Its `tenant` schema exists in no other fixture
+database, so DDL that reaches those tables was read here rather than inherited
+from the segment before.
 
 Three construction facts, each confirmed against `pg_dump` source rather than
 guessed:
@@ -1980,7 +2017,10 @@ guessed:
 they leak into whatever schema runs next in the same container.
 `drop_fixture_db` clears `objects_sub`, `fixture_reader` and `fixture_ts` **by
 name**; a new schema adding its own must grow that function rather than inherit
-a generic sweep. `CREATE TABLESPACE` additionally needs its `LOCATION`
+a generic sweep. `pgdq_tenant` is dropped there for the same reason — a leaked
+database would show up in a later schema's `pg_dumpall` output — and created in
+`create_fixture_db`, gated on its schema the way `prepare_tablespace_dir` is,
+so `dump_flag_set` stays a pure dump-and-write function. `CREATE TABLESPACE` additionally needs its `LOCATION`
 directory to exist and be owned by the `postgres` OS user, which
 `prepare_tablespace_dir` does via `docker exec` `mkdir`+`chown` before the
 schema SQL runs.

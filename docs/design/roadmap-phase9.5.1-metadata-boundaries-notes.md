@@ -89,35 +89,30 @@ wanted.
 
 ## Testing the recurring half needs the *right* multi-database fixture
 
-`edge_cases/dumpall.sql` — the fixture the spec names — spans three databases
-(`template1`, `pgdq_fixture`, `postgres`) but only **one** of them has `COPY`
-blocks, so the file's first `COPY` header closes out every database that could
-matter and the recurring boundary is never reached twice. The vehicle this
-slice used is the concatenated pair of `edge_cases/create.sql` copies with the
-second's database renamed (`tests/map_file.rs`'s `multidb`, the same
-construction `tests/pgtype.rs` and `partial_reporting.rs` already use): two
-databases, both with blocks. 9.5's `CancelsPast` trips the flag at a chosen
-file offset, so cancelling inside the second database's data is deterministic.
+`edge_cases/dumpall.sql` — the fixture the spec names — had `COPY` blocks in
+only **one** of its three databases when this slice landed, so the file's first
+`COPY` header closed out every database that could matter and the recurring
+boundary was never reached twice. The vehicle this slice used was therefore the
+concatenated pair of `edge_cases/create.sql` copies with the second's database
+renamed (`tests/map_file.rs`'s `multidb`, the same construction
+`tests/pgtype.rs` and `partial_reporting.rs` use): two databases, both with
+blocks. 9.5's `CancelsPast` trips the flag at a chosen file offset, so
+cancelling inside the second database's data is deterministic.
 
-**That is a stopgap, reversed at the 2026-08-27 grilling.** The mechanism is
-licensed by I1's *scope limit*, and verifying it only against a file `pg_dump`
-never wrote is the gap: `generate_fixtures.py` is to grow a second
+**That stopgap is gone.** The 2026-08-27 grilling reversed it, and the
+out-of-band round that followed gave `generate_fixtures.py` a second
 data-carrying database, `pgdq_tenant`, so `dumpall.sql` itself reaches the
-boundary twice. Its position is chosen by name rather than observed — **I30**
-records that `pg_dumpall` orders `template1` first then by `datname` — landing
-it between `pgdq_fixture` and `postgres`, so the file holds two consecutive
-data-carrying databases followed by an empty one. The sharp part of the schema
-is a `public.widgets` sharing the first database's name with *different* column
-types: resolving a database-2 block to database 1's types then fails visibly,
-where a distinct-name fixture can only show the absence of an error. Queued in
-`STATUS.md`, "Not started", as its own out-of-band round.
+boundary twice — see [`architecture.md`](architecture.md), "Fixtures". The
+recurring-boundary test runs on the real dump; verifying a mechanism licensed
+by I1's *scope limit* only against a file `pg_dump` never wrote was the gap.
 
 **The concatenated case stays even so.** A real `pg_dumpall` and a bare
 concatenation are different shapes — I9: `pg_dumpall` passes `--create` for
 ordinary databases but writes `postgres`/`template1`'s `\connect` lines
 itself, so those segments' version headers land *after* their `\connect` — and
 the concatenation is what a user gets from `cat a.sql b.sql`, which nothing
-else covers. So `map_file.rs` ends up with both; the helper does not go away.
+else covers. So `map_file.rs` has both — the same assertions run over each —
+and the helper does not go away.
 
 ## Verified with a real signal
 

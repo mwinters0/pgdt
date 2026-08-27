@@ -29,7 +29,7 @@ per-phase checklist here any more. How the system works is
 | Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-27 (Phase 9 is **complete**: 9.1-9.5.1 landed — `parse` resumes, throttles its saves, saves on Ctrl-C, and states its metadata at every legal boundary, and the koji wrap run has verified the last of that at real scale. The out-of-band drive-bys have landed as **M5**/**M6**/**M7**/**M8**, and Phase 4's **4.4.4** with them. Next is `pgdq_tenant`, then the **Phase 9 wrap**, **4.6**, and the **Phase 4 wrap** — see "Not started". A phase boundary: an unattended loop stops here.)
+Last updated: 2026-08-27 (Phase 9 is **complete**: 9.1-9.5.1 landed — `parse` resumes, throttles its saves, saves on Ctrl-C, and states its metadata at every legal boundary, and the koji wrap run has verified the last of that at real scale. The out-of-band drive-bys have landed as **M5**-**M9**, and Phase 4's **4.4.4** with them. Next is the **Phase 9 wrap**, then **4.6** and the **Phase 4 wrap** — see "Not started". A phase boundary: an unattended loop stops here.)
 
 ## Phase 4 progress
 
@@ -176,10 +176,10 @@ was earned after 9.1-9.4 landed and reopened the phase; **9.5.1** was earned by
       are consequently unreachable from any mapping scan; both stay for
       metadata some other scan built, and the narrowing is filed into
       [`../design/roadmap-phase6-inbox.md`](../design/roadmap-phase6-inbox.md).
-      The recurring half is tested on the concatenated two-database fixture,
-      not `edge_cases/dumpall.sql` as the spec expected — that file spans three
-      databases but only one has `COPY` blocks, so it cannot reach the boundary
-      twice. Notes:
+      The recurring half is tested on `edge_cases/dumpall.sql`, which gained a
+      second data-carrying database (`pgdq_tenant`) in the out-of-band round
+      **M9**; the concatenated two-database file this slice shipped with stays
+      beside it, for I9's other shape. Notes:
       [`../design/roadmap-phase9.5.1-metadata-boundaries-notes.md`](../design/roadmap-phase9.5.1-metadata-boundaries-notes.md)
 
 ## Not started
@@ -187,44 +187,6 @@ was earned after 9.1-9.4 landed and reopened the phase; **9.5.1** was earned by
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; the resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-
-- **A second data-carrying database in the `pg_dumpall` fixture** — out-of-band
-  work, **its own round**, settled 2026-08-27. `edge_cases/dumpall.sql` spans
-  three databases but has `COPY` blocks in only one, so 9.5.1's recurring
-  per-database metadata boundary is verified only against a hand-concatenated
-  file `pg_dump` never wrote. `generate_fixtures.py` gains **`pgdq_tenant`**,
-  loaded with about four tables: `public.widgets` under the same name as the
-  first database's but with **different column types** (so resolving a
-  database-2 block to database 1's types is a visible failure, not merely an
-  absent error), plus at least one table unique to it (so the DDL is provably
-  read rather than inherited). By I30 that name lands it between
-  `pgdq_fixture` and `postgres` — two consecutive data-carrying databases, then
-  an empty one, which is the case only the EOF recompute covers. It is created
-  and dropped for the `edge_cases` schema only, in `create_fixture_db` /
-  `drop_fixture_db`, the way `prepare_tablespace_dir` is already gated on
-  `objects` — so `dump_flag_set` stays a pure dump-and-write function. Its DDL
-  is `scripts/fixture_schema_edge_cases_tenant.sql`, loaded by an explicit
-  second call in that branch: `schema_file()` stays a pure fixture-directory →
-  file mapping, and the name says the file belongs to `edge_cases` rather than
-  naming a fifth fixture set. Its header comment states why the database
-  exists — a second `COPY`-carrying segment for I1's recurring boundary —
-  since a bare four-table schema file with no explanation is what gets
-  "simplified" away later. Regenerated across all six majors.
-
-  `map_file.rs`'s recurring-boundary test moves onto it and **keeps** its
-  concatenated case beside it: a real `pg_dumpall` and a bare `cat a.sql
-  b.sql` are different shapes (I9), and nothing else covers the concatenation.
-  `pgtype.rs`'s and `partial_reporting.rs`'s own copies of the helper stay as
-  they are; sweeping them is unrelated churn. The name is deliberately *not*
-  `pgdq_fixture_2`, which all three synthetic helpers already use — with both
-  constructions in one test file, a failure naming `pgdq_fixture_2` would not
-  say which it came from.
-
-  No insta snapshots cover `dumpall.sql`, and the three tests that read it
-  (`map.rs`, `preamble.rs`, `pgtype.rs`) assert properties rather than content,
-  so the blast radius is the regeneration itself. Kept apart from the **M5**/**M6**
-  drive-bys, which have since landed: a six-major regeneration and two
-  error-message changes in one diff would have buried the latter.
 
 - **The koji wrap run is done**, and all three of its checks passed. The guard
   took the signal 20 minutes in at byte 19,867,623,920 of 784,019,857,152 and
@@ -241,17 +203,13 @@ was earned after 9.1-9.4 landed and reopened the phase; **9.5.1** was earned by
   byproduct and nothing reads them any more.
 
 - **Order from here**, re-settled 2026-08-27 after the wrap run landed:
-  **`pgdq_tenant`** → the **Phase 9 wrap** → **4.6** → the **Phase 4 wrap**.
-  M7, 4.4.4 and M8 have landed.
+  the **Phase 9 wrap** → **4.6** → the **Phase 4 wrap**. M7, 4.4.4, M8 and
+  `pgdq_tenant` (**M9**) have landed. `pgdq_tenant` went first so its six-major
+  regeneration diff landed alone **and** so the Phase 9 wrap would not
+  consolidate 9.5.1's stopgap fixture into the phase's permanent account; that
+  slice's notes now say what is true instead.
 
-  `pgdq_tenant` first, both so its six-major regeneration diff lands alone
-  **and** because the Phase 9 wrap must not consolidate before it: 9.5.1's
-  notes record the recurring-boundary test running on a hand-concatenated
-  fixture "not `edge_cases/dumpall.sql` as the spec expected", and
-  `pgdq_tenant` is what makes that sentence obsolete. Consolidating a stopgap
-  that is about to be replaced is the one thing wrap ordering can get wrong.
-
-  The **Phase 9 wrap** then closes that phase outright — it was queued last
+  The **Phase 9 wrap** closes that phase outright — it was queued last
   only because the koji run was in flight, and it has no business waiting
   behind a Phase 4 slice. **4.6** next, on a quiet machine now that the HDD is
   free; it was queued late for the same in-flight run and nothing blocks it any

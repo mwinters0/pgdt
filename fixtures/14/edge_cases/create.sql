@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict 7jpr6eQFFlxBWYLokSemW0japCTZMIjA6yKihSnSqwGR8CUKYnefoNi1vz0nVj8
+\restrict yeDydBrgj1sN2TZTwNCacyeDtsIT5u4UcJ2SDLIO9cmS8JM5zKvu0FU1PCxDv7p
 
 -- Dumped from database version 14.24
 -- Dumped by pg_dump version 14.24
@@ -27,9 +27,9 @@ CREATE DATABASE pgdq_fixture WITH TEMPLATE = template0 ENCODING = 'UTF8' LOCALE 
 
 ALTER DATABASE pgdq_fixture OWNER TO postgres;
 
-\unrestrict 7jpr6eQFFlxBWYLokSemW0japCTZMIjA6yKihSnSqwGR8CUKYnefoNi1vz0nVj8
+\unrestrict yeDydBrgj1sN2TZTwNCacyeDtsIT5u4UcJ2SDLIO9cmS8JM5zKvu0FU1PCxDv7p
 \connect pgdq_fixture
-\restrict 7jpr6eQFFlxBWYLokSemW0japCTZMIjA6yKihSnSqwGR8CUKYnefoNi1vz0nVj8
+\restrict yeDydBrgj1sN2TZTwNCacyeDtsIT5u4UcJ2SDLIO9cmS8JM5zKvu0FU1PCxDv7p
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -173,9 +173,9 @@ ALTER TABLE public.widgets OWNER TO postgres;
 --
 
 COPY logs.events (event_id, widget_id, message, logged_at) FROM stdin;
-100	1	created	2026-08-22 23:16:55.724016+00
-101	2	\N	2026-08-22 23:16:55.724016+00
-102	3	updated\twith a tab char	2026-08-22 23:16:55.724016+00
+100	1	created	2026-08-27 16:25:46.617027+00
+101	2	\N	2026-08-27 16:25:46.617027+00
+102	3	updated\twith a tab char	2026-08-27 16:25:46.617027+00
 \.
 
 
@@ -420,5 +420,5 @@ ALTER TABLE ONLY logs.events
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 7jpr6eQFFlxBWYLokSemW0japCTZMIjA6yKihSnSqwGR8CUKYnefoNi1vz0nVj8
+\unrestrict yeDydBrgj1sN2TZTwNCacyeDtsIT5u4UcJ2SDLIO9cmS8JM5zKvu0FU1PCxDv7p
 

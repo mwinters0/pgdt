@@ -2,7 +2,7 @@
 -- PostgreSQL database cluster dump
 --
 
-\restrict vIR97c1hbjYJuiPJ5GRq27rCeWzlRvUC2PmzIel4cTCpIDKtyXGGtr76xibzRPs
+\restrict IUwoRnfXe9BPMbz91Y1K27l0ruNLKtdcNmzRpMAMJCdzCrpUkvZVPPBboUetLcm
 
 SET default_transaction_read_only = off;
 
@@ -27,7 +27,7 @@ ALTER ROLE postgres WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN REPLICATION
 
 
 
-\unrestrict vIR97c1hbjYJuiPJ5GRq27rCeWzlRvUC2PmzIel4cTCpIDKtyXGGtr76xibzRPs
+\unrestrict IUwoRnfXe9BPMbz91Y1K27l0ruNLKtdcNmzRpMAMJCdzCrpUkvZVPPBboUetLcm
 
 --
 -- Databases
@@ -43,7 +43,7 @@ ALTER ROLE postgres WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN REPLICATION
 -- PostgreSQL database dump
 --
 
-\restrict rJagof3sGBy5evpsqNi9Yl4Uq2mIvuwIlK76SWlvjxU9H2c9ME841bNOn1mbdLe
+\restrict zOX4T7pvNFXIQ2FLPq7I4IldLvp2K6mnBAByNTGYzWl4nPofdhk3hFPt1Gxwnfl
 
 -- Dumped from database version 15.19
 -- Dumped by pg_dump version 15.19
@@ -63,7 +63,7 @@ SET row_security = off;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict rJagof3sGBy5evpsqNi9Yl4Uq2mIvuwIlK76SWlvjxU9H2c9ME841bNOn1mbdLe
+\unrestrict zOX4T7pvNFXIQ2FLPq7I4IldLvp2K6mnBAByNTGYzWl4nPofdhk3hFPt1Gxwnfl
 
 --
 -- Database "pgdq_fixture" dump
@@ -73,7 +73,7 @@ SET row_security = off;
 -- PostgreSQL database dump
 --
 
-\restrict D3zaefK73dm1PvdWGCWkfpTimMdJCZ8AdeeAEQBXORksnfqjml7yMIbIL7Rt8UQ
+\restrict nNU4qX4uh5WXIeJxFZ6Uzl3WjLeHTLxW2tTjsT4BybZXZGxwlMbgL14y3hOfvLt
 
 -- Dumped from database version 15.19
 -- Dumped by pg_dump version 15.19
@@ -98,9 +98,9 @@ CREATE DATABASE pgdq_fixture WITH TEMPLATE = template0 ENCODING = 'UTF8' LOCALE_
 
 ALTER DATABASE pgdq_fixture OWNER TO postgres;
 
-\unrestrict D3zaefK73dm1PvdWGCWkfpTimMdJCZ8AdeeAEQBXORksnfqjml7yMIbIL7Rt8UQ
+\unrestrict nNU4qX4uh5WXIeJxFZ6Uzl3WjLeHTLxW2tTjsT4BybZXZGxwlMbgL14y3hOfvLt
 \connect pgdq_fixture
-\restrict D3zaefK73dm1PvdWGCWkfpTimMdJCZ8AdeeAEQBXORksnfqjml7yMIbIL7Rt8UQ
+\restrict nNU4qX4uh5WXIeJxFZ6Uzl3WjLeHTLxW2tTjsT4BybZXZGxwlMbgL14y3hOfvLt
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -244,9 +244,9 @@ ALTER TABLE public.widgets OWNER TO postgres;
 --
 
 COPY logs.events (event_id, widget_id, message, logged_at) FROM stdin;
-100	1	created	2026-08-22 23:17:05.44167+00
-101	2	\N	2026-08-22 23:17:05.44167+00
-102	3	updated\twith a tab char	2026-08-22 23:17:05.44167+00
+100	1	created	2026-08-27 16:25:55.168068+00
+101	2	\N	2026-08-27 16:25:55.168068+00
+102	3	updated\twith a tab char	2026-08-27 16:25:55.168068+00
 \.
 
 
@@ -491,7 +491,209 @@ ALTER TABLE ONLY logs.events
 -- PostgreSQL database dump complete
 --
 
-\unrestrict D3zaefK73dm1PvdWGCWkfpTimMdJCZ8AdeeAEQBXORksnfqjml7yMIbIL7Rt8UQ
+\unrestrict nNU4qX4uh5WXIeJxFZ6Uzl3WjLeHTLxW2tTjsT4BybZXZGxwlMbgL14y3hOfvLt
+
+--
+-- Database "pgdq_tenant" dump
+--
+
+--
+-- PostgreSQL database dump
+--
+
+\restrict 2pPa0X6nFF86458ZkAoxoTmmHNU7XWoKjxTvL6TTwJoIBal9gg8GW6fwDxhE7tu
+
+-- Dumped from database version 15.19
+-- Dumped by pg_dump version 15.19
+
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SELECT pg_catalog.set_config('search_path', '', false);
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
+
+--
+-- Name: pgdq_tenant; Type: DATABASE; Schema: -; Owner: postgres
+--
+
+CREATE DATABASE pgdq_tenant WITH TEMPLATE = template0 ENCODING = 'UTF8' LOCALE_PROVIDER = libc LOCALE = 'en_US.utf8';
+
+
+ALTER DATABASE pgdq_tenant OWNER TO postgres;
+
+\unrestrict 2pPa0X6nFF86458ZkAoxoTmmHNU7XWoKjxTvL6TTwJoIBal9gg8GW6fwDxhE7tu
+\connect pgdq_tenant
+\restrict 2pPa0X6nFF86458ZkAoxoTmmHNU7XWoKjxTvL6TTwJoIBal9gg8GW6fwDxhE7tu
+
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SELECT pg_catalog.set_config('search_path', '', false);
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
+
+--
+-- Name: tenant; Type: SCHEMA; Schema: -; Owner: postgres
+--
+
+CREATE SCHEMA tenant;
+
+
+ALTER SCHEMA tenant OWNER TO postgres;
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- Name: tenant_only; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.tenant_only (
+    slug text NOT NULL,
+    seats integer NOT NULL
+);
+
+
+ALTER TABLE public.tenant_only OWNER TO postgres;
+
+--
+-- Name: widgets; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.widgets (
+    id bigint NOT NULL,
+    name uuid,
+    description bytea,
+    is_active smallint,
+    created_at date
+);
+
+
+ALTER TABLE public.widgets OWNER TO postgres;
+
+--
+-- Name: ledger; Type: TABLE; Schema: tenant; Owner: postgres
+--
+
+CREATE TABLE tenant.ledger (
+    entry_id bigint NOT NULL,
+    slug text,
+    amount numeric(12,2),
+    posted_at timestamp with time zone
+);
+
+
+ALTER TABLE tenant.ledger OWNER TO postgres;
+
+--
+-- Name: settings; Type: TABLE; Schema: tenant; Owner: postgres
+--
+
+CREATE TABLE tenant.settings (
+    key text NOT NULL,
+    value text
+);
+
+
+ALTER TABLE tenant.settings OWNER TO postgres;
+
+--
+-- Data for Name: tenant_only; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.tenant_only (slug, seats) FROM stdin;
+acme	12
+globex	3
+\.
+
+
+--
+-- Data for Name: widgets; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.widgets (id, name, description, is_active, created_at) FROM stdin;
+9000000001	00000000-0000-0000-0000-000000000001	\\x00ff10	1	2025-03-01
+9000000002	3f2504e0-4f89-11d3-9a0c-0305e82c3301	\N	0	2025-03-02
+9000000003	\N	\\xdeadbeef	\N	\N
+\.
+
+
+--
+-- Data for Name: ledger; Type: TABLE DATA; Schema: tenant; Owner: postgres
+--
+
+COPY tenant.ledger (entry_id, slug, amount, posted_at) FROM stdin;
+1	acme	10.50	2025-03-01 12:00:00+00
+2	acme	-2.25	2025-03-02 12:00:00+00
+3	globex	99.99	\N
+\.
+
+
+--
+-- Data for Name: settings; Type: TABLE DATA; Schema: tenant; Owner: postgres
+--
+
+COPY tenant.settings (key, value) FROM stdin;
+locale	en_GB
+retention_days	30
+\.
+
+
+--
+-- Name: tenant_only tenant_only_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.tenant_only
+    ADD CONSTRAINT tenant_only_pkey PRIMARY KEY (slug);
+
+
+--
+-- Name: widgets widgets_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.widgets
+    ADD CONSTRAINT widgets_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: ledger ledger_pkey; Type: CONSTRAINT; Schema: tenant; Owner: postgres
+--
+
+ALTER TABLE ONLY tenant.ledger
+    ADD CONSTRAINT ledger_pkey PRIMARY KEY (entry_id);
+
+
+--
+-- Name: settings settings_pkey; Type: CONSTRAINT; Schema: tenant; Owner: postgres
+--
+
+ALTER TABLE ONLY tenant.settings
+    ADD CONSTRAINT settings_pkey PRIMARY KEY (key);
+
+
+--
+-- Name: ledger ledger_slug_fkey; Type: FK CONSTRAINT; Schema: tenant; Owner: postgres
+--
+
+ALTER TABLE ONLY tenant.ledger
+    ADD CONSTRAINT ledger_slug_fkey FOREIGN KEY (slug) REFERENCES public.tenant_only(slug);
+
+
+--
+-- PostgreSQL database dump complete
+--
+
+\unrestrict 2pPa0X6nFF86458ZkAoxoTmmHNU7XWoKjxTvL6TTwJoIBal9gg8GW6fwDxhE7tu
 
 --
 -- Database "postgres" dump
@@ -503,7 +705,7 @@ ALTER TABLE ONLY logs.events
 -- PostgreSQL database dump
 --
 
-\restrict syba4TF117QvxizV3U3MXdfoHjfMh9TppAsSEfvfuRdNAXabZzuURHiGGjPQwvR
+\restrict S8T42WeS4Ign7HhcFuwdiN2x680aJnLr0lUWSWRQrOvz57f1g2fncKh5glX4YqK
 
 -- Dumped from database version 15.19
 -- Dumped by pg_dump version 15.19
@@ -523,7 +725,7 @@ SET row_security = off;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict syba4TF117QvxizV3U3MXdfoHjfMh9TppAsSEfvfuRdNAXabZzuURHiGGjPQwvR
+\unrestrict S8T42WeS4Ign7HhcFuwdiN2x680aJnLr0lUWSWRQrOvz57f1g2fncKh5glX4YqK
 
 --
 -- PostgreSQL database cluster dump complete
