@@ -221,6 +221,37 @@ The comparison's other half is the throughput row above: the same recipe on a
 build predating the per-block save, so reproducing the *delta* means checking
 out one of each.
 
+## The preamble prepass is bounded by the schema, not by the dump
+
+`pgdq parse` and every cold query open with `index::scan_preamble`, which reads
+from byte 0 to the first `COPY` header. It is the one region that ignores
+`ScanOptions::cancel` (see `architecture.md`, "`parse` resumes, and saves as it
+goes"), so "bounded by its own length" is the claim that has to hold.
+
+**koji: 63,333 bytes of 784,019,857,152** — 0.00000008 of the file. The whole
+uncancellable region is one read.
+
+```sh
+LC_ALL=C grep -m1 -b -a -E '^COPY .* FROM stdin;' /path/to/koji.dump | cut -c1-80
+```
+
+**The most preamble-heavy shape available: 0.04 s.** A 4000-table dump is 49%
+preamble by bytes (the first `COPY` header sits at 980,996 of 1,998,741), and
+`--preamble-only` maps all of it in 40 ms — against ~20 s for the same file's
+full `parse`, which is dominated by the quadratic below.
+
+```sh
+cd scripts && uv run generate_block_count_bench.py --blocks 4000 --out /tmp/r4000.sql
+rm -f /tmp/r4000.sql.dqcache
+/usr/bin/time -f '%e s' pgdq parse --preamble-only --source /tmp/r4000.sql
+```
+
+So the region grows with the *schema* — table count and DDL size — and not with
+the data, which is what makes an immediate Ctrl-C during it a non-issue on a
+local file. The remote case is not covered by these numbers: 63 KB is still one
+ranged GET that can hang, and that is a Phase 6 decision
+(`roadmap-phase6-inbox.md`).
+
 ## Per-block cache saving is quadratic in block count, and so is the map
 
 The regime koji cannot show: **block-rich and byte-poor** — a schema with

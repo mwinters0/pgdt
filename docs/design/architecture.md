@@ -1068,13 +1068,25 @@ purpose**:
 A caller with `metadata: None` is left on `NotDeclared`: it has no DDL for any
 database, so there is no scan to finish.
 
-**No mapping scan produces the condition any more.** The pass states a
-database's DDL at that database's first `COPY` block, which it necessarily
-passes before any of that database's blocks can be banked, so a block in the
-map always has its database covered. Both answers stay, because both are right
-for a caller presenting metadata some *other* scan built — an embedder's own
-index, or a `ResumeToken` carried across one — and because the asymmetry is
-about what a stream owes its caller, not about how the metadata was reached.
+**No mapping scan produces the condition any more**, and the two answers are
+not equally reachable because of it. The pass states a database's DDL at that
+database's first `COPY` block, which it necessarily passes before any of that
+database's blocks can be banked, so a block in the map always has its database
+covered.
+
+- `ColumnResolution::MetadataNotScanned` stays **reachable**: `resolve_columns`
+  is public and takes its `metadata` from the caller, so an embedder resolving
+  against an index it assembled itself can still present the condition.
+- `Error::MetadataNotScanned` is **unreachable through every public entry
+  point**. `stream::resolve_block` is private, all three of its call sites are
+  in `table_stream`, and all three use the `metadata` read after that call's
+  own mapping pass — the resumed path included, so a `ResumeToken` does not
+  reach it either.
+
+The check is kept anyway, and pinned by a unit test rather than left as
+untested defence: it is what stands between a future reordering — moving that
+metadata read back above the mapping pass — and a silently wrongly-typed row,
+which is the exact failure the whole asymmetry exists to prevent.
 
 ### One schema per stream, resolved up front
 

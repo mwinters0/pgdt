@@ -1654,3 +1654,44 @@ pg_dump --schema=s | grep -A 3 'CREATE TABLE s.t'
 
 The two columns must print as `c s."x ARRAY",` and `g s."x ARRAY"[]` — the
 keyword inside the quotes, the array marker outside.
+
+---
+
+## I30 — `pg_dumpall` writes `template1` first, then every database in `datname` order
+
+**Claim.** The order of the `\connect`-delimited segments in `pg_dumpall`
+output is fully determined by database *name*: `template1` first, then the
+remaining connectable databases sorted by `datname`. It is not creation order,
+OID order, or anything a fixture would have to observe empirically.
+
+**Proof.** `dumpDatabases()` in `pg_dumpall.c` drives the loop from one query:
+
+```sql
+SELECT datname FROM pg_database d
+WHERE datallowconn AND datconnlimit != -2
+ORDER BY (datname <> 'template1'), datname
+```
+
+The `ORDER BY` is the whole guarantee — the boolean sorts `false` (i.e.
+`template1`) first, then `datname` breaks the rest. The comment above it says
+why `template1` leads: the restore script must not be connected to a database
+it is about to drop.
+
+**Scope limit.** `datallowconn AND datconnlimit != -2` excludes non-connectable
+databases and (v15+) template-marked ones, so a database can be absent
+entirely; that is orthogonal to the ordering of those present. Says nothing
+about `pg_dump --create`, which emits one database and no ordering question.
+
+**Verified against:** v13.23, v18.6, master — the query is byte-identical in
+all three.
+**Relied on by:** `architecture.md` ("Fixtures"). The `edge_cases/dumpall`
+fixture's database sequence is chosen by naming, not observed: a second
+data-carrying database named `pgdq_tenant` lands between `pgdq_fixture` and
+`postgres`, which is what makes "cancel inside the *second* database's data" a
+deterministic file offset for the recurring-metadata-boundary test
+(`architecture.md`, "`parse` resumes, and saves as it goes"). If the ordering
+changed, that test would cancel in the wrong segment and still pass.
+**Re-verify:**
+```sh
+grep -n "datname <> 'template1'" -B 6 src/bin/pg_dump/pg_dumpall.c
+```

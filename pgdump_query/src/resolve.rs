@@ -53,10 +53,10 @@ pub enum ColumnResolution {
     /// mapping pass states a database's DDL at that database's first `COPY`
     /// block (I1's recurring boundary), which is strictly before any of its
     /// blocks can be banked, so a block in the map always has its database
-    /// covered. What is left is a caller presenting metadata some *other* scan
-    /// built: an embedder's own index, or a `crate::stream::ResumeToken`
-    /// carried across one. The variant stays because the answer it gives is
-    /// the right one whenever that happens.
+    /// covered. What keeps the variant is that [`resolve_columns`] is public
+    /// and takes its `metadata` from the caller: an embedder resolving against
+    /// an index it assembled itself can still present the condition, and this
+    /// is the right answer when it does.
     ///
     /// **Held apart from [`Self::NotDeclared`], which it would otherwise look
     /// exactly like.** `NotDeclared` means the dump never explained this

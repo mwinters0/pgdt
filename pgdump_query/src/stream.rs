@@ -689,12 +689,17 @@ impl<'a> TableStream<'a> {
 ///
 /// `Typed` mode against metadata that doesn't (yet) have a *complete* entry
 /// for `database` is `Error::MetadataNotScanned` rather than a silent
-/// `NotDeclared` degradation. No mapping scan produces that state any more —
-/// `map_forward` states a database's DDL at its first `COPY` block, so a block
-/// in the map always has its database covered — but the check stays: it is the
-/// guard that keeps a *wrongly*-typed row from ever being handed back, and a
-/// caller can reach it with metadata this stream did not build (a
-/// [`ResumeToken`] carried across a re-scan, or an embedder's own index).
+/// `NotDeclared` degradation.
+///
+/// **No caller can trip it today**, and that is deliberate rather than
+/// accidental: all three call sites are in [`table_stream`], which reads
+/// `index.metadata` *after* its mapping pass, and the mapping pass states a
+/// database's DDL at that database's first `COPY` block — strictly before any
+/// of its blocks can be replayed. The resumed path ([`resume_state`]) shares
+/// that same clone, so a [`ResumeToken`] does not reach it either. The check
+/// stays because it is what stands between a future reordering — moving that
+/// clone back above `map_forward` — and a silently wrongly-typed row, and it
+/// is pinned by a unit test rather than left as untested defence.
 fn resolve_block(
     header: &CopyHeader,
     field_count: usize,
@@ -1180,5 +1185,60 @@ mod tests {
     #[test]
     fn an_absurd_save_cost_saturates_rather_than_panicking() {
         assert!(!SaveThrottle::due_after(Duration::MAX / 2, Duration::MAX));
+    }
+
+    /// **The guard no caller can trip any more, pinned so it stays that way.**
+    /// [`resolve_block`] refuses `Typed` resolution against metadata that has
+    /// no complete entry for the block's database, and every one of its three
+    /// call sites now satisfies that by construction: `table_stream` reads
+    /// `index.metadata` *after* its mapping pass, and the mapping pass states a
+    /// database's DDL at that database's first `COPY` block, strictly before
+    /// any of its blocks can be replayed.
+    ///
+    /// That makes `Error::MetadataNotScanned` unreachable through every public
+    /// entry point — and makes this check the thing standing between a future
+    /// reordering (moving the clone back above `map_forward`, say) and a
+    /// silently wrongly-typed row. An untested guard is one that gets deleted
+    /// as dead code, so it is exercised directly here rather than through an
+    /// integration test that can no longer construct the state.
+    #[test]
+    fn resolving_a_block_against_a_database_the_metadata_lacks_refuses() {
+        use crate::preamble::DatabaseMetadata;
+        use crate::resolve::SchemaMode;
+
+        let header = crate::copy::parse_copy_header(b"COPY public.t (id) FROM stdin;")
+            .expect("a well-formed header");
+        let first = DatabaseMetadata {
+            name: Some("first".to_string()),
+            preamble_complete: true,
+            server_version: None,
+            pg_dump_version: None,
+            extensions: Vec::new(),
+            types: Vec::new(),
+            tables: Default::default(),
+        };
+        let metadata = DumpMetadata { databases: vec![first] };
+
+        let err =
+            resolve_block(&header, 1, Some(&metadata), Some("second"), SchemaMode::Typed, &[])
+                .expect_err("the metadata has no entry for `second`");
+        assert!(
+            matches!(&err, Error::MetadataNotScanned { database } if database.as_deref() == Some("second")),
+            "{err:?}"
+        );
+
+        // The same block in the database the metadata *does* cover resolves,
+        // so the refusal is about coverage and not about the lookup failing.
+        assert!(
+            resolve_block(&header, 1, Some(&metadata), Some("first"), SchemaMode::Typed, &[])
+                .is_ok()
+        );
+
+        // And `Strings` never looks, so it is never refused — the documented
+        // way out of the error.
+        assert!(
+            resolve_block(&header, 1, Some(&metadata), Some("second"), SchemaMode::Strings, &[])
+                .is_ok()
+        );
     }
 }

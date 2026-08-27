@@ -179,6 +179,44 @@ was earned after 9.1-9.4 landed and reopened the phase; **9.5.1** was earned by
   as provisional pending real user trials; the resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 
+- **A second data-carrying database in the `pg_dumpall` fixture** — out-of-band
+  work, **its own round**, settled 2026-08-27. `edge_cases/dumpall.sql` spans
+  three databases but has `COPY` blocks in only one, so 9.5.1's recurring
+  per-database metadata boundary is verified only against a hand-concatenated
+  file `pg_dump` never wrote. `generate_fixtures.py` gains **`pgdq_tenant`**,
+  loaded with about four tables: `public.widgets` under the same name as the
+  first database's but with **different column types** (so resolving a
+  database-2 block to database 1's types is a visible failure, not merely an
+  absent error), plus at least one table unique to it (so the DDL is provably
+  read rather than inherited). By I30 that name lands it between
+  `pgdq_fixture` and `postgres` — two consecutive data-carrying databases, then
+  an empty one, which is the case only the EOF recompute covers. It is created
+  and dropped for the `edge_cases` schema only, in `create_fixture_db` /
+  `drop_fixture_db`, the way `prepare_tablespace_dir` is already gated on
+  `objects` — so `dump_flag_set` stays a pure dump-and-write function. Its DDL
+  is `scripts/fixture_schema_edge_cases_tenant.sql`, loaded by an explicit
+  second call in that branch: `schema_file()` stays a pure fixture-directory →
+  file mapping, and the name says the file belongs to `edge_cases` rather than
+  naming a fifth fixture set. Its header comment states why the database
+  exists — a second `COPY`-carrying segment for I1's recurring boundary —
+  since a bare four-table schema file with no explanation is what gets
+  "simplified" away later. Regenerated across all six majors.
+
+  `map_file.rs`'s recurring-boundary test moves onto it and **keeps** its
+  concatenated case beside it: a real `pg_dumpall` and a bare `cat a.sql
+  b.sql` are different shapes (I9), and nothing else covers the concatenation.
+  `pgtype.rs`'s and `partial_reporting.rs`'s own copies of the helper stay as
+  they are; sweeping them is unrelated churn. The name is deliberately *not*
+  `pgdq_fixture_2`, which all three synthetic helpers already use — with both
+  constructions in one test file, a failure naming `pgdq_fixture_2` would not
+  say which it came from.
+
+  No insta snapshots cover `dumpall.sql`, and the three tests that read it
+  (`map.rs`, `preamble.rs`, `pgtype.rs`) assert properties rather than content,
+  so the blast radius is the regeneration itself. Kept apart from the two
+  drive-bys below: a six-major regeneration and two error-message changes in
+  one diff would bury the latter.
+
 - **Two out-of-band items, queued as one round**: the `--dqcache none` error
   naming `pgdq parse --dqcache <path>` as its remedy, and `TOC_PREFIX_STATS`
   recognition. They are decision-free and share one review surface. A third —
@@ -312,45 +350,27 @@ Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
 
-*Three from 9.5.1, all decided by proceeding.*
+**Nothing is pending**; the notes below say how the last of them went.
 
-**A `parse` interrupted before it starts still reads the preamble.**
-`scan_preamble` ignores `ScanOptions::cancel` on purpose (a stop there could
-not be told from reaching the first `COPY` header), and `map_file` runs it
-before `map_forward`'s first flag check — so a Ctrl-C at t=0 leaves a cache
-holding the first database's DDL rather than nothing. `map_file.rs`'s
-`a_scan_cancelled_before_it_starts_maps_only_the_preamble` used to assert the
-opposite ("nothing was read, so nothing is claimed") and was rewritten. Taken
-because it is what the 2026-08-27 review reasoned to — the prepass is an
-uncancellable region bounded by its own length, and banking it is the whole
-point of the slice. What would change if reversed: one branch skipping the
-prepass when the flag is already set, and an immediate Ctrl-C behaving
-differently from one a millisecond later.
-
-**Both `MetadataNotScanned`s are now unreachable from any mapping scan, and
-both were kept.** A database's DDL is stated before any of its blocks can be
-banked, so no producer leaves the condition. `stream::resolve_block`'s
-pre-resolution check stays as the guard against handing back a wrongly-typed
-row, and `ColumnResolution::MetadataNotScanned` stays as the reporting answer;
-both remain right for a caller presenting metadata some *other* scan built.
-`partial_reporting.rs`'s test now pins that answer against a deliberately
-hand-built pairing. The alternative — deleting one or both as dead — would
-close the Phase 6 question about which answer an embedder gets before Phase 6
-gets to decide it; the narrowing is filed into
-[`../design/roadmap-phase6-inbox.md`](../design/roadmap-phase6-inbox.md)
-instead.
-
-**The spec's third-database assertion was replaced, not dropped.** It asks for
-`MetadataNotScanned` on the third database's blocks after cancelling inside the
-second — but such a scan has banked none of the third's blocks, so there is
-nothing to resolve. The test asserts the checkable half instead (both finished
-databases `preamble_complete` with real DDL, every banked block resolving
-without `MetadataNotScanned`, and the resumed index matching an eager pass span
-for span), which a prepass-only implementation still fails. The fixture also
-had to change: `edge_cases/dumpall.sql`, which the spec names, has `COPY`
-blocks in only one of its three databases. Detail in the slice notes.
-
-*The notes below say how earlier entries went.*
+*9.5.1's three entries were reviewed on 2026-08-27.* The **prepass running
+even when the cancel flag is already set** **stands**, now with numbers behind
+"bounded by its own length": koji's preamble is 63,333 bytes of 784 GB, and the
+most preamble-heavy shape available (4000 tables, 49% preamble by bytes) maps
+in 0.04 s — both in [`../design/measurements.md`](../design/measurements.md),
+"The preamble prepass is bounded by the schema". The **two
+`MetadataNotScanned`s** are **both kept, and the record corrected**: grilling
+found the entry's own claim false, since `stream::resolve_block` is private and
+all three call sites read `metadata` after the mapping pass, so a carried
+`ResumeToken` cannot reach it either — `Error::MetadataNotScanned` is
+unreachable through every public entry point, while
+`ColumnResolution::MetadataNotScanned` stays reachable because `resolve_columns`
+is public. The guard is kept as what stands between a future reordering and a
+wrongly-typed row, and is now pinned by a unit test in `stream.rs` rather than
+left as untested defence. The **`pg_dumpall` fixture** entry is **reversed**:
+`edge_cases/dumpall.sql` gains a second data-carrying database rather than
+leaving the recurring boundary verified only against a hand-concatenated file
+`pg_dump` never wrote — queued under "Not started". Reasoning:
+[`history/2026-08-27.md`](history/2026-08-27.md).
 
 *9.5's two-granularity guard entry was reviewed on 2026-08-27 and **stands**,
 restated as a principle.* The amendment is right — chunk granularity alone

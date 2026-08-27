@@ -59,14 +59,20 @@ which differs from any database, so the next `CopyStart` recomputes. If the
 scan reaches EOF instead, `map_file`'s own recompute covers it. Nothing needed
 a cache format bump.
 
-**`ColumnResolution::MetadataNotScanned` and `Error::MetadataNotScanned` are
-now unreachable from any mapping scan.** A database's DDL is stated before any
-of its blocks can be banked, so a block in the map always has its database
-covered. Both stay: they are the right answers for a caller presenting metadata
-some *other* scan built — an embedder's own index, or a `ResumeToken` carried
-across one — and `stream::resolve_block`'s check is the guard that keeps a
-wrongly-typed row from being handed back. `partial_reporting.rs` still pins the
-reporting half, now against a deliberately hand-built pairing
+**The two `MetadataNotScanned`s are no longer equally reachable, and only one
+of them is reachable at all.** A database's DDL is stated before any of its
+blocks can be banked, so a block in the map always has its database covered.
+`ColumnResolution::MetadataNotScanned` survives that because `resolve_columns`
+is `pub` and takes caller-supplied metadata; `Error::MetadataNotScanned` does
+not — `stream::resolve_block` is private, its three call sites are all in
+`table_stream`, and all three use the `metadata` read *after* that call's own
+`map_forward`, `resume_state` included, so a carried `ResumeToken` does not
+reach it either. Both are kept: the check is what stands between a future
+reordering (moving that read back above the mapping pass) and a silently
+wrongly-typed row. Because that left it as *untested* defence — the test that
+exercised it was this slice's own rewrite — `stream.rs` gained a unit test
+calling `resolve_block` directly. `partial_reporting.rs` still pins the
+reporting half, against a deliberately hand-built pairing
 (`write_truncated_cache`'s `keep_databases`) rather than one a producer leaves.
 The narrowing is filed into `roadmap-phase6-inbox.md`, where the embedded API
 has to pick between the two answers.
@@ -86,12 +92,32 @@ wanted.
 `edge_cases/dumpall.sql` — the fixture the spec names — spans three databases
 (`template1`, `pgdq_fixture`, `postgres`) but only **one** of them has `COPY`
 blocks, so the file's first `COPY` header closes out every database that could
-matter and the recurring boundary is never reached twice. The vehicle is the
-concatenated pair of `edge_cases/create.sql` copies with the second's database
-renamed (`tests/map_file.rs`'s `multidb`, the same construction
-`tests/pgtype.rs` and `partial_reporting.rs` already use): two databases, both
-with blocks. 9.5's `CancelsPast` trips the flag at a chosen file offset, so
-cancelling inside the second database's data is deterministic.
+matter and the recurring boundary is never reached twice. The vehicle this
+slice used is the concatenated pair of `edge_cases/create.sql` copies with the
+second's database renamed (`tests/map_file.rs`'s `multidb`, the same
+construction `tests/pgtype.rs` and `partial_reporting.rs` already use): two
+databases, both with blocks. 9.5's `CancelsPast` trips the flag at a chosen
+file offset, so cancelling inside the second database's data is deterministic.
+
+**That is a stopgap, reversed at the 2026-08-27 grilling.** The mechanism is
+licensed by I1's *scope limit*, and verifying it only against a file `pg_dump`
+never wrote is the gap: `generate_fixtures.py` is to grow a second
+data-carrying database, `pgdq_tenant`, so `dumpall.sql` itself reaches the
+boundary twice. Its position is chosen by name rather than observed — **I30**
+records that `pg_dumpall` orders `template1` first then by `datname` — landing
+it between `pgdq_fixture` and `postgres`, so the file holds two consecutive
+data-carrying databases followed by an empty one. The sharp part of the schema
+is a `public.widgets` sharing the first database's name with *different* column
+types: resolving a database-2 block to database 1's types then fails visibly,
+where a distinct-name fixture can only show the absence of an error. Queued in
+`STATUS.md`, "Not started", as its own out-of-band round.
+
+**The concatenated case stays even so.** A real `pg_dumpall` and a bare
+concatenation are different shapes — I9: `pg_dumpall` passes `--create` for
+ordinary databases but writes `postgres`/`template1`'s `\connect` lines
+itself, so those segments' version headers land *after* their `\connect` — and
+the concatenation is what a user gets from `cat a.sql b.sql`, which nothing
+else covers. So `map_file.rs` ends up with both; the helper does not go away.
 
 ## Verified with a real signal
 
@@ -106,7 +132,10 @@ Resuming produced a cache **byte-identical** to a straight-through parse's.
 The cold-parse wall time on that file is 20.4 s against 9.5's 23.5 s — noise on
 an unpinned machine, not an improvement to claim. The prepass reads the
 preamble once and `map_forward` resumes from where it stopped, so nothing is
-read twice; `measurements.md` needs no new figure.
+read twice. What the prepass itself costs is
+[`measurements.md`](measurements.md), "The preamble prepass is bounded by the
+schema, not by the dump": 63,333 bytes on koji, and 0.04 s on the
+most preamble-heavy shape available.
 
 ## What the koji run adds
 

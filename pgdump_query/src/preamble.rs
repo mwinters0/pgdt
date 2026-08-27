@@ -57,12 +57,13 @@ pub struct DatabaseMetadata {
     /// finish a database's segment, never leave one half-read. What it
     /// composes with is `DumpIndex::scanned_through`: the *first* database's
     /// metadata is guaranteed present after any scan that persists a cache
-    /// (`crate::stream::table_stream`'s prepass — see
-    /// `docs/design/architecture.md`, "The preamble grammar and `DumpMetadata`"), but a
-    /// later `\connect`-ed database's is only ever populated by a full scan
-    /// — so a caller walking `DumpIndex::metadata` still needs to check this
-    /// per-database rather than assume the whole list is complete just
-    /// because a cache file exists.
+    /// (the preamble prepass — see `docs/design/architecture.md`, "The
+    /// preamble grammar and `DumpMetadata`"), and every later `\connect`ed
+    /// database's is stated when the mapping pass reaches that database's
+    /// first `COPY` block. So the list covers exactly the databases whose
+    /// data the scan reached — a caller walking `DumpIndex::metadata` still
+    /// checks this per-database rather than assuming the whole list is
+    /// complete just because a cache file exists.
     pub preamble_complete: bool,
     pub server_version: Option<String>,
     pub pg_dump_version: Option<String>,
