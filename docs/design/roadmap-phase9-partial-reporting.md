@@ -114,6 +114,77 @@ full listing gives no signal that it resumed rather than rescanned, which is
 exactly what a user checking on an interrupted koji scan needs. One line naming
 the resume point precedes the listing.
 
+## The save throttle, and saving on the way out
+
+The koji figure asked the right question of the wrong dump. At 74 blocks over
+3300 seconds the per-block save is +1.5%, so 9.1 built no throttle — but each
+save serializes the **whole** index, so total work is O(blocks^2), and koji
+cannot see that regime. Measured on a synthetic dump in `pg_dump` order, wall
+time is 0.62s / 2.54s / 10.73s / 44.36s at 500 / 1000 / 2000 / 4000 `COPY`
+blocks, a clean 4x per doubling, against **under 10ms** for the same byte count
+in a single block. Every run is 99% CPU: the cost is serialization, not the
+write. A schema with a few thousand tables, or one partitioned table with a
+daily leaf over a decade, pays tens of seconds of pure overhead on a
+two-megabyte file. Figures and commands are in
+[`measurements.md`](measurements.md).
+
+**The throttle is self-tuning, not an interval.** Skip a block's save unless
+the elapsed time since the last save is at least `K` times what the last save
+*took*, always saving at EOF. That bounds the overhead at roughly `1/K` of
+scan time in every regime without a constant that is wrong in one of them: a
+cheap cache saves often, an expensive one saves rarely, and koji — whose blocks
+are ~45s apart and whose saves cost well under a second — is untouched.
+
+*Rejected:* "save at most every N seconds" and "every N bytes". Both need a
+number chosen against one dump shape, and both are wrong on the other: N
+seconds is too frequent for a slow save and too rare for a fast one, and N
+bytes is blind to the fact that the cost tracks block count, not bytes read.
+
+**A throttled scan must still save what it has when it is killed.** On
+`SIGINT` and `SIGTERM`, `parse` saves what it holds and exits. Without it the
+throttle would trade a measured cost for an unmeasured one, and the container
+form in `CLAUDE.md` — where a stop is a `SIGTERM` — is the shape most likely to
+hit it.
+
+What the guard costs the throttle is close to nothing, because the skipped
+saves were only ever writes of state the **in-memory** index still holds: the
+splice, the roles, the tablespaces and `scanned_through` are updated at every
+`CopyEnd` whether or not the save runs. So a graceful interrupt loses only the
+block in flight, exactly as it did before the throttle, and the throttle's
+window is exposed to `SIGKILL`, power loss and panics alone.
+
+**The guard is a cooperative flag, checked once per chunk.** `map_file` owns
+the `DumpIndex` for the whole scan, so racing `ctrl_c` against that future in
+the CLI would *destroy* the map rather than save it — cancellation has to
+reach inside the loop. `ScanOptions` carries an `Option<Arc<AtomicBool>>`,
+defaulting to `None` so no existing caller changes, and the chunk loop reads it
+each time round. Chunk granularity rather than `CopyEnd` granularity is the
+whole point: koji's largest block is hundreds of gigabytes, and a Ctrl-C that
+waits for the next block boundary is indistinguishable from a hang. The
+interrupt path needs no snapshot logic of its own — `index` is consistent at
+the last completed block — so it is `cache.save`, then return an outcome the
+CLI can tell apart from EOF.
+
+*Rejected:* `tokio::select!` in the CLI over `ctrl_c` and the scan. It reads as
+the obvious form and it is the one that silently discards the work.
+
+**The CLI catches both signals and never traps the user.** `SIGINT` and
+`SIGTERM` both set the flag (the CLI crate gains tokio's `signal` feature);
+the run prints where it stopped and that re-running resumes, and exits non-zero
+by signal — 130 and 143 — so a script can tell an interrupt from a failure. A
+**second** signal kills immediately rather than being swallowed, so a save that
+wedges cannot hold the process.
+
+**One rule for both callers, with every exit saving unconditionally.**
+`map_forward` is one loop with two callers, so the throttle applies to `query`
+too; that is harmless — a query stops at its target and saves a handful of
+times — except for one sharp edge: the save at the last `CopyEnd` before an
+early stop is what persists the map for the next query, and skipping *it*
+would throw the scan away. So the throttle governs mid-scan saves only, and
+EOF, target-settled and interrupt all save. `K = 20` is the starting constant
+(~5% of scan time); the 500/1000/2000/4000-block series is what says whether it
+over- or under-shoots, rather than an argument in prose.
+
 ## What a partial index actually lacks
 
 Coverage is stated **once**, at the top, and nothing below it is qualified.
@@ -245,6 +316,13 @@ fixtures. The measurement sits in the slice whose design it could overturn.
 | 9.2 | `info` stops scanning: `CacheStatus::Absent` splits, the "run `pgdq parse`" errors, the mtime warning, `--preamble-only` moves to `parse`. Both invocation forms unchanged |
 | 9.3 | The coverage line — `Scan completion: 76% (12345 bytes)` in text, the components as separate fields in JSON |
 | 9.4 | `--json` carries per-block resolution, including `ColumnResolution::MetadataNotScanned` |
+| 9.5 | The self-tuning save throttle and the interrupt guard, earned from the measurement 9.1 was asked to take. Plus `scripts/generate_block_count_bench.py` and the block-count series in `measurements.md` |
+
+**9.5 was earned by 9.1's own measurement.** The spec told 9.1 to build a
+throttle "only if the number demands it", and the koji number did not — but
+koji has 74 blocks and the cost is quadratic in that count. The number that
+demands it came from a dump shape koji cannot represent, which is why this is a
+slice earned from a discovery rather than a knob 9.1 should have built blind.
 
 **9.3 is small enough to fold into 9.2 and is kept separate anyway.** It is the
 phase's only user-facing formatting decision, and the one most likely to come
@@ -263,6 +341,25 @@ against caches built by an unrelated command's edge case.
   finishes**, and the finished index is identical to one `build_index`
   produced in a single pass — span for span, including the census. This is the
   phase's central claim and the one that would fail silently.
+- **The saves stay a bounded fraction of the scan as the block count grows** —
+  the 500/1000/2000/4000-block series re-run against the throttle, which must
+  turn its 4x-per-doubling into a curve that tracks the scan instead. The
+  series comes from `scripts/generate_block_count_bench.py` (`--blocks`,
+  `--out`, following `generate_insert_run_bench.py`'s conventions), because a
+  verification that cannot be re-run is not one: `generate_perf_data.py` is
+  parameterized by size and this benchmark is parameterized by block count, so
+  it is a second script rather than a section in that one. And an interrupted
+  `parse` still leaves a loadable cache: the guard is what makes the throttle
+  safe, so it is verified with it.
+- **The guard's real-scale test rides on Phase 4's wrap koji run**, which is
+  the only place the shape that matters exists: an interrupt arriving inside a
+  hundred-gigabyte block, against a cache already holding dozens. That run is
+  stopped partway with `nerdctl stop` — a `SIGTERM`, which is what the guard
+  catches — checked for a loadable cache reporting partial coverage, then
+  resumed to completion and compared against the 9.1 figures. One scan serves
+  both that and the identity check; if the stop proves awkward to sequence
+  unattended, identity keeps priority and the interrupt test drops to fixture
+  scale.
 - The koji write-amplification figure exists in
   [`measurements.md`](measurements.md) with its command, whether or not it
   triggers the throttle. A number that only appears when it is bad is a number

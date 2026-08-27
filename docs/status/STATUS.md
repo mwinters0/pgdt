@@ -29,7 +29,7 @@ per-phase checklist here any more. How the system works is
 | Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-26 (Phase 9 complete: `parse` resumes and is the only scanner; `info` reports from the cache, coverage line included; `--json` carries per-block resolution; the koji write-amplification figure is in `measurements.md` and no save throttle is built. Phase 4.4.3: every array-declaration spelling resolves as `integer[]` does).
+Last updated: 2026-08-26 (Phase 9: 9.1-9.4 landed and **9.5** is earned and open — `parse` resumes and is the only scanner; `info` reports from the cache, coverage line included; `--json` carries per-block resolution; the koji write-amplification figure is in `measurements.md`, and the block-count regime it could not see is what 9.5 closes. Phase 4.4.3: every array-declaration spelling resolves as `integer[]` does).
 
 ## Phase 4 progress
 
@@ -119,7 +119,8 @@ Specified in
 
 Specified in
 [`../design/roadmap-phase9-partial-reporting.md`](../design/roadmap-phase9-partial-reporting.md).
-Taken ahead of the rest of Phase 4 (**4.4.4** and **4.6** remain there).
+Taken ahead of the rest of Phase 4 (**4.4.4** and **4.6** remain there). **9.5**
+was earned after 9.1-9.4 landed and reopens the phase.
 
 - [x] **9.1** `parse` resumes from a matching cache and persists after every
       completed block, via `stream::map_forward`; the resume-point line
@@ -141,12 +142,28 @@ Taken ahead of the rest of Phase 4 (**4.4.4** and **4.6** remain there).
 - [x] **9.4** `--json` carries per-block resolution, including
       `ColumnResolution::MetadataNotScanned`. Notes:
       [`../design/roadmap-phase9.4-machine-readable-resolution-notes.md`](../design/roadmap-phase9.4-machine-readable-resolution-notes.md)
+- [ ] **9.5** The self-tuning save throttle and the interrupt guard, earned
+      from 9.1's own measurement: the per-block save is O(blocks^2), which
+      koji's 74 blocks cannot show and a 4000-block dump pays 44s for on a 2 MB
+      file. Skip a mid-scan save unless the elapsed time since the last is at
+      least `K` (=20) times what the last save took; EOF, target-settled and
+      interrupt always save. The guard is a cancel flag on `ScanOptions` read
+      once per chunk, set by the CLI on `SIGINT`/`SIGTERM`, exiting 130/143.
 
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; the resulting changes land as
   out-of-band items. Nothing is pooled here at present.
+
+- **Three out-of-band items, queued as one round after 9.5**: the
+  `DumpMetadata` recompute moving from `map_file` into `map_forward`'s EOF tail
+  so a cold query and a warm one type a `pg_dumpall` file alike; the
+  `--dqcache none` error naming `pgdq parse --dqcache <path>` as its remedy;
+  and `TOC_PREFIX_STATS` recognition. They are decision-free and share one
+  review surface. 9.5 lands alone first — it is the one with behavioural
+  exposure (signals, exit codes, a skipped-save rule) and should not share a
+  review with three drive-bys.
 
 ## Known gaps
 
@@ -205,12 +222,17 @@ Taken ahead of the rest of Phase 4 (**4.4.4** and **4.6** remain there).
   embedded API's promises get decided against it deliberately.
 - `map::parse_toc_header_line` does not recognize `TOC_PREFIX_STATS`
   (`"Statistics for "`, a v18+ `--statistics` component — not
-  `--with-statistics`, which does not exist in any version). A deliberate
-  deferral rather than a gap: fixture evidence exists
-  (`fixtures/18/objects/stats.sql`) and the entry just degrades
-  gracefully, tiling as an ordinary `Unparsed` span with `toc: None`, the
-  same as any other unhandled TOC comment shape. Detail:
+  `--with-statistics`, which does not exist in any version). **Queued as
+  out-of-band work in the 9.5 round.** The entry tiles as an ordinary
+  `Unparsed` span with `toc: None`, so the map stays byte-exact, but each of
+  the fixture's 14 statistics entries costs two unattributed spans: TOC
+  coverage reads 126/175 (72%) against 126/147 (86%) for the same schema
+  without them, so the diagnostic under-reports how much of the file the map
+  understood. Only a dump taken with `--statistics` / `--statistics-only` is
+  affected — `dumpStatistics` defaults to false in v18.6 and on master.
+  Fixture evidence: `fixtures/18/objects/stats.sql`. Detail:
   [`../design/architecture.md`](../design/architecture.md), "TOC enrichment".
+
 - `DumpIndex::roles`/`tablespaces` are complete only once `scanned_through`
   reaches the file's size — the same partiality `metadata`'s
   `preamble_complete` already carries, for the same reason: a query that
@@ -235,55 +257,32 @@ Taken ahead of the rest of Phase 4 (**4.4.4** and **4.6** remain there).
 
 Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
-it has been looked at: settled into the design docs, or reversed.
+it has been looked at: settled into the design docs, or reversed. **Nothing is
+pending**; the notes below say how the last of them went.
 
-- **A full scan now recomputes `DumpMetadata` over every span, so `pgdq parse`
-  types every `\connect`ed database, not just the first.** Phase 9 needed it
-  (a resumed `parse` must produce what `build_index` produces), and it is
-  strictly more information — but it means a `pg_dumpall` cache written by
-  `parse` now answers typed queries against later databases where before only
-  `--schema-mode strings` would. It lives in `stream::map_file`, not in
-  `map_forward`, so the streaming path is untouched; reversing it means
-  `parse`'s index no longer equals `build_index`'s.
+*Three Phase 9 entries were reviewed on 2026-08-26.* The **save-throttle**
+entry is **reversed**: the quadratic regime was measured, it costs 44s on a
+4000-block dump, and closing it is slice **9.5** rather than a Phase 7
+question. The **`parse` types every `\connect`ed database** entry is
+**reversed in the direction of agreement**: the recomputation moves into
+`map_forward` so a cold query and a warm one answer alike — an out-of-band
+change, since the divergence it removes was never a decision anyone took. The
+**coverage-line** entry **stands**: the text line prints unconditionally, since
+its absence would leave a user unsure rather than reassured, and `--json`
+carries the components without a rendered line, because a caller can divide.
+Reasoning: [`history/2026-08-26.md`](history/2026-08-26.md).
 
-- **Loading a cache now recomputes the tiling and TOC-coverage diagnostics.**
-  `diagnostic.rs` always said they are recomputed rather than persisted, but
-  nothing did it on the load path until `info` stopped scanning and would
-  otherwise have lost the TOC-coverage figure. Cost is O(spans) per load,
-  including every query's. It also makes `save`→`load` round-trip
-  `DumpIndex` exactly, diagnostics included, which three `tests/cache.rs`
-  assertions previously had to work around.
-
-- **`info --dqcache none` is now an error.** With no scan to fall back on it
-  would have nothing to report, so it is rejected the same way `parse`
-  rejects it. The spec did not name this case; the alternative was reporting
-  an empty index, which reads as "this dump has no tables".
-
-- **The coverage percentage floors and the byte counts left the summary
-  lines.** `N COPY block(s), M row(s)` and `N span(s)` no longer restate
-  `scanned_through`, since the coverage line above owns it. This is the
-  phase's one formatting decision and the one most likely to come back — 9.3
-  is a separate slice precisely so it can.
-
-- **No save throttle is built, and the quadratic half of the reason is
-  reasoned rather than measured.** The koji figure (+1.5% wall, 18.3 MB
-  written against 784 GB read) is what the spec asked for and it says the knob
-  would save nothing, so it was not built. What no sample here can show is the
-  other regime: each save serializes the whole cache, so total bytes written
-  are O(blocks²), and koji has 74 blocks. A dump with thousands of small
-  `COPY` blocks would pay differently. Reversing this is local to the save
-  site and costs nothing already landed; filed into
-  [`../design/roadmap-phase7-inbox.md`](../design/roadmap-phase7-inbox.md) so
-  the scan-performance phase decides it against its own benchmark inputs.
-
-- **`t_enum_domain` gained `v_empty_enum`, which the slice's spec row does not
-  name.** The resolution-outcome coverage test cannot pass without it —
-  `EmptyEnum` was the only outcome no generated fixture reached — and the
-  alternative was exempting the outcome, which would have put a hole in the
-  check on the day it landed. `roadmap.md`'s "Expand the generated fixtures
-  freely" covers it. It also produced **I27**, a real ambiguity worth having
-  written down: a plain dump writes a label-less enum with the same empty body
-  `--binary-upgrade` writes for *every* enum.
+*The three remaining Phase 9 entries were reviewed on 2026-08-26 and all three
+**stand**.* The diagnostics recompute is 3 ms for koji's 833-span cache — a
+full `info --dqcache` run, load and render included — so the O(spans) cost is
+below process startup; the figure is in
+[`../design/architecture.md`](../design/architecture.md), "The cache".
+`info --dqcache none` stays an error, with the message to name `pgdq parse
+--dqcache <path>` as its remedy the way `Error::FieldDecode` names
+`--schema-mode strings` (out-of-band, riding with 9.5). And `v_empty_enum`
+needed no ruling at all: fixture expansion is a standing rule, so additions
+under it stop being logged here — flagging each one dilutes a section meant for
+decisions.
 
 *4.4.3's normalization-placement entry was reviewed on 2026-08-26 and is
 **settled by refactor**.* Grilling established that both placements produce

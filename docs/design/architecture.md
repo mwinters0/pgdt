@@ -1418,7 +1418,9 @@ One helper, `status_from_file`, serves both `load` and `load_offline`.
 `DumpIndex::diagnostics` is `#[serde(skip)]`, so `status_from_file` re-derives
 the tiling check and the TOC-coverage figure from the spans it just read —
 both are pure functions of those spans and O(spans), which is what makes
-recomputation cheaper than storage. A stored one would also be a warning about
+recomputation cheaper than storage. The cost is not close: koji's cache is 833
+spans, and a whole `pgdq info --dqcache` run against it — load, recompute and
+render the full table listing — is **3 ms**, below process startup. A stored one would also be a warning about
 a check *this* run performed successfully. The consequence that made this
 load-bearing: `pgdq info` reports from a cache without ever scanning, so
 anything not recomputed there is simply lost.
