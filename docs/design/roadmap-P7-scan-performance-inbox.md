@@ -211,7 +211,8 @@ six reps each in both orders. On the brace-free `COPY` control — every row
 rejected by the pre-filter — the census costs **0.037 s per 3.00 GiB**, 45 ns
 per 16-column row: **+7%** of a warm scan. On a file where **every** row
 carries an array it costs **1.26 s per 3.00 GiB**, 1.80 µs per 19-column row:
-**+270%** warm. Cold from this SSD a 5.73 s device floor hides both.
+**+270%** warm. Cold from this SSD a 5.73 s device floor hid both at +1.2%
+and +2.6%, on the pre-`M11` pre-filter; `M14` re-takes that regime.
 
 **So the census's cost is the field split, not the pre-filter**: 97.5% of it
 falls on the rows the pre-filter passes. That inverts the reading this entry
@@ -316,25 +317,21 @@ per-byte component does not normalize away per row; and a slow upward drift
 across a long session lands on whichever file is measured later, which is why
 the runs interleave files rather than running them in blocks.
 
-**A third contributor was found and *is* removable — the census.** A
+**A third contributor is probably present and *is* removable — the census.** A
 `strings` leg is a mapping pass plus a row pass, and the mapping pass runs the
 array-shape census, whose cost depends on whether the rows carry a `{`. The
-`--arrays --composite` file's `strings` leg is 24% above the control's for
-exactly that reason (+1.05 s observed, +1.26 s measured directly). So a
-cross-file subtraction that changes the *brace-bearingness* of the rows is
-comparing two different baselines, and only the per-file `typed` − `strings`
-difference cancels it. Earlier sweeps could not see this: at 9.6 s legs a 1 s
+`--arrays --composite` file's `strings` leg is 24% above the control's, which
+is consistent with that (+1.05 s observed against +1.26 s measured directly,
++1.22 s predicted) but not yet established — a direct test with the census-off
+binary was under way when this was filed; re-check it before relying on the
+attribution. If it holds, a cross-file subtraction that changes the
+*brace-bearingness* of the rows is comparing two different baselines, and only
+the per-file `typed` − `strings` difference cancels it. Earlier sweeps could not see this: at 9.6 s legs a 1 s
 difference was inside the spread.
 
-**And the sign of a sub-microsecond attribution can be set by the allocator.**
-The musl leg of the same sweep, on the same inputs with the same reps, put the
-composite column at **−1.16 µs/row** (5 reps, SE 0.24) — five SE on the
-impossible side of zero, and read at the time as proof that cross-file
-differencing is structurally *biased*. The glibc leg reverses the sign to
-+0.61. That reading is withdrawn: what was being measured was the allocator.
-The practical rule for this campaign is that a sub-microsecond per-row result
-is not a result until it survives a change of allocator, and a *negative* one
-is a diagnostic that the apparatus is wrong, not a bound.
+**And the floor cannot be tightened by taking more reps** — see the next
+entry, which is the same instrument measured on two apparatuses and is the
+reason no confidence interval quoted here means what it looks like.
 
 **Why P7 cares.** It is an entire performance campaign, and the questions
 it will ask — what viewing instead of copying saves on `List<Utf8View>`, what
@@ -370,6 +367,60 @@ floor; re-taken by `M13`'s sweep the same day. Figures, the floor reading and
 the commands:
 [`measurements.md`](measurements.md), "A typed query over nested columns" and
 its "The cross-file subtraction bottoms out" subsection.
+
+---
+
+## Per-rep SE is not an uncertainty estimate here — two apparatuses gave t>4 in opposite directions
+
+**Fact.** `M13`'s sweep ran the same five interleaved reps of the same
+comparison on two builds of the same source. The composite column's per-row
+share came out:
+
+| Build | Composite − control | The same-shape control (seed 43 − seed 42) |
+|---|---|---|
+| glibc | **+0.61 µs/row** (sd 0.31, SE 0.14, **t = +4.34**) | +0.20 (SE 0.18, t = +1.06) |
+| static musl | **−1.16 µs/row** (sd 0.54, SE 0.24, **t = −4.81**) | −0.07 (SE 0.23, t = −0.31) |
+
+Both legs are "significant" past any threshold anyone would set, they disagree
+by **1.77 µs/row**, and the sign inverts — including the sign of the reading's
+distance from its own floor (+0.41 glibc, −1.09 musl). The floor is not
+significant on either leg, so it cannot rescue either. And a third scale sits
+under both: the **identical** control file, same binary, read 7.595 µs/row in
+the sweep's `S5` stage and 7.435 in `S6` seven minutes later — 0.16 µs/row of
+drift between two stages of one sweep, which is the size of the floor and 39%
+of the glibc effect.
+
+**What that establishes.** Within-sweep dispersion measures the *reps*, not the
+*measurement*. Everything that actually moves these numbers — the allocator,
+the stage's position in the session, tmpfs and page state — is held constant
+inside a sweep, so it contributes nothing to the SE and nearly everything to
+the answer. A tight SE says one apparatus is repeatable. It says nothing about
+how near the number is to the truth, and this instrument's between-apparatus
+spread is an order of magnitude wider than its within-sweep spread.
+
+**Why this phase cares.** It is an entire performance campaign whose questions
+are mostly "what does this one thing cost", and it will generate dozens of
+differences of exactly this size. Three rules follow, and the first is the one
+that costs something:
+
+- **Quote a range across at least two apparatuses, never a confidence interval
+  from one.** The second apparatus is cheap here — the same sweep script
+  against a musl build is a second libc for the price of a rebuild.
+- **Read per-rep SE as a repeatability check, not an error bar.** A *wide* SE
+  means the sweep is broken and should be re-run; a narrow one licenses
+  nothing.
+- **A result whose sign flips between apparatuses is not a small result.** It
+  is a question the instrument cannot address, and the answer is a better
+  instrument (here: two files byte-identical in their data section, differing
+  only in a declared type — named in the entry above and still unbuilt), not
+  more reps.
+
+**Origin.** Both legs of `M13`'s sweep, 2026-08-27
+(`runs/m13-warm-set.log`, `runs/m13-warm-set-musl.log`, stages `S5` and `S6`),
+after the musl leg alone was briefly read as evidence that cross-file
+differencing is structurally *biased* — a reading the glibc leg withdrew.
+[`../status/history/2026-08-27.md`](../status/history/2026-08-27.md),
+"`M13`'s figures are folded in".
 
 ## The scanner's read path costs more than its parser on a memory-resident file
 

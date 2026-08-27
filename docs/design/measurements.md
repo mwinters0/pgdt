@@ -277,11 +277,14 @@ pass. What the figure does *not* license is calling it exactly zero: the two
 spreads do not overlap, and the earlier reading that said zero came from
 taking the pair while the page cache was still filling.
 
-**No cold row is taken any more.** The scalar pre-filter's was +1.2% off this
-SSD, where a 5.73 s device floor hid it; a pre-filter 23× cheaper is hidden a
-fortiori, so re-taking it would spend two `drop_caches` cycles to confirm a
-number that can only shrink. The cold regime belongs to the scan-throughput
-table above, which `M14` re-takes whole.
+**The cold row is `M14`'s.** The only cold reading of this comparison is
+**+1.2%**, taken off this SSD against a 5.73 s device floor — and it is the
+*pre-`M11` scalar* pre-filter, on the superseded apparatus, so it is a bound
+rather than this table's other half. A pre-filter 23× cheaper is hidden a
+fortiori, but the claim and its measurement should sit in one apparatus:
+`M14` already stages this control cold on the SSD with `drop_caches` before
+every run and a `dd` floor in the same container, so it takes the census-off
+binary through two more cold runs and this row comes back.
 
 **The control's brace-freeness is a contract, not an accident.** The same
 generator writes array columns behind `--arrays` and a composite behind
@@ -357,11 +360,11 @@ census-on is 5.3× it.
 **What this says.** The census costs **1.26 s per 3.00 GiB of array-bearing
 rows** — 1.80 µs per 19-column row — which is **+270%** on a scan reading from
 memory, i.e. the census does nearly three times the work the rest of the scan
-does on this shape. On a cold read the device still hides most of it: the
-scalar-pre-filter era measured +2.6% off this SSD against a 5.73 s floor, and
-the field-splitting half that dominates here is unchanged since. Both numbers
-are the same CPU; which one a user sees is decided by whether the bytes are
-already resident.
+does on this shape. The cold reading is **+2.6%** off this SSD against a
+5.73 s floor — pre-`M11`, on the superseded apparatus, and re-taken by `M14`
+with the section above; the field-splitting half that dominates here is
+unchanged since, so it is the right order. Both numbers are the same CPU;
+which one a user sees is decided by whether the bytes are already resident.
 
 **The pre-filter is 45 ns of that 1.80 µs** (previous section, same
 apparatus and the same census-off baseline to within 15%). So splitting the
@@ -494,14 +497,19 @@ worth on a given file — and the three files hold different row counts at the
 same byte count — it cancels out of that file's own difference, and would not
 cancel out of a cross-file ratio.
 
-**The untyped baseline is not file-independent, and the reason is the
-census.** The control and the `--composite` file read within 0.03% of each
-other, and the `--arrays --composite` file reads **24% above both**. Its rows
-are the only ones carrying a `{`, so they are the only ones the mapping pass's
-array-shape census splits into fields — and the +1.05 s gap is the +1.26 s
-that census costs on this file, measured directly two sections above. So a
-`strings` leg is a scan plus a census whose price depends on the data's shape,
-not a flat per-byte floor. Earlier sweeps put all three baselines within 2% and
+**The untyped baseline is not file-independent, and the census is the leading
+explanation.** The control and the `--composite` file read within 0.03% of
+each other, and the `--arrays --composite` file reads **24% above both**. Its
+rows are the only ones carrying a `{`, so they are the only ones the mapping
+pass's array-shape census splits into fields, and the +1.05 s gap is
+consistent with the +1.26 s that census costs on this file two sections above.
+It is not yet *established*: the prediction is +1.22 s once the control's own
+pre-filter is netted out, and the arrays file's 14% lower row count should
+make its row pass cheaper, so the census has to cover more than 1.05 s rather
+than less. The direct test — the same query with the census-off binary on both
+files — is under way (`docs/status/STATUS.md`, "Decisions worth another
+look"). Either way a `strings` leg is a scan plus a census whose price depends
+on the data's shape, not a flat per-byte floor. Earlier sweeps put all three baselines within 2% and
 read that as evidence the untyped path was byte-driven; at 9.6 s legs a 1 s
 difference was inside the spread, and it is not at 4.4 s.
 

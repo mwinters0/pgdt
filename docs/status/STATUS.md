@@ -128,7 +128,14 @@ filed.
     repair. Its own regime (cold,
     `drop_caches` before every run, on the SSD), its own inputs (the
     large-object and `INSERT` generators regenerated at 3.00 GiB), and the
-    floor taken with `dd` inside the same container. Corrected by subtraction
+    floor taken with `dd` inside the same container. **It also carries the two
+    census sections' cold rows**, added 2026-08-27: `M13` re-took those
+    comparisons warm only, leaving four claims about the cold regime (+1.2%
+    and +2.6%, in [`../design/measurements.md`](../design/measurements.md),
+    [`../design/architecture.md`](../design/architecture.md) and the P7 inbox)
+    sourced to the superseded pre-`M11` apparatus. `M14` already stages the
+    3.00 GiB `COPY` control cold in that container, so the census-off binary
+    costs it two extra runs per file. Corrected by subtraction
     the conclusion strengthens rather than moves — the `COPY` path runs 1.03×
     the floor, not 1.2× — so this buys a correct number for a claim that
     already holds, which is why it is queued rather than urgent. Scope and
@@ -320,38 +327,60 @@ filed.
 
 Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
-it has been looked at: settled into the design docs, or reversed. **Three are
-open**, all from `M13`'s fold-in and listed first below. `M13`'s two apparatus
-calls were reviewed on 2026-08-27 along with the measurement-era backlog
-before them, and its sweep has since settled the two that were waiting on a
-number; the notes under those say how each went.
+it has been looked at: settled into the design docs, or reversed. **One is
+open** — whether the array-shape census explains the untyped baseline's 24%
+gap, first below, which has a test running. Everything else here has been
+looked at: `M13`'s fold-in was reviewed on 2026-08-27 and two of its three
+calls reversed, its two apparatus calls and the measurement-era backlog before
+them earlier the same day.
 
-**Open: `M13`'s fold-in made three calls with no maintainer present**
-(2026-08-27). All three are about what to do with a figure the re-take
-*contradicted* rather than merely moved.
+**Open: does the array-shape census explain the untyped baseline's 24% gap?**
+`M13`'s fold-in asserted in three docs that the `--arrays --composite` file's
+`--schema-mode strings` leg is 24% above the control's *because* the mapping
+pass's census splits its rows — the only rows in the set carrying a `{`. The
+arithmetic is suggestive but loose: predicted +1.22 s against +1.05 s
+observed, and the arrays file has 14% fewer rows, whose cheaper row pass means
+the census has to cover *more* than 1.05 s, not less. **A direct test is
+running** — the same `strings` query with the census-off binary on both files,
+five interleaved reps, `runs/m13-census-baseline.sh` →
+**`runs/m13-census-baseline.log`**, launched 2026-08-27T23:04Z, expect ~11
+minutes (most of it regenerating two 3.00 GiB inputs). The claim predicts the
+gap collapses from +1.05 s to about **−0.2 s**; a gap that stays positive
+means something else is in there and the attribution comes out of
+[`../design/measurements.md`](../design/measurements.md),
+[`../design/architecture.md`](../design/architecture.md)'s neighbour and the
+P7 inbox. Until the log is read, all three say "consistent with" rather than
+"is". If the run was killed, `/dev/shm/pgdq-m13cb` needs deleting by hand.
 
-- *A P7 inbox entry was **deleted**, not corrected.* "Cross-file differencing
-  cannot resolve one column, and it is bias rather than noise" was written from
-  the musl leg, which put the composite column at −1.16 µs/row — impossible,
-  and read at the time as a structural confound. The glibc leg reverses the
-  sign to +0.61 on the same inputs and reps, so the entry's claim is false
-  rather than imprecise. What survives is folded into the sibling entry
-  ("Attributing a cost to one column…") as a rule: a sub-microsecond per-row
-  result is not a result until it survives a change of allocator, and a
-  negative one is a diagnostic. Reversing this means restoring the entry from
-  git and saying which of the two legs the phase should believe.
-- *The census sections lost their **cold** rows and did not regain them.* The
-  sweep took no cold regime, and the argument for not re-taking one is that a
-  pre-filter 23× cheaper is hidden by a device *a fortiori* — stated in the
-  section rather than left implicit. If that is too glib, the cold pair is two
-  `drop_caches` cycles and `M14` is already going to the cold regime.
-- *Every warm figure moved and none was re-verified against a second sweep.*
-  The re-take is a single session; the standing rules say a comparison table is
-  re-taken whole in one interleaved sweep, which it was, but nothing here
-  distinguishes an apparatus fix from a one-session artifact. The musl leg
-  agrees on every *difference* it shares (the census on array-bearing rows
-  reads Δ 1.27 s against glibc's 1.26 s), which is the only cross-check there
-  is.
+*`M13`'s fold-in made three calls with no maintainer present; all three were
+reviewed on 2026-08-27 and **two were reversed**.*
+
+- *The deleted P7 inbox entry is **restored, with a different fact in it**.*
+  "Cross-file differencing … is bias rather than noise" was written from the
+  musl leg (composite column at −1.16 µs/row, impossible) and read as a
+  structural confound; the glibc leg reverses the sign to +0.61 on the same
+  inputs and reps, so deleting it was right and the rule folded in its place —
+  "survive a change of allocator" — was too weak. The sharper fact is that
+  **both legs are confident and they disagree by 1.77 µs/row**: t = +4.34 and
+  t = −4.81 on the same quantity, against a same-shape floor that is not
+  significant on either leg (t = +1.06, −0.31), and against 0.16 µs/row of
+  drift between two stages of one sweep on the *identical* file. So per-rep SE
+  measures the reps, not the measurement, and the campaign should quote ranges
+  across apparatuses rather than confidence intervals from one. That is now
+  its own entry in
+  [`../design/roadmap-P7-scan-performance-inbox.md`](../design/roadmap-P7-scan-performance-inbox.md).
+- *The census sections' **cold** rows go into `M14`.* Dropping them left four
+  claims about the cold regime (+1.2%, +2.6%) with no displayed measurement,
+  which is worse than either keeping or deleting them outright. All four are
+  now labelled as the pre-`M11` scalar-loop reading, and `M14` — which already
+  stages the 3.00 GiB control cold in the same container — takes the
+  census-off binary through two more runs per file and brings the rows back.
+- *One sweep with no second session **stands**.* The re-take is a single
+  session, but the second *apparatus* is the cross-check that matters and it
+  exists: the musl leg agrees on every difference where the allocator cancels
+  (census on array-bearing rows, Δ 1.27 s against 1.26 s) on absolute legs
+  2.5× apart. Where the two legs disagree, the entry above says so rather than
+  averaging them.
 
 *`M13`'s quadratic table was going to run on the host to dodge container
 startup; the maintainer reversed that on 2026-08-27** — startup must not reach
@@ -397,11 +426,11 @@ worst on the HDD, and page-cache residency is an assumption), and a comparison
 table is re-taken **whole in one interleaved sweep**, never differenced across
 sessions or run a file at a time. And `M10`'s explanation of its own 9%
 between-file baseline gap — "the untyped path is partly per-row" — is
-**retracted**, though the gap itself is real and `M13` later explained it: its
-sweep puts the control and `--composite` legs 0.03% apart and the
-`--arrays --composite` leg 24% above both, which is the mapping pass's
-array-shape census on the only file whose rows carry a `{`, not a per-row
-property of the untyped path. Both rules are also in
+**retracted**, though the gap itself is real: `M13`'s sweep puts the control
+and `--composite` legs 0.03% apart and the `--arrays --composite` leg 24%
+above both, which is consistent with the mapping pass's array-shape census on
+the only file whose rows carry a `{` — under test, first entry above — and in
+no reading a per-row property of the untyped path. Both rules are also in
 [`../design/roadmap-P7-scan-performance-inbox.md`](../design/roadmap-P7-scan-performance-inbox.md),
 since that campaign is where they bite.
 
