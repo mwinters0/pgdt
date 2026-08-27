@@ -232,6 +232,24 @@ open to close.
 *Rejected:* an end-of-scan fix-up pass. It cannot coexist with `snapshot`,
 which the incremental mapping path depends on.
 
+**A finished scan's spans are greedy; `snapshot`'s stop at the watermark.** In
+a whole-file map a `COPY` block's span runs on to wherever the next span
+starts, past the block's own `end_offset`, while `snapshot(end)` closes the
+open span *at* `end`. So an index truncated by hand — which is how the CLI's
+partial-cache tests build one — keeps spans by `start < frontier` and then
+clamps the last one's `end` to the frontier; filtering on `end <= frontier`
+silently drops the very block the scan had just banked.
+
+**`snapshot` is sound at two kinds of point, not one.** A `CopyEnd` watermark
+is the obvious one. The other is immediately after `Builder::on_copy_start`,
+which leaves the builder `Idle` in every arm with the block's `Data` span still
+pending, so `spans.last()` is the DDL span ahead of the block — the boundary
+the recurring metadata recompute stands on (see "`parse` resumes, and saves as
+it goes"). The offset to close at there is
+`pending_comment_start().unwrap_or(header_offset)`, read **before**
+`on_copy_start` consumes the comment, or the block's `-- Data for Name:` header
+is swallowed into the span before it. `scan_preamble` uses the same idiom.
+
 ### Three things close a statement
 
 Anything adding a fourth should check `on_dollar_quote_end`'s
@@ -1553,13 +1571,20 @@ unusable outcome, not a new hard-error path); mtime mismatch surfaces as a
 `CacheMtimeChanged` diagnostic on an otherwise usable cache.
 `ByteRangeSource::modified()` exists for this. That diagnostic matters more
 than it used to: under the old `info` a suspicious cache was about to be
-overwritten by a rescan anyway, and now it is the answer being reported.
+overwritten by a rescan anyway, and now it is the answer being reported — which
+is why `Diagnostic::cache_mtime_changed` is `pub` where its siblings are
+`pub(crate)`. A caller that matches on `CacheStatus` itself still wants the
+library's answer to "what severity is this", rather than composing its own
+warning beside the ones the index carries.
 
 **`CacheStatus::Valid`/`Incomplete` both carry `total_size`**, the cache's
 *own recorded* `SourceIdentity::size` — sound because a live-size mismatch
 produces `SourceChanged` before either is reached, and a cache-only caller has
 no live size to stat at all. `Incomplete` is `scanned_through` short of it.
-One helper, `status_from_file`, serves both `load` and `load_offline`.
+Two helpers serve both `load` and `load_offline`: `read_cache_file` does the
+read plus the envelope check (returning the `CacheFile` or the unusable status
+directly), and `status_from_file` turns the file into a status. `load` adds the
+live-size check on top, which is the one outcome `load_offline` cannot reach.
 
 **Diagnostics are recomputed on load, not persisted.**
 `DumpIndex::diagnostics` is `#[serde(skip)]`, so `status_from_file` re-derives
@@ -1651,6 +1676,13 @@ stop target, then the three whole-file facts only a scan reaching EOF may state
 save. It returns the frontier it started from, which is the one line `parse`
 prints *about the invocation* before the listing that describes the file.
 
+Of the diagnostics a resumed run loaded with its cache, only `CacheMtimeChanged`
+survives into that recompute. The tiling check and the TOC-coverage figure are
+pure functions of the spans and are re-derived both at load and here (see "The
+cache"), so carrying the loaded list forward whole would simply double them;
+the mtime warning is the one nothing else can re-derive, since it is a fact
+about the load.
+
 **The metadata is stated at every legal boundary, not only at EOF.**
 `preamble::dump_metadata_from_spans` may be called at exactly two kinds of
 point (I1): end of file, or the start of the current database's first `COPY`
@@ -1668,7 +1700,16 @@ this column", for every banked column.
 relying on idempotence would put a third whole-index-sized cost in the loop
 that already carries two (see the throttle and the splice below). A
 single-database dump — koji included — therefore recomputes nothing here at
-all: the prepass already stood on that same offset.
+all: the prepass already stood on that same offset. The comparison state is
+seeded from `metadata.databases.last()`, because `dump_metadata_from_spans`
+finalizes the last database it walks, so the last entry is the one whose
+boundary the metadata in hand stands on.
+
+**A cache holding no metadata at all heals on the next resume**, which is what
+kept this from needing a cache format bump: the prepass is skipped on a resumed
+scan, but "no metadata" differs from any database, so the first `CopyStart`
+recomputes — and a resume that reaches EOF instead is covered by `map_file`'s
+own recompute.
 
 **Resume is the default**, and removing the cache file is how to force a fresh
 scan. *Rejected:* a `--restart` flag — deleting the file says the same thing
@@ -1762,8 +1803,12 @@ prefix of the answer with nothing saying so.
 complete — and **nothing below it is qualified**. `--json` carries the
 components (`scanned_through`, already on the index, beside `total_size`)
 rather than the rendered string, so a script computes its own ratio. The
-percentage floors, so it reads 100% only for a genuinely finished scan; the
-block and span summaries below it no longer repeat a byte count.
+percentage floors, so it reads 100% only for a genuinely finished scan — a
+user checking whether an interrupted koji parse finished must not be told 100%
+by rounding — and a zero-byte source reads 100%, being trivially covered in
+full. The block and span summaries below it no longer repeat a byte count:
+stating one number twice in a listing invites the two to disagree, and the
+coverage line owns it.
 
 *Rejected:* a per-record partiality flag. It would always carry the same value,
 which reads as if it could vary. **A partial index lacks records, not
@@ -1840,8 +1885,13 @@ stable token, the Arrow type as the *exact string* `--verbose` renders, and the
 **One resolution pass, two renderings.** `block_resolutions` is the single
 pass; `print_index` and `print_index_json` both consume its output, and
 `resolution_words` returns the token and the sentence from *one* exhaustive
-match. A second implementation is the failure mode here — the export would
-quietly drift into describing a different vocabulary from the listing.
+match, so a new variant cannot be given one spelling without the other. A
+second implementation is the failure mode here — the export would quietly drift
+into describing a different vocabulary from the listing. The cross-check
+reconstructs every expected `--verbose` line out of the JSON and finds it in
+the text, which works because **every sentence begins with its token's words**,
+underscores replaced by spaces; a variant that breaks that property makes the
+test say so rather than quietly weakening it.
 
 **Keyed by `COPY` block** — `(database, qualified name, header_offset)` — not
 rolled up per table. *Rejected:* keying by table, which is what a script most
@@ -1927,6 +1977,15 @@ other half — a shape that resolves to an outcome already covered and merely
 *works* — stays a judgement call, which is exactly the five multi-hop shapes
 `t_nested_array` collects. Naming that limit beats a check implying coverage
 it does not have.
+
+`ColumnResolution::MetadataNotScanned` is that rule's one exemption, listed in
+the test with its reason inline: it is a property of *how much of the file was
+read*, not of a declared type, and every fixture there is scanned to EOF, so no
+fixture column can produce it. It is covered against a hand-truncated index in
+`pgdump_query-cli/tests/partial_reporting.rs` instead, in both directions — the
+later database's blocks report it, and the same blocks resolve properly once
+the parse finishes.
+
 `fixtures/<version>/<schema>/<flag-set>.sql`, real `pg_dump` output across the
 six routine versions (13–18). **"Absent" in this tree always means
 "deliberately absent", never "not yet generated."**
@@ -2081,6 +2140,28 @@ the test:
 - `check_tiling` at runtime, reporting through the diagnostic channel, so a
   hole on a dump shape no fixture covers surfaces as a high-severity diagnostic
   on a map that stays usable.
+
+**The CLI has its own integration suite**,
+`pgdump_query-cli/tests/partial_reporting.rs`, driving the real binary through
+`env!("CARGO_BIN_EXE_pgdq")`. It is the only
+place an exit status or an error sentence can be asserted, which is most of
+what a verb split changes, and it is where the partial-cache reporting is
+pinned: its truncated caches are **built by hand** from a complete index (per
+the clamp rule under "A span's `end` is fixed up at push time"), so the
+assertions do not depend on where a real interruption happened to land.
+`pgdump_query/tests/map_file.rs` separately covers that a real interruption
+leaves that same shape.
+
+**An interrupt is delivered at a file offset, not at a wall-clock moment.**
+`map_file.rs`'s `CancelsPast` is a `ByteRangeSource` that trips the cancel flag
+once a read asks for a byte at or past a chosen offset, which makes "stopped
+inside the second database's data" a deterministic test rather than a race; its
+sibling `FailsPast` returns an `Err` instead, simulating a death mid-scan. The
+**signal** path itself has no automated test: a fixture parses in
+milliseconds, so anything racing a signal against it is a coin flip. It is
+verified by hand against a 4000-block bench file (`SIGTERM` → 143, `SIGINT` →
+130, each leaving a cache that resumes to a byte-identical result) and at real
+scale on koji (`measurements.md`, "koji full scan").
 
 Benchmarks are a **regression tripwire**, not an optimization campaign:
 `benches/decoders.rs` (one `decode`/`render` pair per mapped type family) and

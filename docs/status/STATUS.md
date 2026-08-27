@@ -29,7 +29,7 @@ per-phase checklist here any more. How the system works is
 | Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-27 (Phase 9 is **complete**: 9.1-9.5.1 landed — `parse` resumes, throttles its saves, saves on Ctrl-C, and states its metadata at every legal boundary, and the koji wrap run has verified the last of that at real scale. The out-of-band drive-bys have landed as **M5**-**M9**, and Phase 4's **4.4.4** with them. Next is the **Phase 9 wrap**, then **4.6** and the **Phase 4 wrap** — see "Not started". A phase boundary: an unattended loop stops here.)
+Last updated: 2026-08-27 (Phase 9 is **complete and wrapped** — `parse` resumes, throttles its saves, saves on Ctrl-C, and states its metadata at every legal boundary, verified at real scale on koji; its six slice notes are consolidated and its mechanisms are in `architecture.md`. The out-of-band drive-bys have landed as **M5**-**M9**, and Phase 4's **4.4.4** with them. Next is **4.6**, then the **Phase 4 wrap** — see "Not started". A phase boundary: an unattended loop stops here.)
 
 ## Phase 4 progress
 
@@ -124,63 +124,21 @@ Specified in
       rows (from `parse`), and composite decode throughput. The spec's scope
       was amended 2026-08-27 from the single decode ratio.
 
-## Phase 9 progress
+## Phase 9 — complete and wrapped
 
 Specified in
-[`../design/roadmap-phase9-partial-reporting.md`](../design/roadmap-phase9-partial-reporting.md).
-Taken ahead of the rest of Phase 4 (**4.4.4** and **4.6** remain there). **9.5**
-was earned after 9.1-9.4 landed and reopened the phase; **9.5.1** was earned by
-9.5's verification. All slices have landed; the phase is ready to wrap.
-
-- [x] **9.1** `parse` resumes from a matching cache and persists after every
-      completed block, via `stream::map_forward`; the resume-point line
-      (`stream::map_file`, the CLI's resume line,
-      `pgdump_query/tests/map_file.rs`). The koji write-amplification figure —
-      +1.5% wall and 18 MB written against 784 GB read, so **no save
-      throttle** — is in
-      [`../design/measurements.md`](../design/measurements.md), "koji full
-      scan". Notes:
-      [`../design/roadmap-phase9.1-parse-resume-notes.md`](../design/roadmap-phase9.1-parse-resume-notes.md)
-- [x] **9.2** `info` stops scanning: `CacheStatus::Absent` splits four ways,
-      the "run `pgdq parse`" errors, the mtime warning, `--preamble-only`
-      moves to `parse`. Both invocation forms unchanged, and cache-only mode
-      now reports an incomplete cache instead of refusing it. Notes:
-      [`../design/roadmap-phase9.2-info-stops-scanning-notes.md`](../design/roadmap-phase9.2-info-stops-scanning-notes.md)
-- [x] **9.3** The coverage line — `Scan completion: 76% (12345 bytes)` in
-      text, the components as separate fields in JSON. Notes:
-      [`../design/roadmap-phase9.3-coverage-line-notes.md`](../design/roadmap-phase9.3-coverage-line-notes.md)
-- [x] **9.4** `--json` carries per-block resolution, including
-      `ColumnResolution::MetadataNotScanned`. Notes:
-      [`../design/roadmap-phase9.4-machine-readable-resolution-notes.md`](../design/roadmap-phase9.4-machine-readable-resolution-notes.md)
-- [x] **9.5** The self-tuning save throttle (`SaveThrottle`, `K = 20`) and the
-      interrupt guard (`ScanOptions::cancel`, read per chunk **and** per
-      completed block; `SIGINT`/`SIGTERM` exit 130/143), plus
-      `scripts/generate_block_count_bench.py` and the block-count series. The
-      throttle hits its `1/K` target — 4003 saves become 195 and ~21s of saving
-      becomes ~1.2s — but the series still quadruples per doubling, because
-      **the map is quadratic too** and that half is not the cache's; see the
-      Known gaps entry. Notes:
-      [`../design/roadmap-phase9.5-save-throttle-notes.md`](../design/roadmap-phase9.5-save-throttle-notes.md)
-- [x] **9.5.1** `parse` states its `DumpMetadata` at every legal boundary: the
-      preamble prepass in `map_file` (cold scans only), *and* a recompute in
-      `map_forward` at each `\connect`ed database's first `COPY` block — the
-      recurring one of the two points `dump_metadata_from_spans` may be called
-      at (I1). An interrupted `parse` now comes back **typed** for every
-      database segment it finished, where it used to report `not declared` —
-      the final answer — for every column of every block it had banked. The
-      recompute fires once per *database*, not per block. Absorbed the queued
-      out-of-band move of the EOF recompute into `map_forward`: `table_stream`
-      reads `metadata` after the mapping pass, so a cold query types a
-      `pg_dumpall`'s later databases exactly as a query after `parse` does.
-      `ColumnResolution::MetadataNotScanned` and `Error::MetadataNotScanned`
-      are consequently unreachable from any mapping scan; both stay for
-      metadata some other scan built, and the narrowing is filed into
-      [`../design/roadmap-phase6-inbox.md`](../design/roadmap-phase6-inbox.md).
-      The recurring half is tested on `edge_cases/dumpall.sql`, which gained a
-      second data-carrying database (`pgdq_tenant`) in the out-of-band round
-      **M9**; the concatenated two-database file this slice shipped with stays
-      beside it, for I9's other shape. Notes:
-      [`../design/roadmap-phase9.5.1-metadata-boundaries-notes.md`](../design/roadmap-phase9.5.1-metadata-boundaries-notes.md)
+[`../design/roadmap-phase9-partial-reporting.md`](../design/roadmap-phase9-partial-reporting.md);
+wrapped 2026-08-27, with the per-slice notes consolidated into
+[`../design/roadmap-phase9-partial-reporting-notes.md`](../design/roadmap-phase9-partial-reporting-notes.md).
+Every slice landed — 9.1 (`parse` resumes and banks per block), 9.2 (`info`
+stops scanning), 9.3 (the coverage line), 9.4 (per-block resolution in
+`--json`), 9.5 (the save throttle and the interrupt guard, earned from 9.1's
+measurement) and 9.5.1 (metadata stated at every legal boundary, earned from
+9.5's verification). How the result works is
+[`../design/architecture.md`](../design/architecture.md), "CLI surface" and
+"The cache"; the wrap moved what the slices learned into it by subject, so the
+notes doc holds only the phase's negative results and where its facts were
+filed.
 
 ## Not started
 
@@ -188,51 +146,29 @@ was earned after 9.1-9.4 landed and reopened the phase; **9.5.1** was earned by
   as provisional pending real user trials; the resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 
-- **The koji wrap run is done**, and all three of its checks passed. The guard
-  took the signal 20 minutes in at byte 19,867,623,920 of 784,019,857,152 and
-  left a loadable cache; `info --verbose` on it printed zero `not declared` and
-  zero `metadata not scanned` lines, which is 9.5.1's claim verified at real
-  scale; and the resumed leg finished with 74 blocks / 19,575,829,920 rows /
-  784,019,857,152 bytes, leaving a cache **byte-identical** to the 9.1 run's.
-  The durable halves are in
-  [`../design/measurements.md`](../design/measurements.md), "koji full scan"
-  (the figures, and the recipe, since `runs/koji-wrap.sh` is gitignored) and in
-  [`../design/architecture.md`](../design/architecture.md), "CLI surface" (a
-  resumed scan reproduces an uninterrupted one exactly). Account:
-  [`history/2026-08-27.md`](history/2026-08-27.md). The `runs/` logs are a
-  byproduct and nothing reads them any more.
+- **Order from here**, re-settled 2026-08-27 after the Phase 9 wrap landed:
+  **4.6**, then the **Phase 4 wrap**. Everything else that was queued has
+  landed — M5-M9, 4.4.4, the koji wrap run (whose durable halves are in
+  [`../design/measurements.md`](../design/measurements.md), "koji full scan",
+  and [`../design/architecture.md`](../design/architecture.md), "CLI surface"),
+  and Phase 9's own wrap.
 
-- **Order from here**, re-settled 2026-08-27 after the wrap run landed:
-  the **Phase 9 wrap** → **4.6** → the **Phase 4 wrap**. M7, 4.4.4, M8 and
-  `pgdq_tenant` (**M9**) have landed. `pgdq_tenant` went first so its six-major
-  regeneration diff landed alone **and** so the Phase 9 wrap would not
-  consolidate 9.5.1's stopgap fixture into the phase's permanent account; that
-  slice's notes now say what is true instead.
+  **4.6** is Phase 4's final slice, and the machine is quiet now that the HDD
+  is free. Landing it makes the phase wrappable, and **eleven** slice notes
+  docs (4.1 through 4.5.1) are waiting on the consolidation that `process.md`
+  calls not-optional.
 
-  The **Phase 9 wrap** closes that phase outright — it was queued last
-  only because the koji run was in flight, and it has no business waiting
-  behind a Phase 4 slice. **4.6** next, on a quiet machine now that the HDD is
-  free; it was queued late for the same in-flight run and nothing blocks it any
-  more. The **Phase 4 wrap** last, and it is **new to this order** — 4.6 is
-  Phase 4's final slice, so landing it makes the phase wrappable, and **eleven**
-  slice notes docs (4.1 through 4.5.1) are waiting on the consolidation that
-  `process.md` calls not-optional. The Phase 9 wrap consolidates **six**.
-
-  **Each wrap consolidates its slice notes into one
-  `roadmap-phase<N>-<slug>-notes.md` and deletes the per-slice files**
-  (`process.md`, step 5) — it is not a keystone, which is a separate and
-  maintainer-triggered judgement that the code stands on its own, strikes the
-  phase docs, and happens once or twice in a project's life rather than at any
-  phase boundary. So both wraps leave a spec and one notes doc behind.
-
-  **Each wrap is an audit of `architecture.md`, not a transcription of the
-  slice notes** (`process.md`, "A wrap after a keystone is an audit"). Phase 9's
-  six notes are 546 lines and mostly mechanism — and `architecture.md` already
-  has a subject section for every one of those mechanisms. So the work is:
-  check `architecture.md` for what the slices learned and it does not yet say,
-  move that in, and leave the notes doc holding the residue — negative results,
-  and facts for the next phase not already filed as inbox entries. A short
-  notes doc is a correct outcome; an absent one is not.
+  **The Phase 4 wrap** consolidates those eleven into one
+  `roadmap-phase4-composite-decoding-notes.md` and deletes them
+  (`process.md`, step 5). Like Phase 9's, it is an **audit of
+  `architecture.md`, not a transcription** (`process.md`, "A wrap after a
+  keystone is an audit"): check that doc for what the slices learned and it
+  does not yet say, move that in, and leave the notes doc holding the
+  residue — negative results, and facts for the next phase not already filed
+  as inbox entries. A short notes doc is a correct outcome; an absent one is
+  not. A wrap is **not** a keystone, which is a separate, maintainer-triggered
+  judgement that happens once or twice in a project's life; both wraps leave a
+  spec and one notes doc behind.
 
   **What comes after the Phase 4 wrap is a separate conversation**, claimed by
   the maintainer on 2026-08-27. `process.md` step 6 re-grills the roadmap
@@ -241,8 +177,8 @@ was earned after 9.1-9.4 landed and reopened the phase; **9.5.1** was earned by
   session does not pick one.
 
   The `--disable-triggers` fix is **not** in this order — it is unscheduled, in
-  `roadmap.md`'s "Future". Every Phase 9 slice has landed, so this is a phase
-  boundary and an unattended loop stops here regardless.
+  `roadmap.md`'s "Future". Phase 9 is wrapped, so this is a phase boundary and
+  an unattended loop stops here regardless.
 
 ## Known gaps
 

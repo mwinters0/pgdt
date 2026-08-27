@@ -255,6 +255,9 @@ against a partial type set means designing them twice.
 ## Phase 9 — Partial reporting and machine-readable resolution
 
 **Spec:** [`roadmap-phase9-partial-reporting.md`](roadmap-phase9-partial-reporting.md).
+**Notes:** [`roadmap-phase9-partial-reporting-notes.md`](roadmap-phase9-partial-reporting-notes.md)
+— complete and wrapped 2026-08-27; the mechanisms are in
+[`architecture.md`](architecture.md).
 
 What pgdq can say about a dump it has only partly read, and in what form.
 `info` becomes a pure cache reader and never scans; `parse` becomes the only
@@ -266,8 +269,8 @@ is stated once as a completion line. `--json` gains per-`COPY`-block resolution
 — the per-column outcomes `pgdq info --verbose` already computes and discards
 at the JSON boundary — with no stability promise attached.
 
-**Ran ahead of Phase 4's last slices, and before Phase 5** — 4.4.4 and 4.6
-are all that remain behind it. It carries number 9 because
+**Ran ahead of Phase 4's last slices, and before Phase 5** — 4.6 is all that
+remains behind it. It carries number 9 because
 5–8 are taken and this project does not renumber a tail
 ([`../process.md`](../process.md), "Slice numbering"): a phase's number is its
 identity, its position in this file is its order.

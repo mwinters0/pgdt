@@ -174,10 +174,9 @@ censused" entry above: that one asks what a schema says about array shape when
 the map is partial; this one asks what it says when a whole database's DDL is
 missing, and the tree already contains both answers rather than none.
 
-**Origin.** Slice 9.4, 2026-08-26. See
-[`roadmap-phase9.4-machine-readable-resolution-notes.md`](roadmap-phase9.4-machine-readable-resolution-notes.md)
-and [`architecture.md`](architecture.md), "Joining a header against the
-metadata".
+**Origin.** Slice 9.4, 2026-08-26. See [`architecture.md`](architecture.md),
+"Joining a header against the metadata", and
+[`roadmap-phase9-partial-reporting-notes.md`](roadmap-phase9-partial-reporting-notes.md).
 
 **Narrowed by 9.5.1, 2026-08-27.** The mapping pass now states a database's
 DDL at that database's first `COPY` block (I1's recurring boundary), so no
@@ -230,7 +229,6 @@ whether `ScanCancelled` becomes a DataFusion error or is folded into the
 embedder set it — is also the one that puts an error variant into an engine
 that would rather see a stream end.
 
-**Origin.** Slice 9.5, 2026-08-27. See
-[`roadmap-phase9.5-save-throttle-notes.md`](roadmap-phase9.5-save-throttle-notes.md)
-and [`architecture.md`](architecture.md), "`parse` resumes, and saves as it
-goes".
+**Origin.** Slice 9.5, 2026-08-27. See [`architecture.md`](architecture.md),
+"`parse` resumes, and saves as it goes", and
+[`roadmap-phase9-partial-reporting-notes.md`](roadmap-phase9-partial-reporting-notes.md).
