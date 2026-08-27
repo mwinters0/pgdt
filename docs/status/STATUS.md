@@ -29,7 +29,7 @@ per-phase checklist here any more. How the system works is
 | Device-bound scan performance campaign, sparse row index | not started — P7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — P8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-27 (the measurement-era backlog's seven entries were reviewed and closed on 2026-08-27; the work they queued is `M12`/`M11`/`M13` under "The out-of-band queue", of which the first two have landed and `M13`'s sweep is running detached. `M16` renamed the doc tree to the `P<k>` phase-identifier scheme and settled what a keystone does to the out-of-band ledger; the sweep it prepares for has **not** run. Two entries are open under "Decisions worth another look", both about `M13`'s apparatus. **P4 and P9 are both complete and wrapped**, so no phase is open: what remains queued is out-of-band, and choosing the next phase is a re-grilling the maintainer has claimed. A phase boundary: an unattended loop stops here.)
+Last updated: 2026-08-27 (the measurement-era backlog's seven entries were reviewed and closed on 2026-08-27; the work they queued — `M12`, `M11`, `M13` under "The out-of-band queue" — has all landed, and `M13`'s re-take moved every warm figure in [`../design/measurements.md`](../design/measurements.md), three of them by a factor. `M16` renamed the doc tree to the `P<k>` phase-identifier scheme and settled what a keystone does to the out-of-band ledger; the sweep it prepares for has **not** run. **P4 and P9 are both complete and wrapped**, so no phase is open: what remains queued is `M14` alone, and choosing the next phase is a re-grilling the maintainer has claimed. A phase boundary: an unattended loop stops here.)
 
 ## P4 — complete and wrapped
 
@@ -94,49 +94,38 @@ filed.
     [`../design/measurements.md`](../design/measurements.md) sections whose
     census-off column is taken by patching it. Ledger row `M11`; the notes are
     [`history/2026-08-27.md`](history/2026-08-27.md), "`M11`: the census
-    pre-filter is `memchr2`". **The figure that argued for the swap has not
-    been re-taken against it** — that is `M13`'s, below, and the deferred
-    "should the census be skippable" question reopens only if the swap does
-    not deliver.
+    pre-filter is `memchr2`". **The swap delivered**: `M13` re-took the figure and
+    the pre-filter is 45 ns a row against the scalar loop's 1.03 µs, so the
+    deferred "should the census be skippable" question is closed rather than
+    reopened.
 
-  - [ ] **`M13` — the warm set re-taken on tmpfs, in one session.** Five
-    figures are page-cache-warm SSD reads taken before that standing rule
+  - [x] **`M13` — the warm set re-taken on tmpfs, in one session.** Five
+    figures were page-cache-warm SSD reads taken before that standing rule
     existed: both census figures, the nested end-to-end table, the per-block
     quadratic table, and the `COPY` path's warm CPU that the scan-throughput
-    table cites. Scope, exclusions and the staging hazard are in
-    [`../design/measurements.md`](../design/measurements.md), "The warm set,
-    and what `M13` re-takes".
+    table cites. All are re-taken and folded into
+    [`../design/measurements.md`](../design/measurements.md), whose "The warm
+    set" now records the one apparatus they share. Ledger row `M13`; the notes
+    are [`history/2026-08-27.md`](history/2026-08-27.md), "`M13`'s figures are
+    folded in".
 
-    **Run, then relaunched on glibc; not landed.** A complete sweep landed
-    (`runs/m13-warm-set-musl.log`) and is **not** the figures the doc will
-    carry: it used the static musl binary, and the maintainer's ruling that
-    performance figures are taken with the default glibc build
-    ([`../design/measurements.md`](../design/measurements.md), eighth standing
-    rule) applies to the whole set, not only the quadratic column that exposed
-    it. The glibc sweep runs detached as `runs/m13-warm-set.sh` → **`runs/m13-warm-set.log`**, started
-    2026-08-27T21:42Z, three glibc binaries (`runs/pgdq-m13g-*`) built before
-    the launch; expect ~50 minutes, most of it regenerating the four 3.00 GiB
-    inputs. What remains is for a later session to read that log and fold the
-    numbers in, which is where the box gets ticked and the ledger row written.
-    The stages, and what each figure needs from the log, are in
-    [`history/2026-08-27.md`](history/2026-08-27.md), "`M13`'s sweep is
-    launched" and "The libc is part of the apparatus". If the run was killed,
-    `/dev/shm/pgdq-m13` needs deleting by hand.
-
-    **What the musl sweep already establishes**, and the glibc run is expected
-    to confirm rather than overturn: `M11`'s pre-filter takes the census on
-    brace-free rows from +0.84 s to **+0.04 s per 3.00 GiB** (+3%), against
-    +1.28 s (+100%) on array-bearing rows; the read floor for the same file is
-    0.30 s; and the cross-file instrument cannot resolve the composite column
-    at all (P7 inbox, "Cross-file differencing cannot resolve one
-    column").
+    **Every figure moved, three of them by a factor**, because the tmpfs,
+    in-container-timer and glibc rules landed together: the warm `COPY` scan
+    is 0.57 s where it was 2.92 s; the census on brace-free rows is +7% where
+    it was +39%; the nested `strings` leg is 4.43 s where it was 9.74 s. Two
+    readings are **withdrawn** rather than adjusted — that cross-file
+    differencing is structurally biased, and that the untyped baseline is
+    file-independent — both of which were artifacts the sharper apparatus
+    dissolved. The musl sweep is kept at `runs/m13-warm-set-musl.log` as the
+    evidence for the libc gap and carries no figure the docs cite.
 
   - [ ] **`M14` — the cold scan-throughput table, re-taken under one
     apparatus.** Queued 2026-08-27 out of `M13`'s apparatus finding, which
     reaches further than the warm set: every `pgdq` row of that table was
-    timed around `nerdctl run` and carries 0.77 s, and its floor row is a
-    **host** `cat` against container `pgdq` runs — two apparatuses in one
-    comparison, which arithmetic cannot repair. Its own regime (cold,
+    timed around `nerdctl run` and carries 0.77 s, its floor row is a **host**
+    `cat` against container `pgdq` runs, and all of it is a musl binary —
+    three apparatus faults in one comparison, which arithmetic cannot
+    repair. Its own regime (cold,
     `drop_caches` before every run, on the SSD), its own inputs (the
     large-object and `INSERT` generators regenerated at 3.00 GiB), and the
     floor taken with `dd` inside the same container. Corrected by subtraction
@@ -174,15 +163,14 @@ filed.
     [`history/2026-08-27.md`](history/2026-08-27.md), "Phases are identified by
     `P<k>`".
 
-- **Order from here**, re-settled 2026-08-27 with `M12` and `M11` landed:
-  `M13`'s log is read and its figures folded in, then `M14`, and then nothing
-  that is scheduled (`M15` and `M16` each landed the day they were queued;
-  the keystone sweep `M16` prepares for is the maintainer's call, not a
-  scheduled item). `M14` runs **before** the phase-choice
-  conversation, settled 2026-08-27: its method is written and its generators
-  are hot, and leaving one table under a superseded apparatus is the
-  "figures disagreeing about regime" failure the standing rules were written
-  from. No phase is open — 4 and 9 are both wrapped, and everything
+- **Order from here**, re-settled 2026-08-27 with `M12`, `M11` and `M13`
+  landed: `M14`, and then nothing that is scheduled (`M15` and `M16` each
+  landed the day they were queued; the keystone sweep `M16` prepares for is
+  the maintainer's call, not a scheduled item). `M14` runs **before** the
+  phase-choice conversation, settled 2026-08-27: its method is written and its
+  generators are hot, and leaving one table under a superseded apparatus is
+  the "figures disagreeing about regime" failure the standing rules were
+  written from. No phase is open — 4 and 9 are both wrapped, and everything
   queued ahead of them has landed (M5–M12, the koji wrap run whose durable
   halves are in [`../design/measurements.md`](../design/measurements.md),
   "koji full scan", and
@@ -204,8 +192,9 @@ filed.
   as provisional pending real user trials; the resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 
-- **`M13`, the last of the queued out-of-band items** — its sweep is running;
-  see "The out-of-band queue" above.
+- **`M14`, the last of the queued out-of-band items** — the cold
+  scan-throughput table under one apparatus; see "The out-of-band queue"
+  above. Nothing else is scheduled.
 
 ## Known gaps
 
@@ -265,17 +254,18 @@ filed.
 - **Mapping is O(blocks²), and the save throttle only halved it.** Every
   `CopyEnd` rebuilds `DumpIndex::spans` whole — `map::Builder::snapshot` clones
   the builder's spans, `stream::splice` clones the prefix — so a block-rich,
-  byte-poor dump pays quadratic CPU with the cache disabled entirely: 19.7 s
+  byte-poor dump pays quadratic CPU with the cache disabled entirely: 18.6 s
   for 4000 blocks under `query --dqcache none`, against under 10 ms for the
-  same bytes in one block. 9.5's throttle removed the other half (44.3 s → 23.6
-  s for a 4000-block `parse`). Accepted for now, not scheduled: the fix is to
+  same bytes in one block. 9.5's throttle removed the other half (45.8 s → 20.1
+  s for a 4000-block `parse`), which leaves the map as **93%** of what a
+  throttled `parse` now costs at that block count. Accepted for now, not scheduled: the fix is to
   stop rebuilding the span list per block, which is the same code P7's
   parallel-scan plans would rework and which
   [`roadmap-P7-scan-performance-inbox.md`](../design/roadmap-P7-scan-performance-inbox.md) already flags
   for assuming coverage is a contiguous prefix — so the two belong in one
   decision. A **cheap** version exists and was weighed: for `parse` nothing
   reads `index.spans` between saves, so gating the splice on the throttle the
-  same way the save is gated would cost `n/20` splices instead of `n` (~19.7 s
+  same way the save is gated would cost a few dozen splices instead of `n` (~18.6 s
   → ~1 s at 4000 blocks). It is not taken, because it would make an interrupt
   bank the last *saved* watermark rather than the last *completed block* —
   reversing a guarantee 9.5 established — and `Builder::snapshot` asserts
@@ -315,10 +305,10 @@ filed.
   the scanner level. Measured at **~209MB/s cold against ~1.10GB/s for a `COPY`
   dump of the same size on the same disk read page-cache warm**, i.e. about 5×
   the per-byte CPU, and CPU-bound rather than I/O-bound. **The 5× is a floor
-  under re-take**: its `COPY` side carried 0.77 s of harness and has since
-  gained `M11`'s pre-filter, so `M14` widens the ratio rather than narrowing
-  it — the gap this fix addresses is larger than the figure says, never
-  smaller. Figures and re-run commands in
+  under re-take, and a loose one**: the `COPY` side of it has since been
+  re-taken at 0.57 s per 3.00 GiB (~5.7 GB/s) rather than 2.92 s, so `M14`
+  widens the ratio substantially rather than narrowing it — the gap this fix
+  addresses is larger than the figure says, never smaller. Figures and re-run commands in
   [`../design/measurements.md`](../design/measurements.md). A
   koji-scale 1TB `--inserts` dump therefore spends ~45 minutes of CPU that a
   `COPY` dump of the same size does not. Correctness is unaffected — the map, the tiling and the row counts
@@ -330,16 +320,45 @@ filed.
 
 Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
-it has been looked at: settled into the design docs, or reversed. **Nothing is
-open** — `M13`'s two apparatus calls were reviewed on 2026-08-27, along with
-the measurement-era backlog before them; the notes below say how each went.
+it has been looked at: settled into the design docs, or reversed. **Three are
+open**, all from `M13`'s fold-in and listed first below. `M13`'s two apparatus
+calls were reviewed on 2026-08-27 along with the measurement-era backlog
+before them, and its sweep has since settled the two that were waiting on a
+number; the notes under those say how each went.
 
-**`M13`'s quadratic table was going to run on the host to dodge container
+**Open: `M13`'s fold-in made three calls with no maintainer present**
+(2026-08-27). All three are about what to do with a figure the re-take
+*contradicted* rather than merely moved.
+
+- *A P7 inbox entry was **deleted**, not corrected.* "Cross-file differencing
+  cannot resolve one column, and it is bias rather than noise" was written from
+  the musl leg, which put the composite column at −1.16 µs/row — impossible,
+  and read at the time as a structural confound. The glibc leg reverses the
+  sign to +0.61 on the same inputs and reps, so the entry's claim is false
+  rather than imprecise. What survives is folded into the sibling entry
+  ("Attributing a cost to one column…") as a rule: a sub-microsecond per-row
+  result is not a result until it survives a change of allocator, and a
+  negative one is a diagnostic. Reversing this means restoring the entry from
+  git and saying which of the two legs the phase should believe.
+- *The census sections lost their **cold** rows and did not regain them.* The
+  sweep took no cold regime, and the argument for not re-taking one is that a
+  pre-filter 23× cheaper is hidden by a device *a fortiori* — stated in the
+  section rather than left implicit. If that is too glib, the cold pair is two
+  `drop_caches` cycles and `M14` is already going to the cold regime.
+- *Every warm figure moved and none was re-verified against a second sweep.*
+  The re-take is a single session; the standing rules say a comparison table is
+  re-taken whole in one interleaved sweep, which it was, but nothing here
+  distinguishes an apparatus fix from a one-session artifact. The musl leg
+  agrees on every *difference* it shares (the census on array-bearing rows
+  reads Δ 1.27 s against glibc's 1.26 s), which is the only cross-check there
+  is.
+
+*`M13`'s quadratic table was going to run on the host to dodge container
 startup; the maintainer reversed that on 2026-08-27** — startup must not reach
 the figures, and the figures are still produced inside the container. The
 sweep now times every stage with the container's own shell, which is a
 standing rule in [`../design/measurements.md`](../design/measurements.md), and
-the whole warm set is being re-taken under it. **The finding behind it is not
+the whole warm set was re-taken under it. **The finding behind it is not
 confined to `M13`**: `nerdctl run` costs 0.77 s, so every container figure in
 that doc taken by `/usr/bin/time` around it — the cold scan-throughput table
 included — carries 0.77 s it should not.
@@ -378,9 +397,11 @@ worst on the HDD, and page-cache residency is an assumption), and a comparison
 table is re-taken **whole in one interleaved sweep**, never differenced across
 sessions or run a file at a time. And `M10`'s explanation of its own 9%
 between-file baseline gap — "the untyped path is partly per-row" — is
-**retracted**: the interleaved sweep puts the same files 2% apart with the
-row-count spread unchanged, so the gap was a file-at-a-time sweep mapping the
-session's drift onto file identity. Both rules are also in
+**retracted**, though the gap itself is real and `M13` later explained it: its
+sweep puts the control and `--composite` legs 0.03% apart and the
+`--arrays --composite` leg 24% above both, which is the mapping pass's
+array-shape census on the only file whose rows carry a `{`, not a per-row
+property of the untyped path. Both rules are also in
 [`../design/roadmap-P7-scan-performance-inbox.md`](../design/roadmap-P7-scan-performance-inbox.md),
 since that campaign is where they bite.
 
@@ -414,11 +435,10 @@ to retype an array column. But the 0.84 s per 3.00 GiB is a hand-rolled scalar
 two-comparison byte loop at `map.rs:1269` running at ~3.8 GB/s, and `memchr`
 is already a direct dependency (`pgdump_query/Cargo.toml:12`): `memchr2(b'{',
 b'[', raw).is_some()` is a one-line, SIMD swap. Queued as out-of-band **M11**
-below. The knob question is *deferred, not closed* — if the re-take does not
-show the improvement, it reopens with a real number behind it instead of a
-figure taken against a scalar loop. Nothing is reversed meanwhile: the census
-stays unconditional, and its justification never rested on the pre-filter
-being free.
+below. The knob question was *deferred, not closed*, pending the re-take —
+which came back at **45 ns a row, +7%**, so it is now closed: the census
+stays unconditional, and the pre-filter is 2.5% of what it costs on the rows
+it does not reject.
 
 *`M10`'s date/time fractions were reviewed on 2026-08-27: the choice is
 **wrong in principle, and the correction rides the next re-take** rather than
@@ -458,7 +478,8 @@ is now two standing rules in
 [`../design/measurements.md`](../design/measurements.md). Its one residual —
 that the section cites the `COPY` path's warm CPU (2.92 s), a
 page-cache-warm filesystem read the new tmpfs rule now excludes — is covered
-by **`M13`**, which re-takes the whole warm set on tmpfs in one session.
+by **`M13`**, which re-took the whole warm set on tmpfs in one session: the
+`COPY` path's warm CPU is 0.57 s, not 2.92 s.
 
 *The fidelity guard's `uv` skip was reviewed on 2026-08-27 and **reversed**.*
 The skip guards an environment that does not exist: `mise.toml` pins exactly

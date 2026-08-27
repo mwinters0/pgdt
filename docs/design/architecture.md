@@ -718,18 +718,20 @@ because a `json` column does not resolve to a list.
 contains a `{`, and only an `[lb:ub]=` prefix can precede it, so a row holding
 neither byte costs one pass over its bytes and no field splitting at all. That
 pass is `memchr2`, not a hand-rolled loop, because on the shape a real dump
-mostly has it *is* the census's cost — and `on_row`'s doc comment names the
-two measurements a reader regenerates by patching that function.
-**The cost is two-tier, and neither tier is zero.** On brace-free data — the
-koji shape — every row pays the pre-filter alone: 1.03 µs per 16-column row,
-+39% of a page-cache-warm scan, both measured against the scalar loop
-`M11` replaced and awaiting `M13`'s re-take. A row that passes the pre-filter pays field
-splitting and `observe` on top, 2.50 µs over 19 columns, +81% warm. Both
-collapse to 1–3% on a cold read, where the device floor hides them
-([`measurements.md`](measurements.md), "The census on brace-free rows" and
-"…on array-bearing rows"). It runs unconditionally anyway, because the
-alternative is a query that cannot retype its array columns without a second
-pass over the same bytes.
+mostly has it is the *only* census work there is — the scalar loop it replaced
+cost 23× as much and was, on that shape, the whole figure. `on_row`'s doc
+comment names the two measurements a reader regenerates by patching that
+function.
+**The cost is one tier in practice: the rows that pass the pre-filter.** On
+brace-free data — the koji shape — every row pays the pre-filter alone, 45 ns
+per 16-column row, +7% of a scan reading from memory. A row that passes it
+pays field splitting and `observe` on top: 1.80 µs over 19 columns, +270%
+warm, so the pre-filter is 2.5% of what the census costs on the rows it does
+not reject. Both collapse to a few percent on a cold read, where the device
+floor hides them ([`measurements.md`](measurements.md), "The census on
+brace-free rows" and "…on array-bearing rows"). It runs unconditionally
+anyway, because the alternative is a query that cannot retype its array
+columns without a second pass over the same bytes.
 
 **Every mapping pass censuses, so a mapped block always carries one.**
 `build_index`, `build_map` and `stream::map_forward` all census, under either
@@ -743,8 +745,9 @@ representation.
 *Rejected:* censusing only under `ScanExtent::Full`, so a cold query declines
 the per-row work. A cold query already receives every row of every block it
 maps — `map_forward` calls `on_row` unconditionally and the queried block's
-bytes are read twice regardless — so the saving is the pre-filter alone, and a
-cold query is by definition reading from the device, where that is 1.2%
+bytes are read twice regardless — so the saving is the pre-filter alone, which
+is 45 ns a row even with the bytes in memory and vanishes entirely behind the
+device a cold query is by definition reading from
 ([`measurements.md`](measurements.md), "The census on brace-free rows"). What
 it cost was a state no user could observe or repair: a dump mapped by a cold query and *then* by a full one came out
 `is_complete` with its early blocks permanently uncensused, because

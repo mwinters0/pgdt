@@ -99,8 +99,11 @@ before every run): a `COPY` block scans in 6.68–6.70 s, a large-object region
 in 6.61–6.65 s, an `INSERT` run in 15.13–15.42 s, against a 5.73–5.74 s
 `cat`-to-`/dev/null` floor for the same files. The first two are within 20% of
 the I/O floor; the `INSERT` scan is 2.7× the floor's time. Against the `COPY`
-path's own CPU — 2.92 s for the same bytes page-cache warm — that is ~5× the
-per-byte CPU, ~12 s of it per 3 GiB. The cause is structural, not incidental:
+path's own CPU — 2.92 s for the same bytes page-cache warm, since re-taken at
+**0.57 s** on tmpfs with a glibc binary and no wrapper — that is *at least*
+~5× the per-byte CPU, ~12 s of it per 3 GiB. The two sides are not yet one
+apparatus (`M14` re-takes the cold table), and every correction so far has
+widened the ratio rather than narrowed it. The cause is structural, not incidental:
 slice 3.6 gave the large-object region a `crate::scan`-level fast path (lines
 skipped unread) but left `INSERT` runs decoding every line into `Event::Line`
 and pushing it through `preamble::statement_complete`, folding only the
@@ -152,15 +155,16 @@ complexity is worth it.
 **The copying baseline exists, and it says the parse is the smaller half.**
 On a 3.00 GiB dump whose every row carries a 4-element array, a 50-element
 array and a two-field composite, `pgdq query --schema-mode typed` costs
-3.08× the same query in `strings` mode, against 2.11× for the same file
+3.75× the same query in `strings` mode, against 2.41× for the same file
 without those three columns — so the three nested columns account for about
-**15.1 µs of every row**, slightly more than the sixteen scalar columns
+**13.9 µs of every row**, nearly twice what the sixteen scalar columns cost
 together. **The two arrays carry all of it**: a third file holding the
-composite column and no arrays is indistinguishable from the control, which
-bounds that column under ~0.5 µs/row (4.6.1, and the entry below on what that
-subtraction can resolve). The `nested.rs` literal parse and its render account
-for only **6.3 µs** of the 15.1; the remaining ~8.8 µs is the Arrow build — 56
-per-element `append_value` calls into child builders, plus list offsets. The
+composite column and no arrays reads +0.61 µs/row against an instrument whose
+own floor is +0.20, which bounds that column at around half a microsecond
+(4.6.1, and the entry below on what that subtraction can resolve). The
+`nested.rs` literal parse and its render account for only **6.3 µs** of the
+13.9; the remaining ~7.6 µs is the Arrow build — 56 per-element
+`append_value` calls into child builders, plus list offsets. The
 micro also puts the array cost per *element* (78 ns decoding, 28 ns
 rendering), which is the shape of one allocation each, since
 `ArrayLiteral::elements` is a `Vec<Option<String>>`. **Two targets, then, not
@@ -201,20 +205,19 @@ inspected. A row containing neither `{` nor `[` is rejected after one pass over
 its bytes and never split into fields; a row containing either is split by
 `copy::split_fields` and every field's first bytes examined.
 
-Both sides are measured, on 3.00 GiB files in a container, alternating a
-census and a no-census binary in one session, **page-cache warm**. On the
-brace-free `COPY` control — every row rejected by the pre-filter — the census
-costs **0.84 s per 3.00 GiB**, 1.03 µs per 16-column row: **+39%** of a warm
-scan. On a file where **every** row carries an array it costs **1.75 s per
-3.00 GiB**, 2.50 µs per 19-column row: **+81%** warm. Cold from this SSD, the
-5.73 s device floor cuts both to +1.2% and +2.6%. The pre-filter is therefore
-about 40% of the census's cost even on the rows it rejects — which is what
-those figures were taken on: a scalar `raw.iter().any(|b| b == b'{' || b ==
-b'[')` running at ~3.8 GB/s. **`M11` has since made it
-`memchr::memchr2`**, and `M13`'s warm-set sweep is what re-prices both figures
-against the SIMD version; until that lands, the numbers above are the
-pre-`M11` reading and the +39% is the ceiling of what the swap can remove, not
-what it did.
+Both sides are measured, on 3.00 GiB files served from tmpfs to a 512 MB
+container, alternating a census and a no-census glibc binary in one session,
+six reps each in both orders. On the brace-free `COPY` control — every row
+rejected by the pre-filter — the census costs **0.037 s per 3.00 GiB**, 45 ns
+per 16-column row: **+7%** of a warm scan. On a file where **every** row
+carries an array it costs **1.26 s per 3.00 GiB**, 1.80 µs per 19-column row:
+**+270%** warm. Cold from this SSD a 5.73 s device floor hides both.
+
+**So the census's cost is the field split, not the pre-filter**: 97.5% of it
+falls on the rows the pre-filter passes. That inverts the reading this entry
+carried until `M11` — a scalar `raw.iter().any(…)` at ~3.8 GB/s made the
+pre-filter ~40% of the census's cost even on rows it rejected; `memchr::memchr2`
+makes it 2.5%.
 
 **Why P7 cares.** The double-read entry above recorded that the mapping
 pass did no per-row work; that is no longer true of any mapping pass, and the phase's
@@ -224,17 +227,17 @@ carry the census with whatever unit it splits the file into (it accumulates
 per block and is finalized at `CopyEnd`), and any decision to widen the census
 — per-path keying, or the per-row-group statistics `RowGroupStats` reserves —
 lands on the same per-row stage, and the array-bearing figure above is the
-baseline to measure it against. A third consequence the figures add: **whether
-the census is visible at all is decided by page-cache state**, so a phase
-aiming at a device-bound scan will see 1–3% and a phase that succeeds in
-making the scan CPU-bound will see +39% on the shape a real dump mostly has —
-not the zero an earlier, page-cache-contaminated reading of the brace-free
-figure recorded.
+baseline to measure it against. A third consequence the figures add: **the
+census's visibility is decided by the data's shape, not by the code**. A dump
+of koji's shape pays 7% of a memory-resident scan and nothing at all off a
+device; a dump whose rows all carry arrays pays nearly 3× the rest of the
+scan, on any regime that is not device-bound. A phase that succeeds in making
+the scan CPU-bound makes the second case its dominant cost.
 `scripts/generate_perf_data.py --arrays --composite` is the input.
 
 **Origin.** Slices 4.5 and 4.5.1, 2026-08-26; the array-bearing figure from
-slice 4.6, 2026-08-27; both figures re-taken by `M10`, 2026-08-27, which is
-what corrected the brace-free half. See
+slice 4.6, 2026-08-27; both figures re-taken by `M10` and then by `M13`'s
+warm-set sweep, 2026-08-27, which is what re-priced the pre-filter. See
 [`architecture.md`](architecture.md), "The array shape census";
 [`measurements.md`](measurements.md), "The census on array-bearing rows".
 
@@ -246,21 +249,30 @@ what corrected the brace-free half. See
 **Fact.** `pgdq parse` used to serialize the **whole** cache at every `CopyEnd`
 watermark. Slice 9.5 throttled that (`SaveThrottle`: skip a save unless 20x the
 last save's own duration has elapsed), which cut 4000-block saves from 4003 to
-195 and 44.3 s to 23.6 s. The series is **still** 4x per doubling, because a
+103 and 45.8 s to 20.1 s. The series is **still** 4x per doubling, because a
 second cost has the same shape: every `CopyEnd` rebuilds `DumpIndex::spans`
 whole — `map::Builder::snapshot` clones the builder's span vector, then
 `stream::splice` clones the prefix and concatenates — so the map alone is
-O(blocks²) with the cache disabled entirely (19.7 s for 4000 blocks under
+O(blocks²) with the cache disabled entirely (18.6 s for 4000 blocks under
 `query --dqcache none`, against under 10 ms for the same bytes in one block).
-koji cannot show either half: 74 blocks over 784 GB.
+**The map is now 93% of a throttled `parse` at 4000 blocks**, so the splice is
+what is left to close, not the cache. koji cannot show either half: 74 blocks
+over 784 GB.
+
+**The throttle is self-tuning, which matters for reading its counts.** `K` is
+a ratio against the last save's own duration, so a faster machine, libc or
+allocator saves *fewer* times rather than the same number more cheaply — the
+4000-block count reads 103 on glibc against 110 on musl and 195 on the SSD-warm
+session that first recorded it. A save count is a property of the apparatus,
+not only of `K`.
 
 **The cheap fix, and what it costs — decided against, so the phase does not
 re-derive it.** `index.spans` is rebuilt at every `CopyEnd`, but for `pgdq
 parse` nothing reads it between saves: `target` is `None`, so `target_settled`
 never runs, and the only consumers of a current `index` are the throttled save
 and the chunk-top interrupt save. Moving the `splice` *inside* the existing
-`if settled || cancelled || throttle.due()` arm would therefore fire it `n/20`
-times instead of `n` — roughly 19.7 s → 1 s at 4000 blocks — using the gate
+`if settled || cancelled || throttle.due()` arm would therefore fire it a few
+dozen times instead of `n` — roughly 18.6 s → 1 s at 4000 blocks — using the gate
 9.5 already built, no redesign. **It was rejected anyway**, because it trades
 away the guarantee 9.5 spent a slice establishing: today an interrupt banks the
 last *completed block*, and under the gated splice it would bank the last
@@ -294,15 +306,35 @@ one column costs end to end is to run the same query on two generated files
 that differ by that column and subtract their per-row `typed` − `strings`
 figures. That subtraction has a floor. Two 3.00 GiB files holding the *same*
 sixteen columns and differing only in their RNG seed (`--seed 42` against
-`--seed 43`) disagree by **+0.22 µs/row** (six interleaved reps, per-rep sd
-0.39); a file differing by one composite column reads **−0.10 µs/row** in one
-sweep and **−0.49 µs/row** in a longer one — negative, which a real cost
-cannot be. Anything under roughly ±0.5 µs/row out of this instrument is
-apparatus. Two contributors are known and neither is removable within it: the
-files hold different row counts at the same byte size, so a per-byte component
-does not normalize away per row; and a slow upward drift across a long session
-lands on whichever file is measured later, which is why the runs interleave
-files rather than running them in blocks.
+`--seed 43`) disagree by **+0.20 µs/row** (six interleaved reps, per-rep sd
+0.45) when they should disagree by zero; the file differing by one composite
+column reads **+0.61 µs/row** (five reps, sd 0.31) — only 0.41 µs clear of
+that control, under 2 SE. Anything under roughly **±0.5 µs/row** out of this
+instrument is apparatus. Two contributors are known and neither is removable
+within it: the files hold different row counts at the same byte size, so a
+per-byte component does not normalize away per row; and a slow upward drift
+across a long session lands on whichever file is measured later, which is why
+the runs interleave files rather than running them in blocks.
+
+**A third contributor was found and *is* removable — the census.** A
+`strings` leg is a mapping pass plus a row pass, and the mapping pass runs the
+array-shape census, whose cost depends on whether the rows carry a `{`. The
+`--arrays --composite` file's `strings` leg is 24% above the control's for
+exactly that reason (+1.05 s observed, +1.26 s measured directly). So a
+cross-file subtraction that changes the *brace-bearingness* of the rows is
+comparing two different baselines, and only the per-file `typed` − `strings`
+difference cancels it. Earlier sweeps could not see this: at 9.6 s legs a 1 s
+difference was inside the spread.
+
+**And the sign of a sub-microsecond attribution can be set by the allocator.**
+The musl leg of the same sweep, on the same inputs with the same reps, put the
+composite column at **−1.16 µs/row** (5 reps, SE 0.24) — five SE on the
+impossible side of zero, and read at the time as proof that cross-file
+differencing is structurally *biased*. The glibc leg reverses the sign to
++0.61. That reading is withdrawn: what was being measured was the allocator.
+The practical rule for this campaign is that a sub-microsecond per-row result
+is not a result until it survives a change of allocator, and a *negative* one
+is a diagnostic that the apparatus is wrong, not a bound.
 
 **Why P7 cares.** It is an entire performance campaign, and the questions
 it will ask — what viewing instead of copying saves on `List<Utf8View>`, what
@@ -328,13 +360,14 @@ page-cache warm off a filesystem — device time and background I/O swamp the
 difference being measured, worst on the HDD, and page-cache residency is an
 assumption rather than a guarantee. And a comparison table is re-taken **whole,
 in one interleaved sweep**, never differenced against a figure from another
-session and never run a file at a time: the `strings` leg alone moved ~10%
-between two sessions on an identical binary and input, which is larger than
-most results this campaign will chase.
+session and never run a file at a time: the `strings` leg alone moved from
+9.74 s to 4.43 s on an identical input once the apparatus was fixed, which
+dwarfs every result this campaign will chase.
 
 **Origin.** Slice 4.6.1, 2026-08-27, which tried to separate the composite
 column's end-to-end share from the arrays' and found the share below the
-floor. Figures, the floor reading and the commands:
+floor; re-taken by `M13`'s sweep the same day. Figures, the floor reading and
+the commands:
 [`measurements.md`](measurements.md), "A typed query over nested columns" and
 its "The cross-file subtraction bottoms out" subsection.
 
@@ -342,36 +375,48 @@ its "The cross-file subtraction bottoms out" subsection.
 
 **Fact.** A whole-file `pgdq parse` of the 3.00 GiB brace-free control, served
 from tmpfs inside a 512 MB container and timed by the container's own shell,
-runs **1.29 s: 0.23 s user, 1.10 s sys**. `dd if=… of=/dev/null bs=4M` over
-the same file in the same container reads it in **0.30 s**. So the scan spends
-3.6× `dd`'s whole wall clock inside the kernel, and its user-space work — the
-`COPY` grammar, the map, the census pre-filter — is under a fifth of its own
-elapsed time. Measured 2026-08-27 by `M13`'s sweep (`runs/m13-warm-set.log`,
-stages `S2b` and `S3`), on the tree carrying `M11`'s `memchr2` pre-filter.
+runs **0.53 s: 0.19 s user, 0.33 s sys** (census-off build; the working tree
+adds 0.04 s). `dd if=… of=/dev/null bs=4M` over the same file in the same
+container reads it in **0.33 s**, of which 0.33 s is `sys`. So the scan's
+kernel time is exactly the cost of handing the bytes over, and its user-space
+work — the `COPY` grammar, the map, the census pre-filter — is **36% of its
+own elapsed time**. Measured 2026-08-27 by `M13`'s sweep
+(`runs/m13-warm-set.log`, stages `S2b` and `S3`), on the tree carrying `M11`'s
+`memchr2` pre-filter.
 
-**This is an observation, not a diagnosis.** The candidates are the scanner's
-read chunk size against `dd`'s 4 MiB, page copies across the bind mount, and
-per-`read` syscall overhead; nothing here separates them, and no attempt was
-made to.
+**The musl reading of this was much worse and was an allocator artifact.** The
+same stages built against musl read 1.29 s with **1.10 s of `sys`** against
+the same 0.30 s `dd` — 3.6× `dd`'s whole wall clock inside the kernel, which
+read as a read-path problem and is not one. Whatever musl's allocator does
+with the scanner's buffers shows up as kernel time; glibc's does not.
 
 **Why this phase cares.** The campaign's target is a device-bound local read
 path, and its planned work — SIMD structure discovery, zero-copy row
 extraction, bulk UTF-8 validation — is all *user-space* work. On the one
-regime where the device is not the constraint, user space is already a fifth
-of the time, so those items are optimizing the smaller half unless the read
-path is addressed with them. It also sets the ceiling on what any parser
-change can show: on this input, deleting all user-space work entirely would
-take 1.29 s to 1.06 s.
+regime where the device is not the constraint, that work is 36% of elapsed
+time and the kernel's read is the other 64%, so it sets the ceiling on what
+any parser change can show: on this input, deleting all user-space work
+entirely would take 0.53 s to 0.33 s. It also says the ceiling is *libc-
+dependent*, which is the next entry.
 
 ## The allocator is worth choosing deliberately, and glibc is only the measurement baseline
 
 **Fact.** The same binary source, built against two libcs, differs by ~25% on
-the allocation-heavy stages of the benchmark set: a 500-block `parse` runs
-0.305 s on the default glibc build against 0.41 s static musl, and the
-pre-throttle binary 0.694 s against 0.91 s, both in a 512 MB container on the
-same input. That workload serializes the whole index once per completed block,
-so it is allocation-bound rather than parse-bound. Measured 2026-08-27 while
-standardizing `M13`'s apparatus.
+the block-serialization stages of the benchmark set — a 500-block `parse` runs
+0.29 s on the default glibc build against 0.41 s static musl — and **by a
+factor on everything that moves real bytes**. Both legs of `M13`'s sweep, same
+inputs, same reps, same container limits:
+
+| Stage | glibc | musl |
+|---|---|---|
+| 3.00 GiB warm `parse` (working tree) | 0.57 s | 1.35 s |
+| the same, `--schema-mode strings` query | 4.43 s | 7.98 s |
+| the same, `--schema-mode typed` query | 10.66 s | 19.08 s |
+| 4000-block `parse` | 20.1 s | 32.8 s |
+
+The 2.4× on the warm `parse` is almost entirely **kernel** time (0.33 s of
+`sys` against 1.10 s for an identical 0.33 s `dd` floor), so it is not a
+parsing difference at all. Measured 2026-08-27.
 
 **The decision taken was about measurement only**: every performance figure is
 now taken with the default glibc build in a glibc image
@@ -379,42 +424,14 @@ now taken with the default glibc build in a glibc image
 other. Nothing has been decided about what the *shipped* binary should use.
 
 **Why this phase cares.** A campaign aiming at a device-bound local read path
-inherits an allocator it never chose, and a 25% swing between two stock ones is
-larger than several of the optimizations on this phase's list. Three things to
-settle here: whether pgdq should select an allocator explicitly (`jemalloc`,
-`mimalloc`) rather than inheriting the platform's; whether any figure this
-phase produces is quoted without naming the allocator that produced it; and
+inherits an allocator it never chose, and a **1.8–2.4× swing between two stock
+ones** is larger than everything on this phase's list put together. Three
+things to settle here: whether pgdq should select an allocator explicitly
+(`jemalloc`, `mimalloc`) rather than inheriting the platform's — which on this
+evidence is a bigger lever than any parser change, and cheaper; whether any
+figure this phase produces is quoted without naming the allocator that
+produced it; and
 whether the row-emission path — which allocates per nested element
 (`architecture.md`, "The nested literal codec") — is where an allocator change
 would actually be felt, since the block-serialization workload above is not
 the one users pay per row.
-
-## Cross-file differencing cannot resolve one column, and it is bias rather than noise
-
-**Fact.** `M13`'s interleaved sweep, timed inside the container on tmpfs, puts
-the composite file's per-row typed-minus-strings cost **1.16 µs/row below** the
-control's (5 paired reps, sd 0.54, SE 0.24) — while a second control differing
-only in random seed reads −0.07 µs/row (6 reps, SE 0.23) against the same
-instrument. So the instrument's precision floor is ±0.25 µs/row, five times
-tighter than the ±0.5 recorded in 4.6.1, and the composite reading is ~5 SE on
-the wrong side of zero: adding a column that must be decoded and built cannot
-make a row cheaper. In absolute terms the composite file's typed leg is 10.13 s
-against the control's 11.10 s for the same bytes and 4.9% *more* column-decodes
-(17 × 803,995 against 16 × 814,362).
-
-**What that establishes.** The bound on the composite column's share stands,
-but its justification changes: it is not "below the floor", it is "the
-instrument is confounded". Two files that differ by a column also differ in row
-length and row count at a fixed byte budget, and the seed-43 control proves the
-confound is file shape rather than session drift. No number of reps fixes it.
-
-**Why this phase cares.** Two reasons, and the second is the interesting one.
-Any figure this phase attributes to a column by differencing two generated
-files carries the same bias, so per-column attribution needs the instrument
-4.6.1 named and nobody has built — two files whose *data sections are byte
-identical*, differing only in a declared type. And the anomaly itself is
-unexplained: per-column decode cost differs ~12% between two files whose 16
-shared columns are drawn from the same generator, which is a fact about the
-typed path that a decode-optimization campaign should not meet for the first
-time mid-flight.
-
