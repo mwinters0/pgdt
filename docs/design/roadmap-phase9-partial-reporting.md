@@ -153,8 +153,10 @@ splice, the roles, the tablespaces and `scanned_through` are updated at every
 block in flight, exactly as it did before the throttle, and the throttle's
 window is exposed to `SIGKILL`, power loss and panics alone.
 
-**The guard is a cooperative flag, checked once per chunk *and* at every
-completed block.** `map_file` owns the `DumpIndex` for the whole scan, so
+**The guard is a cooperative flag, read at every point the mapping loop can
+cheaply reach it** — today once per chunk *and* at every completed block. The
+principle is the rule, not the two sites: this spec originally named only the
+chunk check, and the block-rich case walked straight through it. `map_file` owns the `DumpIndex` for the whole scan, so
 racing `ctrl_c` against that future in the CLI would *destroy* the map rather
 than save it — cancellation has to reach inside the loop. `ScanOptions`
 carries an `Option<Arc<AtomicBool>>`, defaulting to `None` so no existing
@@ -321,7 +323,7 @@ fixtures. The measurement sits in the slice whose design it could overturn.
 | 9.3 | The coverage line — `Scan completion: 76% (12345 bytes)` in text, the components as separate fields in JSON |
 | 9.4 | `--json` carries per-block resolution, including `ColumnResolution::MetadataNotScanned` |
 | 9.5 | The self-tuning save throttle and the interrupt guard, earned from the measurement 9.1 was asked to take. Plus `scripts/generate_block_count_bench.py` and the block-count series in `measurements.md` |
-| 9.5.1 | **Earned**, not planned: `map_file` captures the first database's preamble before mapping, the way `table_stream` already does, so an interrupted `parse`'s cache reports `MetadataNotScanned` rather than `NotDeclared` |
+| 9.5.1 | **Earned**, not planned: `parse` states its `DumpMetadata` at every legal boundary — a preamble prepass before mapping (as `table_stream` already does), and a recompute at each `\connect`ed database's first `COPY` block — so an interrupted `parse`'s cache reports `MetadataNotScanned` rather than `NotDeclared`, and is typed for every database segment the scan finished. Absorbs the queued out-of-band move of the EOF recompute into `map_forward` |
 
 **9.5.1 was earned by 9.5's verification.** `map_file` runs no preamble
 prepass, so an interrupted `parse` leaves a cache with no `DumpMetadata` at
@@ -331,7 +333,55 @@ the truth is "finish the parse and ask again". That is precisely the confusion
 9.4 added `MetadataNotScanned` to prevent, and 9.4 could not see it: it
 asserted the variant against hand-built truncated caches, which carry the
 metadata a *query*'s prepass captures. The producer, not the resolver, is what
-is wrong. Reasoning:
+is wrong.
+
+**Scoped at the 2026-08-27 review to every legal boundary, not just the first.**
+`dump_metadata_from_spans` may be called at exactly two kinds of point — EOF, or
+the start of the current database's first `COPY` block (I1) — and anywhere else
+"would make the trailing database's `preamble_complete` a lie"
+(`preamble.rs`). The second kind **recurs**: it is reached once per
+`\connect`ed database, and `map_forward` already sees the event with the
+governing database tracked. A prepass alone would leave a `pg_dumpall` parse
+interrupted in database 3 holding DDL for database 1 only, having read
+database 2's entire preamble. Recomputing at each such boundary is legal by the
+rule above, costs one recompute per database, and is free on every
+single-database dump (koji included). Because that puts the recompute inside
+`map_forward`, this slice also **absorbs** the out-of-band item that moved the
+EOF recompute out of `map_file` — it is the same code, and the divergence that
+item removes (a cold query and a warm one typing a `pg_dumpall` alike) is this
+defect at the other end. The other two queued drive-bys (`--dqcache none` error
+text, `TOC_PREFIX_STATS`) are unaffected and still ride together afterwards.
+
+**The recompute fires once per database, not once per block.** `map_forward`
+sees `Event::CopyStart` for every block, and the obvious implementation —
+recompute at each one and let it be idempotent — is O(blocks) whole-file
+metadata recomputes, a *third* quadratic in the loop where 9.5 measured the
+first two. The trigger is a `CopyStart` whose governing database differs from
+the one the last recompute covered, so a single-database dump recomputes
+exactly once, at the file's first block: the same point the prepass stops at,
+which makes the prepass and the recurring rule one mechanism rather than two.
+
+**The recurring half is tested on a real `pg_dumpall` fixture.**
+`fixtures/<major>/edge_cases/dumpall.sql` spans more than one database
+(`tests/map.rs`), and 9.5's `CancelsPast` trips the cancel flag once a read
+reaches a chosen *file offset*, so the interrupt is deterministic. Cancel
+inside the second database's data: the first two databases must come back
+`preamble_complete`, the third must not, and `resolve_columns` must give real
+types for the first two databases' blocks and `MetadataNotScanned` for the
+third's. A prepass-only implementation passes every prepass test, which is why
+this one is required rather than optional — and koji, being single-database,
+cannot observe the recurring half at all. What the koji wrap run adds is the
+real-scale half of the *prepass*: an interrupted koji cache must come back
+typed rather than reporting `not declared` for every column.
+
+**I1's `Relied on by` gains this mechanism.** The recurring recompute is
+licensed by I1's *scope limit* — the invariant is per database, "hence
+re-arming the preamble search at each `\connect`" — and the same entry's note
+that `MetadataNotScanned` "can only ever name a later database" narrows once
+this lands: it names a later database whose **first `COPY` the scan has not yet
+reached**.
+
+Reasoning:
 [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md).
 
 **9.5 was earned by 9.1's own measurement.** The spec told 9.1 to build a

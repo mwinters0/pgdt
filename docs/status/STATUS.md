@@ -29,7 +29,7 @@ per-phase checklist here any more. How the system works is
 | Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-27 (Phase 9: 9.1-9.5 landed — `parse` resumes, throttles its saves and saves on Ctrl-C. **9.5.1** is earned and open, and is the next slice: an interrupted `parse`'s cache reports `not declared` where it means `metadata not scanned`. Phase 4's **4.4.4** and **4.6** remain).
+Last updated: 2026-08-27 (Phase 9: 9.1-9.5 landed — `parse` resumes, throttles its saves and saves on Ctrl-C. **9.5.1** is earned and open, and is the next slice, rescoped at the 2026-08-27 review: `parse` states its `DumpMetadata` at every legal boundary, so an interrupted cache stops reporting `not declared` where it means `metadata not scanned` and is typed for every database segment the scan finished. Phase 4's **4.4.4** and **4.6** remain).
 
 ## Phase 4 progress
 
@@ -157,9 +157,20 @@ was earned after 9.1-9.4 landed and reopened the phase; **9.5.1** was earned by
       cache with no `DumpMetadata`, and every column of every block in it
       reports `not declared` — the final answer — where the truth is
       `metadata not scanned`, "finish the parse and ask again". That is the
-      exact confusion 9.4 added the variant to prevent. The fix is the prepass
-      `table_stream` already runs. Not folded into 9.5: it changes what every
-      cold `parse` does before mapping, which is a second review surface.
+      exact confusion 9.4 added the variant to prevent. **`parse` states its
+      metadata at every legal boundary**: the prepass `table_stream` already
+      runs, *and* a recompute at each `\connect`ed database's first `COPY`
+      block — the second of the two points `dump_metadata_from_spans` may be
+      called at (`preamble.rs`), and the one that recurs — so a `pg_dumpall`
+      parse interrupted in database 3 is typed for every segment it finished
+      instead of for database 1 alone. That puts the recompute inside
+      `map_forward`, so the slice **absorbs** the queued out-of-band move of
+      the EOF recompute out of `map_file`. The recompute fires **once per
+      database** — a `CopyStart` whose governing database differs from the last
+      one covered — not once per block, which would be a third quadratic in the
+      loop 9.5 measured two in. Tested on `edge_cases/dumpall.sql` with 9.5's
+      `CancelsPast`. Not folded into 9.5: it changes what every cold `parse`
+      does before mapping, which is a second review surface.
 
 ## Not started
 
@@ -167,14 +178,24 @@ was earned after 9.1-9.4 landed and reopened the phase; **9.5.1** was earned by
   as provisional pending real user trials; the resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 
-- **Three out-of-band items, queued as one round after Phase 9's slices**: the
-  `DumpMetadata` recompute moving from `map_file` into `map_forward`'s EOF tail
-  so a cold query and a warm one type a `pg_dumpall` file alike; the
-  `--dqcache none` error naming `pgdq parse --dqcache <path>` as its remedy;
-  and `TOC_PREFIX_STATS` recognition. They are decision-free and share one
-  review surface. **9.5.1 comes first**, for the same reason 9.5 landed alone:
-  it changes what every `parse` does before mapping, and should not share a
-  review with three drive-bys.
+- **Two out-of-band items, queued as one round after 9.5.1**: the `--dqcache
+  none` error naming `pgdq parse --dqcache <path>` as its remedy, and
+  `TOC_PREFIX_STATS` recognition. They are decision-free and share one review
+  surface. A third — the `DumpMetadata` recompute moving out of `map_file` —
+  was **folded into 9.5.1** at the 2026-08-27 review, since that slice puts the
+  recompute inside `map_forward` anyway. **9.5.1 comes first**, for the same
+  reason 9.5 landed alone: it changes what every `parse` does before mapping,
+  and should not share a review with drive-bys.
+
+- **Order after 9.5.1**, settled 2026-08-27: launch the koji wrap run first —
+  detached, log under `runs/`, read by a later session — since it is an hour of
+  wall time nothing else depends on, and 4.6's measurement wants its log. Its
+  checklist gains one item from 9.5.1: an interrupted koji cache must come back
+  **typed**, not reporting `not declared` for every column.
+  Then the two out-of-band drive-bys above, while Phase 9's context is fresh,
+  then back to Phase 4 for **4.4.4** and **4.6**, then the wrap. Phase 9 has no
+  unticked slices after 9.5.1, so that is a phase boundary and an unattended
+  loop stops there regardless.
 
 ## Known gaps
 
@@ -225,7 +246,14 @@ was earned after 9.1-9.4 landed and reopened the phase; **9.5.1** was earned by
   parallel-scan plans would rework and which
   [`roadmap-phase7-inbox.md`](../design/roadmap-phase7-inbox.md) already flags
   for assuming coverage is a contiguous prefix — so the two belong in one
-  decision. Nothing koji-shaped is affected: 74 blocks over 784 GB pay this
+  decision. A **cheap** version exists and was weighed: for `parse` nothing
+  reads `index.spans` between saves, so gating the splice on the throttle the
+  same way the save is gated would cost `n/20` splices instead of `n` (~19.7 s
+  → ~1 s at 4000 blocks). It is not taken, because it would make an interrupt
+  bank the last *saved* watermark rather than the last *completed block* —
+  reversing a guarantee 9.5 established — and `Builder::snapshot` asserts
+  `Idle`, so the chunk-top interrupt check cannot re-derive the spans mid-block
+  to compensate. The analysis is in the phase-7 inbox so it is not re-derived. Nothing koji-shaped is affected: 74 blocks over 784 GB pay this
   74 times, and the figure there is +1.5%. Figures and commands:
   [`../design/measurements.md`](../design/measurements.md), "Per-block cache
   saving is quadratic in block count, and so is the map".
@@ -286,17 +314,21 @@ Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
 
-**The interrupt guard checks its flag at two granularities, not one, which
-amends the 9.5 spec.** The spec said "checked once per chunk", and argued
-chunk granularity *rather than* `CopyEnd` granularity because koji's largest
-block is hundreds of gigabytes. That is right and it is not sufficient: a
-4000-block 2 MB dump spends its entire 23-second scan inside two chunks, so a
-`SIGTERM` three seconds in was ignored for twenty (measured, then fixed —
-[`history/2026-08-27.md`](history/2026-08-27.md)). The guard now reads the flag
-at both points, which bounds the response by the shorter of a chunk and a
-block, and the spec's sentence was amended in place. What would change if
-reconsidered: nothing about the throttle or the save rule — only how quickly a
-block-rich scan notices, and one relaxed atomic load per block.
+**Nothing is pending**; the notes below say how the last of them went.
+
+*9.5's two-granularity guard entry was reviewed on 2026-08-27 and **stands**,
+restated as a principle.* The amendment is right — chunk granularity alone
+leaves a block-rich dump unresponsive for its whole scan — and the finding
+underneath it was that a spec *enumerating* check points is what let the case
+through. Both the spec and `architecture.md` now say the rule is "read the flag
+at every point the loop can cheaply reach", with the two current sites as its
+instances, and both record the two limits it does not remove: the flag is read
+before `read_range`, not during it, and `scan::scan`/`scan_preamble` ignore it
+on purpose, because a stop there could not be told from reaching the first
+`COPY` header and would cache a truncated preamble as complete. The remote-I/O
+half of that is filed into
+[`../design/roadmap-phase6-inbox.md`](../design/roadmap-phase6-inbox.md).
+Reasoning: [`history/2026-08-27.md`](history/2026-08-27.md).
 
 *Three Phase 9 entries were reviewed on 2026-08-26.* The **save-throttle**
 entry is **reversed**: the quadratic regime was measured, it costs 44s on a

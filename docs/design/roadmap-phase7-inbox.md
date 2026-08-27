@@ -200,6 +200,22 @@ O(blocks²) with the cache disabled entirely (19.7 s for 4000 blocks under
 `query --dqcache none`, against under 10 ms for the same bytes in one block).
 koji cannot show either half: 74 blocks over 784 GB.
 
+**The cheap fix, and what it costs — decided against, so the phase does not
+re-derive it.** `index.spans` is rebuilt at every `CopyEnd`, but for `pgdq
+parse` nothing reads it between saves: `target` is `None`, so `target_settled`
+never runs, and the only consumers of a current `index` are the throttled save
+and the chunk-top interrupt save. Moving the `splice` *inside* the existing
+`if settled || cancelled || throttle.due()` arm would therefore fire it `n/20`
+times instead of `n` — roughly 19.7 s → 1 s at 4000 blocks — using the gate
+9.5 already built, no redesign. **It was rejected anyway**, because it trades
+away the guarantee 9.5 spent a slice establishing: today an interrupt banks the
+last *completed block*, and under the gated splice it would bank the last
+*saved* watermark, so a Ctrl-C would lose up to `K` blocks instead of one. The
+coupling cannot be worked around locally either — `map::Builder::snapshot`
+`debug_assert!`s `Mode::Idle`, so the chunk-top check cannot re-derive the
+spans mid-block. Phase 7 may still take it, but as a deliberate change to the
+interrupt's promise, not as a cleanup.
+
 **Why Phase 7 cares.** The phase's target is a device-bound scan path, and this
 is a *CPU* cost inside the scan loop that the 243 MB/s koji baseline the phase
 doc opens with cannot see — on a block-rich, byte-poor dump the scan is not

@@ -1552,7 +1552,19 @@ than saving it. Chunk granularity alone is not enough either, and neither is
 block granularity: koji's largest block is hundreds of gigabytes (a Ctrl-C
 waiting for the next watermark cannot be told from a hang), while a 4000-block
 2 MB dump spends its whole 23 s scan inside two chunks. Together they bound the
-response by the shorter of a chunk and a block. What the guard costs the
+response by the shorter of a chunk and a block. **The rule is the principle,
+not the enumeration**: read the flag at every point the loop can cheaply reach,
+because any list of sites is a list that the next loop invalidates — a spec
+naming only the chunk check is what let the block-rich case through the first
+time. Two limits the principle does not remove. The flag is read *before*
+`source.read_range`, so a scan blocked in a slow read notices only when that
+read returns — irrelevant for a local file, potentially seconds for a remote
+store. And `scan::scan` — hence `index::scan_preamble` — ignores the flag on
+purpose: stopping there is indistinguishable from reaching the first `COPY`
+header, so a truncated preamble would be cached as a complete one and its DDL
+believed. The preamble is therefore an uncancellable region bounded by its own
+length; a Ctrl-C during a query's prepass is honoured at `map_forward`'s first
+chunk check immediately after, with the prepass's metadata already saved. What the guard costs the
 throttle is close to nothing: the splice, the roles, the tablespaces and
 `scanned_through` are updated at every watermark whether or not the save runs,
 so a graceful interrupt loses only the block in flight, and the throttle's

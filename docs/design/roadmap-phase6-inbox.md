@@ -194,7 +194,20 @@ cache holds everything up to the last completed block; `stream::table_stream`
 instead yields `Error::ScanCancelled { scanned_through }` on its first poll
 past the mapping pass, because rows from the blocks a stopped mapping pass
 happened to reach are a prefix of the answer with nothing saying so. The CLI
-wires the flag for `pgdq parse` only.
+wires the flag for `pgdq parse` only. **The flag is read before the read, not
+during it**, so a scan blocked inside `ByteRangeSource::read_range` does not
+notice until that read returns; `scan::scan` (and so `index::scan_preamble`)
+ignores the flag entirely, on purpose — stopping there could not be told from
+reaching the first `COPY` header, and a truncated preamble would be cached as a
+complete one.
+
+**Why Phase 6 cares about that part specifically.** Both limits are invisible
+on a local file and neither is on `object_store`: a ranged GET against remote
+storage can take seconds and can hang, and the preamble prepass — an
+uncancellable region today — is the *first* thing a cold query does. So the
+phase has to decide whether remote I/O gets its own cancellation (a timeout, or
+a cancel token passed into the source) rather than inheriting a flag the read
+path never checks.
 
 **Why Phase 6 cares.** Both embedding surfaces have their own cancellation
 idiom and neither is this flag: a DataFusion `TableProvider`'s stream is
