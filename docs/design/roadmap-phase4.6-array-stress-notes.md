@@ -3,9 +3,12 @@
 What the phase wrap and Phase 7 inherit from the slice that measured nested
 decoding. The figures themselves live in
 [`measurements.md`](measurements.md) — three new sections, "The census on
-array-bearing rows costs 87% of a warm scan", "Nested decode costs what it
-copies, and an element is an allocation", and "A typed query over nested
-columns costs 2.9× a string one". This doc holds what is not in them.
+array-bearing rows…", "Nested decode costs what it copies, and an element is
+an allocation", and "A typed query over nested columns…". This doc holds what
+is not in them. **Two of the three figures were re-taken by `M10` the same
+day**, on a generator that declares the types `pg_dump` writes; the two
+sections below that record why they could not be trusted are the reason, and
+both are closed.
 
 ## What landed
 
@@ -92,7 +95,8 @@ changing any of them changes the default output's bytes — which is the
 regeneration command of every figure already taken on it, the scan-throughput
 table and the brace-free census figure included.
 
-**Three of the sixteen scalar columns do not type.** The generator declares
+**Three of the sixteen scalar columns do not type — closed by `M10`, which
+fixed the generator and re-took the figures.** The generator declared
 `time`, `timestamp` and `timestamptz`; `pgtype` maps only `time without time
 zone` and the two long `timestamp` spellings, which is what `pg_dump` writes.
 So `parse` reports "3 of 16 columns unmapped" on the control and "3 of 19" on
@@ -104,7 +108,8 @@ every typed figure taken on this input, which is why it is **`M10`** — its own
 out-of-band change, with the re-measurement in it — and not a change here.
 
 **`pgdq query --schema-mode typed` and `strings` do not agree byte for byte on
-this input, and that is the generator too.** `v_real` is filled with `repr()`
+this input, and that is the generator too — closed by `M10`, which also made a
+test assert the agreement.** `v_real` was filled with `repr()`
 of a Python float — a float64's 17 significant digits — in a column declared
 `real`. `typed` decodes it to `Float32` and re-renders the shortest string
 that round-trips an `f32`, so `-510216.29239304754` comes back

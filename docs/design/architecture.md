@@ -698,13 +698,14 @@ because a `json` column does not resolve to a list.
 
 **A row is rejected wholesale before it is split.** An array literal always
 contains a `{`, and only an `[lb:ub]=` prefix can precede it, so a row holding
-neither byte costs one pass over its bytes and no field splitting at all. On
-brace-free data — the koji shape — the census is free at the resolution
-[`measurements.md`](measurements.md) can measure. On the other side of that
-pre-filter it is not cheap: rows that *all* carry an array cost 2.5 µs each
-over 19 columns, +87% on a page-cache-warm scan and +3.6% on a cold read,
-where the device floor hides it ([`measurements.md`](measurements.md), "The
-census on array-bearing rows"). It runs unconditionally anyway, because the
+neither byte costs one pass over its bytes and no field splitting at all.
+**The cost is two-tier, and neither tier is zero.** On brace-free data — the
+koji shape — every row pays the pre-filter alone: 1.03 µs per 16-column row,
++39% of a page-cache-warm scan. A row that passes the pre-filter pays field
+splitting and `observe` on top, 2.50 µs over 19 columns, +81% warm. Both
+collapse to 1–3% on a cold read, where the device floor hides them
+([`measurements.md`](measurements.md), "The census on brace-free rows" and
+"…on array-bearing rows"). It runs unconditionally anyway, because the
 alternative is a query that cannot retype its array columns without a second
 pass over the same bytes.
 
@@ -720,9 +721,10 @@ representation.
 *Rejected:* censusing only under `ScanExtent::Full`, so a cold query declines
 the per-row work. A cold query already receives every row of every block it
 maps — `map_forward` calls `on_row` unconditionally and the queried block's
-bytes are read twice regardless — so the saving is the pre-filter alone, which
-is free on brace-free data. What it cost was a state no user could observe or
-repair: a dump mapped by a cold query and *then* by a full one came out
+bytes are read twice regardless — so the saving is the pre-filter alone, and a
+cold query is by definition reading from the device, where that is 1.2%
+([`measurements.md`](measurements.md), "The census on brace-free rows"). What
+it cost was a state no user could observe or repair: a dump mapped by a cold query and *then* by a full one came out
 `is_complete` with its early blocks permanently uncensused, because
 `map_forward` splices onto a prefix it does not re-read. Reasoning:
 [`../status/history/2026-08-26.md`](../status/history/2026-08-26.md).

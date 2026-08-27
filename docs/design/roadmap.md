@@ -537,6 +537,7 @@ dated history entry it points at.
 | M7 | 2026-08-27 | An `--inserts` dump's `INSERT` runs absorb their `Data for` comment and own its TOC entry | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
 | M8 | 2026-08-27 | The `Data for` boundary refusal is pinned by a span-level test over I31's shape, and its doc comments carry the reason that survives | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
 | M9 | 2026-08-27 | `edge_cases/dumpall` gains a second data-carrying database, `pgdq_tenant`, so I1's recurring metadata boundary is tested on a file `pg_dump` wrote | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
+| M10 | 2026-08-27 | `generate_perf_data.py` writes the type spellings, trimmed fractions and `float4out` text `pg_dump` writes; a drift guard asserts it; `--arrays` splits from `--composite`; the five figures taken on its output are re-taken | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
 
 **M3's result is not itself out-of-band work.** The measurement fit one
 session and changed no decision, which is what admitted it here; the number it

@@ -29,7 +29,7 @@ per-phase checklist here any more. How the system works is
 | Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-27 (Phase 9 is **complete and wrapped**; **4.6** has landed and its review earned **4.6.1**. The order from here is **M10** → **4.6.1** → the **Phase 4 wrap** — see "Not started". A phase boundary: an unattended loop stops here.)
+Last updated: 2026-08-27 (Phase 9 is **complete and wrapped**; **4.6** has landed, its review earned **4.6.1**, and **M10** has landed — the benchmark generator now writes what `pg_dump` writes, a test asserts it, and every figure taken on its output has been re-taken. The order from here is **4.6.1** → the **Phase 4 wrap** — see "Not started". A phase boundary: an unattended loop stops here.)
 
 ## Phase 4 progress
 
@@ -115,13 +115,15 @@ Specified in
       optimistically, and the planned representation knob. Notes:
       [`../design/roadmap-phase4.5.1-census-consumption-notes.md`](../design/roadmap-phase4.5.1-census-consumption-notes.md)
 - [x] **4.6** The array stress section in `generate_perf_data.py`, **gated
-      behind `--arrays`** (default output verified byte-identical), the
-      `nested` group in `benches/decoders.rs`, and all three
-      `measurements.md` figures: the census on array-bearing rows (+87% warm,
-      +3.6% cold), the per-element decode micro (78 ns/element; array and
-      composite against a same-bytes copy control), and `pgdq query
-      --schema-mode typed` against `strings` (2.91× with three nested columns,
-      1.85× without). No library code. Notes:
+      behind `--arrays`** (default output verified byte-identical; `M10` has
+      since split that flag from `--composite`), the `nested` group in
+      `benches/decoders.rs`, and all three `measurements.md` figures: the
+      census on array-bearing rows, the per-element decode micro (78
+      ns/element; array and composite against a same-bytes copy control), and
+      `pgdq query --schema-mode typed` against `strings`. `M10` re-took the
+      first and third on a corrected generator — see
+      [`../design/measurements.md`](../design/measurements.md) for the
+      figures that stand. No library code. Notes:
       [`../design/roadmap-phase4.6-array-stress-notes.md`](../design/roadmap-phase4.6-array-stress-notes.md)
 - [ ] **4.6.1** The composite's end-to-end share, **earned** from 4.6's spec
       row naming a deliverable without naming its instrument. 4.6's
@@ -155,35 +157,18 @@ filed.
   as provisional pending real user trials; the resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 
-- **Order from here**, re-settled 2026-08-27 after 4.6's review: **M10**, then
-  **4.6.1**, then the **Phase 4 wrap**. Everything queued before them has
-  landed — M5-M9, 4.4.4, the koji wrap run (whose durable halves are in
-  [`../design/measurements.md`](../design/measurements.md), "koji full scan",
-  and [`../design/architecture.md`](../design/architecture.md), "CLI surface"),
+- **Order from here**, re-settled 2026-08-27 after 4.6's review and again
+  after `M10` landed: **4.6.1**, then the **Phase 4 wrap**. Everything queued
+  before them has landed — M5-M10, 4.4.4, the koji wrap run (whose durable
+  halves are in [`../design/measurements.md`](../design/measurements.md),
+  "koji full scan", and
+  [`../design/architecture.md`](../design/architecture.md), "CLI surface"),
   and Phase 9's own wrap.
 
-  **M10 — the perf generator's three infidelities, and the re-measurement they
-  force.** `scripts/generate_perf_data.py` declares three type spellings
-  `pg_dump` never writes, never trims fractional seconds, and puts a float64
-  `repr()` in a `real` column; the first two are coupled and must move
-  together. Fixing them changes the default output's bytes, so the same change
-  re-takes every figure taken on it: the scan-throughput table, the brace-free
-  census figure, and 4.6's three. **Admitted as out-of-band** — it changes no
-  decision any spec records and fits one session, and `M3` (a benchmark input
-  plus its figures) is the precedent. **It also lands the drift guard**: a
-  round-trip assertion that `pgdq query --schema-mode typed` and `strings`
-  agree byte for byte over a small generated file, which is what the script's
-  own charter ("shaped closely enough that pgdq can read it back") already
-  claims and which would have caught all three infidelities. And it **splits
-  `--arrays` into `--arrays` and `--composite`**, which 4.6.1 needs and which
-  is free to do while the recorded commands are being rewritten anyway.
-  Findings, the coupling, and why the fix is not 4.6's:
-  [`history/2026-08-27.md`](history/2026-08-27.md), "The perf generator is not
-  the pg_dump shape it claims".
-
-  **4.6.1 is after M10, and the dependency is real**: it needs a third
-  generated file, and taking its figure on a generator about to change means
-  taking it twice.
+  **4.6.1 is unblocked**: `M10` split `--arrays` from `--composite`, which is
+  the third generated file it needs, and re-took every figure taken on this
+  generator, so its own figure is now taken against numbers that will not move
+  under it.
 
   **The Phase 4 wrap** consolidates **thirteen** slice notes docs (4.1 through
   4.6.1) into one `roadmap-phase4-composite-decoding-notes.md` and deletes them
@@ -207,9 +192,9 @@ filed.
   session does not pick one.
 
   The `--disable-triggers` fix is **not** in this order — it is unscheduled, in
-  `roadmap.md`'s "Future". Phase 9 is wrapped and Phase 4's slices are all
-  delivered, so this is a phase boundary and an unattended loop stops here
-  regardless.
+  `roadmap.md`'s "Future". Phase 9 is wrapped and Phase 4 has one slice and its
+  wrap left, so this is still the phase boundary an unattended loop stops at,
+  whatever remains queued behind it.
 
 ## Known gaps
 
@@ -317,12 +302,12 @@ filed.
 - An `INSERT` run is folded into one `Data` span, but every line in it is
   still decoded into `Event::Line` and pushed through the statement
   accumulator — unlike the large-object region, which is skipped unread at
-  the scanner level. Measured at **~218MB/s against ~1.0GB/s for a `COPY` dump
-  of the same size on the same disk**, i.e. about 5× the per-byte cost, and
-  CPU-bound rather than I/O-bound; figures and re-run commands in
-  [`../design/measurements.md`](../design/measurements.md). A koji-scale 1TB
-  `--inserts` dump therefore maps in ~75 minutes rather than the ~15 the `COPY`
-  rate implies. Correctness is unaffected — the map, the tiling and the row counts
+  the scanner level. Measured at **~209MB/s cold against ~1.10GB/s for a `COPY`
+  dump of the same size on the same disk read page-cache warm**, i.e. about 5×
+  the per-byte CPU, and CPU-bound rather than I/O-bound; figures and re-run
+  commands in [`../design/measurements.md`](../design/measurements.md). A
+  koji-scale 1TB `--inserts` dump therefore spends ~45 minutes of CPU that a
+  `COPY` dump of the same size does not. Correctness is unaffected — the map, the tiling and the row counts
   are the same either way. Not scheduled: the fix is a scanner-level
   `INSERT` path, which changes a decision and so needs a slice, filed into
   [`roadmap-phase7-inbox.md`](../design/roadmap-phase7-inbox.md).
@@ -333,26 +318,84 @@ Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
 
-Nothing is pending review at present.
+**The census's cost on brace-free rows is 39% of a warm scan, not zero, and
+`M10`'s re-measurement is what found that.** The recorded figure said the
+census was free at the available resolution on rows holding no `{` or `[` —
+the koji shape, and what a `pgdq parse` over a real dump mostly does. Re-taken
+page-cache warm, in both pair orders, the pre-filter costs 0.84 s per 3.00 GiB
+(1.03 µs per 16-column row, +39%); the earlier reading was taken while the
+page cache was still filling, where a 0.8 s difference sits inside the
+run-to-run spread. Cold from this SSD it is +1.2%, so nothing a user sees on a
+first scan of a large dump changes. **Nothing was reversed**: the census stays
+unconditional, and its justification (a query that would otherwise need a
+second pass to retype an array column) never rested on the pre-filter being
+free. But "unconditional and free on the common shape" was part of why that
+call felt cheap, and it is now "unconditional and 39% of warm-scan CPU on the
+common shape" — worth a second look at whether the *pre-filter* should be
+skippable for a caller that will never consume the census. Figures:
+[`../design/measurements.md`](../design/measurements.md), "The census on
+brace-free rows"; the consequences for Phase 7 are in
+[`../design/roadmap-phase7-inbox.md`](../design/roadmap-phase7-inbox.md).
+
+**`M10` gave the three date/time columns real fractional seconds**, where the
+generator previously wrote `.000000` on every row. Trimming alone would have
+left three columns that never carry a fraction at all, which is a *less*
+representative decode benchmark than the one being fixed; the values are now
+drawn from a fixed list chosen for the rendered shapes it produces (no
+fraction, one digit, six digits, and both ends of the trim). That is a change
+to what the benchmark decodes, not only to how it spells it — the figures
+above are taken on the new shape, so nothing is inconsistent, but the choice
+was made without the maintainer and reversing it means re-taking the same five
+figures again.
+
+**The two census figures no longer reproduce against a pre-census binary.**
+The brace-free figure's recorded recipe built the commit before the census
+landed; that binary also predates the `parse`/`info` split, and the difference
+it measures is therefore not the census alone. Both figures now use the method
+4.6 introduced for the array-bearing one — the working tree with a bare
+`return;` at the top of `map::Builder::on_row` — so the two are directly
+comparable and each isolates exactly the census. The *Rejected:* paragraph
+under the array-bearing figure (why this is a source edit and not a cargo
+feature) now covers both.
+
+**The scan-throughput table was re-taken whole, not just its `COPY` row.**
+Only that row sits on this generator, but re-taking it exposed the table's
+floor row as page-cache-contaminated: a 3.00 GiB file reads cold in 5.73 s on
+this SSD, not the 3.67–3.85 s recorded, and two of the three inputs were
+listed as *faster* than a cold read of themselves. Updating one row against a
+floor known to be wrong would leave a table whose rows disagreed about which
+regime they were in, so all three inputs were re-run cold. The comparative
+story is unchanged — `COPY` and large-object within 20% of the floor, `INSERT`
+at 2.7× it, ~5× the per-byte CPU — but two figures the maintainer did not
+queue for re-measurement moved.
+
+**The generator-fidelity guard skips itself when `uv` is absent.**
+`pgdump_query-cli/tests/perf_generator_fidelity.rs` is the only test that
+drives a Python script; every other test runs against committed fixtures. A
+checkout without `uv` (which `mise.toml` pins) gets a passing suite and an
+`eprintln`, rather than a failure it cannot act on — which also means the
+guard is silently absent there.
 
 The notes below say how the earlier entries went.
 
-*4.6's generator-fidelity entry was reviewed on 2026-08-27 and is **settled as
-scheduled work**, with its scope corrected: the finding was three infidelities,
-not one.* `scripts/generate_perf_data.py` declares `time`/`timestamp`/
-`timestamptz` where `pg_dump` writes the long spellings, never trims fractional
-seconds where PostgreSQL does, and fills a `real` column with a float64
-`repr()`. The first two are **coupled** — correcting the spellings alone sends
-three columns that currently never decode through a decoder that re-renders
-them differently from the file — and the third is what makes `typed` and
-`strings` disagree on this input (`v_bytea`, which looks like the culprit, is
-faithful; `pg_dump` writes the doubled backslash too). The consequence is a
-validity problem rather than a fidelity complaint: a benchmark for the typed
-path measures 13 of 16 columns while its table says 16. Fixing it is agreed and
-is **not** 4.6's — it changes the default output's bytes and so re-takes five
-recorded figures. Queued under "Not started"; the findings and the coupling are
-in [`history/2026-08-27.md`](history/2026-08-27.md), "The perf generator is not
-the pg_dump shape it claims".
+*4.6's generator-fidelity entry was reviewed on 2026-08-27, settled as
+scheduled work with its scope corrected — the finding was three infidelities,
+not one — and **landed the same day as `M10`**.*
+`scripts/generate_perf_data.py` declared `time`/`timestamp`/`timestamptz`
+where `pg_dump` writes the long spellings, never trimmed fractional seconds
+where PostgreSQL does, and filled a `real` column with a float64 `repr()`.
+The first two were **coupled** — correcting the spellings alone would have
+sent three columns that never decoded through a decoder that re-renders them
+differently from the file — and the third was what made `typed` and `strings`
+disagree on this input (`v_bytea`, which looked like the culprit, is faithful;
+`pg_dump` writes the doubled backslash too). The consequence was a validity
+problem rather than a fidelity complaint: a benchmark for the typed path
+measured 13 of 16 columns while its table said 16. The fix was not 4.6's — it
+changes the default output's bytes and so re-takes the figures taken on them.
+The findings and the coupling are in
+[`history/2026-08-27.md`](history/2026-08-27.md), "The perf
+generator is not the pg_dump shape it claims"; what landed is `M10` in
+[`../design/roadmap.md`](../design/roadmap.md)'s out-of-band ledger.
 
 *4.4.4's refusal order was reviewed on 2026-08-27 and **stands**, with its
 recorded reason replaced.* It was queued as "kept as a counterfactual" — the

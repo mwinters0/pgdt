@@ -93,12 +93,14 @@ Phase 7's "Measurement discipline" section is the right place to settle it.
 
 ## An `INSERT`-run scan is CPU-bound at ~5× a `COPY` scan's per-byte cost
 
-**Fact.** Three 3.00 GiB synthetic dumps, same disk, same session, three runs
-each (a whole-file `pgdq` scan, 512MB-limited container): a `COPY` block
-scans in 2.55–3.27 s, a large-object region in 3.61–4.99 s, an `INSERT` run in
-14.55–14.79 s, against a 3.67–3.85 s `cat`-to-`/dev/null` floor for the same
-files. The first two are at the I/O floor; the `INSERT` scan is four times
-above it, ~11 s of CPU per 3 GiB. The cause is structural, not incidental:
+**Fact.** Three 3.00 GiB synthetic dumps, same disk, same session, three cold
+runs each (a whole-file `pgdq` scan, 512MB-limited container, `drop_caches`
+before every run): a `COPY` block scans in 6.68–6.70 s, a large-object region
+in 6.61–6.65 s, an `INSERT` run in 15.13–15.42 s, against a 5.73–5.74 s
+`cat`-to-`/dev/null` floor for the same files. The first two are within 20% of
+the I/O floor; the `INSERT` scan is 2.7× the floor's time. Against the `COPY`
+path's own CPU — 2.92 s for the same bytes page-cache warm — that is ~5× the
+per-byte CPU, ~12 s of it per 3 GiB. The cause is structural, not incidental:
 slice 3.6 gave the large-object region a `crate::scan`-level fast path (lines
 skipped unread) but left `INSERT` runs decoding every line into `Event::Line`
 and pushing it through `preamble::statement_complete`, folding only the
@@ -109,16 +111,18 @@ mechanism `State::InLargeObjectRegion` already is — and Phase 7 owns scan
 performance and the "two workloads, two algorithms" split. It is also the one
 place where this project's cost claim is currently false in the direction that
 matters: `--inserts` output is a shape the fixture tooling generates routinely,
-and a koji-scale `--inserts` dump maps in ~75 minutes against the ~15 the
-`COPY` rate implies. The design constraint to carry in: an `INSERT` run's end
+and a koji-scale 1 TB `--inserts` dump spends ~45 minutes of CPU that a `COPY`
+dump of the same size does not. The design constraint to carry in: an `INSERT` run's end
 has no invariant behind it the way `COPY`'s `\.` (I7) and `BLOBS`' `COMMIT;`
 (I12) do, so a skip-and-count path needs the string-aware `'`-tracking scan
 [`architecture.md`](architecture.md)
 ("The three regions do not share an end marker") specifies — which Phase 8
 Track A's row reader needs anyway.
 
-**Origin.** Out-of-band item M3, 2026-08-25. Measurement and full numbers:
-[`../status/history/2026-08-25.md`](../status/history/2026-08-25.md).
+**Origin.** Out-of-band item M3, 2026-08-25; the table re-taken cold by `M10`,
+2026-08-27, which is where the numbers above come from
+([`measurements.md`](measurements.md), "Scan throughput by input shape"). The
+original measurement: [`../status/history/2026-08-25.md`](../status/history/2026-08-25.md).
 
 ---
 
@@ -148,10 +152,11 @@ complexity is worth it.
 **The copying baseline exists, and it says the parse is the smaller half.**
 On a 3.00 GiB dump whose every row carries a 4-element array, a 50-element
 array and a two-field composite, `pgdq query --schema-mode typed` costs
-2.91× the same query in `strings` mode, against 1.85× for the same file
+3.45× the same query in `strings` mode, against 2.26× for the same file
 without those three columns — so the three nested columns account for about
-**16 µs of every row**. The `nested.rs` literal parse and its render account
-for only **6.3 µs** of that; the remaining ~10 µs is the Arrow build — 56
+**14.6 µs of every row**, slightly more than the sixteen scalar columns
+together. The `nested.rs` literal parse and its render account for only
+**6.3 µs** of that; the remaining ~8.3 µs is the Arrow build — 56
 per-element `append_value` calls into child builders, plus list offsets. The
 micro also puts the array cost per *element* (78 ns decoding, 28 ns
 rendering), which is the shape of one allocation each, since
@@ -159,7 +164,7 @@ rendering), which is the shape of one allocation each, since
 one**: viewing instead of copying attacks the build, and it is the larger
 share — but a `Vec<Option<String>>` intermediate is paid before the build is
 reached, so a viewing builder that still routes through `decode_array` keeps
-the 6 µs.
+the 6.3 µs.
 
 **The prize, measured against the path this phase would widen.** One
 `append_view_unchecked` into a borrowed block costs **3.14 ns**, against
@@ -173,7 +178,9 @@ together with the ~10 µs build share above, the shape of the answer is that
 arrays.
 
 **Origin.** Phase 4 grilling, 2026-08-25; the figures from slice 4.6,
-2026-08-27. Decision and its rationale:
+2026-08-27, re-taken by `M10` the same day once the generator declared the
+types `pg_dump` writes — the earlier end-to-end ratios were taken with three
+of the sixteen scalar columns silently untyped. Decision and its rationale:
 [`roadmap-phase4-composite-decoding.md`](roadmap-phase4-composite-decoding.md),
 "Nested elements copy"; figures and commands:
 [`measurements.md`](measurements.md), "Nested decode costs what it copies" and
@@ -192,12 +199,16 @@ its bytes and never split into fields; a row containing either is split by
 `copy::split_fields` and every field's first bytes examined.
 
 Both sides are measured, on 3.00 GiB files in a container, alternating a
-census and a no-census binary in one session. On the brace-free `COPY`
-control — every row rejected by the pre-filter — the census is **free at the
-available resolution** (−3% to +2.5%, falling on both sides of zero). On a
-file where **every** row carries an array it costs **1.77 s per 3.00 GiB**,
-2.5 µs per 19-column row: **+87%** of a page-cache-warm scan, and **+3.6%** of
-a cold read from the SSD, where the 5.74 s device floor hides it.
+census and a no-census binary in one session, **page-cache warm**. On the
+brace-free `COPY` control — every row rejected by the pre-filter — the census
+costs **0.84 s per 3.00 GiB**, 1.03 µs per 16-column row: **+39%** of a warm
+scan. On a file where **every** row carries an array it costs **1.75 s per
+3.00 GiB**, 2.50 µs per 19-column row: **+81%** warm. Cold from this SSD, the
+5.73 s device floor cuts both to +1.2% and +2.6%. The pre-filter is therefore
+about 40% of the census's cost even on the rows it rejects, and it is a scalar
+`raw.iter().any(|b| b == b'{' || b == b'[')` running at ~3.8 GB/s — a
+two-needle SIMD search is the obvious thing to try against it, and it is the
+cheapest available win on the per-row stage.
 
 **Why Phase 7 cares.** The double-read entry above recorded that the mapping
 pass did no per-row work; that is no longer true of any mapping pass, and the phase's
@@ -207,14 +218,17 @@ carry the census with whatever unit it splits the file into (it accumulates
 per block and is finalized at `CopyEnd`), and any decision to widen the census
 — per-path keying, or the per-row-group statistics `RowGroupStats` reserves —
 lands on the same per-row stage, and the array-bearing figure above is the
-baseline to measure it against. A third consequence the figure adds: **whether
+baseline to measure it against. A third consequence the figures add: **whether
 the census is visible at all is decided by page-cache state**, so a phase
-aiming at a device-bound scan will see +3.6% and a phase that succeeds in
-making the scan CPU-bound will see +87% of the same work.
-`scripts/generate_perf_data.py --arrays` is the input.
+aiming at a device-bound scan will see 1–3% and a phase that succeeds in
+making the scan CPU-bound will see +39% on the shape a real dump mostly has —
+not the zero an earlier, page-cache-contaminated reading of the brace-free
+figure recorded.
+`scripts/generate_perf_data.py --arrays --composite` is the input.
 
 **Origin.** Slices 4.5 and 4.5.1, 2026-08-26; the array-bearing figure from
-slice 4.6, 2026-08-27. See
+slice 4.6, 2026-08-27; both figures re-taken by `M10`, 2026-08-27, which is
+what corrected the brace-free half. See
 [`roadmap-phase4.5.1-census-consumption-notes.md`](roadmap-phase4.5.1-census-consumption-notes.md)
 and [`architecture.md`](architecture.md), "The array shape census";
 [`measurements.md`](measurements.md), "The census on array-bearing rows".

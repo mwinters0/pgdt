@@ -9,13 +9,21 @@ All figures are on the hardware `CLAUDE.local.md` describes. Synthetic inputs
 are regenerable with `--seed 42` and are **never committed** — they measure
 throughput, not correctness, which stays entirely fixture-based.
 
-Two standing rules for reading anything below:
+Four standing rules for reading anything below:
 
 - **Every figure is a ratio, never a disk throughput.** Page-cache state
   dominates. A number taken warm on a freshly generated file can be twice what
   the disk delivers to `cat`, which is exactly how the large-object figure was
   once misread. Always take the `cat`-to-`/dev/null` floor for the same file on
   the same disk in the same session, and compare against that.
+- **Say which regime, and stay in it for the whole figure.** "In one session"
+  is not enough: a run sequence that starts cold and warms up puts each run in
+  a different regime, and a difference smaller than the warming trend
+  disappears into it. Either `drop_caches` before *every* run or `cat` the file
+  first and take every run warm — and when the figure is a difference between
+  two binaries, run the pair in both orders, because within a pair the second
+  run is the warmer one. `M10` re-took the census figures for exactly this
+  reason ([`../status/history/2026-08-27.md`](../status/history/2026-08-27.md)).
 - **Long runs are detached.** A koji-scale scan is roughly an hour; see
   `CLAUDE.md`, "Long-running processes", for why waiting on one is expensive
   and what to do instead.
@@ -27,28 +35,37 @@ Two standing rules for reading anything below:
 ## Scan throughput by input shape
 
 Three 3.00 GiB synthetic dumps on the SSD, a whole-file `pgdq` scan in a
-512MB-limited container, three consecutive runs each in one session so
-page-cache state is comparable.
+512MB-limited container. **Every run is cold** — `drop_caches` before each one,
+including before each `cat` — because that is the only regime in which the
+floor row means anything: this file fits page cache twice over, so a second
+read of it measures RAM.
 
 | Input | Wall | Rate | Against the floor |
 |---|---|---|---|
-| `COPY` block | 2.55–3.27 s | ~1.0–1.26 GB/s | at the I/O floor |
-| Large-object region | 3.61–4.99 s | ~645–890 MB/s | at the I/O floor |
-| `INSERT` run | 14.55–14.79 s | ~218–221 MB/s | **4× above it** |
-| `cat` → `/dev/null` | 3.67–3.85 s | ~840–880 MB/s | — |
+| `COPY` block | 6.68–6.70 s | ~481 MB/s | 1.2× the floor's time |
+| Large-object region | 6.61–6.65 s | ~484 MB/s | 1.2× the floor's time |
+| `INSERT` run | 15.13–15.42 s | ~209 MB/s | **2.7× the floor's time** |
+| `cat` → `/dev/null` | 5.73–5.74 s | ~562 MB/s | — |
 
-Max RSS is ~35–42 MB across all three.
+Max RSS is ~40–45 MB across all three.
 
-**What this says.** The `COPY` and large-object paths are device-bound. The
-`INSERT` path is not: it spends roughly 11 s of CPU per 3 GiB that the other
-two do not, because every line is still decoded into `Event::Line` and pushed
-through the statement accumulator (see
+**What this says.** The `COPY` and large-object paths are device-bound: they
+spend about a fifth more wall-clock than reading the same bytes and doing
+nothing, and their CPU (2.92 s warm, below) is well under the 5.73 s the read
+takes. The `INSERT` path is not — it takes 8.6 s per 3 GiB *longer* than the
+`COPY` path on the same device, because every line is still decoded into
+`Event::Line` and pushed through the statement accumulator (see
 [`architecture.md`](architecture.md), "Bulk regions"). Mapping an `--inserts`
 file costs about what *decoding* a `COPY` file costs, not what *scanning* one
-costs — so a koji-scale 1 TB `--inserts` dump maps in ~75 minutes rather than
-the ~15 the `COPY` rate implies. Correctness, tiling and row counts are
-unaffected. The fix is a scanner-level `INSERT` path;
+costs: at 1 TB that is ~45 minutes of CPU no `COPY` dump pays, against the
+~15 minutes the `COPY` path spends on 1 TB in total. Correctness, tiling and
+row counts are unaffected. The fix is a scanner-level `INSERT` path;
 [`roadmap-phase7-inbox.md`](roadmap-phase7-inbox.md) holds it.
+
+**The CPU ceiling under the `COPY` row is 2.92–2.96 s** — the same scan with
+the file already page-cache resident, ~1.10 GB/s. That is the number the two
+census figures below are differences against, and the reason they are stated
+warm: at 481 MB/s the device hides everything the CPU does.
 
 Regenerate the three inputs:
 
@@ -59,21 +76,27 @@ uv run generate_large_object_bench.py --size-mb 3072 --seed 42
 uv run generate_insert_run_bench.py   --size-mb 3072 --seed 42
 ```
 
-The `INSERT` generator writes one `INSERT INTO public.bench_inserts VALUES
-(…);` per line under an ordinary `TABLE DATA` TOC comment — 7,656,060 rows,
-with an apostrophe doubled the way `pg_dump` writes one in ~15% of them, so
-the accumulator's quote tracker is genuinely exercised. The large-object
-generator is `LOBBUFSIZE`-chunked to match real `pg_dump`.
+The `COPY` control is 817,024 rows of 16 columns, 3,943 bytes each, and holds
+no `{` or `[` in any data row — see "The census on brace-free rows" below for
+why that is a contract rather than an accident. The `INSERT` generator writes
+one `INSERT INTO public.bench_inserts VALUES (…);` per line under an ordinary
+`TABLE DATA` TOC comment — 7,656,060 rows, with an apostrophe doubled the way
+`pg_dump` writes one in ~15% of them, so the accumulator's quote tracker is
+genuinely exercised. The large-object generator is `LOBBUFSIZE`-chunked to
+match real `pg_dump`.
 
 Measure each the same way:
 
 ```sh
 cargo build --release --target x86_64-unknown-linux-musl -p pgdump_query-cli
-sudo nerdctl run --rm -m 512m --memory-swap 512m \
-  -v "$PWD/target/x86_64-unknown-linux-musl/release/pgdq:/pgdq:ro" \
-  -v "/path/to/bench.sql:/dump.sql:ro" \
-  postgres:16-alpine \
-  sh -c 'time /pgdq parse --source /dump.sql --dqcache /tmp/x.dqcache'
+for i in 1 2 3; do
+  sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
+  /usr/bin/time -f "run$i %e s maxrss=%MkB" sudo nerdctl run --rm \
+    -m 512m --memory-swap 512m \
+    -v "$PWD/target/x86_64-unknown-linux-musl/release/pgdq:/pgdq:ro" \
+    -v "/path/to/bench.sql:/dump.sql:ro" \
+    postgres:16-alpine /pgdq parse --source /dump.sql --dqcache /tmp/x.dqcache
+done
 ```
 
 `parse` is the only command that reads the dump
@@ -82,49 +105,66 @@ write goes to the container's ephemeral layer — a few hundred KB against 3 GiB
 read, which is why these figures are comparable to the ones taken before that
 split existed.
 
-## The array-shape census costs nothing on brace-free data
+## The census on brace-free rows costs 39% of a warm scan
 
 The census walks every data row of every block any mapping pass maps — a cold
 query's included, since a mapped block always carries one
 ([`architecture.md`](architecture.md), "The array shape census"), so it is a
-change to the scan hot path. Same 3.00 GiB `COPY` control as above, same
-container, the pre-census binary and the census binary alternating in one
-session so page-cache state is shared:
+change to the scan hot path. Same 3.00 GiB `COPY` control as above: no `{` or
+`[` in any data row, so every row is rejected by the census's own pre-filter
+after one pass over its bytes and no row is ever split into fields. That is
+deliberately the koji shape — koji's six array columns are entirely NULL — and
+it is the case worth knowing the price of, since it is what a `pgdq parse`
+over a real dump mostly does.
 
-| Run | Pre-census | With census |
-|---|---|---|
-| 1 (cold) | 5.89 s | 5.92 s |
-| 2 | 4.45 s | 4.31 s |
-| 3 (warm) | 3.18 s | 3.26 s |
+Census on is the working tree; census off is the same tree with one line
+added, so nothing but the census differs between the two binaries (below).
 
-Max RSS ~41–47 MB either way. The pairs track each other as the cache warms
-and the differences (−3% to +2.5%) fall on both sides of zero, so the census
-is **free at this measurement's resolution**.
+| | Census off | Census on | Δ |
+|---|---|---|---|
+| warm (3 runs) | 2.11 / 2.12 / 2.11 s | 2.96 / 2.95 / 2.93 s | **+39%** |
+| cold (2 runs) | 6.67 / 6.66 s | 6.73 / 6.77 s | **+1.2%** |
+
+Max RSS ~40–47 MB either way. `cat` → `/dev/null` on the same file in the same
+session: 5.73 s cold, 0.08 s warm.
+
+**What this says.** The pre-filter is not free: **0.84 s per 3.00 GiB of
+brace-free rows**, 1.03 µs per 16-column row of 3,943 bytes — one pass of
+`raw.iter().any(…)` over the row at ~3.8 GB/s, which is about what a scalar
+byte loop gives. On a page-cache-warm scan
+that is +39%; on a cold read from this SSD the device floor hides all but 1.2%
+of it.
+
+So the census's cost is **two-tier, not present-or-absent**: every row pays the
+pre-filter, and a row that passes it pays field splitting and `observe` on top
+(next section). It is unconditional either way
+([`architecture.md`](architecture.md), "The array shape census") — the
+alternative is a query that cannot retype its array columns without a second
+pass — but "free on brace-free data" is not what the measurement says, and the
+earlier reading that it was came from taking the pair while the page cache was
+still filling, where a 0.8 s difference sits inside the run-to-run spread.
 
 **The control's brace-freeness is a contract, not an accident.** The same
-generator writes array columns behind `--arrays`, and that flag exists
-precisely so its *default* output stays what this figure and the
-scan-throughput table above were taken on. Anything that puts a `{` or `[`
-into the default rows invalidates both.
+generator writes array columns behind `--arrays` and a composite behind
+`--composite`, and those flags exist precisely so its *default* output stays
+what this figure and the scan-throughput table above were taken on. Anything
+that puts a `{` or `[` into the default rows invalidates both.
 
-**What this figure does and does not cover.** The control holds no `{` or `[`
-in any data row, so every row is rejected by the census's own pre-filter after
-one pass over its bytes, and no row is ever split into fields. That is
-deliberately the koji shape — koji's six array columns are entirely NULL — and
-it is the case worth knowing is free, since it is what a `pgdq parse` over a
-real dump mostly does. The other side — where the pre-filter passes and every
-field is inspected — is "The census on array-bearing rows costs 87% of a warm
-scan", below.
-
-Reproduce by building both binaries — the census one from the working tree,
-the other from the commit before it — and alternating. **The pre-census binary
-predates the `parse`/`info` split**, so it takes `info --source /dump.sql
---dqcache none` where the current one takes the line below; both drive the same
-whole-file scan.
+Both binaries, then the alternating runs. Census off is `pub(crate) fn
+on_row`'s body in `map.rs` preceded by a bare `return;` — the pre-filter and
+everything after it, and nothing else. **Run the pair in both orders**: within
+a pair the second run is warmer, which is exactly the artifact that hid this
+figure before.
 
 ```sh
+cd scripts && uv run generate_perf_data.py --size-mb 3072 --seed 42 \
+  /path/to/copy_control.sql
 cargo build --release --target x86_64-unknown-linux-musl -p pgdump_query-cli
-for i in 1 2 3; do for w in baseline census; do
+cp target/x86_64-unknown-linux-musl/release/pgdq runs/pgdq-census
+# add `return;` as the first statement of map::Builder::on_row, rebuild,
+# copy to runs/pgdq-nocensus, then revert.
+cat /path/to/copy_control.sql > /dev/null          # warm, per the standing rule
+for i in 1 2 3; do for w in nocensus census; do
   /usr/bin/time -f "$w run$i %e s maxrss=%MkB" sudo nerdctl run --rm \
     -m 512m --memory-swap 512m \
     -v "$PWD/runs/pgdq-$w:/pgdq:ro" \
@@ -133,57 +173,65 @@ for i in 1 2 3; do for w in baseline census; do
 done; done
 ```
 
-**The large-object skip is the measurement that justifies it.** Completing a
-3GB region inside a 512MB limit, an order of magnitude faster per byte than
-the `INSERT` path walks the same kind of bytes, is the "skipped, not walked"
-evidence: walking it statement by statement would mean one span *and one
-stored text string* per `lowrite` call, hundreds of thousands of them.
+The cold pair takes `sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'`
+before *each* run, not once before the pair.
 
-## The census on array-bearing rows costs 87% of a warm scan
+**The large-object skip is the measurement that justifies it.** Completing a
+3GB region inside a 512MB limit, at the same rate the `COPY` path walks the
+same kind of bytes and less than half what the `INSERT` path costs, is the
+"skipped, not walked" evidence: walking it statement by statement would mean
+one span *and one stored text string* per `lowrite` call, hundreds of
+thousands of them.
+
+## The census on array-bearing rows costs 81% of a warm scan
 
 The other side of the figure above: a 3.00 GiB dump where **every** row holds
 an array, so the census's pre-filter passes on all of them and every field of
 every row is split out and inspected. Generated by the same script with
-`--arrays`, so the file differs from the control in exactly the three stress
-columns — `v_int_array` (3–5 elements), `v_int_array_long` (50) and `v_comp`
-(a two-field composite). 698,140 rows, 4,614 bytes each, 19 columns.
+`--arrays --composite`, so the file differs from the control in exactly the
+three stress columns — `v_int_array` (3–5 elements), `v_int_array_long` (50)
+and `v_comp` (a two-field composite). 701,287 rows, 4,593 bytes each, 19
+columns.
 
 Census on is the working tree; census off is the same tree with one line
 added, so nothing but the census differs between the two binaries (below).
 
 | Run | Census off | Census on |
 |---|---|---|
-| warm 1 | 2.08 s | 3.83 s |
-| warm 2 | 2.03 s | 3.75 s |
-| warm 3 | 2.02 s | 3.80 s |
-| cold | 6.63 s | 6.87 s |
+| warm 1 | 2.13 s | 3.87 s |
+| warm 2 | 2.13 s | 3.91 s |
+| warm 3 | 2.11 s | 3.84 s |
+| cold | 6.66 s | 6.83 s |
 
 Max RSS ~40–47 MB either way. `cat` → `/dev/null` on the same file in the same
-session: 5.74 s cold, 0.09 s warm.
+session: 5.73 s cold, 0.09 s warm.
 
-**What this says.** The census costs **1.77 s per 3.00 GiB of array-bearing
-rows** — 2.5 µs per 19-column row — which is **+87%** on a page-cache-warm
-scan and **+3.6%** on a cold read from this SSD, where the device floor
-(5.74 s) hides most of it. Both numbers are the same CPU; which one a user
+**What this says.** The census costs **1.75 s per 3.00 GiB of array-bearing
+rows** — 2.50 µs per 19-column row — which is **+81%** on a page-cache-warm
+scan and **+2.6%** on a cold read from this SSD, where the device floor
+(5.73 s) hides most of it. Both numbers are the same CPU; which one a user
 sees is decided by whether the bytes are already resident.
 
-So the census is free on the shape a real dump mostly has (previous section)
-and roughly doubles the CPU of a warm scan on the shape it is not free on. It
-is unconditional either way (`architecture.md`, "The array shape census") —
-the alternative is a query that cannot retype its array columns without a
-second pass.
+**The pre-filter is 1.03 µs of that 2.50 µs** (previous section, same warm
+regime and the same census-off baseline to within 1%). So splitting the row
+into fields and running `observe` over all 19 of them — the work the
+pre-filter exists to avoid — costs the remaining **1.47 µs**, a little under
+half again what refusing the row outright costs. The census is unconditional
+either way (`architecture.md`, "The array shape census") — the alternative is
+a query that cannot retype its array columns without a second pass.
 
 Both binaries, then the alternating runs. Census off is `pub(crate) fn
 on_row`'s body in `map.rs` preceded by a bare `return;` — the pre-filter and
 everything after it, and nothing else:
 
 ```sh
-cd scripts && uv run generate_perf_data.py --arrays --size-mb 3072 --seed 42 \
-  /path/to/arrays.sql
+cd scripts && uv run generate_perf_data.py --arrays --composite \
+  --size-mb 3072 --seed 42 /path/to/arrays.sql
 cargo build --release --target x86_64-unknown-linux-musl -p pgdump_query-cli
 cp target/x86_64-unknown-linux-musl/release/pgdq runs/pgdq-census
 # add `return;` as the first statement of map::Builder::on_row, rebuild,
 # copy to runs/pgdq-nocensus, then revert.
+cat /path/to/arrays.sql > /dev/null          # warm, per the standing rule
 for i in 1 2 3; do for w in nocensus census; do
   /usr/bin/time -f "$w run$i %e s maxrss=%MkB" sudo nerdctl run --rm \
     -m 512m --memory-swap 512m \
@@ -202,7 +250,7 @@ first one a project adds sets the precedent for what features are for — here,
 a build in which `architecture.md`'s "the census is unconditional" is untrue,
 serving a comparison taken about once a phase. The escape if the patch-and-
 revert ever bites is to drop the comparison, not to gate it: the absolute
-figure (2.5 µs/row) is what
+figures (1.03 µs/row rejected, 2.50 µs/row inspected) are what
 [`roadmap-phase7-inbox.md`](roadmap-phase7-inbox.md) actually consumes, and
 the census-off column exists to establish it once.
 
@@ -252,7 +300,7 @@ support.
 cargo bench -p pgdump_query --bench decoders -- nested
 ```
 
-## A typed query over nested columns costs 2.9× a string one
+## A typed query over nested columns costs 3.5× a string one
 
 The end-to-end half of the figure above: what the per-element cost actually
 costs a user. Two controls, on two axes. Within a file, `--schema-mode
@@ -267,54 +315,46 @@ Both files page-cache warm, output to `/dev/null`:
 
 | File | `strings` | `typed` | Ratio |
 |---|---|---|---|
-| control — 16 columns, no arrays | 9.36 / 9.46 / 9.55 s | 17.55 / 17.57 / 17.36 s | **1.85×** |
-| `--arrays` — the same 16 plus three nested | 9.72 / 9.38 / 9.56 s | 28.23 / 27.93 / 27.19 s | **2.91×** |
+| control — 16 columns, no arrays | 8.87 / 8.81 / 8.71 s | 19.67 / 20.14 / 19.75 s | **2.26×** |
+| `--arrays --composite` — the same 16 plus three nested | 8.04 / 7.97 / 8.10 s | 27.72 / 27.64 / 27.94 s | **3.45×** |
 
-Max RSS ~40–47 MB throughout.
+Max RSS ~42–47 MB throughout.
 
-**What this says.** The `strings` baseline is the same on both files to within
-noise, which is the check that it is byte-driven and not column-driven. On top
-of it, typing 16 scalar columns costs **9.9 µs per row**; adding three nested
-columns costs **26.1 µs per row**. So three nested columns — 19% more
-columns — roughly **double** the typed cost of an already wide typed scan, and
-they account for about **16 µs of every row**.
+**What this says.** Typing the 16 scalar columns costs **13.5 µs per row**;
+typing those plus the three nested ones costs **28.1 µs per row**. So three
+nested columns — 19% more columns — cost **14.6 µs of every row**, slightly
+more than all sixteen scalar columns together.
 
-The micro above covers 6.3 µs of that 16 µs (decode plus render for a
+Each per-row figure is that file's own `typed` minus its own `strings`, which
+is what makes the subtraction legitimate: the two baselines are **not** equal
+(8.80 s against 8.04 s, 9% apart), because the untyped path is partly per-row
+and the control holds 817,024 rows to the nested file's 701,287 at the same
+byte count. A baseline difference cancels out of each file's own difference
+and would not cancel out of a cross-file ratio.
+
+The micro above covers 6.3 µs of that 14.6 µs (decode plus render for a
 4-element array, a 50-element array and a two-field composite). The remaining
-~10 µs is the Arrow build the micro does not reach: 56 per-element
+~8.3 µs is the Arrow build the micro does not reach: 56 per-element
 `append_value` calls into the child builders, plus the list offsets. **The
 literal parse is the smaller half of nested decoding**, which is the fact
 Phase 7 needs before deciding what to do about nested values always copying.
 
-**Three of the sixteen scalar columns are not actually typed.** The generator
-declares `time`, `timestamp` and `timestamptz`, and `resolve_declared_type`
-maps only the spellings `pg_dump` itself writes (`time without time zone` and
-the two `timestamp … time zone` forms), so those three resolve `Unknown` and
-stay `Utf8View` in both modes. The scalar side of the ratio is therefore 13
-typed columns, not 16, so **1.85× is a floor** for what typing a wide scalar
-table costs. The nested attribution is unaffected: those three columns are
-identical in both files and cancel out of the per-row difference. **This is
-scheduled, not accepted** — `M10` corrects the generator and re-takes every
-figure taken on it (`STATUS.md`, "Not started").
-
 *Not covered:* the composite's end-to-end share separately from the arrays'.
-Isolating it needs a third generated file; the micro table above is what
-separates the two by type.
+Isolating it needs a third generated file — `--composite` without `--arrays`,
+which is why those flags are separate; the micro table above is what separates
+the two by type in the meantime.
 
-**`typed` and `strings` do not agree byte for byte on this input**, which they
-do on what `pg_dump` writes (`architecture.md`, "CLI surface"). One column
-diverges: the generator fills `v_real` with `repr()` of a Python float — 17
-significant digits of a float64 — and `typed` decodes that to `Float32` and
-re-renders the shortest string that round-trips an `f32`, so
-`-510216.29239304754` comes back `-510216.28`. `pg_dump` writes what
-`float4out` produced, which does round-trip, so no real dump reaches this. It
-costs the figures nothing — both modes walk the same bytes — but it rules out
-`cmp` on the two outputs as a smoke test here.
+**`typed` and `strings` agree byte for byte on this input**, as they do on
+what `pg_dump` writes (`architecture.md`, "CLI surface") — so `cmp` on the two
+outputs is a valid smoke test here, and
+`pgdump_query-cli/tests/perf_generator_fidelity.rs` asserts it on a small
+generated file so the generator cannot drift back out of that agreement.
 
 ```sh
 cd scripts
-uv run generate_perf_data.py --arrays --size-mb 3072 --seed 42 /path/to/arrays.sql
-uv run generate_perf_data.py           --size-mb 3072 --seed 42 /path/to/control.sql
+uv run generate_perf_data.py --arrays --composite --size-mb 3072 --seed 42 \
+  /path/to/arrays.sql
+uv run generate_perf_data.py --size-mb 3072 --seed 42 /path/to/control.sql
 cargo build --release --target x86_64-unknown-linux-musl -p pgdump_query-cli
 cat /path/to/arrays.sql > /dev/null          # warm, per the standing rule
 for i in 1 2 3; do for m in strings typed; do
@@ -606,6 +646,9 @@ the script has no Rust runtime to call into.
 
 `decoders.rs`'s `nested` group is the one group that is a ratio rather than a
 tripwire — see "Nested decode costs what it copies". The generator's array and
-composite stress columns are behind `--arrays`, and `whole_file.rs` does not
-pass it: that bench's input stays the brace-free control, the same shape the
-scan-throughput and census figures were taken on.
+composite stress columns are behind `--arrays` and `--composite`, and
+`whole_file.rs` passes neither: that bench's input stays the brace-free
+control, the same shape the scan-throughput and census figures were taken on.
+`whole_file.rs` regenerates its input only when `runs/perf-whole-file.sql` is
+missing, so a change to the generator means deleting that file before the
+next `cargo bench` means anything.
