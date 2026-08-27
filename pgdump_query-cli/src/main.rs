@@ -339,10 +339,16 @@ async fn main() -> Result<()> {
             };
             // `info` never scans, so `--dqcache none` — "ignore the cache" —
             // would leave nothing at all to answer from. The message names the
-            // the way out the same way `Error::FieldDecode` names
-            // `--schema-mode strings`: someone reaching for `none` is usually
-            // reaching for it because the dump's own directory is read-only,
-            // and what they want is a cache written somewhere else.
+            // way out, the way `Error::FieldDecode` names `--schema-mode
+            // strings`: someone reaching for `none` is usually reaching for it
+            // because the dump's own directory is read-only, and what they
+            // want is a cache written somewhere else.
+            //
+            // Formed here rather than in `Error::CacheDisabled` because it
+            // interpolates the user's own `--source` path, which the library
+            // error does not have and should not take a `PathBuf` to get.
+            // `FieldDecode` names a *static* flag string, which is why that
+            // one could live in the error.
             let mode = CacheMode::resolve(&file, dqcache.as_deref());
             let path = mode
                 .require_enabled("info")

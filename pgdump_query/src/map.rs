@@ -239,13 +239,18 @@ pub struct TocHeader {
 /// not exist, see I18) are each optional, and whether or not one is present,
 /// what follows must still be `Name: `.
 ///
-/// The two data prefixes differ in what *follows* the comment, not in how it
-/// parses: a `Data for` entry precedes a `COPY` block, which arrives as its
-/// own scanner event, while a `Statistics for` entry precedes an ordinary
-/// `SELECT pg_catalog.pg_restore_relation_stats(...)` statement. So
-/// [`looks_like_toc_name_line`] recognizes the stats prefix — the span must
-/// continue into the statement it heads — and deliberately does not
-/// recognize the data one.
+/// The two data prefixes differ in what the *builder* must be in when the
+/// following bytes arrive, not in how the line parses. A `Statistics for`
+/// entry heads an ordinary `SELECT pg_catalog.pg_restore_relation_stats(...)`
+/// statement, so its span must continue into that statement — which is
+/// [`looks_like_toc_name_line`] returning true. A `Data for` entry must leave
+/// the builder in `Mode::Comment`, because that is the arm
+/// [`Builder::on_copy_start`] reads the `TocHeader` out of; routing it through
+/// `Mode::Statement` instead would hit the arm that pushes a separate span and
+/// passes `None`, and **every `COPY` block in the file would lose its TOC
+/// entry**. So the asymmetry is forced by `on_copy_start`, not by a claim
+/// about what follows a data entry — under `--inserts` a `Data for` entry
+/// heads an `INSERT` run, which is a statement like any other.
 ///
 /// **Splits on the field markers in the order `_printTocEntry()` writes
 /// them**, not on a fully general grammar — `sanitize_line` only strips
@@ -657,9 +662,10 @@ pub(crate) struct Builder {
 ///
 /// `TOC_PREFIX_STATS` ("Statistics for ") counts, because what follows a
 /// statistics entry is an ordinary statement and the span must run into it.
-/// `TOC_PREFIX_DATA` ("Data for ") does not, because what follows *it* is a
-/// `COPY` block, which the scanner reports as its own event — see
-/// [`parse_toc_header_line`], which parses all three prefixes alike.
+/// `TOC_PREFIX_DATA` ("Data for ") must not, because [`Builder::on_copy_start`]
+/// reads its `TocHeader` out of `Mode::Comment` — returning true here would
+/// route the same bytes through `Mode::Statement`, whose arm there drops the
+/// header. See [`parse_toc_header_line`], which parses all three alike.
 fn looks_like_toc_name_line(line: &str) -> bool {
     let named = line.starts_with("-- Name: ") || line.starts_with("-- Statistics for Name: ");
     named && line.contains("; Type: ")

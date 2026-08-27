@@ -217,12 +217,34 @@ was earned after 9.1-9.4 landed and reopened the phase; **9.5.1** was earned by
   drive-bys, which have since landed: a six-major regeneration and two
   error-message changes in one diff would have buried the latter.
 
+- **M7 — attribute an `--inserts` dump's `INSERT` runs**, out-of-band, **its own
+  round**, settled 2026-08-27. Scope is exactly the narrow fix: `Mode::Comment`'s
+  close arm opens `Mode::InsertRun` at the *comment's* offset carrying its
+  `TocHeader`, mirroring what `Builder::on_copy_start`'s `Mode::Comment` arm
+  already does for a `COPY` block (`step` re-feeds a line when it returns
+  `Some`, which is what makes this reachable). **Out of bounds: relaxing
+  `governing_toc`'s "inheritance never crosses `Framing`" rule** — that is a
+  recorded decision, so taking that route would make this a slice rather than
+  out-of-band work. Verified by TOC coverage on
+  `fixtures/16/edge_cases/inserts.sql` moving 30/52 → 35/52 with the `COPY`
+  fixtures unchanged; `edge_cases/column-inserts.sql` and `data-only.sql` carry
+  the same shape and should be checked alongside. Kept out of the M5/M6 diff:
+  those are landed and reviewable, and this touches the mode machine every data
+  span goes through.
+
 - **The koji wrap run is in flight**, launched 2026-08-27 and read by a later
   session — nothing waits on it. `runs/koji-wrap.sh` drives three checks in one
-  detached pass: the interrupt guard at real scale (SIGTERM 20 minutes in,
-  against a cache holding dozens of completed blocks), 9.5.1's claim that the
-  interrupted cache comes back **typed**, and the identity check (74 blocks / 19575829920 rows / 784019857152 bytes, per the 9.1
-  run). Orchestration log: `runs/koji-wrap.log`; scan output
+  detached pass. **Leg 1 is done and both of its checks passed**: the guard took
+  the signal 20 minutes in, at byte 19,867,623,920 of 784,019,857,152, and left
+  a loadable cache; `info --verbose` on it printed zero `not declared` and zero
+  `metadata not scanned` lines, which is 9.5.1's claim verified at real scale.
+  It exited 130, not 143 — `--stop-signal SIGTERM` is ignored by nerdctl, see
+  `CLAUDE.md` — which tests the same guard down the `SIGINT` arm. **Leg 2, the
+  resume, is still running**, and what remains is the identity check (74 blocks / 19575829920 rows / 784019857152 bytes, per the 9.1
+  run). Leg 1 read at ~16.5 MB/s against 9.1's ~237 MB/s average, with a cargo
+  cycle on the same HDD and the row-dense `archive_rpm_components` region as
+  unseparated causes — so **leg 2's duration is not a throughput measurement**
+  and may be hours. Orchestration log: `runs/koji-wrap.log`; scan output
   `runs/koji-wrap-scan.log`; the two reports `runs/koji-wrap-interrupted-info.log`
   and `runs/koji-wrap-final-info.log`. A later session reads
   `runs/koji-wrap.log` end to end — it states each check's verdict inline. The
@@ -231,14 +253,32 @@ was earned after 9.1-9.4 landed and reopened the phase; **9.5.1** was earned by
   `pg_dump 16` file, a version with no `--statistics` flag to produce the
   entries M6 recognizes.
 
-- **Order from here**, settled 2026-08-27: the koji wrap run is launched and the
-  two out-of-band drive-bys (**M5**, **M6**) have landed, so what remains is
-  Phase 4's **4.4.4** and **4.6**, then the Phase 9 wrap. 4.6's measurement wants
-  the wrap run's log, so read `runs/koji-wrap.log` before starting it. Every
-  Phase 9 slice has landed, so this is a phase boundary and an unattended loop
-  stops here regardless.
+- **Order from here**, settled 2026-08-27 after grilling: **M7** → **4.4.4** →
+  **`pgdq_tenant`** → **4.6** → the **Phase 9 wrap**. M7 first, as the smallest
+  well-scoped item. 4.4.4 next: it is the only one whose success criterion is
+  "no existing test changes", which is cheapest to judge against a tree nobody
+  has churned. `pgdq_tenant` after those, so its six-major regeneration diff
+  lands alone. 4.6 late, because it is the one item genuinely blocked on the
+  koji wrap log — read `runs/koji-wrap.log` before starting it. Wrap last.
+  Every Phase 9 slice has landed, so this is a phase boundary and an unattended
+  loop stops here regardless.
 
 ## Known gaps
+
+- **An `--inserts` dump loses TOC attribution on every `INSERT` run.** Found
+  while grilling M6 on 2026-08-27 and **queued as M7**, its own out-of-band
+  round — see "Not started". The `-- Data for Name: …; Type:
+  TABLE DATA` comment closes as its own `Framing` span, which owns the TOC
+  entry; `Builder::push_span` then clears `governing_toc` for a `Framing` body,
+  so the `INSERT` run that follows carries `toc: None`. It is the same
+  two-spans-one-attributed shape M6 just closed for statistics entries:
+  `fixtures/16/edge_cases/inserts.sql` reports TOC coverage **30/52 (58%)**
+  where attributing the runs would read 35/52 (67%). A `COPY` dump is
+  unaffected — `on_copy_start` folds the comment into the `Data` span, so
+  `edge_cases/default.sql` reads 31/48 with all six `TABLE DATA` entries
+  attributed. Tiling is byte-exact either way, the object census is already
+  right (it counts the owning `Framing` span), and no row data is involved: the
+  cost is the coverage diagnostic under-reporting an `--inserts` dump.
 
 - **An array nested inside a composite** is still decided optimistically, so a
   multi-dimensional or `[lb:ub]=`-decorated value there is a hard
@@ -342,24 +382,32 @@ Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
 
-**Pending: one.**
+**Nothing is pending**; the notes below say how the last of them went.
 
-*M6's boundary-signal asymmetry (2026-08-27).* The queued description of the
+*M6's boundary-signal asymmetry was reviewed on 2026-08-27 and **stands**, with
+its recorded reason replaced.* The queued description of the
 `TOC_PREFIX_STATS` drive-by was "one prefix plus the object-census kind". It
 turned out to be two functions with **different** answers:
 `parse_toc_header_line` reads all three of `_printTocEntry()`'s prefixes, while
 the boundary signal `looks_like_toc_name_line` accepts `"Statistics for "` and
-still refuses `"Data for "`. The reason is what follows each — a statistics
-entry heads an ordinary statement its span must run into, a data entry heads a
-`COPY` block that arrives as its own scanner event. Making the two functions
-agree is the mistake available here, and it would split every `COPY` block's
-header off from its data. If reconsidered, the alternative is a single
-predicate plus an explicit "is this prefix followed by a `COPY`" test at the
-call site, which says the same thing with more machinery. Pinned by
-`a_statistics_entry_is_one_attributed_span` and
-`a_statistics_entry_parses_and_opens_a_span` in `map.rs`.
-
-The notes below say how the earlier ones went.
+still refuses `"Data for "`. Grilled on 2026-08-27, and the first
+reason recorded for it was wrong: it said a data entry heads a `COPY` block
+that arrives as its own event, which is false under `--inserts`. The real
+constraint is `Builder::on_copy_start` — it reads the pending `TocHeader` out
+of its `Mode::Comment` arm, and its `Mode::Statement` arm pushes a separate
+span and passes `None`, so accepting `"Data for "` here would make **every
+`COPY` block in the file lose its TOC entry**. The asymmetry is forced, not
+chosen. Pinned by `a_statistics_entry_is_one_attributed_span` and
+`a_statistics_entry_parses_and_opens_a_span` in `map.rs`; the durable half is
+in [`../design/architecture.md`](../design/architecture.md), "TOC enrichment".
+What the grilling turned up on the way is the `--inserts` gap under "Known
+gaps", queued as **M7**. *M5's placement was reviewed the same day and
+**stands**, also with a replaced reason*: not "the library error is shared"
+(`require_enabled` has two call sites, both in `main.rs`) but that the remedy
+interpolates the user's own `--source` path, which `Error::CacheDisabled` does
+not have and should not take a `PathBuf` to get — unlike `Error::FieldDecode`,
+which names a static flag string. Reasoning:
+[`history/2026-08-27.md`](history/2026-08-27.md).
 
 *9.5.1's three entries were reviewed on 2026-08-27.* The **prepass running
 even when the cancel flag is already set** **stands**, now with numbers behind

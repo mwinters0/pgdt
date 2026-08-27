@@ -53,8 +53,16 @@ sudo nerdctl run -d --name pgdq-koji -m 512m --memory-swap 512m \
   -v "$PWD/runs:/out" \
   -v "/path/to/dump.sql:/dump.sql:ro" \
   postgres:16-alpine \
-  sh -c '/pgdq parse --source /dump.sql --dqcache /out/koji.dqcache > /out/koji-scan.log 2>&1; echo "exit=$?" >> /out/koji-scan.log'
+  sh -c 'exec /pgdq parse --source /dump.sql --dqcache /out/koji.dqcache >> /out/koji-scan.log 2>&1'
 ```
+
+**`exec` is load-bearing, not style.** It makes `pgdq` PID 1, so a later
+`nerdctl stop` reaches the interrupt guard. Leaving `sh` in front — which
+`; echo "exit=$?"` forces, since a compound command cannot be `exec`'d — makes
+`sh` the signal's recipient, and it does not forward: the runtime's `SIGKILL`
+follows and the guard never runs. Read the exit code from
+`sudo nerdctl inspect -f '{{.State.ExitCode}}' pgdq-koji` instead, which
+reports it whether the run finished or was signalled.
 
 **Pass `--dqcache` into the mounted `/out`.** The dump is mounted read-only,
 so the colocated default (`/dump.sql.dqcache`) lands in the container's
@@ -68,15 +76,26 @@ A later session reads `runs/koji-scan.log`; `sudo nerdctl inspect -f
 which `parse` catches either way: it saves everything scanned so far to the
 `--dqcache` path and exits by signal, and re-running the same command resumes
 from there. So a scan that has to be cut short costs the block in flight, not
-the run. Note the `postgres` images set `STOPSIGNAL SIGINT`, so an unqualified
-`nerdctl stop` gives exit **130**, not 143; pass `--stop-signal SIGTERM` to
-`nerdctl run` to exercise the `SIGTERM` path.
+the run. Note the `postgres` images set `STOPSIGNAL SIGINT`, so `nerdctl stop`
+gives exit **130**, not 143. **`--stop-signal SIGTERM` on `nerdctl run` does
+not change that** — it is accepted and then ignored; the container's
+`io.containerd.image.config.stop-signal` label still reads `SIGINT` and
+`nerdctl stop` sends what the label says. To exercise the `SIGTERM` path, send
+it directly: `sudo nerdctl kill -s SIGTERM <name>` (verified: exit 143).
 
-Also **`exec` the binary** rather than leaving `sh` as PID 1 when the run is
-one you intend to stop: `sh -c '/pgdq … > log; echo exit=$?'` makes `sh` the
-signal's recipient, and it does not forward — the guard never runs. Write
-`sh -c 'exec /pgdq … >> log 2>&1'` and read the exit code from
-`sudo nerdctl inspect -f '{{.State.ExitCode}}' <name>`.
+**A wrap-scale verification run is stop-report-resume-compare**, in one
+detached script: start the parse, signal it partway, report the interrupted
+cache (`pgdq info --dqcache <path> --verbose`) and check it comes back typed,
+then resume the same command to completion and compare block/row/byte counts
+against the previous full run. That sequence is what buys the interrupt guard's
+only real-scale test — a signal inside a hundred-gigabyte block, against a cache
+already holding dozens of completed ones — which no fixture can construct. The
+script itself is a `runs/` artifact, not a `scripts/` one: it hardcodes one
+machine's dump and nothing in the repo consumes its output.
+
+**Never edit a `runs/` orchestration script while it is running.** `sh` reads
+a script incrementally, so an edit mid-run shifts the byte offset it is about
+to read from and can execute garbage. Let it finish, or kill it first.
 
 ## Architecture & design docs
 

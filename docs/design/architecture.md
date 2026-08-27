@@ -410,10 +410,16 @@ functions that read them draw the line differently on purpose.
 `parse_toc_header_line` treats `TOC_PREFIX_DATA` (`"Data for "`) and
 `TOC_PREFIX_STATS` (`"Statistics for "`, a v18+ `--statistics` component)
 alike — each is an optional prefix before `Name: `. `looks_like_toc_name_line`,
-the boundary signal, accepts the stats prefix but not the data one: a
-statistics entry heads an ordinary `pg_restore_relation_stats()` statement, so
-its span must run into it, while a data entry heads a `COPY` block, which
-arrives as its own scanner event and opens its own span. Free related fact: a
+the boundary signal, accepts the stats prefix but not the data one, and the
+constraint that forces this is `Builder::on_copy_start`: it reads the pending
+`TocHeader` out of the `Mode::Comment` arm, and its `Mode::Statement` arm
+instead pushes a separate span and passes `None`. A statistics entry heads an
+ordinary `pg_restore_relation_stats()` statement and must leave the builder in
+`Mode::Statement`; a data entry must leave it in `Mode::Comment`, or **every
+`COPY` block in the file loses its TOC entry**. The asymmetry is therefore
+about which mode `on_copy_start` finds, not about what follows a data
+entry — under `--inserts` a data entry heads an `INSERT` run, a statement like
+any other. Free related fact: a
 `STATISTICS DATA` header has no owner at all, not even a placeholder —
 `dumpRelationStats` never sets `te->owner`, and `sanitize_line`'s NULL-hyphen
 substitution turns that into the literal `-`, which `parse_toc_header_line`

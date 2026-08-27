@@ -19,6 +19,10 @@ Two standing rules for reading anything below:
 - **Long runs are detached.** A koji-scale scan is roughly an hour; see
   `CLAUDE.md`, "Long-running processes", for why waiting on one is expensive
   and what to do instead.
+- **A koji figure taken while local work ran is not a figure.** Whether this
+  checkout and the sample share a spindle is a machine fact — see
+  `CLAUDE.local.md`'s hardware section, which records what the contention costs
+  here.
 
 ## Scan throughput by input shape
 
