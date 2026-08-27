@@ -81,11 +81,13 @@ Nine standing rules for reading anything below:
   the composite column's per-row share, five interleaved reps on each of two
   builds of the same source: **+0.61 µs/row (t = +4.34) on glibc and
   −1.16 (t = −4.81) on musl** — both "significant", 1.77 µs/row apart, opposite
-  signs. A figure the design **depends on** — a ratio the roadmap cites, a
-  bound an inbox entry consumes — is therefore taken on **two apparatuses** and
-  quoted as a range across them; the second is cheap here, being the same sweep
-  script against a musl build. A tripwire or an orientation figure may have one,
-  and says so. Reasoning:
+  signs. That comparison is the *demonstration*, not a practice to repeat —
+  **every figure here is glibc**, and the musl leg exists only as the evidence
+  for this rule. What follows for a real figure is a corollary rather than a
+  second run: a cross-file per-row difference under **~0.5 µs/row** is
+  apparatus, that floor is measured rather than assumed (the seed-43 control,
+  "The cross-file subtraction bottoms out"), and no number of reps moves it.
+  Reasoning:
   [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md).
 - **Long runs are detached.** A koji-scale scan is roughly an hour; see
   `CLAUDE.md`, "Long-running processes", for why waiting on one is expensive

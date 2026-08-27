@@ -213,6 +213,26 @@ filed.
     SSD rather than tmpfs anyway. `M13`'s sweep already had to delete two
     inputs mid-run for the same reason.
 
+    **One libc: glibc.** Settled 2026-08-27. The sweep does not take a second
+    leg — the musl comparison in `measurements.md`'s ninth standing rule is
+    the evidence for *why* an SE is not an error bar, not a practice to
+    repeat, and the corollary that survives is the measured ~0.5 µs/row floor.
+
+    **It emits the markdown tables, not just a log.** Each figure's section in
+    [`../design/measurements.md`](../design/measurements.md) has a table shape,
+    and the harness writes that shape so folding in is a paste. Transcription
+    is the step that has actually gone wrong — `M13`'s fold-in introduced two
+    wrong readings by hand — and the interpretation around each table is prose
+    a harness cannot write and should not try to. A figure with no table shape
+    is a figure nobody has decided how to report, which is the useful forcing
+    function.
+
+    **Parameterized by environment variable, defaults for this machine.** It
+    moves from `runs/` to `scripts/`, so machine facts cannot travel with it:
+    the procedure goes in `CLAUDE.md` and the paths stay in `CLAUDE.local.md`,
+    the split the project already runs. A harness that has to be rewritten
+    after a machine move is the same recurrence in a different disguise.
+
     **The fold-in lands per section, across several commits.** A twelve-figure
     diff is exactly what "never mix high- and low-confidence work in one review
     cycle" forbids, and `M13`'s four-figure fold-in already produced two

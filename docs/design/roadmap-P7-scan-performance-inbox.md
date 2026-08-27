@@ -398,8 +398,9 @@ share came out:
 | glibc | **+0.61 µs/row** (sd 0.31, SE 0.14, **t = +4.34**) | +0.20 (SE 0.18, t = +1.06) |
 | static musl | **−1.16 µs/row** (sd 0.54, SE 0.24, **t = −4.81**) | −0.07 (SE 0.23, t = −0.31) |
 
-**These are the only *t* values quoted anywhere in this repo, and they are the
-demonstration rather than a result** — [`measurements.md`](measurements.md)'s
+**These are the only *t* values quoted anywhere in this repo, and the musl leg
+they come from is the only one kept — both exist as this demonstration rather
+than as results** — [`measurements.md`](measurements.md)'s
 ninth standing rule now forbids quoting one for a figure. Both legs are
 "significant" past any threshold anyone would set, they disagree by
 **1.77 µs/row**, and the sign inverts — including the sign of the reading's
@@ -423,11 +424,12 @@ are mostly "what does this one thing cost", and it will generate dozens of
 differences of exactly this size. Three rules follow, and the first is the one
 that costs something:
 
-- **A figure the design depends on gets two apparatuses, quoted as a range.**
-  "Depends on" means a ratio the roadmap cites or a bound an inbox entry
-  consumes; a tripwire or an orientation figure may have one and says so. The
-  second apparatus is cheap here — the same sweep script against a musl build
-  is a second libc for the price of a rebuild.
+- **The floor is the uncertainty estimate, and it is measured.** A cross-file
+  per-row difference under ~0.5 µs/row is apparatus, established by the
+  seed-43 control rather than assumed, and no number of reps moves it. The
+  two-libc comparison above is the *demonstration* that an SE cannot stand in
+  for that floor — it is not a practice to repeat, since every figure this
+  project keeps is glibc.
 - **Read per-rep SE as a repeatability check, not an error bar.** A *wide* SE
   means the sweep is broken and should be re-run; a narrow one licenses
   nothing.
