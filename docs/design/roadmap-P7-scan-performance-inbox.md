@@ -98,12 +98,14 @@ runs each (a whole-file `pgdq` scan, 512MB-limited container, `drop_caches`
 before every run): a `COPY` block scans in 6.68–6.70 s, a large-object region
 in 6.61–6.65 s, an `INSERT` run in 15.13–15.42 s, against a 5.73–5.74 s
 `cat`-to-`/dev/null` floor for the same files. The first two are within 20% of
-the I/O floor; the `INSERT` scan is 2.7× the floor's time. Against the `COPY`
-path's own CPU — 2.92 s for the same bytes page-cache warm, since re-taken at
-**0.57 s** on tmpfs with a glibc binary and no wrapper — that is *at least*
-~5× the per-byte CPU, ~12 s of it per 3 GiB. The two sides are not yet one
-apparatus (`M14` re-takes the cold table), and every correction so far has
-widened the ratio rather than narrowed it. The cause is structural, not incidental:
+the I/O floor; the `INSERT` scan is 2.7× the floor's time. **The "~5×
+per-byte CPU" this entry was filed under is not a CPU ratio**: it divides that
+cold rate, device included, by the `COPY` path's *warm* CPU, and no warm
+`INSERT` figure has ever been taken. The `COPY` side is now 0.57 s per 3.00 GiB
+rather than 2.92 s, and bounding the `INSERT` side from the cold table (15.2 s
+against a 5.73 s floor) puts the real per-byte ratio near **16–26×**. `M17`
+takes the warm `INSERT` `parse` that settles it — **re-check that before using
+any number here**. The cause is structural, not incidental:
 slice 3.6 gave the large-object region a `crate::scan`-level fast path (lines
 skipped unread) but left `INSERT` runs decoding every line into `Event::Line`
 and pushing it through `preamble::statement_complete`, folding only the
@@ -114,8 +116,9 @@ mechanism `State::InLargeObjectRegion` already is — and P7 owns scan
 performance and the "two workloads, two algorithms" split. It is also the one
 place where this project's cost claim is currently false in the direction that
 matters: `--inserts` output is a shape the fixture tooling generates routinely,
-and a koji-scale 1 TB `--inserts` dump spends ~45 minutes of CPU that a `COPY`
-dump of the same size does not. The design constraint to carry in: an `INSERT` run's end
+and a koji-scale 1 TB `--inserts` dump spends tens of minutes of CPU that a
+`COPY` dump of the same size does not — "~45 minutes" is the figure the ~5×
+gave and is a floor under the same re-take. The design constraint to carry in: an `INSERT` run's end
 has no invariant behind it the way `COPY`'s `\.` (I7) and `BLOBS`' `COMMIT;`
 (I12) do, so a skip-and-count path needs the string-aware `'`-tracking scan
 [`architecture.md`](architecture.md)
@@ -307,26 +310,28 @@ one column costs end to end is to run the same query on two generated files
 that differ by that column and subtract their per-row `typed` − `strings`
 figures. That subtraction has a floor. Two 3.00 GiB files holding the *same*
 sixteen columns and differing only in their RNG seed (`--seed 42` against
-`--seed 43`) disagree by **+0.20 µs/row** (six interleaved reps, per-rep sd
-0.45) when they should disagree by zero; the file differing by one composite
-column reads **+0.61 µs/row** (five reps, sd 0.31) — only 0.41 µs clear of
-that control, under 2 SE. Anything under roughly **±0.5 µs/row** out of this
-instrument is apparatus. Two contributors are known and neither is removable
+`--seed 43`) disagree by a paired median of **+0.15 µs/row**, spanning −0.31 to
++0.92 over six interleaved reps, when they should disagree by zero; the file differing by one composite
+column reads a paired median of **+0.59 µs/row** over five reps, whose per-rep
+readings (+0.29 to +1.03) overlap the floor's (−0.31 to +0.92) across most of
+their width. Anything under roughly **±0.5 µs/row** out of this instrument is
+apparatus. Two contributors are known and neither is removable
 within it: the files hold different row counts at the same byte size, so a
 per-byte component does not normalize away per row; and a slow upward drift
 across a long session lands on whichever file is measured later, which is why
 the runs interleave files rather than running them in blocks.
 
-**A third contributor is probably present and *is* removable — the census.** A
-`strings` leg is a mapping pass plus a row pass, and the mapping pass runs the
-array-shape census, whose cost depends on whether the rows carry a `{`. The
-`--arrays --composite` file's `strings` leg is 24% above the control's, which
-is consistent with that (+1.05 s observed against +1.26 s measured directly,
-+1.22 s predicted) but not yet established — a direct test with the census-off
-binary was under way when this was filed; re-check it before relying on the
-attribution. If it holds, a cross-file subtraction that changes the
-*brace-bearingness* of the rows is comparing two different baselines, and only
-the per-file `typed` − `strings` difference cancels it. Earlier sweeps could not see this: at 9.6 s legs a 1 s
+**A third contributor is present and *is* removable — the census, measured.**
+A `strings` leg is a mapping pass plus a row pass, and the mapping pass runs
+the array-shape census, whose cost depends on whether the rows carry a `{`.
+The `--arrays --composite` file's `strings` leg is 24% above the control's;
+with the **census-off** binary on the same two files the gap **inverts**, from
++1.115 s to −0.075 s — the arrays file becoming slightly cheaper, as its 14%
+lower row count should give. So a cross-file subtraction that changes the
+*brace-bearingness* of the rows compares two different baselines, and only the
+per-file `typed` − `strings` difference cancels it. The same run reproduces
+the census's own cost on a different command to within 3% of the `parse`
+figures. Earlier sweeps could not see this: at 9.6 s legs a 1 s
 difference was inside the spread.
 
 **And the floor cannot be tightened by taking more reps** — see the next
@@ -381,8 +386,11 @@ share came out:
 | glibc | **+0.61 µs/row** (sd 0.31, SE 0.14, **t = +4.34**) | +0.20 (SE 0.18, t = +1.06) |
 | static musl | **−1.16 µs/row** (sd 0.54, SE 0.24, **t = −4.81**) | −0.07 (SE 0.23, t = −0.31) |
 
-Both legs are "significant" past any threshold anyone would set, they disagree
-by **1.77 µs/row**, and the sign inverts — including the sign of the reading's
+**These are the only *t* values quoted anywhere in this repo, and they are the
+demonstration rather than a result** — [`measurements.md`](measurements.md)'s
+ninth standing rule now forbids quoting one for a figure. Both legs are
+"significant" past any threshold anyone would set, they disagree by
+**1.77 µs/row**, and the sign inverts — including the sign of the reading's
 distance from its own floor (+0.41 glibc, −1.09 musl). The floor is not
 significant on either leg, so it cannot rescue either. And a third scale sits
 under both: the **identical** control file, same binary, read 7.595 µs/row in
@@ -403,9 +411,11 @@ are mostly "what does this one thing cost", and it will generate dozens of
 differences of exactly this size. Three rules follow, and the first is the one
 that costs something:
 
-- **Quote a range across at least two apparatuses, never a confidence interval
-  from one.** The second apparatus is cheap here — the same sweep script
-  against a musl build is a second libc for the price of a rebuild.
+- **A figure the design depends on gets two apparatuses, quoted as a range.**
+  "Depends on" means a ratio the roadmap cites or a bound an inbox entry
+  consumes; a tripwire or an orientation figure may have one and says so. The
+  second apparatus is cheap here — the same sweep script against a musl build
+  is a second libc for the price of a rebuild.
 - **Read per-rep SE as a repeatability check, not an error bar.** A *wide* SE
   means the sweep is broken and should be re-run; a narrow one licenses
   nothing.

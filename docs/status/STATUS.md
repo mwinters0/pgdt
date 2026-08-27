@@ -170,10 +170,30 @@ filed.
     [`history/2026-08-27.md`](history/2026-08-27.md), "Phases are identified by
     `P<k>`".
 
+  - [ ] **`M17` — the measurement sweep, scope under discussion.** Allocated
+    2026-08-27 out of the finding that **no warm `INSERT` figure has ever been
+    taken**, so the standing "~5× the per-byte CPU" divides a cold rate by a
+    warm CPU and is a floor under a real ratio nearer 16–26× — see "An
+    `INSERT` run is folded into one `Data` span" under "Known gaps". Its seed
+    scope is that one measurement: a warm `INSERT` `parse` on tmpfs, one
+    stage, ~4.5 minutes of generation.
+
+    **The maintainer has asked for it to be comprehensive instead** — one
+    sweep gathering every figure under the current regimes, so that partial
+    re-takes stop recurring. That reopens whether it is out-of-band at all:
+    `roadmap.md`'s admission rule takes an item out-of-band only if it changes
+    no recorded decision and fits one session, and a durable sweep harness
+    would supersede
+    [`../design/measurements.md`](../design/measurements.md)'s "each section's
+    recipe below is the durable record". **Not started; the scope is the open
+    question, not the work.**
+
 - **Order from here**, re-settled 2026-08-27 with `M12`, `M11` and `M13`
-  landed: `M14`, and then nothing that is scheduled (`M15` and `M16` each
-  landed the day they were queued; the keystone sweep `M16` prepares for is
-  the maintainer's call, not a scheduled item). `M14` runs **before** the
+  landed: `M14` and `M17`, whose scopes now overlap enough that they may be
+  one sweep — that is the open question under `M17` above. Nothing else is
+  scheduled (`M15` and `M16` each landed the day they were queued; the
+  keystone sweep `M16` prepares for is the maintainer's call, not a scheduled
+  item). `M14` runs **before** the
   phase-choice conversation, settled 2026-08-27: its method is written and its
   generators are hot, and leaving one table under a superseded apparatus is
   the "figures disagreeing about regime" failure the standing rules were
@@ -199,9 +219,10 @@ filed.
   as provisional pending real user trials; the resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 
-- **`M14`, the last of the queued out-of-band items** — the cold
-  scan-throughput table under one apparatus; see "The out-of-band queue"
-  above. Nothing else is scheduled.
+- **`M14` and `M17`, the queued out-of-band items** — the cold
+  scan-throughput table under one apparatus, and the warm `INSERT` CPU that
+  has never been taken. `M17`'s scope is under discussion and may absorb
+  `M14`; see "The out-of-band queue" above. Nothing else is scheduled.
 
 ## Known gaps
 
@@ -311,11 +332,13 @@ filed.
   accumulator — unlike the large-object region, which is skipped unread at
   the scanner level. Measured at **~209MB/s cold against ~1.10GB/s for a `COPY`
   dump of the same size on the same disk read page-cache warm**, i.e. about 5×
-  the per-byte CPU, and CPU-bound rather than I/O-bound. **The 5× is a floor
-  under re-take, and a loose one**: the `COPY` side of it has since been
-  re-taken at 0.57 s per 3.00 GiB (~5.7 GB/s) rather than 2.92 s, so `M14`
-  widens the ratio substantially rather than narrowing it — the gap this fix
-  addresses is larger than the figure says, never smaller. Figures and re-run commands in
+  the per-byte CPU. **The 5× is not a CPU ratio and is a loose floor**: it
+  divides a *cold* `INSERT` rate, device included, by the `COPY` path's *warm*
+  CPU — and no warm `INSERT` figure has ever been taken. Bounding it from the
+  cold table alone puts the real per-byte ratio near **16–26×**, since the
+  `COPY` side is now 0.57 s per 3.00 GiB rather than 2.92 s. `M17` measures the
+  warm `INSERT` CPU. Every correction so far has made this path look worse, so
+  the gap the fix addresses is larger than the figure says, never smaller. Figures and re-run commands in
   [`../design/measurements.md`](../design/measurements.md). A
   koji-scale 1TB `--inserts` dump therefore spends ~45 minutes of CPU that a
   `COPY` dump of the same size does not. Correctness is unaffected — the map, the tiling and the row counts
@@ -327,30 +350,23 @@ filed.
 
 Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
-it has been looked at: settled into the design docs, or reversed. **One is
-open** — whether the array-shape census explains the untyped baseline's 24%
-gap, first below, which has a test running. Everything else here has been
-looked at: `M13`'s fold-in was reviewed on 2026-08-27 and two of its three
-calls reversed, its two apparatus calls and the measurement-era backlog before
-them earlier the same day.
+it has been looked at: settled into the design docs, or reversed. **Nothing is
+open.** `M13`'s fold-in was reviewed on 2026-08-27: two of its three calls were
+reversed and its one new causal claim was tested rather than argued; its two
+apparatus calls and the measurement-era backlog came earlier the same day. The
+one thing still undecided is not a call already made — it is `M17`'s scope,
+which is under "The out-of-band queue" above.
 
-**Open: does the array-shape census explain the untyped baseline's 24% gap?**
-`M13`'s fold-in asserted in three docs that the `--arrays --composite` file's
-`--schema-mode strings` leg is 24% above the control's *because* the mapping
-pass's census splits its rows — the only rows in the set carrying a `{`. The
-arithmetic is suggestive but loose: predicted +1.22 s against +1.05 s
-observed, and the arrays file has 14% fewer rows, whose cheaper row pass means
-the census has to cover *more* than 1.05 s, not less. **A direct test is
-running** — the same `strings` query with the census-off binary on both files,
-five interleaved reps, `runs/m13-census-baseline.sh` →
-**`runs/m13-census-baseline.log`**, launched 2026-08-27T23:04Z, expect ~11
-minutes (most of it regenerating two 3.00 GiB inputs). The claim predicts the
-gap collapses from +1.05 s to about **−0.2 s**; a gap that stays positive
-means something else is in there and the attribution comes out of
-[`../design/measurements.md`](../design/measurements.md),
-[`../design/architecture.md`](../design/architecture.md)'s neighbour and the
-P7 inbox. Until the log is read, all three say "consistent with" rather than
-"is". If the run was killed, `/dev/shm/pgdq-m13cb` needs deleting by hand.
+*The census attribution was reviewed on 2026-08-27 and **tested rather than
+argued**; it holds.* `M13`'s fold-in asserted in three docs that the
+`--arrays --composite` file's `strings` leg is 24% above the control's because
+the mapping pass's census splits its rows. The same query with the census-off
+binary, five interleaved reps on both files
+(`runs/m13-census-baseline.sh` → `.log`), inverts the gap from **+1.115 s to
+−0.075 s** — the arrays file becoming slightly cheaper, as its 14% lower row
+count should give. The census accounts for more than the whole gap, and its
+cost measured through `query` reproduces the `parse` figures to within 3%,
+which is a cross-check nobody asked for. All three docs now state it flatly.
 
 *`M13`'s fold-in made three calls with no maintainer present; all three were
 reviewed on 2026-08-27 and **two were reversed**.*
@@ -426,11 +442,12 @@ worst on the HDD, and page-cache residency is an assumption), and a comparison
 table is re-taken **whole in one interleaved sweep**, never differenced across
 sessions or run a file at a time. And `M10`'s explanation of its own 9%
 between-file baseline gap — "the untyped path is partly per-row" — is
-**retracted**, though the gap itself is real: `M13`'s sweep puts the control
-and `--composite` legs 0.03% apart and the `--arrays --composite` leg 24%
-above both, which is consistent with the mapping pass's array-shape census on
-the only file whose rows carry a `{` — under test, first entry above — and in
-no reading a per-row property of the untyped path. Both rules are also in
+**retracted**, though the gap itself is real and now explained: `M13`'s sweep
+puts the control and `--composite` legs 0.03% apart and the
+`--arrays --composite` leg 24% above both, and a census-off run inverts that
+gap to −0.075 s — so it is the mapping pass's array-shape census on the only
+file whose rows carry a `{`, and in no reading a per-row property of the
+untyped path. Both rules are also in
 [`../design/roadmap-P7-scan-performance-inbox.md`](../design/roadmap-P7-scan-performance-inbox.md),
 since that campaign is where they bite.
 

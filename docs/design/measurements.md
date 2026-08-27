@@ -9,7 +9,7 @@ All figures are on the hardware `CLAUDE.local.md` describes. Synthetic inputs
 are regenerable with `--seed 42` and are **never committed** — they measure
 throughput, not correctness, which stays entirely fixture-based.
 
-Eight standing rules for reading anything below:
+Nine standing rules for reading anything below:
 
 - **Every figure is a ratio, never a disk throughput.** Page-cache state
   dominates. A number taken warm on a freshly generated file can be twice what
@@ -73,6 +73,20 @@ Eight standing rules for reading anything below:
   Whether a different allocator should be the shipped default is a P7
   question, filed in
   [`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md).
+- **Never quote a standard error or a *t* from one sweep — give the median and
+  the observed spread.** Within-sweep dispersion measures the *reps*, not the
+  measurement: the allocator, the stage's position in the session and the
+  tmpfs/page state are all held constant inside a sweep, so they contribute
+  nothing to an SE and nearly everything to the answer. The demonstration is
+  the composite column's per-row share, five interleaved reps on each of two
+  builds of the same source: **+0.61 µs/row (t = +4.34) on glibc and
+  −1.16 (t = −4.81) on musl** — both "significant", 1.77 µs/row apart, opposite
+  signs. A figure the design **depends on** — a ratio the roadmap cites, a
+  bound an inbox entry consumes — is therefore taken on **two apparatuses** and
+  quoted as a range across them; the second is cheap here, being the same sweep
+  script against a musl build. A tripwire or an orientation figure may have one,
+  and says so. Reasoning:
+  [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md).
 - **Long runs are detached.** A koji-scale scan is roughly an hour; see
   `CLAUDE.md`, "Long-running processes", for why waiting on one is expensive
   and what to do instead.
@@ -149,14 +163,18 @@ path is not — it takes 8.6 s per 3 GiB *longer* than the
 [`architecture.md`](architecture.md), "Bulk regions"). Mapping an `--inserts`
 file costs about what *decoding* a `COPY` file costs, not what *scanning* one
 costs: at 1 TB that is ~45 minutes of CPU no `COPY` dump pays, against the
-~15 minutes the `COPY` path spends on 1 TB in total. **The ~5× ratio is under
-re-take and widens by a lot**: it divides this cold `INSERT` rate by the warm
-`COPY` CPU, and that CPU has since been re-taken from 2.92 s (~1.10 GB/s, of
-which 0.77 s was wrapper, on a page-cache-warm SSD read with the pre-`M11`
-scalar pre-filter) to **0.57 s** (~5.7 GB/s). It is not recomputed here,
-because differencing a tmpfs figure against a cold SSD figure from another
-session is what the fourth standing rule forbids — `M14` re-takes both sides
-under one apparatus. The direction is safe meanwhile: every
+~15 minutes the `COPY` path spends on 1 TB in total. **The ~5× is not a CPU
+ratio and never was.** It divides this *cold* `INSERT` rate — which contains
+the device — by the `COPY` path's *warm* CPU, so it compares two regimes; and
+its `COPY` side has since fallen from 2.92 s (~1.10 GB/s, of which 0.77 s was
+wrapper, on a page-cache-warm SSD read with the pre-`M11` scalar pre-filter) to
+**0.57 s**. **No warm `INSERT` figure has ever been taken**, so the per-byte
+CPU ratio is unmeasured. Bounding it from this table alone: a 15.2 s cold
+`INSERT` scan against a 5.73 s device floor puts its CPU between ~9.5 s (fully
+serialized with the read) and ~15.2 s (fully overlapped), against 0.57 s for
+`COPY` — i.e. somewhere around **16–26×**, with ~5× a floor rather than an
+estimate. The measurement that settles it is a warm `INSERT` `parse` on tmpfs,
+queued as `M17` (`../status/STATUS.md`, "The out-of-band queue"). The direction is safe meanwhile: every
 correction makes the `INSERT` path look worse, never better. Correctness, tiling and
 row counts are unaffected. The fix is a scanner-level `INSERT` path;
 [`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md) holds it.
@@ -486,10 +504,10 @@ typing those plus the three nested ones costs **21.5 µs per row**. So three
 nested columns — 19% more columns — cost **13.9 µs of every row**, nearly
 twice what all sixteen scalar columns together cost. **The two array columns
 carry essentially all of it**: adding the composite column alone moves the
-per-row figure by **+0.49 µs** (paired mean over the five reps +0.61,
-SE 0.14), against a cross-file instrument whose own floor is +0.20 µs/row —
-so ~4% of the three columns' cost, and a bound rather than a resolution
-(below).
+per-row figure by **+0.49 µs** (paired median over the five reps +0.59),
+against a cross-file instrument whose own floor reads +0.15 and whose per-rep
+readings overlap it across most of their range — so ~4% of the three columns'
+cost, and a bound rather than a resolution (below).
 
 Each per-row figure is that file's own `typed` minus its own `strings`, which
 is what makes the subtraction legitimate: whatever the untyped baseline is
@@ -497,19 +515,28 @@ worth on a given file — and the three files hold different row counts at the
 same byte count — it cancels out of that file's own difference, and would not
 cancel out of a cross-file ratio.
 
-**The untyped baseline is not file-independent, and the census is the leading
-explanation.** The control and the `--composite` file read within 0.03% of
-each other, and the `--arrays --composite` file reads **24% above both**. Its
-rows are the only ones carrying a `{`, so they are the only ones the mapping
-pass's array-shape census splits into fields, and the +1.05 s gap is
-consistent with the +1.26 s that census costs on this file two sections above.
-It is not yet *established*: the prediction is +1.22 s once the control's own
-pre-filter is netted out, and the arrays file's 14% lower row count should
-make its row pass cheaper, so the census has to cover more than 1.05 s rather
-than less. The direct test — the same query with the census-off binary on both
-files — is under way (`docs/status/STATUS.md`, "Decisions worth another
-look"). Either way a `strings` leg is a scan plus a census whose price depends
-on the data's shape, not a flat per-byte floor. Earlier sweeps put all three baselines within 2% and
+**The untyped baseline is not file-independent, and the cause is the census —
+measured, not inferred.** The control and the `--composite` file read within
+0.03% of each other; the `--arrays --composite` file reads **24% above both**.
+Its rows are the only ones carrying a `{`, so they are the only ones the
+mapping pass's array-shape census splits into fields. Running the same query
+with the **census-off** binary settles it:
+
+| | control | `--arrays --composite` | gap |
+|---|---|---|---|
+| census on | 4.390 s | 5.505 s | **+1.115 s** |
+| census off | 4.356 s | 4.281 s | **−0.075 s** |
+
+The gap does not shrink, it **inverts** — with the census gone the arrays file
+is slightly *cheaper*, which is what its 14% lower row count should give. The
+census accounts for 1.190 s of a 1.115 s gap, and its cost measured this way
+reproduces the `parse` figures two sections above to within 3% (+0.034 s
+against +0.037 on the control, +1.224 against +1.262 on the arrays file) — a
+cross-check on a different command.
+
+So a `strings` leg is a scan plus a census whose price depends on the data's
+shape, not a flat per-byte floor. Regenerate with `runs/m13-census-baseline.sh`'s
+method: the same query loop below, run with both binaries. Earlier sweeps put all three baselines within 2% and
 read that as evidence the untyped path was byte-driven; at 9.6 s legs a 1 s
 difference was inside the spread, and it is not at 4.4 s.
 
@@ -526,17 +553,19 @@ P7 needs before deciding what to do about nested values always copying.
 Two readings of the same quantity, from the same sweep, plus the control on
 the instrument itself:
 
-| Reading | Reps | Per-row difference |
-|---|---|---|
-| composite column's share — control against `--composite` | 5 | **+0.61 µs** (paired mean, sd 0.31, SE 0.14) |
-| **the instrument's own floor** — control against a second control (`--seed 43`, same 16 columns) | 6 | **+0.20 µs** (paired mean, sd 0.45, SE 0.18) |
+| Reading | Reps | Paired median | Per-rep readings |
+|---|---|---|---|
+| composite column's share — control against `--composite` | 5 | **+0.59 µs** | +0.29, +0.33, +0.59, +0.81, +1.03 |
+| **the instrument's own floor** — control against a second control (`--seed 43`, same 16 columns) | 6 | **+0.15 µs** | −0.31, −0.14, −0.02, +0.33, +0.40, +0.92 |
 
 The second row is the control on the *instrument*: two files that differ only
-in their random seed should differ by zero, and they differ by +0.20 µs per
-row with a per-rep spread of ±0.45. The composite's +0.61 µs is only 0.41 µs
-clear of that, under 2 SE, so it is **consistent with the micro and not
-independent of the floor** — the micro puts the column at 0.43 µs of decode
-plus render before any Arrow build.
+in their random seed should differ by zero, and instead they span −0.31 to
++0.92 µs per row. **The two ranges overlap across most of their width**, which
+is the honest picture and the reason the ninth standing rule forbids quoting an
+interval here — an earlier draft put these at +0.61 ± 0.14 against +0.20 ± 0.18
+and made the separation look like a result. The composite's reading is
+consistent with the micro, which puts the column at 0.43 µs of decode plus
+render before any Arrow build, and is not resolved from the floor.
 
 What the figure supports is therefore still a **bound**: the composite column
 costs **around half a microsecond of every row end to end, ~4% of the 13.9 µs
@@ -545,12 +574,13 @@ three columns is the cost" — the arrays, by an order of magnitude.
 
 *Retracted:* the reading that this subtraction is *biased* rather than merely
 imprecise. A musl-built leg of the same sweep put the composite file
-**1.16 µs/row below** the control (5 reps, SE 0.24) — a negative cost, which
-adding a decoded column cannot produce — and that was read as a structural
-confound in differencing two files of different row length. The glibc leg
-reverses the sign on the same inputs and the same reps, so what was being
-measured was the allocator, not the instrument. The floor stands at roughly
-±0.5 µs/row; the confound does not.
+**1.16 µs/row below** the control on the same five reps — a negative cost,
+which adding a decoded column cannot produce — and that was read as a
+structural confound in differencing two files of different row length. The
+glibc leg reverses the sign on the same inputs and the same reps, so what was
+being measured was the allocator, not the instrument. The floor stands at
+roughly ±0.5 µs/row; the confound does not. This pair is also the ninth
+standing rule's demonstration.
 
 *Not taken:* the instrument that would resolve it. Two files whose data
 sections are **byte-identical**, one declaring `v_comp` as
