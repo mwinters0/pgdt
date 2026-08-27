@@ -736,7 +736,8 @@ rather than scope.
 | 4.4.4 | The array arm folded into one function, **earned** from 4.4.3's unattended call: `element_is_opaque` and `element_is_array` each walk the domain chain separately and their safety is an ordering argument spread across two doc comments, which is what made "where does normalization live" a question worth flagging. Replace both with `resolve_array(element, types) -> TypeOutcome` holding the whole array decision — both refusals, the `resolve_nested` recursion, `list_of` and `NestedPlan::Array` — over **one** domain walk, opaque-tested first so I22's precedence stays visible. `resolve_declared_type`'s array arm becomes a single delegation. **Behaviour-preserving**: every existing test passes unchanged, no test may be edited to accommodate it, and **no new behavioural test is wanted** — the `pgtype.rs` suite and the resolution-outcome coverage test already pin every arm, and a refactor with no delta has nothing new to assert. What it owes instead is the standing rule's documentary check, in the notes doc: which later phases the shape is expected to survive, and what it made simpler. **Out of scope: the quoted type-name gap (I29)**, which the corrected doc comment will now cite. It is a roadmap "Future" item, fixing it changes behaviour, and it is not this slice. Also corrects `array_element`'s "Not quote-aware" paragraph, which documents a limitation the code does not have (I29). Taken under `roadmap.md`, "Refactor when the shape stops fitting" |
 | 4.5 | The shape census, **recording half**: a cache format bump, per-block per-column recording, and the completeness rule. Nothing consumes it yet |
 | 4.5.1 | The shape census, **consuming half**: making the census unconditional (above), retyping the `(DataType, NestedPlan)` pair from a block's census, `ColumnResolution::VaryingArrayShape`, and **the manual's statement of both paths plus the planned representation knob** |
-| 4.6 | The array stress section in `generate_perf_data.py`, **gated behind `--arrays`** so the default output stays the brace-free control two existing figures depend on — `v_int_array`, `v_int_array_long`, `v_comp`, plus the `CREATE TYPE` the composite needs. Then **three** `measurements.md` figures: array decode throughput as a ratio against `text` (a `decoders.rs` micro **and** `pgdq query --schema-mode typed` against `strings`), the census cost on array-bearing rows (from `parse`), and composite decode throughput. Scope amended 2026-08-27 from the single decode ratio; see "The performance deliverable is a ratio, not a gate" |
+| 4.6 | The array stress section in `generate_perf_data.py`, **gated behind `--arrays`** so the default output stays the brace-free control two existing figures depend on — `v_int_array`, `v_int_array_long`, `v_comp`, plus the `CREATE TYPE` the composite needs. Then the `measurements.md` figures a single generated file can carry: array decode throughput as a ratio against `text` (a `decoders.rs` micro **and** `pgdq query --schema-mode typed` against `strings`), the census cost on array-bearing rows (from `parse`), and composite decode throughput **as a micro**. Scope amended 2026-08-27 from the single decode ratio; see "The performance deliverable is a ratio, not a gate" |
+| 4.6.1 | The composite's end-to-end share, **earned**: 4.6's end-to-end run reports the three nested columns as one per-row number, and `pgdq query` has no column projection, so separating the composite from the arrays needs its own generated file. A third input — `--composite` without `--arrays`, the split `M10` performs — the same `typed`-against-`strings` pair on it, and the resulting row in "A typed query over nested columns". Lands **after** `M10`, whose re-measurement it would otherwise duplicate and whose flag split it depends on |
 
 **4.2 keeps decode and render together deliberately** — they are inverses, and
 landing decode alone leaves it with no oracle.
@@ -804,6 +805,18 @@ the six the server accepts fail to resolve today (`integer[3]`, `integer[3][4]`,
 `integer ARRAY` and `integer ARRAY[4]` as `Unknown`, `integer[][]` as the false
 refusal), and under `roadmap.md`'s input-contract rule they are one defect, at
 one code site, not five.
+
+**4.6.1 was earned at review, from a scope this section stated ambiguously.**
+"(2) and (3) cost two more columns and two more rows in a table" was written as
+an argument that the amendment was cheap; it reads equally as a claim that the
+composite figure appears in the same end-to-end run, and the instrument
+paragraph below it names the end-to-end run only for the decode ratio. 4.6
+landed the micro and read the row as satisfied. The remainder — the composite's
+end-to-end share, which needs a third generated file because `pgdq query`
+cannot project columns — is 4.6.1, and this row is rewritten to the scope that
+landed. **The ambiguity is the finding**: a slice row that names a deliverable
+without naming its instrument leaves the instrument to whoever implements it.
+The reasoning is in `docs/status/history/2026-08-27.md`.
 
 **4.5.1 was earned mid-slice, not planned.** The census was specified as one
 row and is two: recording is new, type-blind, L1-only machinery that nothing

@@ -197,6 +197,30 @@ it a slice number.
 which later phases it expects to survive and what it made simpler. If neither
 can be stated, the rule did not apply and the change is a preference.
 
+### A slice row that commits to a measurement names its instrument
+
+**A slice row promising a figure says what will take it.** Not the number, not
+the threshold — the instrument: a microbenchmark, an end-to-end run under a
+named command, a comparison against a named control. A row that names only the
+deliverable leaves the instrument to whoever implements it, and the implementer
+will pick the cheapest one that can be argued to satisfy the words.
+
+This is narrow on purpose. It binds rows that commit to a *measurement*, where
+the instrument is the part most likely to be under-determined and where two
+instruments can differ by an order of magnitude in cost while both answering to
+the same sentence. Everywhere else the ordinary spec discipline is enough.
+
+**Why it is a rule rather than a note.** 4.6's row asked for two figures. For
+one it named both instruments — "a `decoders.rs` micro **and** `pgdq query
+--schema-mode typed` against `strings`" — and got both. For the other it named
+only "composite decode throughput", got a micro, and earned **4.6.1** at
+review to supply the end-to-end half. Same row, same author, same slice: the
+half that named its instrument was delivered whole. Every phase from here is
+measurement-heavy — Phase 7 is an entire performance campaign — so the hazard
+is live for four unwritten specs. Reasoning:
+[`../status/history/2026-08-27.md`](../status/history/2026-08-27.md), "4.6.1
+is earned, and the spec row's ambiguity is why".
+
 ### Four decisions that keep later phases additive
 
 Plain-format-only and single-threaded is a deliberate scope, not a limitation

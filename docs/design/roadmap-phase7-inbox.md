@@ -161,6 +161,17 @@ share — but a `Vec<Option<String>>` intermediate is paid before the build is
 reached, so a viewing builder that still routes through `decode_array` keeps
 the 6 µs.
 
+**The prize, measured against the path this phase would widen.** One
+`append_view_unchecked` into a borrowed block costs **3.14 ns**, against
+~21 ns to copy the same bytes — so the two micro controls bracket the
+question: the literal parse is 12.6× a copy and 84× a view for a 4-element
+array, 149× and 1225× for a 50-element one. 3.14 ns is a floor rather than the
+borrowed arm itself (`push_utf8view_field` also scans the chunk deque and
+calls `block_for`), so those view ratios bound the real ones from above. Read
+together with the ~10 µs build share above, the shape of the answer is that
+**viewing is worth far more than the parse is**, and worth most on long
+arrays.
+
 **Origin.** Phase 4 grilling, 2026-08-25; the figures from slice 4.6,
 2026-08-27. Decision and its rationale:
 [`roadmap-phase4-composite-decoding.md`](roadmap-phase4-composite-decoding.md),

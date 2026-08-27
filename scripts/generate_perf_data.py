@@ -20,6 +20,13 @@ scan-throughput table were both taken on. The array stress columns live behind
 docs/design/roadmap-phase4-composite-decoding.md, "The performance deliverable
 is a ratio, not a gate".
 
+So the default output's *bytes* are frozen, and changing them is not a local
+decision: five recorded figures name this script as the command that
+reproduces them, and they have to be re-taken in the same change. Three
+columns are known to need exactly that and are queued as M10 -- the
+`time`/`timestamp`/`timestamptz` spellings pg_dump does not write, the
+fractional seconds PostgreSQL would have trimmed, and v_real's float64
+repr(). See STATUS.md, "Not started".
 """
 
 from __future__ import annotations

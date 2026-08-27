@@ -14,8 +14,9 @@ columns costs 2.9× a string one". This doc holds what is not in them.
   public.perf_comp AS (a integer, b text)` the composite needs — the first
   type definition this generator writes.
 - `pgdump_query/benches/decoders.rs` grows a `nested` group: decode and render
-  for a 4-element array, a 50-element array and a two-field composite, each
-  against a `String::from` control of the same byte count.
+  for a 4-element array, a 50-element array and a two-field composite, against
+  **two** controls — a `String::from` of the same byte count, and one
+  `append_view_unchecked` into a borrowed block.
 - The three figures, and one sentence of the array-bearing census cost in
   [`architecture.md`](architecture.md), "The array shape census".
 - Two entries in [`roadmap-phase7-inbox.md`](roadmap-phase7-inbox.md) restated
@@ -46,11 +47,23 @@ and the two files are comparable at all. A reader who does not know this will
 wonder why the control is not simply `--schema-mode strings` on the array
 file: that is the *other* axis, and both are used.
 
-**The micro's control is a copy, not a zero-copy view**, for a reason stated
-at length in `decoders.rs`'s header: `batch::append_nested` has no borrowed
-arm, so what a nested value can be asked to justify is the parse *on top of*
-the copy it cannot avoid. Benching against the `Cow::Borrowed` view path would
-have measured the thing Phase 7 might build, not the thing that exists.
+**The micro has two controls, and they answer different questions.** The copy
+(`String::from`, same byte count) isolates the parse from the copy a nested
+value cannot avoid — `batch::append_nested` has no borrowed arm — which is the
+variable Phase 7 is choosing over. The view (one `append_view_unchecked` into
+a block the builder does not own) is what an unescaped text field actually
+costs, so it is the ratio a user experiences. Reporting only the first
+understates the gap by roughly 7×, and reporting only the second measures a
+path nested values do not have.
+
+**The view control is batched ×1024 and its figure must be divided**, which is
+the only bench in the file that is not directly readable. Timing one append
+through `iter_batched_ref` gave ~12.6 ns against a harness floor `bool/decode`
+puts at ~1.1 ns — three quarters apparatus. It is also a **floor** on the
+borrowed arm rather than the arm itself: `push_utf8view_field` additionally
+scans the chunk deque with `find_map` and calls `block_for`, so every ratio
+taken against it bounds the real one from above. Both caveats are in the bench
+header and beside the figure.
 
 **Compare nested shapes per element, never per byte.** The two array lengths
 exist to give a slope, and they do: 78 ns per element decoding, 28 ns
@@ -60,16 +73,24 @@ rendering, which is one allocation each — `ArrayLiteral::elements` is a
 nothing about bytes, and the 50-element array's 149× against its byte-matched
 control is a number about element count wearing a byte-ratio's clothes.
 
-**The composite has no isolated end-to-end figure.** Isolating it needs a
-third generated file (~4.5 minutes to write, ~2 minutes to measure) and the
-micro already separates the two by type, so the end-to-end run reports the
-three nested columns together. `measurements.md` says so where the figure is.
+**The composite has no isolated end-to-end figure, and that is 4.6.1.** The
+end-to-end run reports the three nested columns as one per-row number, because
+`pgdq query` cannot project columns and separating them needs its own
+generated file. 4.6 shipped the composite as a micro and read the spec row as
+satisfied; review split it. The row is rewritten to what landed, the tick
+stands, and the remainder is 4.6.1 — which waits on `M10` for both the
+re-measurement and the `--arrays`/`--composite` flag split it needs. The
+finding underneath is now a standing rule
+([`roadmap.md`](roadmap.md), "A slice row that commits to a measurement names
+its instrument"): the same row's array ratio named both its instruments and
+was delivered with both.
 
-## Two pre-existing generator facts the figures rest on
+## Three pre-existing generator facts the figures rest on
 
-Both were found while taking the figures and neither was changed, because
-changing either invalidates the regeneration command of a figure that is
-already recorded.
+All three were found while taking the figures and none was changed, because
+changing any of them changes the default output's bytes — which is the
+regeneration command of every figure already taken on it, the scan-throughput
+table and the brace-free census figure included.
 
 **Three of the sixteen scalar columns do not type.** The generator declares
 `time`, `timestamp` and `timestamptz`; `pgtype` maps only `time without time
@@ -78,9 +99,9 @@ So `parse` reports "3 of 16 columns unmapped" on the control and "3 of 19" on
 the array file — that count is these three, not an array failure. The scalar
 half of the typed/strings ratio is 13 columns, which makes 1.85× a floor; the
 nested attribution is untouched, since the three columns are identical in both
-files and cancel. Fixing the generator would reset `whole_file.rs`'s baseline
-and every typed figure taken on this input, which is why it is a STATUS
-"Decisions worth another look" entry and not a change here.
+files and cancel. Fixing the generator resets `whole_file.rs`'s baseline and
+every typed figure taken on this input, which is why it is **`M10`** — its own
+out-of-band change, with the re-measurement in it — and not a change here.
 
 **`pgdq query --schema-mode typed` and `strings` do not agree byte for byte on
 this input, and that is the generator too.** `v_real` is filled with `repr()`
@@ -98,9 +119,26 @@ generator writes `\\x…` with a doubled backslash, and so does `pg_dump`
 (`fixtures/16/types/default.sql`, `public.t_bytea`, is `\\xdeadbeef00ff`).
 Both modes print `\x…` for it.
 
+**The three temporal columns carry a fraction PostgreSQL would have trimmed,
+and that couples them to the spelling fix.** The generator formats with
+`%H:%M:%S.%f`, which is always six digits, and its timestamps are whole
+seconds — so every value ends `.000000`. `decode.rs`'s `format_hms_frac` trims
+trailing zeros and drops an all-zero fraction entirely, matching what
+PostgreSQL emits. Today this is invisible, because those are exactly the three
+columns whose declared spelling does not resolve, so they never reach a
+decoder. **Correcting the spellings alone would therefore turn one silent
+problem into three loud ones** — three columns that decode and re-render to a
+different string than the file holds. The two have to move together.
+
 ## Verification of the gate
 
 `--arrays` off produces byte-identical output to the pre-slice script at
 `--seed 42`, checked by diffing a 2 MiB run of each. That is the whole
 guarantee the flag exists for: `measurements.md`'s scan-throughput table and
 brace-free census figure keep the command that reproduces them.
+
+`M10` is the change that deliberately breaks this, and it is allowed to
+because it re-takes those figures in the same change. It also splits the flag
+into `--arrays` and `--composite`, so the file these figures were taken on
+becomes `--arrays --composite` — one rewrite of the recorded commands, not
+two.

@@ -196,19 +196,45 @@ done; done
 The cold pair takes `sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'`
 before each run.
 
+*Rejected:* a `no-census` cargo feature, so this reproduces as a flag instead
+of a source edit. Neither crate declares a `[features]` section today, and the
+first one a project adds sets the precedent for what features are for — here,
+a build in which `architecture.md`'s "the census is unconditional" is untrue,
+serving a comparison taken about once a phase. The escape if the patch-and-
+revert ever bites is to drop the comparison, not to gate it: the absolute
+figure (2.5 µs/row) is what
+[`roadmap-phase7-inbox.md`](roadmap-phase7-inbox.md) actually consumes, and
+the census-off column exists to establish it once.
+
 ## Nested decode costs what it copies, and an element is an allocation
 
-`benches/decoders.rs`'s `nested` group, criterion medians. The control is
-`String::from` over the same byte count — the copy a nested value cannot avoid
-(`crate::batch::append_nested` has no borrowed arm), so the ratio is what the
-*parse* costs on top of that copy. See the bench file's header for why the
-control is a copy and not a zero-copy view.
+`benches/decoders.rs`'s `nested` group, criterion medians. **Two controls,
+because there are two questions.**
 
-| Literal | Bytes | `decode` | `render` | Copy control | decode ÷ copy |
+- **Copy** — `String::from` over the same byte count: 21.0 ns at 49 bytes,
+  25.9 ns at 601, 20.0 ns at 42. A nested value has no borrowed arm
+  (`crate::batch::append_nested`), so this isolates what the *parse* costs on
+  top of the copy it cannot avoid, which is the variable Phase 7 is choosing
+  over.
+- **View** — one `append_view_unchecked` into a block the builder does not
+  own, which is what `push_utf8view_field` does for an unescaped text field:
+  **3.14 ns**, from `text_view_x1024`'s 3.216 µs ÷ 1024. Length-independent,
+  which is the point of a view. This is what a user comparing a text column
+  against an array column actually pays.
+
+| Literal | Bytes | `decode` | `render` | ÷ copy | ÷ view |
 |---|---|---|---|---|---|
-| `integer[]`, 4 elements | 49 | 265 ns | 240 ns | 21.0 ns | **12.6×** |
-| `integer[]`, 50 elements | 601 | 3.85 µs | 1.54 µs | 25.9 ns | **149×** |
-| two-field composite | 42 | 217 ns | 215 ns | 20.0 ns | **10.8×** |
+| `integer[]`, 4 elements | 49 | 265 ns | 240 ns | **12.6×** | **84×** |
+| `integer[]`, 50 elements | 601 | 3.85 µs | 1.54 µs | **149×** | **1225×** |
+| two-field composite | 42 | 217 ns | 215 ns | **10.8×** | **69×** |
+
+**Both control figures are read with a caveat.** `text_view_x1024` reports
+1024 appends and must be divided — timing one append through
+`iter_batched_ref` gave ~12.6 ns against a harness floor that `bool/decode`
+puts at ~1.1 ns, so three quarters of it was criterion. And 3.14 ns is a
+*floor* on the borrowed arm rather than the borrowed arm itself:
+`push_utf8view_field` also scans the chunk deque with `find_map` and calls
+`block_for`. So the `÷ view` column bounds the real ratio **from above**.
 
 **What this says.** Cost is per *element*, not per byte: the two array lengths
 differ only in element count, and the slope between them is **78 ns per
@@ -267,7 +293,9 @@ the two `timestamp … time zone` forms), so those three resolve `Unknown` and
 stay `Utf8View` in both modes. The scalar side of the ratio is therefore 13
 typed columns, not 16, so **1.85× is a floor** for what typing a wide scalar
 table costs. The nested attribution is unaffected: those three columns are
-identical in both files and cancel out of the per-row difference.
+identical in both files and cancel out of the per-row difference. **This is
+scheduled, not accepted** — `M10` corrects the generator and re-takes every
+figure taken on it (`STATUS.md`, "Not started").
 
 *Not covered:* the composite's end-to-end share separately from the arrays'.
 Isolating it needs a third generated file; the micro table above is what

@@ -21,17 +21,31 @@
 //! costs and one length cannot separate the per-element slope from the
 //! per-value overhead.
 //!
-//! `text_copy` is the control, and it is `String::from`, not a zero-copy
-//! view. A top-level `Utf8View` field takes `push_utf8view_field`'s
-//! `Cow::Borrowed` arm — a 16-byte view write into a block it does not own —
-//! whenever the field carried no escapes; the `Cow::Owned` arm, which copies,
-//! is what an escaped field costs. A nested value has no borrowed arm at all
-//! (`crate::batch::append_nested`), so the fair question is what the parse
-//! costs *on top of* the copy it cannot avoid, and the copy alone is the
-//! control that answers it.
+//! There are **two** controls, because the two questions have different
+//! answers. `text_copy` is `String::from` over the same byte count: a nested
+//! value has no borrowed arm at all (`crate::batch::append_nested`), so what
+//! the parse can be asked to justify is its cost *on top of* the copy it
+//! cannot avoid — which is the variable Phase 7 is choosing over.
+//! `text_view_x1024` is the other one: a top-level `Utf8View` field takes
+//! `push_utf8view_field`'s `Cow::Borrowed` arm whenever it carried no escapes,
+//! writing a 16-byte view into a block it does not own, and that is what a
+//! user comparing a text column against an array column actually pays. One
+//! row covers every length, because a view write does not depend on the
+//! value's size — which is the whole point of it.
+//!
+//! **Two things about that bench are deliberate and both are traps
+//! otherwise.** It reports 1024 appends, not one, and its figure must be
+//! divided: the operation is a few nanoseconds, and timing it singly through
+//! `iter_batched_ref` gave ~12.6 ns against a harness floor `bool/decode` puts
+//! at ~1.1 ns — three quarters apparatus. And what it measures is a *floor* on
+//! the borrowed arm, not the borrowed arm: `push_utf8view_field` also scans
+//! the chunk deque with `find_map` and calls `block_for`, neither reproduced
+//! here. So the ratios taken against it bound the real ones from above.
 
 use std::hint::black_box;
 
+use arrow::array::builder::StringViewBuilder;
+use arrow::buffer::Buffer;
 use criterion::{Criterion, criterion_group, criterion_main};
 use pgdump_query::decode::{
     decimal_unscaled_digits, decode_bool, decode_bytea, decode_date32, decode_f64,
@@ -161,12 +175,33 @@ fn nested_family(c: &mut Criterion) {
     g.bench_function("array_50/render", |b| b.iter(|| render_array(black_box(&long_lit))));
     g.bench_function("record_2/decode", |b| b.iter(|| decode_record(black_box(record))));
     g.bench_function("record_2/render", |b| b.iter(|| render_record(black_box(&record_lit))));
-    // The controls: the same byte counts, copied and nothing more.
+    // Control 1: the same byte counts, copied and nothing more.
     g.bench_function("text_copy/array_4_len", |b| b.iter(|| String::from(black_box(&short_text))));
     g.bench_function("text_copy/array_50_len", |b| b.iter(|| String::from(black_box(&long_text))));
     g.bench_function("text_copy/record_2_len", |b| {
         let t = "x".repeat(record.len());
         b.iter(|| String::from(black_box(&t)))
+    });
+    // Control 2: the borrowed arm — one view write into a block the builder
+    // does not own, which is what an unescaped text field of *any* length
+    // costs. A fresh builder per iteration (its construction is not timed)
+    // keeps the view vector from growing without bound across the run.
+    // Reports 1024 appends; divide. See the module header for why it is
+    // batched and why the result is a floor rather than the borrowed arm.
+    const VIEW_BATCH: usize = 1024;
+    let buf = Buffer::from(long_text.as_bytes());
+    let view_len = u32::try_from(short_text.len()).unwrap();
+    g.bench_function("text_view_x1024", |b| {
+        b.iter(|| {
+            let mut builder = StringViewBuilder::with_capacity(VIEW_BATCH);
+            let block = builder.append_block(buf.clone());
+            for _ in 0..VIEW_BATCH {
+                // SAFETY: `long_text` is ASCII, so 0..view_len is a valid
+                // UTF-8 range inside the block appended above.
+                unsafe { builder.append_view_unchecked(black_box(block), 0, view_len) }
+            }
+            builder
+        })
     });
     g.finish();
 }

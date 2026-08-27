@@ -29,7 +29,7 @@ per-phase checklist here any more. How the system works is
 | Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-27 (Phase 9 is **complete and wrapped**, and **4.6** has landed, so **every Phase 4 slice is delivered**. What remains is the **Phase 4 wrap** — see "Not started" — which consolidates twelve slice notes into one and audits `architecture.md`. A phase boundary: an unattended loop stops here.)
+Last updated: 2026-08-27 (Phase 9 is **complete and wrapped**; **4.6** has landed and its review earned **4.6.1**. The order from here is **M10** → **4.6.1** → the **Phase 4 wrap** — see "Not started". A phase boundary: an unattended loop stops here.)
 
 ## Phase 4 progress
 
@@ -123,6 +123,16 @@ Specified in
       --schema-mode typed` against `strings` (2.91× with three nested columns,
       1.85× without). No library code. Notes:
       [`../design/roadmap-phase4.6-array-stress-notes.md`](../design/roadmap-phase4.6-array-stress-notes.md)
+- [ ] **4.6.1** The composite's end-to-end share, **earned** from 4.6's spec
+      row naming a deliverable without naming its instrument. 4.6's
+      `typed`-against-`strings` run reports the three nested columns as one
+      per-row number and `pgdq query` cannot project columns, so separating
+      the composite needs its own generated file: `--composite` without
+      `--arrays` (M10 splits the flag), the same pair run on it, and the row in
+      [`../design/measurements.md`](../design/measurements.md), "A typed query
+      over nested columns". Lands **after** the generator-fidelity fix, whose
+      re-measurement it would otherwise duplicate.
+
 ## Phase 9 — complete and wrapped
 
 Specified in
@@ -145,15 +155,38 @@ filed.
   as provisional pending real user trials; the resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 
-- **Order from here**, re-settled 2026-08-27 after 4.6 landed: the **Phase 4
-  wrap**, and nothing else. Everything queued before it has landed — M5-M9,
-  4.4.4, the koji wrap run (whose durable halves are in
+- **Order from here**, re-settled 2026-08-27 after 4.6's review: **M10**, then
+  **4.6.1**, then the **Phase 4 wrap**. Everything queued before them has
+  landed — M5-M9, 4.4.4, the koji wrap run (whose durable halves are in
   [`../design/measurements.md`](../design/measurements.md), "koji full scan",
   and [`../design/architecture.md`](../design/architecture.md), "CLI surface"),
-  Phase 9's own wrap, and Phase 4's last slice.
+  and Phase 9's own wrap.
 
-  **The Phase 4 wrap** consolidates **twelve** slice notes docs (4.1 through
-  4.6) into one `roadmap-phase4-composite-decoding-notes.md` and deletes them
+  **M10 — the perf generator's three infidelities, and the re-measurement they
+  force.** `scripts/generate_perf_data.py` declares three type spellings
+  `pg_dump` never writes, never trims fractional seconds, and puts a float64
+  `repr()` in a `real` column; the first two are coupled and must move
+  together. Fixing them changes the default output's bytes, so the same change
+  re-takes every figure taken on it: the scan-throughput table, the brace-free
+  census figure, and 4.6's three. **Admitted as out-of-band** — it changes no
+  decision any spec records and fits one session, and `M3` (a benchmark input
+  plus its figures) is the precedent. **It also lands the drift guard**: a
+  round-trip assertion that `pgdq query --schema-mode typed` and `strings`
+  agree byte for byte over a small generated file, which is what the script's
+  own charter ("shaped closely enough that pgdq can read it back") already
+  claims and which would have caught all three infidelities. And it **splits
+  `--arrays` into `--arrays` and `--composite`**, which 4.6.1 needs and which
+  is free to do while the recorded commands are being rewritten anyway.
+  Findings, the coupling, and why the fix is not 4.6's:
+  [`history/2026-08-27.md`](history/2026-08-27.md), "The perf generator is not
+  the pg_dump shape it claims".
+
+  **4.6.1 is after M10, and the dependency is real**: it needs a third
+  generated file, and taking its figure on a generator about to change means
+  taking it twice.
+
+  **The Phase 4 wrap** consolidates **thirteen** slice notes docs (4.1 through
+  4.6.1) into one `roadmap-phase4-composite-decoding-notes.md` and deletes them
   (`process.md`, step 5). Like Phase 9's, it is an **audit of
   `architecture.md`, not a transcription** (`process.md`, "A wrap after a
   keystone is an audit"): check that doc for what the slices learned and it
@@ -300,24 +333,26 @@ Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
 
-*The perf generator declares three column types `pg_dump` never writes, so
-they do not type.* `scripts/generate_perf_data.py` writes `time`, `timestamp`
-and `timestamptz`; `pgtype::resolve_declared_type` maps `time without time
-zone` and the two long `timestamp` spellings, which is what `pg_dump` emits,
-so those three columns resolve `Unknown` and stay `Utf8View`. This is a
-*generator* shortcoming, not a library gap — no real dump can reach it — and
-4.6 left it alone: correcting the spellings changes what the typed path
-actually decodes, which resets `benches/whole_file.rs`'s baseline and every
-typed figure taken on this input, the last of them the same day. Left as is,
-`parse` reports "3 of 16 columns unmapped" on the control input and "3 of 19"
-on the `--arrays` one, and the typed/strings ratio in
-[`../design/measurements.md`](../design/measurements.md), "A typed query over
-nested columns", covers 13 scalar columns rather than 16 — which makes 1.85× a
-floor and leaves the nested attribution untouched. Reversing it means fixing
-the three spellings and re-taking the whole-file bench baseline plus that
-figure's control row.
+Nothing is pending review at present.
 
 The notes below say how the earlier entries went.
+
+*4.6's generator-fidelity entry was reviewed on 2026-08-27 and is **settled as
+scheduled work**, with its scope corrected: the finding was three infidelities,
+not one.* `scripts/generate_perf_data.py` declares `time`/`timestamp`/
+`timestamptz` where `pg_dump` writes the long spellings, never trims fractional
+seconds where PostgreSQL does, and fills a `real` column with a float64
+`repr()`. The first two are **coupled** — correcting the spellings alone sends
+three columns that currently never decode through a decoder that re-renders
+them differently from the file — and the third is what makes `typed` and
+`strings` disagree on this input (`v_bytea`, which looks like the culprit, is
+faithful; `pg_dump` writes the doubled backslash too). The consequence is a
+validity problem rather than a fidelity complaint: a benchmark for the typed
+path measures 13 of 16 columns while its table says 16. Fixing it is agreed and
+is **not** 4.6's — it changes the default output's bytes and so re-takes five
+recorded figures. Queued under "Not started"; the findings and the coupling are
+in [`history/2026-08-27.md`](history/2026-08-27.md), "The perf generator is not
+the pg_dump shape it claims".
 
 *4.4.4's refusal order was reviewed on 2026-08-27 and **stands**, with its
 recorded reason replaced.* It was queued as "kept as a counterfactual" — the
