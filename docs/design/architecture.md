@@ -107,6 +107,14 @@ what keeps the addition additive; it arrives behind a default-off Cargo feature.
   future; an async caller who needs non-blocking callback behaviour uses pull
   mode directly.
 
+`pgdq query` is a pull-mode caller by necessity rather than by taste: rendering
+a nested column needs the stream's `NestedPlan`s *while* iterating, and push
+mode hands the `ResolvedSchema` back only once the stream is drained. It reads
+`stream.resolved_schema().plans` per batch rather than once, because a block's
+schema is per-block (see "Nested columns" below). That leaves `read_table` with
+no non-test caller, which [`roadmap-phase6-inbox.md`](roadmap-phase6-inbox.md)
+files for the phase that decides whether push mode keeps its place.
+
 **Batch size** is caller-settable by row count and/or in-memory byte size,
 whichever is hit first. Default 8192 rows (matching the common
 Arrow/DataFusion convention), no default byte cap.
@@ -667,6 +675,16 @@ Combining blocks is `ArrayShape::merge` — min-of-mins, max-of-maxes, and a
 prefix anywhere counts everywhere — which `index::union_census` folds over a
 set of blocks.
 
+**The vector is pre-sized from the header, and only a header-less block's can
+end up short.** `on_copy_start` allocates one entry per declared column, so a
+headered block's census is index-aligned with its columns whatever the rows
+held. A header-less block — placeholder `column1…N` names, sized to the first
+row — starts empty and grows by field index, and only on rows that pass the
+pre-filter below, so its vector ends at the highest brace-bearing field. A
+missing entry reads as the default `ArrayShape`, which is the same answer a
+present-but-unconstrained one gives ("nothing constrained this column"), so a
+consumer indexing defensively needs no special case.
+
 **Both bounds, never just the maximum.** A column holding `{1,2}` and
 `{{1,2},{3,4}}` records `(1, 2)`; a column holding only 2-D values records
 `(2, 2)`. With a maximum alone the two are indistinguishable, so the mixed
@@ -790,6 +808,15 @@ file. No CLI surface reaches that case today — `info --source` rescans
 whenever the cache falls short and cache-only mode refuses an incomplete
 cache — which is what makes the reported half a rule rather than a second code
 path.
+
+**So a reported schema and a streamed one may legitimately disagree about one
+table**, and each is true of what it describes. `pgdq info` lists per `COPY`
+block and resolves each block from that block's own census; a query commits one
+schema from the union over the blocks it will replay. A table whose first block
+holds 1-D values and whose second holds 2-D ones therefore reads `List(Int32)`
+and `List(List(Int32))` on two `info` lines and comes back as text from a
+query — the listing is about a block, the query's schema about every row it
+will hand back. No fixture produces the shape.
 
 **What survives all this is the array nested inside a composite**, or inside
 another array's element type. The census is keyed by column and has nowhere to
@@ -2021,6 +2048,19 @@ insta snapshot covers any of them.
 | `objects/stats.sql` | v18 only | `TOC_PREFIX_STATS` |
 | `partitions` | `default`, `--load-via-partition-root` | The multi-block-per-table shape |
 
+**The `types` schema's array tables are divided by what a reader may conclude
+from them, not by shape.** `t_array_shape` is read as "these are the shapes the
+census reports", so it holds exactly the census's own cases — uniform 2-D,
+mixed dimensionality across rows, an `[lb:ub]=` prefix — and every column whose
+census entry is correct but misleading is kept out of it. `t_nested_array`'s
+`intarr[]` column censuses `(1, 1)`, correctly, because the literal is one
+brace deep (I26); `t_array_spelling`'s four columns census nothing at all,
+since their values are ordinary 1-D arrays and the novelty is entirely in the
+DDL. `t_delimiter` is separate from `t_base_type` for the same reason one level
+over — the delimiter trap (I22) in one table and the opaque-element case it is
+easily confused with in the other is what lets a test say which of the two it
+means.
+
 `SCHEMAS` uses two sentinels: `None` as a flag set means "swap the binary,
 don't append flags" (that is how `dumpall` is produced), and a value may be
 `(min_version, flags)` instead of a bare list for version-gated sets.
@@ -2109,6 +2149,19 @@ independent round trips, each owned by the layer it tests:
   field of `public.escapes`, across every routine version — the
   escaping/unescaping leg the other round trip deliberately never exercises.
 
+**One fixture column is deliberately outside the round-trip suite**, because
+there a round trip asserts nothing. `t_delimiter.v_box_domain_array` holds two
+`box` values, which `array_out` separates with `;` (I22); `decode_array` splits
+on the hardcoded `,` into **seven** elements, none of which contains a
+quote-forcing character, so `render_array` puts them back byte-for-byte
+identical — wrong element boundaries, an exact round trip, and no error
+anywhere. `tests/nested.rs` leaves the column out of `NESTED_COLUMNS` and pins
+that property directly instead
+(`the_delimiter_trap_round_trips_while_splitting_on_the_wrong_character`), so
+the fixture is not later mistaken for codec coverage. It is the one place where
+the primary correctness tool is blind, and the refusal in [type
+resolution](#type-resolution) is what stands in for it.
+
 Boundary values a fixture round trip cannot reach on its own (`NaN`,
 `±Infinity`, `infinity`/`-infinity` dates and timestamps, year 0001/9999,
 38-vs-39-digit numeric, negative-scale numeric) are hand-written unit tests in
@@ -2172,8 +2225,11 @@ verified by hand against a 4000-block bench file (`SIGTERM` → 143, `SIGINT` �
 scale on koji (`measurements.md`, "koji full scan").
 
 Benchmarks are a **regression tripwire**, not an optimization campaign:
-`benches/decoders.rs` (one `decode`/`render` pair per mapped type family) and
-`benches/whole_file.rs` (one warm-cache end-to-end `Typed` scan, since
+`benches/decoders.rs` (one `decode`/`render` pair per mapped type family, plus
+a `nested` group carrying two controls of its own — a same-byte-count
+`String::from` and one `append_view_unchecked` — since a nested value's cost is
+only readable against the copy it cannot avoid and the view it does not get)
+and `benches/whole_file.rs` (one warm-cache end-to-end `Typed` scan, since
 `Strings` would not exercise the decoders at all). `text`/`varchar`/`char`
 (zero-copy) and `enum` (unparsed dictionary-key append) have no decode step to
 benchmark. Figures and their re-run commands: [`measurements.md`](measurements.md).

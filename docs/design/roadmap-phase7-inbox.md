@@ -232,8 +232,7 @@ figure recorded.
 **Origin.** Slices 4.5 and 4.5.1, 2026-08-26; the array-bearing figure from
 slice 4.6, 2026-08-27; both figures re-taken by `M10`, 2026-08-27, which is
 what corrected the brace-free half. See
-[`roadmap-phase4.5.1-census-consumption-notes.md`](roadmap-phase4.5.1-census-consumption-notes.md)
-and [`architecture.md`](architecture.md), "The array shape census";
+[`architecture.md`](architecture.md), "The array shape census";
 [`measurements.md`](measurements.md), "The census on array-bearing rows".
 
 

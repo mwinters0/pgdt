@@ -214,12 +214,12 @@ async fn predicate_is_null_and_is_not_null() {
     assert_eq!(not_null_rows, expected);
 }
 
-/// A predicate on a column that Phase 4 retyped from `Utf8View` to
-/// `List<Utf8View>` still matches the same rows, because it compares the
-/// COPY-unescaped *field text* — the `array_out` literal — and never the
-/// decoded value. This is the one place the flip could have changed
-/// behaviour invisibly, so it is asserted against the untyped path, which by
-/// construction cannot have changed.
+/// A predicate on a column typed `List<Utf8View>` rather than `Utf8View`
+/// matches the same rows either way, because it compares the COPY-unescaped
+/// *field text* — the `array_out` literal — and never the decoded value. That
+/// is the one place typing a nested column could change behaviour invisibly,
+/// so it is asserted against the untyped path, which by construction cannot
+/// have changed.
 #[tokio::test]
 async fn a_predicate_on_a_nested_column_matches_the_literal_text_in_either_schema_mode() {
     use futures::StreamExt;

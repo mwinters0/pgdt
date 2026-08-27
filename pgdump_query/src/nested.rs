@@ -45,7 +45,7 @@
 //!
 //! The separator is hardcoded to `,`. An array whose element type sets a
 //! different `typdelim` (`box`, or any C-level base type) is not decoded as an
-//! array at all — see the phase 4 design doc, "Render-back must be exact".
+//! array at all — see `docs/design/architecture.md`, "Type resolution".
 
 /// How a quoted token escapes an embedded `"`. Both conventions escape an
 /// embedded `\` by doubling it.

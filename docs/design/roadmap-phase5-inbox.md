@@ -90,5 +90,5 @@ and a partial earlier pass leaves blocks that can never be back-filled.
 
 **Origin.** Slice 4.5, 2026-08-26. See
 [`architecture.md`](architecture.md), "The array shape census", and
-[`roadmap-phase4.5-census-recording-notes.md`](roadmap-phase4.5-census-recording-notes.md).
+[`roadmap-phase4-composite-decoding-notes.md`](roadmap-phase4-composite-decoding-notes.md).
 

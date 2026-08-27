@@ -9,7 +9,7 @@ All figures are on the hardware `CLAUDE.local.md` describes. Synthetic inputs
 are regenerable with `--seed 42` and are **never committed** — they measure
 throughput, not correctness, which stays entirely fixture-based.
 
-Four standing rules for reading anything below:
+Six standing rules for reading anything below:
 
 - **Every figure is a ratio, never a disk throughput.** Page-cache state
   dominates. A number taken warm on a freshly generated file can be twice what

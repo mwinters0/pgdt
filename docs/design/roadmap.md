@@ -303,6 +303,9 @@ item; see below.
 ## Phase 4 — Composite value decoding
 
 **Spec:** [`roadmap-phase4-composite-decoding.md`](roadmap-phase4-composite-decoding.md).
+**Notes:** [`roadmap-phase4-composite-decoding-notes.md`](roadmap-phase4-composite-decoding-notes.md)
+— complete and wrapped 2026-08-27; the mechanisms are in
+[`architecture.md`](architecture.md).
 
 Arrays, composites, ranges and multiranges — the four families type resolution
 deliberately leaves as `Utf8View` — get structured Arrow representations and an
@@ -332,8 +335,8 @@ is stated once as a completion line. `--json` gains per-`COPY`-block resolution
 — the per-column outcomes `pgdq info --verbose` already computes and discards
 at the JSON boundary — with no stability promise attached.
 
-**Ran ahead of Phase 4's last slices, and before Phase 5** — 4.6 is all that
-remains behind it. It carries number 9 because
+**Ran ahead of Phase 4's last slices, and before Phase 5.** It carries number
+9 because
 5–8 are taken and this project does not renumber a tail
 ([`../process.md`](../process.md), "Slice numbering"): a phase's number is its
 identity, its position in this file is its order.

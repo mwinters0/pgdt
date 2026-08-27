@@ -29,115 +29,32 @@ per-phase checklist here any more. How the system works is
 | Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-27 (**"Decisions worth another look" is empty** — all seven measurement-era entries reviewed and closed on 2026-08-27; the work they queued is `M11` under "Not started". Phase 9 is **complete and wrapped**; Phase 4 has **one item left — its wrap**. **4.6.1** has landed, which finishes the phase's measurement work: the nested end-to-end table is three files taken in one interleaved sweep, and the composite column's own share turned out to sit below what differencing two generated files can resolve. A phase boundary: an unattended loop stops here.)
+Last updated: 2026-08-27 (**"Decisions worth another look" is empty** — all seven measurement-era entries were reviewed and closed on 2026-08-27; the work they queued is `M12`/`M11`/`M13` under "Not started". **Phases 4 and 9 are both complete and wrapped**, so no phase is open: what remains queued is out-of-band, and choosing the next phase is a re-grilling the maintainer has claimed. A phase boundary: an unattended loop stops here.)
 
-## Phase 4 progress
+## Phase 4 — complete and wrapped
 
 Specified in
-[`../design/roadmap-phase4-composite-decoding.md`](../design/roadmap-phase4-composite-decoding.md).
+[`../design/roadmap-phase4-composite-decoding.md`](../design/roadmap-phase4-composite-decoding.md);
+wrapped 2026-08-27, with the thirteen per-slice notes consolidated into
+[`../design/roadmap-phase4-composite-decoding-notes.md`](../design/roadmap-phase4-composite-decoding-notes.md).
+Every slice landed — 4.1 and 4.1.1 (the fixture value shapes, including the
+domain-over-`box` array and the zero-field composite), 4.2 (the nested literal
+codec), 4.3 (`ColumnBuilder`'s `List`/`Struct` arms), 4.4 (the resolution flip)
+with 4.4.1 (the resolved Arrow type on `--verbose`, and the manual), 4.4.2 (the
+array-of-array-typed-element refusal), 4.4.3 (the six array-declaration
+spellings) and 4.4.4 (the array arm folded into one function), 4.5 and 4.5.1
+(the shape census, recorded then consumed), and 4.6 with 4.6.1 (the array
+stress data and the phase's measurement work). Six of those thirteen rows were
+not in the spec's table: they were split at grilling, split mid-slice, or
+earned afterwards from a defect or a review.
 
-- [x] **4.1** The fixture value shapes the phase needs — lower-bound
-      decoration, a mixed-dimensionality column, array-of-composite and
-      composite-containing-array, a text-subtype range, array-of-enum,
-      `mybase[]`. Generator plus regenerated fixtures; no library code. Notes:
-      [`../design/roadmap-phase4.1-fixture-shapes-notes.md`](../design/roadmap-phase4.1-fixture-shapes-notes.md)
-- [x] **4.1.1** Two fixture values found after 4.1 landed: an array over a
-      domain whose base is `box` (I22 — a domain inherits its base type's
-      array delimiter, so the value is semicolon-separated and escapes the
-      opaque-element refusal as 4.1 knew it), and a zero-field composite
-      (I23). Generator plus regenerated fixtures; no library code. Notes:
-      [`../design/roadmap-phase4.1.1-delimiter-and-empty-composite-notes.md`](../design/roadmap-phase4.1.1-delimiter-and-empty-composite-notes.md)
-- [x] **4.2** The nested literal codec (`nested.rs`, L2): parameterized
-      quoted-token scanner plus array/record/range instantiations, decode and
-      render, round-tripped against 4.1's literals. Notes:
-      [`../design/roadmap-phase4.2-nested-codec-notes.md`](../design/roadmap-phase4.2-nested-codec-notes.md)
-- [x] **4.3** `ColumnBuilder`'s `List`/`Struct` arms, unit-tested directly;
-      nothing resolves to them yet. Notes:
-      [`../design/roadmap-phase4.3-nested-builders-notes.md`](../design/roadmap-phase4.3-nested-builders-notes.md)
-- [x] **4.4** Flip type resolution: recursive mapping, built-in range
-      subtypes, opaque-element refusal, the `ColumnResolution` surgery
-      (`OpaqueElementType` in, `Deferred`/`DeferredKind` out), the
-      `(DataType, NestedPlan)` pair threaded through `ResolvedSchema` and
-      `RowBatcher::new`, and `render_field`'s deletion in favour of the
-      plan-taking one. Nested columns decode end-to-end on the optimistic
-      path. Notes:
-      [`../design/roadmap-phase4.4-resolution-flip-notes.md`](../design/roadmap-phase4.4-resolution-flip-notes.md)
-- [x] **4.4.1** The presentation half: the resolved Arrow type on `pgdq info
-      --verbose`'s per-column line for every column that is not `Utf8View`,
-      rendered with arrow's `Display` except the range struct, which collapses
-      to `Range<T>`; and the `type-handling.md` rewrite. The manual documented
-      **two** ways a column of these types is still a string, not the spec's
-      three; 4.5.1 added the third. Notes:
-      [`../design/roadmap-phase4.4.1-presentation-notes.md`](../design/roadmap-phase4.4.1-presentation-notes.md)
-- [x] **4.4.2** The array-of-array-typed-element refusal, earned from a defect
-      4.4 shipped (I26): the shape resolves `Utf8View` with
-      `ColumnResolution::NestedArrayElement`, `retype_from_census`'s guard is
-      gone, and the resolution-outcome coverage test now enforces
-      `roadmap.md`'s fixture rule. `types/default.sql` gained
-      `t_nested_array` (both faces of the refusal plus the five
-      working-but-unpinned shapes) and `t_enum_domain.v_empty_enum`, which the
-      coverage test needed and which produced I27. Notes:
-      [`../design/roadmap-phase4.4.2-nested-array-refusal-notes.md`](../design/roadmap-phase4.4.2-nested-array-refusal-notes.md)
-- [x] **4.4.3** The array-declaration spellings, earned from 4.4.2:
-      `pgtype::array_element` normalizes the whole `Typename` array-bounds
-      production (`[]`, `[n]`, repeated, `ARRAY`, `ARRAY[n]` — I28) to the
-      element type plus one array level, so `integer[][]` resolves as
-      `integer[]` does and the census decides its depth; a declaration
-      PostgreSQL rejects stays `Unknown`. The I26 refusal is unchanged and is
-      now the only shape that reaches it. `t_array_spelling` (four spellings,
-      all dumping as `integer[]` on all six majors) is the fixture half.
-      Notes:
-      [`../design/roadmap-phase4.4.3-array-spellings-notes.md`](../design/roadmap-phase4.4.3-array-spellings-notes.md)
-- [x] **4.4.4** The array arm folded into one function, earned from 4.4.3's
-      unattended call: `resolve_array(element, types) -> TypeOutcome` replaces
-      `element_is_opaque`/`element_is_array` and holds the whole array
-      decision over one domain walk, so which function normalizes the
-      array-bounds production stops being a question. No test was edited or
-      added, and `domain_terminal` has one caller again. The "Not quote-aware"
-      paragraph is corrected in `array_element` **and** in
-      [`../design/architecture.md`](../design/architecture.md), "Type
-      resolution", which carried the same false claim (I29). Notes:
-      [`../design/roadmap-phase4.4.4-array-arm-notes.md`](../design/roadmap-phase4.4.4-array-arm-notes.md)
-- [x] **4.5** The shape census, **recording half**: `ArrayShape` on every
-      `CopyBlock`, recorded per column, and the cache format bump that
-      persists it; `DumpIndex::is_complete`. Nothing consumed it — that is
-      4.5.1's half. The slice was specified as one row and split mid-slice;
-      the spec's table carries the earned `4.5.1`. Notes:
-      [`../design/roadmap-phase4.5-census-recording-notes.md`](../design/roadmap-phase4.5-census-recording-notes.md)
-- [x] **4.5.1** The shape census, **consuming half**: the census is
-      unconditional (`Builder::censusing` gone, `CopyBlock::array_shapes` a
-      plain `Vec<ArrayShape>`, cache format bumped, `tests/query_cache.rs`
-      comparing spans for span again); `resolve_columns` takes the census and
-      retypes the `(DataType, NestedPlan)` pair from it;
-      `ColumnResolution::VaryingArrayShape` and its `resolution_label` arm;
-      `Error::FieldDecode` names `--schema-mode strings`; the manual's
-      statement of what an array column becomes, the one case still decided
-      optimistically, and the planned representation knob. Notes:
-      [`../design/roadmap-phase4.5.1-census-consumption-notes.md`](../design/roadmap-phase4.5.1-census-consumption-notes.md)
-- [x] **4.6** The array stress section in `generate_perf_data.py`, **gated
-      behind `--arrays`** (default output verified byte-identical; `M10` has
-      since split that flag from `--composite`), the `nested` group in
-      `benches/decoders.rs`, and all three `measurements.md` figures: the
-      census on array-bearing rows, the per-element decode micro (78
-      ns/element; array and composite against a same-bytes copy control), and
-      `pgdq query --schema-mode typed` against `strings`. `M10` re-took the
-      first and third on a corrected generator — see
-      [`../design/measurements.md`](../design/measurements.md) for the
-      figures that stand. No library code. Notes:
-      [`../design/roadmap-phase4.6-array-stress-notes.md`](../design/roadmap-phase4.6-array-stress-notes.md)
-- [x] **4.6.1** The composite's end-to-end share, **earned** from 4.6's spec
-      row naming a deliverable without naming its instrument. The third
-      generated file (`--composite` without `--arrays`), the same
-      `typed`-against-`strings` pair run on it, and the rewritten
-      [`../design/measurements.md`](../design/measurements.md) section — now
-      three rows from one interleaved sweep. **The answer is a bound, not a
-      point figure**: the composite column's share reads *below zero*, and a
-      control pair differing only in RNG seed reads +0.22 µs/row, so this
-      instrument resolves nothing under ~±0.5 µs/row. What stands is the
-      attribution that bound buys — the two array columns carry essentially
-      all of the 15.1 µs/row the three nested columns cost, and the composite
-      is under 4% of it. Notes:
-      [`../design/roadmap-phase4.6.1-composite-share-notes.md`](../design/roadmap-phase4.6.1-composite-share-notes.md)
+How the result works is
+[`../design/architecture.md`](../design/architecture.md) — "Type resolution",
+"The nested literal codec", "Nested columns: `NestedPlan` travels beside the
+`DataType`", "The array shape census" and "What the census decides, and who may
+believe it". The wrap moved what the slices learned into it by subject, so the
+notes doc holds the phase's negative results, why its slice numbering is not
+its landing order, and where its facts were filed.
 
 ## Phase 9 — complete and wrapped
 
@@ -205,41 +122,22 @@ filed.
   runs past ten minutes, so `CLAUDE.md`'s "Long-running processes" rule
   applies — launch it writing to `runs/`, and let a later session read the log.
 
-- **Order from here**, re-settled 2026-08-27 after `4.6.1` landed: the
-  **Phase 4 wrap**, and nothing else. Every slice of Phase 4 has landed, as
-  has everything that was queued ahead of it — M5-M10, 4.4.4, the koji wrap
-  run (whose durable halves are in
+- **Order from here**, re-settled 2026-08-27 with the Phase 4 wrap landed:
+  **`M12` → `M11` → `M13`** above, and then nothing that is scheduled. No
+  phase is open — 4 and 9 are both wrapped, and everything queued ahead of
+  them has landed (M5–M10, the koji wrap run whose durable halves are in
   [`../design/measurements.md`](../design/measurements.md), "koji full scan",
-  and [`../design/architecture.md`](../design/architecture.md), "CLI
-  surface"), and Phase 9's own wrap.
+  and [`../design/architecture.md`](../design/architecture.md), "CLI surface").
 
-  **The Phase 4 wrap** consolidates **thirteen** slice notes docs (4.1 through
-  4.6.1) into one `roadmap-phase4-composite-decoding-notes.md` and deletes them
-  (`process.md`, step 5). Like Phase 9's, it is an **audit of
-  `architecture.md`, not a transcription** (`process.md`, "A wrap after a
-  keystone is an audit"): check that doc for what the slices learned and it
-  does not yet say, move that in, and leave the notes doc holding the
-  residue — negative results, and facts for the next phase not already filed
-  as inbox entries. 4.6 and 4.6.1 already filed four of their own findings
-  that way — the array-bearing census cost into `architecture.md`, and three
-  [`roadmap-phase7-inbox.md`](../design/roadmap-phase7-inbox.md) entries (two
-  restated from "unmeasured" to their figures, one new: what a cross-file
-  cost attribution can resolve). A short notes doc is a correct outcome; an
-  absent one is not. A wrap is **not** a keystone, which is a separate,
-  maintainer-triggered judgement that happens once or twice in a project's
-  life; both wraps leave a spec and one notes doc behind.
-
-  **What comes after the Phase 4 wrap is a separate conversation**, claimed by
-  the maintainer on 2026-08-27. `process.md` step 6 re-grills the roadmap
-  before the next phase is specified, and four are unspecified (5, 6, 7, 8);
-  numeric order is not plan order, since 9 was taken ahead of 5. An unattended
-  session does not pick one.
+  **Which phase comes next is a separate conversation**, claimed by the
+  maintainer on 2026-08-27. `process.md` step 6 re-grills the roadmap before
+  the next phase is specified, and four are unspecified (5, 6, 7, 8); numeric
+  order is not plan order, since 9 was taken ahead of 5. An unattended session
+  does not pick one, so this is where an unattended loop stops whatever remains
+  queued behind it.
 
   The `--disable-triggers` fix is **not** in this order — it is unscheduled, in
-  `roadmap.md`'s "Future". Neither are **M12/M11/M13** above, which are
-  out-of-band and fit either side of the wrap. Phase 9 is wrapped and Phase 4 has only its
-  wrap left, so this is still the phase boundary an unattended loop stops at,
-  whatever remains queued behind it.
+  `roadmap.md`'s "Future".
 
 ## Known gaps
 
@@ -267,10 +165,9 @@ filed.
   stand: the census is keyed by column and has nowhere to record a shape at
   that depth, so scanning more of the file cannot help. `--schema-mode
   strings`, which the message now names, returns the literal verbatim. A
-  *top-level* array column no longer reaches this — 4.5.1 retypes it from the
-  census on any query, cold or full — and an array whose *element type* is an
-  array no longer reaches it either, since 4.4.2 refuses that shape outright
-  (I26). Keying the census by path is a roadmap "Future" item and would be
+  *top-level* array column does not reach this — it is retyped from the census
+  on any query, cold or full — and an array whose *element type* is an array
+  does not either, since resolution refuses that shape outright (I26). Keying the census by path is a roadmap "Future" item and would be
   purely additive.
 - **An array type this build declines to represent comes back as text with no
   way to ask for more.** Two shapes are in that state: an array whose element
