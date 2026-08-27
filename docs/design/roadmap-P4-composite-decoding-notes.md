@@ -1,4 +1,4 @@
-# Phase 4 — Composite value decoding: notes
+# P4 — Composite value decoding: notes
 
 The phase's residue after the wrap audit. Every mechanism it built is described
 by subject in [`architecture.md`](architecture.md) — the recursive mapping, the
@@ -149,14 +149,14 @@ much of it one review could hold.
   fully-understood array as text, and the quoted type name that costs a weaker
   type.
 - **Facts for phases with no spec** —
-  [`roadmap-phase5-inbox.md`](roadmap-phase5-inbox.md) (nested columns keep an
+  [`roadmap-P5-pushdown-inbox.md`](roadmap-P5-pushdown-inbox.md) (nested columns keep an
   untyped text-shaped predicate; per-block per-column recording exists and
   avoided the L1/L2 injection it looked like it needed),
-  [`roadmap-phase6-inbox.md`](roadmap-phase6-inbox.md) (push mode has no
+  [`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md) (push mode has no
   non-test consumer left; a partial index's blocks are each fully censused
   while the *table's* set may not be; resolution keyed by `COPY` block leaves
   block-to-table to that phase) and
-  [`roadmap-phase7-inbox.md`](roadmap-phase7-inbox.md) (nested values always
+  [`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md) (nested values always
   copy and a large share of them are viewable; every mapping pass now does
   per-row work; the cross-file attribution floor).
 - **Wanted but unscheduled** — [`roadmap.md`](roadmap.md), "Future": the
@@ -170,8 +170,8 @@ much of it one review could hold.
 **The type set is complete, which is the reason this phase preceded pushdown.**
 `TypeOutcome::Deferred` and `DeferredKind` are gone; every declared type now
 resolves to a real Arrow type or to `Utf8View` with one of eight named reasons.
-Phase 5 designs against that table rather than against a partial one, and
-Phase 6 freezes those reasons as an outward surface.
+P5 designs against that table rather than against a partial one, and
+P6 freezes those reasons as an outward surface.
 
 **The pair is the unit.** `resolve_declared_type` is the one producer of
 `(DataType, NestedPlan)` and `retype_from_census` the one transform, and
@@ -181,10 +181,10 @@ exactly while those two sites are the only writers — the single-tree fallback
 is in `architecture.md`'s "Nested columns" section, unbuilt and costed, for
 whenever a third appears.
 
-**The koji identity check passed as part of the Phase 9 wrap run.** The spec
+**The koji identity check passed as part of the P9 wrap run.** The spec
 puts it once at phase wrap; the 2026-08-27 run (`measurements.md`, "koji full
 scan") reproduced 74 blocks / 19,575,829,920 rows / 784,019,857,152 bytes on a
-tree carrying every library change of this phase, so no separate Phase 4 run
+tree carrying every library change of this phase, so no separate P4 run
 was owed. That the phase's whole subject is absent from koji — no composites,
 six array columns all `NULL` — is what makes identity the right check there:
 a difference would mean a slice touched the scanner by accident.

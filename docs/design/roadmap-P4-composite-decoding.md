@@ -1,11 +1,11 @@
-# Phase 4 — Composite value decoding
+# P4 — Composite value decoding
 
 Arrays, composite types, ranges and multiranges: the four families
 `resolve_declared_type` currently answers with `TypeOutcome::Deferred`, leaving
 the column `Utf8View`. This phase gives each one a structured Arrow
 representation and an exact render-back.
 
-There is no `roadmap-phase4-inbox.md` — no earlier phase filed a fact for this
+There is no `roadmap-P4-*-inbox.md` — no earlier phase filed a fact for this
 one.
 
 ## What the dump actually contains
@@ -208,7 +208,7 @@ The degradation is informed rather than fatal: it is decided before the schema
 is fixed, not discovered at row 40 million, and the column round-trips exactly
 as the string it already is today.
 
-*Rejected for Phase 4, kept as a roadmap Future item:*
+*Rejected for P4, kept as a roadmap Future item:*
 `Struct{dims, lbounds, elements}`, which is lossless for every array
 PostgreSQL can produce. Two things decided it, and **only the first is
 evidence — the second is a judgement that this project's flagship dataset is
@@ -224,7 +224,7 @@ Arrow consumer reads as "this is an array".
 and the answer for those users is the struct, not a string. That is why it is
 filed as a *knob* under the roadmap's "Future" section rather than discarded:
 the choice is reversible in exactly one direction. Adding the struct later only
-ever touches columns Phase 4 left as `Utf8View`, so it strictly widens
+ever touches columns P4 left as `Utf8View`, so it strictly widens
 coverage; committing to it now and retreating later makes every array consumer
 rewrite.
 
@@ -412,9 +412,9 @@ contiguous sub-slice.
 Widening the view path into a recursive builder means honouring its three sharp
 edges (chunk retention, block-index invalidation on flush, straddling fields)
 at every level of `List` and `Struct` nesting. That is a scan-performance
-change to an already delicate path, which Phase 7 owns and should measure
+change to an already delicate path, which P7 owns and should measure
 before it widens; filed to
-[`roadmap-phase7-inbox.md`](roadmap-phase7-inbox.md). Copying also leaves this
+[`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md). Copying also leaves this
 phase's own measurement an honest baseline rather than a moving target.
 
 ## The literal form travels beside the Arrow type, from one producer
@@ -556,9 +556,9 @@ PostgreSQL matches and the comparison silently does not.
 which I20's scope limit flags as considerably more permissive than the
 `*_out` inverse this phase commits to, plus canonicalization for the three
 discrete built-in ranges. That is one-time work belonging with typed
-predicates, and it is why Phase 4 precedes Phase 5 in the first place — filed,
+predicates, and it is why P4 precedes P5 in the first place — filed,
 with the measured PostgreSQL and DataFusion semantics, in
-[`roadmap-phase5-inbox.md`](roadmap-phase5-inbox.md).
+[`roadmap-P5-pushdown-inbox.md`](roadmap-P5-pushdown-inbox.md).
 
 ## The performance deliverable is a ratio, not a gate
 
@@ -580,12 +580,12 @@ named, and two more have a claim on the same run:
    to 4.6 in writing — it measures the census as free on brace-free data and
    says the array-bearing case "is not measured here". It is a different code
    path from (1): the census runs in the *scan*, the decode ratio in the
-   *query*. There is no other owner available, since Phase 7 is the consumer.
+   *query*. There is no other owner available, since P7 is the consumer.
 3. **Composite decode throughput**, the same ratio for a `Struct` column.
-   The deferral this phase hands Phase 7 is that **nested** values always copy
+   The deferral this phase hands P7 is that **nested** values always copy
    — which covers a composite's per-field copying exactly as much as an array's
    per-element copying. 4.6's stress data is the only thing that will carry a
-   composite column, so leaving it out means Phase 7 decides half its question
+   composite column, so leaving it out means P7 decides half its question
    on evidence and half on inference.
 
 The generator run and the container cycle are shared across all three, so (2)
@@ -593,7 +593,7 @@ and (3) cost two more columns and two more rows in a table.
 
 **The stress columns.** `v_int_array` (`integer[]`, 3-5 elements),
 `v_int_array_long` (`integer[]`, ~50 elements) and `v_comp` (a two-field
-composite). Two array lengths rather than one because Phase 7's question is what
+composite). Two array lengths rather than one because P7's question is what
 *per-element* copying costs, and one length cannot separate the per-element
 slope from the per-value overhead. Same element type in both, so element count
 is the only variable. All uniform 1-D and non-`NULL`, so they resolve to
@@ -602,7 +602,7 @@ measure nothing `v_text` does not.
 
 *Rejected:* matching koji, whose six array columns are entirely `NULL`. That is
 the realistic shape and it measures the null check rather than the decode,
-which is not what Phase 7 asked for. The observation is recorded beside the
+which is not what P7 asked for. The observation is recorded beside the
 figure instead, so nobody reads the ratio as "what koji costs".
 
 **It is a section in `generate_perf_data.py`, not a fourth bench script.**
@@ -639,7 +639,7 @@ questions, so two are used and one is not:
 
 - **The decode ratio is a `decoders.rs` micro *and* an end-to-end `pgdq query`
   run.** The micro — one array literal against one text field, no I/O, no
-  batching — is the direct answer to Phase 7's question, and is where every
+  batching — is the direct answer to P7's question, and is where every
   other per-type decode cost already lives. The end-to-end run is `pgdq query
   --schema-mode typed` against `--schema-mode strings` on the same file:
   `strings` resolves everything to `Utf8View`, so it is the control the ratio
@@ -709,7 +709,7 @@ which the census reversal below made false —
   strings` is its remedy.
 
 The two-path statement survives only for a **reported** schema over a partial
-index, which no CLI surface can reach until Phase 9.2; it belongs in that
+index, which no CLI surface can reach until P9.2; it belongs in that
 phase's manual work, not this one's.
 
 **Also with 4.5**, one sentence — no more — that a column whose arrays vary in

@@ -8,7 +8,7 @@ keeping.
 
 ## What exists
 
-Phases 1-3 are complete and were struck at the keystone review, so there is no
+P1–P3 are complete and were struck at the keystone review, so there is no
 per-phase checklist here any more. How the system works is
 [`../design/architecture.md`](../design/architecture.md); what is still ahead is
 [`../design/roadmap.md`](../design/roadmap.md).
@@ -24,19 +24,19 @@ per-phase checklist here any more. How the system works is
 | Partial reporting | `info` reports a cache from an unfinished scan for as far as it got, with `Scan completion: N% (M bytes)` stated once at the top; `--json` carries the coverage components and per-`COPY`-block type resolution. An interrupted cache is **typed** for every database segment the scan finished — the mapping pass states each database's DDL at that database's first `COPY` block (I1) |
 | Arrays, composites, ranges, multiranges | typed and decoded end to end: `List<T>`, `Struct<…>`, the five-field range struct, `List<` range struct `>`, and `List<List<T>>` for a uniformly multi-dimensional array column. Three shapes stay a string, each with its own resolution outcome: an array whose element type is opaque (`box`, a C base type, a shell type, through any chain of domains), an array whose element type is itself an array (I26), and an array column whose values disagree on shape |
 | Array shape census | recorded by every mapping pass (`CopyBlock::array_shapes`) and **consumed**: a query retypes its top-level array columns from the union over the blocks it will replay, before the first batch |
-| Predicate and projection pushdown; per-row-group statistics | not started — Phase 5 |
-| `object_store` I/O, Python bindings, DataFusion `TableProvider` | not started — Phase 6 |
-| Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
-| `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
+| Predicate and projection pushdown; per-row-group statistics | not started — P5 |
+| `object_store` I/O, Python bindings, DataFusion `TableProvider` | not started — P6 |
+| Device-bound scan performance campaign, sparse row index | not started — P7 |
+| `--inserts` row reading; custom/directory/tar archive formats | not started — P8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-27 (the measurement-era backlog's seven entries were reviewed and closed on 2026-08-27; the work they queued is `M12`/`M11`/`M13` under "The out-of-band queue", of which the first two have landed and `M13`'s sweep is running detached. Two entries are open under "Decisions worth another look", both about `M13`'s apparatus. **Phases 4 and 9 are both complete and wrapped**, so no phase is open: what remains queued is out-of-band, and choosing the next phase is a re-grilling the maintainer has claimed. A phase boundary: an unattended loop stops here.)
+Last updated: 2026-08-27 (the measurement-era backlog's seven entries were reviewed and closed on 2026-08-27; the work they queued is `M12`/`M11`/`M13` under "The out-of-band queue", of which the first two have landed and `M13`'s sweep is running detached. `M16` renamed the doc tree to the `P<k>` phase-identifier scheme and settled what a keystone does to the out-of-band ledger; the sweep it prepares for has **not** run. Two entries are open under "Decisions worth another look", both about `M13`'s apparatus. **P4 and P9 are both complete and wrapped**, so no phase is open: what remains queued is out-of-band, and choosing the next phase is a re-grilling the maintainer has claimed. A phase boundary: an unattended loop stops here.)
 
-## Phase 4 — complete and wrapped
+## P4 — complete and wrapped
 
 Specified in
-[`../design/roadmap-phase4-composite-decoding.md`](../design/roadmap-phase4-composite-decoding.md);
+[`../design/roadmap-P4-composite-decoding.md`](../design/roadmap-P4-composite-decoding.md);
 wrapped 2026-08-27, with the thirteen per-slice notes consolidated into
-[`../design/roadmap-phase4-composite-decoding-notes.md`](../design/roadmap-phase4-composite-decoding-notes.md).
+[`../design/roadmap-P4-composite-decoding-notes.md`](../design/roadmap-P4-composite-decoding-notes.md).
 Every slice landed — 4.1 and 4.1.1 (the fixture value shapes, including the
 domain-over-`box` array and the zero-field composite), 4.2 (the nested literal
 codec), 4.3 (`ColumnBuilder`'s `List`/`Struct` arms), 4.4 (the resolution flip)
@@ -56,12 +56,12 @@ believe it". The wrap moved what the slices learned into it by subject, so the
 notes doc holds the phase's negative results, why its slice numbering is not
 its landing order, and where its facts were filed.
 
-## Phase 9 — complete and wrapped
+## P9 — complete and wrapped
 
 Specified in
-[`../design/roadmap-phase9-partial-reporting.md`](../design/roadmap-phase9-partial-reporting.md);
+[`../design/roadmap-P9-partial-reporting.md`](../design/roadmap-P9-partial-reporting.md);
 wrapped 2026-08-27, with the per-slice notes consolidated into
-[`../design/roadmap-phase9-partial-reporting-notes.md`](../design/roadmap-phase9-partial-reporting-notes.md).
+[`../design/roadmap-P9-partial-reporting-notes.md`](../design/roadmap-P9-partial-reporting-notes.md).
 Every slice landed — 9.1 (`parse` resumes and banks per block), 9.2 (`info`
 stops scanning), 9.3 (the coverage line), 9.4 (per-block resolution in
 `--json`), 9.5 (the save throttle and the interrupt guard, earned from 9.1's
@@ -128,7 +128,7 @@ filed.
     brace-free rows from +0.84 s to **+0.04 s per 3.00 GiB** (+3%), against
     +1.28 s (+100%) on array-bearing rows; the read floor for the same file is
     0.30 s; and the cross-file instrument cannot resolve the composite column
-    at all (phase-7 inbox, "Cross-file differencing cannot resolve one
+    at all (P7 inbox, "Cross-file differencing cannot resolve one
     column").
 
   - [ ] **`M14` — the cold scan-throughput table, re-taken under one
@@ -160,9 +160,25 @@ filed.
     are [`history/2026-08-27.md`](history/2026-08-27.md), "`M12` armed a
     stale-input trap".
 
+  - [x] **`M16` — the phase-identifier scheme, and what a keystone sweeps.**
+    A phase is identified by `P<k>` permanently and its slug is an informal
+    caption; slice numbers stay integers, where the order they assert is real.
+    The out-of-band ledger is struck at a keystone like the phase docs, leaving
+    a watermark of spent numbers. Two phases may be in flight at once given
+    disjoint mechanisms and separate checklists. Landed in
+    [`../process.md`](../process.md), `CLAUDE.md` and
+    [`../design/roadmap.md`](../design/roadmap.md), and the repo was renamed to
+    match — `docs/design/roadmap-P<N>-<slug>*.md`, with every open phase's
+    inbox gaining a slug. **The keystone sweep itself has not run**: P4's and
+    P9's docs were renamed, not struck. Ledger row `M16`; the notes are
+    [`history/2026-08-27.md`](history/2026-08-27.md), "Phases are identified by
+    `P<k>`".
+
 - **Order from here**, re-settled 2026-08-27 with `M12` and `M11` landed:
   `M13`'s log is read and its figures folded in, then `M14`, and then nothing
-  that is scheduled (`M15` landed the day it was queued). `M14` runs **before** the phase-choice
+  that is scheduled (`M15` and `M16` each landed the day they were queued;
+  the keystone sweep `M16` prepares for is the maintainer's call, not a
+  scheduled item). `M14` runs **before** the phase-choice
   conversation, settled 2026-08-27: its method is written and its generators
   are hot, and leaving one table under a superseded apparatus is the
   "figures disagreeing about regime" failure the standing rules were written
@@ -253,9 +269,9 @@ filed.
   for 4000 blocks under `query --dqcache none`, against under 10 ms for the
   same bytes in one block. 9.5's throttle removed the other half (44.3 s → 23.6
   s for a 4000-block `parse`). Accepted for now, not scheduled: the fix is to
-  stop rebuilding the span list per block, which is the same code Phase 7's
+  stop rebuilding the span list per block, which is the same code P7's
   parallel-scan plans would rework and which
-  [`roadmap-phase7-inbox.md`](../design/roadmap-phase7-inbox.md) already flags
+  [`roadmap-P7-scan-performance-inbox.md`](../design/roadmap-P7-scan-performance-inbox.md) already flags
   for assuming coverage is a contiguous prefix — so the two belong in one
   decision. A **cheap** version exists and was weighed: for `parse` nothing
   reads `index.spans` between saves, so gating the splice on the throttle the
@@ -264,7 +280,7 @@ filed.
   bank the last *saved* watermark rather than the last *completed block* —
   reversing a guarantee 9.5 established — and `Builder::snapshot` asserts
   `Idle`, so the chunk-top interrupt check cannot re-derive the spans mid-block
-  to compensate. The analysis is in the phase-7 inbox so it is not re-derived. Nothing koji-shaped is affected: 74 blocks over 784 GB pay this
+  to compensate. The analysis is in the P7 inbox so it is not re-derived. Nothing koji-shaped is affected: 74 blocks over 784 GB pay this
   74 times, and the figure there is +1.5%. Figures and commands:
   [`../design/measurements.md`](../design/measurements.md), "Per-block cache
   saving is quadratic in block count, and so is the map".
@@ -284,7 +300,7 @@ filed.
   which is what the previous form of this gap cost. Accepted, not
   scheduled — closing it means abandoning early stopping, which is what makes a
   cold query on a large dump affordable. Filed into
-  [`roadmap-phase6-inbox.md`](../design/roadmap-phase6-inbox.md) so the
+  [`roadmap-P6-embeddable-engine-inbox.md`](../design/roadmap-P6-embeddable-engine-inbox.md) so the
   embedded API's promises get decided against it deliberately.
 - `DumpIndex::roles`/`tablespaces` are complete only once `scanned_through`
   reaches the file's size — the same partiality `metadata`'s
@@ -308,7 +324,7 @@ filed.
   `COPY` dump of the same size does not. Correctness is unaffected — the map, the tiling and the row counts
   are the same either way. Not scheduled: the fix is a scanner-level
   `INSERT` path, which changes a decision and so needs a slice, filed into
-  [`roadmap-phase7-inbox.md`](../design/roadmap-phase7-inbox.md).
+  [`roadmap-P7-scan-performance-inbox.md`](../design/roadmap-P7-scan-performance-inbox.md).
 
 ## Decisions worth another look
 
@@ -365,7 +381,7 @@ between-file baseline gap — "the untyped path is partly per-row" — is
 **retracted**: the interleaved sweep puts the same files 2% apart with the
 row-count spread unchanged, so the gap was a file-at-a-time sweep mapping the
 session's drift onto file identity. Both rules are also in
-[`../design/roadmap-phase7-inbox.md`](../design/roadmap-phase7-inbox.md),
+[`../design/roadmap-P7-scan-performance-inbox.md`](../design/roadmap-P7-scan-performance-inbox.md),
 since that campaign is where they bite.
 
 *The composite column's unmeasured end-to-end share was reviewed on
@@ -379,8 +395,8 @@ generator write a declaration `pg_dump` would not — the opposite of what `M10`
 corrected it to do — so it needs an explicit exemption from
 `perf_generator_fidelity.rs`, not just a flag. What is fixed is the wording
 that promised a share: 4.6.1's spec row in
-[`../design/roadmap-phase4-composite-decoding.md`](../design/roadmap-phase4-composite-decoding.md)
-now says the deliverable is whatever that instrument resolves, and the phase-7
+[`../design/roadmap-P4-composite-decoding.md`](../design/roadmap-P4-composite-decoding.md)
+now says the deliverable is whatever that instrument resolves, and the P7
 inbox entry carries the exemption. **Generalized into
 [`../design/roadmap.md`](../design/roadmap.md)'s standing rule** "A slice row
 that commits to a measurement names its instrument", which now states that a
@@ -566,12 +582,12 @@ before `read_range`, not during it, and `scan::scan`/`scan_preamble` ignore it
 on purpose, because a stop there could not be told from reaching the first
 `COPY` header and would cache a truncated preamble as complete. The remote-I/O
 half of that is filed into
-[`../design/roadmap-phase6-inbox.md`](../design/roadmap-phase6-inbox.md).
+[`../design/roadmap-P6-embeddable-engine-inbox.md`](../design/roadmap-P6-embeddable-engine-inbox.md).
 Reasoning: [`history/2026-08-27.md`](history/2026-08-27.md).
 
-*Three Phase 9 entries were reviewed on 2026-08-26.* The **save-throttle**
+*Three P9 entries were reviewed on 2026-08-26.* The **save-throttle**
 entry is **reversed**: the quadratic regime was measured, it costs 44s on a
-4000-block dump, and closing it is slice **9.5** rather than a Phase 7
+4000-block dump, and closing it is slice **9.5** rather than a P7
 question. The **`parse` types every `\connect`ed database** entry is
 **reversed in the direction of agreement**: the recomputation moves into
 `map_forward` so a cold query and a warm one answer alike — an out-of-band
@@ -581,7 +597,7 @@ its absence would leave a user unsure rather than reassured, and `--json`
 carries the components without a rendered line, because a caller can divide.
 Reasoning: [`history/2026-08-26.md`](history/2026-08-26.md).
 
-*The three remaining Phase 9 entries were reviewed on 2026-08-26 and all three
+*The three remaining P9 entries were reviewed on 2026-08-26 and all three
 **stand**.* The diagnostics recompute is 3 ms for koji's 833-span cache — a
 full `info --dqcache` run, load and render included — so the O(spans) cost is
 below process startup; the figure is in

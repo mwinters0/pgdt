@@ -1,4 +1,4 @@
-# Phase 9 — Partial reporting and machine-readable resolution
+# P9 — Partial reporting and machine-readable resolution
 
 What pgdq can say about a dump it has only partly read, and in what form.
 
@@ -12,11 +12,11 @@ scanning can be triggered by a command that reads like a question.
 
 The number is 9 because 5–8 are taken and this project does not renumber a tail
 ([`../process.md`](../process.md), "Slice numbering"). The phase runs after
-Phase 4 and before Phase 5; [`roadmap.md`](roadmap.md) carries the ordering.
+P4 and before P5; [`roadmap.md`](roadmap.md) carries the ordering.
 
-There is no `roadmap-phase9-inbox.md` — the phase did not exist when earlier
+There is no `roadmap-P9-*-inbox.md` — the phase did not exist when earlier
 phases were filing facts. Two facts *this* phase produces are filed into
-[`roadmap-phase6-inbox.md`](roadmap-phase6-inbox.md), where the embedded API
+[`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md), where the embedded API
 has to answer them.
 
 ## The split the CLI does not currently draw
@@ -200,7 +200,7 @@ and the JSON carries the components as separate fields rather than a rendered
 string.
 
 *Rejected:* a per-record partiality flag. It would always carry the same value,
-which reads as if it could vary. The reason it cannot is Phase 4.5.1's: a block
+which reads as if it could vary. The reason it cannot is P4.5.1's: a block
 enters the map only at a `CopyEnd` watermark, and every mapping pass censuses,
 so **every record a partial index holds is complete in itself**. What a partial
 index lacks is records, not confidence — there is no half-known block, only
@@ -232,7 +232,7 @@ rescan. Now it is the answer being reported, so the weak signal has to surface.
 `--json` exports `DumpIndex`, an L1 structure with no resolved schema, so
 everything `pgdq info --verbose` prints per column — the outcome, the declared
 PostgreSQL type, and since 4.4.1 the resolved Arrow type — is human-only. After
-Phase 4.5.1 there are six distinct answers to "why is this column a string",
+P4.5.1 there are six distinct answers to "why is this column a string",
 and no script can reach any of them. `print_index` already computes the whole
 thing per block; the data is discarded at the JSON boundary.
 
@@ -417,7 +417,7 @@ against caches built by an unrelated command's edge case.
   it is a second script rather than a section in that one. And an interrupted
   `parse` still leaves a loadable cache: the guard is what makes the throttle
   safe, so it is verified with it.
-- **The guard's real-scale test rides on Phase 4's wrap koji run**, which is
+- **The guard's real-scale test rides on P4's wrap koji run**, which is
   the only place the shape that matters exists: an interrupt arriving inside a
   hundred-gigabyte block, against a cache already holding dozens. That run is
   stopped partway with `nerdctl stop` — a `SIGTERM`, which is what the guard

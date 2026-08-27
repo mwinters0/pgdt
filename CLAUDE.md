@@ -127,16 +127,28 @@ section is the ledger for work that belongs to no phase — **add a one-line row
 there when landing a change that changes no spec'd decision and fits one
 session**, pointing at the history entry that says why. Such a change gets no
 spec and no notes doc. If it would change a decision, it is not out-of-band:
-grill it, amend the spec, and give it a slice number.
+grill it, amend the spec, and give it a slice number. `M<k>` numbers work like
+`P<k>`: allocated on discovery, never reused, and the ledger's row order is
+allocation order rather than landing order.
+
+**A phase is identified by `P<k>`, which is not a position.** Phases are
+allocated numbers as they are *discovered*, run in whatever order suits, and
+sometimes two at a time; the schedule is the roadmap's index table, top to
+bottom. So: never renumber a phase, never reuse a struck one's number, and
+never drop or add the `P` to signal that a phase has matured — an identifier
+that changes makes every history entry and commit message naming it wrong. The
+slug beside it is an informal caption, free to change and free to repeat a
+slug some earlier phase used. Full rule: `docs/process.md`, "Phase identity is
+`P<k>`".
 
 A phase that has been specified gets its own doc,
-`docs/design/roadmap-phase<N>-<slug>.md`; keep that convention when a new
-phase's plan is written. `docs/design/roadmap-phase7-scan-performance.md` is
+`docs/design/roadmap-P<N>-<slug>.md`; keep that convention when a new
+phase's plan is written. `docs/design/roadmap-P7-scan-performance.md` is
 the performance design for the local-file read path — read it before touching
 the batch layer or the cache format, which it constrains ahead of its own
 phase.
 
-`docs/design/roadmap-phase<N>-inbox.md` holds facts an *earlier* phase found
+`docs/design/roadmap-P<N>-<slug>-inbox.md` holds facts an *earlier* phase found
 that phase N will need — filed by destination, because a notes doc filed by
 origin never gets read at the right moment. Two triggers, and the second is the
 one that decays: **read a phase's inbox before grilling or specifying it**, and
@@ -175,7 +187,7 @@ slice, wrapping one up, writing or revising a phase spec or notes doc, or
 updating `STATUS.md`. Planning, grilling and ad-hoc exploration don't need it.
 
 `docs/design/historical/initial.md` is frozen — historical only. The specs and
-notes for phases 1-3 were struck at the keystone review (`docs/process.md`,
+notes for P1–P3 were struck at the keystone review (`docs/process.md`,
 "The keystone: striking the centering") and live only in git;
 `architecture.md` replaces them. **Don't cite a phase number for something
 already built** — cite the mechanism's section in `architecture.md` instead.

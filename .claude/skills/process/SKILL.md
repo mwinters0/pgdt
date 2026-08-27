@@ -11,11 +11,11 @@ names the obligations and points at it.
 Then read, for the work at hand:
 
 - `docs/design/roadmap.md` — the phase index and the standing policies.
-- The current phase spec, `docs/design/roadmap-phase<N>-<slug>.md` — the
+- The current phase spec, `docs/design/roadmap-P<N>-<slug>.md` — the
   binding statement of what this phase committed to.
 - `docs/status/STATUS.md` — what exists right now, and the phase's slice
   checklist.
-- `docs/design/roadmap-phase<N>-inbox.md`, if one exists — facts an earlier
+- `docs/design/roadmap-P<N>-<slug>-inbox.md`, if one exists — facts an earlier
   phase filed for this one. **Specifying or grilling a phase means draining
   its inbox**: fold each entry into the spec or discard it as stale, then
   delete the file.
@@ -26,7 +26,7 @@ Then read, for the work at hand:
 
 Every one of these belongs in the *same* change as the code, not a follow-up:
 
-1. **A notes doc**, `roadmap-phase<N>.<M>-<slug>-notes.md` — even for a slice
+1. **A notes doc**, `roadmap-P<N>.<M>-<slug>-notes.md` — even for a slice
    that lands no code. Written for the *next* slice: what it inherits, the
    non-obvious calls and why. Not a restatement of the spec, not a changelog.
 2. **The STATUS checklist ticked** for that slice, linking its notes doc, plus
@@ -39,7 +39,7 @@ Every one of these belongs in the *same* change as the code, not a follow-up:
    discovery that changed the plan. Not routine progress.
 5. **An invariants-register entry** if the slice made a decision depend on
    external behaviour that was not already recorded there.
-6. **An inbox entry** in `roadmap-phase<M>-inbox.md` for each fact the slice
+6. **An inbox entry** in `roadmap-P<M>-<slug>-inbox.md` for each fact the slice
    turned up that a phase with no spec yet will need — filed now, not at wrap,
    because that is when you know it. The fact, why *that* phase cares, and
    where it came from; if you can't name why that phase cares, it isn't one.

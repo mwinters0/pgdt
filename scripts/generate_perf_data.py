@@ -2,7 +2,7 @@
 """Generate a synthetic pg_dump-shaped plain-text dump for throughput benchmarks.
 
 Backs docs/design/measurements.md ("Decoder and whole-file benchmarks") and
-docs/design/roadmap-phase7-scan-performance.md ("Measurement discipline"). Unlike generate_fixtures.py, this is *not* a correctness
+docs/design/roadmap-P7-scan-performance.md ("Measurement discipline"). Unlike generate_fixtures.py, this is *not* a correctness
 fixture: its output is never checked against real pg_dump, only shaped
 closely enough to satisfy this codebase's own COPY/DDL grammar so pgdq can
 read it back. Two different runs producing different bytes is fine -- this
@@ -26,7 +26,7 @@ is what docs/design/measurements.md's array-shape-census figure and its
 scan-throughput table were both taken on. The array and composite stress
 columns live behind --arrays and --composite for exactly that reason -- see
 that doc's array sections, and
-docs/design/roadmap-phase4-composite-decoding.md, "The performance deliverable
+docs/design/roadmap-P4-composite-decoding.md, "The performance deliverable
 is a ratio, not a gate".
 
 So the default output's *bytes* are frozen, and changing them is not a local

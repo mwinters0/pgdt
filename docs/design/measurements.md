@@ -69,9 +69,9 @@ Eight standing rules for reading anything below:
   stays what `CLAUDE.md`'s container recipes use for *portability*, and a
   figure taken with it is not comparable to one here. Debian's `/bin/sh` is
   dash, with no `time`, so the in-container timer is `bash -c 'time …'`.
-  Whether a different allocator should be the shipped default is a Phase 7
+  Whether a different allocator should be the shipped default is a P7
   question, filed in
-  [`roadmap-phase7-inbox.md`](roadmap-phase7-inbox.md).
+  [`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md).
 - **Long runs are detached.** A koji-scale scan is roughly an hour; see
   `CLAUDE.md`, "Long-running processes", for why waiting on one is expensive
   and what to do instead.
@@ -152,7 +152,7 @@ from another session is what the fourth standing rule forbids — `M14` re-takes
 both sides under one apparatus. The direction is safe meanwhile: every
 correction makes the `INSERT` path look worse, never better. Correctness, tiling and
 row counts are unaffected. The fix is a scanner-level `INSERT` path;
-[`roadmap-phase7-inbox.md`](roadmap-phase7-inbox.md) holds it.
+[`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md) holds it.
 
 **The CPU ceiling under the `COPY` row is 2.92–2.96 s** — the same scan with
 the file already page-cache resident, ~1.10 GB/s. That is the number the two
@@ -381,7 +381,7 @@ a build in which `architecture.md`'s "the census is unconditional" is untrue,
 serving a comparison taken about once a phase. The escape if the patch-and-
 revert ever bites is to drop the comparison, not to gate it: the absolute
 figures (1.03 µs/row rejected, 2.50 µs/row inspected) are what
-[`roadmap-phase7-inbox.md`](roadmap-phase7-inbox.md) actually consumes, and
+[`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md) actually consumes, and
 the census-off column exists to establish it once.
 
 ## Nested decode costs what it copies, and an element is an allocation
@@ -392,7 +392,7 @@ because there are two questions.**
 - **Copy** — `String::from` over the same byte count: 21.0 ns at 49 bytes,
   25.9 ns at 601, 20.0 ns at 42. A nested value has no borrowed arm
   (`crate::batch::append_nested`), so this isolates what the *parse* costs on
-  top of the copy it cannot avoid, which is the variable Phase 7 is choosing
+  top of the copy it cannot avoid, which is the variable P7 is choosing
   over.
 - **View** — one `append_view_unchecked` into a block the builder does not
   own, which is what `push_utf8view_field` does for an unescaped text field:
@@ -492,7 +492,7 @@ The micro above covers 6.3 µs of that 15.1 µs (decode plus render for a
 ~8.8 µs is the Arrow build the micro does not reach: 56 per-element
 `append_value` calls into the child builders, plus the list offsets. **The
 literal parse is the smaller half of nested decoding**, which is the fact
-Phase 7 needs before deciding what to do about nested values always copying.
+P7 needs before deciding what to do about nested values always copying.
 
 ### The cross-file subtraction bottoms out at about half a microsecond a row
 
@@ -658,7 +658,7 @@ build predating the per-block save, so reproducing the *delta* means checking
 out one of each.
 
 **Stop-and-resume costs nothing measurable, and reproduces the cache
-byte-for-byte.** The Phase 9 wrap run (`runs/koji-wrap.sh`, 2026-08-27) parsed
+byte-for-byte.** The P9 wrap run (`runs/koji-wrap.sh`, 2026-08-27) parsed
 koji cold, signalled it 1200 s in, reported the partial cache, then resumed the
 same command to completion:
 
@@ -759,8 +759,8 @@ rm -f /tmp/r4000.sql.dqcache
 So the region grows with the *schema* — table count and DDL size — and not with
 the data, which is what makes an immediate Ctrl-C during it a non-issue on a
 local file. The remote case is not covered by these numbers: 63 KB is still one
-ranged GET that can hang, and that is a Phase 6 decision
-(`roadmap-phase6-inbox.md`).
+ranged GET that can hang, and that is a P6 decision
+(`roadmap-P6-embeddable-engine-inbox.md`).
 
 ## Per-block cache saving is quadratic in block count, and so is the map
 
@@ -784,7 +784,7 @@ the commit preceding `SaveThrottle`; "after" is the working tree.
 two builds differ in everything that landed from 9.5 onward, not only in the
 save throttle, so the column says what the throttle era bought and must not be
 differenced against a later change. What isolates a mechanism is the
-census-off method above — one line, one rebuild — and what the phase-7 inbox
+census-off method above — one line, one rebuild — and what the P7 inbox
 consumes is the map's own quadratic below, which needs no historical build at
 all.
 
@@ -820,7 +820,7 @@ is O(blocks²) with the cache **disabled entirely**:
 
 So the cache was roughly half the cost at 4000 blocks and the map is the other
 half. Closing the second half means not rebuilding the span list per block;
-it is filed in [`roadmap-phase7-inbox.md`](roadmap-phase7-inbox.md), because it
+it is filed in [`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md), because it
 is a change to how the map is assembled rather than to when it is written.
 
 Save counts come from `strace -f -e trace=openat` filtered to the cache path

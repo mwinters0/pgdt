@@ -1,8 +1,8 @@
-# Phase 7 inbox — facts filed for its grilling
+# P7 inbox — facts filed for its grilling
 
-Evidence found in earlier phases that Phase 7 (scan performance) will need.
-**This is a queue, not a document**: when Phase 7 is grilled, walk every entry,
-fold it into [`roadmap-phase7-scan-performance.md`](roadmap-phase7-scan-performance.md)
+Evidence found in earlier phases that P7 (scan performance) will need.
+**This is a queue, not a document**: when P7 is grilled, walk every entry,
+fold it into [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md)
 or discard it as stale, and delete this file. See `docs/process.md`,
 "Inboxes: facts filed by destination".
 
@@ -21,13 +21,13 @@ on the prefix being a complete tiling of `[0, seg_start)`: if coverage had an
 interior hole, `prefix` would not tile, and extending its last span across the
 seam would silently paper over the wrong range.
 
-**Why Phase 7 cares.** This is the *one* place the phase-3 spec's "coverage is
+**Why P7 cares.** This is the *one* place the P3 spec's "coverage is
 a prefix, by construction" stopped being an observation and became an
-assumption in code. That spec section already names Phase 7's device-aware
+assumption in code. That spec section already names P7's device-aware
 parallelism as "the plausible future source of interior holes" and argues a
 span list (rather than a watermark) is what makes them expressible. It is
 right that the *format* allows them — but `splice` does not, and out-of-order
-NVMe scanning is exactly what would produce them. Whatever Phase 7 does about
+NVMe scanning is exactly what would produce them. Whatever P7 does about
 scan ordering has to either keep coverage prefix-shaped or rework `splice`'s
 seam rule, and that should be a decision, not a discovery.
 
@@ -54,14 +54,14 @@ read is still far cheaper per byte than the second, but "no per-row work" is
 now "a brace/bracket pre-filter per row, and a field split on the rows that
 pass it".
 
-**Why Phase 7 cares.** [`roadmap-phase7-scan-performance.md`](roadmap-phase7-scan-performance.md)'s
+**Why P7 cares.** [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md)'s
 "Two workloads, two algorithms" splits structure discovery from row
 extraction; that split is now real in the code rather than notional, and the
 two have measurably different cost profiles. The double read is the obvious
 thing to measure and the obvious thing to want back — the deferred fix (carry
 the live segment's in-flight spans in the opaque `ResumeToken`, so a single
 pass can emit rows again without reintroducing the unmapped hole) is written
-up under "Future — wanted, unscheduled" in [`roadmap.md`](roadmap.md). Phase 7
+up under "Future — wanted, unscheduled" in [`roadmap.md`](roadmap.md). P7
 is where it should be measured before it is built.
 
 **Origin.** Slice 3.2.1.2.1, 2026-08-24. Decision in
@@ -80,11 +80,11 @@ coalesced over contiguous runs of text-storing spans. Cost is roughly
 `blocks × DDL-size` per scan: on koji, ~200 × 154KB against an hour-long scan,
 i.e. nothing.
 
-**Why Phase 7 cares.** It is `O(blocks × DDL)`, and Phase 7's whole job is
+**Why P7 cares.** It is `O(blocks × DDL)`, and P7's whole job is
 knowing where the scan's time goes. The bound is fine for koji-shaped input
 and could stop being fine for a dump with far more, far smaller blocks — which
 is a shape worth deciding whether to care about rather than assuming away.
-Phase 7's "Measurement discipline" section is the right place to settle it.
+P7's "Measurement discipline" section is the right place to settle it.
 
 **Origin.** Slice 3.2.2, 2026-08-24. See
 [`architecture.md`](architecture.md).
@@ -106,8 +106,8 @@ skipped unread) but left `INSERT` runs decoding every line into `Event::Line`
 and pushing it through `preamble::statement_complete`, folding only the
 *spans* into one.
 
-**Why Phase 7 cares.** This is a second scanner-level fast path — the same
-mechanism `State::InLargeObjectRegion` already is — and Phase 7 owns scan
+**Why P7 cares.** This is a second scanner-level fast path — the same
+mechanism `State::InLargeObjectRegion` already is — and P7 owns scan
 performance and the "two workloads, two algorithms" split. It is also the one
 place where this project's cost claim is currently false in the direction that
 matters: `--inserts` output is a shape the fixture tooling generates routinely,
@@ -116,7 +116,7 @@ dump of the same size does not. The design constraint to carry in: an `INSERT` r
 has no invariant behind it the way `COPY`'s `\.` (I7) and `BLOBS`' `COMMIT;`
 (I12) do, so a skip-and-count path needs the string-aware `'`-tracking scan
 [`architecture.md`](architecture.md)
-("The three regions do not share an end marker") specifies — which Phase 8
+("The three regions do not share an end marker") specifies — which P8
 Track A's row reader needs anyway.
 
 **Origin.** Out-of-band item M3, 2026-08-25; the table re-taken cold by `M10`,
@@ -128,7 +128,7 @@ original measurement: [`../status/history/2026-08-25.md`](../status/history/2026
 
 ## Nested Arrow values are built by copying, and a large share of them are viewable
 
-**Fact.** Phase 4 builds every `List`/`Struct` value by copying, including the
+**Fact.** P4 builds every `List`/`Struct` value by copying, including the
 `List<Utf8View>` that an array of a string-ish element type resolves to. A good
 share of those elements could be views instead: `copy::decode_field` returns a
 borrow of the read chunk whenever the field carries no COPY escapes, and `"` is
@@ -138,11 +138,11 @@ sub-slice `append_view_unchecked` could point at. Only an element whose text
 contains `\` — which forces COPY escaping and makes the whole field owned — or
 one needing unescaping has to be copied.
 
-**Why Phase 7 cares.** It owns the zero-copy path and its three sharp edges
+**Why P7 cares.** It owns the zero-copy path and its three sharp edges
 (chunk retention in the deque, `StringViewBuilder` block-index invalidation on
 every flush, the straddling-field case), and widening that path into a
 *recursive* builder means honouring all three at every level of `List` and
-`Struct` nesting. Phase 4 deliberately declined to do that so a new family's
+`Struct` nesting. P4 deliberately declined to do that so a new family's
 correctness would not ride on the most delicate machinery in the codebase, and
 left its own array measurement as an honest copying baseline to improve on. The
 measurement to take first is that baseline against a viewing variant on the
@@ -180,11 +180,11 @@ together with the ~10 µs build share above, the shape of the answer is that
 **viewing is worth far more than the parse is**, and worth most on long
 arrays.
 
-**Origin.** Phase 4 grilling, 2026-08-25; the figures from slice 4.6,
+**Origin.** P4 grilling, 2026-08-25; the figures from slice 4.6,
 2026-08-27, re-taken by `M10` the same day once the generator declared the
 types `pg_dump` writes — the earlier end-to-end ratios were taken with three
 of the sixteen scalar columns silently untyped. Decision and its rationale:
-[`roadmap-phase4-composite-decoding.md`](roadmap-phase4-composite-decoding.md),
+[`roadmap-P4-composite-decoding.md`](roadmap-P4-composite-decoding.md),
 "Nested elements copy"; figures and commands:
 [`measurements.md`](measurements.md), "Nested decode costs what it copies" and
 "A typed query over nested columns".
@@ -216,7 +216,7 @@ against the SIMD version; until that lands, the numbers above are the
 pre-`M11` reading and the +39% is the ceiling of what the swap can remove, not
 what it did.
 
-**Why Phase 7 cares.** The double-read entry above recorded that the mapping
+**Why P7 cares.** The double-read entry above recorded that the mapping
 pass did no per-row work; that is no longer true of any mapping pass, and the phase's
 device-bound targets are set against a scan loop that has since grown a
 per-row stage. Two specific consequences: a parallel or reordered scan has to
@@ -267,10 +267,10 @@ last *completed block*, and under the gated splice it would bank the last
 *saved* watermark, so a Ctrl-C would lose up to `K` blocks instead of one. The
 coupling cannot be worked around locally either — `map::Builder::snapshot`
 `debug_assert!`s `Mode::Idle`, so the chunk-top check cannot re-derive the
-spans mid-block. Phase 7 may still take it, but as a deliberate change to the
+spans mid-block. P7 may still take it, but as a deliberate change to the
 interrupt's promise, not as a cleanup.
 
-**Why Phase 7 cares.** The phase's target is a device-bound scan path, and this
+**Why P7 cares.** The phase's target is a device-bound scan path, and this
 is a *CPU* cost inside the scan loop that the 243 MB/s koji baseline the phase
 doc opens with cannot see — on a block-rich, byte-poor dump the scan is not
 device-bound at all. Two consequences. First, the fix is in the same code the
@@ -304,7 +304,7 @@ does not normalize away per row; and a slow upward drift across a long session
 lands on whichever file is measured later, which is why the runs interleave
 files rather than running them in blocks.
 
-**Why Phase 7 cares.** It is an entire performance campaign, and the questions
+**Why P7 cares.** It is an entire performance campaign, and the questions
 it will ask — what viewing instead of copying saves on `List<Utf8View>`, what
 a sparse row index costs per block, what a parallel scan wins — are mostly of
 the form "what does this one thing cost", against inputs from the same

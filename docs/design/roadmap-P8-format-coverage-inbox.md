@@ -1,7 +1,7 @@
-# Phase 8 inbox — facts filed for its grilling
+# P8 inbox — facts filed for its grilling
 
-Evidence found in earlier phases that Phase 8 (format coverage beyond plain
-COPY TEXT) will need. **This is a queue, not a document**: when Phase 8 is
+Evidence found in earlier phases that P8 (format coverage beyond plain
+COPY TEXT) will need. **This is a queue, not a document**: when P8 is
 grilled, walk every entry, fold it into the spec or discard it as stale, and
 delete this file. See `docs/process.md`, "Inboxes: facts filed by
 destination".
@@ -21,7 +21,7 @@ Plain-format output is disambiguated by a `-- load via partition root <root>`
 line, which `dumpTableData()` writes into the entry's **`defn`** field;
 `_printTocEntry()` is what renders `defn` as a comment in plain format.
 
-**Why Phase 8 cares.** Track B reads the archive container (custom, directory,
+**Why P8 cares.** Track B reads the archive container (custom, directory,
 tar) rather than plain text. The marker is not part of the SQL — it is
 archive metadata that plain format happens to render as a comment — so a
 container reader has to get it from the TOC entry directly, and `crate::map`'s
@@ -54,7 +54,7 @@ one `COPY` header name are **not** adjacent — an unrelated table whose name
 sorts between two partition names is emitted between their blocks. Observed,
 flagless, 16.15.
 
-**Why Phase 8 cares.** This is a property of the *archive's entry ordering*,
+**Why P8 cares.** This is a property of the *archive's entry ordering*,
 not of plain-text rendering, so it carries over to every container format
 Track B adds. Any Track B design that enumerates a table's data by walking
 entries until the name changes is wrong for the same reason the plain-format
@@ -82,7 +82,7 @@ exactly at its first `INSERT INTO` and carries `toc: None`. Either way
 `CopyBlock`'s `header_offset`/`data_offset` — because nothing reads its rows
 yet.
 
-**Why Phase 8 cares.** Track A reads `--inserts` rows, and it faces **two**
+**Why P8 cares.** Track A reads `--inserts` rows, and it faces **two**
 span shapes for one construct: `span.start` is at the first statement, or an
 arbitrary number of comment lines before it (more under `--verbose`). The only
 invariant that holds across both is `span.start <= ` the first `INSERT INTO`,

@@ -30,7 +30,7 @@
 //! the per-column record at L2 — one per column, always present, reporting
 //! its position on this same scale through `ColumnNote::severity`. A caller
 //! reading both filters uniformly. Unifying at the *drain* point stays open:
-//! a future caller-supplied sink (`docs/design/roadmap.md`, Phase 6) can take
+//! a future caller-supplied sink (`docs/design/roadmap.md`, P6) can take
 //! both
 //! (`docs/design/architecture.md`, "Diagnostics: one severity scale, two types").
 

@@ -1,4 +1,4 @@
-# Phase 9 — Partial reporting and machine-readable resolution: notes
+# P9 — Partial reporting and machine-readable resolution: notes
 
 The phase's residue after the wrap audit. Every mechanism it built is described
 by subject in [`architecture.md`](architecture.md) — the verb split and the
@@ -79,12 +79,12 @@ produces — so both run the same assertions.
   not by a new invariant.
 - **Accepted deficiencies** — [`../status/STATUS.md`](../status/STATUS.md),
   "Known gaps": the remaining half of the mapping quadratic, and the two array
-  refusals Phase 4 left.
-- **Facts for phases with no spec** — [`roadmap-phase6-inbox.md`](roadmap-phase6-inbox.md)
+  refusals P4 left.
+- **Facts for phases with no spec** — [`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md)
   (four entries: the two diagnostic channels, the reported-vs-streamed schema
   answer as narrowed by 9.5.1, cancellation and what an embedder's idiom does
   with it, and per-block keying leaving block-to-table to that phase) and
-  [`roadmap-phase7-inbox.md`](roadmap-phase7-inbox.md) (the span splice, which
+  [`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md) (the span splice, which
   is the quadratic the throttle did not remove).
 
 ## What the next phase inherits directly

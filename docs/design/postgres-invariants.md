@@ -283,7 +283,7 @@ terminator.
 
 **Verified against:** koji (19.58B rows, no false terminator); the
 `public.escapes` round-trip on `pg_dump` 13.23 / 16.15 / 18.6.
-**Relied on by:** `roadmap-phase7-scan-performance.md` (structure discovery).
+**Relied on by:** `roadmap-P7-scan-performance.md` (structure discovery).
 **Re-verify:** the `public.escapes` fixture test already asserts the escaping
 rule this rests on; a new major that changed it would fail that test.
 
@@ -675,10 +675,10 @@ SQL rather than guessing — safe precisely because `pg_dump` never emits one,
 so the only way to encounter it is in text that is not `pg_dump` output (or
 inside a dollar-quoted body, where it must be ignored anyway). And
 CSV-format `COPY` blocks are not a compatibility gap but a non-shape: see
-`pg-dump-compatibility.md` and Phase 8 Track A in `roadmap.md`.
+`pg-dump-compatibility.md` and P8 Track A in `roadmap.md`.
 
 Note the asymmetry with `--inserts`: that one *is* a real output shape and a
-real gap, scheduled in Phase 8 Track A. The two were bundled together in
+real gap, scheduled in P8 Track A. The two were bundled together in
 `docs/design/historical/initial.md`'s future-options list; only one of them
 exists.
 
@@ -690,7 +690,7 @@ contains a `COPY` line with an options clause.
 **Relied on by:** `pgdump_query/src/copy.rs`'s `parse_copy_header` (its doc
 comment states the deliberate non-match for `WITH (...)`);
 `pg-dump-compatibility.md` ("`COPY` header variants" and "CSV-format `COPY`
-blocks"); `roadmap.md` (Phase 8 Track A).
+blocks"); `roadmap.md` (P8 Track A).
 **Re-verify:** `grep -n 'FROM stdin' src/bin/pg_dump/pg_dump.c` — confirm the
 statement is still built from a fixed format string with no options clause;
 `grep -rni csv src/bin/pg_dump/` — confirm it still matches nothing.
@@ -1071,7 +1071,7 @@ predicates exactly, including the `NULL` case-fold and the whitespace test.
 **Verified against:** v13.23, v16.15, v18.6 — the `needquote`/`nq` predicates
 and both emit loops are character-for-character identical across all three.
 
-**Relied on by:** `roadmap-phase4-composite-decoding.md` — the nested decoder's
+**Relied on by:** `roadmap-P4-composite-decoding.md` — the nested decoder's
 parameterization, and the exactness requirement on render-back.
 
 **Re-verify:**
@@ -1117,7 +1117,7 @@ project reads out of the declared type.
 reconstruction is unchanged v13.23 through v18.6.
 
 **Relied on by:** `architecture.md` ("Type resolution", the array paragraph) and
-`roadmap-phase4-composite-decoding.md` — it is the reason an array column's
+`roadmap-P4-composite-decoding.md` — it is the reason an array column's
 Arrow type cannot be settled from the DDL alone.
 
 **Re-verify:**
@@ -1170,7 +1170,7 @@ exposure.**
 **Verified against:** v13.23, v18.6 and master (`pg_type.dat`); v18.6
 (`typecmds.c`, `rowtypes.c`).
 
-**Relied on by:** `roadmap-phase4-composite-decoding.md`, "Render-back must be
+**Relied on by:** `roadmap-P4-composite-decoding.md`, "Render-back must be
 exact" — it is why the opaque-element refusal tests the element type *after*
 domain unwrapping rather than the declared string, and why the array separator
 can stay hardcoded to `,` once it does.
@@ -1229,7 +1229,7 @@ in the relevant loop; `pg_dump.c` identical modulo line numbers), plus
 `fixtures/{13..18}/types/default.sql`'s `public.empty_comp` /
 `t_composite.v_empty_comp`, whose DDL and `()` values are identical on all six.
 
-**Relied on by:** `roadmap-phase4-composite-decoding.md`, "A zero-field
+**Relied on by:** `roadmap-P4-composite-decoding.md`, "A zero-field
 composite maps", and `architecture.md`, "Type resolution" (the all-or-nothing
 field list) — "no fields parsed" and "no fields declared" have to stay
 distinguishable in the type definition when the literal cannot tell them apart,

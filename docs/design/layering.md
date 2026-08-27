@@ -93,12 +93,12 @@ beside `pgtype.rs`. The rule that keeps L2 clean: **a decode function takes a
 `&[u8]` field and returns a value; it never takes an Arrow builder.** If a type
 genuinely needs to write into a builder, that code is L3.
 
-**Pushdown (Phase 5) inverts control, not dependency.** Evaluating predicates
+**Pushdown (P5) inverts control, not dependency.** Evaluating predicates
 during the scan does not mean L1 depends on `predicate.rs`. L1 defines the
 callback or trait; L4 supplies the implementation — rule 6. `predicate.rs`
-stays in L4 whatever Phase 5 does to where it runs.
+stays in L4 whatever P5 does to where it runs.
 
-**Per-row-group statistics (Phase 5) span all four layers**, which makes them
+**Per-row-group statistics (P5) span all four layers**, which makes them
 the sharpest test of these rules: gathered during L1's scan, requiring L2 to
 parse a value, persisted in L1's cache. Rule 5 settles the persistence
 question — `RowGroupStats` records the **declared PostgreSQL type** a statistic
@@ -106,7 +106,7 @@ was computed as, not an Arrow `DataType`, for the same reason `DumpMetadata`
 stores declared type strings. Rule 6 settles the compute question — the parse
 function is injected downward, not imported upward.
 
-**Archive containers (Phase 8) and `object_store` (Phase 6) are L1-only.** Both
+**Archive containers (P8) and `object_store` (P6) are L1-only.** Both
 are additions *inside* L1: `object_store` as a second `ByteRangeSource`, the
 container layer between `io.rs` and `scan.rs`. Neither belongs above L1, and
 neither may introduce an Arrow dependency into it.

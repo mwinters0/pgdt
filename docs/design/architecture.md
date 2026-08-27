@@ -112,7 +112,7 @@ a nested column needs the stream's `NestedPlan`s *while* iterating, and push
 mode hands the `ResolvedSchema` back only once the stream is drained. It reads
 `stream.resolved_schema().plans` per batch rather than once, because a block's
 schema is per-block (see "Nested columns" below). That leaves `read_table` with
-no non-test caller, which [`roadmap-phase6-inbox.md`](roadmap-phase6-inbox.md)
+no non-test caller, which [`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md)
 files for the phase that decides whether push mode keeps its place.
 
 **Batch size** is caller-settable by row count and/or in-memory byte size,
@@ -357,7 +357,7 @@ that costs about 5× a `COPY` scan per byte — see
 [`measurements.md`](measurements.md). Correctness, tiling and row counts are
 unaffected; what it costs is throughput on `--inserts` input. A scanner-level
 `INSERT` path is the fix and is filed in
-[`roadmap-phase7-inbox.md`](roadmap-phase7-inbox.md).
+[`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md).
 
 **An `INSERT` run's end needs a string-aware scan, not a line-anchored check.**
 A `pg_dump --inserts` value is a single-quoted SQL literal, and a value carrying
@@ -646,7 +646,7 @@ above.
 *Rejected:* returning diagnostics alongside every result. It changes every
 public signature for something most callers ignore. A caller-supplied sink (the
 `tracing-subscriber` shape) is the right long-term embedder story and is
-Phase 6's; a sink can drain this list, so nothing here forecloses it.
+P6's; a sink can drain this list, so nothing here forecloses it.
 
 Producers today: `TilingBroken` (`check_tiling`), `CacheMtimeChanged`
 (`CacheMode::load`), `TocCoverage` (always `Info`), `CacheOffline`
@@ -1444,8 +1444,8 @@ field**, not the fragment that tripped it, because that is what
 
 **Nested values always copy, `Utf8View` elements included.** Widening the
 zero-copy view path into a recursive builder means honouring its three sharp
-edges at every level of nesting; that is a scan-performance change Phase 7 owns
-and should measure first (`roadmap-phase7-inbox.md`).
+edges at every level of nesting; that is a scan-performance change P7 owns
+and should measure first (`roadmap-P7-scan-performance-inbox.md`).
 
 A `COPY` header with no explicit column list gets placeholder names
 (`column1`, `column2`, …) sized to the **first row's** field count, so **a
@@ -1780,7 +1780,7 @@ the cost tracks block count rather than bytes read.
 `stream::splice` over the prefix), so the map itself is O(blocks²) with the
 cache disabled entirely — 19.7 s for 4000 blocks under `query --dqcache none`.
 That is a separate cost with a separate fix, filed for the scan-performance
-phase (`roadmap-phase7-inbox.md`).
+phase (`roadmap-P7-scan-performance-inbox.md`).
 
 **Every exit saves unconditionally** — EOF, a settled target, and an interrupt.
 The throttle's whole risk is the window between saves, and those three are
@@ -1936,7 +1936,7 @@ test say so rather than quietly weakening it.
 rolled up per table. *Rejected:* keying by table, which is what a script most
 likely wants and is not well-formed yet: one table can span blocks (I2), and a
 header-less block takes placeholder `column1…N` names from its first row, so a
-rollup needs a rule for disagreeing blocks and for column identity. Phase 6's
+rollup needs a rule for disagreeing blocks and for column identity. P6's
 `TableProvider` has no choice but to write that rule, so guessing at one here
 would mean the embedded API had to contradict it; per-block keying leaves the
 grouping with the consumer, where it honestly sits. *Rejected:* shipping both,

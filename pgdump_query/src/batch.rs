@@ -3,7 +3,7 @@
 //! field (`docs/design/architecture.md`, "Arrow assembly and the zero-copy
 //! path").
 //!
-//! Per `docs/design/roadmap-phase7-scan-performance.md`, a `Utf8View` field
+//! Per `docs/design/roadmap-P7-scan-performance.md`, a `Utf8View` field
 //! that needs no unescaping is appended as a zero-copy view into the Arrow
 //! `Buffer` backing the read chunk it came from, rather than copied into the
 //! builder's own storage — retrofitting that later would be expensive, so
@@ -388,8 +388,8 @@ fn append_null(builder: &mut ColumnBuilder) {
 /// sitting *inside* a nested value. Unlike the top level, a `Utf8View` here
 /// copies: widening the zero-copy view path into a recursive builder means
 /// honouring its chunk-retention and block-invalidation edges at every level,
-/// which is a scan-performance change Phase 7 owns
-/// (`docs/design/roadmap-phase7-inbox.md`).
+/// which is a scan-performance change P7 owns
+/// (`docs/design/roadmap-P7-scan-performance-inbox.md`).
 ///
 /// The error is unit rather than the offending text: `Error::FieldDecode`
 /// reports the *field*'s value, so a failure deep inside a nested literal is

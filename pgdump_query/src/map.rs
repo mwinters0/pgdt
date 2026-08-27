@@ -381,7 +381,7 @@ pub enum DataBlock {
 /// (`docs/design/architecture.md`, "Bulk regions: one span kind, three payloads": "a koji-scale
 /// `--inserts` dump is ~1TB of `INSERT INTO` lines"). No inner offsets: unlike
 /// a `CopyBlock`, nothing reads rows out of this yet — `docs/design/roadmap.md`,
-/// Phase 8 Track A adds
+/// P8 Track A adds
 /// that reader, using the same quote-tracking [`Builder`] already does to
 /// find the run's own boundaries.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -435,7 +435,7 @@ pub enum SpanBody {
     /// "Treating all three as one kind" — [`DataBlock`] is where they stop
     /// sharing a shape: only [`DataBlock::Copy`] carries the inner offsets a
     /// row reader seeks by, since it is the only one of the three a reader
-    /// exists for yet (`docs/design/roadmap.md`, Phase 8 Track A adds one for
+    /// exists for yet (`docs/design/roadmap.md`, P8 Track A adds one for
     /// `INSERT` runs).
     Data(DataBlock),
     /// A `\connect <name>` meta-command — kept distinct from [`Framing`](SpanBody::Framing)

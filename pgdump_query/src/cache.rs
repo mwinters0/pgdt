@@ -80,7 +80,7 @@ impl SourceIdentity {
 
 /// What produced the indexed blocks' byte offsets. Plain-format offsets are
 /// raw file positions; a future archive format's (`docs/design/roadmap.md`,
-/// Phase 8 Track B)
+/// P8 Track B)
 /// are entry-relative, so the two must never be silently conflated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum ContainerKind {

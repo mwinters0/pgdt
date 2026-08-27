@@ -43,7 +43,7 @@ agent's job, never the maintainer's — if a question needs a fact from the
 filesystem, the upstream source, or a live tool, go get it. See
 `.claude/skills/grilling/SKILL.md` for the full protocol.
 
-**2. Write the phase spec.** `docs/design/roadmap-phase<N>-<slug>.md`. This is
+**2. Write the phase spec.** `docs/design/roadmap-P<N>-<slug>.md`. This is
 what the phase will do and why, decided before any code exists.
 
 **3. Slice it.** A phase too large to land at once is broken into numbered
@@ -66,14 +66,14 @@ phase's progress is tracked, and it is the *only* place; see "Progress lives
 in STATUS, never in the spec" below.
 
 **4. Land a slice, write its notes.** Each slice gets
-`roadmap-phase<N>.<M>-<slug>-notes.md`, written as it lands, while it is
+`roadmap-P<N>.<M>-<slug>-notes.md`, written as it lands, while it is
 fresh — **including a slice that lands no code at all**, because a
 fixture-only or evidence-only slice is precisely the kind whose findings the
 next slice inherits. In the same change, tick the slice's box in `STATUS.md`
 and point it at the notes doc.
 
 **5. Wrap the phase.** Consolidate the per-slice notes into one
-`roadmap-phase<N>-<slug>-notes.md` and delete the per-slice files. Rewrite
+`roadmap-P<N>-<slug>-notes.md` and delete the per-slice files. Rewrite
 `STATUS.md`.
 
 **6. Grill again.** A completed phase produces discoveries that invalidate
@@ -93,6 +93,30 @@ project's life, not every phase — see "The keystone: striking the centering"
 below. Then the loop resumes: the next phase is grilled and specified exactly
 as before.
 
+### Two phases in flight
+
+The loop above is drawn serial and usually runs that way, but a phase is
+discovered work, and the work does not wait for a boundary. Finding a second
+phase's worth of it mid-phase is normal: grill it, give it its own `P<k>`, and
+run it — including alongside the phase already open. Do not renumber the
+roadmap to make the new one look next; the number is identity and the roadmap's
+section order is the schedule.
+
+**Two conditions, and the first is the real one.** The phases must touch
+**disjoint mechanisms**, because the whole defence against a half-finished
+phase is that its slice list says what is missing, and two phases editing one
+mechanism produce a state neither checklist describes. And each keeps its
+**own spec and its own STATUS checklist** — a merged checklist cannot say
+which phase is short.
+
+They then wrap independently, in whatever order they finish, which is a wrap
+like any other.
+
+**The trigger that makes this worth allowing** is the long-running job. A phase
+gated on hour-scale runs has real idle time in it, and a disjoint second phase
+is a better use of that time than either idling or widening the first phase's
+scope to fill it.
+
 ---
 
 ## The doc set
@@ -104,10 +128,10 @@ as before.
 | `CLAUDE.local.md` | Facts about *this machine and this operator* | Anything another machine would need |
 | `docs/design/historical/initial.md` | The original handoff, frozen | Edits. It is history, not a live doc |
 | `docs/design/roadmap.md` | Project goals, standing policies, the phase index | Full phase specs (they get their own files) |
-| `docs/design/roadmap-phase<N>-<slug>.md` | **What** phase N does and **why** — the binding spec | How it landed in code |
-| `docs/design/roadmap-phase<N>-<slug>-notes.md` | **How** it landed: module map, and the facts later phases inherit | Restatement of the spec; a changelog |
-| `docs/design/roadmap-phase<N>.<M>-<slug>-notes.md` | The same, for one slice, until the phase wraps | Anything that should have gone in the spec |
-| `docs/design/roadmap-phase<N>-inbox.md` | Facts an *earlier* phase found that phase N's grilling must not miss | Anything with a proper home elsewhere; speculation about phase N's design |
+| `docs/design/roadmap-P<N>-<slug>.md` | **What** phase `P<N>` does and **why** — the binding spec | How it landed in code |
+| `docs/design/roadmap-P<N>-<slug>-notes.md` | **How** it landed: module map, and the facts later phases inherit | Restatement of the spec; a changelog |
+| `docs/design/roadmap-P<N>.<M>-<slug>-notes.md` | The same, for one slice, until the phase wraps | Anything that should have gone in the spec |
+| `docs/design/roadmap-P<N>-<slug>-inbox.md` | Facts an *earlier* phase found that `P<N>`'s grilling must not miss | Anything with a proper home elsewhere; speculation about `P<N>`'s design |
 | `docs/design/<architecture>.md` | How the built system works, filed by **subject** — exists only after a keystone | Phase history; what any phase was committed to |
 | `docs/design/<invariants>.md` | Every external behaviour a decision assumes, with proof | Assumptions without a re-verification step |
 | `docs/design/<compatibility>.md` | Which external variants are tested / untested / unsupported | Untracked "probably fine" rows |
@@ -118,7 +142,11 @@ as before.
 
 ### The four that carry the process
 
-**The roadmap** is an index plus the standing decisions. Phases that have been
+**The roadmap** is an index plus the standing decisions, and it is the one
+place a phase's **position** is stated: its section order is the schedule,
+because a `P<k>` identifier deliberately does not encode one. Head it with an
+index — identifier, slug, state, pointer — so the order is read off the table
+rather than inferred from the numbers. Phases that have been
 specified get one line and a pointer. Phases that have not are sketched **only
 to the depth needed to keep the current phase from painting us into a corner**
 — explicitly annotated as such, with the note that each gets its own full
@@ -150,11 +178,11 @@ sliced phase it is a **terse checklist**, populated in full and unchecked when
 the spec is written, then ticked slice by slice:
 
 ```
-## Phase 3 progress
+## P3 progress
 
 - [x] **3.1** The `objects` fixture schema — the TOC kinds neither existing
       schema produces, plus large objects. No library code. Notes:
-      `docs/design/roadmap-phase3.1-objects-fixture-notes.md`
+      `docs/design/roadmap-P3.1-objects-fixture-notes.md`
 - [ ] **3.3** The TOC enrichment layer: owner, kind labels, `Tablespace:`,
       TOC-coverage reporting.
 ```
@@ -233,14 +261,14 @@ distinguishing *tested* from *assumed* — a row that says "untested
 
 ### Inboxes: facts filed by destination
 
-Notes docs are filed by **origin** — "what phase 3 learned". That works for
-the next phase and fails for a distant one: a fact phase 3 turned up that
-phase 7 needs ends up in phase 3's notes, and nothing prompts anyone to read
-those when phase 7 comes up. It is the "doc pointer with no trigger" failure,
+Notes docs are filed by **origin** — "what `P3` learned". That works for
+the next phase and fails for a distant one: a fact `P3` turned up that
+`P7` needs ends up in `P3`'s notes, and nothing prompts anyone to read
+those when `P7` comes up. It is the "doc pointer with no trigger" failure,
 applied to facts instead of documents.
 
 So a fact addressed to a phase that has no spec yet goes in that phase's
-**inbox**, `roadmap-phase<N>-inbox.md`, created the moment it gets its first
+**inbox**, `roadmap-P<N>-<slug>-inbox.md`, created the moment it gets its first
 entry and never as an empty stub.
 
 Three fields per entry, and the third is what keeps it honest:
@@ -298,8 +326,10 @@ that changes a decision goes back through grilling → spec amendment → a
 numbered slice. Without that rule the ledger becomes where design work goes to
 avoid being reviewed, which is the failure mode it has to be built against.
 
-The ledger is an index, not an account: it grows for the life of the project,
-so its lines stay one line. Detail lives in the history entry.
+The ledger is an index, not an account: its lines stay one line, and the detail
+lives in the history entry. It grows until a keystone, which strikes it along
+with the phase docs — see "The out-of-band ledger is struck too" below. Between
+keystones, treat it as permanent.
 
 ---
 
@@ -313,7 +343,7 @@ it holds nothing up and only obstructs the space beneath.
 
 Phase docs are centering. While a phase is in flight its spec is a contract
 under review and its notes are how a slice hands off before the phase can
-consolidate; while the system is half-built, "module C is here because phase 6
+consolidate; while the system is half-built, "module C is here because `P6`
 will consume it" is the only thing making module C legible. Both stop being
 true at the same moment, and it is not a phase boundary.
 
@@ -347,7 +377,7 @@ answer smeared across four documents, none of which is wrong and none of which
 is complete.
 
 That smearing is the actual cost, and it is worse than the page count
-suggests: a reader who finds the phase-2 answer has no way to know a phase-3
+suggests: a reader who finds the `P2` answer has no way to know a `P3`
 document amended it.
 
 ### The test each artifact must pass
@@ -366,12 +396,52 @@ the mistake is treating the whole phase record as one thing:
 
 | Category | Looks like | Disposition |
 |---|---|---|
-| **Provenance** | "landed in 3.3", "bumped to v5 in 3.2.2", "Phase 1's default" | **Delete.** It answers *when*, `git log` answers *when*, and nobody asks. |
-| **Citation** | "(`roadmap-phase3.md`, "Span boundaries")" | **Retarget, or inline the sentence.** A pointer into a deleted doc is worse than no pointer: a session spends a tool call following it. |
+| **Provenance** | "landed in `P3.3`", "bumped to v5 in `P3.2.2`", "`P1`'s default" | **Delete.** It answers *when*, `git log` answers *when*, and nobody asks. |
+| **Citation** | "(`roadmap-P3-<slug>.md`, "Span boundaries")" | **Retarget, or inline the sentence.** A pointer into a deleted doc is worse than no pointer: a session spends a tool call following it. |
 | **Rationale in situ** | "rejected — it would leak a mapping concern into L1's event contract" | **Keep; strip the phase number.** The reason is durable, the number is not. |
 | **Negative result** | "an earlier attempt put a start floor on `Builder`; it tiles, but…" | **Keep, and promote.** Not recoverable from the code *at any price* — the code records what was built, never what was tried and abandoned. |
 | **External fact** | the assumptions register; "`--with-statistics` does not exist" | **Keep untouched.** Never phase-filed to begin with. |
-| **Live obligation** | "reserved; not populated until phase 7" | **Keep; re-point by name, not by number.** The obligation is stable; the numbering ahead of the keystone is about to be re-grilled. |
+| **Live obligation** | "reserved; not populated until `P7`" | **Keep; re-point by name, not by number.** The obligation is stable; the numbering ahead of the keystone is about to be re-grilled. |
+
+### The out-of-band ledger is struck too
+
+An out-of-band item is filed by *when* exactly as a phase is, so the ledger is
+centering by the same argument and goes the same way — otherwise the one part
+of the doc set that is still a chronology outlives the review that removed
+every other one.
+
+It runs through the same six categories, and the split is not a blanket
+delete. A ledger row is provenance: **delete**. A citation that resolves into
+the ledger — "(the out-of-band ledger, `M4`)" — is a pointer into a row about
+to disappear, so **retarget it at the mechanism's section or inline the
+sentence**. A paragraph carrying a live obligation, such as one recording that
+an item's *finding* was filed into a phase's inbox, is **kept and re-pointed by
+name**.
+
+**The one asymmetry with phase docs is the source you distil from.** Out-of-band
+work has no notes doc by design — the history entry is the notes — so where a
+phase sweep reads a notes doc, this one reads the dated entry. In a project
+that has been filing each item's mechanism into the architecture doc as it
+landed, that is a check rather than a harvest; where it has not, the entry is
+the only place the mechanism is written down, and it is the last chance to
+move it.
+
+**What survives is a watermark, not a summary.** One line saying which numbers
+are spent — "M1–M15 are struck; nothing below M16 is reused." Its job is
+identical to the line saying phase numbering continues from `P4`: it is a live
+obligation, not a record of what happened, and it exists so that an identifier
+appearing in a history entry or a commit message can never be ambiguous.
+Numbers already allocated to items that have not landed yet are spent too; word
+it as a high-water mark rather than as a range that claims everything below it
+is done.
+
+The direction of a reference decides which of those rows it lands in.
+**Backward** — naming a struck phase — is provenance or citation, so it is
+deleted or retargeted at a subject; nothing is served by shortening it. **Forward**
+— naming a phase not yet built — is a live obligation, and it is carried **by
+name rather than by identifier**, because the phase ahead is about to be
+re-grilled and may be split, merged or dropped: "the scan-performance work"
+survives that and `P7` does not.
 
 Measurements are the one category needing a judgement call rather than a rule:
 keep a figure only if the command that reproduces it survives with it. A
@@ -410,11 +480,12 @@ from.
 
 ### What a keystone review must not do
 
-- **Renumber the remaining phases.** Same reason the process already prefers
-  earning an `<N>.<M>.<K>` over renumbering a tail: it invalidates every
-  surviving reference — inbox filenames especially — and erases the record
-  that anything happened. Phases keep their numbers; the sequence just starts
-  further in.
+- **Renumber the remaining phases, or reuse a struck one's number.** Same
+  reason the process already prefers earning a `P<N>.<M>.<K>` over renumbering
+  a tail: it invalidates every surviving reference — inbox filenames
+  especially — and erases the record that anything happened. History holds the
+  numbers and may not be rewritten, so a renumbering makes every dated entry a
+  lie. Phases keep their identifiers; the sequence just starts further in.
 - **Touch the assumptions register or the compatibility matrix.** Neither was
   ever phase-filed, and the register is precisely what makes discarding the
   rest affordable: it is the external evidence that would otherwise have to be
@@ -489,12 +560,12 @@ docs/
   design/
     historical/initial.md                          frozen at bootstrap
     roadmap.md                                     lives forever
-    roadmap-phase1-mvp.md                          written at phase start
-    roadmap-phase1-mvp-notes.md                    written as phase 1 lands
-    roadmap-phase2-typed-columns.md
-    roadmap-phase2.3-resolution-notes.md           deleted at phase 2 wrap
-    roadmap-phase2-typed-columns-notes.md          consolidated at wrap
-    roadmap-phase7-inbox.md                        filed early, drained at phase 7's grilling
+    roadmap-P1-mvp.md                              written at phase start
+    roadmap-P1-mvp-notes.md                        written as P1 lands
+    roadmap-P2-typed-columns.md
+    roadmap-P2.3-resolution-notes.md               deleted at P2's wrap
+    roadmap-P2-typed-columns-notes.md              consolidated at wrap
+    roadmap-P7-scan-performance-inbox.md           filed early, drained at P7's grilling
     layering.md                                    standing constraint
     postgres-invariants.md                         assumptions register
     pg-dump-compatibility.md                       coverage matrix
@@ -506,8 +577,45 @@ docs/
     <topic>.md
 ```
 
-**Slice numbering.** A phase's planned slices are `<N>.1`, `<N>.2`, …. A third
-level (`<N>.<M>.<K>`) is **earned, not planned**, in one of two ways: a slice
+**Phase identity is `P<k>`, and it is not a position.** A phase is a grouping
+of work that gets *discovered*, so phases are only partially ordered when they
+are planned and fully ordered only in hindsight, as they land. A label has to
+carry identity; a bare integer also asserts a position, and it asserts one no
+matter what the surrounding prose says — so the label carries a sigil, which
+is the cheapest thing that makes a reader stop counting with it. `P9` may be specified before `P5`, run beside `P4`, and wrap
+first; none of that makes it misnamed, and none of it needs an apology in the
+roadmap.
+
+**The sigil is permanent.** It is a statement about what kind of thing the
+number is, not a maturity marker, so it is never dropped — a label that
+changes is a label that every history entry and commit message now names
+incorrectly, and those may not be rewritten. Numbers are allocated in
+discovery order and **never reused**, including for a phase that was struck at
+a keystone or abandoned before it was specified.
+
+**Order lives in the roadmap's section order**, which is the only place it is
+true. Head that file with an index whose rows are the schedule, and give each
+row an explicit state — sketched, specified, current, struck — rather than
+leaving maturity to be inferred from how large the number is.
+
+**The slug is informal.** `P<k>` alone resolves; the slug beside it in a
+filename or a heading is a caption, there because
+`roadmap-P7-scan-performance-inbox.md` tells you what you are filing into and
+`roadmap-P7-inbox.md` does not — which matters most for an inbox, whose write
+trigger fires mid-slice while you are thinking about something else. Because it
+carries no identity, a slug is free to be wrong: it may change when grilling
+reshapes the phase, and it may repeat a slug some earlier phase used, since
+`P<k>` is what distinguishes them. **Every open phase carries one** — open
+meaning specified, in flight, or merely sketched. A struck phase carries
+neither: its docs are gone and the architecture doc holds its mechanisms by
+subject.
+
+**Slice numbering.** A phase's planned slices are `P<N>.1`, `P<N>.2`, …, and
+here the integer *is* honest: `process`'s own rule orders slices so that each
+one makes the next one's mistakes visible, and that order is fixed at spec time
+inside a single phase. Numbering is kept exactly where it asserts something
+true and dropped one level up, where it does not. A third level
+(`P<N>.<M>.<K>`) is **earned, not planned**, in one of two ways: a slice
 that already landed turns out to have shipped the wrong contract, and fixing
 it is its own increment; or a slice turns out to have been mis-sized, and the
 part that did not land becomes its own increment. Do not pre-allocate them —
@@ -518,7 +626,7 @@ reference to a slice number and erases the record that the split happened at
 all.
 
 A mis-sized slice's spec row is **rewritten to the scope that actually
-landed**, with the remainder moved into the new `<N>.<M>.<K>` rows. That is a
+landed**, with the remainder moved into the new `P<N>.<M>.<K>` rows. That is a
 decision change, not progress-tracking — the reasoning goes in a history entry
 and the spec's slice table says the split was earned. It is the one case where
 the finished half is legitimately ticked.
@@ -540,7 +648,7 @@ entries. That doc can legitimately be short. It is still written, even then —
 an absent notes doc cannot be told from a skipped wrap, and "slice notes
 surviving past the phase wrap" is a smell someone will look for.
 
-**After a keystone**, the `roadmap-phase<N>-*` files for completed phases are
+**After a keystone**, the `roadmap-P<N>-*` files for completed phases are
 gone and `architecture.md` stands in their place; `roadmap.md` carries only
 goals, standing policies and the phases still ahead. The standing-constraint,
 assumptions-register, compatibility and manual files are unaffected — they were
@@ -686,9 +794,9 @@ nobody trusts.
 2. **Grill it.** First real session. The output is a roadmap, not code.
 
 3. **Write `docs/design/roadmap.md`** — goals, standing policies, and the phase
-   list with everything past phase 1 sketched at corner-avoidance depth only.
+   list with everything past `P1` sketched at corner-avoidance depth only.
 
-4. **Write `docs/design/roadmap-phase1-<slug>.md`** — the first phase spec, in
+4. **Write `docs/design/roadmap-P1-<slug>.md`** — the first phase spec, in
    full, before any code.
 
 5. **Write `CLAUDE.md`** — commands, the doc pointers with their triggers, the
@@ -751,6 +859,16 @@ Each of these means a specific rule has stopped being followed.
 - **A code comment cites a phase number for something already built.** Either
   it is provenance (delete it) or it is a citation whose target should be a
   doc about the mechanism, not about a month.
+- **The roadmap explains why a phase's number is out of order.** The
+  explanation is the artifact: an identifier that needs an apology is being
+  read as a position by the very document that defines it. State the rule
+  once and delete the apology.
+- **A phase identifier changed** — a sigil dropped once the phase was
+  specified, a tail renumbered, a struck number reused. Every dated entry and
+  commit message naming it is now wrong, and none of them may be rewritten.
+- **A slug is being defended.** Arguing about whether a phase's slug will still
+  be accurate, or whether some later phase might want it, means the slug is
+  carrying identity it was never given. `P<k>` resolves; the slug is a caption.
 - **A keystone review that deleted the phase docs without harvesting the
   rejected alternatives out of them first.** Those were the only category that
   could not be rebuilt, and they were the reason not to simply `rm` the

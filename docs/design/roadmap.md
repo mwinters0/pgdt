@@ -1,22 +1,37 @@
 # Roadmap
 
 Where this project is going. Each phase that has been specified gets its own
-doc, `roadmap-phase<N>-<slug>.md`; the sections below are the index. Phases
+doc, `roadmap-P<N>-<slug>.md`; the sections below are the index. Phases
 still sketched here are at a level sufficient to keep current work from
 painting us into a corner — **each gets its own full grilling session when it
-becomes current**, and the resulting spec becomes its own numbered doc.
+becomes current**, and the resulting spec becomes its own doc.
 
-**Phases 1–3 are complete and the system they built is described by subject in
-[`architecture.md`](architecture.md)**, not by phase. Their specs and notes
-were struck at the keystone review (`../process.md`, "The keystone: striking
-the centering"); git holds them. Phase numbering continues from 4 — the
-sequence starts further in rather than renumbering, so every surviving
-reference stays valid.
+**`P<k>` is an identifier, not a position** (`../process.md`, "Phase identity
+is `P<k>`"). Phases are discovered work: they are allocated numbers in the
+order they are *found*, run in the order that suits, and sometimes run two at a
+time. **The order is this table, top to bottom** — never the numbers, and never
+the slug beside them, which is a caption rather than a name. Numbers are never
+reused, including a struck phase's.
+
+| Phase | State | Where it is |
+|---|---|---|
+| P1–P3 | **Struck** at the keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
+| P4 — composite decoding | **Complete**, wrapped 2026-08-27 | [spec](roadmap-P4-composite-decoding.md), [notes](roadmap-P4-composite-decoding-notes.md) |
+| P9 — partial reporting | **Complete**, wrapped 2026-08-27 | [spec](roadmap-P9-partial-reporting.md), [notes](roadmap-P9-partial-reporting-notes.md) |
+| P5 — pushdown | Sketched; not grilled | this file, below; [inbox](roadmap-P5-pushdown-inbox.md) |
+| P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
+| P7 — scan performance | Sketched; design doc ahead of its phase | [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md); [inbox](roadmap-P7-scan-performance-inbox.md) |
+| P8 — format coverage | Sketched; not grilled | this file, below; [inbox](roadmap-P8-format-coverage-inbox.md) |
+
+The struck phases' mechanisms are described by subject in
+[`architecture.md`](architecture.md), not by phase; their specs and notes went
+at the keystone review (`../process.md`, "The keystone: striking the
+centering").
 
 Two standing-constraint docs cut across everything below.
 [`layering.md`](layering.md) assigns each module to one of four layers and
 fixes the direction dependencies may point; several phases here are cross-layer
-by nature — Phase 5's pushdown and statistics especially — and that doc holds
+by nature — P5's pushdown and statistics especially — and that doc holds
 the decision rules for them. [`postgres-invariants.md`](postgres-invariants.md)
 is the evidence layer: every `pg_dump` behaviour a decision treats as
 guaranteed, with its proof and its re-verification command.
@@ -47,14 +62,14 @@ Two things distinguish this project from existing `pg_dump` tooling
 (`pgdumplib` and friends), and both shape the phase ordering below:
 
 - **Embeddable as a query data source**, not just a dump reader — Arrow-native
-  output, and ultimately a DataFusion `TableProvider` (Phase 6).
+  output, and ultimately a DataFusion `TableProvider` (P6).
 - **High performance is a core goal, not a later optimization**, specifically
   for the local-file reader. Dumps are routinely hundreds of gigabytes; the
   difference between a saturated-device scan and a merely-correct one is the
   difference between a usable tool and an overnight job. Concretely: the
   local-file path should stay device-bound, not CPU-bound, on hardware from
   HDD through NVMe, at flat memory. See
-  `docs/design/roadmap-phase7-scan-performance.md`.
+  `docs/design/roadmap-P7-scan-performance.md`.
 
   This targets the `COPY`-block/bulk-row path specifically. Preamble and other
   non-data DDL scanning is bounded by schema size, not file
@@ -231,7 +246,7 @@ one it named both instruments — "a `decoders.rs` micro **and** `pgdq query
 only "composite decode throughput", got a micro, and earned **4.6.1** at
 review to supply the end-to-end half. Same row, same author, same slice: the
 half that named its instrument was delivered whole. Every phase from here is
-measurement-heavy — Phase 7 is an entire performance campaign — so the hazard
+measurement-heavy — P7 is an entire performance campaign — so the hazard
 is live for four unwritten specs. Reasoning:
 [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md), "4.6.1
 is earned, and the spec row's ambiguity is why".
@@ -263,14 +278,14 @@ checkout, per `CLAUDE.local.md`'s rule for the koji replica.
 ### Four decisions that keep later phases additive
 
 Plain-format-only and single-threaded is a deliberate scope, not a limitation
-to design around. These four choices are what make Phases 7 and 8 additive
+to design around. These four choices are what make P7 and P8 additive
 rather than a rewrite, and they are cheap to hold to — so hold to them, even
 where the work in front of you would not require them.
 
 - **The COPY TEXT decoder stays independent of where its bytes came from.**
   `copy.rs` operates on a caller-owned slice and never assumes "a file at
   offset N". Every dump format stores table data as this same COPY TEXT
-  payload, so this decoder is the one component all of Phase 8 reuses verbatim.
+  payload, so this decoder is the one component all of P8 reuses verbatim.
 - **Structure discovery is a separate concern from row decoding.** `scan.rs`
   finds `COPY` boundaries in a plain file; an archive reads them from a TOC.
   Keeping "what entries exist and where are their bytes" apart from "decode
@@ -286,10 +301,10 @@ where the work in front of you would not require them.
   compressed archive entry. Opaque now means the representation can change
   without an API break.
 
-Phase 7 adds a fifth that already binds: the batch layer builds `Utf8View`
+P7 adds a fifth that already binds: the batch layer builds `Utf8View`
 arrays over the scanner's existing chunk buffer instead of copying field bytes
 out of it. See
-[`roadmap-phase7-scan-performance.md`](roadmap-phase7-scan-performance.md).
+[`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md).
 
 ### Permanent non-goals
 
@@ -300,10 +315,10 @@ out of it. See
 Note that CSV-format `COPY` blocks are **not** on this list. They are a Future
 item; see below.
 
-## Phase 4 — Composite value decoding
+## P4 — Composite value decoding
 
-**Spec:** [`roadmap-phase4-composite-decoding.md`](roadmap-phase4-composite-decoding.md).
-**Notes:** [`roadmap-phase4-composite-decoding-notes.md`](roadmap-phase4-composite-decoding-notes.md)
+**Spec:** [`roadmap-P4-composite-decoding.md`](roadmap-P4-composite-decoding.md).
+**Notes:** [`roadmap-P4-composite-decoding-notes.md`](roadmap-P4-composite-decoding-notes.md)
 — complete and wrapped 2026-08-27; the mechanisms are in
 [`architecture.md`](architecture.md).
 
@@ -313,15 +328,15 @@ exact render-back. One phase because they are three parameter sets over one
 quoted-token scanner rather than three decoders, which is **not** the same as
 their sharing a quoting rule: they do not (I20).
 
-Placed here, ahead of pushdown, because Phase 5 is designed *against the type
+Placed here, ahead of pushdown, because P5 is designed *against the type
 set*: "min/max for collation-independent orderable types" is a different table
 when arrays and ranges are still strings, so designing pushdown and statistics
 against a partial type set means designing them twice.
 
-## Phase 9 — Partial reporting and machine-readable resolution
+## P9 — Partial reporting and machine-readable resolution
 
-**Spec:** [`roadmap-phase9-partial-reporting.md`](roadmap-phase9-partial-reporting.md).
-**Notes:** [`roadmap-phase9-partial-reporting-notes.md`](roadmap-phase9-partial-reporting-notes.md)
+**Spec:** [`roadmap-P9-partial-reporting.md`](roadmap-P9-partial-reporting.md).
+**Notes:** [`roadmap-P9-partial-reporting-notes.md`](roadmap-P9-partial-reporting-notes.md)
 — complete and wrapped 2026-08-27; the mechanisms are in
 [`architecture.md`](architecture.md).
 
@@ -335,21 +350,18 @@ is stated once as a completion line. `--json` gains per-`COPY`-block resolution
 — the per-column outcomes `pgdq info --verbose` already computes and discards
 at the JSON boundary — with no stability promise attached.
 
-**Ran ahead of Phase 4's last slices, and before Phase 5.** It carries number
-9 because
-5–8 are taken and this project does not renumber a tail
-([`../process.md`](../process.md), "Slice numbering"): a phase's number is its
-identity, its position in this file is its order.
+**Ran ahead of P4's last slices, and before P5** — the two were in flight
+together, and this one wrapped first.
 
 Placed ahead of pushdown because it is the first phase whose subject is the
-*output contract* rather than the engine, and because Phase 4 is what makes
-that contract worth stating: after 4.5.1 there were six distinct answers to
-"why is this column a string" and no script could reach any of them (9.4 added
+*output contract* rather than the engine, and because P4 is what makes
+that contract worth stating: after P4.5.1 there were six distinct answers to
+"why is this column a string" and no script could reach any of them (P9.4 added
 a seventh, and made all of them machine-readable). It is also the
 phase that pays off the incremental machinery `query` already has — every
 mechanism it needs exists and is reachable from exactly one command.
 
-## Phase 5 — Pushdown
+## P5 — Pushdown
 
 - **Predicate pushdown**: evaluate predicates *during* the scan/parse, so
   non-matching rows never get fully unescaped/materialized — as opposed to
@@ -385,7 +397,7 @@ tables big enough to matter: koji's blocks run to billions of rows, and the
 min/max of a monotonic `id` column over a whole block spans the entire domain, so
 it prunes nothing. Parquet's win comes from row-group granularity, and there is
 already a natural unit to reuse — the sparse row index checkpoints every 8192
-rows (`docs/design/roadmap-phase7-scan-performance.md`). Statistics attach to
+rows (`docs/design/roadmap-P7-scan-performance.md`). Statistics attach to
 those checkpoints; block-level statistics are then just the roll-up, free to
 compute and still worth storing for the coarse first pass.
 
@@ -456,9 +468,9 @@ caller asked for anyway, so coverage is naturally partial. The cache must record
 which row groups actually have statistics — absent is a normal state, not a
 defect.
 
-## Phase 6 — Embeddable engine story
+## P6 — Embeddable engine story
 
-**Inbox:** [`roadmap-phase6-inbox.md`](roadmap-phase6-inbox.md) — facts earlier
+**Inbox:** [`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md) — facts earlier
 phases filed for this one. Drain it when grilling this phase.
 
 The least-specified phase — the user has explicitly flagged unfamiliarity
@@ -477,9 +489,9 @@ under "Standing rules" above, made to keep this open:
 - Apache Spark / Trino integration — order and approach TBD; likely follows
   whatever pattern the DataFusion integration establishes, if applicable.
 
-## Phase 7 — Scan performance
+## P7 — Scan performance
 
-**Inbox:** [`roadmap-phase7-inbox.md`](roadmap-phase7-inbox.md) — facts earlier
+**Inbox:** [`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md) — facts earlier
 phases filed for this one. Drain it when grilling this phase.
 
 Concentrated optimization of the local-file read path: SIMD-accelerated
@@ -487,20 +499,20 @@ structure discovery, zero-copy row extraction into Arrow buffers, bulk UTF-8
 validation, and device-aware parallelism (sequential on rotational media,
 parallel on NVMe). Full sketch, including the measurements that should gate
 each piece and the decisions it constrains, in this phase and before it:
-`docs/design/roadmap-phase7-scan-performance.md`.
+`docs/design/roadmap-P7-scan-performance.md`.
 
-Scheduled here, after the engine story, for two reasons. Phase 5's pushdown
+Scheduled here, after the engine story, for two reasons. P5's pushdown
 changes which bytes get touched at all, so optimizing the pre-pushdown parser
-would partly optimize code that pushdown deletes; and Phase 6's
+would partly optimize code that pushdown deletes; and P6's
 `object_store` backend settles the I/O layer that any readahead/parallelism
-scheme has to live behind. Deliberately *before* Phase 8 — the format work
+scheme has to live behind. Deliberately *before* P8 — the format work
 multiplies the surface area that any later optimization has to be correct
 against, so the fast path should exist first and archive containers should be
 built to fit it.
 
-## Phase 8 — Format coverage beyond plain COPY TEXT
+## P8 — Format coverage beyond plain COPY TEXT
 
-**Inbox:** [`roadmap-phase8-inbox.md`](roadmap-phase8-inbox.md) — facts earlier
+**Inbox:** [`roadmap-P8-format-coverage-inbox.md`](roadmap-P8-format-coverage-inbox.md) — facts earlier
 phases filed for this one. Drain it when grilling this phase.
 
 Everything that widens the set of `pg_dump` outputs we can read. Two
@@ -566,9 +578,11 @@ spec records **and** fits one session. Anything that changes a decision goes
 back through grilling → spec amendment → a numbered slice; that rule is what
 keeps this section from becoming where design work goes to avoid review.
 
-**Ledger lines stay one line each.** This section grows for the life of the
-project and is read as an index, never as an account — the detail lives in the
-dated history entry it points at.
+**Ledger lines stay one line each.** This section is read as an index, never as
+an account — the detail lives in the dated history entry it points at. It grows
+until a keystone, which strikes it along with the phase docs and leaves a
+watermark saying which numbers are spent (`../process.md`, "The out-of-band
+ledger is struck too").
 
 | # | Date | Change | Why |
 |---|---|---|---|
@@ -583,17 +597,18 @@ dated history entry it points at.
 | M12 | 2026-08-27 | `generate_perf_data.py` draws a uniform microsecond instead of a shape-coverage list, and `perf_generator_fidelity.rs` asserts `uv` rather than skipping | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
 | M11 | 2026-08-27 | The census pre-filter is `memchr2`, and `map::Builder::on_row` names the two figures regenerated by patching it | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
 | M15 | 2026-08-27 | `whole_file.rs` regenerates its input when the generator's source changes, not only when the input is missing | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
+| M16 | 2026-08-27 | Phases are identified by `P<k>` and slugs are informal; the out-of-band ledger is struck at a keystone; two phases may run in parallel | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
 
 **M3's result is not itself out-of-band work.** The measurement fit one
 session and changed no decision, which is what admitted it here; the number it
 produced — an `INSERT`-run scan costs ~5× a `COPY` scan per byte, CPU-bound —
 argues for a scanner-level `INSERT` path, which *does* change a decision. That
 goes through grilling → spec amendment → a numbered slice, and is filed in
-`roadmap-phase7-inbox.md` until then.
+`roadmap-P7-scan-performance-inbox.md` until then.
 
 **M1** (`pgdq info` rejects a cache that doesn't cover the whole file) and
 **M2** (`pgdq info` prints `DumpIndex::diagnostics`) were queued here but
-folded into Phase 3's slice **3.7** ("Cache-only inspection") instead of
+folded into P3's slice **3.7** ("Cache-only inspection") instead of
 landing as standalone out-of-band items — cache-only mode needs both
 mechanisms directly, so per the admission rule above they were no longer
 independent one-session changes.
@@ -625,7 +640,7 @@ this section when it acquires a phase number, not when it acquires a design.
   own quoting rules, plus the fixtures to pin it, and `copy.rs`'s independence
   from its byte source ("Four decisions that keep later phases additive") is
   what makes it a variant rather than a rework. Not to be confused with
-  `--format`, which names the archive container and is Phase 8 Track B.
+  `--format`, which names the archive container and is P8 Track B.
 
 - **A real type-name tokenizer, shared by the preamble grammar and `pgtype`.**
   Today `preamble::extract_type_words` captures a declared type as
@@ -651,10 +666,10 @@ this section when it acquires a phase number, not when it acquires a design.
 - **The shape-general array representation, as a selectable alternative.**
   `Struct{dims: List<Int32>, lbounds: List<Int32>, elements: List<T>}` is
   lossless for every array PostgreSQL can produce — any dimensionality, any
-  lower bound, varying freely from row to row — where Phase 4's `List<T>`
+  lower bound, varying freely from row to row — where P4's `List<T>`
   covers only the uniform 1-D case and degrades the rest to `Utf8View`
-  ([`roadmap-phase4-composite-decoding.md`](roadmap-phase4-composite-decoding.md),
-  "What the census says"). Phase 4 chose `List<T>` on koji-shaped evidence: short,
+  ([`roadmap-P4-composite-decoding.md`](roadmap-P4-composite-decoding.md),
+  "What the census says"). P4 chose `List<T>` on koji-shaped evidence: short,
   uniform, one-dimensional arrays, where the struct costs +16 bytes per row and
   the loss of `List` as the signal every generic Arrow consumer reads as "this
   is an array". **A schema of matrices or scientific data inverts that
@@ -662,7 +677,7 @@ this section when it acquires a phase number, not when it acquires a design.
   this is a *knob*, not a replacement: the caller selects which representation
   an array column resolves to. It belongs beside **caller-supplied type
   mapping** above, which is the same knob at a different granularity, and
-  adding it breaks nothing — it only ever changes columns that Phase 4 left as
+  adding it breaks nothing — it only ever changes columns that P4 left as
   `Utf8View` or as a shape the caller has told us to represent differently.
 
 - **A diagnostic for a brace run past `MAXDIM`.** `array_out` cannot emit more
@@ -673,16 +688,16 @@ this section when it acquires a phase number, not when it acquires a design.
   when something reads it. Nothing reports it at *scan* time, so a file nobody
   queries that column of stays silently damaged. The file-level `Diagnostic`
   channel is where this belongs; it is unscheduled because no fixture produces
-  the shape and Phase 9 is the phase that grows the reporting surface for it.
+  the shape and P9 is the phase that grows the reporting surface for it.
 
 - **A per-path shape census, so nested arrays get the same treatment as
-  top-level ones.** Phase 4's census records a shape per *column*, which fixes
+  top-level ones.** P4's census records a shape per *column*, which fixes
   a top-level array column's dimensionality exactly and leaves an array
   *inside* a composite (or inside another array's element type) on the
   optimistic path permanently: its shape has nowhere to be recorded, so a
   multi-dimensional or `[lb:ub]`-decorated value there stays a hard
   `FieldDecode` even after `pgdq parse`
-  ([`roadmap-phase4-composite-decoding.md`](roadmap-phase4-composite-decoding.md),
+  ([`roadmap-P4-composite-decoding.md`](roadmap-P4-composite-decoding.md),
   "What the census stores"). Keying the census by a *path* within the column
   rather than by the column closes that, at the cost of a bigger cache record
   and a per-path walk. Deferred on frequency — a composite with a
