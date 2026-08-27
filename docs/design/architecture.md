@@ -1022,9 +1022,13 @@ resolved `List` depth are independent for this shape alone, and
 the census produces) and *one literal whose elements are literals*. That is
 the collision `NestedPlan` exists to prevent, one level down.
 
-The test runs on the same domain-walk terminal the opaque refusal uses
-(`domain_terminal`), for the same reason: a domain's own DDL records neither
-the delimiter it inherited nor the array-ness of its base.
+Both refusals are decided in `resolve_array`, off the terminal of one
+`domain_terminal` walk, for the same reason: a domain's own DDL records neither
+the delimiter it inherited nor the array-ness of its base, so what decides
+either refusal is visible only at the end of the walk. The opaque test is
+written first — no input reaches both, since it matches a bare type name where
+the array test matches that name with bounds appended, but I22's answer is the
+one that must win if that ever changes.
 
 **The refusal composes into a composite for free**, and *removes* a subtlety
 rather than documenting one. A composite field of the refused type is a
@@ -1074,7 +1078,7 @@ same mistake pointed the other way.
 
 It lives in `pgtype.rs` at two call sites: `resolve_declared_type`'s entry,
 which a composite field, a range bound and a domain's base type all reach
-through, and `element_is_array`, which reads the domain walk's terminal —
+through, and `resolve_array`, which reads the domain walk's terminal —
 `CREATE DOMAIN d AS integer ARRAY` is as legal as any other spelling and the
 walk stops on whatever the DDL wrote. *Rejected:* normalizing in `preamble.rs`
 at parse time. `ColumnNote::declared` carries the raw declared string so `pgdq
@@ -1082,10 +1086,14 @@ info --verbose` can print what the file says beside what we made of it, and a
 parse-time rewrite would have pgdq quietly editing the user's DDL in the one
 place the raw text is the entire point.
 
-A known limit, pre-existing and not widened: the suffix test is not
-quote-aware, so a quoted identifier containing brackets (`CREATE DOMAIN
-"weird[]" AS integer`) reads as an array. Fixing it means a real type-name
-tokenizer.
+A quoted type name is never misread as an array (I29). A name may legally
+contain the array metacharacters, and `pg_dump` writes it quoted wherever it
+appears, so the closing quote is what the suffix strippers bail on: `s."x
+ARRAY"` is a scalar and `s."x ARRAY"[]` sheds only the bound outside the
+quotes. Such a name costs a weaker type rather than a wrong one — the lookup
+misses, because `TypeDef.name` is dequoted while the declaration is not, and
+the column resolves `Unknown` (`STATUS.md`, "Known gaps"). Fixing *that* means
+a real type-name tokenizer, a roadmap "Future" item.
 
 ### Joining a header against the metadata
 

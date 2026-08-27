@@ -29,7 +29,7 @@ per-phase checklist here any more. How the system works is
 | Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-27 (Phase 9 is **complete**: 9.1-9.5.1 landed — `parse` resumes, throttles its saves, saves on Ctrl-C, and states its metadata at every legal boundary. The koji wrap run is in flight and the out-of-band drive-bys have landed as **M5**/**M6**/**M7**; next is Phase 4's **4.4.4**, then **M8**, then **4.6** and the Phase 9 wrap — see "Not started". A phase boundary: an unattended loop stops here.)
+Last updated: 2026-08-27 (Phase 9 is **complete**: 9.1-9.5.1 landed — `parse` resumes, throttles its saves, saves on Ctrl-C, and states its metadata at every legal boundary. The koji wrap run is in flight and the out-of-band drive-bys have landed as **M5**/**M6**/**M7**. Phase 4's **4.4.4** has landed; next is **M8**, then `pgdq_tenant`, **4.6** and the Phase 9 wrap — see "Not started". A phase boundary: an unattended loop stops here.)
 
 ## Phase 4 progress
 
@@ -88,14 +88,16 @@ Specified in
       all dumping as `integer[]` on all six majors) is the fixture half.
       Notes:
       [`../design/roadmap-phase4.4.3-array-spellings-notes.md`](../design/roadmap-phase4.4.3-array-spellings-notes.md)
-- [ ] **4.4.4** The array arm folded into one function, earned from 4.4.3's
+- [x] **4.4.4** The array arm folded into one function, earned from 4.4.3's
       unattended call: `resolve_array(element, types) -> TypeOutcome` replaces
       `element_is_opaque`/`element_is_array` and holds the whole array
       decision over one domain walk, so which function normalizes the
-      array-bounds production stops being a question. Behaviour-preserving —
-      no existing test may change. Also corrects `array_element`'s
-      "Not quote-aware" paragraph, which documents a limit the code does not
-      have (I29).
+      array-bounds production stops being a question. No test was edited or
+      added, and `domain_terminal` has one caller again. The "Not quote-aware"
+      paragraph is corrected in `array_element` **and** in
+      [`../design/architecture.md`](../design/architecture.md), "Type
+      resolution", which carried the same false claim (I29). Notes:
+      [`../design/roadmap-phase4.4.4-array-arm-notes.md`](../design/roadmap-phase4.4.4-array-arm-notes.md)
 - [x] **4.5** The shape census, **recording half**: `ArrayShape` on every
       `CopyBlock`, recorded per column, and the cache format bump that
       persists it; `DumpIndex::is_complete`. Nothing consumed it — that is
@@ -256,12 +258,9 @@ was earned after 9.1-9.4 landed and reopened the phase; **9.5.1** was earned by
   half already landed in
   [`../design/architecture.md`](../design/architecture.md), "TOC enrichment".
 
-- **Order from here**, settled 2026-08-27 after grilling: **4.4.4** → **M8** →
-  **`pgdq_tenant`** → **4.6** → the **Phase 9 wrap**. M7 has landed. 4.4.4
-  first: it is the only one whose success criterion is
-  "no existing test changes", which is cheapest to judge against a tree nobody
-  has churned. M8 next — it is a test swap and two doc comments, so it neither
-  disturbs 4.4.4's criterion nor waits on anything. `pgdq_tenant` after those,
+- **Order from here**, settled 2026-08-27 after grilling: **M8** →
+  **`pgdq_tenant`** → **4.6** → the **Phase 9 wrap**. M7 and 4.4.4 have landed.
+  M8 next — it is a test swap and two doc comments, so it waits on nothing. `pgdq_tenant` after those,
   so its six-major regeneration diff lands alone. 4.6 late, because it is the
   one item genuinely blocked on the koji wrap log — read `runs/koji-wrap.log`
   before starting it. Wrap last. The `--disable-triggers` fix is **not** in this
@@ -391,7 +390,17 @@ Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
 
-Nothing is pending review at present.
+*4.4.4's refusal order is kept as a counterfactual.* The array arm tests
+"element is opaque" before "element is an array" because I22's answer is the
+stronger one — but no input reaches both, and none did before the refactor
+either: the opaque test matches a bare type name where the array test matches
+that name with bounds appended. So `CREATE DOMAIN d AS box[]` with a column of
+`d[]` answers `NestedArrayElement`, a label that is true but silent about the
+delimiter. The order was kept and documented as what must win *if* the two ever
+overlap, rather than deleted as dead. Reversing it would mean either dropping
+the ordering claim from `resolve_array` and `architecture.md`, or testing the
+opaque property recursively through the element's own array levels — which is a
+behaviour change and would need a slice. Nothing else is pending review.
 
 The notes below say how the earlier entries went.
 

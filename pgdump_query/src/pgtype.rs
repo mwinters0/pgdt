@@ -327,42 +327,59 @@ fn range_bound(subtype: Option<&str>, types: &[TypeDef]) -> (DataType, Box<Neste
     (data_type, Box::new(plan))
 }
 
-/// Whether an array of `element` must stay a whole-column string: its element
-/// type is opaque by construction, through any chain of domains.
+/// The whole decision for an array column, from its already-normalized
+/// element type: the two refusals, and otherwise the `List` and the
+/// [`NestedPlan::Array`] that fills it.
 ///
-/// **The test runs on the terminal of the domain walk, not on the declared
-/// spelling** (I22). A domain inherits its base type's `typdelim` and its own
-/// DDL records nothing about it, so `CREATE DOMAIN d AS box` makes `d[]` a
-/// semicolon-separated literal named neither `box` nor `TypeKind::Base`.
+/// **Both refusals test the terminal of one domain walk, not the declared
+/// spelling** (I22, I26). A domain records neither the `typdelim` it inherited
+/// nor the array-ness of its base, so `CREATE DOMAIN d AS box` makes `d[]` a
+/// semicolon-separated literal named neither `box` nor `TypeKind::Base`, and
+/// `CREATE DOMAIN d AS integer[]` makes `d[]` an array of arrays while being
+/// spelled like an array of any other named type. One walk answers both, which
+/// is why they are decided here rather than by two predicates that each walk
+/// it.
+///
+/// **Opaque is tested first**, though no input reaches both: the opaque test
+/// matches a bare type name and the array test matches that same name with
+/// array bounds appended, so a terminal of `box[]` — `CREATE DOMAIN d AS
+/// box[]`, a column of `d[]` — is only ever the second. The order is written
+/// down anyway because I22's answer is the one that must win if that ever
+/// stops being true: `OpaqueElementType` says the delimiter is not `,`, which
+/// makes even the element boundaries unrecoverable, while
+/// `NestedArrayElement` says the boundaries are readable and we decline to
+/// represent what is inside them.
+///
 /// `box` is checked by name because it is a built-in with no `CREATE TYPE` of
-/// its own; a user-defined base type sets its delimiter in DDL this build
-/// does not read, so `TypeKind::Base`/`Shell` are refused wholesale.
-fn element_is_opaque(element: &str, types: &[TypeDef]) -> bool {
+/// its own; a user-defined base type sets its delimiter in DDL this build does
+/// not read, so `TypeKind::Base`/`Shell` are refused wholesale. The
+/// array-ness test reads the terminal through [`array_element`] rather than
+/// looking for a trailing `[]`, because `CREATE DOMAIN d AS integer ARRAY` is
+/// as legal as any other spelling (I28) and the walk stops on whatever the DDL
+/// wrote. That is the second of the normalization's two call sites; the first
+/// is [`resolve_declared_type`]'s entry, which every other position — a
+/// composite field, a range bound, a domain's own base type — reaches through.
+///
+/// See [`TypeOutcome::OpaqueElementType`] and
+/// [`TypeOutcome::NestedArrayElement`] for why each shape is refused rather
+/// than typed.
+fn resolve_array(element: &str, types: &[TypeDef]) -> TypeOutcome {
     let terminal = domain_terminal(element, types);
-    terminal.eq_ignore_ascii_case("box")
+    let opaque = terminal.eq_ignore_ascii_case("box")
         || matches!(
             types.iter().find(|t| t.name == terminal).map(|t| &t.kind),
             Some(TypeKind::Base | TypeKind::Shell)
-        )
-}
-
-/// Whether an array of `element` must stay a whole-column string because its
-/// element type is *itself* an array, through any chain of domains (I26).
-///
-/// Runs on the terminal of the same walk `element_is_opaque` uses, for the
-/// same reason: `CREATE DOMAIN d AS integer[]` records the array-ness in the
-/// domain's base type, so `d[]` is spelled like any other array of a named
-/// type. See [`TypeOutcome::NestedArrayElement`] for why the shape is refused
-/// rather than typed as nested `List`s.
-///
-/// The terminal is read through [`array_element`] rather than for a trailing
-/// `[]`, because `CREATE DOMAIN d AS integer ARRAY` is as legal as any other
-/// spelling (I28) and the walk stops on whatever the DDL wrote. That is the
-/// second of the normalization's two call sites; the first is
-/// [`resolve_declared_type`]'s entry, which every other position — a
-/// composite field, a range bound, a domain's own base type — reaches through.
-fn element_is_array(element: &str, types: &[TypeDef]) -> bool {
-    array_element(domain_terminal(element, types)).is_some()
+        );
+    if opaque {
+        return TypeOutcome::OpaqueElementType;
+    }
+    if array_element(terminal).is_some() {
+        return TypeOutcome::NestedArrayElement;
+    }
+    // The element resolves through `resolve_declared_type`, so nesting
+    // composes with no special case: `public.comp[]` is `List<Struct<…>>`.
+    let (data_type, plan) = resolve_nested(element, types);
+    TypeOutcome::Mapped(list_of(data_type), NestedPlan::Array(Box::new(plan)))
 }
 
 /// The element type of an array declaration, in any of the six spellings
@@ -386,9 +403,17 @@ fn element_is_array(element: &str, types: &[TypeDef]) -> bool {
 /// PostgreSQL refuses is the same mistake as reading a spelling more
 /// literally than PostgreSQL does, pointed the other way.
 ///
-/// **Not quote-aware**, which is pre-existing: a quoted identifier may contain
-/// brackets, so `CREATE DOMAIN "weird[]" AS integer` reads as an array of
-/// `"weird`. Fixing it means a real type-name tokenizer.
+/// **A quoted type name is never misread as an array** (I29). A name may
+/// legally contain `[`, `]`, a space or the `ARRAY` keyword, and `pg_dump`
+/// writes it quoted wherever it appears — so a column of `s."x ARRAY"` ends in
+/// a `"` and both strip helpers bail, while `s."x ARRAY"[]` sheds the bound
+/// outside the quotes and answers the name with its quotes intact. The quotes
+/// are what keep the production unambiguous, and stripping a suffix without
+/// checking for a closing quote first is exactly what would break that. What
+/// such a name *does* cost is a weaker type, never a wrong one: `TypeDef.name`
+/// holds it dequoted while the declaration keeps its quotes, so the lookup
+/// misses and the column resolves `Unknown` (`STATUS.md`, "Known gaps"; the
+/// fix is `roadmap.md`'s "A real type-name tokenizer", not this function's).
 fn array_element(declared: &str) -> Option<&str> {
     let declared = declared.trim();
     // `SimpleTypename ARRAY '[' Iconst ']'` and `SimpleTypename ARRAY`: at
@@ -445,12 +470,12 @@ fn strip_array_keyword(declared: &str) -> Option<&str> {
 /// spelling of the first non-domain it reaches, or of `name` itself when that
 /// is not a domain.
 ///
-/// **Both element refusals test this terminal rather than the declared
-/// spelling** (I22, I26): a domain's own DDL records neither the `typdelim` it
-/// inherited nor the array-ness of its base, so the property that decides the
-/// refusal is only visible at the end of the walk. The terminal is returned as
-/// the DDL spelled it — normalizing the array-bounds production here would
-/// have to allocate, and [`element_is_array`] is the only reader that cares.
+/// **[`resolve_array`] tests this terminal rather than the declared spelling**
+/// (I22, I26): a domain's own DDL records neither the `typdelim` it inherited
+/// nor the array-ness of its base, so the property that decides either refusal
+/// is only visible at the end of the walk. The terminal is returned as the DDL
+/// spelled it — normalizing the array-bounds production here would have to
+/// allocate, and its one reader normalizes what it needs to.
 ///
 /// A domain chain visits each `CREATE DOMAIN` at most once, so the type list's
 /// own length bounds it. `resolve_declared_type` recurses through domains
@@ -482,20 +507,7 @@ fn domain_terminal<'a>(name: &'a str, types: &'a [TypeDef]) -> &'a str {
 pub fn resolve_declared_type(declared: &str, types: &[TypeDef]) -> TypeOutcome {
     let declared = declared.trim();
     if let Some(element) = array_element(declared) {
-        // The element resolves through this same function, so nesting
-        // composes with no special case: `public.comp[]` is
-        // `List<Struct<…>>`.
-        if element_is_opaque(element, types) {
-            return TypeOutcome::OpaqueElementType;
-        }
-        // …with one exception, and it is the reason no nested `Array` plan is
-        // reachable at all: an element that is itself an array is written one
-        // brace deep, so a `List<List<T>>` here could never be filled (I26).
-        if element_is_array(element, types) {
-            return TypeOutcome::NestedArrayElement;
-        }
-        let (data_type, plan) = resolve_nested(element, types);
-        return TypeOutcome::Mapped(list_of(data_type), NestedPlan::Array(Box::new(plan)));
+        return resolve_array(element, types);
     }
     let (base, typmod) = split_typmod(declared);
     if base.contains('.') {
