@@ -442,14 +442,21 @@ span. On a default dump the refusal is a **no-op for `COPY`** — the close arm
 never runs, because the blank line after `--` is absorbed in place and
 `scan::CopyScanner` intercepts the header line as `Event::CopyStart` before
 `feed_line` ever sees it, so `on_copy_start` reads the pending `TocHeader` out
-of `Mode::Comment` without consulting `saw_name` at all. Accepting `"Data for "`
-breaks no behavioural test in the suite. It earns its keep on a
+of `Mode::Comment` without consulting `saw_name` at all. It earns its keep on a
 `--disable-triggers` dump (I31), where a statement *does* intervene: absorbing
 there routes the entry into `push_statement_span`'s `Framing` veto, and a
 leading `SET SESSION AUTHORIZATION DEFAULT;` classifies `Framing` — so the
 entry is not merely misplaced but **destroyed**, taking TOC coverage on such a
 dump from 2/24 down to 1/22. Refusing keeps it on a `Framing` span of its own,
 which is worse than attributed and better than gone.
+
+That dump is therefore the **only** input on which the refusal changes an
+outcome, which makes it the only thing that can pin it:
+`a_data_entry_keeps_its_own_span_when_disable_triggers_intervenes` in `map.rs`
+is that test, and patching the predicate to accept the prefix fails it and
+nothing else in the suite. A predicate whose only test restates it is a
+predicate nothing checks — the tautological assertion that stood there before
+is what let three successive wrong reasons for this refusal be recorded.
 
 Under `--inserts` a data entry heads an `INSERT` run, and `Builder::step`'s
 `Mode::Comment` close arm opens `Mode::InsertRun` for it directly — the same

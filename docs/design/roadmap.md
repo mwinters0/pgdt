@@ -508,6 +508,7 @@ dated history entry it points at.
 | M5 | 2026-08-27 | `info --dqcache none`'s error names `pgdq parse --dqcache <path>` as its remedy | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
 | M6 | 2026-08-27 | `TOC_PREFIX_STATS` recognized, so a `--statistics` dump's entries are attributed | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
 | M7 | 2026-08-27 | An `--inserts` dump's `INSERT` runs absorb their `Data for` comment and own its TOC entry | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
+| M8 | 2026-08-27 | The `Data for` boundary refusal is pinned by a span-level test over I31's shape, and its doc comments carry the reason that survives | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
 
 **M3's result is not itself out-of-band work.** The measurement fit one
 session and changed no decision, which is what admitted it here; the number it

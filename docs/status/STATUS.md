@@ -29,7 +29,7 @@ per-phase checklist here any more. How the system works is
 | Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-27 (Phase 9 is **complete**: 9.1-9.5.1 landed — `parse` resumes, throttles its saves, saves on Ctrl-C, and states its metadata at every legal boundary, and the koji wrap run has verified the last of that at real scale. The out-of-band drive-bys have landed as **M5**/**M6**/**M7**, and Phase 4's **4.4.4** with them. Next is **M8**, then `pgdq_tenant`, the **Phase 9 wrap**, **4.6**, and the **Phase 4 wrap** — see "Not started". A phase boundary: an unattended loop stops here.)
+Last updated: 2026-08-27 (Phase 9 is **complete**: 9.1-9.5.1 landed — `parse` resumes, throttles its saves, saves on Ctrl-C, and states its metadata at every legal boundary, and the koji wrap run has verified the last of that at real scale. The out-of-band drive-bys have landed as **M5**/**M6**/**M7**/**M8**, and Phase 4's **4.4.4** with them. Next is `pgdq_tenant`, then the **Phase 9 wrap**, **4.6**, and the **Phase 4 wrap** — see "Not started". A phase boundary: an unattended loop stops here.)
 
 ## Phase 4 progress
 
@@ -240,30 +240,11 @@ was earned after 9.1-9.4 landed and reopened the phase; **9.5.1** was earned by
   [`history/2026-08-27.md`](history/2026-08-27.md). The `runs/` logs are a
   byproduct and nothing reads them any more.
 
-- **M8: M6's asymmetry gets a behavioural test and a correct reason** —
-  out-of-band, settled 2026-08-27. `looks_like_toc_name_line`'s refusal of
-  `"Data for "` has now had **three** different reasons recorded for it, all
-  wrong, because the only thing pinning it is
-  `a_statistics_entry_parses_and_opens_a_span`'s tautological
-  `assert!(!looks_like_toc_name_line("-- Data for Name: …"))` — an assertion
-  that restates the predicate and so cannot fail for the right reason. Patching
-  the predicate to accept the prefix breaks that one assertion and **nothing
-  else** in the suite. M8 replaces it with a span-level test over the one input
-  that distinguishes the two behaviours — a `-- Data for Name:` block followed
-  by `SET SESSION AUTHORIZATION DEFAULT;` and then a `COPY` header (I31's
-  shape) — asserting the entry survives on its own `Framing` span rather than
-  being destroyed by `push_statement_span`'s `Framing` veto. It also rewrites
-  the doc comments on `looks_like_toc_name_line` and `parse_toc_header_line`,
-  which still carry the superseded reason. No behaviour change; the durable
-  half already landed in
-  [`../design/architecture.md`](../design/architecture.md), "TOC enrichment".
-
 - **Order from here**, re-settled 2026-08-27 after the wrap run landed:
-  **M8** → **`pgdq_tenant`** → the **Phase 9 wrap** → **4.6** → the **Phase 4
-  wrap**. M7 and 4.4.4 have landed.
+  **`pgdq_tenant`** → the **Phase 9 wrap** → **4.6** → the **Phase 4 wrap**.
+  M7, 4.4.4 and M8 have landed.
 
-  M8 first — a test swap and two doc comments, waiting on nothing.
-  `pgdq_tenant` second, both so its six-major regeneration diff lands alone
+  `pgdq_tenant` first, both so its six-major regeneration diff lands alone
   **and** because the Phase 9 wrap must not consolidate before it: 9.5.1's
   notes record the recurring-boundary test running on a hand-concatenated
   fixture "not `edge_cases/dumpall.sql` as the spec expected", and

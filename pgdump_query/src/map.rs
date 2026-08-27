@@ -242,21 +242,21 @@ pub struct TocHeader {
 /// not exist, see I18) are each optional, and whether or not one is present,
 /// what follows must still be `Name: `.
 ///
-/// The two data prefixes differ in what the *builder* must be in when the
-/// following bytes arrive, not in how the line parses. A `Statistics for`
-/// entry heads an ordinary `SELECT pg_catalog.pg_restore_relation_stats(...)`
-/// statement, so its span must continue into that statement — which is
-/// [`looks_like_toc_name_line`] returning true. A `Data for` entry must leave
-/// the builder in `Mode::Comment`, because that is the arm
-/// [`Builder::on_copy_start`] reads the `TocHeader` out of; routing it through
-/// `Mode::Statement` instead would hit the arm that pushes a separate span and
-/// passes `None`, and **every `COPY` block in the file would lose its TOC
-/// entry**. So the asymmetry is forced by `on_copy_start`, not by a claim
-/// about what follows a data entry. Under `--inserts` a `Data for` entry heads
-/// an `INSERT` run instead, and [`Builder::step`]'s `Mode::Comment` close arm
-/// opens `Mode::InsertRun` for it directly, at the comment's own offset — the
-/// same absorption, reached from the same mode, for the data format the
-/// scanner does not intercept.
+/// The two data prefixes differ only in whether they are also a *boundary*
+/// signal, which is [`looks_like_toc_name_line`]'s question, not this one's.
+/// A `Statistics for` entry heads an ordinary `SELECT
+/// pg_catalog.pg_restore_relation_stats(...)` statement, so its span must
+/// continue into that statement. A `Data for` entry heads data, which reaches
+/// the builder without ever passing through the close arm `saw_name`
+/// governs — `crate::scan::CopyScanner` intercepts a `COPY` header as
+/// `Event::CopyStart`, so [`Builder::on_copy_start`] takes the `TocHeader`
+/// straight out of `Mode::Comment`, and under `--inserts` [`Builder::step`]'s
+/// own `Mode::Comment` close arm opens `Mode::InsertRun` at the comment's
+/// offset. The refusal therefore decides nothing on a default dump; what it
+/// buys is a `--disable-triggers` dump (I31), where a statement *does*
+/// intervene and absorbing would feed the entry to
+/// `Builder::push_statement_span`'s `Framing` veto — see
+/// [`looks_like_toc_name_line`].
 ///
 /// **Splits on the field markers in the order `_printTocEntry()` writes
 /// them**, not on a fully general grammar — `sanitize_line` only strips
@@ -668,14 +668,29 @@ pub(crate) struct Builder {
 ///
 /// `TOC_PREFIX_STATS` ("Statistics for ") counts, because what follows a
 /// statistics entry is an ordinary statement and the span must run into it.
-/// `TOC_PREFIX_DATA` ("Data for ") must not, because [`Builder::on_copy_start`]
-/// reads its `TocHeader` out of `Mode::Comment` — returning true here would
-/// route the same bytes through `Mode::Statement`, whose arm there drops the
-/// header. Under `--inserts` the same entry is absorbed by [`Builder::step`]'s
-/// `Mode::Comment` close arm instead, which opens `Mode::InsertRun` at the
-/// comment's offset — so a data entry is attributed in both formats without
-/// this predicate having to say yes. See [`parse_toc_header_line`], which
-/// parses all three alike.
+/// `TOC_PREFIX_DATA` ("Data for ") does not, and **what that refusal buys is
+/// narrow — it is not that a data entry would otherwise lose its header.** The
+/// only thing `saw_name` decides is whether [`Builder::step`]'s `Mode::Comment`
+/// close arm absorbs the block into the statement that follows or pushes it as
+/// its own span, and on a default dump that arm never runs for a data entry at
+/// all: the blank line after the closing `--` is absorbed in place, and
+/// `crate::scan::CopyScanner` intercepts the `COPY` header as
+/// `Event::CopyStart` before `feed_line` sees it, so
+/// [`Builder::on_copy_start`] reads the pending `TocHeader` out of
+/// `Mode::Comment` without consulting `saw_name`. Under `--inserts` the close
+/// arm does run, and it opens `Mode::InsertRun` at the comment's offset —
+/// again without needing a yes here.
+///
+/// It earns its keep on a `--disable-triggers` dump (I31), where `SET SESSION
+/// AUTHORIZATION DEFAULT;` / `ALTER TABLE … DISABLE TRIGGER ALL;` *do*
+/// intervene between the entry and its data. Absorbing there would run the
+/// entry into that `SET` statement's span, where
+/// [`Builder::push_statement_span`]'s `Framing` veto discards the header
+/// outright — the entry is not misplaced but **destroyed**, taking TOC
+/// coverage on such a dump from 2/24 to 1/22. Refusing leaves it on a
+/// `Framing` span of its own: worse than attributed, better than gone.
+/// Pinned by `a_data_entry_keeps_its_own_span_when_disable_triggers_intervenes`;
+/// see [`parse_toc_header_line`], which parses all three prefixes alike.
 fn looks_like_toc_name_line(line: &str) -> bool {
     let named = line.starts_with("-- Name: ") || line.starts_with("-- Statistics for Name: ");
     named && line.contains("; Type: ")
@@ -1041,10 +1056,10 @@ impl Builder {
                     self.mode = Mode::Statement { start, buf: String::new(), toc, toc_owned: true };
                 } else if let Some(table) = parse_insert_target(line) {
                     // An `INSERT` run follows, so this comment block is a
-                    // `-- Data for Name: ...` entry — the one shape
-                    // [`looks_like_toc_name_line`] must refuse, since
-                    // `on_copy_start` reads its `TocHeader` out of this very
-                    // arm. Absorb the comment into the run's outer boundary
+                    // `-- Data for Name: ...` entry — the one prefix
+                    // [`looks_like_toc_name_line`] refuses, which is what
+                    // routes it here rather than into `Mode::Statement`.
+                    // Absorb the comment into the run's outer boundary
                     // and carry its header along, exactly as
                     // `on_copy_start`'s `Mode::Comment` arm does for a `COPY`
                     // block: without this the run would start at its first
@@ -1636,8 +1651,10 @@ mod tests {
     /// `TOC_PREFIX_STATS`, the third prefix `_printTocEntry()` writes
     /// (`fixtures/18/objects/stats.sql`, a `pg_dump 18 --statistics` dump).
     /// Parses like the other two, and unlike `Data for ` it *is* a boundary
-    /// signal, because what follows is an ordinary statement rather than a
-    /// `COPY` block.
+    /// signal — pinned behaviourally by
+    /// `a_statistics_entry_is_one_attributed_span` below, with the refused
+    /// half pinned by
+    /// `a_data_entry_keeps_its_own_span_when_disable_triggers_intervenes`.
     #[test]
     fn a_statistics_entry_parses_and_opens_a_span() {
         let line =
@@ -1653,9 +1670,58 @@ mod tests {
             })
         );
         assert!(looks_like_toc_name_line(line));
-        assert!(!looks_like_toc_name_line(
-            "-- Data for Name: t; Type: TABLE DATA; Schema: public; Owner: postgres"
-        ));
+    }
+
+    /// The one input on which `looks_like_toc_name_line`'s refusal of
+    /// `"Data for "` changes an outcome, and therefore the only thing that
+    /// can pin it: I31's `--disable-triggers` shape, where `SET SESSION
+    /// AUTHORIZATION DEFAULT;` stands between the `-- Data for Name:` block
+    /// and the `COPY` header it heads. Accepting the prefix would run the
+    /// entry into that statement's span, where `push_statement_span`'s
+    /// `Framing` veto discards the header outright; refusing keeps it on a
+    /// `Framing` span of its own. The data span is unattributed either way —
+    /// that is the accepted gap `STATUS.md` records, not what this test is
+    /// about.
+    #[test]
+    fn a_data_entry_keeps_its_own_span_when_disable_triggers_intervenes() {
+        let mut builder = Builder::new();
+        let mut offset = 0u64;
+        for line in [
+            "--",
+            "-- Data for Name: t; Type: TABLE DATA; Schema: public; Owner: postgres",
+            "--",
+            "",
+            "SET SESSION AUTHORIZATION DEFAULT;",
+            "",
+            "ALTER TABLE public.t DISABLE TRIGGER ALL;",
+            "",
+        ] {
+            builder.feed_line(offset, line.as_bytes());
+            offset += line.len() as u64 + 1;
+        }
+        let header_offset = offset;
+        builder.on_copy_start(crate::scan::CopyStart {
+            header: crate::copy::CopyHeader {
+                schema: Some("public".to_string()),
+                table: "t".to_string(),
+                columns: vec!["id".to_string()],
+            },
+            header_offset,
+            data_offset: header_offset + 32,
+        });
+        let terminator_offset = header_offset + 48;
+        let end_offset = terminator_offset + 3;
+        builder.on_copy_end(crate::scan::CopyEnd { terminator_offset, end_offset, row_count: 1 });
+        let spans = builder.finish(end_offset);
+
+        assert_eq!(spans[0].start, 0);
+        assert!(matches!(spans[0].body, SpanBody::Framing));
+        assert!(spans[0].toc_owned, "the entry survives on the comment block's own span");
+        assert_eq!(spans[0].toc.as_ref().map(|t| t.name.as_str()), Some("t"));
+
+        let data = spans.last().expect("the COPY block is the last span");
+        assert!(matches!(data.body, SpanBody::Data(_)));
+        assert_eq!(data.toc, None, "I31: the intervening statements cost the data its entry");
     }
 
     /// The whole statistics entry — comment block and the
