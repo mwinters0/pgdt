@@ -716,10 +716,14 @@ because a `json` column does not resolve to a list.
 
 **A row is rejected wholesale before it is split.** An array literal always
 contains a `{`, and only an `[lb:ub]=` prefix can precede it, so a row holding
-neither byte costs one pass over its bytes and no field splitting at all.
+neither byte costs one pass over its bytes and no field splitting at all. That
+pass is `memchr2`, not a hand-rolled loop, because on the shape a real dump
+mostly has it *is* the census's cost — and `on_row`'s doc comment names the
+two measurements a reader regenerates by patching that function.
 **The cost is two-tier, and neither tier is zero.** On brace-free data — the
 koji shape — every row pays the pre-filter alone: 1.03 µs per 16-column row,
-+39% of a page-cache-warm scan. A row that passes the pre-filter pays field
++39% of a page-cache-warm scan, both measured against the scalar loop
+`M11` replaced and awaiting `M13`'s re-take. A row that passes the pre-filter pays field
 splitting and `observe` on top, 2.50 µs over 19 columns, +81% warm. Both
 collapse to 1–3% on a cold read, where the device floor hides them
 ([`measurements.md`](measurements.md), "The census on brace-free rows" and

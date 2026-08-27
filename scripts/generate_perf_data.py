@@ -31,8 +31,11 @@ is a ratio, not a gate".
 
 So the default output's *bytes* are frozen, and changing them is not a local
 decision: five recorded figures name this script as the command that
-reproduces them, and they have to be re-taken in the same change (M10 did
-exactly that -- docs/design/roadmap.md's out-of-band ledger).
+reproduces them, and they have to be re-taken with the change (M10 did that in
+the same commit -- docs/design/roadmap.md's out-of-band ledger; M12 changed
+the date/time fractions and its re-take is M13, the queued item it was
+deliberately ordered ahead of, so that the whole warm set moves onto tmpfs at
+once rather than a figure at a time).
 """
 
 from __future__ import annotations
@@ -129,13 +132,17 @@ ESCAPES = {
     "\v": "\\v",
 }
 
-# Microsecond components for the three date/time columns. PostgreSQL trims
-# trailing zeros from a fraction and omits an all-zero one, so this list is
-# chosen for the *rendered* shapes it produces -- no fraction at all, one
-# digit, six digits, and the two ends of the trimming -- rather than for
-# uniformity. Drawing a uniform random microsecond instead would almost never
-# produce a trailing zero and so would never exercise the trim.
-FRACTIONS = (0, 0, 0, 500_000, 123_456, 100_000, 10, 999_999)
+# The microsecond component of the three date/time columns is a uniform draw
+# over the whole range, because this is a benchmark input and a benchmark
+# input's job is to look like real data: 300,000 rows of koji's
+# task.create_time hold no value at all with an empty fraction, and 9.9% end
+# in a zero digit, which is about what a uniform draw gives.
+#
+# Rendered *shape* coverage -- an absent fraction, one digit, six digits, and
+# both ends of PostgreSQL's trailing-zero trim -- is a correctness goal, and
+# it belongs to fixtures/, which already carries all five and is produced by
+# pg_dump itself. A weighted list here bought that coverage a second time at
+# the cost of an input 37.5% of whose timestamps render with no fraction.
 
 # FLT_DIG / DBL_DIG: the significant-digit counts float4out/float8out switch
 # to scientific notation at. `pgdump_query::decode::format_shortest` holds the
@@ -239,7 +246,7 @@ def composite(rng: random.Random) -> str:
 
 def random_row(rng: random.Random, row_id: int, arrays: bool, composites: bool) -> list[str]:
     ts = datetime(2000, 1, 1) + timedelta(seconds=rng.randint(0, 60 * 60 * 24 * 365 * 30))
-    micros = rng.choice(FRACTIONS)
+    micros = rng.randrange(1_000_000)
     time_of_day = ts.hour * 3600 + ts.minute * 60 + ts.second
     hms = hms_frac(time_of_day * 1_000_000 + micros)
     values = [

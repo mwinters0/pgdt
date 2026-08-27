@@ -17,10 +17,12 @@
 //! catches those; the byte comparison catches a value pgdq re-renders
 //! differently from what the file holds.
 //!
-//! **Skipped, not failed, when `uv` is absent.** The rest of the suite runs
-//! against committed fixtures and needs no toolchain beyond cargo; this is
-//! the one test that drives a Python script, and a checkout without `uv`
-//! (which `mise.toml` pins) should not report a failure it cannot act on.
+//! **Failed, not skipped, when `uv` is absent.** `uv` is the one tool
+//! `mise.toml` pins, and `mise install` is the remedy — which is the point of
+//! pinning tools at all (`docs/design/roadmap.md`, "A test may assume the
+//! tools `mise` pins"). A skip here is invisible in a green suite and takes
+//! the generator's only drift guard with it, which is how three infidelities
+//! survived in the first place.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -29,14 +31,18 @@ fn scripts_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts")
 }
 
-fn have_uv() -> bool {
-    Command::new("uv").arg("--version").output().is_ok_and(|o| o.status.success())
+fn require_uv() {
+    let ok = Command::new("uv").arg("--version").output().is_ok_and(|o| o.status.success());
+    assert!(
+        ok,
+        "`uv` is not runnable, so the generator's only drift guard cannot run. \
+         `mise.toml` pins it: run `mise install`."
+    );
 }
 
 /// A ~2 MiB dump — a few hundred rows, which is enough for every value shape
-/// the generator draws from (the fraction list especially) to appear many
-/// times over, and small enough that generating two of them per test run is
-/// not felt.
+/// the generator draws from to appear many times over, and small enough that
+/// generating two of them per test run is not felt.
 fn generate(out: &Path, extra: &[&str]) {
     let mut cmd = Command::new("uv");
     cmd.current_dir(scripts_dir())
@@ -116,10 +122,7 @@ fn assert_modes_agree(dump: &Path) {
 
 #[test]
 fn the_perf_generator_writes_what_pgdq_reads_back() {
-    if !have_uv() {
-        eprintln!("skipping: `uv` is not on PATH (mise.toml pins it)");
-        return;
-    }
+    require_uv();
     let dir = tempfile::tempdir().unwrap();
 
     let control = dir.path().join("control.sql");

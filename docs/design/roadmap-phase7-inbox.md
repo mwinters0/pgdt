@@ -208,10 +208,13 @@ costs **0.84 s per 3.00 GiB**, 1.03 µs per 16-column row: **+39%** of a warm
 scan. On a file where **every** row carries an array it costs **1.75 s per
 3.00 GiB**, 2.50 µs per 19-column row: **+81%** warm. Cold from this SSD, the
 5.73 s device floor cuts both to +1.2% and +2.6%. The pre-filter is therefore
-about 40% of the census's cost even on the rows it rejects, and it is a scalar
-`raw.iter().any(|b| b == b'{' || b == b'[')` running at ~3.8 GB/s — a
-two-needle SIMD search is the obvious thing to try against it, and it is the
-cheapest available win on the per-row stage.
+about 40% of the census's cost even on the rows it rejects — which is what
+those figures were taken on: a scalar `raw.iter().any(|b| b == b'{' || b ==
+b'[')` running at ~3.8 GB/s. **`M11` has since made it
+`memchr::memchr2`**, and `M13`'s warm-set sweep is what re-prices both figures
+against the SIMD version; until that lands, the numbers above are the
+pre-`M11` reading and the +39% is the ceiling of what the swap can remove, not
+what it did.
 
 **Why Phase 7 cares.** The double-read entry above recorded that the mapping
 pass did no per-row work; that is no longer true of any mapping pass, and the phase's
@@ -334,3 +337,4 @@ column's end-to-end share from the arrays' and found the share below the
 floor. Figures, the floor reading and the commands:
 [`measurements.md`](measurements.md), "A typed query over nested columns" and
 its "The cross-file subtraction bottoms out" subsection.
+
