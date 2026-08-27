@@ -185,15 +185,44 @@ filed.
     recipe below is the durable record" to point at it. That amendment lands
     *with* the harness, not before.
 
-    **Twelve figures, in three states.** Six are already on the current
-    footing (both census warms, the nested end-to-end table, the cross-file
-    floor, the per-block quadratic, the census attribution) and the harness
-    only has to reproduce them. Four are not: the cold scan-throughput table,
-    both census **cold** rows, and the preamble prepass — which runs
-    `/usr/bin/time` around a **host** `pgdq` with no container at all,
-    violating the timer and cgroup rules, and which nobody had counted until
-    2026-08-27. Two have never been taken at all: the **warm `INSERT` CPU**
-    (the reason `M17` was allocated) and the warm large-object CPU.
+    **The tables it emits, and their state.** ✅ marks one already on the
+    current footing, which the harness only has to reproduce. This list is the
+    progress record — the box above ticks when every ✅ is present, and until
+    then the list says which are.
+
+    | # | Table | Stage | State |
+    |---|---|---|---|
+    | 1 | Scan throughput by input shape (`COPY`, large object, `INSERT`, `dd` floor) | cold SSD | superseded apparatus |
+    | 2 | Census on brace-free rows — cold pair | cold SSD | pre-`M11` reading |
+    | 3 | Census on array-bearing rows — cold pair | cold SSD | pre-`M11` reading |
+    | 4 | Census on brace-free rows — warm pair | warm tmpfs | ✅ |
+    | 5 | Census on array-bearing rows — warm pair | warm tmpfs | ✅ |
+    | 6 | Warm `INSERT` CPU | warm tmpfs | **never taken** |
+    | 7 | Warm large-object CPU | warm tmpfs | **never taken** |
+    | 8 | Nested end-to-end, three files × two modes | warm tmpfs | ✅ |
+    | 9 | Cross-file floor, seed-42 against seed-43 | warm tmpfs | ✅ |
+    | 10 | Census attribution, census on/off × two files | warm tmpfs | ✅ |
+    | 11 | Per-block quadratic — before/after/save counts | warm tmpfs | ✅ |
+    | 12 | Map alone, cache disabled | warm tmpfs | ✅ |
+    | 13 | Preamble prepass | — | host, **no container at all** |
+    | 14 | Nested decode micro — decode/render/÷copy/÷view | `criterion` | conforming; harness emits it |
+
+    Row 13 runs `/usr/bin/time` around a **host** `pgdq`, so it obeys neither
+    the timer nor the cgroup rule; nobody had counted it until 2026-08-27. Row
+    6 is the reason `M17` was allocated at all.
+
+    **Two things are deliberately not tables.** koji is a byte-for-byte
+    regression check on another medium — the harness owns its invocation and
+    does not run it. `benches/decoders.rs`'s per-type pairs and
+    `benches/whole_file.rs` are **tripwires**, quoting no number, and the
+    harness says so rather than inventing a table nobody consumes: "a figure
+    with no table shape is a figure nobody has decided how to report" catches
+    oversights, and these are a decision.
+
+    **Row 14 comes from `criterion`'s own JSON**, not from scraping console
+    output: `target/criterion/<group>/<bench>/new/estimates.json` carries a
+    median in nanoseconds, and every cell of that table is a median plus a byte
+    count that is a constant in the bench.
 
     **`M14` is absorbed into it**, settled 2026-08-27 — two overlapping cold
     sweeps is the thing to avoid, and `M14`'s cold table plus the two cold
@@ -241,10 +270,23 @@ filed.
     the split the project already runs. A harness that has to be rewritten
     after a machine move is the same recurrence in a different disguise.
 
-    **The fold-in lands per section, across several commits.** A twelve-figure
+    **Selection is per figure, never finer.** The fourth standing rule makes a
+    *table* atomic — half a table may not be re-taken — and one figure is
+    exactly one table, so per-figure selection cannot violate it while
+    per-run selection would. Stage grouping (cold-SSD, warm-tmpfs,
+    `criterion`) is the natural default because it shares input staging, but
+    the selectable unit is the figure. Without this the harness is unusable
+    while being written, since a full run is 18 GiB of staging and an hour.
+
+    **The fold-in lands per section, across several commits.** A fourteen-table
     diff is exactly what "never mix high- and low-confidence work in one review
     cycle" forbids, and `M13`'s four-figure fold-in already produced two
     withdrawn readings and three flagged calls.
+
+    **The box ticks only when every table above is harness-emitted**, per the
+    rule that a tick meaning "about half" makes every other tick worthless. The
+    table is the progress record in the meantime, which says more than a tick
+    would — it names *which* are done.
 
   - [x] **`M18` — musl leaves the apparatus.** Only glibc is measured, so a
     static musl build is an untested configuration and an untested portability
