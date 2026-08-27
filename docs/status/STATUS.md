@@ -21,7 +21,7 @@ per-phase checklist here any more. How the system works is
 | DDL object inventory: TOC enrichment, referenced roles and tablespaces, object census | working |
 | Best-effort structural cache with source-identity checking and cache-only inspection | working |
 | CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, and cache-only `info` | working, text output shape provisional; `--json` carries no shape promise at all. **`parse` is the only scanner** — it resumes from a matching cache and banks its progress at `COPY` block boundaries, throttled to ~5% of scan time and saving unconditionally on Ctrl-C (exit 130/143); `info` reports from the cache and never scans |
-| Partial reporting | `info` reports a cache from an unfinished scan for as far as it got, with `Scan completion: N% (M bytes)` stated once at the top; `--json` carries the coverage components and per-`COPY`-block type resolution |
+| Partial reporting | `info` reports a cache from an unfinished scan for as far as it got, with `Scan completion: N% (M bytes)` stated once at the top; `--json` carries the coverage components and per-`COPY`-block type resolution. An interrupted cache is **typed** for every database segment the scan finished — the mapping pass states each database's DDL at that database's first `COPY` block (I1) |
 | Arrays, composites, ranges, multiranges | typed and decoded end to end: `List<T>`, `Struct<…>`, the five-field range struct, `List<` range struct `>`, and `List<List<T>>` for a uniformly multi-dimensional array column. Three shapes stay a string, each with its own resolution outcome: an array whose element type is opaque (`box`, a C base type, a shell type, through any chain of domains), an array whose element type is itself an array (I26), and an array column whose values disagree on shape |
 | Array shape census | recorded by every mapping pass (`CopyBlock::array_shapes`) and **consumed**: a query retypes its top-level array columns from the union over the blocks it will replay, before the first batch |
 | Predicate and projection pushdown; per-row-group statistics | not started — Phase 5 |
@@ -29,7 +29,7 @@ per-phase checklist here any more. How the system works is
 | Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-27 (Phase 9: 9.1-9.5 landed — `parse` resumes, throttles its saves and saves on Ctrl-C. **9.5.1** is earned and open, and is the next slice, rescoped at the 2026-08-27 review: `parse` states its `DumpMetadata` at every legal boundary, so an interrupted cache stops reporting `not declared` where it means `metadata not scanned` and is typed for every database segment the scan finished. Phase 4's **4.4.4** and **4.6** remain).
+Last updated: 2026-08-27 (Phase 9 is **complete**: 9.1-9.5.1 landed — `parse` resumes, throttles its saves, saves on Ctrl-C, and states its metadata at every legal boundary. Next is the koji wrap run, then the two queued out-of-band drive-bys, then Phase 4's **4.4.4** and **4.6**, then the Phase 9 wrap — see "Not started". A phase boundary: an unattended loop stops here.)
 
 ## Phase 4 progress
 
@@ -121,7 +121,7 @@ Specified in
 [`../design/roadmap-phase9-partial-reporting.md`](../design/roadmap-phase9-partial-reporting.md).
 Taken ahead of the rest of Phase 4 (**4.4.4** and **4.6** remain there). **9.5**
 was earned after 9.1-9.4 landed and reopened the phase; **9.5.1** was earned by
-9.5's verification and keeps it open.
+9.5's verification. All slices have landed; the phase is ready to wrap.
 
 - [x] **9.1** `parse` resumes from a matching cache and persists after every
       completed block, via `stream::map_forward`; the resume-point line
@@ -152,25 +152,26 @@ was earned after 9.1-9.4 landed and reopened the phase; **9.5.1** was earned by
       **the map is quadratic too** and that half is not the cache's; see the
       Known gaps entry. Notes:
       [`../design/roadmap-phase9.5-save-throttle-notes.md`](../design/roadmap-phase9.5-save-throttle-notes.md)
-- [ ] **9.5.1** Earned from 9.5's verification, and **the next slice**:
-      `map_file` runs no preamble prepass, so an interrupted `parse` leaves a
-      cache with no `DumpMetadata`, and every column of every block in it
-      reports `not declared` — the final answer — where the truth is
-      `metadata not scanned`, "finish the parse and ask again". That is the
-      exact confusion 9.4 added the variant to prevent. **`parse` states its
-      metadata at every legal boundary**: the prepass `table_stream` already
-      runs, *and* a recompute at each `\connect`ed database's first `COPY`
-      block — the second of the two points `dump_metadata_from_spans` may be
-      called at (`preamble.rs`), and the one that recurs — so a `pg_dumpall`
-      parse interrupted in database 3 is typed for every segment it finished
-      instead of for database 1 alone. That puts the recompute inside
-      `map_forward`, so the slice **absorbs** the queued out-of-band move of
-      the EOF recompute out of `map_file`. The recompute fires **once per
-      database** — a `CopyStart` whose governing database differs from the last
-      one covered — not once per block, which would be a third quadratic in the
-      loop 9.5 measured two in. Tested on `edge_cases/dumpall.sql` with 9.5's
-      `CancelsPast`. Not folded into 9.5: it changes what every cold `parse`
-      does before mapping, which is a second review surface.
+- [x] **9.5.1** `parse` states its `DumpMetadata` at every legal boundary: the
+      preamble prepass in `map_file` (cold scans only), *and* a recompute in
+      `map_forward` at each `\connect`ed database's first `COPY` block — the
+      recurring one of the two points `dump_metadata_from_spans` may be called
+      at (I1). An interrupted `parse` now comes back **typed** for every
+      database segment it finished, where it used to report `not declared` —
+      the final answer — for every column of every block it had banked. The
+      recompute fires once per *database*, not per block. Absorbed the queued
+      out-of-band move of the EOF recompute into `map_forward`: `table_stream`
+      reads `metadata` after the mapping pass, so a cold query types a
+      `pg_dumpall`'s later databases exactly as a query after `parse` does.
+      `ColumnResolution::MetadataNotScanned` and `Error::MetadataNotScanned`
+      are consequently unreachable from any mapping scan; both stay for
+      metadata some other scan built, and the narrowing is filed into
+      [`../design/roadmap-phase6-inbox.md`](../design/roadmap-phase6-inbox.md).
+      The recurring half is tested on the concatenated two-database fixture,
+      not `edge_cases/dumpall.sql` as the spec expected — that file spans three
+      databases but only one has `COPY` blocks, so it cannot reach the boundary
+      twice. Notes:
+      [`../design/roadmap-phase9.5.1-metadata-boundaries-notes.md`](../design/roadmap-phase9.5.1-metadata-boundaries-notes.md)
 
 ## Not started
 
@@ -178,24 +179,21 @@ was earned after 9.1-9.4 landed and reopened the phase; **9.5.1** was earned by
   as provisional pending real user trials; the resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 
-- **Two out-of-band items, queued as one round after 9.5.1**: the `--dqcache
-  none` error naming `pgdq parse --dqcache <path>` as its remedy, and
-  `TOC_PREFIX_STATS` recognition. They are decision-free and share one review
-  surface. A third — the `DumpMetadata` recompute moving out of `map_file` —
-  was **folded into 9.5.1** at the 2026-08-27 review, since that slice puts the
-  recompute inside `map_forward` anyway. **9.5.1 comes first**, for the same
-  reason 9.5 landed alone: it changes what every `parse` does before mapping,
-  and should not share a review with drive-bys.
+- **Two out-of-band items, queued as one round**: the `--dqcache none` error
+  naming `pgdq parse --dqcache <path>` as its remedy, and `TOC_PREFIX_STATS`
+  recognition. They are decision-free and share one review surface. A third —
+  the `DumpMetadata` recompute moving out of `map_file` — was folded into
+  **9.5.1** and has landed with it.
 
-- **Order after 9.5.1**, settled 2026-08-27: launch the koji wrap run first —
+- **Order from here**, settled 2026-08-27: launch the koji wrap run first —
   detached, log under `runs/`, read by a later session — since it is an hour of
   wall time nothing else depends on, and 4.6's measurement wants its log. Its
-  checklist gains one item from 9.5.1: an interrupted koji cache must come back
-  **typed**, not reporting `not declared` for every column.
+  checklist carries one item from 9.5.1: an interrupted koji cache must come
+  back **typed**, not reporting `not declared` for every column.
   Then the two out-of-band drive-bys above, while Phase 9's context is fresh,
-  then back to Phase 4 for **4.4.4** and **4.6**, then the wrap. Phase 9 has no
-  unticked slices after 9.5.1, so that is a phase boundary and an unattended
-  loop stops there regardless.
+  then back to Phase 4 for **4.4.4** and **4.6**, then the Phase 9 wrap. Every
+  Phase 9 slice has landed, so this is a phase boundary and an unattended loop
+  stops here regardless.
 
 ## Known gaps
 
@@ -314,7 +312,45 @@ Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
 
-**Nothing is pending**; the notes below say how the last of them went.
+*Three from 9.5.1, all decided by proceeding.*
+
+**A `parse` interrupted before it starts still reads the preamble.**
+`scan_preamble` ignores `ScanOptions::cancel` on purpose (a stop there could
+not be told from reaching the first `COPY` header), and `map_file` runs it
+before `map_forward`'s first flag check — so a Ctrl-C at t=0 leaves a cache
+holding the first database's DDL rather than nothing. `map_file.rs`'s
+`a_scan_cancelled_before_it_starts_maps_only_the_preamble` used to assert the
+opposite ("nothing was read, so nothing is claimed") and was rewritten. Taken
+because it is what the 2026-08-27 review reasoned to — the prepass is an
+uncancellable region bounded by its own length, and banking it is the whole
+point of the slice. What would change if reversed: one branch skipping the
+prepass when the flag is already set, and an immediate Ctrl-C behaving
+differently from one a millisecond later.
+
+**Both `MetadataNotScanned`s are now unreachable from any mapping scan, and
+both were kept.** A database's DDL is stated before any of its blocks can be
+banked, so no producer leaves the condition. `stream::resolve_block`'s
+pre-resolution check stays as the guard against handing back a wrongly-typed
+row, and `ColumnResolution::MetadataNotScanned` stays as the reporting answer;
+both remain right for a caller presenting metadata some *other* scan built.
+`partial_reporting.rs`'s test now pins that answer against a deliberately
+hand-built pairing. The alternative — deleting one or both as dead — would
+close the Phase 6 question about which answer an embedder gets before Phase 6
+gets to decide it; the narrowing is filed into
+[`../design/roadmap-phase6-inbox.md`](../design/roadmap-phase6-inbox.md)
+instead.
+
+**The spec's third-database assertion was replaced, not dropped.** It asks for
+`MetadataNotScanned` on the third database's blocks after cancelling inside the
+second — but such a scan has banked none of the third's blocks, so there is
+nothing to resolve. The test asserts the checkable half instead (both finished
+databases `preamble_complete` with real DDL, every banked block resolving
+without `MetadataNotScanned`, and the resumed index matching an eager pass span
+for span), which a prepass-only implementation still fails. The fixture also
+had to change: `edge_cases/dumpall.sql`, which the spec names, has `COPY`
+blocks in only one of its three databases. Detail in the slice notes.
+
+*The notes below say how earlier entries went.*
 
 *9.5's two-granularity guard entry was reviewed on 2026-08-27 and **stands**,
 restated as a principle.* The amendment is right — chunk granularity alone

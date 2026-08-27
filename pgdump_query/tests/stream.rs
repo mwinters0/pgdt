@@ -438,14 +438,22 @@ async fn database_selector_resolves_the_ambiguity_to_the_first_databases_rows() 
     }
 }
 
-/// Selecting the *second* database still requires either `SchemaMode::Strings`
-/// or a prior full scan: an incremental scan never learns a later
-/// `\connect`ed database's DDL (`table_stream`'s live scan deliberately does
-/// not accumulate preamble as it goes — "The preamble pass" in the phase
-/// doc), so a `Typed` query against it is `Error::MetadataNotScanned`, not a
-/// silent `Utf8View` degradation.
+/// Selecting the *second* database types it on a **cold** query, exactly as a
+/// query after `pgdq parse` does. The mapping pass states `DumpMetadata` at
+/// each `\connect`ed database's first `COPY` block — one of the two boundaries
+/// `preamble::dump_metadata_from_spans` may be called at (I1) — so the DDL a
+/// scan has walked past is DDL it may use.
+///
+/// This does not reintroduce the rejected "accumulate preamble as the stream
+/// goes": mapping and streaming are separate passes, the map is complete
+/// before any row is emitted, and a file containing any `\connect` is never
+/// early-stopped (`stream::target_settled`). So the schema depends on the
+/// finished map, never on how far the row replay has got.
+///
+/// `SchemaMode::Strings` still bypasses typing entirely, and must return the
+/// same rows through the untyped path.
 #[tokio::test]
-async fn selecting_a_later_databases_table_needs_strings_mode_or_a_prior_full_scan() {
+async fn selecting_a_later_databases_table_types_it_on_a_cold_query() {
     for version in [13, 16, 18] {
         let (_dir, path) = multidb_fixture(version);
         let source = LocalFileSource::open(&path).unwrap();
@@ -461,12 +469,18 @@ async fn selecting_a_later_databases_table_needs_strings_mode_or_a_prior_full_sc
             None,
             CacheMode::Disabled,
         );
-        match stream.next().await {
-            Some(Err(pgdump_query::Error::MetadataNotScanned { database })) => {
-                assert_eq!(database.as_deref(), Some("pgdq_fixture_2"), "pg_dump {version}");
-            }
-            other => panic!("pg_dump {version}: expected MetadataNotScanned, got {other:?}"),
+        let mut typed_rows = Vec::new();
+        let mut schema = None;
+        while let Some(batch) = stream.next().await {
+            let batch = batch.expect("pg_dump {version}: the second database's DDL was read");
+            schema.get_or_insert_with(|| batch.schema());
+            typed_rows.extend(rows_of(&batch));
         }
+        let schema = schema.unwrap_or_else(|| panic!("pg_dump {version}: no batches"));
+        assert!(
+            schema.fields().iter().any(|f| f.data_type() != &DataType::Utf8View),
+            "pg_dump {version}: really typed, not degraded to strings: {schema:?}"
+        );
 
         let strings = BatchOptions {
             database: Some("pgdq_fixture_2".to_string()),
@@ -487,6 +501,7 @@ async fn selecting_a_later_databases_table_needs_strings_mode_or_a_prior_full_sc
             rows.extend(rows_of(&batch.unwrap()));
         }
         assert!(!rows.is_empty(), "pg_dump {version}: SchemaMode::Strings bypasses the check");
+        assert_eq!(rows, typed_rows, "pg_dump {version}: same rows, typed or not");
     }
 }
 

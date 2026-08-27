@@ -378,11 +378,14 @@ pub(crate) fn toc_coverage_diagnostic(spans: &[Span]) -> crate::diagnostic::Diag
 /// preamble, incidentally finishing any earlier, table-less database's too.
 ///
 /// This bounded prepass (`docs/design/architecture.md`, "Bounded
-/// preamble-only reads") exists so an incremental scan
-/// (`crate::stream::table_stream`) can
-/// guarantee this metadata gets captured even when the query's own target
-/// table starts later in the file (or never appears at all) — see also
-/// `docs/design/architecture.md`, "The preamble grammar and `DumpMetadata`".
+/// preamble-only reads") exists so a scan that may stop anywhere still states
+/// this metadata. `crate::stream::table_stream` needs it because the query's
+/// own target table may start later in the file, or never appear at all;
+/// `crate::stream::map_file` needs it because an interrupted `parse` would
+/// otherwise bank blocks with no DDL behind them, and every column of them
+/// would report `not declared` — the final answer — where the truth is
+/// "finish the parse". See also `docs/design/architecture.md`, "The preamble
+/// grammar and `DumpMetadata`".
 ///
 /// Returns the recovered metadata, the spans tiling `[0, preamble_end)` (per
 /// `crate::map::Builder` — no `Data` span among them, since the scan stops at

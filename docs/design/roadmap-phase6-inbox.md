@@ -179,6 +179,14 @@ missing, and the tree already contains both answers rather than none.
 and [`architecture.md`](architecture.md), "Joining a header against the
 metadata".
 
+**Narrowed by 9.5.1, 2026-08-27.** The mapping pass now states a database's
+DDL at that database's first `COPY` block (I1's recurring boundary), so no
+mapping scan produces the condition at all — a block in the map always has its
+database covered, cold query and post-`parse` query alike. Both answers stay,
+and Phase 6 still has to pick, but the caller who can present the condition is
+now an embedder holding metadata from *its own* index, or one carrying a
+`ResumeToken` across a re-scan — not an ordinary partial scan.
+
 **Contingent on** `stream::resolve_block` keeping its pre-resolution check —
 if that ever moved into `resolve_columns`, the two answers would collapse into
 one and the question would be settled by default rather than deliberately.
@@ -204,7 +212,8 @@ complete one.
 **Why Phase 6 cares about that part specifically.** Both limits are invisible
 on a local file and neither is on `object_store`: a ranged GET against remote
 storage can take seconds and can hang, and the preamble prepass — an
-uncancellable region today — is the *first* thing a cold query does. So the
+uncancellable region today — is the *first* thing a cold query does, and since
+9.5.1 the first thing a cold `parse` does too. So the
 phase has to decide whether remote I/O gets its own cancellation (a timeout, or
 a cancel token passed into the source) rather than inheriting a flag the read
 path never checks.

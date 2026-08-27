@@ -47,9 +47,16 @@ pub enum ColumnResolution {
     /// TABLE x OF t`), or `SchemaMode::Strings` (which never looks).
     NotDeclared,
     /// The scan never read this block's database's DDL, so nothing is yet
-    /// known about *any* of its columns. Reachable only from a partial index:
-    /// `scan_preamble` always captures the first database (I1), so this needs
-    /// a `pg_dumpall`/`--create` dump whose scan stopped inside a later one.
+    /// known about *any* of its columns.
+    ///
+    /// **No mapping scan leaves this pairing any more.** `crate::stream`'s
+    /// mapping pass states a database's DDL at that database's first `COPY`
+    /// block (I1's recurring boundary), which is strictly before any of its
+    /// blocks can be banked, so a block in the map always has its database
+    /// covered. What is left is a caller presenting metadata some *other* scan
+    /// built: an embedder's own index, or a `crate::stream::ResumeToken`
+    /// carried across one. The variant stays because the answer it gives is
+    /// the right one whenever that happens.
     ///
     /// **Held apart from [`Self::NotDeclared`], which it would otherwise look
     /// exactly like.** `NotDeclared` means the dump never explained this
@@ -306,11 +313,10 @@ pub fn resolve_columns(
         SchemaMode::Strings => None,
         SchemaMode::Typed => metadata.and_then(|m| database_for_name(m, database)),
     };
-    // Metadata exists, but not for *this* block's database — a scan that
-    // stopped inside a later `\connect`ed segment never read its DDL, so
-    // nothing is known about any column here and saying "not declared" would
-    // be a different, final claim. `metadata: None` is left alone: that is a
-    // caller with no DDL at all, which is exactly `NotDeclared`.
+    // Metadata exists, but not for *this* block's database, so nothing is
+    // known about any column here and saying "not declared" would be a
+    // different, final claim. `metadata: None` is left alone: that is a caller
+    // with no DDL at all, which is exactly `NotDeclared`.
     let unscanned_database =
         mode == SchemaMode::Typed && metadata.is_some() && !db.is_some_and(|d| d.preamble_complete);
     let declared_cols = db.and_then(|d| d.tables.get(qualified_table));
@@ -422,8 +428,7 @@ mod tests {
         assert_eq!(resolved.columns, [ColumnResolution::NotDeclared]);
     }
 
-    /// A block attributed to a database the metadata does not cover — a scan
-    /// that stopped inside a later `\connect`ed segment — is
+    /// A block attributed to a database the metadata does not cover is
     /// `MetadataNotScanned`, not `NotDeclared`. The two look identical in the
     /// output and mean opposite things: one is final, the other says "finish
     /// the parse and ask again".

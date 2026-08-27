@@ -732,6 +732,16 @@ impl Builder {
         }
     }
 
+    /// The database in scope right now — whatever the last `\\connect` this
+    /// builder has seen named, or whatever [`with_database`](Self::with_database)
+    /// seeded it with. This is the same value [`on_copy_end`](Self::on_copy_end)
+    /// stamps onto a block, exposed for `crate::stream`'s mapping pass, which
+    /// has to notice that a `COPY` header belongs to a database it has not yet
+    /// stated the DDL of.
+    pub(crate) fn database(&self) -> Option<&str> {
+        self.database.as_deref()
+    }
+
     /// Push a newly-completed span, and — since the tiling invariant makes a
     /// span's true end exactly the next span's start — fix up the
     /// previously-pushed span's placeholder `end` at the same time. Only the
@@ -1366,13 +1376,22 @@ impl Builder {
     /// — i.e. `self.mode` is [`Mode::Idle`] **and** no large-object region is
     /// pending — since otherwise the last-pushed span in `self.spans` is not
     /// actually the span open at `end`, it's the one before it, and stamping
-    /// its `end` there would be wrong. Right after [`on_copy_end`](Self::on_copy_end)
-    /// is exactly such a boundary (`on_copy_start` always leaves `mode`
-    /// `Idle` for the block's duration, and I12 puts the large-object region
-    /// strictly after every `COPY` block, so nothing pends one yet either),
-    /// which is the caller this exists for — `crate::stream`'s mapping pass
-    /// banks its progress at completed blocks as it goes, not just once at
-    /// the true end of its scan.
+    /// its `end` there would be wrong.
+    ///
+    /// A `COPY` block's two edges are both such boundaries, and
+    /// `crate::stream`'s mapping pass calls this at each of them:
+    ///
+    /// - Right after [`on_copy_end`](Self::on_copy_end), to bank progress at
+    ///   completed blocks as it goes rather than only at the true end of its
+    ///   scan. (`on_copy_start` always leaves `mode` `Idle` for the block's
+    ///   duration, and I12 puts the large-object region strictly after every
+    ///   `COPY` block, so nothing pends one yet either.)
+    /// - Right after [`on_copy_start`](Self::on_copy_start), at the *start*
+    ///   offset of the `Data` span it just opened — which is still pending,
+    ///   so `self.spans.last()` is the DDL span before it and closing that one
+    ///   out at the block's start is exactly right. That is the boundary
+    ///   `crate::preamble::dump_metadata_from_spans` may be called at (I1),
+    ///   which is what the mapping pass wants it for.
     pub(crate) fn snapshot(&self, end: u64) -> Vec<Span> {
         debug_assert!(matches!(self.mode, Mode::Idle));
         debug_assert!(self.pending_large_objects.is_none());

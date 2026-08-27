@@ -191,17 +191,13 @@ blocks past the frontier that are not there at all.
 That is why coverage is stated once, at the top, and nothing below it carries a
 caveat. Finish the `parse` and the listing grows; nothing in it changes.
 
-The one thing that *does* change is a column of a database the scan never
-reached. In a `pg_dumpall` or `--create` dump with several databases, a scan
-that stopped inside a later one never read that database's `CREATE TABLE`
-statements, and `--verbose` says so per column:
-
-```
-    id: metadata not scanned — the scan never reached this database's DDL; finish the parse
-```
-
-That is different from `not declared`, which means the dump never explained the
-column at all and is final.
+**Column types included**, and that holds for a `pg_dumpall` or `--create`
+dump with several databases too. Each database's `CREATE TABLE` statements sit
+ahead of its own data, so a scan that banked any of a database's `COPY` blocks
+has necessarily read that database's DDL first — and `parse` writes it down at
+that point rather than only at the end. An interrupted parse of a
+five-database dump comes back fully typed for the databases it finished, and
+simply has no blocks yet for the ones it did not reach.
 
 ## Everything else in the file: `--map`
 

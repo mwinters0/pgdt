@@ -40,10 +40,21 @@ preamble search at each `\connect`.
 
 **Verified against:** v13.0, v16.0, v18.6 — identical.
 **Relied on by:** `architecture.md` ("Bounded preamble-only reads"), and —
-through the scope limit above — `ColumnResolution::MetadataNotScanned`
-(`architecture.md`, "Joining a header against the metadata"), which can only
-ever name a *later* database: the first one's preamble is captured before
-anything else runs, so it is never the one in doubt.
+through the scope limit above — two mechanisms that turn on where a metadata
+computation may legally stand:
+
+- The mapping pass restating `DumpMetadata` at **each** `\connect`ed
+  database's first `COPY` block (`architecture.md`, "`parse` resumes, and saves
+  as it goes"). The scope limit is what licenses it: the invariant is per
+  database, so each database's first `COPY` header closes out that database's
+  preamble exactly as the file's first one closes out the first database's.
+  Without the scope limit the recurring boundary would not exist and only EOF
+  would be legal.
+- `ColumnResolution::MetadataNotScanned` (`architecture.md`, "Joining a header
+  against the metadata"). Given the above, no mapping scan produces the
+  condition any more: a database's DDL is stated before any of its blocks can
+  be banked, so a block in the map always has its database covered. The variant
+  answers for metadata built by some other scan.
 **Re-verify:** `grep -n 'addBoundaryDependencies' -A40 src/bin/pg_dump/pg_dump.c`
 and confirm `DO_EXTENSION`/`DO_TYPE`/`DO_SHELL_TYPE` are still in the pre-data
 arm, plus the `PRIO_*` ordering in `pg_dump_sort.c`.

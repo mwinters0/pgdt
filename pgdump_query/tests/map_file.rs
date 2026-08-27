@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures::StreamExt;
 use pgdump_query::cache::{CacheMode, CacheStatus};
+use pgdump_query::resolve::{ColumnResolution, SchemaMode, resolve_columns};
 use pgdump_query::{
     BatchOptions, ByteRangeSource, DumpIndex, LocalFileSource, ScanOptions, build_index, cache,
     map_file, preamble_only, table_stream,
@@ -329,11 +330,20 @@ async fn a_cancelled_map_file_reports_it_and_banks_what_it_scanned() {
     assert_matches_eager(&resumed.index, &eager, "resumed from a cancelled scan");
 }
 
-/// A flag set before the scan starts stops it at once, and still writes the
-/// cache — the degenerate case of the rule above, and the one that would
-/// otherwise return an index claiming to describe a file it never opened.
+/// A flag set before the scan starts stops it at the first thing it can stop
+/// at, and still writes the cache — the degenerate case of the rule above, and
+/// the one that would otherwise return an index claiming to describe a file it
+/// never opened.
+///
+/// What it *does* claim is the preamble. `scan_preamble` ignores the flag
+/// deliberately (`ScanOptions::cancel`): a stop inside it could not be told
+/// from reaching the first `COPY` header, so a truncated preamble would be
+/// cached as a complete one. It is an uncancellable region bounded by its own
+/// length, it runs before `map_forward`'s first flag check, and it banks its
+/// result — so even the most immediate interrupt leaves a cache whose columns
+/// resolve rather than one that reports `not declared` for all of them.
 #[tokio::test]
-async fn a_scan_cancelled_before_it_starts_maps_nothing() {
+async fn a_scan_cancelled_before_it_starts_maps_only_the_preamble() {
     let (_dir, dump) = sandboxed();
     let source = LocalFileSource::open(&dump).unwrap();
     let mode = CacheMode::Enabled(cache::colocated_path(&dump));
@@ -343,9 +353,16 @@ async fn a_scan_cancelled_before_it_starts_maps_nothing() {
     let run = map_file(&source, &options, &mode).await.unwrap();
 
     assert!(run.interrupted);
-    assert_eq!(run.index.scanned_through, 0);
-    assert!(run.index.blocks().next().is_none());
-    assert!(run.index.metadata.is_none(), "nothing was read, so nothing is claimed");
+    assert_eq!(run.resumed_from, 0, "the prepass is this run's work, not a resume point");
+    assert!(run.index.blocks().next().is_none(), "no block was mapped");
+    assert!(run.index.scanned_through > 0, "the preamble was read");
+    let metadata = run.index.metadata.as_ref().expect("the preamble prepass banked its DDL");
+    assert!(metadata.databases.first().unwrap().preamble_complete);
+
+    // On disk, and resumable from where the prepass stopped.
+    let reloaded = mode.load(&source).await.unwrap().expect("the prepass wrote a cache");
+    assert_eq!(reloaded.scanned_through, run.index.scanned_through);
+    assert_eq!(reloaded.metadata, run.index.metadata);
 }
 
 /// A cancelled **query** is an error, not a short stream. `map_forward` is one
@@ -364,4 +381,141 @@ async fn a_cancelled_query_errors_rather_than_returning_a_prefix() {
         table_stream(&source, "public.widgets", options, BatchOptions::default(), None, None, mode);
     let err = stream.next().await.expect("the stream yields once").expect_err("cancelled");
     assert!(matches!(err, pgdump_query::Error::ScanCancelled { .. }), "{err:?}");
+}
+
+/// Two copies of `edge_cases/create.sql` concatenated, the second's database
+/// renamed — a real `\connect`-delimited multi-database file in which *both*
+/// databases have `COPY` blocks, which the genuine `pg_dumpall` fixture does
+/// not (its `template1`/`postgres` segments carry none, so its first block's
+/// offset already closes out every database that could matter).
+fn multidb(version: u32) -> (tempfile::TempDir, PathBuf) {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../fixtures")
+        .join(version.to_string())
+        .join("edge_cases/create.sql");
+    let content = std::fs::read_to_string(&fixture).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("multidb.sql");
+    std::fs::write(&dump, format!("{content}{}", content.replace("pgdq_fixture", "pgdq_2")))
+        .unwrap();
+    (dir, dump)
+}
+
+/// Every banked block's columns, resolved the way `pgdq info` resolves them:
+/// against the index's own metadata, with no census (a partial index may not
+/// believe one — `DumpIndex::is_complete`).
+fn outcomes(index: &DumpIndex) -> Vec<(String, Vec<ColumnResolution>)> {
+    let metadata = index.metadata.as_ref();
+    index
+        .blocks()
+        // A header with no column list takes placeholder names from its first
+        // row, which no DDL can ever explain; those are `NotDeclared` by
+        // construction and say nothing about the metadata.
+        .filter(|b| !b.header.columns.is_empty())
+        .map(|b| {
+            let schema = resolve_columns(
+                &b.header.qualified_name(),
+                &b.header.columns,
+                metadata,
+                b.database.as_deref(),
+                SchemaMode::Typed,
+                &[],
+            );
+            (b.header.qualified_name(), schema.columns)
+        })
+        .collect()
+}
+
+/// **The defect this slice exists for.** An interrupted `parse` used to leave
+/// a cache with no `DumpMetadata` at all, so `resolve_columns` answered
+/// `NotDeclared` — "the dump never explained this column", final — for every
+/// column of every block it had just banked, with the `CREATE TABLE` sitting
+/// in the same cache's spans. The preamble prepass is what makes those blocks
+/// genuinely *typed* rather than merely labelled with better advice.
+#[tokio::test]
+async fn an_interrupted_scans_banked_blocks_resolve_against_real_ddl() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("dump.sql");
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/16/edge_cases/default.sql"),
+        &dump,
+    )
+    .unwrap();
+    let source = LocalFileSource::open(&dump).unwrap();
+    let mode = CacheMode::Enabled(cache::colocated_path(&dump));
+
+    let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let trip = eager.blocks().nth(1).expect("the fixture has two blocks").end_offset;
+
+    let cancel = Arc::new(AtomicBool::new(false));
+    let tripping = CancelsPast { inner: &source, trip, cancel: Arc::clone(&cancel) };
+    let options =
+        ScanOptions { chunk_size: 1, cancel: Some(Arc::clone(&cancel)), ..ScanOptions::default() };
+    let run = map_file(&tripping, &options, &mode).await.unwrap();
+
+    assert!(run.interrupted);
+    assert!(!run.index.is_complete(source.size().await.unwrap()));
+    let checked = outcomes(&run.index);
+    assert!(!checked.is_empty(), "the scan banked blocks with column lists to check");
+    for (table, columns) in &checked {
+        assert!(
+            !columns.contains(&ColumnResolution::NotDeclared)
+                && !columns.contains(&ColumnResolution::MetadataNotScanned),
+            "{table}: {columns:?}"
+        );
+    }
+}
+
+/// **The recurring boundary, which a prepass alone does not reach.** I1 lets
+/// `dump_metadata_from_spans` be called at each database's first `COPY` block
+/// as well as at EOF, and the second kind of point recurs once per `\connect`.
+/// Without it a `parse` interrupted inside database 2 holds DDL for database 1
+/// alone — having read database 2's entire preamble on the way past — and
+/// every one of database 2's banked blocks reports `MetadataNotScanned`.
+#[tokio::test]
+async fn an_interrupt_inside_a_later_database_types_the_segments_it_finished() {
+    for version in [13, 16, 18] {
+        let (_dir, dump) = multidb(version);
+        let source = LocalFileSource::open(&dump).unwrap();
+        let mode = CacheMode::Enabled(cache::colocated_path(&dump));
+
+        let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
+        let trip = eager
+            .blocks()
+            .find(|b| b.database.as_deref() == Some("pgdq_2"))
+            .expect("the second database has blocks")
+            .end_offset;
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let tripping = CancelsPast { inner: &source, trip, cancel: Arc::clone(&cancel) };
+        let options = ScanOptions {
+            chunk_size: 1,
+            cancel: Some(Arc::clone(&cancel)),
+            ..ScanOptions::default()
+        };
+        let run = map_file(&tripping, &options, &mode).await.unwrap();
+        assert!(run.interrupted, "pg_dump {version}");
+        assert!(
+            run.index.blocks().any(|b| b.database.as_deref() == Some("pgdq_2")),
+            "pg_dump {version}: the scan banked a second-database block"
+        );
+
+        let metadata = run.index.metadata.as_ref().expect("pg_dump {version}: metadata");
+        assert_eq!(metadata.databases.len(), 2, "pg_dump {version}: {metadata:?}");
+        for db in &metadata.databases {
+            assert!(db.preamble_complete, "pg_dump {version}: {:?}", db.name);
+            assert!(!db.tables.is_empty(), "pg_dump {version}: {:?} has DDL", db.name);
+        }
+
+        for (table, columns) in outcomes(&run.index) {
+            assert!(
+                !columns.contains(&ColumnResolution::MetadataNotScanned),
+                "pg_dump {version}: {table}: {columns:?}"
+            );
+        }
+
+        // And finishing it is still span for span what one eager pass gives.
+        let resumed = map_file(&source, &ScanOptions::default(), &mode).await.unwrap();
+        assert_matches_eager(&resumed.index, &eager, &format!("pg_dump {version}: resumed"));
+    }
 }

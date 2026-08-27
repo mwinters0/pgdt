@@ -8,10 +8,11 @@
 //!
 //! **Partial caches are built by hand, by truncating a complete index at a
 //! block boundary.** That is the state an interrupted `parse` leaves — every
-//! block up to a `CopyEnd` watermark banked, an `Unscanned` tail after it, and
-//! metadata holding only what the preamble prepass captured — and constructing
-//! it directly is what makes these tests deterministic. `pgdump_query`'s own
-//! `tests/map_file.rs` covers that a real interruption produces this shape.
+//! block up to a `CopyEnd` watermark banked and an `Unscanned` tail after it —
+//! and constructing it directly is what makes these tests deterministic.
+//! `pgdump_query`'s own `tests/map_file.rs` covers that a real interruption
+//! produces this shape, and that its metadata covers every database segment
+//! the scan finished.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -61,14 +62,15 @@ fn sandboxed_multidb() -> (tempfile::TempDir, PathBuf) {
     (dir, dump)
 }
 
-/// Write the cache an interrupted `parse` would have left: everything the map
-/// held up to `frontier`, an `Unscanned` tail for the rest, and only the
-/// databases whose preamble the prepass had captured by then.
+/// Write a cache holding everything the map held up to `frontier`, an
+/// `Unscanned` tail for the rest, and the first `keep_databases` databases'
+/// DDL.
 ///
-/// `keep_databases` models the one thing a mid-scan index cannot have — a
-/// later `\connect`ed database's DDL. `map_forward` never recomputes metadata
-/// as it goes, precisely because a span list cut at a `CopyEnd` watermark is
-/// not a boundary `dump_metadata_from_spans` may be called at.
+/// `keep_databases` is what lets a test put a block in the map whose database
+/// has no metadata behind it. A real scan no longer produces that pairing —
+/// `map_forward` states a database's DDL at its first `COPY` block, before any
+/// of its blocks can be banked — so this builds the state directly, to pin
+/// what `resolve_columns` answers when it is handed one.
 async fn write_truncated_cache(
     dump: &Path,
     frontier: u64,
@@ -445,20 +447,24 @@ async fn the_json_export_carries_coverage_as_components() {
     assert!(json.get("Scan completion").is_none(), "no rendered string");
 }
 
-/// **The distinction `MetadataNotScanned` exists for.** A `pg_dumpall`-shaped
-/// dump whose scan stopped inside its *second* database has blocks there whose
-/// DDL was never read — and `NotDeclared` would be the wrong answer with
+/// **The distinction `MetadataNotScanned` exists for.** Given a block whose
+/// database has no DDL behind it, `NotDeclared` would be the wrong answer with
 /// identical-looking output: it means the dump never explained the column and
 /// is final, where this means "finish the parse and ask again".
+///
+/// The pairing is hand-built (see `write_truncated_cache`): a real scan states
+/// each database's DDL at its first `COPY` block, so no producer leaves a
+/// banked block whose database it never read. This pins the resolver's answer
+/// for the callers that can still present one — an embedder's own index, or a
+/// `ResumeToken` carried across a re-scan.
 #[tokio::test]
 async fn a_later_databases_blocks_report_metadata_not_scanned() {
     let (_dir, dump) = sandboxed_multidb();
     let source = LocalFileSource::open(&dump).unwrap();
     let full = build_index(&source, &ScanOptions::default()).await.unwrap();
 
-    // Stop just past the first block of the *second* database: its DDL sits
-    // behind us in the file, but a mid-scan index's metadata only ever holds
-    // what the preamble prepass captured, which is the first database.
+    // Stop just past the first block of the *second* database, keeping only
+    // the first database's DDL.
     let second_db = full
         .blocks()
         .find(|b| b.database.as_deref() == Some("pgdq_fixture_2"))

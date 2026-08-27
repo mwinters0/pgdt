@@ -735,15 +735,27 @@ pair, staged via a `pending_headers` field and consumed by `on_connect` on
 `index::scan_preamble` scans from byte 0 to the first `COPY` block header (or
 EOF), which — per I1 — always closes out the *first* database's preamble
 regardless of how many `\connect`-ed databases precede it, so its cost is
-independent of dump size. `table_stream` runs it once, up front, whenever
-caching is enabled and the first database's `preamble_complete` is not already
-known, persisting immediately (not deferred to a later segment's save) so even
-a caller that polls once and drops the stream leaves a cache with that
-metadata. Skipped under `CacheMode::Disabled` (pure streaming, no side
-effects). This is also what makes `pgdq parse --preamble-only` cheap.
+independent of dump size. **Both mapping entry points run it once, up front**,
+whenever the first database's `preamble_complete` is not already known,
+persisting immediately (not deferred to a later segment's save):
 
-**A later `\connect`-ed database's preamble is populated only by a full scan** —
-there is no incremental equivalent for anything past the first database.
+- `table_stream`, because a `Typed` query needs the DDL whether or not its own
+  target table is ever reached. Under `CacheMode::Disabled` the scan still runs
+  — `--dqcache none` disables persistence, not typing — and the save is a no-op.
+- `map_file` (`pgdq parse`), only for a scan starting at byte 0, because an
+  interrupted parse would otherwise bank blocks with no DDL behind them and
+  report `not declared` — the final answer — for every column of them. The
+  prepass's spans *are* the prefix a resumed scan splices onto, not something
+  to splice onto one, so a resumed run skips it and takes the metadata its own
+  earlier run stated.
+
+This is also what makes `pgdq parse --preamble-only` cheap.
+
+**Every later `\connect`ed database is stated at its own first `COPY` block**
+by the mapping pass (see "`parse` resumes, and saves as it goes") — the same kind of
+boundary the prepass stops at, per I1, and the only other point
+`dump_metadata_from_spans` may be called at. So the prepass is not a special
+first case; it is that rule's first firing.
 
 ### Per-`CopyBlock` database attribution
 
@@ -1046,9 +1058,8 @@ purpose**:
 - **Streaming** refuses: `stream::resolve_block` raises
   `Error::MetadataNotScanned { database }` before a batch exists, because a
   stream hands back rows and a wrongly-typed one is a wrong answer with no
-  signal. Reachable only through the incremental path, since a full scan
-  leaves every database it found `preamble_complete`. Its remedy is real:
-  `--schema-mode strings` bypasses the check entirely.
+  signal. Its remedy is real: `--schema-mode strings` bypasses the check
+  entirely.
 - **Reporting** degrades and says so: `resolve_columns` marks the block's
   unexplained columns `ColumnResolution::MetadataNotScanned`. A listing covers
   every block in the index, so one unresolvable block must not sink the
@@ -1056,6 +1067,14 @@ purpose**:
 
 A caller with `metadata: None` is left on `NotDeclared`: it has no DDL for any
 database, so there is no scan to finish.
+
+**No mapping scan produces the condition any more.** The pass states a
+database's DDL at that database's first `COPY` block, which it necessarily
+passes before any of that database's blocks can be banked, so a block in the
+map always has its database covered. Both answers stay, because both are right
+for a caller presenting metadata some *other* scan built — an embedder's own
+index, or a `ResumeToken` carried across one — and because the asymmetry is
+about what a stream owes its caller, not about how the metadata was reached.
 
 ### One schema per stream, resolved up front
 
@@ -1066,20 +1085,26 @@ to type a column has not been scanned, the query says so
 *Rejected:* lazy resolution — typing a column once its DDL happens to have been
 seen. It makes the Arrow schema depend on scan progress.
 
-*Rejected for the same reason, in a different hat:* having the live scan
-accumulate preamble as it goes. It looks strictly better — a stream passing
-database 2's DDL on its way to database 2's data could just read it, and
-`MetadataNotScanned` would become nearly unreachable — but that DDL sits
-*before* its `COPY` block, so the stream would learn a column's type partway
-through its own run and the schema would again depend on how far the scan had
-got.
+*Rejected for the same reason, in a different hat:* having the **row replay**
+accumulate preamble as it goes. A stream passing database 2's DDL on its way to
+database 2's data could read it, but that DDL sits *before* its `COPY` block,
+so the stream would learn a column's type partway through its own run and the
+schema would again depend on how far the replay had got.
 
-**A full metadata scan is `pgdq parse`, not a new flag.** `parse` already means
-"scan the whole file eagerly and persist what you find". An incremental typed
-query captures exactly one database's preamble — the first, via the
-`scan_preamble` prepass — and nothing more; the error names both the detection
-and the remedy in one message. A `--full` flag on `query` would be a third way
-to say the same thing.
+**The mapping pass reading it is not the same thing**, and is what happens:
+mapping and streaming are separate passes, the map is finished before the first
+batch, and the metadata is read off the index *after* the map returns. A file
+containing any `\connect` is never early-stopped (`stream::target_settled`), so
+the map that answers is always the whole file's. The schema therefore depends
+on the finished map — a deterministic function of the file — never on replay
+progress.
+
+**A full metadata scan is still `pgdq parse` and not a new flag.** `parse`
+means "scan the whole file eagerly and persist what you find"; a `--full` flag
+on `query` would be a third way to say the same thing. What changed is that a
+cold query and one run after `parse` now type a multi-database dump alike, so
+there is less occasion to want it. Reasoning for the rewritten rejection above:
+[`../status/history/2026-08-27.md`](../status/history/2026-08-27.md).
 
 ## Decoders and render-back
 
@@ -1271,8 +1296,10 @@ yields until the first is done**:
 1. **`map_forward`** — a free `async fn`, not part of the generator. Walks from
    `index.scanned_through`, drives a `map::Builder`, and after every `CopyEnd`
    splices `snapshot` onto the base spans, advances `scanned_through`, merges
-   the builder's `roles()`/`tablespaces()`, and persists. Returns when the
-   target is settled or at EOF. Its stop rule is
+   the builder's `roles()`/`tablespaces()`, and persists. At a `CopyStart`
+   opening a database the metadata does not yet cover, it restates
+   `index.metadata` — I1's recurring boundary; see "`parse` resumes, and saves
+   as it goes". Returns when the target is settled or at EOF. Its stop rule is
    `target: Option<(&str, Option<&str>)>` — `None` means "run to EOF", which is
    what `ScanExtent::Full` asks for and what `map_file` always wants. An
    `Option` rather than a `ScanExtent` beside an unused table name, since a
@@ -1498,12 +1525,30 @@ two-path model is what makes a cold query on a 784GB dump affordable.
 
 ### `parse` resumes, and saves as it goes
 
-`stream::map_file` is `map_forward` with no stop target plus the three
-whole-file facts only a scan reaching EOF may state — metadata recomputed over
-every span (so every `\connect`ed database ends `preamble_complete`, not just
-the first), diagnostics recomputed, and a final save. It returns the frontier
-it started from, which is the one line `parse` prints *about the invocation*
-before the listing that describes the file.
+`stream::map_file` is the bounded preamble prepass, then `map_forward` with no
+stop target, then the three whole-file facts only a scan reaching EOF may state
+— metadata recomputed over every span, diagnostics recomputed, and a final
+save. It returns the frontier it started from, which is the one line `parse`
+prints *about the invocation* before the listing that describes the file.
+
+**The metadata is stated at every legal boundary, not only at EOF.**
+`preamble::dump_metadata_from_spans` may be called at exactly two kinds of
+point (I1): end of file, or the start of the current database's first `COPY`
+block — anywhere else would make the trailing database's `preamble_complete` a
+lie. The second kind *recurs*, once per `\connect`ed database, and the mapping
+loop already sees the event with the governing database tracked, so it
+recomputes there: a `CopyStart` whose governing database differs from the one
+the metadata in hand covers. That is what makes an interrupted `parse` come
+back *typed* — for every database segment it finished, not merely for the one
+the prepass captured — where before it came back with no metadata at all and
+`resolve_columns` answered `NotDeclared`, the final "the dump never explained
+this column", for every banked column.
+
+**Once per database, not once per block.** Recomputing at every `CopyStart` and
+relying on idempotence would put a third whole-index-sized cost in the loop
+that already carries two (see the throttle and the splice below). A
+single-database dump — koji included — therefore recomputes nothing here at
+all: the prepass already stood on that same offset.
 
 **Resume is the default**, and removing the cache file is how to force a fresh
 scan. *Rejected:* a `--restart` flag — deleting the file says the same thing

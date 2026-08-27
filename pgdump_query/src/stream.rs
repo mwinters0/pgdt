@@ -41,10 +41,12 @@
 //! caller stops polling. This runs even under [`CacheMode::Disabled`]:
 //! `--dqcache none` disables *persistence*, not type resolution
 //! (`docs/design/architecture.md`, "Bounded preamble-only reads") — but
-//! `cache.save` is a no-op there, so nothing is written to disk. Under [`CacheMode::Enabled`], a cache file's mere presence
-//! therefore does *not* mean its metadata is complete for every database (a
-//! later `\connect`-ed one is still full-scan-only), but it does always mean
-//! the first one is.
+//! `cache.save` is a no-op there, so nothing is written to disk. The prepass
+//! covers the *first* database; every later `\connect`ed one is stated by
+//! [`map_forward`] when it reaches that database's first `COPY` block, which
+//! per I1 is the same kind of boundary the prepass stops at. So a cache's
+//! metadata covers exactly the databases whose data the scan reached, and one
+//! it did not reach has no blocks in the map to ask about.
 //!
 //! **Type resolution**: once a query's matching
 //! `COPY` block is found, its column list is resolved against that captured
@@ -239,6 +241,14 @@ enum MapStop {
 ///
 /// **Not every completed block is persisted; every *exit* is.** See
 /// [`SaveThrottle`] for the rule and why the exits are exempt from it.
+///
+/// **`index.metadata` is restated at each `\connect`ed database's first
+/// `COPY` block**, which per I1 is one of the two boundaries
+/// [`crate::preamble::dump_metadata_from_spans`] may be called at — and the
+/// only one this loop ever stands on, since a `CopyEnd` watermark is not one.
+/// It fires when the block's governing database differs from the one the
+/// metadata in hand was computed at, so a single-database dump (koji included)
+/// pays nothing: the preamble prepass already stood at that same offset.
 async fn map_forward<S: ByteRangeSource>(
     source: &S,
     scan_options: &ScanOptions,
@@ -264,6 +274,14 @@ async fn map_forward<S: ByteRangeSource>(
         index.metadata.as_ref().and_then(|m| m.databases.first()).and_then(|db| db.name.clone())
     });
     let mut builder = crate::map::Builder::with_database(database);
+
+    // The database whose first `COPY` block the metadata in hand was computed
+    // at — the outer `None` meaning "no metadata at all", the inner one a
+    // database with no `\connect` to name it. `dump_metadata_from_spans`
+    // finalizes the *last* database it walks, so the last entry is the one
+    // whose boundary the computation stood on.
+    let mut metadata_covers: Option<Option<String>> =
+        index.metadata.as_ref().and_then(|m| m.databases.last()).map(|db| db.name.clone());
 
     let mut scanner = CopyScanner::resume(seg_start, None);
     let mut read_pos = seg_start;
@@ -293,7 +311,34 @@ async fn map_forward<S: ByteRangeSource>(
 
         while let Some(event) = scanner.next_event(&buf, eof)? {
             match event {
-                Event::CopyStart(start) => builder.on_copy_start(start),
+                Event::CopyStart(start) => {
+                    // The start of the current database's first `COPY` block
+                    // is the second of the two boundaries
+                    // `dump_metadata_from_spans` may be called at (I1), and
+                    // the one that *recurs* — once per `\connect`ed database.
+                    // Stating the metadata here is what makes a `parse`
+                    // interrupted in database 3 typed for the two segments it
+                    // finished instead of for database 1 alone, and what makes
+                    // a cold query and a warm one type a `pg_dumpall` alike.
+                    //
+                    // Retreat to a pending TOC comment's own start the way
+                    // `crate::index::scan_preamble` does, so the span list
+                    // handed over ends where the `Data` span is about to
+                    // begin rather than swallowing the comment.
+                    let boundary = builder.pending_comment_start().unwrap_or(start.header_offset);
+                    builder.on_copy_start(start);
+                    // **Once per database, not once per block.** Recomputing
+                    // at every `CopyStart` and leaning on idempotence would
+                    // put a third whole-index-sized cost in this loop, beside
+                    // the two `docs/design/measurements.md` already prices.
+                    let db = builder.database().map(str::to_owned);
+                    if metadata_covers.as_ref() != Some(&db) {
+                        let spans =
+                            splice(&prefix, builder.snapshot(boundary), seg_start, boundary, size);
+                        index.metadata = Some(crate::preamble::dump_metadata_from_spans(&spans));
+                        metadata_covers = Some(db);
+                    }
+                }
                 // This pass needs only the block's extent, which the
                 // scanner finds from the `\.` terminator — row bytes become
                 // batches in the replay phase. The one thing rows are read
@@ -461,16 +506,32 @@ pub struct MapRun {
 /// stays the eager, cache-blind producer, and teaching *it* to resume would
 /// duplicate the splice-onto-a-prefix logic here with a different set of bugs.
 ///
+/// **It opens with the bounded preamble prepass** [`table_stream`] has always
+/// run, under the same "unless the first database's preamble is already
+/// complete" guard. Without it an interrupted `parse` leaves a cache with no
+/// `DumpMetadata` at all, and `crate::resolve::resolve_columns` turns that
+/// into `NotDeclared` for every column of every block — the *final* "the dump
+/// never explained this column" answer, where the truth is
+/// [`crate::resolve::ColumnResolution::MetadataNotScanned`], "finish the parse
+/// and ask again". It costs one read of the preamble rather than two:
+/// `scan_preamble` stops at the first `COPY` header and leaves
+/// `scanned_through` there, which is exactly where `map_forward` picks up.
+///
+/// The prepass runs only for a scan starting at byte 0. Its spans *are* the
+/// prefix — it produces a tiling of `[0, preamble_end)`, not something to
+/// splice onto one — so running it over a resumed map would discard it. A
+/// resumed cache carries whatever metadata its own scan stated, and
+/// `map_forward`'s per-database recompute repairs one that carries none.
+///
 /// **The three finishing steps are this function's, not `map_forward`'s.**
 ///
-/// - `metadata` is recomputed over the whole span list. A query only ever has
-///   `crate::index::scan_preamble`'s first-database capture, because that is
-///   all a scan stopping at its target may honestly claim
-///   ([`crate::preamble::dump_metadata_from_spans`] names the two boundaries
-///   it may be called at, and a `CopyEnd` watermark is not one of them). A
-///   scan that reached EOF is at the other boundary, so every `\connect`ed
-///   database's DDL is recovered here — which is what makes "a full `pgdq
-///   parse` leaves every database `preamble_complete`" true.
+/// - `metadata` is recomputed over the whole span list. `map_forward` states
+///   it at each database's first `COPY` block (I1's recurring boundary), which
+///   already covers every database whose data the scan reached; EOF is the
+///   other boundary [`crate::preamble::dump_metadata_from_spans`] may be
+///   called at, and it is what covers a trailing database with no `COPY` block
+///   of its own — and a file with no blocks at all, where the recurring
+///   boundary is never reached.
 /// - `diagnostics` are recomputed rather than inherited: they are
 ///   `#[serde(skip)]`, so an index that came wholly from the cache carries
 ///   none, and whatever [`CacheMode::load`] reported about the cache *file*
@@ -485,7 +546,9 @@ pub struct MapRun {
 /// the whole file: a span list cut at a `CopyEnd` watermark is not a boundary
 /// `dump_metadata_from_spans` may be called at, and a coverage figure computed
 /// over a partial map would read as a finished one. `map_forward` has already
-/// persisted what it holds by then.
+/// persisted what it holds by then — including the metadata it stated at the
+/// legal boundaries it *did* stand on, which is what makes an interrupted
+/// cache typed rather than merely labelled.
 pub async fn map_file<S: ByteRangeSource>(
     source: &S,
     scan_options: &ScanOptions,
@@ -502,6 +565,27 @@ pub async fn map_file<S: ByteRangeSource>(
         .filter(|d| d.kind == crate::diagnostic::DiagnosticKind::CacheMtimeChanged)
         .collect();
     let resumed_from = index.scanned_through.min(size);
+
+    let first_db_preamble_known = index
+        .metadata
+        .as_ref()
+        .and_then(|m| m.databases.first())
+        .is_some_and(|db| db.preamble_complete);
+    if resumed_from == 0 && !first_db_preamble_known {
+        // Persisted before `map_forward` runs, so an interrupt arriving during
+        // the very first chunk still finds banked metadata. `scan_preamble`
+        // itself ignores the cancel flag on purpose (`ScanOptions::cancel`):
+        // the preamble is an uncancellable region bounded by its own length.
+        let (metadata, spans, preamble_end, roles, tablespaces) =
+            scan_preamble(source, scan_options).await?;
+        index.metadata = Some(metadata);
+        index.spans = splice(&[], spans, 0, preamble_end, size);
+        index.roles.extend(roles);
+        index.tablespaces.extend(tablespaces);
+        index.scanned_through = preamble_end;
+        crate::map::attach_text(source, &mut index.spans).await?;
+        cache.save(source, &index).await?;
+    }
 
     if map_forward(source, scan_options, cache, &mut index, None, size).await?
         == MapStop::Interrupted
@@ -605,10 +689,12 @@ impl<'a> TableStream<'a> {
 ///
 /// `Typed` mode against metadata that doesn't (yet) have a *complete* entry
 /// for `database` is `Error::MetadataNotScanned` rather than a silent
-/// `NotDeclared` degradation — reachable only via `table_stream`'s
-/// incremental scan, which never learns a later `\connect`ed database's DDL
-/// (see "The preamble pass" in the phase doc); a full `pgdq parse` scan
-/// always leaves every database it found `preamble_complete`.
+/// `NotDeclared` degradation. No mapping scan produces that state any more —
+/// `map_forward` states a database's DDL at its first `COPY` block, so a block
+/// in the map always has its database covered — but the check stays: it is the
+/// guard that keeps a *wrongly*-typed row from ever being handed back, and a
+/// caller can reach it with metadata this stream did not build (a
+/// [`ResumeToken`] carried across a re-scan, or an embedder's own index).
 fn resolve_block(
     header: &CopyHeader,
     field_count: usize,
@@ -763,8 +849,6 @@ where
             crate::map::attach_text(source, &mut index.spans).await?;
             cache.save(source, &index).await?;
         }
-        let metadata = index.metadata.clone();
-
         // Pass 1: extend the map until this query's table is settled. No
         // rows come out of this, and nothing is yielded until it returns.
         let selector = batch_options.database.as_deref();
@@ -782,6 +866,13 @@ where
         {
             Err(Error::ScanCancelled { scanned_through: index.scanned_through })?;
         }
+        // Read *after* the mapping pass, not before it: `map_forward` states
+        // the metadata at each `\connect`ed database's first `COPY` block, so
+        // a cold query on a `pg_dumpall` types a later database's blocks
+        // exactly as a query after `pgdq parse` does. The two passes are still
+        // strictly ordered (see the module docs), so the schema depends on the
+        // map, never on how far the *row* replay has got.
+        let metadata = index.metadata.clone();
 
         // One target per query (`docs/design/architecture.md`,
         // "One target per query"): narrow the name-only matches down to at
