@@ -70,7 +70,10 @@
 //! - **Bulk regions.** [`SpanBody::Data`] holds a [`DataBlock`]:
 //!   [`DataBlock::Copy`] for a `COPY` block, [`DataBlock::InsertRun`] for a run
 //!   of `INSERT INTO <table> ...;` statements (`Mode::InsertRun`, entered from
-//!   `Mode::Statement`'s first line), and [`DataBlock::LargeObjects`] for the
+//!   `Mode::Statement`'s first line, or straight from `Mode::Comment`'s close
+//!   arm when a `-- Data for Name: ...` entry heads the run — which is what
+//!   attributes it, since the comment's own span would otherwise be `Framing`
+//!   and clear `governing_toc`), and [`DataBlock::LargeObjects`] for the
 //!   whole `BEGIN;`/`COMMIT;`-wrapped large-object region (I12), merged across
 //!   however many archive entries `pg_dump` split it into
 //!   ([`Builder::on_large_object_start`]).
@@ -249,8 +252,11 @@ pub struct TocHeader {
 /// `Mode::Statement` instead would hit the arm that pushes a separate span and
 /// passes `None`, and **every `COPY` block in the file would lose its TOC
 /// entry**. So the asymmetry is forced by `on_copy_start`, not by a claim
-/// about what follows a data entry — under `--inserts` a `Data for` entry
-/// heads an `INSERT` run, which is a statement like any other.
+/// about what follows a data entry. Under `--inserts` a `Data for` entry heads
+/// an `INSERT` run instead, and [`Builder::step`]'s `Mode::Comment` close arm
+/// opens `Mode::InsertRun` for it directly, at the comment's own offset — the
+/// same absorption, reached from the same mode, for the data format the
+/// scanner does not intercept.
 ///
 /// **Splits on the field markers in the order `_printTocEntry()` writes
 /// them**, not on a fully general grammar — `sanitize_line` only strips
@@ -665,7 +671,11 @@ pub(crate) struct Builder {
 /// `TOC_PREFIX_DATA` ("Data for ") must not, because [`Builder::on_copy_start`]
 /// reads its `TocHeader` out of `Mode::Comment` — returning true here would
 /// route the same bytes through `Mode::Statement`, whose arm there drops the
-/// header. See [`parse_toc_header_line`], which parses all three alike.
+/// header. Under `--inserts` the same entry is absorbed by [`Builder::step`]'s
+/// `Mode::Comment` close arm instead, which opens `Mode::InsertRun` at the
+/// comment's offset — so a data entry is attributed in both formats without
+/// this predicate having to say yes. See [`parse_toc_header_line`], which
+/// parses all three alike.
 fn looks_like_toc_name_line(line: &str) -> bool {
     let named = line.starts_with("-- Name: ") || line.starts_with("-- Statistics for Name: ");
     named && line.contains("; Type: ")
@@ -690,7 +700,9 @@ fn partition_root_marker(line: &str) -> Option<String> {
 /// line that merely starts with this text as multi-line *string content* —
 /// guarded the same way [`looks_like_toc_name_line`]/[`partition_root_marker`]
 /// are, by the caller only ever checking this on a fresh statement's first
-/// line (`Mode::Statement`'s `buf.is_empty()` gate, `Mode::InsertRun`'s own).
+/// line (`Mode::Statement`'s `buf.is_empty()` gate, `Mode::InsertRun`'s own,
+/// and `Mode::Comment`'s close arm — where no statement is in flight at all,
+/// since that mode holds no buffer).
 fn parse_insert_target(line: &str) -> Option<String> {
     let rest = line.strip_prefix("INSERT INTO ")?;
     crate::preamble::parse_qualified_name(rest).map(|(name, _consumed)| name)
@@ -1027,6 +1039,33 @@ impl Builder {
                     // the comment's own offset. `toc_owned: true` — this
                     // comment is where `toc` came from.
                     self.mode = Mode::Statement { start, buf: String::new(), toc, toc_owned: true };
+                } else if let Some(table) = parse_insert_target(line) {
+                    // An `INSERT` run follows, so this comment block is a
+                    // `-- Data for Name: ...` entry — the one shape
+                    // [`looks_like_toc_name_line`] must refuse, since
+                    // `on_copy_start` reads its `TocHeader` out of this very
+                    // arm. Absorb the comment into the run's outer boundary
+                    // and carry its header along, exactly as
+                    // `on_copy_start`'s `Mode::Comment` arm does for a `COPY`
+                    // block: without this the run would start at its first
+                    // `INSERT` line with `toc: None`, because the comment's
+                    // own `Framing` span clears `governing_toc`.
+                    //
+                    // Unconditional, like `on_copy_start`: a comment block
+                    // carrying no header at all is absorbed the same way,
+                    // and the version-header block is unreachable here for
+                    // the same reason it is there — `pg_dump` always writes
+                    // its `SET` statements between the header and any data.
+                    let owned = toc.is_some();
+                    self.mode = Mode::InsertRun {
+                        start,
+                        table,
+                        database: self.database.clone(),
+                        buf: String::new(),
+                        row_count: 0,
+                        toc,
+                        toc_owned: owned,
+                    };
                 } else {
                     let body = close_comment(false, server_version.take(), pg_dump_version.take());
                     let owned = toc.is_some();
@@ -1640,6 +1679,35 @@ mod tests {
         assert_eq!(spans.len(), 1);
         assert!(spans[0].toc_owned);
         assert_eq!(spans[0].toc.as_ref().map(|t| t.kind.as_str()), Some("STATISTICS DATA"));
+    }
+
+    /// A `-- Data for Name: ...` entry heading an `INSERT` run is **one**
+    /// span owning its TOC entry, the same shape `on_copy_start` already
+    /// produces for a `COPY` block. `looks_like_toc_name_line` must keep
+    /// refusing the `Data for ` prefix — see its own docs — so the absorption
+    /// happens in `Mode::Comment`'s close arm instead, and the run starts at
+    /// the comment's offset rather than at its first `INSERT` line.
+    #[test]
+    fn an_insert_run_absorbs_its_data_entry_and_owns_it() {
+        let spans = spans_of(&[
+            "--",
+            "-- Data for Name: widgets; Type: TABLE DATA; Schema: public; Owner: postgres",
+            "--",
+            "",
+            "INSERT INTO public.widgets VALUES (1, 'alpha');",
+            "INSERT INTO public.widgets VALUES (2, 'beta');",
+        ]);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].start, 0, "the span opens at the comment, not at the first INSERT");
+        assert!(spans[0].toc_owned);
+        assert_eq!(spans[0].toc.as_ref().map(|t| t.kind.as_str()), Some("TABLE DATA"));
+        match &spans[0].body {
+            SpanBody::Data(DataBlock::InsertRun(run)) => {
+                assert_eq!(run.table, "public.widgets");
+                assert_eq!(run.row_count, 2);
+            }
+            other => panic!("expected an INSERT run, got {other:?}"),
+        }
     }
 
     /// `-- Name: EXTENSION postgres_fdw; Type: COMMENT; Schema: -; Owner: `

@@ -29,7 +29,7 @@ per-phase checklist here any more. How the system works is
 | Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-27 (Phase 9 is **complete**: 9.1-9.5.1 landed — `parse` resumes, throttles its saves, saves on Ctrl-C, and states its metadata at every legal boundary. The koji wrap run is in flight and the two out-of-band drive-bys have landed as **M5**/**M6**; next is Phase 4's **4.4.4** and **4.6**, then the Phase 9 wrap — see "Not started". A phase boundary: an unattended loop stops here.)
+Last updated: 2026-08-27 (Phase 9 is **complete**: 9.1-9.5.1 landed — `parse` resumes, throttles its saves, saves on Ctrl-C, and states its metadata at every legal boundary. The koji wrap run is in flight and the out-of-band drive-bys have landed as **M5**/**M6**/**M7**; next is Phase 4's **4.4.4** and **4.6**, then the Phase 9 wrap — see "Not started". A phase boundary: an unattended loop stops here.)
 
 ## Phase 4 progress
 
@@ -217,21 +217,6 @@ was earned after 9.1-9.4 landed and reopened the phase; **9.5.1** was earned by
   drive-bys, which have since landed: a six-major regeneration and two
   error-message changes in one diff would have buried the latter.
 
-- **M7 — attribute an `--inserts` dump's `INSERT` runs**, out-of-band, **its own
-  round**, settled 2026-08-27. Scope is exactly the narrow fix: `Mode::Comment`'s
-  close arm opens `Mode::InsertRun` at the *comment's* offset carrying its
-  `TocHeader`, mirroring what `Builder::on_copy_start`'s `Mode::Comment` arm
-  already does for a `COPY` block (`step` re-feeds a line when it returns
-  `Some`, which is what makes this reachable). **Out of bounds: relaxing
-  `governing_toc`'s "inheritance never crosses `Framing`" rule** — that is a
-  recorded decision, so taking that route would make this a slice rather than
-  out-of-band work. Verified by TOC coverage on
-  `fixtures/16/edge_cases/inserts.sql` moving 30/52 → 35/52 with the `COPY`
-  fixtures unchanged; `edge_cases/column-inserts.sql` and `data-only.sql` carry
-  the same shape and should be checked alongside. Kept out of the M5/M6 diff:
-  those are landed and reviewable, and this touches the mode machine every data
-  span goes through.
-
 - **The koji wrap run is in flight**, launched 2026-08-27 and read by a later
   session — nothing waits on it. `runs/koji-wrap.sh` drives three checks in one
   detached pass. **Leg 1 is done and both of its checks passed**: the guard took
@@ -253,9 +238,9 @@ was earned after 9.1-9.4 landed and reopened the phase; **9.5.1** was earned by
   `pg_dump 16` file, a version with no `--statistics` flag to produce the
   entries M6 recognizes.
 
-- **Order from here**, settled 2026-08-27 after grilling: **M7** → **4.4.4** →
-  **`pgdq_tenant`** → **4.6** → the **Phase 9 wrap**. M7 first, as the smallest
-  well-scoped item. 4.4.4 next: it is the only one whose success criterion is
+- **Order from here**, settled 2026-08-27 after grilling: **4.4.4** →
+  **`pgdq_tenant`** → **4.6** → the **Phase 9 wrap**. M7 has landed. 4.4.4
+  next: it is the only one whose success criterion is
   "no existing test changes", which is cheapest to judge against a tree nobody
   has churned. `pgdq_tenant` after those, so its six-major regeneration diff
   lands alone. 4.6 late, because it is the one item genuinely blocked on the
@@ -264,21 +249,6 @@ was earned after 9.1-9.4 landed and reopened the phase; **9.5.1** was earned by
   loop stops here regardless.
 
 ## Known gaps
-
-- **An `--inserts` dump loses TOC attribution on every `INSERT` run.** Found
-  while grilling M6 on 2026-08-27 and **queued as M7**, its own out-of-band
-  round — see "Not started". The `-- Data for Name: …; Type:
-  TABLE DATA` comment closes as its own `Framing` span, which owns the TOC
-  entry; `Builder::push_span` then clears `governing_toc` for a `Framing` body,
-  so the `INSERT` run that follows carries `toc: None`. It is the same
-  two-spans-one-attributed shape M6 just closed for statistics entries:
-  `fixtures/16/edge_cases/inserts.sql` reports TOC coverage **30/52 (58%)**
-  where attributing the runs would read 35/52 (67%). A `COPY` dump is
-  unaffected — `on_copy_start` folds the comment into the `Data` span, so
-  `edge_cases/default.sql` reads 31/48 with all six `TABLE DATA` entries
-  attributed. Tiling is byte-exact either way, the object census is already
-  right (it counts the owning `Framing` span), and no row data is involved: the
-  cost is the coverage diagnostic under-reporting an `--inserts` dump.
 
 - **An array nested inside a composite** is still decided optimistically, so a
   multi-dimensional or `[lb:ub]=`-decorated value there is a hard
@@ -382,7 +352,28 @@ Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
 
-**Nothing is pending**; the notes below say how the last of them went.
+**M7 absorbs a comment block into an `INSERT` run unconditionally**, the way
+`on_copy_start` does, rather than only when the block carried a `TocHeader`.
+The gated version would attribute exactly as well and touch fewer span
+boundaries; it was not taken because it would put an unexplainable asymmetry
+between the `COPY` and `--inserts` paths, which is the kind of divergence
+nobody can justify a year later. What changes if reconsidered: a comment block
+with no TOC header that immediately precedes an `INSERT INTO` line would get
+its own `Framing` span again instead of being folded into the `Data` span. No
+fixture contains that shape, and the version-header block cannot reach it —
+`pg_dump` always writes `SET` statements between the header and any data.
+
+**M7's queued verification figure was wrong, and the real one is better in a
+different direction.** The scope note predicted TOC coverage on
+`fixtures/16/edge_cases/inserts.sql` moving 30/52 → 35/52; it moved 30/52 →
+30/47 (58% → 64%). Absorbing the comment removes a span rather than adding an
+attributed one — the five `Framing` spans that held the entries are gone and
+the five `Data` spans now hold them. Everything else the note asked for holds:
+`column-inserts.sql` moves identically, `default.sql` and `data-only.sql` do
+not move, tiling stays byte-exact, and the object census stays `TABLE DATA: 5`.
+Reasoning: [`history/2026-08-27.md`](history/2026-08-27.md).
+
+The notes below say how the earlier entries went.
 
 *M6's boundary-signal asymmetry was reviewed on 2026-08-27 and **stands**, with
 its recorded reason replaced.* The queued description of the
@@ -400,8 +391,8 @@ span and passes `None`, so accepting `"Data for "` here would make **every
 chosen. Pinned by `a_statistics_entry_is_one_attributed_span` and
 `a_statistics_entry_parses_and_opens_a_span` in `map.rs`; the durable half is
 in [`../design/architecture.md`](../design/architecture.md), "TOC enrichment".
-What the grilling turned up on the way is the `--inserts` gap under "Known
-gaps", queued as **M7**. *M5's placement was reviewed the same day and
+What the grilling turned up on the way is the `--inserts` attribution gap,
+closed the same day as **M7**. *M5's placement was reviewed the same day and
 **stands**, also with a replaced reason*: not "the library error is shared"
 (`require_enabled` has two call sites, both in `main.rs`) but that the remedy
 interpolates the user's own `--source` path, which `Error::CacheDisabled` does

@@ -189,6 +189,50 @@ async fn inserts_dump_with_an_embedded_newline_value_still_tiles() {
     );
 }
 
+/// Every `INSERT` run carries the `-- Data for Name: ...` entry that heads
+/// it, and owns it — the `COPY` path's attribution, on the `--inserts` path.
+/// The run's span starts at that comment, so the entry is attributed exactly
+/// once rather than to a `Framing` span the run then fails to inherit from
+/// (`Framing` is one of the three kinds inheritance never crosses).
+///
+/// `public.empty_table` is why this checks the runs rather than the entries:
+/// it has zero rows, so its comment block runs straight into the next one and
+/// only the later entry survives — the same absorption the tiling test above
+/// documents.
+#[tokio::test]
+async fn every_insert_run_owns_its_data_entry() {
+    use pgdump_query::DataBlock;
+
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/edge_cases/inserts.sql");
+    let (spans, _size) = map_of(&path).await;
+
+    let attributed: Vec<(&str, &str, &str)> = spans
+        .iter()
+        .filter_map(|s| match &s.body {
+            SpanBody::Data(DataBlock::InsertRun(run)) => {
+                let toc = s
+                    .toc
+                    .as_ref()
+                    .unwrap_or_else(|| panic!("INSERT run for {} carries no TOC entry", run.table));
+                assert!(s.toc_owned, "INSERT run for {} inherited its entry", run.table);
+                Some((run.table.as_str(), toc.name.as_str(), toc.kind.as_str()))
+            }
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        attributed,
+        vec![
+            ("logs.events", "events", "TABLE DATA"),
+            ("public.dropped_column", "dropped_column", "TABLE DATA"),
+            ("public.escapes", "escapes", "TABLE DATA"),
+            ("public.generated_column", "generated_column", "TABLE DATA"),
+            ("public.widgets", "widgets", "TABLE DATA"),
+        ]
+    );
+}
+
 #[tokio::test]
 async fn column_inserts_dump_still_tiles() {
     let path =

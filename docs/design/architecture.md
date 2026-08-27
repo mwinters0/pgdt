@@ -305,7 +305,14 @@ An `INSERT` run instead reuses the statement accumulator and simply stops
 pushing a span per statement: `Mode::InsertRun`, entered from `Mode::Statement`'s
 first line via `parse_insert_target`, folding completed statements into one
 span until a different table's `INSERT INTO` arrives or the next TOC comment
-reasserts a boundary. **Every line is still decoded into `Event::Line`**, and
+reasserts a boundary. `Mode::Comment`'s close arm opens it too, at the
+comment's own offset, when the line that closes the block is an `INSERT INTO` —
+so a TOC-commented `INSERT` run is **one span**, comment absorbed, exactly as a
+TOC-commented `COPY` block is, and it owns its `TABLE DATA` entry. That arm is
+the only route to attribution here: `looks_like_toc_name_line` must keep
+refusing `"Data for "` (see "TOC enrichment"), so the comment would otherwise
+close as its own `Framing` span, and `Framing` is one of the three kinds
+`governing_toc` inheritance never crosses. **Every line is still decoded into `Event::Line`**, and
 that costs about 5× a `COPY` scan per byte — see
 [`measurements.md`](measurements.md). Correctness, tiling and row counts are
 unaffected; what it costs is throughput on `--inserts` input. A scanner-level
@@ -417,9 +424,11 @@ instead pushes a separate span and passes `None`. A statistics entry heads an
 ordinary `pg_restore_relation_stats()` statement and must leave the builder in
 `Mode::Statement`; a data entry must leave it in `Mode::Comment`, or **every
 `COPY` block in the file loses its TOC entry**. The asymmetry is therefore
-about which mode `on_copy_start` finds, not about what follows a data
-entry — under `--inserts` a data entry heads an `INSERT` run, a statement like
-any other. Free related fact: a
+about which mode `on_copy_start` finds, not about what follows a data entry.
+Under `--inserts` a data entry heads an `INSERT` run, and `Builder::step`'s
+`Mode::Comment` close arm opens `Mode::InsertRun` for it directly — the same
+absorption from the same mode, for the data format the scanner does not
+intercept, so this predicate never has to say yes. Free related fact: a
 `STATISTICS DATA` header has no owner at all, not even a placeholder —
 `dumpRelationStats` never sets `te->owner`, and `sanitize_line`'s NULL-hyphen
 substitution turns that into the literal `-`, which `parse_toc_header_line`
@@ -431,6 +440,14 @@ cost two unattributed spans, so `fixtures/18/objects/stats.sql` reported TOC
 coverage 126/175 (72%) where the same schema without statistics reported
 126/147 (86%). It now reports 140/161 (87%), and `STATISTICS DATA` appears in
 the object census like any other kind.
+
+The `--inserts` path had the same two-spans-one-attributed shape, closed the
+same way and with the same reach: each data entry cost one `Framing` span
+holding the entry and one unattributed `Data` span holding the rows, so
+`fixtures/16/edge_cases/inserts.sql` reported 30/52 (58%) and now reports 30/47
+(64%). The object census is unchanged at `TABLE DATA: 5` — the entry was always
+counted, just against the wrong span. A `COPY` dump was never affected:
+`edge_cases/default.sql` reads 31/48 either way.
 
 ### Cross-references (roles and tablespaces)
 

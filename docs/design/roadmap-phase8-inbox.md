@@ -64,3 +64,31 @@ rather than rediscovering the trap.
 
 **Origin.** Slice 3.2.1.2.1, 2026-08-24. See I2 in
 [`postgres-invariants.md`](postgres-invariants.md).
+
+---
+
+## An `INSERT` run's span starts at its TOC comment, not at its first `INSERT`
+
+**Fact.** As of M7, `map::Builder`'s `Mode::Comment` close arm opens
+`Mode::InsertRun` at the *comment's* offset when a `-- Data for Name: …; Type:
+TABLE DATA` block heads the run, so a TOC-commented run is one `Data` span
+covering comment and rows alike — the same absorption `on_copy_start` has
+always done for a `COPY` block. `DataBlock::InsertRun` carries no inner offsets
+(no counterpart to `CopyBlock`'s `header_offset`/`data_offset`), because
+nothing reads its rows yet.
+
+**Why Phase 8 cares.** Track A reads `--inserts` rows, and the first byte of
+`span.start` is a `--` comment line, not `INSERT INTO`. A reader that seeks to
+`span.start` and starts parsing statements will hit the comment block and, on
+a `--verbose` dump, several more lines of it. Either Track A finds the first
+statement by scanning forward from `span.start`, or `InsertRun` grows a
+`data_offset` the mapping pass records the way `CopyBlock` does — a cache
+format change, so it wants deciding at spec time rather than mid-slice. Note
+also that a zero-row table contributes **no** span at all: its comment block
+runs into the next entry's and only the later entry survives
+(`public.empty_table` in `edge_cases/inserts.sql`).
+
+**Origin.** M7, 2026-08-27. See
+[`../status/history/2026-08-27.md`](../status/history/2026-08-27.md), "M7
+attributes an `--inserts` dump's rows", and `architecture.md`'s "Bulk regions:
+one span kind, three payloads".
