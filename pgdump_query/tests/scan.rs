@@ -320,7 +320,7 @@ async fn line_length_limit_is_enforced() {
     std::fs::write(&path, &content).unwrap();
 
     let source = LocalFileSource::open(&path).unwrap();
-    let options = ScanOptions { chunk_size: 64, max_line_bytes: 512 };
+    let options = ScanOptions { chunk_size: 64, max_line_bytes: 512, ..Default::default() };
     let err = build_index(&source, &options).await.unwrap_err();
     assert!(matches!(err, pgdump_query::Error::LineTooLong { .. }), "unexpected error: {err}");
 }

@@ -187,26 +187,30 @@ and [`architecture.md`](architecture.md), "The array shape census".
 
 ---
 
-## The per-block cache save has no throttle, and its byte cost is quadratic in block count
+## Mapping is O(blocks²) after the save throttle, and the remaining half is the span splice
 
-**Fact.** `pgdq parse` serializes the **whole** cache at every `CopyEnd`
-watermark. Measured on koji: 74 saves cost **+50 s on a 3300 s scan (~1.5%)**
-and under 18.3 MB written against 784 GB read — negligible, so the throttle
-Phase 9 reserved as a tuning knob was deliberately not built. But the cache
-grows with the block count while the number of saves *is* the block count, so
-total bytes written are O(B²): koji's 74 blocks hide a cost a dump with
-thousands of small `COPY` blocks would not. No such sample exists here, so the
-quadratic half is reasoned, not measured.
+**Fact.** `pgdq parse` used to serialize the **whole** cache at every `CopyEnd`
+watermark. Slice 9.5 throttled that (`SaveThrottle`: skip a save unless 20x the
+last save's own duration has elapsed), which cut 4000-block saves from 4003 to
+195 and 44.3 s to 23.6 s. The series is **still** 4x per doubling, because a
+second cost has the same shape: every `CopyEnd` rebuilds `DumpIndex::spans`
+whole — `map::Builder::snapshot` clones the builder's span vector, then
+`stream::splice` clones the prefix and concatenates — so the map alone is
+O(blocks²) with the cache disabled entirely (19.7 s for 4000 blocks under
+`query --dqcache none`, against under 10 ms for the same bytes in one block).
+koji cannot show either half: 74 blocks over 784 GB.
 
-**Why Phase 7 cares.** The phase's target is a device-bound scan path, and
-this is a write the scan path now performs that the baseline it is measured
-against (243 MB/s, the koji figure the phase doc opens with) does not
-separate out. Two consequences: any parallel or reordered scan has to decide
-what a save even means when the frontier is not a single watermark, and if the
-phase adds a many-small-block benchmark input it is the first thing that would
-make the throttle decision real. Reversing the no-throttle call is cheap and
-purely local to the save site.
+**Why Phase 7 cares.** The phase's target is a device-bound scan path, and this
+is a *CPU* cost inside the scan loop that the 243 MB/s koji baseline the phase
+doc opens with cannot see — on a block-rich, byte-poor dump the scan is not
+device-bound at all. Two consequences. First, the fix is in the same code the
+phase's parallelism plans would rework: keeping the frontier's spans appendable
+instead of rebuilt (and `stream::splice` is already flagged above for assuming
+coverage is a contiguous prefix), so the two should be decided together.
+Second, the throttle's constant `K = 20` is a starting value chosen against
+this series; a scan whose per-block cost changes is a scan whose save cadence
+changes with it.
 
-**Origin.** Slice 9.1, 2026-08-26. Figures and container recipe:
-[`measurements.md`](measurements.md), "koji full scan"; the decision:
-[`roadmap-phase9.1-parse-resume-notes.md`](roadmap-phase9.1-parse-resume-notes.md).
+**Origin.** Slice 9.5, 2026-08-27. Figures, both series and their commands:
+[`measurements.md`](measurements.md), "Per-block cache saving is quadratic in
+block count, and so is the map".

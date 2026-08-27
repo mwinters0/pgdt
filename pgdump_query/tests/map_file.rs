@@ -9,6 +9,8 @@
 //! listing.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use futures::StreamExt;
 use pgdump_query::cache::{CacheMode, CacheStatus};
@@ -63,11 +65,11 @@ async fn a_cold_map_file_matches_build_index() {
             let source = LocalFileSource::open(&dump).unwrap();
             let mode = CacheMode::Enabled(cache::colocated_path(&dump));
 
-            let (index, resumed_from) =
-                map_file(&source, &ScanOptions::default(), &mode).await.unwrap();
-            assert_eq!(resumed_from, 0, "{schema_dir}/{flag_set}: nothing to resume from");
+            let run = map_file(&source, &ScanOptions::default(), &mode).await.unwrap();
+            assert_eq!(run.resumed_from, 0, "{schema_dir}/{flag_set}: nothing to resume from");
+            assert!(!run.interrupted);
             let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
-            assert_matches_eager(&index, &eager, &format!("{schema_dir}/{flag_set}"));
+            assert_matches_eager(&run.index, &eager, &format!("{schema_dir}/{flag_set}"));
         }
     }
 }
@@ -97,14 +99,14 @@ async fn a_partial_cache_is_finished_into_the_same_index_an_eager_scan_builds() 
     let partial = mode.load(&source).await.unwrap().expect("the query wrote a cache");
     assert!(partial.scanned_through < size, "sanity: the query really did stop short");
 
-    let (finished, resumed_from) = map_file(&source, &ScanOptions::default(), &mode).await.unwrap();
-    assert_eq!(resumed_from, partial.scanned_through, "resumed at the cache's own frontier");
+    let run = map_file(&source, &ScanOptions::default(), &mode).await.unwrap();
+    assert_eq!(run.resumed_from, partial.scanned_through, "resumed at the cache's own frontier");
     let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
     assert!(
         partial.blocks().count() < eager.blocks().count(),
         "sanity: the query left blocks unmapped for this to find"
     );
-    assert_matches_eager(&finished, &eager, "resumed from a query's partial cache");
+    assert_matches_eager(&run.index, &eager, "resumed from a query's partial cache");
 
     // And what landed on disk is the finished index, not the partial one.
     let reloaded = mode.load(&source).await.unwrap().unwrap();
@@ -127,10 +129,10 @@ async fn a_preamble_only_cache_is_finished_into_the_same_index() {
     assert!(preamble_cache.scanned_through > 0);
     assert!(preamble_cache.blocks().next().is_none(), "the prepass stops before the first block");
 
-    let (finished, resumed_from) = map_file(&source, &ScanOptions::default(), &mode).await.unwrap();
-    assert_eq!(resumed_from, preamble_cache.scanned_through);
+    let run = map_file(&source, &ScanOptions::default(), &mode).await.unwrap();
+    assert_eq!(run.resumed_from, preamble_cache.scanned_through);
     let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
-    assert_matches_eager(&finished, &eager, "resumed from a preamble-only cache");
+    assert_matches_eager(&run.index, &eager, "resumed from a preamble-only cache");
 }
 
 /// A second `map_file` over an already-complete cache scans nothing — it
@@ -145,13 +147,13 @@ async fn a_complete_cache_is_reported_without_rescanning() {
     let size = source.size().await.unwrap();
     let mode = CacheMode::Enabled(cache::colocated_path(&dump));
 
-    let (first, _) = map_file(&source, &ScanOptions::default(), &mode).await.unwrap();
-    let (second, resumed_from) = map_file(&source, &ScanOptions::default(), &mode).await.unwrap();
+    let first = map_file(&source, &ScanOptions::default(), &mode).await.unwrap().index;
+    let second = map_file(&source, &ScanOptions::default(), &mode).await.unwrap();
 
-    assert_eq!(resumed_from, size, "the cache already covered the file");
-    assert_eq!(first, second);
+    assert_eq!(second.resumed_from, size, "the cache already covered the file");
+    assert_eq!(first, second.index);
     assert!(
-        !second.diagnostics.is_empty(),
+        !second.index.diagnostics.is_empty(),
         "the TOC-coverage figure is recomputed, not read back from a cache that never stored it"
     );
 }
@@ -218,9 +220,9 @@ async fn an_interrupted_map_file_leaves_a_resumable_cache() {
 
     // Finishing it from there agrees with one eager pass, like any other
     // partial cache.
-    let (finished, resumed_from) = map_file(&source, &ScanOptions::default(), &mode).await.unwrap();
-    assert_eq!(resumed_from, first_block_end);
-    assert_matches_eager(&finished, &eager, "resumed from an interrupted scan");
+    let run = map_file(&source, &ScanOptions::default(), &mode).await.unwrap();
+    assert_eq!(run.resumed_from, first_block_end);
+    assert_matches_eager(&run.index, &eager, "resumed from an interrupted scan");
 }
 
 /// A full scan recovers **every** database's DDL, not just the first's. A
@@ -243,7 +245,7 @@ async fn a_full_scan_recovers_every_databases_ddl() {
         let source = LocalFileSource::open(&dump).unwrap();
         let mode = CacheMode::Enabled(cache::colocated_path(&dump));
 
-        let (index, _) = map_file(&source, &ScanOptions::default(), &mode).await.unwrap();
+        let index = map_file(&source, &ScanOptions::default(), &mode).await.unwrap().index;
         let metadata = index.metadata.as_ref().expect("a full scan always has metadata");
         assert_eq!(metadata.databases.len(), 2, "pg_dump {version}");
         for db in &metadata.databases {
@@ -251,4 +253,115 @@ async fn a_full_scan_recovers_every_databases_ddl() {
             assert!(!db.tables.is_empty(), "pg_dump {version}: {:?} has DDL", db.name);
         }
     }
+}
+
+/// A [`ByteRangeSource`] that trips a cancellation flag once the scan asks for
+/// a byte at or past `trip` — the `SIGINT` these tests cannot deliver,
+/// arriving at a file offset instead of at a wall-clock moment. The read
+/// itself succeeds, so the scan is stopped by the flag alone and never by an
+/// I/O failure.
+struct CancelsPast<'a> {
+    inner: &'a LocalFileSource,
+    trip: u64,
+    cancel: Arc<AtomicBool>,
+}
+
+impl ByteRangeSource for CancelsPast<'_> {
+    async fn read_range(&self, offset: u64, len: usize) -> pgdump_query::Result<bytes::Bytes> {
+        if offset >= self.trip {
+            self.cancel.store(true, Ordering::SeqCst);
+        }
+        self.inner.read_range(offset, len).await
+    }
+
+    async fn size(&self) -> pgdump_query::Result<u64> {
+        self.inner.size().await
+    }
+
+    async fn modified(&self) -> pgdump_query::Result<Option<std::time::SystemTime>> {
+        self.inner.modified().await
+    }
+}
+
+/// **The interrupt guard.** A cancelled scan is not an error and not a lie: it
+/// reports `interrupted`, the index it returns stops at the last completed
+/// block, and the cache on disk holds exactly that — whether or not the
+/// throttle had skipped that block's own save, since every exit saves
+/// unconditionally.
+///
+/// The flag trips one byte past the first block's end, with one-byte reads so
+/// that offset is a read boundary: the block's `CopyEnd` has been processed,
+/// nothing after it has.
+#[tokio::test]
+async fn a_cancelled_map_file_reports_it_and_banks_what_it_scanned() {
+    let (_dir, dump) = sandboxed();
+    let cache_path = cache::colocated_path(&dump);
+    let source = LocalFileSource::open(&dump).unwrap();
+    let size = source.size().await.unwrap();
+    let mode = CacheMode::Enabled(cache_path.clone());
+
+    let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let first_block_end = eager.blocks().next().expect("the fixture has blocks").end_offset;
+    assert!(first_block_end < size, "sanity: there is a file left after the first block");
+
+    let cancel = Arc::new(AtomicBool::new(false));
+    let tripping =
+        CancelsPast { inner: &source, trip: first_block_end, cancel: Arc::clone(&cancel) };
+    let options =
+        ScanOptions { chunk_size: 1, cancel: Some(Arc::clone(&cancel)), ..ScanOptions::default() };
+
+    let run = map_file(&tripping, &options, &mode).await.unwrap();
+    assert!(run.interrupted, "a cancelled scan says so");
+    assert_eq!(run.index.scanned_through, first_block_end, "banked the block that completed");
+    assert!(!run.index.is_complete(size), "and does not claim the whole file");
+
+    let status = cache::load(&cache_path, &source).await.unwrap();
+    let CacheStatus::Incomplete { index, .. } = status else {
+        panic!("a cancelled scan must leave an incomplete cache, got {status:?}");
+    };
+    assert_eq!(index.scanned_through, first_block_end);
+    assert_eq!(index.blocks().count(), 1);
+
+    // And it is a resume point like any other.
+    let resumed = map_file(&source, &ScanOptions::default(), &mode).await.unwrap();
+    assert!(!resumed.interrupted);
+    assert_eq!(resumed.resumed_from, first_block_end);
+    assert_matches_eager(&resumed.index, &eager, "resumed from a cancelled scan");
+}
+
+/// A flag set before the scan starts stops it at once, and still writes the
+/// cache — the degenerate case of the rule above, and the one that would
+/// otherwise return an index claiming to describe a file it never opened.
+#[tokio::test]
+async fn a_scan_cancelled_before_it_starts_maps_nothing() {
+    let (_dir, dump) = sandboxed();
+    let source = LocalFileSource::open(&dump).unwrap();
+    let mode = CacheMode::Enabled(cache::colocated_path(&dump));
+
+    let options =
+        ScanOptions { cancel: Some(Arc::new(AtomicBool::new(true))), ..ScanOptions::default() };
+    let run = map_file(&source, &options, &mode).await.unwrap();
+
+    assert!(run.interrupted);
+    assert_eq!(run.index.scanned_through, 0);
+    assert!(run.index.blocks().next().is_none());
+    assert!(run.index.metadata.is_none(), "nothing was read, so nothing is claimed");
+}
+
+/// A cancelled **query** is an error, not a short stream. `map_forward` is one
+/// loop with two callers, and the second one cannot report partiality: rows
+/// from the blocks a cancelled mapping pass happened to reach are a prefix of
+/// the answer with nothing saying so.
+#[tokio::test]
+async fn a_cancelled_query_errors_rather_than_returning_a_prefix() {
+    let (_dir, dump) = sandboxed();
+    let source = LocalFileSource::open(&dump).unwrap();
+    let mode = CacheMode::Enabled(cache::colocated_path(&dump));
+
+    let options =
+        ScanOptions { cancel: Some(Arc::new(AtomicBool::new(true))), ..ScanOptions::default() };
+    let mut stream =
+        table_stream(&source, "public.widgets", options, BatchOptions::default(), None, None, mode);
+    let err = stream.next().await.expect("the stream yields once").expect_err("cancelled");
+    assert!(matches!(err, pgdump_query::Error::ScanCancelled { .. }), "{err:?}");
 }

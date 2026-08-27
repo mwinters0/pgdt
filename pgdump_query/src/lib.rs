@@ -38,6 +38,6 @@ pub use scan::{
     CopyEnd, CopyScanner, CopyStart, Event, LargeObjectEnd, LargeObjectStart, Line, Row,
     ScanOptions, scan,
 };
-pub use stream::{BlockingTableIter, ResumeToken, TableStream, map_file, table_stream};
+pub use stream::{BlockingTableIter, MapRun, ResumeToken, TableStream, map_file, table_stream};
 
 pub type Result<T> = std::result::Result<T, Error>;

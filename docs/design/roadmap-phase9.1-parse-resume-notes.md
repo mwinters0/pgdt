@@ -71,10 +71,10 @@ scans of the same file. The saves' total bytes are bounded above by 18.3 MB
 against 784 GB read. The figure, its table and its container recipe are in
 [`measurements.md`](measurements.md), "koji full scan".
 
-So the save throttle the phase reserved as a tuning knob **is not built**, and
-nothing downstream should assume a save interval exists. What would change the
-answer is a dump with orders of magnitude more `COPY` blocks than koji's 74,
-since the cost is per block and each save is the *whole* cache: a file with
-10,000 small blocks pays 10,000 serializations of a cache that is itself
-proportional to the block count, which is quadratic where koji's is not. No
-such sample exists here to measure against.
+So the save throttle the phase reserved as a tuning knob was **not built here**.
+What changed the answer is the regime koji cannot represent — orders of
+magnitude more `COPY` blocks — since the cost is per block and each save is the
+*whole* cache: 4000 small blocks pay 4000 serializations of a cache
+proportional to the block count. That was measured after this slice, and
+**slice 9.5 built the throttle** (`stream::SaveThrottle`); koji's own behaviour
+is unchanged by it.

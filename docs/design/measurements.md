@@ -172,9 +172,13 @@ run's ~110 MB/s figure was the outlier, caused by the concurrent restore
 documented below, not a real regression. Command and container recipe are in
 `CLAUDE.md`.
 
-**Per-block cache persistence costs ~1.5%, and needs no throttle.** `pgdq
-parse` serializes the whole cache at every `CopyEnd` watermark, so a koji scan
-writes it 74 times where the build before it wrote it once. Container
+**Per-block cache persistence costs ~1.5%, and the throttle leaves it
+untouched.** `pgdq parse` serializes the whole cache at a `CopyEnd` watermark,
+so a koji scan writes it 74 times where the build before it wrote it once. The
+self-tuning throttle below never fires on this shape — koji's blocks are ~45 s
+apart and its saves cost well under a second, so the "20x the last save's own
+cost" bar is cleared every time — which is the regime it was designed not to
+change. Container
 `pgdq-koji-9.1`, launched 2026-08-26T04:21:17Z, `runs/koji-9.1-scan.log`,
 `exit=0`:
 
@@ -190,9 +194,9 @@ writes it 74 times where the build before it wrote it once. Container
 The +1.5% sits inside the run-to-run spread the two baseline scans above
 already show (~241 against ~243 MB/s), and the byte bound is an over-estimate
 twice over: every save is charged the *final* cache size, which only the last
-block's save actually pays. So the save interval the phase reserved as a
-tuning knob is not worth turning — **there is no throttle**, and a figure this
-far from mattering is the reason to record it rather than the reason not to.
+block's save actually pays. **This figure is why the throttle is not an
+interval**: at koji scale there is nothing to save, and any constant chosen to
+help the block-rich shape below would have had to be checked against this one.
 
 This run agreed with the one above on the block list, the per-block row counts
 and the byte total. It did **not** re-run the byte-for-byte offset identity
@@ -216,6 +220,65 @@ sudo nerdctl run -d --name pgdq-koji-9.1 -m 512m --memory-swap 512m \
 The comparison's other half is the throughput row above: the same recipe on a
 build predating the per-block save, so reproducing the *delta* means checking
 out one of each.
+
+## Per-block cache saving is quadratic in block count, and so is the map
+
+The regime koji cannot show: **block-rich and byte-poor** — a schema with
+thousands of tables, or one partitioned table with a daily leaf over a decade.
+Four columns, three rows per table, the schema section then the data section,
+which is how `pg_dump` orders a plain dump:
+
+```sh
+cd scripts
+for n in 500 1000 2000 4000; do
+  uv run generate_block_count_bench.py --blocks $n --out /tmp/r$n.sql
+done
+```
+
+`parse` on each, cache removed first, one session, warm page cache. "Before" is
+the build with a save at every `CopyEnd`; "after" is the same binary with
+`SaveThrottle` (`K = 20`):
+
+| blocks | dump | final cache | before | after | saves before → after |
+|---|---|---|---|---|---|
+| 500 | 248 KB | 322 KB | 0.63 s | 0.32 s | 503 → 21 |
+| 1000 | 496 KB | 647 KB | 2.50 s | 1.30 s | 1003 → 42 |
+| 2000 | 997 KB | 1.3 MB | 10.44 s | 5.66 s | 2003 → 97 |
+| 4000 | 2.0 MB | 2.6 MB | 44.31 s | 23.56 s | 4003 → 195 |
+
+Every run is 99% CPU at every point: the cost is *serializing* the index, not
+writing it. The control is the same byte count in **one** `COPY` block —
+`uv run generate_perf_data.py --size-mb 2 --seed 42 /tmp/one_block.sql`, which
+`parse` finishes in under 10 ms — so at 4000 blocks the overhead is three
+orders of magnitude above the scan it protects.
+
+**The throttle does exactly what it was designed to do, and the series still
+quadruples per doubling.** Saves fall to `n/20` — the `1/K` bound, visible in
+the last column — and the ~21 s of saving at 4000 blocks becomes ~1.2 s of a
+23.5 s scan. What is left is a *second* quadratic with the same shape and a
+different cause: every `CopyEnd` clones the whole span list
+(`map::Builder::snapshot`, then `stream::splice` over the prefix), so the map
+is O(blocks²) with the cache **disabled entirely**:
+
+```sh
+# maps to EOF (the table never matches) and never saves
+./target/release/pgdq query --source /tmp/r$n.sql --table public.nosuchtable --dqcache none
+```
+
+| blocks | 1000 | 2000 | 4000 |
+|---|---|---|---|
+| map only, no saving | 1.02 s | 4.58 s | 19.67 s |
+
+So the cache was roughly half the cost at 4000 blocks and the map is the other
+half. Closing the second half means not rebuilding the span list per block;
+it is filed in [`roadmap-phase7-inbox.md`](roadmap-phase7-inbox.md), because it
+is a change to how the map is assembled rather than to when it is written.
+
+Save counts come from `strace -f -e trace=openat` filtered to the cache path
+(`std::fs::write` opens once per save; the first is the load's miss).
+Reproducing the "before" column means building the commit that precedes the
+throttle — `git worktree add <dir> <commit>` and a release build there, the
+same two-binary method the census figure above uses.
 
 ## Decoder and whole-file benchmarks
 

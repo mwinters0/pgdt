@@ -12,6 +12,8 @@ pub enum Error {
     UnterminatedLargeObjectRegion { start_offset: u64 },
     #[error("line at offset {offset} exceeds the {limit}-byte line limit")]
     LineTooLong { offset: u64, limit: usize },
+    #[error("scan cancelled at byte {scanned_through}")]
+    ScanCancelled { scanned_through: u64 },
     #[error("value is not valid UTF-8 (valid up to byte {valid_up_to})")]
     InvalidUtf8 { valid_up_to: usize },
     #[error(

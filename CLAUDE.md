@@ -64,6 +64,11 @@ hour of scanning without an error, since the write itself succeeds.
 A later session reads `runs/koji-scan.log`; `sudo nerdctl inspect -f
 '{{.State.Status}}' pgdq-koji` says whether it is still going.
 
+**Stopping one is safe.** `sudo nerdctl stop` sends `SIGTERM`, which `parse`
+catches: it saves everything scanned so far to the `--dqcache` path and exits
+143, and re-running the same command resumes from there. So a scan that has to
+be cut short costs the block in flight, not the run.
+
 ## Architecture & design docs
 
 `docs/design/architecture.md` describes how the built system works, filed by

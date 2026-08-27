@@ -1371,7 +1371,7 @@ impl Builder {
     /// `Idle` for the block's duration, and I12 puts the large-object region
     /// strictly after every `COPY` block, so nothing pends one yet either),
     /// which is the caller this exists for — `crate::stream`'s mapping pass
-    /// persists its progress after every completed block, not just once at
+    /// banks its progress at completed blocks as it goes, not just once at
     /// the true end of its scan.
     pub(crate) fn snapshot(&self, end: u64) -> Vec<Span> {
         debug_assert!(matches!(self.mode, Mode::Idle));

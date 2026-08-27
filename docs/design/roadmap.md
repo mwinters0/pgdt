@@ -258,14 +258,16 @@ against a partial type set means designing them twice.
 
 What pgdq can say about a dump it has only partly read, and in what form.
 `info` becomes a pure cache reader and never scans; `parse` becomes the only
-scanner, resumes by default, and persists after every completed block, so an
-interrupted scan leaves something to resume and something to report. Coverage
+scanner, resumes by default, and banks its progress at `COPY` block boundaries
+— throttled to a bounded fraction of scan time, and saving unconditionally on
+`SIGINT`/`SIGTERM` — so an interrupted scan leaves something to resume and
+something to report. Coverage
 is stated once as a completion line. `--json` gains per-`COPY`-block resolution
 — the per-column outcomes `pgdq info --verbose` already computes and discards
 at the JSON boundary — with no stability promise attached.
 
-**Ran ahead of Phase 4's last slice, and before Phase 5** — 4.6 (the array
-stress data) is all that remains behind it. It carries number 9 because
+**Ran ahead of Phase 4's last slices, and before Phase 5** — 4.4.4 and 4.6
+are all that remain behind it. It carries number 9 because
 5–8 are taken and this project does not renumber a tail
 ([`../process.md`](../process.md), "Slice numbering"): a phase's number is its
 identity, its position in this file is its order.

@@ -153,14 +153,18 @@ splice, the roles, the tablespaces and `scanned_through` are updated at every
 block in flight, exactly as it did before the throttle, and the throttle's
 window is exposed to `SIGKILL`, power loss and panics alone.
 
-**The guard is a cooperative flag, checked once per chunk.** `map_file` owns
-the `DumpIndex` for the whole scan, so racing `ctrl_c` against that future in
-the CLI would *destroy* the map rather than save it — cancellation has to
-reach inside the loop. `ScanOptions` carries an `Option<Arc<AtomicBool>>`,
-defaulting to `None` so no existing caller changes, and the chunk loop reads it
-each time round. Chunk granularity rather than `CopyEnd` granularity is the
-whole point: koji's largest block is hundreds of gigabytes, and a Ctrl-C that
-waits for the next block boundary is indistinguishable from a hang. The
+**The guard is a cooperative flag, checked once per chunk *and* at every
+completed block.** `map_file` owns the `DumpIndex` for the whole scan, so
+racing `ctrl_c` against that future in the CLI would *destroy* the map rather
+than save it — cancellation has to reach inside the loop. `ScanOptions`
+carries an `Option<Arc<AtomicBool>>`, defaulting to `None` so no existing
+caller changes. Chunk granularity is what gets a scan out of a block big
+enough that its `CopyEnd` is an hour away: koji's largest block is hundreds of
+gigabytes, and a Ctrl-C that waits for the next block boundary is
+indistinguishable from a hang. The `CopyEnd` check covers the opposite
+extreme, which the chunk check alone leaves unresponsive — a block-rich dump
+can spend its whole multi-second scan inside two chunks (amended 2026-08-27,
+[`../status/history/2026-08-27.md`](../status/history/2026-08-27.md)). The
 interrupt path needs no snapshot logic of its own — `index` is consistent at
 the last completed block — so it is `cache.save`, then return an outcome the
 CLI can tell apart from EOF.
@@ -317,6 +321,18 @@ fixtures. The measurement sits in the slice whose design it could overturn.
 | 9.3 | The coverage line — `Scan completion: 76% (12345 bytes)` in text, the components as separate fields in JSON |
 | 9.4 | `--json` carries per-block resolution, including `ColumnResolution::MetadataNotScanned` |
 | 9.5 | The self-tuning save throttle and the interrupt guard, earned from the measurement 9.1 was asked to take. Plus `scripts/generate_block_count_bench.py` and the block-count series in `measurements.md` |
+| 9.5.1 | **Earned**, not planned: `map_file` captures the first database's preamble before mapping, the way `table_stream` already does, so an interrupted `parse`'s cache reports `MetadataNotScanned` rather than `NotDeclared` |
+
+**9.5.1 was earned by 9.5's verification.** `map_file` runs no preamble
+prepass, so an interrupted `parse` leaves a cache with no `DumpMetadata` at
+all, and `resolve_columns` answers `NotDeclared` for every column of every
+block in it — the final, "the dump never explained this column" answer, where
+the truth is "finish the parse and ask again". That is precisely the confusion
+9.4 added `MetadataNotScanned` to prevent, and 9.4 could not see it: it
+asserted the variant against hand-built truncated caches, which carry the
+metadata a *query*'s prepass captures. The producer, not the resolver, is what
+is wrong. Reasoning:
+[`../status/history/2026-08-27.md`](../status/history/2026-08-27.md).
 
 **9.5 was earned by 9.1's own measurement.** The spec told 9.1 to build a
 throttle "only if the number demands it", and the koji number did not — but

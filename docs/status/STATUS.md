@@ -20,7 +20,7 @@ per-phase checklist here any more. How the system works is
 | Full byte-exact file map — every byte in exactly one span, verified over every fixture | working |
 | DDL object inventory: TOC enrichment, referenced roles and tablespaces, object census | working |
 | Best-effort structural cache with source-identity checking and cache-only inspection | working |
-| CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, and cache-only `info` | working, text output shape provisional; `--json` carries no shape promise at all. **`parse` is the only scanner** — it resumes from a matching cache and persists after every completed block; `info` reports from the cache and never scans |
+| CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, and cache-only `info` | working, text output shape provisional; `--json` carries no shape promise at all. **`parse` is the only scanner** — it resumes from a matching cache and banks its progress at `COPY` block boundaries, throttled to ~5% of scan time and saving unconditionally on Ctrl-C (exit 130/143); `info` reports from the cache and never scans |
 | Partial reporting | `info` reports a cache from an unfinished scan for as far as it got, with `Scan completion: N% (M bytes)` stated once at the top; `--json` carries the coverage components and per-`COPY`-block type resolution |
 | Arrays, composites, ranges, multiranges | typed and decoded end to end: `List<T>`, `Struct<…>`, the five-field range struct, `List<` range struct `>`, and `List<List<T>>` for a uniformly multi-dimensional array column. Three shapes stay a string, each with its own resolution outcome: an array whose element type is opaque (`box`, a C base type, a shell type, through any chain of domains), an array whose element type is itself an array (I26), and an array column whose values disagree on shape |
 | Array shape census | recorded by every mapping pass (`CopyBlock::array_shapes`) and **consumed**: a query retypes its top-level array columns from the union over the blocks it will replay, before the first batch |
@@ -29,7 +29,7 @@ per-phase checklist here any more. How the system works is
 | Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-26 (Phase 9: 9.1-9.4 landed and **9.5** is earned and open — `parse` resumes and is the only scanner; `info` reports from the cache, coverage line included; `--json` carries per-block resolution; the koji write-amplification figure is in `measurements.md`, and the block-count regime it could not see is what 9.5 closes. Phase 4.4.3: every array-declaration spelling resolves as `integer[]` does).
+Last updated: 2026-08-27 (Phase 9: 9.1-9.5 landed — `parse` resumes, throttles its saves and saves on Ctrl-C. **9.5.1** is earned and open, and is the next slice: an interrupted `parse`'s cache reports `not declared` where it means `metadata not scanned`. Phase 4's **4.4.4** and **4.6** remain).
 
 ## Phase 4 progress
 
@@ -120,7 +120,8 @@ Specified in
 Specified in
 [`../design/roadmap-phase9-partial-reporting.md`](../design/roadmap-phase9-partial-reporting.md).
 Taken ahead of the rest of Phase 4 (**4.4.4** and **4.6** remain there). **9.5**
-was earned after 9.1-9.4 landed and reopens the phase.
+was earned after 9.1-9.4 landed and reopened the phase; **9.5.1** was earned by
+9.5's verification and keeps it open.
 
 - [x] **9.1** `parse` resumes from a matching cache and persists after every
       completed block, via `stream::map_forward`; the resume-point line
@@ -142,13 +143,23 @@ was earned after 9.1-9.4 landed and reopens the phase.
 - [x] **9.4** `--json` carries per-block resolution, including
       `ColumnResolution::MetadataNotScanned`. Notes:
       [`../design/roadmap-phase9.4-machine-readable-resolution-notes.md`](../design/roadmap-phase9.4-machine-readable-resolution-notes.md)
-- [ ] **9.5** The self-tuning save throttle and the interrupt guard, earned
-      from 9.1's own measurement: the per-block save is O(blocks^2), which
-      koji's 74 blocks cannot show and a 4000-block dump pays 44s for on a 2 MB
-      file. Skip a mid-scan save unless the elapsed time since the last is at
-      least `K` (=20) times what the last save took; EOF, target-settled and
-      interrupt always save. The guard is a cancel flag on `ScanOptions` read
-      once per chunk, set by the CLI on `SIGINT`/`SIGTERM`, exiting 130/143.
+- [x] **9.5** The self-tuning save throttle (`SaveThrottle`, `K = 20`) and the
+      interrupt guard (`ScanOptions::cancel`, read per chunk **and** per
+      completed block; `SIGINT`/`SIGTERM` exit 130/143), plus
+      `scripts/generate_block_count_bench.py` and the block-count series. The
+      throttle hits its `1/K` target — 4003 saves become 195 and ~21s of saving
+      becomes ~1.2s — but the series still quadruples per doubling, because
+      **the map is quadratic too** and that half is not the cache's; see the
+      Known gaps entry. Notes:
+      [`../design/roadmap-phase9.5-save-throttle-notes.md`](../design/roadmap-phase9.5-save-throttle-notes.md)
+- [ ] **9.5.1** Earned from 9.5's verification, and **the next slice**:
+      `map_file` runs no preamble prepass, so an interrupted `parse` leaves a
+      cache with no `DumpMetadata`, and every column of every block in it
+      reports `not declared` — the final answer — where the truth is
+      `metadata not scanned`, "finish the parse and ask again". That is the
+      exact confusion 9.4 added the variant to prevent. The fix is the prepass
+      `table_stream` already runs. Not folded into 9.5: it changes what every
+      cold `parse` does before mapping, which is a second review surface.
 
 ## Not started
 
@@ -156,13 +167,13 @@ was earned after 9.1-9.4 landed and reopens the phase.
   as provisional pending real user trials; the resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 
-- **Three out-of-band items, queued as one round after 9.5**: the
+- **Three out-of-band items, queued as one round after Phase 9's slices**: the
   `DumpMetadata` recompute moving from `map_file` into `map_forward`'s EOF tail
   so a cold query and a warm one type a `pg_dumpall` file alike; the
   `--dqcache none` error naming `pgdq parse --dqcache <path>` as its remedy;
   and `TOC_PREFIX_STATS` recognition. They are decision-free and share one
-  review surface. 9.5 lands alone first — it is the one with behavioural
-  exposure (signals, exit codes, a skipped-save rule) and should not share a
+  review surface. **9.5.1 comes first**, for the same reason 9.5 landed alone:
+  it changes what every `parse` does before mapping, and should not share a
   review with three drive-bys.
 
 ## Known gaps
@@ -202,6 +213,22 @@ was earned after 9.1-9.4 landed and reopens the phase.
   identifiers, which is every fixture and the koji sample. The fix is the
   roadmap "Future" item "A real type-name tokenizer", and it is strictly
   additive.
+
+- **Mapping is O(blocks²), and the save throttle only halved it.** Every
+  `CopyEnd` rebuilds `DumpIndex::spans` whole — `map::Builder::snapshot` clones
+  the builder's spans, `stream::splice` clones the prefix — so a block-rich,
+  byte-poor dump pays quadratic CPU with the cache disabled entirely: 19.7 s
+  for 4000 blocks under `query --dqcache none`, against under 10 ms for the
+  same bytes in one block. 9.5's throttle removed the other half (44.3 s → 23.6
+  s for a 4000-block `parse`). Accepted for now, not scheduled: the fix is to
+  stop rebuilding the span list per block, which is the same code Phase 7's
+  parallel-scan plans would rework and which
+  [`roadmap-phase7-inbox.md`](../design/roadmap-phase7-inbox.md) already flags
+  for assuming coverage is a contiguous prefix — so the two belong in one
+  decision. Nothing koji-shaped is affected: 74 blocks over 784 GB pay this
+  74 times, and the figure there is +1.5%. Figures and commands:
+  [`../design/measurements.md`](../design/measurements.md), "Per-block cache
+  saving is quadratic in block count, and so is the map".
 
 - A query stops mapping once its target is settled, so a conflicting
   candidate **past** the stopping point is never seen and
@@ -257,8 +284,19 @@ was earned after 9.1-9.4 landed and reopens the phase.
 
 Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
-it has been looked at: settled into the design docs, or reversed. **Nothing is
-pending**; the notes below say how the last of them went.
+it has been looked at: settled into the design docs, or reversed.
+
+**The interrupt guard checks its flag at two granularities, not one, which
+amends the 9.5 spec.** The spec said "checked once per chunk", and argued
+chunk granularity *rather than* `CopyEnd` granularity because koji's largest
+block is hundreds of gigabytes. That is right and it is not sufficient: a
+4000-block 2 MB dump spends its entire 23-second scan inside two chunks, so a
+`SIGTERM` three seconds in was ignored for twenty (measured, then fixed —
+[`history/2026-08-27.md`](history/2026-08-27.md)). The guard now reads the flag
+at both points, which bounds the response by the shorter of a chunk and a
+block, and the spec's sentence was amended in place. What would change if
+reconsidered: nothing about the throttle or the save rule — only how quickly a
+block-rich scan notices, and one relaxed atomic load per block.
 
 *Three Phase 9 entries were reviewed on 2026-08-26.* The **save-throttle**
 entry is **reversed**: the quadratic regime was measured, it costs 44s on a

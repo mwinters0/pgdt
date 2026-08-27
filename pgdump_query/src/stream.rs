@@ -27,9 +27,11 @@
 //! ever point inside already-mapped territory, and a query-built `DumpIndex`
 //! tiles the file exactly the way [`crate::index::build_index`]'s does, with
 //! no exemption for resumed streams. A [`CacheMode::Enabled`] cache is
-//! persisted after every completed block, so a caller that stops polling
-//! keeps what the map learned; [`CacheMode::Disabled`] runs the same way with
-//! `save` a no-op, mapping in memory only.
+//! persisted at completed blocks as the map advances — every one whose save
+//! has earned its cost ([`SaveThrottle`]), and unconditionally at every exit
+//! — so a caller that stops polling keeps what the map learned;
+//! [`CacheMode::Disabled`] runs the same way with `save` a no-op, mapping in
+//! memory only.
 //!
 //! **Preamble capture** (`docs/design/architecture.md`, "Bounded
 //! preamble-only reads"): before
@@ -54,6 +56,7 @@
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use arrow::array::RecordBatch;
 use arrow::buffer::Buffer;
@@ -199,9 +202,27 @@ fn target_settled(index: &DumpIndex, table: &str, selector: Option<&str>) -> boo
     matched
 }
 
-/// Extend `index`'s map forward from its own `scanned_through`, persisting
-/// after every completed block, until the queried table is settled or EOF is
-/// reached. Emits no rows — see the module docs.
+/// How far [`map_forward`] got.
+///
+/// Two variants, not three: reaching EOF and stopping at a settled target are
+/// the same fact to every caller — the loop ran until it had nothing left to
+/// do — and only [`map_file`], which never passes a target, has to tell them
+/// apart, which it does by construction. Interruption is the one outcome a
+/// caller must not mistake for either, because the map is short of the file
+/// through no decision of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MapStop {
+    /// EOF, or the queried table settled.
+    Reached,
+    /// [`ScanOptions::cancel`] was set. The index is consistent at the last
+    /// completed block and has been persisted; everything past it is
+    /// unscanned.
+    Interrupted,
+}
+
+/// Extend `index`'s map forward from its own `scanned_through`, persisting as
+/// it goes, until the queried table is settled, EOF is reached, or the scan is
+/// cancelled. Emits no rows — see the module docs.
 ///
 /// `target` is the `(table, database selector)` a query may stop early for
 /// once [`target_settled`] says so. **`None` means "run to EOF"** — what
@@ -215,6 +236,9 @@ fn target_settled(index: &DumpIndex, table: &str, selector: Option<&str>) -> boo
 /// line past it, which would leave the blank lines in between unattributed)
 /// and with the database in scope there, which it cannot infer: it never
 /// reads the `\connect` lines earlier in the file.
+///
+/// **Not every completed block is persisted; every *exit* is.** See
+/// [`SaveThrottle`] for the rule and why the exits are exempt from it.
 async fn map_forward<S: ByteRangeSource>(
     source: &S,
     scan_options: &ScanOptions,
@@ -222,12 +246,12 @@ async fn map_forward<S: ByteRangeSource>(
     index: &mut DumpIndex,
     target: Option<(&str, Option<&str>)>,
     size: u64,
-) -> Result<()> {
+) -> Result<MapStop> {
     if index.scanned_through >= size {
-        return Ok(());
+        return Ok(MapStop::Reached);
     }
     if target.is_some_and(|(table, selector)| target_settled(index, table, selector)) {
-        return Ok(());
+        return Ok(MapStop::Reached);
     }
 
     let seg_start = index.scanned_through;
@@ -244,8 +268,21 @@ async fn map_forward<S: ByteRangeSource>(
     let mut scanner = CopyScanner::resume(seg_start, None);
     let mut read_pos = seg_start;
     let mut buf: Vec<u8> = Vec::with_capacity(scan_options.chunk_size);
+    let mut throttle = SaveThrottle::new();
 
     loop {
+        // Once per chunk, before anything is read: this is the check that
+        // gets a scan out of a block big enough that its `CopyEnd` is an hour
+        // away (`ScanOptions::cancel`); the `CopyEnd` arm carries the other
+        // one, for the file whose whole scan fits in two chunks. `index` is
+        // consistent at the last completed block whatever the buffer holds —
+        // nothing between watermarks touches it — so the save needs no
+        // snapshot logic of its own, and it is unconditional: the throttle's
+        // skipped saves are exactly what an interrupt is here to make good.
+        if scan_options.cancelled() {
+            cache.save(source, index).await?;
+            return Ok(MapStop::Interrupted);
+        }
         let want = scan_options.chunk_size.min((size - read_pos) as usize);
         if want > 0 {
             let bytes = source.read_range(read_pos, want).await?;
@@ -275,11 +312,27 @@ async fn map_forward<S: ByteRangeSource>(
                     index.roles.extend(builder.roles().iter().cloned());
                     index.tablespaces.extend(builder.tablespaces().iter().cloned());
                     index.scanned_through = index.scanned_through.max(watermark);
-                    cache.save(source, index).await?;
-                    if target
-                        .is_some_and(|(table, selector)| target_settled(index, table, selector))
-                    {
-                        return Ok(());
+                    // The save at the *last* watermark before an early stop is
+                    // what persists the map for the next query, so a settled
+                    // target saves whether or not the throttle would have —
+                    // and so does an interrupt.
+                    let settled = target
+                        .is_some_and(|(table, selector)| target_settled(index, table, selector));
+                    // The second of the guard's two check points, and the one
+                    // that covers the opposite extreme from the chunk check
+                    // above: a block-rich file can spend tens of seconds
+                    // inside a *single* chunk, where the chunk check runs
+                    // twice in the whole scan. The two together bound the
+                    // response by the shorter of a chunk and a block.
+                    let cancelled = scan_options.cancelled();
+                    if settled || cancelled || throttle.due() {
+                        throttle.save(cache, source, index).await?;
+                    }
+                    if settled {
+                        return Ok(MapStop::Reached);
+                    }
+                    if cancelled {
+                        return Ok(MapStop::Interrupted);
                     }
                 }
                 Event::Line(line) => builder.feed_line(line.offset, line.raw),
@@ -310,14 +363,97 @@ async fn map_forward<S: ByteRangeSource>(
     crate::map::attach_text(source, &mut index.spans).await?;
     index.diagnostics = crate::index::tiling_diagnostics(&index.spans, size);
     index.diagnostics.push(crate::index::toc_coverage_diagnostic(&index.spans));
-    cache.save(source, index).await
+    cache.save(source, index).await?;
+    Ok(MapStop::Reached)
+}
+
+/// How many times the elapsed scan has to cover the last save's own cost
+/// before another save is worth taking. `20` puts the ceiling on save
+/// overhead at ~5% of scan time.
+const SAVE_THROTTLE_K: u32 = 20;
+
+/// Decides whether a mid-scan cache save has earned its cost
+/// (`docs/design/architecture.md`, "`parse` resumes, and saves as it goes").
+///
+/// Every save serializes the **whole** index, and the index grows with the
+/// block count, so saving at every `CopyEnd` is O(blocks²): koji's 74 blocks
+/// cost +1.5% wall, while 4000 small blocks cost 44 s against a scan of
+/// milliseconds (`docs/design/measurements.md`, "Per-block cache saving").
+///
+/// **The rule is self-tuning, not an interval**: skip a block's save unless at
+/// least [`SAVE_THROTTLE_K`] times the last save's own duration has elapsed
+/// since it. That bounds the overhead at roughly `1/K` of scan time in every
+/// regime with no constant that has to be right in two of them — a cheap cache
+/// saves often, an expensive one saves rarely, and koji (blocks ~45 s apart,
+/// saves well under a second) is untouched. *Rejected:* "every N seconds" and
+/// "every N bytes"; both pick a number against one dump shape, and the cost
+/// tracks block count rather than bytes read.
+///
+/// **Exits are exempt.** EOF, a settled target and an interrupt all save
+/// unconditionally — the whole risk the throttle adds is the window between
+/// saves, and those three are where that window would cost something real.
+struct SaveThrottle {
+    last_save: Instant,
+    last_cost: Duration,
+}
+
+impl SaveThrottle {
+    /// Starts due: `last_cost` is zero, so the first block of a segment always
+    /// banks. A scan that dies before ever saving would otherwise leave a
+    /// resumable frontier it never wrote down.
+    fn new() -> Self {
+        Self { last_save: Instant::now(), last_cost: Duration::ZERO }
+    }
+
+    /// The rule itself, over measured quantities rather than clocks, so it is
+    /// testable without one.
+    fn due_after(elapsed: Duration, last_cost: Duration) -> bool {
+        elapsed >= last_cost.saturating_mul(SAVE_THROTTLE_K)
+    }
+
+    fn due(&self) -> bool {
+        Self::due_after(self.last_save.elapsed(), self.last_cost)
+    }
+
+    /// Save, and time the save — that duration is the whole input to the next
+    /// decision. A disabled cache makes this ~free and so never throttles,
+    /// which is right: there is nothing to amortize.
+    async fn save<S: ByteRangeSource>(
+        &mut self,
+        cache: &CacheMode,
+        source: &S,
+        index: &DumpIndex,
+    ) -> Result<()> {
+        let started = Instant::now();
+        cache.save(source, index).await?;
+        self.last_cost = started.elapsed();
+        self.last_save = Instant::now();
+        Ok(())
+    }
+}
+
+/// What one [`map_file`] run did.
+///
+/// `resumed_from` is the frontier the run *started* at — `0` for a scan that
+/// began at byte 0, the cache's `scanned_through` for one that resumed — which
+/// is what `pgdq parse` prints about the invocation before the listing that
+/// describes the file.
+#[derive(Debug)]
+pub struct MapRun {
+    /// The map as it stands after the run: whole-file when `interrupted` is
+    /// false, everything up to the last completed block when it is true.
+    pub index: DumpIndex,
+    /// The frontier this run started from.
+    pub resumed_from: u64,
+    /// Whether [`ScanOptions::cancel`] stopped the run short of EOF. The
+    /// index and the cache agree either way; what differs is whether the
+    /// index describes the whole file.
+    pub interrupted: bool,
 }
 
 /// Map `source` end to end, **continuing from whatever `cache` already
 /// holds** — `pgdq parse`'s scan (`docs/design/architecture.md`, "CLI
-/// surface"). Returns the finished [`DumpIndex`] and the frontier this run
-/// started from: `0` for a scan that began at byte 0, and the cache's
-/// `scanned_through` for one that resumed.
+/// surface").
 ///
 /// This is [`map_forward`] with no stop target, plus the three whole-file
 /// facts that only a scan reaching EOF may state. It is a second caller for
@@ -343,11 +479,18 @@ async fn map_forward<S: ByteRangeSource>(
 ///   EOF, but with the pre-EOF metadata; this is the save that persists the
 ///   finished index, and it is also the only save when the cache already
 ///   covered the file and nothing was scanned at all.
+///
+/// **An interrupted run states none of the three**, and returns
+/// [`MapRun::interrupted`] rather than an index that would claim to describe
+/// the whole file: a span list cut at a `CopyEnd` watermark is not a boundary
+/// `dump_metadata_from_spans` may be called at, and a coverage figure computed
+/// over a partial map would read as a finished one. `map_forward` has already
+/// persisted what it holds by then.
 pub async fn map_file<S: ByteRangeSource>(
     source: &S,
     scan_options: &ScanOptions,
     cache: &CacheMode,
-) -> Result<(DumpIndex, u64)> {
+) -> Result<MapRun> {
     let size = source.size().await?;
     let mut index = cache.load(source).await?.unwrap_or_default();
     // The one diagnostic about the cache *file* rather than about the map:
@@ -360,7 +503,11 @@ pub async fn map_file<S: ByteRangeSource>(
         .collect();
     let resumed_from = index.scanned_through.min(size);
 
-    map_forward(source, scan_options, cache, &mut index, None, size).await?;
+    if map_forward(source, scan_options, cache, &mut index, None, size).await?
+        == MapStop::Interrupted
+    {
+        return Ok(MapRun { index, resumed_from, interrupted: true });
+    }
 
     index.metadata = Some(crate::preamble::dump_metadata_from_spans(&index.spans));
     let mut diagnostics = carried;
@@ -368,7 +515,7 @@ pub async fn map_file<S: ByteRangeSource>(
     diagnostics.push(crate::index::toc_coverage_diagnostic(&index.spans));
     index.diagnostics = diagnostics;
     cache.save(source, &index).await?;
-    Ok((index, resumed_from))
+    Ok(MapRun { index, resumed_from, interrupted: false })
 }
 
 /// Opaque cursor into a [`table_stream`]/[`crate::batch::read_table`]
@@ -551,8 +698,9 @@ fn snapshot(scanner: &CopyScanner, active: &Option<Active>, rows_emitted: u64) -
 ///
 /// `cache` controls structure-cache consulting
 /// (`docs/design/architecture.md`, "The cache").
-/// `CacheMode::Enabled` persists the map after every block the mapping pass
-/// completes, so a later query against the same dump starts from a nearer
+/// `CacheMode::Enabled` persists the map at completed blocks as the mapping
+/// pass advances — and always at the block it stops on — so a later query
+/// against the same dump starts from a nearer
 /// frontier; `CacheMode::Disabled` runs identically but writes nothing,
 /// mapping in memory for this call only. Either way rows come from replaying
 /// mapped blocks, never from the mapping pass itself — see the module docs.
@@ -624,7 +772,16 @@ where
             ScanExtent::UntilTargetSettled => Some((table.as_str(), selector)),
             ScanExtent::Full => None,
         };
-        map_forward(source, &scan_options, &cache, &mut index, target, size).await?;
+        // A cancelled mapping pass is an error here rather than a short
+        // stream: the blocks it would replay are only the ones it happened to
+        // reach, and a caller that asked for a table's rows would be handed a
+        // prefix of them with nothing saying so. `pgdq query` never sets the
+        // flag; an embedder that does gets told.
+        if map_forward(source, &scan_options, &cache, &mut index, target, size).await?
+            == MapStop::Interrupted
+        {
+            Err(Error::ScanCancelled { scanned_through: index.scanned_through })?;
+        }
 
         // One target per query (`docs/design/architecture.md`,
         // "One target per query"): narrow the name-only matches down to at
@@ -893,5 +1050,44 @@ impl<'a> Iterator for BlockingTableIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         use futures::StreamExt;
         self.rt.block_on(self.stream.next())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The throttle's whole rule, over measured quantities rather than a
+    /// clock. What it has to get right at the edges: a save that cost nothing
+    /// never blocks another (the first save of a segment, and every save under
+    /// `CacheMode::Disabled`), and a save that cost something blocks the next
+    /// one until the scan has done `K` times that much work.
+    #[test]
+    fn a_save_is_due_once_the_scan_has_outrun_the_last_ones_cost() {
+        let ms = Duration::from_millis;
+
+        assert!(SaveThrottle::due_after(Duration::ZERO, Duration::ZERO), "a free save never waits");
+        assert!(SaveThrottle::due_after(ms(1), Duration::ZERO));
+
+        // K = 20: 10ms of saving buys 200ms of silence.
+        assert!(!SaveThrottle::due_after(ms(199), ms(10)));
+        assert!(SaveThrottle::due_after(ms(200), ms(10)));
+        assert!(SaveThrottle::due_after(ms(1000), ms(10)));
+
+        // koji's shape — blocks ~45s apart, saves well under a second — is
+        // untouched, which is the regime the measurement said not to change.
+        assert!(SaveThrottle::due_after(Duration::from_secs(45), ms(300)));
+
+        // And the pathological one: a cache expensive enough that saving it
+        // every block is the scan.
+        assert!(!SaveThrottle::due_after(ms(11), ms(10)));
+    }
+
+    /// A `last_cost` big enough to overflow `Duration * u32` saturates instead
+    /// of panicking. Unreachable in practice — it takes a save of over seven
+    /// years — but the multiplication is on the hot path of every block.
+    #[test]
+    fn an_absurd_save_cost_saturates_rather_than_panicking() {
+        assert!(!SaveThrottle::due_after(Duration::MAX / 2, Duration::MAX));
     }
 }

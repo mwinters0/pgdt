@@ -20,6 +20,8 @@
 //!   matching the full `COPY ... FROM stdin;` grammar is structural.
 
 use std::ops::ControlFlow;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::copy::{CopyHeader, is_terminator, parse_copy_header, scan_dollar_quotes};
 use crate::io::ByteRangeSource;
@@ -341,11 +343,38 @@ pub struct ScanOptions {
     /// a row until it has the whole line, so this is the only thing standing
     /// between a malformed input and unbounded memory growth.
     pub max_line_bytes: usize,
+    /// Cooperative cancellation: set this flag from another task and the
+    /// mapping loop stops at the next chunk boundary, persists what it holds
+    /// and reports that it was interrupted
+    /// (`docs/design/architecture.md`, "`parse` resumes, and saves as it
+    /// goes"). `None` — the default — is a scan nobody can stop.
+    ///
+    /// **Chunk granularity is the point**, not `CopyEnd` granularity: a
+    /// single `COPY` block can be hundreds of gigabytes, and a Ctrl-C that
+    /// waits for the next block boundary cannot be told from a hang.
+    ///
+    /// **Only [`crate::stream::map_forward`] reads it** — the mapping loop
+    /// behind `pgdq parse` and `pgdq query`, which is the one driver with
+    /// somewhere to put a partial result (the cache) and a way to report the
+    /// stop. [`scan`] and the eager producers built on it ignore it, because
+    /// stopping there would be indistinguishable from reaching EOF and would
+    /// silently truncate the index they return.
+    pub cancel: Option<Arc<AtomicBool>>,
 }
 
 impl Default for ScanOptions {
     fn default() -> Self {
-        Self { chunk_size: 1 << 20, max_line_bytes: 64 << 20 }
+        Self { chunk_size: 1 << 20, max_line_bytes: 64 << 20, cancel: None }
+    }
+}
+
+impl ScanOptions {
+    /// Whether a caller has asked this scan to stop. `Relaxed` is the right
+    /// ordering: the flag guards nothing but itself — the reader's response
+    /// is to finish the chunk it already holds and save the index it already
+    /// owns — so nothing is published through it.
+    pub fn cancelled(&self) -> bool {
+        self.cancel.as_ref().is_some_and(|flag| flag.load(Ordering::Relaxed))
     }
 }
 

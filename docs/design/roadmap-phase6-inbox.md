@@ -182,3 +182,33 @@ metadata".
 **Contingent on** `stream::resolve_block` keeping its pre-resolution check —
 if that ever moved into `resolve_columns`, the two answers would collapse into
 one and the question would be settled by default rather than deliberately.
+
+---
+
+## A scan is cancellable, and the library's answer to a cancelled *query* is an error
+
+**Fact.** `ScanOptions::cancel: Option<Arc<AtomicBool>>` (default `None`) stops
+a mapping scan cooperatively — read once per chunk and at every completed
+`COPY` block. `stream::map_file` reports it as `MapRun::interrupted` and the
+cache holds everything up to the last completed block; `stream::table_stream`
+instead yields `Error::ScanCancelled { scanned_through }` on its first poll
+past the mapping pass, because rows from the blocks a stopped mapping pass
+happened to reach are a prefix of the answer with nothing saying so. The CLI
+wires the flag for `pgdq parse` only.
+
+**Why Phase 6 cares.** Both embedding surfaces have their own cancellation
+idiom and neither is this flag: a DataFusion `TableProvider`'s stream is
+cancelled by **dropping** it mid-poll, and a Python binding's caller expects
+`KeyboardInterrupt` to reach the GIL. So Phase 6 has to decide three things it
+cannot inherit — whether `ScanOptions::cancel` is exposed at all or stays a CLI
+mechanism; what a dropped `TableStream` does to the partial map (today: the
+cache holds whatever the last save banked, and nothing is written on drop); and
+whether `ScanCancelled` becomes a DataFusion error or is folded into the
+"stream ended" path. The cheap default — leave the field public and let an
+embedder set it — is also the one that puts an error variant into an engine
+that would rather see a stream end.
+
+**Origin.** Slice 9.5, 2026-08-27. See
+[`roadmap-phase9.5-save-throttle-notes.md`](roadmap-phase9.5-save-throttle-notes.md)
+and [`architecture.md`](architecture.md), "`parse` resumes, and saves as it
+goes".

@@ -34,7 +34,7 @@ through.
 | `batch.rs`, the zero-copy `Utf8View` path | [Arrow assembly and the zero-copy path](#arrow-assembly-and-the-zero-copy-path) |
 | `stream.rs`, `map_forward`/`map_file`, replay, resume, predicates | [Query: mapping and streaming are separate passes](#query-mapping-and-streaming-are-separate-passes) |
 | `cache.rs`, the format version, cache modes | [The cache](#the-cache) |
-| the CLI's flags or output | [CLI surface](#cli-surface) |
+| the CLI's flags or output, the save throttle, the interrupt guard | [CLI surface](#cli-surface) |
 | `scripts/`, a new fixture schema | [Fixtures](#fixtures) |
 | adding or changing a test | [Testing philosophy](#testing-philosophy) |
 
@@ -1509,22 +1509,65 @@ before the listing that describes the file.
 scan. *Rejected:* a `--restart` flag — deleting the file says the same thing
 without one.
 
-The cache is persisted **after every completed block**, which is what makes
-resuming worth building: `map_forward` already saved at a `CopyEnd` watermark
-(a resumable point by construction — the scanner is back in `Outside` there),
-so `parse` is a second caller for an existing loop, not new machinery.
-*Rejected:* teaching `index::build_index` to resume. It is the eager,
-whole-file producer; giving it a frontier makes it a second implementation of
-`map_forward`'s splice-onto-a-prefix logic with a different set of bugs.
+The cache is persisted at `CopyEnd` watermarks as the scan advances, which is
+what makes resuming worth building: a watermark is a resumable point by
+construction — the scanner is back in `Outside` there — so `parse` is a second
+caller for an existing loop, not new machinery. *Rejected:* teaching
+`index::build_index` to resume. It is the eager, whole-file producer; giving it
+a frontier makes it a second implementation of `map_forward`'s
+splice-onto-a-prefix logic with a different set of bugs.
 
-**There is no save throttle**, and the measurement is why: each save
-serializes the whole cache, so koji's 74 of them cost +1.5% wall and under
-18.3 MB written against 784 GB read (`measurements.md`, "koji full scan").
-*Rejected:* saving at most every N seconds or N bytes. It is the obvious knob
-and it was reserved deliberately until there was a number; the number says the
-interval would be chosen to save nothing. Total bytes written are O(blocks²)
-— the cache grows with the block count and is written once per block — so a
-dump with thousands of small `COPY` blocks is where the question reopens.
+**The save throttle is self-tuning, not an interval.** Every save serializes
+the *whole* index and the index grows with the block count, so saving at every
+watermark is O(blocks²): koji's 74 blocks cost +1.5% wall, while 4000 small
+blocks cost 44 s against a file of 2 MB (`measurements.md`, "Per-block cache
+saving"). `SaveThrottle` skips a block's save unless at least `K = 20` times
+the last save's own *measured duration* has elapsed since it, which bounds save
+overhead at roughly `1/K` of scan time in every regime with no constant that
+has to be right in two of them — a cheap cache saves often, an expensive one
+saves rarely, koji is untouched. Measured at 4000 blocks: 4003 saves become
+195, and ~21 s of saving becomes ~1.2 s of a 23.5 s scan. *Rejected:* "every N
+seconds" and "every N bytes"; both choose a number against one dump shape, and
+the cost tracks block count rather than bytes read.
+
+**What the throttle does not fix**: the *rest* of the same quadratic. Every
+`CopyEnd` also clones the whole span list (`map::Builder::snapshot`, then
+`stream::splice` over the prefix), so the map itself is O(blocks²) with the
+cache disabled entirely — 19.7 s for 4000 blocks under `query --dqcache none`.
+That is a separate cost with a separate fix, filed for the scan-performance
+phase (`roadmap-phase7-inbox.md`).
+
+**Every exit saves unconditionally** — EOF, a settled target, and an interrupt.
+The throttle's whole risk is the window between saves, and those three are
+where that window would cost something real: skipping the save at the last
+watermark before an early stop would throw a query's scan away.
+
+**The interrupt guard is a cooperative flag** (`ScanOptions::cancel`, an
+`Option<Arc<AtomicBool>>` defaulting to `None`), read **at both extremes**:
+once per chunk, and at every completed block. *Rejected:* `tokio::select!` in
+the CLI over `ctrl_c` and the scan future — it reads as the obvious form and it
+is the one that silently discards the work, since `map_file` owns the
+`DumpIndex` for the whole scan and cancelling that future drops the map rather
+than saving it. Chunk granularity alone is not enough either, and neither is
+block granularity: koji's largest block is hundreds of gigabytes (a Ctrl-C
+waiting for the next watermark cannot be told from a hang), while a 4000-block
+2 MB dump spends its whole 23 s scan inside two chunks. Together they bound the
+response by the shorter of a chunk and a block. What the guard costs the
+throttle is close to nothing: the splice, the roles, the tablespaces and
+`scanned_through` are updated at every watermark whether or not the save runs,
+so a graceful interrupt loses only the block in flight, and the throttle's
+window belongs to `SIGKILL`, power loss and panics alone.
+
+`map_file` reports an interrupted run as `MapRun::interrupted` rather than
+returning an index that would claim to describe the whole file: the three
+finishing steps above are exactly the ones a partial map may not state. The CLI
+catches `SIGINT` and `SIGTERM`, prints where the scan stopped and that
+re-running resumes, and exits 130/143 so a script can tell an interrupt from a
+failure; a second signal of either kind exits immediately, so a save that
+wedges cannot hold the process. `query` shares the loop and the throttle; a
+*cancelled* query is an `Error::ScanCancelled` rather than a short stream,
+because rows from the blocks a stopped mapping pass happened to reach are a
+prefix of the answer with nothing saying so.
 
 ### Coverage is stated once, at the top
 

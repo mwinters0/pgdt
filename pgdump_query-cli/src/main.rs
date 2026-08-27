@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use anyhow::{Context, Result};
 use arrow::array::RecordBatch;
@@ -48,9 +50,10 @@ enum Command {
     /// Scan a dump file and build the structure cache — the only command
     /// that reads the dump for its structure (`pgdq info` reports from the
     /// cache this leaves). Resumes from a matching cache rather than
-    /// restarting, and persists after every completed `COPY` block, so an
-    /// interrupted scan is not wasted work. Remove the cache file to force a
-    /// scan from byte 0.
+    /// restarting, and banks its progress at `COPY` block boundaries as it
+    /// goes — including on Ctrl-C, which saves what has been scanned and
+    /// exits 130 — so an interrupted scan is not wasted work. Remove the
+    /// cache file to force a scan from byte 0.
     Parse {
         /// The dump file to scan.
         #[arg(long)]
@@ -196,6 +199,47 @@ fn resume_notice(resumed_from: u64, size: u64) -> Option<String> {
     }
 }
 
+/// Catch `SIGINT` and `SIGTERM` for the duration of a scan, so an interrupted
+/// `pgdq parse` saves what it has instead of throwing it away
+/// (`docs/design/architecture.md`, "`parse` resumes, and saves as it goes").
+///
+/// The guard is **cooperative**: the signal sets a flag the mapping loop reads
+/// once per chunk, and the loop persists the index it owns before returning.
+/// *Rejected:* `tokio::select!` in the CLI over `ctrl_c` and the scan future.
+/// It reads as the obvious form and it is the one that silently discards the
+/// work — `map_file` owns the `DumpIndex` for the whole scan, so cancelling
+/// that future drops the map rather than saving it.
+///
+/// A **second** signal, of either kind, exits immediately: a save that wedges
+/// must not be able to hold the process, and a Ctrl-C that appears to do
+/// nothing is worse than no handler at all.
+///
+/// Returns the cell the exit code is read from: `0` until a signal lands,
+/// then that signal's number.
+fn install_interrupt_guard(cancel: Arc<AtomicBool>) -> Result<Arc<AtomicI32>> {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let signalled = Arc::new(AtomicI32::new(0));
+    for kind in [SignalKind::interrupt(), SignalKind::terminate()] {
+        let number = kind.as_raw_value();
+        let mut stream =
+            signal(kind).with_context(|| format!("installing handler for {number}"))?;
+        let (cancel, signalled) = (Arc::clone(&cancel), Arc::clone(&signalled));
+        tokio::spawn(async move {
+            while stream.recv().await.is_some() {
+                // A non-zero previous value means the other handler, or this
+                // one, has already asked the scan to stop.
+                let already = signalled.swap(number, Ordering::SeqCst);
+                cancel.store(true, Ordering::SeqCst);
+                if already != 0 {
+                    std::process::exit(128 + number);
+                }
+            }
+        });
+    }
+    Ok(signalled)
+}
+
 /// Print one batch's rows tab-separated, `\N` for NULL — mirroring COPY
 /// TEXT's own NULL marker. Each field is rendered back to PostgreSQL text via
 /// [`render_field`], so output is byte-identical whether `--schema-mode` is
@@ -245,19 +289,38 @@ async fn main() -> Result<()> {
                 return Ok(());
             }
             let size = source.size().await?;
-            let (index, resumed_from) =
-                pgdump_query::map_file(&source, &ScanOptions::default(), &mode).await?;
+            let cancel = Arc::new(AtomicBool::new(false));
+            let signalled = install_interrupt_guard(Arc::clone(&cancel))?;
+            let scan_options = ScanOptions { cancel: Some(cancel), ..ScanOptions::default() };
+            let run = pgdump_query::map_file(&source, &scan_options, &mode).await?;
+            if run.interrupted {
+                // No listing: the user asked the scan to stop, not for a
+                // report on what it had reached, and `pgdq info` is the
+                // command that reports. Both lines go to stderr, so a caller
+                // redirecting stdout gets an empty report rather than a
+                // truncated one.
+                eprintln!(
+                    "interrupted at byte {} of {size} — the cache at {} holds the scan so far",
+                    run.index.scanned_through,
+                    path.display()
+                );
+                eprintln!("re-run `pgdq parse --source {}` to continue", file.display());
+                // Exit by signal (130/143), so a script can tell an interrupt
+                // from a failure. `SIGINT` is the fallback for a flag nothing
+                // in this binary sets any other way.
+                let number = signalled.load(Ordering::SeqCst);
+                std::process::exit(128 + if number == 0 { 2 } else { number });
+            }
             // The listing describes the file's state after this run, not this
             // invocation's diff — so the one line that *is* about the
             // invocation goes above it, where a user checking on an
             // interrupted scan looks first.
-            if let Some(notice) = resume_notice(resumed_from, size) {
+            if let Some(notice) = resume_notice(run.resumed_from, size) {
                 println!("{notice}");
                 println!();
             }
-            // `map_file` always reaches EOF, so its censuses cover the whole
-            // file.
-            print_index(&index, false, false, true);
+            // `map_file` reached EOF, so its censuses cover the whole file.
+            print_index(&run.index, false, false, true);
             println!();
             println!("wrote cache to {}", path.display());
         }

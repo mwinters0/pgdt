@@ -29,9 +29,9 @@ It scans the file end to end, writes the cache beside it
 `--dqcache <path>` to put the cache somewhere else — worth doing when the dump
 sits on a read-only mount, since the default location is next to the dump.
 
-**An interrupted parse is not wasted work.** The cache is written after every
-`COPY` block the scan completes, so a run killed at minute 50 of 60 leaves 50
-minutes of progress on disk. Run `parse` again and it picks up where it
+**An interrupted parse is not wasted work.** The scan banks its progress at
+`COPY` block boundaries as it goes, so a run killed at minute 50 of 60 leaves
+most of those 50 minutes on disk. Run `parse` again and it picks up where it
 stopped:
 
 ```
@@ -46,6 +46,25 @@ that is already fully cached costs nothing and says so.
 
 The finished result is identical either way — a resumed scan and a
 straight-through one produce the same index, byte for byte.
+
+**Ctrl-C stops it cleanly.** On `SIGINT` (Ctrl-C) or `SIGTERM` (`docker stop`,
+`kill`), `parse` stops at the next block or chunk boundary, writes everything
+it has scanned to the cache, says where it stopped, and exits 130 or 143 so a
+script can tell an interrupt from a failure:
+
+```
+$ pgdq parse --source koji.dump
+^C
+interrupted at byte 41231843328 of 784019857152 — the cache at koji.dump.dqcache holds the scan so far
+re-run `pgdq parse --source koji.dump` to continue
+```
+
+A clean stop like that loses only the block it was reading. A **second** Ctrl-C
+exits immediately without waiting for the write, and so does `kill -9`, a power
+cut or a crash — those fall back to the last save the scan happened to take,
+which can be a few blocks earlier, because a scan that saved after every block
+would spend more time saving than scanning. Nothing is ever left *corrupt*: the
+cache either loads or it does not, and `pgdq info` states how far it goes.
 
 ### `parse --preamble-only`
 
