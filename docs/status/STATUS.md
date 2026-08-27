@@ -29,7 +29,7 @@ per-phase checklist here any more. How the system works is
 | Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-27 (Phase 9 is **complete**: 9.1-9.5.1 landed — `parse` resumes, throttles its saves, saves on Ctrl-C, and states its metadata at every legal boundary. The koji wrap run is in flight and the out-of-band drive-bys have landed as **M5**/**M6**/**M7**. Phase 4's **4.4.4** has landed; next is **M8**, then `pgdq_tenant`, **4.6** and the Phase 9 wrap — see "Not started". A phase boundary: an unattended loop stops here.)
+Last updated: 2026-08-27 (Phase 9 is **complete**: 9.1-9.5.1 landed — `parse` resumes, throttles its saves, saves on Ctrl-C, and states its metadata at every legal boundary, and the koji wrap run has verified the last of that at real scale. The out-of-band drive-bys have landed as **M5**/**M6**/**M7**, and Phase 4's **4.4.4** with them. Next is **M8**, then `pgdq_tenant`, the **Phase 9 wrap**, **4.6**, and the **Phase 4 wrap** — see "Not started". A phase boundary: an unattended loop stops here.)
 
 ## Phase 4 progress
 
@@ -114,8 +114,15 @@ Specified in
       statement of what an array column becomes, the one case still decided
       optimistically, and the planned representation knob. Notes:
       [`../design/roadmap-phase4.5.1-census-consumption-notes.md`](../design/roadmap-phase4.5.1-census-consumption-notes.md)
-- [ ] **4.6** The array stress section in `generate_perf_data.py` and the
-      `measurements.md` ratio.
+- [ ] **4.6** The array stress section in `generate_perf_data.py`, **gated
+      behind `--arrays`** so the default output stays the brace-free control
+      the census and scan-throughput figures depend on — `v_int_array`,
+      `v_int_array_long`, `v_comp`, and the `CREATE TYPE` the composite needs.
+      Then **three** `measurements.md` figures: array decode throughput as a
+      ratio against `text` (a `decoders.rs` micro **and** `pgdq query
+      --schema-mode typed` against `strings`), the census cost on array-bearing
+      rows (from `parse`), and composite decode throughput. The spec's scope
+      was amended 2026-08-27 from the single decode ratio.
 
 ## Phase 9 progress
 
@@ -219,26 +226,19 @@ was earned after 9.1-9.4 landed and reopened the phase; **9.5.1** was earned by
   drive-bys, which have since landed: a six-major regeneration and two
   error-message changes in one diff would have buried the latter.
 
-- **The koji wrap run is in flight**, launched 2026-08-27 and read by a later
-  session — nothing waits on it. `runs/koji-wrap.sh` drives three checks in one
-  detached pass. **Leg 1 is done and both of its checks passed**: the guard took
-  the signal 20 minutes in, at byte 19,867,623,920 of 784,019,857,152, and left
-  a loadable cache; `info --verbose` on it printed zero `not declared` and zero
-  `metadata not scanned` lines, which is 9.5.1's claim verified at real scale.
-  It exited 130, not 143 — `--stop-signal SIGTERM` is ignored by nerdctl, see
-  `CLAUDE.md` — which tests the same guard down the `SIGINT` arm. **Leg 2, the
-  resume, is still running**, and what remains is the identity check (74 blocks / 19575829920 rows / 784019857152 bytes, per the 9.1
-  run). Leg 1 read at ~16.5 MB/s against 9.1's ~237 MB/s average, with a cargo
-  cycle on the same HDD and the row-dense `archive_rpm_components` region as
-  unseparated causes — so **leg 2's duration is not a throughput measurement**
-  and may be hours. Orchestration log: `runs/koji-wrap.log`; scan output
-  `runs/koji-wrap-scan.log`; the two reports `runs/koji-wrap-interrupted-info.log`
-  and `runs/koji-wrap-final-info.log`. A later session reads
-  `runs/koji-wrap.log` end to end — it states each check's verdict inline. The
-  static binary it runs was built before **M5**/**M6** landed, which is
-  immaterial to all three checks: M5 changes one error message, and koji is a
-  `pg_dump 16` file, a version with no `--statistics` flag to produce the
-  entries M6 recognizes.
+- **The koji wrap run is done**, and all three of its checks passed. The guard
+  took the signal 20 minutes in at byte 19,867,623,920 of 784,019,857,152 and
+  left a loadable cache; `info --verbose` on it printed zero `not declared` and
+  zero `metadata not scanned` lines, which is 9.5.1's claim verified at real
+  scale; and the resumed leg finished with 74 blocks / 19,575,829,920 rows /
+  784,019,857,152 bytes, leaving a cache **byte-identical** to the 9.1 run's.
+  The durable halves are in
+  [`../design/measurements.md`](../design/measurements.md), "koji full scan"
+  (the figures, and the recipe, since `runs/koji-wrap.sh` is gitignored) and in
+  [`../design/architecture.md`](../design/architecture.md), "CLI surface" (a
+  resumed scan reproduces an uninterrupted one exactly). Account:
+  [`history/2026-08-27.md`](history/2026-08-27.md). The `runs/` logs are a
+  byproduct and nothing reads them any more.
 
 - **M8: M6's asymmetry gets a behavioural test and a correct reason** —
   out-of-band, settled 2026-08-27. `looks_like_toc_name_line`'s refusal of
@@ -258,15 +258,52 @@ was earned after 9.1-9.4 landed and reopened the phase; **9.5.1** was earned by
   half already landed in
   [`../design/architecture.md`](../design/architecture.md), "TOC enrichment".
 
-- **Order from here**, settled 2026-08-27 after grilling: **M8** →
-  **`pgdq_tenant`** → **4.6** → the **Phase 9 wrap**. M7 and 4.4.4 have landed.
-  M8 next — it is a test swap and two doc comments, so it waits on nothing. `pgdq_tenant` after those,
-  so its six-major regeneration diff lands alone. 4.6 late, because it is the
-  one item genuinely blocked on the koji wrap log — read `runs/koji-wrap.log`
-  before starting it. Wrap last. The `--disable-triggers` fix is **not** in this
-  order — it is unscheduled, in `roadmap.md`'s "Future". Every Phase 9 slice has
-  landed, so this is a phase boundary and an unattended loop stops here
-  regardless.
+- **Order from here**, re-settled 2026-08-27 after the wrap run landed:
+  **M8** → **`pgdq_tenant`** → the **Phase 9 wrap** → **4.6** → the **Phase 4
+  wrap**. M7 and 4.4.4 have landed.
+
+  M8 first — a test swap and two doc comments, waiting on nothing.
+  `pgdq_tenant` second, both so its six-major regeneration diff lands alone
+  **and** because the Phase 9 wrap must not consolidate before it: 9.5.1's
+  notes record the recurring-boundary test running on a hand-concatenated
+  fixture "not `edge_cases/dumpall.sql` as the spec expected", and
+  `pgdq_tenant` is what makes that sentence obsolete. Consolidating a stopgap
+  that is about to be replaced is the one thing wrap ordering can get wrong.
+
+  The **Phase 9 wrap** then closes that phase outright — it was queued last
+  only because the koji run was in flight, and it has no business waiting
+  behind a Phase 4 slice. **4.6** next, on a quiet machine now that the HDD is
+  free; it was queued late for the same in-flight run and nothing blocks it any
+  more. The **Phase 4 wrap** last, and it is **new to this order** — 4.6 is
+  Phase 4's final slice, so landing it makes the phase wrappable, and **eleven**
+  slice notes docs (4.1 through 4.5.1) are waiting on the consolidation that
+  `process.md` calls not-optional. The Phase 9 wrap consolidates **six**.
+
+  **Each wrap consolidates its slice notes into one
+  `roadmap-phase<N>-<slug>-notes.md` and deletes the per-slice files**
+  (`process.md`, step 5) — it is not a keystone, which is a separate and
+  maintainer-triggered judgement that the code stands on its own, strikes the
+  phase docs, and happens once or twice in a project's life rather than at any
+  phase boundary. So both wraps leave a spec and one notes doc behind.
+
+  **Each wrap is an audit of `architecture.md`, not a transcription of the
+  slice notes** (`process.md`, "A wrap after a keystone is an audit"). Phase 9's
+  six notes are 546 lines and mostly mechanism — and `architecture.md` already
+  has a subject section for every one of those mechanisms. So the work is:
+  check `architecture.md` for what the slices learned and it does not yet say,
+  move that in, and leave the notes doc holding the residue — negative results,
+  and facts for the next phase not already filed as inbox entries. A short
+  notes doc is a correct outcome; an absent one is not.
+
+  **What comes after the Phase 4 wrap is a separate conversation**, claimed by
+  the maintainer on 2026-08-27. `process.md` step 6 re-grills the roadmap
+  before the next phase is specified, and four are unspecified (5, 6, 7, 8);
+  numeric order is not plan order, since 9 was taken ahead of 5. An unattended
+  session does not pick one.
+
+  The `--disable-triggers` fix is **not** in this order — it is unscheduled, in
+  `roadmap.md`'s "Future". Every Phase 9 slice has landed, so this is a phase
+  boundary and an unattended loop stops here regardless.
 
 ## Known gaps
 
@@ -390,19 +427,24 @@ Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
 
-*4.4.4's refusal order is kept as a counterfactual.* The array arm tests
-"element is opaque" before "element is an array" because I22's answer is the
-stronger one — but no input reaches both, and none did before the refactor
-either: the opaque test matches a bare type name where the array test matches
-that name with bounds appended. So `CREATE DOMAIN d AS box[]` with a column of
-`d[]` answers `NestedArrayElement`, a label that is true but silent about the
-delimiter. The order was kept and documented as what must win *if* the two ever
-overlap, rather than deleted as dead. Reversing it would mean either dropping
-the ordering claim from `resolve_array` and `architecture.md`, or testing the
-opaque property recursively through the element's own array levels — which is a
-behaviour change and would need a slice. Nothing else is pending review.
+Nothing is pending review at present.
 
 The notes below say how the earlier entries went.
+
+*4.4.4's refusal order was reviewed on 2026-08-27 and **stands**, with its
+recorded reason replaced.* It was queued as "kept as a counterfactual" — the
+order is dead, since the opaque test matches a bare type name where the array
+test matches that name with bounds appended, so no input reaches both. What
+settles it is that **both refusals answer `Utf8View`**: the order can only ever
+pick a *label*, never a type, so keeping it costs nothing and the hypothetical
+defence it was written with ("what must win if the two ever overlap") is not
+the argument. `resolve_array` and
+[`../design/architecture.md`](../design/architecture.md), "Type resolution",
+now say that instead, and both name the alternative — testing opaqueness
+recursively through the element's own array levels, which would make an array
+over a domain whose base is `box[]` answer `OpaqueElementType`. That is a
+behaviour change buying a better diagnostic on a shape `pg_dump` cannot write
+(I21), so it is not scheduled.
 
 *M7's two entries were reviewed on 2026-08-27.* The **unconditional
 absorption** **stands**, with its reason upgraded from "it would put an

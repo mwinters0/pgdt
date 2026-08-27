@@ -528,6 +528,18 @@ slice's detail has somewhere to go while it is fresh, without waiting on the
 phase; leaving five of them behind means the next phase reads five overlapping
 partial accounts instead of one.
 
+**A wrap after a keystone is an audit, not a transcription.** Once a
+subject-filed architecture doc exists, the fact-routing table above sends
+mechanism facts *there*, not into the phase notes — so consolidating a phase's
+slice notes verbatim rebuilds the second authority the keystone was run to
+remove. The wrap instead checks the architecture doc for anything the slices
+learned that has not reached it, moves that in, and leaves the consolidated
+notes doc holding what subject-filing has no home for: the phase's negative
+results, and facts addressed at the next phase that are not already inbox
+entries. That doc can legitimately be short. It is still written, even then —
+an absent notes doc cannot be told from a skipped wrap, and "slice notes
+surviving past the phase wrap" is a smell someone will look for.
+
 **After a keystone**, the `roadmap-phase<N>-*` files for completed phases are
 gone and `architecture.md` stands in their place; `roadmap.md` carries only
 goals, standing policies and the phases still ahead. The standing-constraint,

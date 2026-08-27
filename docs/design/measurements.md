@@ -101,6 +101,13 @@ Max RSS ~41–47 MB either way. The pairs track each other as the cache warms
 and the differences (−3% to +2.5%) fall on both sides of zero, so the census
 is **free at this measurement's resolution**.
 
+**The control's brace-freeness is a contract, not an accident.** Slice 4.6 adds
+array columns to this same generator behind `--arrays`
+(`roadmap-phase4-composite-decoding.md`, "The performance deliverable is a
+ratio, not a gate"); the flag exists precisely so the default output stays what
+this figure and the scan-throughput table above were taken on. Anything that
+puts a `{` or `[` into the *default* rows invalidates both.
+
 **What this figure does and does not cover.** The control holds no `{` or `[`
 in any data row, so every row is rejected by the census's own pre-filter after
 one pass over its bytes, and no row is ever split into fields. That is
@@ -224,6 +231,80 @@ sudo nerdctl run -d --name pgdq-koji-9.1 -m 512m --memory-swap 512m \
 The comparison's other half is the throughput row above: the same recipe on a
 build predating the per-block save, so reproducing the *delta* means checking
 out one of each.
+
+**Stop-and-resume costs nothing measurable, and reproduces the cache
+byte-for-byte.** The Phase 9 wrap run (`runs/koji-wrap.sh`, 2026-08-27) parsed
+koji cold, signalled it 1200 s in, reported the partial cache, then resumed the
+same command to completion:
+
+| | |
+|---|---|
+| Interrupted at | byte 19,867,623,920 of 784,019,857,152 (2%) |
+| Interrupted cache | 109,916 bytes, loadable, `Scan completion: 2%` |
+| Resumed leg | 764,152,233,232 bytes in 3302 s, **~231 MB/s** |
+| Final cache | 247,380 bytes, **byte-identical** to the 9.1 run's |
+| Blocks / rows / bytes | 74 / 19,575,829,920 / 784,019,857,152 — 9.1's figures |
+
+The resumed leg's ~231 MB/s against the 9.1 straight-through run's ~238 MB/s is
+**not** a like-for-like scan comparison: it omits the file's opening 19.9 GB,
+which is `public.archive_rpm_components` and row-dense rather than byte-dense.
+What it does establish is that resuming carries no detectable cost — the same
+device, the same order of magnitude, with a stop and a cache reload in between.
+
+The interrupted leg's own throughput (~16.5 MB/s) measures nothing about pgdq:
+a `cargo build`/`test`/`clippy` cycle ran on the same HDD throughout. The
+resumed leg, uncontended over the same file, is what says so.
+
+**The byte-identical cache is the run's real product**, and it is a property,
+not a figure: a scan stopped inside a hundred-gigabyte block and resumed
+produces the same structural record — span for span — as an uninterrupted one.
+`architecture.md`, "CLI surface", states it. The fixture-scale version is
+`pgdump_query/tests/map_file.rs`'s
+`a_cancelled_map_file_reports_it_and_banks_what_it_scanned`, which asserts the
+resumed *index* equals an eager scan's; koji is where the same property is
+checked on the serialized cache, at a scale no fixture reaches.
+
+The run was driven by `runs/koji-wrap.sh`, which is **gitignored** — it
+hardcodes one machine's dump path and nothing in the repo consumes its output
+(`CLAUDE.md`, "Long-running processes"). So the recipe is here, since a figure
+whose command lives only in an ignored directory is a figure with no command:
+
+```sh
+cargo build --release --target x86_64-unknown-linux-musl -p pgdump_query-cli
+R="-m 512m --memory-swap 512m \
+  -v $PWD/target/x86_64-unknown-linux-musl/release/pgdq:/pgdq:ro \
+  -v $PWD/runs:/out -v /path/to/koji.dump:/dump.sql:ro postgres:16-alpine"
+
+# leg 1 — cold, interrupted. `exec` is load-bearing: it makes pgdq PID 1 so the
+# signal reaches the guard rather than the wrapping shell.
+sudo nerdctl run -d --name wrap1 $R sh -c \
+  'exec /pgdq parse --source /dump.sql --dqcache /out/koji-wrap.dqcache \
+     >> /out/koji-wrap-scan.log 2>&1'
+sleep 1200 && sudo nerdctl stop -t 120 wrap1
+sudo nerdctl inspect -f '{{.State.ExitCode}}' wrap1     # 130 (SIGINT), see below
+
+# the interrupted cache must come back typed — both counts zero
+sudo nerdctl run --rm $R /pgdq info --dqcache /out/koji-wrap.dqcache --verbose \
+  | grep -c 'not declared\|metadata not scanned'
+
+# leg 2 — resume the identical command, then compare
+sudo nerdctl rm -f wrap1 && sudo nerdctl run -d --name wrap2 $R sh -c \
+  'exec /pgdq parse --source /dump.sql --dqcache /out/koji-wrap.dqcache \
+     >> /out/koji-wrap-scan.log 2>&1'
+cmp runs/koji-wrap.dqcache runs/koji-9.1.dqcache
+```
+
+**The stop exercises the `SIGINT` arm, not `SIGTERM`**, and no flag on
+`nerdctl run` changes that: the `postgres` images set `STOPSIGNAL SIGINT` and
+`nerdctl stop` sends what the image label says, so `--stop-signal SIGTERM` is
+accepted and ignored (`CLAUDE.md`). Exit **130**, not 143. Both arms reach the
+same guard; the `SIGTERM` one is reached directly with `nerdctl kill -s
+SIGTERM`, and at fixture scale by the CLI's own tests.
+
+**Neither the exit codes nor the identity check are asserted by the script** —
+it logs the expected value beside the observed one and a reader compares. That
+is deliberate for a run whose whole point is to be read by a later session, but
+it means "the log says done" is not the same as "the checks passed".
 
 ## The preamble prepass is bounded by the schema, not by the dump
 

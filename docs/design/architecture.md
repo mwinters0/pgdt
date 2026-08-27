@@ -1025,10 +1025,15 @@ the collision `NestedPlan` exists to prevent, one level down.
 Both refusals are decided in `resolve_array`, off the terminal of one
 `domain_terminal` walk, for the same reason: a domain's own DDL records neither
 the delimiter it inherited nor the array-ness of its base, so what decides
-either refusal is visible only at the end of the walk. The opaque test is
-written first — no input reaches both, since it matches a bare type name where
-the array test matches that name with bounds appended, but I22's answer is the
-one that must win if that ever changes.
+either refusal is visible only at the end of the walk. **Their order decides a
+label, not a type** — both answer `Utf8View` — and it is opaque-first because
+`OpaqueElementType` is the stronger statement. As written no input reaches
+both: the opaque test matches a bare type name where the array test matches
+that name with bounds appended, so an array over a domain whose base is `box[]`
+answers `NestedArrayElement`, true but silent about the delimiter. Making it
+answer I22 instead means testing opaqueness recursively through the element's
+own array levels — a behaviour change, for a better diagnostic on a shape
+`pg_dump` cannot write (I21).
 
 **The refusal composes into a composite for free**, and *removes* a subtlety
 rather than documenting one. A composite field of the refused type is a
@@ -1722,6 +1727,16 @@ throttle is close to nothing: the splice, the roles, the tablespaces and
 `scanned_through` are updated at every watermark whether or not the save runs,
 so a graceful interrupt loses only the block in flight, and the throttle's
 window belongs to `SIGKILL`, power loss and panics alone.
+
+**A resumed scan reproduces an uninterrupted one exactly.** Not the same
+totals — the same structural record, span for span. Verified against the 784 GB
+koji sample: signalled 1200 s in, 2% through, reported, then resumed to
+completion, and the resulting `.dqcache` is **byte-identical** to a
+straight-through scan's (`measurements.md`, "koji full scan"). That is the
+strongest statement the guard and the resume path can make together, and it is
+what justifies treating an interrupted `parse` as a saving of work rather than
+a partial result to be distrusted. `pgdump_query/tests/map_file.rs` asserts the
+index half of it at fixture scale.
 
 `map_file` reports an interrupted run as `MapRun::interrupted` rather than
 returning an index that would claim to describe the whole file: the three

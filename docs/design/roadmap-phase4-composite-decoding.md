@@ -568,23 +568,89 @@ phase records array-column decode throughput in
 plain `text` columns** — same file, same session, same cache state, per that
 doc's standing rule.
 
-No number gates the phase. Array decoding is per-element CPU work, so an
-array-heavy column will not stay device-bound; a gate demanding it would be one
-the phase cannot pass, and a looser one would never fire. The `INSERT`-run
-measurement is the precedent for why the ratio is the useful artifact: it is
-what tells a later reader, and Phase 7, what the per-element cost actually is.
+**Three figures, not one** (amended 2026-08-27;
+[`history/2026-08-27.md`](../status/history/2026-08-27.md), "4.6 owes three
+figures"). The array decode ratio was the only one this section originally
+named, and two more have a claim on the same run:
 
-**The consumer is Phase 7, so the figure is filed there too.** This phase
-decides that nested values always copy and defers the zero-copy widening to
-Phase 7 "which should measure before it widens" — a decision that cannot be
-made without knowing what per-element copying costs. So 4.6 files its ratio
-into [`roadmap-phase7-inbox.md`](roadmap-phase7-inbox.md) as well as
-[`measurements.md`](measurements.md); a figure whose only consumer is in
-another phase does not reach that phase through `measurements.md` alone. It is
-also why the slice is worth building now rather than leaving to Phase 7: the
-generator section is cheapest to write while the array code is fresh, and koji
-cannot supply the data at any later date — it holds no non-scalar values at
-all.
+1. **Array decode throughput**, as a ratio against `text` columns in the same
+   table. The figure this section was written for.
+2. **The census cost on array-bearing rows.**
+   [`measurements.md`](measurements.md)'s census section already promises this
+   to 4.6 in writing — it measures the census as free on brace-free data and
+   says the array-bearing case "is not measured here". It is a different code
+   path from (1): the census runs in the *scan*, the decode ratio in the
+   *query*. There is no other owner available, since Phase 7 is the consumer.
+3. **Composite decode throughput**, the same ratio for a `Struct` column.
+   The deferral this phase hands Phase 7 is that **nested** values always copy
+   — which covers a composite's per-field copying exactly as much as an array's
+   per-element copying. 4.6's stress data is the only thing that will carry a
+   composite column, so leaving it out means Phase 7 decides half its question
+   on evidence and half on inference.
+
+The generator run and the container cycle are shared across all three, so (2)
+and (3) cost two more columns and two more rows in a table.
+
+**The stress columns.** `v_int_array` (`integer[]`, 3-5 elements),
+`v_int_array_long` (`integer[]`, ~50 elements) and `v_comp` (a two-field
+composite). Two array lengths rather than one because Phase 7's question is what
+*per-element* copying costs, and one length cannot separate the per-element
+slope from the per-value overhead. Same element type in both, so element count
+is the only variable. All uniform 1-D and non-`NULL`, so they resolve to
+`List`/`Struct` rather than degrading: the refused shapes are `Utf8View` and
+measure nothing `v_text` does not.
+
+*Rejected:* matching koji, whose six array columns are entirely `NULL`. That is
+the realistic shape and it measures the null check rather than the decode,
+which is not what Phase 7 asked for. The observation is recorded beside the
+figure instead, so nobody reads the ratio as "what koji costs".
+
+**It is a section in `generate_perf_data.py`, not a fourth bench script.**
+The one-script-per-benchmark-shape precedent (`generate_insert_run_bench.py`,
+`generate_large_object_bench.py`, `generate_block_count_bench.py`) is about
+whole-*file* shapes; `generate_perf_data.py` is already a multi-column stress
+table, where `v_long_text` and `v_escaped` sit beside `v_text` for exactly this
+reason. And [`measurements.md`](measurements.md)'s standing rule requires the
+ratio be taken on the same file in the same session — which a sibling column
+gives for free and a separate file makes awkward.
+
+**The section is gated behind `--arrays`, and that is not a convenience.**
+`generate_perf_data.py`'s default output backs two existing figures that depend
+on what it does *not* contain: [`measurements.md`](measurements.md)'s census
+figure rests on the control holding **no `{` or `[` in any data row**, so every
+row is rejected by the census pre-filter after one pass — deliberately the koji
+shape — and the scan-throughput table is taken on the same bytes. Adding array
+columns unconditionally would leave both figures without a command that
+reproduces them, and that doc's own rule then says to delete them. With the
+flag, the default output is byte-for-byte what it is today and 4.6's commands
+carry one extra flag.
+
+*Rejected:* a second table (`public.perf_nested`) always emitted in the same
+file. It preserves the census pre-filter's brace-free table but not the
+*file-level* scan figures, which would then cover both tables — it fixes half
+the problem it is aimed at.
+
+`--arrays` also emits `CREATE TYPE public.perf_comp AS (…)` into the preamble,
+which is the first type definition this generator writes; it emits a bare
+`CREATE TABLE` with no TOC comments today.
+
+**Which instrument takes which figure.** Three exist and they answer different
+questions, so two are used and one is not:
+
+- **The decode ratio is a `decoders.rs` micro *and* an end-to-end `pgdq query`
+  run.** The micro — one array literal against one text field, no I/O, no
+  batching — is the direct answer to Phase 7's question, and is where every
+  other per-type decode cost already lives. The end-to-end run is `pgdq query
+  --schema-mode typed` against `--schema-mode strings` on the same file:
+  `strings` resolves everything to `Utf8View`, so it is the control the ratio
+  needs without a second file. The two are complements — the slope, and what
+  the slope costs a user.
+- **The census figure comes from `parse`**, as the existing census measurement
+  does, since the census runs in the scan and not in the query.
+- *Rejected:* a `whole_file.rs` criterion case. It is already wired to this
+  generator, which is its whole appeal, but a whole-file scan dilutes the array
+  cost across the other sixteen columns and then duplicates the end-to-end run
+  more expensively.
 
 ## Where the code goes
 
@@ -670,7 +736,7 @@ rather than scope.
 | 4.4.4 | The array arm folded into one function, **earned** from 4.4.3's unattended call: `element_is_opaque` and `element_is_array` each walk the domain chain separately and their safety is an ordering argument spread across two doc comments, which is what made "where does normalization live" a question worth flagging. Replace both with `resolve_array(element, types) -> TypeOutcome` holding the whole array decision — both refusals, the `resolve_nested` recursion, `list_of` and `NestedPlan::Array` — over **one** domain walk, opaque-tested first so I22's precedence stays visible. `resolve_declared_type`'s array arm becomes a single delegation. **Behaviour-preserving**: every existing test passes unchanged, no test may be edited to accommodate it, and **no new behavioural test is wanted** — the `pgtype.rs` suite and the resolution-outcome coverage test already pin every arm, and a refactor with no delta has nothing new to assert. What it owes instead is the standing rule's documentary check, in the notes doc: which later phases the shape is expected to survive, and what it made simpler. **Out of scope: the quoted type-name gap (I29)**, which the corrected doc comment will now cite. It is a roadmap "Future" item, fixing it changes behaviour, and it is not this slice. Also corrects `array_element`'s "Not quote-aware" paragraph, which documents a limitation the code does not have (I29). Taken under `roadmap.md`, "Refactor when the shape stops fitting" |
 | 4.5 | The shape census, **recording half**: a cache format bump, per-block per-column recording, and the completeness rule. Nothing consumes it yet |
 | 4.5.1 | The shape census, **consuming half**: making the census unconditional (above), retyping the `(DataType, NestedPlan)` pair from a block's census, `ColumnResolution::VaryingArrayShape`, and **the manual's statement of both paths plus the planned representation knob** |
-| 4.6 | The array stress section in `generate_perf_data.py`, and the `measurements.md` ratio |
+| 4.6 | The array stress section in `generate_perf_data.py`, **gated behind `--arrays`** so the default output stays the brace-free control two existing figures depend on — `v_int_array`, `v_int_array_long`, `v_comp`, plus the `CREATE TYPE` the composite needs. Then **three** `measurements.md` figures: array decode throughput as a ratio against `text` (a `decoders.rs` micro **and** `pgdq query --schema-mode typed` against `strings`), the census cost on array-bearing rows (from `parse`), and composite decode throughput. Scope amended 2026-08-27 from the single decode ratio; see "The performance deliverable is a ratio, not a gate" |
 
 **4.2 keeps decode and render together deliberately** — they are inverses, and
 landing decode alone leaves it with no oracle.

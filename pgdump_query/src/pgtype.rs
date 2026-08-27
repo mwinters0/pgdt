@@ -340,15 +340,21 @@ fn range_bound(subtype: Option<&str>, types: &[TypeDef]) -> (DataType, Box<Neste
 /// is why they are decided here rather than by two predicates that each walk
 /// it.
 ///
-/// **Opaque is tested first**, though no input reaches both: the opaque test
-/// matches a bare type name and the array test matches that same name with
-/// array bounds appended, so a terminal of `box[]` — `CREATE DOMAIN d AS
-/// box[]`, a column of `d[]` — is only ever the second. The order is written
-/// down anyway because I22's answer is the one that must win if that ever
-/// stops being true: `OpaqueElementType` says the delimiter is not `,`, which
-/// makes even the element boundaries unrecoverable, while
-/// `NestedArrayElement` says the boundaries are readable and we decline to
-/// represent what is inside them.
+/// **The order between the two refusals decides a label, never a type.** Both
+/// answer `Utf8View`, so nothing a caller reads depends on which fires. It is
+/// written opaque-first because `OpaqueElementType` is the stronger statement
+/// — the delimiter is not `,`, so even the element boundaries are
+/// unrecoverable, where `NestedArrayElement` says the boundaries are readable
+/// and we decline to represent what is inside them.
+///
+/// As written, no input reaches both: the opaque test matches a bare type name
+/// and the array test matches that same name with array bounds appended, so a
+/// terminal of `box[]` — `CREATE DOMAIN d AS box[]`, a column of `d[]` — is
+/// only ever the second, and answers `NestedArrayElement`, true but silent
+/// about the delimiter. Making that case answer `OpaqueElementType` means
+/// testing opaqueness recursively through the element's own array levels; it
+/// is a behaviour change, and it buys a better diagnostic on a shape `pg_dump`
+/// cannot write (I21) rather than a better type.
 ///
 /// `box` is checked by name because it is a built-in with no `CREATE TYPE` of
 /// its own; a user-defined base type sets its delimiter in DDL this build does
