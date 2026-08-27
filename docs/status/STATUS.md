@@ -29,7 +29,7 @@ per-phase checklist here any more. How the system works is
 | Device-bound scan performance campaign, sparse row index | not started — P7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — P8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-27 (the measurement-era backlog's seven entries were reviewed and closed on 2026-08-27; the work they queued — `M12`, `M11`, `M13` under "The out-of-band queue" — has all landed, and `M13`'s re-take moved every warm figure in [`../design/measurements.md`](../design/measurements.md), three of them by a factor. `M16` renamed the doc tree to the `P<k>` phase-identifier scheme and settled what a keystone does to the out-of-band ledger; the sweep it prepares for has **not** run. **P4 and P9 are both complete and wrapped**, so no phase is open: what remains queued is `M14` alone, and choosing the next phase is a re-grilling the maintainer has claimed. A phase boundary: an unattended loop stops here.)
+Last updated: 2026-08-27 (the measurement-era backlog's seven entries were reviewed and closed on 2026-08-27; the work they queued — `M12`, `M11`, `M13` under "The out-of-band queue" — has all landed, and `M13`'s re-take moved every warm figure in [`../design/measurements.md`](../design/measurements.md), three of them by a factor. `M16` renamed the doc tree to the `P<k>` phase-identifier scheme and settled what a keystone does to the out-of-band ledger; the sweep it prepares for has **not** run. **P4 and P9 are both complete and wrapped**, so no phase is open: what remains queued is `M17` alone — the committed measurement harness, which absorbed `M14` — and choosing the next phase is a re-grilling the maintainer has claimed. A phase boundary: an unattended loop stops here.)
 
 ## P4 — complete and wrapped
 
@@ -120,7 +120,10 @@ filed.
     evidence for the libc gap and carries no figure the docs cite.
 
   - [ ] **`M14` — the cold scan-throughput table, re-taken under one
-    apparatus.** Queued 2026-08-27 out of `M13`'s apparatus finding, which
+    apparatus. Absorbed into `M17` on 2026-08-27; the number is spent and is
+    never reused.** It is kept here because its scope statement is the
+    specification of one of `M17`'s stages, not because it will land on its
+    own. Queued 2026-08-27 out of `M13`'s apparatus finding, which
     reaches further than the warm set: every `pgdq` row of that table was
     timed around `nerdctl run` and carries 0.77 s, its floor row is a **host**
     `cat` against container `pgdq` runs, and all of it is a musl binary —
@@ -133,7 +136,7 @@ filed.
     comparisons warm only, leaving four claims about the cold regime (+1.2%
     and +2.6%, in [`../design/measurements.md`](../design/measurements.md),
     [`../design/architecture.md`](../design/architecture.md) and the P7 inbox)
-    sourced to the superseded pre-`M11` apparatus. `M14` already stages the
+    sourced to the superseded pre-`M11` apparatus. `M17`'s sweep stages the
     3.00 GiB `COPY` control cold in that container, so the census-off binary
     costs it two extra runs per file. Corrected by subtraction
     the conclusion strengthens rather than moves — the `COPY` path runs 1.03×
@@ -170,34 +173,60 @@ filed.
     [`history/2026-08-27.md`](history/2026-08-27.md), "Phases are identified by
     `P<k>`".
 
-  - [ ] **`M17` — the measurement sweep, scope under discussion.** Allocated
-    2026-08-27 out of the finding that **no warm `INSERT` figure has ever been
-    taken**, so the standing "~5× the per-byte CPU" divides a cold rate by a
-    warm CPU and is a floor under a real ratio nearer 16–26× — see "An
-    `INSERT` run is folded into one `Data` span" under "Known gaps". Its seed
-    scope is that one measurement: a warm `INSERT` `parse` on tmpfs, one
-    stage, ~4.5 minutes of generation.
+  - [ ] **`M17` — the measurement harness, and the sweep that fills the doc.**
+    Scope settled 2026-08-27. Not started.
 
-    **The maintainer has asked for it to be comprehensive instead** — one
-    sweep gathering every figure under the current regimes, so that partial
-    re-takes stop recurring. That reopens whether it is out-of-band at all:
-    `roadmap.md`'s admission rule takes an item out-of-band only if it changes
-    no recorded decision and fits one session, and a durable sweep harness
-    would supersede
+    **Why it exists.** `M10`, `M13` and `M14` each re-derived the same
+    apparatus from scratch because every re-take so far has been a one-off
+    `runs/` script that dies with the session. The recurrence is the target,
+    not any one figure: `M17` commits the sweep to `scripts/` so the next
+    apparatus change re-runs it instead of rewriting it, and amends
     [`../design/measurements.md`](../design/measurements.md)'s "each section's
-    recipe below is the durable record". **Not started; the scope is the open
-    question, not the work.**
+    recipe below is the durable record" to point at it. That amendment lands
+    *with* the harness, not before.
+
+    **Twelve figures, in three states.** Six are already on the current
+    footing (both census warms, the nested end-to-end table, the cross-file
+    floor, the per-block quadratic, the census attribution) and the harness
+    only has to reproduce them. Four are not: the cold scan-throughput table,
+    both census **cold** rows, and the preamble prepass — which runs
+    `/usr/bin/time` around a **host** `pgdq` with no container at all,
+    violating the timer and cgroup rules, and which nobody had counted until
+    2026-08-27. Two have never been taken at all: the **warm `INSERT` CPU**
+    (the reason `M17` was allocated) and the warm large-object CPU.
+
+    **`M14` is absorbed into it**, settled 2026-08-27 — two overlapping cold
+    sweeps is the thing to avoid, and `M14`'s cold table plus the two cold
+    census rows are one stage of this. `M14`'s number is **spent, not
+    reused**.
+
+    **koji stays out of the run.** It is 784 GB on the HDD, ~54 minutes, a
+    different medium and a regression check rather than a throughput figure,
+    and it is device-bound at ~33% of one core so the allocator is unlikely to
+    move it. Its glibc re-take rides the next koji run. What `M17` does take
+    is the **invocation**: the harness owns koji's recipe so the next session
+    to run one conforms without re-deriving it.
+
+    **The inputs do not fit, so the sweep is staged.** Control, seed-43
+    control, `--composite`, `--arrays`, `INSERT` and large-object is 6 ×
+    3.00 GiB = 18 GiB against `/dev/shm`'s 16 G, and the cold stages need the
+    SSD rather than tmpfs anyway. `M13`'s sweep already had to delete two
+    inputs mid-run for the same reason.
+
+    **The fold-in lands per section, across several commits.** A twelve-figure
+    diff is exactly what "never mix high- and low-confidence work in one review
+    cycle" forbids, and `M13`'s four-figure fold-in already produced two
+    withdrawn readings and three flagged calls.
 
 - **Order from here**, re-settled 2026-08-27 with `M12`, `M11` and `M13`
-  landed: `M14` and `M17`, whose scopes now overlap enough that they may be
-  one sweep — that is the open question under `M17` above. Nothing else is
-  scheduled (`M15` and `M16` each landed the day they were queued; the
-  keystone sweep `M16` prepares for is the maintainer's call, not a scheduled
-  item). `M14` runs **before** the
-  phase-choice conversation, settled 2026-08-27: its method is written and its
-  generators are hot, and leaving one table under a superseded apparatus is
-  the "figures disagreeing about regime" failure the standing rules were
-  written from. No phase is open — 4 and 9 are both wrapped, and everything
+  landed: **`M17` alone**, which absorbed `M14`. Nothing else is scheduled
+  (`M15` and `M16` each landed the day they were queued; the keystone sweep
+  `M16` prepares for is the maintainer's call, not a scheduled item). `M17`
+  runs **before** the phase-choice conversation, settled 2026-08-27: leaving
+  six of twelve figures under a superseded apparatus, or none at all, is the
+  "figures disagreeing about regime" failure the standing rules were written
+  from — and a phase that opens on those figures inherits the disagreement.
+  No phase is open — 4 and 9 are both wrapped, and everything
   queued ahead of them has landed (M5–M12, the koji wrap run whose durable
   halves are in [`../design/measurements.md`](../design/measurements.md),
   "koji full scan", and
@@ -219,10 +248,10 @@ filed.
   as provisional pending real user trials; the resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 
-- **`M14` and `M17`, the queued out-of-band items** — the cold
-  scan-throughput table under one apparatus, and the warm `INSERT` CPU that
-  has never been taken. `M17`'s scope is under discussion and may absorb
-  `M14`; see "The out-of-band queue" above. Nothing else is scheduled.
+- **`M17`, the only queued out-of-band item** — the committed measurement
+  harness and the sweep that fills the doc, which absorbed `M14`. Six of its
+  twelve figures need re-taking or taking for the first time; see "The
+  out-of-band queue" above. Nothing else is scheduled.
 
 ## Known gaps
 
@@ -385,11 +414,11 @@ reviewed on 2026-08-27 and **two were reversed**.*
   across apparatuses rather than confidence intervals from one. That is now
   its own entry in
   [`../design/roadmap-P7-scan-performance-inbox.md`](../design/roadmap-P7-scan-performance-inbox.md).
-- *The census sections' **cold** rows go into `M14`.* Dropping them left four
+- *The census sections' **cold** rows go into the sweep (`M14` at the time, now `M17`).* Dropping them left four
   claims about the cold regime (+1.2%, +2.6%) with no displayed measurement,
   which is worse than either keeping or deleting them outright. All four are
-  now labelled as the pre-`M11` scalar-loop reading, and `M14` — which already
-  stages the 3.00 GiB control cold in the same container — takes the
+  now labelled as the pre-`M11` scalar-loop reading, and the sweep — which
+  already stages the 3.00 GiB control cold in the same container — takes the
   census-off binary through two more runs per file and brings the rows back.
 - *One sweep with no second session **stands**.* The re-take is a single
   session, but the second *apparatus* is the cross-check that matters and it

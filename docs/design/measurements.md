@@ -185,7 +185,7 @@ same bytes served from tmpfs, ~5.7 GB/s, of which 0.33 s is the kernel's read
 the two census figures below are differences against, and the reason they are
 stated warm: at 481 MB/s the device hides everything the CPU does.
 
-**This whole table is superseded by `M14`** (`docs/status/STATUS.md`, "The
+**This whole table is superseded by `M17`** (`docs/status/STATUS.md`, "The
 out-of-band queue"), and by more than a rounding: every `pgdq` row was timed
 by `/usr/bin/time` around `nerdctl run` and so carries the 0.77 s the seventh
 standing rule now excludes, while the floor row is a **host** `cat` with no
@@ -194,7 +194,7 @@ fixes. Corrected by that constant the rows read 5.91 / 5.84 / 14.36 s, and
 "1.2× the floor's time" becomes **1.03×** for `COPY` and 1.02× for large
 objects, with the `INSERT` row at 2.5×. The device-bound conclusion is
 unchanged and in fact sharper — the `COPY` path spends 3% more wall-clock than
-reading the bytes and doing nothing, not a fifth more — but `M14` re-takes the
+reading the bytes and doing nothing, not a fifth more — but `M17` re-takes the
 rows and the floor under one apparatus rather than leaving the doc quoting
 arithmetic.
 
@@ -295,14 +295,14 @@ pass. What the figure does *not* license is calling it exactly zero: the two
 spreads do not overlap, and the earlier reading that said zero came from
 taking the pair while the page cache was still filling.
 
-**The cold row is `M14`'s.** The only cold reading of this comparison is
+**The cold row is `M17`'s.** The only cold reading of this comparison is
 **+1.2%**, taken off this SSD against a 5.73 s device floor — and it is the
 *pre-`M11` scalar* pre-filter, on the superseded apparatus, so it is a bound
 rather than this table's other half. A pre-filter 23× cheaper is hidden a
 fortiori, but the claim and its measurement should sit in one apparatus:
-`M14` already stages this control cold on the SSD with `drop_caches` before
-every run and a `dd` floor in the same container, so it takes the census-off
-binary through two more cold runs and this row comes back.
+`M17`'s sweep already stages this control cold on the SSD with `drop_caches`
+before every run and a `dd` floor in the same container, so it takes the
+census-off binary through two more cold runs and this row comes back.
 
 **The control's brace-freeness is a contract, not an accident.** The same
 generator writes array columns behind `--arrays` and a composite behind
@@ -379,7 +379,7 @@ census-on is 5.3× it.
 rows** — 1.80 µs per 19-column row — which is **+270%** on a scan reading from
 memory, i.e. the census does nearly three times the work the rest of the scan
 does on this shape. The cold reading is **+2.6%** off this SSD against a
-5.73 s floor — pre-`M11`, on the superseded apparatus, and re-taken by `M14`
+5.73 s floor — pre-`M11`, on the superseded apparatus, and re-taken by `M17`
 with the section above; the field-splitting half that dominates here is
 unchanged since, so it is the right order. Both numbers are the same CPU;
 which one a user sees is decided by whether the bytes are already resident.
@@ -655,7 +655,10 @@ motivated line-anchored detection.
 `CLAUDE.md`'s static-binary container recipe. The scan is device-bound at
 ~33% of one core, so the allocator is unlikely to move them — but the next
 koji run takes them on the glibc build, and until one does they are not
-comparable to the warm figures above.
+comparable to the warm figures above. koji is deliberately **not** part of
+`M17`'s sweep: a different medium, ~54 minutes, and a regression check rather
+than a throughput figure. `M17` owns the *invocation* so the next run conforms
+without re-deriving the recipe.
 
 **Throughput, re-measured clean.** A 2026-08-25 re-run on an uncontended disk
 (container `pgdq-koji`, `runs/koji-throughput-scan.log`) reproduced the same
@@ -817,6 +820,14 @@ cd scripts && uv run generate_block_count_bench.py --blocks 4000 --out /tmp/r400
 rm -f /tmp/r4000.sql.dqcache
 /usr/bin/time -f '%e s' pgdq parse --preamble-only --source /tmp/r4000.sql
 ```
+
+**This figure is taken on the host, with no container**, so it conforms to
+neither the timer rule nor the cgroup one — the 40 ms is `/usr/bin/time`
+around a bare `pgdq`. It survives as an order-of-magnitude claim rather than a
+figure: what it has to establish is that an uncancellable region is
+milliseconds against a scan of seconds to an hour, and two orders of magnitude
+of headroom is not something the apparatus can take away. `M17` re-takes it
+under the standard one.
 
 So the region grows with the *schema* — table count and DDL size — and not with
 the data, which is what makes an immediate Ctrl-C during it a non-issue on a

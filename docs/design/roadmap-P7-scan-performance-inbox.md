@@ -215,7 +215,7 @@ rejected by the pre-filter — the census costs **0.037 s per 3.00 GiB**, 45 ns
 per 16-column row: **+7%** of a warm scan. On a file where **every** row
 carries an array it costs **1.26 s per 3.00 GiB**, 1.80 µs per 19-column row:
 **+270%** warm. Cold from this SSD a 5.73 s device floor hid both at +1.2%
-and +2.6%, on the pre-`M11` pre-filter; `M14` re-takes that regime.
+and +2.6%, on the pre-`M11` pre-filter; `M17` re-takes that regime.
 
 **So the census's cost is the field split, not the pre-filter**: 97.5% of it
 falls on the rows the pre-filter passes. That inverts the reading this entry
@@ -365,6 +365,18 @@ in one interleaved sweep**, never differenced against a figure from another
 session and never run a file at a time: the `strings` leg alone moved from
 9.74 s to 4.43 s on an identical input once the apparatus was fixed, which
 dwarfs every result this campaign will chase.
+
+**One bullet of this phase's own spec is now wrong, and the drain must fix
+it.** [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md)'s
+"Measurement discipline" says to benchmark "from tmpfs **or a warm page
+cache**"; the third standing rule forbids the second half outright, for the
+reason above. The spec was left unamended deliberately — it records intent
+from before the evidence existed, and editing it to match a doc written
+afterwards is what the spec/notes split exists to prevent — so the correction
+lives here and lands when this inbox is drained. Two more of that section's
+bullets are superseded rather than wrong: "track bytes/second and CPU%" and
+the `criterion`-plus-whole-file pairing both predate the nine rules that now
+say how a figure is taken at all.
 
 **Origin.** Slice 4.6.1, 2026-08-27, which tried to separate the composite
 column's end-to-end share from the arrays' and found the share below the

@@ -728,7 +728,7 @@ per 16-column row, +7% of a scan reading from memory. A row that passes it
 pays field splitting and `observe` on top: 1.80 µs over 19 columns, +270%
 warm, so the pre-filter is 2.5% of what the census costs on the rows it does
 not reject. Both collapsed to a few percent on a cold read of this SSD, where
-the device floor hides them — a pre-`M11` reading awaiting `M14`
+the device floor hides them — a pre-`M11` reading awaiting `M17`
 ([`measurements.md`](measurements.md), "The census on brace-free rows" and
 "…on array-bearing rows"). It runs unconditionally
 anyway, because the alternative is a query that cannot retype its array
