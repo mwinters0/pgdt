@@ -313,7 +313,22 @@ section** and differ only in DDL — declare the column under test as its real
 type in one file and as `text` in the other, so the same rows are decoded two
 ways with the same row count and the same bytes. That needs a generator knob
 that writes a deliberately weaker declaration; it was named and not built,
-since nothing yet needs the resolution.
+since nothing yet needs the resolution. Reviewed 2026-08-27 and still not
+built, with its real cost now named: the knob makes the generator write a
+declaration `pg_dump` would not, which is the opposite of what `M10` corrected
+it to do, so it needs an explicit exemption from
+`pgdump_query-cli/tests/perf_generator_fidelity.rs` rather than just a flag.
+
+**Two standing rules came out of the same review**, both in
+[`measurements.md`](measurements.md)'s preamble and both binding on this
+campaign. A figure about parsing CPU is taken with its input on **tmpfs**, not
+page-cache warm off a filesystem — device time and background I/O swamp the
+difference being measured, worst on the HDD, and page-cache residency is an
+assumption rather than a guarantee. And a comparison table is re-taken **whole,
+in one interleaved sweep**, never differenced against a figure from another
+session and never run a file at a time: the `strings` leg alone moved ~10%
+between two sessions on an identical binary and input, which is larger than
+most results this campaign will chase.
 
 **Origin.** Slice 4.6.1, 2026-08-27, which tried to separate the composite
 column's end-to-end share from the arrays' and found the share below the

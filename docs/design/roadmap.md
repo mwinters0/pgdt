@@ -210,6 +210,21 @@ the instrument is the part most likely to be under-determined and where two
 instruments can differ by an order of magnitude in cost while both answering to
 the same sentence. Everywhere else the ordinary spec discipline is enough.
 
+**A named instrument is satisfied by whatever it resolves — including a
+bound.** The row commits to running the instrument, not to the answer coming
+back above its floor. A null or negative reading is a result, and the
+instrument's own floor is part of the deliverable: state it beside the figure,
+and name the sharper instrument without building one. A row is unsatisfied
+only if the instrument it named was not built or not run. This is the second
+failure of the same row-shape, and it points the other way from the first:
+4.6.1 named its instrument, ran it, and got the composite column's share back
+*below* what differencing two generated files can resolve. Rescuing that with
+an unbudgeted second instrument is scope growth arriving through a measurement
+row — the hazard an unattended session is most likely to walk into, since
+building something looks more like finishing than reporting a bound does.
+Reasoning: [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md),
+"The review of the six measurement decisions".
+
 **Why it is a rule rather than a note.** 4.6's row asked for two figures. For
 one it named both instruments — "a `decoders.rs` micro **and** `pgdq query
 --schema-mode typed` against `strings`" — and got both. For the other it named
@@ -220,6 +235,30 @@ measurement-heavy — Phase 7 is an entire performance campaign — so the hazar
 is live for four unwritten specs. Reasoning:
 [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md), "4.6.1
 is earned, and the spec row's ambiguity is why".
+
+### A test may assume the tools `mise` pins
+
+**A test that needs a pinned tool asserts its presence; it does not skip
+itself.** `mise.toml` is the project's declaration of what a checkout has, and
+`mise install` is one command — which is the point of using `mise` at all: a
+CI run is one step away from every tool the suite needs. So a missing pinned
+tool is a misconfigured environment, and the honest report is a failure naming
+`mise install`, not a green run with a printed skip.
+
+**Why it is a rule.** A conditional skip is invisible in a passing suite, and
+the test most likely to carry one is a test nothing else covers — which is
+exactly when its silent absence costs the most.
+`pgdump_query-cli/tests/perf_generator_fidelity.rs` is the whole example: one
+test, the suite's only guard against `scripts/generate_perf_data.py` drifting
+away from what `pg_dump` writes, and it skipped itself when `uv` was absent.
+Three infidelities had already survived in that generator for want of any
+guard at all (`M10`).
+
+**The check.** A test that reaches for an external tool either asserts it is
+present, or is gated behind an env var that defaults to *enforcing* — never a
+silent skip. A genuinely machine-local resource, which `mise` cannot pin, is
+the exception and gates the other way: unset by default, absent in every other
+checkout, per `CLAUDE.local.md`'s rule for the koji replica.
 
 ### Four decisions that keep later phases additive
 

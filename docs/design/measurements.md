@@ -24,6 +24,28 @@ Four standing rules for reading anything below:
   two binaries, run the pair in both orders, because within a pair the second
   run is the warmer one. `M10` re-took the census figures for exactly this
   reason ([`../status/history/2026-08-27.md`](../status/history/2026-08-27.md)).
+- **A figure about parsing CPU must not be taken against a filesystem.** Put
+  the input on tmpfs, or otherwise guarantee it is served from memory for every
+  run. Device time and background I/O swamp the difference being measured —
+  badly on the HDD, where minor unrelated activity moves the reading further
+  than any code change under review will — and page-cache residency is an
+  assumption, not a guarantee: a multi-gigabyte input can be partly evicted
+  between runs by anything else the machine does. This does not apply to a
+  figure whose *subject* is the device ("Scan throughput by input shape"
+  below), which is taken cold on purpose. Every warm figure below predates this
+  rule and was taken page-cache warm off the SSD; **`M13` re-takes the whole
+  warm set on tmpfs in one session**, rather than each figure drifting onto the
+  new footing whenever someone next touches it.
+- **Re-take a comparison table whole, in one interleaved sweep.** Never
+  difference one row against a figure from another session, and never run a
+  multi-file comparison a file at a time. Session-to-session level shifts of
+  ~10% happen here on identical binaries and identical inputs, and a
+  file-at-a-time sweep maps a session's own drift onto file identity,
+  manufacturing a between-file difference that is apparatus. Each rep runs
+  every file-and-mode combination in turn; report medians. `M10`'s nested table
+  and `4.6.1`'s disagreed by 3.45× against 3.08× for exactly this reason, while
+  the per-row differences the design actually consumes barely moved
+  ([`../status/history/2026-08-27.md`](../status/history/2026-08-27.md)).
 - **Long runs are detached.** A koji-scale scan is roughly an hour; see
   `CLAUDE.md`, "Long-running processes", for why waiting on one is expensive
   and what to do instead.
@@ -31,6 +53,30 @@ Four standing rules for reading anything below:
   checkout and the sample share a spindle is a machine fact — see
   `CLAUDE.local.md`'s hardware section, which records what the contention costs
   here.
+
+## The warm set, and what `M13` re-takes
+
+Five figures below are page-cache-warm reads off the SSD, taken before the
+tmpfs rule existed: both census figures, the nested end-to-end table, the
+per-block quadratic table, and the `COPY` path's warm CPU (2.92 s) that the
+scan-throughput table cites as its device-bound evidence. `M13` re-takes them
+together, in one session, on tmpfs — together because a figure re-taken alone
+would leave the doc's warm figures disagreeing about regime, which is the
+failure the standing rules were written from.
+
+**Out of scope, deliberately.** `benches/decoders.rs`'s micros read literals
+written in the bench and never touch a filesystem. The scan-throughput table's
+own rows are cold on purpose — the device is their subject. koji is 784 GB on
+the HDD and cannot be staged in memory at all; it is a device figure and a
+regression check, not a parsing-CPU one.
+
+**Generate the inputs on tmpfs from the host, before starting any container.**
+The union of inputs is four 3.00 GiB files — `--seed 42` control, a `--seed 43`
+control, `--composite`, `--arrays --composite` — which is 12 GiB against
+`/dev/shm`'s 16 G and this machine's ~21 GB available. Writing them from inside
+the 512 MB-limited container would charge those tmpfs pages to its cgroup and
+kill it; the pages must already be resident and charged to the host when the
+container opens the file read-only.
 
 ## Scan throughput by input shape
 
@@ -143,6 +189,13 @@ alternative is a query that cannot retype its array columns without a second
 pass — but "free on brace-free data" is not what the measurement says, and the
 earlier reading that it was came from taking the pair while the page cache was
 still filling, where a 0.8 s difference sits inside the run-to-run spread.
+
+**This figure is superseded by `M13`** (queued 2026-08-27; `docs/status/STATUS.md`,
+"Not started"), which re-takes it after two changes it sits downstream of:
+`M12` switches `scripts/generate_perf_data.py`'s `FRACTIONS` to a uniform
+microsecond draw, changing the input's bytes, and `M11` replaces the
+pre-filter's hand-rolled scalar loop with `memchr2`, which is expected to take
+the +39% to roughly +7%.
 
 **The control's brace-freeness is a contract, not an accident.** The same
 generator writes array columns behind `--arrays` and a composite behind
@@ -300,7 +353,7 @@ support.
 cargo bench -p pgdump_query --bench decoders -- nested
 ```
 
-## A typed query over nested columns costs 3.1× a string one
+## A typed query over nested columns costs 15 µs a row more than a string one
 
 The end-to-end half of the figure above: what the per-element cost actually
 costs a user. Two controls, on two axes. Within a file, `--schema-mode
@@ -315,13 +368,21 @@ sweep**: five reps, each rep running both modes on all three files in turn, so
 the slow upward drift across a long session lands on every row equally rather
 than on whichever file went first. Medians of five:
 
-| File | Rows | `strings` | `typed` | Ratio | `typed` − `strings` |
+| File | Rows | `strings` | `typed` | `typed` − `strings` | Ratio |
 |---|---|---|---|---|---|
-| control — 16 scalar columns | 817,024 | 9.74 s | 20.55 s | **2.11×** | 13.23 µs/row |
-| `--composite` — the same 16 plus one composite | 806,322 | 9.76 s | 20.35 s | **2.09×** | 13.13 µs/row |
-| `--arrays --composite` — the same 16 plus three nested | 701,287 | 9.56 s | 29.45 s | **3.08×** | 28.36 µs/row |
+| control — 16 scalar columns | 817,024 | 9.74 s | 20.55 s | **13.23 µs/row** | 2.11× |
+| `--composite` — the same 16 plus one composite | 806,322 | 9.76 s | 20.35 s | **13.13 µs/row** | 2.09× |
+| `--arrays --composite` — the same 16 plus three nested | 701,287 | 9.56 s | 29.45 s | **28.36 µs/row** | 3.08× |
 
 Max RSS ~36–45 MB throughout.
+
+**The per-row difference is the figure; the ratio is derived and does not
+travel.** A ratio carries that session's `strings` leg in its denominator, and
+that leg moves ~10% between sessions on an identical binary and an identical
+file — `M10` read 8.80 s and 8.04 s where this sweep reads 9.74 s and 9.56 s,
+which alone moved the nested ratio 3.45× → 3.08× while the per-row difference
+moved 14.6 → 15.1 µs. Quote a ratio only against the sweep it came from; the
+design consumes the differences.
 
 **What this says.** Typing the 16 scalar columns costs **13.2 µs per row**;
 typing those plus the three nested ones costs **28.4 µs per row**. So three
@@ -335,10 +396,17 @@ Each per-row figure is that file's own `typed` minus its own `strings`, which
 is what makes the subtraction legitimate: whatever the untyped baseline is
 worth on a given file — and the three files hold different row counts at the
 same byte count — it cancels out of that file's own difference, and would not
-cancel out of a cross-file ratio. The baselines happen to sit within 2% of
-each other here (9.56–9.76 s across a 14% spread in row count), which is a
-weaker statement about the untyped path being byte-driven than it looks: an
-earlier session of the same three-way comparison put them 9% apart.
+cancel out of a cross-file ratio.
+
+The three baselines sit within 2% of each other (9.56–9.76 s across a 14%
+spread in row count). An earlier, **non-interleaved** session of the same
+comparison put two of them 9% apart and read the gap as the untyped path being
+partly per-row; that reading is retracted, since the row-count spread is
+unchanged here and the gap is not. Running a multi-file comparison a file at a
+time maps the session's own drift onto file identity, which is why the sweep
+above interleaves and why the standing rules now require it. What the 2% does
+*not* establish is that the untyped path is byte-driven — one sweep agreeing
+is weaker evidence than one sweep disagreeing was.
 
 The micro above covers 6.3 µs of that 15.1 µs (decode plus render for a
 4-element array, a 50-element array and a two-field composite). The remaining

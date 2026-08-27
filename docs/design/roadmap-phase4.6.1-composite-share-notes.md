@@ -2,7 +2,7 @@
 
 What the phase wrap and Phase 7 inherit from the slice that finished 4.6's
 end-to-end figure. The figures are in [`measurements.md`](measurements.md), "A
-typed query over nested columns costs 3.1× a string one"; this doc holds what
+typed query over nested columns"; this doc holds what
 is not in them.
 
 ## What landed
@@ -77,6 +77,18 @@ in `M10`'s session and 15.1 µs/row here, and the sixteen scalar columns 13.5
 against 13.2. A ratio against a `strings` leg that moves 15% between sessions
 is the fragile way to state this figure; the per-row difference is the durable
 one, and the section leads with it.
+
+**`M10`'s between-file baseline gap was apparatus, and its explanation is
+retracted.** That session read 8.80 s (control) against 8.04 s (nested) and
+attributed the 9% to the untyped path being partly per-row, the control
+holding 817,024 rows to the nested file's 701,287. This slice's sweep reads
+9.74 against 9.56 — 2% apart, with the row-count spread unchanged — so the gap
+was not per-row cost. The difference in method is the answer: `M10` ran the
+comparison a file at a time, which maps a session's own drift onto file
+identity. Reviewed 2026-08-27; `measurements.md` now carries "Re-take a
+comparison table whole, in one interleaved sweep" as a standing rule, and the
+sibling rule that a parsing-CPU figure belongs on tmpfs rather than on a
+page-cache-warm filesystem read.
 
 ## What the next slice inherits
 
