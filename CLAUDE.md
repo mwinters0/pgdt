@@ -45,9 +45,10 @@ Running `pgdq` against the multi-hundred-GB koji sample (see
 the HDD. It goes in a memory-limited container, and — because a scan's
 throughput is a performance figure — on the **default glibc build in a glibc
 image**, per `docs/design/measurements.md`'s standing rule that the allocator
-is part of the apparatus. A host-built binary runs in `postgres:16`; the
-static musl build and `postgres:16-alpine` stay available for portability, but
-figures taken with it are not comparable. Let the container write the log:
+is part of the apparatus. A host-built binary runs in `postgres:16`. **There is
+no musl recipe here any more**: only glibc is measured, so a static musl build
+is an untested configuration and an untested portability claim is worse than
+none. Let the container write the log:
 
 ```sh
 cargo build --release -p pgdump_query-cli

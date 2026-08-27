@@ -474,7 +474,7 @@ any parser change can show: on this input, deleting all user-space work
 entirely would take 0.53 s to 0.33 s. It also says the ceiling is *libc-
 dependent*, which is the next entry.
 
-## The allocator is worth choosing deliberately, and glibc is only the measurement baseline
+## The allocator is worth choosing deliberately, and glibc is the assumed target
 
 **Fact.** The same binary source, built against two libcs, differs by ~25% on
 the block-serialization stages of the benchmark set — a 500-block `parse` runs
@@ -493,16 +493,18 @@ The 2.4× on the warm `parse` is almost entirely **kernel** time (0.33 s of
 `sys` against 1.10 s for an identical 0.33 s `dd` floor), so it is not a
 parsing difference at all. Measured 2026-08-27.
 
-**The decision taken was about measurement only**: every performance figure is
-now taken with the default glibc build in a glibc image
-([`measurements.md`](measurements.md)), so figures are comparable to each
-other. Nothing has been decided about what the *shipped* binary should use.
+**musl is settled and is not the open question.** Every performance figure is
+taken with the default glibc build in a glibc image
+([`measurements.md`](measurements.md)), and as of 2026-08-27 musl is gone from
+the container recipes too — only glibc is measured, so a static musl build is
+an untested configuration. What stays open is a *different* axis: whether pgdq
+should select an allocator explicitly rather than inheriting the platform's.
 
 **Why this phase cares.** A campaign aiming at a device-bound local read path
 inherits an allocator it never chose, and a **1.8–2.4× swing between two stock
 ones** is larger than everything on this phase's list put together. Three
 things to settle here: whether pgdq should select an allocator explicitly
-(`jemalloc`, `mimalloc`) rather than inheriting the platform's — which on this
+(`jemalloc`, `mimalloc`) rather than inheriting glibc's — which on this
 evidence is a bigger lever than any parser change, and cheaper; whether any
 figure this phase produces is quoted without naming the allocator that
 produced it; and

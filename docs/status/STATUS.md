@@ -227,6 +227,14 @@ filed.
     is a figure nobody has decided how to report, which is the useful forcing
     function.
 
+    **Python in `scripts/`, run with `uv`.** Every generator there already is,
+    and there is no shell script in `scripts/` at all. The specific cost a
+    shell harness cannot remove: every sweep so far has ended with a throwaway
+    Python parser scraping medians out of a shell log — one for `M13`, another
+    for the census-baseline test — and that scraping step is where the
+    transcription errors live. A Python harness still shells out per run, but
+    times, takes medians and spreads, and emits the tables in-process.
+
     **Parameterized by environment variable, defaults for this machine.** It
     moves from `runs/` to `scripts/`, so machine facts cannot travel with it:
     the procedure goes in `CLAUDE.md` and the paths stay in `CLAUDE.local.md`,
@@ -237,6 +245,33 @@ filed.
     diff is exactly what "never mix high- and low-confidence work in one review
     cycle" forbids, and `M13`'s four-figure fold-in already produced two
     withdrawn readings and three flagged calls.
+
+  - [x] **`M18` — musl leaves the apparatus.** Only glibc is measured, so a
+    static musl build is an untested configuration and an untested portability
+    claim is worse than none. `CLAUDE.md`'s long-running-job section no longer
+    offers a musl recipe, [`../design/measurements.md`](../design/measurements.md)'s
+    eighth standing rule says musl is not measured and is in no recipe, its two
+    koji recipes build the default target and run `postgres:16`, and the P7
+    inbox's allocator entry is reframed — musl settled, `jemalloc`/`mimalloc`
+    still open. The musl *figures* stay where they are, labelled, because they
+    are the evidence for naming glibc and for the ninth rule. Ledger row `M18`;
+    the notes are [`history/2026-08-27.md`](history/2026-08-27.md), "Only
+    glibc, anywhere". **`postgres:16-alpine` in
+    [`../design/postgres-invariants.md`](../design/postgres-invariants.md) and
+    the compatibility matrix is untouched** — that is a PostgreSQL image used
+    to probe server behaviour, nothing to do with pgdq's libc.
+
+  - [x] **`M19` — the scan-throughput recipe runs, and `--seed` stops calling
+    determinism a non-goal.** The documented regeneration command for two of
+    that table's three inputs could not execute: it passed `--size-mb` to
+    generators whose flag is `--size-gb`, and omitted the required positional
+    output path. Fixed, along with the misleading `--seed` help in
+    `scripts/generate_large_object_bench.py` and
+    `scripts/generate_insert_run_bench.py` — both use `random.Random(seed)`, and
+    a seeded run was verified byte-for-byte reproducible, which is the property
+    the standing rule "re-take a comparison table whole" depends on. Ledger row
+    `M19`; the notes are [`history/2026-08-27.md`](history/2026-08-27.md),
+    "A documented recipe that does not run".
 
 - **Order from here**, re-settled 2026-08-27 with `M12`, `M11` and `M13`
   landed: **`M17` alone**, which absorbed `M14`. Nothing else is scheduled

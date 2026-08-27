@@ -599,6 +599,8 @@ ledger is struck too").
 | M13 | 2026-08-27 | The warm measurement set re-taken in one sweep — tmpfs inputs, the timer inside the container, glibc binaries — moving every warm figure and withdrawing two readings | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
 | M15 | 2026-08-27 | `whole_file.rs` regenerates its input when the generator's source changes, not only when the input is missing | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
 | M16 | 2026-08-27 | Phases are identified by `P<k>` and slugs are informal; the out-of-band ledger is struck at a keystone; two phases may run in parallel | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
+| M18 | 2026-08-27 | musl leaves the apparatus: no musl recipe in `CLAUDE.md` or `measurements.md`, since only glibc is measured and an untested portability claim is worse than none | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
+| M19 | 2026-08-27 | The scan-throughput table's regeneration command runs (`--size-gb`, and the output path it omitted), and the two bench generators' `--seed` help stops calling determinism a non-goal | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
 
 **M3's result is not itself out-of-band work.** The measurement fit one
 session and changed no decision, which is what admitted it here; the number it

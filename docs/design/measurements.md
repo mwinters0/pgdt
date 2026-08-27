@@ -66,9 +66,9 @@ Nine standing rules for reading anything below:
   `--schema-mode strings` query over it **4.43 s** against **7.98 s**. So
   the figures here are `cargo build --release` (no `--target`) run under
   `postgres:16` (Debian bookworm), whose **glibc 2.36 malloc is part of the
-  apparatus** and should be named when a figure moves. The static musl build
-  stays what `CLAUDE.md`'s container recipes use for *portability*, and a
-  figure taken with it is not comparable to one here. Debian's `/bin/sh` is
+  apparatus** and should be named when a figure moves. **musl is not measured
+  and is no longer in any recipe** — the comparison above is why glibc is
+  named, not an invitation to take a second leg. Debian's `/bin/sh` is
   dash, with no `time`, so the in-container timer is `bash -c 'time …'`.
   Whether a different allocator should be the shipped default is a P7
   question, filed in
@@ -204,10 +204,15 @@ Regenerate the three inputs:
 
 ```sh
 cd scripts
-uv run generate_perf_data.py         --size-mb 3072 --seed 42   # COPY control
-uv run generate_large_object_bench.py --size-mb 3072 --seed 42
-uv run generate_insert_run_bench.py   --size-mb 3072 --seed 42
+# note the flags differ: generate_perf_data.py takes --size-mb, the other two
+# --size-gb, and all three take the output path as a positional.
+uv run generate_perf_data.py          --size-mb 3072 --seed 42 /path/to/copy_control.sql
+uv run generate_large_object_bench.py --size-gb 3    --seed 42 /path/to/large_object.sql
+uv run generate_insert_run_bench.py   --size-gb 3    --seed 42 /path/to/insert_run.sql
 ```
+
+All three are deterministic under `--seed`, which is what lets this table be
+re-taken whole rather than re-measured against different bytes.
 
 The `COPY` control is 817,024 rows of 16 columns, 3,943 bytes each, and holds
 no `{` or `[` in any data row — see "The census on brace-free rows" below for
@@ -221,21 +226,21 @@ match real `pg_dump`.
 Measure each the same way:
 
 ```sh
-cargo build --release --target x86_64-unknown-linux-musl -p pgdump_query-cli
+cargo build --release -p pgdump_query-cli          # default target: glibc
 for i in 1 2 3; do
   sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
-  echo "run$i"; sudo nerdctl run --rm \
+  echo "### run$i"; sudo nerdctl run --rm \
     -m 512m --memory-swap 512m \
-    -v "$PWD/target/x86_64-unknown-linux-musl/release/pgdq:/pgdq:ro" \
+    -v "$PWD/target/release/pgdq:/pgdq:ro" \
     -v "/path/to/bench.sql:/dump.sql:ro" \
-    postgres:16-alpine \
-    sh -c 'time /pgdq parse --source /dump.sql --dqcache /tmp/x.dqcache >/dev/null'
+    postgres:16 \
+    bash -c 'time /pgdq parse --source /dump.sql --dqcache /tmp/x.dqcache >/dev/null'
 done
 # and the floor, in the same container so the comparison is one apparatus:
 sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
 sudo nerdctl run --rm -m 512m --memory-swap 512m \
-  -v "/path/to/bench.sql:/dump.sql:ro" postgres:16-alpine \
-  sh -c 'time dd if=/dump.sql of=/dev/null bs=4M'
+  -v "/path/to/bench.sql:/dump.sql:ro" postgres:16 \
+  bash -c 'time dd if=/dump.sql of=/dev/null bs=4M'
 ```
 
 `parse` is the only command that reads the dump
@@ -706,13 +711,13 @@ and the byte total. It did **not** re-run the byte-for-byte offset identity
 check, which needs `--verbose`; that check runs on its own.
 
 ```sh
-cargo build --release --target x86_64-unknown-linux-musl -p pgdump_query-cli
+cargo build --release -p pgdump_query-cli
 mkdir -p runs
 sudo nerdctl run -d --name pgdq-koji-9.1 -m 512m --memory-swap 512m \
-  -v "$PWD/target/x86_64-unknown-linux-musl/release/pgdq:/pgdq:ro" \
+  -v "$PWD/target/release/pgdq:/pgdq:ro" \
   -v "$PWD/runs:/out" \
   -v "/path/to/koji.dump:/dump.sql:ro" \
-  postgres:16-alpine \
+  postgres:16 \
   sh -c 'L=/out/koji-9.1-scan.log; S=$(date +%s); \
     echo "started=$(date -Iseconds)" > $L; \
     /pgdq parse --source /dump.sql --dqcache /out/koji-9.1.dqcache >> $L 2>&1; \
@@ -762,10 +767,10 @@ hardcodes one machine's dump path and nothing in the repo consumes its output
 whose command lives only in an ignored directory is a figure with no command:
 
 ```sh
-cargo build --release --target x86_64-unknown-linux-musl -p pgdump_query-cli
+cargo build --release -p pgdump_query-cli
 R="-m 512m --memory-swap 512m \
-  -v $PWD/target/x86_64-unknown-linux-musl/release/pgdq:/pgdq:ro \
-  -v $PWD/runs:/out -v /path/to/koji.dump:/dump.sql:ro postgres:16-alpine"
+  -v $PWD/target/release/pgdq:/pgdq:ro \
+  -v $PWD/runs:/out -v /path/to/koji.dump:/dump.sql:ro postgres:16"
 
 # leg 1 — cold, interrupted. `exec` is load-bearing: it makes pgdq PID 1 so the
 # signal reaches the guard rather than the wrapping shell.

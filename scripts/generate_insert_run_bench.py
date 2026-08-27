@@ -129,7 +129,7 @@ def main() -> None:
         help="Approximate output size in GiB (default: 3.0, matching the large-object bench)",
     )
     parser.add_argument(
-        "--seed", type=int, default=None, help="Optional RNG seed (reproducibility is not a goal)"
+        "--seed", type=int, default=None, help="RNG seed; a seeded run is byte-for-byte reproducible"
     )
     args = parser.parse_args()
 
