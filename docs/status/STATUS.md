@@ -148,19 +148,21 @@ filed.
     by input shape". **Not** a re-take of koji (0.77 s of 3300 s) or of the
     criterion micros (no container).
 
-  - [ ] **`M15` — `whole_file.rs` regenerates its input when the generator
+  - [x] **`M15` — `whole_file.rs` regenerates its input when the generator
     changes.** The bench regenerates `runs/perf-whole-file.sql` only when the
     file is *missing*, so a checkout that already has one benchmarks pre-`M12`
     bytes forever and silently — and the population that has one is exactly the
     population that will compare a new number against an old one. The fix is to
     hash `scripts/generate_perf_data.py`, store the hash beside the input, and
-    regenerate on mismatch. A code change, so it is its own row rather than
-    riding in `M13`'s fold-in. Nothing is wrong on this machine today: the file
-    is absent here.
+    regenerate on mismatch — landed as `runs/perf-whole-file.stamp`, with both
+    branches exercised by hand (an unchanged generator reuses the input; a
+    one-line edit to the generator regenerates it). Ledger row `M15`; the notes
+    are [`history/2026-08-27.md`](history/2026-08-27.md), "`M12` armed a
+    stale-input trap".
 
 - **Order from here**, re-settled 2026-08-27 with `M12` and `M11` landed:
-  `M13`'s log is read and its figures folded in, then `M14`, then `M15`, and
-  then nothing that is scheduled. `M14` runs **before** the phase-choice
+  `M13`'s log is read and its figures folded in, then `M14`, and then nothing
+  that is scheduled (`M15` landed the day it was queued). `M14` runs **before** the phase-choice
   conversation, settled 2026-08-27: its method is written and its generators
   are hot, and leaving one table under a superseded apparatus is the
   "figures disagreeing about regime" failure the standing rules were written
