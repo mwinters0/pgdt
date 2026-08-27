@@ -921,9 +921,10 @@ owner at all). **The flag that produces it is `--statistics`, not
 `--with-statistics`** — the name this entry originally used, before slice
 3.1.1's fixture generation went looking for the literal flag in `pg_dump.c`
 and found no such option; `--with-statistics` does not exist in any version.
-`map::parse_toc_header_line` does not recognize `TOC_PREFIX_STATS` — a
-deliberate deferral (see that function's doc comment), not something this
-fixture closes.
+`map::parse_toc_header_line` recognizes all three prefixes; the boundary
+signal `looks_like_toc_name_line` recognizes `TOC_PREFIX_STATS` but not
+`TOC_PREFIX_DATA`, since only the former heads a statement rather than a
+`COPY` block.
 
 **Verified against:** v18.6 source; fixtures at 13.23 through 18.6 for the
 `Schema:`/`Owner:` placeholder shapes and the `Tablespace:` suffix; v18.6

@@ -338,11 +338,22 @@ async fn main() -> Result<()> {
                 return info_offline(&path, verbose, map, json).await;
             };
             // `info` never scans, so `--dqcache none` — "ignore the cache" —
-            // would leave nothing at all to answer from.
+            // would leave nothing at all to answer from. The message names the
+            // the way out the same way `Error::FieldDecode` names
+            // `--schema-mode strings`: someone reaching for `none` is usually
+            // reaching for it because the dump's own directory is read-only,
+            // and what they want is a cache written somewhere else.
             let mode = CacheMode::resolve(&file, dqcache.as_deref());
             let path = mode
                 .require_enabled("info")
-                .context("`--dqcache none` cannot be combined with `info`, which never scans")?
+                .with_context(|| {
+                    format!(
+                        "`--dqcache none` cannot be combined with `info`, which never scans — run \
+                         `pgdq parse --source {} --dqcache <path>` to build a cache somewhere \
+                         writable, then pass that same `--dqcache <path>` here",
+                        file.display()
+                    )
+                })?
                 .to_path_buf();
             let source = LocalFileSource::open(&file)?;
             let status = pgdump_query::cache::load(&path, &source).await?;

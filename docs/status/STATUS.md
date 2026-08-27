@@ -29,7 +29,7 @@ per-phase checklist here any more. How the system works is
 | Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-27 (Phase 9 is **complete**: 9.1-9.5.1 landed — `parse` resumes, throttles its saves, saves on Ctrl-C, and states its metadata at every legal boundary. Next is the koji wrap run, then the two queued out-of-band drive-bys, then Phase 4's **4.4.4** and **4.6**, then the Phase 9 wrap — see "Not started". A phase boundary: an unattended loop stops here.)
+Last updated: 2026-08-27 (Phase 9 is **complete**: 9.1-9.5.1 landed — `parse` resumes, throttles its saves, saves on Ctrl-C, and states its metadata at every legal boundary. The koji wrap run is in flight and the two out-of-band drive-bys have landed as **M5**/**M6**; next is Phase 4's **4.4.4** and **4.6**, then the Phase 9 wrap — see "Not started". A phase boundary: an unattended loop stops here.)
 
 ## Phase 4 progress
 
@@ -213,23 +213,28 @@ was earned after 9.1-9.4 landed and reopened the phase; **9.5.1** was earned by
 
   No insta snapshots cover `dumpall.sql`, and the three tests that read it
   (`map.rs`, `preamble.rs`, `pgtype.rs`) assert properties rather than content,
-  so the blast radius is the regeneration itself. Kept apart from the two
-  drive-bys below: a six-major regeneration and two error-message changes in
-  one diff would bury the latter.
+  so the blast radius is the regeneration itself. Kept apart from the **M5**/**M6**
+  drive-bys, which have since landed: a six-major regeneration and two
+  error-message changes in one diff would have buried the latter.
 
-- **Two out-of-band items, queued as one round**: the `--dqcache none` error
-  naming `pgdq parse --dqcache <path>` as its remedy, and `TOC_PREFIX_STATS`
-  recognition. They are decision-free and share one review surface. A third —
-  the `DumpMetadata` recompute moving out of `map_file` — was folded into
-  **9.5.1** and has landed with it.
+- **The koji wrap run is in flight**, launched 2026-08-27 and read by a later
+  session — nothing waits on it. `runs/koji-wrap.sh` drives three checks in one
+  detached pass: the interrupt guard at real scale (SIGTERM 20 minutes in,
+  against a cache holding dozens of completed blocks), 9.5.1's claim that the
+  interrupted cache comes back **typed**, and the identity check (74 blocks / 19575829920 rows / 784019857152 bytes, per the 9.1
+  run). Orchestration log: `runs/koji-wrap.log`; scan output
+  `runs/koji-wrap-scan.log`; the two reports `runs/koji-wrap-interrupted-info.log`
+  and `runs/koji-wrap-final-info.log`. A later session reads
+  `runs/koji-wrap.log` end to end — it states each check's verdict inline. The
+  static binary it runs was built before **M5**/**M6** landed, which is
+  immaterial to all three checks: M5 changes one error message, and koji is a
+  `pg_dump 16` file, a version with no `--statistics` flag to produce the
+  entries M6 recognizes.
 
-- **Order from here**, settled 2026-08-27: launch the koji wrap run first —
-  detached, log under `runs/`, read by a later session — since it is an hour of
-  wall time nothing else depends on, and 4.6's measurement wants its log. Its
-  checklist carries one item from 9.5.1: an interrupted koji cache must come
-  back **typed**, not reporting `not declared` for every column.
-  Then the two out-of-band drive-bys above, while Phase 9's context is fresh,
-  then back to Phase 4 for **4.4.4** and **4.6**, then the Phase 9 wrap. Every
+- **Order from here**, settled 2026-08-27: the koji wrap run is launched and the
+  two out-of-band drive-bys (**M5**, **M6**) have landed, so what remains is
+  Phase 4's **4.4.4** and **4.6**, then the Phase 9 wrap. 4.6's measurement wants
+  the wrap run's log, so read `runs/koji-wrap.log` before starting it. Every
   Phase 9 slice has landed, so this is a phase boundary and an unattended loop
   stops here regardless.
 
@@ -311,19 +316,6 @@ was earned after 9.1-9.4 landed and reopened the phase; **9.5.1** was earned by
   cold query on a large dump affordable. Filed into
   [`roadmap-phase6-inbox.md`](../design/roadmap-phase6-inbox.md) so the
   embedded API's promises get decided against it deliberately.
-- `map::parse_toc_header_line` does not recognize `TOC_PREFIX_STATS`
-  (`"Statistics for "`, a v18+ `--statistics` component — not
-  `--with-statistics`, which does not exist in any version). **Queued as
-  out-of-band work in the 9.5 round.** The entry tiles as an ordinary
-  `Unparsed` span with `toc: None`, so the map stays byte-exact, but each of
-  the fixture's 14 statistics entries costs two unattributed spans: TOC
-  coverage reads 126/175 (72%) against 126/147 (86%) for the same schema
-  without them, so the diagnostic under-reports how much of the file the map
-  understood. Only a dump taken with `--statistics` / `--statistics-only` is
-  affected — `dumpStatistics` defaults to false in v18.6 and on master.
-  Fixture evidence: `fixtures/18/objects/stats.sql`. Detail:
-  [`../design/architecture.md`](../design/architecture.md), "TOC enrichment".
-
 - `DumpIndex::roles`/`tablespaces` are complete only once `scanned_through`
   reaches the file's size — the same partiality `metadata`'s
   `preamble_complete` already carries, for the same reason: a query that
@@ -350,7 +342,24 @@ Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
 
-**Nothing is pending**; the notes below say how the last of them went.
+**Pending: one.**
+
+*M6's boundary-signal asymmetry (2026-08-27).* The queued description of the
+`TOC_PREFIX_STATS` drive-by was "one prefix plus the object-census kind". It
+turned out to be two functions with **different** answers:
+`parse_toc_header_line` reads all three of `_printTocEntry()`'s prefixes, while
+the boundary signal `looks_like_toc_name_line` accepts `"Statistics for "` and
+still refuses `"Data for "`. The reason is what follows each — a statistics
+entry heads an ordinary statement its span must run into, a data entry heads a
+`COPY` block that arrives as its own scanner event. Making the two functions
+agree is the mistake available here, and it would split every `COPY` block's
+header off from its data. If reconsidered, the alternative is a single
+predicate plus an explicit "is this prefix followed by a `COPY`" test at the
+call site, which says the same thing with more machinery. Pinned by
+`a_statistics_entry_is_one_attributed_span` and
+`a_statistics_entry_parses_and_opens_a_span` in `map.rs`.
+
+The notes below say how the earlier ones went.
 
 *9.5.1's three entries were reviewed on 2026-08-27.* The **prepass running
 even when the cancel flag is already set** **stands**, now with numbers behind

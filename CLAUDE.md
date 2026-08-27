@@ -64,10 +64,19 @@ hour of scanning without an error, since the write itself succeeds.
 A later session reads `runs/koji-scan.log`; `sudo nerdctl inspect -f
 '{{.State.Status}}' pgdq-koji` says whether it is still going.
 
-**Stopping one is safe.** `sudo nerdctl stop` sends `SIGTERM`, which `parse`
-catches: it saves everything scanned so far to the `--dqcache` path and exits
-143, and re-running the same command resumes from there. So a scan that has to
-be cut short costs the block in flight, not the run.
+**Stopping one is safe.** `sudo nerdctl stop` sends the image's stop signal,
+which `parse` catches either way: it saves everything scanned so far to the
+`--dqcache` path and exits by signal, and re-running the same command resumes
+from there. So a scan that has to be cut short costs the block in flight, not
+the run. Note the `postgres` images set `STOPSIGNAL SIGINT`, so an unqualified
+`nerdctl stop` gives exit **130**, not 143; pass `--stop-signal SIGTERM` to
+`nerdctl run` to exercise the `SIGTERM` path.
+
+Also **`exec` the binary** rather than leaving `sh` as PID 1 when the run is
+one you intend to stop: `sh -c '/pgdq … > log; echo exit=$?'` makes `sh` the
+signal's recipient, and it does not forward — the guard never runs. Write
+`sh -c 'exec /pgdq … >> log 2>&1'` and read the exit code from
+`sudo nerdctl inspect -f '{{.State.ExitCode}}' <name>`.
 
 ## Architecture & design docs
 

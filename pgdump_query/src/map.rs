@@ -232,17 +232,20 @@ pub struct TocHeader {
 /// `trimmed` is expected to already have leading/trailing whitespace removed,
 /// matching every other caller in this module.
 ///
-/// **Handles both `-- Name: ...` and `-- Data for Name: ...` with one code
-/// path** — `TOC_PREFIX_DATA` ("Data for ") is optional, and whether or not
-/// it's present, what follows must still be `Name: `. The third prefix
-/// `_printTocEntry()` can write, `TOC_PREFIX_STATS` ("Statistics for ", a
-/// `pg_dump` 18+ `--statistics` component — real flag name; the register
-/// entry that first named it said `--with-statistics`, which does not exist,
-/// see I18), is left unrecognized: fixture evidence now exists
-/// (`fixtures/18/objects/stats.sql`), but recognizing it is a
-/// deliberate deferral, not a gap — an entry using it just degrades
-/// gracefully (span still tiles, this comment isn't read as a header) the
-/// same way any other unhandled shape does.
+/// **Handles all three of `_printTocEntry()`'s prefixes with one code path**
+/// — `TOC_PREFIX_DATA` ("Data for ") and `TOC_PREFIX_STATS` ("Statistics
+/// for ", a `pg_dump` 18+ `--statistics` component — real flag name; the
+/// register entry that first named it said `--with-statistics`, which does
+/// not exist, see I18) are each optional, and whether or not one is present,
+/// what follows must still be `Name: `.
+///
+/// The two data prefixes differ in what *follows* the comment, not in how it
+/// parses: a `Data for` entry precedes a `COPY` block, which arrives as its
+/// own scanner event, while a `Statistics for` entry precedes an ordinary
+/// `SELECT pg_catalog.pg_restore_relation_stats(...)` statement. So
+/// [`looks_like_toc_name_line`] recognizes the stats prefix — the span must
+/// continue into the statement it heads — and deliberately does not
+/// recognize the data one.
 ///
 /// **Splits on the field markers in the order `_printTocEntry()` writes
 /// them**, not on a fully general grammar — `sanitize_line` only strips
@@ -254,7 +257,10 @@ pub struct TocHeader {
 /// boundary detection (`looks_like_toc_name_line`) doesn't call this at all.
 fn parse_toc_header_line(trimmed: &str) -> Option<TocHeader> {
     let rest = trimmed.strip_prefix("-- ")?;
-    let rest = rest.strip_prefix("Data for ").unwrap_or(rest);
+    let rest = rest
+        .strip_prefix("Data for ")
+        .or_else(|| rest.strip_prefix("Statistics for "))
+        .unwrap_or(rest);
     let rest = rest.strip_prefix("Name: ")?;
     let (name, rest) = rest.split_once("; Type: ")?;
     let (kind, rest) = rest.split_once("; Schema: ")?;
@@ -648,8 +654,15 @@ pub(crate) struct Builder {
 /// docs describe. Deliberately not full TOC parsing: it never reads
 /// `Type:`/`Schema:`/`Owner:`, only confirms this comment block is a real
 /// TOC entry rather than framing prose.
+///
+/// `TOC_PREFIX_STATS` ("Statistics for ") counts, because what follows a
+/// statistics entry is an ordinary statement and the span must run into it.
+/// `TOC_PREFIX_DATA` ("Data for ") does not, because what follows *it* is a
+/// `COPY` block, which the scanner reports as its own event — see
+/// [`parse_toc_header_line`], which parses all three prefixes alike.
 fn looks_like_toc_name_line(line: &str) -> bool {
-    line.starts_with("-- Name: ") && line.contains("; Type: ")
+    let named = line.starts_with("-- Name: ") || line.starts_with("-- Statistics for Name: ");
+    named && line.contains("; Type: ")
 }
 
 /// The root table named by a `-- load via partition root <name>` marker
@@ -1573,6 +1586,54 @@ mod tests {
                 tablespace: Some("fastspace".to_string()),
             })
         );
+    }
+
+    /// `TOC_PREFIX_STATS`, the third prefix `_printTocEntry()` writes
+    /// (`fixtures/18/objects/stats.sql`, a `pg_dump 18 --statistics` dump).
+    /// Parses like the other two, and unlike `Data for ` it *is* a boundary
+    /// signal, because what follows is an ordinary statement rather than a
+    /// `COPY` block.
+    #[test]
+    fn a_statistics_entry_parses_and_opens_a_span() {
+        let line =
+            "-- Statistics for Name: widgets; Type: STATISTICS DATA; Schema: objects; Owner: -";
+        assert_eq!(
+            parse_toc_header_line(line),
+            Some(TocHeader {
+                name: "widgets".to_string(),
+                kind: "STATISTICS DATA".to_string(),
+                schema: Some("objects".to_string()),
+                owner: None,
+                tablespace: None,
+            })
+        );
+        assert!(looks_like_toc_name_line(line));
+        assert!(!looks_like_toc_name_line(
+            "-- Data for Name: t; Type: TABLE DATA; Schema: public; Owner: postgres"
+        ));
+    }
+
+    /// The whole statistics entry — comment block and the
+    /// `pg_restore_relation_stats()` call it heads — is **one** span owning
+    /// its TOC entry. Before the prefix was recognized it was two, neither
+    /// attributed, which is what made the TOC-coverage diagnostic under-report
+    /// a `--statistics` dump by 14 points.
+    #[test]
+    fn a_statistics_entry_is_one_attributed_span() {
+        let spans = spans_of(&[
+            "--",
+            "-- Statistics for Name: widgets; Type: STATISTICS DATA; Schema: objects; Owner: -",
+            "--",
+            "",
+            "SELECT * FROM pg_catalog.pg_restore_relation_stats(",
+            "    'version', '180000'::integer,",
+            "    'relation', 'objects.widgets'::regclass,",
+            "    'relpages', '1'::integer",
+            ");",
+        ]);
+        assert_eq!(spans.len(), 1);
+        assert!(spans[0].toc_owned);
+        assert_eq!(spans[0].toc.as_ref().map(|t| t.kind.as_str()), Some("STATISTICS DATA"));
     }
 
     /// `-- Name: EXTENSION postgres_fdw; Type: COMMENT; Schema: -; Owner: `

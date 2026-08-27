@@ -405,14 +405,26 @@ If something later wants real grouping, the TOC's `Dependencies:` field —
 captured only under `--verbose`, parsed by nothing — is the documented
 mechanism.
 
-`map::parse_toc_header_line` does not recognize `TOC_PREFIX_STATS`
-(`"Statistics for "`, a v18+ `--statistics` component). A deliberate deferral,
-not a gap: the entry degrades to an ordinary `Unparsed` span with `toc: None`,
-and fixture evidence exists (`fixtures/18/objects/stats.sql`). Free related
-fact: a `STATISTICS DATA` header has no owner at all, not even a placeholder —
+**All three of `_printTocEntry()`'s prefixes are recognized**, and the two
+functions that read them draw the line differently on purpose.
+`parse_toc_header_line` treats `TOC_PREFIX_DATA` (`"Data for "`) and
+`TOC_PREFIX_STATS` (`"Statistics for "`, a v18+ `--statistics` component)
+alike — each is an optional prefix before `Name: `. `looks_like_toc_name_line`,
+the boundary signal, accepts the stats prefix but not the data one: a
+statistics entry heads an ordinary `pg_restore_relation_stats()` statement, so
+its span must run into it, while a data entry heads a `COPY` block, which
+arrives as its own scanner event and opens its own span. Free related fact: a
+`STATISTICS DATA` header has no owner at all, not even a placeholder —
 `dumpRelationStats` never sets `te->owner`, and `sanitize_line`'s NULL-hyphen
 substitution turns that into the literal `-`, which `parse_toc_header_line`
 already treats as "no owner".
+
+Recognition matters to the *diagnostic*, not to the tiling, which was
+byte-exact either way: while the prefix was unrecognized each statistics entry
+cost two unattributed spans, so `fixtures/18/objects/stats.sql` reported TOC
+coverage 126/175 (72%) where the same schema without statistics reported
+126/147 (86%). It now reports 140/161 (87%), and `STATISTICS DATA` appears in
+the object census like any other kind.
 
 ### Cross-references (roles and tablespaces)
 

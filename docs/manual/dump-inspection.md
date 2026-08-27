@@ -164,7 +164,13 @@ missing", it is "your file is not the file you parsed."
 
 `--dqcache none`, which for `query` means "ignore the cache", is rejected on
 `info` — with nothing to read and no scan to fall back on, there would be
-nothing left to report.
+nothing left to report. If you reached for it because the directory beside the
+dump is read-only, put the cache somewhere else instead:
+
+```sh
+pgdq parse --source /readonly/dump.sql --dqcache ~/dump.dqcache
+pgdq info  --source /readonly/dump.sql --dqcache ~/dump.dqcache
+```
 
 ## Reading a partial answer
 

@@ -186,13 +186,18 @@ async fn info_distinguishes_foreign_bytes_from_another_builds_cache() {
 
 /// `--dqcache none` means "ignore the cache", which after this phase leaves
 /// `info` with nothing at all to answer from. Rejected up front rather than
-/// silently reporting an empty index.
+/// silently reporting an empty index — and the message names the way out,
+/// since the usual reason to reach for `none` is a read-only directory beside
+/// the dump, which `parse --dqcache <path>` answers.
 #[tokio::test]
-async fn info_rejects_a_disabled_cache() {
+async fn info_rejects_a_disabled_cache_and_names_the_remedy() {
     let (_dir, dump) = sandboxed("16/types/default.sql");
     let out = run(&["info", "--source", dump.to_str().unwrap(), "--dqcache", "none"]);
     assert!(!out.status.success());
-    assert!(stderr_of(&out).contains("never scans"), "{}", stderr_of(&out));
+    let stderr = stderr_of(&out);
+    assert!(stderr.contains("never scans"), "{stderr}");
+    assert!(stderr.contains("pgdq parse --source"), "{stderr}");
+    assert!(stderr.contains("--dqcache <path>"), "{stderr}");
 }
 
 /// `info` reads a cache and stops there — it does not extend, rewrite, or
