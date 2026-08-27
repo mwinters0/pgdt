@@ -145,13 +145,32 @@ measurement to take first is that baseline against a viewing variant on the
 array-heavy stress section — the gap is what says whether the nesting
 complexity is worth it.
 
-**Origin.** Phase 4 grilling, 2026-08-25. Decision and its rationale:
+**The copying baseline exists, and it says the parse is the smaller half.**
+On a 3.00 GiB dump whose every row carries a 4-element array, a 50-element
+array and a two-field composite, `pgdq query --schema-mode typed` costs
+2.91× the same query in `strings` mode, against 1.85× for the same file
+without those three columns — so the three nested columns account for about
+**16 µs of every row**. The `nested.rs` literal parse and its render account
+for only **6.3 µs** of that; the remaining ~10 µs is the Arrow build — 56
+per-element `append_value` calls into child builders, plus list offsets. The
+micro also puts the array cost per *element* (78 ns decoding, 28 ns
+rendering), which is the shape of one allocation each, since
+`ArrayLiteral::elements` is a `Vec<Option<String>>`. **Two targets, then, not
+one**: viewing instead of copying attacks the build, and it is the larger
+share — but a `Vec<Option<String>>` intermediate is paid before the build is
+reached, so a viewing builder that still routes through `decode_array` keeps
+the 6 µs.
+
+**Origin.** Phase 4 grilling, 2026-08-25; the figures from slice 4.6,
+2026-08-27. Decision and its rationale:
 [`roadmap-phase4-composite-decoding.md`](roadmap-phase4-composite-decoding.md),
-"Nested elements copy".
+"Nested elements copy"; figures and commands:
+[`measurements.md`](measurements.md), "Nested decode costs what it copies" and
+"A typed query over nested columns".
 
 ---
 
-## Every mapping pass now does per-row work, and its cost is only half measured
+## Every mapping pass now does per-row work, and on array-bearing rows it is not free
 
 **Fact.** Slice 4.5 put the array-shape census in `map::Builder::on_row`, fed
 from `Event::Row` by `build_index`, `build_map` and `stream::map_forward`;
@@ -161,14 +180,13 @@ inspected. A row containing neither `{` nor `[` is rejected after one pass over
 its bytes and never split into fields; a row containing either is split by
 `copy::split_fields` and every field's first bytes examined.
 
-Measured on the 3.00 GiB `COPY` control, alternating pre-census and census
-binaries in one session: **free at the available resolution** (differences of
-−3% to +2.5%, falling on both sides of zero, while both tracked the warming
-page cache from 5.9 s to 3.2 s). But that control holds **no `{` or `[` in any
-data row**, so it measures the pre-filter and nothing else. The cost on
-array-bearing rows — where every field is inspected — is unmeasured;
-[`measurements.md`](measurements.md), "The array shape census costs nothing on
-brace-free data", says so explicitly.
+Both sides are measured, on 3.00 GiB files in a container, alternating a
+census and a no-census binary in one session. On the brace-free `COPY`
+control — every row rejected by the pre-filter — the census is **free at the
+available resolution** (−3% to +2.5%, falling on both sides of zero). On a
+file where **every** row carries an array it costs **1.77 s per 3.00 GiB**,
+2.5 µs per 19-column row: **+87%** of a page-cache-warm scan, and **+3.6%** of
+a cold read from the SSD, where the 5.74 s device floor hides it.
 
 **Why Phase 7 cares.** The double-read entry above recorded that the mapping
 pass did no per-row work; that is no longer true of any mapping pass, and the phase's
@@ -177,12 +195,18 @@ per-row stage. Two specific consequences: a parallel or reordered scan has to
 carry the census with whatever unit it splits the file into (it accumulates
 per block and is finalized at `CopyEnd`), and any decision to widen the census
 — per-path keying, or the per-row-group statistics `RowGroupStats` reserves —
-lands on the same per-row stage and should be measured against array-bearing
-data, which does not exist as a benchmark input until slice 4.6 generates it.
+lands on the same per-row stage, and the array-bearing figure above is the
+baseline to measure it against. A third consequence the figure adds: **whether
+the census is visible at all is decided by page-cache state**, so a phase
+aiming at a device-bound scan will see +3.6% and a phase that succeeds in
+making the scan CPU-bound will see +87% of the same work.
+`scripts/generate_perf_data.py --arrays` is the input.
 
-**Origin.** Slices 4.5 and 4.5.1, 2026-08-26. See
+**Origin.** Slices 4.5 and 4.5.1, 2026-08-26; the array-bearing figure from
+slice 4.6, 2026-08-27. See
 [`roadmap-phase4.5.1-census-consumption-notes.md`](roadmap-phase4.5.1-census-consumption-notes.md)
-and [`architecture.md`](architecture.md), "The array shape census".
+and [`architecture.md`](architecture.md), "The array shape census";
+[`measurements.md`](measurements.md), "The census on array-bearing rows".
 
 
 ---

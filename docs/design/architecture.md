@@ -700,7 +700,13 @@ because a `json` column does not resolve to a list.
 contains a `{`, and only an `[lb:ub]=` prefix can precede it, so a row holding
 neither byte costs one pass over its bytes and no field splitting at all. On
 brace-free data — the koji shape — the census is free at the resolution
-[`measurements.md`](measurements.md) can measure.
+[`measurements.md`](measurements.md) can measure. On the other side of that
+pre-filter it is not cheap: rows that *all* carry an array cost 2.5 µs each
+over 19 columns, +87% on a page-cache-warm scan and +3.6% on a cold read,
+where the device floor hides it ([`measurements.md`](measurements.md), "The
+census on array-bearing rows"). It runs unconditionally anyway, because the
+alternative is a query that cannot retype its array columns without a second
+pass over the same bytes.
 
 **Every mapping pass censuses, so a mapped block always carries one.**
 `build_index`, `build_map` and `stream::map_forward` all census, under either

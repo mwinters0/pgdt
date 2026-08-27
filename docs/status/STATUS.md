@@ -29,7 +29,7 @@ per-phase checklist here any more. How the system works is
 | Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-27 (Phase 9 is **complete and wrapped** — `parse` resumes, throttles its saves, saves on Ctrl-C, and states its metadata at every legal boundary, verified at real scale on koji; its six slice notes are consolidated and its mechanisms are in `architecture.md`. The out-of-band drive-bys have landed as **M5**-**M9**, and Phase 4's **4.4.4** with them. Next is **4.6**, then the **Phase 4 wrap** — see "Not started". A phase boundary: an unattended loop stops here.)
+Last updated: 2026-08-27 (Phase 9 is **complete and wrapped**, and **4.6** has landed, so **every Phase 4 slice is delivered**. What remains is the **Phase 4 wrap** — see "Not started" — which consolidates twelve slice notes into one and audits `architecture.md`. A phase boundary: an unattended loop stops here.)
 
 ## Phase 4 progress
 
@@ -114,16 +114,15 @@ Specified in
       statement of what an array column becomes, the one case still decided
       optimistically, and the planned representation knob. Notes:
       [`../design/roadmap-phase4.5.1-census-consumption-notes.md`](../design/roadmap-phase4.5.1-census-consumption-notes.md)
-- [ ] **4.6** The array stress section in `generate_perf_data.py`, **gated
-      behind `--arrays`** so the default output stays the brace-free control
-      the census and scan-throughput figures depend on — `v_int_array`,
-      `v_int_array_long`, `v_comp`, and the `CREATE TYPE` the composite needs.
-      Then **three** `measurements.md` figures: array decode throughput as a
-      ratio against `text` (a `decoders.rs` micro **and** `pgdq query
-      --schema-mode typed` against `strings`), the census cost on array-bearing
-      rows (from `parse`), and composite decode throughput. The spec's scope
-      was amended 2026-08-27 from the single decode ratio.
-
+- [x] **4.6** The array stress section in `generate_perf_data.py`, **gated
+      behind `--arrays`** (default output verified byte-identical), the
+      `nested` group in `benches/decoders.rs`, and all three
+      `measurements.md` figures: the census on array-bearing rows (+87% warm,
+      +3.6% cold), the per-element decode micro (78 ns/element; array and
+      composite against a same-bytes copy control), and `pgdq query
+      --schema-mode typed` against `strings` (2.91× with three nested columns,
+      1.85× without). No library code. Notes:
+      [`../design/roadmap-phase4.6-array-stress-notes.md`](../design/roadmap-phase4.6-array-stress-notes.md)
 ## Phase 9 — complete and wrapped
 
 Specified in
@@ -146,27 +145,25 @@ filed.
   as provisional pending real user trials; the resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 
-- **Order from here**, re-settled 2026-08-27 after the Phase 9 wrap landed:
-  **4.6**, then the **Phase 4 wrap**. Everything else that was queued has
-  landed — M5-M9, 4.4.4, the koji wrap run (whose durable halves are in
+- **Order from here**, re-settled 2026-08-27 after 4.6 landed: the **Phase 4
+  wrap**, and nothing else. Everything queued before it has landed — M5-M9,
+  4.4.4, the koji wrap run (whose durable halves are in
   [`../design/measurements.md`](../design/measurements.md), "koji full scan",
   and [`../design/architecture.md`](../design/architecture.md), "CLI surface"),
-  and Phase 9's own wrap.
+  Phase 9's own wrap, and Phase 4's last slice.
 
-  **4.6** is Phase 4's final slice, and the machine is quiet now that the HDD
-  is free. Landing it makes the phase wrappable, and **eleven** slice notes
-  docs (4.1 through 4.5.1) are waiting on the consolidation that `process.md`
-  calls not-optional.
-
-  **The Phase 4 wrap** consolidates those eleven into one
-  `roadmap-phase4-composite-decoding-notes.md` and deletes them
+  **The Phase 4 wrap** consolidates **twelve** slice notes docs (4.1 through
+  4.6) into one `roadmap-phase4-composite-decoding-notes.md` and deletes them
   (`process.md`, step 5). Like Phase 9's, it is an **audit of
   `architecture.md`, not a transcription** (`process.md`, "A wrap after a
   keystone is an audit"): check that doc for what the slices learned and it
   does not yet say, move that in, and leave the notes doc holding the
   residue — negative results, and facts for the next phase not already filed
-  as inbox entries. A short notes doc is a correct outcome; an absent one is
-  not. A wrap is **not** a keystone, which is a separate, maintainer-triggered
+  as inbox entries. 4.6 already filed two of its own findings that way — the
+  array-bearing census cost into `architecture.md`, and two
+  [`roadmap-phase7-inbox.md`](../design/roadmap-phase7-inbox.md) entries
+  restated from "unmeasured" to their figures. A short notes doc is a correct
+  outcome; an absent one is not. A wrap is **not** a keystone, which is a separate, maintainer-triggered
   judgement that happens once or twice in a project's life; both wraps leave a
   spec and one notes doc behind.
 
@@ -177,8 +174,9 @@ filed.
   session does not pick one.
 
   The `--disable-triggers` fix is **not** in this order — it is unscheduled, in
-  `roadmap.md`'s "Future". Phase 9 is wrapped, so this is a phase boundary and
-  an unattended loop stops here regardless.
+  `roadmap.md`'s "Future". Phase 9 is wrapped and Phase 4's slices are all
+  delivered, so this is a phase boundary and an unattended loop stops here
+  regardless.
 
 ## Known gaps
 
@@ -302,7 +300,22 @@ Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
 
-Nothing is pending review at present.
+*The perf generator declares three column types `pg_dump` never writes, so
+they do not type.* `scripts/generate_perf_data.py` writes `time`, `timestamp`
+and `timestamptz`; `pgtype::resolve_declared_type` maps `time without time
+zone` and the two long `timestamp` spellings, which is what `pg_dump` emits,
+so those three columns resolve `Unknown` and stay `Utf8View`. This is a
+*generator* shortcoming, not a library gap — no real dump can reach it — and
+4.6 left it alone: correcting the spellings changes what the typed path
+actually decodes, which resets `benches/whole_file.rs`'s baseline and every
+typed figure taken on this input, the last of them the same day. Left as is,
+`parse` reports "3 of 16 columns unmapped" on the control input and "3 of 19"
+on the `--arrays` one, and the typed/strings ratio in
+[`../design/measurements.md`](../design/measurements.md), "A typed query over
+nested columns", covers 13 scalar columns rather than 16 — which makes 1.85× a
+floor and leaves the nested attribution untouched. Reversing it means fixing
+the three spellings and re-taking the whole-file bench baseline plus that
+figure's control row.
 
 The notes below say how the earlier entries went.
 
