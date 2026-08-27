@@ -152,11 +152,14 @@ complexity is worth it.
 **The copying baseline exists, and it says the parse is the smaller half.**
 On a 3.00 GiB dump whose every row carries a 4-element array, a 50-element
 array and a two-field composite, `pgdq query --schema-mode typed` costs
-3.45× the same query in `strings` mode, against 2.26× for the same file
+3.08× the same query in `strings` mode, against 2.11× for the same file
 without those three columns — so the three nested columns account for about
-**14.6 µs of every row**, slightly more than the sixteen scalar columns
-together. The `nested.rs` literal parse and its render account for only
-**6.3 µs** of that; the remaining ~8.3 µs is the Arrow build — 56
+**15.1 µs of every row**, slightly more than the sixteen scalar columns
+together. **The two arrays carry all of it**: a third file holding the
+composite column and no arrays is indistinguishable from the control, which
+bounds that column under ~0.5 µs/row (4.6.1, and the entry below on what that
+subtraction can resolve). The `nested.rs` literal parse and its render account
+for only **6.3 µs** of the 15.1; the remaining ~8.8 µs is the Arrow build — 56
 per-element `append_value` calls into child builders, plus list offsets. The
 micro also puts the array cost per *element* (78 ns decoding, 28 ns
 rendering), which is the shape of one allocation each, since
@@ -279,3 +282,41 @@ changes with it.
 **Origin.** Slice 9.5, 2026-08-27. Figures, both series and their commands:
 [`measurements.md`](measurements.md), "Per-block cache saving is quadratic in
 block count, and so is the map".
+
+---
+
+## Attributing a cost to one column by differencing two generated files bottoms out at ~0.5 µs/row
+
+**Fact.** `pgdq query` has no column projection, so the only way to say what
+one column costs end to end is to run the same query on two generated files
+that differ by that column and subtract their per-row `typed` − `strings`
+figures. That subtraction has a floor. Two 3.00 GiB files holding the *same*
+sixteen columns and differing only in their RNG seed (`--seed 42` against
+`--seed 43`) disagree by **+0.22 µs/row** (six interleaved reps, per-rep sd
+0.39); a file differing by one composite column reads **−0.10 µs/row** in one
+sweep and **−0.49 µs/row** in a longer one — negative, which a real cost
+cannot be. Anything under roughly ±0.5 µs/row out of this instrument is
+apparatus. Two contributors are known and neither is removable within it: the
+files hold different row counts at the same byte size, so a per-byte component
+does not normalize away per row; and a slow upward drift across a long session
+lands on whichever file is measured later, which is why the runs interleave
+files rather than running them in blocks.
+
+**Why Phase 7 cares.** It is an entire performance campaign, and the questions
+it will ask — what viewing instead of copying saves on `List<Utf8View>`, what
+a sparse row index costs per block, what a parallel scan wins — are mostly of
+the form "what does this one thing cost", against inputs from the same
+generator. A campaign that reads a 0.3 µs/row difference as a result will
+report noise as a win. The remedy, when a figure that sharp is actually
+needed, is an instrument whose two files are **byte-identical in the data
+section** and differ only in DDL — declare the column under test as its real
+type in one file and as `text` in the other, so the same rows are decoded two
+ways with the same row count and the same bytes. That needs a generator knob
+that writes a deliberately weaker declaration; it was named and not built,
+since nothing yet needs the resolution.
+
+**Origin.** Slice 4.6.1, 2026-08-27, which tried to separate the composite
+column's end-to-end share from the arrays' and found the share below the
+floor. Figures, the floor reading and the commands:
+[`measurements.md`](measurements.md), "A typed query over nested columns" and
+its "The cross-file subtraction bottoms out" subsection.

@@ -300,73 +300,117 @@ support.
 cargo bench -p pgdump_query --bench decoders -- nested
 ```
 
-## A typed query over nested columns costs 3.5× a string one
+## A typed query over nested columns costs 3.1× a string one
 
 The end-to-end half of the figure above: what the per-element cost actually
 costs a user. Two controls, on two axes. Within a file, `--schema-mode
 strings` resolves every column to `Utf8View` and takes the zero-copy path, so
 the `typed` run differs from it by decode plus Arrow build plus typed render
-and nothing else. Across files, a second 3.00 GiB dump holding only the
-sixteen scalar columns is what attributes the difference to the three nested
-ones — `pgdq query` has no column projection, so there is no within-file way
-to ask.
+and nothing else. Across files, further 3.00 GiB dumps holding fewer of the
+nested columns are what attribute the difference to a particular one — `pgdq
+query` has no column projection, so there is no within-file way to ask.
 
-Both files page-cache warm, output to `/dev/null`:
+Three inputs, all page-cache warm, output to `/dev/null`. **One interleaved
+sweep**: five reps, each rep running both modes on all three files in turn, so
+the slow upward drift across a long session lands on every row equally rather
+than on whichever file went first. Medians of five:
 
-| File | `strings` | `typed` | Ratio |
-|---|---|---|---|
-| control — 16 columns, no arrays | 8.87 / 8.81 / 8.71 s | 19.67 / 20.14 / 19.75 s | **2.26×** |
-| `--arrays --composite` — the same 16 plus three nested | 8.04 / 7.97 / 8.10 s | 27.72 / 27.64 / 27.94 s | **3.45×** |
+| File | Rows | `strings` | `typed` | Ratio | `typed` − `strings` |
+|---|---|---|---|---|---|
+| control — 16 scalar columns | 817,024 | 9.74 s | 20.55 s | **2.11×** | 13.23 µs/row |
+| `--composite` — the same 16 plus one composite | 806,322 | 9.76 s | 20.35 s | **2.09×** | 13.13 µs/row |
+| `--arrays --composite` — the same 16 plus three nested | 701,287 | 9.56 s | 29.45 s | **3.08×** | 28.36 µs/row |
 
-Max RSS ~42–47 MB throughout.
+Max RSS ~36–45 MB throughout.
 
-**What this says.** Typing the 16 scalar columns costs **13.5 µs per row**;
-typing those plus the three nested ones costs **28.1 µs per row**. So three
-nested columns — 19% more columns — cost **14.6 µs of every row**, slightly
-more than all sixteen scalar columns together.
+**What this says.** Typing the 16 scalar columns costs **13.2 µs per row**;
+typing those plus the three nested ones costs **28.4 µs per row**. So three
+nested columns — 19% more columns — cost **15.1 µs of every row**, slightly
+more than all sixteen scalar columns together. **The two array columns carry
+essentially all of it**: adding the composite column alone moves the per-row
+figure by −0.10 µs, which is a *negative* cost and therefore the instrument's
+floor rather than a measurement (below).
 
 Each per-row figure is that file's own `typed` minus its own `strings`, which
-is what makes the subtraction legitimate: the two baselines are **not** equal
-(8.80 s against 8.04 s, 9% apart), because the untyped path is partly per-row
-and the control holds 817,024 rows to the nested file's 701,287 at the same
-byte count. A baseline difference cancels out of each file's own difference
-and would not cancel out of a cross-file ratio.
+is what makes the subtraction legitimate: whatever the untyped baseline is
+worth on a given file — and the three files hold different row counts at the
+same byte count — it cancels out of that file's own difference, and would not
+cancel out of a cross-file ratio. The baselines happen to sit within 2% of
+each other here (9.56–9.76 s across a 14% spread in row count), which is a
+weaker statement about the untyped path being byte-driven than it looks: an
+earlier session of the same three-way comparison put them 9% apart.
 
-The micro above covers 6.3 µs of that 14.6 µs (decode plus render for a
+The micro above covers 6.3 µs of that 15.1 µs (decode plus render for a
 4-element array, a 50-element array and a two-field composite). The remaining
-~8.3 µs is the Arrow build the micro does not reach: 56 per-element
+~8.8 µs is the Arrow build the micro does not reach: 56 per-element
 `append_value` calls into the child builders, plus the list offsets. **The
 literal parse is the smaller half of nested decoding**, which is the fact
 Phase 7 needs before deciding what to do about nested values always copying.
 
-*Not covered:* the composite's end-to-end share separately from the arrays'.
-Isolating it needs a third generated file — `--composite` without `--arrays`,
-which is why those flags are separate; the micro table above is what separates
-the two by type in the meantime.
+### The cross-file subtraction bottoms out at about half a microsecond a row
 
-**`typed` and `strings` agree byte for byte on this input**, as they do on
-what `pg_dump` writes (`architecture.md`, "CLI surface") — so `cmp` on the two
-outputs is a valid smoke test here, and
-`pgdump_query-cli/tests/perf_generator_fidelity.rs` asserts it on a small
-generated file so the generator cannot drift back out of that agreement.
+**One composite column is below what this instrument can resolve**, and the
+sweep above is not enough runs to see that. Three separate readings of the
+same quantity:
+
+| Reading | Reps | Composite column's per-row share |
+|---|---|---|
+| the sweep above | 5 (three files interleaved) | −0.10 µs (paired mean 0.00, sd 0.93) |
+| control against `--composite`, interleaved | 8 | −0.49 µs (paired mean, SE 0.22) |
+| **control against a second control** (`--seed 43`, same 16 columns) | 6 | **+0.22 µs** (paired mean, SE 0.16) |
+
+The third row is the control on the *instrument*: two files that differ only
+in their random seed should differ by zero, and they differ by +0.22 µs per
+row with a per-rep spread of ±0.39. So a cross-file per-row difference under
+roughly **±0.5 µs/row** is apparatus, not signal — and the composite column's
+share, which the micro puts at 0.43 µs of decode plus render before any Arrow
+build, sits inside that. The two negative readings are the proof it is not
+being measured: adding a column that must be decoded and built cannot make a
+row cheaper.
+
+What the figure supports is therefore a **bound**: the composite column costs
+**under ~0.5 µs of every row end to end, under 4% of the 15.1 µs the three
+nested columns cost together**. That is consistent with the micro, where it is
+0.43 µs of the nested group's 6.3 µs, and it is the answer to "which of the
+three columns is the cost" — the arrays, by an order of magnitude.
+
+*Not taken:* the instrument that would resolve it. Two files whose data
+sections are **byte-identical**, one declaring `v_comp` as
+`public.perf_comp` and the other as `text`, differ only in whether that one
+column is decoded — same rows, same bytes, so the per-row normalization that
+carries the floor above disappears. It needs a generator knob that writes a
+deliberately weaker declaration, which is a new instrument rather than this
+slice's, and nothing yet needs a figure that sharp.
+
+**`typed` and `strings` agree byte for byte on all three inputs**, as they do
+on what `pg_dump` writes (`architecture.md`, "CLI surface") — so `cmp` on the
+two outputs is a valid smoke test here, and
+`pgdump_query-cli/tests/perf_generator_fidelity.rs` asserts it on small
+generated files, the control and both nested flag combinations that back a
+figure, so the generator cannot drift back out of that agreement.
 
 ```sh
-cd scripts
-uv run generate_perf_data.py --arrays --composite --size-mb 3072 --seed 42 \
-  /path/to/arrays.sql
-uv run generate_perf_data.py --size-mb 3072 --seed 42 /path/to/control.sql
 cargo build --release --target x86_64-unknown-linux-musl -p pgdump_query-cli
-cat /path/to/arrays.sql > /dev/null          # warm, per the standing rule
-for i in 1 2 3; do for m in strings typed; do
-  /usr/bin/time -f "$m run$i %e s maxrss=%MkB" sudo nerdctl run --rm \
+(cd scripts &&
+ uv run generate_perf_data.py --size-mb 3072 --seed 42 /path/to/control.sql &&
+ uv run generate_perf_data.py --composite --size-mb 3072 --seed 42 \
+   /path/to/composite.sql &&
+ uv run generate_perf_data.py --arrays --composite --size-mb 3072 --seed 42 \
+   /path/to/arrays.sql)
+for f in control composite arrays; do cat /path/to/$f.sql > /dev/null; done
+for i in 1 2 3 4 5; do for f in control composite arrays; do for m in strings typed; do
+  /usr/bin/time -f "$f $m rep$i %e s maxrss=%MkB" sudo nerdctl run --rm \
     -m 512m --memory-swap 512m \
     -v "$PWD/target/x86_64-unknown-linux-musl/release/pgdq:/pgdq:ro" \
-    -v "/path/to/arrays.sql:/dump.sql:ro" \
+    -v "/path/to/$f.sql:/dump.sql:ro" \
     postgres:16-alpine sh -c \
     "/pgdq query --source /dump.sql --table public.perf --dqcache none \
        --schema-mode $m > /dev/null 2>/dev/null"
-done; done
+done; done; done
 ```
+
+The floor reading swaps `composite`/`arrays` for a second control generated
+with `--seed 43`, and is otherwise the same loop.
 
 ## koji full scan — the regression check
 

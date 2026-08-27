@@ -134,4 +134,14 @@ fn the_perf_generator_writes_what_pgdq_reads_back() {
     generate(&nested, &["--arrays", "--composite"]);
     assert_every_column_maps(&nested, &dir.path().join("nested.dqcache"));
     assert_modes_agree(&nested);
+
+    // `--composite` alone, because a recorded figure is taken on exactly that
+    // input (`docs/design/measurements.md`, "A typed query over nested
+    // columns") — the flags are independent, so covering the pair does not
+    // cover either one by itself. `--arrays` alone backs no figure and is
+    // left uncovered rather than guarded on principle.
+    let composite = dir.path().join("composite.sql");
+    generate(&composite, &["--composite"]);
+    assert_every_column_maps(&composite, &dir.path().join("composite.dqcache"));
+    assert_modes_agree(&composite);
 }

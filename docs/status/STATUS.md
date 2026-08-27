@@ -29,7 +29,7 @@ per-phase checklist here any more. How the system works is
 | Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-27 (Phase 9 is **complete and wrapped**; **4.6** has landed, its review earned **4.6.1**, and **M10** has landed — the benchmark generator now writes what `pg_dump` writes, a test asserts it, and every figure taken on its output has been re-taken. The order from here is **4.6.1** → the **Phase 4 wrap** — see "Not started". A phase boundary: an unattended loop stops here.)
+Last updated: 2026-08-27 (Phase 9 is **complete and wrapped**; Phase 4 has **one item left — its wrap**. **4.6.1** has landed, which finishes the phase's measurement work: the nested end-to-end table is three files taken in one interleaved sweep, and the composite column's own share turned out to sit below what differencing two generated files can resolve. A phase boundary: an unattended loop stops here.)
 
 ## Phase 4 progress
 
@@ -125,15 +125,19 @@ Specified in
       [`../design/measurements.md`](../design/measurements.md) for the
       figures that stand. No library code. Notes:
       [`../design/roadmap-phase4.6-array-stress-notes.md`](../design/roadmap-phase4.6-array-stress-notes.md)
-- [ ] **4.6.1** The composite's end-to-end share, **earned** from 4.6's spec
-      row naming a deliverable without naming its instrument. 4.6's
-      `typed`-against-`strings` run reports the three nested columns as one
-      per-row number and `pgdq query` cannot project columns, so separating
-      the composite needs its own generated file: `--composite` without
-      `--arrays` (M10 splits the flag), the same pair run on it, and the row in
-      [`../design/measurements.md`](../design/measurements.md), "A typed query
-      over nested columns". Lands **after** the generator-fidelity fix, whose
-      re-measurement it would otherwise duplicate.
+- [x] **4.6.1** The composite's end-to-end share, **earned** from 4.6's spec
+      row naming a deliverable without naming its instrument. The third
+      generated file (`--composite` without `--arrays`), the same
+      `typed`-against-`strings` pair run on it, and the rewritten
+      [`../design/measurements.md`](../design/measurements.md) section — now
+      three rows from one interleaved sweep. **The answer is a bound, not a
+      point figure**: the composite column's share reads *below zero*, and a
+      control pair differing only in RNG seed reads +0.22 µs/row, so this
+      instrument resolves nothing under ~±0.5 µs/row. What stands is the
+      attribution that bound buys — the two array columns carry essentially
+      all of the 15.1 µs/row the three nested columns cost, and the composite
+      is under 4% of it. Notes:
+      [`../design/roadmap-phase4.6.1-composite-share-notes.md`](../design/roadmap-phase4.6.1-composite-share-notes.md)
 
 ## Phase 9 — complete and wrapped
 
@@ -157,18 +161,13 @@ filed.
   as provisional pending real user trials; the resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 
-- **Order from here**, re-settled 2026-08-27 after 4.6's review and again
-  after `M10` landed: **4.6.1**, then the **Phase 4 wrap**. Everything queued
-  before them has landed — M5-M10, 4.4.4, the koji wrap run (whose durable
-  halves are in [`../design/measurements.md`](../design/measurements.md),
-  "koji full scan", and
-  [`../design/architecture.md`](../design/architecture.md), "CLI surface"),
-  and Phase 9's own wrap.
-
-  **4.6.1 is unblocked**: `M10` split `--arrays` from `--composite`, which is
-  the third generated file it needs, and re-took every figure taken on this
-  generator, so its own figure is now taken against numbers that will not move
-  under it.
+- **Order from here**, re-settled 2026-08-27 after `4.6.1` landed: the
+  **Phase 4 wrap**, and nothing else. Every slice of Phase 4 has landed, as
+  has everything that was queued ahead of it — M5-M10, 4.4.4, the koji wrap
+  run (whose durable halves are in
+  [`../design/measurements.md`](../design/measurements.md), "koji full scan",
+  and [`../design/architecture.md`](../design/architecture.md), "CLI
+  surface"), and Phase 9's own wrap.
 
   **The Phase 4 wrap** consolidates **thirteen** slice notes docs (4.1 through
   4.6.1) into one `roadmap-phase4-composite-decoding-notes.md` and deletes them
@@ -177,13 +176,14 @@ filed.
   keystone is an audit"): check that doc for what the slices learned and it
   does not yet say, move that in, and leave the notes doc holding the
   residue — negative results, and facts for the next phase not already filed
-  as inbox entries. 4.6 already filed two of its own findings that way — the
-  array-bearing census cost into `architecture.md`, and two
-  [`roadmap-phase7-inbox.md`](../design/roadmap-phase7-inbox.md) entries
-  restated from "unmeasured" to their figures. A short notes doc is a correct
-  outcome; an absent one is not. A wrap is **not** a keystone, which is a separate, maintainer-triggered
-  judgement that happens once or twice in a project's life; both wraps leave a
-  spec and one notes doc behind.
+  as inbox entries. 4.6 and 4.6.1 already filed four of their own findings
+  that way — the array-bearing census cost into `architecture.md`, and three
+  [`roadmap-phase7-inbox.md`](../design/roadmap-phase7-inbox.md) entries (two
+  restated from "unmeasured" to their figures, one new: what a cross-file
+  cost attribution can resolve). A short notes doc is a correct outcome; an
+  absent one is not. A wrap is **not** a keystone, which is a separate,
+  maintainer-triggered judgement that happens once or twice in a project's
+  life; both wraps leave a spec and one notes doc behind.
 
   **What comes after the Phase 4 wrap is a separate conversation**, claimed by
   the maintainer on 2026-08-27. `process.md` step 6 re-grills the roadmap
@@ -192,8 +192,8 @@ filed.
   session does not pick one.
 
   The `--disable-triggers` fix is **not** in this order — it is unscheduled, in
-  `roadmap.md`'s "Future". Phase 9 is wrapped and Phase 4 has one slice and its
-  wrap left, so this is still the phase boundary an unattended loop stops at,
+  `roadmap.md`'s "Future". Phase 9 is wrapped and Phase 4 has only its wrap
+  left, so this is still the phase boundary an unattended loop stops at,
   whatever remains queued behind it.
 
 ## Known gaps
@@ -317,6 +317,38 @@ filed.
 Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
+
+**4.6.1 re-took the whole nested end-to-end table, and two ratios moved that
+nobody queued for re-measurement.** The recorded control and `--arrays
+--composite` rows came from `M10`'s session; the new composite-only file could
+not be differenced against them across sessions without breaking
+`measurements.md`'s "say which regime, and stay in it" rule, so all three were
+re-run in one interleaved sweep. The ratios fell — **3.45× → 3.08×** for the
+nested file, **2.26× → 2.11×** for the control — entirely because this
+session's `strings` leg is ~9.6 s on all three files where `M10`'s was 8.0–8.8
+s and varied by file. The derived per-row figures, which is what the design
+actually consumes, barely moved (three nested columns 14.6 → 15.1 µs/row;
+sixteen scalar columns 13.5 → 13.2). Nothing explains the baseline shift
+between two sessions an hour apart on the same binary and the same file, and
+`M10`'s session looks like the outlier of the three: 4.6's own run, before
+`M10` regenerated the inputs, also read 9.4–9.7 s
+([`../design/roadmap-phase4.6-array-stress-notes.md`](../design/roadmap-phase4.6-array-stress-notes.md)).
+A ~10% session-to-session swing on the untyped leg is worth understanding
+before Phase 7 leans on this instrument.
+
+**The composite column's end-to-end share was not measured, and the slice was
+ticked anyway.** 4.6.1's spec row asked for a third file and the pair run on
+it; both were delivered, and the answer came back below the instrument's
+floor — two of three readings negative, against +0.22 µs/row between two files
+that differ only in RNG seed. What is recorded is therefore a bound (under
+~0.5 µs/row, under 4% of the nested total) plus the attribution it buys, not
+the figure the row's title promises. The call was to tick the box, because the
+instrument the row named was built and run, and to name the sharper instrument
+rather than build it: two files whose data sections are byte-identical, one
+declaring `v_comp` as its real type and the other as `text`. Reversing this
+means adding that generator knob and a fourth measurement run; the reason not
+to, unattended, is that a new instrument is a scope decision and nothing yet
+needs a figure that sharp.
 
 **The census's cost on brace-free rows is 39% of a warm scan, not zero, and
 `M10`'s re-measurement is what found that.** The recorded figure said the

@@ -13,9 +13,9 @@ lives in fixtures/, which pg_dump itself produces.
 failing silently: every column must declare a type pgdq maps and hold values
 pgdq re-renders unchanged, or a benchmark for the typed path is quietly
 measuring the untyped one. That floor is asserted from the Rust side --
-pgdump_query-cli/tests/perf_generator_fidelity.rs generates a small file both
-ways and requires `pgdq query --schema-mode typed` and `strings` to agree byte
-for byte.
+pgdump_query-cli/tests/perf_generator_fidelity.rs generates a small file in
+every flag combination a recorded figure is taken on and requires `pgdq query
+--schema-mode typed` and `strings` to agree byte for byte on each.
 
 Generated, never committed: point the output path somewhere outside the repo
 (the SSD or root NVMe volume -- see CLAUDE.local.md) for a real measurement
