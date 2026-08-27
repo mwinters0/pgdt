@@ -312,7 +312,21 @@ TOC-commented `COPY` block is, and it owns its `TABLE DATA` entry. That arm is
 the only route to attribution here: `looks_like_toc_name_line` must keep
 refusing `"Data for "` (see "TOC enrichment"), so the comment would otherwise
 close as its own `Framing` span, and `Framing` is one of the three kinds
-`governing_toc` inheritance never crosses. **Every line is still decoded into `Event::Line`**, and
+`governing_toc` inheritance never crosses.
+
+**That absorption is unconditional** — a comment block carrying no parseable
+TOC header at all is folded in the same way, exactly as `on_copy_start`'s
+`Mode::Comment` arm has always folded one for a `COPY` block. `pg_dump` cannot
+produce the shape that distinguishes the two (its only header-less block is the
+file header, and `SET` statements always separate that from any data), so what
+decides it is the one producer class that *can*: a hand-written or
+`pg_dump`-compatible dump, where `-- a note` above an `INSERT INTO` is
+ordinary. Absorbing gives that file one `Data` span where gating would give it
+a `Framing` span plus a `Data` span, which is the coarser-and-cheaper trade the
+`COPY` path already makes. The symmetry between the two paths is a consequence
+of that call, not the argument for it.
+
+**Every line is still decoded into `Event::Line`**, and
 that costs about 5× a `COPY` scan per byte — see
 [`measurements.md`](measurements.md). Correctness, tiling and row counts are
 unaffected; what it costs is throughput on `--inserts` input. A scanner-level
@@ -417,14 +431,26 @@ functions that read them draw the line differently on purpose.
 `parse_toc_header_line` treats `TOC_PREFIX_DATA` (`"Data for "`) and
 `TOC_PREFIX_STATS` (`"Statistics for "`, a v18+ `--statistics` component)
 alike — each is an optional prefix before `Name: `. `looks_like_toc_name_line`,
-the boundary signal, accepts the stats prefix but not the data one, and the
-constraint that forces this is `Builder::on_copy_start`: it reads the pending
-`TocHeader` out of the `Mode::Comment` arm, and its `Mode::Statement` arm
-instead pushes a separate span and passes `None`. A statistics entry heads an
-ordinary `pg_restore_relation_stats()` statement and must leave the builder in
-`Mode::Statement`; a data entry must leave it in `Mode::Comment`, or **every
-`COPY` block in the file loses its TOC entry**. The asymmetry is therefore
-about which mode `on_copy_start` finds, not about what follows a data entry.
+the boundary signal, accepts the stats prefix but not the data one. A
+statistics entry heads an ordinary `pg_restore_relation_stats()` statement and
+must leave the builder in `Mode::Statement`; a data entry must not.
+
+**What the refusal actually buys is narrow, and it is not what it looks
+like.** `saw_name` decides one thing only: whether `Mode::Comment`'s close arm
+absorbs the block into the statement that follows, or pushes it as its own
+span. On a default dump the refusal is a **no-op for `COPY`** — the close arm
+never runs, because the blank line after `--` is absorbed in place and
+`scan::CopyScanner` intercepts the header line as `Event::CopyStart` before
+`feed_line` ever sees it, so `on_copy_start` reads the pending `TocHeader` out
+of `Mode::Comment` without consulting `saw_name` at all. Accepting `"Data for "`
+breaks no behavioural test in the suite. It earns its keep on a
+`--disable-triggers` dump (I31), where a statement *does* intervene: absorbing
+there routes the entry into `push_statement_span`'s `Framing` veto, and a
+leading `SET SESSION AUTHORIZATION DEFAULT;` classifies `Framing` — so the
+entry is not merely misplaced but **destroyed**, taking TOC coverage on such a
+dump from 2/24 down to 1/22. Refusing keeps it on a `Framing` span of its own,
+which is worse than attributed and better than gone.
+
 Under `--inserts` a data entry heads an `INSERT` run, and `Builder::step`'s
 `Mode::Comment` close arm opens `Mode::InsertRun` for it directly — the same
 absorption from the same mode, for the data format the scanner does not
@@ -448,6 +474,33 @@ holding the entry and one unattributed `Data` span holding the rows, so
 (64%). The object census is unchanged at `TABLE DATA: 5` — the entry was always
 counted, just against the wrong span. A `COPY` dump was never affected:
 `edge_cases/default.sql` reads 31/48 either way.
+
+**`--disable-triggers` defeats attribution for every data span in the file,
+`COPY` and `INSERT` alike, and that is accepted.** I31 puts `SET SESSION
+AUTHORIZATION DEFAULT;` and `ALTER TABLE … DISABLE TRIGGER ALL;` between the
+`-- Data for Name:` block and the data, so neither `on_copy_start`'s
+`Mode::Comment` arm nor the `INSERT`-run arm ever sees the entry: the comment
+closes as its own `Framing` span, and `Framing` clears `governing_toc`.
+Measured against 16.15, two tables: TOC coverage 2/24, the two being the
+comment blocks themselves. What is lost is the coverage diagnostic and
+`Span::toc` on data spans; nothing else — the table name comes from the `COPY`
+header or the `INSERT INTO` line, the object census still reads `TABLE DATA:
+2` off the comment spans, and roles still come off the entry's own `Owner:`.
+See `../status/STATUS.md`'s known gaps for what a fix would cost, and
+`roadmap.md`'s "Future — wanted, unscheduled" for the fix itself.
+
+It is also the only known shape that reaches `on_copy_start`'s `Mode::Idle`
+arm, which passes `None` rather than inheriting `governing_toc` — unlike
+`step`'s own `Mode::Idle` arm, which seeds `toc: self.governing_toc.clone()`.
+Across the whole fixture tree there are **904 `COPY` spans and none
+unattributed**, so no default-flag `pg_dump` output exercises it.
+
+*Rejected:* fixing that arm on its own. It is two lines and no fixture can
+observe the difference, which is what disqualifies it — a change no test can
+see, to a rule this section states as a decision, is what the out-of-band
+admission rule exists to refuse. It would also fix nothing by itself: the
+`Data for` comment closes as `Framing` and so leaves no `governing_toc` behind
+for the arm to inherit. All three changes land together or none do.
 
 ### Cross-references (roles and tablespaces)
 

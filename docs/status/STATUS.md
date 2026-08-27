@@ -29,7 +29,7 @@ per-phase checklist here any more. How the system works is
 | Device-bound scan performance campaign, sparse row index | not started — Phase 7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — Phase 8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-27 (Phase 9 is **complete**: 9.1-9.5.1 landed — `parse` resumes, throttles its saves, saves on Ctrl-C, and states its metadata at every legal boundary. The koji wrap run is in flight and the out-of-band drive-bys have landed as **M5**/**M6**/**M7**; next is Phase 4's **4.4.4** and **4.6**, then the Phase 9 wrap — see "Not started". A phase boundary: an unattended loop stops here.)
+Last updated: 2026-08-27 (Phase 9 is **complete**: 9.1-9.5.1 landed — `parse` resumes, throttles its saves, saves on Ctrl-C, and states its metadata at every legal boundary. The koji wrap run is in flight and the out-of-band drive-bys have landed as **M5**/**M6**/**M7**; next is Phase 4's **4.4.4**, then **M8**, then **4.6** and the Phase 9 wrap — see "Not started". A phase boundary: an unattended loop stops here.)
 
 ## Phase 4 progress
 
@@ -238,17 +238,56 @@ was earned after 9.1-9.4 landed and reopened the phase; **9.5.1** was earned by
   `pg_dump 16` file, a version with no `--statistics` flag to produce the
   entries M6 recognizes.
 
-- **Order from here**, settled 2026-08-27 after grilling: **4.4.4** →
+- **M8: M6's asymmetry gets a behavioural test and a correct reason** —
+  out-of-band, settled 2026-08-27. `looks_like_toc_name_line`'s refusal of
+  `"Data for "` has now had **three** different reasons recorded for it, all
+  wrong, because the only thing pinning it is
+  `a_statistics_entry_parses_and_opens_a_span`'s tautological
+  `assert!(!looks_like_toc_name_line("-- Data for Name: …"))` — an assertion
+  that restates the predicate and so cannot fail for the right reason. Patching
+  the predicate to accept the prefix breaks that one assertion and **nothing
+  else** in the suite. M8 replaces it with a span-level test over the one input
+  that distinguishes the two behaviours — a `-- Data for Name:` block followed
+  by `SET SESSION AUTHORIZATION DEFAULT;` and then a `COPY` header (I31's
+  shape) — asserting the entry survives on its own `Framing` span rather than
+  being destroyed by `push_statement_span`'s `Framing` veto. It also rewrites
+  the doc comments on `looks_like_toc_name_line` and `parse_toc_header_line`,
+  which still carry the superseded reason. No behaviour change; the durable
+  half already landed in
+  [`../design/architecture.md`](../design/architecture.md), "TOC enrichment".
+
+- **Order from here**, settled 2026-08-27 after grilling: **4.4.4** → **M8** →
   **`pgdq_tenant`** → **4.6** → the **Phase 9 wrap**. M7 has landed. 4.4.4
-  next: it is the only one whose success criterion is
+  first: it is the only one whose success criterion is
   "no existing test changes", which is cheapest to judge against a tree nobody
-  has churned. `pgdq_tenant` after those, so its six-major regeneration diff
-  lands alone. 4.6 late, because it is the one item genuinely blocked on the
-  koji wrap log — read `runs/koji-wrap.log` before starting it. Wrap last.
-  Every Phase 9 slice has landed, so this is a phase boundary and an unattended
-  loop stops here regardless.
+  has churned. M8 next — it is a test swap and two doc comments, so it neither
+  disturbs 4.4.4's criterion nor waits on anything. `pgdq_tenant` after those,
+  so its six-major regeneration diff lands alone. 4.6 late, because it is the
+  one item genuinely blocked on the koji wrap log — read `runs/koji-wrap.log`
+  before starting it. Wrap last. The `--disable-triggers` fix is **not** in this
+  order — it is unscheduled, in `roadmap.md`'s "Future". Every Phase 9 slice has
+  landed, so this is a phase boundary and an unattended loop stops here
+  regardless.
 
 ## Known gaps
+
+- **A `--disable-triggers` dump loses TOC attribution on every data span**,
+  `COPY` and `INSERT` runs alike. I31: `pg_dump` writes `ALTER TABLE … DISABLE
+  TRIGGER ALL;` — and `SET SESSION AUTHORIZATION DEFAULT;` ahead of the first
+  entry — between each `-- Data for Name:` block and the data, so the comment
+  is no longer adjacent to what it heads and closes as its own `Framing` span,
+  which clears `governing_toc`. Measured against 16.15, two tables: TOC
+  coverage 2/24, the two being the comment blocks. **Accepted, not a
+  correctness hazard**: tiling stays byte-exact, the table name comes from the
+  `COPY` header or the `INSERT INTO` line, the object census still reads
+  `TABLE DATA: 2`, and roles still come off the entry's `Owner:`. What is lost
+  is the coverage diagnostic and `Span::toc` on data spans. Opt-in and gated on
+  `--data-only`/`--section=data`. Not fixed opportunistically because a fix is
+  three coordinated changes, one of them to a decision `architecture.md`
+  states — so by `roadmap.md`'s admission rule it is a graded slice, not a
+  drive-by. Wanted but unscheduled, with the three changes named:
+  [`../design/roadmap.md`](../design/roadmap.md), "Future — wanted,
+  unscheduled".
 
 - **An array nested inside a composite** is still decided optimistically, so a
   multi-dimensional or `[lb:ub]=`-decorated value there is a hard
@@ -352,28 +391,25 @@ Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
 it has been looked at: settled into the design docs, or reversed.
 
-**M7 absorbs a comment block into an `INSERT` run unconditionally**, the way
-`on_copy_start` does, rather than only when the block carried a `TocHeader`.
-The gated version would attribute exactly as well and touch fewer span
-boundaries; it was not taken because it would put an unexplainable asymmetry
-between the `COPY` and `--inserts` paths, which is the kind of divergence
-nobody can justify a year later. What changes if reconsidered: a comment block
-with no TOC header that immediately precedes an `INSERT INTO` line would get
-its own `Framing` span again instead of being folded into the `Data` span. No
-fixture contains that shape, and the version-header block cannot reach it —
-`pg_dump` always writes `SET` statements between the header and any data.
-
-**M7's queued verification figure was wrong, and the real one is better in a
-different direction.** The scope note predicted TOC coverage on
-`fixtures/16/edge_cases/inserts.sql` moving 30/52 → 35/52; it moved 30/52 →
-30/47 (58% → 64%). Absorbing the comment removes a span rather than adding an
-attributed one — the five `Framing` spans that held the entries are gone and
-the five `Data` spans now hold them. Everything else the note asked for holds:
-`column-inserts.sql` moves identically, `default.sql` and `data-only.sql` do
-not move, tiling stays byte-exact, and the object census stays `TABLE DATA: 5`.
-Reasoning: [`history/2026-08-27.md`](history/2026-08-27.md).
+Nothing is pending review at present.
 
 The notes below say how the earlier entries went.
+
+*M7's two entries were reviewed on 2026-08-27.* The **unconditional
+absorption** **stands**, with its reason upgraded from "it would put an
+unexplainable asymmetry between the `COPY` and `--inserts` paths" to a claim
+about the only producer that can reach the shape: `pg_dump` cannot emit a
+header-less comment block immediately before an `INSERT INTO`, but a
+hand-written dump can, and there absorbing gives one `Data` span where gating
+would give a `Framing` span plus a `Data` span — the same trade
+`on_copy_start`'s `Mode::Comment` arm already makes. The symmetry is a
+consequence of that call, not the argument for it; the durable half is in
+[`../design/architecture.md`](../design/architecture.md), "Bulk regions: one
+span kind, three payloads". The **corrected verification figure** needed no
+ruling: 30/47, 30/47, 31/48 and 6/21 all reproduce on today's tree, so the
+entry is simply closed. What the grilling turned up on the way is the
+`--disable-triggers` gap below, and a **third** wrong reason recorded for M6's
+asymmetry. Reasoning: [`history/2026-08-27.md`](history/2026-08-27.md).
 
 *M6's boundary-signal asymmetry was reviewed on 2026-08-27 and **stands**, with
 its recorded reason replaced.* The queued description of the

@@ -67,28 +67,42 @@ rather than rediscovering the trap.
 
 ---
 
-## An `INSERT` run's span starts at its TOC comment, not at its first `INSERT`
+## An `INSERT` run's span has two shapes, and neither records where the rows start
 
 **Fact.** As of M7, `map::Builder`'s `Mode::Comment` close arm opens
 `Mode::InsertRun` at the *comment's* offset when a `-- Data for Name: …; Type:
 TABLE DATA` block heads the run, so a TOC-commented run is one `Data` span
 covering comment and rows alike — the same absorption `on_copy_start` has
-always done for a `COPY` block. `DataBlock::InsertRun` carries no inner offsets
-(no counterpart to `CopyBlock`'s `header_offset`/`data_offset`), because
-nothing reads its rows yet.
+always done for a `COPY` block. **But that absorption needs the comment to be
+adjacent to the data, and `--disable-triggers` breaks the adjacency** (I31): it
+writes `ALTER TABLE … DISABLE TRIGGER ALL;`, and before the first entry a `SET
+SESSION AUTHORIZATION DEFAULT;`, in between. There the run instead starts
+exactly at its first `INSERT INTO` and carries `toc: None`. Either way
+`DataBlock::InsertRun` carries no inner offsets — no counterpart to
+`CopyBlock`'s `header_offset`/`data_offset` — because nothing reads its rows
+yet.
 
-**Why Phase 8 cares.** Track A reads `--inserts` rows, and the first byte of
-`span.start` is a `--` comment line, not `INSERT INTO`. A reader that seeks to
-`span.start` and starts parsing statements will hit the comment block and, on
-a `--verbose` dump, several more lines of it. Either Track A finds the first
-statement by scanning forward from `span.start`, or `InsertRun` grows a
-`data_offset` the mapping pass records the way `CopyBlock` does — a cache
-format change, so it wants deciding at spec time rather than mid-slice. Note
-also that a zero-row table contributes **no** span at all: its comment block
-runs into the next entry's and only the later entry survives
-(`public.empty_table` in `edge_cases/inserts.sql`).
+**Why Phase 8 cares.** Track A reads `--inserts` rows, and it faces **two**
+span shapes for one construct: `span.start` is at the first statement, or an
+arbitrary number of comment lines before it (more under `--verbose`). The only
+invariant that holds across both is `span.start <= ` the first `INSERT INTO`,
+which is not enough to seek on. So the choice is: scan forward from
+`span.start` for the first statement, or give `InsertRun` a `data_offset` the
+mapping pass records the way `CopyBlock` does. The second shape is what
+settles it — a scan-forward reader has to tolerate an intervening `ALTER TABLE`
+statement, not just comment lines, which is re-deriving the mapping pass's own
+work at read time. `data_offset` is a cache format change, so it wants deciding
+at spec time rather than mid-slice. Note also that a zero-row table contributes
+**no** span at all: its comment block runs into the next entry's and only the
+later entry survives (`public.empty_table` in `edge_cases/inserts.sql`).
 
-**Origin.** M7, 2026-08-27. See
-[`../status/history/2026-08-27.md`](../status/history/2026-08-27.md), "M7
-attributes an `--inserts` dump's rows", and `architecture.md`'s "Bulk regions:
-one span kind, three payloads".
+**Origin.** M7, 2026-08-27; the second shape found grilling M7 the same day.
+See [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md), "M7
+attributes an `--inserts` dump's rows" and "Grilling M7", I31 in
+[`postgres-invariants.md`](postgres-invariants.md), and `architecture.md`'s
+"Bulk regions: one span kind, three payloads".
+
+**Contingent on.** The `--disable-triggers` known gap staying open
+(`../status/STATUS.md`). If the unscheduled fix for it (`roadmap.md`, "Future")
+lands first, both shapes collapse back to one and only the `data_offset`
+question remains.

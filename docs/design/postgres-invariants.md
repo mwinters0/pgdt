@@ -1696,3 +1696,40 @@ changed, that test would cancel in the wrong segment and still pass.
 ```sh
 grep -n "datname <> 'template1'" -B 6 src/bin/pg_dump/pg_dumpall.c
 ```
+
+## I31 — `--disable-triggers` writes statements between a data entry's TOC comment and its data
+
+**Claim.** With `--disable-triggers`, `pg_dump` emits `ALTER TABLE <table>
+DISABLE TRIGGER ALL;` **after** each `TABLE DATA` entry's `-- Data for Name:`
+comment block and **before** the `COPY` header or first `INSERT INTO` line,
+plus a `SET SESSION AUTHORIZATION DEFAULT;` ahead of the first such entry. The
+comment block is therefore no longer adjacent to the data it heads — the one
+adjacency `map::Builder::on_copy_start` and `Mode::Comment`'s `INSERT`-run arm
+both depend on.
+
+**Proof.** `restore_toc_entry()` in `pg_backup_archiver.c` calls
+`_printTocEntry(AH, te, true)` — which writes the comment block — and only then
+`_disableTriggersIfNecessary(AH, te)`, which writes
+`_becomeUser(AH, ropt->superuser)`'s `SET SESSION AUTHORIZATION` line followed
+by `ahprintf(AH, "ALTER TABLE %s DISABLE TRIGGER ALL;\n\n", …)`. The matching
+`ENABLE TRIGGER ALL;` is written after the data by `_enableTriggersIfNecessary`.
+
+**Scope limit.** Opt-in and gated on a data-only restore: the guard is
+`if (!ropt->dataOnly || !ropt->disable_triggers) return;` on v13–v17 and
+`if (ropt->dumpSchema || !ropt->disable_triggers) return;` on v18/master, so
+`--disable-triggers` alone emits nothing — `--data-only` or `--section=data`
+must accompany it. Says nothing about any other flag: no other `pg_dump` option
+is known to interpose a statement at this position.
+
+**Verified against:** source in all of v13.23, v14.24, v15.19, v16.15, v17.11,
+v18.6 and master (identical call order); output observed against 16.15, both
+`--data-only --disable-triggers` and `--section=data --disable-triggers`, in
+`COPY` and `--inserts` form.
+**Relied on by:** `architecture.md` ("TOC enrichment") — it is why
+`looks_like_toc_name_line` keeps refusing `"Data for "`, and it is the whole of
+the `--disable-triggers` known gap in `../status/STATUS.md`.
+**Re-verify:**
+```sh
+grep -n "_printTocEntry(AH, te, true)" -A 25 src/bin/pg_dump/pg_backup_archiver.c
+pg_dump -d <db> --data-only --disable-triggers | grep -B 6 'DISABLE TRIGGER ALL'
+```

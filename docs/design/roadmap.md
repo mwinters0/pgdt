@@ -528,6 +528,21 @@ independent one-session changes.
 Work we intend to do without committing it to a phase. An item moves out of
 this section when it acquires a phase number, not when it acquires a design.
 
+- **TOC attribution across an intervening statement, so `--disable-triggers`
+  dumps stay attributed.** I31 puts `ALTER TABLE … DISABLE TRIGGER ALL;` — and
+  a `SET SESSION AUTHORIZATION DEFAULT;` ahead of the first entry — between a
+  `-- Data for Name:` block and its data, and no data span in such a file
+  carries a TOC entry as a result (`STATUS.md`, "Known gaps"). Not a
+  correctness hazard and opt-in, which is why it is here rather than scheduled.
+  Three coordinated changes: the `Data for` comment must absorb into
+  `Mode::Statement`, `push_statement_span`'s `Framing` veto must not eat an
+  owned `toc`, and `on_copy_start`'s `Mode::Idle` arm must inherit
+  `governing_toc`. The third is why this is a graded slice rather than
+  out-of-band work — `architecture.md` states `governing_toc`'s inheritance as
+  a decision. The fixture half is a seventh `edge_cases` flag set (`--data-only
+  --disable-triggers`), which by I31's scope limit is the only combination that
+  emits anything.
+
 - **CSV-format `COPY` blocks, as part of alternate-format support, post-1.0.**
   `pg_dump` has no CSV mode at all (I13), but `psql` writes `COPY ... WITH
   (FORMAT csv)` and that is valid PostgreSQL, so it is inside the input
