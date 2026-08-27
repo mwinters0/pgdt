@@ -42,17 +42,21 @@ So, for anything expected to take more than 10 minutes:
 
 Running `pgdq` against the multi-hundred-GB koji sample (see
 `CLAUDE.local.md`) is exactly this case: a full scan is roughly an hour on
-the HDD. It goes in a memory-limited container; build a static binary so any
-base image works, and let the container itself write the log:
+the HDD. It goes in a memory-limited container, and — because a scan's
+throughput is a performance figure — on the **default glibc build in a glibc
+image**, per `docs/design/measurements.md`'s standing rule that the allocator
+is part of the apparatus. A host-built binary runs in `postgres:16`; the
+static musl build and `postgres:16-alpine` stay available for portability, but
+figures taken with it are not comparable. Let the container write the log:
 
 ```sh
-cargo build --release --target x86_64-unknown-linux-musl -p pgdump_query-cli
+cargo build --release -p pgdump_query-cli
 mkdir -p runs
 sudo nerdctl run -d --name pgdq-koji -m 512m --memory-swap 512m \
-  -v "$PWD/target/x86_64-unknown-linux-musl/release/pgdq:/pgdq:ro" \
+  -v "$PWD/target/release/pgdq:/pgdq:ro" \
   -v "$PWD/runs:/out" \
   -v "/path/to/dump.sql:/dump.sql:ro" \
-  postgres:16-alpine \
+  postgres:16 \
   sh -c 'exec /pgdq parse --source /dump.sql --dqcache /out/koji.dqcache >> /out/koji-scan.log 2>&1'
 ```
 

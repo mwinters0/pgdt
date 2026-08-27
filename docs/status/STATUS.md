@@ -107,20 +107,64 @@ filed.
     [`../design/measurements.md`](../design/measurements.md), "The warm set,
     and what `M13` re-takes".
 
-    **Launched, not landed.** The sweep runs detached as `runs/m13-warm-set.sh`
-    (log: `runs/m13-warm-set.log`), started 2026-08-27 on the tree carrying
-    `M12` and `M11`, with its three binaries — working tree, census-off,
-    pre-throttle `b726f6b` — built before the launch. What remains is for a
-    later session to read the log and fold the numbers into
-    `measurements.md`, which is where the box gets ticked and the ledger row
-    written. The stages and what each figure needs from the log are in
+    **Run, then relaunched on glibc; not landed.** A complete sweep landed
+    (`runs/m13-warm-set-musl.log`) and is **not** the figures the doc will
+    carry: it used the static musl binary, and the maintainer's ruling that
+    performance figures are taken with the default glibc build
+    ([`../design/measurements.md`](../design/measurements.md), eighth standing
+    rule) applies to the whole set, not only the quadratic column that exposed
+    it. The glibc sweep runs detached as `runs/m13-warm-set.sh` → **`runs/m13-warm-set.log`**, started
+    2026-08-27T21:42Z, three glibc binaries (`runs/pgdq-m13g-*`) built before
+    the launch; expect ~50 minutes, most of it regenerating the four 3.00 GiB
+    inputs. What remains is for a later session to read that log and fold the
+    numbers in, which is where the box gets ticked and the ledger row written.
+    The stages, and what each figure needs from the log, are in
     [`history/2026-08-27.md`](history/2026-08-27.md), "`M13`'s sweep is
-    launched". If the run was killed, `/dev/shm/pgdq-m13` needs deleting by
-    hand.
+    launched" and "The libc is part of the apparatus". If the run was killed,
+    `/dev/shm/pgdq-m13` needs deleting by hand.
+
+    **What the musl sweep already establishes**, and the glibc run is expected
+    to confirm rather than overturn: `M11`'s pre-filter takes the census on
+    brace-free rows from +0.84 s to **+0.04 s per 3.00 GiB** (+3%), against
+    +1.28 s (+100%) on array-bearing rows; the read floor for the same file is
+    0.30 s; and the cross-file instrument cannot resolve the composite column
+    at all (phase-7 inbox, "Cross-file differencing cannot resolve one
+    column").
+
+  - [ ] **`M14` — the cold scan-throughput table, re-taken under one
+    apparatus.** Queued 2026-08-27 out of `M13`'s apparatus finding, which
+    reaches further than the warm set: every `pgdq` row of that table was
+    timed around `nerdctl run` and carries 0.77 s, and its floor row is a
+    **host** `cat` against container `pgdq` runs — two apparatuses in one
+    comparison, which arithmetic cannot repair. Its own regime (cold,
+    `drop_caches` before every run, on the SSD), its own inputs (the
+    large-object and `INSERT` generators regenerated at 3.00 GiB), and the
+    floor taken with `dd` inside the same container. Corrected by subtraction
+    the conclusion strengthens rather than moves — the `COPY` path runs 1.03×
+    the floor, not 1.2× — so this buys a correct number for a claim that
+    already holds, which is why it is queued rather than urgent. Scope and
+    the corrected reading are in
+    [`../design/measurements.md`](../design/measurements.md), "Scan throughput
+    by input shape". **Not** a re-take of koji (0.77 s of 3300 s) or of the
+    criterion micros (no container).
+
+  - [ ] **`M15` — `whole_file.rs` regenerates its input when the generator
+    changes.** The bench regenerates `runs/perf-whole-file.sql` only when the
+    file is *missing*, so a checkout that already has one benchmarks pre-`M12`
+    bytes forever and silently — and the population that has one is exactly the
+    population that will compare a new number against an old one. The fix is to
+    hash `scripts/generate_perf_data.py`, store the hash beside the input, and
+    regenerate on mismatch. A code change, so it is its own row rather than
+    riding in `M13`'s fold-in. Nothing is wrong on this machine today: the file
+    is absent here.
 
 - **Order from here**, re-settled 2026-08-27 with `M12` and `M11` landed:
-  `M13`'s log is read and its figures folded in, and then nothing that is
-  scheduled. No phase is open — 4 and 9 are both wrapped, and everything
+  `M13`'s log is read and its figures folded in, then `M14`, then `M15`, and
+  then nothing that is scheduled. `M14` runs **before** the phase-choice
+  conversation, settled 2026-08-27: its method is written and its generators
+  are hot, and leaving one table under a superseded apparatus is the
+  "figures disagreeing about regime" failure the standing rules were written
+  from. No phase is open — 4 and 9 are both wrapped, and everything
   queued ahead of them has landed (M5–M12, the koji wrap run whose durable
   halves are in [`../design/measurements.md`](../design/measurements.md),
   "koji full scan", and
@@ -252,8 +296,12 @@ filed.
   accumulator — unlike the large-object region, which is skipped unread at
   the scanner level. Measured at **~209MB/s cold against ~1.10GB/s for a `COPY`
   dump of the same size on the same disk read page-cache warm**, i.e. about 5×
-  the per-byte CPU, and CPU-bound rather than I/O-bound.; figures and re-run
-  commands in [`../design/measurements.md`](../design/measurements.md). A
+  the per-byte CPU, and CPU-bound rather than I/O-bound. **The 5× is a floor
+  under re-take**: its `COPY` side carried 0.77 s of harness and has since
+  gained `M11`'s pre-filter, so `M14` widens the ratio rather than narrowing
+  it — the gap this fix addresses is larger than the figure says, never
+  smaller. Figures and re-run commands in
+  [`../design/measurements.md`](../design/measurements.md). A
   koji-scale 1TB `--inserts` dump therefore spends ~45 minutes of CPU that a
   `COPY` dump of the same size does not. Correctness is unaffected — the map, the tiling and the row counts
   are the same either way. Not scheduled: the fix is a scanner-level
@@ -264,32 +312,37 @@ filed.
 
 Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
-it has been looked at: settled into the design docs, or reversed. **Two are
-open**, both about `M13`'s apparatus; below them, the measurement-era backlog
-reviewed on 2026-08-27 and how each entry went.
+it has been looked at: settled into the design docs, or reversed. **Nothing is
+open** — `M13`'s two apparatus calls were reviewed on 2026-08-27, along with
+the measurement-era backlog before them; the notes below say how each went.
 
-**`M13`'s per-block quadratic table runs on the host, not in a container.**
-Every other stage of the sweep runs the binary in a 512 MB container the way
-the figures it re-takes were taken, but a container costs ~0.7 s of startup
-(measured on a 2 MB input), which is more than twice the 0.32 s the 500-block
-row reads. The binaries are static musl, so `CLAUDE.local.md`'s glibc-arena
-caution does not apply, and max RSS on these inputs is a few MB. What changes
-if this is reconsidered: the table's absolute numbers move by a roughly
-constant offset and stop being comparable to the container-run figures around
-them — the alternative is to accept that the smallest row is mostly apparatus,
-or to drop the 500-block row.
+**`M13`'s quadratic table was going to run on the host to dodge container
+startup; the maintainer reversed that on 2026-08-27** — startup must not reach
+the figures, and the figures are still produced inside the container. The
+sweep now times every stage with the container's own shell, which is a
+standing rule in [`../design/measurements.md`](../design/measurements.md), and
+the whole warm set is being re-taken under it. **The finding behind it is not
+confined to `M13`**: `nerdctl run` costs 0.77 s, so every container figure in
+that doc taken by `/usr/bin/time` around it — the cold scan-throughput table
+included — carries 0.77 s it should not.
 
-**`M13` re-takes the quadratic table's "before" column from a rebuilt
-pre-throttle binary rather than carrying the recorded numbers over.** Carrying
-them would leave one column page-cache-warm off the SSD beside a tmpfs column,
-which is the disagreement `M13` exists to remove — but it means the whole
-table now depends on `b726f6b` still building, and the binary that column
-describes differs from today's tree in everything 9.5 onward, not only in the
-throttle. `measurements.md` already documented the rebuild as the way to
-reproduce that column, so this follows its own recipe. What changes if it is
-reconsidered: the "before" column is dropped and the table states only the
-throttled cost and the map's own quadratic, which is what the phase-7 inbox
-actually consumes.
+*The quadratic table's "before" column was reviewed on 2026-08-27 and
+**stands**, with what it is limited to now stated in the table.* It is
+re-taken from a rebuilt `b726f6b` rather than carried over, so the table is one
+apparatus throughout; the limit is that the two builds differ in everything
+from 9.5 onward, not only in the throttle, so the column records what the
+throttle era bought and may not be differenced against a later change.
+Isolating a mechanism is what the census-off method is for.
+
+*The max-RSS column was reviewed on 2026-08-27 and **deleted**.*
+`/usr/bin/time -f %M` around `nerdctl run` reports the nerdctl client's peak,
+not pgdq's: it read the same ~40–45 MB for a 2 MB input as for a 3.00 GiB one,
+against ~9 MiB for koji's 784 GB scan in the same doc. What the apparatus can
+honestly claim is that every run completes inside a 512 MB cgroup, and that is
+what `measurements.md` now says. A real instrument — a `VmHWM` poller inside
+the container — is a busy loop that would distort the timings it rode along
+with, so it would have to be its own untimed stage, and nothing consumes a
+number that sharp.
 
 *4.6.1's re-taken table and the ratios that moved were reviewed on
 2026-08-27, and the swing is **neutralized by construction rather than

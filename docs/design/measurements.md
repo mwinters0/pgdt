@@ -9,7 +9,7 @@ All figures are on the hardware `CLAUDE.local.md` describes. Synthetic inputs
 are regenerable with `--seed 42` and are **never committed** — they measure
 throughput, not correctness, which stays entirely fixture-based.
 
-Six standing rules for reading anything below:
+Eight standing rules for reading anything below:
 
 - **Every figure is a ratio, never a disk throughput.** Page-cache state
   dominates. A number taken warm on a freshly generated file can be twice what
@@ -46,6 +46,32 @@ Six standing rules for reading anything below:
   and `4.6.1`'s disagreed by 3.45× against 3.08× for exactly this reason, while
   the per-row differences the design actually consumes barely moved
   ([`../status/history/2026-08-27.md`](../status/history/2026-08-27.md)).
+- **The timer goes inside the container, never around it.** A figure must
+  not carry the harness that produced it. `sudo nerdctl run` costs **0.77 s**
+  before the binary starts — measured 2026-08-27 over three runs of a trivial
+  command — and the same 3.00 GiB warm `parse` reads **1.35 s** timed by the
+  container's own shell against **2.08 s** timed by `/usr/bin/time` around
+  `nerdctl run`. That is 36% of a warm scan, and more than twice the smallest
+  row of the quadratic table. So the timed command is `sh -c 'time /pgdq …'`;
+  busybox `time` resolves to 10 ms, under 1% of every figure here. This does
+  not license running a figure outside the container to avoid the cost — the
+  cgroup limit is part of the apparatus, and a difference of binaries is not
+  measurable across two different ones.
+- **A performance figure is taken with the default `glibc` build, in a glibc
+  image.** The allocator is part of what is being measured, and the two libcs
+  do not agree: the same 500-block `parse` runs **0.305 s** glibc against
+  **0.41 s** static musl, and the pre-throttle binary on the same input
+  **0.694 s** against **0.91 s** — ~25% either way, on a workload that
+  serializes the index once per block and is therefore allocation-bound. So
+  the figures here are `cargo build --release` (no `--target`) run under
+  `postgres:16` (Debian bookworm), whose **glibc 2.36 malloc is part of the
+  apparatus** and should be named when a figure moves. The static musl build
+  stays what `CLAUDE.md`'s container recipes use for *portability*, and a
+  figure taken with it is not comparable to one here. Debian's `/bin/sh` is
+  dash, with no `time`, so the in-container timer is `bash -c 'time …'`.
+  Whether a different allocator should be the shipped default is a Phase 7
+  question, filed in
+  [`roadmap-phase7-inbox.md`](roadmap-phase7-inbox.md).
 - **Long runs are detached.** A koji-scale scan is roughly an hour; see
   `CLAUDE.md`, "Long-running processes", for why waiting on one is expensive
   and what to do instead.
@@ -101,7 +127,12 @@ read of it measures RAM.
 | `INSERT` run | 15.13–15.42 s | ~209 MB/s | **2.7× the floor's time** |
 | `cat` → `/dev/null` | 5.73–5.74 s | ~562 MB/s | — |
 
-Max RSS is ~40–45 MB across all three.
+Every run completes inside the 512 MB cgroup, which is the memory claim this
+apparatus can actually make. **It carries no max-RSS figure**: `/usr/bin/time
+-f %M` around `nerdctl run` reports the *nerdctl client's* peak, not pgdq's —
+it read the same ~40–45 MB for a 2 MB input as for a 3.00 GiB one, four times
+what koji's row below records for a 784 GB scan. pgdq's own resident set is the
+koji figure, ~9 MiB.
 
 **What this says.** The `COPY` and large-object paths are device-bound: they
 spend about a fifth more wall-clock than reading the same bytes and doing
@@ -112,7 +143,14 @@ takes. The `INSERT` path is not — it takes 8.6 s per 3 GiB *longer* than the
 [`architecture.md`](architecture.md), "Bulk regions"). Mapping an `--inserts`
 file costs about what *decoding* a `COPY` file costs, not what *scanning* one
 costs: at 1 TB that is ~45 minutes of CPU no `COPY` dump pays, against the
-~15 minutes the `COPY` path spends on 1 TB in total. Correctness, tiling and
+~15 minutes the `COPY` path spends on 1 TB in total. **The ~5× ratio is under
+re-take and will widen**: it divides this cold `INSERT` rate by the warm
+`COPY` CPU, and that CPU carried 0.77 s of wrapper (~1.10 GB/s as recorded,
+~1.5 GB/s honest, ~2.4 GB/s on tmpfs with `M11`'s pre-filter). It is not
+recomputed here, because differencing a tmpfs figure against a cold SSD figure
+from another session is what the fourth standing rule forbids — `M14` re-takes
+both sides under one apparatus. The direction is safe meanwhile: every
+correction makes the `INSERT` path look worse, never better. Correctness, tiling and
 row counts are unaffected. The fix is a scanner-level `INSERT` path;
 [`roadmap-phase7-inbox.md`](roadmap-phase7-inbox.md) holds it.
 
@@ -120,6 +158,19 @@ row counts are unaffected. The fix is a scanner-level `INSERT` path;
 the file already page-cache resident, ~1.10 GB/s. That is the number the two
 census figures below are differences against, and the reason they are stated
 warm: at 481 MB/s the device hides everything the CPU does.
+
+**This whole table is superseded by `M14`** (`docs/status/STATUS.md`, "The
+out-of-band queue"), and by more than a rounding: every `pgdq` row was timed
+by `/usr/bin/time` around `nerdctl run` and so carries the 0.77 s the seventh
+standing rule now excludes, while the floor row is a **host** `cat` with no
+container at all — two apparatuses in one comparison, which no subtraction
+fixes. Corrected by that constant the rows read 5.91 / 5.84 / 14.36 s, and
+"1.2× the floor's time" becomes **1.03×** for `COPY` and 1.02× for large
+objects, with the `INSERT` row at 2.5×. The device-bound conclusion is
+unchanged and in fact sharper — the `COPY` path spends 3% more wall-clock than
+reading the bytes and doing nothing, not a fifth more — but `M14` re-takes the
+rows and the floor under one apparatus rather than leaving the doc quoting
+arithmetic.
 
 Regenerate the three inputs:
 
@@ -145,12 +196,18 @@ Measure each the same way:
 cargo build --release --target x86_64-unknown-linux-musl -p pgdump_query-cli
 for i in 1 2 3; do
   sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
-  /usr/bin/time -f "run$i %e s maxrss=%MkB" sudo nerdctl run --rm \
+  echo "run$i"; sudo nerdctl run --rm \
     -m 512m --memory-swap 512m \
     -v "$PWD/target/x86_64-unknown-linux-musl/release/pgdq:/pgdq:ro" \
     -v "/path/to/bench.sql:/dump.sql:ro" \
-    postgres:16-alpine /pgdq parse --source /dump.sql --dqcache /tmp/x.dqcache
+    postgres:16-alpine \
+    sh -c 'time /pgdq parse --source /dump.sql --dqcache /tmp/x.dqcache >/dev/null'
 done
+# and the floor, in the same container so the comparison is one apparatus:
+sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
+sudo nerdctl run --rm -m 512m --memory-swap 512m \
+  -v "/path/to/bench.sql:/dump.sql:ro" postgres:16-alpine \
+  sh -c 'time dd if=/dump.sql of=/dev/null bs=4M'
 ```
 
 `parse` is the only command that reads the dump
@@ -179,8 +236,9 @@ added, so nothing but the census differs between the two binaries (below).
 | warm (3 runs) | 2.11 / 2.12 / 2.11 s | 2.96 / 2.95 / 2.93 s | **+39%** |
 | cold (2 runs) | 6.67 / 6.66 s | 6.73 / 6.77 s | **+1.2%** |
 
-Max RSS ~40–47 MB either way. `cat` → `/dev/null` on the same file in the same
-session: 5.73 s cold, 0.08 s warm.
+Both binaries complete inside the 512 MB cgroup; no max-RSS figure is quoted,
+for the reason under the scan-throughput table. `cat` → `/dev/null` on the same
+file in the same session: 5.73 s cold, 0.08 s warm.
 
 **What this says.** The pre-filter is not free: **0.84 s per 3.00 GiB of
 brace-free rows**, 1.03 µs per 16-column row of 3,943 bytes — one pass of
@@ -232,7 +290,7 @@ cp target/x86_64-unknown-linux-musl/release/pgdq runs/pgdq-census
 # copy to runs/pgdq-nocensus, then revert.
 cat /path/to/copy_control.sql > /dev/null          # warm, per the standing rule
 for i in 1 2 3; do for w in nocensus census; do
-  /usr/bin/time -f "$w run$i %e s maxrss=%MkB" sudo nerdctl run --rm \
+  echo "$w run$i"; sudo nerdctl run --rm \
     -m 512m --memory-swap 512m \
     -v "$PWD/runs/pgdq-$w:/pgdq:ro" \
     -v "/path/to/copy_control.sql:/dump.sql:ro" \
@@ -270,8 +328,9 @@ added, so nothing but the census differs between the two binaries (below).
 | warm 3 | 2.11 s | 3.84 s |
 | cold | 6.66 s | 6.83 s |
 
-Max RSS ~40–47 MB either way. `cat` → `/dev/null` on the same file in the same
-session: 5.73 s cold, 0.09 s warm.
+Both binaries complete inside the 512 MB cgroup; no max-RSS figure is quoted,
+for the reason under the scan-throughput table. `cat` → `/dev/null` on the same
+file in the same session: 5.73 s cold, 0.09 s warm.
 
 **What this says.** The census costs **1.75 s per 3.00 GiB of array-bearing
 rows** — 2.50 µs per 19-column row — which is **+81%** on a page-cache-warm
@@ -304,7 +363,7 @@ cp target/x86_64-unknown-linux-musl/release/pgdq runs/pgdq-census
 # copy to runs/pgdq-nocensus, then revert.
 cat /path/to/arrays.sql > /dev/null          # warm, per the standing rule
 for i in 1 2 3; do for w in nocensus census; do
-  /usr/bin/time -f "$w run$i %e s maxrss=%MkB" sudo nerdctl run --rm \
+  echo "$w run$i"; sudo nerdctl run --rm \
     -m 512m --memory-swap 512m \
     -v "$PWD/runs/pgdq-$w:/pgdq:ro" \
     -v "/path/to/arrays.sql:/dump.sql:ro" \
@@ -393,7 +452,8 @@ than on whichever file went first. Medians of five:
 | `--composite` — the same 16 plus one composite | 806,322 | 9.76 s | 20.35 s | **13.13 µs/row** | 2.09× |
 | `--arrays --composite` — the same 16 plus three nested | 701,287 | 9.56 s | 29.45 s | **28.36 µs/row** | 3.08× |
 
-Max RSS ~36–45 MB throughout.
+Every run completes inside the 512 MB cgroup; no max-RSS figure is quoted, for
+the reason under the scan-throughput table.
 
 **The per-row difference is the figure; the ratio is derived and does not
 travel.** A ratio carries that session's `strings` leg in its denominator, and
@@ -486,7 +546,7 @@ cargo build --release --target x86_64-unknown-linux-musl -p pgdump_query-cli
    /path/to/arrays.sql)
 for f in control composite arrays; do cat /path/to/$f.sql > /dev/null; done
 for i in 1 2 3 4 5; do for f in control composite arrays; do for m in strings typed; do
-  /usr/bin/time -f "$f $m rep$i %e s maxrss=%MkB" sudo nerdctl run --rm \
+  echo "$f $m rep$i"; sudo nerdctl run --rm \
     -m 512m --memory-swap 512m \
     -v "$PWD/target/x86_64-unknown-linux-musl/release/pgdq:/pgdq:ro" \
     -v "/path/to/$f.sql:/dump.sql:ro" \
@@ -528,6 +588,12 @@ check is for.
 `lock_monitor.activity` — whose row data contains a literal `COPY … TO
 stdout;` substring — must parse as one correct block. That is the case that
 motivated line-anchored detection.
+
+**These are musl-build figures**, taken before the glibc rule above and under
+`CLAUDE.md`'s static-binary container recipe. The scan is device-bound at
+~33% of one core, so the allocator is unlikely to move them — but the next
+koji run takes them on the glibc build, and until one does they are not
+comparable to the warm figures above.
 
 **Throughput, re-measured clean.** A 2026-08-25 re-run on an uncontended disk
 (container `pgdq-koji`, `runs/koji-throughput-scan.log`) reproduced the same
@@ -711,9 +777,16 @@ done
 ```
 
 `parse` on each, cache removed first, one session, warm page cache — the
-regime `M13` re-takes on tmpfs, both columns together. "Before" is
-the build with a save at every `CopyEnd`; "after" is the same binary with
-`SaveThrottle` (`K = 20`):
+regime `M13` re-takes on tmpfs, both columns together. "Before" is `b726f6b`,
+the commit preceding `SaveThrottle`; "after" is the working tree.
+
+**"Before" is a whole-commit comparison, not a throttle-isolating one.** The
+two builds differ in everything that landed from 9.5 onward, not only in the
+save throttle, so the column says what the throttle era bought and must not be
+differenced against a later change. What isolates a mechanism is the
+census-off method above — one line, one rebuild — and what the phase-7 inbox
+consumes is the map's own quadratic below, which needs no historical build at
+all.
 
 | blocks | dump | final cache | before | after | saves before → after |
 |---|---|---|---|---|---|

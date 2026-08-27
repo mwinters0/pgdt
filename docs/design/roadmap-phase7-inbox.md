@@ -338,3 +338,83 @@ floor. Figures, the floor reading and the commands:
 [`measurements.md`](measurements.md), "A typed query over nested columns" and
 its "The cross-file subtraction bottoms out" subsection.
 
+## The scanner's read path costs more than its parser on a memory-resident file
+
+**Fact.** A whole-file `pgdq parse` of the 3.00 GiB brace-free control, served
+from tmpfs inside a 512 MB container and timed by the container's own shell,
+runs **1.29 s: 0.23 s user, 1.10 s sys**. `dd if=… of=/dev/null bs=4M` over
+the same file in the same container reads it in **0.30 s**. So the scan spends
+3.6× `dd`'s whole wall clock inside the kernel, and its user-space work — the
+`COPY` grammar, the map, the census pre-filter — is under a fifth of its own
+elapsed time. Measured 2026-08-27 by `M13`'s sweep (`runs/m13-warm-set.log`,
+stages `S2b` and `S3`), on the tree carrying `M11`'s `memchr2` pre-filter.
+
+**This is an observation, not a diagnosis.** The candidates are the scanner's
+read chunk size against `dd`'s 4 MiB, page copies across the bind mount, and
+per-`read` syscall overhead; nothing here separates them, and no attempt was
+made to.
+
+**Why this phase cares.** The campaign's target is a device-bound local read
+path, and its planned work — SIMD structure discovery, zero-copy row
+extraction, bulk UTF-8 validation — is all *user-space* work. On the one
+regime where the device is not the constraint, user space is already a fifth
+of the time, so those items are optimizing the smaller half unless the read
+path is addressed with them. It also sets the ceiling on what any parser
+change can show: on this input, deleting all user-space work entirely would
+take 1.29 s to 1.06 s.
+
+## The allocator is worth choosing deliberately, and glibc is only the measurement baseline
+
+**Fact.** The same binary source, built against two libcs, differs by ~25% on
+the allocation-heavy stages of the benchmark set: a 500-block `parse` runs
+0.305 s on the default glibc build against 0.41 s static musl, and the
+pre-throttle binary 0.694 s against 0.91 s, both in a 512 MB container on the
+same input. That workload serializes the whole index once per completed block,
+so it is allocation-bound rather than parse-bound. Measured 2026-08-27 while
+standardizing `M13`'s apparatus.
+
+**The decision taken was about measurement only**: every performance figure is
+now taken with the default glibc build in a glibc image
+([`measurements.md`](measurements.md)), so figures are comparable to each
+other. Nothing has been decided about what the *shipped* binary should use.
+
+**Why this phase cares.** A campaign aiming at a device-bound local read path
+inherits an allocator it never chose, and a 25% swing between two stock ones is
+larger than several of the optimizations on this phase's list. Three things to
+settle here: whether pgdq should select an allocator explicitly (`jemalloc`,
+`mimalloc`) rather than inheriting the platform's; whether any figure this
+phase produces is quoted without naming the allocator that produced it; and
+whether the row-emission path — which allocates per nested element
+(`architecture.md`, "The nested literal codec") — is where an allocator change
+would actually be felt, since the block-serialization workload above is not
+the one users pay per row.
+
+## Cross-file differencing cannot resolve one column, and it is bias rather than noise
+
+**Fact.** `M13`'s interleaved sweep, timed inside the container on tmpfs, puts
+the composite file's per-row typed-minus-strings cost **1.16 µs/row below** the
+control's (5 paired reps, sd 0.54, SE 0.24) — while a second control differing
+only in random seed reads −0.07 µs/row (6 reps, SE 0.23) against the same
+instrument. So the instrument's precision floor is ±0.25 µs/row, five times
+tighter than the ±0.5 recorded in 4.6.1, and the composite reading is ~5 SE on
+the wrong side of zero: adding a column that must be decoded and built cannot
+make a row cheaper. In absolute terms the composite file's typed leg is 10.13 s
+against the control's 11.10 s for the same bytes and 4.9% *more* column-decodes
+(17 × 803,995 against 16 × 814,362).
+
+**What that establishes.** The bound on the composite column's share stands,
+but its justification changes: it is not "below the floor", it is "the
+instrument is confounded". Two files that differ by a column also differ in row
+length and row count at a fixed byte budget, and the seed-43 control proves the
+confound is file shape rather than session drift. No number of reps fixes it.
+
+**Why this phase cares.** Two reasons, and the second is the interesting one.
+Any figure this phase attributes to a column by differencing two generated
+files carries the same bias, so per-column attribution needs the instrument
+4.6.1 named and nobody has built — two files whose *data sections are byte
+identical*, differing only in a declared type. And the anomaly itself is
+unexplained: per-column decode cost differs ~12% between two files whose 16
+shared columns are drawn from the same generator, which is a fact about the
+typed path that a decode-optimization campaign should not meet for the first
+time mid-flight.
+
