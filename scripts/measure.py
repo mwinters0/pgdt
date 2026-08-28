@@ -1622,7 +1622,12 @@ def resolve_selection(ids: Iterable[str]) -> list[Figure]:
 # Staleness: which figures a diff has invalidated.
 # --------------------------------------------------------------------------
 
-STAMP_RE = re.compile(r"measure\.py.*?commit `([0-9a-f]{7,40})`", re.IGNORECASE)
+#: The stamp is prose and prose wraps, so this spans lines — with a bounded
+#: lazy run rather than an open one, so it cannot leap from the word
+#: "measure.py" in one paragraph to a commit hash pages later.
+STAMP_RE = re.compile(
+    r"measure\.py.{0,200}?commit `([0-9a-f]{7,40})`", re.IGNORECASE | re.DOTALL
+)
 
 #: How the doc names a figure. A heading is free to quote a number and free to
 #: change when the number moves -- so the harness must not address a section by

@@ -29,7 +29,7 @@ per-phase checklist here any more. How the system works is
 | Device-bound scan performance campaign, sparse row index | not started — P7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — P8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-28 (the measurement-era backlog's seven entries were reviewed and closed on 2026-08-27; the work they queued — `M12`, `M11`, `M13` under "The out-of-band queue" — has all landed, and `M13`'s re-take moved every warm figure in [`../design/measurements.md`](../design/measurements.md), three of them by a factor. `M16` renamed the doc tree to the `P<k>` phase-identifier scheme and settled what a keystone does to the out-of-band ledger; the sweep it prepares for has **not** run. **P4 and P9 are both complete and wrapped**, so no phase is open: what remains queued is `M17` alone — the committed measurement harness, which absorbed `M14`. Its **harness half landed 2026-08-28** as `scripts/measure.py`, and the sweep has run — but **no figure in `measurements.md` has moved yet**: the fold-in is what remains, per section, out of `runs/measure-20260828T021024/tables.md`. Choosing the next phase is a re-grilling the maintainer has claimed. A phase boundary: an unattended loop stops here.)
+Last updated: 2026-08-28 (**every out-of-band item is closed**, `M17` last: the measurement harness `scripts/measure.py` is committed, and one sweep on 2026-08-28 replaced every table in [`../design/measurements.md`](../design/measurements.md), which now carries a session stamp naming the commit it ran against. Two figures were taken for the first time — the warm scan-throughput table and the session-drift table — and the warm one put an `INSERT` scan at **14.6×** a `COPY` scan's per-byte CPU against a long-standing "~5×"; the number is corrected everywhere it appeared, but what it changes about P7's plan is open under "Decisions worth another look". **P4 and P9 are both complete and wrapped**, and no phase is open. Choosing the next phase is a re-grilling the maintainer has claimed, so this is a phase boundary: an unattended loop stops here.)
 
 ## P4 — complete and wrapped
 
@@ -95,7 +95,7 @@ filed.
     census-off column is taken by patching it. Ledger row `M11`; the notes are
     [`history/2026-08-27.md`](history/2026-08-27.md), "`M11`: the census
     pre-filter is `memchr2`". **The swap delivered**: `M13` re-took the figure and
-    the pre-filter is 45 ns a row against the scalar loop's 1.03 µs, so the
+    the pre-filter is 64 ns a row against the scalar loop's 1.03 µs, so the
     deferred "should the census be skippable" question is closed rather than
     reopened.
 
@@ -111,7 +111,7 @@ filed.
 
     **Every figure moved, three of them by a factor**, because the tmpfs,
     in-container-timer and glibc rules landed together: the warm `COPY` scan
-    is 0.57 s where it was 2.92 s; the census on brace-free rows is +7% where
+    is 0.57 s where it was 2.92 s (0.549 s under `M17`'s sweep); the census on brace-free rows was +7% where
     it was +39%; the nested `strings` leg is 4.43 s where it was 9.74 s. Two
     readings are **withdrawn** rather than adjusted — that cross-file
     differencing is structurally biased, and that the untyped baseline is
@@ -173,257 +173,34 @@ filed.
     [`history/2026-08-27.md`](history/2026-08-27.md), "Phases are identified by
     `P<k>`".
 
-  - [ ] **`M17` — the measurement harness, and the sweep that fills the doc.**
-    **The harness is in; not one table has been folded into the doc.** Contract
-    settled across 2026-08-27 and 2026-08-28; the notes are
-    [`history/2026-08-27.md`](history/2026-08-27.md) and
-    [`history/2026-08-28.md`](history/2026-08-28.md), the second of which also
-    says where the next session picks this up.
+  - [x] **`M17` — the measurement harness, and the sweep that filled the
+    doc.** `scripts/measure.py` runs the sweep behind
+    [`../design/measurements.md`](../design/measurements.md) and emits that
+    doc's tables; the sweep of 2026-08-28 replaced **every one of them**, and
+    the doc carries a session stamp naming the commit it ran against. Ledger
+    row `M17`; the notes are [`history/2026-08-27.md`](history/2026-08-27.md)
+    and [`history/2026-08-28.md`](history/2026-08-28.md), which hold the
+    contract, the grilling that finished it, and what the sweep found.
 
-    **Landed 2026-08-28**: `scripts/measure.py`, which implements all thirteen
-    rows of the inventory below as eleven figures; `scripts/test_measure.py`
-    (65 stdlib `unittest` cases); `CLAUDE.md`'s command block and read-trigger,
-    and the contention and process-group rules its sweep needs;
-    `CLAUDE.local.md`'s paths; and
-    [`../design/measurements.md`](../design/measurements.md)'s "each section's
-    recipe below is the durable record" retargeted at the harness. Verified
-    against the recorded figures at reduced scale — the quadratic table's save
-    counts come back 503 → 15 / 1003 / 2003 / 4003 and its wall times within
-    3–8% of the doc's, and the preamble dump's first `COPY` header at byte
-    980,996 of 1,998,741 exactly.
+    Twelve figures, each one table, each declaring both edges — the paths that
+    invalidate it (`--stale`) and the documents that repeat its numbers
+    (`--check`). The doc addresses a figure by an `<!-- figure: id -->` marker
+    rather than by its heading, so a heading may quote a number and be
+    rewritten when that number moves; a test holds the markers and the register
+    in exact correspondence. `--koji-recipe` prints koji's invocation, which
+    the harness owns but never runs. `--drift` computes the twelfth figure
+    across two sweeps.
 
-    Also landed, out of the 2026-08-28 grilling: `quoted_by`, the `--check`,
-    `--koji-recipe` and `--drift` commands, marker-based section addressing, a
-    computed tmpfs budget with a preflight, the cold and warm throughput tables
-    sharing one doc section, and
-    `pgdump_query-cli/tests/measure_harness.rs`, which runs the harness's own
-    95 tests from `cargo test --workspace`. `--koji-recipe` replaced the three
-    hand-maintained copies of koji's invocation in `CLAUDE.md` and
-    [`../design/measurements.md`](../design/measurements.md); one of the three
-    could not have been interrupted cleanly, since it wrapped `parse` in a
-    compound `sh -c` that cannot be `exec`'d.
+    **What the sweep changed.** The census on brace-free rows is +11% warm and
+    +0% cold; on array-bearing rows +234% warm and +1% cold — both cold rows
+    are new, and both say the device hides the census entirely. The `INSERT`
+    path's per-byte CPU is **14.6×** the `COPY` path's, measured warm in one
+    regime, replacing a "~5×" that divided a cold rate by a warm one. Session
+    drift is measured rather than asserted: 1.2% median over 32 readings, 15.4%
+    worst, with cold readings at 0.1% and warm sub-second ones at 2.6–15.4%.
 
-    **`M17` is the harness, and a claim the sweep overturns is not part of
-    it.** The out-of-band admission rule is "changes no decision any spec
-    records and fits one session"; the harness meets it and the fold-in's claim
-    changes do not, so those travel to
-    [`../design/roadmap-P7-scan-performance-inbox.md`](../design/roadmap-P7-scan-performance-inbox.md)
-    rather than growing this item. The first is filed there already.
-
-    **Not landed**: any table. The first full sweep ran for 36 minutes and
-    **lost three of eleven figures** to a staging budget that was over by 6,799
-    bytes — its five surviving tables are kept as a drift cross-check, not
-    folded in, since the doc's tables must come from one session. The re-run is
-    what the fold-in reads. The fold-in is per section: the table, the prose
-    recipe it replaces deleted with it, the `<!-- figure: <id> -->` marker, and
-    the session stamp. **This box ticks when every row of the inventory below
-    is harness-emitted *in the doc*.**
-
-    **One figure will move a claim, not a value.** The cold `INSERT` run reads
-    9.77 s and 1.70× the device floor against the recorded 15.13–15.42 s and
-    2.7×, because `M7` changed how `--inserts` runs are scanned after that row
-    was taken. Under the rule settled the same day, a fold-in may replace a
-    value but a changed *conclusion* goes back through grilling — so the `~5×`
-    claim in
-    [`../design/pg-dump-compatibility.md`](../design/pg-dump-compatibility.md)
-    and [`../design/roadmap.md`](../design/roadmap.md) is not the fold-in's to
-    rewrite. The re-run's warm `INSERT` figure decides how far it moves.
-
-    **The fold-in reaches five other files, and that is now declared rather
-    than remembered.** Every figure names the documents that repeat its numbers
-    (`quoted_by`, printed by `--check` and beside every emitted table):
-    [`../design/architecture.md`](../design/architecture.md),
-    [`../design/roadmap-P7-scan-performance-inbox.md`](../design/roadmap-P7-scan-performance-inbox.md),
-    [`../design/pg-dump-compatibility.md`](../design/pg-dump-compatibility.md),
-    [`../design/roadmap.md`](../design/roadmap.md),
-    [`../design/roadmap-P4-composite-decoding-notes.md`](../design/roadmap-P4-composite-decoding-notes.md)
-    and this file. The P7 inbox alone repeats about fifteen of these figures,
-    and `pg-dump-compatibility.md` carries the "~5× the per-byte cost" claim
-    that the warm throughput table exists to replace.
-
-    **Why it exists.** `M10`, `M13` and `M14` each re-derived the same
-    apparatus from scratch because every re-take so far has been a one-off
-    `runs/` script that dies with the session. The recurrence is the target,
-    not any one figure: `M17` commits the sweep to `scripts/` so the next
-    apparatus change re-runs it instead of rewriting it, and amends
-    [`../design/measurements.md`](../design/measurements.md)'s "each section's
-    recipe below is the durable record" to point at it. That amendment lands
-    *with* the harness, not before.
-
-    **The tables it emits, and their state today.** ✅ marks one already on
-    the current footing — the harness has only to *reproduce* those, where the
-    rest are re-takes or first takes. The sweep emits **every row** regardless
-    (see "the run replaces every table" below), so this column is a statement
-    about how much each row is expected to move, not about which ones get run.
-    The list is the progress record: the box above ticks when every row is
-    harness-emitted, and until then this says which are.
-
-    | # | Table | Stage | State |
-    |---|---|---|---|
-    | 1 | Scan throughput by input shape (`COPY`, large object, `INSERT`, `dd` floor) | cold SSD | superseded apparatus |
-    | 2 | Census on brace-free rows — cold pair | cold SSD | pre-`M11` reading |
-    | 3 | Census on array-bearing rows — cold pair | cold SSD | pre-`M11` reading |
-    | 4 | Census on brace-free rows — warm pair | warm tmpfs | ✅ |
-    | 5 | Census on array-bearing rows — warm pair | warm tmpfs | ✅ |
-    | 6 | **Warm** scan throughput by input shape — row 1's twin | warm tmpfs | **never taken** |
-    | 7 | Nested end-to-end, three files × two modes | warm tmpfs | ✅ |
-    | 8 | Cross-file floor, seed-42 against seed-43 | warm tmpfs | ✅ |
-    | 9 | Census attribution, census on/off × two files | warm tmpfs | ✅ |
-    | 10 | Per-block quadratic — before/after/save counts | warm tmpfs | ✅ |
-    | 11 | Map alone, cache disabled | warm tmpfs | ✅ |
-    | 12 | Preamble prepass | — | host, **no container at all** |
-    | 13 | Nested decode micro — decode/render/÷copy/÷view | `criterion` | conforming; harness emits it |
-
-    Row 12 runs `/usr/bin/time` around a **host** `pgdq`, so it obeys neither
-    the timer nor the cgroup rule; nobody had counted it until 2026-08-27.
-
-    **Thirteen rows are eleven figures**, which is what `uv run measure.py
-    --list` names: rows 2 and 4 are the cold and warm rows of *one* table
-    (`census-brace-free`), as are 3 and 5 (`census-arrays`), and a table is the
-    unit that may not be half re-taken. The other nine map one-to-one —
-    `scan-throughput-cold`, `scan-throughput-warm`, `nested-end-to-end`,
-    `cross-file-floor`, `census-attribution`, `per-block-quadratic`,
-    `map-only`, `preamble-prepass`, `nested-decode-micro`.
-
-    **Row 6 is the reason `M17` was allocated**, and its shape is settled: the
-    cold table's twin — same four rows (`COPY` block, large-object region,
-    `INSERT` run, `dd` floor), same columns, tmpfs instead of a cold SSD. That
-    makes the `INSERT` path's per-byte CPU a division **within one table**
-    rather than the cross-regime comparison it has been since it was written,
-    which is the defect that allocated `M17`. Its `COPY` row is not a new
-    measurement: it is row 4's census-on column, same binary, same command,
-    same input.
-
-    **Two things are deliberately not tables.** koji is a byte-for-byte
-    regression check on another medium — the harness owns its invocation and
-    does not run it. `benches/decoders.rs`'s per-type pairs and
-    `benches/whole_file.rs` are **tripwires**, quoting no number, and the
-    harness says so rather than inventing a table nobody consumes: "a figure
-    with no table shape is a figure nobody has decided how to report" catches
-    oversights, and these are a decision.
-
-    **Row 13 comes from `criterion`'s own JSON**, not from scraping console
-    output: `target/criterion/<group>/<bench>/new/estimates.json` carries a
-    median in nanoseconds, and every cell of that table is a median plus a byte
-    count that is a constant in the bench.
-
-    **`M14` is absorbed into it**, settled 2026-08-27 — two overlapping cold
-    sweeps is the thing to avoid, and `M14`'s cold table plus the two cold
-    census rows are one stage of this. `M14`'s number is **spent, not
-    reused**.
-
-    **koji stays out of the run.** It is 784 GB on the HDD, ~54 minutes, a
-    different medium and a regression check rather than a throughput figure,
-    and it is device-bound at ~33% of one core so the allocator is unlikely to
-    move it. Its glibc re-take rides the next koji run. What `M17` does take
-    is the **invocation**: the harness owns koji's recipe so the next session
-    to run one conforms without re-deriving it.
-
-    **The inputs do not fit, so the sweep is staged.** Control, seed-43
-    control, `--composite`, `--arrays`, `INSERT` and large-object is 6 ×
-    3.00 GiB = 18 GiB against `/dev/shm`'s 16 G, and the cold stages need the
-    SSD rather than tmpfs anyway. `M13`'s sweep already had to delete two
-    inputs mid-run for the same reason.
-
-    **One libc: glibc.** Settled 2026-08-27. The sweep does not take a second
-    leg — the musl comparison in `measurements.md`'s ninth standing rule is
-    the evidence for *why* an SE is not an error bar, not a practice to
-    repeat, and the corollary that survives is the measured ~0.5 µs/row floor.
-
-    **It emits the markdown tables, not just a log.** Each figure's section in
-    [`../design/measurements.md`](../design/measurements.md) has a table shape,
-    and the harness writes that shape so folding in is a paste. Transcription
-    is the step that has actually gone wrong — `M13`'s fold-in introduced two
-    wrong readings by hand — and the interpretation around each table is prose
-    a harness cannot write and should not try to. A figure with no table shape
-    is a figure nobody has decided how to report, which is the useful forcing
-    function.
-
-    **Python in `scripts/`, run with `uv`.** Every generator there already is,
-    and there is no shell script in `scripts/` at all. The specific cost a
-    shell harness cannot remove: every sweep so far has ended with a throwaway
-    Python parser scraping medians out of a shell log — one for `M13`, another
-    for the census-baseline test — and that scraping step is where the
-    transcription errors live. A Python harness still shells out per run, but
-    times, takes medians and spreads, and emits the tables in-process.
-
-    **Parameterized by environment variable, defaults for this machine.** It
-    moves from `runs/` to `scripts/`, so machine facts cannot travel with it:
-    the procedure goes in `CLAUDE.md` and the paths stay in `CLAUDE.local.md`,
-    the split the project already runs. A harness that has to be rewritten
-    after a machine move is the same recurrence in a different disguise.
-
-    **Selection is per figure, never finer.** The fourth standing rule makes a
-    *table* atomic — half a table may not be re-taken — and one figure is
-    exactly one table, so per-figure selection cannot violate it while
-    per-run selection would. Stage grouping (cold-SSD, warm-tmpfs,
-    `criterion`) is the natural default because it shares input staging, but
-    the selectable unit is the figure. Without this the harness is unusable
-    while being written, since a full run is 18 GiB of staging and an hour.
-
-    **The fold-in lands per section, across several commits.** A thirteen-table
-    diff is exactly what "never mix high- and low-confidence work in one review
-    cycle" forbids, and `M13`'s four-figure fold-in already produced two
-    withdrawn readings and three flagged calls.
-
-    **The prose recipes it executes are deleted, not left alongside.** Each of
-    `measurements.md`'s thirteen `sh` blocks is tested by one question — does
-    the harness execute it? If yes, the block becomes the one-line invocation
-    that reproduces that figure. Leaving both is the second-authority problem
-    the keystone doctrine is written against, and `M19` proved it is not
-    hypothetical: a recipe drifted out of runnability and nothing noticed,
-    because nothing executes prose. **Two kinds of block stay**, because the
-    harness genuinely does not own them: the census-off **source patch**
-    (`return;` at the top of `map::Builder::on_row`, which no harness can
-    perform) and generator invocations a reader may want on their own. koji's
-    detached recipe was a third until 2026-08-28, when `--koji-recipe` took it.
-
-    **It is tested where a silent error would be worst.** Median, spread and
-    table formatting get stdlib `unittest` — `uv run python -m unittest`, no
-    dependency added to a repo that has none — because a wrong median produces
-    a confidently wrong table, which is the failure `M17` exists to prevent. No
-    container-level smoke test: that would need root and a runtime to run the
-    suite, a cost this project has consistently refused. The second guard is
-    free and already obligatory: the ninth standing rule requires the observed
-    per-rep readings beside every median, so each emitted table carries its own
-    audit trail and a wrong median is visible against the numbers that produced
-    it.
-
-    **The run replaces every table, including the seven already current.** The
-    doc differences *across* tables — the census-attribution table is quoted as
-    reproducing the census `parse` figures to within 3%, and row 6 exists so
-    the `INSERT` ratio becomes a division against row 1 — so a doc spanning two
-    sessions reintroduces the fourth standing rule's failure one level up. Seven
-    tables moving by the session drift is not churn to avoid; it is evidence
-    the drift is real, and the ninth rule already forbids reading a small
-    movement as a result.
-
-    **`measurements.md` gains a session stamp** — one line near the top naming
-    the sweep's date and the commit it ran against — and per-section apparatus
-    notes shrink to the places a section genuinely departs (koji's medium,
-    `criterion`'s absence of a container). Stating the shared apparatus once
-    and letting a section speak only about its departures is the same argument
-    as the standing rules themselves, and it answers "are these figures from
-    before or after my change" at a glance, which has been answered by
-    archaeology every time so far.
-
-    **Each figure declares the paths that invalidate it**, so the harness can
-    say which figures a diff has made stale — the census figures on `map.rs`,
-    the nested tables on `nested.rs`/`batch.rs`, the quadratic on the map plus
-    the cache, every figure on its generator. This is the *other* half of the
-    recurrence and the one the harness alone does not fix: `M11` changed one
-    line in `on_row` and invalidated both census figures, `M12` changed a
-    generator and armed a stale-input trap that `M15` had to disarm, and in
-    both cases nothing announced it — someone noticed. A declaration is the
-    same forcing function as the table shape: a figure that cannot say what
-    invalidates it is one nobody has thought about. `CLAUDE.md` gains both the
-    command and the read-trigger when the harness lands, since a capability
-    nobody is told about is one nobody uses.
-
-    **The box ticks only when every table above is harness-emitted**, per the
-    rule that a tick meaning "about half" makes every other tick worthless. The
-    table is the progress record in the meantime, which says more than a tick
-    would — it names *which* are done.
+    `M14` was absorbed into this item on 2026-08-27; its number is **spent and
+    never reused**.
 
   - [x] **`M18` — musl leaves the apparatus.** Only glibc is measured, so a
     static musl build is an untested configuration and an untested portability
@@ -452,26 +229,21 @@ filed.
     `M19`; the notes are [`history/2026-08-27.md`](history/2026-08-27.md),
     "A documented recipe that does not run".
 
-- **Order from here**, re-settled 2026-08-27 with `M12`, `M11` and `M13`
-  landed: **`M17` alone**, which absorbed `M14`. Nothing else is scheduled
-  (`M15` and `M16` each landed the day they were queued; the keystone sweep
-  `M16` prepares for is the maintainer's call, not a scheduled item). `M17`
-  runs **before** the phase-choice conversation, settled 2026-08-27: leaving
-  six of twelve figures under a superseded apparatus, or none at all, is the
-  "figures disagreeing about regime" failure the standing rules were written
-  from — and a phase that opens on those figures inherits the disagreement.
-  No phase is open — 4 and 9 are both wrapped, and everything
-  queued ahead of them has landed (M5–M12, the koji wrap run whose durable
-  halves are in [`../design/measurements.md`](../design/measurements.md),
-  "koji full scan", and
-  [`../design/architecture.md`](../design/architecture.md), "CLI surface").
+- **Nothing is queued.** `M17` was the last item, and it landed 2026-08-28.
+  Every other number in this section is spent: `M14` was absorbed into `M17`,
+  and `M1`/`M2` were folded into P3's slice 3.7. The keystone sweep `M16`
+  prepares for has **not** run and is the maintainer's call, not a scheduled
+  item.
 
   **Which phase comes next is a separate conversation**, claimed by the
   maintainer on 2026-08-27. `process.md` step 6 re-grills the roadmap before
   the next phase is specified, and four are unspecified (5, 6, 7, 8); numeric
   order is not plan order, since 9 was taken ahead of 5. An unattended session
-  does not pick one, so this is where an unattended loop stops whatever remains
-  queued behind it.
+  does not pick one, so this is where an unattended loop stops.
+
+  **P7 inherits a sharper input than it had**: the `INSERT` ratio above, the
+  measured drift floor, and a `--stale` that will name the figures any change
+  invalidates.
 
   The `--disable-triggers` fix is **not** in this order — it is unscheduled, in
   `roadmap.md`'s "Future".
@@ -545,10 +317,10 @@ filed.
 - **Mapping is O(blocks²), and the save throttle only halved it.** Every
   `CopyEnd` rebuilds `DumpIndex::spans` whole — `map::Builder::snapshot` clones
   the builder's spans, `stream::splice` clones the prefix — so a block-rich,
-  byte-poor dump pays quadratic CPU with the cache disabled entirely: 18.6 s
+  byte-poor dump pays quadratic CPU with the cache disabled entirely: 19.4 s
   for 4000 blocks under `query --dqcache none`, against under 10 ms for the
   same bytes in one block. 9.5's throttle removed the other half (45.8 s → 20.1
-  s for a 4000-block `parse`), which leaves the map as **93%** of what a
+  s for a 4000-block `parse`), which leaves the map as **94%** of what a
   throttled `parse` now costs at that block count. Accepted for now, not scheduled: the fix is to
   stop rebuilding the span list per block, which is the same code P7's
   parallel-scan plans would rework and which
@@ -556,7 +328,7 @@ filed.
   for assuming coverage is a contiguous prefix — so the two belong in one
   decision. A **cheap** version exists and was weighed: for `parse` nothing
   reads `index.spans` between saves, so gating the splice on the throttle the
-  same way the save is gated would cost a few dozen splices instead of `n` (~18.6 s
+  same way the save is gated would cost a few dozen splices instead of `n` (~19.4 s
   → ~1 s at 4000 blocks). It is not taken, because it would make an interrupt
   bank the last *saved* watermark rather than the last *completed block* —
   reversing a guarantee 9.5 established — and `Builder::snapshot` asserts
@@ -598,8 +370,8 @@ filed.
   the per-byte CPU. **The 5× is not a CPU ratio and is a loose floor**: it
   divides a *cold* `INSERT` rate, device included, by the `COPY` path's *warm*
   CPU — and no warm `INSERT` figure has ever been taken. Bounding it from the
-  cold table alone puts the real per-byte ratio near **16–26×**, since the
-  `COPY` side is now 0.57 s per 3.00 GiB rather than 2.92 s. `M17` measures the
+  warm table now measures the per-byte ratio at **14.6×**, inside the 16–26×
+  the cold table alone had bounded it at. `M17` measured the
   warm `INSERT` CPU. Every correction so far has made this path look worse, so
   the gap the fix addresses is larger than the figure says, never smaller. Figures and re-run commands in
   [`../design/measurements.md`](../design/measurements.md). A
@@ -613,11 +385,24 @@ filed.
 
 Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
-it has been looked at: settled into the design docs, or reversed. **Nothing is
-open.** `M17`'s harness half raised five on 2026-08-28 and the grilling the
-same day closed all five; `M13`'s fold-in was reviewed on 2026-08-27, where two
+it has been looked at: settled into the design docs, or reversed. **One is
+open**, listed first. `M17`'s harness half raised five more on 2026-08-28 and
+the grilling the same day closed all five; `M13`'s fold-in was reviewed on 2026-08-27, where two
 of its three calls were reversed and its one new causal claim was tested rather
 than argued.
+
+*An `INSERT` scan costs **14.6×** a `COPY` scan per byte, not the "~5×" three
+documents carried — and what that changes about P7's plan has not been
+grilled.* The number itself is folded in wherever it was repeated, since a
+document must not keep asserting a measurement known to be wrong. The decision
+behind it is untouched: the old ratio was the evidence for filing a
+scanner-level `INSERT` path in
+[`../design/roadmap-P7-scan-performance-inbox.md`](../design/roadmap-P7-scan-performance-inbox.md),
+and a ratio three times larger — 1 TB of `INSERT` runs is ~41 minutes of CPU
+against the `COPY` path's ~3 — may change where that sits in P7's order, or
+whether it is P7's at all. That is a phase-planning question and it goes
+through grilling, which is why the fold-in stopped here rather than
+re-prioritising anything.
 
 *`M17`'s five were reviewed on 2026-08-28 and **all five stand**, three of them
 with the reasoning sharpened.*
@@ -773,8 +558,8 @@ two-comparison byte loop at `map.rs:1269` running at ~3.8 GB/s, and `memchr`
 is already a direct dependency (`pgdump_query/Cargo.toml:12`): `memchr2(b'{',
 b'[', raw).is_some()` is a one-line, SIMD swap. Queued as out-of-band **M11**
 below. The knob question was *deferred, not closed*, pending the re-take —
-which came back at **45 ns a row, +7%**, so it is now closed: the census
-stays unconditional, and the pre-filter is 2.5% of what it costs on the rows
+which came back at **64 ns a row, +11%**, so it is now closed: the census
+stays unconditional, and the pre-filter is 4% of what it costs on the rows
 it does not reject.
 
 *`M10`'s date/time fractions were reviewed on 2026-08-27: the choice is
@@ -815,8 +600,8 @@ is now two standing rules in
 [`../design/measurements.md`](../design/measurements.md). Its one residual —
 that the section cites the `COPY` path's warm CPU (2.92 s), a
 page-cache-warm filesystem read the new tmpfs rule now excludes — is covered
-by **`M13`**, which re-took the whole warm set on tmpfs in one session: the
-`COPY` path's warm CPU is 0.57 s, not 2.92 s.
+by **`M13`**, which re-took the whole warm set on tmpfs in one session, and by
+`M17`'s sweep since: the `COPY` path's warm CPU is 0.549 s, not 2.92 s.
 
 *The fidelity guard's `uv` skip was reviewed on 2026-08-27 and **reversed**.*
 The skip guards an environment that does not exist: `mise.toml` pins exactly

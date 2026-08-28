@@ -723,12 +723,12 @@ cost 23× as much and was, on that shape, the whole figure. `on_row`'s doc
 comment names the two measurements a reader regenerates by patching that
 function.
 **The cost is one tier in practice: the rows that pass the pre-filter.** On
-brace-free data — the koji shape — every row pays the pre-filter alone, 45 ns
-per 16-column row, +7% of a scan reading from memory. A row that passes it
-pays field splitting and `observe` on top: 1.80 µs over 19 columns, +270%
-warm, so the pre-filter is 2.5% of what the census costs on the rows it does
-not reject. Both collapsed to a few percent on a cold read of this SSD, where
-the device floor hides them — a pre-`M11` reading awaiting `M17`
+brace-free data — the koji shape — every row pays the pre-filter alone, 64 ns
+per 16-column row, +11% of a scan reading from memory. A row that passes it
+pays field splitting and `observe` on top: 1.76 µs over 19 columns, +234%
+warm, so the pre-filter is 4% of what the census costs on the rows it does
+not reject. Both collapse to +0% and +1% on a cold read of this SSD, where the
+device floor hides them entirely
 ([`measurements.md`](measurements.md), "The census on brace-free rows" and
 "…on array-bearing rows"). It runs unconditionally
 anyway, because the alternative is a query that cannot retype its array
@@ -747,7 +747,7 @@ representation.
 the per-row work. A cold query already receives every row of every block it
 maps — `map_forward` calls `on_row` unconditionally and the queried block's
 bytes are read twice regardless — so the saving is the pre-filter alone, which
-is 45 ns a row even with the bytes in memory and vanishes entirely behind the
+is 64 ns a row even with the bytes in memory and vanishes entirely behind the
 device a cold query is by definition reading from
 ([`measurements.md`](measurements.md), "The census on brace-free rows"). What
 it cost was a state no user could observe or repair: a dump mapped by a cold query and *then* by a full one came out
@@ -1769,20 +1769,21 @@ splice-onto-a-prefix logic with a different set of bugs.
 **The save throttle is self-tuning, not an interval.** Every save serializes
 the *whole* index and the index grows with the block count, so saving at every
 watermark is O(blocks²): koji's 74 blocks cost +1.5% wall, while 4000 small
-blocks cost 44 s against a file of 2 MB (`measurements.md`, "Per-block cache
+blocks cost 49 s against a file of 1.9 MB (`measurements.md`, "Per-block cache
 saving"). `SaveThrottle` skips a block's save unless at least `K = 20` times
 the last save's own *measured duration* has elapsed since it, which bounds save
 overhead at roughly `1/K` of scan time in every regime with no constant that
 has to be right in two of them — a cheap cache saves often, an expensive one
 saves rarely, koji is untouched. Measured at 4000 blocks: 4003 saves become
-195, and ~21 s of saving becomes ~1.2 s of a 23.5 s scan. *Rejected:* "every N
+106, and ~28 s of saving becomes ~1.2 s of a 20.6 s scan. *Rejected:* "every N
 seconds" and "every N bytes"; both choose a number against one dump shape, and
 the cost tracks block count rather than bytes read.
 
 **What the throttle does not fix**: the *rest* of the same quadratic. Every
 `CopyEnd` also clones the whole span list (`map::Builder::snapshot`, then
 `stream::splice` over the prefix), so the map itself is O(blocks²) with the
-cache disabled entirely — 19.7 s for 4000 blocks under `query --dqcache none`.
+cache disabled entirely — 19.4 s for 4000 blocks under `query --dqcache none`,
+which is 94% of what a throttled `parse` of the same file costs.
 That is a separate cost with a separate fix, filed for the scan-performance
 phase (`roadmap-P7-scan-performance-inbox.md`).
 

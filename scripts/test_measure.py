@@ -286,6 +286,24 @@ class Staleness(unittest.TestCase):
 
 
 class Stamp(unittest.TestCase):
+    def test_a_stamp_wrapped_across_lines_still_yields_a_commit(self):
+        # The stamp is prose in a hard-wrapped doc, so it is never one line.
+        with tempfile.TemporaryDirectory() as tmp:
+            doc = Path(tmp) / "measurements.md"
+            doc.write_text(
+                "**Session stamp.** Every figure below was taken by `scripts/measure.py` on\n"
+                "2026-08-28, against commit `3739c26`. One sweep, one apparatus.\n"
+            )
+            self.assertEqual(measure.stamped_commit(doc), "3739c26")
+
+    def test_the_stamp_does_not_reach_across_the_document(self):
+        # A bounded run, so "measure.py" in one paragraph cannot bind to a
+        # commit hash mentioned much later.
+        with tempfile.TemporaryDirectory() as tmp:
+            doc = Path(tmp) / "measurements.md"
+            doc.write_text("measure.py\n" + ("filler line\n" * 40) + "commit `abc1234`\n")
+            self.assertIsNone(measure.stamped_commit(doc))
+
     def test_the_stamp_line_yields_a_commit(self):
         with tempfile.TemporaryDirectory() as tmp:
             doc = Path(tmp) / "measurements.md"
@@ -511,13 +529,22 @@ class Markers(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(measure.markers_in(self._doc(tmp, "# Measurements\n")), [])
 
-    def test_every_marker_in_the_doc_names_a_real_figure(self):
-        # Vacuous until the fold-in lands, and the check that catches a rename
-        # the moment it does.
-        doc = measure.REPO / "docs/design/measurements.md"
-        for marker in measure.markers_in(doc):
-            with self.subTest(marker=marker):
-                self.assertIn(marker, measure.ALL_BY_ID)
+    def test_the_doc_and_the_register_agree_exactly(self):
+        """Bidirectional, now that every figure has been folded in: a rename on
+        either side breaks this rather than going unnoticed."""
+        markers = measure.markers_in(measure.REPO / "docs/design/measurements.md")
+        self.assertEqual(sorted(markers), sorted(f.id for f in measure.ALL_FIGURES))
+
+    def test_no_figure_is_marked_twice(self):
+        # One figure is one table.
+        markers = measure.markers_in(measure.REPO / "docs/design/measurements.md")
+        self.assertEqual(len(markers), len(set(markers)))
+
+    def test_the_doc_s_session_stamp_names_a_commit(self):
+        # `--stale` defaults to it, so an unparseable stamp silently disarms
+        # the only mechanism that says a figure has gone stale.
+        stamp = measure.stamped_commit(measure.REPO / "docs/design/measurements.md")
+        self.assertIsNotNone(stamp)
 
 
 class KojiRecipe(unittest.TestCase):

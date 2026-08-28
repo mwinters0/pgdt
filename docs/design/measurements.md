@@ -5,6 +5,13 @@ reproduces it. A baseline nobody can re-run is a rumour with a decimal point,
 so **a figure that loses its regeneration command should be deleted, not
 kept**.
 
+**Session stamp.** Every figure below was taken by `scripts/measure.py` on
+2026-08-28, against commit `3739c26`. One sweep, one apparatus — which is what
+lets these tables be differenced against each other, and what "are these
+figures from before or after my change" is answered by. `uv run measure.py
+--stale` reads that commit back and names the figures a diff has invalidated
+since.
+
 All figures are on the hardware `CLAUDE.local.md` describes. Synthetic inputs
 are regenerable with `--seed 42` and are **never committed** — they measure
 throughput, not correctness, which stays entirely fixture-based.
@@ -34,12 +41,13 @@ Nine standing rules for reading anything below:
   figure whose *subject* is the device ("Scan throughput by input shape"
   below), which is taken cold on purpose. **Every warm figure below is on
   tmpfs**, and they were re-taken together in one session rather than drifting
-  onto the new footing one at a time — see "The warm set" below for the
-  apparatus they share.
+  onto the new footing one at a time — see "The apparatus" below, which every
+  figure here shares.
 - **Re-take a comparison table whole, in one interleaved sweep.** Never
   difference one row against a figure from another session, and never run a
-  multi-file comparison a file at a time. Session-to-session level shifts of
-  ~10% happen here on identical binaries and identical inputs, and a
+  multi-file comparison a file at a time. Session-to-session level shifts of up
+  to 15% happen here on identical binaries and identical inputs — measured, in
+  "What a session's own drift costs" below — and a
   file-at-a-time sweep maps a session's own drift onto file identity,
   manufacturing a between-file difference that is apparatus. Each rep runs
   every file-and-mode combination in turn; report medians. `M10`'s nested table
@@ -50,7 +58,7 @@ Nine standing rules for reading anything below:
   not carry the harness that produced it. `sudo nerdctl run` costs **0.74–0.76
   s** before the binary starts — three runs of a trivial command, opening the
   warm-set sweep below — against which a 3.00 GiB warm `parse` of the
-  brace-free control is **0.57 s** timed by the container's own shell. The
+  brace-free control is **0.549 s** timed by the container's own shell. The
   wrapper is *larger than the figure*, and more than twice the smallest row of
   the quadratic table. So the timed command is `bash -c 'time /pgdq …'`, whose
   timer resolves to 1 ms. This does not license running a figure outside the
@@ -97,75 +105,77 @@ Nine standing rules for reading anything below:
   `CLAUDE.local.md`'s hardware section, which records what the contention costs
   here.
 
-## The warm set
+## The apparatus
 
-Four figures below share one apparatus and were taken in one sweep, on
-2026-08-27: both census figures, the nested end-to-end table (with its
-cross-file floor), and the per-block quadratic table. `S3`'s census-on column
-is also the `COPY` path's warm CPU that the scan-throughput table cites, so
-that fifth figure is the same measurement rather than another one.
+**Every figure below comes from one sweep of `scripts/measure.py`**, which is
+what the session stamp above records. Figures that share a reading share it
+rather than measuring it twice: each throughput table's `COPY` row *is* the
+census table's census-on column for that regime, and the preamble table's
+full-`parse` row *is* the quadratic table's 4000-block "after" column.
 
-**The apparatus is one line: 3.00 GiB inputs on `/dev/shm`, read by a
-`glibc` binary in a 512 MB `postgres:16` container, timed by that container's
-own `bash`.** They were re-taken together because a figure re-taken alone
-would leave the doc's warm figures disagreeing about regime, which is the
-failure the standing rules were written from — and every one of them moved,
-some by a factor, when the tmpfs, in-container-timer and glibc rules landed
-together.
+**One line, in two regimes: 3.00 GiB inputs read by a `glibc` binary in a
+512 MB `postgres:16` container, timed by that container's own `bash`.** Warm
+figures read from `/dev/shm`; cold ones read from the SSD with `drop_caches`
+before every run, including before the floor. Nothing else builds or runs on
+the machine while a sweep does — a `cargo` job across 24 cores moves the
+numbers being taken, which is "a koji figure taken while local work ran is not
+a figure" one scale down.
 
-The sweep that produced them was `runs/m13-warm-set.sh` → `.log`, a `runs/`
-artifact and therefore gitignored — and the last sweep taken that way.
-**`scripts/measure.py` is the durable record now**: it runs the apparatus in
-the paragraph above and emits each section's table, so re-taking a figure is
-`uv run measure.py --figure <id>` rather than a new script and a hand-written
-parser to read its log. It also answers which figures a diff has invalidated
-(`--stale`), since every figure declares the paths it depends on.
+**The harness stages the inputs, and the budget is computed.** The full input
+set is six 3.00 GiB files, which does not fit `/dev/shm`, so it stages one
+figure's inputs at a time and evicts what no remaining figure wants. The
+ceiling is the largest single figure's own inputs plus 10% — 9.90 GiB here —
+checked against the filesystem's real free space before the first measurement
+rather than discovered twenty minutes into a sweep. Inputs are generated onto
+the SSD once and *copied* into tmpfs, both from the host: 3 GiB written from
+inside the 512 MB container would be charged to its cgroup and kill it.
 
 **Each figure's section carries an `<!-- figure: <id> -->` marker**, and that
 marker — not the heading — is how the harness addresses it. Headings here are
 free to quote a number, and a heading whose number the next sweep moves is
-rewritten with it; `uv run measure.py --check` reconciles the markers against
-the harness's register, and names for each figure the other documents that
-repeat its numbers.
+rewritten with it. `uv run measure.py --check` reconciles the markers against
+the harness's register and names, for each figure, the other documents that
+repeat its numbers; `--stale` names the figures a diff has invalidated.
 
-The prose recipes below stand until the harness's own sweep replaces the figure
-each one backs; then each becomes the one-line invocation that reproduces it.
-**Two never go**, because the harness genuinely does not own them: the
-census-off **source patch**, which no harness should perform, and the generator
-invocations a reader may want on their own. koji's was a third until the
-harness took it — `uv run measure.py --koji-recipe` prints it now.
-
-The `M13` sweep ran on the tree carrying `M12` (the generated bytes are final)
-and `M11` (the pre-filter is `memchr2`), so every figure here is post-both.
-
-**Out of scope, deliberately.** `benches/decoders.rs`'s micros read literals
-written in the bench and never touch a filesystem. The scan-throughput table's
-own rows are cold on purpose — the device is their subject. koji is 784 GB on
-the HDD and cannot be staged in memory at all; it is a device figure and a
-regression check, not a parsing-CPU one.
-
-**Generate the inputs on tmpfs from the host, before starting any container.**
-The union of inputs is four 3.00 GiB files — `--seed 42` control, a `--seed 43`
-control, `--composite`, `--arrays --composite` — which is 12 GiB against
-`/dev/shm`'s 16 G and this machine's ~21 GB available. Writing them from inside
-the 512 MB-limited container would charge those tmpfs pages to its cgroup and
-kill it; the pages must already be resident and charged to the host when the
-container opens the file read-only.
+**Two prose recipes never go**, because the harness genuinely does not own
+them: the census-off **source patch**, which no harness should perform, and the
+generator invocations a reader may want on their own. koji's was a third until
+the harness took it — `uv run measure.py --koji-recipe` prints it now.
 
 ## Scan throughput by input shape
 
-Three 3.00 GiB synthetic dumps on the SSD, a whole-file `pgdq` scan in a
-512MB-limited container. **Every run is cold** — `drop_caches` before each one,
-including before each `cat` — because that is the only regime in which the
-floor row means anything: this file fits page cache twice over, so a second
-read of it measures RAM.
+Three 3.00 GiB synthetic dumps, a whole-file `pgdq` scan in a 512MB-limited
+container, in both regimes. **Cold** is `drop_caches` before every run,
+including before the floor, because that is the only regime in which a device
+floor means anything: this file fits page cache twice over, so a second read of
+it measures RAM. **Warm** is the same files on tmpfs, which is where the CPU
+the device hides becomes visible.
+
+<!-- figure: scan-throughput-cold — reproduce with `cd scripts && uv run measure.py --figure scan-throughput-cold` -->
+
+**Every run cold, on the SSD**
 
 | Input | Wall | Rate | Against the floor |
 |---|---|---|---|
-| `COPY` block | 6.68–6.70 s | ~481 MB/s | 1.2× the floor's time |
-| Large-object region | 6.61–6.65 s | ~484 MB/s | 1.2× the floor's time |
-| `INSERT` run | 15.13–15.42 s | ~209 MB/s | **2.7× the floor's time** |
-| `cat` → `/dev/null` | 5.73–5.74 s | ~562 MB/s | — |
+| `COPY` block | **5.77 s** (5.76–5.81) | ~558 MB/s | 1.00× the floor's time |
+| Large-object region | **5.80 s** (5.76–5.80) | ~556 MB/s | 1.01× the floor's time |
+| `INSERT` run | **9.90 s** (9.84–10.10) | ~325 MB/s | **1.72× the floor's time** |
+| `dd` → `/dev/null` | **5.75 s** (5.75–5.76) | ~560 MB/s | — |
+
+<!-- figure: scan-throughput-warm — reproduce with `cd scripts && uv run measure.py --figure scan-throughput-warm` -->
+
+**Every run warm, on tmpfs**
+
+| Input | Wall | Rate | Against the floor |
+|---|---|---|---|
+| `COPY` block | **0.549 s** (0.541–0.562) | ~5867 MB/s | 1.78× the floor's time |
+| Large-object region | **0.474 s** (0.467–0.484) | ~6796 MB/s | 1.54× the floor's time |
+| `INSERT` run | **8.00 s** (7.88–8.24) | ~403 MB/s | **25.97× the floor's time** |
+| `dd` → `/dev/null` | **0.308 s** (0.307–0.310) | ~10459 MB/s | — |
+
+Each table's `COPY` row is the census figure's census-on column for that
+regime — the same binary, the same command, the same input, not a second
+measurement of it.
 
 Every run completes inside the 512 MB cgroup, which is the memory claim this
 apparatus can actually make. **It carries no max-RSS figure**: `/usr/bin/time
@@ -174,101 +184,84 @@ it read the same ~40–45 MB for a 2 MB input as for a 3.00 GiB one, four times
 what koji's row below records for a 784 GB scan. pgdq's own resident set is the
 koji figure, ~9 MiB.
 
-**What this says.** The `COPY` and large-object paths are device-bound: they
-spend about a fifth more wall-clock than reading the same bytes and doing
-nothing, and their CPU (0.57 s for the same 3.00 GiB with the bytes in memory,
-below) is an order of magnitude under the 5.73 s the read takes. The `INSERT`
-path is not — it takes 8.6 s per 3 GiB *longer* than the
-`COPY` path on the same device, because every line is still decoded into
-`Event::Line` and pushed through the statement accumulator (see
-[`architecture.md`](architecture.md), "Bulk regions"). Mapping an `--inserts`
-file costs about what *decoding* a `COPY` file costs, not what *scanning* one
-costs: at 1 TB that is ~45 minutes of CPU no `COPY` dump pays, against the
-~15 minutes the `COPY` path spends on 1 TB in total. **The ~5× is not a CPU
-ratio and never was.** It divides this *cold* `INSERT` rate — which contains
-the device — by the `COPY` path's *warm* CPU, so it compares two regimes; and
-its `COPY` side has since fallen from 2.92 s (~1.10 GB/s, of which 0.77 s was
-wrapper, on a page-cache-warm SSD read with the pre-`M11` scalar pre-filter) to
-**0.57 s**. **No warm `INSERT` figure has ever been taken**, so the per-byte
-CPU ratio is unmeasured. Bounding it from this table alone: a 15.2 s cold
-`INSERT` scan against a 5.73 s device floor puts its CPU between ~9.5 s (fully
-serialized with the read) and ~15.2 s (fully overlapped), against 0.57 s for
-`COPY` — i.e. somewhere around **16–26×**, with ~5× a floor rather than an
-estimate. The measurement that settles it is a warm `INSERT` `parse` on tmpfs,
-queued as `M17` (`../status/STATUS.md`, "The out-of-band queue"). The direction is safe meanwhile: every
-correction makes the `INSERT` path look worse, never better. Correctness, tiling and
-row counts are unaffected. The fix is a scanner-level `INSERT` path;
-[`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md) holds it.
+**What this says.** The `COPY` and large-object paths are device-bound to the
+point of disappearing into the device: cold, they spend **1.00× and 1.01×** the
+wall-clock of reading the same bytes and doing nothing. Warm, the same scans
+cost 0.549 s and 0.474 s against a 0.308 s `dd` floor — so the CPU is there,
+and at 560 MB/s the disk simply covers it.
 
-**The CPU ceiling under the `COPY` row is 0.57 s** — the same scan with the
-same bytes served from tmpfs, ~5.7 GB/s, of which 0.33 s is the kernel's read
-(the `dd` floor for the same file in the same container). That is the number
-the two census figures below are differences against, and the reason they are
-stated warm: at 481 MB/s the device hides everything the CPU does.
+**The `INSERT` path is a different algorithm, and the warm table is what says
+so.** Warm, an `INSERT` run costs **8.00 s against the `COPY` path's 0.549 s on
+the same 3.00 GiB — 14.6× the per-byte CPU**, and **26× the `dd` floor** where
+the `COPY` path is 1.8×. Every line is decoded into `Event::Line` and pushed
+through the statement accumulator ([`architecture.md`](architecture.md), "Bulk
+regions") where a `COPY` block's data is walked and skipped. Cold, the same
+difference is compressed to 1.72× the floor, because the device hides most of
+it — which is exactly why the two tables are here together rather than one
+being differenced against the other's regime.
 
-**This whole table is superseded by `M17`** (`docs/status/STATUS.md`, "The
-out-of-band queue"), and by more than a rounding: every `pgdq` row was timed
-by `/usr/bin/time` around `nerdctl run` and so carries the 0.77 s the seventh
-standing rule now excludes, while the floor row is a **host** `cat` with no
-container at all — two apparatuses in one comparison, which no subtraction
-fixes. Corrected by that constant the rows read 5.91 / 5.84 / 14.36 s, and
-"1.2× the floor's time" becomes **1.03×** for `COPY` and 1.02× for large
-objects, with the `INSERT` row at 2.5×. The device-bound conclusion is
-unchanged and in fact sharper — the `COPY` path spends 3% more wall-clock than
-reading the bytes and doing nothing, not a fifth more — but `M17` re-takes the
-rows and the floor under one apparatus rather than leaving the doc quoting
-arithmetic.
+**This replaces the "~5× per-byte cost" claim, which was never a CPU ratio.**
+That number divided a *cold* `INSERT` rate, device included, by the `COPY`
+path's *warm* CPU. The honest figure is the one above, from a single regime:
+**14.6×**, close to the bottom of the 16–26× the previous cold table was used
+to bound it at. Correctness, tiling and row counts are unaffected; the fix is a
+scanner-level `INSERT` path, and
+[`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md)
+holds it. The number is corrected wherever it is repeated —
+[`pg-dump-compatibility.md`](pg-dump-compatibility.md),
+[`roadmap.md`](roadmap.md) and
+[`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md).
+**What a 14.6× ratio changes about P7's priorities is not**: that is a
+decision rather than a value, and it is open
+(`../status/STATUS.md`, "Decisions worth another look").
 
-Regenerate the three inputs:
+**The cold `INSERT` row has itself moved, and not because of the apparatus.**
+It read 15.13–15.42 s when it was taken on 2026-08-25 and reads 9.90 s now;
+`M7` changed how an `--inserts` dump's runs are scanned in between. Attributing
+the difference needs a pre-`M7` build and a second cold table, which nothing
+yet requires.
+
+Regenerate the three inputs, for a reader who wants them without the harness:
 
 ```sh
 cd scripts
-# note the flags differ: generate_perf_data.py takes --size-mb, the other two
-# --size-gb, and all three take the output path as a positional.
 uv run generate_perf_data.py          --size-mb 3072 --seed 42 /path/to/copy_control.sql
 uv run generate_large_object_bench.py --size-gb 3    --seed 42 /path/to/large_object.sql
 uv run generate_insert_run_bench.py   --size-gb 3    --seed 42 /path/to/insert_run.sql
 ```
 
-All three are deterministic under `--seed`, which is what lets this table be
+All three are deterministic under `--seed`, which is what lets these tables be
 re-taken whole rather than re-measured against different bytes.
 
-The `COPY` control is 817,024 rows of 16 columns, 3,943 bytes each, and holds
+The `COPY` control is 814,362 rows of 16 columns, 3,956 bytes each, and holds
 no `{` or `[` in any data row — see "The census on brace-free rows" below for
 why that is a contract rather than an accident. The `INSERT` generator writes
 one `INSERT INTO public.bench_inserts VALUES (…);` per line under an ordinary
-`TABLE DATA` TOC comment — 7,656,060 rows, with an apostrophe doubled the way
-`pg_dump` writes one in ~15% of them, so the accumulator's quote tracker is
-genuinely exercised. The large-object generator is `LOBBUFSIZE`-chunked to
-match real `pg_dump`.
+`TABLE DATA` TOC comment, with an apostrophe doubled the way `pg_dump` writes
+one in ~15% of them, so the accumulator's quote tracker is genuinely exercised.
+The large-object generator is `LOBBUFSIZE`-chunked to match real `pg_dump`.
 
-Measure each the same way:
+Both tables come from one command:
 
 ```sh
-cargo build --release -p pgdump_query-cli          # default target: glibc
-for i in 1 2 3; do
-  sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
-  echo "### run$i"; sudo nerdctl run --rm \
-    -m 512m --memory-swap 512m \
-    -v "$PWD/target/release/pgdq:/pgdq:ro" \
-    -v "/path/to/bench.sql:/dump.sql:ro" \
-    postgres:16 \
-    bash -c 'time /pgdq parse --source /dump.sql --dqcache /tmp/x.dqcache >/dev/null'
-done
-# and the floor, in the same container so the comparison is one apparatus:
-sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'
-sudo nerdctl run --rm -m 512m --memory-swap 512m \
-  -v "/path/to/bench.sql:/dump.sql:ro" postgres:16 \
-  bash -c 'time dd if=/dump.sql of=/dev/null bs=4M'
+cd scripts && uv run measure.py --figure scan-throughput-cold --figure scan-throughput-warm
 ```
 
 `parse` is the only command that reads the dump
 ([`architecture.md`](architecture.md), "CLI surface"), and the cache it must
 write goes to the container's ephemeral layer — a few hundred KB against 3 GiB
-read, which is why these figures are comparable to the ones taken before that
-split existed.
+read.
 
-## The census on brace-free rows costs 7% of a warm scan
+**The large-object skip is the measurement that justifies it.** Completing a
+3 GiB region inside a 512 MB limit, at the same rate the `COPY` path walks the
+same kind of bytes and a sixteenth of what the `INSERT` path costs, is the
+"skipped, not walked" evidence: walking it statement by statement would mean
+one span *and one stored text string* per `lowrite` call, hundreds of
+thousands of them.
+
+## The census on brace-free rows costs 11% of a warm scan
+
+<!-- figure: census-brace-free — reproduce with `cd scripts && uv run measure.py --figure census-brace-free` -->
 
 The census walks every data row of every block any mapping pass maps — a cold
 query's included, since a mapped block always carries one
@@ -289,27 +282,40 @@ beside them.
 
 | | Census off | Census on | Δ |
 |---|---|---|---|
-| warm, on tmpfs | **0.531 s** (0.515–0.562) | **0.568 s** (0.560–0.593) | **+0.037 s, +7%** |
+| cold, on the SSD | **5.76 s** (5.76–5.82) | **5.77 s** (5.76–5.81) | **+0.004 s, +0%** |
+| warm, on tmpfs | **0.496 s** (0.494–0.525) | **0.549 s** (0.541–0.562) | **+0.053 s, +11%** |
 
 Both binaries complete inside the 512 MB cgroup; no max-RSS figure is quoted,
 for the reason under the scan-throughput table. `dd` → `/dev/null` on the same
-file in the same container: **0.326 s**, so the census-off scan is already
-within 1.6× of what the kernel charges to hand over the bytes.
+file in the same container: **0.308 s** warm and **5.75 s** cold, so the
+census-off scan is already within 1.6× of what the kernel charges to hand over
+the bytes.
 
 **What this says.** The pre-filter is very nearly free on the shape a real
-dump mostly has: **0.037 s per 3.00 GiB of brace-free rows**, 45 ns per
-16-column row of 3,956 bytes. That implies ~87 GB/s, which is well above what
+dump mostly has: **0.053 s per 3.00 GiB of brace-free rows**, 64 ns per
+16-column row of 3,956 bytes. That implies ~60 GB/s, which is well above what
 this machine's DRAM will give one core — so the reading is not a
 memory-bandwidth figure at all: the pre-filter re-walks bytes the scanner has
 just walked, out of cache, and `memchr2` is fast enough that what is left is
 the loop, not the bytes.
 
-**It was not always.** The scalar `raw.iter().any(…)` loop `M11` replaced ran
-at ~3.8 GB/s and cost 1.03 µs per row — +39% as recorded and **+63%
-reconstructed**, once the 0.77 s container wrapper that sat in both legs is
-taken out ([`../status/history/2026-08-27.md`](../status/history/2026-08-27.md)).
+**Cold, the census is invisible**: +0.004 s on a 5.77 s scan, which is inside
+the run-to-run spread of the floor itself. That row is not a separate finding —
+it is the same CPU cost, hidden behind a device delivering 560 MB/s. Which one
+a user sees is decided by whether the bytes are already resident.
+
+**Read the warm Δ against the instrument, not to three figures.** "What a
+session's own drift costs" below puts warm sub-second readings 6–15% apart
+between two sweeps of identical binaries and inputs, so +11% is "roughly a
+tenth", and the +7% this table read in the previous sweep is the same
+measurement rather than a change.
+
+**It was not always.** The scalar `raw.iter().any(…)` loop that preceded
+`memchr2` ran at ~3.8 GB/s and cost 1.03 µs per row — +39% as recorded and
+**+63% reconstructed**, once the 0.77 s container wrapper that sat in both legs
+is taken out ([`../status/history/2026-08-27.md`](../status/history/2026-08-27.md)).
 That figure is what argued for the swap, and it is why the deferred question
-of a *skippable* census is now closed rather than open: 45 ns per row is not a
+of a *skippable* census is now closed rather than open: 64 ns per row is not a
 cost worth a knob.
 
 So the census's cost is effectively **one tier, not two**: it is paid by the
@@ -321,64 +327,38 @@ pass. What the figure does *not* license is calling it exactly zero: the two
 spreads do not overlap, and the earlier reading that said zero came from
 taking the pair while the page cache was still filling.
 
-**The cold row is `M17`'s.** The only cold reading of this comparison is
-**+1.2%**, taken off this SSD against a 5.73 s device floor — and it is the
-*pre-`M11` scalar* pre-filter, on the superseded apparatus, so it is a bound
-rather than this table's other half. A pre-filter 23× cheaper is hidden a
-fortiori, but the claim and its measurement should sit in one apparatus:
-`M17`'s sweep already stages this control cold on the SSD with `drop_caches`
-before every run and a `dd` floor in the same container, so it takes the
-census-off binary through two more cold runs and this row comes back.
-
 **The control's brace-freeness is a contract, not an accident.** The same
 generator writes array columns behind `--arrays` and a composite behind
 `--composite`, and those flags exist precisely so its *default* output stays
 what this figure and the scan-throughput table above were taken on. Anything
 that puts a `{` or `[` into the default rows invalidates both.
 
-Both binaries, then the alternating runs. Census off is `pub(crate) fn
-on_row`'s body in `map.rs` preceded by a bare `return;` — the pre-filter and
-everything after it, and nothing else. **Run the pair in both orders**: within
-a pair the second run is warmer, which is exactly the artifact that hid this
-figure before.
+**The census-off binary is a source patch, which no harness performs.** Build
+it once, by hand: put a bare `return;` as the first statement of `pub(crate) fn
+on_row` in `map.rs` — the pre-filter and everything after it, and nothing else
+— then
 
 ```sh
-# generate from the HOST: 3 GiB written from inside the 512 MB container is
-# charged to its cgroup and kills it.
-cd scripts && uv run generate_perf_data.py --size-mb 3072 --seed 42 \
-  /dev/shm/pgdq/control.sql
 cargo build --release -p pgdump_query-cli          # default target: glibc
-cp target/release/pgdq runs/pgdq-census
-# add `return;` as the first statement of map::Builder::on_row, rebuild,
-# copy to runs/pgdq-nocensus, then revert.
-for i in 1 2 3; do for w in nocensus census; do
-  echo "### $w run$i"; sudo nerdctl run --rm \
-    -m 512m --memory-swap 512m \
-    -v "$PWD/runs/pgdq-$w:/pgdq:ro" \
-    -v "/dev/shm/pgdq/control.sql:/dump.sql:ro" \
-    postgres:16 \
-    bash -c 'time /pgdq parse --source /dump.sql --dqcache /tmp/x.dqcache >/dev/null'
-done; done
-# reps 4-6 swap the inner order to `census nocensus`.
-# the floor, same container, same file:
-sudo nerdctl run --rm -m 512m --memory-swap 512m \
-  -v "/dev/shm/pgdq/control.sql:/dump.sql:ro" postgres:16 \
-  bash -c 'time dd if=/dump.sql of=/dev/null bs=4M'
+cp target/release/pgdq runs/pgdq-nocensus          # then revert map.rs
+```
+
+and the harness takes it from there, staging both regimes, interleaving the
+pair, reversing the order halfway and taking the floor in the same container:
+
+```sh
+cd scripts && uv run measure.py --figure census-brace-free
 ```
 
 **Never redirect stderr inside a timed command.** Some shells route `time`'s
 own report through the timed command's redirection, so a `2>/dev/null` meant
 to hide the binary's chatter deletes the figure and leaves a labelled run with
-no number under it. Let the binary's stderr reach the log.
+no number under it. The harness's own tests assert that none of its commands
+does this; the trap is recorded because a hand-run one still can.
 
-**The large-object skip is the measurement that justifies it.** Completing a
-3GB region inside a 512MB limit, at the same rate the `COPY` path walks the
-same kind of bytes and less than half what the `INSERT` path costs, is the
-"skipped, not walked" evidence: walking it statement by statement would mean
-one span *and one stored text string* per `lowrite` call, hundreds of
-thousands of them.
+## The census on array-bearing rows more than triples a warm scan
 
-## The census on array-bearing rows nearly quadruples a warm scan
+<!-- figure: census-arrays — reproduce with `cd scripts && uv run measure.py --figure census-arrays` -->
 
 The other side of the figure above: a 3.00 GiB dump where **every** row holds
 an array, so the census's pre-filter passes on all of them and every field of
@@ -394,26 +374,25 @@ Six reps each, the pair run in both orders; medians, with the full spread.
 
 | | Census off | Census on | Δ |
 |---|---|---|---|
-| warm, on tmpfs | **0.468 s** (0.465–0.478) | **1.729 s** (1.699–1.740) | **+1.26 s, +270%** |
+| cold, on the SSD | **5.77 s** (5.76–5.77) | **5.84 s** (5.84–5.91) | **+0.074 s, +1%** |
+| warm, on tmpfs | **0.524 s** (0.512–0.550) | **1.753 s** (1.695–1.871) | **+1.229 s, +234%** |
 
 Both binaries complete inside the 512 MB cgroup; no max-RSS figure is quoted,
-for the reason under the scan-throughput table. The `dd` floor for a 3.00 GiB
-file in this container is 0.326 s, so census-off is within 1.4× of it and
-census-on is 5.3× it.
+for the reason under the scan-throughput table. The `dd` floor for this file in
+this container is 0.320 s warm and 5.75 s cold, so warm census-off is within
+1.6× of it and census-on is 5.5× it.
 
-**What this says.** The census costs **1.26 s per 3.00 GiB of array-bearing
-rows** — 1.80 µs per 19-column row — which is **+270%** on a scan reading from
-memory, i.e. the census does nearly three times the work the rest of the scan
-does on this shape. The cold reading is **+2.6%** off this SSD against a
-5.73 s floor — pre-`M11`, on the superseded apparatus, and re-taken by `M17`
-with the section above; the field-splitting half that dominates here is
-unchanged since, so it is the right order. Both numbers are the same CPU;
-which one a user sees is decided by whether the bytes are already resident.
+**What this says.** The census costs **1.229 s per 3.00 GiB of array-bearing
+rows** — 1.76 µs per 19-column row — which is **+234%** on a scan reading from
+memory, i.e. the census does more than twice the work the rest of the scan does
+on this shape. Cold it is **+1%**, hidden behind the device exactly as the
+brace-free case is. Both rows are the same CPU; which one a user sees is
+decided by whether the bytes are already resident.
 
-**The pre-filter is 45 ns of that 1.80 µs** (previous section, same
-apparatus and the same census-off baseline to within 15%). So splitting the
+**The pre-filter is 64 ns of that 1.76 µs** (previous section, same
+apparatus and the same census-off baseline to within 6%). So splitting the
 row into fields and running `observe` over all 19 of them — the work the
-pre-filter exists to avoid — is **97.5% of the census's whole cost**, and the
+pre-filter exists to avoid — is **96% of the census's whole cost**, and the
 pre-filter is what keeps the brace-free case off that path. The census is
 unconditional either way (`architecture.md`, "The array shape census") — the
 alternative is a query that cannot retype its array columns without a second
@@ -424,17 +403,18 @@ is CPU rather than allocator: the musl leg of the same sweep read 1.29 s
 census-off against 2.56 s census-on, a Δ of 1.27 s against glibc's 1.26 s,
 while its *absolute* legs were 2.5× higher.
 
-Both binaries, then the alternating runs. Census off is `pub(crate) fn
-on_row`'s body in `map.rs` preceded by a bare `return;` — the pre-filter and
-everything after it, and nothing else:
+The same census-off binary the previous section builds, on the same apparatus:
+
+```sh
+cd scripts && uv run measure.py --figure census-arrays
+```
+
+The input alone, for a reader who wants it without the harness:
 
 ```sh
 cd scripts && uv run generate_perf_data.py --arrays --composite \
   --size-mb 3072 --seed 42 /dev/shm/pgdq/arrays.sql
 ```
-
-Then the identical loop the previous section gives, with
-`/dev/shm/pgdq/arrays.sql` in place of the control.
 
 *Rejected:* a `no-census` cargo feature, so this reproduces as a flag instead
 of a source edit. Neither crate declares a `[features]` section today, and the
@@ -442,31 +422,33 @@ first one a project adds sets the precedent for what features are for — here,
 a build in which `architecture.md`'s "the census is unconditional" is untrue,
 serving a comparison taken about once a phase. The escape if the patch-and-
 revert ever bites is to drop the comparison, not to gate it: the absolute
-figures (45 ns/row rejected, 1.80 µs/row inspected) are what
+figures (64 ns/row rejected, 1.76 µs/row inspected) are what
 [`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md) actually consumes, and
 the census-off column exists to establish it once.
 
 ## Nested decode costs what it copies, and an element is an allocation
 
+<!-- figure: nested-decode-micro — reproduce with `cd scripts && uv run measure.py --figure nested-decode-micro` -->
+
 `benches/decoders.rs`'s `nested` group, criterion medians. **Two controls,
 because there are two questions.**
 
-- **Copy** — `String::from` over the same byte count: 21.0 ns at 49 bytes,
-  25.9 ns at 601, 20.0 ns at 42. A nested value has no borrowed arm
+- **Copy** — `String::from` over the same byte count: 22 ns at 49 bytes,
+  47 ns at 601, 22 ns at 42. A nested value has no borrowed arm
   (`crate::batch::append_nested`), so this isolates what the *parse* costs on
   top of the copy it cannot avoid, which is the variable P7 is choosing
   over.
 - **View** — one `append_view_unchecked` into a block the builder does not
   own, which is what `push_utf8view_field` does for an unescaped text field:
-  **3.14 ns**, from `text_view_x1024`'s 3.216 µs ÷ 1024. Length-independent,
+  **3.07 ns**, from `text_view_x1024`'s median ÷ 1024. Length-independent,
   which is the point of a view. This is what a user comparing a text column
   against an array column actually pays.
 
 | Literal | Bytes | `decode` | `render` | ÷ copy | ÷ view |
 |---|---|---|---|---|---|
-| `integer[]`, 4 elements | 49 | 265 ns | 240 ns | **12.6×** | **84×** |
-| `integer[]`, 50 elements | 601 | 3.85 µs | 1.54 µs | **149×** | **1225×** |
-| two-field composite | 42 | 217 ns | 215 ns | **10.8×** | **69×** |
+| `integer[]`, 4 elements | 49 | 299 ns | 231 ns | **24.4×** | **173×** |
+| `integer[]`, 50 elements | 601 | 4.03 µs | 1.65 µs | **121.8×** | **1853×** |
+| two-field composite | 42 | 206 ns | 188 ns | **18.1×** | **128×** |
 
 **Both control figures are read with a caveat.** `text_view_x1024` reports
 1024 appends and must be divided — timing one append through
@@ -477,8 +459,8 @@ puts at ~1.1 ns, so three quarters of it was criterion. And 3.14 ns is a
 `block_for`. So the `÷ view` column bounds the real ratio **from above**.
 
 **What this says.** Cost is per *element*, not per byte: the two array lengths
-differ only in element count, and the slope between them is **78 ns per
-element** decoding and **28 ns per element** rendering. That is the shape of
+differ only in element count, and the slope between them is **81 ns per
+element** decoding and **31 ns per element** rendering. That is the shape of
 one allocation per element, which is what `ArrayLiteral::elements` being a
 `Vec<Option<String>>` buys — every element is its own `String`. A composite
 sits where its field count says it should: two fields, and it costs about what
@@ -489,10 +471,16 @@ meaningless; comparing them per element is the only reading these three rows
 support.
 
 ```sh
-cargo bench -p pgdump_query --bench decoders -- nested
+cd scripts && uv run measure.py --figure nested-decode-micro
 ```
 
-## A typed query over nested columns costs 14 µs a row more than a string one
+It reads criterion's own `estimates.json` rather than scraping the console,
+because a rounded ratio is how a table acquires a number nobody can reproduce.
+The bench alone is `cargo bench -p pgdump_query --bench decoders -- nested`.
+
+## A typed query over nested columns costs 13.5 µs a row more than a string one
+
+<!-- figure: nested-end-to-end — reproduce with `cd scripts && uv run measure.py --figure nested-end-to-end` -->
 
 The end-to-end half of the figure above: what the per-element cost actually
 costs a user. Two controls, on two axes. Within a file, `--schema-mode
@@ -509,30 +497,30 @@ whichever file went first. Medians of five:
 
 | File | Rows | `strings` | `typed` | `typed` − `strings` | Ratio |
 |---|---|---|---|---|---|
-| control — 16 scalar columns | 814,362 | 4.43 s | 10.66 s | **7.66 µs/row** | 2.41× |
-| `--composite` — the same 16 plus one composite | 803,995 | 4.43 s | 10.98 s | **8.15 µs/row** | 2.48× |
-| `--arrays --composite` — the same 16 plus three nested | 699,962 | 5.48 s | 20.54 s | **21.52 µs/row** | 3.75× |
+| control — 16 scalar columns | 814,362 | 4.41 s | 10.58 s | **7.57 µs/row** | 2.40× |
+| `--composite` — the same 16 plus one composite | 803,995 | 4.42 s | 10.84 s | **7.98 µs/row** | 2.45× |
+| `--arrays --composite` — the same 16 plus three nested | 699,962 | 5.51 s | 20.28 s | **21.10 µs/row** | 3.68× |
 
 Every run completes inside the 512 MB cgroup; no max-RSS figure is quoted, for
 the reason under the scan-throughput table.
 
 **The per-row difference is the figure; the ratio is derived and does not
 travel.** A ratio carries that session's `strings` leg in its denominator, and
-that leg is apparatus-sensitive far beyond the ~10% session drift first blamed
-for it: the same three files read 9.74 / 9.76 / 9.56 s on a page-cache-warm
-SSD with a musl binary and 0.77 s of wrapper, against 4.43 / 4.43 / 5.48 s
-here. That alone moved the nested ratio 3.08× → 3.75× while the per-row
-difference moved 15.1 → 13.9 µs. Quote a ratio only against the sweep it came
-from; the design consumes the differences.
+that leg is apparatus-sensitive far beyond the session drift measured below:
+the same three files read 9.74 / 9.76 / 9.56 s on a page-cache-warm SSD with a
+musl binary and 0.77 s of wrapper, against 4.41 / 4.42 / 5.51 s here. That
+alone moved the nested ratio 3.08× → 3.68× while the per-row difference moved
+15.1 → 13.5 µs. Quote a ratio only against the sweep it came from; the design
+consumes the differences.
 
-**What this says.** Typing the 16 scalar columns costs **7.7 µs per row**;
-typing those plus the three nested ones costs **21.5 µs per row**. So three
-nested columns — 19% more columns — cost **13.9 µs of every row**, nearly
+**What this says.** Typing the 16 scalar columns costs **7.6 µs per row**;
+typing those plus the three nested ones costs **21.1 µs per row**. So three
+nested columns — 19% more columns — cost **13.5 µs of every row**, nearly
 twice what all sixteen scalar columns together cost. **The two array columns
 carry essentially all of it**: adding the composite column alone moves the
-per-row figure by **+0.49 µs** (paired median over the five reps +0.59),
-against a cross-file instrument whose own floor reads +0.15 and whose per-rep
-readings overlap it across most of their range — so ~4% of the three columns'
+per-row figure by **+0.41 µs** (paired median over the five reps +0.39),
+against a cross-file instrument whose own floor reads +0.07 and whose per-rep
+readings overlap it across most of their range — so ~3% of the three columns'
 cost, and a bound rather than a resolution (below).
 
 Each per-row figure is that file's own `typed` minus its own `strings`, which
@@ -548,17 +536,21 @@ Its rows are the only ones carrying a `{`, so they are the only ones the
 mapping pass's array-shape census splits into fields. Running the same query
 with the **census-off** binary settles it:
 
+<!-- figure: census-attribution — reproduce with `cd scripts && uv run measure.py --figure census-attribution` -->
+
 | | control | `--arrays --composite` | gap |
 |---|---|---|---|
-| census on | 4.390 s | 5.505 s | **+1.115 s** |
-| census off | 4.356 s | 4.281 s | **−0.075 s** |
+| census on | 4.399 s | 5.563 s | **+1.164 s** |
+| census off | 4.361 s | 4.304 s | **−0.057 s** |
 
 The gap does not shrink, it **inverts** — with the census gone the arrays file
 is slightly *cheaper*, which is what its 14% lower row count should give. The
-census accounts for 1.190 s of a 1.115 s gap, and its cost measured this way
-reproduces the `parse` figures two sections above to within 3% (+0.034 s
-against +0.037 on the control, +1.224 against +1.262 on the arrays file) — a
-cross-check on a different command.
+census accounts for 1.221 s of a 1.164 s gap, and its cost measured this way
+reproduces the `parse` figures two sections above to within 30% on the control
+(+0.038 s against +0.053) and 2% on the arrays file (+1.259 against +1.229) —
+a cross-check on a different command, and the control's looser agreement is
+two 0.04 s differences read off 4.4 s legs, which is what the drift figure
+below says this instrument can resolve.
 
 So a `strings` leg is a scan plus a census whose price depends on the data's
 shape, not a flat per-byte floor. Regenerate with `runs/m13-census-baseline.sh`'s
@@ -566,9 +558,9 @@ method: the same query loop below, run with both binaries. Earlier sweeps put al
 read that as evidence the untyped path was byte-driven; at 9.6 s legs a 1 s
 difference was inside the spread, and it is not at 4.4 s.
 
-The micro above covers 6.3 µs of that 13.9 µs (decode plus render for a
+The micro above covers 6.6 µs of that 13.5 µs (decode plus render for a
 4-element array, a 50-element array and a two-field composite). The remaining
-~7.6 µs is the Arrow build the micro does not reach: 56 per-element
+~6.9 µs is the Arrow build the micro does not reach: 56 per-element
 `append_value` calls into the child builders, plus the list offsets. **The
 literal parse is the smaller half of nested decoding**, which is the fact
 P7 needs before deciding what to do about nested values always copying.
@@ -579,14 +571,16 @@ P7 needs before deciding what to do about nested values always copying.
 Two readings of the same quantity, from the same sweep, plus the control on
 the instrument itself:
 
+<!-- figure: cross-file-floor — reproduce with `cd scripts && uv run measure.py --figure cross-file-floor` -->
+
 | Reading | Reps | Paired median | Per-rep readings |
 |---|---|---|---|
-| composite column's share — control against `--composite` | 5 | **+0.59 µs** | +0.29, +0.33, +0.59, +0.81, +1.03 |
-| **the instrument's own floor** — control against a second control (`--seed 43`, same 16 columns) | 6 | **+0.15 µs** | −0.31, −0.14, −0.02, +0.33, +0.40, +0.92 |
+| composite column's share — control against `--composite` | 5 | **+0.39 µs** | −0.12, +0.24, +0.39, +0.67, +1.60 |
+| **the instrument's own floor** — control against a second control (`--seed 43`, same 16 columns) | 6 | **+0.07 µs** | −0.36, −0.31, −0.12, +0.26, +0.45, +0.48 |
 
 The second row is the control on the *instrument*: two files that differ only
-in their random seed should differ by zero, and instead they span −0.31 to
-+0.92 µs per row. **The two ranges overlap across most of their width**, which
+in their random seed should differ by zero, and instead they span −0.36 to
++0.48 µs per row. **The two ranges overlap across most of their width**, which
 is the honest picture and the reason the ninth standing rule forbids quoting an
 interval here — an earlier draft put these at +0.61 ± 0.14 against +0.20 ± 0.18
 and made the separation look like a result. The composite's reading is
@@ -594,7 +588,7 @@ consistent with the micro, which puts the column at 0.43 µs of decode plus
 render before any Arrow build, and is not resolved from the floor.
 
 What the figure supports is therefore still a **bound**: the composite column
-costs **around half a microsecond of every row end to end, ~4% of the 13.9 µs
+costs **around half a microsecond of every row end to end, ~3% of the 13.5 µs
 the three nested columns cost together**. That is the answer to "which of the
 three columns is the cost" — the arrays, by an order of magnitude.
 
@@ -647,6 +641,38 @@ Three 3.00 GiB inputs is 9 GiB of `/dev/shm`; the floor reading needs a fourth
 (`--seed 43`), so drop `composite` and `arrays` before generating it. It is
 otherwise the same loop, six reps, over `control` and `control43`.
 
+## What a session's own drift costs, measured rather than asserted
+
+<!-- figure: session-drift — reproduce with `cd scripts && uv run measure.py --drift <sweep> <sweep>` -->
+
+The instrument measured against itself. Two full sweeps ran 40 minutes apart on
+2026-08-28, on identical inputs and identical binaries, and 32 readings are
+common to both. The point is not any row but the shape:
+
+| | Drift between two sweeps |
+|---|---|
+| median absolute, over 32 readings | **1.2%** |
+| largest | **15.4%** |
+| cold readings (5–10 s, device-bound) | **≤0.7%**, most at 0.1% |
+| warm sub-second readings | **2.6–15.4%** |
+
+**What this says.** Drift is not a single number, and the "~10%" this doc
+asserted for years was the warm case quoted as if it were general. A cold,
+device-bound reading reproduces to a tenth of a percent — the device is the
+clock. A warm reading of half a second reproduces to about a tenth of itself,
+and the worst row is the warm `dd` floor at 0.267 s against 0.308 s: a 0.04 s
+absolute difference that is 15% only because the number is small.
+
+So a *difference* between two warm sub-second legs of the same sweep is worth
+more than either leg's absolute value across sweeps, which is what the fourth
+standing rule already required and this is the measurement behind it. It is
+also the calibration for the ninth: a cross-file per-row difference under
+~0.5 µs/row is apparatus, and the two sweeps agree on that floor
+(+0.15 and +0.07 µs/row) far better than either agrees on the leg it came from.
+
+Both sweeps are `runs/measure-*` directories; the table is computed from their
+`raw.json`, never transcribed.
+
 ## koji full scan — the regression check
 
 The 784GB real sample (`CLAUDE.local.md` has the path). Roughly an hour on the
@@ -678,13 +704,13 @@ stdout;` substring — must parse as one correct block. That is the case that
 motivated line-anchored detection.
 
 **These are musl-build figures**, taken before the glibc rule above and under
-`CLAUDE.md`'s static-binary container recipe. The scan is device-bound at
-~33% of one core, so the allocator is unlikely to move them — but the next
-koji run takes them on the glibc build, and until one does they are not
-comparable to the warm figures above. koji is deliberately **not** part of
-`M17`'s sweep: a different medium, ~54 minutes, and a regression check rather
-than a throughput figure. `M17` owns the *invocation* so the next run conforms
-without re-deriving the recipe.
+a static-binary container recipe that no longer exists. The scan is
+device-bound at ~33% of one core, so the allocator is unlikely to move them —
+but the next koji run takes them on the glibc build, and until one does they
+are not comparable to the figures above. koji is deliberately **outside** the
+sweep: a different medium, ~54 minutes, and a regression check rather than a
+throughput figure. The harness owns the *invocation* — `uv run measure.py
+--koji-recipe` — so the next run conforms without re-deriving the recipe.
 
 **Throughput, re-measured clean.** A 2026-08-25 re-run on an uncontended disk
 (container `pgdq-koji`, `runs/koji-throughput-scan.log`) reproduced the same
@@ -800,6 +826,8 @@ it means "the log says done" is not the same as "the checks passed".
 
 ## The preamble prepass is bounded by the schema, not by the dump
 
+<!-- figure: preamble-prepass — reproduce with `cd scripts && uv run measure.py --figure preamble-prepass` -->
+
 `pgdq parse` and every cold query open with `index::scan_preamble`, which reads
 from byte 0 to the first `COPY` header. It is the one region that ignores
 `ScanOptions::cancel` (see `architecture.md`, "`parse` resumes, and saves as it
@@ -812,24 +840,28 @@ uncancellable region is one read.
 LC_ALL=C grep -m1 -b -a -E '^COPY .* FROM stdin;' /path/to/koji.dump | cut -c1-80
 ```
 
-**The most preamble-heavy shape available: 0.04 s.** A 4000-table dump is 49%
-preamble by bytes (the first `COPY` header sits at 980,996 of 1,998,741), and
-`--preamble-only` maps all of it in 40 ms — against ~20 s for the same file's
-full `parse`, which is dominated by the quadratic below.
+**The most preamble-heavy shape available.** A 4000-table dump is 49% preamble
+by bytes — the first `COPY` header sits at 980,996 of 1,998,741 — so this is
+the worst case the generators can build:
+
+| | Wall |
+|---|---|
+| `parse --preamble-only`, 4000-table dump | **0.047 s** |
+| full `parse` of the same file | 20.56 s |
+
+The second row is not a second measurement: it is the quadratic table's
+4000-block "after" column. What the pair has to establish is that an
+uncancellable region is *milliseconds* against a scan of seconds to an hour,
+and at 437× it clears that by more than any apparatus difference could take
+away.
 
 ```sh
-cd scripts && uv run generate_block_count_bench.py --blocks 4000 --out /tmp/r4000.sql
-rm -f /tmp/r4000.sql.dqcache
-/usr/bin/time -f '%e s' pgdq parse --preamble-only --source /tmp/r4000.sql
+cd scripts && uv run measure.py --figure preamble-prepass
 ```
 
-**This figure is taken on the host, with no container**, so it conforms to
-neither the timer rule nor the cgroup one — the 40 ms is `/usr/bin/time`
-around a bare `pgdq`. It survives as an order-of-magnitude claim rather than a
-figure: what it has to establish is that an uncancellable region is
-milliseconds against a scan of seconds to an hour, and two orders of magnitude
-of headroom is not something the apparatus can take away. `M17` re-takes it
-under the standard one.
+Both rows are now taken inside the container like every other figure; the 40 ms
+this section used to quote was `/usr/bin/time` around a host `pgdq`, obeying
+neither the timer rule nor the cgroup one.
 
 So the region grows with the *schema* — table count and DDL size — and not with
 the data, which is what makes an immediate Ctrl-C during it a non-issue on a
@@ -838,6 +870,8 @@ ranged GET that can hang, and that is a P6 decision
 (`roadmap-P6-embeddable-engine-inbox.md`).
 
 ## Per-block cache saving is quadratic in block count, and so is the map
+
+<!-- figure: per-block-quadratic — reproduce with `cd scripts && uv run measure.py --figure per-block-quadratic` -->
 
 The regime koji cannot show: **block-rich and byte-poor** — a schema with
 thousands of tables, or one partitioned table with a daily leaf over a decade.
@@ -867,10 +901,10 @@ all.
 
 | blocks | dump | final cache | before | after | saves before → after |
 |---|---|---|---|---|---|
-| 500 | 248 KB | 322 KB | 0.68 s | 0.29 s | 503 → 15 |
-| 1000 | 496 KB | 647 KB | 2.59 s | 1.12 s | 1003 → 27 |
-| 2000 | 997 KB | 1.3 MB | 10.86 s | 4.41 s | 2003 → 51 |
-| 4000 | 2.0 MB | 2.6 MB | 45.84 s | 20.10 s | 4003 → 103 |
+| 500 | 242 KB | 315 KB | 0.692 s | 0.286 s | 503 → 15 |
+| 1000 | 484 KB | 632 KB | 2.67 s | 1.123 s | 1003 → 26 |
+| 2000 | 973 KB | 1.2 MB | 11.07 s | 4.56 s | 2003 → 54 |
+| 4000 | 1.9 MB | 2.5 MB | 48.58 s | 20.56 s | 4003 → 106 |
 
 Every run is 99% CPU at every point: the cost is *serializing* the index, not
 writing it. The control is the same byte count in **one** `COPY` block —
@@ -882,8 +916,8 @@ orders of magnitude above the scan it protects.
 quadruples per doubling.** Saves fall well under the `1/K` bound — visible in
 the last column, and *self-tuning*: the throttle skips a save unless 20× the
 last save's own duration has elapsed, so a faster machine or libc saves fewer
-times, not the same number faster. The ~27 s of saving at 4000 blocks becomes
-~1.5 s of a 20.1 s scan. What is left is a *second* quadratic with the same
+times, not the same number faster. The ~28 s of saving at 4000 blocks becomes
+~1.2 s of a 20.6 s scan. What is left is a *second* quadratic with the same
 shape and a different cause: every `CopyEnd` clones the whole span list
 (`map::Builder::snapshot`, then `stream::splice` over the prefix), so the map
 is O(blocks²) with the cache **disabled entirely**:
@@ -893,13 +927,15 @@ is O(blocks²) with the cache **disabled entirely**:
 /pgdq query --source /dump.sql --table public.nosuchtable --dqcache none
 ```
 
+<!-- figure: map-only — reproduce with `cd scripts && uv run measure.py --figure map-only` -->
+
 | blocks | 1000 | 2000 | 4000 |
 |---|---|---|---|
-| map only, no saving | 1.11 s | 4.32 s | 18.62 s |
+| map only, no saving | 1.120 s | 4.37 s | 19.36 s |
 
-So at 4000 blocks the map is **93% of what a throttled `parse` costs** —
-18.6 s of 20.1 s — and the cache is the remaining 1.5 s. Against the
-*unthrottled* build the split is even: 27 s of saving, 18.6 s of mapping.
+So at 4000 blocks the map is **94% of what a throttled `parse` costs** —
+19.4 s of 20.6 s — and the cache is the remaining 1.2 s. Against the
+*unthrottled* build the split is even: 28 s of saving, 19.4 s of mapping.
 Closing the second half means not rebuilding the span list per block;
 it is filed in [`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md), because it
 is a change to how the map is assembled rather than to when it is written.

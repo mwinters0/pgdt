@@ -600,11 +600,14 @@ ledger is struck too").
 | M15 | 2026-08-27 | `whole_file.rs` regenerates its input when the generator's source changes, not only when the input is missing | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
 | M16 | 2026-08-27 | Phases are identified by `P<k>` and slugs are informal; the out-of-band ledger is struck at a keystone; two phases may run in parallel | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
 | M18 | 2026-08-27 | musl leaves the apparatus: no musl recipe in `CLAUDE.md` or `measurements.md`, since only glibc is measured and an untested portability claim is worse than none | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
+| M17 | 2026-08-28 | The measurement harness (`scripts/measure.py`) runs the sweep behind `measurements.md` and emits its tables; one sweep replaced every figure, and each one declares what invalidates it and which documents repeat it | [`../status/history/2026-08-28.md`](../status/history/2026-08-28.md) |
 | M19 | 2026-08-27 | The scan-throughput table's regeneration command runs (`--size-gb`, and the output path it omitted), and the two bench generators' `--seed` help stops calling determinism a non-goal | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
 
 **M3's result is not itself out-of-band work.** The measurement fit one
 session and changed no decision, which is what admitted it here; the number it
-produced — an `INSERT`-run scan costs ~5× a `COPY` scan per byte, CPU-bound —
+produced — an `INSERT`-run scan costs 14.6× a `COPY` scan per byte, CPU-bound
+(`~5×` when the row was first written; the 2026-08-28 sweep measured both legs
+in one regime) —
 argues for a scanner-level `INSERT` path, which *does* change a decision. That
 goes through grilling → spec amendment → a numbered slice, and is filed in
 `roadmap-P7-scan-performance-inbox.md` until then.

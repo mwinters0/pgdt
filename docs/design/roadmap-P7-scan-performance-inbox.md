@@ -91,50 +91,50 @@ P7's "Measurement discipline" section is the right place to settle it.
 
 ---
 
-## An `INSERT`-run scan is CPU-bound at ~5× a `COPY` scan's per-byte cost
+## An `INSERT`-run scan is CPU-bound at 14.6× a `COPY` scan's per-byte cost
 
-**Fact.** Three 3.00 GiB synthetic dumps, same disk, same session, three cold
-runs each (a whole-file `pgdq` scan, 512MB-limited container, `drop_caches`
-before every run): a `COPY` block scans in 6.68–6.70 s, a large-object region
-in 6.61–6.65 s, an `INSERT` run in 15.13–15.42 s, against a 5.73–5.74 s
-`cat`-to-`/dev/null` floor for the same files. The first two are within 20% of
-the I/O floor; the `INSERT` scan is 2.7× the floor's time. **The "~5×
-per-byte CPU" this entry was filed under is not a CPU ratio**: it divides that
-cold rate, device included, by the `COPY` path's *warm* CPU, and no warm
-`INSERT` figure has ever been taken. The `COPY` side is now 0.57 s per 3.00 GiB
-rather than 2.92 s, and bounding the `INSERT` side from the cold table (15.2 s
-against a 5.73 s floor) puts the real per-byte ratio near **16–26×**. `M17`
-takes the warm `INSERT` `parse` that settles it — **re-check that before using
-any number here**. The cause is structural, not incidental:
-slice 3.6 gave the large-object region a `crate::scan`-level fast path (lines
-skipped unread) but left `INSERT` runs decoding every line into `Event::Line`
-and pushing it through `preamble::statement_complete`, folding only the
-*spans* into one.
+**Fact.** The warm figure exists now, and it settles the ratio this entry was
+filed under. Three 3.00 GiB synthetic dumps, one sweep, both regimes
+(512 MB-limited container, timer inside it, glibc):
+
+| | `COPY` block | large object | `INSERT` run | `dd` floor |
+|---|---|---|---|---|
+| warm, tmpfs | 0.549 s | 0.474 s | **8.00 s** | 0.308 s |
+| cold, SSD | 5.77 s | 5.80 s | 9.90 s | 5.75 s |
+
+**An `INSERT` run costs 14.6× a `COPY` block's per-byte CPU** — 8.00 s against
+0.549 s on the same 3.00 GiB — and 26× the warm device floor where the `COPY`
+path is 1.8×. The **"~5×" this entry was filed under was never a CPU ratio**:
+it divided a cold `INSERT` rate, device included, by the `COPY` path's warm
+CPU. 14.6× is a single-regime measurement and replaces it, landing just under
+the 16–26× the cold table alone was used to bound it at.
+
+The cause is structural, not incidental: slice 3.6 gave the large-object region
+a `crate::scan`-level fast path (lines skipped unread) but left `INSERT` runs
+decoding every line into `Event::Line` and pushing it through
+`preamble::statement_complete`, folding only the *spans* into one.
 
 **Why P7 cares.** This is a second scanner-level fast path — the same
 mechanism `State::InLargeObjectRegion` already is — and P7 owns scan
 performance and the "two workloads, two algorithms" split. It is also the one
 place where this project's cost claim is currently false in the direction that
 matters: `--inserts` output is a shape the fixture tooling generates routinely,
-and a koji-scale 1 TB `--inserts` dump spends tens of minutes of CPU that a
-`COPY` dump of the same size does not — "~45 minutes" is the figure the ~5×
-gave and is a floor under the same re-take. The design constraint to carry in: an `INSERT` run's end
+and a koji-scale 1 TB `--inserts` dump spends CPU a `COPY` dump of the same
+size does not. Scaled from the warm figures, 1 TB of `INSERT` runs is **~41
+minutes of CPU** against the `COPY` path's **~3** — the same order the old ~5×
+gave, arrived at from a single regime this time rather than by dividing across
+two. The design constraint to carry in: an `INSERT` run's end
 has no invariant behind it the way `COPY`'s `\.` (I7) and `BLOBS`' `COMMIT;`
 (I12) do, so a skip-and-count path needs the string-aware `'`-tracking scan
 [`architecture.md`](architecture.md)
 ("The three regions do not share an end marker") specifies — which P8
 Track A's row reader needs anyway.
 
-**The cold numbers above have themselves moved, and by more than apparatus.**
-`M17`'s harness re-took that table on 2026-08-28: the `INSERT` run reads
-**9.77 s and 1.70× the device floor**, against the 15.13–15.42 s and 2.7×
-recorded here, while the `COPY` row is **1.00×** the floor rather than 1.2×.
-`M7` (`2eb51f4`) changed how an `--inserts` dump's runs are scanned after this
-entry's numbers were taken, which is a cause rather than an apparatus
-difference. So the **16–26× bound above is derived from a superseded reading**
-and must not be used; the warm `INSERT` figure the same sweep takes is what
-replaces both. Until it is folded in, treat every ratio in this entry as
-unmeasured rather than as a bound.
+**The cold `INSERT` reading also moved, and not because of the apparatus**:
+15.13–15.42 s when first taken, 9.90 s now. `M7` (`2eb51f4`) changed how an
+`--inserts` dump's runs are scanned in between. Attributing the difference
+needs a pre-`M7` build and a second cold table, which nothing yet requires —
+the warm figure above is what P7 actually consumes.
 
 **Origin.** Out-of-band item M3, 2026-08-25; the table re-taken cold by `M10`,
 2026-08-27; re-taken again under the committed harness on 2026-08-28
@@ -175,27 +175,27 @@ On a 3.00 GiB dump whose every row carries a 4-element array, a 50-element
 array and a two-field composite, `pgdq query --schema-mode typed` costs
 3.75× the same query in `strings` mode, against 2.41× for the same file
 without those three columns — so the three nested columns account for about
-**13.9 µs of every row**, nearly twice what the sixteen scalar columns cost
+**13.5 µs of every row**, nearly twice what the sixteen scalar columns cost
 together. **The two arrays carry all of it**: a third file holding the
-composite column and no arrays reads +0.61 µs/row against an instrument whose
-own floor is +0.20, which bounds that column at around half a microsecond
+composite column and no arrays reads +0.39 µs/row against an instrument whose
+own floor is +0.07, which bounds that column at around half a microsecond
 (4.6.1, and the entry below on what that subtraction can resolve). The
-`nested.rs` literal parse and its render account for only **6.3 µs** of the
-13.9; the remaining ~7.6 µs is the Arrow build — 56 per-element
+`nested.rs` literal parse and its render account for only **6.6 µs** of the
+13.5; the remaining ~6.9 µs is the Arrow build — 56 per-element
 `append_value` calls into child builders, plus list offsets. The
-micro also puts the array cost per *element* (78 ns decoding, 28 ns
+micro also puts the array cost per *element* (81 ns decoding, 31 ns
 rendering), which is the shape of one allocation each, since
 `ArrayLiteral::elements` is a `Vec<Option<String>>`. **Two targets, then, not
 one**: viewing instead of copying attacks the build, and it is the larger
 share — but a `Vec<Option<String>>` intermediate is paid before the build is
 reached, so a viewing builder that still routes through `decode_array` keeps
-the 6.3 µs.
+the 6.6 µs.
 
 **The prize, measured against the path this phase would widen.** One
-`append_view_unchecked` into a borrowed block costs **3.14 ns**, against
-~21 ns to copy the same bytes — so the two micro controls bracket the
-question: the literal parse is 12.6× a copy and 84× a view for a 4-element
-array, 149× and 1225× for a 50-element one. 3.14 ns is a floor rather than the
+`append_view_unchecked` into a borrowed block costs **3.07 ns**, against
+~22 ns to copy the same bytes — so the two micro controls bracket the
+question: the literal parse is 24.4× a copy and 173× a view for a 4-element
+array, 121.8× and 1853× for a 50-element one. 3.07 ns is a floor rather than the
 borrowed arm itself (`push_utf8view_field` also scans the chunk deque and
 calls `block_for`), so those view ratios bound the real ones from above. Read
 together with the ~10 µs build share above, the shape of the answer is that
@@ -226,11 +226,12 @@ its bytes and never split into fields; a row containing either is split by
 Both sides are measured, on 3.00 GiB files served from tmpfs to a 512 MB
 container, alternating a census and a no-census glibc binary in one session,
 six reps each in both orders. On the brace-free `COPY` control — every row
-rejected by the pre-filter — the census costs **0.037 s per 3.00 GiB**, 45 ns
-per 16-column row: **+7%** of a warm scan. On a file where **every** row
-carries an array it costs **1.26 s per 3.00 GiB**, 1.80 µs per 19-column row:
-**+270%** warm. Cold from this SSD a 5.73 s device floor hid both at +1.2%
-and +2.6%, on the pre-`M11` pre-filter; `M17` re-takes that regime.
+rejected by the pre-filter — the census costs **0.053 s per 3.00 GiB**, 64 ns
+per 16-column row: **+11%** of a warm scan. On a file where **every** row
+carries an array it costs **1.229 s per 3.00 GiB**, 1.76 µs per 19-column row:
+**+234%** warm. Cold from this SSD the device floor hides both entirely, at
++0% and +1% — measured in the same sweep, so the two regimes are one
+apparatus.
 
 **So the census's cost is the field split, not the pre-filter**: 97.5% of it
 falls on the rows the pre-filter passes. That inverts the reading this entry
