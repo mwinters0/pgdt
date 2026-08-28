@@ -134,7 +134,7 @@ numbers being taken, which is "a koji figure taken while local work ran is not
 a figure" one scale down.
 
 **The harness stages the inputs, and the budget is computed.** The full input
-set is six 3.00 GiB files, which does not fit `/dev/shm`, so it stages one
+set is seven 3.00 GiB files, which does not fit `/dev/shm`, so it stages one
 figure's inputs at a time and evicts what no remaining figure wants. The
 ceiling is the largest single figure's own inputs plus 10% — 9.90 GiB here —
 checked against the filesystem's real free space before the first measurement
