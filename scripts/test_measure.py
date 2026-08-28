@@ -277,7 +277,7 @@ class IsolatedPair(unittest.TestCase):
         self.assertEqual(strong, weak)
 
     def test_the_figure_is_taken_on_exactly_that_pair(self):
-        fig = measure.FIGURES_BY_ID["composite-isolated"]
+        fig = measure.SELECTABLE_BY_ID["composite-isolated"]
         self.assertEqual(fig.warm_inputs, ("composite", "composite_text"))
 
     def _diffs(self, rows_a, rows_b, first, second):
@@ -306,6 +306,46 @@ class IsolatedPair(unittest.TestCase):
         # quietly.
         with self.assertRaises(ValueError):
             self._diffs(1_000_000, 999_999, [11.0], [10.0])
+
+
+class Untaken(unittest.TestCase):
+    """An instrument that is built and whose figure has not been taken.
+
+    It has to be selectable and runnable, and it must not be mistaken for a
+    figure the doc is missing — those pull in opposite directions, which is why
+    the two registers are separate."""
+
+    def test_an_untaken_instrument_is_not_a_figure_the_doc_must_carry(self):
+        for fig in measure.UNTAKEN:
+            with self.subTest(figure=fig.id):
+                self.assertNotIn(fig, measure.ALL_FIGURES)
+
+    def test_a_sweep_does_not_take_it(self):
+        # `--all` is `FIGURES`; an untaken instrument needs asking for by name.
+        for fig in measure.UNTAKEN:
+            with self.subTest(figure=fig.id):
+                self.assertNotIn(fig.id, [f.id for f in measure.FIGURES])
+
+    def test_it_is_still_selectable_by_name(self):
+        for fig in measure.UNTAKEN:
+            with self.subTest(figure=fig.id):
+                got = [f.id for f in measure.resolve_selection([fig.id])]
+                self.assertEqual(got, [fig.id])
+
+    def test_its_inputs_and_declared_paths_are_real(self):
+        # The structural checks `Register` applies to a figure apply here too:
+        # an instrument nobody can stage is not built.
+        for fig in measure.UNTAKEN:
+            for name in (*fig.cold_inputs, *fig.warm_inputs):
+                with self.subTest(figure=fig.id, input=name):
+                    self.assertIn(name, measure.INPUTS)
+            for path in fig.depends:
+                with self.subTest(figure=fig.id, path=path):
+                    self.assertTrue((measure.REPO / path).exists(), path)
+
+    def test_no_id_collides_with_a_figure(self):
+        ids = [f.id for f in measure.ALL_FIGURES] + [f.id for f in measure.UNTAKEN]
+        self.assertEqual(len(ids), len(set(ids)))
 
 
 class Staleness(unittest.TestCase):

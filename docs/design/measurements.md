@@ -733,13 +733,22 @@ being measured was the allocator, not the instrument. The floor stands at
 roughly ±0.5 µs/row; the confound does not. This pair is also the
 demonstration behind the standing rule against quoting a standard error.
 
-*Not taken:* the instrument that would resolve it. Two files whose data
-sections are **byte-identical**, one declaring `v_comp` as
+**Built, not taken: the instrument that would resolve it.** Two files whose
+data sections are **byte-identical**, one declaring `v_comp` as
 `public.perf_comp` and the other as `text`, differ only in whether that one
-column is decoded — same rows, same bytes, so the per-row normalization that
-carries the floor above disappears. It needs a generator knob that writes a
-deliberately weaker declaration, which is a new instrument rather than this
-slice's, and nothing yet needs a figure that sharp.
+column is decoded — same rows, same bytes, so the per-row normalization
+carrying the floor above disappears, and the same pair read in `strings` mode,
+where neither decodes the column, is its own zero control.
+
+`generate_perf_data.py --weak-composite` writes the weak declaration and
+`measure.py --figure composite-isolated` takes the reading; the pair is held
+valid by `perf_generator_fidelity.rs`, which compares the two data sections
+byte for byte, and by the figure refusing to divide if they stop sharing a row
+count. **Nothing has run it under a quiet apparatus**, so this section still
+reads the composite column's cost as the bound above, and `--list` carries the
+instrument under "built, not taken" until someone needs the number badly enough
+to take it. Whoever does publishes it the way any figure is published — with
+the sweep that carries the doc's session stamp.
 
 **`typed` and `strings` agree byte for byte on all three inputs**, as they do
 on what `pg_dump` writes (`architecture.md`, "CLI surface") — so `cmp` on the

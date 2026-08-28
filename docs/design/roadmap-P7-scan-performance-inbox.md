@@ -265,6 +265,44 @@ that day's warm-set sweep, which is what re-priced the pre-filter. See
 
 ---
 
+## The instrument that resolves a composite column's cost is built and unrun
+
+**Fact.** `generate_perf_data.py --weak-composite` writes the same seed's rows
+as `--composite` with `v_comp` declared `text`, so the two files' data sections
+are byte-identical and the only difference between reading them is whether that
+one column is decoded into a `Struct`. `measure.py --figure composite-isolated`
+takes the paired difference; the same two files read in `strings` mode, where
+neither decodes the column, are its own zero control. Neither has been run
+under a quiet machine, so no figure exists and
+[`measurements.md`](measurements.md) still states that column's cost as a bound
+— "of the order of a microsecond a row, ~5% of the 13.0 µs the three nested
+columns cost together".
+
+**Why this phase cares.** Two reasons, and the second outlives the first.
+
+The nested-decode entries above turn on how much of the 13.0 µs is the literal
+parse and how much is the Arrow build, and the composite column is the term
+that four sweeps could not read consistently: +0.31, +0.39, +0.62 and +0.99
+µs/row, a spread wider than the quantity. Any plan that budgets work against
+that number needs it settled first, and this is the instrument that settles it
+— one warm run of one figure, not a sweep.
+
+More generally, it is a *method* this phase can reuse. The standing floor of
+~0.5 µs/row is a property of differencing two files with different row lengths,
+not a property of the machine; declaring one column two ways over identical
+bytes removes it entirely. Any figure this phase wants that isolates one
+column's or one decoder's cost can be built the same way, and the roadmap's
+rule that a slice committing to a measurement names its instrument makes that
+worth knowing before the slice rows are written.
+
+**Origin.** 2026-08-28, `M23`. The knob and the figure exist; what does not is
+a reading. The pairing is asserted by
+`pgdump_query-cli/tests/perf_generator_fidelity.rs` (the two data sections
+match byte for byte) and by the figure refusing to divide if they stop sharing
+a row count, so an unrun instrument cannot rot silently into a wrong one.
+
+---
+
 ## Mapping is O(blocks²) after the save throttle, and the remaining half is the span splice
 
 **Fact.** `pgdq parse` serializes the **whole** cache at a `CopyEnd`
@@ -399,10 +437,15 @@ bullets are superseded rather than wrong: "track bytes/second and CPU%" and
 the `criterion`-plus-whole-file pairing both predate the nine rules that now
 say how a figure is taken at all.
 
+**Superseded as a limit, not as a fact:** the floor is a property of
+differencing files of *different row lengths*, and the entry above
+("The instrument that resolves a composite column's cost is built and unrun")
+is the instrument that removes it — same rows, one column declared two ways.
+This entry still governs every figure taken the old way.
+
 **Origin.** 2026-08-27, which tried to separate the composite
 column's end-to-end share from the arrays' and found the share below the
-floor; re-taken by `M13`'s sweep the same day. Figures, the floor reading and
-the commands:
+floor; re-taken the same day. Figures, the floor reading and the commands:
 [`measurements.md`](measurements.md), "A typed query over nested columns" and
 its "The cross-file subtraction bottoms out" subsection.
 

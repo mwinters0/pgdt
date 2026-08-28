@@ -22,7 +22,7 @@ review, so there is no per-phase checklist here.
 | Array shape census | recorded by every mapping pass and consumed: a query retypes its top-level array columns from the union over the blocks it will replay, before the first batch |
 | CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, cache-only `info` | working; **`parse` is the only scanner** — it resumes from a matching cache, banks at `COPY` block boundaries under a self-tuning throttle, and saves unconditionally on Ctrl-C (exit 130/143). `info` reports from the cache and never scans. Text output shape is provisional; `--json` carries no shape promise at all |
 | Partial reporting | `info` reports an unfinished scan's cache for as far as it got, with `Scan completion: N%` stated once at the top and nothing below it qualified. An interrupted cache is **typed** for every database segment the scan finished (I1) |
-| Measurement harness | `scripts/measure.py` takes every figure in [`../design/measurements.md`](../design/measurements.md) and emits that doc's tables — thirteen figures, twelve taken by a sweep and one derived across two, each declaring what invalidates it and which documents repeat it |
+| Measurement harness | `scripts/measure.py` takes every figure in [`../design/measurements.md`](../design/measurements.md) and emits that doc's tables — twelve figures, eleven taken by a sweep and one derived across two, each declaring what invalidates it and which documents repeat it, plus one instrument built and not taken |
 | Predicate and projection pushdown; per-row-group statistics | not started — P5 |
 | `object_store` I/O, Python bindings, DataFusion `TableProvider` | not started — P6 |
 | Device-bound scan performance campaign, sparse row index | not started — P7 |
@@ -31,17 +31,18 @@ review, so there is no per-phase checklist here.
 **Figures.** Every figure in
 [`../design/measurements.md`](../design/measurements.md) comes from the
 `fa186ab` sweep of 2026-08-28, folded in whole, each table carrying an
-apparatus line witnessing a quiet machine. **One figure is owed a fold-in, and
-it needs a quiet machine to take it**: `M23` added `composite-isolated`, and
-the sweep launched for it (`runs/measure-20260828T180425`, against `ed588a3`)
-ran alongside unrelated HDD and duckdb work — it passed every contention gate
-and is still **not foldable**, its warm readings running 5–45% slow against the
-`fa186ab` sweep of the same binaries. Re-take it when the machine is idle. That
-sweep is kept as the control that measures what noise costs
-([`history/2026-08-28.md`](history/2026-08-28.md), "A gate that passes cannot
-mean a machine that was quiet"). Until the fold-in,
-`scripts/test_measure.py`'s marker-reconciliation test fails on the missing
-section, which is that check doing its job.
+apparatus line witnessing a quiet machine. **Nothing is owed a fold-in**;
+`--check` reconciles twelve markers against twelve figures and `--stale`
+reports nothing outstanding.
+
+**One instrument is built and deliberately unrun.** `M23`'s
+`composite-isolated` isolates the composite column's decode cost by declaring
+one column two ways over byte-identical rows, which removes the normalization
+that gives the cross-file subtraction its ~0.5 µs/row floor. It is registered
+under `measure.UNTAKEN` — a sweep does not take it and the doc carries no table
+for it — so the standing figure keeps reading that cost as a bound. Take it
+with `uv run measure.py --figure composite-isolated` on an idle machine, and
+move the entry into `FIGURES` when publishing it.
 
 ## Not started
 

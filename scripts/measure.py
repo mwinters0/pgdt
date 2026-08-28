@@ -2050,19 +2050,6 @@ FIGURES: list[Figure] = [
         run=run_cross_file_floor,
     ),
     Figure(
-        id="composite-isolated",
-        quoted_by=(
-            "docs/design/roadmap-P7-scan-performance-inbox.md",
-            "docs/design/architecture.md",
-            "docs/status/STATUS.md",
-        ),
-        section="One column, isolated: the same rows declared two ways",
-        stage="warm",
-        depends=(*NESTED, *QUERY_CLI, *GEN_PERF),
-        warm_inputs=("composite", "composite_text"),
-        run=run_composite_isolated,
-    ),
-    Figure(
         id="per-block-quadratic",
         quoted_by=(
             "docs/design/architecture.md",
@@ -2115,6 +2102,30 @@ FIGURES: list[Figure] = [
 
 FIGURES_BY_ID = {f.id: f for f in FIGURES}
 
+#: Instruments that are **built but whose figure has not been taken**.
+#:
+#: A sweep does not run these and the doc carries no table for them, which is
+#: why they sit outside `ALL_FIGURES`: the marker reconciliation would
+#: otherwise demand a section with no numbers under it, and `quoted_by` would
+#: have to name consumers of a figure that does not exist yet. `--figure <id>`
+#: still selects one, which is how the reading gets taken — and taking it moves
+#: the entry into `FIGURES`, where the doc-side checks start applying.
+#:
+#: The distinction is worth a list rather than a comment because *built* and
+#: *taken* fail differently. An instrument nobody built is work; an instrument
+#: built and never run is a claim nobody checked, and it is invisible unless
+#: something names it.
+UNTAKEN: list[Figure] = [
+    Figure(
+        id="composite-isolated",
+        section="One column, isolated: the same rows declared two ways",
+        stage="warm",
+        depends=(*NESTED, *QUERY_CLI, *GEN_PERF),
+        warm_inputs=("composite", "composite_text"),
+        run=run_composite_isolated,
+    )
+]
+
 #: A figure that no sweep produces, because it is computed *across* two of
 #: them. It still gets a section, a marker and both declared edges — it is one
 #: table like any other, and the register is what `--check` reconciles against
@@ -2137,6 +2148,11 @@ DERIVED: list[Figure] = [
 
 ALL_FIGURES = FIGURES + DERIVED
 ALL_BY_ID = {f.id: f for f in ALL_FIGURES}
+
+#: Everything `--figure` may name: the sweep's figures plus the untaken
+#: instruments. Not `ALL_FIGURES`, which is the set the *doc* must carry.
+SELECTABLE = FIGURES + UNTAKEN
+SELECTABLE_BY_ID = {f.id: f for f in SELECTABLE}
 
 
 def drift_table(first: Path, second: Path) -> str:
@@ -2209,15 +2225,15 @@ def resolve_selection(ids: Iterable[str]) -> list[Figure]:
     def add(fid: str) -> None:
         if fid in wanted:
             return
-        if fid not in FIGURES_BY_ID:
+        if fid not in SELECTABLE_BY_ID:
             raise SystemExit(f"unknown figure {fid!r}; `--list` names them all")
         wanted.add(fid)
-        for dep in FIGURES_BY_ID[fid].requires:
+        for dep in SELECTABLE_BY_ID[fid].requires:
             add(dep)
 
     for fid in ids:
         add(fid)
-    return [f for f in FIGURES if f.id in wanted]
+    return [f for f in SELECTABLE if f.id in wanted]
 
 
 # --------------------------------------------------------------------------
@@ -2471,6 +2487,13 @@ def cmd_list() -> None:
         )
         print(f"  {'':<24}  reproduce: cd scripts && uv run measure.py {reproduce}")
         print()
+    if UNTAKEN:
+        print("Built, not taken — no table in the doc until someone runs it:\n")
+        for fig in UNTAKEN:
+            print(f"  {fig.id:<24} [{fig.stage}]  {fig.section}")
+            print(f"  {'':<24}  invalidated by: {', '.join(fig.depends)}")
+            print(f"  {'':<24}  take it: cd scripts && uv run measure.py --figure {fig.id}")
+            print()
     print("Not emitted here, deliberately:\n")
     for name, why in NOT_OURS.items():
         print(f"  {name}\n    {why}\n")
@@ -2588,6 +2611,11 @@ def cmd_check(doc: Path) -> int:
         print("Markers appearing more than once — one figure is one table:")
         for m in duplicated:
             print(f"  {m}")
+        print()
+    if UNTAKEN:
+        print("Built, not taken (no marker expected — see `--list`):")
+        for fig in UNTAKEN:
+            print(f"  {fig.id}")
         print()
     print("What else a moved figure invalidates:")
     for fig in ALL_FIGURES:

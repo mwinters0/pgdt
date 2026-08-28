@@ -538,26 +538,20 @@ until a keystone, which strikes it along with the phase docs and leaves a
 watermark saying which numbers are spent (`../process.md`, "The out-of-band
 ledger is struck too").
 
-**M1–M19 are struck**, and nothing at or below `M19` is reused. That is a
+**M1–M23 are struck**, and nothing at or below `M23` is reused. That is a
 high-water mark rather than a claim that every one of them landed: `M14` was
 absorbed into `M17` and `M1`/`M2` were folded into a phase slice, and their
-numbers are spent all the same. What each struck item did is in
-`architecture.md` by subject, and why it was done is in the dated history entry
-it was filed under.
+numbers are spent all the same. What each struck item did is filed by
+subject — `architecture.md` for a mechanism, `measurements.md` for an apparatus
+change, `layering.md` and `../process.md` for a rule — and why it was done is
+in the dated history entry it was filed under. The next item to land opens the
+table again at `M24`.
 
-| # | Date | What changed | Why |
-|---|---|---|---|
-| `M20` | 2026-08-28 | "Decisions worth another look" gains four rules — file-then-delete on close, closed by the session that hears the answer, capped at five, and an admission rule — plus the `depends` rationale the last keystone swept away | [`../status/history/2026-08-28.md`](../status/history/2026-08-28.md) |
-| `M22` | 2026-08-28 | Every reading gains a contention witness — PSI/`steal` counter deltas bracketing each run, sampled frequency and temperature, a per-table apparatus line — plus a per-regime retake gate calibrated from 182 readings, and `--pin-governor`, measured as a no-op here and left off | [`../status/history/2026-08-28.md`](../status/history/2026-08-28.md) |
-| `M21` | 2026-08-28 | Hygiene, no behaviour change: a `tests/common/mod.rs` per test crate replaces the fixture vocabulary's thirteen copies, every crate-internal dependency moves into an import list so `layering.md`'s rule-1 check reads a complete one (with a counter-check added), and four duplicated rules are extracted | [`../status/history/2026-08-28.md`](../status/history/2026-08-28.md) |
-| `M23` | 2026-08-28 | The composite column's cost gets an instrument with nothing to normalize: `--weak-composite` writes the same rows with `v_comp` declared `text`, so two byte-identical data sections differ only in whether that column is decoded, and the pair's `strings` legs are its own floor | [`../status/history/2026-08-28.md`](../status/history/2026-08-28.md) |
-
-**One of them left a live obligation.** The synthetic `INSERT`-run measurement
-fit one session and changed no decision, which is what admitted it as
-out-of-band; the number it produced — an `INSERT`-run scan costs **14.6×** a
-`COPY` scan per byte, CPU-bound — argues for a scanner-level `INSERT` path,
-which *does* change a decision. That goes through grilling → spec amendment →
-a numbered slice, and is filed in the scan-performance phase's inbox
+**One live obligation outlived them.** An `INSERT`-run scan costs **14.6×** a
+`COPY` scan per byte, CPU-bound, which argues for a scanner-level `INSERT`
+path — and *that* changes a decision, so it goes through grilling → spec
+amendment → a numbered slice rather than through this section. It is filed in
+the scan-performance phase's inbox
 ([`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md))
 until then.
 
