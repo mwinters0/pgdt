@@ -29,7 +29,7 @@ per-phase checklist here any more. How the system works is
 | Device-bound scan performance campaign, sparse row index | not started — P7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — P8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-28 (the measurement-era backlog's seven entries were reviewed and closed on 2026-08-27; the work they queued — `M12`, `M11`, `M13` under "The out-of-band queue" — has all landed, and `M13`'s re-take moved every warm figure in [`../design/measurements.md`](../design/measurements.md), three of them by a factor. `M16` renamed the doc tree to the `P<k>` phase-identifier scheme and settled what a keystone does to the out-of-band ledger; the sweep it prepares for has **not** run. **P4 and P9 are both complete and wrapped**, so no phase is open: what remains queued is `M17` alone — the committed measurement harness, which absorbed `M14`. Its **harness half landed 2026-08-28** as `scripts/measure.py`; **no figure in `measurements.md` has moved yet**, and the sweep that would move them is running detached — `runs/m17-sweep.log`. Choosing the next phase is a re-grilling the maintainer has claimed. A phase boundary: an unattended loop stops here.)
+Last updated: 2026-08-28 (the measurement-era backlog's seven entries were reviewed and closed on 2026-08-27; the work they queued — `M12`, `M11`, `M13` under "The out-of-band queue" — has all landed, and `M13`'s re-take moved every warm figure in [`../design/measurements.md`](../design/measurements.md), three of them by a factor. `M16` renamed the doc tree to the `P<k>` phase-identifier scheme and settled what a keystone does to the out-of-band ledger; the sweep it prepares for has **not** run. **P4 and P9 are both complete and wrapped**, so no phase is open: what remains queued is `M17` alone — the committed measurement harness, which absorbed `M14`. Its **harness half landed 2026-08-28** as `scripts/measure.py`, and the sweep has run — but **no figure in `measurements.md` has moved yet**: the fold-in is what remains, per section, out of `runs/measure-20260828T021024/tables.md`. Choosing the next phase is a re-grilling the maintainer has claimed. A phase boundary: an unattended loop stops here.)
 
 ## P4 — complete and wrapped
 
@@ -192,12 +192,54 @@ filed.
     3–8% of the doc's, and the preamble dump's first `COPY` header at byte
     980,996 of 1,998,741 exactly.
 
-    **Not landed**: any table. A full sweep was launched detached at the end of
-    that session — `runs/m17-sweep.log`, output under
-    `runs/measure-20260828T003328/` — and the fold-in is the next session's
-    work: per section, each replaced prose recipe deleted with the table that
-    replaces it, plus the session stamp. **This box ticks when every row of the
-    inventory below is harness-emitted *in the doc*.**
+    Also landed, out of the 2026-08-28 grilling: `quoted_by`, the `--check`,
+    `--koji-recipe` and `--drift` commands, marker-based section addressing, a
+    computed tmpfs budget with a preflight, the cold and warm throughput tables
+    sharing one doc section, and
+    `pgdump_query-cli/tests/measure_harness.rs`, which runs the harness's own
+    95 tests from `cargo test --workspace`. `--koji-recipe` replaced the three
+    hand-maintained copies of koji's invocation in `CLAUDE.md` and
+    [`../design/measurements.md`](../design/measurements.md); one of the three
+    could not have been interrupted cleanly, since it wrapped `parse` in a
+    compound `sh -c` that cannot be `exec`'d.
+
+    **`M17` is the harness, and a claim the sweep overturns is not part of
+    it.** The out-of-band admission rule is "changes no decision any spec
+    records and fits one session"; the harness meets it and the fold-in's claim
+    changes do not, so those travel to
+    [`../design/roadmap-P7-scan-performance-inbox.md`](../design/roadmap-P7-scan-performance-inbox.md)
+    rather than growing this item. The first is filed there already.
+
+    **Not landed**: any table. The first full sweep ran for 36 minutes and
+    **lost three of eleven figures** to a staging budget that was over by 6,799
+    bytes — its five surviving tables are kept as a drift cross-check, not
+    folded in, since the doc's tables must come from one session. The re-run is
+    what the fold-in reads. The fold-in is per section: the table, the prose
+    recipe it replaces deleted with it, the `<!-- figure: <id> -->` marker, and
+    the session stamp. **This box ticks when every row of the inventory below
+    is harness-emitted *in the doc*.**
+
+    **One figure will move a claim, not a value.** The cold `INSERT` run reads
+    9.77 s and 1.70× the device floor against the recorded 15.13–15.42 s and
+    2.7×, because `M7` changed how `--inserts` runs are scanned after that row
+    was taken. Under the rule settled the same day, a fold-in may replace a
+    value but a changed *conclusion* goes back through grilling — so the `~5×`
+    claim in
+    [`../design/pg-dump-compatibility.md`](../design/pg-dump-compatibility.md)
+    and [`../design/roadmap.md`](../design/roadmap.md) is not the fold-in's to
+    rewrite. The re-run's warm `INSERT` figure decides how far it moves.
+
+    **The fold-in reaches five other files, and that is now declared rather
+    than remembered.** Every figure names the documents that repeat its numbers
+    (`quoted_by`, printed by `--check` and beside every emitted table):
+    [`../design/architecture.md`](../design/architecture.md),
+    [`../design/roadmap-P7-scan-performance-inbox.md`](../design/roadmap-P7-scan-performance-inbox.md),
+    [`../design/pg-dump-compatibility.md`](../design/pg-dump-compatibility.md),
+    [`../design/roadmap.md`](../design/roadmap.md),
+    [`../design/roadmap-P4-composite-decoding-notes.md`](../design/roadmap-P4-composite-decoding-notes.md)
+    and this file. The P7 inbox alone repeats about fifteen of these figures,
+    and `pg-dump-compatibility.md` carries the "~5× the per-byte cost" claim
+    that the warm throughput table exists to replace.
 
     **Why it exists.** `M10`, `M13` and `M14` each re-derived the same
     apparatus from scratch because every re-take so far has been a one-off
@@ -330,11 +372,11 @@ filed.
     that reproduces that figure. Leaving both is the second-authority problem
     the keystone doctrine is written against, and `M19` proved it is not
     hypothetical: a recipe drifted out of runnability and nothing noticed,
-    because nothing executes prose. **Three kinds of block stay**, because the
-    harness genuinely does not own them: koji's detached recipe, the census-off
-    **source patch** (`return;` at the top of `map::Builder::on_row`, which no
-    harness can perform), and generator invocations a reader may want on their
-    own.
+    because nothing executes prose. **Two kinds of block stay**, because the
+    harness genuinely does not own them: the census-off **source patch**
+    (`return;` at the top of `map::Builder::on_row`, which no harness can
+    perform) and generator invocations a reader may want on their own. koji's
+    detached recipe was a third until 2026-08-28, when `--koji-recipe` took it.
 
     **It is tested where a silent error would be worst.** Median, spread and
     table formatting get stdlib `unittest` — `uv run python -m unittest`, no
@@ -571,54 +613,40 @@ filed.
 
 Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. An entry leaves this section once
-it has been looked at: settled into the design docs, or reversed. **Five are
-open**, all from `M17`'s harness half on 2026-08-28 and listed first below.
-`M13`'s fold-in was reviewed on 2026-08-27: two of its three calls were
-reversed and its one new causal claim was tested rather than argued; its two
-apparatus calls and the measurement-era backlog came earlier the same day.
+it has been looked at: settled into the design docs, or reversed. **Nothing is
+open.** `M17`'s harness half raised five on 2026-08-28 and the grilling the
+same day closed all five; `M13`'s fold-in was reviewed on 2026-08-27, where two
+of its three calls were reversed and its one new causal claim was tested rather
+than argued.
 
-*The **cold** scan-throughput table's `COPY` row is shared with the census
-table, which the contract only asked for on the warm one.* `M17`'s contract
-says the warm table's `COPY` row "is not a new measurement: it is row 4's
-census-on column". The identical duplication exists in the cold pair — the cold
-throughput table's `COPY` row and the census table's cold census-on column are
-the same binary, command, input and regime — so the harness shares both, and
-`scan-throughput-cold` now pulls `census-brace-free` into any selection that
-names it. Reversing it means giving the cold table its own three runs and
-accepting that two numbers in one doc, for one measurement, will differ by the
-sweep's own noise.
+*`M17`'s five were reviewed on 2026-08-28 and **all five stand**, three of them
+with the reasoning sharpened.*
 
-*The prose recipes were **not** deleted with the harness.* The contract says
-each `sh` block the harness executes "becomes the one-line invocation that
-reproduces that figure", and this session deleted none of them — it only
-retargeted the "durable record" sentence in "The warm set". The reasoning: the
-fold-in lands per section, and a recipe is replaced by the table that replaces
-it, so deleting a runnable recipe in favour of a harness that has never emitted
-a real figure for that section would leave the doc with neither. If the
-maintainer wants them gone sooner, the deletion is mechanical.
-
-*Two figures had no table shape and the harness invented one.* "The preamble
-prepass" quoted 40 ms and ~20 s in prose, so the harness emits a two-row wall
-table (`--preamble-only` against a full `parse` of the same file) with the
-preamble's byte fraction as a note. The warm throughput table's shape was
-settled in the contract; this one was not, and a different shape would be a
-one-function change.
-
-*`--stale`'s dependency paths are declared narrowly.* Each figure names the
-source files behind its mechanism — `map.rs` for the census figures,
-`nested.rs`/`batch.rs` for the nested tables — rather than the whole of
-`pgdump_query/src/`. A blanket directory would mark every figure stale on every
-commit, which is a report nobody reads; the cost is that a change *outside*
-those paths that moves a figure goes unannounced. The session stamp is the
-second answer to the same question, and it does not depend on anyone having
-declared the right paths.
-
-*"Taken against a dirty tree" means dirty **under a measured path**.* The
-harness stamps its output with `HEAD` and says whether the tree differs from
-it, but computing that from `git status` alone would mark a sweep unpublishable
-because a doc or the harness itself was uncommitted — neither of which can move
-a reading. It uses the same predicate as `--stale`, so it inherits the
-narrowness above.
+- *Sharing the **cold** throughput table's `COPY` row with the census table*,
+  where the contract asked only for the warm one. It is one measurement; the
+  sharing makes two numbers for it structurally impossible rather than
+  something to check.
+- *The prose recipes are deleted **per section**, with the table that replaces
+  each one* — not all at once with the harness, which would have left the doc
+  with neither for any section whose figure had not been emitted. The set that
+  never goes is now **two**, not the contract's three: the census-off source
+  patch and the generator invocations. `--koji-recipe` took the third.
+- *The preamble prepass's invented table shape stands.* Its claim — an
+  uncancellable region is milliseconds against a scan of seconds to an hour —
+  is a ratio between two rows, which is what a table is for. It was prose only
+  because nobody had decided how to report it, which is the oversight the emit
+  contract's forcing function exists to catch.
+- *`depends` stays narrow, and granularity is **not** the goal.* Replaying
+  `--stale` against `M7`'s real commit flags 8 of 11 figures through `map.rs`,
+  including the one figure that did move. Since any stale figure forces a whole
+  re-sweep, the actionable answer is binary — re-take the doc or don't — and
+  one true positive settles it. Per-figure attribution is explanatory colour,
+  and an under-declared path costs a false negative only if *no* figure
+  declares the changed file.
+- *"Taken against a dirty tree" is that same predicate applied to `git
+  status`*, so the two are consistent by construction rather than by
+  agreement: an uncommitted doc or harness cannot move a reading and does not
+  mark a sweep unpublishable.
 
 *The census attribution was reviewed on 2026-08-27 and **tested rather than
 argued**; it holds.* `M13`'s fold-in asserted in three docs that the

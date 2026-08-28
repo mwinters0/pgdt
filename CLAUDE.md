@@ -21,6 +21,7 @@ cd scripts && uv run generate_fixtures.py [--version 13|16|18]  # regenerate fix
 
 cd scripts && uv run measure.py --list            # every figure, and what invalidates each
 cd scripts && uv run measure.py --stale           # which figures a diff has made stale
+cd scripts && uv run measure.py --check           # figure markers vs the doc, and each figure's consumers
 cd scripts && uv run measure.py --figure <id>     # re-take one figure — one whole table
 cd scripts && uv run measure.py --all             # the whole sweep: ~1 h, detach it
 cd scripts && uv run python -m unittest test_measure   # the harness's own tests
@@ -64,18 +65,18 @@ image**, per `docs/design/measurements.md`'s standing rule that the allocator
 is part of the apparatus. A host-built binary runs in `postgres:16`. **There is
 no musl recipe here any more**: only glibc is measured, so a static musl build
 is an untested configuration and an untested portability claim is worse than
-none. Let the container write the log:
+none. Let the container write the log.
 
-```sh
-cargo build --release -p pgdump_query-cli
-mkdir -p runs
-sudo nerdctl run -d --name pgdq-koji -m 512m --memory-swap 512m \
-  -v "$PWD/target/release/pgdq:/pgdq:ro" \
-  -v "$PWD/runs:/out" \
-  -v "/path/to/dump.sql:/dump.sql:ro" \
-  postgres:16 \
-  sh -c 'exec /pgdq parse --source /dump.sql --dqcache /out/koji.dqcache >> /out/koji-scan.log 2>&1'
-```
+**The invocation is not written out here.** `cd scripts && uv run measure.py
+--koji-recipe` prints it with every path filled in, and `--koji-recipe --wrap`
+prints the stop-report-resume-compare sequence. It lived in three
+hand-maintained copies until the harness took it, which is how `M19` found a
+documented command that could no longer execute. The harness prints koji's
+recipe and never runs it.
+
+Two of its details are load-bearing and easy to lose again; the third is the
+512 MB cgroup, which is part of the apparatus. `scripts/test_measure.py`
+asserts all three:
 
 **`exec` is load-bearing, not style.** It makes `pgdq` PID 1, so a later
 `nerdctl stop` reaches the interrupt guard. Leaving `sh` in front — which
@@ -90,7 +91,7 @@ so the colocated default (`/dump.sql.dqcache`) lands in the container's
 ephemeral writable layer and is destroyed with the container — throwing away an
 hour of scanning without an error, since the write itself succeeds.
 
-A later session reads `runs/koji-scan.log`; `sudo nerdctl inspect -f
+A later session reads `runs/pgdq-koji-scan.log`; `sudo nerdctl inspect -f
 '{{.State.Status}}' pgdq-koji` says whether it is still going.
 
 **Stopping one is safe.** `sudo nerdctl stop` sends the image's stop signal,
@@ -201,7 +202,23 @@ figure declares the paths that invalidate it, so the harness answers "which
 figures did this diff make stale" instead of someone remembering to — which is
 the half that failed twice. Selection is per figure and a figure is exactly one
 whole table; a full sweep replaces every table at once, which is what that
-doc's session stamp records. The paths and sizes it uses are environment
+doc's session stamp records.
+
+**A sweep preflights.** Everything knowable before the first measurement —
+whether each figure's inputs fit the staging area, whether the staging area
+fits the machine, whether the disk holds the inputs still to generate — is
+checked in the first second, because the alternative is finding out twenty
+minutes in with figures already lost. The tmpfs ceiling is computed from the
+largest figure's own inputs plus a margin rather than configured, so it travels
+to a machine with a smaller `/dev/shm` instead of being a number that happened
+to work here.
+
+**A figure declares both edges.** `depends` is what invalidates it; `quoted_by`
+is what *it* invalidates — the documents that repeat its numbers or the claim
+it licenses, which a fold-in must re-read. **The doc addresses a figure by an
+`<!-- figure: <id> -->` marker, never by its heading**, so a heading may quote
+a number and be rewritten when that number moves; `--check` reconciles the
+markers against the register and prints each figure's consumers. The paths and sizes it uses are environment
 variables (`PGDQ_MEASURE_*`) whose defaults suit this machine — see
 `CLAUDE.local.md`.
 

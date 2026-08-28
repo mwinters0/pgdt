@@ -110,9 +110,18 @@ class Config:
     cache_dir: Path = Path(_env("PGDQ_MEASURE_CACHE_DIR", "/mnt/ssd/fedora/pgdq-measure"))
     # tmpfs, for every warm figure.
     warm_dir: Path = Path(_env("PGDQ_MEASURE_WARM_DIR", "/dev/shm/pgdq"))
-    # How much of the tmpfs the harness will fill. /dev/shm is 16 G here and
-    # the full input set is 18 GiB, which is why the sweep is staged.
-    warm_budget: float = float(_env("PGDQ_MEASURE_TMPFS_BUDGET_GIB", "9"))
+    # How much of the tmpfs the harness may fill. **Normally computed, not
+    # configured**: the harness knows which inputs each figure needs and how
+    # big they are, so the budget is the largest figure's own need plus
+    # WARM_MARGIN. A constant here would be a guess -- and a guess that is
+    # exactly the nominal sum fails on the few KB every generator overshoots
+    # by, twenty minutes into a sweep. Set the variable only to cap it below
+    # what the machine would otherwise allow.
+    warm_budget: float | None = (
+        float(os.environ["PGDQ_MEASURE_TMPFS_BUDGET_GIB"])
+        if "PGDQ_MEASURE_TMPFS_BUDGET_GIB" in os.environ
+        else None
+    )
     out_dir: Path = Path(_env("PGDQ_MEASURE_OUT_DIR", str(REPO / "runs")))
 
     container: str = _env("PGDQ_MEASURE_CONTAINER", "sudo nerdctl")
@@ -314,6 +323,13 @@ def input_stamp(spec: InputSpec, cfg: Config) -> str:
     return h.hexdigest()
 
 
+#: Headroom over the largest figure's own inputs. It absorbs the kilobytes a
+#: generator overshoots its target by, and nothing more — the budget tracks the
+#: need rather than a round number, so it is portable to a machine whose
+#: `/dev/shm` is smaller than this one's.
+WARM_MARGIN = 1.10
+
+
 def nominal_size(cfg: Config, name: str) -> int:
     """What an input would weigh, for a dry run that has not generated it."""
     spec = INPUTS[name]
@@ -345,6 +361,7 @@ class Stager:
         self.cfg = cfg
         self.log = log
         self.needs: dict[str, list[int]] = {}
+        self.figure_need: dict[str, int] = {}
         self._profiles: dict[str, dict] = {}
         self._pretended: set[str] = set()
         self._staged: dict[str, int] = {}
@@ -412,12 +429,12 @@ class Stager:
         return dst
 
     def _make_room(self, need: int, figure_index: int) -> None:
-        budget = int(self.cfg.warm_budget * GIB)
+        budget = self.budget()
         while self._warm_bytes() + need > budget:
             if not self._staged:
                 raise RuntimeError(
-                    f"{need / GIB:.2f} GiB does not fit in a {self.cfg.warm_budget} GiB "
-                    "tmpfs budget even when empty; raise PGDQ_MEASURE_TMPFS_BUDGET_GIB"
+                    f"{need / GIB:.2f} GiB does not fit in a {budget / GIB:.2f} GiB "
+                    "tmpfs budget even when empty"
                 )
             # Evict what no remaining figure wants; failing that, what is
             # wanted latest. An input the *current* figure wants is never a
@@ -437,11 +454,81 @@ class Stager:
     def plan(self, figures: Sequence[Figure]) -> None:
         """Record which figures want each input warm, so eviction can pick the
         one nothing is waiting on -- and, failing that, the one wanted
-        latest."""
+        latest. Also size each figure, which is what the budget is computed
+        from."""
         self.needs = {}
         for i, fig in enumerate(figures):
             for name in fig.warm_inputs:
                 self.needs.setdefault(name, []).append(i)
+        self.figure_need = {
+            fig.id: sum(self.expected_size(n) for n in fig.warm_inputs) for fig in figures
+        }
+
+    def expected_size(self, name: str) -> int:
+        """What an input weighs: measured if it has been generated, nominal if
+        not. Nominal is the low estimate -- every generator overshoots its
+        target by a few KB -- which is what WARM_MARGIN is for."""
+        path = self.cfg.cache_dir / f"{name}.sql"
+        if path.exists():
+            return path.stat().st_size
+        return nominal_size(self.cfg, name)
+
+    def budget(self) -> int:
+        """The tmpfs ceiling: one figure's inputs plus headroom, since only one
+        figure's inputs are ever needed at once and eviction handles the rest.
+        An explicit PGDQ_MEASURE_TMPFS_BUDGET_GIB overrides it."""
+        if self.cfg.warm_budget is not None:
+            return int(self.cfg.warm_budget * GIB)
+        largest = max(self.figure_need.values(), default=0)
+        return int(largest * WARM_MARGIN)
+
+    def preflight(self, figures: Sequence[Figure]) -> list[str]:
+        """Everything knowable before the first run: does each figure fit the
+        budget, does the budget fit the tmpfs, do the inputs fit the disk they
+        are generated onto.
+
+        This exists because the alternative is finding out twenty minutes in,
+        with a figure already lost and its dependants failing behind it."""
+        problems: list[str] = []
+        budget = self.budget()
+        for fig in figures:
+            need = self.figure_need.get(fig.id, 0)
+            if need > budget:
+                problems.append(
+                    f"{fig.id} needs {need / GIB:.2f} GiB of tmpfs at once, over the "
+                    f"{budget / GIB:.2f} GiB budget"
+                )
+        try:
+            self.cfg.warm_dir.mkdir(parents=True, exist_ok=True)
+            warm_free = shutil.disk_usage(self.cfg.warm_dir).free + self._warm_bytes()
+        except OSError as exc:
+            problems.append(f"{self.cfg.warm_dir} is not usable as a staging area: {exc}")
+            warm_free = budget
+        if budget > warm_free:
+            problems.append(
+                f"{self.cfg.warm_dir} has {warm_free / GIB:.2f} GiB usable, under the "
+                f"{budget / GIB:.2f} GiB this sweep needs resident. Point "
+                "PGDQ_MEASURE_WARM_DIR at a larger memory-backed filesystem, or lower "
+                "PGDQ_MEASURE_SIZE_GIB — which makes the run unpublishable"
+            )
+        wanted = {n for fig in figures for n in (*fig.cold_inputs, *fig.warm_inputs)}
+        missing = sum(
+            self.expected_size(n)
+            for n in wanted
+            if not (self.cfg.cache_dir / f"{n}.sql").exists()
+        )
+        try:
+            self.cfg.cache_dir.mkdir(parents=True, exist_ok=True)
+            cache_free = shutil.disk_usage(self.cfg.cache_dir).free
+        except OSError as exc:
+            problems.append(f"{self.cfg.cache_dir} is not usable as an input cache: {exc}")
+            return problems
+        if missing > cache_free:
+            problems.append(
+                f"{self.cfg.cache_dir} has {cache_free / GIB:.2f} GiB free, under the "
+                f"{missing / GIB:.2f} GiB of inputs still to generate"
+            )
+        return problems
 
     def _next_need(self, name: str, figure_index: int) -> float:
         return min(
@@ -690,6 +777,9 @@ class Session:
     def get(self, figure: str, spec: RunSpec) -> list[float]:
         return self.readings[spec.key(figure)]
 
+    def has(self, figure: str, spec: RunSpec) -> bool:
+        return spec.key(figure) in self.readings
+
     def borrow(self, from_figure: str, spec: RunSpec) -> list[float] | None:
         """A reading another figure already took. The warm scan-throughput
         table's `COPY` row *is* the census table's warm census-on column --
@@ -764,17 +854,34 @@ def count_saves(
 @dataclass
 class Figure:
     id: str
-    #: The measurements.md section this table belongs under.
+    #: A human label for the measurements.md section this table belongs under.
+    #: **Not an address**: the doc addresses a figure by its `<!-- figure: id -->`
+    #: marker, so a heading may quote a number and may be rewritten when the
+    #: number moves without desynchronising anything. `--check` reconciles the
+    #: two.
     section: str
     stage: str  # "cold" | "warm" | "criterion"
     #: Repo-relative paths whose change invalidates this figure. `--stale`
     #: intersects these with a diff. A figure that cannot say what invalidates
     #: it is one nobody has thought about.
     depends: tuple[str, ...]
+    #: Caption for this figure's table, when its section holds more than one.
+    #: The cold and warm throughput tables share a section on purpose: the
+    #: `INSERT` path's per-byte CPU is then a division within one place rather
+    #: than across two regimes, which is the defect that allocated the warm
+    #: table in the first place.
+    table_label: str = ""
     cold_inputs: tuple[str, ...] = ()
     warm_inputs: tuple[str, ...] = ()
     #: Figures whose readings this one uses, pulled in automatically.
     requires: tuple[str, ...] = ()
+    #: Documents that repeat this figure's numbers, or the claim it licenses.
+    #: `depends` is the edge into a figure -- what invalidates it; this is the
+    #: edge out -- what a moved figure invalidates. Both exist for the same
+    #: reason: "someone will notice" is not a mechanism, and the doc set has
+    #: already drifted this way (`architecture.md` quotes 4003 -> 195 saves and
+    #: a 19.7 s map where `measurements.md`'s table says 103 and 18.62).
+    quoted_by: tuple[str, ...] = ()
     run: Callable[[Session], str] = field(default=lambda s: "")
 
 
@@ -1257,6 +1364,11 @@ def _per_rep(figure: str, session: Session, specs: Sequence[RunSpec]) -> str:
 FIGURES: list[Figure] = [
     Figure(
         id="census-brace-free",
+        quoted_by=(
+            "docs/design/architecture.md",
+            "docs/design/roadmap-P7-scan-performance-inbox.md",
+            "docs/status/STATUS.md",
+        ),
         section="The census on brace-free rows costs 7% of a warm scan",
         stage="cold+warm",
         depends=(*MAP, *SCAN, *GEN_PERF),
@@ -1266,6 +1378,11 @@ FIGURES: list[Figure] = [
     ),
     Figure(
         id="census-arrays",
+        quoted_by=(
+            "docs/design/architecture.md",
+            "docs/design/roadmap-P7-scan-performance-inbox.md",
+            "docs/status/STATUS.md",
+        ),
         section="The census on array-bearing rows nearly quadruples a warm scan",
         stage="cold+warm",
         depends=(*MAP, *SCAN, *GEN_PERF),
@@ -1275,7 +1392,14 @@ FIGURES: list[Figure] = [
     ),
     Figure(
         id="scan-throughput-cold",
+        quoted_by=(
+            "docs/design/roadmap-P7-scan-performance-inbox.md",
+            "docs/design/pg-dump-compatibility.md",
+            "docs/design/roadmap.md",
+            "docs/status/STATUS.md",
+        ),
         section="Scan throughput by input shape",
+        table_label="Every run cold, on the SSD",
         stage="cold",
         depends=(*SCAN, *MAP, *GEN_SHAPES),
         cold_inputs=("control", "large_object", "insert_run"),
@@ -1284,7 +1408,14 @@ FIGURES: list[Figure] = [
     ),
     Figure(
         id="scan-throughput-warm",
-        section="Scan throughput by input shape (warm)",
+        quoted_by=(
+            "docs/design/roadmap-P7-scan-performance-inbox.md",
+            "docs/design/pg-dump-compatibility.md",
+            "docs/design/roadmap.md",
+            "docs/status/STATUS.md",
+        ),
+        section="Scan throughput by input shape",
+        table_label="Every run warm, on tmpfs",
         stage="warm",
         depends=(*SCAN, *MAP, *GEN_SHAPES),
         warm_inputs=("control", "large_object", "insert_run"),
@@ -1293,6 +1424,10 @@ FIGURES: list[Figure] = [
     ),
     Figure(
         id="nested-end-to-end",
+        quoted_by=(
+            "docs/design/roadmap-P7-scan-performance-inbox.md",
+            "docs/status/STATUS.md",
+        ),
         section="A typed query over nested columns costs 14 µs a row more than a string one",
         stage="warm",
         depends=(*NESTED, *MAP, *QUERY_CLI, *GEN_PERF),
@@ -1301,6 +1436,10 @@ FIGURES: list[Figure] = [
     ),
     Figure(
         id="census-attribution",
+        quoted_by=(
+            "docs/design/roadmap-P7-scan-performance-inbox.md",
+            "docs/status/STATUS.md",
+        ),
         section="The untyped baseline is not file-independent (census attribution)",
         stage="warm",
         depends=(*MAP, *QUERY_CLI, *GEN_PERF),
@@ -1309,6 +1448,11 @@ FIGURES: list[Figure] = [
     ),
     Figure(
         id="cross-file-floor",
+        quoted_by=(
+            "docs/design/roadmap-P7-scan-performance-inbox.md",
+            "docs/design/roadmap-P4-composite-decoding-notes.md",
+            "docs/status/STATUS.md",
+        ),
         section="The cross-file subtraction bottoms out at about half a microsecond a row",
         stage="warm",
         depends=(*NESTED, *QUERY_CLI, *GEN_PERF),
@@ -1318,6 +1462,11 @@ FIGURES: list[Figure] = [
     ),
     Figure(
         id="per-block-quadratic",
+        quoted_by=(
+            "docs/design/architecture.md",
+            "docs/design/roadmap-P7-scan-performance-inbox.md",
+            "docs/status/STATUS.md",
+        ),
         section="Per-block cache saving is quadratic in block count, and so is the map",
         stage="warm",
         depends=(*MAP, *CACHE, *GEN_BLOCKS),
@@ -1326,6 +1475,11 @@ FIGURES: list[Figure] = [
     ),
     Figure(
         id="map-only",
+        quoted_by=(
+            "docs/design/architecture.md",
+            "docs/design/roadmap-P7-scan-performance-inbox.md",
+            "docs/status/STATUS.md",
+        ),
         section="Per-block cache saving is quadratic in block count, and so is the map (map alone)",
         stage="warm",
         depends=(*MAP, *QUERY_CLI, *GEN_BLOCKS),
@@ -1334,6 +1488,10 @@ FIGURES: list[Figure] = [
     ),
     Figure(
         id="preamble-prepass",
+        quoted_by=(
+            "docs/design/roadmap-P7-scan-performance-inbox.md",
+            "docs/status/STATUS.md",
+        ),
         section="The preamble prepass is bounded by the schema, not by the dump",
         stage="warm",
         depends=(*PREAMBLE, *GEN_BLOCKS),
@@ -1343,6 +1501,9 @@ FIGURES: list[Figure] = [
     ),
     Figure(
         id="nested-decode-micro",
+        quoted_by=(
+            "docs/design/roadmap-P7-scan-performance-inbox.md",
+        ),
         section="Nested decode costs what it copies, and an element is an allocation",
         stage="criterion",
         depends=("pgdump_query/src/nested.rs", "pgdump_query/benches/decoders.rs"),
@@ -1352,12 +1513,85 @@ FIGURES: list[Figure] = [
 
 FIGURES_BY_ID = {f.id: f for f in FIGURES}
 
+#: A figure that no sweep produces, because it is computed *across* two of
+#: them. It still gets a section, a marker and both declared edges — it is one
+#: table like any other, and the register is what `--check` reconciles against
+#: the doc.
+DERIVED: list[Figure] = [
+    Figure(
+        id="session-drift",
+        section="What a session's own drift costs, measured rather than asserted",
+        stage="derived",
+        # Nothing in the library invalidates this one: it measures the
+        # apparatus, not the code. What can move it is the harness's own timing
+        # path.
+        depends=("scripts/measure.py",),
+        quoted_by=(
+            "docs/design/roadmap-P7-scan-performance-inbox.md",
+            "docs/status/STATUS.md",
+        ),
+    )
+]
+
+ALL_FIGURES = FIGURES + DERIVED
+ALL_BY_ID = {f.id: f for f in ALL_FIGURES}
+
+
+def drift_table(first: Path, second: Path) -> str:
+    """Two sweeps of the same figures, differenced reading by reading.
+
+    The standing rules assert session-to-session drift of "~10%" on the
+    strength of history rather than a measurement, and the ninth rule's
+    "under ~0.5 µs/row is apparatus" corollary leans on it. Two sweeps taken
+    the same day, on identical inputs and binaries, are the only reading of the
+    instrument itself this apparatus has ever had."""
+    a = json.loads(first.read_text())
+    b = json.loads(second.read_text())
+    shared = sorted(set(a["readings"]) & set(b["readings"]))
+    if not shared:
+        raise ValueError("the two sweeps share no reading; they measured different figures")
+    rows, deltas = [], []
+    for key in shared:
+        first_v, second_v = a["readings"][key], b["readings"][key]
+        if not first_v or not second_v:
+            continue
+        m1, m2 = median(first_v), median(second_v)
+        pct = (m2 - m1) / m1 * 100
+        deltas.append(abs(pct))
+        figure, _, reading = key.partition("/")
+        rows.append([figure, f"`{reading}`", fmt_s(m1), fmt_s(m2), f"{pct:+.1f}%"])
+    table = md_table(
+        [
+            "Figure",
+            "Reading",
+            f"sweep 1 ({a['date']})",
+            f"sweep 2 ({b['date']})",
+            "Δ",
+        ],
+        rows,
+    )
+    return (
+        table
+        + f"\n\nBoth sweeps ran against commit `{a['commit']}` and `{b['commit']}` on identical "
+        f"inputs and binaries. Over {len(deltas)} shared readings the median absolute drift is "
+        f"**{median(deltas):.1f}%** and the largest is **{max(deltas):.1f}%**.\n"
+    )
+
+
+def cmd_drift(first: str, second: str) -> int:
+    fig = ALL_BY_ID["session-drift"]
+    print(f"## {fig.section}\n")
+    print(f"<!-- figure: {fig.id} — reproduce with `cd scripts && uv run measure.py "
+          f"--drift <sweep> <sweep>` -->\n")
+    print(drift_table(Path(first) / "raw.json", Path(second) / "raw.json"))
+    return 0
+
 #: Figures measurements.md carries that this harness deliberately does not own.
 NOT_OURS = {
     "koji full scan": (
         "784 GB on the HDD, ~54 minutes, a different medium, and a byte-for-byte regression "
-        "check rather than a throughput figure. The harness owns its invocation (CLAUDE.md, "
-        "\"Long-running processes\") and does not run it."
+        "check rather than a throughput figure. The harness owns the *invocation* — "
+        "`--koji-recipe`, which prints it — and never runs it."
     ),
     "benches/decoders.rs per-type pairs, benches/whole_file.rs": (
         "Tripwires, not figures: they quote no number in the doc, so there is no table to emit. "
@@ -1389,6 +1623,16 @@ def resolve_selection(ids: Iterable[str]) -> list[Figure]:
 # --------------------------------------------------------------------------
 
 STAMP_RE = re.compile(r"measure\.py.*?commit `([0-9a-f]{7,40})`", re.IGNORECASE)
+
+#: How the doc names a figure. A heading is free to quote a number and free to
+#: change when the number moves -- so the harness must not address a section by
+#: its title. The marker is the id, and it is what `--check` reconciles.
+MARKER_RE = re.compile(r"<!--\s*figure:\s*([a-z0-9-]+)")
+
+
+def markers_in(doc: Path) -> list[str]:
+    """Every figure id `measurements.md` claims to carry, in order."""
+    return MARKER_RE.findall(doc.read_text())
 
 
 def stamped_commit(doc: Path) -> str | None:
@@ -1466,12 +1710,34 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
 
     stager = Stager(cfg, log)
     stager.plan(figures)
+    problems = stager.preflight(figures)
+    log(
+        f"tmpfs budget: {stager.budget() / GIB:.2f} GiB "
+        f"(largest figure {max(stager.figure_need.values(), default=0) / GIB:.2f} GiB "
+        f"+ {WARM_MARGIN - 1:.0%} margin)" if cfg.warm_budget is None
+        else f"tmpfs budget: {stager.budget() / GIB:.2f} GiB (set explicitly)"
+    )
+    if problems:
+        for problem in problems:
+            log(f"!! {problem}")
+        log("nothing was run: every one of these is knowable before the first measurement.")
+        log_file.close()
+        return 2
     session = Session(cfg, stager, log)
 
     parts: list[str] = []
+    sections_seen: set[str] = set()
     failures: list[tuple[str, str]] = []
     for i, fig in enumerate(figures):
         session.figure_index = i
+        blocked = [r for r, _ in failures if r in fig.requires]
+        if blocked:
+            # A figure that borrows a reading from one that failed cannot be
+            # measured on its own terms; say so rather than dying on the
+            # missing key.
+            log(f"\n=== {fig.id} skipped — borrows from {', '.join(blocked)}, which failed")
+            failures.append((fig.id, f"skipped: borrows from {', '.join(blocked)}"))
+            continue
         log(f"\n=== {fig.id} ({fig.stage}) — {fig.section}")
         started = time.time()
         try:
@@ -1486,10 +1752,19 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
             continue
         took = time.time() - started
         log(f"--- {fig.id} done in {took:.0f} s")
+        consumers = (
+            "\n**The fold-in must also re-read**, because these repeat this figure's numbers "
+            "or the claim it licenses: " + ", ".join(f"`{q}`" for q in fig.quoted_by) + ".\n"
+            if fig.quoted_by
+            else ""
+        )
+        heading = "" if fig.section in sections_seen else f"## {fig.section}\n\n"
+        sections_seen.add(fig.section)
+        label = f"**{fig.table_label}**\n\n" if fig.table_label else ""
         parts.append(
-            f"## {fig.section}\n\n"
+            f"{heading}"
             f"<!-- figure: {fig.id} — reproduce with `cd scripts && "
-            f"uv run measure.py --figure {fig.id}` -->\n\n{body}\n"
+            f"uv run measure.py --figure {fig.id}` -->\n\n{label}{body}\n{consumers}"
         )
 
     stager.cleanup()
@@ -1537,16 +1812,141 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
 
 def cmd_list() -> None:
     print("Figures (run order; one figure is one table):\n")
-    for fig in FIGURES:
+    for fig in ALL_FIGURES:
         print(f"  {fig.id:<24} [{fig.stage}]  {fig.section}")
         if fig.requires:
             print(f"  {'':<24}  shares readings with: {', '.join(fig.requires)}")
         print(f"  {'':<24}  invalidated by: {', '.join(fig.depends)}")
-        print(f"  {'':<24}  reproduce: cd scripts && uv run measure.py --figure {fig.id}")
+        print(f"  {'':<24}  quoted by: {', '.join(fig.quoted_by) or '(nothing else)'}")
+        reproduce = (
+            "--drift <sweep> <sweep>" if fig.stage == "derived" else f"--figure {fig.id}"
+        )
+        print(f"  {'':<24}  reproduce: cd scripts && uv run measure.py {reproduce}")
         print()
     print("Not emitted here, deliberately:\n")
     for name, why in NOT_OURS.items():
         print(f"  {name}\n    {why}\n")
+
+
+KOJI_DUMP = _env("PGDQ_KOJI_DUMP", "/mnt/wd12t/fedora/koji/koji-2026-07-23.dump")
+
+
+def koji_recipe(cfg: Config, name: str, wrap: bool) -> str:
+    """The koji invocation, printed rather than run.
+
+    koji is deliberately outside the sweep — a different medium, ~54 minutes,
+    and a byte-for-byte regression check rather than a throughput figure — but
+    the *recipe* was living in three hand-maintained copies, which is how `M19`
+    found a documented command that no longer ran. This is the one copy.
+
+    Three things here have each cost a run, and a test asserts all three:
+
+    * `exec`, so `pgdq` is PID 1 and `nerdctl stop` reaches the interrupt guard.
+      A compound command cannot be `exec`'d, which is why nothing is appended to
+      report the exit status — `nerdctl inspect` reports it either way, for a
+      run that finished *or* was signalled.
+    * the cgroup limit, which is part of the apparatus.
+    * `--dqcache` under the mounted `/out`. The dump is read-only, so the
+      colocated default lands in the container's ephemeral layer and is
+      destroyed with it — an hour of scanning thrown away with no error, since
+      the write itself succeeds.
+    """
+    mounts = (
+        f'  -v "{cfg.bin_pgdq}:/pgdq:ro" \\\n'
+        f'  -v "{cfg.out_dir}:/out" \\\n'
+        f'  -v "{KOJI_DUMP}:/dump.sql:ro" \\\n'
+    )
+    def leg(container: str, cache: str, log: str) -> str:
+        return (
+            f"sudo nerdctl run -d --name {container} "
+            f"-m {cfg.memory} --memory-swap {cfg.memory} \\\n"
+            + mounts
+            + f"  {cfg.image} \\\n"
+            f"  sh -c 'exec /pgdq parse --source /dump.sql --dqcache /out/{cache} "
+            f">> /out/{log} 2>&1'"
+        )
+
+    out = ["cargo build --release -p pgdump_query-cli   # default target: glibc", "mkdir -p runs", ""]
+    if not wrap:
+        out += [
+            leg(name, f"{name}.dqcache", f"{name}-scan.log"),
+            "",
+            f"# still going?   sudo nerdctl inspect -f '{{{{.State.Status}}}}' {name}",
+            f"# exit status:   sudo nerdctl inspect -f '{{{{.State.ExitCode}}}}' {name}",
+            "#   130 = SIGINT, which is what `nerdctl stop` sends: the postgres images set",
+            "#   STOPSIGNAL SIGINT, and --stop-signal on `run` is accepted and then ignored.",
+            "#   For the SIGTERM arm: sudo nerdctl kill -s SIGTERM " + name + "  (exit 143)",
+            f"# wall clock:    sudo nerdctl inspect -f "
+            "'{{.State.StartedAt}} {{.State.FinishedAt}}' " + name,
+            f"# the log:       runs/{name}-scan.log",
+        ]
+    else:
+        out += [
+            "# leg 1 — cold, interrupted partway.",
+            leg(f"{name}-wrap1", f"{name}-wrap.dqcache", f"{name}-wrap-scan.log"),
+            f"sleep 1200 && sudo nerdctl stop -t 120 {name}-wrap1",
+            f"sudo nerdctl inspect -f '{{{{.State.ExitCode}}}}' {name}-wrap1   # 130 (SIGINT)",
+            "",
+            "# the interrupted cache must come back typed — both counts zero",
+            f"sudo nerdctl run --rm -m {cfg.memory} --memory-swap {cfg.memory} \\",
+            # keep the trailing line-continuation: the mounts run straight on
+            # into the image name below.
+            mounts.rstrip("\n"),
+            f"  {cfg.image} /pgdq info --dqcache /out/{name}-wrap.dqcache --verbose \\",
+            "  | grep -c 'not declared\\|metadata not scanned'",
+            "",
+            "# leg 2 — resume the identical command, then compare to a full run's cache",
+            f"sudo nerdctl rm -f {name}-wrap1",
+            leg(f"{name}-wrap2", f"{name}-wrap.dqcache", f"{name}-wrap-scan.log"),
+            f"cmp runs/{name}-wrap.dqcache runs/<a previous full run>.dqcache",
+        ]
+    return "\n".join(out)
+
+
+def cmd_koji(wrap: bool) -> int:
+    cfg = Config()
+    print(
+        "# koji is not part of the sweep: a different medium, ~54 minutes, and a\n"
+        "# byte-for-byte regression check rather than a throughput figure. Run this\n"
+        "# detached and read it in a later session (CLAUDE.md, \"Long-running processes\").\n"
+    )
+    print(koji_recipe(cfg, "pgdq-koji", wrap))
+    return 0
+
+
+def cmd_check(doc: Path) -> int:
+    """Reconcile the register against the doc: which figures have landed a
+    marker, which markers name nothing, and which documents a fold-in must
+    re-read because they repeat a figure's numbers."""
+    found = markers_in(doc)
+    unknown = [m for m in found if m not in ALL_BY_ID]
+    duplicated = sorted({m for m in found if found.count(m) > 1})
+    missing = [f.id for f in ALL_FIGURES if f.id not in found]
+
+    print(
+        f"{doc.relative_to(REPO)} carries {len(set(found))} of {len(ALL_FIGURES)} figure markers.\n"
+    )
+    if missing:
+        print("Not yet folded in (no `<!-- figure: <id> -->` under a heading):")
+        for fid in missing:
+            print(f"  {fid}")
+        print()
+    if unknown:
+        print("Markers naming no figure — a rename that did not reach the register:")
+        for m in sorted(set(unknown)):
+            print(f"  {m}")
+        print()
+    if duplicated:
+        print("Markers appearing more than once — one figure is one table:")
+        for m in duplicated:
+            print(f"  {m}")
+        print()
+    print("What else a moved figure invalidates:")
+    for fig in ALL_FIGURES:
+        print(f"  {fig.id}")
+        for q in fig.quoted_by:
+            print(f"      {q}")
+    return 1 if (unknown or duplicated) else 0
 
 
 def cmd_stale(since: str | None) -> int:
@@ -1581,7 +1981,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--stage", choices=["cold", "warm", "criterion"], help="every figure of one stage")
     parser.add_argument("--all", action="store_true", help="the whole sweep — what the doc's session stamp means")
     parser.add_argument("--stale", action="store_true", help="say which figures a diff has invalidated")
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="reconcile the register against measurements.md's figure markers, and name the "
+        "documents a moved figure invalidates",
+    )
     parser.add_argument("--since", help="revision for --stale (default: the doc's session stamp)")
+    parser.add_argument(
+        "--drift",
+        nargs=2,
+        metavar=("SWEEP", "SWEEP"),
+        help="two runs/measure-* directories: emit the session-drift table across them",
+    )
+    parser.add_argument(
+        "--koji-recipe",
+        action="store_true",
+        help="print koji's detached invocation — the harness owns it but never runs it",
+    )
+    parser.add_argument(
+        "--wrap",
+        action="store_true",
+        help="with --koji-recipe: the stop-report-resume-compare sequence instead",
+    )
     parser.add_argument("--reps", type=int, help="override every figure's rep count (smoke runs only)")
     parser.add_argument("--dry-run", action="store_true", help="print what would run, measure nothing")
     parser.add_argument("--keep-warm", action="store_true", help="leave staged inputs on tmpfs")
@@ -1590,6 +2012,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.list:
         cmd_list()
         return 0
+    if args.drift:
+        return cmd_drift(*args.drift)
+    if args.koji_recipe:
+        return cmd_koji(args.wrap)
+    if args.check:
+        return cmd_check(REPO / "docs/design/measurements.md")
     if args.stale:
         return cmd_stale(args.since)
 

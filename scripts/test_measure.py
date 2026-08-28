@@ -16,9 +16,11 @@ takes it.
 
 from __future__ import annotations
 
+import collections
 import json
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 import measure
@@ -225,18 +227,18 @@ class Selection(unittest.TestCase):
 
 class Register(unittest.TestCase):
     def test_ids_are_unique(self):
-        ids = [f.id for f in measure.FIGURES]
+        ids = [f.id for f in measure.ALL_FIGURES]
         self.assertEqual(len(ids), len(set(ids)))
 
     def test_every_figure_declares_what_invalidates_it(self):
         # A figure that cannot say what invalidates it is one nobody has
         # thought about.
-        for fig in measure.FIGURES:
+        for fig in measure.ALL_FIGURES:
             with self.subTest(figure=fig.id):
                 self.assertTrue(fig.depends)
 
     def test_every_declared_path_exists(self):
-        for fig in measure.FIGURES:
+        for fig in measure.ALL_FIGURES:
             for dep in fig.depends:
                 with self.subTest(figure=fig.id, dep=dep):
                     self.assertTrue((measure.REPO / dep).exists(), dep)
@@ -371,7 +373,7 @@ class Eviction(unittest.TestCase):
     is staged. What must never happen is evicting something the figure in hand
     still needs, or thrashing an input the next figure wants."""
 
-    def _stager(self, budget: float):
+    def _stager(self, budget: float | None):
         cfg = measure.Config(dry_run=True, warm_budget=budget)
         return measure.Stager(cfg, lambda _msg: None)
 
@@ -403,11 +405,249 @@ class Eviction(unittest.TestCase):
         stager._make_room(3 * measure.GIB, figure_index=1)
         self.assertEqual(list(stager._staged), ["control"])
 
-    def test_the_full_sweep_fits_the_default_budget(self):
-        # Every figure's own inputs must fit at once, or the sweep cannot run
-        # at all -- which is a planning error, not a runtime one.
-        cfg = measure.Config()
+    def test_the_budget_is_the_largest_figure_plus_headroom(self):
+        stager = self._stager(None)
+        stager.plan(measure.FIGURES)
+        largest = max(stager.figure_need.values())
+        self.assertEqual(stager.budget(), int(largest * measure.WARM_MARGIN))
+
+    def test_every_figure_fits_the_computed_budget(self):
+        stager = self._stager(None)
+        stager.plan(measure.FIGURES)
+        budget = stager.budget()
         for fig in measure.FIGURES:
-            need = sum(measure.nominal_size(cfg, n) for n in fig.warm_inputs)
             with self.subTest(figure=fig.id):
-                self.assertLessEqual(need, cfg.warm_budget * measure.GIB)
+                self.assertLessEqual(stager.figure_need[fig.id], budget)
+
+    def test_a_generator_overshooting_its_target_does_not_break_the_budget(self):
+        # The real defect: three inputs whose nominal sum is exactly the budget
+        # overshot it by 6,799 bytes, and the sweep died twenty minutes in.
+        # The margin has to absorb that, and the check has to use real sizes.
+        stager = self._stager(None)
+        stager.plan(measure.FIGURES)
+        largest = max(stager.figure_need.values())
+        self.assertGreater(stager.budget() - largest, 64 * 1024)
+
+    def test_an_explicit_budget_overrides_the_computed_one(self):
+        stager = self._stager(4)
+        stager.plan(measure.FIGURES)
+        self.assertEqual(stager.budget(), 4 * measure.GIB)
+
+    def test_a_figure_too_big_for_an_explicit_budget_is_refused_before_any_run(self):
+        stager = self._stager(1)
+        stager.plan(measure.FIGURES)
+        problems = stager.preflight(measure.FIGURES)
+        self.assertTrue(any("over the" in p for p in problems))
+
+    def test_a_staging_area_too_small_is_refused_before_any_run(self):
+        stager = self._stager(None)
+        stager.plan(measure.FIGURES)
+        tiny = collections.namedtuple("usage", "total used free")(0, 0, 1 * measure.GIB)
+        with unittest.mock.patch.object(measure.shutil, "disk_usage", return_value=tiny):
+            problems = stager.preflight(measure.FIGURES)
+        self.assertTrue(any("usable" in p for p in problems), problems)
+
+
+class Consumers(unittest.TestCase):
+    """`depends` is the edge into a figure; `quoted_by` is the edge out. A
+    figure whose numbers are repeated somewhere and does not say where is how
+    `architecture.md` came to quote a save count `measurements.md` no longer
+    holds."""
+
+    def test_every_figure_names_its_consumers(self):
+        for fig in measure.ALL_FIGURES:
+            with self.subTest(figure=fig.id):
+                self.assertTrue(fig.quoted_by)
+
+    def test_every_consumer_exists(self):
+        for fig in measure.ALL_FIGURES:
+            for path in fig.quoted_by:
+                with self.subTest(figure=fig.id, path=path):
+                    self.assertTrue((measure.REPO / path).exists(), path)
+
+    def test_a_figure_does_not_list_the_doc_it_lives_in(self):
+        # measurements.md is where the table goes, not somewhere that repeats
+        # it; listing it would make every fold-in look like a cross-doc edit.
+        for fig in measure.ALL_FIGURES:
+            with self.subTest(figure=fig.id):
+                self.assertNotIn("docs/design/measurements.md", fig.quoted_by)
+
+
+class Markers(unittest.TestCase):
+    """The doc addresses a figure by id, never by heading — so a heading is
+    free to quote a number and free to be rewritten when the number moves."""
+
+    def _doc(self, tmp: str, text: str) -> Path:
+        doc = Path(tmp) / "measurements.md"
+        doc.write_text(text)
+        return doc
+
+    def test_a_marker_is_read_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            doc = self._doc(tmp, "## Anything at all\n\n<!-- figure: map-only -->\n")
+            self.assertEqual(measure.markers_in(doc), ["map-only"])
+
+    def test_the_emitted_marker_is_the_one_that_is_read_back(self):
+        # What emit() writes above each table must be what --check finds after
+        # the paste, trailing prose in the comment included.
+        with tempfile.TemporaryDirectory() as tmp:
+            doc = self._doc(
+                tmp,
+                "<!-- figure: census-arrays — reproduce with `cd scripts && "
+                "uv run measure.py --figure census-arrays` -->\n",
+            )
+            self.assertEqual(measure.markers_in(doc), ["census-arrays"])
+
+    def test_a_heading_that_quotes_a_number_is_not_an_address(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            doc = self._doc(
+                tmp,
+                "## The census on brace-free rows costs 6% of a warm scan\n\n"
+                "<!-- figure: census-brace-free -->\n",
+            )
+            self.assertEqual(measure.markers_in(doc), ["census-brace-free"])
+
+    def test_no_marker_is_no_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(measure.markers_in(self._doc(tmp, "# Measurements\n")), [])
+
+    def test_every_marker_in_the_doc_names_a_real_figure(self):
+        # Vacuous until the fold-in lands, and the check that catches a rename
+        # the moment it does.
+        doc = measure.REPO / "docs/design/measurements.md"
+        for marker in measure.markers_in(doc):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, measure.ALL_BY_ID)
+
+
+class KojiRecipe(unittest.TestCase):
+    """koji is never run from here, but the invocation is owned here — three
+    hand-maintained copies is how `M19` found a documented command that could
+    not execute. Each assertion below is a mistake that has cost a run."""
+
+    def _recipe(self, wrap=False) -> str:
+        return measure.koji_recipe(measure.Config(), "pgdq-koji", wrap)
+
+    def test_pgdq_is_pid_one(self):
+        # A compound command cannot be exec'd, so nothing may be appended to
+        # report the exit status: `sh` would take the signal and not forward
+        # it, the runtime's SIGKILL would follow, and the interrupt guard would
+        # never run.
+        self.assertIn("sh -c 'exec /pgdq parse", self._recipe())
+
+    def test_nothing_follows_the_parse_inside_the_shell(self):
+        for line in self._recipe().splitlines():
+            if "exec /pgdq parse" in line:
+                with self.subTest(line=line):
+                    self.assertNotIn("; echo", line)
+
+    def test_the_cgroup_limit_is_part_of_the_apparatus(self):
+        self.assertIn("-m 512m --memory-swap 512m", self._recipe())
+
+    def test_the_cache_lands_in_the_mounted_volume(self):
+        # The dump is mounted read-only, so the colocated default would land in
+        # the container's ephemeral layer and die with it — an hour of scanning
+        # lost with no error, because the write itself succeeds.
+        self.assertIn("--dqcache /out/", self._recipe())
+        self.assertNotIn("--dqcache /dump.sql", self._recipe())
+
+    def test_the_dump_is_read_only(self):
+        self.assertIn(":/dump.sql:ro", self._recipe())
+
+    def test_the_exit_status_is_read_from_inspect(self):
+        self.assertIn("{{.State.ExitCode}}", self._recipe())
+
+    def test_the_wrap_recipe_stops_reports_resumes_and_compares(self):
+        wrap = self._recipe(wrap=True)
+        for fragment in ("nerdctl stop", "info --dqcache", "--verbose", "cmp "):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, wrap)
+
+    def test_the_wrap_resumes_the_identical_command(self):
+        wrap = self._recipe(wrap=True)
+        legs = [ln for ln in wrap.splitlines() if "exec /pgdq parse" in ln]
+        self.assertEqual(len(legs), 2)
+        self.assertEqual(legs[0], legs[1])
+
+    def test_every_continued_line_carries_its_continuation(self):
+        # A dropped trailing backslash silently splits one command into two.
+        for recipe in (self._recipe(), self._recipe(wrap=True)):
+            lines = recipe.splitlines()
+            for i, line in enumerate(lines[:-1]):
+                if line.strip().startswith("-v ") and not lines[i + 1].strip().startswith("-v "):
+                    with self.subTest(line=line):
+                        self.assertTrue(line.rstrip().endswith("\\"), line)
+
+
+class SharedSections(unittest.TestCase):
+    def test_the_two_throughput_tables_share_one_section(self):
+        # The INSERT path's per-byte CPU is then a division within one place,
+        # which is the defect that allocated the warm table.
+        cold = measure.FIGURES_BY_ID["scan-throughput-cold"]
+        warm = measure.FIGURES_BY_ID["scan-throughput-warm"]
+        self.assertEqual(cold.section, warm.section)
+
+    def test_a_shared_section_labels_each_table(self):
+        by_section: dict[str, list[measure.Figure]] = {}
+        for fig in measure.FIGURES:
+            by_section.setdefault(fig.section, []).append(fig)
+        for section, figs in by_section.items():
+            if len(figs) > 1:
+                for fig in figs:
+                    with self.subTest(section=section, figure=fig.id):
+                        self.assertTrue(fig.table_label)
+
+
+class Drift(unittest.TestCase):
+    """The instrument measured against itself: two sweeps of the same figures,
+    on identical inputs and binaries. The standing rules assert "~10%"
+    session-to-session drift from history rather than from a reading."""
+
+    def _sweep(self, tmp: str, name: str, readings: dict, commit="abc1234", day="2026-08-28"):
+        d = Path(tmp) / name
+        d.mkdir()
+        (d / "raw.json").write_text(
+            json.dumps({"commit": commit, "date": day, "readings": readings})
+        )
+        return d
+
+    def test_the_delta_is_the_second_sweep_against_the_first(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a = self._sweep(tmp, "a", {"census-brace-free/pgdq/control/parse/warm": [1.0, 1.0]})
+            b = self._sweep(tmp, "b", {"census-brace-free/pgdq/control/parse/warm": [1.1, 1.1]})
+            table = measure.drift_table(a / "raw.json", b / "raw.json")
+            self.assertIn("+10.0%", table)
+
+    def test_a_faster_second_sweep_reads_negative(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a = self._sweep(tmp, "a", {"f/pgdq/control/parse/warm": [2.0]})
+            b = self._sweep(tmp, "b", {"f/pgdq/control/parse/warm": [1.0]})
+            self.assertIn("-50.0%", measure.drift_table(a / "raw.json", b / "raw.json"))
+
+    def test_only_shared_readings_are_compared(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a = self._sweep(tmp, "a", {"f/a": [1.0], "f/only-in-a": [1.0]})
+            b = self._sweep(tmp, "b", {"f/a": [1.0], "f/only-in-b": [1.0]})
+            table = measure.drift_table(a / "raw.json", b / "raw.json")
+            self.assertNotIn("only-in-a", table)
+            self.assertNotIn("only-in-b", table)
+
+    def test_two_sweeps_sharing_nothing_is_an_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a = self._sweep(tmp, "a", {"f/a": [1.0]})
+            b = self._sweep(tmp, "b", {"f/b": [1.0]})
+            with self.assertRaises(ValueError):
+                measure.drift_table(a / "raw.json", b / "raw.json")
+
+    def test_the_summary_quotes_the_median_and_the_worst(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a = self._sweep(tmp, "a", {"f/x": [1.0], "f/y": [1.0], "f/z": [1.0]})
+            b = self._sweep(tmp, "b", {"f/x": [1.01], "f/y": [1.05], "f/z": [1.20]})
+            table = measure.drift_table(a / "raw.json", b / "raw.json")
+            self.assertIn("median absolute drift is **5.0%**", table)
+            self.assertIn("largest is **20.0%**", table)
+
+    def test_the_derived_figure_is_not_in_the_sweep(self):
+        # It is computed across two sweeps, so `--all` must not try to run it.
+        self.assertNotIn("session-drift", [f.id for f in measure.FIGURES])
+        self.assertIn("session-drift", measure.ALL_BY_ID)

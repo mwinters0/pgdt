@@ -125,10 +125,25 @@ has no invariant behind it the way `COPY`'s `\.` (I7) and `BLOBS`' `COMMIT;`
 ("The three regions do not share an end marker") specifies — which P8
 Track A's row reader needs anyway.
 
+**The cold numbers above have themselves moved, and by more than apparatus.**
+`M17`'s harness re-took that table on 2026-08-28: the `INSERT` run reads
+**9.77 s and 1.70× the device floor**, against the 15.13–15.42 s and 2.7×
+recorded here, while the `COPY` row is **1.00×** the floor rather than 1.2×.
+`M7` (`2eb51f4`) changed how an `--inserts` dump's runs are scanned after this
+entry's numbers were taken, which is a cause rather than an apparatus
+difference. So the **16–26× bound above is derived from a superseded reading**
+and must not be used; the warm `INSERT` figure the same sweep takes is what
+replaces both. Until it is folded in, treat every ratio in this entry as
+unmeasured rather than as a bound.
+
 **Origin.** Out-of-band item M3, 2026-08-25; the table re-taken cold by `M10`,
-2026-08-27, which is where the numbers above come from
+2026-08-27; re-taken again under the committed harness on 2026-08-28
+([`../status/history/2026-08-28.md`](../status/history/2026-08-28.md), "What the
+partial sweep is good for"), which is where the movement above comes from
 ([`measurements.md`](measurements.md), "Scan throughput by input shape"). The
 original measurement: [`../status/history/2026-08-25.md`](../status/history/2026-08-25.md).
+**Contingent on** nothing else changing `scan.rs`, `copy.rs` or `map.rs`:
+`uv run measure.py --stale` names this figure when one of them does.
 
 ---
 
