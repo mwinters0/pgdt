@@ -37,6 +37,15 @@ single authority on how the built system works. **Choosing the next phase is a
 re-grilling the maintainer has claimed**, so this is a phase boundary: an
 unattended loop stops here.
 
+**A full measurement sweep is in flight**, launched detached at
+2026-08-28T03:49:48Z against `ff9c8f3`. Until it lands,
+[`../design/measurements.md`](../design/measurements.md) still carries the
+`3739c26` session stamp and `uv run measure.py --stale` still flags eight
+figures. **Nothing may build or test while it runs** — a `cargo` job across 24
+cores moves the numbers it is taking. What to check and what to do with the
+result: [`history/2026-08-28.md`](history/2026-08-28.md), "A full sweep is
+running detached".
+
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
@@ -181,20 +190,7 @@ Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. **An entry leaves this section once
 it has been looked at**, settled into the design docs or reversed; the
 reasoning that closed it lives in the dated history entry it names, and the
-durable half in the doc that holds the decision. Two are open.
-
-*The keystone sweep declined the re-sweep `--stale` asks for, because no figure
-moved.* It edited comments in `scripts/generate_perf_data.py` and
-`pgdump_query/src/cache.rs`, which eight figures declare among the paths that
-invalidate them, so `uv run measure.py --stale` flags eight figures against the
-session stamp. Both edits are comment-only, and the generator's output was
-checked byte-for-byte across the change rather than assumed
-(`--size-mb 4 --seed 42 --arrays --composite`, identical). The harness is doing
-what it was built to do — `depends` is deliberately path-granular and any stale
-figure forces a whole sweep — so what is worth weighing is only whether a
-~1 h sweep should have been spent to clear a flag with nothing behind it. If it
-should, `uv run measure.py --all` is the whole answer. Reasoning:
-[`history/2026-08-28.md`](history/2026-08-28.md), "The second keystone".
+durable half in the doc that holds the decision. One is open.
 
 *An `INSERT` scan costs **14.6×** a `COPY` scan per byte, not the "~5×" three
 documents carried — and what that changes about P7's plan has not been
