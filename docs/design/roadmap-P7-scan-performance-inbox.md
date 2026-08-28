@@ -31,7 +31,7 @@ NVMe scanning is exactly what would produce them. Whatever P7 does about
 scan ordering has to either keep coverage prefix-shaped or rework `splice`'s
 seam rule, and that should be a decision, not a discovery.
 
-**Origin.** Slice 3.2.1.2.1, 2026-08-24. See
+**Origin.** 2026-08-24. See
 [`architecture.md`](architecture.md),
 "What the next slice inherits".
 
@@ -39,14 +39,14 @@ seam rule, and that should be a decision, not a discovery.
 
 ## The mapping pass reads the target block twice, and does almost no per-row work
 
-**Fact.** Since 3.2.1.2.1, a query is two passes. The mapping pass walks bytes
+**Fact.** A query is two passes. The mapping pass walks bytes
 allocating no `SourceChunk`s, taking no zero-copy views, and building no
 batches; all it needs from a block is the extent the `\.` terminator gives it.
 The row pass then re-reads the queried block's bytes to build batches. So a
 cold query reads the target block twice, and the first read is far cheaper per
 byte than the second.
 
-**Amended by 4.5/4.5.1** (entry below): the mapping pass is no longer
+**Amended** (entry below): the mapping pass is no longer
 per-row-free at all. Every mapping pass records the array-shape census from
 `Event::Row` — `build_index`, `build_map` and `stream::map_forward` under
 either `ScanExtent`, a cold `UntilTargetSettled` query included. The first
@@ -64,7 +64,7 @@ pass can emit rows again without reintroducing the unmapped hole) is written
 up under "Future — wanted, unscheduled" in [`roadmap.md`](roadmap.md). P7
 is where it should be measured before it is built.
 
-**Origin.** Slice 3.2.1.2.1, 2026-08-24. Decision in
+**Origin.** 2026-08-24. Decision in
 [`architecture.md`](architecture.md),
 "Mapping and streaming are separate passes".
 
@@ -86,12 +86,12 @@ and could stop being fine for a dump with far more, far smaller blocks — which
 is a shape worth deciding whether to care about rather than assuming away.
 P7's "Measurement discipline" section is the right place to settle it.
 
-**Origin.** Slice 3.2.2, 2026-08-24. See
+**Origin.** 2026-08-24. See
 [`architecture.md`](architecture.md).
 
 ---
 
-## An `INSERT`-run scan is CPU-bound at 16× a `COPY` scan's per-byte cost
+## An `INSERT`-run scan is CPU-bound at 14.6× a `COPY` scan's per-byte cost
 
 **Fact.** The warm figure exists now, and it settles the ratio this entry was
 filed under. Three 3.00 GiB synthetic dumps, one sweep, both regimes
@@ -111,8 +111,8 @@ bottom of the 16–26× the cold table alone was used to bound it at. Carry it a
 **mid-teens**: the sweep before this one read 14.6× on the same binaries and
 inputs, both legs having moved inside the measured session drift.
 
-The cause is structural, not incidental: slice 3.6 gave the large-object region
-a `crate::scan`-level fast path (lines skipped unread) but left `INSERT` runs
+The cause is structural, not incidental: the large-object region has a
+`crate::scan`-level fast path (lines skipped unread) but left `INSERT` runs
 decoding every line into `Event::Line` and pushing it through
 `preamble::statement_complete`, folding only the *spans* into one.
 
@@ -182,7 +182,7 @@ without those three columns — so the three nested columns account for about
 together. **The two arrays carry all of it**: a third file holding the
 composite column and no arrays reads +0.62 µs/row against an instrument whose
 own floor is −0.11, which bounds that column at about a microsecond
-(4.6.1, and the entry below on what that subtraction can resolve). The
+(see the entry below on what that subtraction can resolve). The
 `nested.rs` literal parse and its render account for only **6.3 µs** of the
 13.3; the remaining ~7.0 µs is the Arrow build — 56 per-element
 `append_value` calls into child builders, plus list offsets. The
@@ -205,8 +205,7 @@ together with the ~10 µs build share above, the shape of the answer is that
 **viewing is worth far more than the parse is**, and worth most on long
 arrays.
 
-**Origin.** P4 grilling, 2026-08-25; the figures from slice 4.6,
-2026-08-27, re-taken by `M10` the same day once the generator declared the
+**Origin.** 2026-08-25; the figures 2026-08-27, re-taken the same day once the generator declared the
 types `pg_dump` writes — the earlier end-to-end ratios were taken with three
 of the sixteen scalar columns silently untyped. Decision and its rationale:
 [`architecture.md`](architecture.md), "Nested columns: `NestedPlan` travels
@@ -218,9 +217,9 @@ beside the `DataType`" (nested values always copy); figures and commands:
 
 ## Every mapping pass now does per-row work, and on array-bearing rows it is not free
 
-**Fact.** Slice 4.5 put the array-shape census in `map::Builder::on_row`, fed
+**Fact.** pgdq puts the array-shape census in `map::Builder::on_row`, fed
 from `Event::Row` by `build_index`, `build_map` and `stream::map_forward`;
-4.5.1 removed the `ScanExtent::Full` gate, so **a cold query's mapping pass
+There is no `ScanExtent::Full` gate on it, so **a cold query's mapping pass
 censuses too**. Every data row of every block any mapping pass maps is now
 inspected. A row containing neither `{` nor `[` is rejected after one pass over
 its bytes and never split into fields; a row containing either is split by
@@ -258,9 +257,8 @@ scan, on any regime that is not device-bound. A phase that succeeds in making
 the scan CPU-bound makes the second case its dominant cost.
 `scripts/generate_perf_data.py --arrays --composite` is the input.
 
-**Origin.** Slices 4.5 and 4.5.1, 2026-08-26; the array-bearing figure from
-slice 4.6, 2026-08-27; both figures re-taken by `M10` and then by `M13`'s
-warm-set sweep, 2026-08-27, which is what re-priced the pre-filter. See
+**Origin.** 2026-08-26; the array-bearing figure 2026-08-27, both re-taken by
+that day's warm-set sweep, which is what re-priced the pre-filter. See
 [`architecture.md`](architecture.md), "The array shape census";
 [`measurements.md`](measurements.md), "The census on array-bearing rows".
 
@@ -269,10 +267,10 @@ warm-set sweep, 2026-08-27, which is what re-priced the pre-filter. See
 
 ## Mapping is O(blocks²) after the save throttle, and the remaining half is the span splice
 
-**Fact.** `pgdq parse` used to serialize the **whole** cache at every `CopyEnd`
-watermark. Slice 9.5 throttled that (`SaveThrottle`: skip a save unless 20x the
-last save's own duration has elapsed), which cut 4000-block saves from 4003 to
-107 and 45.5 s to 19.8 s. The series is **still** 4x per doubling, because a
+**Fact.** `pgdq parse` serializes the **whole** cache at a `CopyEnd`
+watermark, throttled (`SaveThrottle`: skip a save unless 20x the last save's own
+duration has elapsed) — which holds 4000-block saves to 107 rather than 4003,
+and a 45.5 s scan to 19.8 s. The series is **still** 4x per doubling, because a
 second cost has the same shape: every `CopyEnd` rebuilds `DumpIndex::spans`
 whole — `map::Builder::snapshot` clones the builder's span vector, then
 `stream::splice` clones the prefix and concatenates — so the map alone is
@@ -296,10 +294,9 @@ never runs, and the only consumers of a current `index` are the throttled save
 and the chunk-top interrupt save. Moving the `splice` *inside* the existing
 `if settled || cancelled || throttle.due()` arm would therefore fire it a few
 dozen times instead of `n` — roughly 19.1 s → 1 s at 4000 blocks — using the
-gate 9.5 already built, no redesign. **It was rejected anyway**, because it
-trades
-away the guarantee 9.5 spent a slice establishing: today an interrupt banks the
-last *completed block*, and under the gated splice it would bank the last
+gate the throttle already built, no redesign. **It was rejected anyway**,
+because it trades away the interrupt guard's central guarantee: today an
+interrupt banks the last *completed block*, and under the gated splice it would bank the last
 *saved* watermark, so a Ctrl-C would lose up to `K` blocks instead of one. The
 coupling cannot be worked around locally either — `map::Builder::snapshot`
 `debug_assert!`s `Mode::Idle`, so the chunk-top check cannot re-derive the
@@ -317,7 +314,7 @@ Second, the throttle's constant `K = 20` is a starting value chosen against
 this series; a scan whose per-block cost changes is a scan whose save cadence
 changes with it.
 
-**Origin.** Slice 9.5, 2026-08-27. Figures, both series and their commands:
+**Origin.** 2026-08-27, with the save throttle. Figures, both series and their commands:
 [`measurements.md`](measurements.md), "Per-block cache saving is quadratic in
 block count, and so is the map".
 
@@ -402,7 +399,7 @@ bullets are superseded rather than wrong: "track bytes/second and CPU%" and
 the `criterion`-plus-whole-file pairing both predate the nine rules that now
 say how a figure is taken at all.
 
-**Origin.** Slice 4.6.1, 2026-08-27, which tried to separate the composite
+**Origin.** 2026-08-27, which tried to separate the composite
 column's end-to-end share from the arrays' and found the share below the
 floor; re-taken by `M13`'s sweep the same day. Figures, the floor reading and
 the commands:

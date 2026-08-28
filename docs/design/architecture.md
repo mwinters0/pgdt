@@ -67,9 +67,6 @@ the greps that enforce the rest.
 Integration tests mirror the split: `tests/{scan,map,preamble,pgtype,decode,nested,batch,stream,cache,query_cache}.rs`,
 plus an `insta` snapshot of the whole event stream over `tests/data/edge_cases.sql`.
 
-The `objects.rs` split that was once conditioned on `preamble.rs` passing
-~1500 lines has not triggered — it is 1348 lines.
-
 ## Execution model and API surface
 
 **Async core on `tokio`, with only the I/O layer async.** The parsing and
@@ -107,13 +104,14 @@ what keeps the addition additive; it arrives behind a default-off Cargo feature.
   future; an async caller who needs non-blocking callback behaviour uses pull
   mode directly.
 
-`pgdq query` is a pull-mode caller by necessity rather than by taste: rendering
-a nested column needs the stream's `NestedPlan`s *while* iterating, and push
-mode hands the `ResolvedSchema` back only once the stream is drained. It reads
-`stream.resolved_schema().plans` per batch rather than once, because a block's
-schema is per-block (see "Nested columns" below). That leaves `read_table` with
-no non-test caller, which [`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md)
-files for the phase that decides whether push mode keeps its place.
+`pgdq query` is a pull-mode caller by necessity: rendering a nested column
+needs the stream's `NestedPlan`s *while* iterating, and push mode hands the
+`ResolvedSchema` back only once the stream is drained. It reads
+`stream.resolved_schema().plans` per batch rather than once, since a block's
+schema is per-block (see "Nested columns"). That leaves `read_table` with no
+non-test caller, filed in
+[`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md)
+for the phase that decides whether push mode keeps its place.
 
 **Batch size** is caller-settable by row count and/or in-memory byte size,
 whichever is hit first. Default 8192 rows (matching the common
@@ -341,24 +339,29 @@ close as its own `Framing` span, and `Framing` is one of the three kinds
 `governing_toc` inheritance never crosses.
 
 **That absorption is unconditional** — a comment block carrying no parseable
-TOC header at all is folded in the same way, exactly as `on_copy_start`'s
-`Mode::Comment` arm has always folded one for a `COPY` block. `pg_dump` cannot
-produce the shape that distinguishes the two (its only header-less block is the
-file header, and `SET` statements always separate that from any data), so what
-decides it is the one producer class that *can*: a hand-written or
-`pg_dump`-compatible dump, where `-- a note` above an `INSERT INTO` is
-ordinary. Absorbing gives that file one `Data` span where gating would give it
-a `Framing` span plus a `Data` span, which is the coarser-and-cheaper trade the
-`COPY` path already makes. The symmetry between the two paths is a consequence
-of that call, not the argument for it.
+TOC header is folded in the same way, as `on_copy_start`'s `Mode::Comment` arm
+folds one for a `COPY` block. `pg_dump` cannot produce the shape that
+distinguishes the two (its only header-less block is the file header, and `SET`
+statements always separate that from any data), so what decides it is the
+producer class that *can*: a hand-written or `pg_dump`-compatible dump, where
+`-- a note` above an `INSERT INTO` is ordinary. Absorbing gives that file one
+`Data` span where gating gives it a `Framing` span plus a `Data` span — the
+coarser-and-cheaper trade the `COPY` path already makes. The symmetry between
+the two paths is a consequence of that call, not the argument for it.
 
-**Every line is still decoded into `Event::Line`**, and
-that costs about 16× a `COPY` scan per byte, warm — see
-[`measurements.md`](measurements.md), "Scan throughput by input shape".
-Correctness, tiling and row counts are unaffected; what it costs is throughput
-on `--inserts` input. A scanner-level
-`INSERT` path is the fix and is filed in
+**Every line is still decoded into `Event::Line`**, and that costs **14.6×** a
+`COPY` scan per byte, warm — see [`measurements.md`](measurements.md), "Scan
+throughput by input shape". Correctness, tiling and row counts are unaffected;
+what it costs is throughput on `--inserts` input, ~43 minutes of CPU for a 1 TB
+dump against the `COPY` path's ~3. A scanner-level `INSERT` path is the fix and
+is filed in
 [`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md).
+
+*Rejected:* re-prioritising that fix on the strength of the ratio alone. The
+number is three times what the entry was filed under, which is exactly the kind
+of change that argues for moving work forward — and where it sits belongs to
+the scan-performance phase's grilling, against that phase's other candidates,
+not to whichever fold-in happened to correct the figure.
 
 **An `INSERT` run's end needs a string-aware scan, not a line-anchored check.**
 A `pg_dump --inserts` value is a single-quoted SQL literal, and a value carrying
@@ -462,28 +465,26 @@ the boundary signal, accepts the stats prefix but not the data one. A
 statistics entry heads an ordinary `pg_restore_relation_stats()` statement and
 must leave the builder in `Mode::Statement`; a data entry must not.
 
-**What the refusal actually buys is narrow, and it is not what it looks
-like.** `saw_name` decides one thing only: whether `Mode::Comment`'s close arm
-absorbs the block into the statement that follows, or pushes it as its own
-span. On a default dump the refusal is a **no-op for `COPY`** — the close arm
-never runs, because the blank line after `--` is absorbed in place and
-`scan::CopyScanner` intercepts the header line as `Event::CopyStart` before
-`feed_line` ever sees it, so `on_copy_start` reads the pending `TocHeader` out
-of `Mode::Comment` without consulting `saw_name` at all. It earns its keep on a
-`--disable-triggers` dump (I31), where a statement *does* intervene: absorbing
-there routes the entry into `push_statement_span`'s `Framing` veto, and a
-leading `SET SESSION AUTHORIZATION DEFAULT;` classifies `Framing` — so the
-entry is not merely misplaced but **destroyed**, taking TOC coverage on such a
-dump from 2/24 down to 1/22. Refusing keeps it on a `Framing` span of its own,
+**What the data-prefix refusal buys is narrow.** `saw_name` decides one thing
+only: whether `Mode::Comment`'s close arm absorbs the block into the statement
+that follows, or pushes it as its own span. On a default dump it is a **no-op
+for `COPY`** — the close arm never runs, because the blank line after `--` is
+absorbed in place and `scan::CopyScanner` intercepts the header line as
+`Event::CopyStart` before `feed_line` sees it, so `on_copy_start` reads the
+pending `TocHeader` out of `Mode::Comment` without consulting `saw_name` at
+all. It earns its keep on a `--disable-triggers` dump (I31), where a statement
+*does* intervene: absorbing there routes the entry into `push_statement_span`'s
+`Framing` veto, and a leading `SET SESSION AUTHORIZATION DEFAULT;` classifies
+`Framing` — so the entry is not merely misplaced but **destroyed**, taking TOC
+coverage from 2/24 to 1/22. Refusing keeps it on a `Framing` span of its own,
 which is worse than attributed and better than gone.
 
-That dump is therefore the **only** input on which the refusal changes an
-outcome, which makes it the only thing that can pin it:
+That dump is the **only** input on which the refusal changes an outcome, so it
+is the only thing that can pin it:
 `a_data_entry_keeps_its_own_span_when_disable_triggers_intervenes` in `map.rs`
 is that test, and patching the predicate to accept the prefix fails it and
 nothing else in the suite. A predicate whose only test restates it is a
-predicate nothing checks — the tautological assertion that stood there before
-is what let three successive wrong reasons for this refusal be recorded.
+predicate nothing checks.
 
 Under `--inserts` a data entry heads an `INSERT` run, and `Builder::step`'s
 `Mode::Comment` close arm opens `Mode::InsertRun` for it directly — the same
@@ -494,20 +495,11 @@ intercept, so this predicate never has to say yes. Free related fact: a
 substitution turns that into the literal `-`, which `parse_toc_header_line`
 already treats as "no owner".
 
-Recognition matters to the *diagnostic*, not to the tiling, which was
-byte-exact either way: while the prefix was unrecognized each statistics entry
-cost two unattributed spans, so `fixtures/18/objects/stats.sql` reported TOC
-coverage 126/175 (72%) where the same schema without statistics reported
-126/147 (86%). It now reports 140/161 (87%), and `STATISTICS DATA` appears in
-the object census like any other kind.
-
-The `--inserts` path had the same two-spans-one-attributed shape, closed the
-same way and with the same reach: each data entry cost one `Framing` span
-holding the entry and one unattributed `Data` span holding the rows, so
-`fixtures/16/edge_cases/inserts.sql` reported 30/52 (58%) and now reports 30/47
-(64%). The object census is unchanged at `TABLE DATA: 5` — the entry was always
-counted, just against the wrong span. A `COPY` dump was never affected:
-`edge_cases/default.sql` reads 31/48 either way.
+Prefix recognition moves the *diagnostic*, never the tiling: an unrecognized
+prefix costs two unattributed spans per data entry, and both prefixes are
+recognized, so `fixtures/18/objects/stats.sql` reads 140/161 (87%) and
+`fixtures/16/edge_cases/inserts.sql` 30/47 (64%). Object censuses are unchanged
+either way — the entry was always counted, just against the wrong span.
 
 **`--disable-triggers` defeats attribution for every data span in the file,
 `COPY` and `INSERT` alike, and that is accepted.** I31 puts `SET SESSION
@@ -713,51 +705,46 @@ codec. Both are L2, both need the field decoded first, and I25 makes the
 leading run exact — there is nothing for a parser to add.
 
 **The census is type-blind, so it runs over every field.** `map::Builder` is
-L1 and cannot know which columns are arrays; it records what each literal
-looks like and leaves the interpretation to whoever consumes it. A composite's
-`(…)` and a `json` column's `{…}` therefore reach `observe` too — the first
-contributes nothing, the second records a depth nothing will ever read,
-because a `json` column does not resolve to a list.
+L1 and cannot know which columns are arrays; it records what each literal looks
+like and leaves interpretation to the consumer. A composite's `(…)` and a
+`json` column's `{…}` therefore reach `observe` too — the first contributes
+nothing, the second records a depth nothing reads, since a `json` column does
+not resolve to a list.
 
 **A row is rejected wholesale before it is split.** An array literal always
 contains a `{`, and only an `[lb:ub]=` prefix can precede it, so a row holding
-neither byte costs one pass over its bytes and no field splitting at all. That
-pass is `memchr2`, not a hand-rolled loop, because on the shape a real dump
-mostly has it is the *only* census work there is — the scalar loop it replaced
-cost roughly 20× as much and was, on that shape, the whole figure. `on_row`'s
-doc comment names the two measurements a reader regenerates by patching that
-function.
-**The cost is one tier in practice: the rows that pass the pre-filter.** On
-brace-free data — the koji shape — every row pays the pre-filter alone, 41 ns
-per 16-column row, +9% of a scan reading from memory. A row that passes it
-pays field splitting and `observe` on top: 1.58 µs over 19 columns, +226%
-warm, so the pre-filter is 3% of what the census costs on the rows it does
-not reject. Both collapse to +0% and +1% on a cold read of this SSD, where the
-device floor hides them entirely
-([`measurements.md`](measurements.md), "The census on brace-free rows" and
-"…on array-bearing rows"). It runs unconditionally
-anyway, because the alternative is a query that cannot retype its array
-columns without a second pass over the same bytes.
+neither byte costs one `memchr2` pass and no field splitting — not a
+hand-rolled loop, because on the shape a real dump mostly has this is the
+*only* census work there is, and the scalar loop it replaced cost roughly 20×
+as much. `on_row`'s doc comment names the two measurements a reader regenerates
+by patching that function.
 
-**Every mapping pass censuses, so a mapped block always carries one.**
-`build_index`, `build_map` and `stream::map_forward` all census, under either
-`ScanExtent`. `scanned_through` advances only at a `CopyEnd` watermark or at
-EOF, so a `CopyBlock` that reached the map was walked end to end — there is no
-such thing as a half-censused block, and no state a later pass could repair.
-An empty vector means "censused, saw no array-shaped literal", which is the
-same answer as a vector of unconstrained `ArrayShape`s and needs no separate
-representation.
+**The cost is one tier in practice: the rows that pass the pre-filter.** On
+brace-free data — the koji shape — a row pays the pre-filter alone, 41 ns per
+16-column row, +9% of a scan reading from memory; a row that passes pays field
+splitting and `observe` on top, 1.58 µs over 19 columns, +226% warm. Both
+collapse to +0% and +1% cold on this SSD, where the device floor hides them
+([`measurements.md`](measurements.md), "The census on brace-free rows" and
+"…on array-bearing rows"). It runs unconditionally anyway: the alternative is a
+query that cannot retype its array columns without a second pass over the same
+bytes.
+
+**Every mapping pass censuses, so a mapped block always carries one** —
+`build_index`, `build_map` and `stream::map_forward`, under either
+`ScanExtent`. `scanned_through` advances only at a `CopyEnd` watermark or EOF,
+so a `CopyBlock` that reached the map was walked end to end: there is no
+half-censused block and no state a later pass could repair. An empty vector
+means "censused, saw no array-shaped literal", the same answer a vector of
+unconstrained `ArrayShape`s gives, so it needs no separate representation.
 
 *Rejected:* censusing only under `ScanExtent::Full`, so a cold query declines
-the per-row work. A cold query already receives every row of every block it
-maps — `map_forward` calls `on_row` unconditionally and the queried block's
-bytes are read twice regardless — so the saving is the pre-filter alone, which
-is 41 ns a row even with the bytes in memory and vanishes entirely behind the
-device a cold query is by definition reading from
-([`measurements.md`](measurements.md), "The census on brace-free rows"). What
-it cost was a state no user could observe or repair: a dump mapped by a cold query and *then* by a full one came out
-`is_complete` with its early blocks permanently uncensused, because
-`map_forward` splices onto a prefix it does not re-read. Reasoning:
+the per-row work. The saving is the pre-filter alone — a cold query already
+receives every row of every block it maps — which is 41 ns a row with the bytes
+in memory and vanishes behind the device a cold query reads from. What it cost
+was a state no user could observe or repair: a dump mapped by a cold query and
+*then* by a full one came out `is_complete` with its early blocks permanently
+uncensused, because `map_forward` splices onto a prefix it does not re-read.
+Reasoning:
 [`../status/history/2026-08-26.md`](../status/history/2026-08-26.md).
 
 *Rejected:* gating instead — erroring up front with a `ShapeNotScanned` unless
@@ -827,22 +814,20 @@ while the evidence it needed sat in the blocks it had just walked.
 
 **`is_complete` qualifies a *reported* schema instead.** `pgdq info` answers
 "what is this table's schema" from an index alone, with no replay to bound the
-claim; a mapped block's own census is total, but one table's data can occupy
+claim; a mapped block's census is total, but one table's data can occupy
 several blocks (I2), so a map that stopped short cannot speak for a block past
 its frontier. `print_index` therefore passes `&[]` unless the index covers the
-file. No CLI surface reaches that case today — `info --source` rescans
-whenever the cache falls short and cache-only mode refuses an incomplete
-cache — which is what makes the reported half a rule rather than a second code
-path.
+file — a rule rather than a second code path, since no CLI surface reaches the
+case (`info --source` rescans when the cache falls short, and cache-only mode
+refuses an incomplete cache).
 
 **So a reported schema and a streamed one may legitimately disagree about one
-table**, and each is true of what it describes. `pgdq info` lists per `COPY`
-block and resolves each block from that block's own census; a query commits one
-schema from the union over the blocks it will replay. A table whose first block
-holds 1-D values and whose second holds 2-D ones therefore reads `List(Int32)`
-and `List(List(Int32))` on two `info` lines and comes back as text from a
-query — the listing is about a block, the query's schema about every row it
-will hand back. No fixture produces the shape.
+table**, each true of what it describes: `info` lists per `COPY` block and
+resolves each from that block's own census, where a query commits one schema
+from the union over the blocks it will replay. A table whose first block holds
+1-D values and whose second holds 2-D ones reads `List(Int32)` and
+`List(List(Int32))` on two `info` lines and comes back as text from a query. No
+fixture produces the shape.
 
 **What survives all this is the array nested inside a composite**, or inside
 another array's element type. The census is keyed by column and has nowhere to
@@ -1077,86 +1062,76 @@ which needs no unreachable state at all — but then the type vanishes from
 type the dump never declared, which is strictly less information for a case
 that cannot occur.
 
-**An array whose element type is opaque stays a whole-column string**, and the
-separator stays hardcoded to `,`. The refusal tests the element **after domain
-unwrapping, not the declared string** (I22): a domain inherits its base type's
-`typdelim` and its own DDL records nothing about it, so `CREATE DOMAIN d AS
-box` makes `d[]` semicolon-separated while being named neither `box` nor
-`TypeKind::Base`. Such an element resolves to `Utf8View` anyway, so
-`List<Utf8View>` would recover nothing a plain string does not — it would only
-add a way to split on the wrong character, which round-trips byte-for-byte
-while being wrong.
+**Two array shapes are refused, both landing on `Utf8View`, and both decided in
+`resolve_array` off the terminal of one `domain_terminal` walk** — because a
+domain's own DDL records neither the delimiter it inherited nor the array-ness
+of its base, so what decides either refusal is visible only at the walk's end.
 
-*Rejected:* refusing any array whose element does not resolve to a mapped
-Arrow type. It closes the same hole and pays for it by degrading `interval[]`,
-`money[]` and every unknown-element array to a whole-column string, where
-`List<Utf8View>` recovers the element boundaries and splits on the right
-character. *Rejected:* parsing `DELIMITER` out of `CREATE TYPE` into
-`TypeKind::Base`. It handles the trap instead of removing it, and buys a
-`List<Utf8View>` over values that are opaque by construction.
+- **An opaque element type**, tested after domain unwrapping rather than
+  against the declared string (I22): a domain inherits its base's `typdelim`
+  and records nothing about it, so `CREATE DOMAIN d AS box` makes `d[]`
+  semicolon-separated while being named neither `box` nor `TypeKind::Base`.
+  The separator stays hardcoded to `,`, and such an element resolves to
+  `Utf8View` anyway, so `List<Utf8View>` would recover nothing a plain string
+  does not — only a way to split on the wrong character, which round-trips
+  byte-for-byte while being wrong.
+- **An element type that is itself an array**, which is what keeps
+  `NestedPlan::Array` meaning one thing. `CREATE DOMAIN d AS integer[]` with a
+  column of `d[]` is the only DDL shape reaching a nested `Array` plan at all
+  (I26; `integer[][]` does not — it is a spelling of `integer[]`, normalized
+  before the refusal is tested, I28). Its value is written **one brace deep**,
+  `{"{1,2}","{3}"}`, since `array_out` force-quotes any element containing `{`
+  (I25), so the literal's brace run and the column's `List` depth are
+  independent for this shape alone — and `Array(Array(…))` would have to mean
+  both *one literal, two dimensions* (what the census produces) and *one
+  literal whose elements are literals*. That is the collision `NestedPlan`
+  exists to prevent, one level down.
 
-**An array whose element type is itself an array stays a whole-column string
-too**, and it is the refusal that keeps `NestedPlan::Array` meaning one thing.
-`CREATE DOMAIN d AS integer[]` with a column of `d[]` is the only DDL shape
-that reaches a nested `Array` plan at all (I26 — `integer[][]` does not: it is
-a spelling of `integer[]`, whose element is `integer`, and it is normalized to
-one array level before the refusal is tested, I28). Its value is written **one brace deep** —
-`{"{1,2}","{3}"}`, because `array_out` force-quotes any element whose text
-contains `{` (I25) — so the literal's leading brace run and the column's
-resolved `List` depth are independent for this shape alone, and
-`Array(Array(…))` would have to mean both *one literal, two dimensions* (what
-the census produces) and *one literal whose elements are literals*. That is
-the collision `NestedPlan` exists to prevent, one level down.
+**Their order decides a label, not a type**, and it is opaque-first because
+`OpaqueElementType` is the stronger statement. No input reaches both: the
+opaque test matches a bare type name where the array test matches that name
+with bounds appended, so an array over a domain whose base is `box[]` answers
+`NestedArrayElement` — true, but silent about the delimiter. Answering I22
+instead means testing opaqueness recursively through the element's own array
+levels: a behaviour change, for a better diagnostic on a shape `pg_dump` cannot
+write (I21).
 
-Both refusals are decided in `resolve_array`, off the terminal of one
-`domain_terminal` walk, for the same reason: a domain's own DDL records neither
-the delimiter it inherited nor the array-ness of its base, so what decides
-either refusal is visible only at the end of the walk. **Their order decides a
-label, not a type** — both answer `Utf8View` — and it is opaque-first because
-`OpaqueElementType` is the stronger statement. As written no input reaches
-both: the opaque test matches a bare type name where the array test matches
-that name with bounds appended, so an array over a domain whose base is `box[]`
-answers `NestedArrayElement`, true but silent about the delimiter. Making it
-answer I22 instead means testing opaqueness recursively through the element's
-own array levels — a behaviour change, for a better diagnostic on a shape
-`pg_dump` cannot write (I21).
+**Both compose into a composite for free.** A composite field of a refused type
+is a `Utf8View` field inside an otherwise typed `Struct`, the rule every
+unmapped leaf already follows — and with no nested `Array` plan reachable from
+the DDL, [the census's](#the-array-shape-census) transform has no such shape to
+guard against.
 
-**The refusal composes into a composite for free**, and *removes* a subtlety
-rather than documenting one. A composite field of the refused type is a
-`Utf8View` field inside an otherwise typed `Struct` — the rule every unmapped
-leaf already follows — and with no nested `Array` plan reachable from the DDL,
-[the census's](#the-array-shape-census) transform has no such shape to guard
-against.
+*Rejected:* refusing any array whose element does not resolve to a mapped Arrow
+type. It closes the same hole and pays by degrading `interval[]`, `money[]` and
+every unknown-element array to a whole-column string, where `List<Utf8View>`
+recovers the element boundaries and splits on the right character.
+*Rejected:* parsing `DELIMITER` out of `CREATE TYPE` into `TypeKind::Base` — it
+handles the trap instead of removing it, and buys a `List<Utf8View>` over
+values that are opaque by construction. *Rejected:* reusing
+`OpaqueElementType` for the second refusal. The mechanism matches, but the
+label would lie: `integer[]` is not opaque, it is understood and declined.
+Opaque means *never improves*; this means *yes, if anyone needs it*.
+*Rejected:* splitting the plan variant into a dimensional `Array` beside an
+element-is-a-literal one, teaching `append_typed` to recurse into
+`decode_array` per element with `render_field` inverting it. It is the complete
+answer and it is contained, but it buys `List<List<T>>` over a shape almost
+nobody declares by putting a second meaning into the one type whose purpose is
+keeping meanings apart, and it lands in `batch.rs`. It stays available and is
+strictly additive: it only ever touches columns this refusal leaves `Utf8View`.
 
-*Rejected:* reusing `OpaqueElementType`. The mechanism matches — both refuse an
-array because the element's own literal grammar is not what the outer split
-assumes — but the label would lie: `integer[]` is not opaque, it is understood
-and declined. Opaque means *never improves*; this means *yes, if anyone needs
-it*. *Rejected:* splitting the plan variant into a dimensional `Array` beside
-an element-is-a-literal one, and teaching `append_typed` to recurse into
-`decode_array` per element with `render_field` inverting it. It is the
-complete answer and it is contained, but it buys `List<List<T>>` over a shape
-almost nobody declares by putting a second meaning into the one type whose
-whole purpose is keeping meanings apart, and it lands in `batch.rs`. It stays
-available and is strictly additive: it would only ever touch columns this
-refusal leaves as `Utf8View`.
-
-**Array dimensionality is not in the catalog** (I21). `integer[][]` and
-`integer[3]` both come back from `pg_dump` as plain `integer[]`, identical to a
-one-dimensional column — PostgreSQL arrays carry no fixed dimensionality in the
-type system, and one column may hold values of differing dimensionality and
-lower bound. An array decoder must infer nesting from the literal's own brace
-structure (`{{1,2},{3,4}}`), not from the declared type.
-
-**So every array declaration is normalized to its element type plus one array
-level** before anything else reads the string — `integer[]`, `integer[3]`,
+**Array dimensionality is not in the catalog** (I21): `integer[][]` and
+`integer[3]` both come back from `pg_dump` as plain `integer[]`, and one column
+may hold values of differing dimensionality and lower bound. So a decoder infers
+nesting from the literal's own brace structure, never from the declared type —
+and **every array declaration is normalized to its element type plus one array
+level** before anything reads the string. `integer[]`, `integer[3]`,
 `integer[][]`, `integer[3][4]`, `integer ARRAY` and `integer ARRAY[4]` are one
-type, and the parser discards the bracket count and the bounds rather than
-recording them anywhere a dump could carry them (I28). `pg_dump` writes only
-the first spelling, so this is entirely the hand-written and other-producer
-input path (`roadmap.md`, "The input contract is valid PostgreSQL"); reading a
-spelling more literally than PostgreSQL does is how `integer[][]` came to be
-refused as an array of arrays, which said something false about the column
+type, with the bracket count and bounds discarded rather than recorded
+somewhere a dump could carry them (I28). `pg_dump` writes only the first
+spelling, so this serves the hand-written and other-producer input path
+(`roadmap.md`, "The input contract is valid PostgreSQL"): reading a spelling
+more literally than PostgreSQL does says something false about the column
 rather than declining to answer it.
 
 The normalization follows the `Typename` grammar rather than approximating it,
@@ -1211,30 +1186,28 @@ that enum by equality, to buy a coupling one producer already gives.
 `ColumnResolution` is `Mapped`, `UnknownType`, `NotDeclared`,
 `MetadataNotScanned`, `OpaqueElementType`, `NestedArrayElement`,
 `VaryingArrayShape`, `OpaqueBaseType` or `EmptyEnum` — **the ways a column of a
-container type can still be a string are told apart**, since "why is this
-column text" has more than one answer a reader will want: its element type is
-opaque, its element type is itself an array, its arrays do not share one shape,
-or strings were asked for. The first never improves; the second is a shape we
-decline to represent and could; the third is what the file holds.
+container type can still be a string are told apart**, because "why is this
+column text" has several answers a reader wants: its element type is opaque
+(never improves), its element type is itself an array (a shape we decline to
+represent and could), its arrays do not share one shape (what the file holds),
+or strings were asked for.
 
-`MetadataNotScanned` is the odd one: it is a property of **how much of the file
-was read**, not of a declared type, and it is the only outcome no fixture can
-produce (`tests/pgtype.rs` names it as the sole legitimate exemption from the
-fixture rule, since every fixture is scanned to EOF). It needs a
-`pg_dumpall`/`--create` dump whose scan stopped inside a *later* database:
-`scan_preamble` always captures the first (I1), so the earlier ones are never
-in doubt.
+`MetadataNotScanned` is the odd one: a property of **how much of the file was
+read**, not of a declared type, and the only outcome no fixture can produce
+(`tests/pgtype.rs` names it as the sole exemption from the fixture rule, since
+every fixture is scanned to EOF). It needs a `pg_dumpall`/`--create` dump whose
+scan stopped inside a *later* database — `scan_preamble` always captures the
+first (I1).
 
 *Rejected:* reporting such a column as `NotDeclared`. It means "the dump never
 explained this column" and is final, where this one means "finish the parse and
 ask again" — identical-looking output, opposite advice.
 
 `resolve_columns` also takes the block's array-shape census, positional like
-the column list — see [The array shape census](#the-array-shape-census) for
-what it changes and who may believe it. It is a parameter rather than
-something this module looks up so that a caller cannot silently skip it: the
-three `stream::resolve_block` call sites, the resumed one included, would
-otherwise be free to disagree about one stream's schema.
+the column list — see [The array shape census](#the-array-shape-census). It is
+a parameter rather than a lookup this module performs so that a caller cannot
+silently skip it: the three `stream::resolve_block` call sites, the resumed one
+included, would otherwise be free to disagree about one stream's schema.
 
 `SchemaMode::Strings` never looks anything up — every column is
 `NotDeclared`/`Utf8View`, at zero lookup cost. In `SchemaMode::Typed` only,
@@ -1255,25 +1228,18 @@ purpose**:
 A caller with `metadata: None` is left on `NotDeclared`: it has no DDL for any
 database, so there is no scan to finish.
 
-**No mapping scan produces the condition any more**, and the two answers are
-not equally reachable because of it. The pass states a database's DDL at that
-database's first `COPY` block, which it necessarily passes before any of that
-database's blocks can be banked, so a block in the map always has its database
-covered.
+**No mapping scan produces the condition**, since the pass states a database's
+DDL at that database's first `COPY` block — necessarily before any of that
+database's blocks can be banked. So `Error::MetadataNotScanned` is unreachable
+through every public entry point (`stream::resolve_block` is private, and all
+three call sites read `metadata` after their own mapping pass, the resumed one
+included), while `ColumnResolution::MetadataNotScanned` stays reachable:
+`resolve_columns` is public and takes its `metadata` from the caller, so an
+embedder resolving against an index it assembled itself can still present it.
 
-- `ColumnResolution::MetadataNotScanned` stays **reachable**: `resolve_columns`
-  is public and takes its `metadata` from the caller, so an embedder resolving
-  against an index it assembled itself can still present the condition.
-- `Error::MetadataNotScanned` is **unreachable through every public entry
-  point**. `stream::resolve_block` is private, all three of its call sites are
-  in `table_stream`, and all three use the `metadata` read after that call's
-  own mapping pass — the resumed path included, so a `ResumeToken` does not
-  reach it either.
-
-The check is kept anyway, and pinned by a unit test rather than left as
-untested defence: it is what stands between a future reordering — moving that
-metadata read back above the mapping pass — and a silently wrongly-typed row,
-which is the exact failure the whole asymmetry exists to prevent.
+The check is kept anyway and pinned by a unit test rather than left as untested
+defence: it stands between a future reordering — moving that metadata read back
+above the mapping pass — and a silently wrongly-typed row.
 
 ### One schema per stream, resolved up front
 
@@ -1298,11 +1264,10 @@ the map that answers is always the whole file's. The schema therefore depends
 on the finished map — a deterministic function of the file — never on replay
 progress.
 
-**A full metadata scan is still `pgdq parse` and not a new flag.** `parse`
-means "scan the whole file eagerly and persist what you find"; a `--full` flag
-on `query` would be a third way to say the same thing. What changed is that a
-cold query and one run after `parse` now type a multi-database dump alike, so
-there is less occasion to want it. Reasoning for the rewritten rejection above:
+*Rejected:* a `--full` flag on `query`. `parse` already means "scan the whole
+file eagerly and persist what you find", and a cold query and one run after
+`parse` type a multi-database dump alike, so there is little occasion to want
+it. Reasoning:
 [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md).
 
 ## Decoders and render-back
@@ -1433,11 +1398,11 @@ deliberately **no plan-less sibling**, because one that panicked on a nested
 column would make "did every caller switch?" a review question rather than a
 compile error. A scalar caller passes `&NestedPlan::Scalar`, its `Default`.
 
-**Two trees that must agree are kept agreeing by a rule, not by a structure.**
+**Two trees that must agree are kept agreeing by a rule, not a structure.**
 `resolve_declared_type` is the one producer of the `(DataType, NestedPlan)`
-pair and `resolve_columns`' census transform the one place either half changes
-afterwards; neither half is ever rewritten alone. That is affordable exactly
-while those two sites are the only writers.
+pair, and `resolve_columns`' census transform the one place either half changes
+afterwards; neither is ever rewritten alone. That is affordable exactly while
+those two sites are the only writers.
 
 *Rejected — but costed, as the fallback if a third writer ever appears:* a
 single tree owning both (`Scalar(DataType)` / `Array(Box<…>)` / …, with a
@@ -1677,26 +1642,27 @@ read plus the envelope check (returning the `CacheFile` or the unusable status
 directly), and `status_from_file` turns the file into a status. `load` adds the
 live-size check on top, which is the one outcome `load_offline` cannot reach.
 
-**Diagnostics are recomputed on load, not persisted.**
-`DumpIndex::diagnostics` is `#[serde(skip)]`, so `status_from_file` re-derives
-the tiling check and the TOC-coverage figure from the spans it just read —
-both are pure functions of those spans and O(spans), which is what makes
-recomputation cheaper than storage. The cost is not close: koji's cache is 833
-spans, and a whole `pgdq info --dqcache` run against it — load, recompute and
-render the full table listing — is **3 ms**, below process startup. A stored one would also be a warning about
-a check *this* run performed successfully. The consequence that made this
-load-bearing: `pgdq info` reports from a cache without ever scanning, so
-anything not recomputed there is simply lost.
+**Diagnostics are recomputed on load, not persisted** (see "`DumpIndex`: one
+owner per fact"): `status_from_file` re-derives the tiling check and the
+TOC-coverage figure from the spans it just read, both pure functions of those
+spans and O(spans). The cost is not close — koji's cache is 833 spans, and a
+whole `pgdq info --dqcache` run against it, load and recompute and render,
+is **3 ms**. What makes it load-bearing rather than an optimization: `pgdq
+info` reports from a cache without ever scanning, so anything not recomputed
+there is simply lost.
 
-**`CacheMode::load` treats `Incomplete` exactly like `Valid`.** Folding it into
-`None` would break all three `Option`-returning callers (`map_file`,
-`table_stream`, `preamble_only`): a cold query's map is *designed* to stop
-short of the file's size once its target settles, and a resumed `parse` builds
-on exactly such a cache, so a partial cache is the normal shape there rather
-than a defect. Folding would make `map_forward` restart from byte 0 every
-time. A caller that instead *reports* what a cache holds reaches for
-`cache::load`/`CacheMode::load_offline` and the full `CacheStatus`, which is
-what `pgdq info` does.
+**`CacheMode::load` treats `Incomplete` exactly like `Valid`**, and the
+completeness question has two forms, one per kind of caller. A caller holding a
+live source (`map_file`, `table_stream`) compares `DumpIndex::scanned_through`
+against the size it already had to stat; folding `Incomplete` into `None` would
+instead make `map_forward` restart from byte 0 every time, when a partial cache
+is the *normal* shape there — a cold query's map is designed to stop short once
+its target settles, and a resumed `parse` builds on exactly such a cache. A
+caller that instead *reports* what a cache holds has no live source to compare
+against, so it reaches for `cache::load`/`CacheMode::load_offline` and matches
+on the full `CacheStatus`. Neither form is CLI plumbing: an embedder asking
+"does this cache already cover what I need" reaches for whichever matches what
+it holds.
 
 **`CacheMode::Offline(PathBuf)`** is never produced by `CacheMode::resolve`;
 the CLI constructs it directly when `pgdq info` gets no `--source`. The split
@@ -1710,15 +1676,6 @@ generator to learn that `query` never accepts a cache-only mode.
 outcomes from the unusable ones with no scan to fall back on. It cannot reach
 `SourceChanged` at all — there is no live file to compare against, which is
 exactly what its `CacheOffline` diagnostic warns about.
-
-**The completeness check has two forms, one per kind of caller.** A cache-only
-caller has no live source to compare against, so `CacheStatus::Incomplete` is
-the primitive it matches on — that is why `load_offline` returns the full
-status. A caller holding a live source (`map_file`, `table_stream`) instead
-compares `DumpIndex::scanned_through` against the size it already had to stat;
-`CacheMode::load` deliberately does not make that call on its behalf. Neither
-form is CLI plumbing: an embedder asking "does this cache already cover what I
-need" reaches for whichever matches what it holds.
 
 **Anything persisted is expressible in L1's vocabulary** — declared type
 strings, not resolved Arrow types. That is `layering.md`'s rule 5 and it
@@ -1777,30 +1734,27 @@ about the load.
 **The metadata is stated at every legal boundary, not only at EOF.**
 `preamble::dump_metadata_from_spans` may be called at exactly two kinds of
 point (I1): end of file, or the start of the current database's first `COPY`
-block — anywhere else would make the trailing database's `preamble_complete` a
-lie. The second kind *recurs*, once per `\connect`ed database, and the mapping
-loop already sees the event with the governing database tracked, so it
-recomputes there: a `CopyStart` whose governing database differs from the one
-the metadata in hand covers. That is what makes an interrupted `parse` come
-back *typed* — for every database segment it finished, not merely for the one
-the prepass captured — where before it came back with no metadata at all and
-`resolve_columns` answered `NotDeclared`, the final "the dump never explained
-this column", for every banked column.
+block — anywhere else makes the trailing database's `preamble_complete` a lie.
+The second kind *recurs*, once per `\connect`ed database, and the mapping loop
+already sees the event with the governing database tracked, so it recomputes
+there: at a `CopyStart` whose governing database differs from the one the
+metadata in hand covers. That is what makes an interrupted `parse` come back
+*typed* for every database segment it finished, not merely for the one the
+prepass captured.
 
 **Once per database, not once per block.** Recomputing at every `CopyStart` and
-relying on idempotence would put a third whole-index-sized cost in the loop
-that already carries two (see the throttle and the splice below). A
-single-database dump — koji included — therefore recomputes nothing here at
-all: the prepass already stood on that same offset. The comparison state is
-seeded from `metadata.databases.last()`, because `dump_metadata_from_spans`
-finalizes the last database it walks, so the last entry is the one whose
-boundary the metadata in hand stands on.
+relying on idempotence would put a third whole-index-sized cost in a loop that
+already carries two (the throttle and the splice, below); a single-database
+dump — koji included — recomputes nothing here at all, the prepass having stood
+on that same offset. The comparison state is seeded from
+`metadata.databases.last()`, since `dump_metadata_from_spans` finalizes the
+last database it walks, so that entry is the one whose boundary the metadata in
+hand stands on.
 
-**A cache holding no metadata at all heals on the next resume**, which is what
-kept this from needing a cache format bump: the prepass is skipped on a resumed
-scan, but "no metadata" differs from any database, so the first `CopyStart`
-recomputes — and a resume that reaches EOF instead is covered by `map_file`'s
-own recompute.
+**A cache holding no metadata heals on the next resume**, which is what kept
+this from needing a format bump: the prepass is skipped on a resumed scan, but
+"no metadata" differs from any database, so the first `CopyStart` recomputes —
+and a resume reaching EOF instead is covered by `map_file`'s own recompute.
 
 **Resume is the default**, and removing the cache file is how to force a fresh
 scan. *Rejected:* a `--restart` flag — deleting the file says the same thing
@@ -1842,31 +1796,33 @@ watermark before an early stop would throw a query's scan away.
 
 **The interrupt guard is a cooperative flag** (`ScanOptions::cancel`, an
 `Option<Arc<AtomicBool>>` defaulting to `None`), read **at both extremes**:
-once per chunk, and at every completed block. *Rejected:* `tokio::select!` in
-the CLI over `ctrl_c` and the scan future — it reads as the obvious form and it
-is the one that silently discards the work, since `map_file` owns the
-`DumpIndex` for the whole scan and cancelling that future drops the map rather
-than saving it. Chunk granularity alone is not enough either, and neither is
-block granularity: koji's largest block is hundreds of gigabytes (a Ctrl-C
-waiting for the next watermark cannot be told from a hang), while a 4000-block
-2 MB dump spends its whole 23 s scan inside two chunks. Together they bound the
-response by the shorter of a chunk and a block. **The rule is the principle,
-not the enumeration**: read the flag at every point the loop can cheaply reach,
-because any list of sites is a list that the next loop invalidates — a spec
-naming only the chunk check is what let the block-rich case through the first
-time. Two limits the principle does not remove. The flag is read *before*
+once per chunk, and at every completed block. Neither alone is enough — koji's
+largest block is hundreds of gigabytes, so a Ctrl-C waiting for the next
+watermark cannot be told from a hang, while a 4000-block 2 MB dump spends its
+whole 23 s scan inside two chunks — and together they bound the response by the
+shorter of a chunk and a block. **The rule is the principle, not the
+enumeration**: read the flag at every point the loop can cheaply reach, because
+any list of sites is one the next loop invalidates.
+
+*Rejected:* `tokio::select!` in the CLI over `ctrl_c` and the scan future. It
+reads as the obvious form and it is the one that silently discards the work:
+`map_file` owns the `DumpIndex` for the whole scan, so cancelling that future
+drops the map rather than saving it.
+
+Two limits the principle does not remove. The flag is read *before*
 `source.read_range`, so a scan blocked in a slow read notices only when that
 read returns — irrelevant for a local file, potentially seconds for a remote
 store. And `scan::scan` — hence `index::scan_preamble` — ignores the flag on
 purpose: stopping there is indistinguishable from reaching the first `COPY`
-header, so a truncated preamble would be cached as a complete one and its DDL
-believed. The preamble is therefore an uncancellable region bounded by its own
-length; a Ctrl-C during a query's prepass is honoured at `map_forward`'s first
-chunk check immediately after, with the prepass's metadata already saved. What the guard costs the
-throttle is close to nothing: the splice, the roles, the tablespaces and
-`scanned_through` are updated at every watermark whether or not the save runs,
-so a graceful interrupt loses only the block in flight, and the throttle's
-window belongs to `SIGKILL`, power loss and panics alone.
+header, so a truncated preamble would be cached as complete and its DDL
+believed. The preamble is an uncancellable region bounded by its own length,
+and a Ctrl-C during a query's prepass is honoured at `map_forward`'s first
+chunk check immediately after, with the prepass's metadata already saved.
+
+What the guard costs the throttle is close to nothing: the splice, the roles,
+the tablespaces and `scanned_through` are updated at every watermark whether or
+not the save runs, so a graceful interrupt loses only the block in flight, and
+the throttle's window belongs to `SIGKILL`, power loss and panics alone.
 
 **A resumed scan reproduces an uninterrupted one exactly.** Not the same
 totals — the same structural record, span for span. Verified against the 784 GB
@@ -1918,22 +1874,21 @@ that matches every `SpanBody`/`DataBlock` variant for display, and a future
 `--filter-kind` should extend it rather than duplicate the match. 
 
 **`--verbose`'s per-column line is a complete statement of the Arrow schema.**
-One line per column that has something to say: a column that did not map gets
-`resolution_words`' sentence, and a column that mapped gets its Arrow type —
-unless that type is `Utf8View`, the no-information answer, which is also the
-only type a non-`Mapped` resolution ever produces, so the two never both fire.
-The type is rendered by `arrow_type_label`
-(`pgdump_query-cli/src/main.rs`) as arrow-schema's own `Display` —
-terse, reversible, and carrying a composite's real field names — with one
+One line per column that has something to say: an unmapped column gets
+`resolution_words`' sentence, a mapped one gets its Arrow type — unless that
+type is `Utf8View`, the no-information answer and the only type a non-`Mapped`
+resolution produces, so the two never both fire. `arrow_type_label`
+(`pgdump_query-cli/src/main.rs`) renders it as arrow-schema's own `Display` —
+terse, reversible, carrying a composite's real field names — with one
 substitution: the five-field range struct is identical for every range column
-in every dump, so it collapses to `Range<T>`, `T` being the bound type. The
-substitution is dispatched on the [`NestedPlan`](#nested-columns-nestedplan-travels-beside-the-datatype),
-never on the field names, since a user composite may declare five fields with
-exactly those names. A built-in multirange and an array of the matching range
-therefore render identically (`List(Range<Int32>)`) — correct, not a
-collision: they are the same Arrow type, and the declared PostgreSQL type sits
-on the same line. `docs/manual/type-handling.md` states the range struct's
-real layout once, which is what makes the elision lossless.
+in every dump, so it collapses to `Range<T>`. That is dispatched on the
+[`NestedPlan`](#nested-columns-nestedplan-travels-beside-the-datatype), never
+on the field names, since a user composite may declare five fields with exactly
+those names. A built-in multirange and an array of the matching range therefore
+render identically (`List(Range<Int32>)`) — correct rather than a collision:
+they are the same Arrow type, and the declared PostgreSQL type is on the same
+line. `docs/manual/type-handling.md` states the struct's real layout once,
+which is what makes the elision lossless.
 
 *Rejected:* printing the type only where the plan is not `Scalar`. It keeps
 every existing line's width untouched, which is its whole appeal, but "what
@@ -1946,26 +1901,20 @@ reader already meets everywhere else Arrow is named.
 
 **`pgdq info --json` dumps the internal struct, not a designed format.**
 `IndexJson` (`pgdump_query-cli/src/main.rs`) flattens `DumpIndex` and adds the
-three things it does not itself carry: `total_size` (see "Coverage is stated
-once" above), `diagnostics` — the one field `#[serde(skip)]` drops for the
-cache's own reasons — and `resolution`. This is deliberately **not** a second
-output shape to maintain: it carries zero compatibility promise, so renaming
-or restructuring a field on `DumpIndex` for internal reasons is free to
-change its JSON along with it, same as any other refactor. It exists so an
-alpha user can get everything the human-readable listing shows (and more —
-the raw span/TOC detail no text view surfaces) without pgdq committing to a
-CLI flag for their specific need before enough of those needs have converged —
-which is what "the output shape is provisional" at the head of this section
-means in practice. `--json` is incompatible
-with `--verbose`/`--map`: both only add formatting detail to the text view,
-all of which the full struct already carries.
+three things it does not carry: `total_size`, `diagnostics` (the one field
+`#[serde(skip)]` drops for the cache's reasons) and `resolution`. It is **not**
+a second output shape to maintain — it carries zero compatibility promise, so
+restructuring a `DumpIndex` field for internal reasons is free to change the
+JSON with it. It exists so an alpha user can get everything the listing shows,
+and the raw span/TOC detail no text view surfaces, without pgdq committing to a
+flag for their specific need before those needs converge. It is incompatible
+with `--verbose`/`--map`, which only add formatting detail the full struct
+already carries.
 
-*Rejected:* a hand-shaped JSON schema (renamed/pruned fields, a stable
-top-level contract). That is exactly the CLI-output work this project is
-deferring pending real trials — the text output above carries the same
-"provisional" label for the same reason. **No `version` field either**: that is
-precisely the compatibility shim `roadmap.md`'s "Pre-1.0" forbids, and it would
-be the only one in the tree.
+*Rejected:* a hand-shaped JSON schema (renamed fields, a stable top-level
+contract) — that is the CLI-output work this project is deferring pending real
+trials. **No `version` field either**: that is precisely the compatibility shim
+`roadmap.md`'s "Pre-1.0" forbids, and it would be the only one in the tree.
 
 ### Machine-readable resolution
 
@@ -1976,15 +1925,14 @@ stable token, the Arrow type as the *exact string* `--verbose` renders, and the
 `int4range[]` and `int4multirange` share it).
 
 **One resolution pass, two renderings.** `block_resolutions` is the single
-pass; `print_index` and `print_index_json` both consume its output, and
+pass that `print_index` and `print_index_json` both consume, and
 `resolution_words` returns the token and the sentence from *one* exhaustive
-match, so a new variant cannot be given one spelling without the other. A
-second implementation is the failure mode here — the export would quietly drift
-into describing a different vocabulary from the listing. The cross-check
-reconstructs every expected `--verbose` line out of the JSON and finds it in
-the text, which works because **every sentence begins with its token's words**,
-underscores replaced by spaces; a variant that breaks that property makes the
-test say so rather than quietly weakening it.
+match, so a new variant cannot be given one spelling without the other —
+a second implementation would drift into describing a different vocabulary from
+the listing. The cross-check reconstructs every expected `--verbose` line out
+of the JSON and finds it in the text, which works because **every sentence
+begins with its token's words**, underscores replaced by spaces; a variant
+breaking that property fails the test rather than quietly weakening it.
 
 **Keyed by `COPY` block** — `(database, qualified name, header_offset)` — not
 rolled up per table. *Rejected:* keying by table, which is what a script most
@@ -2027,8 +1975,7 @@ separate flag and no "guess why the open failed" ambiguity.
 detect that the file changed. `--dqcache P` alone reads P with no live file to
 check against, and says so (`CacheOffline`). The cache records the source's
 size, so the coverage line works either way. `info_offline` refuses the same
-three unusable outcomes and reports `Incomplete` like any other cache;
-refusing a partial one was what this phase removed.
+three unusable outcomes and reports `Incomplete` like any other cache.
 
 `preamble_only` returns `(DumpMetadata, Vec<Diagnostic>)`: it was the one
 library entry point answering with `DumpMetadata` alone, so its diagnostics had
@@ -2054,22 +2001,17 @@ a message naming one remedy would have been wrong half the time.
 ## Fixtures
 
 
-**Adding a shape is the default, not a last resort** — see `roadmap.md`,
-"Expand the generated fixtures freely; never infer what `pg_dump` writes". A
-decision that turns on the exact bytes `pg_dump` emits gets a fixture column;
-reasoning out what the output must be is what produced I22's, I23's and I26's
-late discoveries.
-
-**Half of that rule is enforced.** `tests/pgtype.rs`'s
+**Adding a shape is the default, not a last resort** — the rule and its
+evidence are `roadmap.md`, "Expand the generated fixtures freely". **Half of it
+is enforced here.** `tests/pgtype.rs`'s
 `every_resolution_outcome_is_produced_by_a_real_fixture_column` resolves every
 column of every `COPY` block of every fixture and requires each
-`ColumnResolution` variant to have at least one real column behind it — so a
-new refusal cannot land without the `pg_dump` output that reaches it, and its
-exhaustive match makes a new variant a compile error until it is listed. The
-other half — a shape that resolves to an outcome already covered and merely
-*works* — stays a judgement call, which is exactly the five multi-hop shapes
-`t_nested_array` collects. Naming that limit beats a check implying coverage
-it does not have.
+`ColumnResolution` variant to have a real column behind it, so a new refusal
+cannot land without the `pg_dump` output that reaches it — and its exhaustive
+match makes a new variant a compile error until it is listed. The other half —
+a shape resolving to an outcome already covered and merely *working* — stays a
+judgement call, which is what the five multi-hop shapes in `t_nested_array`
+are. Naming that limit beats a check implying coverage it does not have.
 
 `ColumnResolution::MetadataNotScanned` is that rule's one exemption, listed in
 the test with its reason inline: it is a property of *how much of the file was
@@ -2239,13 +2181,13 @@ rather than a hardcoded `StringViewArray` downcast.
 
 **The fixture vocabulary is one module per test crate** —
 `pgdump_query/tests/common/mod.rs` and `pgdump_query-cli/tests/common/mod.rs`,
-holding the fixture paths, the tempdir-sandboxing helpers, and the shared
+holding the fixture paths, the tempdir-sandboxing helpers and the shared
 expectations (`rows_of`, `widgets_expected`). Each `tests/*.rs` file is its own
-crate, so without them each file carries its own copy of every path helper it
-needs, and copies of a path helper drift silently because nothing compares
-them. What *drives* the library — a `collect`, a `drain`, a `census_of` —
-deliberately stays in the file whose subject it is: those differ per file in
-ways that matter, and pooling them would rebuild the same problem one level up.
+crate, so without them every file carries its own copy of each path helper, and
+copies drift silently because nothing compares them. What *drives* the library
+— a `collect`, a `drain`, a `census_of` — stays in the file whose subject it
+is: those differ per file in ways that matter, and pooling them would rebuild
+the same problem one level up.
 
 Chunk-boundary correctness is asserted, not assumed: the event stream is
 identical across chunk sizes 1…4096, and the batch tests exercise the

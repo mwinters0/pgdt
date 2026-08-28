@@ -153,7 +153,7 @@ repeat its numbers; `--stale` names the figures a diff has invalidated.
 figure. **Any stale figure forces a whole re-sweep** — selection is per figure,
 but a sweep is what the session stamp records — so the actionable output is
 binary, re-take the doc or don't, and one true positive settles it. `map.rs`
-alone is declared by eight of the eleven figures a sweep takes, which means
+alone is declared by eight of the twelve figures a sweep takes, which means
 most changes mark most of the doc stale and the tool still answers correctly.
 Per-figure detail would be explanatory colour, and buying it by narrowing the
 declarations trades against the only failure that matters: an under-declared
@@ -820,8 +820,7 @@ HDD; run it detached per `CLAUDE.md`.
 **The `.dqcache` a run leaves behind dies at the next cache-format bump**, and
 those are free and frequent pre-1.0 (`architecture.md`, "The cache"). Treat the
 koji cache as a byproduct of a scan run for another reason, never as an asset:
-the cache left by the 2026-08-25 run was already unreadable by the time 4.4
-landed. Nothing plans around keeping one alive — inspecting koji at all
+the cache left by the 2026-08-25 run was unreadable within days. Nothing plans around keeping one alive — inspecting koji at all
 (`pgdq info`, with or without `--source`) is available only between a scan and
 the next bump, and regaining it costs the full ~54-minute scan.
 
@@ -911,10 +910,10 @@ same command to completion:
 | Interrupted at | byte 19,867,623,920 of 784,019,857,152 (2%) |
 | Interrupted cache | 109,916 bytes, loadable, `Scan completion: 2%` |
 | Resumed leg | 764,152,233,232 bytes in 3302 s, **~231 MB/s** |
-| Final cache | 247,380 bytes, **byte-identical** to the 9.1 run's |
-| Blocks / rows / bytes | 74 / 19,575,829,920 / 784,019,857,152 — 9.1's figures |
+| Final cache | 247,380 bytes, **byte-identical** to the straight-through run's |
+| Blocks / rows / bytes | 74 / 19,575,829,920 / 784,019,857,152 — the same figures |
 
-The resumed leg's ~231 MB/s against the 9.1 straight-through run's ~238 MB/s is
+The resumed leg's ~231 MB/s against the straight-through run's ~238 MB/s is
 **not** a like-for-like scan comparison: it omits the file's opening 19.9 GB,
 which is `public.archive_rpm_components` and row-dense rather than byte-dense.
 What it does establish is that resuming carries no detectable cost — the same
@@ -1025,7 +1024,7 @@ working tree. The cache is written to the tmpfs directory too, mounted into
 the container, so no run writes to the container's own layer.
 
 **"Before" is a whole-commit comparison, not a throttle-isolating one.** The
-two builds differ in everything that landed from 9.5 onward, not only in the
+two builds differ in everything that landed after `b726f6b`, not only in the
 save throttle, so the column says what the throttle era bought and must not be
 differenced against a later change. What isolates a mechanism is the
 census-off method above — one line, one rebuild — and what the P7 inbox

@@ -34,7 +34,7 @@ applies to `INSERT` runs, and `stream::target_settled`'s stop rule reads
 `CopyBlock::partition_root`, which nothing populates for a non-`COPY` region
 yet.
 
-**Origin.** Slice 3.2.1.2.1, 2026-08-24. See I2 in
+**Origin.** 2026-08-24. See I2 in
 [`postgres-invariants.md`](postgres-invariants.md) — which carries the
 reproduction and the exact source functions — and the
 `--load-via-partition-root` row in
@@ -62,7 +62,7 @@ version was — and a container's TOC makes "just index every entry up front"
 cheap, which is the better answer there and worth reaching for deliberately
 rather than rediscovering the trap.
 
-**Origin.** Slice 3.2.1.2.1, 2026-08-24. See I2 in
+**Origin.** 2026-08-24. See I2 in
 [`postgres-invariants.md`](postgres-invariants.md).
 
 ---

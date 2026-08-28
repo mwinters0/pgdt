@@ -13,8 +13,7 @@ from — go re-check the origin rather than trusting an entry that has aged.
 ## There are two diagnostic channels, and the sink is where they unify
 
 **Fact.** A `DumpIndex` carries `diagnostics: Vec<diagnostic::Diagnostic>`
-(file-level: tiling failures, cache mtime mismatches, and whatever 3.3's
-TOC-coverage figure becomes). A `ResolvedSchema` separately carries `notes:
+(file-level: tiling failures, cache mtime mismatches, the TOC-coverage figure). A `ResolvedSchema` separately carries `notes:
 Vec<resolve::ColumnNote>`, one per column. They are **not** one type, and
 cannot be: `DumpIndex` is L1 while `ColumnResolution` is an L2 conclusion
 about PostgreSQL type semantics, so a single enum would have L1 name an L2
@@ -32,7 +31,7 @@ drain point is what it permits. A P6 design that gives the sink only one
 of the two channels re-opens a question that was already settled the other
 way.
 
-**Origin.** Slice 3.2.2 and its follow-up, 2026-08-24. See
+**Origin.** 2026-08-24. See
 [`architecture.md`](architecture.md),
 "Diagnostics: a file-level channel on `DumpIndex`", and
 [`../status/history/2026-08-24.md`](../status/history/2026-08-24.md), "The
@@ -69,7 +68,7 @@ the answer is conditional on no concatenation, which costs nothing and turns
 silence into a filterable signal. The third interacts directly with the sink
 entry above, which is why both are filed here.
 
-**Origin.** Slice 3.2.1.2.1, 2026-08-24 (the decision), carried through
+**Origin.** 2026-08-24 (the decision), carried through
 P3's end-of-phase grilling as an accepted gap. See `STATUS.md`'s "Known
 gaps" and
 [`architecture.md`](architecture.md),
@@ -85,9 +84,8 @@ question entirely.
 
 **Fact.** `batch::read_table`, the push-mode entry point, is a ~20-line drain
 over the pull-mode `stream::table_stream` — it forwards each batch to the
-callback and returns `(ResolvedSchema, Option<ResumeToken>)`. Since 4.4 moved
-`pgdq query` to pull mode (it needs the stream's `NestedPlan`s while
-rendering), nothing outside `pgdump_query/tests/` and
+callback and returns `(ResolvedSchema, Option<ResumeToken>)`. Because `pgdq query` is a pull-mode caller (it needs the stream's
+`NestedPlan`s while rendering), nothing outside `pgdump_query/tests/` and
 `pgdump_query/benches/whole_file.rs` calls it. The shared scan loop is
 unaffected and still exercised by every CLI invocation; what has no
 non-test caller is the drain itself and the `ControlFlow::Break` →
@@ -113,7 +111,7 @@ comes back with it.
 
 ## A partial `DumpIndex`'s blocks are each fully censused; the *table's* set may not be
 
-**Fact.** After P4.5.1 every `COPY` block in a map carries a complete
+**Fact.** Every `COPY` block in a map carries a complete
 array-shape census — a block enters the map only at a `CopyEnd` watermark, and
 every mapping pass censuses. `stream::table_stream` exploits this by unioning
 the censuses of exactly the blocks it will replay, which needs no completeness
@@ -128,7 +126,7 @@ the frontier could disagree: report the optimistic type, refuse, or expose the
 partiality to the caller. P9 answers this for the CLI (report, and mark
 the coverage); the embedded API has no equivalent place to put a mark.
 
-**Origin.** Grilling 4.5's open decisions, 2026-08-26. See
+**Origin.** 2026-08-26, grilling the census's open decisions. See
 [`../status/history/2026-08-26.md`](../status/history/2026-08-26.md).
 
 ---
@@ -148,7 +146,7 @@ cannot be deferred again. P9 deliberately left the question open rather
 than guessing at a rollup the embedded API would then have to contradict. A
 per-table rollup in the CLI export is purely additive once the rule exists.
 
-**Origin.** Grilling 4.5's open decisions, 2026-08-26. See
+**Origin.** 2026-08-26, grilling the census's open decisions. See
 [`../status/history/2026-08-26.md`](../status/history/2026-08-26.md).
 
 ---
@@ -174,7 +172,7 @@ censused" entry above: that one asks what a schema says about array shape when
 the map is partial; this one asks what it says when a whole database's DDL is
 missing, and the tree already contains both answers rather than none.
 
-**Origin.** Slice 9.4, 2026-08-26. See [`architecture.md`](architecture.md),
+**Origin.** 2026-08-26. See [`architecture.md`](architecture.md),
 "Joining a header against the metadata".
 
 **Narrowed by 9.5.1, 2026-08-27.** The mapping pass now states a database's
@@ -228,5 +226,5 @@ whether `ScanCancelled` becomes a DataFusion error or is folded into the
 embedder set it — is also the one that puts an error variant into an engine
 that would rather see a stream end.
 
-**Origin.** Slice 9.5, 2026-08-27. See [`architecture.md`](architecture.md),
+**Origin.** 2026-08-27. See [`architecture.md`](architecture.md),
 "`parse` resumes, and saves as it goes".

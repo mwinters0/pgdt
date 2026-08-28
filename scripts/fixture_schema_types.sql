@@ -69,7 +69,8 @@ INSERT INTO public.t_float VALUES
     (7, NULL, NULL);
 
 -- infinity/-infinity are PostgreSQL date pseudo-values with no numeric day
--- offset at all -- see the P2 notes on what this means for Date32.
+-- offset at all, so they have no Date32 representation and decode as a
+-- FieldDecode by design (docs/design/architecture.md, "Testing philosophy").
 CREATE TABLE public.t_date (
     id integer PRIMARY KEY,
     v_date date
