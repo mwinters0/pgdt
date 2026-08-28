@@ -262,6 +262,52 @@ class Register(unittest.TestCase):
                 self.assertTrue((measure.SCRIPTS / spec.generator).exists())
 
 
+class IsolatedPair(unittest.TestCase):
+    """`composite` and `composite_text` are one seed's draw written twice.
+
+    That is the whole instrument: the same rows, one declaring `v_comp` as its
+    real type and the other as `text`, so the difference between them is one
+    column's decode cost and nothing else. Two things can quietly break it —
+    the pair drifting apart in its generator arguments, and the two files
+    ending up with different row counts — and each has a check here."""
+
+    def test_the_pair_differs_only_in_the_declaration_flag(self):
+        strong = [a for a in measure.INPUTS["composite"].args if a != "--composite"]
+        weak = [a for a in measure.INPUTS["composite_text"].args if a != "--weak-composite"]
+        self.assertEqual(strong, weak)
+
+    def test_the_figure_is_taken_on_exactly_that_pair(self):
+        fig = measure.FIGURES_BY_ID["composite-isolated"]
+        self.assertEqual(fig.warm_inputs, ("composite", "composite_text"))
+
+    def _diffs(self, rows_a, rows_b, first, second):
+        class _Stager:
+            def profile(self, name):
+                return {"rows": rows_a if name == "composite" else rows_b}
+
+        class _Session:
+            stager = _Stager()
+
+            def get(self, figure, spec):
+                return first if spec.input == "composite" else second
+
+        return measure._same_rows_diffs(
+            _Session(), "composite-isolated", "typed", "composite", "composite_text"
+        )
+
+    def test_the_difference_is_per_row_over_the_row_count_they_share(self):
+        # One second apart over a million rows is a microsecond a row.
+        got = self._diffs(1_000_000, 1_000_000, [11.0, 12.0], [10.0, 11.0])
+        self.assertEqual([round(v, 6) for v in got], [1.0, 1.0])
+
+    def test_a_pair_that_no_longer_shares_a_row_count_is_refused(self):
+        # Not silently divided by one of the two: a pair that has drifted
+        # measures the files, and the figure must fail rather than say so
+        # quietly.
+        with self.assertRaises(ValueError):
+            self._diffs(1_000_000, 999_999, [11.0], [10.0])
+
+
 class Staleness(unittest.TestCase):
     def test_a_file_under_a_declared_directory_counts(self):
         touched = dict(

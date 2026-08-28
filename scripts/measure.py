@@ -139,7 +139,7 @@ class Config:
         _env("PGDQ_MEASURE_BEFORE_BIN", str(REPO / "runs/pgdq-before-throttle"))
     )
 
-    # The size of the six large inputs. 3.00 GiB is the recorded apparatus;
+    # The size of the seven large inputs. 3.00 GiB is the recorded apparatus;
     # anything else marks the run unpublishable.
     size_gib: float = float(_env("PGDQ_MEASURE_SIZE_GIB", "3.0"))
     # Pin every CPU to SWEEP_GOVERNOR for the sweep. Off by default -- see
@@ -755,6 +755,10 @@ INPUTS: dict[str, InputSpec] = {
     # The instrument's own floor: identical shape, different seed.
     "control43": _perf("control43", "--seed", "43"),
     "composite": _perf("composite", "--composite", "--seed", "42"),
+    # The composite file's twin: the same seed, so the same rows, with `v_comp`
+    # declared `text`. The two data sections are byte-identical, which is what
+    # lets one column's decode cost be differenced without normalizing per row.
+    "composite_text": _perf("composite_text", "--weak-composite", "--seed", "42"),
     "arrays": _perf("arrays", "--arrays", "--composite", "--seed", "42"),
     "large_object": InputSpec(
         "large_object",
@@ -1646,6 +1650,73 @@ def run_cross_file_floor(session: Session) -> str:
     return md_table(["Reading", "Reps", "Paired median", "Per-rep readings"], rows)
 
 
+# -- one column, isolated ---------------------------------------------------
+
+
+def _same_rows_diffs(session: Session, figure: str, mode: str, a: str, b: str) -> list[float]:
+    """Per-rep µs/row differences between two files read in the same mode.
+
+    Legitimate only because the two files hold the *same rows*: `composite`
+    and `composite_text` are one seed's draw written twice, so nothing has to
+    be normalized away before the subtraction and the per-row division is a
+    division rather than a comparison of two row counts. That is the whole
+    difference between this instrument and `cross-file-floor`, which
+    differences files of different row lengths and bottoms out around half a
+    microsecond a row for it."""
+    counts = {name: session.stager.profile(name)["rows"] for name in (a, b)}
+    if counts[a] != counts[b]:
+        raise ValueError(
+            f"{a} holds {counts[a]:,} rows and {b} holds {counts[b]:,}: the pair is no longer "
+            "one draw written twice, so this difference measures the files, not the column"
+        )
+    va = session.get(figure, RunSpec("pgdq", a, f"query-{mode}", "warm", ""))
+    vb = session.get(figure, RunSpec("pgdq", b, f"query-{mode}", "warm", ""))
+    return [(x - y) / counts[a] * 1e6 for x, y in zip(va, vb)]
+
+
+def run_composite_isolated(session: Session) -> str:
+    figure = "composite-isolated"
+    files = ("composite", "composite_text")
+    specs = [
+        RunSpec("pgdq", name, f"query-{mode}", "warm", f"{name} {mode}")
+        for name in files
+        for mode in ("strings", "typed")
+    ]
+    session.sweep(figure, specs, session.cfg.reps(6))
+    typed = _same_rows_diffs(session, figure, "typed", *files)
+    strings = _same_rows_diffs(session, figure, "strings", *files)
+    rows = [
+        [
+            "composite column's cost — `typed` on both, `public.perf_comp` against `text`",
+            str(len(typed)),
+            f"**{median(typed):+.2f} µs**",
+            ", ".join(f"{v:+.2f}" for v in sorted(typed)),
+        ],
+        [
+            "**the instrument's own floor** — `strings` on the same two files, where neither "
+            "decodes the column",
+            str(len(strings)),
+            f"**{median(strings):+.2f} µs**",
+            ", ".join(f"{v:+.2f}" for v in sorted(strings)),
+        ],
+    ]
+    table = md_table(["Reading", "Reps", "Paired median", "Per-rep readings"], rows)
+    legs = "\n".join(
+        f"- {name} `{mode}`: "
+        f"{fmt_readings(session.get(figure, RunSpec('pgdq', name, f'query-{mode}', 'warm', '')))}"
+        for name in files
+        for mode in ("strings", "typed")
+    )
+    profile = session.stager.profile(files[0])
+    return (
+        table
+        + f"\n\nBoth files hold {profile['rows']:,} rows and data sections that are equal byte "
+        "for byte; only one column's declared type differs.\n\nPer-rep readings (s):\n"
+        + legs
+        + "\n"
+    )
+
+
 # -- census attribution -----------------------------------------------------
 
 
@@ -1977,6 +2048,19 @@ FIGURES: list[Figure] = [
         warm_inputs=("control", "control43"),
         requires=("nested-end-to-end",),
         run=run_cross_file_floor,
+    ),
+    Figure(
+        id="composite-isolated",
+        quoted_by=(
+            "docs/design/roadmap-P7-scan-performance-inbox.md",
+            "docs/design/architecture.md",
+            "docs/status/STATUS.md",
+        ),
+        section="One column, isolated: the same rows declared two ways",
+        stage="warm",
+        depends=(*NESTED, *QUERY_CLI, *GEN_PERF),
+        warm_inputs=("composite", "composite_text"),
+        run=run_composite_isolated,
     ),
     Figure(
         id="per-block-quadratic",
