@@ -18,6 +18,12 @@ cargo run -p pgdump_query-cli -- info --source <file> [--verbose]   # never scan
 cargo run -p pgdump_query-cli -- info --dqcache <path>       # cache-only, no dump file needed
 
 cd scripts && uv run generate_fixtures.py [--version 13|16|18]  # regenerate fixtures/
+
+cd scripts && uv run measure.py --list            # every figure, and what invalidates each
+cd scripts && uv run measure.py --stale           # which figures a diff has made stale
+cd scripts && uv run measure.py --figure <id>     # re-take one figure — one whole table
+cd scripts && uv run measure.py --all             # the whole sweep: ~1 h, detach it
+cd scripts && uv run python -m unittest test_measure   # the harness's own tests
 ```
 
 ## Long-running processes (>10 minutes)
@@ -39,6 +45,16 @@ So, for anything expected to take more than 10 minutes:
   the next session should check.
 - If nothing else can proceed until it finishes, wrap the session up —
   including all doc updates — rather than idling.
+
+A full `scripts/measure.py --all` sweep is one of these: ~18 GiB of generated
+input and roughly an hour of runs. Detach it, let it write
+`runs/measure-<stamp>/`, and let a later session read `tables.md` there.
+**Nothing else may build or test while it runs** — a `cargo` job across 24
+cores moves the very numbers it is taking, which is the same rule as
+`measurements.md`'s "a koji figure taken while local work ran is not a figure".
+Start it with `setsid` and stop it by **process group** (`pkill -g <pgid>`):
+killing the harness alone orphans whichever generator it had running, and that
+generator keeps writing a multi-gigabyte file.
 
 Running `pgdq` against the multi-hundred-GB koji sample (see
 `CLAUDE.local.md`) is exactly this case: a full scan is roughly an hour on
@@ -173,6 +189,21 @@ on, each with the command that reproduces it. **Read it before making a
 performance claim, and add to it rather than to a notes doc when you measure
 something.** A figure whose regeneration command is gone should be deleted, not
 kept.
+
+`scripts/measure.py` is the harness that takes those figures and emits that
+doc's tables. **Run it rather than writing a one-off script when a figure needs
+re-taking** — every re-take before it was a `runs/` script that died with the
+session, so each one re-derived the apparatus from scratch and ended with a
+throwaway parser scraping medians out of a log, which is where the
+transcription errors lived. Its unit tests are `scripts/test_measure.py`.
+**Run `uv run measure.py --stale` before claiming a figure still holds**: every
+figure declares the paths that invalidate it, so the harness answers "which
+figures did this diff make stale" instead of someone remembering to — which is
+the half that failed twice. Selection is per figure and a figure is exactly one
+whole table; a full sweep replaces every table at once, which is what that
+doc's session stamp records. The paths and sizes it uses are environment
+variables (`PGDQ_MEASURE_*`) whose defaults suit this machine — see
+`CLAUDE.local.md`.
 
 `docs/design/pg-dump-compatibility.md` tracks which `pg_dump` options/variants
 are tested/untested/unsupported.
