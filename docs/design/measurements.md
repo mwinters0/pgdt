@@ -190,19 +190,33 @@ this harness exists to prevent. Contention is therefore grounds to **discard a
 reading and take it again** — the discipline `drop_caches` already applies to a
 dirty page cache. Control the apparatus; never model it.
 
-**The gate is built and its thresholds are not yet set.**
-`measure.CONTENTION_LIMITS` is empty, which gates nothing: a limit cannot be
-chosen before the distribution is known — too tight and every sweep loops, too
-loose and it never fires — so the first sweeps under this telemetry record
-without gating and are what the limits get set from. A reading over a limit is
+**The gate is armed, per regime**: `cpu_busy_pct` 15, `psi_cpu_some_pct` 5 and
+`cpu_steal_pct` 2, each roughly 3x the p95 observed over 182 readings, and
+`psi_io_some_pct` gated in neither regime — a cold run drops the page cache and
+reads 3.00 GiB off the SSD, so it stalls on I/O by construction and one global
+limit would fire on every cold reading or none. A reading over a limit is
 retaken up to three times; a figure that cannot get a quiet reading fails
 loudly rather than publishing one nobody can defend.
 
-**What no counter can see, on a VM.** A neighbour saturating memory bandwidth
-appears as neither steal nor PSI — the vCPU is scheduled, nothing stalls on a
-runqueue, the instructions are simply slower. The only witness for that is a
-co-measured one, which is what the `dd` floor already is. Counters say *why* on
-bare metal; the floor is what catches a noisy host. Neither is a normaliser.
+**What no counter can see — and it is not only a VM problem.** A neighbour
+saturating memory bandwidth appears as neither steal nor PSI: the CPU is
+scheduled, nothing stalls on a runqueue, the instructions are simply slower.
+The only witness is a co-measured one, which is what the `dd` floor already is.
+
+That is measured, not predicted. A sweep taken on this machine while unrelated
+processes read the HDD and ran duckdb queries **passed every gate** — machine
+≤13% busy against the limit's 15, no steal, CPU stall ≤0.99% — while its warm
+readings ran 5–45% slow against a quiet sweep of the same binaries and inputs.
+What moved tracked bandwidth, not clocks: the warm tmpfs `dd` floor **+19–24%**
+and the warm `COPY` scan **+45%**, against the cold SSD `dd` floor at **+0.1%**
+and the line-skipping large-object path at +0.2% — with the busiest core
+*faster* than in the quiet sweep (3.73–4.24 GHz against 3.59–4.09). So the
+counters witness CPU contention, the floor witnesses bandwidth, and a sweep is
+judged on both. Evidence:
+[`../status/history/2026-08-28.md`](../status/history/2026-08-28.md), "A gate
+that passes cannot mean a machine that was quiet".
+
+Neither is a normaliser.
 
 *Rejected:* **pinning the CPU governor as part of the apparatus.** The
 hypothesis was that an 8× scaling range (0.56–4.67 GHz) under `powersave` was

@@ -31,13 +31,17 @@ review, so there is no per-phase checklist here.
 **Figures.** Every figure in
 [`../design/measurements.md`](../design/measurements.md) comes from the
 `fa186ab` sweep of 2026-08-28, folded in whole, each table carrying an
-apparatus line witnessing a quiet machine. **One figure is owed a fold-in**:
-`M23` added `composite-isolated` and its sweep
-(`runs/measure-20260828T180425`, against `ed588a3`) was launched detached — see
-[`history/2026-08-28.md`](history/2026-08-28.md), "`M23`", for what the next
-session does with it. Until then `scripts/test_measure.py`'s
-marker-reconciliation test fails on the missing section, which is that check
-doing its job.
+apparatus line witnessing a quiet machine. **One figure is owed a fold-in, and
+it needs a quiet machine to take it**: `M23` added `composite-isolated`, and
+the sweep launched for it (`runs/measure-20260828T180425`, against `ed588a3`)
+ran alongside unrelated HDD and duckdb work — it passed every contention gate
+and is still **not foldable**, its warm readings running 5–45% slow against the
+`fa186ab` sweep of the same binaries. Re-take it when the machine is idle. That
+sweep is kept as the control that measures what noise costs
+([`history/2026-08-28.md`](history/2026-08-28.md), "A gate that passes cannot
+mean a machine that was quiet"). Until the fold-in,
+`scripts/test_measure.py`'s marker-reconciliation test fails on the missing
+section, which is that check doing its job.
 
 ## Not started
 
