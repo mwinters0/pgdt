@@ -174,10 +174,8 @@ filed.
     `P<k>`".
 
   - [ ] **`M17` — the measurement harness, and the sweep that fills the doc.**
-    Scope settled 2026-08-27. Not started.
-
-    Contract settled across 2026-08-27 and 2026-08-28; the notes are
-    [`history/2026-08-27.md`](history/2026-08-27.md) and
+    **Not started.** Contract settled across 2026-08-27 and 2026-08-28; the
+    notes are [`history/2026-08-27.md`](history/2026-08-27.md) and
     [`history/2026-08-28.md`](history/2026-08-28.md).
 
     **Why it exists.** `M10`, `M13` and `M14` each re-derived the same
@@ -189,10 +187,13 @@ filed.
     recipe below is the durable record" to point at it. That amendment lands
     *with* the harness, not before.
 
-    **The tables it emits, and their state.** ✅ marks one already on the
-    current footing, which the harness only has to reproduce. This list is the
-    progress record — the box above ticks when every ✅ is present, and until
-    then the list says which are.
+    **The tables it emits, and their state today.** ✅ marks one already on
+    the current footing — the harness has only to *reproduce* those, where the
+    rest are re-takes or first takes. The sweep emits **every row** regardless
+    (see "the run replaces every table" below), so this column is a statement
+    about how much each row is expected to move, not about which ones get run.
+    The list is the progress record: the box above ticks when every row is
+    harness-emitted, and until then this says which are.
 
     | # | Table | Stage | State |
     |---|---|---|---|
@@ -230,7 +231,7 @@ filed.
     with no table shape is a figure nobody has decided how to report" catches
     oversights, and these are a decision.
 
-    **Row 14 comes from `criterion`'s own JSON**, not from scraping console
+    **Row 13 comes from `criterion`'s own JSON**, not from scraping console
     output: `target/criterion/<group>/<bench>/new/estimates.json` carries a
     median in nanoseconds, and every cell of that table is a median plus a byte
     count that is a constant in the bench.
@@ -289,7 +290,7 @@ filed.
     the selectable unit is the figure. Without this the harness is unusable
     while being written, since a full run is 18 GiB of staging and an hour.
 
-    **The fold-in lands per section, across several commits.** A fourteen-table
+    **The fold-in lands per section, across several commits.** A thirteen-table
     diff is exactly what "never mix high- and low-confidence work in one review
     cycle" forbids, and `M13`'s four-figure fold-in already produced two
     withdrawn readings and three flagged calls.
@@ -317,11 +318,11 @@ filed.
     audit trail and a wrong median is visible against the numbers that produced
     it.
 
-    **The run replaces every table, including the six already current.** The
+    **The run replaces every table, including the seven already current.** The
     doc differences *across* tables — the census-attribution table is quoted as
     reproducing the census `parse` figures to within 3%, and row 6 exists so
     the `INSERT` ratio becomes a division against row 1 — so a doc spanning two
-    sessions reintroduces the fourth standing rule's failure one level up. Six
+    sessions reintroduces the fourth standing rule's failure one level up. Seven
     tables moving by the session drift is not churn to avoid; it is evidence
     the drift is real, and the ninth rule already forbids reading a small
     movement as a result.
