@@ -183,10 +183,16 @@ what it changed elsewhere: [`history/2026-08-28.md`](history/2026-08-28.md).
 ## Decisions worth another look
 
 Calls made without the maintainer present that are worth weighing in on —
-cautionary and informational, not blocking. **An entry leaves this section once
-it has been looked at**, settled into the design docs or reversed; the
-reasoning that closed it lives in the dated history entry it names, and the
-durable half in the doc that holds the decision. Two are open.
+cautionary and informational, not blocking. **Capped at five**, because the
+section only works while it is short enough to read every session.
+
+**Closing an entry is filing it and then deleting it**, done by the session
+that hears the answer — never by editing the entry to say it was reviewed. If
+the review changed an artifact, the fold-in has filed it; if the review
+affirmed the call and changed nothing, its reasoning goes beside the mechanism
+it governs first, because that is the only case whose content lives nowhere
+else. Full rules: [`../process.md`](../process.md), "Decisions worth another
+look". Two are open.
 
 *An `INSERT` scan costs **16.2×** a `COPY` scan per byte, not the "~5×" three
 documents carried — and what that changes about P7's plan has not been

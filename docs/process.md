@@ -203,11 +203,41 @@ Three sections earn their keep beyond the checklist:
 - **Decisions worth another look** — calls made without the maintainer
   present that a person should still weigh in on: cautionary and
   informational, never blocking. Each entry states the call, why it was made
-  that way, and what would change if it were reconsidered. An entry leaves
-  when the maintainer has looked at it — either settled into the design docs
-  or reversed. This is the pressure valve that makes unattended work honest
-  rather than silent; without it the choice is between stalling and burying
-  the decision in a diff.
+  that way, and what would change if it were reconsidered. This is the
+  pressure valve that makes unattended work honest rather than silent;
+  without it the choice is between stalling and burying the decision in a
+  diff.
+
+  Four rules keep it from silting up. The first is the one that fails on its
+  own, because it is the only one whose moment is a conversation rather than a
+  file:
+
+  - **Closing an entry means filing it and then deleting it** — never editing
+    it to record that it was reviewed. Where the review changed an artifact —
+    the call reversed, sharpened into a design doc, or promoted to a numbered
+    item — the fold-in has already filed it, so delete the entry. Where the
+    review **affirmed the call and changed nothing**, its reasoning has no
+    home yet: write it beside the mechanism it governs, as a
+    rejected-alternative paragraph, *then* delete. That second case is what
+    actually produces sediment, and it is invisible without this rule, because
+    it is the only kind whose content lives nowhere else and so cannot
+    honestly be deleted on the spot.
+  - **The session that hears the answer does the closing**, in that same
+    session, before the work the answer unblocked. Deletion is the
+    acknowledgement: nothing else in the repo records that a review happened,
+    so an entry left standing is indistinguishable from one nobody read.
+  - **Five entries, hard.** A sixth is not written until one is closed or
+    withdrawn. The cap *is* the mechanism, not a target to stay under: this
+    section's whole value is being short enough to read every session, so a
+    list long enough to need an index has already stopped working as a flag
+    and as a record at the same time.
+  - **Name the decision, or file it elsewhere.** Before writing an entry, say
+    what the maintainer is being asked to decide. If the honest answer is
+    "nothing — they would nod", it is not a decision: it is a known gap, an
+    inbox entry, or an out-of-band row, and it goes there now. This is the
+    out-of-band ledger's admission rule applied to the milder version of the
+    same failure — that ledger becomes where design work hides from review,
+    and this section becomes where observations go to avoid being filed.
 
 Keeping STATUS.md current is part of any change that alters implementation
 state, not a separate chore. It drifts within days otherwise.
@@ -528,6 +558,7 @@ Four questions settle almost every case.
 | What we intend to build | the phase **spec** |
 | What we built, that a later phase inherits | the phase **notes** — or, after a keystone, the **architecture** doc's section for that mechanism |
 | Something we tried and rejected | beside the mechanism it would have replaced, wherever that lives |
+| A call made unattended, reviewed, and **affirmed with nothing changed** | beside the mechanism it governs, as a rejected-alternative paragraph — then the STATUS entry is deleted |
 | What exists right now | **STATUS.md** |
 | Why we changed our mind, and the evidence | a **history** entry, linked from the doc holding the resulting decision |
 | Something outside our control that we now depend on | the **assumptions register** |
@@ -692,6 +723,14 @@ look", not in silence and not in a blocking question.** The section exists so
 that proceeding and flagging is available as a third option; use it. An entry
 there is cheap to write, cheap to read, and cheap to reverse.
 
+**Writing an entry and closing one are different sessions' jobs, and neither
+is the keystone's.** The unattended session writes; whichever session hears
+the maintainer's answer files the reasoning and deletes the entry, per
+"Decisions worth another look" above. A keystone that arrives to find a
+backlog there has found a filing failure, not a housekeeping chore — every
+entry in it was answered months earlier and kept because answering left no
+trace.
+
 ## CLAUDE.md vs. CLAUDE.local.md vs. docs
 
 Three files, three audiences, and the split is about **portability**, not
@@ -838,6 +877,15 @@ Each of these means a specific rule has stopped being followed.
   phase wrap has nothing to consolidate.
 - **History entries contain "turns out", "actually", "correction".** They were
   written as a log of the day rather than as the day's settled facts.
+- **A "Decisions worth another look" entry describes its own review** — "was
+  reviewed on D and stands". It was closed and then kept. Either the fold-in
+  already filed it, in which case delete it, or the review affirmed the call
+  and changed nothing, in which case its reasoning has never been written down
+  anywhere and must go beside the mechanism before the entry does.
+- **That section runs past five entries.** It is no longer short enough to be
+  read, so it has stopped buying the flag *and* the continuity it exists for —
+  and a section nobody reads cannot be the pressure valve unattended work
+  depends on.
 - **An invariant has no re-verification step.** It will not be checked at the
   next upstream release, which is the only reason it was written down.
 - **`CLAUDE.md` explains a design.** It should be pointing at a doc instead.

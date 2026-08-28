@@ -541,9 +541,13 @@ ledger is struck too").
 **M1–M19 are struck**, and nothing at or below `M19` is reused. That is a
 high-water mark rather than a claim that every one of them landed: `M14` was
 absorbed into `M17` and `M1`/`M2` were folded into a phase slice, and their
-numbers are spent all the same. The next out-of-band item is `M20`. What each
-struck item did is in `architecture.md` by subject, and why it was done is in
-the dated history entry it was filed under.
+numbers are spent all the same. What each struck item did is in
+`architecture.md` by subject, and why it was done is in the dated history entry
+it was filed under.
+
+| # | Date | What changed | Why |
+|---|---|---|---|
+| `M20` | 2026-08-28 | "Decisions worth another look" gains four rules — file-then-delete on close, closed by the session that hears the answer, capped at five, and an admission rule — plus the `depends` rationale the last keystone swept away | [`../status/history/2026-08-28.md`](../status/history/2026-08-28.md) |
 
 **One of them left a live obligation.** The synthetic `INSERT`-run measurement
 fit one session and changed no decision, which is what admitted it as

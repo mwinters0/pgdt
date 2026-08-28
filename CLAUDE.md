@@ -269,6 +269,16 @@ During a sliced phase, `STATUS.md` is a **terse checklist** of what has landed
 this phase, each item linking to the subphase notes doc that holds the detail —
 not a prose summary duplicating them.
 
+**When the maintainer answers an entry under `STATUS.md`'s "Decisions worth
+another look", close it in that same session** — before the work the answer
+unblocked, and never by editing the entry to record that it was reviewed. If
+the answer changed an artifact, the fold-in files it and the entry is deleted;
+if the answer affirmed the call and changed nothing, write the reasoning
+beside the mechanism it governs first, as a rejected-alternative paragraph,
+*then* delete. Deletion is the only record that the review happened, and the
+section is capped at five entries. Rules: `docs/process.md`, "Decisions worth
+another look".
+
 ## Writing style
 Do not document what _was_, document what _is_.  If we learn something important
 enough to persist as historical reference, I'll ask you explicitly to do so.

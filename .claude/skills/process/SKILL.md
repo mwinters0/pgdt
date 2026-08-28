@@ -62,3 +62,10 @@ one review cycle; stop at the last clean boundary rather than reworking a
 tested core path on a judgement call; and put every call the maintainer should
 weigh into STATUS's **"Decisions worth another look"**, which exists precisely
 so that proceeding-and-flagging beats both stalling and staying silent.
+
+That section is **capped at five entries**, and an entry is closed by the
+session that hears the maintainer's answer — filed, then deleted, never edited
+to record that it was reviewed. An affirmed call that changed nothing has its
+reasoning written beside the mechanism it governs *before* the entry goes; that
+is the only case whose content lives nowhere else. Read the process doc's
+sub-rules under that heading before writing an entry or closing one.
