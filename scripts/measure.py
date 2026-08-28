@@ -64,6 +64,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import atexit
 import dataclasses
 import hashlib
 import json
@@ -74,6 +75,7 @@ import shutil
 import statistics
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import date
@@ -140,6 +142,9 @@ class Config:
     # The size of the six large inputs. 3.00 GiB is the recorded apparatus;
     # anything else marks the run unpublishable.
     size_gib: float = float(_env("PGDQ_MEASURE_SIZE_GIB", "3.0"))
+    # Pin every CPU to SWEEP_GOVERNOR for the sweep. Off by default -- see
+    # that constant for the measurement that says why.
+    pin_governor: bool = _env("PGDQ_MEASURE_PIN_GOVERNOR", "") not in ("", "0", "no")
     # Rep-count override, for smoke runs only. None means each figure's own.
     reps_override: int | None = None
     dry_run: bool = False
@@ -156,6 +161,443 @@ class Config:
 
     def reps(self, declared: int) -> int:
         return self.reps_override if self.reps_override is not None else declared
+
+
+# --------------------------------------------------------------------------
+# Contention telemetry: what the machine was doing while a reading was taken.
+#
+# A reading is only as good as the machine was quiet, and the harness could
+# not previously say how quiet it was. Two sweeps of the same 11 figures, on
+# the same inputs and the same binaries, differ by up to **20% on `dd` alone**
+# -- which contains none of this project's code. Without telemetry that is
+# visible but not diagnosable.
+#
+# **Counters, not samples.** A warm reading is ~0.5 s, so PSI's `avg10` and a
+# 1 Hz sampler each describe a window many times longer than the thing being
+# measured. What works is the monotonic `total=` counters, read immediately
+# either side of the timed run: their difference is stall *during this rep*.
+# Frequency has no such counter under `amd-pstate-epp` (it exposes no
+# `cpufreq/stats/time_in_state`), so frequency alone is sampled, and its
+# per-reading value says how many samples it averaged -- which for a warm
+# reading is one or two.
+#
+# **Witness, not divisor.** These numbers gate a reading; they never adjust
+# one. Dividing by a "contention factor" needs a model of how contention maps
+# to *this* workload's slowdown, and the same pair of sweeps shows that model
+# cannot be a scalar: `dd` (memory-bandwidth-bound) moved +20.1% while the
+# CPU-bound `INSERT` scan moved +0.4%. Any divisor correcting one over-corrects
+# the other by 20x, and a mis-calibrated divisor emits a *confidently wrong*
+# table -- the exact failure this harness exists to prevent. So contention is
+# grounds to discard a reading and take it again: the discipline `drop_caches`
+# already applies to a dirty page cache. Control the apparatus, never model it.
+#
+# **What no counter can see.** On a VM, a neighbour saturating memory
+# bandwidth appears as neither steal nor PSI -- the vCPU is scheduled, nothing
+# stalls on a runqueue, the instructions are simply slower. The only witness
+# for that is a co-measured one, which is what the `dd` floor already is.
+# Counters say *why* on bare metal; the floor is what catches a noisy host.
+# Neither is a normaliser.
+# --------------------------------------------------------------------------
+
+#: The three pressure files, each carrying a `some` and a `full` line.
+PSI_RESOURCES = ("cpu", "memory", "io")
+
+#: `/proc/stat`'s aggregate `cpu` line, in order. `steal` is the field that
+#: matters on a VM and is always zero on bare metal.
+CPU_STAT_FIELDS = (
+    "user",
+    "nice",
+    "system",
+    "idle",
+    "iowait",
+    "irq",
+    "softirq",
+    "steal",
+    "guest",
+    "guest_nice",
+)
+
+#: How often the background sampler reads the quantities with no counter.
+#: 5 Hz puts one or two samples inside a 0.5 s warm reading and costs tens of
+#: microseconds a second, well under the noise it is there to measure.
+SAMPLE_HZ = 5.0
+
+
+def read_psi_totals(root: Path = Path("/proc/pressure")) -> dict[str, int]:
+    """Monotonic stall counters in microseconds, keyed `"<resource>.<kind>"`
+    (`"cpu.some"`, `"memory.full"`, ...).
+
+    A missing file yields missing keys rather than an error: PSI is a kernel
+    build option, and a harness that refused to run without it would be dead
+    on arrival at the next machine.
+    """
+    totals: dict[str, int] = {}
+    for resource in PSI_RESOURCES:
+        try:
+            text = (root / resource).read_text()
+        except OSError:
+            continue
+        for line in text.splitlines():
+            fields = line.split()
+            if not fields:
+                continue
+            for field_text in fields[1:]:
+                name, _, value = field_text.partition("=")
+                if name == "total":
+                    totals[f"{resource}.{fields[0]}"] = int(value)
+    return totals
+
+
+def read_cpu_jiffies(path: Path = Path("/proc/stat")) -> dict[str, int]:
+    """The aggregate `cpu` line by field name, or `{}` where unreadable."""
+    try:
+        first = path.read_text().split("\n", 1)[0]
+    except OSError:
+        return {}
+    fields = first.split()
+    if not fields or fields[0] != "cpu":
+        return {}
+    return {name: int(v) for name, v in zip(CPU_STAT_FIELDS, fields[1:])}
+
+
+@dataclass(frozen=True)
+class Counters:
+    """One instant's reading of every monotonic counter, with the clock it was
+    read at. Two of these bracket a timed run."""
+
+    monotonic: float
+    psi: dict[str, int]
+    cpu: dict[str, int]
+
+    @classmethod
+    def read(cls) -> "Counters":
+        return cls(time.monotonic(), read_psi_totals(), read_cpu_jiffies())
+
+
+def counter_delta(before: Counters, after: Counters) -> dict[str, float]:
+    """What the machine did between two snapshots.
+
+    Stall is reported absolutely (microseconds) and as a percentage of the
+    window, and the percentage is the comparable one: it is what puts a 0.5 s
+    warm reading and an 8 s `INSERT` scan on the same scale.
+
+    `cpu_busy_pct` is the **whole machine, this run included**. On a 24-core
+    box one scan accounts for a few percent, so a useful threshold sits well
+    above what a reading costs on its own.
+    """
+    elapsed = max(after.monotonic - before.monotonic, 1e-9)
+    out: dict[str, float] = {"window_s": round(elapsed, 4)}
+    for key in sorted(set(before.psi) & set(after.psi)):
+        stalled_us = after.psi[key] - before.psi[key]
+        flat = key.replace(".", "_")
+        out[f"psi_{flat}_us"] = float(stalled_us)
+        out[f"psi_{flat}_pct"] = round(100.0 * stalled_us / 1e6 / elapsed, 3)
+    jiffies = {k: after.cpu[k] - before.cpu[k] for k in set(before.cpu) & set(after.cpu)}
+    total = sum(jiffies.values())
+    if total > 0:
+        idle = jiffies.get("idle", 0) + jiffies.get("iowait", 0)
+        out["cpu_busy_pct"] = round(100.0 * (total - idle) / total, 2)
+        out["cpu_steal_pct"] = round(100.0 * jiffies.get("steal", 0) / total, 3)
+    return out
+
+
+def cpu_freq_paths(root: Path = Path("/sys/devices/system/cpu")) -> list[Path]:
+    """One frequency file per CPU, preferring the aperf/mperf-derived *actual*
+    average (`cpuinfo_avg_freq`) over `scaling_cur_freq`, which reports what
+    was requested rather than what was delivered."""
+    paths = []
+    for cpu in sorted(root.glob("cpu[0-9]*")):
+        for name in ("cpufreq/cpuinfo_avg_freq", "cpufreq/scaling_cur_freq"):
+            candidate = cpu / name
+            if candidate.exists():
+                paths.append(candidate)
+                break
+    return paths
+
+
+#: hwmon `name` values worth reading a temperature from, most-wanted first.
+#: The CPU package is what matters; a drive's temperature is not why a warm
+#: reading moved.
+CPU_HWMON_NAMES = ("k10temp", "coretemp", "zenpower")
+
+
+def thermal_paths(
+    thermal_root: Path = Path("/sys/class/thermal"),
+    hwmon_root: Path = Path("/sys/class/hwmon"),
+) -> list[Path]:
+    """CPU temperature inputs, in milli-degrees.
+
+    Two sources because neither is universal: `thermal_zone*` is the portable
+    one and this AMD box has none, exposing its package temperature through
+    hwmon's `k10temp` instead. Only CPU sensors are collected -- an NVMe or
+    chipset reading would dilute the maximum with something that has nothing
+    to do with why a scan slowed down.
+    """
+    zones = sorted(p / "temp" for p in thermal_root.glob("thermal_zone*") if (p / "temp").exists())
+    if zones:
+        return zones
+    out: list[Path] = []
+    for hwmon in sorted(hwmon_root.glob("hwmon*")):
+        try:
+            name = (hwmon / "name").read_text().strip()
+        except OSError:
+            continue
+        if name in CPU_HWMON_NAMES:
+            out += sorted(hwmon.glob("temp*_input"))
+    return out
+
+
+class Sampler:
+    """Background sampling for the two quantities with no kernel counter.
+
+    Only frequency and temperature are here. Everything else is a counter and
+    is read exactly around the run it belongs to, which is strictly better:
+    sampling a 0.5 s reading at any affordable rate gives one or two points,
+    while a counter difference covers the whole window by construction.
+    """
+
+    def __init__(self, hz: float = SAMPLE_HZ) -> None:
+        self.interval = 1.0 / hz if hz > 0 else 0.0
+        self.freq_paths = cpu_freq_paths()
+        self.thermal_paths = thermal_paths()
+        #: `(monotonic, mean kHz across cores, busiest core kHz, max milli-°C)`
+        self.samples: list[tuple[float, float, float, float]] = []
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def sample_once(self) -> tuple[float, float, float, float]:
+        khz: list[float] = []
+        for p in self.freq_paths:
+            try:
+                khz.append(float(p.read_text()))
+            except (OSError, ValueError):
+                pass
+        milli: list[float] = []
+        for p in self.thermal_paths:
+            try:
+                milli.append(float(p.read_text()))
+            except (OSError, ValueError):
+                pass
+        return (
+            time.monotonic(),
+            statistics.mean(khz) if khz else float("nan"),
+            max(khz) if khz else float("nan"),
+            max(milli) if milli else float("nan"),
+        )
+
+    def _loop(self) -> None:
+        while not self._stop.wait(self.interval):
+            self.samples.append(self.sample_once())
+
+    def start(self) -> None:
+        if self.interval <= 0 or self._thread is not None:
+            return
+        self._thread = threading.Thread(target=self._loop, name="pgdq-sampler", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+            self._thread = None
+
+    def window(self, start: float, end: float) -> dict[str, float]:
+        """Frequency and temperature over `[start, end]` in monotonic time.
+
+        `freq_samples` is reported beside the mean because it is what says how
+        much to trust it: a warm reading yields two samples, and a mean of two
+        is a hint rather than a measurement.
+        """
+        inside = [s for s in self.samples if start <= s[0] <= end]
+        if not inside:
+            return {"freq_samples": 0}
+        mean_khz = [s[1] for s in inside if s[1] == s[1]]
+        busiest_khz = [s[2] for s in inside if s[2] == s[2]]
+        temps = [s[3] for s in inside if s[3] == s[3]]
+        out: dict[str, float] = {"freq_samples": len(inside)}
+        if busiest_khz:
+            # **The busiest core is the one that matters.** A scan is close to
+            # single-threaded, so the mean across 24 cores is dominated by the
+            # 23 idle ones and reads far below the frequency the work actually
+            # ran at. The mean is kept beside it because the two together say
+            # whether anything *else* was running.
+            out["freq_busiest_mhz"] = round(statistics.mean(busiest_khz) / 1000.0, 1)
+            out["freq_busiest_min_mhz"] = round(min(busiest_khz) / 1000.0, 1)
+        if mean_khz:
+            out["freq_allcore_mean_mhz"] = round(statistics.mean(mean_khz) / 1000.0, 1)
+        if temps:
+            out["temp_max_c"] = round(max(temps) / 1000.0, 1)
+        return out
+
+
+# --------------------------------------------------------------------------
+# The apparatus: the machine state the recorded figures assume.
+# --------------------------------------------------------------------------
+
+#: The governor `--pin-governor` pins every CPU to.
+#:
+#: **Off by default, because on this machine it measures as a no-op.** The
+#: hypothesis was that an 8x scaling range (0.56-4.67 GHz) under `powersave`
+#: was moving memory-bandwidth-bound readings. It is not: `amd-pstate-epp` is
+#: a hardware-managed P-state driver where the governor name is very nearly
+#: cosmetic and the energy-performance preference does the work, so a busy
+#: core boosts to 4.55 GHz under `powersave` and 4.55 GHz under `performance`,
+#: with an identical `dd` median either way (0.270 s over three runs of a
+#: 3 GiB tmpfs read, 2026-08-28).
+#:
+#: The mechanism is kept and left off rather than deleted, because the
+#: reasoning is machine-specific: a box on `acpi-cpufreq` with a genuine
+#: `ondemand`/`powersave` governor would show exactly the effect this was
+#: written for, and there the flag is a one-word fix rather than a rewrite.
+#:
+#: Pinning is an **apparatus change**: a figure taken under it is not
+#: comparable with one taken without it, so turning it on obliges a full
+#: re-sweep.
+SWEEP_GOVERNOR = "performance"
+
+#: A reading whose window shows contention above these limits is not a
+#: reading: it is discarded and taken again.
+#:
+#: **Empty until calibrated, deliberately.** A threshold cannot be chosen
+#: before the distribution is known -- too tight and every sweep loops, too
+#: loose and the gate never fires -- so the first sweeps under this telemetry
+#: record without gating, and what they report is what these limits are then
+#: set from. An empty mapping gates nothing, and is not a bug.
+CONTENTION_LIMITS: dict[str, float] = {}
+
+#: How many times a contended reading is retaken before its figure fails.
+GATE_RETRIES = 3
+
+
+def apparatus_note(records: Sequence[dict]) -> str:
+    """One line under a figure's table saying how quiet the machine was while
+    it was taken.
+
+    The worst case, not the average: a table's median survives one bad rep,
+    but a reader deciding whether to trust the number wants to know the worst
+    the apparatus got. An empty string where there is no telemetry at all, so
+    a machine without PSI emits the table it always did.
+    """
+    deltas = [r["telemetry"] for r in records if r.get("telemetry")]
+    if not deltas:
+        return ""
+    def worst(key: str) -> float | None:
+        seen = [d[key] for d in deltas if key in d]
+        return max(seen) if seen else None
+    def least(key: str) -> float | None:
+        seen = [d[key] for d in deltas if key in d]
+        return min(seen) if seen else None
+
+    bits: list[str] = []
+    cpu_stall = worst("psi_cpu_some_pct")
+    if cpu_stall is not None:
+        bits.append(f"CPU stall ≤{cpu_stall:.2f}%")
+    io_stall = worst("psi_io_some_pct")
+    if io_stall is not None:
+        bits.append(f"I/O stall ≤{io_stall:.2f}%")
+    busy = worst("cpu_busy_pct")
+    if busy is not None:
+        bits.append(f"machine ≤{busy:.0f}% busy")
+    steal = worst("cpu_steal_pct")
+    if steal is not None:
+        bits.append(f"steal ≤{steal:.2f}%")
+    freq = least("freq_busiest_min_mhz")
+    if freq is not None:
+        bits.append(f"busiest core ≥{freq / 1000:.2f} GHz")
+    temp = worst("temp_max_c")
+    if temp is not None:
+        bits.append(f"≤{temp:.0f}°C")
+    if not bits:
+        return ""
+    return "Apparatus over every run in this table: " + ", ".join(bits) + ".\n"
+
+
+def contention_verdict(
+    delta: dict[str, float], limits: dict[str, float] | None = None
+) -> str | None:
+    """The first limit this reading's telemetry breaks, or `None` if it is
+    clean. Returns a sentence, because it goes straight into the log."""
+    limits = CONTENTION_LIMITS if limits is None else limits
+    for key, limit in sorted(limits.items()):
+        if key in delta and delta[key] > limit:
+            return f"{key}={delta[key]} over limit {limit}"
+    return None
+
+
+class GovernorPin:
+    """Pin every CPU's scaling governor for the duration of a sweep, and put
+    it back afterwards.
+
+    Restoration is the part that matters: this changes a machine-wide setting
+    that outlives the process, so it is restored on the way out of the context
+    **and** from an `atexit` hook, which covers the exits that skip `finally`.
+    A failure to restore is logged loudly, with the commands to fix it by
+    hand, rather than swallowed -- a machine left pinned is a changed
+    apparatus for whatever runs next.
+    """
+
+    def __init__(
+        self,
+        governor: str = SWEEP_GOVERNOR,
+        sudo: str = "sudo",
+        log: Callable[[str], None] = print,
+        root: Path = Path("/sys/devices/system/cpu"),
+    ) -> None:
+        self.governor = governor
+        self.sudo = sudo
+        self.log = log
+        self.root = root
+        self.previous: dict[Path, str] = {}
+        self.error: str | None = None
+
+    def files(self) -> list[Path]:
+        return sorted(self.root.glob("cpu[0-9]*/cpufreq/scaling_governor"))
+
+    def _write_all(self, values: dict[Path, str]) -> None:
+        # One `sudo sh -c` for the whole set: 24 separate elevations is 24
+        # chances to be prompted, and the point is an unattended sweep.
+        script = "; ".join(
+            f"echo {shlex.quote(v)} > {shlex.quote(str(p))}" for p, v in values.items()
+        )
+        run(shlex.split(self.sudo) + ["sh", "-c", script])
+
+    def __enter__(self) -> "GovernorPin":
+        files = self.files()
+        if not files:
+            self.error = "no scaling_governor files — cpufreq is not exposed here"
+            self.log(f"!! governor not pinned: {self.error}")
+            return self
+        try:
+            self.previous = {p: p.read_text().strip() for p in files}
+            self._write_all({p: self.governor for p in files})
+        except Exception as exc:
+            self.error = str(exc)
+            self.previous = {}
+            self.log(f"!! governor not pinned: {exc}")
+            return self
+        was = sorted(set(self.previous.values()))
+        self.log(f"governor pinned to {self.governor} (was {', '.join(was)})")
+        atexit.register(self.restore)
+        return self
+
+    def restore(self) -> None:
+        if not self.previous:
+            return
+        previous, self.previous = self.previous, {}
+        try:
+            self._write_all(previous)
+            self.log(f"governor restored to {', '.join(sorted(set(previous.values())))}")
+        except Exception as exc:  # loud: the machine has been left changed
+            self.log(f"!! GOVERNOR NOT RESTORED ({exc}) — restore it by hand:")
+            for p, v in previous.items():
+                self.log(f"     echo {v} | sudo tee {p}")
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.restore()
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
 
 
 # --------------------------------------------------------------------------
@@ -681,7 +1123,13 @@ class Session:
         self.readings: dict[str, list[float]] = {}
         self.records: list[dict] = []
         self.figure_index = 0
+        self.figure_id = ""
         self._dry_reps: dict[str, int] = {}
+        self._last_telemetry: dict[str, float] = {}
+        self.sampler = Sampler()
+        #: Every reading's telemetry, in the order taken, so a sweep can be
+        #: audited after the fact even where the gate let a reading through.
+        self.telemetry: list[dict] = []
 
     # -- one timed run ----------------------------------------------------
 
@@ -739,21 +1187,32 @@ class Session:
             self._dry_reps[key] = rep + 1
             digest = hashlib.sha256(f"{key}/{rep}".encode()).digest()
             return 0.4 + digest[0] / 255 * 5.0
+        # The counters bracket the run as tightly as possible: two procfile
+        # reads, outside the timer, either side of the subprocess. Their
+        # difference is what the machine did *during this rep* -- which is the
+        # only window that means anything for a reading half a second long.
         started = time.time()
+        before, mono_start = Counters.read(), time.monotonic()
         proc = subprocess.run(argv, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        mono_end, after = time.monotonic(), Counters.read()
         if proc.returncode != 0:
             raise RuntimeError(
                 f"{spec.label} exited {proc.returncode}\n{proc.stdout[-2000:]}\n{proc.stderr[-2000:]}"
             )
         seconds = parse_bash_time(proc.stderr)
+        telemetry = counter_delta(before, after)
+        telemetry.update(self.sampler.window(mono_start, mono_end))
         self.records.append(
             {
                 "spec": dataclasses.asdict(spec),
                 "seconds": seconds,
                 "wall_including_container": round(time.time() - started, 3),
+                "telemetry": telemetry,
                 "argv": argv,
             }
         )
+        self.telemetry.append({"key": spec.key(self.figure_id), **telemetry})
+        self._last_telemetry = telemetry
         return seconds
 
     # -- sweeps -----------------------------------------------------------
@@ -771,9 +1230,37 @@ class Session:
         for rep in range(reps):
             order = list(specs) if rep < (reps + 1) // 2 else list(reversed(specs))
             for spec in order:
-                seconds = self.time_run(spec)
+                seconds = self.take(spec, rep)
                 self.readings[spec.key(figure)].append(seconds)
+
+    def take(self, spec: RunSpec, rep: int) -> float:
+        """One reading, retaken while the machine says it was contended.
+
+        A contended reading is **discarded, not corrected** -- see the
+        telemetry section's "witness, not divisor". Retaking is the same
+        remedy `drop_caches` applies to a dirty page cache, and it is bounded:
+        a machine that cannot produce a quiet reading in `GATE_RETRIES`
+        attempts is not a machine this figure can be taken on, and saying so
+        beats emitting a number nobody can defend.
+
+        With `CONTENTION_LIMITS` empty -- the state until a sweep has
+        calibrated them -- every reading passes on the first attempt and this
+        is exactly the loop it replaced.
+        """
+        for attempt in range(1, GATE_RETRIES + 1):
+            seconds = self.time_run(spec)
+            verdict = contention_verdict(self._last_telemetry)
+            if verdict is None:
                 self.log(f"  rep{rep + 1} {spec.label}: {seconds:.3f} s")
+                return seconds
+            self.log(
+                f"  rep{rep + 1} {spec.label}: {seconds:.3f} s — DISCARDED, "
+                f"machine contended ({verdict}); attempt {attempt}/{GATE_RETRIES}"
+            )
+        raise RuntimeError(
+            f"{spec.label}: {GATE_RETRIES} consecutive readings were taken under contention "
+            f"({contention_verdict(self._last_telemetry)}) — the machine is too busy to measure on"
+        )
 
     def get(self, figure: str, spec: RunSpec) -> list[float]:
         return self.readings[spec.key(figure)]
@@ -1732,6 +2219,16 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
         log_file.close()
         return 2
     session = Session(cfg, stager, log)
+    # The apparatus, in the order it has to be established: pin the governor
+    # (a machine-wide change, restored on the way out), then start sampling.
+    # `--dry-run` touches neither: it runs nothing worth witnessing and must
+    # not need root.
+    governor = None
+    if not cfg.dry_run:
+        if cfg.pin_governor:
+            governor = GovernorPin(sudo=cfg.sudo, log=log)
+            governor.__enter__()
+        session.sampler.start()
 
     parts: list[str] = []
     sections_seen: set[str] = set()
@@ -1747,6 +2244,8 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
             failures.append((fig.id, f"skipped: borrows from {', '.join(blocked)}"))
             continue
         log(f"\n=== {fig.id} ({fig.stage}) — {fig.section}")
+        session.figure_id = fig.id
+        first_record = len(session.records)
         started = time.time()
         try:
             for name in fig.cold_inputs:
@@ -1759,6 +2258,9 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
             failures.append((fig.id, str(exc)))
             continue
         took = time.time() - started
+        apparatus = apparatus_note(session.records[first_record:])
+        if apparatus:
+            log("    " + apparatus.strip())
         log(f"--- {fig.id} done in {took:.0f} s")
         consumers = (
             "\n**The fold-in must also re-read**, because these repeat this figure's numbers "
@@ -1772,10 +2274,14 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
         parts.append(
             f"{heading}"
             f"<!-- figure: {fig.id} — reproduce with `cd scripts && "
-            f"uv run measure.py --figure {fig.id}` -->\n\n{label}{body}\n{consumers}"
+            f"uv run measure.py --figure {fig.id}` -->\n\n{label}{body}\n{apparatus}{consumers}"
         )
 
     stager.cleanup()
+    if not cfg.dry_run:
+        session.sampler.stop()
+    if governor is not None:
+        governor.__exit__()
 
     header = [
         "# measure.py output",
@@ -1793,6 +2299,15 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
             "It proves the harness runs; it is not a figure.",
             "",
         ]
+    elif governor is not None and not governor.ok:
+        # The governor is part of the recorded apparatus, so failing to pin it
+        # departs from that apparatus exactly as a resized input does.
+        header += [
+            f"> **NOT PUBLISHABLE.** The `{SWEEP_GOVERNOR}` governor could not be pinned "
+            f"({governor.error}), so these readings were taken under whatever scaling "
+            "policy the machine was left in. Fix that and re-run.",
+            "",
+        ]
     if failures:
         header += ["> **Figures that failed:** " + ", ".join(f"`{f}` ({m})" for f, m in failures), ""]
 
@@ -1807,6 +2322,12 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
                 "figures": [f.id for f in figures],
                 "failures": failures,
                 "readings": session.readings,
+                "telemetry": session.telemetry,
+                "governor": {
+                    "requested": SWEEP_GOVERNOR if cfg.pin_governor else None,
+                    "pinned": bool(governor and governor.ok),
+                    "error": governor.error if governor else None,
+                },
                 "runs": session.records,
             },
             indent=1,
@@ -2015,6 +2536,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--reps", type=int, help="override every figure's rep count (smoke runs only)")
     parser.add_argument("--dry-run", action="store_true", help="print what would run, measure nothing")
     parser.add_argument("--keep-warm", action="store_true", help="leave staged inputs on tmpfs")
+    parser.add_argument(
+        "--pin-governor",
+        action="store_true",
+        help=f"pin every CPU to the {SWEEP_GOVERNOR} governor for the sweep and restore it "
+        "afterwards; an apparatus change, and a measured no-op on amd-pstate-epp",
+    )
     args = parser.parse_args(argv)
 
     if args.list:
@@ -2039,7 +2566,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not ids:
         parser.error("nothing selected: pass --figure, --stage, --all, --list or --stale")
 
-    cfg = Config(reps_override=args.reps, dry_run=args.dry_run, keep_warm=args.keep_warm)
+    cfg = Config(
+        reps_override=args.reps,
+        dry_run=args.dry_run,
+        keep_warm=args.keep_warm,
+        pin_governor=args.pin_governor or Config().pin_governor,
+    )
     figures = resolve_selection(ids)
     if not cfg.dry_run and not cfg.bin_pgdq.exists():
         parser.error(f"{cfg.bin_pgdq} is missing — `cargo build --release -p pgdump_query-cli`")

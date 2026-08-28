@@ -678,3 +678,216 @@ class Drift(unittest.TestCase):
         # It is computed across two sweeps, so `--all` must not try to run it.
         self.assertNotIn("session-drift", [f.id for f in measure.FIGURES])
         self.assertIn("session-drift", measure.ALL_BY_ID)
+
+
+class Telemetry(unittest.TestCase):
+    """The contention witnesses. What a silent error costs here is a sweep
+    that reports itself quiet when it was not, so the parsing and the window
+    arithmetic are what get pinned."""
+
+    def _psi_dir(self, tmp, cpu_some=1000, cpu_full=0):
+        root = Path(tmp) / "pressure"
+        root.mkdir()
+        (root / "cpu").write_text(
+            f"some avg10=0.00 avg60=0.00 avg300=0.00 total={cpu_some}\n"
+            f"full avg10=0.00 avg60=0.00 avg300=0.00 total={cpu_full}\n"
+        )
+        return root
+
+    def test_psi_totals_are_read_per_resource_and_kind(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            got = measure.read_psi_totals(self._psi_dir(tmp, cpu_some=1234, cpu_full=56))
+            self.assertEqual(got, {"cpu.some": 1234, "cpu.full": 56})
+
+    def test_absent_psi_is_missing_keys_not_an_error(self):
+        # PSI is a kernel build option; a harness that died without it would be
+        # dead on arrival at the next machine.
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(measure.read_psi_totals(Path(tmp) / "nope"), {})
+
+    def test_the_avg_fields_are_not_mistaken_for_the_total(self):
+        # `avg10` describes a 10-second window and a warm reading is 0.5 s, so
+        # reading it instead of `total` would describe the wrong thing entirely.
+        with tempfile.TemporaryDirectory() as tmp:
+            got = measure.read_psi_totals(self._psi_dir(tmp, cpu_some=7))
+            self.assertEqual(set(got.values()), {7, 0})
+
+    def test_cpu_jiffies_name_every_field_including_steal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stat = Path(tmp) / "stat"
+            stat.write_text("cpu  1 2 3 4 5 6 7 8 9 10\ncpu0 1 2 3 4 5 6 7 8 9 10\n")
+            got = measure.read_cpu_jiffies(stat)
+            self.assertEqual(got["user"], 1)
+            self.assertEqual(got["steal"], 8)
+            self.assertEqual(got["idle"], 4)
+
+    def test_a_stat_file_without_the_cpu_line_is_empty_not_wrong(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stat = Path(tmp) / "stat"
+            stat.write_text("intr 1 2 3\n")
+            self.assertEqual(measure.read_cpu_jiffies(stat), {})
+
+    def _counters(self, mono, psi, cpu):
+        return measure.Counters(monotonic=mono, psi=psi, cpu=cpu)
+
+    def test_stall_is_reported_absolutely_and_as_a_share_of_the_window(self):
+        before = self._counters(10.0, {"cpu.some": 1_000_000}, {})
+        after = self._counters(12.0, {"cpu.some": 1_200_000}, {})
+        got = measure.counter_delta(before, after)
+        self.assertEqual(got["psi_cpu_some_us"], 200_000)
+        # 0.2 s of stall in a 2 s window.
+        self.assertAlmostEqual(got["psi_cpu_some_pct"], 10.0)
+
+    def test_the_percentage_makes_a_short_and_a_long_reading_comparable(self):
+        short = measure.counter_delta(
+            self._counters(0.0, {"cpu.some": 0}, {}), self._counters(0.5, {"cpu.some": 50_000}, {})
+        )
+        long = measure.counter_delta(
+            self._counters(0.0, {"cpu.some": 0}, {}), self._counters(8.0, {"cpu.some": 800_000}, {})
+        )
+        self.assertAlmostEqual(short["psi_cpu_some_pct"], long["psi_cpu_some_pct"])
+
+    def test_busy_and_steal_come_out_of_the_jiffy_difference(self):
+        before = self._counters(0.0, {}, {"user": 0, "idle": 0, "iowait": 0, "steal": 0})
+        after = self._counters(1.0, {}, {"user": 10, "idle": 80, "iowait": 10, "steal": 5})
+        got = measure.counter_delta(before, after)
+        # 105 jiffies total, 90 of them idle+iowait.
+        self.assertAlmostEqual(got["cpu_busy_pct"], round(100 * 15 / 105, 2))
+        self.assertAlmostEqual(got["cpu_steal_pct"], round(100 * 5 / 105, 3))
+
+    def test_a_zero_length_window_does_not_divide_by_zero(self):
+        same = self._counters(5.0, {"cpu.some": 1}, {"user": 1})
+        self.assertIn("window_s", measure.counter_delta(same, same))
+
+    def test_only_counters_present_on_both_sides_are_differenced(self):
+        before = self._counters(0.0, {"cpu.some": 1}, {})
+        after = self._counters(1.0, {"cpu.some": 2, "io.some": 9}, {})
+        got = measure.counter_delta(before, after)
+        self.assertIn("psi_cpu_some_us", got)
+        self.assertNotIn("psi_io_some_us", got)
+
+
+class SamplerWindow(unittest.TestCase):
+    def _sampler(self, samples):
+        s = measure.Sampler(hz=0)  # no thread; the samples are supplied
+        s.samples = samples
+        return s
+
+    def test_only_samples_inside_the_window_are_used(self):
+        s = self._sampler([(0.0, 1e6, 2e6, 40_000), (5.0, 2e6, 4e6, 50_000), (9.0, 1e6, 1e6, 90_000)])
+        got = s.window(4.0, 6.0)
+        self.assertEqual(got["freq_samples"], 1)
+        self.assertAlmostEqual(got["freq_busiest_mhz"], 4000.0)
+        self.assertAlmostEqual(got["temp_max_c"], 50.0)
+
+    def test_a_window_with_no_samples_says_so_rather_than_guessing(self):
+        # A warm reading can be shorter than the sample interval; reporting a
+        # count of zero is what stops the mean being read as a measurement.
+        s = self._sampler([(0.0, 1e6, 2e6, 40_000)])
+        self.assertEqual(s.window(10.0, 11.0), {"freq_samples": 0})
+
+    def test_the_busiest_core_is_reported_apart_from_the_all_core_mean(self):
+        # A scan is near enough single-threaded that the mean across 24 cores
+        # is dominated by the idle ones and reads far below the frequency the
+        # work ran at.
+        s = self._sampler([(1.0, 1_000_000, 4_500_000, 50_000)])
+        got = s.window(0.0, 2.0)
+        self.assertAlmostEqual(got["freq_busiest_mhz"], 4500.0)
+        self.assertAlmostEqual(got["freq_allcore_mean_mhz"], 1000.0)
+
+    def test_unreadable_sensors_drop_out_rather_than_poisoning_the_mean(self):
+        nan = float("nan")
+        s = self._sampler([(1.0, nan, nan, 50_000)])
+        got = s.window(0.0, 2.0)
+        self.assertNotIn("freq_busiest_mhz", got)
+        self.assertAlmostEqual(got["temp_max_c"], 50.0)
+
+
+class Gate(unittest.TestCase):
+    def test_empty_limits_gate_nothing(self):
+        # The state until a sweep has calibrated them, and not a bug.
+        self.assertEqual(measure.CONTENTION_LIMITS, {})
+        self.assertIsNone(measure.contention_verdict({"cpu_busy_pct": 99.0}, {}))
+
+    def test_a_reading_over_a_limit_is_named_with_the_limit_it_broke(self):
+        verdict = measure.contention_verdict({"cpu_busy_pct": 60.0}, {"cpu_busy_pct": 25.0})
+        self.assertIn("cpu_busy_pct", verdict)
+        self.assertIn("25.0", verdict)
+
+    def test_a_reading_under_every_limit_is_clean(self):
+        limits = {"cpu_busy_pct": 25.0, "psi_cpu_some_pct": 5.0}
+        self.assertIsNone(
+            measure.contention_verdict({"cpu_busy_pct": 3.0, "psi_cpu_some_pct": 0.1}, limits)
+        )
+
+    def test_a_limit_with_no_reading_behind_it_does_not_fire(self):
+        # A machine without PSI must not fail every reading for lack of it.
+        self.assertIsNone(measure.contention_verdict({}, {"psi_cpu_some_pct": 1.0}))
+
+
+class ApparatusNote(unittest.TestCase):
+    def test_the_note_quotes_the_worst_run_not_the_average(self):
+        records = [
+            {"telemetry": {"cpu_busy_pct": 3.0, "psi_cpu_some_pct": 0.1}},
+            {"telemetry": {"cpu_busy_pct": 40.0, "psi_cpu_some_pct": 9.0}},
+        ]
+        note = measure.apparatus_note(records)
+        self.assertIn("≤40% busy", note)
+        self.assertIn("9.00%", note)
+
+    def test_no_telemetry_emits_no_note(self):
+        # A machine exposing none of this emits the table it always did.
+        self.assertEqual(measure.apparatus_note([{"seconds": 1.0}]), "")
+
+    def test_the_slowest_frequency_is_the_one_reported(self):
+        records = [
+            {"telemetry": {"freq_busiest_min_mhz": 4500.0}},
+            {"telemetry": {"freq_busiest_min_mhz": 2100.0}},
+        ]
+        self.assertIn("≥2.10 GHz", measure.apparatus_note(records))
+
+
+class Governor(unittest.TestCase):
+    def test_pinning_is_off_by_default(self):
+        # It measures as a no-op on amd-pstate-epp, and turning it on is an
+        # apparatus change that obliges a full re-sweep.
+        self.assertFalse(measure.Config().pin_governor)
+
+    def test_a_machine_without_cpufreq_is_reported_not_crashed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pin = measure.GovernorPin(log=lambda _m: None, root=Path(tmp))
+            pin.__enter__()
+            self.assertFalse(pin.ok)
+            pin.__exit__()
+
+    def test_the_previous_governor_is_read_before_it_is_overwritten(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for cpu in ("cpu0", "cpu1"):
+                d = root / cpu / "cpufreq"
+                d.mkdir(parents=True)
+                (d / "scaling_governor").write_text("powersave\n")
+            written = []
+            pin = measure.GovernorPin(log=lambda _m: None, root=root)
+            pin._write_all = lambda values: written.append(dict(values))
+            pin.__enter__()
+            self.assertTrue(pin.ok)
+            self.assertEqual(set(written[0].values()), {"performance"})
+            pin.restore()
+            self.assertEqual(set(written[1].values()), {"powersave"})
+
+    def test_restoring_twice_is_a_no_op(self):
+        # `__exit__` and the atexit hook both call it, and the second must not
+        # re-write a governor the first already put back.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            d = root / "cpu0" / "cpufreq"
+            d.mkdir(parents=True)
+            (d / "scaling_governor").write_text("powersave\n")
+            written = []
+            pin = measure.GovernorPin(log=lambda _m: None, root=root)
+            pin._write_all = lambda values: written.append(dict(values))
+            pin.__enter__()
+            pin.restore()
+            pin.restore()
+            self.assertEqual(len(written), 2)

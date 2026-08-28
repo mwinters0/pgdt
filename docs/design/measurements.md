@@ -164,6 +164,60 @@ construction rather than by anyone keeping them in step. Evidence:
 [`../status/history/2026-08-28.md`](../status/history/2026-08-28.md),
 "`--stale`'s job is binary".
 
+**Every reading carries a witness to how quiet the machine was.** Two procfile
+reads bracket each timed run — PSI's monotonic `total=` stall counters and
+`/proc/stat`'s jiffies, `steal` included — and their difference is what the
+machine did *during that rep*. Frequency and CPU temperature have no such
+counter under `amd-pstate-epp`, so those alone are sampled at 5 Hz and
+labelled with how many samples landed inside the window. Each table's
+`Apparatus over every run in this table:` line reports the **worst** run, not
+the average: a median survives one bad rep, but a reader deciding whether to
+trust the number wants the worst the apparatus got. `raw.json` keeps the
+per-reading detail.
+
+**Counters, because a warm reading is half a second.** PSI's `avg10` and any
+affordable sampling rate both describe a window many times longer than the
+thing being measured; only a counter difference covers the window by
+construction.
+
+*Rejected:* **normalising a reading against the witnesses.** Dividing by a
+"contention factor" needs a model of how contention maps to *this* workload's
+slowdown, and that model cannot be a scalar: between the 2026-08-28 sweeps
+`dd` (memory-bandwidth-bound) moved +20.1% while the CPU-bound `INSERT` scan
+moved +0.4%, so any divisor correcting one over-corrects the other by 20×. A
+mis-calibrated divisor emits a *confidently wrong* table, which is the failure
+this harness exists to prevent. Contention is therefore grounds to **discard a
+reading and take it again** — the discipline `drop_caches` already applies to a
+dirty page cache. Control the apparatus; never model it.
+
+**The gate is built and its thresholds are not yet set.**
+`measure.CONTENTION_LIMITS` is empty, which gates nothing: a limit cannot be
+chosen before the distribution is known — too tight and every sweep loops, too
+loose and it never fires — so the first sweeps under this telemetry record
+without gating and are what the limits get set from. A reading over a limit is
+retaken up to three times; a figure that cannot get a quiet reading fails
+loudly rather than publishing one nobody can defend.
+
+**What no counter can see, on a VM.** A neighbour saturating memory bandwidth
+appears as neither steal nor PSI — the vCPU is scheduled, nothing stalls on a
+runqueue, the instructions are simply slower. The only witness for that is a
+co-measured one, which is what the `dd` floor already is. Counters say *why* on
+bare metal; the floor is what catches a noisy host. Neither is a normaliser.
+
+*Rejected:* **pinning the CPU governor as part of the apparatus.** The
+hypothesis was that an 8× scaling range (0.56–4.67 GHz) under `powersave` was
+moving the memory-bandwidth-bound readings. Measured, it is not:
+`amd-pstate-epp` is a hardware-managed P-state driver where the governor name
+is very nearly cosmetic and the energy-performance preference does the work, so
+a busy core boosts to 4.55 GHz under `powersave` and 4.55 GHz under
+`performance`, with an identical `dd` median either way (0.270 s over three
+runs of a 3 GiB tmpfs read). `measure.py --pin-governor` implements it and is
+**off**, because pinning is an apparatus change that would oblige a full
+re-sweep in exchange for nothing measurable here. It is kept rather than
+deleted because the reasoning is machine-specific: a box on `acpi-cpufreq`
+with a genuine `ondemand` governor would show exactly the effect this was
+written for.
+
 **Two prose recipes never go**, because the harness genuinely does not own
 them: the census-off **source patch**, which no harness should perform, and the
 generator invocations a reader may want on their own. koji's was a third until

@@ -43,13 +43,18 @@ unattended loop stops here.
 taken against `ff9c8f3` on 2026-08-28 in 43 minutes and folded in whole;
 `--check` reconciles twelve markers against twelve figures.
 
-**A re-sweep is outstanding.** `M21` touched paths that ten of the twelve
-figures declare, so `uv run measure.py --stale` reports them stale. Nothing in
-that item is expected to have moved a number — it was imports, one extracted
-`Builder` method, and a DDL-path helper — but staleness here is computed rather
-than argued, and the doc's tables must come from one sweep. The re-take is
-`uv run measure.py --all` (~1 h, detached per `CLAUDE.md`) against the commit
-that landed `M21`, folded in whole.
+**A re-sweep is outstanding, and it is also the telemetry's calibration run.**
+`M21` touched paths that ten of the twelve figures declare, and the first
+re-take (`runs/measure-20260828T115846`, `exit=0`) is **not foldable**: its warm
+regime was 12–20% slower than the sweep it would replace, witnessed by `dd`
+moving +20.1% while containing none of this project's code. Folding it would
+move the cross-document `INSERT`-vs-`COPY` claim from 16.2× to 14.5× for a
+reason that is apparatus rather than code
+([`history/2026-08-28.md`](history/2026-08-28.md)).
+
+`M22` is what makes the next attempt decidable: every reading now carries its
+own contention witness. The next sweep is both the re-take and the run that
+sets `measure.CONTENTION_LIMITS`, after which the gate can be armed.
 
 ## Not started
 
@@ -57,8 +62,8 @@ that landed `M21`, folded in whole.
   as provisional pending real user trials; the resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 
-- **No out-of-band work is queued.** `M1`–`M21` are spent; the next item takes
-  `M22` ([`../design/roadmap.md`](../design/roadmap.md), "Out-of-band work").
+- **No out-of-band work is queued.** `M1`–`M22` are spent; the next item takes
+  `M23` ([`../design/roadmap.md`](../design/roadmap.md), "Out-of-band work").
 
 - **No phase is specified.** Four are sketched and none grilled — P5, P6, P7,
   P8 — and numeric order is not plan order, since P9 was taken ahead of P5.
