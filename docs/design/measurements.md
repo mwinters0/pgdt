@@ -1064,10 +1064,18 @@ all.
 Apparatus over every run in this table: CPU stall ≤0.30%, I/O stall ≤6.49%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.60 GHz, ≤66°C.
 
 Every run is 99% CPU at every point: the cost is *serializing* the index, not
-writing it. The control is the same byte count in **one** `COPY` block —
-`uv run generate_perf_data.py --size-mb 2 --seed 42 /dev/shm/pgdq/one_block.sql`,
-which `parse` finishes in under 10 ms — so at 4000 blocks the overhead is three
-orders of magnitude above the scan it protects.
+writing it. **The control is the table's first row** — the same byte count in
+**one** `COPY` block — and it is what makes the rest readable as a series
+rather than a curve: it holds the bytes fixed so the only variable left is the
+block count, which is how the 4000-block figure can be called three orders of
+magnitude above the scan it protects rather than merely large.
+
+*The published table above predates that row.* The control was prose and a
+hand-run command here, last read at under 10 ms, and a control the harness does
+not run is one that goes stale without anyone noticing — so it is now a row the
+figure takes, and the next sweep fills it in. `scripts/test_measure.py` asserts
+that every declared input is consumed by some figure, which is the check that
+would have caught it sitting unread.
 
 **The throttle does exactly what it was designed to do, and the series still
 quadruples per doubling.** Saves fall well under the `1/K` bound — visible in

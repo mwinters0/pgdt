@@ -256,6 +256,23 @@ class Register(unittest.TestCase):
                 with self.subTest(figure=fig.id, requires=dep):
                     self.assertLess(order.index(dep), order.index(fig.id))
 
+    def test_every_defined_input_is_consumed(self):
+        """An input no figure takes is a control that goes stale in silence.
+
+        `one_block` was exactly that: the doc quoted a one-block parse at
+        "under 10 ms" and gave the command that regenerates the *input*, while
+        no figure took the reading — so nothing re-took it when the code it
+        controls for moved."""
+        used = {n for f in measure.SELECTABLE for n in (*f.cold_inputs, *f.warm_inputs)}
+        self.assertEqual(sorted(set(measure.INPUTS) - used), [])
+
+    def test_the_quadratic_carries_its_one_block_control(self):
+        # The series says a cost rises with block count; only the control says
+        # how much of the cost *is* block count.
+        fig = measure.FIGURES_BY_ID["per-block-quadratic"]
+        self.assertIn("one_block", fig.warm_inputs)
+        self.assertEqual(measure._QUADRATIC_ROWS[0][0], "one_block")
+
     def test_every_generator_named_by_an_input_exists(self):
         for spec in measure.INPUTS.values():
             with self.subTest(input=spec.name):

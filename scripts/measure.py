@@ -1749,37 +1749,47 @@ def run_census_attribution(session: Session) -> str:
 
 _BLOCK_COUNTS = (500, 1000, 2000, 4000)
 
+#: The series, and the control that makes it readable as one: the same byte
+#: count in **one** `COPY` block. Without it the table shows a cost rising with
+#: block count and cannot say how much of the cost *is* block count — the
+#: one-block run is what puts the 4000-block figure three orders of magnitude
+#: above the scan it protects. It was a command in the doc's prose and a number
+#: nobody re-took; a control the harness does not run is a control that goes
+#: stale silently.
+_QUADRATIC_ROWS: tuple[tuple[str, str], ...] = (
+    ("one_block", "1 (control)"),
+    *tuple((f"blocks{n}", f"{n}") for n in _BLOCK_COUNTS),
+)
+
 
 def run_per_block_quadratic(session: Session) -> str:
     figure = "per-block-quadratic"
     specs = []
-    for n in _BLOCK_COUNTS:
+    for name, _ in _QUADRATIC_ROWS:
         for binary in ("before", "pgdq"):
-            specs.append(
-                RunSpec(binary, f"blocks{n}", "parse-cache-out", "warm", f"{binary} blocks{n}")
-            )
+            specs.append(RunSpec(binary, name, "parse-cache-out", "warm", f"{binary} {name}"))
     session.sweep(figure, specs, session.cfg.reps(2))
 
     rows, per_rep = [], []
-    for n in _BLOCK_COUNTS:
-        dump = session.input_path(f"blocks{n}", "warm")
-        before = session.get(figure, RunSpec("before", f"blocks{n}", "parse-cache-out", "warm", ""))
-        after = session.get(figure, RunSpec("pgdq", f"blocks{n}", "parse-cache-out", "warm", ""))
+    for name, label in _QUADRATIC_ROWS:
+        dump = session.input_path(name, "warm")
+        before = session.get(figure, RunSpec("before", name, "parse-cache-out", "warm", ""))
+        after = session.get(figure, RunSpec("pgdq", name, "parse-cache-out", "warm", ""))
         saves_before, _ = count_saves(session.cfg, session.binary_path("before"), dump, session.log)
         saves_after, cache_size = count_saves(
             session.cfg, session.binary_path("pgdq"), dump, session.log
         )
         rows.append(
             [
-                str(n),
-                _fmt_bytes(file_size(session.cfg, dump, f"blocks{n}")),
+                label,
+                _fmt_bytes(file_size(session.cfg, dump, name)),
                 _fmt_bytes(cache_size),
                 f"{fmt_s(median(before))} s",
                 f"{fmt_s(median(after))} s",
                 f"{saves_before} → {saves_after}",
             ]
         )
-        per_rep.append(f"- {n} blocks — before: {fmt_readings(before)}; after: {fmt_readings(after)}")
+        per_rep.append(f"- {label} — before: {fmt_readings(before)}; after: {fmt_readings(after)}")
     table = md_table(
         ["blocks", "dump", "final cache", "before", "after", "saves before → after"], rows
     )
@@ -2058,8 +2068,8 @@ FIGURES: list[Figure] = [
         ),
         section="Per-block cache saving is quadratic in block count, and so is the map",
         stage="warm",
-        depends=(*MAP, *CACHE, *GEN_BLOCKS),
-        warm_inputs=tuple(f"blocks{n}" for n in _BLOCK_COUNTS),
+        depends=(*MAP, *CACHE, *GEN_BLOCKS, *GEN_PERF),
+        warm_inputs=tuple(name for name, _ in _QUADRATIC_ROWS),
         run=run_per_block_quadratic,
     ),
     Figure(
