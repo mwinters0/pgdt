@@ -1,6 +1,5 @@
 //! `scripts/generate_perf_data.py` writes what `pg_dump` writes — the drift
-//! guard for the benchmark generator, landed with `M10`
-//! (`docs/design/roadmap.md`, out-of-band ledger).
+//! guard for the benchmark generator.
 //!
 //! The generator's charter is that its output is "shaped closely enough that
 //! pgdq can read it back" (its module docstring). Nothing checked that, and

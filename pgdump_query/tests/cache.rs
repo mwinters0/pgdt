@@ -397,7 +397,7 @@ async fn offline_mode_is_rejected_by_live_methods_and_vice_versa() {
 /// `Incomplete` with the total size it fell short of, the same way `load`
 /// does for a live source — the completeness check reads the cache's own
 /// recorded size, since there is no live file to stat
-/// (`docs/design/architecture.md`, "The cache", the former out-of-band item M1).
+/// (`docs/design/architecture.md`, "The cache").
 #[tokio::test]
 async fn load_offline_reports_incomplete_for_a_partial_scan() {
     let source = LocalFileSource::open(edge_cases()).unwrap();

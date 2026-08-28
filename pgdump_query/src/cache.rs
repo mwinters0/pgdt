@@ -143,7 +143,7 @@ pub enum CacheStatus {
     /// A usable cache whose `index.scanned_through` falls short of
     /// `total_size` — a real, not-yet-finished scan (e.g. a preamble-only
     /// scan, or a query that stopped once its target settled), not a defect
-    /// (`docs/design/architecture.md`, "The cache", the former out-of-band item M1). What "not enough"
+    /// (`docs/design/architecture.md`, "The cache"). What "not enough"
     /// means is caller-specific: `pgdq info` reports whatever this holds and
     /// states the coverage (`docs/design/architecture.md`, "CLI surface"),
     /// while a caller that resumes an incremental scan from wherever it left

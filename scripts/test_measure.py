@@ -549,7 +549,7 @@ class Markers(unittest.TestCase):
 
 class KojiRecipe(unittest.TestCase):
     """koji is never run from here, but the invocation is owned here — three
-    hand-maintained copies is how `M19` found a documented command that could
+    hand-maintained copies is how a documented command was found that could
     not execute. Each assertion below is a mistake that has cost a run."""
 
     def _recipe(self, wrap=False) -> str:

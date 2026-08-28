@@ -25,17 +25,13 @@ The default output is a *control*: no data row contains a `{` or a `[`, which
 is what docs/design/measurements.md's array-shape-census figure and its
 scan-throughput table were both taken on. The array and composite stress
 columns live behind --arrays and --composite for exactly that reason -- see
-that doc's array sections, and
-docs/design/roadmap-P4-composite-decoding.md, "The performance deliverable
-is a ratio, not a gate".
+that doc's array sections.
 
 So the default output's *bytes* are frozen, and changing them is not a local
-decision: five recorded figures name this script as the command that
-reproduces them, and they have to be re-taken with the change (M10 did that in
-the same commit -- docs/design/roadmap.md's out-of-band ledger; M12 changed
-the date/time fractions and its re-take is M13, the queued item it was
-deliberately ordered ahead of, so that the whole warm set moves onto tmpfs at
-once rather than a figure at a time).
+decision: several recorded figures name this script as the command that
+reproduces them, and they have to be re-taken with the change. `scripts/measure.py
+--stale` is what says which ones -- every figure declares this file among the
+paths that invalidate it.
 """
 
 from __future__ import annotations

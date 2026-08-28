@@ -70,8 +70,8 @@ none. Let the container write the log.
 **The invocation is not written out here.** `cd scripts && uv run measure.py
 --koji-recipe` prints it with every path filled in, and `--koji-recipe --wrap`
 prints the stop-report-resume-compare sequence. It lived in three
-hand-maintained copies until the harness took it, which is how `M19` found a
-documented command that could no longer execute. The harness prints koji's
+hand-maintained copies until the harness took it, which is how a documented
+command was found that could no longer execute. The harness prints koji's
 recipe and never runs it.
 
 Two of its details are load-bearing and easy to lose again; the third is the
@@ -147,7 +147,9 @@ session**, pointing at the history entry that says why. Such a change gets no
 spec and no notes doc. If it would change a decision, it is not out-of-band:
 grill it, amend the spec, and give it a slice number. `M<k>` numbers work like
 `P<k>`: allocated on discovery, never reused, and the ledger's row order is
-allocation order rather than landing order.
+allocation order rather than landing order. The rows themselves are struck at
+each keystone; that section's watermark says which numbers are already spent,
+so the next item takes the number after it.
 
 **A phase is identified by `P<k>`, which is not a position.** Phases are
 allocated numbers as they are *discovered*, run in whatever order suits, and
@@ -235,11 +237,14 @@ names the obligations. Trigger the skill before implementing a roadmap phase or
 slice, wrapping one up, writing or revising a phase spec or notes doc, or
 updating `STATUS.md`. Planning, grilling and ad-hoc exploration don't need it.
 
-`docs/design/historical/initial.md` is frozen — historical only. The specs and
-notes for P1–P3 were struck at the keystone review (`docs/process.md`,
-"The keystone: striking the centering") and live only in git;
-`architecture.md` replaces them. **Don't cite a phase number for something
-already built** — cite the mechanism's section in `architecture.md` instead.
+`docs/design/historical/initial.md` is frozen — historical only. **Every
+completed phase's spec and notes have been struck** at a keystone review
+(`docs/process.md`, "The keystone: striking the centering") and live only in
+git; `architecture.md` replaces them, filed by subject. The out-of-band ledger
+went the same way, leaving a watermark of spent `M<k>` numbers in
+`docs/design/roadmap.md`. **Don't cite a phase or an out-of-band number for
+something already built** — cite the mechanism's section in `architecture.md`
+instead.
 
 **Pre-1.0, nothing carries a backwards-compatibility or API-stability
 guarantee** — see "Pre-1.0" in `docs/design/roadmap.md`. Don't design around

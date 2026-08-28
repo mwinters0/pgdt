@@ -16,7 +16,7 @@ All figures are on the hardware `CLAUDE.local.md` describes. Synthetic inputs
 are regenerable with `--seed 42` and are **never committed** — they measure
 throughput, not correctness, which stays entirely fixture-based.
 
-Nine standing rules for reading anything below:
+Ten standing rules for reading anything below:
 
 - **Every figure is a ratio, never a disk throughput.** Page-cache state
   dominates. A number taken warm on a freshly generated file can be twice what
@@ -29,8 +29,9 @@ Nine standing rules for reading anything below:
   disappears into it. Either `drop_caches` before *every* run or `cat` the file
   first and take every run warm — and when the figure is a difference between
   two binaries, run the pair in both orders, because within a pair the second
-  run is the warmer one. `M10` re-took the census figures for exactly this
-  reason ([`../status/history/2026-08-27.md`](../status/history/2026-08-27.md)).
+  run is the warmer one. The census figures were once re-taken for exactly
+  this reason
+  ([`../status/history/2026-08-27.md`](../status/history/2026-08-27.md)).
 - **A figure about parsing CPU must not be taken against a filesystem.** Put
   the input on tmpfs, or otherwise guarantee it is served from memory for every
   run. Device time and background I/O swamp the difference being measured —
@@ -50,9 +51,10 @@ Nine standing rules for reading anything below:
   "What a session's own drift costs" below — and a
   file-at-a-time sweep maps a session's own drift onto file identity,
   manufacturing a between-file difference that is apparatus. Each rep runs
-  every file-and-mode combination in turn; report medians. `M10`'s nested table
-  and `4.6.1`'s disagreed by 3.45× against 3.08× for exactly this reason, while
-  the per-row differences the design actually consumes barely moved
+  every file-and-mode combination in turn; report medians. Two takes of the
+  nested table a day apart disagreed by 3.45× against 3.08× for exactly this
+  reason, while the per-row differences the design actually consumes barely
+  moved
   ([`../status/history/2026-08-27.md`](../status/history/2026-08-27.md)).
 - **The timer goes inside the container, never around it.** A figure must
   not carry the harness that produced it. `sudo nerdctl run` costs **0.74–0.76
@@ -100,6 +102,16 @@ Nine standing rules for reading anything below:
 - **Long runs are detached.** A koji-scale scan is roughly an hour; see
   `CLAUDE.md`, "Long-running processes", for why waiting on one is expensive
   and what to do instead.
+- **koji is one dump *shape*, so a per-block or per-span cost measured only
+  there is unmeasured.** It is the project's only real sample and it is
+  byte-rich and block-poor — 74 blocks over 784 GB — so a cost that scales with
+  block or span count cannot express itself in it at all. The save throttle was
+  correctly declined on a koji reading of +1.5% wall and 18 MB written, and the
+  same code cost 44 s on 4000 small blocks in a 2 MB file, because every save
+  serializes the whole index. `scripts/generate_block_count_bench.py` exists to
+  be that other axis; "Per-block cache saving is quadratic in block count"
+  below is the figure it takes.
+
 - **A koji figure taken while local work ran is not a figure.** Whether this
   checkout and the sample share a spindle is a machine fact — see
   `CLAUDE.local.md`'s hardware section, which records what the contention costs
@@ -217,9 +229,10 @@ decision rather than a value, and it is open
 
 **The cold `INSERT` row has itself moved, and not because of the apparatus.**
 It read 15.13–15.42 s when it was taken on 2026-08-25 and reads 9.90 s now;
-`M7` changed how an `--inserts` dump's runs are scanned in between. Attributing
-the difference needs a pre-`M7` build and a second cold table, which nothing
-yet requires.
+`2eb51f4` changed how an `--inserts` dump's runs are scanned in between —
+absorbing the `Data for` comment into the run. Attributing the difference needs
+a build from before that commit and a second cold table, which nothing yet
+requires.
 
 Regenerate the three inputs, for a reader who wants them without the harness:
 
@@ -581,7 +594,8 @@ the instrument itself:
 The second row is the control on the *instrument*: two files that differ only
 in their random seed should differ by zero, and instead they span −0.36 to
 +0.48 µs per row. **The two ranges overlap across most of their width**, which
-is the honest picture and the reason the ninth standing rule forbids quoting an
+is the honest picture and the reason the standing rule against quoting a
+standard error forbids quoting an
 interval here — an earlier draft put these at +0.61 ± 0.14 against +0.20 ± 0.18
 and made the separation look like a result. The composite's reading is
 consistent with the micro, which puts the column at 0.43 µs of decode plus
@@ -599,8 +613,8 @@ which adding a decoded column cannot produce — and that was read as a
 structural confound in differencing two files of different row length. The
 glibc leg reverses the sign on the same inputs and the same reps, so what was
 being measured was the allocator, not the instrument. The floor stands at
-roughly ±0.5 µs/row; the confound does not. This pair is also the ninth
-standing rule's demonstration.
+roughly ±0.5 µs/row; the confound does not. This pair is also the
+demonstration behind the standing rule against quoting a standard error.
 
 *Not taken:* the instrument that would resolve it. Two files whose data
 sections are **byte-identical**, one declaring `v_comp` as
@@ -664,9 +678,10 @@ and the worst row is the warm `dd` floor at 0.267 s against 0.308 s: a 0.04 s
 absolute difference that is 15% only because the number is small.
 
 So a *difference* between two warm sub-second legs of the same sweep is worth
-more than either leg's absolute value across sweeps, which is what the fourth
-standing rule already required and this is the measurement behind it. It is
-also the calibration for the ninth: a cross-file per-row difference under
+more than either leg's absolute value across sweeps, which is what the standing
+rule "re-take a comparison table whole" already required and this is the
+measurement behind it. It is also the calibration for the standing rule against
+quoting a standard error: a cross-file per-row difference under
 ~0.5 µs/row is apparatus, and the two sweeps agree on that floor
 (+0.15 and +0.07 µs/row) far better than either agrees on the leg it came from.
 

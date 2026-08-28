@@ -55,8 +55,7 @@ discrete built-in ranges (`int4range`, `int8range`, `daterange`; `numrange`,
 belongs with typed predicates, not smeared across two phases.
 
 **Origin.** P4 grilling, 2026-08-25. Decision and rationale:
-[`roadmap-P4-composite-decoding.md`](roadmap-P4-composite-decoding.md),
-"Predicates are unchanged"; register entry I20.
+[`architecture.md`](architecture.md), "Predicates"; register entry I20.
 
 ---
 
@@ -89,6 +88,6 @@ and a two-sided believability test, because a scan reads a block's bytes once
 and a partial earlier pass leaves blocks that can never be back-filled.
 
 **Origin.** Slice 4.5, 2026-08-26. See
-[`architecture.md`](architecture.md), "The array shape census", and
-[`roadmap-P4-composite-decoding-notes.md`](roadmap-P4-composite-decoding-notes.md).
+[`architecture.md`](architecture.md), "The array shape census" and "What the
+census decides, and who may believe it".
 

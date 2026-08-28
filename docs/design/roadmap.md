@@ -15,9 +15,7 @@ reused, including a struck phase's.
 
 | Phase | State | Where it is |
 |---|---|---|
-| P1–P3 | **Struck** at the keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
-| P4 — composite decoding | **Complete**, wrapped 2026-08-27 | [spec](roadmap-P4-composite-decoding.md), [notes](roadmap-P4-composite-decoding-notes.md) |
-| P9 — partial reporting | **Complete**, wrapped 2026-08-27 | [spec](roadmap-P9-partial-reporting.md), [notes](roadmap-P9-partial-reporting-notes.md) |
+| P1–P4, P9 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
 | P5 — pushdown | Sketched; not grilled | this file, below; [inbox](roadmap-P5-pushdown-inbox.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
 | P7 — scan performance | Sketched; design doc ahead of its phase | [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md); [inbox](roadmap-P7-scan-performance-inbox.md) |
@@ -25,8 +23,9 @@ reused, including a struck phase's.
 
 The struck phases' mechanisms are described by subject in
 [`architecture.md`](architecture.md), not by phase; their specs and notes went
-at the keystone review (`../process.md`, "The keystone: striking the
-centering").
+at a keystone review (`../process.md`, "The keystone: striking the
+centering"). **Phase numbering continues from `P9`** — nothing at or below it
+is reused, whether it was struck or never specified.
 
 Two standing-constraint docs cut across everything below.
 [`layering.md`](layering.md) assigns each module to one of four layers and
@@ -267,7 +266,7 @@ exactly when its silent absence costs the most.
 test, the suite's only guard against `scripts/generate_perf_data.py` drifting
 away from what `pg_dump` writes, and it skipped itself when `uv` was absent.
 Three infidelities had already survived in that generator for want of any
-guard at all (`M10`).
+guard at all.
 
 **The check.** A test that reaches for an external tool either asserts it is
 present, or is gated behind an env var that defaults to *enforcing* — never a
@@ -314,52 +313,6 @@ out of it. See
   `CREATE TABLE`.
 Note that CSV-format `COPY` blocks are **not** on this list. They are a Future
 item; see below.
-
-## P4 — Composite value decoding
-
-**Spec:** [`roadmap-P4-composite-decoding.md`](roadmap-P4-composite-decoding.md).
-**Notes:** [`roadmap-P4-composite-decoding-notes.md`](roadmap-P4-composite-decoding-notes.md)
-— complete and wrapped 2026-08-27; the mechanisms are in
-[`architecture.md`](architecture.md).
-
-Arrays, composites, ranges and multiranges — the four families type resolution
-deliberately leaves as `Utf8View` — get structured Arrow representations and an
-exact render-back. One phase because they are three parameter sets over one
-quoted-token scanner rather than three decoders, which is **not** the same as
-their sharing a quoting rule: they do not (I20).
-
-Placed here, ahead of pushdown, because P5 is designed *against the type
-set*: "min/max for collation-independent orderable types" is a different table
-when arrays and ranges are still strings, so designing pushdown and statistics
-against a partial type set means designing them twice.
-
-## P9 — Partial reporting and machine-readable resolution
-
-**Spec:** [`roadmap-P9-partial-reporting.md`](roadmap-P9-partial-reporting.md).
-**Notes:** [`roadmap-P9-partial-reporting-notes.md`](roadmap-P9-partial-reporting-notes.md)
-— complete and wrapped 2026-08-27; the mechanisms are in
-[`architecture.md`](architecture.md).
-
-What pgdq can say about a dump it has only partly read, and in what form.
-`info` becomes a pure cache reader and never scans; `parse` becomes the only
-scanner, resumes by default, and banks its progress at `COPY` block boundaries
-— throttled to a bounded fraction of scan time, and saving unconditionally on
-`SIGINT`/`SIGTERM` — so an interrupted scan leaves something to resume and
-something to report. Coverage
-is stated once as a completion line. `--json` gains per-`COPY`-block resolution
-— the per-column outcomes `pgdq info --verbose` already computes and discards
-at the JSON boundary — with no stability promise attached.
-
-**Ran ahead of P4's last slices, and before P5** — the two were in flight
-together, and this one wrapped first.
-
-Placed ahead of pushdown because it is the first phase whose subject is the
-*output contract* rather than the engine, and because P4 is what makes
-that contract worth stating: after P4.5.1 there were six distinct answers to
-"why is this column a string" and no script could reach any of them (P9.4 added
-a seventh, and made all of them machine-readable). It is also the
-phase that pays off the incremental machinery `query` already has — every
-mechanism it needs exists and is reachable from exactly one command.
 
 ## P5 — Pushdown
 
@@ -567,11 +520,12 @@ under "Four decisions that keep later phases additive" above.
 ## Out-of-band work
 
 Small work that belongs to no phase: a CLI ergonomics change, a defect fix
-that changes no decision. It gets a number `M<k>` and **one terse ledger line
-below** — date, what changed, and the history entry that says why. Nothing
-else: no spec (there was no intent doc to write), and no notes doc, because
-the history entry *is* the notes. If out-of-band work turns up a fact an
-unspecified phase needs, that fact goes in that phase's inbox, as always.
+that changes no decision. It gets a number `M<k>` and **one terse ledger line**
+— date, what changed, and the history entry that says why — in a table below
+the watermark, started again the first time an item lands after a keystone.
+Nothing else: no spec (there was no intent doc to write), and no notes doc,
+because the history entry *is* the notes. If out-of-band work turns up a fact
+an unspecified phase needs, that fact goes in that phase's inbox, as always.
 
 **Admission rule.** An item is out-of-band only if it changes no decision any
 spec records **and** fits one session. Anything that changes a decision goes
@@ -584,40 +538,21 @@ until a keystone, which strikes it along with the phase docs and leaves a
 watermark saying which numbers are spent (`../process.md`, "The out-of-band
 ledger is struck too").
 
-| # | Date | Change | Why |
-|---|---|---|---|
-| M3 | 2026-08-25 | Synthetic `INSERT`-run throughput measurement (`scripts/generate_insert_run_bench.py`) | [`../status/history/2026-08-25.md`](../status/history/2026-08-25.md) |
-| M4 | 2026-08-25 | `pgdq info --json` — raw `DumpIndex`/`DumpMetadata` export, no schema promise | [`../status/history/2026-08-25.md`](../status/history/2026-08-25.md) |
-| M5 | 2026-08-27 | `info --dqcache none`'s error names `pgdq parse --dqcache <path>` as its remedy | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
-| M6 | 2026-08-27 | `TOC_PREFIX_STATS` recognized, so a `--statistics` dump's entries are attributed | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
-| M7 | 2026-08-27 | An `--inserts` dump's `INSERT` runs absorb their `Data for` comment and own its TOC entry | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
-| M8 | 2026-08-27 | The `Data for` boundary refusal is pinned by a span-level test over I31's shape, and its doc comments carry the reason that survives | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
-| M9 | 2026-08-27 | `edge_cases/dumpall` gains a second data-carrying database, `pgdq_tenant`, so I1's recurring metadata boundary is tested on a file `pg_dump` wrote | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
-| M10 | 2026-08-27 | `generate_perf_data.py` writes the type spellings, trimmed fractions and `float4out` text `pg_dump` writes; a drift guard asserts it; `--arrays` splits from `--composite`; the five figures taken on its output are re-taken | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
-| M12 | 2026-08-27 | `generate_perf_data.py` draws a uniform microsecond instead of a shape-coverage list, and `perf_generator_fidelity.rs` asserts `uv` rather than skipping | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
-| M11 | 2026-08-27 | The census pre-filter is `memchr2`, and `map::Builder::on_row` names the two figures regenerated by patching it | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
-| M13 | 2026-08-27 | The warm measurement set re-taken in one sweep — tmpfs inputs, the timer inside the container, glibc binaries — moving every warm figure and withdrawing two readings | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
-| M15 | 2026-08-27 | `whole_file.rs` regenerates its input when the generator's source changes, not only when the input is missing | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
-| M16 | 2026-08-27 | Phases are identified by `P<k>` and slugs are informal; the out-of-band ledger is struck at a keystone; two phases may run in parallel | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
-| M18 | 2026-08-27 | musl leaves the apparatus: no musl recipe in `CLAUDE.md` or `measurements.md`, since only glibc is measured and an untested portability claim is worse than none | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
-| M17 | 2026-08-28 | The measurement harness (`scripts/measure.py`) runs the sweep behind `measurements.md` and emits its tables; one sweep replaced every figure, and each one declares what invalidates it and which documents repeat it | [`../status/history/2026-08-28.md`](../status/history/2026-08-28.md) |
-| M19 | 2026-08-27 | The scan-throughput table's regeneration command runs (`--size-gb`, and the output path it omitted), and the two bench generators' `--seed` help stops calling determinism a non-goal | [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md) |
+**M1–M19 are struck**, and nothing at or below `M19` is reused. That is a
+high-water mark rather than a claim that every one of them landed: `M14` was
+absorbed into `M17` and `M1`/`M2` were folded into a phase slice, and their
+numbers are spent all the same. The next out-of-band item is `M20`. What each
+struck item did is in `architecture.md` by subject, and why it was done is in
+the dated history entry it was filed under.
 
-**M3's result is not itself out-of-band work.** The measurement fit one
-session and changed no decision, which is what admitted it here; the number it
-produced — an `INSERT`-run scan costs 14.6× a `COPY` scan per byte, CPU-bound
-(`~5×` when the row was first written; the 2026-08-28 sweep measured both legs
-in one regime) —
-argues for a scanner-level `INSERT` path, which *does* change a decision. That
-goes through grilling → spec amendment → a numbered slice, and is filed in
-`roadmap-P7-scan-performance-inbox.md` until then.
-
-**M1** (`pgdq info` rejects a cache that doesn't cover the whole file) and
-**M2** (`pgdq info` prints `DumpIndex::diagnostics`) were queued here but
-folded into P3's slice **3.7** ("Cache-only inspection") instead of
-landing as standalone out-of-band items — cache-only mode needs both
-mechanisms directly, so per the admission rule above they were no longer
-independent one-session changes.
+**One of them left a live obligation.** The synthetic `INSERT`-run measurement
+fit one session and changed no decision, which is what admitted it as
+out-of-band; the number it produced — an `INSERT`-run scan costs **14.6×** a
+`COPY` scan per byte, CPU-bound — argues for a scanner-level `INSERT` path,
+which *does* change a decision. That goes through grilling → spec amendment →
+a numbered slice, and is filed in the scan-performance phase's inbox
+([`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md))
+until then.
 
 ## Future — wanted, unscheduled
 
@@ -672,10 +607,10 @@ this section when it acquires a phase number, not when it acquires a design.
 - **The shape-general array representation, as a selectable alternative.**
   `Struct{dims: List<Int32>, lbounds: List<Int32>, elements: List<T>}` is
   lossless for every array PostgreSQL can produce — any dimensionality, any
-  lower bound, varying freely from row to row — where P4's `List<T>`
-  covers only the uniform 1-D case and degrades the rest to `Utf8View`
-  ([`roadmap-P4-composite-decoding.md`](roadmap-P4-composite-decoding.md),
-  "What the census says"). P4 chose `List<T>` on koji-shaped evidence: short,
+  lower bound, varying freely from row to row — where the `List<T>` that ships
+  today covers only the uniform 1-D case and degrades the rest to `Utf8View`
+  ([`architecture.md`](architecture.md), "What the census decides, and who may
+  believe it"). `List<T>` was chosen on koji-shaped evidence: short,
   uniform, one-dimensional arrays, where the struct costs +16 bytes per row and
   the loss of `List` as the signal every generic Arrow consumer reads as "this
   is an array". **A schema of matrices or scientific data inverts that
@@ -683,8 +618,8 @@ this section when it acquires a phase number, not when it acquires a design.
   this is a *knob*, not a replacement: the caller selects which representation
   an array column resolves to. It belongs beside **caller-supplied type
   mapping** above, which is the same knob at a different granularity, and
-  adding it breaks nothing — it only ever changes columns that P4 left as
-  `Utf8View` or as a shape the caller has told us to represent differently.
+  adding it breaks nothing — it only ever changes columns that are `Utf8View`
+  today, or a shape the caller has told us to represent differently.
 
 - **A diagnostic for a brace run past `MAXDIM`.** `array_out` cannot emit more
   than 6 leading braces (I25), so a longer run means the file is not `pg_dump`
@@ -694,17 +629,17 @@ this section when it acquires a phase number, not when it acquires a design.
   when something reads it. Nothing reports it at *scan* time, so a file nobody
   queries that column of stays silently damaged. The file-level `Diagnostic`
   channel is where this belongs; it is unscheduled because no fixture produces
-  the shape and P9 is the phase that grows the reporting surface for it.
+  the shape.
 
 - **A per-path shape census, so nested arrays get the same treatment as
-  top-level ones.** P4's census records a shape per *column*, which fixes
+  top-level ones.** The census records a shape per *column*, which fixes
   a top-level array column's dimensionality exactly and leaves an array
   *inside* a composite (or inside another array's element type) on the
   optimistic path permanently: its shape has nowhere to be recorded, so a
   multi-dimensional or `[lb:ub]`-decorated value there stays a hard
   `FieldDecode` even after `pgdq parse`
-  ([`roadmap-P4-composite-decoding.md`](roadmap-P4-composite-decoding.md),
-  "What the census stores"). Keying the census by a *path* within the column
+  ([`architecture.md`](architecture.md), "What the census decides, and who may
+  believe it"). Keying the census by a *path* within the column
   rather than by the column closes that, at the cost of a bigger cache record
   and a per-path walk. Deferred on frequency — a composite with a
   multi-dimensional array field is rare even by that phase's standards — and it

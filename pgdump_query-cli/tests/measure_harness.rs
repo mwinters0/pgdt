@@ -1,8 +1,9 @@
 //! `scripts/measure.py`'s own unit tests, run by `cargo test --workspace`.
 //!
 //! The harness exists because a prose recipe is something nobody executes, and
-//! a recipe nobody executes drifts out of runnability without anyone noticing
-//! (`docs/design/roadmap.md`, out-of-band ledger, `M19`). A Python test suite
+//! a recipe nobody executes drifts out of runnability without anyone noticing —
+//! this repo's own scan-throughput recipe passed a flag its generators do not
+//! have and omitted a required path. A Python test suite
 //! that only runs when someone remembers to type `uv run python -m unittest`
 //! is that same failure with a different extension — and what it guards is the
 //! median, the spread and the table formatting, whose silent failure produces

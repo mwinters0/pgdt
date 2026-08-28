@@ -8,10 +8,11 @@ keeping.
 
 ## What exists
 
-P1–P3 are complete and were struck at the keystone review, so there is no
-per-phase checklist here any more. How the system works is
-[`../design/architecture.md`](../design/architecture.md); what is still ahead is
-[`../design/roadmap.md`](../design/roadmap.md).
+**No phase is open.** P1–P4 and P9 are complete and were struck at a keystone
+review, so there is no per-phase checklist here. How the system works is
+[`../design/architecture.md`](../design/architecture.md); what is still ahead
+is [`../design/roadmap.md`](../design/roadmap.md), whose index table is the
+schedule.
 
 | Capability | State |
 |---|---|
@@ -24,229 +25,17 @@ per-phase checklist here any more. How the system works is
 | Partial reporting | `info` reports a cache from an unfinished scan for as far as it got, with `Scan completion: N% (M bytes)` stated once at the top; `--json` carries the coverage components and per-`COPY`-block type resolution. An interrupted cache is **typed** for every database segment the scan finished — the mapping pass states each database's DDL at that database's first `COPY` block (I1) |
 | Arrays, composites, ranges, multiranges | typed and decoded end to end: `List<T>`, `Struct<…>`, the five-field range struct, `List<` range struct `>`, and `List<List<T>>` for a uniformly multi-dimensional array column. Three shapes stay a string, each with its own resolution outcome: an array whose element type is opaque (`box`, a C base type, a shell type, through any chain of domains), an array whose element type is itself an array (I26), and an array column whose values disagree on shape |
 | Array shape census | recorded by every mapping pass (`CopyBlock::array_shapes`) and **consumed**: a query retypes its top-level array columns from the union over the blocks it will replay, before the first batch |
+| Measurement harness | `scripts/measure.py` takes every figure in [`../design/measurements.md`](../design/measurements.md) and emits that doc's tables; twelve figures, each declaring what invalidates it and which documents repeat it |
 | Predicate and projection pushdown; per-row-group statistics | not started — P5 |
 | `object_store` I/O, Python bindings, DataFusion `TableProvider` | not started — P6 |
 | Device-bound scan performance campaign, sparse row index | not started — P7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — P8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-28 (**every out-of-band item is closed**, `M17` last: the measurement harness `scripts/measure.py` is committed, and one sweep on 2026-08-28 replaced every table in [`../design/measurements.md`](../design/measurements.md), which now carries a session stamp naming the commit it ran against. Two figures were taken for the first time — the warm scan-throughput table and the session-drift table — and the warm one put an `INSERT` scan at **14.6×** a `COPY` scan's per-byte CPU against a long-standing "~5×"; the number is corrected everywhere it appeared, but what it changes about P7's plan is open under "Decisions worth another look". **P4 and P9 are both complete and wrapped**, and no phase is open. Choosing the next phase is a re-grilling the maintainer has claimed, so this is a phase boundary: an unattended loop stops here.)
-
-## P4 — complete and wrapped
-
-Specified in
-[`../design/roadmap-P4-composite-decoding.md`](../design/roadmap-P4-composite-decoding.md);
-wrapped 2026-08-27, with the thirteen per-slice notes consolidated into
-[`../design/roadmap-P4-composite-decoding-notes.md`](../design/roadmap-P4-composite-decoding-notes.md).
-Every slice landed — 4.1 and 4.1.1 (the fixture value shapes, including the
-domain-over-`box` array and the zero-field composite), 4.2 (the nested literal
-codec), 4.3 (`ColumnBuilder`'s `List`/`Struct` arms), 4.4 (the resolution flip)
-with 4.4.1 (the resolved Arrow type on `--verbose`, and the manual), 4.4.2 (the
-array-of-array-typed-element refusal), 4.4.3 (the six array-declaration
-spellings) and 4.4.4 (the array arm folded into one function), 4.5 and 4.5.1
-(the shape census, recorded then consumed), and 4.6 with 4.6.1 (the array
-stress data and the phase's measurement work). Six of those thirteen rows were
-not in the spec's table: they were split at grilling, split mid-slice, or
-earned afterwards from a defect or a review.
-
-How the result works is
-[`../design/architecture.md`](../design/architecture.md) — "Type resolution",
-"The nested literal codec", "Nested columns: `NestedPlan` travels beside the
-`DataType`", "The array shape census" and "What the census decides, and who may
-believe it". The wrap moved what the slices learned into it by subject, so the
-notes doc holds the phase's negative results, why its slice numbering is not
-its landing order, and where its facts were filed.
-
-## P9 — complete and wrapped
-
-Specified in
-[`../design/roadmap-P9-partial-reporting.md`](../design/roadmap-P9-partial-reporting.md);
-wrapped 2026-08-27, with the per-slice notes consolidated into
-[`../design/roadmap-P9-partial-reporting-notes.md`](../design/roadmap-P9-partial-reporting-notes.md).
-Every slice landed — 9.1 (`parse` resumes and banks per block), 9.2 (`info`
-stops scanning), 9.3 (the coverage line), 9.4 (per-block resolution in
-`--json`), 9.5 (the save throttle and the interrupt guard, earned from 9.1's
-measurement) and 9.5.1 (metadata stated at every legal boundary, earned from
-9.5's verification). How the result works is
-[`../design/architecture.md`](../design/architecture.md), "CLI surface" and
-"The cache"; the wrap moved what the slices learned into it by subject, so the
-notes doc holds only the phase's negative results and where its facts were
-filed.
-
-## The out-of-band queue
-
-- **M12, M11, M13 — three out-of-band items in that order**, queued
-  2026-08-27 out of the review of the measurement-era backlog. They are three
-  rows rather than one because four unrelated edits under one ledger row is
-  unreadable later; the order is forced, since each lands on the one before.
-
-  - [x] **`M12` — generator hygiene.** `scripts/generate_perf_data.py` draws
-    the microsecond component of its three date/time columns uniformly instead
-    of from a shape-coverage list, and
-    `pgdump_query-cli/tests/perf_generator_fidelity.rs` asserts `uv` is
-    runnable — naming `mise install` — instead of skipping itself. Ledger row
-    `M12` in [`../design/roadmap.md`](../design/roadmap.md); the notes are
-    [`history/2026-08-27.md`](history/2026-08-27.md), "`M12`: the benchmark
-    generator draws a uniform microsecond".
-
-  - [x] **`M11` — the census pre-filter on `memchr2`.**
-    `map::Builder::on_row`'s pre-filter is `memchr::memchr2(b'{', b'[', raw)`,
-    and the function carries a doc comment naming the two
-    [`../design/measurements.md`](../design/measurements.md) sections whose
-    census-off column is taken by patching it. Ledger row `M11`; the notes are
-    [`history/2026-08-27.md`](history/2026-08-27.md), "`M11`: the census
-    pre-filter is `memchr2`". **The swap delivered**: `M13` re-took the figure and
-    the pre-filter is 64 ns a row against the scalar loop's 1.03 µs, so the
-    deferred "should the census be skippable" question is closed rather than
-    reopened.
-
-  - [x] **`M13` — the warm set re-taken on tmpfs, in one session.** Five
-    figures were page-cache-warm SSD reads taken before that standing rule
-    existed: both census figures, the nested end-to-end table, the per-block
-    quadratic table, and the `COPY` path's warm CPU that the scan-throughput
-    table cites. All are re-taken and folded into
-    [`../design/measurements.md`](../design/measurements.md), whose "The warm
-    set" now records the one apparatus they share. Ledger row `M13`; the notes
-    are [`history/2026-08-27.md`](history/2026-08-27.md), "`M13`'s figures are
-    folded in".
-
-    **Every figure moved, three of them by a factor**, because the tmpfs,
-    in-container-timer and glibc rules landed together: the warm `COPY` scan
-    is 0.57 s where it was 2.92 s (0.549 s under `M17`'s sweep); the census on brace-free rows was +7% where
-    it was +39%; the nested `strings` leg is 4.43 s where it was 9.74 s. Two
-    readings are **withdrawn** rather than adjusted — that cross-file
-    differencing is structurally biased, and that the untyped baseline is
-    file-independent — both of which were artifacts the sharper apparatus
-    dissolved. The musl sweep is kept at `runs/m13-warm-set-musl.log` as the
-    evidence for the libc gap and carries no figure the docs cite.
-
-  - [ ] **`M14` — the cold scan-throughput table, re-taken under one
-    apparatus. Absorbed into `M17` on 2026-08-27; the number is spent and is
-    never reused.** It is kept here because its scope statement is the
-    specification of one of `M17`'s stages, not because it will land on its
-    own. Queued 2026-08-27 out of `M13`'s apparatus finding, which
-    reaches further than the warm set: every `pgdq` row of that table was
-    timed around `nerdctl run` and carries 0.77 s, its floor row is a **host**
-    `cat` against container `pgdq` runs, and all of it is a musl binary —
-    three apparatus faults in one comparison, which arithmetic cannot
-    repair. Its own regime (cold,
-    `drop_caches` before every run, on the SSD), its own inputs (the
-    large-object and `INSERT` generators regenerated at 3.00 GiB), and the
-    floor taken with `dd` inside the same container. **It also carries the two
-    census sections' cold rows**, added 2026-08-27: `M13` re-took those
-    comparisons warm only, leaving four claims about the cold regime (+1.2%
-    and +2.6%, in [`../design/measurements.md`](../design/measurements.md),
-    [`../design/architecture.md`](../design/architecture.md) and the P7 inbox)
-    sourced to the superseded pre-`M11` apparatus. `M17`'s sweep stages the
-    3.00 GiB `COPY` control cold in that container, so the census-off binary
-    costs it two extra runs per file. Corrected by subtraction
-    the conclusion strengthens rather than moves — the `COPY` path runs 1.03×
-    the floor, not 1.2× — so this buys a correct number for a claim that
-    already holds, which is why it is queued rather than urgent. Scope and
-    the corrected reading are in
-    [`../design/measurements.md`](../design/measurements.md), "Scan throughput
-    by input shape". **Not** a re-take of koji (0.77 s of 3300 s) or of the
-    criterion micros (no container).
-
-  - [x] **`M15` — `whole_file.rs` regenerates its input when the generator
-    changes.** The bench regenerates `runs/perf-whole-file.sql` only when the
-    file is *missing*, so a checkout that already has one benchmarks pre-`M12`
-    bytes forever and silently — and the population that has one is exactly the
-    population that will compare a new number against an old one. The fix is to
-    hash `scripts/generate_perf_data.py`, store the hash beside the input, and
-    regenerate on mismatch — landed as `runs/perf-whole-file.stamp`, with both
-    branches exercised by hand (an unchanged generator reuses the input; a
-    one-line edit to the generator regenerates it). Ledger row `M15`; the notes
-    are [`history/2026-08-27.md`](history/2026-08-27.md), "`M12` armed a
-    stale-input trap".
-
-  - [x] **`M16` — the phase-identifier scheme, and what a keystone sweeps.**
-    A phase is identified by `P<k>` permanently and its slug is an informal
-    caption; slice numbers stay integers, where the order they assert is real.
-    The out-of-band ledger is struck at a keystone like the phase docs, leaving
-    a watermark of spent numbers. Two phases may be in flight at once given
-    disjoint mechanisms and separate checklists. Landed in
-    [`../process.md`](../process.md), `CLAUDE.md` and
-    [`../design/roadmap.md`](../design/roadmap.md), and the repo was renamed to
-    match — `docs/design/roadmap-P<N>-<slug>*.md`, with every open phase's
-    inbox gaining a slug. **The keystone sweep itself has not run**: P4's and
-    P9's docs were renamed, not struck. Ledger row `M16`; the notes are
-    [`history/2026-08-27.md`](history/2026-08-27.md), "Phases are identified by
-    `P<k>`".
-
-  - [x] **`M17` — the measurement harness, and the sweep that filled the
-    doc.** `scripts/measure.py` runs the sweep behind
-    [`../design/measurements.md`](../design/measurements.md) and emits that
-    doc's tables; the sweep of 2026-08-28 replaced **every one of them**, and
-    the doc carries a session stamp naming the commit it ran against. Ledger
-    row `M17`; the notes are [`history/2026-08-27.md`](history/2026-08-27.md)
-    and [`history/2026-08-28.md`](history/2026-08-28.md), which hold the
-    contract, the grilling that finished it, and what the sweep found.
-
-    Twelve figures, each one table, each declaring both edges — the paths that
-    invalidate it (`--stale`) and the documents that repeat its numbers
-    (`--check`). The doc addresses a figure by an `<!-- figure: id -->` marker
-    rather than by its heading, so a heading may quote a number and be
-    rewritten when that number moves; a test holds the markers and the register
-    in exact correspondence. `--koji-recipe` prints koji's invocation, which
-    the harness owns but never runs. `--drift` computes the twelfth figure
-    across two sweeps.
-
-    **What the sweep changed.** The census on brace-free rows is +11% warm and
-    +0% cold; on array-bearing rows +234% warm and +1% cold — both cold rows
-    are new, and both say the device hides the census entirely. The `INSERT`
-    path's per-byte CPU is **14.6×** the `COPY` path's, measured warm in one
-    regime, replacing a "~5×" that divided a cold rate by a warm one. Session
-    drift is measured rather than asserted: 1.2% median over 32 readings, 15.4%
-    worst, with cold readings at 0.1% and warm sub-second ones at 2.6–15.4%.
-
-    `M14` was absorbed into this item on 2026-08-27; its number is **spent and
-    never reused**.
-
-  - [x] **`M18` — musl leaves the apparatus.** Only glibc is measured, so a
-    static musl build is an untested configuration and an untested portability
-    claim is worse than none. `CLAUDE.md`'s long-running-job section no longer
-    offers a musl recipe, [`../design/measurements.md`](../design/measurements.md)'s
-    eighth standing rule says musl is not measured and is in no recipe, its two
-    koji recipes build the default target and run `postgres:16`, and the P7
-    inbox's allocator entry is reframed — musl settled, `jemalloc`/`mimalloc`
-    still open. The musl *figures* stay where they are, labelled, because they
-    are the evidence for naming glibc and for the ninth rule. Ledger row `M18`;
-    the notes are [`history/2026-08-27.md`](history/2026-08-27.md), "Only
-    glibc, anywhere". **`postgres:16-alpine` in
-    [`../design/postgres-invariants.md`](../design/postgres-invariants.md) and
-    the compatibility matrix is untouched** — that is a PostgreSQL image used
-    to probe server behaviour, nothing to do with pgdq's libc.
-
-  - [x] **`M19` — the scan-throughput recipe runs, and `--seed` stops calling
-    determinism a non-goal.** The documented regeneration command for two of
-    that table's three inputs could not execute: it passed `--size-mb` to
-    generators whose flag is `--size-gb`, and omitted the required positional
-    output path. Fixed, along with the misleading `--seed` help in
-    `scripts/generate_large_object_bench.py` and
-    `scripts/generate_insert_run_bench.py` — both use `random.Random(seed)`, and
-    a seeded run was verified byte-for-byte reproducible, which is the property
-    the standing rule "re-take a comparison table whole" depends on. Ledger row
-    `M19`; the notes are [`history/2026-08-27.md`](history/2026-08-27.md),
-    "A documented recipe that does not run".
-
-- **Nothing is queued.** `M17` was the last item, and it landed 2026-08-28.
-  Every other number in this section is spent: `M14` was absorbed into `M17`,
-  and `M1`/`M2` were folded into P3's slice 3.7. The keystone sweep `M16`
-  prepares for has **not** run and is the maintainer's call, not a scheduled
-  item.
-
-  **Which phase comes next is a separate conversation**, claimed by the
-  maintainer on 2026-08-27. `process.md` step 6 re-grills the roadmap before
-  the next phase is specified, and four are unspecified (5, 6, 7, 8); numeric
-  order is not plan order, since 9 was taken ahead of 5. An unattended session
-  does not pick one, so this is where an unattended loop stops.
-
-  **P7 inherits a sharper input than it had**: the `INSERT` ratio above, the
-  measured drift floor, and a `--stale` that will name the figures any change
-  invalidates.
-
-  The `--disable-triggers` fix is **not** in this order — it is unscheduled, in
-  `roadmap.md`'s "Future".
+Last updated: 2026-08-28 — the keystone sweep. Every completed phase's spec and
+notes are struck and the out-of-band ledger with them; `architecture.md` is the
+single authority on how the built system works. **Choosing the next phase is a
+re-grilling the maintainer has claimed**, so this is a phase boundary: an
+unattended loop stops here.
 
 ## Not started
 
@@ -254,10 +43,14 @@ filed.
   as provisional pending real user trials; the resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 
-- **`M17`, the only queued out-of-band item** — the committed measurement
-  harness and the sweep that fills the doc, which absorbed `M14`. Six of its
-  twelve figures need re-taking or taking for the first time; see "The
-  out-of-band queue" above. Nothing else is scheduled.
+- **No out-of-band work is queued.** `M1`–`M19` are spent; the next item takes
+  `M20` ([`../design/roadmap.md`](../design/roadmap.md), "Out-of-band work").
+
+- **No phase is specified.** Four are sketched and none grilled — P5, P6, P7,
+  P8 — and numeric order is not plan order, since P9 was taken ahead of P5.
+  `process.md` step 6 re-grills the roadmap before the next phase is
+  specified, and each of the four has an inbox that must be drained as part of
+  that grilling.
 
 ## Known gaps
 
@@ -371,8 +164,9 @@ filed.
   divides a *cold* `INSERT` rate, device included, by the `COPY` path's *warm*
   CPU — and no warm `INSERT` figure has ever been taken. Bounding it from the
   warm table now measures the per-byte ratio at **14.6×**, inside the 16–26×
-  the cold table alone had bounded it at. `M17` measured the
-  warm `INSERT` CPU. Every correction so far has made this path look worse, so
+  the cold table alone had bounded it at, and it is now measured warm in one
+  regime rather than derived across two. Every correction so far has made this
+  path look worse, so
   the gap the fix addresses is larger than the figure says, never smaller. Figures and re-run commands in
   [`../design/measurements.md`](../design/measurements.md). A
   koji-scale 1TB `--inserts` dump therefore spends ~45 minutes of CPU that a
@@ -384,12 +178,23 @@ filed.
 ## Decisions worth another look
 
 Calls made without the maintainer present that are worth weighing in on —
-cautionary and informational, not blocking. An entry leaves this section once
-it has been looked at: settled into the design docs, or reversed. **One is
-open**, listed first. `M17`'s harness half raised five more on 2026-08-28 and
-the grilling the same day closed all five; `M13`'s fold-in was reviewed on 2026-08-27, where two
-of its three calls were reversed and its one new causal claim was tested rather
-than argued.
+cautionary and informational, not blocking. **An entry leaves this section once
+it has been looked at**, settled into the design docs or reversed; the
+reasoning that closed it lives in the dated history entry it names, and the
+durable half in the doc that holds the decision. Two are open.
+
+*The keystone sweep declined the re-sweep `--stale` asks for, because no figure
+moved.* It edited comments in `scripts/generate_perf_data.py` and
+`pgdump_query/src/cache.rs`, which eight figures declare among the paths that
+invalidate them, so `uv run measure.py --stale` flags eight figures against the
+session stamp. Both edits are comment-only, and the generator's output was
+checked byte-for-byte across the change rather than assumed
+(`--size-mb 4 --seed 42 --arrays --composite`, identical). The harness is doing
+what it was built to do — `depends` is deliberately path-granular and any stale
+figure forces a whole sweep — so what is worth weighing is only whether a
+~1 h sweep should have been spent to clear a flag with nothing behind it. If it
+should, `uv run measure.py --all` is the whole answer. Reasoning:
+[`history/2026-08-28.md`](history/2026-08-28.md), "The second keystone".
 
 *An `INSERT` scan costs **14.6×** a `COPY` scan per byte, not the "~5×" three
 documents carried — and what that changes about P7's plan has not been
@@ -403,375 +208,3 @@ against the `COPY` path's ~3 — may change where that sits in P7's order, or
 whether it is P7's at all. That is a phase-planning question and it goes
 through grilling, which is why the fold-in stopped here rather than
 re-prioritising anything.
-
-*`M17`'s five were reviewed on 2026-08-28 and **all five stand**, three of them
-with the reasoning sharpened.*
-
-- *Sharing the **cold** throughput table's `COPY` row with the census table*,
-  where the contract asked only for the warm one. It is one measurement; the
-  sharing makes two numbers for it structurally impossible rather than
-  something to check.
-- *The prose recipes are deleted **per section**, with the table that replaces
-  each one* — not all at once with the harness, which would have left the doc
-  with neither for any section whose figure had not been emitted. The set that
-  never goes is now **two**, not the contract's three: the census-off source
-  patch and the generator invocations. `--koji-recipe` took the third.
-- *The preamble prepass's invented table shape stands.* Its claim — an
-  uncancellable region is milliseconds against a scan of seconds to an hour —
-  is a ratio between two rows, which is what a table is for. It was prose only
-  because nobody had decided how to report it, which is the oversight the emit
-  contract's forcing function exists to catch.
-- *`depends` stays narrow, and granularity is **not** the goal.* Replaying
-  `--stale` against `M7`'s real commit flags 8 of 11 figures through `map.rs`,
-  including the one figure that did move. Since any stale figure forces a whole
-  re-sweep, the actionable answer is binary — re-take the doc or don't — and
-  one true positive settles it. Per-figure attribution is explanatory colour,
-  and an under-declared path costs a false negative only if *no* figure
-  declares the changed file.
-- *"Taken against a dirty tree" is that same predicate applied to `git
-  status`*, so the two are consistent by construction rather than by
-  agreement: an uncommitted doc or harness cannot move a reading and does not
-  mark a sweep unpublishable.
-
-*The census attribution was reviewed on 2026-08-27 and **tested rather than
-argued**; it holds.* `M13`'s fold-in asserted in three docs that the
-`--arrays --composite` file's `strings` leg is 24% above the control's because
-the mapping pass's census splits its rows. The same query with the census-off
-binary, five interleaved reps on both files
-(`runs/m13-census-baseline.sh` → `.log`), inverts the gap from **+1.115 s to
-−0.075 s** — the arrays file becoming slightly cheaper, as its 14% lower row
-count should give. The census accounts for more than the whole gap, and its
-cost measured through `query` reproduces the `parse` figures to within 3%,
-which is a cross-check nobody asked for. All three docs now state it flatly.
-
-*`M13`'s fold-in made three calls with no maintainer present; all three were
-reviewed on 2026-08-27 and **two were reversed**.*
-
-- *The deleted P7 inbox entry is **restored, with a different fact in it**.*
-  "Cross-file differencing … is bias rather than noise" was written from the
-  musl leg (composite column at −1.16 µs/row, impossible) and read as a
-  structural confound; the glibc leg reverses the sign to +0.61 on the same
-  inputs and reps, so deleting it was right and the rule folded in its place —
-  "survive a change of allocator" — was too weak. The sharper fact is that
-  **both legs are confident and they disagree by 1.77 µs/row**: t = +4.34 and
-  t = −4.81 on the same quantity, against a same-shape floor that is not
-  significant on either leg (t = +1.06, −0.31), and against 0.16 µs/row of
-  drift between two stages of one sweep on the *identical* file. So per-rep SE
-  measures the reps, not the measurement, and the campaign should quote ranges
-  across apparatuses rather than confidence intervals from one. That is now
-  its own entry in
-  [`../design/roadmap-P7-scan-performance-inbox.md`](../design/roadmap-P7-scan-performance-inbox.md).
-- *The census sections' **cold** rows go into the sweep (`M14` at the time, now `M17`).* Dropping them left four
-  claims about the cold regime (+1.2%, +2.6%) with no displayed measurement,
-  which is worse than either keeping or deleting them outright. All four are
-  now labelled as the pre-`M11` scalar-loop reading, and the sweep — which
-  already stages the 3.00 GiB control cold in the same container — takes the
-  census-off binary through two more runs per file and brings the rows back.
-- *One sweep with no second session **stands**.* The re-take is a single
-  session, but the second *apparatus* is the cross-check that matters and it
-  exists: the musl leg agrees on every difference where the allocator cancels
-  (census on array-bearing rows, Δ 1.27 s against 1.26 s) on absolute legs
-  2.5× apart. Where the two legs disagree, the entry above says so rather than
-  averaging them.
-
-*`M13`'s quadratic table was going to run on the host to dodge container
-startup; the maintainer reversed that on 2026-08-27** — startup must not reach
-the figures, and the figures are still produced inside the container. The
-sweep now times every stage with the container's own shell, which is a
-standing rule in [`../design/measurements.md`](../design/measurements.md), and
-the whole warm set was re-taken under it. **The finding behind it is not
-confined to `M13`**: `nerdctl run` costs 0.77 s, so every container figure in
-that doc taken by `/usr/bin/time` around it — the cold scan-throughput table
-included — carries 0.77 s it should not.
-
-*The quadratic table's "before" column was reviewed on 2026-08-27 and
-**stands**, with what it is limited to now stated in the table.* It is
-re-taken from a rebuilt `b726f6b` rather than carried over, so the table is one
-apparatus throughout; the limit is that the two builds differ in everything
-from 9.5 onward, not only in the throttle, so the column records what the
-throttle era bought and may not be differenced against a later change.
-Isolating a mechanism is what the census-off method is for.
-
-*The max-RSS column was reviewed on 2026-08-27 and **deleted**.*
-`/usr/bin/time -f %M` around `nerdctl run` reports the nerdctl client's peak,
-not pgdq's: it read the same ~40–45 MB for a 2 MB input as for a 3.00 GiB one,
-against ~9 MiB for koji's 784 GB scan in the same doc. What the apparatus can
-honestly claim is that every run completes inside a 512 MB cgroup, and that is
-what `measurements.md` now says. A real instrument — a `VmHWM` poller inside
-the container — is a busy loop that would distort the timings it rode along
-with, so it would have to be its own untimed stage, and nothing consumes a
-number that sharp.
-
-*4.6.1's re-taken table and the ratios that moved were reviewed on
-2026-08-27, and the swing is **neutralized by construction rather than
-investigated**.* Reconstructing both sessions' raw legs settled it: the shift
-is common-mode within a file — `M10`'s `strings`/`typed` read 8.80/19.89 s
-(control) and 8.04/27.74 s (nested) against this sweep's 9.74/20.55 and
-9.56/29.45 — so the ratio moved because the drifting baseline sits in its
-denominator, while the per-row differences the design consumes did not. Three
-things changed instead of a diagnosis. The per-row difference is now the
-headline of [`../design/measurements.md`](../design/measurements.md)'s nested
-section and the ratio a derived column; two standing rules were added there —
-a parsing-CPU figure is taken with its input on **tmpfs**, never page-cache
-warm off a filesystem (device time and background I/O swamp the difference,
-worst on the HDD, and page-cache residency is an assumption), and a comparison
-table is re-taken **whole in one interleaved sweep**, never differenced across
-sessions or run a file at a time. And `M10`'s explanation of its own 9%
-between-file baseline gap — "the untyped path is partly per-row" — is
-**retracted**, though the gap itself is real and now explained: `M13`'s sweep
-puts the control and `--composite` legs 0.03% apart and the
-`--arrays --composite` leg 24% above both, and a census-off run inverts that
-gap to −0.075 s — so it is the mapping pass's array-shape census on the only
-file whose rows carry a `{`, and in no reading a per-row property of the
-untyped path. Both rules are also in
-[`../design/roadmap-P7-scan-performance-inbox.md`](../design/roadmap-P7-scan-performance-inbox.md),
-since that campaign is where they bite.
-
-*The composite column's unmeasured end-to-end share was reviewed on
-2026-08-27, and the tick **stands** — the promise is corrected, not the
-measurement.* Nothing consumes a figure that sharp, and the bound already
-answers the question the phase asked: which of the three nested columns is the
-cost, and it is the arrays by an order of magnitude. The sharper instrument
-stays unbuilt, with its real cost now named rather than left as "a scope
-decision": a generator knob that declares `v_comp` as `text` makes the
-generator write a declaration `pg_dump` would not — the opposite of what `M10`
-corrected it to do — so it needs an explicit exemption from
-`perf_generator_fidelity.rs`, not just a flag. What is fixed is the wording
-that promised a share: 4.6.1's spec row in
-[`../design/roadmap-P4-composite-decoding.md`](../design/roadmap-P4-composite-decoding.md)
-now says the deliverable is whatever that instrument resolves, and the P7
-inbox entry carries the exemption. **Generalized into
-[`../design/roadmap.md`](../design/roadmap.md)'s standing rule** "A slice row
-that commits to a measurement names its instrument", which now states that a
-named instrument is satisfied by whatever it resolves, a bound included, and
-that the instrument's floor is part of the deliverable — the row is unsatisfied
-only if the instrument was not built or not run. That closes the opposite
-failure to the one the rule was written for: an unattended session building an
-unbudgeted second instrument to rescue a null reading.
-
-*The census's 39% cost on brace-free rows was reviewed on 2026-08-27, and the
-answer is to **make the pre-filter cheap, not to make it skippable**.* A knob
-would re-introduce exactly what 4.5.1 deleted (`Builder::censusing`) and would
-have to be plumbed to a caller who cannot know whether a later query will want
-to retype an array column. But the 0.84 s per 3.00 GiB is a hand-rolled scalar
-two-comparison byte loop at `map.rs:1269` running at ~3.8 GB/s, and `memchr`
-is already a direct dependency (`pgdump_query/Cargo.toml:12`): `memchr2(b'{',
-b'[', raw).is_some()` is a one-line, SIMD swap. Queued as out-of-band **M11**
-below. The knob question was *deferred, not closed*, pending the re-take —
-which came back at **64 ns a row, +11%**, so it is now closed: the census
-stays unconditional, and the pre-filter is 4% of what it costs on the rows
-it does not reject.
-
-*`M10`'s date/time fractions were reviewed on 2026-08-27: the choice is
-**wrong in principle, and the correction rides the next re-take** rather than
-buying one.* The list was chosen for the rendered shapes it produces, which is
-a **correctness** goal met elsewhere — `fixtures/` already carries all five
-(`00:00:00`, `.000001`, `.123456`, `.85312` for the trim, `.999999`). Against
-real data the list is badly unrepresentative: 300,000 rows of koji's
-`task.create_time` hold **zero** values with no fractional part and 9.9%
-ending in a zero digit, against the list's 37.5% and 50%. But the stake is
-below the instrument: three of sixteen columns, ~7 bytes shorter per
-no-fraction render, is 0.2% of a 3,943-byte row, and the decoder costs about
-the same either way — while changing it re-takes five figures. So
-`FRACTIONS` in `scripts/generate_perf_data.py` switches to a uniform
-microsecond draw as **`M12`**, landing ahead of `M13`'s re-take so the figures
-are taken on the final bytes; the comment that currently justifies the list
-records at that point that shape coverage belongs to the fixtures.
-
-*The census figures' source-edit recipe was reviewed on 2026-08-27 and
-**stands**, with the recipe made discoverable from the code.* Regenerating
-either figure means putting a bare `return;` at the top of
-`map::Builder::on_row` and rebuilding, which isolates exactly the census but
-breaks silently if that function is renamed, split, or loses the pre-filter —
-and nothing in the source points back at the doc. `on_row` gains a doc comment
-naming the two [`../design/measurements.md`](../design/measurements.md)
-sections taken by patching it, the way
-[`../design/architecture.md`](../design/architecture.md)'s "`Event` is the
-scanner's contract" records a constraint at the site that would break it. It
-lands with `M11`, which edits that function anyway. Still not a cargo feature:
-the existing *Rejected:* paragraph holds, and a feature is a shipped knob for
-a measurement.
-
-*The scan-throughput table's whole re-take was reviewed on 2026-08-27 and
-**needed no ruling*** — re-taking two rows the maintainer had not queued was
-forced by the floor row being page-cache-contaminated, and correct
-re-measurement is not a decision to weigh in on. The practice it exemplifies
-is now two standing rules in
-[`../design/measurements.md`](../design/measurements.md). Its one residual —
-that the section cites the `COPY` path's warm CPU (2.92 s), a
-page-cache-warm filesystem read the new tmpfs rule now excludes — is covered
-by **`M13`**, which re-took the whole warm set on tmpfs in one session, and by
-`M17`'s sweep since: the `COPY` path's warm CPU is 0.549 s, not 2.92 s.
-
-*The fidelity guard's `uv` skip was reviewed on 2026-08-27 and **reversed**.*
-The skip guards an environment that does not exist: `mise.toml` pins exactly
-one tool, `uv = "latest"`, and there is no CI, so the suite runs in one place
-where `uv` is present — while covering the file's only test, so when it does
-fire the suite goes green with its only generator guard entirely absent. Its
-recorded reason, that such a checkout "should not report a failure it cannot
-act on", is false here: the remedy is `mise install`, which is the point of
-pinning tools with `mise` at all — a CI run is one step from having everything
-the suite needs. `have_uv()`'s skip becomes an assertion naming that remedy,
-riding with `M12`. Generalized into
-[`../design/roadmap.md`](../design/roadmap.md)'s standing rules as "A test may
-assume the tools `mise` pins", which also states the exception that gates the
-other way: a machine-local resource `mise` cannot pin, per `CLAUDE.local.md`'s
-koji-replica rule.
-
-
-*4.6's generator-fidelity entry was reviewed on 2026-08-27, settled as
-scheduled work with its scope corrected — the finding was three infidelities,
-not one — and **landed the same day as `M10`**.*
-`scripts/generate_perf_data.py` declared `time`/`timestamp`/`timestamptz`
-where `pg_dump` writes the long spellings, never trimmed fractional seconds
-where PostgreSQL does, and filled a `real` column with a float64 `repr()`.
-The first two were **coupled** — correcting the spellings alone would have
-sent three columns that never decoded through a decoder that re-renders them
-differently from the file — and the third was what made `typed` and `strings`
-disagree on this input (`v_bytea`, which looked like the culprit, is faithful;
-`pg_dump` writes the doubled backslash too). The consequence was a validity
-problem rather than a fidelity complaint: a benchmark for the typed path
-measured 13 of 16 columns while its table said 16. The fix was not 4.6's — it
-changes the default output's bytes and so re-takes the figures taken on them.
-The findings and the coupling are in
-[`history/2026-08-27.md`](history/2026-08-27.md), "The perf
-generator is not the pg_dump shape it claims"; what landed is `M10` in
-[`../design/roadmap.md`](../design/roadmap.md)'s out-of-band ledger.
-
-*4.4.4's refusal order was reviewed on 2026-08-27 and **stands**, with its
-recorded reason replaced.* It was queued as "kept as a counterfactual" — the
-order is dead, since the opaque test matches a bare type name where the array
-test matches that name with bounds appended, so no input reaches both. What
-settles it is that **both refusals answer `Utf8View`**: the order can only ever
-pick a *label*, never a type, so keeping it costs nothing and the hypothetical
-defence it was written with ("what must win if the two ever overlap") is not
-the argument. `resolve_array` and
-[`../design/architecture.md`](../design/architecture.md), "Type resolution",
-now say that instead, and both name the alternative — testing opaqueness
-recursively through the element's own array levels, which would make an array
-over a domain whose base is `box[]` answer `OpaqueElementType`. That is a
-behaviour change buying a better diagnostic on a shape `pg_dump` cannot write
-(I21), so it is not scheduled.
-
-*M7's two entries were reviewed on 2026-08-27.* The **unconditional
-absorption** **stands**, with its reason upgraded from "it would put an
-unexplainable asymmetry between the `COPY` and `--inserts` paths" to a claim
-about the only producer that can reach the shape: `pg_dump` cannot emit a
-header-less comment block immediately before an `INSERT INTO`, but a
-hand-written dump can, and there absorbing gives one `Data` span where gating
-would give a `Framing` span plus a `Data` span — the same trade
-`on_copy_start`'s `Mode::Comment` arm already makes. The symmetry is a
-consequence of that call, not the argument for it; the durable half is in
-[`../design/architecture.md`](../design/architecture.md), "Bulk regions: one
-span kind, three payloads". The **corrected verification figure** needed no
-ruling: 30/47, 30/47, 31/48 and 6/21 all reproduce on today's tree, so the
-entry is simply closed. What the grilling turned up on the way is the
-`--disable-triggers` gap below, and a **third** wrong reason recorded for M6's
-asymmetry. Reasoning: [`history/2026-08-27.md`](history/2026-08-27.md).
-
-*M6's boundary-signal asymmetry was reviewed on 2026-08-27 and **stands**, with
-its recorded reason replaced.* The queued description of the
-`TOC_PREFIX_STATS` drive-by was "one prefix plus the object-census kind". It
-turned out to be two functions with **different** answers:
-`parse_toc_header_line` reads all three of `_printTocEntry()`'s prefixes, while
-the boundary signal `looks_like_toc_name_line` accepts `"Statistics for "` and
-still refuses `"Data for "`. Grilled on 2026-08-27, and the first
-reason recorded for it was wrong: it said a data entry heads a `COPY` block
-that arrives as its own event, which is false under `--inserts`. The real
-constraint is `Builder::on_copy_start` — it reads the pending `TocHeader` out
-of its `Mode::Comment` arm, and its `Mode::Statement` arm pushes a separate
-span and passes `None`, so accepting `"Data for "` here would make **every
-`COPY` block in the file lose its TOC entry**. The asymmetry is forced, not
-chosen. Pinned by `a_statistics_entry_is_one_attributed_span` and
-`a_statistics_entry_parses_and_opens_a_span` in `map.rs`; the durable half is
-in [`../design/architecture.md`](../design/architecture.md), "TOC enrichment".
-What the grilling turned up on the way is the `--inserts` attribution gap,
-closed the same day as **M7**. *M5's placement was reviewed the same day and
-**stands**, also with a replaced reason*: not "the library error is shared"
-(`require_enabled` has two call sites, both in `main.rs`) but that the remedy
-interpolates the user's own `--source` path, which `Error::CacheDisabled` does
-not have and should not take a `PathBuf` to get — unlike `Error::FieldDecode`,
-which names a static flag string. Reasoning:
-[`history/2026-08-27.md`](history/2026-08-27.md).
-
-*9.5.1's three entries were reviewed on 2026-08-27.* The **prepass running
-even when the cancel flag is already set** **stands**, now with numbers behind
-"bounded by its own length": koji's preamble is 63,333 bytes of 784 GB, and the
-most preamble-heavy shape available (4000 tables, 49% preamble by bytes) maps
-in 0.04 s — both in [`../design/measurements.md`](../design/measurements.md),
-"The preamble prepass is bounded by the schema". The **two
-`MetadataNotScanned`s** are **both kept, and the record corrected**: grilling
-found the entry's own claim false, since `stream::resolve_block` is private and
-all three call sites read `metadata` after the mapping pass, so a carried
-`ResumeToken` cannot reach it either — `Error::MetadataNotScanned` is
-unreachable through every public entry point, while
-`ColumnResolution::MetadataNotScanned` stays reachable because `resolve_columns`
-is public. The guard is kept as what stands between a future reordering and a
-wrongly-typed row, and is now pinned by a unit test in `stream.rs` rather than
-left as untested defence. The **`pg_dumpall` fixture** entry is **reversed**:
-`edge_cases/dumpall.sql` gains a second data-carrying database rather than
-leaving the recurring boundary verified only against a hand-concatenated file
-`pg_dump` never wrote — queued under "Not started". Reasoning:
-[`history/2026-08-27.md`](history/2026-08-27.md).
-
-*9.5's two-granularity guard entry was reviewed on 2026-08-27 and **stands**,
-restated as a principle.* The amendment is right — chunk granularity alone
-leaves a block-rich dump unresponsive for its whole scan — and the finding
-underneath it was that a spec *enumerating* check points is what let the case
-through. Both the spec and `architecture.md` now say the rule is "read the flag
-at every point the loop can cheaply reach", with the two current sites as its
-instances, and both record the two limits it does not remove: the flag is read
-before `read_range`, not during it, and `scan::scan`/`scan_preamble` ignore it
-on purpose, because a stop there could not be told from reaching the first
-`COPY` header and would cache a truncated preamble as complete. The remote-I/O
-half of that is filed into
-[`../design/roadmap-P6-embeddable-engine-inbox.md`](../design/roadmap-P6-embeddable-engine-inbox.md).
-Reasoning: [`history/2026-08-27.md`](history/2026-08-27.md).
-
-*Three P9 entries were reviewed on 2026-08-26.* The **save-throttle**
-entry is **reversed**: the quadratic regime was measured, it costs 44s on a
-4000-block dump, and closing it is slice **9.5** rather than a P7
-question. The **`parse` types every `\connect`ed database** entry is
-**reversed in the direction of agreement**: the recomputation moves into
-`map_forward` so a cold query and a warm one answer alike — an out-of-band
-change, since the divergence it removes was never a decision anyone took. The
-**coverage-line** entry **stands**: the text line prints unconditionally, since
-its absence would leave a user unsure rather than reassured, and `--json`
-carries the components without a rendered line, because a caller can divide.
-Reasoning: [`history/2026-08-26.md`](history/2026-08-26.md).
-
-*The three remaining P9 entries were reviewed on 2026-08-26 and all three
-**stand**.* The diagnostics recompute is 3 ms for koji's 833-span cache — a
-full `info --dqcache` run, load and render included — so the O(spans) cost is
-below process startup; the figure is in
-[`../design/architecture.md`](../design/architecture.md), "The cache".
-`info --dqcache none` stays an error, with the message to name `pgdq parse
---dqcache <path>` as its remedy the way `Error::FieldDecode` names
-`--schema-mode strings` (out-of-band, riding with 9.5). And `v_empty_enum`
-needed no ruling at all: fixture expansion is a standing rule, so additions
-under it stop being logged here — flagging each one dilutes a section meant for
-decisions.
-
-*4.4.3's normalization-placement entry was reviewed on 2026-08-26 and is
-**settled by refactor**.* Grilling established that both placements produce
-identical outcomes on every input — normalization can only add an array level,
-and no normalized terminal is ever the literal name `box` or a `TypeDef.name` —
-so the choice was free and the real finding was that two predicates walking the
-domain chain separately is what made placement a question. Slice **4.4.4** folds
-the array arm into one function; the reasoning is in
-[`history/2026-08-26.md`](history/2026-08-26.md), and the policy it was decided
-under is `roadmap.md`, "Refactor when the shape stops fitting".
-
-*4.4.2's `integer[][]` entry was reversed by 4.4.3* — the spelling resolves as
-`integer[]` does again, and the refusal it was flagging now has exactly one
-DDL shape behind it (I26).
-
-*4.5.1's two entries were reviewed on 2026-08-26.* The
-`MAX_ARRAY_DIMS` verdict **stands** — a run past `MAXDIM` is not evidence, so
-the column keeps its optimistic type and the row surfaces as a `FieldDecode`;
-the durable half is in [`../design/architecture.md`](../design/architecture.md),
-"The array shape census", and the scan-time diagnostic it does *not* raise is
-now a roadmap "Future" item. The spec/manual divergence is **resolved by
-amending the spec**: its "What the manual must say" section now describes one
-path, matching the census section the same reversal rewrote. Reasoning:
-[`history/2026-08-26.md`](history/2026-08-26.md).

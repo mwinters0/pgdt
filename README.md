@@ -12,9 +12,10 @@ device-bound rather than CPU-bound, at flat memory.
 
 **Status**: early development, pre-1.0, with no compatibility guarantees yet.
 What works today: streaming row extraction from plain-format dumps into typed
-Arrow batches, a full byte-exact file map and DDL object inventory, and a
-best-effort structural cache. What is next — composite/array decoding,
-pushdown, engine bindings, the performance campaign, archive formats — is in
+Arrow batches — arrays, composites, ranges and multiranges included — a full
+byte-exact file map and DDL object inventory, a resumable scan that reports
+what it has, and a best-effort structural cache. What is next — pushdown,
+engine bindings, the performance campaign, archive formats — is in
 [`docs/design/roadmap.md`](docs/design/roadmap.md). See
 [`docs/status/STATUS.md`](docs/status/STATUS.md) for exact implementation
 state, known gaps included.

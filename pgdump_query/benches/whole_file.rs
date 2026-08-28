@@ -21,8 +21,9 @@
 //! of `PERF_DATA_SIZE_MB`; a mismatch regenerates. Without that, a checkout
 //! holding an input from before a generator change benchmarks the old bytes
 //! indefinitely and silently — and the machines holding one are exactly the
-//! ones that would compare the new number against an old one (`M12` changed
-//! those bytes; `M15` is this).
+//! ones that would compare the new number against an old one — which is a
+//! trap this bench has already sprung once, on a generator change that moved
+//! the bytes.
 
 use std::hint::black_box;
 use std::ops::ControlFlow;

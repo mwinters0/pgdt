@@ -641,7 +641,11 @@ the `{severity, kind}` shape. `Diagnostic` is the file-level type in L1;
 `resolve::ColumnNote` is the per-column *record* in L2 — one per column, always
 present, the ordinary case being a clean resolution. Its severity is derived
 from `resolution`, not stored, for the same one-owner reason as everything
-above.
+above. Every `DiagnosticKind` that exists is a property of the *file* —
+tiling, cache, TOC coverage — which is the other half of why a type-semantics
+conclusion is not one. The visibility argument for making it one does not hold
+either: `--json` exports `DumpIndex`, which carries no `ResolvedSchema`, so a
+column-level fact is absent from that export whichever type holds it.
 
 *Rejected:* returning diagnostics alongside every result. It changes every
 public signature for something most callers ignore. A caller-supplied sink (the
@@ -754,6 +758,19 @@ it cost was a state no user could observe or repair: a dump mapped by a cold que
 `is_complete` with its early blocks permanently uncensused, because
 `map_forward` splices onto a prefix it does not re-read. Reasoning:
 [`../status/history/2026-08-26.md`](../status/history/2026-08-26.md).
+
+*Rejected:* gating instead — erroring up front with a `ShapeNotScanned` unless
+a census exists. koji's array columns are certainly 1-D (they are entirely
+`NULL`), so gating would fail a cold query and demand an hour of `pgdq parse`
+to learn nothing.
+
+*Rejected:* a transparent query-time prepass over the target blocks. That is a
+*second* read added for the census's sake, silently doubling the cost of every
+cold array query — the cost this project is least willing to hide. What the
+census does instead is not that: the mapping pass exists regardless ([Query:
+mapping and streaming are separate passes](#query-mapping-and-streaming-are-separate-passes),
+so a queried block's bytes are read twice whatever the census does), and the
+census is per-row work folded into a read already being performed.
 
 ### What the census decides, and who may believe it
 
@@ -1415,6 +1432,19 @@ deliberately **no plan-less sibling**, because one that panicked on a nested
 column would make "did every caller switch?" a review question rather than a
 compile error. A scalar caller passes `&NestedPlan::Scalar`, its `Default`.
 
+**Two trees that must agree are kept agreeing by a rule, not by a structure.**
+`resolve_declared_type` is the one producer of the `(DataType, NestedPlan)`
+pair and `resolve_columns`' census transform the one place either half changes
+afterwards; neither half is ever rewritten alone. That is affordable exactly
+while those two sites are the only writers.
+
+*Rejected — but costed, as the fallback if a third writer ever appears:* a
+single tree owning both (`Scalar(DataType)` / `Array(Box<…>)` / …, with a
+`data_type()` accessor), which makes disagreement unrepresentable. It costs a
+rewrite of `pgtype.rs`'s public surface plus a `.data_type()` at every existing
+`DataType`-shaped call site, against a drift risk that two writers do not yet
+have.
+
 *Rejected:* inferring the literal form from the Arrow type. It is not merely
 fragile, it is impossible for the array-of-range/multirange pair. *Rejected:*
 smuggling the marker into Arrow `Field` metadata. Metadata is part of `Field`
@@ -1567,6 +1597,23 @@ Predicates are untyped — the compared value is a plain string, and
 `IsNull`/`IsNotNull` are the two that exist because before typed columns there
 was no way to ask for a NULL at all. Evaluating predicates *during* the scan is
 future work; it inverts control, not dependency (see `layering.md`).
+
+**A string comparison agrees with PostgreSQL more often than it deserves to**,
+and the reason is a property of the input rather than of the comparison: every
+value in a dump is already in canonical *output* form — discrete ranges
+canonicalize on input, array input whitespace is dropped — so the literal in
+the file is the one `*_out` would write. The divergence is one class: a user
+supplying a non-canonical literal, where PostgreSQL matches and this comparison
+does not. It also costs nothing — no per-row render, no new code — which is why
+a nested column needs no special case here.
+
+*Rejected:* type-aware comparison at this layer. It needs the *input*-side
+grammar, which I20's scope limit flags as considerably more permissive than the
+`*_out` inverse the decoders commit to, plus canonicalization for the three
+discrete built-in ranges. That is one-time work belonging with typed
+predicates, and it is filed — with the measured PostgreSQL and DataFusion
+semantics — in
+[`roadmap-P5-pushdown-inbox.md`](roadmap-P5-pushdown-inbox.md).
 
 ## The cache
 
@@ -1906,8 +1953,9 @@ or restructuring a field on `DumpIndex` for internal reasons is free to
 change its JSON along with it, same as any other refactor. It exists so an
 alpha user can get everything the human-readable listing shows (and more —
 the raw span/TOC detail no text view surfaces) without pgdq committing to a
-CLI flag for their specific need before enough of those needs have converged
-(`docs/design/roadmap.md`, out-of-band ledger M4). `--json` is incompatible
+CLI flag for their specific need before enough of those needs have converged —
+which is what "the output shape is provisional" at the head of this section
+means in practice. `--json` is incompatible
 with `--verbose`/`--map`: both only add formatting detail to the text view,
 all of which the full struct already carries.
 

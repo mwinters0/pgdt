@@ -313,10 +313,11 @@ for _n in (500, 1000, 2000, 4000):
 def input_stamp(spec: InputSpec, cfg: Config) -> str:
     """A hash of the generator's source and the arguments it was given.
 
-    M15's lesson, applied to the harness's own inputs: a generated file that is
-    only regenerated when *missing* means a checkout that already has one
-    benchmarks pre-change bytes forever, silently -- and the population that
-    has one is exactly the population comparing a new number to an old one."""
+    The whole-file bench's lesson, applied to the harness's own inputs: a
+    generated file regenerated only when *missing* means a checkout that
+    already has one benchmarks pre-change bytes forever, silently -- and the
+    population that has one is exactly the population comparing a new number to
+    an old one."""
     h = hashlib.sha256()
     h.update((SCRIPTS / spec.generator).read_bytes())
     h.update(repr(spec.argv(cfg, Path("OUT"))).encode())
@@ -1450,7 +1451,7 @@ FIGURES: list[Figure] = [
         id="cross-file-floor",
         quoted_by=(
             "docs/design/roadmap-P7-scan-performance-inbox.md",
-            "docs/design/roadmap-P4-composite-decoding-notes.md",
+            "docs/design/architecture.md",
             "docs/status/STATUS.md",
         ),
         section="The cross-file subtraction bottoms out at about half a microsecond a row",
@@ -1841,8 +1842,8 @@ def koji_recipe(cfg: Config, name: str, wrap: bool) -> str:
 
     koji is deliberately outside the sweep — a different medium, ~54 minutes,
     and a byte-for-byte regression check rather than a throughput figure — but
-    the *recipe* was living in three hand-maintained copies, which is how `M19`
-    found a documented command that no longer ran. This is the one copy.
+    the *recipe* was living in three hand-maintained copies, which is how a
+    documented command was found that no longer ran. This is the one copy.
 
     Three things here have each cost a run, and a test asserts all three:
 

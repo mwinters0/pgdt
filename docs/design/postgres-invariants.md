@@ -1071,7 +1071,7 @@ predicates exactly, including the `NULL` case-fold and the whitespace test.
 **Verified against:** v13.23, v16.15, v18.6 — the `needquote`/`nq` predicates
 and both emit loops are character-for-character identical across all three.
 
-**Relied on by:** `roadmap-P4-composite-decoding.md` — the nested decoder's
+**Relied on by:** `architecture.md`, "The nested literal codec" — the decoder's
 parameterization, and the exactness requirement on render-back.
 
 **Re-verify:**
@@ -1116,9 +1116,9 @@ project reads out of the declared type.
 **Verified against:** v16.15 (behaviour, live server); the `format_type`
 reconstruction is unchanged v13.23 through v18.6.
 
-**Relied on by:** `architecture.md` ("Type resolution", the array paragraph) and
-`roadmap-P4-composite-decoding.md` — it is the reason an array column's
-Arrow type cannot be settled from the DDL alone.
+**Relied on by:** `architecture.md`, "Type resolution" (the array paragraph)
+and "The array shape census" — it is the reason an array column's Arrow type
+cannot be settled from the DDL alone.
 
 **Re-verify:**
 
@@ -1170,10 +1170,10 @@ exposure.**
 **Verified against:** v13.23, v18.6 and master (`pg_type.dat`); v18.6
 (`typecmds.c`, `rowtypes.c`).
 
-**Relied on by:** `roadmap-P4-composite-decoding.md`, "Render-back must be
-exact" — it is why the opaque-element refusal tests the element type *after*
-domain unwrapping rather than the declared string, and why the array separator
-can stay hardcoded to `,` once it does.
+**Relied on by:** `architecture.md`, "Type resolution" (both array refusals)
+and "The nested literal codec" — it is why the opaque-element refusal tests the
+element type *after* domain unwrapping rather than the declared string, and why
+the array separator can stay hardcoded to `,` once it does.
 
 **Re-verify:**
 
@@ -1229,9 +1229,8 @@ in the relevant loop; `pg_dump.c` identical modulo line numbers), plus
 `fixtures/{13..18}/types/default.sql`'s `public.empty_comp` /
 `t_composite.v_empty_comp`, whose DDL and `()` values are identical on all six.
 
-**Relied on by:** `roadmap-P4-composite-decoding.md`, "A zero-field
-composite maps", and `architecture.md`, "Type resolution" (the all-or-nothing
-field list) — "no fields parsed" and "no fields declared" have to stay
+**Relied on by:** `architecture.md`, "Type resolution" (the all-or-nothing
+field list) and "Nested columns: `NestedPlan` travels beside the `DataType`" — "no fields parsed" and "no fields declared" have to stay
 distinguishable in the type definition when the literal cannot tell them apart,
 which is why `TypeKind::Composite::fields` is an `Option`.
 

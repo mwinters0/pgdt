@@ -69,7 +69,7 @@ rather than rediscovering the trap.
 
 ## An `INSERT` run's span has two shapes, and neither records where the rows start
 
-**Fact.** As of M7, `map::Builder`'s `Mode::Comment` close arm opens
+**Fact.** `map::Builder`'s `Mode::Comment` close arm opens
 `Mode::InsertRun` at the *comment's* offset when a `-- Data for Name: …; Type:
 TABLE DATA` block heads the run, so a TOC-commented run is one `Data` span
 covering comment and rows alike — the same absorption `on_copy_start` has

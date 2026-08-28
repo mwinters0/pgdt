@@ -175,8 +175,7 @@ the map is partial; this one asks what it says when a whole database's DDL is
 missing, and the tree already contains both answers rather than none.
 
 **Origin.** Slice 9.4, 2026-08-26. See [`architecture.md`](architecture.md),
-"Joining a header against the metadata", and
-[`roadmap-P9-partial-reporting-notes.md`](roadmap-P9-partial-reporting-notes.md).
+"Joining a header against the metadata".
 
 **Narrowed by 9.5.1, 2026-08-27.** The mapping pass now states a database's
 DDL at that database's first `COPY` block (I1's recurring boundary), so no
@@ -230,5 +229,4 @@ embedder set it — is also the one that puts an error variant into an engine
 that would rather see a stream end.
 
 **Origin.** Slice 9.5, 2026-08-27. See [`architecture.md`](architecture.md),
-"`parse` resumes, and saves as it goes", and
-[`roadmap-P9-partial-reporting-notes.md`](roadmap-P9-partial-reporting-notes.md).
+"`parse` resumes, and saves as it goes".

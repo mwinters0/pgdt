@@ -131,9 +131,10 @@ has no invariant behind it the way `COPY`'s `\.` (I7) and `BLOBS`' `COMMIT;`
 Track A's row reader needs anyway.
 
 **The cold `INSERT` reading also moved, and not because of the apparatus**:
-15.13–15.42 s when first taken, 9.90 s now. `M7` (`2eb51f4`) changed how an
-`--inserts` dump's runs are scanned in between. Attributing the difference
-needs a pre-`M7` build and a second cold table, which nothing yet requires —
+15.13–15.42 s when first taken, 9.90 s now. `2eb51f4` changed how an
+`--inserts` dump's runs are scanned in between — absorbing the `Data for`
+comment into the run. Attributing the difference needs a build from before that
+commit and a second cold table, which nothing yet requires —
 the warm figure above is what P7 actually consumes.
 
 **Origin.** Out-of-band item M3, 2026-08-25; the table re-taken cold by `M10`,
@@ -206,8 +207,8 @@ arrays.
 2026-08-27, re-taken by `M10` the same day once the generator declared the
 types `pg_dump` writes — the earlier end-to-end ratios were taken with three
 of the sixteen scalar columns silently untyped. Decision and its rationale:
-[`roadmap-P4-composite-decoding.md`](roadmap-P4-composite-decoding.md),
-"Nested elements copy"; figures and commands:
+[`architecture.md`](architecture.md), "Nested columns: `NestedPlan` travels
+beside the `DataType`" (nested values always copy); figures and commands:
 [`measurements.md`](measurements.md), "Nested decode costs what it copies" and
 "A typed query over nested columns".
 
@@ -385,7 +386,8 @@ dwarfs every result this campaign will chase.
 **One bullet of this phase's own spec is now wrong, and the drain must fix
 it.** [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md)'s
 "Measurement discipline" says to benchmark "from tmpfs **or a warm page
-cache**"; the third standing rule forbids the second half outright, for the
+cache**"; the standing rule "a figure about parsing CPU must not be taken
+against a filesystem" forbids the second half outright, for the
 reason above. The spec was left unamended deliberately — it records intent
 from before the evidence existed, and editing it to match a doc written
 afterwards is what the spec/notes split exists to prevent — so the correction
@@ -416,8 +418,8 @@ share came out:
 
 **These are the only *t* values quoted anywhere in this repo, and the musl leg
 they come from is the only one kept — both exist as this demonstration rather
-than as results** — [`measurements.md`](measurements.md)'s
-ninth standing rule now forbids quoting one for a figure. Both legs are
+than as results** — [`measurements.md`](measurements.md)'s standing rule
+against quoting a standard error now forbids quoting one for a figure. Both legs are
 "significant" past any threshold anyone would set, they disagree by
 **1.77 µs/row**, and the sign inverts — including the sign of the reading's
 distance from its own floor (+0.41 glibc, −1.09 musl). The floor is not
