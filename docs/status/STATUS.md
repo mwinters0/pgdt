@@ -31,30 +31,28 @@ schedule.
 | Device-bound scan performance campaign, sparse row index | not started — P7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — P8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-28 — the keystone sweep, the measurement sweep that
-followed it, then `M21`'s hygiene pass. Every completed phase's spec and notes are struck and the
+Last updated: 2026-08-28 — the keystone sweep, `M21`'s hygiene pass, then
+`M22`'s contention telemetry and the sweep it made defensible. Every completed phase's spec and notes are struck and the
 out-of-band ledger with them; `architecture.md` is the
 single authority on how the built system works. **Choosing the next phase is a
 re-grilling the maintainer has claimed**, so this is a phase boundary: an
 unattended loop stops here.
 
 **Every figure in
-[`../design/measurements.md`](../design/measurements.md) comes from one sweep**,
-taken against `ff9c8f3` on 2026-08-28 in 43 minutes and folded in whole;
-`--check` reconciles twelve markers against twelve figures.
+[`../design/measurements.md`](../design/measurements.md) comes from the
+`fa186ab` sweep of 2026-08-28**, taken in 24
+minutes and folded in whole; `--check` reconciles twelve markers against twelve
+figures, and `--stale` reports nothing outstanding. Every table carries an
+apparatus line witnessing a quiet machine — ≤5% machine-busy, no steal, no
+meaningful CPU stall — which is what `M22` added and what makes the sweep
+defensible rather than merely recent.
 
-**A re-sweep is outstanding, and it is also the telemetry's calibration run.**
-`M21` touched paths that ten of the twelve figures declare, and the first
-re-take (`runs/measure-20260828T115846`, `exit=0`) is **not foldable**: its warm
-regime was 12–20% slower than the sweep it would replace, witnessed by `dd`
-moving +20.1% while containing none of this project's code. Folding it would
-move the cross-document `INSERT`-vs-`COPY` claim from 16.2× to 14.5× for a
-reason that is apparatus rather than code
-([`history/2026-08-28.md`](history/2026-08-28.md)).
-
-`M22` is what makes the next attempt decidable: every reading now carries its
-own contention witness. The next sweep is both the re-take and the run that
-sets `measure.CONTENTION_LIMITS`, after which the gate can be armed.
+**The `INSERT`-vs-`COPY` ratio moved, and the older figure was the outlier.**
+It now reads **14.6×**, corrected wherever it was repeated. Two sweeps taken
+under witnessed-quiet apparatus agree at 14.5–14.6× where the un-telemetered
+sweep the doc previously held read 16.2×
+([`history/2026-08-28.md`](history/2026-08-28.md)). The decision that ratio
+bears on — a scanner-level `INSERT` path — is untouched and still ungrilled.
 
 ## Not started
 
@@ -178,10 +176,10 @@ sets `measure.CONTENTION_LIMITS`, after which the gate can be armed.
 - An `INSERT` run is folded into one `Data` span, but every line in it is
   still decoded into `Event::Line` and pushed through the statement
   accumulator — unlike the large-object region, which is skipped unread at
-  the scanner level. Warm, on the same 3.00 GiB, that costs **16.2× the
-  per-byte CPU of a `COPY` scan** — 8.26 s against 0.510 s, and 31× the device
-  floor where the `COPY` path is 1.9×. Cold from this SSD the device hides most
-  of it, at 1.71× the floor against the `COPY` path's 1.00×, which is why the
+  the scanner level. Warm, on the same 3.00 GiB, that costs **14.6× the
+  per-byte CPU of a `COPY` scan** — 7.78 s against 0.534 s, and 25× the device
+  floor where the `COPY` path is 1.7×. Cold from this SSD the device hides most
+  of it, at 1.60× the floor against the `COPY` path's 1.00×, which is why the
   ratio is quoted from the warm table and from one regime. Figures and re-run
   commands in
   [`../design/measurements.md`](../design/measurements.md). A
@@ -205,7 +203,7 @@ it governs first, because that is the only case whose content lives nowhere
 else. Full rules: [`../process.md`](../process.md), "Decisions worth another
 look". Two are open.
 
-*An `INSERT` scan costs **16.2×** a `COPY` scan per byte, not the "~5×" three
+*An `INSERT` scan costs **14.6×** a `COPY` scan per byte, not the "~5×" three
 documents carried — and what that changes about P7's plan has not been
 grilled.* The number itself is folded in wherever it was repeated, since a
 document must not keep asserting a measurement known to be wrong. The decision
@@ -218,13 +216,13 @@ whether it is P7's at all. That is a phase-planning question and it goes
 through grilling, which is why the fold-in stopped here rather than
 re-prioritising anything.
 
-*The composite column's end-to-end share now separates from the instrument's
-own floor, and the fold-in kept the old bound anyway.* This sweep reads the
-composite column at **+0.99 µs/row** against a seed-43 floor of **−0.11**, and
-their per-rep ranges do not overlap (+0.31…+1.24 against −0.41…+0.28) — where
-the previous sweep read +0.39 against a +0.07 floor and overlapped it across
-most of its width. Two takes of one quantity **0.6 µs/row apart** is wider than
-the floor itself, so
+*The composite column's end-to-end share separates from the instrument's own
+floor in every sweep that takes it, and never at the same value.* This sweep
+reads the composite column at **+0.62 µs/row** against a seed-43 floor of
+**−0.17**, and their per-rep ranges do not overlap (+0.54…+0.70 against
+−0.28…−0.06) — as they did not in the sweep before it. But four sweeps have now
+read the same quantity at **+0.31, +0.39, +0.62 and +0.99 µs/row**: a 0.7 µs
+spread, wider than the quantity itself, so
 [`../design/measurements.md`](../design/measurements.md) still reads that
 subtraction as a bound rather than a resolution, and its standing rule still
 puts the apparatus floor at ~0.5 µs/row. What is open is whether a third sweep

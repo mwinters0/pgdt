@@ -679,6 +679,14 @@ class Drift(unittest.TestCase):
         self.assertNotIn("session-drift", [f.id for f in measure.FIGURES])
         self.assertIn("session-drift", measure.ALL_BY_ID)
 
+    def test_the_derived_figure_is_still_checked_for_staleness(self):
+        # It is out of the sweep but not out of the register: it declares
+        # `scripts/measure.py`, because the harness's own timing path is the
+        # apparatus it measures. Iterating the sweep list here would leave
+        # that declaration inert.
+        touched = [f.id for f, _ in measure.figures_touched(["scripts/measure.py"])]
+        self.assertIn("session-drift", touched)
+
 
 class Telemetry(unittest.TestCase):
     """The contention witnesses. What a silent error costs here is a sweep
@@ -804,25 +812,46 @@ class SamplerWindow(unittest.TestCase):
 
 
 class Gate(unittest.TestCase):
-    def test_empty_limits_gate_nothing(self):
-        # The state until a sweep has calibrated them, and not a bug.
-        self.assertEqual(measure.CONTENTION_LIMITS, {})
-        self.assertIsNone(measure.contention_verdict({"cpu_busy_pct": 99.0}, {}))
+    LIMITS = {"warm": {"cpu_busy_pct": 25.0}, "cold": {"cpu_busy_pct": 25.0}}
 
     def test_a_reading_over_a_limit_is_named_with_the_limit_it_broke(self):
-        verdict = measure.contention_verdict({"cpu_busy_pct": 60.0}, {"cpu_busy_pct": 25.0})
+        verdict = measure.contention_verdict({"cpu_busy_pct": 60.0}, "warm", self.LIMITS)
         self.assertIn("cpu_busy_pct", verdict)
         self.assertIn("25.0", verdict)
 
     def test_a_reading_under_every_limit_is_clean(self):
-        limits = {"cpu_busy_pct": 25.0, "psi_cpu_some_pct": 5.0}
-        self.assertIsNone(
-            measure.contention_verdict({"cpu_busy_pct": 3.0, "psi_cpu_some_pct": 0.1}, limits)
-        )
+        self.assertIsNone(measure.contention_verdict({"cpu_busy_pct": 3.0}, "warm", self.LIMITS))
 
     def test_a_limit_with_no_reading_behind_it_does_not_fire(self):
         # A machine without PSI must not fail every reading for lack of it.
-        self.assertIsNone(measure.contention_verdict({}, {"psi_cpu_some_pct": 1.0}))
+        self.assertIsNone(
+            measure.contention_verdict({}, "warm", {"warm": {"psi_cpu_some_pct": 1.0}})
+        )
+
+    def test_a_regime_with_no_limits_gates_nothing(self):
+        self.assertIsNone(measure.contention_verdict({"cpu_busy_pct": 99.0}, "warm", {}))
+
+    def test_io_stall_is_gated_in_neither_regime(self):
+        # A cold run drops the page cache and reads 3 GiB off the SSD, so it
+        # stalls on I/O for a fifth of its window *by construction*. Gating
+        # that would fail every cold reading there is.
+        for regime in ("cold", "warm"):
+            self.assertNotIn("psi_io_some_pct", measure.CONTENTION_LIMITS[regime])
+        self.assertIsNone(measure.contention_verdict({"psi_io_some_pct": 23.0}, "cold"))
+
+    def test_the_armed_limits_clear_the_calibration_sweep_with_headroom(self):
+        # Every p95 from the 182-reading fa186ab sweep, which its apparatus
+        # lines witness as quiet. A limit that fires here is mis-set.
+        for regime, p95 in (
+            ("cold", {"cpu_busy_pct": 4.29, "psi_cpu_some_pct": 1.16, "cpu_steal_pct": 0.0}),
+            ("warm", {"cpu_busy_pct": 4.52, "psi_cpu_some_pct": 0.20, "cpu_steal_pct": 0.0}),
+        ):
+            self.assertIsNone(measure.contention_verdict(p95, regime), regime)
+
+    def test_an_obviously_busy_machine_is_caught_in_either_regime(self):
+        for regime in ("cold", "warm"):
+            self.assertIsNotNone(measure.contention_verdict({"cpu_busy_pct": 40.0}, regime))
+            self.assertIsNotNone(measure.contention_verdict({"cpu_steal_pct": 12.0}, regime))
 
 
 class ApparatusNote(unittest.TestCase):

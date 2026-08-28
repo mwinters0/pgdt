@@ -458,12 +458,33 @@ SWEEP_GOVERNOR = "performance"
 #: A reading whose window shows contention above these limits is not a
 #: reading: it is discarded and taken again.
 #:
-#: **Empty until calibrated, deliberately.** A threshold cannot be chosen
-#: before the distribution is known -- too tight and every sweep loops, too
-#: loose and the gate never fires -- so the first sweeps under this telemetry
-#: record without gating, and what they report is what these limits are then
-#: set from. An empty mapping gates nothing, and is not a bug.
-CONTENTION_LIMITS: dict[str, float] = {}
+#: **Per regime, because a cold figure's I/O stall is the measurement.** A cold
+#: run drops the page cache and then reads 3.00 GiB off the SSD, so it stalls
+#: on I/O for a fifth of its window *by construction* -- p95 21.3% against a
+#: warm figure's 5.4%. One global I/O limit would either fire on every cold
+#: reading or never fire at all, which is why `psi_io_some_pct` is gated in
+#: neither regime: in the cold one it is signal, and in the warm one nothing
+#: has yet been seen that it would catch and `cpu_busy_pct` would not.
+#:
+#: Calibrated from 182 readings of the 2026-08-28 `fa186ab` sweep, whose
+#: apparatus lines witness a quiet machine throughout. Each limit sits at
+#: roughly three times the observed p95, because the gate is here to catch a
+#: machine that is *obviously* busy -- a limit tight enough to fire on ordinary
+#: variance costs three retakes per reading and buys nothing:
+#:
+#: | metric | cold p95 | warm p95 | limit |
+#: |---|---|---|---|
+#: | `cpu_busy_pct` | 4.29 | 4.52 | 15 |
+#: | `psi_cpu_some_pct` | 1.16 | 0.20 | 5 |
+#: | `cpu_steal_pct` | 0.00 | 0.00 | 2 |
+#:
+#: `cpu_steal_pct` is zero on this bare-metal box in every reading ever taken,
+#: so its limit is untested here and exists for the VM case, where steal is the
+#: single most valuable number available.
+CONTENTION_LIMITS: dict[str, dict[str, float]] = {
+    "cold": {"cpu_busy_pct": 15.0, "psi_cpu_some_pct": 5.0, "cpu_steal_pct": 2.0},
+    "warm": {"cpu_busy_pct": 15.0, "psi_cpu_some_pct": 5.0, "cpu_steal_pct": 2.0},
+}
 
 #: How many times a contended reading is retaken before its figure fails.
 GATE_RETRIES = 3
@@ -513,12 +534,19 @@ def apparatus_note(records: Sequence[dict]) -> str:
 
 
 def contention_verdict(
-    delta: dict[str, float], limits: dict[str, float] | None = None
+    delta: dict[str, float],
+    regime: str = "warm",
+    limits: dict[str, dict[str, float]] | None = None,
 ) -> str | None:
     """The first limit this reading's telemetry breaks, or `None` if it is
-    clean. Returns a sentence, because it goes straight into the log."""
-    limits = CONTENTION_LIMITS if limits is None else limits
-    for key, limit in sorted(limits.items()):
+    clean. Returns a sentence, because it goes straight into the log.
+
+    A regime with no limits gates nothing, and a limit with no reading behind
+    it does not fire -- a machine exposing no PSI must not fail every reading
+    for lack of it.
+    """
+    table = CONTENTION_LIMITS if limits is None else limits
+    for key, limit in sorted(table.get(regime, {}).items()):
         if key in delta and delta[key] > limit:
             return f"{key}={delta[key]} over limit {limit}"
     return None
@@ -1243,13 +1271,12 @@ class Session:
         attempts is not a machine this figure can be taken on, and saying so
         beats emitting a number nobody can defend.
 
-        With `CONTENTION_LIMITS` empty -- the state until a sweep has
-        calibrated them -- every reading passes on the first attempt and this
-        is exactly the loop it replaced.
+        Limits are per regime, because a cold reading stalls on I/O by
+        construction and a warm one does not -- see `CONTENTION_LIMITS`.
         """
         for attempt in range(1, GATE_RETRIES + 1):
             seconds = self.time_run(spec)
-            verdict = contention_verdict(self._last_telemetry)
+            verdict = contention_verdict(self._last_telemetry, spec.regime)
             if verdict is None:
                 self.log(f"  rep{rep + 1} {spec.label}: {seconds:.3f} s")
                 return seconds
@@ -1259,7 +1286,8 @@ class Session:
             )
         raise RuntimeError(
             f"{spec.label}: {GATE_RETRIES} consecutive readings were taken under contention "
-            f"({contention_verdict(self._last_telemetry)}) — the machine is too busy to measure on"
+            f"({contention_verdict(self._last_telemetry, spec.regime)}) — "
+            "the machine is too busy to measure on"
         )
 
     def get(self, figure: str, spec: RunSpec) -> list[float]:
@@ -1871,7 +1899,7 @@ FIGURES: list[Figure] = [
             "docs/design/roadmap-P7-scan-performance-inbox.md",
             "docs/status/STATUS.md",
         ),
-        section="The census on array-bearing rows nearly quadruples a warm scan",
+        section="The census on array-bearing rows more than triples a warm scan",
         stage="cold+warm",
         depends=(*MAP, *SCAN, *GEN_PERF),
         cold_inputs=("arrays",),
@@ -1918,7 +1946,7 @@ FIGURES: list[Figure] = [
             "docs/design/roadmap-P7-scan-performance-inbox.md",
             "docs/status/STATUS.md",
         ),
-        section="A typed query over nested columns costs 14 µs a row more than a string one",
+        section="A typed query over nested columns costs 13.0 µs a row more than a string one",
         stage="warm",
         depends=(*NESTED, *MAP, *QUERY_CLI, *GEN_PERF),
         warm_inputs=("control", "composite", "arrays"),
@@ -2138,10 +2166,17 @@ def stamped_commit(doc: Path) -> str | None:
 
 def figures_touched(changed: Iterable[str]) -> list[tuple[Figure, list[str]]]:
     """Figures whose declared paths a diff touches. A declared path is a
-    prefix: a directory matches everything under it."""
+    prefix: a directory matches everything under it.
+
+    **Every figure, not just the ones a sweep runs.** The derived
+    `session-drift` declares `scripts/measure.py` because the harness's own
+    timing path is the apparatus it measures; iterating `FIGURES` here left
+    that declaration inert, which is the failure mode a declared dependency
+    exists to prevent.
+    """
     changed = list(changed)
     out = []
-    for fig in FIGURES:
+    for fig in ALL_BY_ID.values():
         hits = [c for c in changed for d in fig.depends if c == d or c.startswith(d)]
         if hits:
             out.append((fig, sorted(set(hits))))
@@ -2496,6 +2531,14 @@ def cmd_stale(since: str | None) -> int:
         return 0
     for fig, hits in touched:
         print(f"  {fig.id:<24} stale — {', '.join(hits)}")
+    if all(f.stage == "derived" for f, _ in touched):
+        # A derived figure is computed from two sweeps' `raw.json`, so it is
+        # re-taken in seconds and forces no sweep on anything else.
+        print(
+            "\nEvery stale figure here is derived: re-take it with "
+            "`uv run measure.py --drift <sweep> <sweep>`, which measures nothing."
+        )
+        return 1
     print(
         "\nA stale figure must be re-taken with the whole doc: one sweep replaces every table "
         "(`uv run measure.py --all`), because the doc differences across tables."

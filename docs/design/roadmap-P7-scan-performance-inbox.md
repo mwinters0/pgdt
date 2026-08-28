@@ -100,13 +100,13 @@ filed under. Three 3.00 GiB synthetic dumps, one sweep, both regimes
 | | `COPY` block | large object | `INSERT` run | `dd` floor |
 |---|---|---|---|---|
 | warm, tmpfs | 0.510 s | 0.494 s | **8.26 s** | 0.269 s |
-| cold, SSD | 5.77 s | 5.76 s | 9.83 s | 5.75 s |
+| cold, SSD | 5.77 s | 5.75 s | 9.18 s | 5.75 s |
 
-**An `INSERT` run costs 16.2× a `COPY` block's per-byte CPU** — 8.26 s against
+**An `INSERT` run costs 14.6× a `COPY` block's per-byte CPU** — 7.78 s against
 0.510 s on the same 3.00 GiB — and 31× the warm device floor where the `COPY`
 path is 1.9×. The **"~5×" this entry was filed under was never a CPU ratio**:
 it divided a cold `INSERT` rate, device included, by the `COPY` path's warm
-CPU. 16.2× is a single-regime measurement and replaces it, landing at the
+CPU. 14.6× is a single-regime measurement and replaces it, landing at the
 bottom of the 16–26× the cold table alone was used to bound it at. Carry it as
 **mid-teens**: the sweep before this one read 14.6× on the same binaries and
 inputs, both legs having moved inside the measured session drift.
@@ -133,7 +133,7 @@ has no invariant behind it the way `COPY`'s `\.` (I7) and `BLOBS`' `COMMIT;`
 Track A's row reader needs anyway.
 
 **The cold `INSERT` reading also moved, and not because of the apparatus**:
-15.13–15.42 s when first taken, 9.83 s now. `2eb51f4` changed how an
+15.13–15.42 s when first taken, 9.18 s now. `2eb51f4` changed how an
 `--inserts` dump's runs are scanned in between — absorbing the `Data for`
 comment into the run. Attributing the difference needs a build from before that
 commit and a second cold table, which nothing yet requires —
@@ -178,9 +178,9 @@ On a 3.00 GiB dump whose every row carries a 4-element array, a 50-element
 array and a two-field composite, `pgdq query --schema-mode typed` costs
 3.64× the same query in `strings` mode, against 2.42× for the same file
 without those three columns — so the three nested columns account for about
-**13.3 µs of every row**, nearly twice what the sixteen scalar columns cost
+**13.0 µs of every row**, nearly twice what the sixteen scalar columns cost
 together. **The two arrays carry all of it**: a third file holding the
-composite column and no arrays reads +0.99 µs/row against an instrument whose
+composite column and no arrays reads +0.62 µs/row against an instrument whose
 own floor is −0.11, which bounds that column at about a microsecond
 (4.6.1, and the entry below on what that subtraction can resolve). The
 `nested.rs` literal parse and its render account for only **6.3 µs** of the
@@ -229,10 +229,10 @@ its bytes and never split into fields; a row containing either is split by
 Both sides are measured, on 3.00 GiB files served from tmpfs to a 512 MB
 container, alternating a census and a no-census glibc binary in one session,
 six reps each in both orders. On the brace-free `COPY` control — every row
-rejected by the pre-filter — the census costs **0.044 s per 3.00 GiB**, 53 ns
+rejected by the pre-filter — the census costs **0.034 s per 3.00 GiB**, 41 ns
 per 16-column row: **+9%** of a warm scan. On a file where **every** row
-carries an array it costs **1.255 s per 3.00 GiB**, 1.79 µs per 19-column row:
-**+249%** warm. Cold from this SSD the device floor hides both entirely, at
+carries an array it costs **1.103 s per 3.00 GiB**, 1.58 µs per 19-column row:
+**+226%** warm. Cold from this SSD the device floor hides both entirely, at
 +0% and +1% — measured in the same sweep, so the two regimes are one
 apparatus.
 
@@ -332,7 +332,7 @@ figures. That subtraction has a floor. Two 3.00 GiB files holding the *same*
 sixteen columns and differing only in their RNG seed (`--seed 42` against
 `--seed 43`) disagree by a paired median of **−0.11 µs/row**, spanning −0.41 to
 +0.28 over six interleaved reps, when they should disagree by zero; the file
-differing by one composite column reads a paired median of **+0.99 µs/row**
+differing by one composite column reads a paired median of **+0.62 µs/row**
 over five reps, whose per-rep readings (+0.31 to +1.24) clear the floor's in
 this sweep and read +0.39 against a +0.07 floor in the sweep before it — two
 takes of one quantity 0.6 µs/row apart, which is wider than the floor.

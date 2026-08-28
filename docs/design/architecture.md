@@ -728,9 +728,9 @@ cost roughly 20× as much and was, on that shape, the whole figure. `on_row`'s
 doc comment names the two measurements a reader regenerates by patching that
 function.
 **The cost is one tier in practice: the rows that pass the pre-filter.** On
-brace-free data — the koji shape — every row pays the pre-filter alone, 53 ns
+brace-free data — the koji shape — every row pays the pre-filter alone, 41 ns
 per 16-column row, +9% of a scan reading from memory. A row that passes it
-pays field splitting and `observe` on top: 1.79 µs over 19 columns, +249%
+pays field splitting and `observe` on top: 1.58 µs over 19 columns, +226%
 warm, so the pre-filter is 3% of what the census costs on the rows it does
 not reject. Both collapse to +0% and +1% on a cold read of this SSD, where the
 device floor hides them entirely
@@ -752,7 +752,7 @@ representation.
 the per-row work. A cold query already receives every row of every block it
 maps — `map_forward` calls `on_row` unconditionally and the queried block's
 bytes are read twice regardless — so the saving is the pre-filter alone, which
-is 53 ns a row even with the bytes in memory and vanishes entirely behind the
+is 41 ns a row even with the bytes in memory and vanishes entirely behind the
 device a cold query is by definition reading from
 ([`measurements.md`](measurements.md), "The census on brace-free rows"). What
 it cost was a state no user could observe or repair: a dump mapped by a cold query and *then* by a full one came out

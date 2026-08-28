@@ -548,12 +548,12 @@ it was filed under.
 | # | Date | What changed | Why |
 |---|---|---|---|
 | `M20` | 2026-08-28 | "Decisions worth another look" gains four rules — file-then-delete on close, closed by the session that hears the answer, capped at five, and an admission rule — plus the `depends` rationale the last keystone swept away | [`../status/history/2026-08-28.md`](../status/history/2026-08-28.md) |
-| `M22` | 2026-08-28 | Every reading gains a contention witness — PSI/`steal` counter deltas bracketing each run, sampled frequency and temperature, a per-table apparatus line — plus a retake gate whose thresholds a sweep still has to set, and `--pin-governor`, measured as a no-op here and left off | [`../status/history/2026-08-28.md`](../status/history/2026-08-28.md) |
+| `M22` | 2026-08-28 | Every reading gains a contention witness — PSI/`steal` counter deltas bracketing each run, sampled frequency and temperature, a per-table apparatus line — plus a per-regime retake gate calibrated from 182 readings, and `--pin-governor`, measured as a no-op here and left off | [`../status/history/2026-08-28.md`](../status/history/2026-08-28.md) |
 | `M21` | 2026-08-28 | Hygiene, no behaviour change: a `tests/common/mod.rs` per test crate replaces the fixture vocabulary's thirteen copies, every crate-internal dependency moves into an import list so `layering.md`'s rule-1 check reads a complete one (with a counter-check added), and four duplicated rules are extracted | [`../status/history/2026-08-28.md`](../status/history/2026-08-28.md) |
 
 **One of them left a live obligation.** The synthetic `INSERT`-run measurement
 fit one session and changed no decision, which is what admitted it as
-out-of-band; the number it produced — an `INSERT`-run scan costs **16.2×** a
+out-of-band; the number it produced — an `INSERT`-run scan costs **14.6×** a
 `COPY` scan per byte, CPU-bound — argues for a scanner-level `INSERT` path,
 which *does* change a decision. That goes through grilling → spec amendment →
 a numbered slice, and is filed in the scan-performance phase's inbox
