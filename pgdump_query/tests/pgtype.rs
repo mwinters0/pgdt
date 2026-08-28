@@ -6,38 +6,15 @@
 //! path end to end, the same evidence `tests/preamble.rs` pins the DDL
 //! grammar against.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use arrow::datatypes::{DataType, Field, Fields};
 use pgdump_query::resolve::{ColumnResolution, SchemaMode, resolve_columns};
 use pgdump_query::{DumpMetadata, LocalFileSource, NestedPlan, ScanOptions, build_index};
 
-fn types_fixture(version: u32, flag_set: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures")
-        .join(version.to_string())
-        .join("types")
-        .join(format!("{flag_set}.sql"))
-}
-
-/// Two copies of `edge_cases/create.sql`, concatenated into one real
-/// `\connect`-delimited multi-database dump — see `tests/preamble.rs`'s
-/// `multidb_fixture` for the full rationale (duplicated here since each
-/// `tests/*.rs` file is its own crate with no shared support module).
-fn multidb_fixture(version: u32) -> (tempfile::TempDir, PathBuf) {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures")
-        .join(version.to_string())
-        .join("edge_cases")
-        .join("create.sql");
-    let content = std::fs::read_to_string(path).unwrap();
-    let renamed = content.replace("pgdq_fixture", "pgdq_fixture_2");
-    let dir = tempfile::tempdir().unwrap();
-    let combined = dir.path().join("multidb.sql");
-    std::fs::write(&combined, format!("{content}{renamed}")).unwrap();
-    (dir, combined)
-}
+mod common;
+use common::{all_fixtures, multidb_fixture, types_fixture};
 
 async fn metadata(path: &Path) -> DumpMetadata {
     let source = LocalFileSource::open(path).unwrap();
@@ -415,34 +392,6 @@ async fn resolution_still_works_against_metadata_with_more_than_one_database() {
             );
         }
     }
-}
-
-/// Every real `pg_dump` output file the fixture generator produced — a
-/// private copy of `tests/map.rs`'s helper, since each `tests/*.rs` file is
-/// its own crate with no shared support module.
-fn all_fixtures() -> Vec<PathBuf> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures");
-    let mut out = Vec::new();
-    for version in std::fs::read_dir(&root).unwrap() {
-        let version = version.unwrap().path();
-        if !version.is_dir() {
-            continue;
-        }
-        for schema in std::fs::read_dir(&version).unwrap() {
-            let schema = schema.unwrap().path();
-            if !schema.is_dir() {
-                continue;
-            }
-            for entry in std::fs::read_dir(&schema).unwrap() {
-                let path = entry.unwrap().path();
-                if path.extension().is_some_and(|e| e == "sql") {
-                    out.push(path);
-                }
-            }
-        }
-    }
-    assert!(!out.is_empty(), "fixture discovery found nothing — did the tree move?");
-    out
 }
 
 /// One resolution outcome's name.

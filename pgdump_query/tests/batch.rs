@@ -5,53 +5,14 @@
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 
-use arrow::array::RecordBatch;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
     BatchOptions, LocalFileSource, NestedPlan, Predicate, PredicateOp, ScanOptions, read_table,
     render_field,
 };
 
-fn edge_cases() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/edge_cases.sql")
-}
-
-fn fixture(version: u32, name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures")
-        .join(version.to_string())
-        .join("edge_cases")
-        .join(format!("{name}.sql"))
-}
-
-fn types_fixture(version: u32, flag_set: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures")
-        .join(version.to_string())
-        .join("types")
-        .join(format!("{flag_set}.sql"))
-}
-
-/// Every column rendered back to text via [`render_field`] — works
-/// regardless of `SchemaMode`: a hand-written fixture with no DDL (like
-/// `edge_cases()`) resolves every column `Utf8View` either way, so this reads
-/// identically to a hardcoded `StringViewArray` downcast there, and also
-/// handles a real `pg_dump` fixture's typed columns
-/// (`docs/design/architecture.md`, "CLI surface": render-back is
-/// exactly this build's own decode/render round trip).
-fn rows_of(batch: &RecordBatch) -> Vec<Vec<Option<String>>> {
-    (0..batch.num_rows())
-        // Every fixture this file queries is scalar-typed, so the plan is
-        // `Scalar` for every column (`crate::pgtype::NestedPlan`'s default).
-        .map(|row| {
-            batch
-                .columns()
-                .iter()
-                .map(|c| render_field(c.as_ref(), row, &NestedPlan::Scalar))
-                .collect()
-        })
-        .collect()
-}
+mod common;
+use common::{edge_cases, edge_cases_fixture, rows_of, types_fixture, widgets_expected};
 
 /// Collect every batch `read_table` produces for `table`, as decoded rows,
 /// along with each batch's row count (so batch-size-limit tests can see the
@@ -98,45 +59,6 @@ async fn collect_with_predicate(
     )
     .await?;
     Ok(rows)
-}
-
-fn widgets_expected() -> Vec<Vec<Option<String>>> {
-    vec![
-        vec![
-            Some("1".into()),
-            Some("alpha".into()),
-            Some("a simple widget".into()),
-            Some("2024-01-01 00:00:00+00".into()),
-        ],
-        vec![Some("2".into()), Some("beta".into()), None, Some("2024-01-02 00:00:00+00".into())],
-        vec![
-            Some("3".into()),
-            Some("gamma".into()),
-            Some("multi\nline\twith a backslash \\ inside".into()),
-            None,
-        ],
-        vec![
-            Some("4".into()),
-            Some("delta".into()),
-            Some(
-                "contains a COPY-like phrase: COPY public.widgets (id) FROM stdin; -- not a directive"
-                    .into(),
-            ),
-            Some("2024-01-04 00:00:00+00".into()),
-        ],
-        vec![
-            Some("5".into()),
-            Some("".into()),
-            Some("empty name to the left".into()),
-            Some("2024-01-05 00:00:00+00".into()),
-        ],
-        vec![
-            Some("6".into()),
-            Some("epsilon".into()),
-            Some("carriage\rreturn, octal A, hex B".into()),
-            Some("2024-01-06 00:00:00+00".into()),
-        ],
-    ]
 }
 
 #[tokio::test]
@@ -486,7 +408,7 @@ async fn escapes_table_round_trips_through_postgres_batched() {
             let options =
                 BatchOptions { max_rows: 17, max_bytes: None, schema_mode, ..Default::default() };
             let (_, rows) = collect(
-                &fixture(version, "default"),
+                &edge_cases_fixture(version, "default"),
                 "public.escapes",
                 &ScanOptions::default(),
                 &options,

@@ -15,44 +15,17 @@
 //! the scan finished.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
 
 use pgdump_query::{
     DumpIndex, DumpMetadata, LocalFileSource, ScanOptions, Span, SpanBody, build_index, cache,
 };
 
-fn pgdq() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_pgdq"))
-}
-
-fn run(args: &[&str]) -> Output {
-    pgdq().args(args).output().expect("the pgdq binary runs")
-}
-
-fn stdout_of(output: &Output) -> String {
-    String::from_utf8(output.stdout.clone()).expect("pgdq writes UTF-8")
-}
-
-fn stderr_of(output: &Output) -> String {
-    String::from_utf8(output.stderr.clone()).expect("pgdq writes UTF-8")
-}
-
-fn fixture(relative: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures").join(relative)
-}
-
-/// A private copy of a fixture in a fresh tempdir, so a colocated `.dqcache`
-/// can be written beside it.
-fn sandboxed(relative: &str) -> (tempfile::TempDir, PathBuf) {
-    let dir = tempfile::tempdir().unwrap();
-    let dump = dir.path().join("dump.sql");
-    std::fs::copy(fixture(relative), &dump).unwrap();
-    (dir, dump)
-}
+mod common;
+use common::{fixture, pgdq, run, stderr_of, stdout_of};
 
 /// Two copies of `edge_cases/create.sql` concatenated, the second's database
-/// renamed — a real `\connect`-delimited multi-database dump, same
-/// construction as `pgdump_query/tests/pgtype.rs`'s `multidb_fixture`.
+/// renamed — a real `\connect`-delimited multi-database dump, the same
+/// construction `pgdump_query/tests/common/mod.rs`'s `multidb_fixture` uses.
 fn sandboxed_multidb() -> (tempfile::TempDir, PathBuf) {
     let content = std::fs::read_to_string(fixture("16/edge_cases/create.sql")).unwrap();
     let dir = tempfile::tempdir().unwrap();
@@ -132,7 +105,7 @@ async fn block_frontier(dump: &Path, n: usize) -> u64 {
 /// asserted rather than one standing in for the other.
 #[tokio::test]
 async fn info_with_no_cache_names_parse_and_exits_non_zero() {
-    let (_dir, dump) = sandboxed("16/types/default.sql");
+    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
     let out = run(&["info", "--source", dump.to_str().unwrap()]);
 
     assert!(!out.status.success(), "info must not succeed without a cache");
@@ -144,7 +117,7 @@ async fn info_with_no_cache_names_parse_and_exits_non_zero() {
 
 #[tokio::test]
 async fn info_against_a_changed_file_says_the_file_changed() {
-    let (_dir, dump) = sandboxed("16/types/default.sql");
+    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
     assert!(run(&["parse", "--source", dump.to_str().unwrap()]).status.success());
 
     // Same file, one byte longer: every offset in the cache could now be
@@ -166,7 +139,7 @@ async fn info_against_a_changed_file_says_the_file_changed() {
 /// advice.
 #[tokio::test]
 async fn info_distinguishes_foreign_bytes_from_another_builds_cache() {
-    let (_dir, dump) = sandboxed("16/types/default.sql");
+    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
     let cache_path = cache::colocated_path(&dump);
     std::fs::write(&cache_path, b"not a cache at all").unwrap();
 
@@ -191,7 +164,7 @@ async fn info_distinguishes_foreign_bytes_from_another_builds_cache() {
 /// the dump, which `parse --dqcache <path>` answers.
 #[tokio::test]
 async fn info_rejects_a_disabled_cache_and_names_the_remedy() {
-    let (_dir, dump) = sandboxed("16/types/default.sql");
+    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
     let out = run(&["info", "--source", dump.to_str().unwrap(), "--dqcache", "none"]);
     assert!(!out.status.success());
     let stderr = stderr_of(&out);
@@ -204,7 +177,7 @@ async fn info_rejects_a_disabled_cache_and_names_the_remedy() {
 /// touch it. Proven by the bytes on disk, not by the absence of a delay.
 #[tokio::test]
 async fn info_leaves_a_partial_cache_exactly_as_it_found_it() {
-    let (_dir, dump) = sandboxed("16/types/default.sql");
+    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
     let frontier = block_frontier(&dump, 2).await;
     let (cache_path, _) = write_truncated_cache(&dump, frontier, 1).await;
     let before = std::fs::read(&cache_path).unwrap();
@@ -226,7 +199,7 @@ async fn info_leaves_a_partial_cache_exactly_as_it_found_it() {
 /// suggest a variation that does not exist.
 #[tokio::test]
 async fn a_partial_cache_lists_exactly_the_blocks_it_holds() {
-    let (_dir, dump) = sandboxed("16/types/default.sql");
+    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
     let frontier = block_frontier(&dump, 2).await;
     let (_cache_path, truncated) = write_truncated_cache(&dump, frontier, 1).await;
     let expected: Vec<String> = truncated.blocks().map(|b| b.header.qualified_name()).collect();
@@ -259,7 +232,7 @@ async fn a_partial_cache_lists_exactly_the_blocks_it_holds() {
 /// partial answer raises.
 #[tokio::test]
 async fn a_complete_cache_reports_full_coverage() {
-    let (_dir, dump) = sandboxed("16/types/default.sql");
+    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
     assert!(run(&["parse", "--source", dump.to_str().unwrap()]).status.success());
     let size = std::fs::metadata(&dump).unwrap().len();
 
@@ -273,7 +246,7 @@ async fn a_complete_cache_reports_full_coverage() {
 /// an answer, and refusing it outright is what this phase removed.
 #[tokio::test]
 async fn cache_only_mode_reports_a_partial_cache() {
-    let (_dir, dump) = sandboxed("16/types/default.sql");
+    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
     let frontier = block_frontier(&dump, 2).await;
     let (cache_path, _) = write_truncated_cache(&dump, frontier, 1).await;
 
@@ -296,7 +269,7 @@ async fn cache_only_mode_reports_a_partial_cache() {
 /// so the one line about the invocation goes above it.
 #[tokio::test]
 async fn parse_resumes_from_a_partial_cache_and_says_so() {
-    let (_dir, dump) = sandboxed("16/types/default.sql");
+    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
     let frontier = block_frontier(&dump, 2).await;
     write_truncated_cache(&dump, frontier, 1).await;
 
@@ -319,7 +292,7 @@ async fn parse_resumes_from_a_partial_cache_and_says_so() {
 /// A first `parse` has nothing to resume from and says nothing about it.
 #[tokio::test]
 async fn a_cold_parse_prints_no_resume_line() {
-    let (_dir, dump) = sandboxed("16/types/default.sql");
+    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
     let out = run(&["parse", "--source", dump.to_str().unwrap()]);
     assert!(out.status.success(), "{}", stderr_of(&out));
     let text = stdout_of(&out);
@@ -332,7 +305,7 @@ async fn a_cold_parse_prints_no_resume_line() {
 /// `info` then reads like any other.
 #[tokio::test]
 async fn preamble_only_moved_to_parse_and_leaves_a_cache_info_reads() {
-    let (_dir, dump) = sandboxed("16/types/default.sql");
+    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
     assert!(pgdq().args(["info", "--preamble-only"]).output().unwrap().status.code() != Some(0));
 
     let out = run(&["parse", "--source", dump.to_str().unwrap(), "--preamble-only"]);
@@ -380,7 +353,7 @@ fn verbose_column_lines(text: &str) -> Vec<Vec<String>> {
 /// token, whose words are the sentence's own opening.
 #[tokio::test]
 async fn the_json_export_and_the_verbose_listing_agree_column_for_column() {
-    let (_dir, dump) = sandboxed("16/types/default.sql");
+    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
     assert!(run(&["parse", "--source", dump.to_str().unwrap()]).status.success());
 
     let verbose = stdout_of(&run(&["info", "--source", dump.to_str().unwrap(), "--verbose"]));
@@ -435,7 +408,7 @@ async fn the_json_export_and_the_verbose_listing_agree_column_for_column() {
 /// wants instead of parsing that line back apart.
 #[tokio::test]
 async fn the_json_export_carries_coverage_as_components() {
-    let (_dir, dump) = sandboxed("16/types/default.sql");
+    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
     let frontier = block_frontier(&dump, 2).await;
     write_truncated_cache(&dump, frontier, 1).await;
     let size = std::fs::metadata(&dump).unwrap().len();

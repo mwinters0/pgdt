@@ -31,8 +31,8 @@ schedule.
 | Device-bound scan performance campaign, sparse row index | not started — P7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — P8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-28 — the keystone sweep, then the measurement sweep that
-followed it. Every completed phase's spec and notes are struck and the
+Last updated: 2026-08-28 — the keystone sweep, the measurement sweep that
+followed it, then `M21`'s hygiene pass. Every completed phase's spec and notes are struck and the
 out-of-band ledger with them; `architecture.md` is the
 single authority on how the built system works. **Choosing the next phase is a
 re-grilling the maintainer has claimed**, so this is a phase boundary: an
@@ -40,10 +40,16 @@ unattended loop stops here.
 
 **Every figure in
 [`../design/measurements.md`](../design/measurements.md) comes from one sweep**,
-taken against `ff9c8f3` on 2026-08-28 in 43 minutes and folded in whole:
-`uv run measure.py --stale` reports no figure's declared paths touched, and
-`--check` reconciles twelve markers against twelve figures. What moved, and
-what it changed elsewhere: [`history/2026-08-28.md`](history/2026-08-28.md).
+taken against `ff9c8f3` on 2026-08-28 in 43 minutes and folded in whole;
+`--check` reconciles twelve markers against twelve figures.
+
+**A re-sweep is outstanding.** `M21` touched paths that ten of the twelve
+figures declare, so `uv run measure.py --stale` reports them stale. Nothing in
+that item is expected to have moved a number — it was imports, one extracted
+`Builder` method, and a DDL-path helper — but staleness here is computed rather
+than argued, and the doc's tables must come from one sweep. The re-take is
+`uv run measure.py --all` (~1 h, detached per `CLAUDE.md`) against the commit
+that landed `M21`, folded in whole.
 
 ## Not started
 
@@ -51,8 +57,8 @@ what it changed elsewhere: [`history/2026-08-28.md`](history/2026-08-28.md).
   as provisional pending real user trials; the resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 
-- **No out-of-band work is queued.** `M1`–`M19` are spent; the next item takes
-  `M20` ([`../design/roadmap.md`](../design/roadmap.md), "Out-of-band work").
+- **No out-of-band work is queued.** `M1`–`M21` are spent; the next item takes
+  `M22` ([`../design/roadmap.md`](../design/roadmap.md), "Out-of-band work").
 
 - **No phase is specified.** Four are sketched and none grilled — P5, P6, P7,
   P8 — and numeric order is not plan order, since P9 was taken ahead of P5.

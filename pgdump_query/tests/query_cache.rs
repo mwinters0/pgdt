@@ -13,49 +13,17 @@ use bytes::Bytes;
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
-    BatchOptions, ByteRangeSource, LocalFileSource, NestedPlan, ScanExtent, ScanOptions,
-    build_index, cache, check_tiling, render_field, table_stream,
+    BatchOptions, ByteRangeSource, LocalFileSource, ScanExtent, ScanOptions, build_index, cache,
+    check_tiling, table_stream,
 };
 
-fn edge_cases() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/edge_cases.sql")
-}
-
-/// A private copy of `edge_cases.sql` in a fresh tempdir, so every test can
-/// freely read/write a colocated `.dqcache` next to it without touching the
-/// checked-in fixture.
-fn sandboxed_edge_cases() -> (tempfile::TempDir, PathBuf) {
-    let dir = tempfile::tempdir().unwrap();
-    let dump = dir.path().join("edge_cases.sql");
-    std::fs::copy(edge_cases(), &dump).unwrap();
-    (dir, dump)
-}
-
-fn objects_fixture() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/16/objects/default.sql")
-}
+mod common;
+use common::{objects_fixture, rows_of, sandboxed, sandboxed_edge_cases};
 
 /// A private copy of `fixtures/16/objects/default.sql`, the same convention
 /// as [`sandboxed_edge_cases`].
 fn sandboxed_objects_fixture() -> (tempfile::TempDir, PathBuf) {
-    let dir = tempfile::tempdir().unwrap();
-    let dump = dir.path().join("objects.sql");
-    std::fs::copy(objects_fixture(), &dump).unwrap();
-    (dir, dump)
-}
-
-fn rows_of(batch: &arrow::array::RecordBatch) -> Vec<Vec<Option<String>>> {
-    (0..batch.num_rows())
-        // Every fixture this file queries is scalar-typed, so the plan is
-        // `Scalar` for every column (`crate::pgtype::NestedPlan`'s default).
-        .map(|row| {
-            batch
-                .columns()
-                .iter()
-                .map(|c| render_field(c.as_ref(), row, &NestedPlan::Scalar))
-                .collect()
-        })
-        .collect()
+    sandboxed(&objects_fixture(16, "default"), "objects.sql")
 }
 
 fn widgets_expected() -> Vec<Vec<Option<String>>> {

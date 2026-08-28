@@ -548,6 +548,7 @@ it was filed under.
 | # | Date | What changed | Why |
 |---|---|---|---|
 | `M20` | 2026-08-28 | "Decisions worth another look" gains four rules — file-then-delete on close, closed by the session that hears the answer, capped at five, and an admission rule — plus the `depends` rationale the last keystone swept away | [`../status/history/2026-08-28.md`](../status/history/2026-08-28.md) |
+| `M21` | 2026-08-28 | Hygiene, no behaviour change: a `tests/common/mod.rs` per test crate replaces the fixture vocabulary's thirteen copies, every crate-internal dependency moves into an import list so `layering.md`'s rule-1 check reads a complete one (with a counter-check added), and four duplicated rules are extracted | [`../status/history/2026-08-28.md`](../status/history/2026-08-28.md) |
 
 **One of them left a live obligation.** The synthetic `INSERT`-run measurement
 fit one session and changed no decision, which is what admitted it as

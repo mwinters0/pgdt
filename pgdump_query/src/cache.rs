@@ -34,7 +34,8 @@ use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
 
-use crate::index::DumpIndex;
+use crate::diagnostic::Diagnostic;
+use crate::index::{DumpIndex, tiling_diagnostics, toc_coverage_diagnostic};
 use crate::io::ByteRangeSource;
 use crate::{Error, Result};
 
@@ -232,8 +233,8 @@ fn status_from_file(file: CacheFile, mtime_changed: bool) -> CacheStatus {
     // rather than persisted (`crate::diagnostic`, "Not persisted") — and a
     // caller that reports from a cache without ever scanning (`pgdq info`)
     // would otherwise silently lose the TOC-coverage figure.
-    index.diagnostics = crate::index::tiling_diagnostics(&index.spans, total_size);
-    index.diagnostics.push(crate::index::toc_coverage_diagnostic(&index.spans));
+    index.diagnostics = tiling_diagnostics(&index.spans, total_size);
+    index.diagnostics.push(toc_coverage_diagnostic(&index.spans));
     if index.is_complete(total_size) {
         CacheStatus::Valid { index, mtime_changed, total_size }
     } else {
@@ -329,9 +330,7 @@ impl CacheMode {
                     // mismatch is between the cache and *this* run's
                     // observation, so it is recomputed on every load.
                     if mtime_changed {
-                        index
-                            .diagnostics
-                            .push(crate::diagnostic::Diagnostic::cache_mtime_changed());
+                        index.diagnostics.push(Diagnostic::cache_mtime_changed());
                     }
                     Ok(Some(index))
                 }
@@ -363,7 +362,7 @@ impl CacheMode {
                     | CacheStatus::UnsupportedVersion
                     | CacheStatus::SourceChanged { .. } => {}
                     CacheStatus::Valid { index, .. } | CacheStatus::Incomplete { index, .. } => {
-                        index.diagnostics.push(crate::diagnostic::Diagnostic::cache_offline());
+                        index.diagnostics.push(Diagnostic::cache_offline());
                     }
                 }
                 Ok(status)

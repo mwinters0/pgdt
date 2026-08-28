@@ -2,7 +2,7 @@
 //! generated fixture plus the hand-written edge-case dump, targeted
 //! targeted classification checks, and TOC-enrichment checks.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use pgdump_query::map::{SpanBody, TilingIssue};
 use pgdump_query::{
@@ -10,40 +10,8 @@ use pgdump_query::{
     dump_metadata_from_spans,
 };
 
-fn edge_cases() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/edge_cases.sql")
-}
-
-/// Every real `pg_dump` output file the fixture generator produced, across
-/// all six routine versions and all three schemas
-/// (`edge_cases`/`objects`/`types`) — including the degenerate shapes the
-/// design doc calls out by name: `data-only`, `schema-only`, `inserts`/
-/// `column-inserts` (no `COPY` blocks at all), and `dumpall` (concatenated,
-/// multi-`\connect`).
-fn all_fixtures() -> Vec<PathBuf> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures");
-    let mut out = Vec::new();
-    for version in std::fs::read_dir(&root).unwrap() {
-        let version = version.unwrap().path();
-        if !version.is_dir() {
-            continue;
-        }
-        for schema in std::fs::read_dir(&version).unwrap() {
-            let schema = schema.unwrap().path();
-            if !schema.is_dir() {
-                continue;
-            }
-            for entry in std::fs::read_dir(&schema).unwrap() {
-                let path = entry.unwrap().path();
-                if path.extension().is_some_and(|e| e == "sql") {
-                    out.push(path);
-                }
-            }
-        }
-    }
-    assert!(!out.is_empty(), "fixture discovery found nothing — did the tree move?");
-    out
-}
+mod common;
+use common::{all_fixtures, edge_cases, edge_cases_fixture, objects_fixture};
 
 async fn map_of(path: &Path) -> (Vec<pgdump_query::Span>, u64) {
     let source = LocalFileSource::open(path).unwrap();
@@ -126,8 +94,7 @@ async fn edge_cases_dump_tiles_exactly() {
 /// DDL/framing, and `check_tiling`'s no-`Data`-span path is exercised.
 #[tokio::test]
 async fn schema_only_dump_has_no_data_spans_but_still_tiles() {
-    let path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/edge_cases/schema-only.sql");
+    let path = edge_cases_fixture(18, "schema-only");
     let (spans, size) = map_of(&path).await;
     assert!(check_tiling(&spans, size).is_empty());
     assert!(!spans.iter().any(|s| matches!(s.body, SpanBody::Data(_))));
@@ -137,8 +104,7 @@ async fn schema_only_dump_has_no_data_spans_but_still_tiles() {
 /// still tiles.
 #[tokio::test]
 async fn data_only_dump_tiles_exactly() {
-    let path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/edge_cases/data-only.sql");
+    let path = edge_cases_fixture(18, "data-only");
     let (spans, size) = map_of(&path).await;
     assert!(check_tiling(&spans, size).is_empty());
     assert!(spans.iter().any(|s| matches!(s.body, SpanBody::Data(_))));
@@ -158,7 +124,7 @@ async fn data_only_dump_tiles_exactly() {
 async fn inserts_dump_with_an_embedded_newline_value_still_tiles() {
     use pgdump_query::DataBlock;
 
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/edge_cases/inserts.sql");
+    let path = edge_cases_fixture(18, "inserts");
     let (spans, size) = map_of(&path).await;
     assert!(check_tiling(&spans, size).is_empty());
 
@@ -203,7 +169,7 @@ async fn inserts_dump_with_an_embedded_newline_value_still_tiles() {
 async fn every_insert_run_owns_its_data_entry() {
     use pgdump_query::DataBlock;
 
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/edge_cases/inserts.sql");
+    let path = edge_cases_fixture(18, "inserts");
     let (spans, _size) = map_of(&path).await;
 
     let attributed: Vec<(&str, &str, &str)> = spans
@@ -235,8 +201,7 @@ async fn every_insert_run_owns_its_data_entry() {
 
 #[tokio::test]
 async fn column_inserts_dump_still_tiles() {
-    let path =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/edge_cases/column-inserts.sql");
+    let path = edge_cases_fixture(18, "column-inserts");
     let (spans, size) = map_of(&path).await;
     assert!(check_tiling(&spans, size).is_empty());
 }
@@ -246,7 +211,7 @@ async fn column_inserts_dump_still_tiles() {
 /// `\connect` are attributed to the new database.
 #[tokio::test]
 async fn concatenated_dumpall_tiles_and_attributes_databases_by_connect() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/edge_cases/dumpall.sql");
+    let path = edge_cases_fixture(18, "dumpall");
     let (spans, size) = map_of(&path).await;
     assert!(check_tiling(&spans, size).is_empty());
 
@@ -262,9 +227,7 @@ async fn concatenated_dumpall_tiles_and_attributes_databases_by_connect() {
 #[tokio::test]
 async fn objects_fixture_with_dollar_quoted_function_bodies_tiles_exactly() {
     for flavor in ["default", "verbose"] {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../fixtures/18/objects")
-            .join(format!("{flavor}.sql"));
+        let path = objects_fixture(18, flavor);
         let (spans, size) = map_of(&path).await;
         let issues = check_tiling(&spans, size);
         assert!(issues.is_empty(), "{flavor}: {issues:?}");
@@ -288,10 +251,7 @@ async fn the_large_object_region_is_one_data_span_on_every_routine_version() {
     use pgdump_query::DataBlock;
 
     for version in [13, 14, 15, 16, 17, 18] {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../fixtures")
-            .join(version.to_string())
-            .join("objects/default.sql");
+        let path = objects_fixture(version, "default");
         let (spans, size) = map_of(&path).await;
         assert!(check_tiling(&spans, size).is_empty(), "pg_dump {version}");
 
@@ -323,7 +283,7 @@ async fn the_large_object_region_is_one_data_span_on_every_routine_version() {
 /// statement.
 #[tokio::test]
 async fn create_table_span_carries_name_and_columns() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/edge_cases/default.sql");
+    let path = edge_cases_fixture(18, "default");
     let (spans, _) = map_of(&path).await;
     let widgets = spans
         .iter()
@@ -341,7 +301,7 @@ async fn create_table_span_carries_name_and_columns() {
 /// first carries the header text itself.
 #[tokio::test]
 async fn alter_owner_to_is_its_own_adjacent_unparsed_span() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/objects/default.sql");
+    let path = objects_fixture(18, "default");
     let (spans, _) = map_of(&path).await;
     let (i, _) = spans
         .iter()
@@ -361,7 +321,7 @@ async fn alter_owner_to_is_its_own_adjacent_unparsed_span() {
 /// framing, never as an object.
 #[tokio::test]
 async fn prologue_and_epilogue_classify_as_framing() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/edge_cases/default.sql");
+    let path = edge_cases_fixture(18, "default");
     let (spans, _) = map_of(&path).await;
     assert_eq!(spans[0].body, SpanBody::Framing);
     assert_eq!(spans.last().unwrap().body, SpanBody::Framing);
@@ -483,7 +443,7 @@ async fn empty_span_list_against_a_zero_length_scan_tiles_cleanly() {
 /// every function body in the file would be missing from it.
 #[tokio::test]
 async fn span_text_includes_dollar_quoted_bodies_events_never_surface() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/16/objects/default.sql");
+    let path = objects_fixture(16, "default");
     let source = LocalFileSource::open(&path).unwrap();
     let raw = std::fs::read_to_string(&path).unwrap();
     let spans = build_map(&source, &ScanOptions::default()).await.unwrap();
@@ -613,7 +573,7 @@ async fn a_header_less_dump_degrades_to_one_span_per_object() {
 /// (`docs/design/architecture.md`, "TOC enrichment").
 #[tokio::test]
 async fn a_real_toc_header_fills_owner_kind_and_schema() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/objects/default.sql");
+    let path = objects_fixture(18, "default");
     let (spans, _) = map_of(&path).await;
     let widgets = spans
         .iter()
@@ -632,7 +592,7 @@ async fn a_real_toc_header_fills_owner_kind_and_schema() {
 /// still parses; only the field is absent).
 #[tokio::test]
 async fn no_owner_fixture_parses_every_toc_header_with_no_owner() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/edge_cases/no-owner.sql");
+    let path = edge_cases_fixture(18, "no-owner");
     let (spans, _) = map_of(&path).await;
     let with_toc: Vec<_> = spans.iter().filter_map(|s| s.toc.as_ref()).collect();
     assert!(!with_toc.is_empty(), "no-owner.sql still carries TOC comments, just no owners");
@@ -648,7 +608,7 @@ async fn no_owner_fixture_parses_every_toc_header_with_no_owner() {
 /// rather than counting as uncovered.
 #[tokio::test]
 async fn build_index_reports_toc_coverage_for_a_real_dump() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/18/objects/default.sql");
+    let path = objects_fixture(18, "default");
     let source = LocalFileSource::open(&path).unwrap();
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
     let coverage = index
@@ -702,7 +662,7 @@ async fn build_index_reports_zero_toc_coverage_for_a_header_less_dump() {
 /// default_tablespace = '';` reset lines are never a reference either way.
 #[tokio::test]
 async fn build_index_records_referenced_roles_and_tablespaces() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/16/objects/default.sql");
+    let path = objects_fixture(16, "default");
     let source = LocalFileSource::open(&path).unwrap();
     let index = build_index(&source, &ScanOptions::default()).await.unwrap();
     assert!(index.roles.contains("postgres"));

@@ -34,6 +34,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::copy::Cursor;
+use crate::map::{Span, SpanBody};
 
 /// Everything the preamble pass recovered, per database. See "Multi-database
 /// dumps" in `docs/design/architecture.md`.
@@ -194,30 +195,42 @@ pub(crate) fn parse_qualified_name(s: &str) -> Option<(String, usize)> {
     Some((name, cur.pos()))
 }
 
+/// Skip over the single-quoted string literal starting at `open_idx`,
+/// returning the index just past its closing quote — or `bytes.len()` for an
+/// unterminated one, which lets a caller's scan terminate rather than loop.
+///
+/// **One implementation of the quoting rule**: both scanners below have to
+/// know that `''` is an escaped quote rather than the end of the string, and
+/// nothing would make a copy each of them agree.
+fn skip_quoted(bytes: &[u8], open_idx: usize) -> usize {
+    debug_assert_eq!(bytes.get(open_idx), Some(&b'\''));
+    let mut i = open_idx + 1;
+    while i < bytes.len() {
+        if bytes[i] == b'\'' {
+            if bytes.get(i + 1) == Some(&b'\'') {
+                i += 2;
+                continue;
+            }
+            return i + 1;
+        }
+        i += 1;
+    }
+    i
+}
+
 /// Find the index of `bytes[open_idx..]`'s matching `)`, respecting
-/// single-quoted strings (with `''` as an escaped quote) so a literal like
-/// `'has,comma'` or, hypothetically, `')'` inside a string never confuses
-/// the depth count.
+/// single-quoted strings so a literal like `'has,comma'` or, hypothetically,
+/// `')'` inside a string never confuses the depth count.
 fn matching_paren(bytes: &[u8], open_idx: usize) -> Option<usize> {
     debug_assert_eq!(bytes.get(open_idx), Some(&b'('));
     let mut depth: i32 = 0;
-    let mut in_string = false;
     let mut i = open_idx;
     while i < bytes.len() {
-        let b = bytes[i];
-        if in_string {
-            if b == b'\'' {
-                if bytes.get(i + 1) == Some(&b'\'') {
-                    i += 2;
-                    continue;
-                }
-                in_string = false;
+        match bytes[i] {
+            b'\'' => {
+                i = skip_quoted(bytes, i);
+                continue;
             }
-            i += 1;
-            continue;
-        }
-        match b {
-            b'\'' => in_string = true,
             b'(' => depth += 1,
             b')' => {
                 depth -= 1;
@@ -238,24 +251,14 @@ fn split_top_level_commas(s: &str) -> Vec<&str> {
     let bytes = s.as_bytes();
     let mut parts = Vec::new();
     let mut depth: i32 = 0;
-    let mut in_string = false;
     let mut start = 0usize;
     let mut i = 0usize;
     while i < bytes.len() {
-        let b = bytes[i];
-        if in_string {
-            if b == b'\'' {
-                if bytes.get(i + 1) == Some(&b'\'') {
-                    i += 2;
-                    continue;
-                }
-                in_string = false;
+        match bytes[i] {
+            b'\'' => {
+                i = skip_quoted(bytes, i);
+                continue;
             }
-            i += 1;
-            continue;
-        }
-        match b {
-            b'\'' => in_string = true,
             b'(' => depth += 1,
             b')' => depth -= 1,
             b',' if depth == 0 => {
@@ -773,9 +776,7 @@ fn finalize(mut db: DatabaseMetadata) -> DatabaseMetadata {
 /// span builder both only ever produce spans this way. A span list with an
 /// `Unscanned` tail cut off anywhere else (e.g. `crate::stream::table_stream`'s
 /// live segment) would make the trailing database's `preamble_complete` a lie.
-pub fn dump_metadata_from_spans(spans: &[crate::map::Span]) -> DumpMetadata {
-    use crate::map::SpanBody;
-
+pub fn dump_metadata_from_spans(spans: &[Span]) -> DumpMetadata {
     let mut seen_connect = false;
     let mut current = DatabaseMetadata::empty(None);
     let mut databases = Vec::new();

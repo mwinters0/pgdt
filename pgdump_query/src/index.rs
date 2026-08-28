@@ -11,8 +11,10 @@ use serde::{Deserialize, Serialize};
 use crate::Result;
 use crate::cache::CacheMode;
 use crate::copy::CopyHeader;
+use crate::diagnostic::Diagnostic;
 use crate::io::ByteRangeSource;
-use crate::map::{DataBlock, Span, SpanBody};
+use crate::map::{Builder, DataBlock, Span, SpanBody, attach_text, check_tiling};
+use crate::preamble::dump_metadata_from_spans;
 use crate::scan::{Event, ScanOptions, scan};
 
 /// A block's sparse row index: the byte offset of every `interval`-th data
@@ -250,7 +252,7 @@ pub struct DumpIndex {
     /// check *this* run performed successfully. Recomputed wherever an index
     /// is produced or loaded; see [`crate::diagnostic`].
     #[serde(skip)]
-    pub diagnostics: Vec<crate::diagnostic::Diagnostic>,
+    pub diagnostics: Vec<Diagnostic>,
 }
 
 impl DumpIndex {
@@ -305,7 +307,7 @@ pub async fn build_index<S: ByteRangeSource>(
     source: &S,
     options: &ScanOptions,
 ) -> Result<DumpIndex> {
-    let mut spans = crate::map::Builder::new();
+    let mut spans = Builder::new();
 
     scan(source, options, |event| {
         match event {
@@ -325,8 +327,8 @@ pub async fn build_index<S: ByteRangeSource>(
     let roles = spans.roles().clone();
     let tablespaces = spans.tablespaces().clone();
     let mut spans = spans.finish(size);
-    let metadata = Some(crate::preamble::dump_metadata_from_spans(&spans));
-    crate::map::attach_text(source, &mut spans).await?;
+    let metadata = Some(dump_metadata_from_spans(&spans));
+    attach_text(source, &mut spans).await?;
     let mut diagnostics = tiling_diagnostics(&spans, size);
     diagnostics.push(toc_coverage_diagnostic(&spans));
     Ok(DumpIndex { spans, scanned_through: size, metadata, roles, tablespaces, diagnostics })
@@ -341,16 +343,9 @@ pub async fn build_index<S: ByteRangeSource>(
 /// scan that just read the whole region, so it is free — and what it guards
 /// is a silently dropped region on a dump shape no fixture covers, which is
 /// exactly what a test cannot catch.
-pub(crate) fn tiling_diagnostics(
-    spans: &[Span],
-    expected_end: u64,
-) -> Vec<crate::diagnostic::Diagnostic> {
-    let issues = crate::map::check_tiling(spans, expected_end);
-    if issues.is_empty() {
-        Vec::new()
-    } else {
-        vec![crate::diagnostic::Diagnostic::tiling_broken(issues)]
-    }
+pub(crate) fn tiling_diagnostics(spans: &[Span], expected_end: u64) -> Vec<Diagnostic> {
+    let issues = check_tiling(spans, expected_end);
+    if issues.is_empty() { Vec::new() } else { vec![Diagnostic::tiling_broken(issues)] }
 }
 
 /// The TOC-coverage figure for a finished map: how many `spans` are
@@ -363,9 +358,9 @@ pub(crate) fn tiling_diagnostics(
 /// state (the map running in header-less degraded mode), not an error, so
 /// `attributed == 0` is a legitimate value here rather than something this
 /// function special-cases away.
-pub(crate) fn toc_coverage_diagnostic(spans: &[Span]) -> crate::diagnostic::Diagnostic {
+pub(crate) fn toc_coverage_diagnostic(spans: &[Span]) -> Diagnostic {
     let attributed = spans.iter().filter(|s| s.toc.is_some()).count();
-    crate::diagnostic::Diagnostic::toc_coverage(attributed, spans.len())
+    Diagnostic::toc_coverage(attributed, spans.len())
 }
 
 /// Scan only far enough to recover the first database's preamble — up to
@@ -398,7 +393,7 @@ pub(crate) async fn scan_preamble<S: ByteRangeSource>(
     source: &S,
     options: &ScanOptions,
 ) -> Result<(DumpMetadata, Vec<Span>, u64, BTreeSet<String>, BTreeSet<String>)> {
-    let mut spans = crate::map::Builder::new();
+    let mut spans = Builder::new();
     let mut end = source.size().await?;
     scan(source, options, |event| match event {
         Event::CopyStart(start) => {
@@ -446,7 +441,7 @@ pub(crate) async fn scan_preamble<S: ByteRangeSource>(
     let roles = spans.roles().clone();
     let tablespaces = spans.tablespaces().clone();
     let spans = spans.finish(end);
-    let metadata = crate::preamble::dump_metadata_from_spans(&spans);
+    let metadata = dump_metadata_from_spans(&spans);
     Ok((metadata, spans, end, roles, tablespaces))
 }
 
@@ -474,7 +469,7 @@ pub async fn preamble_only<S: ByteRangeSource>(
     source: &S,
     options: &ScanOptions,
     cache: &CacheMode,
-) -> Result<(DumpMetadata, Vec<crate::diagnostic::Diagnostic>)> {
+) -> Result<(DumpMetadata, Vec<Diagnostic>)> {
     let mut base_index = cache.load(source).await?.unwrap_or_default();
     let known = base_index
         .metadata
@@ -501,7 +496,7 @@ pub async fn preamble_only<S: ByteRangeSource>(
             });
         }
         base_index.spans.extend(spans);
-        crate::map::attach_text(source, &mut base_index.spans).await?;
+        attach_text(source, &mut base_index.spans).await?;
         cache.save(source, &base_index).await?;
     }
     Ok((base_index.metadata.unwrap_or_default(), base_index.diagnostics))

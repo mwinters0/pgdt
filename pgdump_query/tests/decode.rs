@@ -15,7 +15,7 @@
 //! real boundary rows rather than hand-built ones.
 
 use std::ops::ControlFlow;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use futures::StreamExt;
@@ -26,13 +26,8 @@ use pgdump_query::{
     table_stream,
 };
 
-fn types_fixture(version: u32, flag_set: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures")
-        .join(version.to_string())
-        .join("types")
-        .join(format!("{flag_set}.sql"))
-}
+mod common;
+use common::types_fixture;
 
 /// Every row of `table`, rendered back to PostgreSQL text.
 ///

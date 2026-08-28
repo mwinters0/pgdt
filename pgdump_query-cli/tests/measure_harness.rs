@@ -14,27 +14,18 @@
 //! input, because everything that needs those fails loudly on the first real
 //! run anyway.
 //!
-//! **Failed, not skipped, when `uv` is absent**, for the reason
-//! `perf_generator_fidelity.rs` gives at length: `mise.toml` pins `uv`, a skip
-//! is invisible in a green suite, and an invisible skip is how the thing being
-//! guarded rots.
+//! **Failed, not skipped, when `uv` is absent** — see `common::require_uv`
+//! for why: `mise.toml` pins `uv`, a skip is invisible in a green suite, and
+//! an invisible skip is how the thing being guarded rots.
 
-use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn scripts_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts")
-}
+mod common;
+use common::{require_uv, scripts_dir};
 
 #[test]
 fn the_measurement_harness_passes_its_own_tests() {
-    let uv_runnable =
-        Command::new("uv").arg("--version").output().is_ok_and(|o| o.status.success());
-    assert!(
-        uv_runnable,
-        "`uv` is not runnable, so the measurement harness's only guard cannot run. \
-         `mise.toml` pins it: run `mise install`."
-    );
+    require_uv("the measurement harness's only guard");
 
     let out = Command::new("uv")
         .args(["run", "python", "-m", "unittest", "test_measure"])

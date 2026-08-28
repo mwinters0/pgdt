@@ -70,12 +70,16 @@ use crate::batch::{
 };
 use crate::cache::CacheMode;
 use crate::copy::{CopyHeader, DELIMITER};
-use crate::index::{ArrayShape, CopyBlock, DumpIndex, scan_preamble, union_census};
+use crate::diagnostic::{Diagnostic, DiagnosticKind};
+use crate::index::{
+    ArrayShape, CopyBlock, DumpIndex, scan_preamble, tiling_diagnostics, toc_coverage_diagnostic,
+    union_census,
+};
 use crate::io::ByteRangeSource;
-use crate::map::{Span, SpanBody};
-use crate::preamble::DumpMetadata;
+use crate::map::{Builder, Span, SpanBody, attach_text};
+use crate::preamble::{DumpMetadata, dump_metadata_from_spans};
 use crate::predicate::Predicate;
-use crate::resolve::{ResolvedSchema, resolve_columns};
+use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
 use crate::scan::{CopyScanner, Event, ScanOptions};
 use crate::{Error, Result};
 
@@ -244,7 +248,7 @@ enum MapStop {
 ///
 /// **`index.metadata` is restated at each `\connect`ed database's first
 /// `COPY` block**, which per I1 is one of the two boundaries
-/// [`crate::preamble::dump_metadata_from_spans`] may be called at — and the
+/// [`dump_metadata_from_spans`] may be called at — and the
 /// only one this loop ever stands on, since a `CopyEnd` watermark is not one.
 /// It fires when the block's governing database differs from the one the
 /// metadata in hand was computed at, so a single-database dump (koji included)
@@ -273,7 +277,7 @@ async fn map_forward<S: ByteRangeSource>(
     let database = prefix.last().and_then(|s| s.database.clone()).or_else(|| {
         index.metadata.as_ref().and_then(|m| m.databases.first()).and_then(|db| db.name.clone())
     });
-    let mut builder = crate::map::Builder::with_database(database);
+    let mut builder = Builder::with_database(database);
 
     // The database whose first `COPY` block the metadata in hand was computed
     // at — the outer `None` meaning "no metadata at all", the inner one a
@@ -335,7 +339,7 @@ async fn map_forward<S: ByteRangeSource>(
                     if metadata_covers.as_ref() != Some(&db) {
                         let spans =
                             splice(&prefix, builder.snapshot(boundary), seg_start, boundary, size);
-                        index.metadata = Some(crate::preamble::dump_metadata_from_spans(&spans));
+                        index.metadata = Some(dump_metadata_from_spans(&spans));
                         metadata_covers = Some(db);
                     }
                 }
@@ -405,9 +409,9 @@ async fn map_forward<S: ByteRangeSource>(
     index.tablespaces.extend(builder.tablespaces().iter().cloned());
     index.spans = splice(&prefix, builder.finish(size), seg_start, size, size);
     index.scanned_through = size;
-    crate::map::attach_text(source, &mut index.spans).await?;
-    index.diagnostics = crate::index::tiling_diagnostics(&index.spans, size);
-    index.diagnostics.push(crate::index::toc_coverage_diagnostic(&index.spans));
+    attach_text(source, &mut index.spans).await?;
+    index.diagnostics = tiling_diagnostics(&index.spans, size);
+    index.diagnostics.push(toc_coverage_diagnostic(&index.spans));
     cache.save(source, index).await?;
     Ok(MapStop::Reached)
 }
@@ -528,7 +532,7 @@ pub struct MapRun {
 /// - `metadata` is recomputed over the whole span list. `map_forward` states
 ///   it at each database's first `COPY` block (I1's recurring boundary), which
 ///   already covers every database whose data the scan reached; EOF is the
-///   other boundary [`crate::preamble::dump_metadata_from_spans`] may be
+///   other boundary [`dump_metadata_from_spans`] may be
 ///   called at, and it is what covers a trailing database with no `COPY` block
 ///   of its own — and a file with no blocks at all, where the recurring
 ///   boundary is never reached.
@@ -559,10 +563,10 @@ pub async fn map_file<S: ByteRangeSource>(
     // The one diagnostic about the cache *file* rather than about the map:
     // everything else the load computed is recomputed below over the finished
     // spans, and `map_forward` assigns `diagnostics` wholesale at EOF anyway.
-    let carried: Vec<crate::diagnostic::Diagnostic> = index
+    let carried: Vec<Diagnostic> = index
         .diagnostics
         .drain(..)
-        .filter(|d| d.kind == crate::diagnostic::DiagnosticKind::CacheMtimeChanged)
+        .filter(|d| d.kind == DiagnosticKind::CacheMtimeChanged)
         .collect();
     let resumed_from = index.scanned_through.min(size);
 
@@ -583,7 +587,7 @@ pub async fn map_file<S: ByteRangeSource>(
         index.roles.extend(roles);
         index.tablespaces.extend(tablespaces);
         index.scanned_through = preamble_end;
-        crate::map::attach_text(source, &mut index.spans).await?;
+        attach_text(source, &mut index.spans).await?;
         cache.save(source, &index).await?;
     }
 
@@ -593,10 +597,10 @@ pub async fn map_file<S: ByteRangeSource>(
         return Ok(MapRun { index, resumed_from, interrupted: true });
     }
 
-    index.metadata = Some(crate::preamble::dump_metadata_from_spans(&index.spans));
+    index.metadata = Some(dump_metadata_from_spans(&index.spans));
     let mut diagnostics = carried;
-    diagnostics.extend(crate::index::tiling_diagnostics(&index.spans, size));
-    diagnostics.push(crate::index::toc_coverage_diagnostic(&index.spans));
+    diagnostics.extend(tiling_diagnostics(&index.spans, size));
+    diagnostics.push(toc_coverage_diagnostic(&index.spans));
     index.diagnostics = diagnostics;
     cache.save(source, &index).await?;
     Ok(MapRun { index, resumed_from, interrupted: false })
@@ -705,10 +709,10 @@ fn resolve_block(
     field_count: usize,
     metadata: Option<&DumpMetadata>,
     database: Option<&str>,
-    schema_mode: crate::resolve::SchemaMode,
+    schema_mode: SchemaMode,
     census: &[ArrayShape],
 ) -> Result<ResolvedSchema> {
-    if schema_mode == crate::resolve::SchemaMode::Typed
+    if schema_mode == SchemaMode::Typed
         && let Some(meta) = metadata
         && !meta.databases.iter().any(|db| db.name.as_deref() == database && db.preamble_complete)
     {
@@ -851,7 +855,7 @@ where
             index.roles.extend(roles);
             index.tablespaces.extend(tablespaces);
             index.scanned_through = index.scanned_through.max(preamble_end);
-            crate::map::attach_text(source, &mut index.spans).await?;
+            attach_text(source, &mut index.spans).await?;
             cache.save(source, &index).await?;
         }
         // Pass 1: extend the map until this query's table is settled. No
@@ -1204,7 +1208,6 @@ mod tests {
     #[test]
     fn resolving_a_block_against_a_database_the_metadata_lacks_refuses() {
         use crate::preamble::DatabaseMetadata;
-        use crate::resolve::SchemaMode;
 
         let header = crate::copy::parse_copy_header(b"COPY public.t (id) FROM stdin;")
             .expect("a well-formed header");

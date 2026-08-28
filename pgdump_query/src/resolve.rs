@@ -16,7 +16,7 @@ use arrow::datatypes::{Field, Schema, SchemaRef};
 use crate::diagnostic::Severity;
 use crate::index::{ArrayShape, MAX_ARRAY_DIMS};
 use crate::pgtype::{NestedPlan, TypeOutcome, resolve_declared_type};
-use crate::preamble::DumpMetadata;
+use crate::preamble::{DatabaseMetadata, DumpMetadata};
 
 /// Whether a query resolves column types at all. See "Output model" in the
 /// phase doc.
@@ -192,7 +192,7 @@ impl ResolvedSchema {
 fn database_for_name<'a>(
     metadata: &'a DumpMetadata,
     database: Option<&str>,
-) -> Option<&'a crate::preamble::DatabaseMetadata> {
+) -> Option<&'a DatabaseMetadata> {
     metadata.databases.iter().find(|db| db.name.as_deref() == database)
 }
 

@@ -25,13 +25,8 @@ use pgdump_query::{
 /// test may freely write the colocated `.dqcache` beside it — same fixture and
 /// same convention as `tests/query_cache.rs`, which is what makes the "a query
 /// stops at its target" setup below behave identically here.
-fn sandboxed() -> (tempfile::TempDir, PathBuf) {
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/edge_cases.sql");
-    let dir = tempfile::tempdir().unwrap();
-    let dump = dir.path().join("edge_cases.sql");
-    std::fs::copy(&fixture, &dump).unwrap();
-    (dir, dump)
-}
+mod common;
+use common::sandboxed_edge_cases as sandboxed;
 
 /// Assert that a resumed/finished index is what a single eager pass produces.
 /// Field by field before the whole-struct comparison, so a failure names which

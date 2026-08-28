@@ -8,17 +8,8 @@ use std::path::{Path, PathBuf};
 use pgdump_query::copy::{decode_field, encode_field, split_fields};
 use pgdump_query::{Event, LocalFileSource, ScanOptions, build_index, scan};
 
-fn edge_cases() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/edge_cases.sql")
-}
-
-fn fixture(version: u32, name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures")
-        .join(version.to_string())
-        .join("edge_cases")
-        .join(format!("{name}.sql"))
-}
+mod common;
+use common::{edge_cases, edge_cases_fixture};
 
 /// Render the whole event stream, decoded, as stable text.
 async fn render(path: &Path, chunk_size: usize) -> String {
@@ -97,7 +88,7 @@ async fn event_stream_is_independent_of_chunk_size() {
 #[tokio::test]
 async fn generated_fixtures_have_the_expected_structure() {
     for version in [13, 16, 18] {
-        let source = LocalFileSource::open(fixture(version, "default")).unwrap();
+        let source = LocalFileSource::open(edge_cases_fixture(version, "default")).unwrap();
         let index = build_index(&source, &ScanOptions::default()).await.unwrap();
 
         let summary: Vec<(String, String, u64)> = index
@@ -121,7 +112,7 @@ async fn generated_fixtures_have_the_expected_structure() {
         assert_eq!(index.total_rows(), 144);
         assert_eq!(
             index.scanned_through,
-            std::fs::metadata(fixture(version, "default")).unwrap().len()
+            std::fs::metadata(edge_cases_fixture(version, "default")).unwrap().len()
         );
     }
 }
@@ -130,7 +121,7 @@ async fn generated_fixtures_have_the_expected_structure() {
 #[tokio::test]
 async fn recorded_offsets_address_the_right_bytes() {
     for version in [13, 16, 18] {
-        let path = fixture(version, "default");
+        let path = edge_cases_fixture(version, "default");
         let bytes = std::fs::read(&path).unwrap();
         let source = LocalFileSource::open(&path).unwrap();
         let index = build_index(&source, &ScanOptions::default()).await.unwrap();
@@ -156,7 +147,7 @@ async fn recorded_offsets_address_the_right_bytes() {
 async fn dumps_without_copy_blocks_yield_no_blocks() {
     for version in [13, 16, 18] {
         for variant in ["schema-only", "inserts", "column-inserts"] {
-            let source = LocalFileSource::open(fixture(version, variant)).unwrap();
+            let source = LocalFileSource::open(edge_cases_fixture(version, variant)).unwrap();
             let index = build_index(&source, &ScanOptions::default()).await.unwrap();
             assert!(index.blocks().next().is_none(), "pg_dump {version} {variant}");
         }
@@ -166,7 +157,7 @@ async fn dumps_without_copy_blocks_yield_no_blocks() {
 #[tokio::test]
 async fn data_only_dumps_carry_every_block() {
     for version in [13, 16, 18] {
-        let source = LocalFileSource::open(fixture(version, "data-only")).unwrap();
+        let source = LocalFileSource::open(edge_cases_fixture(version, "data-only")).unwrap();
         let index = build_index(&source, &ScanOptions::default()).await.unwrap();
         assert_eq!(index.blocks().count(), 6, "pg_dump {version} data-only");
         assert_eq!(index.total_rows(), 144);
@@ -187,7 +178,7 @@ async fn data_only_dumps_carry_every_block() {
 #[tokio::test]
 async fn copy_text_escaping_round_trips_through_postgres() {
     for version in [13, 16, 18] {
-        let source = LocalFileSource::open(fixture(version, "default")).unwrap();
+        let source = LocalFileSource::open(edge_cases_fixture(version, "default")).unwrap();
         let mut in_escapes = false;
         let mut checked = 0usize;
 

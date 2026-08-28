@@ -23,21 +23,11 @@
 //! the generator's only drift guard with it, which is how three infidelities
 //! survived in the first place.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
-fn scripts_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts")
-}
-
-fn require_uv() {
-    let ok = Command::new("uv").arg("--version").output().is_ok_and(|o| o.status.success());
-    assert!(
-        ok,
-        "`uv` is not runnable, so the generator's only drift guard cannot run. \
-         `mise.toml` pins it: run `mise install`."
-    );
-}
+mod common;
+use common::{require_uv, run_ok as pgdq, scripts_dir};
 
 /// A ~2 MiB dump — a few hundred rows, which is enough for every value shape
 /// the generator draws from to appear many times over, and small enough that
@@ -50,12 +40,6 @@ fn generate(out: &Path, extra: &[&str]) {
         .arg(out);
     let status = cmd.status().expect("uv runs");
     assert!(status.success(), "generate_perf_data.py {extra:?} failed");
-}
-
-fn pgdq(args: &[&str]) -> String {
-    let out = Command::new(env!("CARGO_BIN_EXE_pgdq")).args(args).output().expect("pgdq runs");
-    assert!(out.status.success(), "pgdq {args:?} failed: {}", String::from_utf8_lossy(&out.stderr));
-    String::from_utf8(out.stdout).expect("pgdq writes UTF-8")
 }
 
 /// Every column of the generated file must resolve `Mapped`. `pgdq parse`
@@ -121,7 +105,7 @@ fn assert_modes_agree(dump: &Path) {
 
 #[test]
 fn the_perf_generator_writes_what_pgdq_reads_back() {
-    require_uv();
+    require_uv("the generator's only drift guard");
     let dir = tempfile::tempdir().unwrap();
 
     let control = dir.path().join("control.sql");

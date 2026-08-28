@@ -12,7 +12,7 @@
 //! wrote.
 
 use std::ops::ControlFlow;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use pgdump_query::cache::CacheMode;
 use pgdump_query::nested::{
@@ -64,13 +64,8 @@ const NESTED_COLUMNS: &[(&str, &str, Kind, u32)] = &[
     ("public.t_multirange", "v_myrange_multi", Kind::Multirange, 14),
 ];
 
-fn types_fixture(version: u32) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures")
-        .join(version.to_string())
-        .join("types")
-        .join("default.sql")
-}
+mod common;
+use common::types_fixture;
 
 /// One column's non-NULL values, as decoded COPY text. `SchemaMode::Strings`
 /// is deliberate: it never consults the DDL, so what comes back is exactly
@@ -127,7 +122,7 @@ fn assert_round_trips(kind: Kind, value: &str, context: &str) {
 #[tokio::test]
 async fn every_nested_fixture_value_round_trips_byte_for_byte() {
     for version in [13, 14, 15, 16, 17, 18] {
-        let path = types_fixture(version);
+        let path = types_fixture(version, "default");
         let mut seen = 0;
         for (table, column, kind, min_version) in NESTED_COLUMNS {
             if version < *min_version {
@@ -151,7 +146,7 @@ async fn every_nested_fixture_value_round_trips_byte_for_byte() {
 #[tokio::test]
 async fn a_nested_layer_round_trips_through_the_other_conventions_codec() {
     for version in [13, 16, 18] {
-        let path = types_fixture(version);
+        let path = types_fixture(version, "default");
 
         // `public.point2d[]` — `array_out` (backslash) around `record_out`
         // (doubling).
@@ -197,7 +192,7 @@ async fn a_nested_layer_round_trips_through_the_other_conventions_codec() {
 #[tokio::test]
 async fn a_zero_field_composite_is_indistinguishable_from_a_one_field_null() {
     for version in [13, 16, 18] {
-        let path = types_fixture(version);
+        let path = types_fixture(version, "default");
         let values = column_values(&path, "public.t_composite", "v_empty_comp").await;
         assert_eq!(values, vec!["()".to_string(), "()".to_string()], "pg_dump {version}");
         for value in &values {
@@ -218,7 +213,7 @@ async fn a_zero_field_composite_is_indistinguishable_from_a_one_field_null() {
 #[tokio::test]
 async fn the_delimiter_trap_round_trips_while_splitting_on_the_wrong_character() {
     for version in [13, 16, 18] {
-        let path = types_fixture(version);
+        let path = types_fixture(version, "default");
         let values = column_values(&path, "public.t_delimiter", "v_box_domain_array").await;
         assert_eq!(
             values,
@@ -236,7 +231,7 @@ async fn the_delimiter_trap_round_trips_while_splitting_on_the_wrong_character()
 #[tokio::test]
 async fn the_fixture_carries_the_array_shapes_the_census_will_have_to_report() {
     for version in [13, 16, 18] {
-        let path = types_fixture(version);
+        let path = types_fixture(version, "default");
         let ndims = |values: &[String]| -> Vec<usize> {
             values.iter().map(|v| decode_array(v).unwrap().ndim()).collect()
         };

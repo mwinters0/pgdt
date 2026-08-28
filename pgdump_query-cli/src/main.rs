@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
@@ -368,7 +368,7 @@ async fn main() -> Result<()> {
                 | CacheStatus::Incomplete { index, mtime_changed, total_size } => {
                     (index, mtime_changed, total_size)
                 }
-                unusable => anyhow::bail!(unusable_cache_message(&unusable, &path, &file)),
+                unusable => anyhow::bail!(unusable_cache_message(&unusable, &path, Some(&file))),
             };
             if mtime_changed {
                 index.diagnostics.push(Diagnostic::cache_mtime_changed());
@@ -431,48 +431,45 @@ async fn main() -> Result<()> {
 /// never parsed this file" and "your file changed since you parsed it" send a
 /// reader to different places.
 ///
+/// **One match, two renderings**, the same discipline [`resolution_words`]
+/// applies. `source` is `None` in cache-only mode, which has no dump file to
+/// name and so states the fault and stops; the two paths otherwise describe
+/// the same faults, and a second match is how they come to describe them
+/// differently. Cache-only mode cannot reach
+/// [`CacheStatus::SourceChanged`] at all — there is no live file to compare
+/// against, which is exactly what its `CacheOffline` diagnostic warns about.
+///
 /// Takes the whole [`CacheStatus`] rather than a narrowed type so the match
 /// stays exhaustive: a usable status reaching here is a caller bug, and it says
 /// so rather than printing a plausible error.
-fn unusable_cache_message(status: &CacheStatus, path: &Path, source: &Path) -> String {
-    let parse = format!("run `pgdq parse --source {}`", source.display());
+fn unusable_cache_message(status: &CacheStatus, path: &Path, source: Option<&Path>) -> String {
+    // Each arm supplies its own connective and tail, because "no cache at X"
+    // and "X is not a pgdq cache" do not join to the same sentence.
+    let remedy = |lead: &str, tail: &str| match source {
+        Some(s) => format!(" — {lead}run `pgdq parse --source {}`{tail}", s.display()),
+        None => String::new(),
+    };
     match status {
         CacheStatus::Missing => {
-            format!("no cache at {} — {parse} first", path.display())
+            format!("no cache at {}{}", path.display(), remedy("", " first"))
         }
         CacheStatus::Unreadable => {
-            format!("{} is not a pgdq cache — check the path, or {parse}", path.display())
+            format!("{} is not a pgdq cache{}", path.display(), remedy("check the path, or ", ""))
         }
         CacheStatus::UnsupportedVersion => format!(
-            "the cache at {} was written by a different pgdq build and cannot be read — {parse}",
-            path.display()
+            "the cache at {} was written by a different pgdq build and cannot be read{}",
+            path.display(),
+            remedy("", "")
         ),
-        CacheStatus::SourceChanged { cached_size, live_size } => format!(
-            "{} has changed since it was parsed ({live_size} bytes now, {cached_size} when the \
-             cache at {} was written), so every offset in the cache could be wrong — {parse}",
-            source.display(),
-            path.display()
-        ),
-        CacheStatus::Valid { .. } | CacheStatus::Incomplete { .. } => {
-            unreachable!("a usable cache is reported, not refused")
-        }
-    }
-}
-
-/// The cache-only counterpart, with no `--source` to name. Cache-only mode
-/// cannot reach [`CacheStatus::SourceChanged`] at all — there is no live file
-/// to compare against, which is exactly what its `CacheOffline` diagnostic
-/// warns about.
-fn unusable_offline_cache_message(status: &CacheStatus, path: &Path) -> String {
-    match status {
-        CacheStatus::Missing => format!("no cache at {}", path.display()),
-        CacheStatus::Unreadable => format!("{} is not a pgdq cache", path.display()),
-        CacheStatus::UnsupportedVersion => format!(
-            "the cache at {} was written by a different pgdq build and cannot be read",
-            path.display()
-        ),
-        CacheStatus::SourceChanged { .. } => {
-            unreachable!("cache-only mode has no live source to compare against")
+        CacheStatus::SourceChanged { cached_size, live_size } => {
+            let source = source.expect("cache-only mode has no live source to compare against");
+            format!(
+                "{} has changed since it was parsed ({live_size} bytes now, {cached_size} when \
+                 the cache at {} was written), so every offset in the cache could be wrong{}",
+                source.display(),
+                path.display(),
+                remedy("", "")
+            )
         }
         CacheStatus::Valid { .. } | CacheStatus::Incomplete { .. } => {
             unreachable!("a usable cache is reported, not refused")
@@ -490,7 +487,7 @@ async fn info_offline(path: &Path, verbose: bool, map: bool, json: bool) -> Resu
     let (index, total_size) = match mode.load_offline().await? {
         CacheStatus::Valid { index, total_size, .. }
         | CacheStatus::Incomplete { index, total_size, .. } => (index, total_size),
-        unusable => anyhow::bail!(unusable_offline_cache_message(&unusable, path)),
+        unusable => anyhow::bail!(unusable_cache_message(&unusable, path, None)),
     };
     report(&index, total_size, verbose, map, json);
     Ok(())
@@ -599,6 +596,48 @@ fn range_label(data_type: &DataType, bound: &NestedPlan) -> String {
     }
 }
 
+/// How a database is named in the listing. A `\connect`-less dump has no
+/// name to print, and `(unnamed)` is what the listing calls that database —
+/// one spelling, so the metadata header, the block listing and `--map` cannot
+/// come to disagree about what an unnamed database is called.
+fn database_label(database: &Option<String>) -> &str {
+    match database {
+        Some(name) => name,
+        None => "(unnamed)",
+    }
+}
+
+/// Prints a `database: <name>` line each time the database changes, and only
+/// when a listing spans more than one — the common case (a plain or
+/// single-`--create` dump) prints no header at all.
+///
+/// **The rows are already in file order and every `\connect` segment is
+/// contiguous in the file**, so a header whenever the value changes is the
+/// whole grouping rule: nothing has to be sorted or bucketed first. This is
+/// also what makes an `AmbiguousTable` error's candidate names actionable —
+/// they are names this listing already showed
+/// (`docs/design/architecture.md`, "One target per query").
+struct DatabaseHeadings<'a> {
+    multi: bool,
+    current: Option<&'a Option<String>>,
+}
+
+impl<'a> DatabaseHeadings<'a> {
+    /// `databases` is every row's database, in listing order; only its
+    /// cardinality is read here.
+    fn new(databases: impl Iterator<Item = &'a Option<String>>) -> Self {
+        let multi = databases.collect::<BTreeSet<_>>().len() > 1;
+        Self { multi, current: None }
+    }
+
+    fn before(&mut self, database: &'a Option<String>) {
+        if self.multi && self.current != Some(database) {
+            self.current = Some(database);
+            println!("database: {}", database_label(database));
+        }
+    }
+}
+
 /// Dump-level metadata header: server/`pg_dump` versions, extension and
 /// user-defined-type counts (`docs/design/architecture.md`,
 /// "CLI surface"). The `database: <name>` line is only shown when it's informative —
@@ -611,10 +650,7 @@ fn print_metadata(metadata: &DumpMetadata) {
         let show_name = multi || db.name.is_some();
         let indent = if show_name { "  " } else { "" };
         if show_name {
-            match &db.name {
-                Some(name) => println!("database: {name}"),
-                None => println!("database: (unnamed)"),
-            }
+            println!("database: {}", database_label(&db.name));
         }
         if let Some(v) = &db.server_version {
             println!("{indent}server version: {v}");
@@ -811,27 +847,10 @@ fn print_index(index: &DumpIndex, verbose: bool, map: bool, complete: bool) {
     let mut total_columns = 0usize;
     let mut total_unmapped = 0usize;
 
-    // Group by database once blocks carry more than one — the common case
-    // (a plain or single-`--create` dump) prints no header at all. Blocks
-    // are already in file order, and every `\connect` segment is contiguous
-    // in the file, so a header line whenever the database changes is enough
-    // — no need to sort or bucket first. This is also what makes an
-    // `AmbiguousTable` error's candidate names actionable: they're names
-    // this listing already showed (`docs/design/architecture.md`,
-    // "One target per query").
-    let multi_database =
-        blocks.iter().map(|(b, _)| &b.database).collect::<std::collections::BTreeSet<_>>().len()
-            > 1;
-    let mut current_database: Option<&Option<String>> = None;
+    let mut headings = DatabaseHeadings::new(blocks.iter().map(|(b, _)| &b.database));
 
     for (block, resolved) in &blocks {
-        if multi_database && current_database != Some(&block.database) {
-            current_database = Some(&block.database);
-            match &block.database {
-                Some(name) => println!("database: {name}"),
-                None => println!("database: (unnamed)"),
-            }
-        }
+        headings.before(&block.database);
         println!("{} ({} rows)", block.header.qualified_name(), block.row_count);
         if block.header.columns.is_empty() {
             println!("    columns: (not listed in COPY header)");
@@ -982,21 +1001,12 @@ fn print_object_kinds(index: &DumpIndex) -> bool {
 /// `--map`: every span the full file map found, in file order — the raw
 /// structure `DumpIndex::spans` keeps, not the per-table view `blocks()`
 /// filters it down to (`docs/design/architecture.md`,
-/// "`DumpIndex`: one owner per fact"). Same
-/// database-header grouping convention as the ordinary block listing above.
+/// "`DumpIndex`: one owner per fact"). Grouped by [`DatabaseHeadings`], the
+/// same convention the ordinary block listing uses.
 fn print_map(index: &DumpIndex) {
-    let multi_database =
-        index.spans.iter().map(|s| &s.database).collect::<std::collections::BTreeSet<_>>().len()
-            > 1;
-    let mut current_database: Option<&Option<String>> = None;
+    let mut headings = DatabaseHeadings::new(index.spans.iter().map(|s| &s.database));
     for span in &index.spans {
-        if multi_database && current_database != Some(&span.database) {
-            current_database = Some(&span.database);
-            match &span.database {
-                Some(name) => println!("database: {name}"),
-                None => println!("database: (unnamed)"),
-            }
-        }
+        headings.before(&span.database);
         println!("[{}, {}) {}", span.start, span.end, span_summary(span));
     }
 }

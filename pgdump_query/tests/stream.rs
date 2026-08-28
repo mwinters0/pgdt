@@ -1,90 +1,17 @@
 //! Pull-mode stream, resume, and blocking-iterator tests. See `tests/batch.rs`
 //! for the push-mode (`read_table`) equivalent over the same fixtures.
 
-use std::path::{Path, PathBuf};
-
-use arrow::array::RecordBatch;
 use arrow::datatypes::DataType;
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::resolve::{ColumnResolution, SchemaMode};
-use pgdump_query::{
-    BatchOptions, BlockingTableIter, LocalFileSource, NestedPlan, ScanOptions, render_field,
-    table_stream,
+use pgdump_query::{BatchOptions, BlockingTableIter, LocalFileSource, ScanOptions, table_stream};
+
+mod common;
+use common::{
+    edge_cases, edge_cases_fixture, multidb_fixture, partitions_fixture, rows_of, types_fixture,
+    widgets_expected,
 };
-
-fn edge_cases() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/edge_cases.sql")
-}
-
-fn fixture(version: u32, name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures")
-        .join(version.to_string())
-        .join("edge_cases")
-        .join(format!("{name}.sql"))
-}
-
-fn types_fixture(version: u32, flag_set: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures")
-        .join(version.to_string())
-        .join("types")
-        .join(format!("{flag_set}.sql"))
-}
-
-fn rows_of(batch: &RecordBatch) -> Vec<Vec<Option<String>>> {
-    (0..batch.num_rows())
-        // Every fixture this file queries is scalar-typed, so the plan is
-        // `Scalar` for every column (`crate::pgtype::NestedPlan`'s default).
-        .map(|row| {
-            batch
-                .columns()
-                .iter()
-                .map(|c| render_field(c.as_ref(), row, &NestedPlan::Scalar))
-                .collect()
-        })
-        .collect()
-}
-
-fn widgets_expected() -> Vec<Vec<Option<String>>> {
-    vec![
-        vec![
-            Some("1".into()),
-            Some("alpha".into()),
-            Some("a simple widget".into()),
-            Some("2024-01-01 00:00:00+00".into()),
-        ],
-        vec![Some("2".into()), Some("beta".into()), None, Some("2024-01-02 00:00:00+00".into())],
-        vec![
-            Some("3".into()),
-            Some("gamma".into()),
-            Some("multi\nline\twith a backslash \\ inside".into()),
-            None,
-        ],
-        vec![
-            Some("4".into()),
-            Some("delta".into()),
-            Some(
-                "contains a COPY-like phrase: COPY public.widgets (id) FROM stdin; -- not a directive"
-                    .into(),
-            ),
-            Some("2024-01-04 00:00:00+00".into()),
-        ],
-        vec![
-            Some("5".into()),
-            Some("".into()),
-            Some("empty name to the left".into()),
-            Some("2024-01-05 00:00:00+00".into()),
-        ],
-        vec![
-            Some("6".into()),
-            Some("epsilon".into()),
-            Some("carriage\rreturn, octal A, hex B".into()),
-            Some("2024-01-06 00:00:00+00".into()),
-        ],
-    ]
-}
 
 /// The pull-mode primitive, run to completion with no resume, matches the
 /// push-mode fixture data exactly — a regression guard on top of the fact
@@ -196,7 +123,7 @@ async fn resume_reconstructs_headerless_schema() {
 #[tokio::test]
 async fn resume_at_a_block_boundary() {
     for version in [13, 16, 18] {
-        let path = fixture(version, "default");
+        let path = edge_cases_fixture(version, "default");
         let source = LocalFileSource::open(&path).unwrap();
         let options = BatchOptions { max_rows: 132, max_bytes: None, ..Default::default() };
         let mut stream = table_stream(
@@ -330,19 +257,9 @@ fn blocking_iterator_matches_async_stream() {
     assert_eq!(rows, widgets_expected());
 }
 
-/// Two copies of `edge_cases/create.sql`, concatenated into one real
-/// `\connect`-delimited multi-database dump — see `tests/preamble.rs`'s
-/// `multidb_fixture` for the full rationale (duplicated here since each
-/// `tests/*.rs` file is its own crate with no shared support module).
-fn multidb_fixture(version: u32) -> (tempfile::TempDir, PathBuf) {
-    let content = std::fs::read_to_string(fixture(version, "create")).unwrap();
-    let renamed = content.replace("pgdq_fixture", "pgdq_fixture_2");
-    let dir = tempfile::tempdir().unwrap();
-    let combined = dir.path().join("multidb.sql");
-    std::fs::write(&combined, format!("{content}{renamed}")).unwrap();
-    (dir, combined)
-}
-
+/// Every row `table` yields, drained from a pull-mode stream with no
+/// predicate and no resume — the whole-table read the multi-database tests
+/// compare against each other.
 async fn all_rows(source: &LocalFileSource, table: &str) -> Vec<Vec<Option<String>>> {
     let mut stream = table_stream(
         source,
@@ -413,7 +330,7 @@ async fn querying_a_table_name_shared_by_two_databases_errors_without_a_database
 #[tokio::test]
 async fn database_selector_resolves_the_ambiguity_to_the_first_databases_rows() {
     for version in [13, 16, 18] {
-        let single_source = LocalFileSource::open(fixture(version, "create")).unwrap();
+        let single_source = LocalFileSource::open(edge_cases_fixture(version, "create")).unwrap();
         let single_rows = all_rows(&single_source, "public.widgets").await;
         assert!(!single_rows.is_empty(), "pg_dump {version}");
 
@@ -503,14 +420,6 @@ async fn selecting_a_later_databases_table_types_it_on_a_cold_query() {
         assert!(!rows.is_empty(), "pg_dump {version}: SchemaMode::Strings bypasses the check");
         assert_eq!(rows, typed_rows, "pg_dump {version}: same rows, typed or not");
     }
-}
-
-fn partitions_fixture(version: u32, flag_set: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures")
-        .join(version.to_string())
-        .join("partitions")
-        .join(format!("{flag_set}.sql"))
 }
 
 /// I2's multi-block shape, end to end. `public.feel` is hash-partitioned on

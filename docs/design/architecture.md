@@ -2233,9 +2233,19 @@ raw text with no error.
 scanner/batch-assembly properties unrelated to types, and new typed coverage is
 added alongside rather than by retyping their expectations. The two
 `public.escapes` tests are the deliberate exception, run in **both** modes
-since `text` maps to `Utf8View` either way and the results must match. Every
-column-rendering test helper (`rows_of`) goes through the public
-`render_field` rather than a hardcoded `StringViewArray` downcast.
+since `text` maps to `Utf8View` either way and the results must match. The
+column-rendering helper (`rows_of`) goes through the public `render_field`
+rather than a hardcoded `StringViewArray` downcast.
+
+**The fixture vocabulary is one module per test crate** —
+`pgdump_query/tests/common/mod.rs` and `pgdump_query-cli/tests/common/mod.rs`,
+holding the fixture paths, the tempdir-sandboxing helpers, and the shared
+expectations (`rows_of`, `widgets_expected`). Each `tests/*.rs` file is its own
+crate, so without them each file carries its own copy of every path helper it
+needs, and copies of a path helper drift silently because nothing compares
+them. What *drives* the library — a `collect`, a `drain`, a `census_of` —
+deliberately stays in the file whose subject it is: those differ per file in
+ways that matter, and pooling them would rebuild the same problem one level up.
 
 Chunk-boundary correctness is asserted, not assumed: the event stream is
 identical across chunk sizes 1…4096, and the batch tests exercise the

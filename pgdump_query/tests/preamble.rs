@@ -4,55 +4,13 @@
 //! statement text), this pins the parser against what `pg_dump` actually
 //! emits.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use pgdump_query::preamble::{TypeDef, TypeKind};
 use pgdump_query::{DatabaseMetadata, LocalFileSource, ScanOptions, build_index};
 
-fn types_fixture(version: u32, flag_set: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures")
-        .join(version.to_string())
-        .join("types")
-        .join(format!("{flag_set}.sql"))
-}
-
-fn edge_cases_fixture(version: u32, flag_set: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures")
-        .join(version.to_string())
-        .join("edge_cases")
-        .join(format!("{flag_set}.sql"))
-}
-
-/// Two copies of `edge_cases/create.sql`, concatenated: a real
-/// `\connect`-delimited multi-database dump, the shape `pg_dumpall` and
-/// hand-concatenated dump files produce ("Multi-database dumps" in
-/// `docs/design/architecture.md`). `--create` is the only
-/// flag combination in the fixture matrix that emits a `\connect` at all
-/// (plain `pg_dump` never does), so it's the only one two copies of can be
-/// concatenated into this shape.
-///
-/// The second copy has its database name changed so the two `\connect`
-/// targets are distinguishable: `pgdq_fixture` (the fixture generator's
-/// fixed `DB_NAME`) appears nowhere in a `--create` dump except in the
-/// `CREATE DATABASE`/`ALTER DATABASE`/`\connect` lines naming it, so a
-/// literal string replace is safe and needs no real second Postgres
-/// instance. The rest of the schema — every table, type, and row — is
-/// identical between the two, which is deliberate: it means a table name
-/// like `public.widgets` genuinely collides across databases, exercising
-/// `resolve.rs::database_for`'s first-match behavior and `table_stream`'s
-/// cross-database matching (both currently un-scoped by database — see
-/// `docs/status/STATUS.md`, "Decisions worth a second look") against a real
-/// dump instead of only hand-written unit input.
-fn multidb_fixture(version: u32) -> (tempfile::TempDir, PathBuf) {
-    let content = std::fs::read_to_string(edge_cases_fixture(version, "create")).unwrap();
-    let renamed = content.replace("pgdq_fixture", "pgdq_fixture_2");
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("multidb.sql");
-    std::fs::write(&path, format!("{content}{renamed}")).unwrap();
-    (dir, path)
-}
+mod common;
+use common::{edge_cases_fixture, multidb_fixture, types_fixture};
 
 async fn single_database(path: &Path) -> DatabaseMetadata {
     let source = LocalFileSource::open(path).unwrap();

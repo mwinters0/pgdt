@@ -118,7 +118,7 @@
 //!   (both [`crate::index::DumpIndex`] fields of the same name) as spans close:
 //!   [`Builder::push_span`] reads `toc.owner`/`toc.tablespace`, and
 //!   [`Builder::push_statement_span`] scans the closing statement's own text
-//!   via [`crate::preamble::extract_statement_cross_refs`] for `OWNER TO`,
+//!   via [`extract_statement_cross_refs`] for `OWNER TO`,
 //!   `GRANT`/`REVOKE`/`ALTER DEFAULT PRIVILEGES FOR ROLE`, and `SET
 //!   default_tablespace` — the sources `Span::toc` alone cannot cover.
 //!
@@ -145,13 +145,15 @@ use std::ops::ControlFlow;
 use serde::{Deserialize, Serialize};
 
 use crate::Result;
-use crate::index::CopyBlock;
+use crate::copy::split_fields;
+use crate::index::{ArrayShape, CopyBlock};
 use crate::io::ByteRangeSource;
 use crate::preamble::{
-    StatementShape, classify_statement, in_open_quote, push_stmt_line, statement_complete,
+    Extension, StatementShape, TypeDef, TypeKind, classify_statement, extract_statement_cross_refs,
+    in_open_quote, insert_role, insert_tablespace, parse_alter_type_add_value_body, parse_connect,
+    parse_qualified_name, push_stmt_line, statement_complete, strip_kw,
 };
-use crate::preamble::{TypeDef, parse_connect};
-use crate::scan::{Event, ScanOptions, scan};
+use crate::scan::{CopyEnd, CopyStart, Event, ScanOptions, scan};
 
 /// One tile of the full file map. `start`/`end` are absolute file offsets;
 /// `[start, end)` never overlaps another span's range, and every span
@@ -423,7 +425,7 @@ pub enum SpanBody {
     },
     TypeDef {
         name: String,
-        kind: crate::preamble::TypeKind,
+        kind: TypeKind,
     },
     Extension {
         name: String,
@@ -612,7 +614,7 @@ pub(crate) struct Builder {
     /// partition-root marker this block's header carried, consumed at
     /// `CopyStart` so a later block cannot inherit it. `.3` is the TOC header
     /// the preceding `-- Data for Name: ...` comment (if any) parsed to.
-    pending_data: Option<(u64, crate::scan::CopyStart, Option<String>, Option<TocHeader>)>,
+    pending_data: Option<(u64, CopyStart, Option<String>, Option<TocHeader>)>,
     /// The `-- load via partition root <name>` marker (I2) seen since the
     /// last TOC entry began, waiting for the `COPY` header it belongs to.
     /// Cleared by the header that consumes it, and by the next TOC `Name:`
@@ -649,7 +651,7 @@ pub(crate) struct Builder {
     /// nothing real depends on this carrying across builder instances).
     governing_toc: Option<TocHeader>,
     /// The census accumulating for the open `COPY` block
-    /// (`crate::index::ArrayShape`). Sized at `CopyStart` from the header's
+    /// (`ArrayShape`). Sized at `CopyStart` from the header's
     /// column list, and grown by any row that turns out to have more fields
     /// (a header-less block, whose column count only the rows know).
     ///
@@ -657,7 +659,7 @@ pub(crate) struct Builder {
     /// `crate::batch::ScanExtent`: a block reaches the map only once it has
     /// been walked end to end, so there is no such thing as a half-censused
     /// block and no state a later pass could repair.
-    pending_census: Vec<crate::index::ArrayShape>,
+    pending_census: Vec<ArrayShape>,
 }
 
 /// Whether `-- Name: ...` (pg_dump's `_printTocEntry()` header, I3) is
@@ -720,7 +722,7 @@ fn partition_root_marker(line: &str) -> Option<String> {
 /// since that mode holds no buffer).
 fn parse_insert_target(line: &str) -> Option<String> {
     let rest = line.strip_prefix("INSERT INTO ")?;
-    crate::preamble::parse_qualified_name(rest).map(|(name, _consumed)| name)
+    parse_qualified_name(rest).map(|(name, _consumed)| name)
 }
 
 /// Whether `line` is one of the version-header block's two lines (I9), and
@@ -788,6 +790,22 @@ impl Builder {
         self.database.as_deref()
     }
 
+    /// A TOC comment's own `Owner:`/`Tablespace:` fields, added to the
+    /// cross-reference sets. One of every span's two cross-reference sources
+    /// regardless of its kind, since `_printTocEntry()` writes those fields
+    /// ahead of *every* entry, not just the ones this module classifies
+    /// (`docs/design/architecture.md`, "TOC enrichment") — the other being
+    /// the statement text, which `extract_statement_cross_refs` reads.
+    fn harvest_toc_cross_refs(&mut self, toc: &Option<TocHeader>) {
+        let Some(t) = toc else { return };
+        if let Some(owner) = &t.owner {
+            insert_role(&mut self.roles, owner.clone());
+        }
+        if let Some(tablespace) = &t.tablespace {
+            insert_tablespace(&mut self.tablespaces, tablespace.clone());
+        }
+    }
+
     /// Push a newly-completed span, and — since the tiling invariant makes a
     /// span's true end exactly the next span's start — fix up the
     /// previously-pushed span's placeholder `end` at the same time. Only the
@@ -819,19 +837,7 @@ impl Builder {
         // out of `self` before calling back in here) — means the pending
         // large-object region isn't being extended, so it closes now.
         self.flush_large_objects();
-        if let Some(t) = &toc {
-            // The TOC comment's own `Owner:`/`Tablespace:` fields — one of
-            // this span's two cross-reference sources regardless of its
-            // kind, since `_printTocEntry()` writes them ahead of every
-            // entry, not just the ones this module classifies
-            // (`docs/design/architecture.md`, "TOC enrichment").
-            if let Some(owner) = &t.owner {
-                crate::preamble::insert_role(&mut self.roles, owner.clone());
-            }
-            if let Some(tablespace) = &t.tablespace {
-                crate::preamble::insert_tablespace(&mut self.tablespaces, tablespace.clone());
-            }
-        }
+        self.harvest_toc_cross_refs(&toc);
         // `Framing`/`Connect`/`VersionHeader` are the three kinds inheritance
         // never crosses (`docs/design/architecture.md`, "Three things close a statement"); everything else becomes the entry a following
         // comment-less statement would inherit, whether this span's own
@@ -858,7 +864,7 @@ impl Builder {
     /// `classify(buf)` call site below does — but first scan `buf` itself
     /// for the cross-references [`Span::toc`] can't cover: `OWNER TO`,
     /// `GRANT`/`REVOKE`/`ALTER DEFAULT PRIVILEGES FOR ROLE`, and `SET
-    /// default_tablespace` (`crate::preamble::extract_statement_cross_refs`).
+    /// default_tablespace` (`extract_statement_cross_refs`).
     /// Centralized here — rather than at each call site — so every statement
     /// this module ever classifies is scanned exactly once, the same way
     /// [`push_span`](Self::push_span) centralizes the TOC-sourced half.
@@ -877,7 +883,7 @@ impl Builder {
         toc: Option<TocHeader>,
         toc_owned: bool,
     ) {
-        crate::preamble::extract_statement_cross_refs(buf, &mut self.roles, &mut self.tablespaces);
+        extract_statement_cross_refs(buf, &mut self.roles, &mut self.tablespaces);
         let body = classify(buf);
         let (toc, toc_owned) =
             if matches!(body, SpanBody::Framing) { (None, false) } else { (toc, toc_owned) };
@@ -1223,7 +1229,7 @@ impl Builder {
         }
     }
 
-    pub(crate) fn on_copy_start(&mut self, event: crate::scan::CopyStart) {
+    pub(crate) fn on_copy_start(&mut self, event: CopyStart) {
         // I12 puts the large-object region after every `COPY` block, so a
         // pending one here would mean malformed/non-`pg_dump` input — flush
         // it rather than silently absorbing whatever follows into it.
@@ -1255,7 +1261,7 @@ impl Builder {
     }
 
     /// Fold one data row of the open `COPY` block into its array-shape
-    /// census — see [`crate::index::ArrayShape`].
+    /// census — see [`ArrayShape`].
     ///
     /// **The row is rejected wholesale before it is split.** An array
     /// literal always contains a `{`, and the only other thing that can
@@ -1279,7 +1285,7 @@ impl Builder {
             return;
         }
         let census = &mut self.pending_census;
-        for (i, field) in crate::copy::split_fields(raw).enumerate() {
+        for (i, field) in split_fields(raw).enumerate() {
             if i >= census.len() {
                 census.resize(i + 1, Default::default());
             }
@@ -1287,7 +1293,7 @@ impl Builder {
         }
     }
 
-    pub(crate) fn on_copy_end(&mut self, end: crate::scan::CopyEnd) {
+    pub(crate) fn on_copy_end(&mut self, end: CopyEnd) {
         // `on_copy_start` always runs first for a matching block
         // (`crate::scan::CopyScanner` never emits `CopyEnd` without a prior
         // `CopyStart`), so this is always `Some`.
@@ -1346,18 +1352,10 @@ impl Builder {
                 (offset, None)
             }
         };
-        // The TOC `Owner:`/`Tablespace:` fields feed the cross-reference set
-        // regardless of whether this entry becomes its own span or merges
-        // into an already-open one — the same rule `push_span` applies to
-        // every other span's `toc`.
-        if let Some(t) = &toc {
-            if let Some(owner) = &t.owner {
-                crate::preamble::insert_role(&mut self.roles, owner.clone());
-            }
-            if let Some(tablespace) = &t.tablespace {
-                crate::preamble::insert_tablespace(&mut self.tablespaces, tablespace.clone());
-            }
-        }
+        // Harvested whether or not this entry becomes its own span: a
+        // large-object entry that merges into an already-open region still
+        // named an owner.
+        self.harvest_toc_cross_refs(&toc);
         match &mut self.pending_large_objects {
             // Continuing an already-open region: keep its own start/toc, not
             // this entry's.
@@ -1510,7 +1508,7 @@ impl Builder {
 /// proper (`docs/design/architecture.md`, "Framing
 /// spans") and `_selectTablespace()` writes ahead of a definition — read for
 /// its tablespace reference by `push_statement_span`'s
-/// `crate::preamble::extract_statement_cross_refs` call regardless of how
+/// `extract_statement_cross_refs` call regardless of how
 /// this function classifies it. Neither is one of this module's three
 /// classified shapes, and treating both uniformly as
 /// framing (rather than `Unparsed`) matches the design doc regardless of
@@ -1530,15 +1528,15 @@ fn classify(stmt: &str) -> SpanBody {
     if looks_like_framing_statement(stmt) {
         return SpanBody::Framing;
     }
-    if let Some(rest) = crate::preamble::strip_kw(stmt.trim_start(), "ALTER TYPE")
-        && let Some((type_name, label)) = crate::preamble::parse_alter_type_add_value_body(rest)
+    if let Some(rest) = strip_kw(stmt.trim_start(), "ALTER TYPE")
+        && let Some((type_name, label)) = parse_alter_type_add_value_body(rest)
     {
         return SpanBody::AlterTypeAddValue { type_name, label };
     }
     match classify_statement(stmt) {
         Some(StatementShape::Table { name, columns }) => SpanBody::Table { name, columns },
         Some(StatementShape::Type(TypeDef { name, kind })) => SpanBody::TypeDef { name, kind },
-        Some(StatementShape::Extension(crate::preamble::Extension { name, schema })) => {
+        Some(StatementShape::Extension(Extension { name, schema })) => {
             SpanBody::Extension { name, schema }
         }
         None => SpanBody::Unparsed,
@@ -1575,6 +1573,7 @@ pub async fn build_map<S: ByteRangeSource>(source: &S, options: &ScanOptions) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::copy::CopyHeader;
 
     /// Feed `lines` (each with a synthetic offset — `\n`-joined, matching
     /// how a real scan would number them) through a fresh [`Builder`] and
@@ -1709,8 +1708,8 @@ mod tests {
             offset += line.len() as u64 + 1;
         }
         let header_offset = offset;
-        builder.on_copy_start(crate::scan::CopyStart {
-            header: crate::copy::CopyHeader {
+        builder.on_copy_start(CopyStart {
+            header: CopyHeader {
                 schema: Some("public".to_string()),
                 table: "t".to_string(),
                 columns: vec!["id".to_string()],
@@ -1720,7 +1719,7 @@ mod tests {
         });
         let terminator_offset = header_offset + 48;
         let end_offset = terminator_offset + 3;
-        builder.on_copy_end(crate::scan::CopyEnd { terminator_offset, end_offset, row_count: 1 });
+        builder.on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1 });
         let spans = builder.finish(end_offset);
 
         assert_eq!(spans[0].start, 0);
@@ -1852,8 +1851,8 @@ mod tests {
             offset += line.len() as u64 + 1;
         }
         let header_offset = offset;
-        builder.on_copy_start(crate::scan::CopyStart {
-            header: crate::copy::CopyHeader {
+        builder.on_copy_start(CopyStart {
+            header: CopyHeader {
                 schema: Some("public".to_string()),
                 table: "t".to_string(),
                 columns: vec!["id".to_string()],
@@ -1863,7 +1862,7 @@ mod tests {
         });
         let terminator_offset = header_offset + 48;
         let end_offset = terminator_offset + 3;
-        builder.on_copy_end(crate::scan::CopyEnd { terminator_offset, end_offset, row_count: 1 });
+        builder.on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1 });
 
         let spans = builder.finish(end_offset);
         assert_eq!(spans.len(), 1);
@@ -2005,8 +2004,8 @@ mod tests {
             offset += line.len() as u64 + 1;
         }
         let header_offset = offset;
-        builder.on_copy_start(crate::scan::CopyStart {
-            header: crate::copy::CopyHeader {
+        builder.on_copy_start(CopyStart {
+            header: CopyHeader {
                 schema: Some("public".to_string()),
                 table: "t".to_string(),
                 columns: vec!["id".to_string()],
@@ -2016,7 +2015,7 @@ mod tests {
         });
         let terminator_offset = header_offset + 48;
         let end_offset = terminator_offset + 3;
-        builder.on_copy_end(crate::scan::CopyEnd { terminator_offset, end_offset, row_count: 1 });
+        builder.on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1 });
         offset = end_offset;
         builder.feed_line(offset, b"CREATE EXTENSION pgcrypto;");
 
@@ -2161,8 +2160,8 @@ mod tests {
         assert!(check_tiling(&builder.snapshot(offset), offset).is_empty());
 
         let header_offset = offset;
-        builder.on_copy_start(crate::scan::CopyStart {
-            header: crate::copy::CopyHeader {
+        builder.on_copy_start(CopyStart {
+            header: CopyHeader {
                 schema: Some("public".to_string()),
                 table: "t".to_string(),
                 columns: vec!["id".to_string()],
@@ -2172,7 +2171,7 @@ mod tests {
         });
         let terminator_offset = header_offset + 48;
         let end_offset = terminator_offset + 3;
-        builder.on_copy_end(crate::scan::CopyEnd { terminator_offset, end_offset, row_count: 1 });
+        builder.on_copy_end(CopyEnd { terminator_offset, end_offset, row_count: 1 });
         offset = end_offset;
 
         let snapshot = builder.snapshot(end_offset);

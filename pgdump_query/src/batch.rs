@@ -40,6 +40,10 @@ use crate::pgtype::NestedPlan;
 use crate::predicate::Predicate;
 use crate::resolve::{ResolvedSchema, SchemaMode};
 use crate::scan::ScanOptions;
+// L4, imported by L3: `read_table` is a push-mode entry point that belongs in
+// `stream.rs`. Named here rather than reached for inline so the layering
+// check (`layering.md`, "Checks") sees the deviation it already records.
+use crate::stream::{ResumeToken, table_stream};
 use crate::{Error, Result};
 
 /// Tuning knobs for batch assembly.
@@ -965,7 +969,7 @@ pub async fn read_table<S, F>(
     predicate: Option<Predicate>,
     cache: CacheMode,
     mut on_batch: F,
-) -> Result<(crate::resolve::ResolvedSchema, Option<crate::stream::ResumeToken>)>
+) -> Result<(ResolvedSchema, Option<ResumeToken>)>
 where
     S: ByteRangeSource,
     F: FnMut(RecordBatch) -> ControlFlow<()>,
@@ -973,12 +977,12 @@ where
     use futures::StreamExt;
 
     if matches!(cache, CacheMode::Offline(_)) {
-        return Err(crate::Error::CacheModeMismatch(
+        return Err(Error::CacheModeMismatch(
             "query requires a live dump source; CacheMode::Offline is cache-only",
         ));
     }
 
-    let mut stream = crate::stream::table_stream(
+    let mut stream = table_stream(
         source,
         table,
         scan_options.clone(),

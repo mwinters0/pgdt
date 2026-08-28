@@ -12,9 +12,8 @@ use pgdump_query::{
     preamble_only,
 };
 
-fn edge_cases() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/edge_cases.sql")
-}
+mod common;
+use common::edge_cases;
 
 #[test]
 fn colocated_path_appends_the_cache_suffix() {

@@ -8,7 +8,7 @@
 //! `ScanExtent`, and that a query's schema is retyped from them before its
 //! first batch.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use futures::StreamExt;
 
@@ -19,17 +19,8 @@ use pgdump_query::{
     BatchOptions, LocalFileSource, ScanExtent, ScanOptions, build_index, table_stream, union_census,
 };
 
-fn types_fixture(version: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures")
-        .join(version)
-        .join("types/default.sql")
-}
-
-/// Every major we generate fixtures for. The census reads a literal, not a
-/// catalog, and `array_out`'s output shape is identical across all of them
-/// (I25) — running the same assertions on each is what says so.
-const VERSIONS: [&str; 6] = ["13", "14", "15", "16", "17", "18"];
+mod common;
+use common::{VERSIONS, types_fixture};
 
 /// The census recorded for `table`'s block, by column name.
 async fn census_of(path: &Path, table: &str) -> Vec<(String, ArrayShape)> {
@@ -50,7 +41,7 @@ fn shape(census: &[(String, ArrayShape)], column: &str) -> ArrayShape {
 #[tokio::test]
 async fn the_shape_fixture_records_the_dimensions_its_literals_carry() {
     for version in VERSIONS {
-        let path = types_fixture(version);
+        let path = types_fixture(version, "default");
         let census = census_of(&path, "public.t_array_shape").await;
 
         // `{{1,2},{3,4}}`, `\N`, `{{5,6},{7,8}}` — uniformly two-dimensional,
@@ -79,7 +70,7 @@ async fn the_shape_fixture_records_the_dimensions_its_literals_carry() {
 #[tokio::test]
 async fn quoted_elements_and_empty_arrays_do_not_disturb_the_count() {
     for version in VERSIONS {
-        let path = types_fixture(version);
+        let path = types_fixture(version, "default");
         let census = census_of(&path, "public.t_array").await;
 
         // Row 1 is `{}`, row 2 is `{1,2,3}`: the empty array fits any depth
@@ -106,7 +97,7 @@ async fn quoted_elements_and_empty_arrays_do_not_disturb_the_count() {
 /// literal's shape alone.
 #[tokio::test]
 async fn a_composite_column_contributes_no_dimensionality() {
-    let census = census_of(&types_fixture("16"), "public.t_composite").await;
+    let census = census_of(&types_fixture(16, "default"), "public.t_composite").await;
     assert_eq!(shape(&census, "v_point"), ArrayShape::default());
     assert_eq!(shape(&census, "v_tagged"), ArrayShape::default());
     // The array *of* composites is a real array, one dimension deep.
@@ -121,7 +112,7 @@ async fn a_composite_column_contributes_no_dimensionality() {
 /// beside it.
 #[tokio::test]
 async fn every_mapping_pass_censuses_whatever_its_extent() {
-    let path = types_fixture("16");
+    let path = types_fixture(16, "default");
     let source = LocalFileSource::open(&path).unwrap();
 
     for extent in [ScanExtent::UntilTargetSettled, ScanExtent::Full] {
@@ -162,7 +153,7 @@ async fn every_mapping_pass_censuses_whatever_its_extent() {
 /// (`docs/design/architecture.md`, "The array shape census").
 #[tokio::test]
 async fn a_cold_query_retypes_from_the_census_it_just_recorded() {
-    let path = types_fixture("16");
+    let path = types_fixture(16, "default");
     let source = LocalFileSource::open(&path).unwrap();
 
     for extent in [ScanExtent::UntilTargetSettled, ScanExtent::Full] {

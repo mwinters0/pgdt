@@ -80,6 +80,25 @@ Rule 1 is read off the import lists:
 rg -n '^use crate::' pgdump_query/src/*.rs
 ```
 
+**That check is only as complete as the import lists are**, so a module names
+every crate-internal dependency it has in one — never `crate::other::thing`
+inline at the use site. An inline path is invisible to the grep, so a module
+that uses them depends on more modules than the check reports. The
+counter-check reads production code only (it stops at the first
+`#[cfg(test)]`, since a test module's imports are not the module's
+dependencies) and must also produce no output:
+
+```sh
+for f in pgdump_query/src/*.rs; do
+  awk '/^#\[cfg\(test\)\]/{exit}
+       /crate::/ && !/^(use |pub use )/ && !/^[[:space:]]*\/\// {print FILENAME": "FNR": "$0}' "$f"
+done
+```
+
+This applies to an upward reference too. `batch.rs` naming `crate::stream` is
+the recorded deviation below, and it belongs in the import list precisely so
+the check reports it rather than hiding it at the use site.
+
 ## Where the layering comes under pressure
 
 These are the four cases where the boundary is not obvious. Each has a
