@@ -29,7 +29,7 @@ per-phase checklist here any more. How the system works is
 | Device-bound scan performance campaign, sparse row index | not started — P7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — P8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-27 (the measurement-era backlog's seven entries were reviewed and closed on 2026-08-27; the work they queued — `M12`, `M11`, `M13` under "The out-of-band queue" — has all landed, and `M13`'s re-take moved every warm figure in [`../design/measurements.md`](../design/measurements.md), three of them by a factor. `M16` renamed the doc tree to the `P<k>` phase-identifier scheme and settled what a keystone does to the out-of-band ledger; the sweep it prepares for has **not** run. **P4 and P9 are both complete and wrapped**, so no phase is open: what remains queued is `M17` alone — the committed measurement harness, which absorbed `M14` — and choosing the next phase is a re-grilling the maintainer has claimed. A phase boundary: an unattended loop stops here.)
+Last updated: 2026-08-28 (the measurement-era backlog's seven entries were reviewed and closed on 2026-08-27; the work they queued — `M12`, `M11`, `M13` under "The out-of-band queue" — has all landed, and `M13`'s re-take moved every warm figure in [`../design/measurements.md`](../design/measurements.md), three of them by a factor. `M16` renamed the doc tree to the `P<k>` phase-identifier scheme and settled what a keystone does to the out-of-band ledger; the sweep it prepares for has **not** run. **P4 and P9 are both complete and wrapped**, so no phase is open: what remains queued is `M17` alone — the committed measurement harness, which absorbed `M14` — and choosing the next phase is a re-grilling the maintainer has claimed. A phase boundary: an unattended loop stops here.)
 
 ## P4 — complete and wrapped
 
@@ -176,6 +176,10 @@ filed.
   - [ ] **`M17` — the measurement harness, and the sweep that fills the doc.**
     Scope settled 2026-08-27. Not started.
 
+    Contract settled across 2026-08-27 and 2026-08-28; the notes are
+    [`history/2026-08-27.md`](history/2026-08-27.md) and
+    [`history/2026-08-28.md`](history/2026-08-28.md).
+
     **Why it exists.** `M10`, `M13` and `M14` each re-derived the same
     apparatus from scratch because every re-take so far has been a one-off
     `runs/` script that dies with the session. The recurrence is the target,
@@ -312,6 +316,37 @@ filed.
     per-rep readings beside every median, so each emitted table carries its own
     audit trail and a wrong median is visible against the numbers that produced
     it.
+
+    **The run replaces every table, including the six already current.** The
+    doc differences *across* tables — the census-attribution table is quoted as
+    reproducing the census `parse` figures to within 3%, and row 6 exists so
+    the `INSERT` ratio becomes a division against row 1 — so a doc spanning two
+    sessions reintroduces the fourth standing rule's failure one level up. Six
+    tables moving by the session drift is not churn to avoid; it is evidence
+    the drift is real, and the ninth rule already forbids reading a small
+    movement as a result.
+
+    **`measurements.md` gains a session stamp** — one line near the top naming
+    the sweep's date and the commit it ran against — and per-section apparatus
+    notes shrink to the places a section genuinely departs (koji's medium,
+    `criterion`'s absence of a container). Stating the shared apparatus once
+    and letting a section speak only about its departures is the same argument
+    as the standing rules themselves, and it answers "are these figures from
+    before or after my change" at a glance, which has been answered by
+    archaeology every time so far.
+
+    **Each figure declares the paths that invalidate it**, so the harness can
+    say which figures a diff has made stale — the census figures on `map.rs`,
+    the nested tables on `nested.rs`/`batch.rs`, the quadratic on the map plus
+    the cache, every figure on its generator. This is the *other* half of the
+    recurrence and the one the harness alone does not fix: `M11` changed one
+    line in `on_row` and invalidated both census figures, `M12` changed a
+    generator and armed a stale-input trap that `M15` had to disarm, and in
+    both cases nothing announced it — someone noticed. A declaration is the
+    same forcing function as the table shape: a figure that cannot say what
+    invalidates it is one nobody has thought about. `CLAUDE.md` gains both the
+    command and the read-trigger when the harness lands, since a capability
+    nobody is told about is one nobody uses.
 
     **The box ticks only when every table above is harness-emitted**, per the
     rule that a tick meaning "about half" makes every other tick worthless. The
