@@ -149,6 +149,21 @@ rewritten with it. `uv run measure.py --check` reconciles the markers against
 the harness's register and names, for each figure, the other documents that
 repeat its numbers; `--stale` names the figures a diff has invalidated.
 
+*Rejected:* sharpening `depends` until it attributes staleness figure by
+figure. **Any stale figure forces a whole re-sweep** — selection is per figure,
+but a sweep is what the session stamp records — so the actionable output is
+binary, re-take the doc or don't, and one true positive settles it. `map.rs`
+alone is declared by eight of the eleven figures a sweep takes, which means
+most changes mark most of the doc stale and the tool still answers correctly.
+Per-figure detail would be explanatory colour, and buying it by narrowing the
+declarations trades against the only failure that matters: an under-declared
+path costs a false negative when *no* figure declares the changed file. The
+same predicate decides whether a sweep was taken against a dirty tree
+(`git_head` in `scripts/measure.py`), so the two answers are consistent by
+construction rather than by anyone keeping them in step. Evidence:
+[`../status/history/2026-08-28.md`](../status/history/2026-08-28.md),
+"`--stale`'s job is binary".
+
 **Two prose recipes never go**, because the harness genuinely does not own
 them: the census-off **source patch**, which no harness should perform, and the
 generator invocations a reader may want on their own. koji's was a third until
