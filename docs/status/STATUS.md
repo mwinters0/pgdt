@@ -31,20 +31,19 @@ schedule.
 | Device-bound scan performance campaign, sparse row index | not started — P7 |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — P8 (the map already locates and attributes `INSERT` runs) |
 
-Last updated: 2026-08-28 — the keystone sweep. Every completed phase's spec and
-notes are struck and the out-of-band ledger with them; `architecture.md` is the
+Last updated: 2026-08-28 — the keystone sweep, then the measurement sweep that
+followed it. Every completed phase's spec and notes are struck and the
+out-of-band ledger with them; `architecture.md` is the
 single authority on how the built system works. **Choosing the next phase is a
 re-grilling the maintainer has claimed**, so this is a phase boundary: an
 unattended loop stops here.
 
-**A full measurement sweep is in flight**, launched detached at
-2026-08-28T03:49:48Z against `ff9c8f3`. Until it lands,
-[`../design/measurements.md`](../design/measurements.md) still carries the
-`3739c26` session stamp and `uv run measure.py --stale` still flags eight
-figures. **Nothing may build or test while it runs** — a `cargo` job across 24
-cores moves the numbers it is taking. What to check and what to do with the
-result: [`history/2026-08-28.md`](history/2026-08-28.md), "A full sweep is
-running detached".
+**Every figure in
+[`../design/measurements.md`](../design/measurements.md) comes from one sweep**,
+taken against `ff9c8f3` on 2026-08-28 in 43 minutes and folded in whole:
+`uv run measure.py --stale` reports no figure's declared paths touched, and
+`--check` reconciles twelve markers against twelve figures. What moved, and
+what it changed elsewhere: [`history/2026-08-28.md`](history/2026-08-28.md).
 
 ## Not started
 
@@ -119,10 +118,10 @@ running detached".
 - **Mapping is O(blocks²), and the save throttle only halved it.** Every
   `CopyEnd` rebuilds `DumpIndex::spans` whole — `map::Builder::snapshot` clones
   the builder's spans, `stream::splice` clones the prefix — so a block-rich,
-  byte-poor dump pays quadratic CPU with the cache disabled entirely: 19.4 s
+  byte-poor dump pays quadratic CPU with the cache disabled entirely: 19.1 s
   for 4000 blocks under `query --dqcache none`, against under 10 ms for the
-  same bytes in one block. 9.5's throttle removed the other half (45.8 s → 20.1
-  s for a 4000-block `parse`), which leaves the map as **94%** of what a
+  same bytes in one block. 9.5's throttle removed the other half (45.5 s → 19.8
+  s for a 4000-block `parse`), which leaves the map as **97%** of what a
   throttled `parse` now costs at that block count. Accepted for now, not scheduled: the fix is to
   stop rebuilding the span list per block, which is the same code P7's
   parallel-scan plans would rework and which
@@ -130,8 +129,9 @@ running detached".
   for assuming coverage is a contiguous prefix — so the two belong in one
   decision. A **cheap** version exists and was weighed: for `parse` nothing
   reads `index.spans` between saves, so gating the splice on the throttle the
-  same way the save is gated would cost a few dozen splices instead of `n` (~19.4 s
-  → ~1 s at 4000 blocks). It is not taken, because it would make an interrupt
+  same way the save is gated would cost a few dozen splices instead of `n`
+  (~19.1 s → ~1 s at 4000 blocks). It is not taken, because it would make an
+  interrupt
   bank the last *saved* watermark rather than the last *completed block* —
   reversing a guarantee 9.5 established — and `Builder::snapshot` asserts
   `Idle`, so the chunk-top interrupt check cannot re-derive the spans mid-block
@@ -167,18 +167,14 @@ running detached".
 - An `INSERT` run is folded into one `Data` span, but every line in it is
   still decoded into `Event::Line` and pushed through the statement
   accumulator — unlike the large-object region, which is skipped unread at
-  the scanner level. Measured at **~209MB/s cold against ~1.10GB/s for a `COPY`
-  dump of the same size on the same disk read page-cache warm**, i.e. about 5×
-  the per-byte CPU. **The 5× is not a CPU ratio and is a loose floor**: it
-  divides a *cold* `INSERT` rate, device included, by the `COPY` path's *warm*
-  CPU — and no warm `INSERT` figure has ever been taken. Bounding it from the
-  warm table now measures the per-byte ratio at **14.6×**, inside the 16–26×
-  the cold table alone had bounded it at, and it is now measured warm in one
-  regime rather than derived across two. Every correction so far has made this
-  path look worse, so
-  the gap the fix addresses is larger than the figure says, never smaller. Figures and re-run commands in
+  the scanner level. Warm, on the same 3.00 GiB, that costs **16.2× the
+  per-byte CPU of a `COPY` scan** — 8.26 s against 0.510 s, and 31× the device
+  floor where the `COPY` path is 1.9×. Cold from this SSD the device hides most
+  of it, at 1.71× the floor against the `COPY` path's 1.00×, which is why the
+  ratio is quoted from the warm table and from one regime. Figures and re-run
+  commands in
   [`../design/measurements.md`](../design/measurements.md). A
-  koji-scale 1TB `--inserts` dump therefore spends ~45 minutes of CPU that a
+  koji-scale 1TB `--inserts` dump therefore spends ~43 minutes of CPU that a
   `COPY` dump of the same size does not. Correctness is unaffected — the map, the tiling and the row counts
   are the same either way. Not scheduled: the fix is a scanner-level
   `INSERT` path, which changes a decision and so needs a slice, filed into
@@ -190,17 +186,32 @@ Calls made without the maintainer present that are worth weighing in on —
 cautionary and informational, not blocking. **An entry leaves this section once
 it has been looked at**, settled into the design docs or reversed; the
 reasoning that closed it lives in the dated history entry it names, and the
-durable half in the doc that holds the decision. One is open.
+durable half in the doc that holds the decision. Two are open.
 
-*An `INSERT` scan costs **14.6×** a `COPY` scan per byte, not the "~5×" three
+*An `INSERT` scan costs **16.2×** a `COPY` scan per byte, not the "~5×" three
 documents carried — and what that changes about P7's plan has not been
 grilled.* The number itself is folded in wherever it was repeated, since a
 document must not keep asserting a measurement known to be wrong. The decision
 behind it is untouched: the old ratio was the evidence for filing a
 scanner-level `INSERT` path in
 [`../design/roadmap-P7-scan-performance-inbox.md`](../design/roadmap-P7-scan-performance-inbox.md),
-and a ratio three times larger — 1 TB of `INSERT` runs is ~41 minutes of CPU
+and a ratio three times larger — 1 TB of `INSERT` runs is ~43 minutes of CPU
 against the `COPY` path's ~3 — may change where that sits in P7's order, or
 whether it is P7's at all. That is a phase-planning question and it goes
 through grilling, which is why the fold-in stopped here rather than
 re-prioritising anything.
+
+*The composite column's end-to-end share now separates from the instrument's
+own floor, and the fold-in kept the old bound anyway.* This sweep reads the
+composite column at **+0.99 µs/row** against a seed-43 floor of **−0.11**, and
+their per-rep ranges do not overlap (+0.31…+1.24 against −0.41…+0.28) — where
+the previous sweep read +0.39 against a +0.07 floor and overlapped it across
+most of its width. Two takes of one quantity **0.6 µs/row apart** is wider than
+the floor itself, so
+[`../design/measurements.md`](../design/measurements.md) still reads that
+subtraction as a bound rather than a resolution, and its standing rule still
+puts the apparatus floor at ~0.5 µs/row. What is open is whether a third sweep
+reproducing the separation retires that bound, and whether ~0.5 µs/row is the
+right floor now that the instrument's own control spans −0.41 to +0.28. Both
+are readings of a figure rather than values in it, which is why the fold-in did
+not settle them.

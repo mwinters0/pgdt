@@ -547,7 +547,7 @@ the dated history entry it was filed under.
 
 **One of them left a live obligation.** The synthetic `INSERT`-run measurement
 fit one session and changed no decision, which is what admitted it as
-out-of-band; the number it produced — an `INSERT`-run scan costs **14.6×** a
+out-of-band; the number it produced — an `INSERT`-run scan costs **16.2×** a
 `COPY` scan per byte, CPU-bound — argues for a scanner-level `INSERT` path,
 which *does* change a decision. That goes through grilling → spec amendment →
 a numbered slice, and is filed in the scan-performance phase's inbox
