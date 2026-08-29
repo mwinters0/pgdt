@@ -178,8 +178,9 @@ It buys two things that matter:
 Reserve room for it in the serialized `DumpIndex` from the start; it is
 optional data, so a cache without it stays valid. The checkpoint interval also
 defines the row-group boundary that per-column statistics attach to
-(`docs/design/roadmap.md`, P5 companion), so the two features share one
-addressing scheme.
+(`docs/design/roadmap.md`, "P10 — Per-row-group column statistics"), so the two
+features share one addressing scheme — which is why P10 is scheduled after this
+phase rather than before it.
 
 ## Measurement discipline
 

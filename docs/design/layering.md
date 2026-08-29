@@ -117,7 +117,7 @@ during the scan does not mean L1 depends on `predicate.rs`. L1 defines the
 callback or trait; L4 supplies the implementation — rule 6. `predicate.rs`
 stays in L4 whatever P5 does to where it runs.
 
-**Per-row-group statistics (P5) span all four layers**, which makes them
+**Per-row-group statistics (P10) span all four layers**, which makes them
 the sharpest test of these rules: gathered during L1's scan, requiring L2 to
 parse a value, persisted in L1's cache. Rule 5 settles the persistence
 question — `RowGroupStats` records the **declared PostgreSQL type** a statistic

@@ -34,8 +34,8 @@ pub struct SparseRowIndex {
 
 /// Per-row-group column statistics for one block, keyed to its
 /// [`SparseRowIndex`] checkpoints. Reserved in the cache format from the
-/// first release; not populated yet — `docs/design/roadmap.md`, "Companion:
-/// per-row-group column statistics", defines its real shape (null counts,
+/// first release; not populated yet — `docs/design/roadmap.md`, "P10 —
+/// Per-row-group column statistics", defines its real shape (null counts,
 /// sortedness, min/max, the type each was computed as).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RowGroupStats {}

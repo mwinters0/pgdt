@@ -23,9 +23,10 @@ review, so there is no per-phase checklist here.
 | CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, cache-only `info` | working; **`parse` is the only scanner** — it resumes from a matching cache, banks at `COPY` block boundaries under a self-tuning throttle, and saves unconditionally on Ctrl-C (exit 130/143). `info` reports from the cache and never scans. Text output shape is provisional; `--json` carries no shape promise at all |
 | Partial reporting | `info` reports an unfinished scan's cache for as far as it got, with `Scan completion: N%` stated once at the top and nothing below it qualified. An interrupted cache is **typed** for every database segment the scan finished (I1) |
 | Measurement harness | `scripts/measure.py` takes every figure in [`../design/measurements.md`](../design/measurements.md) and emits that doc's tables — twelve figures, eleven taken by a sweep and one derived across two, each declaring what invalidates it and which documents repeat it, plus one instrument built and not taken |
-| Predicate and projection pushdown; per-row-group statistics | not started — P5 |
+| Column projection; richer predicates (conjunction, ordering, typed comparison) | not started — P5 |
 | `object_store` I/O, Python bindings, DataFusion `TableProvider` | not started — P6 |
 | Device-bound scan performance campaign, sparse row index | not started — P7 |
+| Per-row-group column statistics | not started — P10, which needs P7's sparse row index. `CopyBlock::column_stats` stays a reserved `None` |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — P8 (the map already locates and attributes `INSERT` runs) |
 
 **Figures.** Every figure in
@@ -83,11 +84,20 @@ against them.
      the isolated instrument replaces that bound with a measurement.
   6. Delete the `ed588a3` acknowledgement, which the new stamp makes spent, and
      add the ledger row.
-- **No phase is specified.** Four are sketched and none grilled — P5, P6, P7,
-  P8 — and numeric order is not plan order, since P9 was taken ahead of P5.
-  `process.md` step 6 re-grills the roadmap before the next phase is
-  specified, and each of the four has an inbox that must be drained as part of
-  that grilling.
+- **No phase is specified.** Five are sketched and none grilled — P5, P6, P7,
+  P10, P8, in that schedule order — and numeric order is not plan order, since
+  P9 was taken ahead of P5 and P10 was allocated when P5's grilling split
+  statistics out of it. `process.md` step 6 re-grills the roadmap before the
+  next phase is specified, and each of the five has an inbox that must be
+  drained as part of that grilling.
+
+- **P5's grilling is open, not finished.** Its scope was narrowed and the
+  statistics companion left it for P10
+  ([`../design/roadmap.md`](../design/roadmap.md), both sections; reasoning in
+  [`history/2026-08-29.md`](history/2026-08-29.md)). The remaining design tree —
+  what a projection does to the resolved schema and the zero-copy path, and how
+  far predicate expressiveness goes — is unanswered, so
+  `roadmap-P5-pushdown-inbox.md` stays undrained and there is no spec yet.
 
 ## Known gaps
 

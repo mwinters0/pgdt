@@ -19,6 +19,7 @@ reused, including a struck phase's.
 | P5 — pushdown | Sketched; not grilled | this file, below; [inbox](roadmap-P5-pushdown-inbox.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
 | P7 — scan performance | Sketched; design doc ahead of its phase | [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md); [inbox](roadmap-P7-scan-performance-inbox.md) |
+| P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
 | P8 — format coverage | Sketched; not grilled | this file, below; [inbox](roadmap-P8-format-coverage-inbox.md) |
 
 The struck phases' mechanisms are described by subject in
@@ -30,8 +31,8 @@ is reused, whether it was struck or never specified.
 Two standing-constraint docs cut across everything below.
 [`layering.md`](layering.md) assigns each module to one of four layers and
 fixes the direction dependencies may point; several phases here are cross-layer
-by nature — P5's pushdown and statistics especially — and that doc holds
-the decision rules for them. [`postgres-invariants.md`](postgres-invariants.md)
+by nature — P10's statistics most of all, which that doc calls the sharpest
+test of its own rules — and it holds the decision rules for them. [`postgres-invariants.md`](postgres-invariants.md)
 is the evidence layer: every `pg_dump` behaviour a decision treats as
 guaranteed, with its proof and its re-verification command.
 
@@ -316,17 +317,125 @@ item; see below.
 
 ## P5 — Pushdown
 
-- **Predicate pushdown**: evaluate predicates *during* the scan/parse, so
-  non-matching rows never get fully unescaped/materialized — as opposed to
-  today's post-parse filtering.
+**Inbox:** [`roadmap-P5-pushdown-inbox.md`](roadmap-P5-pushdown-inbox.md) — facts earlier
+phases filed for this one. Drain it when grilling this phase.
+
 - **Column projection pushdown**: only parse/materialize columns the caller
-  actually requested.
+  actually requested. `BatchOptions` has no projection today and
+  `RowBatcher::push_row` walks and decodes every field of every row, so this is
+  unbuilt and its saving is real.
+- **Richer predicates**: what a filter can express. Today it is exactly one
+  `Option<Predicate>` over `Eq`/`Ne`/`IsNull`/`IsNotNull`, compared as an
+  unparsed string; a conjunction, ordering operators and type-aware comparison
+  are each unbuilt, and each has a different cost — see the inbox, which prices
+  the third.
 
-Both depend on the typed DDL parsing already built (at minimum for
-knowing column boundaries/positions cheaply), though projection could
-plausibly land against string columns first if it proves valuable earlier.
+Both depend on the typed DDL parsing already built (at minimum for knowing
+column boundaries/positions cheaply), though projection could plausibly land
+against string columns first if it proves valuable earlier.
 
-### Companion: per-row-group column statistics
+**The phase is not what its slug says, and the correction is load-bearing.**
+This section used to promise that pushdown would evaluate predicates during the
+scan "so non-matching rows never get fully unescaped/materialized — as opposed
+to today's post-parse filtering". The second half was never true of the built
+system: `stream.rs`'s replay loop tests the predicate against the **raw** row
+and calls `push_row` only if it passes, and `Predicate::matches` walks
+`split_fields` as far as one column index and unescapes that single field. A
+rejected row already never reaches a `ColumnBuilder`. What is left to remove is
+a partial field walk, against a scanner that must find every row's terminator
+whatever the predicate says — so **this phase should not be sold on making
+rejected rows cheaper**, and any performance claim it makes belongs to
+projection. Reasoning:
+[`../status/history/2026-08-29.md`](../status/history/2026-08-29.md), "The
+sketch's premise for predicate pushdown is already banked".
+
+**Whatever it claims, it claims about replay only.** A query is two passes, and
+the mapping pass walks and censuses every row between `scanned_through` and the
+target regardless of what the query asks for. Replay then re-reads one block's
+extent. Pushdown's share of a cold query's wall clock is that block, not the
+file; it is the whole cost only once the map is cached. Skipping *bytes* is
+P10's, not this phase's.
+
+The chunk-pinning obligation P7 names lands here: a `Utf8View` batch pins its
+whole source chunk, which is harmless at full selectivity and wasteful once a
+filter is aggressive ([`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md),
+"Row extraction").
+
+## P6 — Embeddable engine story
+
+**Inbox:** [`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md) — facts earlier
+phases filed for this one. Drain it when grilling this phase.
+
+The least-specified phase — the user has explicitly flagged unfamiliarity
+with this space, so treat its eventual grilling session as needing real
+research (prior art from `object_store`/DataFusion/similar embedded-source
+crates), not just architectural taste. Rough shape, informed by the decisions
+under "Standing rules" above, made to keep this open:
+
+- Feature-gated `object_store`-backed I/O implementation of the MVP's
+  internal byte-range trait, alongside the lightweight local-only default —
+  unlocks S3/GCS/Azure and any other `object_store`-supported backend.
+- Python bindings (likely `pyo3`), as a new workspace member.
+- Apache DataFusion `TableProvider` integration, as a new workspace member —
+  the async core and the `Utf8View` column choice were made with this
+  destination specifically in mind.
+- Apache Spark / Trino integration — order and approach TBD; likely follows
+  whatever pattern the DataFusion integration establishes, if applicable.
+
+## P7 — Scan performance
+
+**Inbox:** [`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md) — facts earlier
+phases filed for this one. Drain it when grilling this phase.
+
+Concentrated optimization of the local-file read path: SIMD-accelerated
+structure discovery, zero-copy row extraction into Arrow buffers, bulk UTF-8
+validation, and device-aware parallelism (sequential on rotational media,
+parallel on NVMe). Full sketch, including the measurements that should gate
+each piece and the decisions it constrains, in this phase and before it:
+`docs/design/roadmap-P7-scan-performance.md`.
+
+Scheduled here, after the engine story, because P6's `object_store` backend
+settles the I/O layer that any readahead/parallelism scheme has to live behind.
+Deliberately *before* P8 — the format work multiplies the surface area that any
+later optimization has to be correct against, so the fast path should exist
+first and archive containers should be built to fit it. And before P10, which
+needs the sparse row index this phase builds.
+
+*The reason that used to head this list is withdrawn:* that P5's pushdown
+"changes which bytes get touched at all, so optimizing the pre-pushdown parser
+would partly optimize code that pushdown deletes". Pushdown deletes no parser
+code — it never did, and P5's section says why. Nothing about the ordering
+changed, because the `object_store` reason was always the load-bearing one; the
+withdrawn half is recorded so it is not re-derived.
+
+## P10 — Per-row-group column statistics
+
+**Inbox:** [`roadmap-P10-row-group-statistics-inbox.md`](roadmap-P10-row-group-statistics-inbox.md) — facts earlier
+phases filed for this one. Drain it when grilling this phase.
+
+Sketched as P5's companion until P5's grilling separated them, and the number
+is later than its neighbours' because it was allocated when that happened
+(`../process.md`, "Phase identity is `P<k>`"). Three things make it a phase
+rather than a companion, and the last one also fixes where it sits in the
+table above:
+
+- It is the only work here that spans **all four layers**, which
+  [`layering.md`](layering.md) calls the sharpest test of its own rules.
+- It is the only work here whose bug is a **wrong answer** rather than a slow
+  one — see "The correctness asymmetry" below — so it cannot share a review
+  cycle with a self-contained query-API change (`../process.md`, "Size a slice
+  by its review, not by its scope").
+- **It needs an addressing scheme P7 owns.** Statistics attach to row groups,
+  the row group is the sparse row index's checkpoint interval, and
+  `CopyBlock::sparse_index` is a reserved `None` that
+  [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md) fills. So
+  this phase is scheduled after that one; running it earlier means inventing a
+  second addressing scheme that P7 then has to reconcile with the one it
+  wanted.
+
+Reasoning for the split:
+[`../status/history/2026-08-29.md`](../status/history/2026-08-29.md), "Statistics
+are a phase, not a companion".
 
 Parquet-style statistics, gathered during a scan and persisted in the cache, so
 a later query can skip data instead of reading it. Needs typed columns (a
@@ -421,47 +530,19 @@ caller asked for anyway, so coverage is naturally partial. The cache must record
 which row groups actually have statistics — absent is a normal state, not a
 defect.
 
-## P6 — Embeddable engine story
-
-**Inbox:** [`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md) — facts earlier
-phases filed for this one. Drain it when grilling this phase.
-
-The least-specified phase — the user has explicitly flagged unfamiliarity
-with this space, so treat its eventual grilling session as needing real
-research (prior art from `object_store`/DataFusion/similar embedded-source
-crates), not just architectural taste. Rough shape, informed by the decisions
-under "Standing rules" above, made to keep this open:
-
-- Feature-gated `object_store`-backed I/O implementation of the MVP's
-  internal byte-range trait, alongside the lightweight local-only default —
-  unlocks S3/GCS/Azure and any other `object_store`-supported backend.
-- Python bindings (likely `pyo3`), as a new workspace member.
-- Apache DataFusion `TableProvider` integration, as a new workspace member —
-  the async core and the `Utf8View` column choice were made with this
-  destination specifically in mind.
-- Apache Spark / Trino integration — order and approach TBD; likely follows
-  whatever pattern the DataFusion integration establishes, if applicable.
-
-## P7 — Scan performance
-
-**Inbox:** [`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md) — facts earlier
-phases filed for this one. Drain it when grilling this phase.
-
-Concentrated optimization of the local-file read path: SIMD-accelerated
-structure discovery, zero-copy row extraction into Arrow buffers, bulk UTF-8
-validation, and device-aware parallelism (sequential on rotational media,
-parallel on NVMe). Full sketch, including the measurements that should gate
-each piece and the decisions it constrains, in this phase and before it:
-`docs/design/roadmap-P7-scan-performance.md`.
-
-Scheduled here, after the engine story, for two reasons. P5's pushdown
-changes which bytes get touched at all, so optimizing the pre-pushdown parser
-would partly optimize code that pushdown deletes; and P6's
-`object_store` backend settles the I/O layer that any readahead/parallelism
-scheme has to live behind. Deliberately *before* P8 — the format work
-multiplies the surface area that any later optimization has to be correct
-against, so the fast path should exist first and archive containers should be
-built to fit it.
+**A statistic never helps the scan that gathered it, and that is the whole
+shape of the payoff.** A query is two passes: the mapping pass walks every row
+between `scanned_through` and the target, and only then does replay read the
+target block. Statistics are written by the first pass and read by a *later*
+query's planning — so the run that pays the parse tax gets nothing back, and
+every benefit lands on a subsequent query against a cache that survived. That
+puts two things in the frame together whenever this phase's value is argued:
+the cache's own lifetime, which pre-1.0 ends at the next format bump
+(`architecture.md`, "The cache" — koji's cache was unreadable within days), and
+the opt-in-and-column-selectable rule above, which is what keeps a caller who
+will never benefit from paying. Found during P5's grilling:
+[`../status/history/2026-08-29.md`](../status/history/2026-08-29.md), "Pushdown
+cannot touch the mapping pass".
 
 ## P8 — Format coverage beyond plain COPY TEXT
 
