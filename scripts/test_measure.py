@@ -388,6 +388,128 @@ class Staleness(unittest.TestCase):
         self.assertEqual(touched, ["nested-decode-micro"])
 
 
+class Acknowledgements(unittest.TestCase):
+    """A commit that touched a declared path and moved no reading.
+
+    The mechanism's whole risk is that it becomes a way to wave staleness away,
+    so what these tests hold are the refusals: a dirty path is never excused, a
+    path is excused only when *every* commit that touched it is, and an excuse
+    is scoped to the figures it names.
+    """
+
+    ACKS = (
+        measure.Acknowledged(commit="aaa", figures=("census-arrays",), why="additive"),
+        measure.Acknowledged(commit="bbb", figures=(), why="touches no figure's subject"),
+    )
+
+    def test_a_path_whose_only_commit_is_excused_is_excused(self):
+        got = measure.excused_paths(
+            "census-arrays",
+            ["scripts/generate_perf_data.py"],
+            {"scripts/generate_perf_data.py": ["aaa"]},
+            set(),
+            self.ACKS,
+        )
+        self.assertEqual(got, ["scripts/generate_perf_data.py"])
+
+    def test_an_excuse_does_not_reach_a_figure_it_does_not_name(self):
+        got = measure.excused_paths(
+            "census-brace-free",
+            ["scripts/generate_perf_data.py"],
+            {"scripts/generate_perf_data.py": ["aaa"]},
+            set(),
+            self.ACKS,
+        )
+        self.assertEqual(got, [])
+
+    def test_an_empty_figure_list_excuses_every_figure(self):
+        got = measure.excused_paths(
+            "census-brace-free",
+            ["scripts/measure.py"],
+            {"scripts/measure.py": ["bbb"]},
+            set(),
+            self.ACKS,
+        )
+        self.assertEqual(got, ["scripts/measure.py"])
+
+    def test_one_unexamined_commit_keeps_the_path_stale(self):
+        # The failure this exists against: a path changed by an excused commit
+        # and an unexamined one is stale on the strength of the second.
+        got = measure.excused_paths(
+            "census-arrays",
+            ["scripts/generate_perf_data.py"],
+            {"scripts/generate_perf_data.py": ["aaa", "ccc"]},
+            set(),
+            self.ACKS,
+        )
+        self.assertEqual(got, [])
+
+    def test_an_uncommitted_path_is_never_excused(self):
+        # There is no commit to point at, so nobody has read the diff.
+        got = measure.excused_paths(
+            "census-arrays",
+            ["scripts/generate_perf_data.py"],
+            {"scripts/generate_perf_data.py": ["aaa"]},
+            {"scripts/generate_perf_data.py"},
+            self.ACKS,
+        )
+        self.assertEqual(got, [])
+
+    def test_a_path_with_no_commits_in_range_is_not_excused(self):
+        got = measure.excused_paths(
+            "census-arrays", ["scripts/generate_perf_data.py"], {}, set(), self.ACKS
+        )
+        self.assertEqual(got, [])
+
+    def test_the_live_register_names_only_real_figures(self):
+        known = set(measure.ALL_BY_ID)
+        for ack in measure.ACKNOWLEDGED:
+            for fid in ack.figures:
+                with self.subTest(commit=ack.commit, figure=fid):
+                    self.assertIn(fid, known)
+
+    def test_every_live_entry_carries_its_evidence(self):
+        # An entry may legitimately have no mechanical check, but it may not
+        # have no *reason*: `why` is what a reader weighs when the excuse is
+        # the only thing between a figure and a re-take.
+        for ack in measure.ACKNOWLEDGED:
+            with self.subTest(commit=ack.commit):
+                self.assertTrue(ack.why.strip())
+
+    def test_a_spent_entry_is_reported_rather_than_kept(self):
+        acks = (measure.Acknowledged(commit="aaa", figures=(), why="x"),)
+        unknown, spent = measure.acknowledgement_problems(acks, measure.ALL_BY_ID, ["aaa"])
+        self.assertEqual(unknown, [])
+        self.assertEqual(spent, ["aaa"])
+
+    def test_an_entry_naming_no_figure_is_reported(self):
+        acks = (measure.Acknowledged(commit="aaa", figures=("gone",), why="x"),)
+        unknown, spent = measure.acknowledgement_problems(acks, measure.ALL_BY_ID, [])
+        self.assertEqual(unknown, ["aaa names gone"])
+        self.assertEqual(spent, [])
+
+
+class VerifyAdditive(unittest.TestCase):
+    """The evidence half: regenerate at two revisions and compare bytes."""
+
+    def test_it_verifies_only_inputs_a_published_figure_is_taken_on(self):
+        # `composite_text` is consumed by the untaken instrument alone, so no
+        # published figure was taken on its bytes -- and it cannot be generated
+        # at a revision before the flag that makes it existed.
+        published = {
+            name
+            for fig in measure.ALL_FIGURES
+            for name in (*fig.cold_inputs, *fig.warm_inputs)
+        }
+        self.assertNotIn("composite_text", published)
+        self.assertIn("composite", published)
+
+    def test_the_verification_size_is_small_enough_to_be_run(self):
+        # A verification nobody runs is worth nothing; the sweep's own 3 GiB
+        # would make this a minutes-long command per input.
+        self.assertLess(measure.VERIFY_SIZE_GIB, 0.1)
+
+
 class Stamp(unittest.TestCase):
     def test_a_stamp_wrapped_across_lines_still_yields_a_commit(self):
         # The stamp is prose in a hard-wrapped doc, so it is never one line.

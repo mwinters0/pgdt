@@ -75,6 +75,7 @@ import shutil
 import statistics
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
@@ -2165,6 +2166,153 @@ SELECTABLE = FIGURES + UNTAKEN
 SELECTABLE_BY_ID = {f.id: f for f in SELECTABLE}
 
 
+# --------------------------------------------------------------------------
+# Acknowledged commits: a declared path changed, and no reading moved.
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Acknowledged:
+    """One commit that touched a figure's declared paths without moving it.
+
+    `depends` is coarse on purpose (see `SCAN` and the constants beside it),
+    and coarseness costs something in *both* directions. The cost designed for
+    is the false negative: a change outside the declared paths moves a figure
+    and nothing says so, which is why the doc also carries a session stamp.
+    This is the other one, and it is the one that decays the mechanism. A
+    change *inside* a declared path that provably moves nothing leaves
+    `--stale` red until a sweep re-stamps the doc — and a sweep is an hour on a
+    machine that has to be quiet, so the realistic outcome is that no sweep
+    runs and `--stale` becomes a light that is always on. A signal that is
+    always on is the same thing as no signal, which is the decay the register
+    was built against, arriving from the other side.
+
+    So a commit can be excused, per figure, with its evidence attached.
+
+    **Per commit, never per path.** Excusing a path would silently cover every
+    future change to it, which is precisely the escape hatch that turns this
+    into a way to wave away real staleness. A commit is a fixed diff that
+    someone — or `--verify-additive` — actually looked at.
+
+    **An acknowledgement lives inside one stamp's range.** Once the doc is
+    re-stamped past it, the commit is no longer in any `--stale` range and the
+    entry is spent; `--check` names spent entries so they are deleted rather
+    than kept as sediment.
+    """
+
+    #: Any spelling `git rev-parse` resolves. Normalised before comparison, so
+    #: the short sha that `--stale` prints is what gets recorded.
+    commit: str
+    #: The figure ids this excuses. Empty means every figure — right only for a
+    #: change no figure's subject can see, and rare enough to be suspicious.
+    figures: tuple[str, ...]
+    #: What changed and why no reading moves, in one line.
+    why: str
+    #: The command that re-checks the claim, so the entry is not a session's
+    #: word. Empty is allowed and is the weaker kind of entry: it says someone
+    #: read the diff and nothing mechanical can confirm it.
+    verified: str = ""
+
+
+#: The excused commits, live for the current session stamp only.
+ACKNOWLEDGED: tuple[Acknowledged, ...] = (
+    Acknowledged(
+        commit="ed588a3",
+        figures=(
+            "census-brace-free",
+            "census-arrays",
+            "scan-throughput-cold",
+            "scan-throughput-warm",
+            "nested-end-to-end",
+            "census-attribution",
+            "cross-file-floor",
+            "per-block-quadratic",
+        ),
+        why=(
+            "--weak-composite is a new flag on generate_perf_data.py; every mode a figure "
+            "generates on writes the bytes it wrote before"
+        ),
+        verified="cd scripts && uv run measure.py --verify-additive --since fa186ab",
+    ),
+)
+
+
+def resolved_acknowledgements(
+    acks: Sequence[Acknowledged] = ACKNOWLEDGED,
+) -> list[Acknowledged]:
+    """`ACKNOWLEDGED` with every commit resolved to a full sha, so comparison
+    against `git log` output is not a string-length accident."""
+    out = []
+    for ack in acks:
+        sha = run(["git", "rev-parse", f"{ack.commit}^{{commit}}"], cwd=REPO, capture=True).strip()
+        out.append(dataclasses.replace(ack, commit=sha))
+    return out
+
+
+def excuses(acks: Sequence[Acknowledged], commit: str, figure_id: str) -> Acknowledged | None:
+    """The acknowledgement covering this commit for this figure, if any."""
+    for ack in acks:
+        if ack.commit == commit and (not ack.figures or figure_id in ack.figures):
+            return ack
+    return None
+
+
+def excused_paths(
+    figure_id: str,
+    hits: Sequence[str],
+    commits_by_path: dict[str, Sequence[str]],
+    dirty: set[str],
+    acks: Sequence[Acknowledged],
+) -> list[str]:
+    """Which of a figure's touched paths an acknowledgement accounts for.
+
+    Two refusals, and both are the conservative direction:
+
+    - **An uncommitted path is never excused.** There is no commit to point
+      at, so nobody has reviewed the diff — a dirty tree under a measured path
+      is exactly what `git_head` already calls unpublishable.
+    - **Every commit touching the path must be excused, not just one.** A path
+      changed by an excused commit and an unexamined one is stale on the
+      strength of the second.
+    """
+    out = []
+    for path in hits:
+        if path in dirty:
+            continue
+        commits = commits_by_path.get(path) or ()
+        if commits and all(excuses(acks, c, figure_id) for c in commits):
+            out.append(path)
+    return out
+
+
+def commits_touching(paths: Iterable[str], since: str) -> dict[str, list[str]]:
+    """The commits in `since..HEAD` that changed each path."""
+    out: dict[str, list[str]] = {}
+    for path in paths:
+        log = run(
+            ["git", "log", "--format=%H", f"{since}..HEAD", "--", path],
+            cwd=REPO,
+            capture=True,
+        )
+        out[path] = [line.strip() for line in log.splitlines() if line.strip()]
+    return out
+
+
+def dirty_paths() -> set[str]:
+    status = run(["git", "status", "--porcelain"], cwd=REPO, capture=True)
+    return {line[3:].strip() for line in status.splitlines() if line.strip()}
+
+
+def is_ancestor(earlier: str, later: str) -> bool:
+    proc = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", earlier, later],
+        cwd=str(REPO),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return proc.returncode == 0
+
+
 def drift_table(first: Path, second: Path) -> str:
     """Two sweeps of the same figures, differenced reading by reading.
 
@@ -2627,12 +2775,179 @@ def cmd_check(doc: Path) -> int:
         for fig in UNTAKEN:
             print(f"  {fig.id}")
         print()
+    acks = resolved_acknowledgements()
+    stamp = stamped_commit(doc)
+    unknown_ack, spent_ack = acknowledgement_problems(
+        acks,
+        ALL_BY_ID,
+        [a.commit for a in acks if stamp and is_ancestor(a.commit, stamp)],
+    )
+    if acks:
+        print("Acknowledged commits — a declared path changed and no reading moved:")
+        for ack in acks:
+            print(f"  {ack.commit[:7]}  {ack.why}")
+        print()
+    if unknown_ack:
+        print("Acknowledgements naming no figure — a rename that did not reach the register:")
+        for line in unknown_ack:
+            print(f"  {line}")
+        print()
+    if spent_ack:
+        print("Spent acknowledgements — the stamp has moved past them; delete these entries:")
+        for line in spent_ack:
+            print(f"  {line}")
+        print()
     print("What else a moved figure invalidates:")
     for fig in ALL_FIGURES:
         print(f"  {fig.id}")
         for q in fig.quoted_by:
             print(f"      {q}")
-    return 1 if (unknown or duplicated) else 0
+    return 1 if (unknown or duplicated or unknown_ack or spent_ack) else 0
+
+
+def acknowledgement_problems(
+    acks: Sequence[Acknowledged], known: Iterable[str], spent: Iterable[str]
+) -> tuple[list[str], list[str]]:
+    """Entries naming a figure that does not exist, and entries already spent.
+
+    Spent is the one that silts up. An acknowledgement covers a commit inside
+    one session stamp's range; once the doc is re-stamped past that commit, no
+    `--stale` range can reach it again and the entry excuses nothing. Left
+    standing, the register accumulates permanent excuses whose diffs nobody
+    will ever re-read — which is how a mechanism that exists to keep a signal
+    honest turns into the thing dulling it.
+    """
+    known = set(known)
+    spent = set(spent)
+    unknown = sorted(
+        f"{ack.commit[:7]} names {fid}" for ack in acks for fid in ack.figures if fid not in known
+    )
+    return unknown, sorted(ack.commit[:7] for ack in acks if ack.commit in spent)
+
+
+#: The size `--verify-additive` generates at. Small enough that verifying every
+#: input is seconds rather than the sweep's tens of gigabytes, and large enough
+#: that every value shape the generators draw from appears many times over: the
+#: same seed draws the same row sequence at any size, so a prefix that matches
+#: byte for byte is the row logic matching, not a coincidence of length.
+VERIFY_SIZE_GIB = 0.03
+
+
+def cmd_verify_additive(since: str | None) -> int:
+    """Regenerate every figure's inputs at two revisions and compare bytes.
+
+    The one class of staleness that can be settled mechanically. A figure's
+    `depends` names its generator, so *any* edit to that script marks it stale
+    — including one that only adds a flag. Rather than trusting a reading of
+    the diff, generate both ways and compare: identical bytes mean the figure
+    would have been taken on the same input, which is the whole of what its
+    generator dependency claims.
+
+    What this cannot settle is a change to library code or to the harness's own
+    timing path, where there is no cheap oracle and the honest answer is a
+    sweep. Those stay stale, and `--stale` keeps saying so.
+    """
+    doc = REPO / "docs/design/measurements.md"
+    rev = since or stamped_commit(doc)
+    if not rev:
+        print(
+            "no --since given and measurements.md carries no session stamp naming a commit; "
+            "pass --since <rev>",
+            file=sys.stderr,
+        )
+        return 2
+
+    changed = set(changed_paths(rev))
+    generators = sorted(
+        {spec.generator for spec in INPUTS.values() if f"scripts/{spec.generator}" in changed}
+    )
+    if not generators:
+        print(f"no generator any figure depends on changed since {rev}.")
+        return 0
+
+    cfg = dataclasses.replace(Config(), size_gib=VERIFY_SIZE_GIB)
+    # Only the inputs a *published* figure is taken on. An input that exists
+    # solely for an untaken instrument has no bytes in the doc to be wrong
+    # about, and -- as `composite_text` proved on this mechanism's first run --
+    # it may not be generatable at the old revision at all, because the commit
+    # under test is what added its flag. A published figure's inputs cannot be
+    # new that way: the figure was taken at the stamp, so they existed then.
+    published = {name for fig in ALL_FIGURES for name in (*fig.cold_inputs, *fig.warm_inputs)}
+    specs = sorted(
+        {
+            (spec.name, spec)
+            for name, spec in INPUTS.items()
+            if spec.generator in generators and name in published
+        },
+        key=lambda pair: pair[0],
+    )
+    if not specs:
+        print(
+            "the changed generator(s) feed no published figure's inputs, so nothing the doc "
+            "carries was taken on them."
+        )
+        return 0
+    print(f"{len(generators)} generator(s) changed since {rev}: {', '.join(generators)}")
+    print(f"regenerating {len(specs)} input(s) at {VERIFY_SIZE_GIB} GiB under both revisions\n")
+
+    # Under `runs/`, like the pre-throttle build's worktree: gitignored, so a
+    # crashed run leaves no untracked tree inside the repo being measured.
+    cfg.out_dir.mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", rev)
+    work = cfg.out_dir / f"worktree-verify-{safe}"
+    run(["git", "worktree", "add", "--detach", str(work), rev], cwd=REPO, quiet=True)
+    identical: list[str] = []
+    differing: list[str] = []
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            for name, spec in specs:
+                old_out = tmp_path / f"{name}.old"
+                new_out = tmp_path / f"{name}.new"
+                run(spec.argv(cfg, old_out), cwd=work / "scripts", quiet=True)
+                run(spec.argv(cfg, new_out), cwd=SCRIPTS, quiet=True)
+                old, new = old_out.read_bytes(), new_out.read_bytes()
+                if old == new:
+                    identical.append(name)
+                    print(f"  {name:<16} identical ({len(new)} bytes)")
+                else:
+                    differing.append(name)
+                    at = next(
+                        (i for i, (a, b) in enumerate(zip(old, new)) if a != b),
+                        min(len(old), len(new)),
+                    )
+                    print(f"  {name:<16} DIFFERS at byte {at} ({len(old)} vs {len(new)} bytes)")
+                old_out.unlink()
+                new_out.unlink()
+    finally:
+        run(["git", "worktree", "remove", "--force", str(work)], cwd=REPO, quiet=True)
+
+    if differing:
+        print(
+            f"\n{len(differing)} input(s) changed. Those figures are genuinely stale and need a "
+            "sweep; do not acknowledge them."
+        )
+        return 1
+
+    covered = sorted(
+        {
+            fig.id
+            for fig in ALL_BY_ID.values()
+            for dep in fig.depends
+            if dep in {f"scripts/{g}" for g in generators}
+        }
+    )
+    print(
+        f"\nEvery input is byte-identical, so no figure was taken on different bytes. "
+        f"The {len(covered)} figure(s) this accounts for:\n"
+    )
+    for fid in covered:
+        print(f"  {fid}")
+    print(
+        "\nThat is the evidence an `Acknowledged` entry carries — record the commit that changed "
+        "the generator, these figure ids, and this command as its `verified`."
+    )
+    return 0
 
 
 def cmd_stale(since: str | None) -> int:
@@ -2651,9 +2966,39 @@ def cmd_stale(since: str | None) -> int:
     if not touched:
         print("no figure's declared paths were touched.")
         return 0
+
+    acks = resolved_acknowledgements()
+    dirty = dirty_paths()
+    by_path = commits_touching({p for _, hits in touched for p in hits}, rev)
+
+    stale: list[tuple[Figure, list[str]]] = []
+    excused_by: dict[str, list[str]] = {}
     for fig, hits in touched:
+        ok = excused_paths(fig.id, hits, by_path, dirty, acks)
+        left = [h for h in hits if h not in ok]
+        if left:
+            stale.append((fig, left))
+        for path in ok:
+            for commit in by_path[path]:
+                excused_by.setdefault(commit, []).append(fig.id)
+
+    if excused_by:
+        print("Acknowledged — the commit is recorded as moving no reading:\n")
+        for commit, ids in excused_by.items():
+            ack = next(a for a in acks if a.commit == commit)
+            short = commit[:7]
+            print(f"  {short}  {ack.why}")
+            print(f"           verified: {ack.verified or '(read by hand; nothing re-checks it)'}")
+            print(f"           excuses: {', '.join(sorted(set(ids)))}")
+        print()
+
+    if not stale:
+        print("no figure is stale: every touched path is accounted for.")
+        return 0
+
+    for fig, hits in stale:
         print(f"  {fig.id:<24} stale — {', '.join(hits)}")
-    if all(f.stage == "derived" for f, _ in touched):
+    if all(f.stage == "derived" for f, _ in stale):
         # A derived figure is computed from two sweeps' `raw.json`, so it is
         # re-taken in seconds and forces no sweep on anything else.
         print(
@@ -2681,7 +3026,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="reconcile the register against measurements.md's figure markers, and name the "
         "documents a moved figure invalidates",
     )
-    parser.add_argument("--since", help="revision for --stale (default: the doc's session stamp)")
+    parser.add_argument(
+        "--verify-additive",
+        action="store_true",
+        help="regenerate every figure's inputs at --since and now, and compare bytes — the "
+        "evidence an acknowledged commit carries",
+    )
+    parser.add_argument(
+        "--since", help="revision for --stale/--verify-additive (default: the doc's session stamp)"
+    )
     parser.add_argument(
         "--drift",
         nargs=2,
@@ -2720,6 +3073,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return cmd_check(REPO / "docs/design/measurements.md")
     if args.stale:
         return cmd_stale(args.since)
+    if args.verify_additive:
+        return cmd_verify_additive(args.since)
 
     ids: list[str] = []
     for item in args.figure:
@@ -2729,7 +3084,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.all:
         ids = [f.id for f in FIGURES]
     if not ids:
-        parser.error("nothing selected: pass --figure, --stage, --all, --list or --stale")
+        parser.error(
+            "nothing selected: pass --figure, --stage, --all, --list, --stale or --verify-additive"
+        )
 
     cfg = Config(
         reps_override=args.reps,

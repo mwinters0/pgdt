@@ -31,26 +31,58 @@ review, so there is no per-phase checklist here.
 **Figures.** Every figure in
 [`../design/measurements.md`](../design/measurements.md) comes from the
 `fa186ab` sweep of 2026-08-28, folded in whole, each table carrying an
-apparatus line witnessing a quiet machine. **Nothing is owed a fold-in**;
-`--check` reconciles twelve markers against twelve figures and `--stale`
-reports nothing outstanding.
+apparatus line witnessing a quiet machine. `--check` reconciles twelve markers
+against twelve figures. **Eleven of the twelve are clean**: `ed588a3` touched a
+declared path — it added `--weak-composite` to the perf generator — and is
+acknowledged as moving no reading, verified by regenerating every published
+figure's inputs at both revisions and comparing them byte for byte
+(`uv run measure.py --verify-additive --since fa186ab`).
+
+**`session-drift` is stale and stays stale until `M25`.** It declares
+`scripts/measure.py` because the harness is the apparatus it measures, and four
+commits since the stamp have touched it — including the one that armed the
+contention gate. That has no cheap oracle, so it is not acknowledgeable; it
+needs the sweep pair `--drift` reads.
 
 **One instrument is built and deliberately unrun.** `M23`'s
 `composite-isolated` isolates the composite column's decode cost by declaring
 one column two ways over byte-identical rows, which removes the normalization
 that gives the cross-file subtraction its ~0.5 µs/row floor. It is registered
 under `measure.UNTAKEN` — a sweep does not take it and the doc carries no table
-for it — so the standing figure keeps reading that cost as a bound. Take it
-with `uv run measure.py --figure composite-isolated` on an idle machine, and
-move the entry into `FIGURES` when publishing it.
+for it — so the standing figure keeps reading that cost as a bound. **`M25`
+publishes it**, in a sweep rather than alone: the doc's tables are one
+apparatus, so a figure taken in its own session could not be differenced
+against them.
 
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **No out-of-band work is queued.** `M1`–`M23` are spent; the next item takes
-  `M24` ([`../design/roadmap.md`](../design/roadmap.md), "Out-of-band work").
+- **`M25` — the sweep that publishes `composite-isolated` and re-stamps the
+  doc.** Queued for a quiet machine; `M1`–`M24` are spent, so the item after it
+  takes `M26` ([`../design/roadmap.md`](../design/roadmap.md), "Out-of-band
+  work"). What it owes, in order:
+
+  1. Move `composite-isolated` from `measure.UNTAKEN` into `FIGURES` and give
+     it a `quoted_by`. `--check` then demands a section and an
+     `<!-- figure: composite-isolated -->` marker in the doc, which is the
+     fold-in's own checklist.
+  2. Run **two** full sweeps, detached under `runs/` per `CLAUDE.md`'s
+     long-running-process rules, with nothing else building or testing on the
+     machine. Two, not one, because `session-drift` is derived across a pair
+     and one sweep cannot re-take it.
+  3. **Judge each sweep on its floor before folding anything in.** An apparatus
+     line that clears every limit is necessary and not sufficient — the
+     2026-08-28 contention run cleared its gate and moved the warm `dd` floor a
+     fifth. A sweep whose floor moved is unpublishable: report it and stop.
+  4. Fold in the quieter sweep's `tables.md` whole, take `session-drift` with
+     `--drift` across the pair, and re-stamp the doc.
+  5. Re-read every consumer `--check` names for each figure whose number moved,
+     and revise the claims that read the composite column's cost as a *bound* —
+     the isolated instrument replaces that bound with a measurement.
+  6. Delete the `ed588a3` acknowledgement, which the new stamp makes spent, and
+     add the ledger row.
 - **No phase is specified.** Four are sketched and none grilled — P5, P6, P7,
   P8 — and numeric order is not plan order, since P9 was taken ahead of P5.
   `process.md` step 6 re-grills the roadmap before the next phase is

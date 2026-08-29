@@ -22,6 +22,7 @@ cd scripts && uv run generate_fixtures.py [--version 13|16|18]  # regenerate fix
 cd scripts && uv run measure.py --list            # every figure, and what invalidates each
 cd scripts && uv run measure.py --stale           # which figures a diff has made stale
 cd scripts && uv run measure.py --check           # figure markers vs the doc, and each figure's consumers
+cd scripts && uv run measure.py --verify-additive # inputs regenerated at two revisions, compared byte for byte
 cd scripts && uv run measure.py --figure <id>     # re-take one figure — one whole table
 cd scripts && uv run measure.py --all             # the whole sweep: ~1 h, detach it
 cd scripts && uv run python -m unittest test_measure   # the harness's own tests
@@ -202,9 +203,15 @@ transcription errors lived. Its unit tests are `scripts/test_measure.py`.
 **Run `uv run measure.py --stale` before claiming a figure still holds**: every
 figure declares the paths that invalidate it, so the harness answers "which
 figures did this diff make stale" instead of someone remembering to — which is
-the half that failed twice. Selection is per figure and a figure is exactly one
-whole table; a full sweep replaces every table at once, which is what that
-doc's session stamp records.
+the half that failed twice. A declared path is coarse, so a change inside one
+that provably moves nothing still reads stale; **acknowledge that commit rather
+than leaving `--stale` red**, because a signal that is always on is no signal.
+`--verify-additive` regenerates every published figure's inputs at two
+revisions and compares them byte for byte — that is the evidence an
+acknowledgement carries, and it settles generator changes only. Library and
+harness changes have no cheap oracle and stay stale until a sweep. Selection is
+per figure and a figure is exactly one whole table; a full sweep replaces every
+table at once, which is what that doc's session stamp records.
 
 **A sweep preflights.** Everything knowable before the first measurement —
 whether each figure's inputs fit the staging area, whether the staging area

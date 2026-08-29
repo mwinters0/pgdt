@@ -164,6 +164,57 @@ construction rather than by anyone keeping them in step. Evidence:
 [`../status/history/2026-08-28.md`](../status/history/2026-08-28.md),
 "`--stale`'s job is binary".
 
+**A commit can be acknowledged, and then it stops marking a figure stale.**
+Coarse `depends` costs something in both directions. The paragraph above weighs
+the false negative; the false positive is the one that decays the mechanism. A
+change *inside* a declared path that provably moves nothing leaves `--stale`
+red until a sweep re-stamps the doc — and a sweep is an hour on a machine that
+has to be quiet, so the realistic outcome is that no sweep runs and `--stale`
+becomes a light that is always on. A signal that is always on is the same thing
+as no signal, which is the decay the register was built against, arriving from
+the other side.
+
+So `measure.ACKNOWLEDGED` records commits that touched a declared path without
+moving a reading: the commit, the figures it excuses, why, and the command that
+re-checks it. `--stale` then prints the excuse rather than the figure, so the
+acknowledgement is *visible* — an invisible excuse would be the same defect one
+level down.
+
+Four properties keep it from becoming a way to wave staleness away:
+
+- **It is per commit, never per path.** Excusing a path would silently cover
+  every future change to it. A commit is a fixed diff someone looked at.
+- **Every commit touching a path must be excused**, not just one, so a path
+  changed by an excused commit and an unexamined one stays stale.
+- **An uncommitted path is never excused**, because there is no commit to point
+  at and nobody has read the diff — the same predicate `git_head` uses to call
+  a sweep unpublishable.
+- **An entry lives inside one session stamp's range.** Once the doc is
+  re-stamped past the commit, no `--stale` range reaches it and the entry
+  excuses nothing; `--check` names spent entries so they are deleted rather
+  than kept as sediment.
+
+**The evidence is computed, not asserted.** `uv run measure.py
+--verify-additive` regenerates every published figure's inputs at both
+revisions and compares them byte for byte, which settles the one class of
+staleness that has a cheap oracle: a figure's `depends` names its generator, so
+any edit to that script marks it stale, including one that only adds a flag.
+It generates at 30 MiB rather than the sweep's 3.00 GiB — the same seed draws
+the same row sequence at any size, so a prefix that matches byte for byte is
+the row logic matching rather than a coincidence of length — and it verifies
+only the inputs a *published* figure is taken on, since an input that exists
+for an untaken instrument has no bytes in the doc to be wrong about and may not
+be generatable at the older revision at all.
+
+*Rejected:* letting an acknowledgement cover library or harness changes on a
+reading of the diff. There is no cheap oracle for those — the only way to know
+whether a change to `map.rs` or to the harness's own timing path moved a number
+is to take the number — so they stay stale and `--stale` keeps saying so. The
+worked case is `session-drift`, which declares `scripts/measure.py` because the
+harness *is* the apparatus it measures: the commits that armed the contention
+gate are not acknowledgeable, and that figure waits for the sweep pair
+`--drift` needs.
+
 **Every reading carries a witness to how quiet the machine was.** Two procfile
 reads bracket each timed run — PSI's monotonic `total=` stall counters and
 `/proc/stat`'s jiffies, `steal` included — and their difference is what the

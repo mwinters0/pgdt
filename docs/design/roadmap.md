@@ -544,8 +544,12 @@ absorbed into `M17` and `M1`/`M2` were folded into a phase slice, and their
 numbers are spent all the same. What each struck item did is filed by
 subject — `architecture.md` for a mechanism, `measurements.md` for an apparatus
 change, `layering.md` and `../process.md` for a rule — and why it was done is
-in the dated history entry it was filed under. The next item to land opens the
-table again at `M24`.
+in the dated history entry it was filed under. The table below opens again at
+`M24`.
+
+| # | Date | What changed | Why |
+|---|---|---|---|
+| `M24` | 2026-08-29 | `--stale` can be told that a commit touched a declared path without moving a reading: a per-commit acknowledgement carrying its own evidence, `--verify-additive` to compute that evidence by regenerating every published figure's inputs at two revisions and comparing bytes, and `--check` reporting entries the session stamp has moved past | [`measurements.md`](measurements.md), "A commit can be acknowledged, and then it stops marking a figure stale" |
 
 **One live obligation outlived them.** An `INSERT`-run scan costs **14.6×** a
 `COPY` scan per byte, CPU-bound, which argues for a scanner-level `INSERT`
