@@ -90,9 +90,13 @@ views must reference it (arrow-rs exposes block-based view construction on
 `StringViewBuilder` — confirm the exact API shape when implementing). Two
 consequences to design around:
 
-- A batch then pins its whole source chunk in memory. Harmless at full
-  selectivity; wasteful once P5 pushdown filters aggressively. Compact
-  the view array when the selected fraction drops below a threshold.
+- A batch then pins its whole source chunk in memory — and, once a filter is
+  aggressive, every chunk it took a view into, in proportion to
+  `1/selectivity`. Threshold compaction was the original answer here and is
+  **withdrawn**: the fix is a flush trigger on the source byte span a batch
+  covers, specified in
+  [`roadmap-P5-pushdown.md`](roadmap-P5-pushdown.md) and landing with that
+  phase.
 - Fields ≤12 bytes are stored inline in the view and don't reference the
   buffer at all, so short-column tables get this for free either way.
 

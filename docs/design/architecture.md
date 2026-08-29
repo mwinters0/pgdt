@@ -1579,7 +1579,7 @@ grammar, which I20's scope limit flags as considerably more permissive than the
 discrete built-in ranges. That is one-time work belonging with typed
 predicates, and it is filed — with the measured PostgreSQL and DataFusion
 semantics — in
-[`roadmap-P5-pushdown-inbox.md`](roadmap-P5-pushdown-inbox.md).
+[`roadmap-P11-typed-predicates-inbox.md`](roadmap-P11-typed-predicates-inbox.md).
 
 ## The cache
 

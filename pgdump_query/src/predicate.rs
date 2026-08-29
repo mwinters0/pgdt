@@ -7,7 +7,7 @@ use crate::copy::{decode_field, split_fields};
 /// deliberately excluded: on unparsed strings they'd be actively misleading
 /// for numeric/date columns (`"9" < "10"` is false lexicographically), and
 /// are deferred; typed/ordering predicates need pushdown to do them
-/// correctly (`docs/design/roadmap.md`, P5).
+/// correctly (`docs/design/roadmap-P5-pushdown.md`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PredicateOp {
     Eq,
@@ -24,8 +24,9 @@ pub enum PredicateOp {
 /// or the `column1`, `column2`, ... placeholders used when the header has
 /// none). `value` is compared against each row's decoded (unescaped) field
 /// as a plain string — not typed: filtering happens after a row is parsed
-/// (typed/ordering predicates are P5, where
-/// pushdown lands). `value` is `None` for `IsNull`/`IsNotNull`, which need
+/// (typed/ordering predicates are
+/// `docs/design/roadmap-P5-pushdown.md`). `value` is `None` for
+/// `IsNull`/`IsNotNull`, which need
 /// no comparison value; it is always `Some` for `Eq`/`Ne`.
 ///
 /// A NULL field matches neither `Eq` nor `Ne` — SQL's own three-valued

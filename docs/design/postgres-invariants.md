@@ -1734,3 +1734,49 @@ the `--disable-triggers` known gap in `../status/STATUS.md`.
 grep -n "_printTocEntry(AH, te, true)" -A 25 src/bin/pg_dump/pg_backup_archiver.c
 pg_dump -d <db> --data-only --disable-triggers | grep -B 6 'DISABLE TRIGGER ALL'
 ```
+
+## I32 — A plain dump records no database collation unless `--create`
+
+**Claim.** A `pg_dump` plain-format file carries **no statement of the
+database's collation** — no `LC_COLLATE`, no `LOCALE`, no `ICU_LOCALE` — unless
+it was taken with `--create` (or `-C`). The preamble states
+`client_encoding`, `standard_conforming_strings` and `search_path`, and stops
+there. A per-column `COLLATE` clause appears in `CREATE TABLE` only where the
+column's collation differs from the database default, so it never supplies the
+default either.
+
+**Proof.** `dumpDatabase` is the only emitter of `LC_COLLATE`/`LOCALE`/
+`ICU_LOCALE`, and `pg_dump.c`'s `main` calls it under exactly one condition:
+
+```c
+/* The database items are always next, unless we don't want them at all */
+if (dopt.outputCreateDB)
+    dumpDatabase(fout);
+```
+
+`outputCreateDB` is set by `--create` alone. Verified in the v13.23, v14.24,
+v15.19, v16.15, v17.11, v18.6 and master worktrees — the gating line is
+identical in all of them.
+
+**Scope limit.** A `--create` dump *does* carry it, and so does `pg_dumpall`,
+whose per-database `CREATE DATABASE` statements come from the same function. So
+this is a statement about the ordinary single-database plain dump, which is the
+input pgdq is built around, not about every file `pg_dump` can write.
+
+**Consequence.** A text ordering comparison cannot be made to agree with the
+server from the dump alone: PostgreSQL orders `text` by collation, and under
+any non-`C` collation the answer differs from a bytewise comparison
+(`'a' < 'B'` is true in `en_US.UTF-8`, false bytewise). pgdq therefore compares
+bytewise and **registers the divergence** rather than claiming agreement — see
+`roadmap-P5-pushdown.md`'s ordering register, and after that phase lands
+`architecture.md`'s "Predicates".
+
+**Relied on by.** The ordering register's `Utf8View` rows.
+
+**Re-verify.**
+
+```sh
+grep -n 'outputCreateDB' /mnt/wd12t/upstream/postgres/release-v<N>/src/bin/pg_dump/pg_dump.c
+pg_dump --no-owner mydb | grep -ci 'lc_collate\|locale'   # expect 0
+pg_dump --create --no-owner mydb | grep -ci 'locale'      # expect > 0
+```

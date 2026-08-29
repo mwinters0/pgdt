@@ -2129,6 +2129,10 @@ FIGURES_BY_ID = {f.id: f for f in FIGURES}
 #: built and never run is a claim nobody checked, and it is invisible unless
 #: something names it.
 UNTAKEN: list[Figure] = [
+    # Superseded before publication: with P5's column projection the same
+    # isolation is a subtraction between two widths of *one* file, needing
+    # neither a second file nor the cross-file floor this was built to dodge.
+    # `P5.7` deletes it (docs/design/roadmap-P5-pushdown.md).
     Figure(
         id="composite-isolated",
         section="One column, isolated: the same rows declared two ways",

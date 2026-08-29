@@ -16,8 +16,9 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P4, P9 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
-| P5 — pushdown | Sketched; not grilled | this file, below; [inbox](roadmap-P5-pushdown-inbox.md) |
+| P5 — pushdown | **Specified** | [`roadmap-P5-pushdown.md`](roadmap-P5-pushdown.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
+| P11 — typed predicates | Sketched; not grilled | this file, below; [inbox](roadmap-P11-typed-predicates-inbox.md) |
 | P7 — scan performance | Sketched; design doc ahead of its phase | [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md); [inbox](roadmap-P7-scan-performance-inbox.md) |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
 | P8 — format coverage | Sketched; not grilled | this file, below; [inbox](roadmap-P8-format-coverage-inbox.md) |
@@ -317,49 +318,10 @@ item; see below.
 
 ## P5 — Pushdown
 
-**Inbox:** [`roadmap-P5-pushdown-inbox.md`](roadmap-P5-pushdown-inbox.md) — facts earlier
-phases filed for this one. Drain it when grilling this phase.
-
-- **Column projection pushdown**: only parse/materialize columns the caller
-  actually requested. `BatchOptions` has no projection today and
-  `RowBatcher::push_row` walks and decodes every field of every row, so this is
-  unbuilt and its saving is real.
-- **Richer predicates**: what a filter can express. Today it is exactly one
-  `Option<Predicate>` over `Eq`/`Ne`/`IsNull`/`IsNotNull`, compared as an
-  unparsed string; a conjunction, ordering operators and type-aware comparison
-  are each unbuilt, and each has a different cost — see the inbox, which prices
-  the third.
-
-Both depend on the typed DDL parsing already built (at minimum for knowing
-column boundaries/positions cheaply), though projection could plausibly land
-against string columns first if it proves valuable earlier.
-
-**The phase is not what its slug says, and the correction is load-bearing.**
-This section used to promise that pushdown would evaluate predicates during the
-scan "so non-matching rows never get fully unescaped/materialized — as opposed
-to today's post-parse filtering". The second half was never true of the built
-system: `stream.rs`'s replay loop tests the predicate against the **raw** row
-and calls `push_row` only if it passes, and `Predicate::matches` walks
-`split_fields` as far as one column index and unescapes that single field. A
-rejected row already never reaches a `ColumnBuilder`. What is left to remove is
-a partial field walk, against a scanner that must find every row's terminator
-whatever the predicate says — so **this phase should not be sold on making
-rejected rows cheaper**, and any performance claim it makes belongs to
-projection. Reasoning:
-[`../status/history/2026-08-29.md`](../status/history/2026-08-29.md), "The
-sketch's premise for predicate pushdown is already banked".
-
-**Whatever it claims, it claims about replay only.** A query is two passes, and
-the mapping pass walks and censuses every row between `scanned_through` and the
-target regardless of what the query asks for. Replay then re-reads one block's
-extent. Pushdown's share of a cold query's wall clock is that block, not the
-file; it is the whole cost only once the map is cached. Skipping *bytes* is
-P10's, not this phase's.
-
-The chunk-pinning obligation P7 names lands here: a `Utf8View` batch pins its
-whole source chunk, which is harmless at full selectivity and wasteful once a
-filter is aggressive ([`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md),
-"Row extraction").
+**Specified:** [`roadmap-P5-pushdown.md`](roadmap-P5-pushdown.md). Column
+projection, and a predicate that is a conjunction of single-column
+comparisons with typed ordering operators on scalar columns. Its inbox was
+drained at its grilling; what the grilling deferred is P11, below.
 
 ## P6 — Embeddable engine story
 
@@ -381,6 +343,36 @@ under "Standing rules" above, made to keep this open:
   destination specifically in mind.
 - Apache Spark / Trino integration — order and approach TBD; likely follows
   whatever pattern the DataFusion integration establishes, if applicable.
+
+## P11 — Typed predicates
+
+**Inbox:** [`roadmap-P11-typed-predicates-inbox.md`](roadmap-P11-typed-predicates-inbox.md) — facts earlier
+phases filed for this one. Drain it when grilling this phase.
+
+Sketched only, to corner-avoidance depth; it gets its own grilling when it
+becomes current. What P5's grilling deferred, as one body of work rather than
+two:
+
+- **Full boolean structure** — `OR` and `NOT` over the conjunction P5 builds,
+  which is not two more operators but a real three-valued evaluator. P5's
+  predicate collapses unknown to false at each term, which is sound under `AND`
+  and unsound under `NOT`, so admitting `NOT` re-opens the semantics of every
+  operator that already exists.
+- **Type-aware comparison on nested columns** — needs the *input*-side grammar
+  (I20's scope limit: `array_in` is considerably more permissive than
+  `array_out`'s inverse) and canonicalization for the three discrete built-in
+  ranges. P5 leaves a nested column comparing as text, which is right for every
+  value a dump contains and wrong only for a user-supplied non-canonical
+  literal.
+
+**Wanted before 1.0**, and scheduled after P6 rather than inside P5 for two
+reasons. Its worst bug is a different class from anything in P5 — a silently
+wrong row *set*, where projection's worst is a wrong column list — so bundling
+them would force one review confidence across both, the same argument that made
+statistics P10. And P6 is what settles the shape of the expression this has to
+accept: DataFusion hands a `TableProvider` an `Expr` tree and asks, per filter,
+whether the pushdown is exact, inexact or unsupported. Designing a boolean
+expression language before seeing that is inventing a second one to reconcile.
 
 ## P7 — Scan performance
 
@@ -404,7 +396,7 @@ needs the sparse row index this phase builds.
 *The reason that used to head this list is withdrawn:* that P5's pushdown
 "changes which bytes get touched at all, so optimizing the pre-pushdown parser
 would partly optimize code that pushdown deletes". Pushdown deletes no parser
-code — it never did, and P5's section says why. Nothing about the ordering
+code — it never did, and [`roadmap-P5-pushdown.md`](roadmap-P5-pushdown.md) says why. Nothing about the ordering
 changed, because the `object_store` reason was always the load-bearing one; the
 withdrawn half is recorded so it is not re-derived.
 

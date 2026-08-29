@@ -112,10 +112,12 @@ beside `pgtype.rs`. The rule that keeps L2 clean: **a decode function takes a
 `&[u8]` field and returns a value; it never takes an Arrow builder.** If a type
 genuinely needs to write into a builder, that code is L3.
 
-**Pushdown (P5) inverts control, not dependency.** Evaluating predicates
-during the scan does not mean L1 depends on `predicate.rs`. L1 defines the
-callback or trait; L4 supplies the implementation — rule 6. `predicate.rs`
-stays in L4 whatever P5 does to where it runs.
+**Evaluating a predicate inside the scan would invert control, not
+dependency.** Nothing does this today — the replay loop tests the predicate
+after the scanner yields a row — and it is worth stating anyway, because it is
+the shape any future move of that evaluation must take: L1 defines the callback
+or trait and L4 supplies the implementation, per rule 6. `predicate.rs` stays
+in L4 wherever it comes to run.
 
 **Per-row-group statistics (P10) span all four layers**, which makes them
 the sharpest test of these rules: gathered during L1's scan, requiring L2 to
