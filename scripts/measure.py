@@ -110,7 +110,9 @@ def _env(name: str, default: str) -> str:
 class Config:
     # Where generated inputs live and are kept between sessions. Cold figures
     # read them in place, so this must be the SSD, not tmpfs.
-    cache_dir: Path = Path(_env("PGDQ_MEASURE_CACHE_DIR", "/mnt/ssd/fedora/pgdq-measure"))
+    cache_dir: Path = Path(
+        _env("PGDQ_MEASURE_CACHE_DIR", "/mnt/ssd/fedora/scratch/pgdump_query/measure")
+    )
     # tmpfs, for every warm figure.
     warm_dir: Path = Path(_env("PGDQ_MEASURE_WARM_DIR", "/dev/shm/pgdq"))
     # How much of the tmpfs the harness may fill. **Normally computed, not
