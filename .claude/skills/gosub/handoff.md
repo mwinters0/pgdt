@@ -49,6 +49,7 @@ done: check says exited; then exit 0 = ok, 130 = SIGINT (cache saved, resumable)
 failed: exit nonzero and not 130/143; or log tail has "panicked"/"No space left"
 stuck: progress unchanged across two consecutive fires
 stop: sudo nerdctl stop pgdq-koji     # safe: parse saves cache, same command resumes
+volatile: /dev/shm/pgdq (warm staging, evicted per figure); container pgdq-koji (state lost on prune); /mnt/ssd/fedora/scratch/pgdump_query/measure (kept, but partial figures overwrite)
 result: runs/measure-20260829-1407/tables.md — one table per figure
 next: fold tables.md into docs/design/measurements.md per --check consumers, tick 8.3, notes doc
 ---
@@ -68,6 +69,12 @@ Rules for those keys:
   written out — killing the harness alone orphans its generator.
 - `started` and `expect` let the reader compute elapsed time without asking
   anyone.
+- `volatile` names every piece of state that will be **gone or overwritten**
+  by the time someone investigates: tmpfs staging, container state a prune
+  destroys, scratch directories the next run reuses, temp files under `/tmp`.
+  You are the only agent who knows these exist. If the job fails, an agent
+  with none of your context is sent to capture them before they evaporate,
+  and it can only look where this line points.
 - `next` is one line: what the follow-up agent does with the result. Not how.
 
 ## 3. Report the path and stop

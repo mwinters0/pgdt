@@ -155,11 +155,13 @@ verification step is exactly that. The loop is paused, not continuing.
 the next fire can compare.
 
 - *Still running, progress moving* — say so in one line and end the turn.
-- *Stuck* by the frontmatter's own `stuck` rule — stop the job with `stop`,
-  disarm the cron, and stop the loop.
-- *Failed* — disarm the cron, and stop the loop. Leave the log and the tree
-  untouched; a fresh subagent is for results, not for a post-mortem the
-  maintainer should see first.
+- *Stuck* by the frontmatter's own `stuck` rule — disarm the cron and dispatch
+  the diagnosis below **before** stopping the job: a wedged process that is
+  still alive shows more than its corpse. Stop it with `stop` once the
+  diagnosis returns, then stop the loop.
+- *Failed* — disarm the cron, dispatch the diagnosis below, then stop the
+  loop. The maintainer decides the fix; a subagent only captures what would
+  otherwise be gone by the time they look.
 - *Done* — disarm the cron (`CronDelete`), then step 5.
 - *Over eight hours since `started`* — disarm the cron and stop the loop,
   whatever the job is doing. Leave the job running; write up status per
@@ -185,6 +187,57 @@ the next fire can compare.
 decide. From here the round is an ordinary one, and every stop condition
 applies to it unchanged.
 
+### When the job fails
+
+A failed job and a wedged one take the same path. Either is a stop, but
+stopping silently loses the evidence. Half of what
+explains a failed sweep is volatile — a tmpfs staging directory the next run
+evicts, a container whose state a prune destroys, partial output the next
+attempt overwrites, files under `/tmp`. By the time the maintainer reads the
+report, that is gone. So one fresh subagent captures it, and *only* captures
+it.
+
+New `Agent` call, `general-purpose`, no `model`, never a fork:
+
+> The long job described in `<handoff path>` has failed (or wedged — the
+> orchestrator says which). Read that file in full, including the body below
+> the frontmatter. If it is still running, leave it running; something else
+> will stop it.
+>
+> **Diagnose and record. Change nothing else.** Do not retry the job, do not
+> fix the cause, do not clean anything up, do not touch the source tree.
+> Cleanup and correction are the maintainer's call and they need this report
+> to make it.
+>
+> Capture, into `runs/<job>-<stamp>/FAILURE.md` beside the handoff doc:
+> what `check` and `exit` say now; enough of the log to show the failure, in
+> full where it is short and as the relevant span where it is long; and the
+> current state of everything the frontmatter's `volatile` line names —
+> contents, sizes, free space, container state — because that is what will not
+> survive. Add anything else the machine can still tell you and will stop
+> being able to: disk free on the volumes involved, an OOM kill in `dmesg`,
+> an orphaned process group still writing.
+>
+> Then say what you believe went wrong and how confident you are, and list
+> what is left behind that someone will have to clean up — staging
+> directories, containers, partial multi-gigabyte files, orphaned processes —
+> without removing any of it.
+>
+> Finally, so a fresh session finds this at all: a
+> `docs/status/history/<today>.md` entry naming the job, the failure in one or
+> two sentences, and the path to `FAILURE.md`; and slice `<N.M>`'s STATUS
+> checklist entry annotated with what remains and that it is blocked on this.
+>
+> Report back: the `FAILURE.md` path, your one-line diagnosis, and the
+> cleanup list.
+
+`runs/` is gitignored, so `FAILURE.md` holds the bulk and the history entry is
+the pointer that survives into git. Verify that entry and the STATUS
+annotation exist before you stop — they are the whole reason a later session
+knows to look.
+
+Then stop the loop, and name the failure in the final report.
+
 ### The eight-hour cutoff
 
 Eight hours after `started`, the session ends rather than the job. Disarm the
@@ -208,7 +261,9 @@ One message when the loop ends:
   look" entry in full, or the failing test's output, or "no slices remain in
   Phase N".
 - Any long job still running: its handoff doc's path, what `check` last said,
-  and how to stop it. The maintainer inherits it.
+  and how to stop it. The maintainer inherits it. If one failed instead: the
+  `FAILURE.md` path, the one-line diagnosis, and what is left behind to clean
+  up.
 - What is left in the tree uncommitted, if anything, and why.
 - What the maintainer needs to look at first.
 
