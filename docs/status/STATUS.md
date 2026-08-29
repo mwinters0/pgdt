@@ -33,11 +33,16 @@ review, so there is no per-phase checklist here.
 [`../design/measurements.md`](../design/measurements.md) comes from the
 `fa186ab` sweep of 2026-08-28, folded in whole, each table carrying an
 apparatus line witnessing a quiet machine. `--check` reconciles twelve markers
-against twelve figures. **Eleven of the twelve are clean**: `ed588a3` touched a
-declared path — it added `--weak-composite` to the perf generator — and is
-acknowledged as moving no reading, verified by regenerating every published
-figure's inputs at both revisions and comparing them byte for byte
-(`uv run measure.py --verify-additive --since fa186ab`).
+against twelve figures. **Eleven of the twelve are clean**, two of them by
+acknowledgement — a declared path changed and no reading moved:
+
+- `ed588a3` added `--weak-composite` to the perf generator. Verified by
+  regenerating every published figure's inputs at both revisions and comparing
+  them byte for byte (`uv run measure.py --verify-additive --since fa186ab`).
+- `5a207de` changed `index.rs` in a doc comment only, retargeting
+  `RowGroupStats`' pointer from P5's companion section to P10. **The weaker
+  kind of entry**: a library path has no cheap oracle, so this one rests on the
+  diff having been read rather than on anything mechanical.
 
 **`session-drift` is stale and stays stale until `M25`.** It declares
 `scripts/measure.py` because the harness is the apparatus it measures, and four

@@ -2236,6 +2236,14 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         ),
         verified="cd scripts && uv run measure.py --verify-additive --since fa186ab",
     ),
+    Acknowledged(
+        commit="5a207de",
+        figures=("preamble-prepass",),
+        why=(
+            "index.rs changed only in a doc comment — RowGroupStats' pointer retargeted from "
+            "P5's companion section to P10; no executable line differs"
+        ),
+    ),
 )
 
 
