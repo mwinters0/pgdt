@@ -46,6 +46,10 @@ carries the real instructions:
 > Invoke the `go` skill (Skill tool, `skill: "go"`) and follow it exactly.
 > Land exactly one slice — the next unticked box in the STATUS checklist.
 >
+> If the slice requires launching a job you expect to run more than 30
+> minutes, read `.claude/skills/gosub/handoff.md` before you launch it and
+> follow it instead of finishing the slice.
+>
 > When you are done, report: the slice number and title; whether you ticked
 > its box, and if not, what remains; whether you added any entries to STATUS's
 > "Decisions worth another look", quoted in full; whether you split the slice
@@ -89,7 +93,9 @@ Any one of these ends the loop. Report it plainly; do not work around it.
   more work on an unreviewed judgement.
 - **The slice's box is still unticked**, including when the subagent split it
   and left an earned `<N>.<M>.<K>` behind. A split is a re-plan, and the next
-  slice may no longer be the right one.
+  slice may no longer be the right one. The one exception is a round that
+  handed off a long job: its box is unticked *by design*, and the follow-up
+  subagent in step 5 is what ticks it.
 - **`cargo test`, `clippy`, or `fmt --check` fails**, whatever the report said.
 - **No unticked slices remain in the phase.** Do not roll into the next phase:
   a phase needs grilling and a spec before it has slices, and grilling needs
@@ -100,13 +106,98 @@ Any one of these ends the loop. Report it plainly; do not work around it.
 - **The subagent reports it stopped at a boundary** or says it needs the
   maintainer, however it phrases it.
 
-## Long-running jobs
+## A round that launches a long job
 
-`CLAUDE.md`'s protocol binds the orchestrator too. If a round launches a
-detached job — a koji scan, a measurement — **do not wait on it and do not arm
-a monitor.** Record the log path, note that a later session reads it, and treat
-the round as clean if its slice's box is ticked; a slice whose box is unticked
-*because* it is waiting on that job is a stop.
+A job expected to run **over 30 minutes** does not fit inside a round. The
+subagent that designed and started it has spent its context doing so, and by
+the time the job lands, that context is a liability — an agent holding half a
+day of stale reasoning reading a number it could read cold. So the job outlives
+its subagent, and a fresh one reads the result.
+
+The subagent's side is `.claude/skills/gosub/handoff.md`, named in the dispatch
+prompt: it starts the job, watches five minutes for real progress, writes
+`runs/<job>-<stamp>/HANDOFF.md`, and reports that path. Your side is below.
+
+**This overrides `CLAUDE.md`'s "never monitor a long job" for the orchestrator
+only, and only in this shape.** That rule exists because waiting past an hour
+expires the prompt cache and reloads the whole conversation. A 30-minute poll
+never crosses that hour, and each fire is a handful of commands against a
+context you have deliberately kept small. Do not widen the interval to "save"
+fires — an hourly poll is the expensive one. The subagents are still bound by
+the rule as written: they never wait, and none of them is alive while the job
+runs.
+
+**1. Validate the handoff doc.** Read only the frontmatter. Run `check`,
+`progress`, and `exit` verbatim, right now. Each must execute and produce
+output you can read against the `running`/`done`/`failed` lines without
+guessing. A command that needs a path fixed, a variable filled in, or a code
+the frontmatter never names is not validated — `SendMessage` that subagent
+once to fix the line, then re-run it. If it still does not hold up, stop the
+job with `stop`, and stop the loop.
+
+**2. Release the subagent.** Once the frontmatter validates, that agent is
+finished. Never message it again — not for a status opinion, not for the
+analysis. It is the agent this whole protocol exists to retire.
+
+**3. Arm the poll.** `CronCreate`, `*/30 * * * *`, recurring, with a prompt
+that stands on its own:
+
+> Long-job check for `<handoff path>`. Read its frontmatter. Run `check` and
+> `progress`. Follow `.claude/skills/gosub/SKILL.md`, "A round that launches a
+> long job", step 4.
+
+Cron jobs are session-only and fire only while this session is idle, so end
+your turn after arming it and stay idle. Do not start another round: `CLAUDE.md`
+forbids a `cargo` build or test while a measurement runs, and your own
+verification step is exactly that. The loop is paused, not continuing.
+
+**4. Each fire.** Run `check` and `progress`; keep the last `progress` value so
+the next fire can compare.
+
+- *Still running, progress moving* — say so in one line and end the turn.
+- *Stuck* by the frontmatter's own `stuck` rule — stop the job with `stop`,
+  disarm the cron, and stop the loop.
+- *Failed* — disarm the cron, and stop the loop. Leave the log and the tree
+  untouched; a fresh subagent is for results, not for a post-mortem the
+  maintainer should see first.
+- *Done* — disarm the cron (`CronDelete`), then step 5.
+- *Over eight hours since `started`* — disarm the cron and stop the loop,
+  whatever the job is doing. Leave the job running; write up status per
+  "The eight-hour cutoff" below.
+
+**5. Dispatch a fresh subagent for the result.** New `Agent` call,
+`general-purpose`, no `model`, never a fork. Its prompt:
+
+> The long job described in `<handoff path>` has finished. Read that file in
+> full, including the body below the frontmatter. Confirm its `done` condition
+> holds, then carry out its `next` line and whatever else slice `<N.M>`'s spec
+> row requires to be complete.
+>
+> Invoke the `process` skill first and follow it — this slice's notes doc,
+> STATUS, and any figure's consumers are part of finishing it. Do not commit.
+>
+> Report: whether you ticked the slice's box and what remains if not; any
+> entries you added to STATUS's "Decisions worth another look", quoted in full;
+> and the verbatim result lines from `cargo test --workspace`, `cargo clippy
+> --workspace --all-targets`, and `cargo fmt --check`.
+
+**6. Resume the loop at step 3 of "One round"** — verify independently, commit,
+decide. From here the round is an ordinary one, and every stop condition
+applies to it unchanged.
+
+### The eight-hour cutoff
+
+Eight hours after `started`, the session ends rather than the job. Disarm the
+cron, leave the job running, and write up status as the last thing you do:
+
+- A `docs/status/history/<today>.md` entry naming what was launched, the
+  handoff doc's path, and that a later session reads it.
+- STATUS's checklist entry for the slice, annotated with what remains.
+- The final report below, saying plainly that the loop stopped on the cutoff
+  with the job still running.
+
+The handoff doc is what a later session picks up — which is why the frontmatter
+has to hold without you.
 
 ## The final report
 
@@ -116,6 +207,8 @@ One message when the loop ends:
 - Why the loop stopped, quoting the trigger — the new "Decisions worth another
   look" entry in full, or the failing test's output, or "no slices remain in
   Phase N".
+- Any long job still running: its handoff doc's path, what `check` last said,
+  and how to stop it. The maintainer inherits it.
 - What is left in the tree uncommitted, if anything, and why.
 - What the maintainer needs to look at first.
 
