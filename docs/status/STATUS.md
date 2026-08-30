@@ -9,12 +9,13 @@ discoveries are in `history/`.
 ## What exists
 
 P1–P4 and P9 are complete and were struck at a keystone review. **P5 is open**
-and one slice of it has landed, which registers a figure and adds no library
-code; its checklist is below the table.
+and two slices of it have landed — one registering a figure and adding no
+library code, one bounding what an in-flight batch pins. Neither projection nor
+the richer predicates exists yet; the checklist is below the table.
 
 | Capability | State |
 |---|---|
-| Streaming row extraction from plain-format dumps, push and pull mode, resumable | working |
+| Streaming row extraction from plain-format dumps, push and pull mode, resumable | working; a batch flushes on whichever of `max_rows`, `max_bytes` or `max_source_span` comes first, the last of which is what bounds the read chunks an in-flight batch pins ([`../design/architecture.md`](../design/architecture.md), "Three flush triggers") |
 | Typed Arrow columns from `CREATE TABLE` DDL, with per-column resolution diagnostics; `SchemaMode::Strings` for the untyped path | working |
 | Full byte-exact file map — every byte in exactly one span, verified over every fixture | working |
 | DDL object inventory: TOC enrichment, referenced roles and tablespaces, object census | working |
@@ -36,6 +37,11 @@ code; its checklist is below the table.
 apparatus line. `--check` reconciles twelve markers against twelve figures.
 `session-drift` is derived across that sweep and a second one taken two minutes
 later on the same commit, which is the pair `--drift` reads.
+
+**`nested-end-to-end` and `cross-file-floor` read stale** since `P5.2` put a
+branch and two `u64` writes on the per-row replay path both of them measure.
+Neither is acknowledgeable — a library change has no cheap oracle — so they
+stay stale until the next full sweep, which is `P5.7`'s neighbourhood.
 
 **Two instruments are built and unrun**, both registered under
 `measure.UNTAKEN` — a sweep takes neither and the doc carries no table for
@@ -64,8 +70,9 @@ The spec is
       19-column input, under `measure.UNTAKEN`. No generator change, no
       library code. Notes:
       [`../design/roadmap-P5.1-projection-figure-notes.md`](../design/roadmap-P5.1-projection-figure-notes.md)
-- [ ] **P5.2** The source-span flush trigger — bounds what an in-flight batch
-      pins, closing the known gap below.
+- [x] **P5.2** The source-span flush trigger — bounds what an in-flight batch
+      pins. Notes:
+      [`../design/roadmap-P5.2-source-span-flush-notes.md`](../design/roadmap-P5.2-source-span-flush-notes.md)
 - [ ] **P5.3** Projection in the library — the `QueryOptions` field and API
       move, the projected `ResolvedSchema`, `push_row` skipping, the
       zero-column `RecordBatch`.
@@ -173,20 +180,6 @@ is safe, and where the mechanism or the fix is written down.
   [`../design/roadmap-P5-pushdown.md`](../design/roadmap-P5-pushdown.md), the
   ordering register; worklist:
   [`../design/roadmap-P11-typed-predicates-inbox.md`](../design/roadmap-P11-typed-predicates-inbox.md).
-
-- **An aggressive filter pins read chunks in proportion to `1/selectivity`.**
-  The `Utf8View` path gives `StringViewBuilder::append_block` a clone of the
-  read chunk's Arrow `Buffer`, so the **in-flight batch** holds every chunk it
-  took a view into until it flushes; the `chunks` deque's own eviction at the
-  scanner position cannot release them. Neither flush trigger bounds it —
-  `max_rows` counts *selected* rows and `max_bytes` counts *selected* field
-  bytes — so with the default 1 MiB chunks a 1%-selective filter holds on the
-  order of 80 MiB and a 0.01%-selective one on the order of 8 GiB. Correctness
-  is unaffected; what is lost is the flat-memory goal, and only for a query
-  that filters hard. A caller can bound it today by lowering `max_rows` or
-  `ScanOptions::chunk_size`. The fix is a third flush trigger on the source
-  byte span a batch covers, specified in
-  [`../design/roadmap-P5-pushdown.md`](../design/roadmap-P5-pushdown.md).
 
 - **An `INSERT` run is folded into one span but every line is still decoded**,
   unlike the large-object region, which is skipped unread. That costs **14.4×**

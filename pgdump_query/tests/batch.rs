@@ -304,6 +304,77 @@ async fn max_rows_splits_batches() {
     }
 }
 
+/// The third flush trigger splits a batch on the *source* span it covers,
+/// which is the only one of the three that bounds what an in-flight batch
+/// pins: `max_rows` counts selected rows and `max_bytes` selected field
+/// bytes, and a filter makes both arbitrarily sparse in the file. Both are
+/// disabled here so the split points are the span's alone, and the decoded
+/// data must be identical however they land — including under a `chunk_size`
+/// small enough that a mid-block flush lands between two views into the same
+/// chunk, which is what `invalidate_block_cache` is there for.
+#[tokio::test]
+async fn max_source_span_splits_batches() {
+    let reference = collect(
+        &edge_cases_fixture(16, "default"),
+        "public.escapes",
+        &ScanOptions::default(),
+        &BatchOptions::default(),
+    )
+    .await
+    .1;
+    assert_eq!(reference.len(), 132);
+
+    let mut previous = 0;
+    for max_source_span in [1 << 20, 512, 64, 16, 1] {
+        for chunk_size in [7, 4096, 1 << 20] {
+            let options = BatchOptions {
+                max_rows: usize::MAX,
+                max_bytes: None,
+                max_source_span: Some(max_source_span),
+                ..Default::default()
+            };
+            let scan = ScanOptions { chunk_size, ..Default::default() };
+            let (sizes, rows) =
+                collect(&edge_cases_fixture(16, "default"), "public.escapes", &scan, &options)
+                    .await;
+            assert_eq!(rows, reference, "span {max_source_span} chunk {chunk_size}");
+            assert_eq!(sizes.iter().sum::<usize>(), 132);
+            if chunk_size == 7 {
+                // Tighter caps never split less; the widest is one batch and
+                // the tightest is one batch per row.
+                assert!(
+                    sizes.len() >= previous,
+                    "span {max_source_span}: {} batches, was {previous}",
+                    sizes.len()
+                );
+                previous = sizes.len();
+            }
+        }
+    }
+    assert_eq!(previous, 132, "a one-byte cap flushes after every row");
+}
+
+/// `None` restores the pre-trigger behaviour: with the other two triggers off
+/// as well, a block is one batch however far apart its rows are.
+#[tokio::test]
+async fn a_none_source_span_leaves_the_block_as_one_batch() {
+    let options = BatchOptions {
+        max_rows: usize::MAX,
+        max_bytes: None,
+        max_source_span: None,
+        ..Default::default()
+    };
+    let (sizes, rows) = collect(
+        &edge_cases_fixture(16, "default"),
+        "public.escapes",
+        &ScanOptions::default(),
+        &options,
+    )
+    .await;
+    assert_eq!(sizes, vec![132]);
+    assert_eq!(rows.len(), 132);
+}
+
 /// Fields eligible for a zero-copy view (no escapes) are only zero-copy when
 /// they land fully inside one read chunk; a small `chunk_size` forces most
 /// fields — and the multi-byte escaped ones — through every code path

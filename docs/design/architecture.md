@@ -31,7 +31,7 @@ through.
 | `preamble.rs`, the DDL grammar, `\connect` handling | [The preamble grammar and `DumpMetadata`](#the-preamble-grammar-and-dumpmetadata) |
 | `pgtype.rs`, `resolve.rs`, the type mapping table | [Type resolution](#type-resolution) |
 | `decode.rs`, a new type's decode/render pair | [Decoders and render-back](#decoders-and-render-back) |
-| `batch.rs`, the zero-copy `Utf8View` path | [Arrow assembly and the zero-copy path](#arrow-assembly-and-the-zero-copy-path) |
+| `batch.rs`, the zero-copy `Utf8View` path, a batch's flush triggers | [Arrow assembly and the zero-copy path](#arrow-assembly-and-the-zero-copy-path) |
 | `stream.rs`, `map_forward`/`map_file`, replay, resume, predicates | [Query: mapping and streaming are separate passes](#query-mapping-and-streaming-are-separate-passes) |
 | `cache.rs`, the format version, cache modes | [The cache](#the-cache) |
 | the CLI's flags or output, the save throttle, the interrupt guard | [CLI surface](#cli-surface) |
@@ -113,9 +113,11 @@ non-test caller, filed in
 [`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md)
 for the phase that decides whether push mode keeps its place.
 
-**Batch size** is caller-settable by row count and/or in-memory byte size,
-whichever is hit first. Default 8192 rows (matching the common
-Arrow/DataFusion convention), no default byte cap.
+**Batch size** is caller-settable by row count, in-memory byte size and the
+source byte span a batch covers, whichever is hit first. Default 8192 rows
+(matching the common Arrow/DataFusion convention), no byte cap, and a 64 MiB
+source span. The third of those is a memory bound rather than a sizing knob —
+see "Three flush triggers, and only one of them bounds memory".
 
 **Every query returns all columns of its table** — there is no projection.
 
@@ -1374,6 +1376,45 @@ path. Around that:
   block list. Anything adding a new flush trigger must honour this.
 - Non-UTF8 field bytes are a hard `Error::InvalidUtf8`, never a lossy
   conversion.
+
+### Three flush triggers, and only one of them bounds memory
+
+`RowBatcher::should_flush` fires on `max_rows`, on `max_bytes`, or on
+`max_source_span` — the distance from the start of a batch's first selected
+row to the end of its latest. All three are evaluated after a row has been
+appended, so each is overshot by at most one row. The span trigger alone
+cannot fire on an empty batch whatever its cap, since a batch has no span
+until a row lands.
+
+**The span cap is the only one that bounds what a batch pins.** A pinned chunk
+is one the builder holds a `Buffer` clone of, and it is held until the batch
+flushes; the `chunks` deque's own eviction at the scanner position cannot
+release it. `max_rows` counts *selected* rows and `max_bytes` counts *selected*
+field bytes, and a filter makes both arbitrarily sparse in the file — so with
+the default 1 MiB `ScanOptions::chunk_size`, a 1%-selective filter would pin on
+the order of 80 MiB and a 0.01%-selective one on the order of 8 GiB, against
+this project's flat-memory goal. The span is a conservative bound on that:
+pinned bytes never exceed the span rounded out to chunk boundaries.
+
+A row a predicate rejected never reaches `push_row`, so it neither opens a span
+nor extends one past the last selected row. That is what stops a long stretch
+matching nothing from flushing a batch that pins nothing.
+
+**64 MiB is chosen not to trip on ordinary work** — 64 default chunks, well
+inside the 512 MB cgroup the measurements run in. The perf inputs are ~3.86 and
+~4.49 KB/row, so a full-selectivity 8192-row batch spans ~32–37 MiB and still
+hits `max_rows` first. `None` restores an unbounded span.
+
+*Rejected: compacting the batch's views once selectivity drops below a
+threshold.* It admits an unbounded peak before the threshold trips, and it
+copies exactly the data the zero-copy path exists to avoid copying. A span cap
+bounds memory against a number a caller can set, and — unlike a threshold — it
+is testable at fixture scale with a small chunk size.
+
+*Rejected: measuring the span against the scanner position rather than the last
+selected row.* It would flush an in-flight batch while the scan crossed a
+region matching nothing, which pins nothing, turning a hard filter into one
+tiny batch per cap's worth of file.
 
 ### Nested columns: `NestedPlan` travels beside the `DataType`
 

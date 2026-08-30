@@ -94,9 +94,8 @@ consequences to design around:
   aggressive, every chunk it took a view into, in proportion to
   `1/selectivity`. Threshold compaction was the original answer here and is
   **withdrawn**: the fix is a flush trigger on the source byte span a batch
-  covers, specified in
-  [`roadmap-P5-pushdown.md`](roadmap-P5-pushdown.md) and landing with that
-  phase.
+  covers — [`architecture.md`](architecture.md), "Three flush triggers, and
+  only one of them bounds memory".
 - Fields ≤12 bytes are stored inline in the view and don't reference the
   buffer at all, so short-column tables get this for free either way.
 

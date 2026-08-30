@@ -54,6 +54,18 @@ pub struct BatchOptions {
     /// Optional cap on a batch's total field-byte count. Whichever of this
     /// or `max_rows` is hit first flushes the batch.
     pub max_bytes: Option<usize>,
+    /// Cap on the source byte span an in-flight batch covers — the distance
+    /// from the start of its first selected row to the end of its latest.
+    /// This is the only one of the three triggers that bounds what a batch
+    /// **pins**: the zero-copy `Utf8View` path hands the builder a clone of
+    /// each read chunk it takes a view into, and those chunks are held until
+    /// the batch flushes, whereas `max_rows` counts *selected* rows and
+    /// `max_bytes` counts *selected* field bytes — both of which a hard
+    /// filter makes arbitrarily sparse in the file
+    /// (`docs/design/architecture.md`, "Arrow assembly and the zero-copy
+    /// path"). Defaults to 64 MiB, which no ordinary query reaches; `None`
+    /// leaves a batch's span unbounded.
+    pub max_source_span: Option<usize>,
     /// Whether to resolve column types against the dump's DDL — see
     /// `docs/design/architecture.md`, "Arrow assembly and the zero-copy path". Every
     /// `RecordBatch` this build produces carries the same schema as its
@@ -76,6 +88,7 @@ impl Default for BatchOptions {
         Self {
             max_rows: 8192,
             max_bytes: None,
+            max_source_span: Some(64 << 20),
             schema_mode: SchemaMode::default(),
             database: None,
             scan_extent: ScanExtent::default(),
@@ -621,6 +634,14 @@ pub(crate) struct RowBatcher {
     columns: Vec<ColumnBuilder>,
     rows_in_batch: usize,
     bytes_in_batch: usize,
+    /// The source byte span the in-flight batch covers: `Some((start, end))`
+    /// once a row has been pushed, where `start` is the first pushed row's
+    /// offset and `end` is one past the latest pushed row's last byte. A row
+    /// a predicate rejected never reaches `push_row`, so it neither opens a
+    /// span nor extends one past the last *selected* row — which is what
+    /// stops an empty batch from flushing while the scanner walks a long
+    /// stretch that matches nothing.
+    span: Option<(u64, u64)>,
     options: BatchOptions,
 }
 
@@ -645,6 +666,7 @@ impl RowBatcher {
             columns,
             rows_in_batch: 0,
             bytes_in_batch: 0,
+            span: None,
             options,
         }
     }
@@ -659,9 +681,22 @@ impl RowBatcher {
         self.schema.fields().len()
     }
 
+    /// Whether any of the three flush triggers has fired. All three are
+    /// evaluated after a row has been appended, so each may be overshot by at
+    /// most one row. The span trigger is additionally incapable of firing on
+    /// an empty batch whatever its cap, since `span` stays `None` until a row
+    /// lands.
     pub(crate) fn should_flush(&self) -> bool {
         self.rows_in_batch >= self.options.max_rows
             || self.options.max_bytes.is_some_and(|max| self.bytes_in_batch >= max)
+            || self.source_span_reached()
+    }
+
+    fn source_span_reached(&self) -> bool {
+        let (Some(max), Some((start, end))) = (self.options.max_source_span, self.span) else {
+            return false;
+        };
+        end.saturating_sub(start) >= max as u64
     }
 
     /// Append one raw (still-escaped) COPY TEXT data row.
@@ -703,6 +738,11 @@ impl RowBatcher {
             });
         }
         self.rows_in_batch += 1;
+        let row_end = row_offset + raw.len() as u64;
+        self.span = Some(match self.span {
+            Some((start, _)) => (start, row_end),
+            None => (row_offset, row_end),
+        });
         Ok(())
     }
 
@@ -746,6 +786,7 @@ impl RowBatcher {
     pub(crate) fn flush(&mut self) -> Result<RecordBatch> {
         self.rows_in_batch = 0;
         self.bytes_in_batch = 0;
+        self.span = None;
         let arrays: Vec<ArrayRef> = self.columns.iter_mut().map(finish_column).collect();
         Ok(RecordBatch::try_new(self.schema.clone(), arrays)?)
     }
@@ -1250,5 +1291,100 @@ mod tests {
             .collect();
         let batch = RecordBatch::try_new(Arc::new(Schema::new(fields)), arrays).unwrap();
         assert_eq!(batch.num_rows(), 2);
+    }
+
+    /// A [`RowBatcher`] over one nullable `Utf8View` column, for driving
+    /// `push_row` at chosen file offsets — the flush triggers are arithmetic
+    /// over offsets and row lengths, and reaching a 64 MiB span through a
+    /// fixture would mean a 64 MiB fixture.
+    fn one_column_batcher(options: BatchOptions) -> RowBatcher {
+        use arrow::datatypes::Schema;
+
+        use crate::resolve::{ColumnNote, ColumnResolution};
+
+        let resolved = ResolvedSchema {
+            schema: Arc::new(Schema::new(vec![Field::new("v", DataType::Utf8View, true)])),
+            columns: vec![ColumnResolution::Mapped],
+            notes: vec![ColumnNote {
+                column: "v".into(),
+                declared: Some("text".into()),
+                resolution: ColumnResolution::Mapped,
+            }],
+            plans: vec![NestedPlan::Scalar],
+        };
+        RowBatcher::new(&resolved, "public.t".into(), options)
+    }
+
+    /// The span trigger measures from the first selected row's offset to one
+    /// past the latest selected row's last byte, and fires the moment that
+    /// reaches the cap — so it is overshot by at most one row, like the other
+    /// two. The rows here are four bytes apart in a file no other trigger
+    /// would ever split: `max_rows` is effectively unbounded and `max_bytes`
+    /// is off.
+    #[test]
+    fn the_source_span_trigger_fires_on_the_distance_between_selected_rows() {
+        let options = BatchOptions {
+            max_rows: usize::MAX,
+            max_bytes: None,
+            max_source_span: Some(100),
+            ..Default::default()
+        };
+        let mut batcher = one_column_batcher(options);
+        let mut chunks = VecDeque::new();
+        assert!(!batcher.should_flush(), "an empty batch never flushes");
+
+        // Offsets 0, 4, 8, … each three bytes of row: the span after the row
+        // at offset `n` is `n + 3`, so the first `>= 100` is at offset 100.
+        for offset in (0..100).step_by(4) {
+            batcher.push_row(0, offset, b"abc", &mut chunks).unwrap();
+            assert!(!batcher.should_flush(), "span {} is under the cap", offset + 3);
+        }
+        batcher.push_row(0, 100, b"abc", &mut chunks).unwrap();
+        assert!(batcher.should_flush(), "span 103 has reached the cap");
+
+        // Flushing reopens the span at the next row rather than at the
+        // flushed batch's end: a batch that started at offset 100 and has
+        // covered four bytes has not covered 100.
+        assert_eq!(batcher.flush().unwrap().num_rows(), 26);
+        assert!(!batcher.should_flush());
+        batcher.push_row(0, 104, b"abc", &mut chunks).unwrap();
+        assert!(!batcher.should_flush(), "the span restarts at the first row after a flush");
+    }
+
+    /// A stretch of rows the predicate rejects moves the scanner but not the
+    /// span, because a rejected row never reaches `push_row` and pins
+    /// nothing. Without that, a hard filter would flush a one-row batch every
+    /// time the scan crossed the cap.
+    #[test]
+    fn rows_that_were_never_pushed_do_not_widen_the_span() {
+        let options = BatchOptions {
+            max_rows: usize::MAX,
+            max_bytes: None,
+            max_source_span: Some(100),
+            ..Default::default()
+        };
+        let mut batcher = one_column_batcher(options);
+        let mut chunks = VecDeque::new();
+        batcher.push_row(0, 1_000_000, b"abc", &mut chunks).unwrap();
+        assert!(!batcher.should_flush(), "a span opens at the first selected row, not at zero");
+        batcher.push_row(0, 1_000_040, b"abc", &mut chunks).unwrap();
+        assert!(!batcher.should_flush(), "43 bytes of span, whatever lay between");
+    }
+
+    /// `None` is the escape hatch the pre-trigger behaviour needs: no span,
+    /// however wide, flushes on its own.
+    #[test]
+    fn a_none_source_span_leaves_a_batch_unbounded() {
+        let options = BatchOptions {
+            max_rows: usize::MAX,
+            max_bytes: None,
+            max_source_span: None,
+            ..Default::default()
+        };
+        let mut batcher = one_column_batcher(options);
+        let mut chunks = VecDeque::new();
+        batcher.push_row(0, 0, b"abc", &mut chunks).unwrap();
+        batcher.push_row(0, 1 << 40, b"abc", &mut chunks).unwrap();
+        assert!(!batcher.should_flush());
     }
 }
