@@ -19,6 +19,16 @@ buys is that no session ever re-derives a settled decision, re-discovers a
 known limitation as a bug, or re-litigates a question the maintainer already
 answered.
 
+**What the process governs is iteration on the product, not on itself.** Every
+obligation below — the ledger's admission rule, slice numbering, what landing
+work requires — applies to changes to the software and to the design record
+that describes it. A change to *this document* is not one of them: it earns no
+ledger row, no slice number, and no history entry. The rule text is its own
+record. What that gives up is the ability to date a wording change or trace a
+dangling reference back to the revision that orphaned it, which is a small and
+bounded loss; what it avoids is a meta-process with its own bookkeeping, which
+is unbounded.
+
 ---
 
 ## The loop
@@ -196,10 +206,54 @@ empty box and says, in its own checklist entry, what landed and what did not.
 Three sections earn their keep beyond the checklist:
 
 - **Not started** — so the boundary of what exists is explicit, not inferred.
-- **Known gaps** — deficiencies that are known and *accepted*, each with why
-  it is safe or what it costs. This is the section that stops the next session
-  from re-discovering a deliberate limitation as a bug, and it is worth more
-  than the checklist above it.
+- **Known gaps** — a register of deficiencies that are known, each with what it
+  costs. This is the section that stops the next session from re-discovering a
+  deliberate limitation as a bug, and it is worth more than the checklist above
+  it.
+
+  It is a **register with a stable identifier per entry** (`G1`, `G2`, …),
+  allocated on discovery and never reused, for the same reason phase numbers
+  are: an entry gets cited, and a citation that renumbers is a citation that
+  lies. Five rules keep it working, and the first is the one whose absence is
+  hardest to see:
+
+  - **Each entry declares one of three stances**, because they are not one kind
+    of thing and the difference decides whether anyone should act. **(a)** A
+    consequence of a deliberate tradeoff — it will never be worked, because
+    closing it means giving up something that was chosen. **(b)** A defect with
+    a known fix and a named destination. **(c)** A defect with a known fix and
+    no owner. The `(a)`/`(c)` split is the one that costs most while it is
+    invisible: re-proposing an `(a)` wastes a session on a question that was
+    already settled, and a `(c)` is unowned work that reads identically to it.
+  - **Unowned is a legitimate resting state, said in those words.** A gap is
+    not obliged to acquire a roadmap row, and forcing one manufactures intent
+    nobody holds. What must not happen is that the absence of a plan cannot be
+    told from an oversight. Where something specific would promote the entry —
+    a real input hitting it, a phase that would absorb it — the entry names
+    that trigger.
+  - **A property is not a gap.** If the remedy is already available to the user
+    today, it is how the system works: it belongs beside the mechanism, with no
+    register entry. A section that mixes "this is how it works" with "this is
+    worse than we want" teaches the reader to skim both.
+  - **The register is an index; the detail lives beside the mechanism.** The
+    property being protected is that a session touching a mechanism cannot miss
+    that mechanism's limitations — not that every session reads every gap.
+    `CLAUDE.md`'s read-triggers already oblige reading the mechanism's own
+    section before changing it, so a gap written there is read *because* the
+    session is touching it, where a central list has to be recognised as
+    relevant first. Locality is therefore the stronger guarantee, and it is
+    also what keeps this section readable as the set grows: `STATUS.md` carries
+    one line per gap — identifier, one sentence, stance, destination — and the
+    paragraph explaining it sits wherever that mechanism is documented.
+  - **The index is reconciled mechanically, not by discipline.** An index that
+    has drifted from its detail is worse than either alone, and "someone will
+    remember" is the assumption every other register in this process was built
+    to avoid. A check resolves every `G<k>` in the index to its entry and every
+    entry back to the index, and fails on either half. Where the *code* would
+    otherwise mislead — a line that reads as a complete, deliberate choice and
+    gives no sign that a limitation hangs off it — mark it with the identifier
+    and let the same check cover markers too, so one outliving its entry is an
+    error rather than a slow lie.
 - **Decisions worth another look** — calls made without the maintainer
   present that a person should still weigh in on: cautionary and
   informational, never blocking. Each entry states the call, why it was made
@@ -313,7 +367,8 @@ Three fields per entry, and the third is what keeps it honest:
 **The threshold is: no other home.** An external behaviour goes in the
 assumptions register. Something the *next* phase inherits goes in the phase
 notes. A rule that outlives phases is a standing constraint. A wanted feature
-is a roadmap "Future" item. An accepted deficiency is a `STATUS.md` known gap.
+is a roadmap "Future" item. A known deficiency is a gap register entry —
+indexed in `STATUS.md`, detailed beside the mechanism.
 What is left — evidence found in phase N that constrains a design decision in
 phase M, where M is far enough out to have no spec — is the only thing an
 inbox is for. Most forward-looking remarks fail this test, and filing them
@@ -560,6 +615,8 @@ Four questions settle almost every case.
 | Something we tried and rejected | beside the mechanism it would have replaced, wherever that lives |
 | A call made unattended, reviewed, and **affirmed with nothing changed** | beside the mechanism it governs, as a rejected-alternative paragraph — then the STATUS entry is deleted |
 | What exists right now | **STATUS.md** |
+| A deficiency we know about and are not fixing now | the **gap register** — one indexed line in STATUS, the detail beside the mechanism |
+| A limitation whose remedy the user already has today | beside the **mechanism**; it is a property, not a gap |
 | Why we changed our mind, and the evidence | a **history** entry, linked from the doc holding the resulting decision |
 | Something outside our control that we now depend on | the **assumptions register** |
 | A rule that will still apply three phases from now | a **standing-constraint** doc, or a named roadmap section |
@@ -886,6 +943,18 @@ Each of these means a specific rule has stopped being followed.
   read, so it has stopped buying the flag *and* the continuity it exists for —
   and a section nobody reads cannot be the pressure valve unattended work
   depends on.
+- **A known gap that cannot say which of its three stances it is.** The
+  classification is what tells a reader whether to act; without it the entry is
+  prose that will be re-litigated, which is the thing the section exists to
+  prevent.
+- **A gap's explanation lives in STATUS rather than beside its mechanism.** The
+  index has become the document. It will be skimmed, and the session that is
+  actually editing that mechanism will not see it.
+- **A gap register entry whose remedy is already available to the user.** It is
+  a property filed as a deficiency, and it dilutes every real entry beside it.
+- **A code marker naming a gap that no longer has an entry**, or an entry
+  nothing resolves to. The reconciliation is not being run, so the register has
+  started lying in whichever direction is not checked.
 - **An invariant has no re-verification step.** It will not be checked at the
   next upstream release, which is the only reason it was written down.
 - **`CLAUDE.md` explains a design.** It should be pointing at a doc instead.
