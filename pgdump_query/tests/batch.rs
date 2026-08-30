@@ -43,13 +43,22 @@ async fn collect_with_predicate(
     table: &str,
     predicate: Predicate,
 ) -> pgdump_query::Result<Vec<Vec<Option<String>>>> {
+    collect_with_filters(path, table, vec![predicate]).await
+}
+
+/// The same, for a conjunction: every term must match for a row to survive.
+async fn collect_with_filters(
+    path: &Path,
+    table: &str,
+    filters: Vec<Predicate>,
+) -> pgdump_query::Result<Vec<Vec<Option<String>>>> {
     let source = LocalFileSource::open(path).unwrap();
     let mut rows = Vec::new();
     read_table(
         &source,
         table,
         &ScanOptions::default(),
-        &QueryOptions { filter: Some(predicate), ..Default::default() },
+        &QueryOptions { filters, ..Default::default() },
         CacheMode::Disabled,
         |batch| {
             rows.extend(rows_of(&batch));
@@ -135,6 +144,110 @@ async fn predicate_is_null_and_is_not_null() {
     assert_eq!(not_null_rows, expected);
 }
 
+/// Terms are ANDed: a row survives only if every one of them matches. Row 2
+/// has a NULL `description` and row 3 a NULL `created_at`, so requiring both
+/// to be present drops exactly those two.
+#[tokio::test]
+async fn every_term_of_a_conjunction_must_match() {
+    let rows = collect_with_filters(
+        &edge_cases(),
+        "public.widgets",
+        vec![
+            Predicate { column: "description".into(), op: PredicateOp::IsNotNull, value: None },
+            Predicate { column: "created_at".into(), op: PredicateOp::IsNotNull, value: None },
+        ],
+    )
+    .await
+    .unwrap();
+    let expected: Vec<_> =
+        widgets_expected().into_iter().filter(|r| r[2].is_some() && r[3].is_some()).collect();
+    assert_eq!(rows, expected);
+}
+
+/// Nothing dedupes or contradicts terms: two terms on one column are
+/// evaluated independently, so a pair no row can satisfy yields no rows
+/// rather than an error.
+#[tokio::test]
+async fn a_contradictory_conjunction_yields_no_rows() {
+    let rows = collect_with_filters(
+        &edge_cases(),
+        "public.widgets",
+        vec![
+            Predicate { column: "name".into(), op: PredicateOp::Eq, value: Some("alpha".into()) },
+            Predicate { column: "name".into(), op: PredicateOp::Eq, value: Some("beta".into()) },
+        ],
+    )
+    .await
+    .unwrap();
+    assert!(rows.is_empty());
+}
+
+/// An unknown column is refused wherever in the conjunction it sits, and the
+/// error names that term's column rather than the first term's.
+#[tokio::test]
+async fn an_unknown_column_in_a_later_term_is_refused() {
+    let err = collect_with_filters(
+        &edge_cases(),
+        "public.widgets",
+        vec![
+            Predicate { column: "name".into(), op: PredicateOp::IsNotNull, value: None },
+            Predicate { column: "nope".into(), op: PredicateOp::Eq, value: Some("x".into()) },
+        ],
+    )
+    .await
+    .unwrap_err();
+    match err {
+        pgdump_query::Error::UnknownPredicateColumn { column, .. } => assert_eq!(column, "nope"),
+        other => panic!("expected UnknownPredicateColumn, got {other:?}"),
+    }
+}
+
+/// The resume token's query fingerprint covers the whole conjunction, not
+/// just its first term: adding a term changes which rows come back, so a
+/// token from the narrower query must not silently continue the wider one.
+#[tokio::test]
+async fn a_resume_token_covers_the_whole_conjunction() {
+    use futures::StreamExt;
+    use pgdump_query::table_stream;
+
+    let source = LocalFileSource::open(edge_cases()).unwrap();
+    let one = Predicate { column: "id".into(), op: PredicateOp::IsNotNull, value: None };
+    let two = Predicate { column: "name".into(), op: PredicateOp::IsNotNull, value: None };
+    let options =
+        QueryOptions { max_rows: 1, filters: vec![one.clone()], ..QueryOptions::default() };
+    let mut stream = table_stream(
+        &source,
+        "public.widgets",
+        ScanOptions::default(),
+        options.clone(),
+        None,
+        CacheMode::Disabled,
+    );
+    stream.next().await.unwrap().unwrap();
+    let token = stream.resume_token();
+    drop(stream);
+
+    let mut wrong = table_stream(
+        &source,
+        "public.widgets",
+        ScanOptions::default(),
+        QueryOptions { filters: vec![one, two], ..options.clone() },
+        Some(token.clone()),
+        CacheMode::Disabled,
+    );
+    assert!(matches!(wrong.next().await, Some(Err(pgdump_query::Error::ResumeQueryMismatch))));
+
+    let mut resumed = table_stream(
+        &source,
+        "public.widgets",
+        ScanOptions::default(),
+        options,
+        Some(token),
+        CacheMode::Disabled,
+    );
+    assert!(resumed.next().await.unwrap().is_ok(), "the same conjunction resumes");
+}
+
 /// A predicate on a column typed `List<Utf8View>` rather than `Utf8View`
 /// matches the same rows either way, because it compares the COPY-unescaped
 /// *field text* — the `array_out` literal — and never the decoded value. That
@@ -154,7 +267,7 @@ async fn a_predicate_on_a_nested_column_matches_the_literal_text_in_either_schem
             value: Some(value.to_string()),
         };
         let options =
-            QueryOptions { schema_mode: mode, filter: Some(predicate), ..Default::default() };
+            QueryOptions { schema_mode: mode, filters: vec![predicate], ..Default::default() };
         let mut stream = table_stream(
             &source,
             "public.t_array",

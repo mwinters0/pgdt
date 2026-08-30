@@ -79,21 +79,22 @@ use crate::index::{
 use crate::io::ByteRangeSource;
 use crate::map::{Builder, Span, SpanBody, attach_text};
 use crate::preamble::{DumpMetadata, dump_metadata_from_spans};
-use crate::predicate::{Predicate, PredicateOp};
+use crate::predicate::{Predicate, PredicateOp, matches_all};
 use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
 use crate::scan::{CopyScanner, Event, ScanOptions};
 use crate::{Error, Result};
 
 /// State for a `COPY` block whose table matches the query: the batcher
-/// accumulating its rows, the column index a [`Predicate`] was resolved to
+/// accumulating its rows, one column index per [`Predicate`] term resolved
 /// against this block's own schema (schemas can differ block-to-block, e.g.
 /// a headerless block's placeholder names), and the database this block is
 /// attributed to (`docs/design/architecture.md`, "One target per query").
 ///
-/// The predicate's index is into the block's **unprojected** column list,
-/// because that is what the raw row's fields are numbered by — a filter may
-/// name a column the projection does not.
-type Active = (u64, CopyHeader, RowBatcher, Option<usize>, Option<String>);
+/// The indices are parallel to `QueryOptions::filters` and are into the
+/// block's **unprojected** column list, because that is what the raw row's
+/// fields are numbered by — a term may name a column the projection does
+/// not.
+type Active = (u64, CopyHeader, RowBatcher, Vec<usize>, Option<String>);
 
 /// `database`, rendered as `database.schema.table`, or just `schema.table`
 /// when the file had no `\connect` at all — the form `Error::AmbiguousTable`
@@ -105,20 +106,27 @@ fn render_candidate((database, qualified_name): &(Option<String>, String)) -> St
     }
 }
 
-/// Resolve `predicate`'s column name against `schema`, once per block. `Ok(None)`
-/// when there is no predicate to apply.
-fn resolve_predicate_index(
-    predicate: Option<&Predicate>,
+/// Resolve every filter term's column name against `schema`, once per block,
+/// returning one index per term in term order. An empty conjunction resolves
+/// to an empty vector, which is what makes "no filter" need no case of its
+/// own on the row path.
+///
+/// A term naming a column this block does not carry is
+/// `Error::UnknownPredicateColumn`, raised for the first such term in the
+/// order the caller gave them.
+fn resolve_predicate_indices(
+    filters: &[Predicate],
     schema: &SchemaRef,
     header_offset: u64,
-) -> Result<Option<usize>> {
-    let Some(predicate) = predicate else { return Ok(None) };
-    schema
-        .fields()
+) -> Result<Vec<usize>> {
+    filters
         .iter()
-        .position(|f| f.name() == &predicate.column)
-        .map(Some)
-        .ok_or(Error::UnknownPredicateColumn { header_offset, column: predicate.column.clone() })
+        .map(|predicate| {
+            schema.fields().iter().position(|f| f.name() == &predicate.column).ok_or_else(|| {
+                Error::UnknownPredicateColumn { header_offset, column: predicate.column.clone() }
+            })
+        })
+        .collect()
 }
 
 /// Cut `resolved` down to `projection`, and say which of the block's fields
@@ -169,7 +177,7 @@ fn project(
 }
 
 /// A [`ResumeToken`]'s stamp of the query that produced it: the table, the
-/// projection, the filter and the schema mode
+/// projection, the filter terms and the schema mode
 /// (`docs/design/architecture.md`, "Resume").
 ///
 /// Every field is hashed through an explicit `match` rather than a derived
@@ -194,20 +202,22 @@ fn query_fingerprint(table: &str, options: &QueryOptions) -> u64 {
             columns.hash(&mut hasher);
         }
     }
-    match &options.filter {
-        None => 0u8.hash(&mut hasher),
-        Some(filter) => {
-            1u8.hash(&mut hasher);
-            filter.column.hash(&mut hasher);
-            match filter.op {
-                PredicateOp::Eq => 0u8,
-                PredicateOp::Ne => 1u8,
-                PredicateOp::IsNull => 2u8,
-                PredicateOp::IsNotNull => 3u8,
-            }
-            .hash(&mut hasher);
-            filter.value.hash(&mut hasher);
+    // Arity first, then each term in order. Two conjunctions that differ
+    // only in the order of their terms are semantically the same query and
+    // fingerprint differently; that costs a `ResumeQueryMismatch` on a
+    // resume nobody would write, and the alternative — canonicalizing the
+    // list — would make the stamp depend on an ordering rule of its own.
+    options.filters.len().hash(&mut hasher);
+    for filter in &options.filters {
+        filter.column.hash(&mut hasher);
+        match filter.op {
+            PredicateOp::Eq => 0u8,
+            PredicateOp::Ne => 1u8,
+            PredicateOp::IsNull => 2u8,
+            PredicateOp::IsNotNull => 3u8,
         }
+        .hash(&mut hasher);
+        filter.value.hash(&mut hasher);
     }
     hasher.finish()
 }
@@ -851,11 +861,8 @@ fn resume_state(
                 query_options.schema_mode,
                 census,
             )?;
-            let predicate_index = resolve_predicate_index(
-                query_options.filter.as_ref(),
-                &full.schema,
-                ic.header_offset,
-            )?;
+            let predicate_indices =
+                resolve_predicate_indices(&query_options.filters, &full.schema, ic.header_offset)?;
             let (r, field_targets) =
                 project(&full, query_options.projection.as_deref(), ic.header_offset)?;
             let batcher = RowBatcher::new(
@@ -869,7 +876,7 @@ fn resume_state(
                 ic.header_offset,
                 ic.header.clone(),
                 batcher,
-                predicate_index,
+                predicate_indices,
                 ic.database.clone(),
             ))
         })
@@ -909,19 +916,19 @@ fn snapshot(
 /// query fingerprint disagrees with `query_options` is
 /// `Error::ResumeQueryMismatch`.
 ///
-/// `query_options.filter` applies `docs/design/architecture.md`'s post-parse
-/// row filter (`docs/design/architecture.md`, "Predicates"): `None`
-/// yields every row, as before; `Some` drops any row whose named column
-/// doesn't satisfy it, after that row has been fully unescaped. Referencing a
-/// column absent from a matching block's own schema is
-/// `Error::UnknownPredicateColumn`.
+/// `query_options.filters` applies `docs/design/architecture.md`'s post-parse
+/// row filter (`docs/design/architecture.md`, "Predicates") as a
+/// conjunction: an empty list yields every row, and otherwise a row is kept
+/// only if **every** term matches, tested after that row has been fully
+/// unescaped. A term referencing a column absent from a matching block's own
+/// schema is `Error::UnknownPredicateColumn`.
 ///
 /// `query_options.projection` decides which columns are materialized
 /// (`docs/design/architecture.md`, "Projection"). It cuts the schema
 /// [`TableStream::resolved_schema`] reports as well as the batches, may
 /// reorder, and may be empty — a zero-column projection yields batches
-/// carrying a row count and nothing else. A filter may name a column the
-/// projection does not.
+/// carrying a row count and nothing else. A filter term may name a column
+/// the projection does not.
 ///
 /// `cache` controls structure-cache consulting
 /// (`docs/design/architecture.md`, "The cache").
@@ -1139,12 +1146,12 @@ where
                                     query_options.schema_mode,
                                     &census,
                                 )?;
-                                // Against the *unprojected* schema: the
-                                // predicate's index numbers the raw row's
-                                // fields, and a filter may name a column the
+                                // Against the *unprojected* schema: a
+                                // term's index numbers the raw row's
+                                // fields, and a term may name a column the
                                 // projection dropped.
-                                let predicate_index = resolve_predicate_index(
-                                    query_options.filter.as_ref(),
+                                let predicate_indices = resolve_predicate_indices(
+                                    &query_options.filters,
                                     &full.schema,
                                     start.header_offset,
                                 )?;
@@ -1164,7 +1171,7 @@ where
                                     start.header_offset,
                                     start.header,
                                     batcher,
-                                    predicate_index,
+                                    predicate_indices,
                                     block_database.clone(),
                                 ));
                             }
@@ -1181,8 +1188,8 @@ where
                                     query_options.schema_mode,
                                     &census,
                                 )?;
-                                let predicate_index = resolve_predicate_index(
-                                    query_options.filter.as_ref(),
+                                let predicate_indices = resolve_predicate_indices(
+                                    &query_options.filters,
                                     &full.schema,
                                     header_offset,
                                 )?;
@@ -1202,17 +1209,18 @@ where
                                     header_offset,
                                     header,
                                     batcher,
-                                    predicate_index,
+                                    predicate_indices,
                                     block_database,
                                 ));
                             }
-                            if let Some((header_offset, _, batcher, predicate_index, _)) =
+                            if let Some((header_offset, _, batcher, predicate_indices, _)) =
                                 active.as_mut()
                             {
-                                let keep = match (query_options.filter.as_ref(), *predicate_index) {
-                                    (Some(pred), Some(col)) => pred.matches(row.raw, col)?,
-                                    _ => true,
-                                };
+                                let keep = matches_all(
+                                    &query_options.filters,
+                                    predicate_indices,
+                                    row.raw,
+                                )?;
                                 if keep {
                                     batcher.push_row(
                                         *header_offset,

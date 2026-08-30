@@ -9,10 +9,11 @@ discoveries are in `history/`.
 ## What exists
 
 P1–P4 and P9 are complete and were struck at a keystone review. **P5 is open**
-and four slices of it have landed — one registering a figure and adding no
+and five slices of it have landed — one registering a figure and adding no
 library code, one bounding what an in-flight batch pins, one adding projection
-to the library, and one giving it a CLI. The richer predicates do not exist;
-the checklist is below the table.
+to the library, one giving it a CLI, and one turning the single filter into a
+conjunction. The typed ordering operators do not exist; the checklist is below
+the table.
 
 | Capability | State |
 |---|---|
@@ -27,7 +28,8 @@ the checklist is below the table.
 | Partial reporting | `info` reports an unfinished scan's cache for as far as it got, with `Scan completion: N%` stated once at the top and nothing below it qualified. An interrupted cache is **typed** for every database segment the scan finished (I1) |
 | Measurement harness | `scripts/measure.py` takes every figure in [`../design/measurements.md`](../design/measurements.md) and emits that doc's tables — twelve figures, eleven taken by a sweep and one derived across two, each declaring what invalidates it and which documents repeat it, plus two instruments built and not taken |
 | Column projection | working, library and CLI: `QueryOptions::projection` names columns, cuts the reported `ResolvedSchema` with the batches, may reorder, and may be empty (`COUNT(*)`); `pgdq query` spells it `--column <name>` repeated, or `--no-columns`, which prints no header so `\| wc -l` is a row count. A filter may name a column the projection does not, and an unprojected column is never decoded, so projecting a column away escapes its `Error::FieldDecode` ([`../design/architecture.md`](../design/architecture.md), "Projection") |
-| Richer predicates (conjunction, typed ordering) | not started — P5.5, P5.6, specified |
+| Predicate conjunction | working, library and CLI: `QueryOptions::filters` is a list of single-column terms ANDed, the empty list being "no filter"; `pgdq query` spells it `--filter <term>` repeated. Nothing folds two terms, so a contradictory pair is a query with no rows. `OR` and `NOT` are not expressible — the NULL collapse that is sound under `AND` is not under `NOT` ([`../design/architecture.md`](../design/architecture.md), "Predicates") |
+| Typed ordering operators (`<`, `<=`, `>`, `>=`) | not started — P5.6, specified |
 | `object_store` I/O, Python bindings, DataFusion `TableProvider` | not started — P6 |
 | Device-bound scan performance campaign, sparse row index | not started — P7 |
 | Per-row-group column statistics | not started — P10, which needs P7's sparse row index. `CopyBlock::column_stats` stays a reserved `None` |
@@ -42,8 +44,8 @@ later on the same commit, which is the pair `--drift` reads.
 
 **Eight figures read stale** — `census-brace-free`, `census-arrays`,
 `scan-throughput-cold`, `scan-throughput-warm`, `nested-end-to-end`,
-`census-attribution`, `cross-file-floor` and `map-only` — since `P5.2`,
-`P5.3` and `P5.4` between them touched `batch.rs`, `stream.rs` and the CLI,
+`census-attribution`, `cross-file-floor` and `map-only` — since `P5.2`
+through `P5.5` between them touched `batch.rs`, `stream.rs` and the CLI,
 which all eight declare. None is acknowledgeable: a library change has no cheap
 oracle, and `P5.3` puts a per-field lookup on the replay path. They stay stale
 until the next full sweep, which is `P5.7`'s neighbourhood.
@@ -84,7 +86,9 @@ The spec is
       [`../design/roadmap-P5.3-projection-notes.md`](../design/roadmap-P5.3-projection-notes.md)
 - [x] **P5.4** The CLI for projection — `--column`, `--no-columns`. Notes:
       [`../design/roadmap-P5.4-projection-cli-notes.md`](../design/roadmap-P5.4-projection-cli-notes.md)
-- [ ] **P5.5** The filter conjunction — repeatable `--filter`, terms ANDed.
+- [x] **P5.5** The filter conjunction — repeatable `--filter`, terms ANDed.
+      Notes:
+      [`../design/roadmap-P5.5-filter-conjunction-notes.md`](../design/roadmap-P5.5-filter-conjunction-notes.md)
 - [ ] **P5.6** Typed ordering operators — `<`, `<=`, `>`, `>=`, and the refusal
       on a column that is not `Mapped` with a `Scalar` plan.
 - [ ] **P5.7** Take the figure, fold it in, re-read its consumers, delete

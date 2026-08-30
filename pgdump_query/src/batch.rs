@@ -48,9 +48,9 @@ use crate::{Error, Result};
 
 /// What one table query asks for, and how its batches are cut.
 ///
-/// Both halves of a query live here — the projection and the filter beside
-/// the batching knobs — rather than the query half arriving as positional
-/// arguments: they are the same kind of thing, and a caller should not have
+/// Both halves of a query live here — the projection and the filter terms
+/// beside the batching knobs — rather than the query half arriving as
+/// positional arguments: they are the same kind of thing, and a caller should not have
 /// to learn which of them is a field and which is an argument
 /// (`docs/design/architecture.md`, "Execution model and API surface").
 #[derive(Debug, Clone)]
@@ -64,11 +64,15 @@ pub struct QueryOptions {
     /// repeated name is `Error::DuplicateProjectionColumn`
     /// (`docs/design/architecture.md`, "Projection").
     pub projection: Option<Vec<String>>,
-    /// Post-parse row filter (`docs/design/architecture.md`, "Predicates").
-    /// `None` yields every row. A filter may name a column the projection
-    /// does not: the projection decides what is *built*, never what may be
-    /// tested.
-    pub filter: Option<Predicate>,
+    /// Post-parse row filter (`docs/design/architecture.md`, "Predicates"),
+    /// as a **conjunction**: a row is kept only if every term matches, and
+    /// the empty list — the default — yields every row, so "no filter" needs
+    /// no separate spelling. Terms are independent single-column
+    /// comparisons; `OR` and `NOT` are not expressible here.
+    ///
+    /// A term may name a column the projection does not: the projection
+    /// decides what is *built*, never what may be tested.
+    pub filters: Vec<Predicate>,
     /// Rows per batch. A batch is flushed once it reaches this many rows.
     pub max_rows: usize,
     /// Optional cap on a batch's total field-byte count — counting only the
@@ -109,7 +113,7 @@ impl Default for QueryOptions {
     fn default() -> Self {
         Self {
             projection: None,
-            filter: None,
+            filters: Vec::new(),
             max_rows: 8192,
             max_bytes: None,
             max_source_span: Some(64 << 20),
@@ -1061,7 +1065,7 @@ fn render_array(column: &dyn Array, row: usize, child_plan: &NestedPlan) -> Stri
 /// share one scan loop. The callback may return [`ControlFlow::Break`] to stop
 /// early, in which case the returned token resumes from just past the last
 /// batch delivered to it — see [`crate::stream::TableStream::resume_token`].
-/// `query_options` carries the projection and the post-parse row filter as
+/// `query_options` carries the projection and the post-parse filter terms as
 /// well as the batching knobs — see `table_stream`'s docs.
 /// `cache` controls structure-cache consulting — see `table_stream`'s docs.
 /// Rejects `CacheMode::Offline` up front: `source` is mandatory here, and a

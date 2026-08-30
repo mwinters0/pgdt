@@ -114,7 +114,8 @@ non-test caller, filed in
 for the phase that decides whether push mode keeps its place.
 
 **One struct carries the whole query.** `QueryOptions` holds what the query
-*asks for* — the projection and the filter — beside how its batches are cut,
+*asks for* — the projection and the filter terms — beside how its batches are
+cut,
 and both entry points take it. The two halves are the same kind of thing, so
 splitting them across a struct and a positional argument would make every
 caller learn which is which; the name also follows from the struct already
@@ -1602,7 +1603,7 @@ columns than the original did.
 A reserved `generation` field is always 0.
 
 **It also carries a fingerprint of the query that produced it** — the table,
-the projection, the filter and the schema mode, hashed — and resuming a stream
+the projection, the filter terms and the schema mode, hashed — and resuming a stream
 whose options hash differently is `Error::ResumeQueryMismatch`. That defends
 "one schema per stream, resolved up front", which nothing else defends: the
 token never named even the table, so resuming against a different one was
@@ -1610,7 +1611,11 @@ silently accepted, and a projection makes changing the schema without changing
 the table an ordinary thing to do rather than an exotic one. The hash is over
 an explicit `match` per field rather than a derived `Hash`, so a new operator
 or option is a compile error instead of a stamp that quietly stops covering it.
-`database` and `scan_extent` are deliberately outside it: they change which
+The filter list is hashed arity-first and in order, so two conjunctions
+differing only in term order fingerprint differently — a `ResumeQueryMismatch`
+on a resume nobody would write, against a canonicalization rule the stamp
+would otherwise have to own. `database` and `scan_extent` are deliberately
+outside it: they change which
 blocks are replayed, not the shape of what comes back.
 
 **`ResumeToken` exposes no public fields, and must stay that way.** A raw file
@@ -1647,10 +1652,10 @@ against that schema. Taking indices here instead would make the meaning of `2`
 depend on which block matched, which is what every other lookup avoids by going
 through the `COPY` header.
 
-**A filter may name a column the projection does not.** The projection decides
-what is *built*, never what may be *tested*: `Predicate::matches` walks the raw
-row itself, so the predicate's column index is resolved against the block's
-**unprojected** schema. That is also what makes a filtered row count —
+**A filter term may name a column the projection does not.** The projection
+decides what is *built*, never what may be *tested*: `Predicate::matches` walks
+the raw row itself, so every term's column index is resolved against the
+block's **unprojected** schema. That is also what makes a filtered row count —
 zero columns plus a filter — expressible.
 
 **A projection narrows what is decoded, never what is walked.**
@@ -1716,6 +1721,39 @@ Predicates are untyped — the compared value is a plain string, and
 `IsNull`/`IsNotNull` are the two that exist because before typed columns there
 was no way to ask for a NULL at all. Evaluating predicates *during* the scan is
 future work; it inverts control, not dependency (see `layering.md`).
+
+**A filter is a conjunction**: `QueryOptions::filters` is a list of
+single-column terms, and a row survives only if every one of them matches.
+The empty list is the default and yields every row, so "no filter" is the
+degenerate conjunction rather than a case of its own — nothing on the row
+path branches on whether a filter exists. Terms are resolved to column
+indices once per block, in term order, and an index vector parallel to the
+term list travels in the block's `Active` state; a term naming a column the
+block does not carry is `Error::UnknownPredicateColumn`, raised for the first
+such term. Evaluation short-circuits at the first term that fails, so the
+ordinary case costs one walk of the row; each term does walk it separately,
+which is only a real cost for a conjunction whose leading terms almost always
+pass.
+
+**Nothing folds two terms together.** Two terms on one column are evaluated
+independently, so a contradictory pair is a query with no rows rather than an
+error, and a redundant pair costs a second walk. There is no simplifier and
+no plan.
+
+*Rejected: `OR` and `NOT` alongside the conjunction.* Not for code volume —
+for NULL. A NULL field matches neither `Eq` nor `Ne`: unknown is collapsed to
+false at each term, which is sound under `AND` and unsound under `NOT`, since
+SQL's `NOT UNKNOWN` is `UNKNOWN` rather than `TRUE`. Admitting `NOT` does not
+add an operator, it obliges a real three-valued evaluator and re-opens the
+semantics of every operator that already exists. It is filed with typed
+predicates in
+[`roadmap-P11-typed-predicates-inbox.md`](roadmap-P11-typed-predicates-inbox.md).
+
+**On the command line a filter repeats rather than splits**, exactly as a
+projection does: `pgdq query --filter <term>`, once per term, ANDed. Each
+repetition is parsed on its own — a malformed one is refused before the dump
+is opened — and the CLI decides nothing else about them; the column lookup and
+its refusal are the library's, identical for an embedder.
 
 **A string comparison agrees with PostgreSQL more often than it deserves to**,
 and the reason is a property of the input rather than of the comparison: every
@@ -2379,7 +2417,11 @@ the flags' exit statuses, and the *rendered* stream — a zero-column query's
 missing header line above all, since a stray line there breaks the row-count
 idiom silently. It also runs `measure.py`'s own registered projection widths
 against a generated input, so a command shape the harness would only execute
-mid-sweep is executed by the suite instead.
+mid-sweep is executed by the suite instead. `query_filter.rs` does the same
+for the conjunction: what a repeated flag *accumulates* is a property of the
+parser, so the test that says a second `--filter` neither replaces nor is
+ignored has to count rows out of the real binary, with each term asserted
+alone in the same test as the pair.
 `pgdump_query/tests/map_file.rs` separately covers that a real interruption
 leaves that same shape.
 

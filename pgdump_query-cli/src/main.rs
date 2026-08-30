@@ -109,7 +109,7 @@ enum Command {
         json: bool,
     },
     /// Stream a table's rows, optionally projected to named columns and
-    /// filtered by a single-column predicate.
+    /// filtered by a conjunction of single-column predicates.
     Query {
         /// The dump file to scan. `query` can never answer from a cache
         /// alone — row data is never cached — so this is always required.
@@ -124,9 +124,11 @@ enum Command {
         dqcache: Option<PathBuf>,
         /// Single-column filter: `column=value`, `column!=value`,
         /// `column IS NULL`, or `column IS NOT NULL`, compared against each
-        /// row's decoded field value.
+        /// row's decoded field value. Repeatable — every term must match,
+        /// so the terms are ANDed. There is no `OR` and no negation of a
+        /// whole term (`docs/design/architecture.md`, "Predicates").
         #[arg(long)]
-        filter: Option<String>,
+        filter: Vec<String>,
         /// Materialize only this column, repeatable — the output carries the
         /// columns in the order the flags give them, which need not be the
         /// file's. A name the table does not carry is an error, and so is a
@@ -137,8 +139,8 @@ enum Command {
         /// column away is also the way past a value that fails to decode
         /// while keeping every other column typed.
         ///
-        /// A `--filter` may name a column this does not: the projection
-        /// decides what is built, never what may be tested.
+        /// A `--filter` term may name a column this does not: the
+        /// projection decides what is built, never what may be tested.
         #[arg(long = "column", value_name = "NAME")]
         column: Vec<String>,
         /// Materialize no columns at all — the `COUNT(*)` shape. Each row
@@ -183,7 +185,8 @@ fn projection(columns: Vec<String>, no_columns: bool) -> Option<Vec<String>> {
     }
 }
 
-/// Parse a `--filter` argument into a [`Predicate`]: `column=value`,
+/// Parse one `--filter` argument into a [`Predicate`] — one term of the
+/// conjunction the flag's repetitions build: `column=value`,
 /// `column!=value`, `column IS NULL`, or `column IS NOT NULL` (the `IS`
 /// forms matched case-insensitively after the column name — see
 /// `docs/design/architecture.md`, "Predicates"). `!=` is
@@ -429,7 +432,11 @@ async fn main() -> Result<()> {
             schema_mode,
         } => {
             let mode = CacheMode::resolve(&file, dqcache.as_deref());
-            let predicate = filter.as_deref().map(parse_filter).transpose()?;
+            // Every term is parsed before the file is opened, so a
+            // malformed one is reported without a scan; the library then
+            // resolves each against the block's own schema.
+            let filters =
+                filter.iter().map(String::as_str).map(parse_filter).collect::<Result<Vec<_>>>()?;
             let source = LocalFileSource::open(&file)?;
             let mut header_printed = false;
             let mut any_batch = false;
@@ -437,7 +444,7 @@ async fn main() -> Result<()> {
             let query_options = QueryOptions {
                 database,
                 schema_mode: schema_mode.into(),
-                filter: predicate,
+                filters,
                 projection: projection(column, no_columns),
                 ..QueryOptions::default()
             };

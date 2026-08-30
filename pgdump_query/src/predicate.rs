@@ -19,7 +19,9 @@ pub enum PredicateOp {
     IsNotNull,
 }
 
-/// A single-column post-parse filter: `column <op> value`. `column` is
+/// A single-column post-parse filter: `column <op> value`, and one **term**
+/// of a conjunction — a query carries a list of these and keeps a row only
+/// if every one of them matches (`QueryOptions::filters`). `column` is
 /// matched against the queried table's column names (the `COPY` header list,
 /// or the `column1`, `column2`, ... placeholders used when the header has
 /// none). `value` is compared against each row's decoded (unescaped) field
@@ -32,7 +34,10 @@ pub enum PredicateOp {
 /// A NULL field matches neither `Eq` nor `Ne` — SQL's own three-valued
 /// logic collapses both to "excluded" — which is exactly why `IsNull`/
 /// `IsNotNull` exist: without them there is no way to ask for a NULL
-/// explicitly (`docs/status/history/2026-08-22.md`).
+/// explicitly (`docs/status/history/2026-08-22.md`). That collapse is what
+/// bounds the conjunction to `AND`: it is sound under `AND` and unsound
+/// under `NOT`, which is why `OR`/`NOT` are deferred rather than added
+/// alongside (`docs/design/architecture.md`, "Predicates").
 #[derive(Debug, Clone)]
 pub struct Predicate {
     pub column: String,
@@ -56,6 +61,32 @@ impl Predicate {
             PredicateOp::Ne => decoded.is_some_and(|v| Some(v.as_ref()) != self.value.as_deref()),
         })
     }
+}
+
+/// Evaluate a conjunction against `raw_row`: every term must match.
+/// `indices[i]` is the column index term `i` resolved to against the block's
+/// **unprojected** schema, so the two slices are parallel by construction
+/// (`docs/design/architecture.md`, "Predicates").
+///
+/// An empty conjunction matches every row, which is what makes "no filter"
+/// need no separate case anywhere above this.
+///
+/// Terms are tested in the order they were given and the walk stops at the
+/// first that fails, so the ordinary case costs one pass over the row. Each
+/// term does walk the row itself — there is no shared pass — which is a real
+/// cost only for a conjunction whose leading terms nearly always pass, and
+/// which buys the short-circuit for the common shape.
+pub(crate) fn matches_all(
+    filters: &[Predicate],
+    indices: &[usize],
+    raw_row: &[u8],
+) -> Result<bool> {
+    for (filter, &index) in filters.iter().zip(indices) {
+        if !filter.matches(raw_row, index)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -92,6 +123,34 @@ mod tests {
         assert!(!is_null.matches(b"other\ta", 1).unwrap());
         assert!(!is_not_null.matches(b"other\t\\N", 1).unwrap());
         assert!(is_not_null.matches(b"other\ta", 1).unwrap());
+    }
+
+    #[test]
+    fn an_empty_conjunction_matches_every_row() {
+        assert!(matches_all(&[], &[], b"a\tb").unwrap());
+    }
+
+    #[test]
+    fn every_term_must_match() {
+        let filters = [
+            Predicate { column: "a".into(), op: PredicateOp::Eq, value: Some("1".into()) },
+            Predicate { column: "b".into(), op: PredicateOp::Eq, value: Some("2".into()) },
+        ];
+        assert!(matches_all(&filters, &[0, 1], b"1\t2").unwrap());
+        assert!(!matches_all(&filters, &[0, 1], b"1\t3").unwrap());
+        assert!(!matches_all(&filters, &[0, 1], b"9\t2").unwrap());
+    }
+
+    /// Two terms on one column are an ordinary conjunction, and a
+    /// contradictory pair simply matches nothing — no term is special-cased.
+    #[test]
+    fn two_terms_may_name_the_same_column() {
+        let filters = [
+            Predicate { column: "a".into(), op: PredicateOp::Ne, value: Some("1".into()) },
+            Predicate { column: "a".into(), op: PredicateOp::Ne, value: Some("2".into()) },
+        ];
+        assert!(matches_all(&filters, &[0, 0], b"3").unwrap());
+        assert!(!matches_all(&filters, &[0, 0], b"2").unwrap());
     }
 
     #[test]

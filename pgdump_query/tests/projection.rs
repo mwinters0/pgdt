@@ -91,11 +91,11 @@ async fn a_zero_column_projection_still_counts_its_rows() {
 #[tokio::test]
 async fn a_filter_may_name_a_column_the_projection_does_not() {
     let options = QueryOptions {
-        filter: Some(pgdump_query::Predicate {
+        filters: vec![pgdump_query::Predicate {
             column: "name".into(),
             op: pgdump_query::PredicateOp::Eq,
             value: Some("beta".into()),
-        }),
+        }],
         ..projecting(&[])
     };
     let (names, rows) = drain("public.widgets", options).await.unwrap();
