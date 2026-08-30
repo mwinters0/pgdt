@@ -343,6 +343,15 @@ external variants you have actually exercised. Its value is entirely in
 distinguishing *tested* from *assumed* — a row that says "untested
 (deliberately), because X" is doing more work than a row that says "supported".
 
+**Keep the matrix and the gap register from bleeding into each other.** They
+answer different questions — the matrix says what has been *exercised* and what
+is in scope, the register says what is *wrong* and who owns it — and the word
+"gap" reaches for both. Say in the matrix that a status is coverage rather than
+deficiency, and that a row earns an identifier only by naming one; say in the
+register that a coverage statement is not a gap. Without that, an `unsupported`
+row reads as a deficiency nobody filed, and a register entry looks like it
+should have a row it was never entitled to.
+
 ### Inboxes: facts filed by destination
 
 Notes docs are filed by **origin** — "what `P3` learned". That works for
