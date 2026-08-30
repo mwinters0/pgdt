@@ -623,8 +623,9 @@ in the dated history entry it was filed under. The table below opens again at
 | # | Date | What changed | Why |
 |---|---|---|---|
 | `M24` | 2026-08-29 | `--stale` can be told that a commit touched a declared path without moving a reading: a per-commit acknowledgement carrying its own evidence, `--verify-additive` to compute that evidence by regenerating every published figure's inputs at two revisions and comparing bytes, and `--check` reporting entries the session stamp has moved past | [`measurements.md`](measurements.md), "A commit can be acknowledged, and then it stops marking a figure stale" |
+| `M25` | 2026-08-30 | Two full sweeps back to back re-stamp `measurements.md` at `4c2c3e7`: every table replaced from the quieter sweep, `session-drift` re-derived across the pair with `--drift`, and the acknowledgement register emptied of the entries the new stamp made spent | [`../status/history/2026-08-30.md`](../status/history/2026-08-30.md) |
 
-**One live obligation outlived them.** An `INSERT`-run scan costs **14.6×** a
+**One live obligation outlived them.** An `INSERT`-run scan costs **14.4×** a
 `COPY` scan per byte, CPU-bound, which argues for a scanner-level `INSERT`
 path — and *that* changes a decision, so it goes through grilling → spec
 amendment → a numbered slice rather than through this section. It is filed in

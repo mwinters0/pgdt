@@ -31,24 +31,22 @@ and nothing of it has landed; its checklist is below the table.
 
 **Figures.** Every figure in
 [`../design/measurements.md`](../design/measurements.md) comes from the
-`fa186ab` sweep of 2026-08-28, folded in whole, each table carrying an
-apparatus line witnessing a quiet machine. `--check` reconciles twelve markers
-against twelve figures. **Eleven of the twelve are clean**, two of them by
-acknowledgement — a declared path changed and no reading moved:
+`4c2c3e7` sweep of 2026-08-30, folded in whole, each table carrying an
+apparatus line. `--check` reconciles twelve markers against twelve figures, and
+`measure.ACKNOWLEDGED` is empty: the new stamp spent both entries the previous
+one carried, and a spent acknowledgement is deleted rather than kept.
+**`session-drift` has been re-taken** — derived across that sweep and a second
+one two minutes later on the same commit, which is the pair `--drift` reads.
+It reads stale again until the fold-in commit is acknowledged, because that
+commit edits `scripts/measure.py`, which the figure declares
+([`history/2026-08-30.md`](history/2026-08-30.md)).
 
-- `ed588a3` added `--weak-composite` to the perf generator. Verified by
-  regenerating every published figure's inputs at both revisions and comparing
-  them byte for byte (`uv run measure.py --verify-additive --since fa186ab`).
-- `5a207de` changed `index.rs` in a doc comment only, retargeting
-  `RowGroupStats`' pointer from P5's companion section to P10. **The weaker
-  kind of entry**: a library path has no cheap oracle, so this one rests on the
-  diff having been read rather than on anything mechanical.
-
-**`session-drift` is stale and stays stale until `M25`.** It declares
-`scripts/measure.py` because the harness is the apparatus it measures, and four
-commits since the stamp have touched it — including the one that armed the
-contention gate. That has no cheap oracle, so it is not acknowledgeable; it
-needs the sweep pair `--drift` reads.
+**One published table was taken under a witnessed CPU episode.** `map-only`'s
+three readings come from a window at ≤12% machine-busy against ≤5% everywhere
+else in both sweeps — under the armed gate, so the harness published them, and
+the table's own apparatus line says so. They are 4–7% above what the quieter
+sweep read and their reps spread 7–11%. The sizes the figure exists for are
+unaffected; the third decimal is not defensible.
 
 **One instrument is built and deliberately unrun, and it will not be
 published.** `M23`'s `composite-isolated` isolates the composite column's
@@ -88,23 +86,6 @@ The spec is
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **`M25` — the sweep pair that re-stamps `measurements.md`.** Queued for a
-  quiet machine; `M1`–`M24` are spent, so the item after it takes `M26` ([`../design/roadmap.md`](../design/roadmap.md), "Out-of-band
-  work"). What it owes, in order:
-
-  1. Run **two** full sweeps, detached under `runs/` per `CLAUDE.md`'s
-     long-running-process rules, with nothing else building or testing on the
-     machine. Two, not one, because `session-drift` is derived across a pair
-     and one sweep cannot re-take it.
-  2. **Judge each sweep on its floor before folding anything in.** An apparatus
-     line that clears every limit is necessary and not sufficient — the
-     2026-08-28 contention run cleared its gate and moved the warm `dd` floor a
-     fifth. A sweep whose floor moved is unpublishable: report it and stop.
-  3. Fold in the quieter sweep's `tables.md` whole, take `session-drift` with
-     `--drift` across the pair, and re-stamp the doc.
-  4. Re-read every consumer `--check` names for each figure whose number moved.
-  5. Delete the `ed588a3` acknowledgement, which the new stamp makes spent, and
-     add the ledger row.
 - **Four phases are sketched and none grilled** — P6, P11, P7, P10, P8, in that
   schedule order. Numeric order is not plan order: P9 was taken ahead of P5,
   P10 was allocated when P5's grilling split statistics out of it, and P11 when
@@ -156,9 +137,9 @@ is safe, and where the mechanism or the fix is written down.
 
 - **Mapping is O(blocks²), and the save throttle only halved it.** Every
   `CopyEnd` rebuilds `DumpIndex::spans` whole, so a block-rich, byte-poor dump
-  pays quadratic CPU with the cache disabled entirely — 19.1 s for 4000 blocks,
-  which is 97% of what a throttled `parse` of the same file costs. Nothing
-  koji-shaped is affected: 74 blocks over 784 GB pay it 74 times, at +1.5%.
+  pays quadratic CPU with the cache disabled entirely — 20.9 s for 4000 blocks,
+  which is all but a fraction of what a throttled `parse` of the same file
+  costs. Nothing koji-shaped is affected: 74 blocks over 784 GB pay it 74 times, at +1.5%.
   Not scheduled, because the fix is the same code P7's parallel-scan plans
   would rework — including a cheap variant that was weighed and refused for
   reversing the interrupt guard's guarantee. The full analysis, so it is not
@@ -212,8 +193,8 @@ is safe, and where the mechanism or the fix is written down.
   [`../design/roadmap-P5-pushdown.md`](../design/roadmap-P5-pushdown.md).
 
 - **An `INSERT` run is folded into one span but every line is still decoded**,
-  unlike the large-object region, which is skipped unread. That costs **14.6×**
-  the per-byte CPU of a `COPY` scan warm — ~43 minutes for a koji-scale 1 TB
+  unlike the large-object region, which is skipped unread. That costs **14.4×**
+  the per-byte CPU of a `COPY` scan warm — ~40 minutes for a koji-scale 1 TB
   `--inserts` dump against the `COPY` path's ~3. Correctness, tiling and row
   counts are unaffected. Not scheduled: the fix is a scanner-level `INSERT`
   path, which changes a decision and so needs a slice, filed into
@@ -228,4 +209,30 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-**None are open.**
+- **The published sweep is the one with the flat floor, not the one with the
+  quiet counters.** `M25` ran two sweeps and they fail different tests. Sweep 1
+  (`runs/measure-20260830T025850`) matches the standing warm `dd` floor to
+  +0.6% on the control file and −0.6% on the arrays one, but its last two
+  tables ran at ≤12% and ≤9% machine-busy and its `map-only` readings are 4–7%
+  high. Sweep 2 (`runs/measure-20260830T032507`) never exceeded 4.7%
+  machine-busy and its reps are tight everywhere, but its warm `control` floor
+  read 0.294 s against the doc's 0.309 — a 5.5% move, which the standing gate
+  calls unpublishable. The gate was applied as written, so sweep 1 is what the
+  doc now carries. **What argues the other way**: the gate exists to catch
+  bandwidth contention hiding from the counters, and contention makes a floor
+  *slower*; sweep 2's is faster, in the direction contention cannot produce,
+  and 5.5% is inside the drift envelope that figure measures — its two-hour
+  pair's warm readings spanned 2.2–8.5%, and the two sweeps behind the previous
+  stamp differed by 4.3% on that same floor with both published. Reconsidering means folding sweep 2's `tables.md` instead;
+  `raw.json` for both is kept, so it costs no measuring.
+
+- **A live phase spec quotes a figure and is deliberately not declared as its
+  consumer.** `roadmap-P5-pushdown.md` cites `nested-end-to-end`'s per-row
+  number, which this sweep moved 13.0 → 13.1 µs/row. The spec was left
+  untouched, because a spec is edited only when a *decision* changes, and
+  `nested-end-to-end`'s `quoted_by` still does not name it — declaring it would
+  oblige every future sweep to edit a spec. So the two rules point opposite
+  ways and the figure register is silently incomplete. Reconsidering means
+  either adding open specs to `quoted_by` and accepting that a fold-in edits
+  them, or rewriting such citations to name the figure without repeating its
+  number.

@@ -1969,7 +1969,7 @@ FIGURES: list[Figure] = [
             "docs/design/roadmap-P7-scan-performance-inbox.md",
             "docs/status/STATUS.md",
         ),
-        section="The census on brace-free rows costs 7% of a warm scan",
+        section="The census on brace-free rows costs 8% of a warm scan",
         stage="cold+warm",
         depends=(*MAP, *SCAN, *GEN_PERF),
         cold_inputs=("control",),
@@ -2030,7 +2030,7 @@ FIGURES: list[Figure] = [
             "docs/design/roadmap-P7-scan-performance-inbox.md",
             "docs/status/STATUS.md",
         ),
-        section="A typed query over nested columns costs 13.0 µs a row more than a string one",
+        section="A typed query over nested columns costs 13.1 µs a row more than a string one",
         stage="warm",
         depends=(*NESTED, *MAP, *QUERY_CLI, *GEN_PERF),
         warm_inputs=("control", "composite", "arrays"),
@@ -2220,35 +2220,10 @@ class Acknowledged:
     verified: str = ""
 
 
-#: The excused commits, live for the current session stamp only.
-ACKNOWLEDGED: tuple[Acknowledged, ...] = (
-    Acknowledged(
-        commit="ed588a3",
-        figures=(
-            "census-brace-free",
-            "census-arrays",
-            "scan-throughput-cold",
-            "scan-throughput-warm",
-            "nested-end-to-end",
-            "census-attribution",
-            "cross-file-floor",
-            "per-block-quadratic",
-        ),
-        why=(
-            "--weak-composite is a new flag on generate_perf_data.py; every mode a figure "
-            "generates on writes the bytes it wrote before"
-        ),
-        verified="cd scripts && uv run measure.py --verify-additive --since fa186ab",
-    ),
-    Acknowledged(
-        commit="5a207de",
-        figures=("preamble-prepass",),
-        why=(
-            "index.rs changed only in a doc comment — RowGroupStats' pointer retargeted from "
-            "P5's companion section to P10; no executable line differs"
-        ),
-    ),
-)
+#: The excused commits, live for the current session stamp only. Empty is the
+#: state a fresh stamp leaves behind: every entry a sweep re-stamps past is
+#: spent, and `--check` names it so it is deleted rather than kept as sediment.
+ACKNOWLEDGED: tuple[Acknowledged, ...] = ()
 
 
 def resolved_acknowledgements(

@@ -6,11 +6,13 @@ so **a figure that loses its regeneration command should be deleted, not
 kept**.
 
 **Session stamp.** Every figure below was taken by `scripts/measure.py` on
-2026-08-28, against commit `fa186ab`. One sweep, one apparatus — which is what
+2026-08-30, against commit `4c2c3e7`. One sweep, one apparatus — which is what
 lets these tables be differenced against each other, and what "are these
 figures from before or after my change" is answered by. `uv run measure.py
 --stale` reads that commit back and names the figures a diff has invalidated
-since.
+since. The one exception is `session-drift`, which no sweep can take: it is
+derived across the published sweep and a second one taken two minutes later on
+the same commit, and it says so in its own section.
 
 All figures are on the hardware `CLAUDE.local.md` describes. Synthetic inputs
 are regenerable with `--seed 42` and are **never committed** — they measure
@@ -47,7 +49,8 @@ Ten standing rules for reading anything below:
 - **Re-take a comparison table whole, in one interleaved sweep.** Never
   difference one row against a figure from another session, and never run a
   multi-file comparison a file at a time. Session-to-session level shifts of up
-  to 13% happen here on identical binaries and identical inputs — measured, in
+  to 8.5% happen here on identical binaries and identical inputs, and that is
+  the two-hour figure rather than the back-to-back one — measured, in
   "What a session's own drift costs" below — and a
   file-at-a-time sweep maps a session's own drift onto file identity,
   manufacturing a between-file difference that is apparatus. Each rep runs
@@ -60,7 +63,7 @@ Ten standing rules for reading anything below:
   not carry the harness that produced it. `sudo nerdctl run` costs **0.74–0.76
   s** before the binary starts — three runs of a trivial command, opening the
   warm-set sweep below — against which a 3.00 GiB warm `parse` of the
-  brace-free control is **0.534 s** timed by the container's own shell. The
+  brace-free control is **0.537 s** timed by the container's own shell. The
   wrapper is *larger than the figure*, and more than twice the smallest row of
   the quadratic table. So the timed command is `bash -c 'time /pgdq …'`, whose
   timer resolves to 1 ms. This does not license running a figure outside the
@@ -303,12 +306,12 @@ the device hides becomes visible.
 
 | Input | Wall | Rate | Against the floor |
 |---|---|---|---|
-| `COPY` block | **5.77 s** (5.76–5.80) | ~559 MB/s | 1.00× the floor's time |
-| Large-object region | **5.75 s** (5.75–5.76) | ~560 MB/s | 1.00× the floor's time |
-| `INSERT` run | **9.18 s** (9.18–9.25) | ~351 MB/s | **1.60× the floor's time** |
-| `dd` → `/dev/null` | **5.75 s** (5.74–5.75) | ~560 MB/s | — |
+| `COPY` block | **5.77 s** (5.76–5.81) | ~559 MB/s | 1.00× the floor's time |
+| Large-object region | **5.77 s** (5.77–5.78) | ~558 MB/s | 1.00× the floor's time |
+| `INSERT` run | **9.27 s** (9.20–9.28) | ~348 MB/s | **1.61× the floor's time** |
+| `dd` → `/dev/null` | **5.76 s** (5.76–5.77) | ~559 MB/s | — |
 
-Apparatus over every run in this table: CPU stall ≤1.08%, I/O stall ≤20.35%, machine ≤4% busy, steal ≤0.00%, busiest core ≥3.73 GHz, ≤62°C.
+Apparatus over every run in this table: CPU stall ≤1.09%, I/O stall ≤19.12%, machine ≤4% busy, steal ≤0.00%, busiest core ≥3.83 GHz, ≤62°C.
 
 <!-- figure: scan-throughput-warm — reproduce with `cd scripts && uv run measure.py --figure scan-throughput-warm` -->
 
@@ -316,12 +319,12 @@ Apparatus over every run in this table: CPU stall ≤1.08%, I/O stall ≤20.35%,
 
 | Input | Wall | Rate | Against the floor |
 |---|---|---|---|
-| `COPY` block | **0.534 s** (0.528–0.573) | ~6032 MB/s | 1.73× the floor's time |
-| Large-object region | **0.466 s** (0.459–0.481) | ~6913 MB/s | 1.51× the floor's time |
-| `INSERT` run | **7.78 s** (7.70–7.79) | ~414 MB/s | **25.17× the floor's time** |
-| `dd` → `/dev/null` | **0.309 s** (0.307–0.311) | ~10425 MB/s | — |
+| `COPY` block | **0.537 s** (0.529–0.570) | ~5999 MB/s | 1.73× the floor's time |
+| Large-object region | **0.455 s** (0.446–0.461) | ~7080 MB/s | 1.46× the floor's time |
+| `INSERT` run | **7.71 s** (7.71–7.82) | ~418 MB/s | **24.81× the floor's time** |
+| `dd` → `/dev/null` | **0.311 s** (0.307–0.315) | ~10358 MB/s | — |
 
-Apparatus over every run in this table: CPU stall ≤0.17%, I/O stall ≤7.22%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.60 GHz, ≤64°C.
+Apparatus over every run in this table: CPU stall ≤0.21%, I/O stall ≤7.88%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.77 GHz, ≤64°C.
 
 Each table's `COPY` row is the census figure's census-on column for that
 regime — the same binary, the same command, the same input, not a second
@@ -337,26 +340,26 @@ koji figure, ~9 MiB.
 **What this says.** The `COPY` and large-object paths are device-bound to the
 point of disappearing into the device: cold, they each spend **1.00×** the
 wall-clock of reading the same bytes and doing nothing. Warm, the same scans
-cost 0.534 s and 0.466 s against a 0.309 s `dd` floor — so the CPU is there,
-and at 560 MB/s the disk simply covers it.
+cost 0.537 s and 0.455 s against a 0.311 s `dd` floor — so the CPU is there,
+and at 559 MB/s the disk simply covers it.
 
 **The `INSERT` path is a different algorithm, and the warm table is what says
-so.** Warm, an `INSERT` run costs **7.78 s against the `COPY` path's 0.534 s on
-the same 3.00 GiB — 14.6× the per-byte CPU**, and **25× the `dd` floor** where
+so.** Warm, an `INSERT` run costs **7.71 s against the `COPY` path's 0.537 s on
+the same 3.00 GiB — 14.4× the per-byte CPU**, and **25× the `dd` floor** where
 the `COPY` path is 1.7×. Every line is decoded into `Event::Line` and pushed
 through the statement accumulator ([`architecture.md`](architecture.md), "Bulk
 regions") where a `COPY` block's data is walked and skipped. Cold, the same
-difference is compressed to 1.60× the floor, because the device hides most of
+difference is compressed to 1.61× the floor, because the device hides most of
 it — which is exactly why the two tables are here together rather than one
 being differenced against the other's regime.
 
 **This replaces the "~5× per-byte cost" claim, which was never a CPU ratio.**
 That number divided a *cold* `INSERT` rate, device included, by the `COPY`
 path's *warm* CPU. The honest figure is the one above, from a single regime:
-**14.6×**, below the 16–26× the previous cold table was used to bound it at.
+**14.4×**, below the 16–26× the previous cold table was used to bound it at.
 **Quote it as mid-teens, not to three figures**: sweeps of the same binaries
-and inputs have read it anywhere between 14.5× and 16.2×, and the two that
-agree at 14.5–14.6× are the two taken under an apparatus witnessed quiet by
+and inputs have read it anywhere between 14.4× and 16.2×, and the four that
+agree at 14.4–14.9× are the four taken under an apparatus witnessed quiet by
 the telemetry each table now carries. Both of the ratio's legs move inside the
 envelope the drift figure below measures, and the `COPY` leg — half a second,
 memory-bandwidth-bound — is the one that moves. Correctness, tiling
@@ -372,7 +375,7 @@ decision rather than a value, and it is open
 (`../status/STATUS.md`, "Decisions worth another look").
 
 **The cold `INSERT` row has itself moved, and not because of the apparatus.**
-It read 15.13–15.42 s when it was taken on 2026-08-25 and reads 9.18 s now;
+It read 15.13–15.42 s when it was taken on 2026-08-25 and reads 9.27 s now;
 `2eb51f4` changed how an `--inserts` dump's runs are scanned in between —
 absorbing the `Data for` comment into the run. Attributing the difference needs
 a build from before that commit and a second cold table, which nothing yet
@@ -416,7 +419,7 @@ same kind of bytes and a sixteenth of what the `INSERT` path costs, is the
 one span *and one stored text string* per `lowrite` call, hundreds of
 thousands of them.
 
-## The census on brace-free rows costs 7% of a warm scan
+## The census on brace-free rows costs 8% of a warm scan
 
 <!-- figure: census-brace-free — reproduce with `cd scripts && uv run measure.py --figure census-brace-free` -->
 
@@ -439,36 +442,37 @@ beside them.
 
 | | Census off | Census on | Δ |
 |---|---|---|---|
-| cold, on the SSD | **5.77 s** (5.76–5.84) | **5.77 s** (5.76–5.80) | **-0.005 s, -0%** |
-| warm, on tmpfs | **0.500 s** (0.481–0.504) | **0.534 s** (0.528–0.573) | **+0.034 s, +7%** |
+| cold, on the SSD | **5.78 s** (5.76–5.81) | **5.77 s** (5.76–5.81) | **-0.008 s, -0%** |
+| warm, on tmpfs | **0.499 s** (0.487–0.519) | **0.537 s** (0.529–0.570) | **+0.038 s, +8%** |
 
-Apparatus over every run in this table: CPU stall ≤1.02%, I/O stall ≤19.91%, machine ≤4% busy, steal ≤0.00%, busiest core ≥3.59 GHz, ≤58°C.
+Apparatus over every run in this table: CPU stall ≤1.10%, I/O stall ≤20.33%, machine ≤4% busy, steal ≤0.00%, busiest core ≥3.64 GHz, ≤62°C.
 
 Both binaries complete inside the 512 MB cgroup; no max-RSS figure is quoted,
 for the reason under the scan-throughput table. `dd` → `/dev/null` on the same
-file in the same container: **0.310 s** warm and **5.75 s** cold, so the
+file in the same container: **0.311 s** warm and **5.75 s** cold, so the
 census-off scan is already within 1.6× of what the kernel charges to hand over
 the bytes.
 
 **What this says.** The pre-filter is very nearly free on the shape a real
-dump mostly has: **0.034 s per 3.00 GiB of brace-free rows**, 41 ns per
-16-column row of 3,956 bytes. That implies ~95 GB/s, which is well above what
+dump mostly has: **0.038 s per 3.00 GiB of brace-free rows**, 47 ns per
+16-column row of 3,956 bytes. That implies ~85 GB/s, which is well above what
 this machine's DRAM will give one core — so the reading is not a
 memory-bandwidth figure at all: the pre-filter re-walks bytes the scanner has
 just walked, out of cache, and `memchr2` is fast enough that what is left is
 the loop, not the bytes.
 
-**Cold, the census is invisible**: −0.005 s on a 5.77 s scan — a *negative*
+**Cold, the census is invisible**: −0.008 s on a 5.77 s scan — a *negative*
 reading, which is the plainest possible statement that the effect is smaller
 than the noise it sits in. It is inside
 the run-to-run spread of the floor itself. That row is not a separate finding —
-it is the same CPU cost, hidden behind a device delivering 560 MB/s. Which one
+it is the same CPU cost, hidden behind a device delivering 559 MB/s. Which one
 a user sees is decided by whether the bytes are already resident.
 
 **Read the warm Δ against the instrument, not to three figures.** "What a
-session's own drift costs" below puts warm sub-second readings up to 13% apart
-between two sweeps of identical binaries and inputs, so +7% is "roughly a
-tenth", and the +9% and +11% earlier sweeps read are the same measurement
+session's own drift costs" below puts warm sub-second readings several percent
+apart between two sweeps of identical binaries and inputs — and both legs of
+this Δ are such readings, moving independently — so +8% is "roughly a tenth",
+and the +7%, +9%, +10% and +11% other sweeps read are the same measurement
 rather than a change.
 
 **It was not always.** The scalar `raw.iter().any(…)` loop that preceded
@@ -476,7 +480,7 @@ rather than a change.
 **+63% reconstructed**, once the 0.77 s container wrapper that sat in both legs
 is taken out ([`../status/history/2026-08-27.md`](../status/history/2026-08-27.md)).
 That figure is what argued for the swap, and it is why the deferred question
-of a *skippable* census is now closed rather than open: 41 ns per row is not a
+of a *skippable* census is now closed rather than open: 47 ns per row is not a
 cost worth a knob.
 
 So the census's cost is effectively **one tier, not two**: it is paid by the
@@ -535,25 +539,25 @@ Six reps each, the pair run in both orders; medians, with the full spread.
 
 | | Census off | Census on | Δ |
 |---|---|---|---|
-| cold, on the SSD | **5.76 s** (5.76–5.77) | **5.82 s** (5.81–5.85) | **+0.053 s, +1%** |
-| warm, on tmpfs | **0.489 s** (0.480–0.506) | **1.592 s** (1.563–1.606) | **+1.103 s, +226%** |
+| cold, on the SSD | **5.78 s** (5.76–5.80) | **5.84 s** (5.83–5.84) | **+0.062 s, +1%** |
+| warm, on tmpfs | **0.504 s** (0.481–0.534) | **1.607 s** (1.583–1.627) | **+1.103 s, +219%** |
 
-Apparatus over every run in this table: CPU stall ≤1.29%, I/O stall ≤23.03%, machine ≤4% busy, steal ≤0.00%, busiest core ≥3.59 GHz, ≤62°C.
+Apparatus over every run in this table: CPU stall ≤1.18%, I/O stall ≤21.48%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.62 GHz, ≤62°C.
 
 Both binaries complete inside the 512 MB cgroup; no max-RSS figure is quoted,
 for the reason under the scan-throughput table. The `dd` floor for this file in
-this container is 0.314 s warm and 5.75 s cold, so warm census-off is within
-1.6× of it and census-on is 5.1× it.
+this container is 0.312 s warm and 5.76 s cold, so warm census-off is within
+1.6× of it and census-on is 5.2× it.
 
 **What this says.** The census costs **1.103 s per 3.00 GiB of array-bearing
-rows** — 1.58 µs per 19-column row — which is **+226%** on a scan reading from
+rows** — 1.58 µs per 19-column row — which is **+219%** on a scan reading from
 memory, i.e. the census does a bit over twice the work the rest of the scan
 does on this shape. Cold it is **+1%**, hidden behind the device
 exactly as the brace-free case is. Both rows are the same CPU; which one a user
 sees is decided by whether the bytes are already resident.
 
-**The pre-filter is 41 ns of that 1.58 µs** (previous section, same
-apparatus and the same census-off baseline to within 3%). So splitting the
+**The pre-filter is 47 ns of that 1.58 µs** (previous section, same
+apparatus and the same census-off baseline to within 1%). So splitting the
 row into fields and running `observe` over all 19 of them — the work the
 pre-filter exists to avoid — is **97% of the census's whole cost**, and the
 pre-filter is what keeps the brace-free case off that path. The census is
@@ -585,7 +589,7 @@ first one a project adds sets the precedent for what features are for — here,
 a build in which `architecture.md`'s "the census is unconditional" is untrue,
 serving a comparison taken about once a phase. The escape if the patch-and-
 revert ever bites is to drop the comparison, not to gate it: the absolute
-figures (41 ns/row rejected, 1.58 µs/row inspected) are what
+figures (47 ns/row rejected, 1.58 µs/row inspected) are what
 [`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md) actually consumes, and
 the census-off column exists to establish it once.
 
@@ -596,8 +600,8 @@ the census-off column exists to establish it once.
 `benches/decoders.rs`'s `nested` group, criterion medians. **Two controls,
 because there are two questions.**
 
-- **Copy** — `String::from` over the same byte count: 22 ns at 49 bytes,
-  28 ns at 601, 22 ns at 42. A nested value has no borrowed arm
+- **Copy** — `String::from` over the same byte count: 20 ns at 49 bytes,
+  42 ns at 601, 20 ns at 42. A nested value has no borrowed arm
   (`crate::batch::append_nested`), so this isolates what the *parse* costs on
   top of the copy it cannot avoid, which is the variable P7 is choosing
   over.
@@ -609,9 +613,9 @@ because there are two questions.**
 
 | Literal | Bytes | `decode` | `render` | ÷ copy | ÷ view |
 |---|---|---|---|---|---|
-| `integer[]`, 4 elements | 49 | 278 ns | 232 ns | **26.3×** | **173×** |
-| `integer[]`, 50 elements | 601 | 3.72 µs | 1.49 µs | **221.0×** | **1762×** |
-| two-field composite | 42 | 195 ns | 188 ns | **19.7×** | **130×** |
+| `integer[]`, 4 elements | 49 | 294 ns | 232 ns | **26.9×** | **178×** |
+| `integer[]`, 50 elements | 601 | 3.64 µs | 1.50 µs | **122.2×** | **1740×** |
+| two-field composite | 42 | 206 ns | 189 ns | **20.2×** | **133×** |
 
 **Both control figures are read with a caveat.** `text_view_x1024` reports
 1024 appends and must be divided — timing one append through
@@ -621,9 +625,16 @@ puts at ~1.1 ns, so three quarters of it was criterion. And 2.96 ns is a
 `push_utf8view_field` also scans the chunk deque with `find_map` and calls
 `block_for`. So the `÷ view` column bounds the real ratio **from above**.
 
+**The `÷ copy` column for the 50-element row is the least stable number in the
+table**, because its denominator is: the 601-byte copy control has read 24 ns
+in one sweep and 42 and 41 ns in the two that followed, which swings that
+ratio between 122× and 221× while `decode` itself moves 2%. Read the `decode`
+and `render` columns, which are what the design consumes; treat `÷ copy` as
+the order of magnitude it establishes.
+
 **What this says.** Cost is per *element*, not per byte: the two array lengths
-differ only in element count, and the slope between them is **74 ns per
-element** decoding and **27 ns per element** rendering. That is the shape of
+differ only in element count, and the slope between them is **73 ns per
+element** decoding and **28 ns per element** rendering. That is the shape of
 one allocation per element, which is what `ArrayLiteral::elements` being a
 `Vec<Option<String>>` buys — every element is its own `String`. A composite
 sits where its field count says it should: two fields, and it costs about what
@@ -641,7 +652,7 @@ It reads criterion's own `estimates.json` rather than scraping the console,
 because a rounded ratio is how a table acquires a number nobody can reproduce.
 The bench alone is `cargo bench -p pgdump_query --bench decoders -- nested`.
 
-## A typed query over nested columns costs 13.0 µs a row more than a string one
+## A typed query over nested columns costs 13.1 µs a row more than a string one
 
 <!-- figure: nested-end-to-end — reproduce with `cd scripts && uv run measure.py --figure nested-end-to-end` -->
 
@@ -660,11 +671,11 @@ whichever file went first. Medians of five:
 
 | File | Rows | `strings` | `typed` | `typed` − `strings` | Ratio |
 |---|---|---|---|---|---|
-| control — 16 scalar columns | 814,362 | 4.16 s | 9.95 s | **7.10 µs/row** | 2.39× |
-| `--composite` — the same 16 plus one composite | 803,995 | 4.21 s | 10.39 s | **7.69 µs/row** | 2.47× |
-| `--arrays --composite` — the same 16 plus three nested | 699,962 | 5.13 s | 19.22 s | **20.12 µs/row** | 3.74× |
+| control — 16 scalar columns | 814,362 | 4.20 s | 9.99 s | **7.10 µs/row** | 2.38× |
+| `--composite` — the same 16 plus one composite | 803,995 | 4.17 s | 10.44 s | **7.80 µs/row** | 2.50× |
+| `--arrays --composite` — the same 16 plus three nested | 699,962 | 5.17 s | 19.34 s | **20.24 µs/row** | 3.74× |
 
-Apparatus over every run in this table: CPU stall ≤11.34%, I/O stall ≤2.16%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.60 GHz, ≤65°C.
+Apparatus over every run in this table: CPU stall ≤0.15%, I/O stall ≤2.66%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.83 GHz, ≤65°C.
 
 Every run completes inside the 512 MB cgroup; no max-RSS figure is quoted, for
 the reason under the scan-throughput table.
@@ -673,18 +684,18 @@ the reason under the scan-throughput table.
 travel.** A ratio carries that session's `strings` leg in its denominator, and
 that leg is apparatus-sensitive far beyond the session drift measured below:
 the same three files read 9.74 / 9.76 / 9.56 s on a page-cache-warm SSD with a
-musl binary and 0.77 s of wrapper, against 4.16 / 4.21 / 5.13 s here. That
+musl binary and 0.77 s of wrapper, against 4.20 / 4.17 / 5.17 s here. That
 alone moved the nested ratio 3.08× → 3.74× while the per-row difference moved
-15.1 → 13.0 µs. Quote a ratio only against the sweep it came from; the design
+15.1 → 13.1 µs. Quote a ratio only against the sweep it came from; the design
 consumes the differences.
 
 **What this says.** Typing the 16 scalar columns costs **7.1 µs per row**;
-typing those plus the three nested ones costs **20.1 µs per row**. So three
-nested columns — 19% more columns — cost **13.0 µs of every row**, nearly
+typing those plus the three nested ones costs **20.2 µs per row**. So three
+nested columns — 19% more columns — cost **13.1 µs of every row**, nearly
 twice what all sixteen scalar columns together cost. **The two array columns
 carry essentially all of it**: adding the composite column alone moves the
-per-row figure by **+0.59 µs** (paired median over the five reps +0.62),
-against a cross-file instrument whose own floor reads −0.17 — so ~5% of the
+per-row figure by **+0.70 µs** (paired median over the five reps +0.72),
+against a cross-file instrument whose own floor reads −0.05 — so ~5% of the
 three columns' cost, and a bound rather than a resolution (below).
 
 Each per-row figure is that file's own `typed` minus its own `strings`, which
@@ -695,8 +706,8 @@ cancel out of a cross-file ratio.
 
 **The untyped baseline is not file-independent, and the cause is the census —
 measured, not inferred.** The control and the `--composite` file read within
-4% of each other, which is this instrument's own drift; the `--arrays
---composite` file reads **22–28% above both**.
+1% of each other, which is this instrument's own drift; the `--arrays
+--composite` file reads **23–24% above both**.
 Its rows are the only ones carrying a `{`, so they are the only ones the
 mapping pass's array-shape census splits into fields. Running the same query
 with the **census-off** binary settles it:
@@ -705,18 +716,18 @@ with the **census-off** binary settles it:
 
 | | control | `--arrays --composite` | gap |
 |---|---|---|---|
-| census on | 4.160 s | 5.137 s | **+0.977 s** |
-| census off | 4.183 s | 4.082 s | **-0.101 s** |
+| census on | 4.161 s | 5.153 s | **+0.992 s** |
+| census off | 4.162 s | 4.104 s | **-0.058 s** |
 
-Apparatus over every run in this table: CPU stall ≤0.17%, I/O stall ≤2.65%, machine ≤4% busy, steal ≤0.00%, busiest core ≥3.99 GHz, ≤63°C.
+Apparatus over every run in this table: CPU stall ≤0.15%, I/O stall ≤3.31%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.76 GHz, ≤62°C.
 
-**The gap does not merely vanish with the census gone, it reverses**: +0.977 s
-becomes **−0.101 s**, so the census accounts for the whole of it and then some —
+**The gap does not merely vanish with the census gone, it reverses**: +0.992 s
+becomes **−0.058 s**, so the census accounts for the whole of it and then some —
 on a file carrying 14% *fewer* rows than the control, which is why what
 survives is a residue rather than a cost. Measured this way the census
-reproduces the `parse` figures two sections above to within 4% on the arrays
-file (+1.055 s against +1.103); on the control it reads −0.023 s against
-+0.034 — a cross-check on a different command, and the control's disagreement
+reproduces the `parse` figures two sections above to within 5% on the arrays
+file (+1.049 s against +1.103); on the control it reads −0.001 s against
++0.038 — a cross-check on a different command, and the control's disagreement
 is two sub-0.1 s differences read off 4.2 s legs, which is what the drift
 figure below says this instrument can resolve.
 
@@ -730,11 +741,11 @@ cd scripts && uv run measure.py --figure census-attribution
 
 Earlier sweeps put all three baselines within 2% and
 read that as evidence the untyped path was byte-driven; at 9.6 s legs a 1 s
-difference was inside the spread, and it is not at 4.3 s.
+difference was inside the spread, and it is not at 4.2 s.
 
-The micro above covers 6.1 µs of that 13.0 µs (decode plus render for a
+The micro above covers 6.1 µs of that 13.1 µs (decode plus render for a
 4-element array, a 50-element array and a two-field composite). The remaining
-~6.9 µs is the Arrow build the micro does not reach: 56 per-element
+~7.0 µs is the Arrow build the micro does not reach: 56 per-element
 `append_value` calls into the child builders, plus the list offsets. **The
 literal parse is the smaller half of nested decoding**, which is the fact
 P7 needs before deciding what to do about nested values always copying.
@@ -749,26 +760,27 @@ the instrument itself:
 
 | Reading | Reps | Paired median | Per-rep readings |
 |---|---|---|---|
-| composite column's share — control against `--composite` | 5 | **+0.62 µs** | +0.54, +0.56, +0.62, +0.69, +0.70 |
-| **the instrument's own floor** — control against a second control (`--seed 43`, same 16 columns) | 6 | **−0.17 µs** | −0.28, −0.22, −0.19, −0.16, −0.06, −0.06 |
+| composite column's share — control against `--composite` | 5 | **+0.72 µs** | +0.49, +0.68, +0.72, +0.74, +0.81 |
+| **the instrument's own floor** — control against a second control (`--seed 43`, same 16 columns) | 6 | **−0.05 µs** | −0.29, −0.17, −0.08, −0.03, +0.19, +0.41 |
 
-Apparatus over every run in this table: CPU stall ≤0.18%, I/O stall ≤1.88%, machine ≤4% busy, steal ≤0.00%, busiest core ≥3.59 GHz, ≤63°C.
+Apparatus over every run in this table: CPU stall ≤0.16%, I/O stall ≤2.20%, machine ≤6% busy, steal ≤0.00%, busiest core ≥3.59 GHz, ≤64°C.
 
 The second row is the control on the *instrument*: two files that differ only
-in their random seed should differ by zero, and instead they span −0.28 to
-−0.06 µs per row. **In this sweep the two rows do not overlap** — every
-composite rep sits above every floor rep — and that is still not a resolution,
-because sweeps of the same binaries and inputs have read the same composite
-share at +0.31, +0.39, +0.62 and +0.99 µs: takes of one quantity **0.7 µs/row
-apart**, which is wider than the quantity itself. It is also why the standing rule against quoting a
+in their random seed should differ by zero, and instead they span −0.29 to
++0.41 µs per row. **In this sweep the two rows do not overlap** — every
+composite rep sits above every floor rep, by 0.08 µs — and that is still not a
+resolution, because sweeps of the same binaries and inputs have read the same
+composite share at +0.31, +0.39, +0.62, +0.69, +0.72 and +0.99 µs: takes of one
+quantity **0.7 µs/row apart**, which is wider than the quantity itself. It is
+also why the standing rule against quoting a
 standard error forbids quoting an interval here — an earlier draft put these at
 +0.61 ± 0.14 against +0.20 ± 0.18 and made the separation look like a result.
-The micro puts the column at 0.38 µs of decode plus render before any Arrow
+The micro puts the column at 0.40 µs of decode plus render before any Arrow
 build, which an end-to-end reading has to exceed and does.
 
 What the figure supports is therefore still a **bound**: the composite column
 costs **of the order of a microsecond of every row end to end, ~5% of the
-13.0 µs the three nested columns cost together**. That is the answer to "which
+13.1 µs the three nested columns cost together**. That is the answer to "which
 of the three columns is the cost" — the arrays, by an order of magnitude.
 Whether a sweep that separates the two rows retires the bound is a question for
 the maintainer, not for a fold-in (`../status/STATUS.md`, "Decisions worth
@@ -836,44 +848,58 @@ otherwise the same loop, six reps, over `control` and `control43`.
 
 <!-- figure: session-drift — reproduce with `cd scripts && uv run measure.py --drift <sweep> <sweep>` -->
 
-The instrument measured against itself. Two full sweeps ran two hours apart on
-2026-08-28, on identical inputs and identical binaries, and 46 readings are
-common to both. **Both carry the per-reading telemetry every table above
-reports**, and both witness a quiet machine throughout — so what follows is
-drift with contention ruled out by measurement rather than assumed away. The
-point is not any row but the shape:
+The instrument measured against itself. The sweep this doc is stamped with and
+a second one on the same commit ran **about two minutes apart** — back to back,
+with a 120 s settle between them — on identical inputs and identical binaries,
+and all 48 readings are common to both. **Both carry the per-reading telemetry
+every table above reports.** The point is not any row but the shape:
 
-| | Drift between two sweeps |
+| | Drift between two sweeps, two minutes apart |
 |---|---|
-| median absolute, over 46 readings | **5.6%** |
-| largest | **8.5%** |
-| cold **device-bound** readings (5–6 s) | **≤0.2%** |
-| the one cold reading with real CPU in it (`INSERT`) | **8.1%** |
-| warm readings | **2.2–8.5%** |
+| median absolute, over 48 readings | **0.4%** |
+| largest | **7.3%** |
+| cold **device-bound** readings (5–6 s) | **≤0.3%** |
+| the one cold reading with real CPU in it (`INSERT`) | **0.3%** |
+| warm readings | **0.0–7.3%**, median 0.6% |
 
-**What this says.** Drift is not a single number, and the "~10%" this doc
-asserted for years was the warm case quoted as if it were general. A cold,
-device-bound reading reproduces to a fifth of a percent — the device is the
-clock, and the two sweeps' `dd` floors differ by 0.10%. The exception names
-itself: the cold `INSERT` scan is 9.18 s against a 5.75 s device floor, so
-better than a third of it is CPU, and it drifts like a warm reading (8.1%)
-because that is what it is.
+**Drift is not a single number, and the gap between the sweeps is one of its
+terms.** A pair two hours apart read a median absolute 5.6% and a largest 8.5%;
+this pair, two minutes apart, reads 0.4% and 7.3%. The register carries no gap
+parameter, so both are the same figure taken at two intervals, and **the
+two-hour number is the one to plan against** — it is what "another session" and
+"a comparison re-taken next week" actually cost. What the short interval buys
+is a cleaner view of the rest: at two minutes almost everything reproduces, so
+the readings that still move name themselves.
 
-A warm reading reproduces to a few percent of itself, and the worst row is
-`query-nomatch` at 1.218 s against 1.114 s — a 0.10 s absolute difference.
-**None of it is contention**: the apparatus lines put both sweeps at ≤5%
-machine-busy with no steal and no meaningful CPU stall. What remains is the
-part a counter cannot see — memory layout, cache and TLB luck across a 34-day
-uptime with tmpfs on 4 KiB pages — which is precisely why the remedy is to
-re-take a comparison whole rather than to correct a reading.
+Three of them move, and each says something different:
+
+- **Nothing device-bound does.** Every cold 5–6 s reading is inside 0.3%,
+  including the cold `INSERT` scan — which at two hours drifted 8.1%, like the
+  warm reading a third of it is. The device is the clock, and over two minutes
+  even the CPU riding on it holds still.
+- **The `control` file's warm `dd` floor moved 5.5%, and its warm readings
+  moved with it** (−3.3% on the `COPY` scan, −5.5% on the census-off leg),
+  while the `arrays` file's floor moved +1.9% and its readings barely at all.
+  That is a per-file effect on tmpfs, not a machine-wide one, and it is the
+  clearest statement available that a warm figure is a ratio against its own
+  co-measured floor rather than an absolute.
+- **`map-only` moved 3.7–7.3%, and here a counter did see it.** The first
+  sweep's last two tables ran at ≤12% and ≤9% machine-busy against ≤5%
+  everywhere else in both sweeps — under the armed gate, published, and
+  visible in that table's apparatus line. Those three readings are the softest
+  in this doc.
+
+What is left after those is the part a counter cannot see — memory layout,
+cache and TLB luck — which is why the remedy is to re-take a comparison whole
+rather than to correct a reading.
 
 So a *difference* between two warm legs of the same sweep is worth more than
 either leg's absolute value across sweeps, which is what the standing rule
 "re-take a comparison table whole" already required and this is the measurement
 behind it. It is also the calibration for the standing rule against quoting a
 standard error: a cross-file per-row difference under ~0.5 µs/row is apparatus,
-and three sweeps agree on that floor (+0.07, −0.11 and −0.17 µs/row) far better
-than any of them agrees on the leg it came from.
+and five sweeps agree on that floor (−0.17, −0.11, −0.05, +0.07 and +0.07
+µs/row) far better than any of them agrees on the leg it came from.
 
 Both sweeps are `runs/measure-*` directories; the table is computed from their
 `raw.json`, never transcribed.
@@ -1050,15 +1076,15 @@ the worst case the generators can build:
 
 | | Wall |
 |---|---|
-| `parse --preamble-only`, 4000-table dump | **0.044 s** |
-| full `parse` of the same file | 20.71 s |
+| `parse --preamble-only`, 4000-table dump | **0.045 s** |
+| full `parse` of the same file | 21.03 s |
 
-Apparatus over every run in this table: CPU stall ≤0.23%, I/O stall ≤7.86%, machine ≤4% busy, steal ≤0.00%, busiest core ≥4.09 GHz, ≤61°C.
+Apparatus over every run in this table: CPU stall ≤0.33%, I/O stall ≤12.01%, machine ≤9% busy, steal ≤0.00%, busiest core ≥4.12 GHz, ≤65°C.
 
 The second row is not a second measurement: it is the quadratic table's
 4000-block "after" column. What the pair has to establish is that an
 uncancellable region is *milliseconds* against a scan of seconds to an hour,
-and at 439× it clears that by more than any apparatus difference could take
+and at 467× it clears that by more than any apparatus difference could take
 away.
 
 ```sh
@@ -1107,12 +1133,13 @@ all.
 
 | blocks | dump | final cache | before | after | saves before → after |
 |---|---|---|---|---|---|
-| 500 | 242 KB | 315 KB | 0.636 s | 0.290 s | 503 → 15 |
-| 1000 | 484 KB | 632 KB | 2.51 s | 1.128 s | 1003 → 28 |
-| 2000 | 973 KB | 1.2 MB | 10.68 s | 4.64 s | 2003 → 48 |
-| 4000 | 1.9 MB | 2.5 MB | 46.33 s | 20.71 s | 4003 → 109 |
+| 1 (control) | 2.0 MB | 1 KB | 0.026 s | 0.005 s | 4 → 5 |
+| 500 | 242 KB | 315 KB | 0.626 s | 0.291 s | 503 → 16 |
+| 1000 | 484 KB | 632 KB | 2.45 s | 1.101 s | 1003 → 27 |
+| 2000 | 973 KB | 1.2 MB | 10.65 s | 4.74 s | 2003 → 51 |
+| 4000 | 1.9 MB | 2.5 MB | 47.18 s | 21.03 s | 4003 → 108 |
 
-Apparatus over every run in this table: CPU stall ≤0.30%, I/O stall ≤6.49%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.60 GHz, ≤66°C.
+Apparatus over every run in this table: CPU stall ≤0.25%, I/O stall ≤8.85%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.61 GHz, ≤68°C.
 
 Every run is 99% CPU at every point: the cost is *serializing* the index, not
 writing it. **The control is the table's first row** — the same byte count in
@@ -1121,19 +1148,17 @@ rather than a curve: it holds the bytes fixed so the only variable left is the
 block count, which is how the 4000-block figure can be called three orders of
 magnitude above the scan it protects rather than merely large.
 
-*The published table above predates that row.* The control was prose and a
-hand-run command here, last read at under 10 ms, and a control the harness does
-not run is one that goes stale without anyone noticing — so it is now a row the
-figure takes, and the next sweep fills it in. `scripts/test_measure.py` asserts
-that every declared input is consumed by some figure, which is the check that
-would have caught it sitting unread.
+**The harness takes that row rather than a reader running it by hand**, because
+a control nothing runs is one that goes stale without anyone noticing.
+`scripts/test_measure.py` asserts that every declared input is consumed by some
+figure, which is the check that catches one sitting unread.
 
 **The throttle does exactly what it was designed to do, and the series still
 quadruples per doubling.** Saves fall well under the `1/K` bound — visible in
 the last column, and *self-tuning*: the throttle skips a save unless 20× the
 last save's own duration has elapsed, so a faster machine or libc saves fewer
 times, not the same number faster. The ~26 s of saving at 4000 blocks becomes
-~0.6 s of a 19.8 s scan. What is left is a *second* quadratic with the same
+under a second of a 21 s scan. What is left is a *second* quadratic with the same
 shape and a different cause: every `CopyEnd` clones the whole span list
 (`map::Builder::snapshot`, then `stream::splice` over the prefix), so the map
 is O(blocks²) with the cache **disabled entirely**:
@@ -1147,13 +1172,23 @@ is O(blocks²) with the cache **disabled entirely**:
 
 | blocks | 1000 | 2000 | 4000 |
 |---|---|---|---|
-| map only, no saving | 1.114 s | 4.40 s | 19.95 s |
+| map only, no saving | 1.174 s | 4.75 s | 20.86 s |
 
-Apparatus over every run in this table: CPU stall ≤0.12%, I/O stall ≤5.51%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.84 GHz, ≤66°C.
+Apparatus over every run in this table: CPU stall ≤0.53%, I/O stall ≤11.63%, machine ≤12% busy, steal ≤0.00%, busiest core ≥4.04 GHz, ≤69°C.
 
-So at 4000 blocks the map is **97% of what a throttled `parse` costs** —
-19.1 s of 19.8 s — and the cache is the remaining 0.6 s. Against the
-*unthrottled* build the split is even: 26 s of saving, 19.1 s of mapping.
+**This table was taken under a witnessed CPU episode** — 12% machine-busy
+against ≤5% for every other table in the sweep, under the armed gate's 15 but
+well above the sweep's own baseline; the `preamble-prepass` table beside it,
+taken in the same window, reads ≤9%. The reps here spread 7–11% because of it,
+and the second sweep read these three 4–7% lower. The sizes are what the figure
+is for and they are not in question; the third decimal is.
+
+So at 4000 blocks the map is **all but a fraction of what a throttled `parse`
+costs** — 20.9 s of 21.0 s — and the cache is what is left. That remainder is
+under a second and cannot be resolved more finely: it is the difference of two
+~21 s readings taken in different figures, which the drift figure puts several
+percent apart. Against the *unthrottled* build the split is 26 s of saving
+against 21 s of mapping.
 Closing the second half means not rebuilding the span list per block;
 it is filed in [`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md), because it
 is a change to how the map is assembled rather than to when it is written.

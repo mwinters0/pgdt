@@ -349,10 +349,10 @@ producer class that *can*: a hand-written or `pg_dump`-compatible dump, where
 coarser-and-cheaper trade the `COPY` path already makes. The symmetry between
 the two paths is a consequence of that call, not the argument for it.
 
-**Every line is still decoded into `Event::Line`**, and that costs **14.6×** a
+**Every line is still decoded into `Event::Line`**, and that costs **14.4×** a
 `COPY` scan per byte, warm — see [`measurements.md`](measurements.md), "Scan
 throughput by input shape". Correctness, tiling and row counts are unaffected;
-what it costs is throughput on `--inserts` input, ~43 minutes of CPU for a 1 TB
+what it costs is throughput on `--inserts` input, ~40 minutes of CPU for a 1 TB
 dump against the `COPY` path's ~3. A scanner-level `INSERT` path is the fix and
 is filed in
 [`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md).
@@ -720,9 +720,9 @@ as much. `on_row`'s doc comment names the two measurements a reader regenerates
 by patching that function.
 
 **The cost is one tier in practice: the rows that pass the pre-filter.** On
-brace-free data — the koji shape — a row pays the pre-filter alone, 41 ns per
-16-column row, +9% of a scan reading from memory; a row that passes pays field
-splitting and `observe` on top, 1.58 µs over 19 columns, +226% warm. Both
+brace-free data — the koji shape — a row pays the pre-filter alone, 47 ns per
+16-column row, +8% of a scan reading from memory; a row that passes pays field
+splitting and `observe` on top, 1.58 µs over 19 columns, +219% warm. Both
 collapse to +0% and +1% cold on this SSD, where the device floor hides them
 ([`measurements.md`](measurements.md), "The census on brace-free rows" and
 "…on array-bearing rows"). It runs unconditionally anyway: the alternative is a
@@ -739,7 +739,7 @@ unconstrained `ArrayShape`s gives, so it needs no separate representation.
 
 *Rejected:* censusing only under `ScanExtent::Full`, so a cold query declines
 the per-row work. The saving is the pre-filter alone — a cold query already
-receives every row of every block it maps — which is 41 ns a row with the bytes
+receives every row of every block it maps — which is 47 ns a row with the bytes
 in memory and vanishes behind the device a cold query reads from. What it cost
 was a state no user could observe or repair: a dump mapped by a cold query and
 *then* by a full one came out `is_complete` with its early blocks permanently
@@ -1784,8 +1784,8 @@ the cost tracks block count rather than bytes read.
 **What the throttle does not fix**: the *rest* of the same quadratic. Every
 `CopyEnd` also clones the whole span list (`map::Builder::snapshot`, then
 `stream::splice` over the prefix), so the map itself is O(blocks²) with the
-cache disabled entirely — 19.1 s for 4000 blocks under `query --dqcache none`,
-which is 97% of what a throttled `parse` of the same file costs.
+cache disabled entirely — 20.9 s for 4000 blocks under `query --dqcache none`,
+which is all but a fraction of what a throttled `parse` of the same file costs.
 That is a separate cost with a separate fix, filed for the scan-performance
 phase (`roadmap-P7-scan-performance-inbox.md`).
 
