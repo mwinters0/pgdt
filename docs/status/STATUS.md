@@ -132,6 +132,11 @@ limitation whose remedy the user already has today is not here at all: it is a
 property of how the system works, and it lives beside its mechanism with no
 identifier.
 
+A coverage statement is not a gap either. [`../design/pg-dump-compatibility.md`](../design/pg-dump-compatibility.md)
+tracks which `pg_dump` variants have been exercised, and its `Unsupported` and
+`Untested` rows are scope and evidence rather than deficiency — a row there
+earns a `G<k>` only when it names one.
+
 `cd scripts && uv run gaps.py` reconciles this index against those paragraphs
 and against the source-code markers, and fails on either half.
 
