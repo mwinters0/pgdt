@@ -82,4 +82,13 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "that differ there are the import and the comment replacing the block"
         ),
     ),
+    Acknowledged(
+        commit="fc0cb5d",
+        figures=("session-drift",),
+        why=(
+            "registered the untaken projection-widths instrument: a new UNTAKEN entry, its "
+            "query-project-<width> command shapes and its run function, none of which any "
+            "taken figure executes"
+        ),
+    ),
 )
