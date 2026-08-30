@@ -99,7 +99,7 @@ The spec is
       genuinely malformed text. Runs before `P5.7` so the sweep measures it.
 - [ ] **P5.7** Take the figure, fold it in, re-read its consumers, delete
       `composite-isolated` and re-scope the cross-file figures it supersedes,
-      update the manual — including `G2`'s second escape, which the error
+      update the manual — including `KD2`'s second escape, which the error
       message does not name.
 
 ## Not started
@@ -115,13 +115,13 @@ The spec is
   specified, and each of the four has an inbox that must be drained as part of
   that grilling.
 
-## Known gaps
+## Known deficiencies
 
-The gap register. Every known deficiency carries a stable `G<k>`, allocated on
-discovery and never reused, and **one line here**: what it costs, its stance,
-and the file whose paragraph holds the rest. That paragraph sits beside the
-mechanism, where `CLAUDE.md`'s read-triggers already send a session that is
-about to touch it. This is an index, not the document.
+The deficiency register. Every known deficiency carries a stable `KD<k>`,
+allocated on discovery and never reused, and **one line here**: what it costs,
+its stance, and the file whose paragraph holds the rest. That paragraph sits
+beside the mechanism, where `CLAUDE.md`'s read-triggers already send a session
+that is about to touch it. This is an index, not the document.
 
 Three stances, because these are not one kind of thing and the difference
 decides whether anyone should act. **(a)** a consequence of a deliberate
@@ -132,60 +132,60 @@ limitation whose remedy the user already has today is not here at all: it is a
 property of how the system works, and it lives beside its mechanism with no
 identifier.
 
-A coverage statement is not a gap either. [`../design/pg-dump-compatibility.md`](../design/pg-dump-compatibility.md)
-tracks which `pg_dump` variants have been exercised, and its `Unsupported` and
-`Untested` rows are scope and evidence rather than deficiency — a row there
-earns a `G<k>` only when it names one.
+A coverage statement is not a deficiency:
+[`../design/pg-dump-compatibility.md`](../design/pg-dump-compatibility.md)'s
+`Unsupported` and `Untested` rows are scope and evidence, and earn a `KD<k>`
+only by naming one.
 
-`cd scripts && uv run gaps.py` reconciles this index against those paragraphs
-and against the source-code markers, and fails on either half.
+`cd scripts && uv run deficiencies.py` reconciles this index against those
+paragraphs and against the source-code markers, and fails on either half.
 
-- **G1** — a `--disable-triggers` dump loses TOC attribution on every data
+- **KD1** — a `--disable-triggers` dump loses TOC attribution on every data
   span, `COPY` and `INSERT` alike (I31), costing the coverage diagnostic and
   `Span::toc`. **(c) unowned**; promoted by a dump in hand whose data spans
   need attribution. Detail:
   [`../design/architecture.md`](../design/architecture.md), "TOC enrichment".
 
-- **G2** — an array nested inside a composite is decided optimistically, so a
+- **KD2** — an array nested inside a composite is decided optimistically, so a
   multi-dimensional or `[lb:ub]=`-decorated value there is a hard
   `Error::FieldDecode`. **(c) unowned**; promoted by a schema that holds one,
   the per-path census being deferred on frequency. Detail:
   [`../design/architecture.md`](../design/architecture.md), "What the census
   decides, and who may believe it".
 
-- **G3** — two array shapes come back as text with no way to ask for more,
+- **KD3** — two array shapes come back as text with no way to ask for more,
   `NestedArrayElement` and `VaryingArrayShape`, though both are fully
   understood. **(c) unowned**; promoted by a caller whose arrays are matrices
   or scientific data, for whom a string is the wrong answer. Detail:
   [`../design/architecture.md`](../design/architecture.md), "Joining a header
   against the metadata".
 
-- **G4** — a type name that needs quoting resolves `Unknown` (I29): a weaker
+- **KD4** — a type name that needs quoting resolves `Unknown` (I29): a weaker
   type, never a wrong one. **(c) unowned**; promoted by a dump whose type names
   are not ordinary identifiers, which neither any fixture nor koji is. Detail:
   [`../design/architecture.md`](../design/architecture.md), "Type resolution".
 
-- **G5** — mapping is O(blocks²): every `CopyEnd` rebuilds `DumpIndex::spans`
+- **KD5** — mapping is O(blocks²): every `CopyEnd` rebuilds `DumpIndex::spans`
   whole, and the save throttle only halved the series. **(b) owned by P7**,
   whose parallel-scan plans rework the same code. Detail:
   [`../design/roadmap-P7-scan-performance-inbox.md`](../design/roadmap-P7-scan-performance-inbox.md),
   "Mapping is O(blocks²) after the save throttle".
 
-- **G6** — a conflicting table past a query's stopping point is never seen, so
+- **KD6** — a conflicting table past a query's stopping point is never seen, so
   `Error::AmbiguousTable` is not raised for it and the query returns the
   candidate it found. **(b) owned by P6**, where what the embedded API promises
   is decided. Detail:
   [`../design/architecture.md`](../design/architecture.md), "One target per
   query".
 
-- **G7** — four rows of the ordering register diverge from PostgreSQL under
+- **KD7** — four rows of the ordering register diverge from PostgreSQL under
   `<`/`>`: a bare `numeric`, text under any collation but `C`/`POSIX`, an enum,
   and every other text-held type. **(b) owned by P11**, which holds the
   per-type worklist. Detail:
   [`../design/architecture.md`](../design/architecture.md), "Ordering operators
   compare typed".
 
-- **G8** — a typed column cannot hold `infinity`, `-infinity` or `NaN`, so
+- **KD8** — a typed column cannot hold `infinity`, `-infinity` or `NaN`, so
   materializing one raises `Error::FieldDecode` and there is no typed way to
   read the value. **(c) unowned**; promoted by whichever phase takes typed
   materialization, which is where the choice between a null, a sentinel and the
@@ -193,7 +193,7 @@ and against the source-code markers, and fails on either half.
   [`../design/architecture.md`](../design/architecture.md), "Decoders and
   render-back".
 
-- **G9** — an `INSERT` run is folded into one span but every line is still
+- **KD9** — an `INSERT` run is folded into one span but every line is still
   decoded, at 14.4× a `COPY` scan's per-byte CPU. **(b) owned by P7**, since
   the fix is a second scanner-level fast path. Detail:
   [`../design/roadmap-P7-scan-performance-inbox.md`](../design/roadmap-P7-scan-performance-inbox.md),
@@ -208,11 +208,12 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`G6` is filed as a gap rather than evicted as a property.** Building the
-  register applied one test to every entry — is the remedy already available to
-  the user today? — and it is what turned `DumpIndex::roles`/`tablespaces`
-  into a property with no identifier, since a full scan gives the complete set.
-  `G6` carries the same remedy sentence, `ScanExtent::Full` or a query after
+- **`KD6` is filed as a deficiency rather than evicted as a property.**
+  Building the register applied one test to every entry — is the remedy already
+  available to the user today? — and it is what turned
+  `DumpIndex::roles`/`tablespaces` into a property with no identifier, since a
+  full scan gives the complete set.
+  `KD6` carries the same remedy sentence, `ScanExtent::Full` or a query after
   `pgdq parse`, and was kept anyway: what it costs is not a partial answer the
   user can ask for again, it is a possibly *wrong* one with no signal at all,
   and the cheap fix P6 is weighing — a `Diagnostic` on every early stop — does

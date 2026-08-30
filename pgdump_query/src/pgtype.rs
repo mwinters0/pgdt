@@ -137,8 +137,8 @@ pub(crate) fn split_typmod(s: &str) -> (&str, Option<&str>) {
 /// *orders* lexicographically under `<`/`>`, so `"9" < "10"` is false where
 /// PostgreSQL says true.
 ///
-/// Gap register: `gap: G7` — the detail is `docs/design/architecture.md`'s
-/// "Ordering operators compare typed".
+/// Deficiency register: `deficiency: KD7` — the detail is
+/// `docs/design/architecture.md`'s "Ordering operators compare typed".
 fn map_numeric(typmod: Option<&str>) -> DataType {
     let Some(typmod) = typmod else { return DataType::Utf8View };
     let mut parts = typmod.split(',').map(str::trim);
@@ -427,9 +427,9 @@ fn resolve_array(element: &str, types: &[TypeDef]) -> TypeOutcome {
 /// holds it dequoted while the declaration keeps its quotes, so the lookup
 /// misses and the column resolves `Unknown`.
 ///
-/// Gap register: `gap: G4` — the detail is `docs/design/architecture.md`'s
-/// "Type resolution", and the fix is `roadmap.md`'s "A real type-name
-/// tokenizer", not this function's.
+/// Deficiency register: `deficiency: KD4` — the detail is
+/// `docs/design/architecture.md`'s "Type resolution", and the fix is
+/// `roadmap.md`'s "A real type-name tokenizer", not this function's.
 fn array_element(declared: &str) -> Option<&str> {
     let declared = declared.trim();
     // `SimpleTypename ARRAY '[' Iconst ']'` and `SimpleTypename ARRAY`: at

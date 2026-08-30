@@ -1628,7 +1628,7 @@ CREATE TABLE s.t (
 **Scope limit.** Nothing here is reachable from a dump of a database whose type
 names are all ordinary identifiers, which is every fixture and the koji sample.
 It bears on the input contract (`roadmap.md`, "The input contract is valid
-PostgreSQL"), and on what this build does with such a file — gap `G4`
+PostgreSQL"), and on what this build does with such a file — deficiency `KD4`
 (`architecture.md`, "Type resolution").
 
 **Verified against:** v16.15, live, `pg_dump 16.14`. Not re-checked on other
@@ -1637,8 +1637,8 @@ majors: `fmtId()` and the quoting rule are not version-varying, and the
 
 **Relied on by:** `pgtype.rs`'s `array_element` — its bound- and
 keyword-stripping helpers bail on a trailing `"`, which is what makes the
-quoted spellings safe rather than merely untested. Gap `G4` rests on the
-second half of the claim: because
+quoted spellings safe rather than merely untested. Deficiency `KD4` rests on
+the second half of the claim: because
 `pg_dump` quotes the name in the *declaration* while `parse_ident` dequotes it
 in `TypeDef.name`, the two never compare equal and the column degrades to
 `Unknown` instead of being misread.
@@ -1728,7 +1728,7 @@ v18.6 and master (identical call order); output observed against 16.15, both
 `COPY` and `--inserts` form.
 **Relied on by:** `architecture.md` ("TOC enrichment") — it is why
 `looks_like_toc_name_line` keeps refusing `"Data for "`, and it is the whole of
-gap `G1`.
+deficiency `KD1`.
 **Re-verify:**
 ```sh
 grep -n "_printTocEntry(AH, te, true)" -A 25 src/bin/pg_dump/pg_backup_archiver.c

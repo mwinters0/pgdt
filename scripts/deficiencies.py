@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""The gap register's reconciliation: STATUS.md's index against the detail
-paragraphs beside each mechanism, and against the markers in the source.
+"""The deficiency register's reconciliation: STATUS.md's index against the
+detail paragraphs beside each mechanism, and against the markers in the source.
 
-`docs/process.md` ("Known gaps") makes the register an index whose detail lives
-elsewhere -- beside the mechanism, where CLAUDE.md's read-triggers already send
-a session that is about to touch it. That buys locality and pays for it with a
-second place to drift, and an index that has drifted from its detail is worse
-than either alone. So the resolution is mechanical, in both directions and with
-no discipline in the loop:
+`docs/process.md` ("Known deficiencies") makes the register an index whose
+detail lives elsewhere -- beside the mechanism, where CLAUDE.md's read-triggers
+already send a session that is about to touch it. That buys locality and pays
+for it with a second place to drift, and an index that has drifted from its
+detail is worse than either alone. So the resolution is mechanical, in both
+directions and with no discipline in the loop:
 
-* every `G<k>` in the index resolves to exactly one detail paragraph, in the
+* every `KD<k>` in the index resolves to exactly one detail paragraph, in the
   file the index names;
 * every detail paragraph resolves back to an index entry;
 * every source-code marker resolves to an index entry, so one outliving its
-  gap is an error rather than a slow lie.
+  entry is an error rather than a slow lie.
 
 Failing on *either* half is the point. A one-directional check leaves the other
 direction free to rot, which is exactly how a register stops being one.
@@ -23,18 +23,18 @@ comment, never by a heading, because a heading is rewritten whenever the thing
 under it moves -- but it is not a measurement concern and shares nothing with
 that harness but the shape.
 
-**The marker is one token, `gap: G<k>`, in both file kinds.** In Markdown it
-goes in an HTML comment (`<!-- gap: G3 -->`) beside the paragraph; in Rust it
-goes in the doc comment of the item that would otherwise mislead. A code marker
-is *not* wanted per gap -- only where a line reads as a complete, deliberate
-choice and gives no sign that a limitation hangs off it. Most gaps are visible
-in their own doc section and need none.
+**The marker is one token, `deficiency: KD<k>`, in both file kinds.** In Markdown
+it goes in an HTML comment (`<!-- deficiency: KD3 -->`) beside the paragraph; in
+Rust it goes in the doc comment of the item that would otherwise mislead. A code
+marker is *not* wanted per entry -- only where a line reads as a complete,
+deliberate choice and gives no sign that a limitation hangs off it. Most
+entries are visible in their own doc section and need none.
 
 Usage:
 
     cd scripts
-    uv run gaps.py
-    uv run python -m unittest test_gaps
+    uv run deficiencies.py
+    uv run python -m unittest test_deficiencies
 """
 
 from __future__ import annotations
@@ -59,15 +59,20 @@ DOC_ROOT = REPO / "docs"
 #: Where a code marker may live.
 CODE_ROOTS = (REPO / "pgdump_query" / "src", REPO / "pgdump_query-cli" / "src")
 
-SECTION_HEADING = "## Known gaps"
+SECTION_HEADING = "## Known deficiencies"
 
 #: One token, both file kinds. Deliberately not anchored to `<!--`, so the Rust
 #: comments and the Markdown ones are found by the same rule.
-MARKER_RE = re.compile(r"gap:\s*(G\d+)")
+MARKER_RE = re.compile(r"deficiency:\s*(KD\d+)")
 
 #: An index entry opens a bullet at column 0 and runs to the next one.
-ENTRY_HEAD_RE = re.compile(r"^-\s+\*\*(G\d+)\*\*\s+—\s*(.*)$")
+ENTRY_HEAD_RE = re.compile(r"^-\s+\*\*(KD\d+)\*\*\s+—\s*(.*)$")
 BULLET_RE = re.compile(r"^-\s")
+
+
+def _index(ident: str) -> int:
+    """The numeric half of an identifier, whatever the sigil's length."""
+    return int(re.sub(r"\D", "", ident))
 
 #: The three stances, spelled exactly. `(c)` must say "unowned" in that word --
 #: the whole point of the stance is that unowned is a resting state a reader can
@@ -96,7 +101,7 @@ class Entry:
 
 @dataclass(frozen=True)
 class Marker:
-    """One `gap: G<k>` occurrence."""
+    """One `deficiency: KD<k>` occurrence."""
 
     id: str
     #: Repo-relative.
@@ -167,16 +172,16 @@ def parse_index(text: str) -> tuple[list[Entry], list[str]]:
         head = ENTRY_HEAD_RE.match(bullet[0])
         if not head:
             problems.append(
-                f"entry does not open `- **G<k>** — `: {bullet[0].strip()[:70]}"
+                f"entry does not open `- **KD<k>** — `: {bullet[0].strip()[:70]}"
             )
             continue
-        gid = head.group(1)
-        seen[gid] = seen.get(gid, 0) + 1
+        did = head.group(1)
+        seen[did] = seen.get(did, 0) + 1
 
         stance = STANCE_RE.search(joined)
         if not stance:
             problems.append(
-                f"{gid} declares no stance — expected one of "
+                f"{did} declares no stance — expected one of "
                 "`**(a) deliberate tradeoff**`, `**(b) owned by <destination>**`, "
                 "`**(c) unowned**`"
             )
@@ -185,32 +190,32 @@ def parse_index(text: str) -> tuple[list[Entry], list[str]]:
 
         destination = ""
         if kind == "a" and not label.startswith("deliberate tradeoff"):
-            problems.append(f'{gid} is stance (a) but does not say "deliberate tradeoff"')
+            problems.append(f'{did} is stance (a) but does not say "deliberate tradeoff"')
         if kind == "b":
             owned = OWNED_RE.match(label)
             if not owned:
                 problems.append(
-                    f"{gid} is stance (b) and names no destination — "
+                    f"{did} is stance (b) and names no destination — "
                     "expected `**(b) owned by <destination>**`"
                 )
             else:
                 destination = owned.group(1).strip()
         if kind == "c" and label != "unowned":
             problems.append(
-                f'{gid} is stance (c) but does not say "unowned" in that word '
+                f'{did} is stance (c) but does not say "unowned" in that word '
                 f"(it says {label!r})"
             )
 
         detail = DETAIL_RE.search(joined)
         if not detail:
             problems.append(
-                f"{gid} names no detail entry — expected `Detail: [<name>](<path>)`"
+                f"{did} names no detail entry — expected `Detail: [<name>](<path>)`"
             )
             continue
 
         entries.append(
             Entry(
-                id=gid,
+                id=did,
                 stance=kind,
                 label=label,
                 destination=destination,
@@ -219,9 +224,9 @@ def parse_index(text: str) -> tuple[list[Entry], list[str]]:
             )
         )
 
-    for gid, count in sorted(seen.items()):
+    for did, count in sorted(seen.items()):
         if count > 1:
-            problems.append(f"{gid} is indexed {count} times — an identifier is one entry")
+            problems.append(f"{did} is indexed {count} times — an identifier is one entry")
     return entries, problems
 
 
@@ -277,7 +282,7 @@ def reconcile(
         if not found:
             problems.append(
                 f"{entry.id} is indexed and nothing carries its detail — "
-                f"expected `<!-- gap: {entry.id} -->` in {entry.detail}"
+                f"expected `<!-- deficiency: {entry.id} -->` in {entry.detail}"
             )
             continue
         if len(found) > 1:
@@ -305,8 +310,8 @@ def reconcile(
             )
     for m in status_markers:
         problems.append(
-            f"{m.path}:{m.line} carries a `gap: {m.id}` marker — the index is not "
-            "where a detail entry lives"
+            f"{m.path}:{m.line} carries a `deficiency: {m.id}` marker — the index "
+            "is not where a detail entry lives"
         )
     return problems
 
@@ -327,11 +332,11 @@ def report(
 
     stances = {"a": "deliberate tradeoff", "b": "owned", "c": "unowned"}
     print(
-        f"{len(entries)} gaps indexed, {len(details)} detail entries, "
+        f"{len(entries)} deficiencies indexed, {len(details)} detail entries, "
         f"{len(code)} code markers.\n",
         file=out,
     )
-    for entry in sorted(entries, key=lambda e: int(e.id[1:])):
+    for entry in sorted(entries, key=lambda e: _index(e.id)):
         stance = f"({entry.stance}) {stances[entry.stance]}"
         if entry.destination:
             stance += f" by {entry.destination}"

@@ -1690,7 +1690,7 @@ mod tests {
     /// `Framing` span of its own. The data span is unattributed either way,
     /// which is not what this test is about.
     ///
-    /// Gap register: `gap: G1` — the detail is
+    /// Deficiency register: `deficiency: KD1` — the detail is
     /// `docs/design/architecture.md`'s "TOC enrichment".
     #[test]
     fn a_data_entry_keeps_its_own_span_when_disable_triggers_intervenes() {

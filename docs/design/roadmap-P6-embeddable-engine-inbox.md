@@ -69,7 +69,7 @@ silence into a filterable signal. The third interacts directly with the sink
 entry above, which is why both are filed here.
 
 **Origin.** 2026-08-24 (the decision), carried through
-P3's end-of-phase grilling as an accepted gap. It is gap `G6`, whose detail
+P3's end-of-phase grilling as an accepted deficiency. It is `KD6`, whose detail
 paragraph is [`architecture.md`](architecture.md)'s "One target per query";
 this phase is the destination that entry names.
 

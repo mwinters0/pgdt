@@ -18,7 +18,7 @@ what it has, and a best-effort structural cache. What is next — pushdown,
 engine bindings, the performance campaign, archive formats — is in
 [`docs/design/roadmap.md`](docs/design/roadmap.md). See
 [`docs/status/STATUS.md`](docs/status/STATUS.md) for exact implementation
-state, known gaps included.
+state, known deficiencies included.
 
 ## Quickstart
 
@@ -35,7 +35,7 @@ cargo run -p pgdump_query-cli -- info --source <dump.sql> --verbose
 
 ## Documentation
 
-- [`docs/status/STATUS.md`](docs/status/STATUS.md) — current implementation status (what's built vs. not, plus known gaps). [`docs/status/history/`](docs/status/history/) holds dated notes for future-session pickup and plan-changing discoveries.
+- [`docs/status/STATUS.md`](docs/status/STATUS.md) — current implementation status (what's built vs. not, plus known deficiencies). [`docs/status/history/`](docs/status/history/) holds dated notes for future-session pickup and plan-changing discoveries.
 - [`docs/manual/`](docs/manual/) — user manual: [type handling](docs/manual/type-handling.md), [dump inspection](docs/manual/dump-inspection.md).
 - [`docs/design/architecture.md`](docs/design/architecture.md) — how the built system works, filed by subject: the scanner, the file map, `DumpIndex`, the preamble grammar, type resolution, decoders, the zero-copy Arrow path, the query passes, the cache, fixtures, testing. The place to start.
 - [`docs/design/roadmap.md`](docs/design/roadmap.md) — project goals, the standing rules that cut across all work, and the phases still ahead. Each specified phase gets its own `roadmap-P<N>-<slug>.md` doc.

@@ -323,8 +323,8 @@ where projecting a column away escapes its decode failure.
 
 Materializing these values is a separate, harder question — a null, a sentinel
 indistinguishable from a real date, or the error — and it belongs to whichever
-phase owns typed materialization. It is carried in `STATUS.md`'s known gaps
-until then.
+phase owns typed materialization. It is carried in `STATUS.md`'s known
+deficiencies until then.
 
 ## A third flush trigger bounds what a batch pins
 
@@ -350,7 +350,8 @@ counts *selected* rows and `max_bytes` counts *selected* field bytes, so with
 1 MiB chunks a 1%-selective filter pins on the order of 80 MiB and a
 0.01%-selective one on the order of 8 GiB. Against this project's flat-memory
 goal that is a defect rather than waste, and it is true of the shipped system
-today — see [`../status/STATUS.md`](../status/STATUS.md)'s known gaps.
+today — see [`../status/STATUS.md`](../status/STATUS.md)'s known
+deficiencies.
 
 Whatever adds this trigger must honour `batch::invalidate_block_cache`:
 `StringViewBuilder::finish()` resets its block list, so every cached per-chunk

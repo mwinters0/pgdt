@@ -331,8 +331,8 @@ fn splice(
 /// `\connect` — a plain dump with something concatenated after it. Nothing in
 /// the prefix announces that.
 ///
-/// Gap register: `gap: G6` — the detail is `docs/design/architecture.md`'s
-/// "One target per query".
+/// Deficiency register: `deficiency: KD6` — the detail is
+/// `docs/design/architecture.md`'s "One target per query".
 fn target_settled(index: &DumpIndex, table: &str, selector: Option<&str>) -> bool {
     if index.spans.iter().any(|s| matches!(s.body, SpanBody::Connect { .. })) {
         return false;

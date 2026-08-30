@@ -142,7 +142,7 @@ pub enum ScanExtent {
     /// scan reached. A file concatenating two dumps of the *same* database
     /// name is the case with no early signal at all.
     ///
-    /// Gap register: `gap: G6` — the detail is
+    /// Deficiency register: `deficiency: KD6` — the detail is
     /// `docs/design/architecture.md`'s "One target per query".
     #[default]
     UntilTargetSettled,

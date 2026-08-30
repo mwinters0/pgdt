@@ -642,7 +642,7 @@ this section when it acquires a phase number, not when it acquires a design.
   dumps stay attributed.** I31 puts `ALTER TABLE … DISABLE TRIGGER ALL;` — and
   a `SET SESSION AUTHORIZATION DEFAULT;` ahead of the first entry — between a
   `-- Data for Name:` block and its data, and no data span in such a file
-  carries a TOC entry as a result (gap `G1`). Not a
+  carries a TOC entry as a result (deficiency `KD1`). Not a
   correctness hazard and opt-in, which is why it is here rather than scheduled.
   Three coordinated changes: the `Data for` comment must absorb into
   `Mode::Statement`, `push_statement_span`'s `Framing` veto must not eat an
@@ -667,7 +667,7 @@ this section when it acquires a phase number, not when it acquires a design.
   whitespace-delimited words and `parse_ident` dequotes an identifier, so a
   type name needing quotes (I29) is stored dequoted in `TypeDef.name` while the
   declaration that uses it keeps its quotes — the two never compare equal, and
-  the column degrades to `Unknown` (gap `G4`). A tokenizer
+  the column degrades to `Unknown` (deficiency `KD4`). A tokenizer
   that understands quoted identifiers would let the name and the declaration
   agree, and would also let `array_element` decide quoting deliberately rather
   than by the accident that its strip helpers bail on a trailing `"`. Strictly

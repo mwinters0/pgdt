@@ -16,12 +16,12 @@ Sections carry their **rejected alternatives** inline, marked *Rejected:*.
 Those are the paragraphs that cannot be recovered from the code, because the
 code records only what was built.
 
-They also carry that mechanism's **known gaps**, each opening with a
-`<!-- gap: G<k> -->` marker and indexed one line apiece in `../status/STATUS.md`
-("Known gaps"). The detail lives here rather than there so that a session
-reading this section before changing the mechanism cannot miss it;
-`cd scripts && uv run gaps.py` is what keeps the two halves resolving to each
-other.
+They also carry that mechanism's **known deficiencies**, each opening with a
+`<!-- deficiency: KD<k> -->` marker and indexed one line apiece in
+`../status/STATUS.md` ("Known deficiencies"). The detail lives here rather than
+there so that a session reading this section before changing the mechanism
+cannot miss it; `cd scripts && uv run deficiencies.py` is what keeps the two
+halves resolving to each other.
 
 ## Contents
 
@@ -540,9 +540,9 @@ admission rule exists to refuse. It would also fix nothing by itself: the
 `Data for` comment closes as `Framing` and so leaves no `governing_toc` behind
 for the arm to inherit. All three changes land together or none do.
 
-<!-- gap: G1 -->
-**The attribution loss above is gap `G1`** (`../status/STATUS.md`, "Known
-gaps"), and it is unowned.
+<!-- deficiency: KD1 -->
+**The attribution loss above is deficiency `KD1`** (`../status/STATUS.md`,
+"Known deficiencies"), and it is unowned.
 The shape is opt-in — I31 emits nothing at all without
 `--data-only`/`--section=data` — which is why it is not scheduled; the fix is
 three coordinated changes, spelled out in `roadmap.md`'s "Future — wanted,
@@ -824,9 +824,8 @@ a nested `Array` plan can only ever be one this transform built.
 censuses before emitting a row. So the evidence covers exactly the rows the
 stream will hand back, on a cold query as much as on a full scan. That holds
 even where the stop rule is fooled: the shape `stream::target_settled` cannot
-detect (gap `G6`, [One target per query](#one-target-per-query)) is also one
-whose extra blocks the stream
-never replays.
+detect (deficiency `KD6`, [One target per query](#one-target-per-query)) is
+also one whose extra blocks the stream never replays.
 
 *Rejected:* gating the streamed schema on `DumpIndex::is_complete` too. A cold
 query can never satisfy it, so every query against a large dump would keep the
@@ -850,8 +849,9 @@ from the union over the blocks it will replay. A table whose first block holds
 `List(List(Int32))` on two `info` lines and comes back as text from a query. No
 fixture produces the shape.
 
-<!-- gap: G2 -->
-**What survives all this is the array nested inside a composite** — gap `G2` —
+<!-- deficiency: KD2 -->
+**What survives all this is the array nested inside a composite** —
+deficiency `KD2` —
 or inside another array's element type. The census is keyed by column and has
 nowhere to record a shape at that depth, so those stay on the optimistic path
 however much of the file has been scanned: a multi-dimensional or
@@ -1194,8 +1194,8 @@ quotes. Such a name costs a weaker type rather than a wrong one — the lookup
 misses, because `TypeDef.name` is dequoted while the declaration is not, and
 the column resolves `Unknown`.
 
-<!-- gap: G4 -->
-**That is gap `G4`**, and it is unowned. No spelling is *misread* and every
+<!-- deficiency: KD4 -->
+**That is deficiency `KD4`**, and it is unowned. No spelling is *misread* and every
 value still decodes as the text the file holds, so what is lost is strength,
 not correctness; it is unreachable from any dump whose type names are ordinary
 identifiers, which is every fixture and the koji sample. Fixing it means a real
@@ -1232,8 +1232,8 @@ column text" has several answers a reader wants: its element type is opaque
 represent and could), its arrays do not share one shape (what the file holds),
 or strings were asked for.
 
-<!-- gap: G3 -->
-**Two of those outcomes are gap `G3`.** `NestedArrayElement` and
+<!-- deficiency: KD3 -->
+**Two of those outcomes are deficiency `KD3`.** `NestedArrayElement` and
 `VaryingArrayShape` leave a column as `Utf8View` with no way for a caller to
 ask for more, and neither is opaque: both shapes are fully understood, and one
 lossless representation — the shape-general `Struct{dims, lbounds, elements}`
@@ -1358,9 +1358,9 @@ a future reader to re-derive:
   `Utf8View`) nor round-trip testing, which compares against what the dump
   emits rather than the original `INSERT`.
 
-<!-- gap: G8 -->
-**No typed column can hold `infinity`, `-infinity` or `NaN`** — gap `G8`, and
-unowned. `Date32` has no infinity and `Decimal128` no NaN, so a field holding
+<!-- deficiency: KD8 -->
+**No typed column can hold `infinity`, `-infinity` or `NaN`** — deficiency
+`KD8`, and unowned. `Date32` has no infinity and `Decimal128` no NaN, so a field holding
 one is an `Error::FieldDecode` and there is no typed way to read the value.
 The file is not at fault: `pg_dump` emits these from any healthy database
 (I33). `--schema-mode strings` returns the literal verbatim. *Comparing* one is
@@ -1639,10 +1639,10 @@ one is present (silent for the common single-database case) — that is what
 makes an `AmbiguousTable`'s candidate names actionable, since they are names
 the listing already showed.
 
-<!-- gap: G6 -->
-**The residual gap is `G6`**: a conflicting table *past* a query's stopping
-point is never seen, so `Error::AmbiguousTable` is not raised for it and the
-query returns the candidate it found. The stop rule rules out the two shapes
+<!-- deficiency: KD6 -->
+**The residual deficiency is `KD6`**: a conflicting table *past* a query's
+stopping point is never seen, so `Error::AmbiguousTable` is not raised for it
+and the query returns the candidate it found. The stop rule rules out the two shapes
 that announce themselves — a partition-root marker (I2) and any `\connect` at
 all — leaving one undetectable case, a file whose *first* segment is a plain
 dump with something concatenated after it. `ScanExtent::Full`, or a query after
@@ -1745,7 +1745,7 @@ A column that is not projected is never decoded, so a value that would raise
 `Error::FieldDecode` no longer does — which is the per-column escape from a
 hard decode failure that `SchemaMode::Strings`, untyping the whole table, was
 previously the only form of. An array nested inside a composite is the
-motivating case (gap `G2`, [What the census decides, and who may believe
+motivating case (deficiency `KD2`, [What the census decides, and who may believe
 it](#what-the-census-decides-and-who-may-believe-it)).
 
 *Rejected: decoding unprojected columns anyway to preserve error parity.* It
@@ -1931,10 +1931,10 @@ an *embedder* should be handed instead is filed in
 [`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md),
 whose sink is the designated unification point for diagnostic channels.
 
-<!-- gap: G7 -->
-**The four rows reading "no" are gap `G7`**, and they are one entry rather than
-four because this table is where they are told apart: its last column is what
-would close each one, and no two of them share it. Equality is unaffected and
+<!-- deficiency: KD7 -->
+**The four rows reading "no" are deficiency `KD7`**, and they are one entry
+rather than four because this table is where they are told apart: its last
+column is what would close each one, and no two of them share it. Equality is unaffected and
 every value still decodes as the text the file holds, so what is missing is the
 ordering, not the data — and each divergence announces itself, which is what
 keeps it a weaker answer rather than a silent one. The per-type worklist
