@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import collections
 import json
+import re
 import tempfile
 import unittest
 import unittest.mock
@@ -178,6 +179,12 @@ class BenchConstants(unittest.TestCase):
 
 
 class Scripts(unittest.TestCase):
+    #: The timer, where a timed command can start: the whole script, or after a
+    #: `;`. Not a bare `time ` anywhere in the string — the perf table has a
+    #: column named `v_time`, so a projection's flags carry that substring
+    #: without timing anything.
+    TIMER = re.compile(r"(?:\A|; )time ")
+
     def test_every_command_times_exactly_one_thing(self):
         for command in (
             "parse",
@@ -186,10 +193,11 @@ class Scripts(unittest.TestCase):
             "query-typed",
             "query-strings",
             "query-nomatch",
+            *(f"query-project-{w}" for w in measure.PROJECTION_WIDTHS),
             "dd",
         ):
             with self.subTest(command=command):
-                self.assertEqual(measure._script(command).count("time "), 1)
+                self.assertEqual(len(self.TIMER.findall(measure._script(command))), 1)
 
     def test_no_command_redirects_stderr_inside_the_timer(self):
         # Some shells route `time`'s own report through the timed command's
@@ -205,6 +213,85 @@ class Scripts(unittest.TestCase):
     def test_an_unknown_command_is_an_error(self):
         with self.assertRaises(ValueError):
             measure._script("no-such-command")
+
+    def test_a_width_the_register_does_not_carry_is_an_error(self):
+        # The command shape is parsed rather than matched, so an unregistered
+        # width has to be refused explicitly or it would run a query with no
+        # projection flags at all and be read as a width.
+        for command in ("query-project-7", "query-project-", "query-project-all"):
+            with self.subTest(command=command):
+                with self.assertRaises(ValueError):
+                    measure._script(command)
+
+
+class ProjectionWidths(unittest.TestCase):
+    """One file read at five widths, which is the whole instrument.
+
+    Two things make the adjacent-row subtraction mean what the table says it
+    means: each width is a superset of the one above it, so their difference is
+    exactly the columns they differ by; and every name is one the generator
+    actually writes, so the query does not fail three minutes into a sweep."""
+
+    def test_each_width_names_that_many_columns(self):
+        for width, names in measure.PROJECTION_WIDTHS.items():
+            with self.subTest(width=width):
+                self.assertEqual(len(names), width)
+
+    def test_no_width_repeats_a_column(self):
+        for width, names in measure.PROJECTION_WIDTHS.items():
+            with self.subTest(width=width):
+                self.assertEqual(len(set(names)), len(names))
+
+    def test_every_name_is_a_column_the_generator_writes(self):
+        emitted = {
+            name
+            for name, _ in (
+                *measure.perf.COLUMNS,
+                *measure.perf.ARRAY_COLUMNS,
+                *measure.perf.COMPOSITE_COLUMNS,
+            )
+        }
+        for width, names in measure.PROJECTION_WIDTHS.items():
+            for name in names:
+                with self.subTest(width=width, column=name):
+                    self.assertIn(name, emitted)
+
+    def test_each_width_contains_the_one_below_it(self):
+        widths = sorted(measure.PROJECTION_WIDTHS)
+        for narrow, wide in zip(widths, widths[1:]):
+            with self.subTest(narrow=narrow, wide=wide):
+                self.assertLessEqual(
+                    set(measure.PROJECTION_WIDTHS[narrow]),
+                    set(measure.PROJECTION_WIDTHS[wide]),
+                )
+
+    def test_zero_columns_asks_for_no_columns_rather_than_nothing(self):
+        # An empty repetition of `--column` is an unprojected query, which
+        # would silently make the floor row the widest row.
+        self.assertEqual(measure.projection_flags(0), "--no-columns")
+        script = measure._script("query-project-0")
+        self.assertIn("--no-columns", script)
+        self.assertNotIn("--column", script)
+
+    def test_a_width_repeats_the_flag_once_per_column(self):
+        self.assertEqual(measure.projection_flags(16).count("--column "), 16)
+        self.assertNotIn(",", measure.projection_flags(16))
+
+    def test_every_run_is_typed(self):
+        # `strings` builds every column the same cheap way, so a table taken
+        # that way would measure nothing this figure is about.
+        for width in measure.PROJECTION_WIDTHS:
+            with self.subTest(width=width):
+                self.assertIn("--schema-mode typed", measure._script(f"query-project-{width}"))
+
+    def test_the_table_rows_are_the_registered_widths_ascending(self):
+        widths = [w for w, _, _ in measure._PROJECTION_ROWS]
+        self.assertEqual(widths, sorted(measure.PROJECTION_WIDTHS))
+
+    def test_the_figure_is_taken_on_the_nineteen_column_file(self):
+        fig = measure.SELECTABLE_BY_ID["projection-widths"]
+        self.assertEqual(fig.warm_inputs, ("arrays",))
+        self.assertEqual(measure.INPUTS["arrays"].args[:2], ("--arrays", "--composite"))
 
 
 class Selection(unittest.TestCase):

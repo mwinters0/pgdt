@@ -88,6 +88,13 @@ from typing import Callable, Iterable, Sequence
 # and `measure.Acknowledged` still resolve.
 from acknowledged import ACKNOWLEDGED, Acknowledged
 
+# The perf generator's own column lists, imported rather than transcribed: a
+# projection names columns, and a name this file spells for itself would
+# survive a rename in the generator as a query that fails at run time in the
+# middle of a sweep. Import-safe -- the module is stdlib-only and everything
+# executable sits behind its `__main__` guard.
+import generate_perf_data as perf
+
 REPO = Path(__file__).resolve().parent.parent
 SCRIPTS = REPO / "scripts"
 
@@ -1122,6 +1129,49 @@ class RunSpec:
         return f"{figure}/{self.binary}/{self.input}/{self.command}/{self.regime}"
 
 
+#: The perf table's columns, split the way the generator writes them: the 16
+#: scalars, then the two arrays under `--arrays`, then the composite under
+#: `--composite`. Taken from the generator so a rename there reaches the
+#: projections below.
+_PERF_SCALARS = tuple(name for name, _ in perf.COLUMNS)
+_PERF_ARRAYS = tuple(name for name, _ in perf.ARRAY_COLUMNS)
+_PERF_COMPOSITE = tuple(name for name, _ in perf.COMPOSITE_COLUMNS)
+
+#: The five projection widths `projection-widths` is taken at, over the
+#: `--arrays --composite` file's 19 columns. Every list is a *subsequence* of
+#: the file's own column order, so no row introduces a reordering as a second
+#: variable, and each is a superset of the row above it -- which is what makes
+#: the difference between two adjacent rows the cost of exactly the columns
+#: they differ by.
+#:
+#: Each key is that width's column count, and a test is what holds it so.
+#: Writing `len(_PERF_SCALARS)` as the key instead would keep the mapping
+#: consistent with itself while quietly renaming the rows the doc's table
+#: carries.
+PROJECTION_WIDTHS: dict[int, tuple[str, ...]] = {
+    0: (),
+    1: ("v_smallint",),
+    16: _PERF_SCALARS,
+    17: _PERF_SCALARS + _PERF_COMPOSITE,
+    19: _PERF_SCALARS + _PERF_ARRAYS + _PERF_COMPOSITE,
+}
+
+
+def projection_flags(width: int) -> str:
+    """The `pgdq query` flags that ask for one width.
+
+    Zero columns is `--no-columns` rather than an empty repetition of
+    `--column`, which is the CLI this phase specifies; every other width
+    repeats `--column`, because a comma-separated list cannot express a column
+    name containing a comma."""
+    if width not in PROJECTION_WIDTHS:
+        raise ValueError(f"no projection registered at width {width}")
+    names = PROJECTION_WIDTHS[width]
+    if not names:
+        return "--no-columns"
+    return " ".join(f"--column {name}" for name in names)
+
+
 def _script(command: str) -> str:
     """The in-container shell for one command shape.
 
@@ -1146,6 +1196,18 @@ def _script(command: str) -> str:
         return (
             f"{q} query --source /dump.sql --table public.perf --dqcache none "
             f"--schema-mode {mode} >/dev/null"
+        )
+    if command.startswith("query-project-"):
+        # Typed, always: the figure is about what building a column costs, and
+        # `strings` builds every column the same cheap way. The flags this
+        # names do not exist until the CLI slice lands, which is harmless
+        # while the figure sits in `UNTAKEN` and nothing runs it.
+        width = command.rpartition("-")[2]
+        if not width.isdigit():
+            raise ValueError(f"unknown command shape {command!r}")
+        return (
+            f"{q} query --source /dump.sql --table public.perf --dqcache none "
+            f"--schema-mode typed {projection_flags(int(width))} >/dev/null"
         )
     if command == "query-nomatch":
         # Maps to EOF (the table never matches) and never saves.
@@ -1725,6 +1787,75 @@ def run_composite_isolated(session: Session) -> str:
     )
 
 
+# -- projection widths ------------------------------------------------------
+
+#: The rows, in width order, each labelled by what its difference against the
+#: row above buys. Ascending because every row's column list contains the one
+#: above it: the difference is then the columns they differ by and nothing
+#: else, over identical rows of one file.
+_PROJECTION_ROWS: tuple[tuple[int, str, str], ...] = (
+    (0, "0 — `--no-columns`", "the replay floor: no decode, no build, no render"),
+    (1, "1 — `v_smallint`", "one cheap scalar, above the floor"),
+    (16, "16 — every scalar", "the other 15 scalars"),
+    (17, "17 — the scalars and `v_comp`", "**the composite column alone**"),
+    (19, "19 — every column", "**the two array columns alone**"),
+)
+
+
+def run_projection_widths(session: Session) -> str:
+    """One file at five projection widths.
+
+    Every attribution the cross-file apparatus makes is a subtraction between
+    two adjacent rows here, over identical rows of an identical file — so
+    neither `cross-file-floor`'s subtraction floor nor the census's
+    file-dependent untyped baseline enters. That is what makes this a
+    supersession of that apparatus rather than one more figure beside it.
+    """
+    figure = "projection-widths"
+    specs = [
+        RunSpec("pgdq", "arrays", f"query-project-{width}", "warm", f"{width}-column")
+        for width, _, _ in _PROJECTION_ROWS
+    ]
+    # Six, like the two differencing figures this replaces: the reading that
+    # matters is a paired difference between adjacent rows, and pairing is
+    # per rep.
+    session.sweep(figure, specs, session.cfg.reps(6))
+    profile = session.stager.profile("arrays")
+    rows, per_rep, previous = [], [], None
+    for width, label, buys in _PROJECTION_ROWS:
+        spec = RunSpec("pgdq", "arrays", f"query-project-{width}", "warm", "")
+        values = session.get(figure, spec)
+        if previous is None:
+            delta = "—"
+        else:
+            paired = [(a - b) / profile["rows"] * 1e6 for a, b in zip(values, previous)]
+            delta = f"**{median(paired):+.2f} µs**"
+        rows.append(
+            [
+                label,
+                f"{fmt_s(median(values))} s",
+                f"{median(values) / profile['rows'] * 1e6:.2f} µs",
+                delta,
+                buys,
+            ]
+        )
+        per_rep.append(f"- {label}: {fmt_readings(values)}")
+        previous = values
+    table = md_table(
+        ["Projection", "Median", "Per row", "Δ per row against the row above", "What that buys"],
+        rows,
+    )
+    return (
+        table
+        + f"\n\nOne file — `--arrays --composite`, {profile['rows']:,} rows of "
+        f"{profile['columns']} columns — read {len(_PROJECTION_ROWS)} ways, warm and typed, "
+        "through the CLI. Per-row differences are paired rep by rep and then taken as a "
+        "median.\n\nPer-rep readings (s):\n"
+        + "\n".join(per_rep)
+        + "\n"
+    )
+
+
 # -- census attribution -----------------------------------------------------
 
 
@@ -2145,7 +2276,25 @@ UNTAKEN: list[Figure] = [
         depends=(*NESTED, *QUERY_CLI, *GEN_PERF),
         warm_inputs=("composite", "composite_text"),
         run=run_composite_isolated,
-    )
+    ),
+    # Registered before the feature it measures exists: its command shapes name
+    # `--column`/`--no-columns`, which the CLI does not carry yet. Harmless
+    # while it sits here, because `UNTAKEN` is never swept and `--figure` is
+    # the only way to reach it. `P5.7` takes it, and taking it moves the entry
+    # into `FIGURES` (docs/design/roadmap-P5-pushdown.md).
+    #
+    # `depends` carries the scan path as well as the decode one, which no other
+    # query figure does: the zero-column row is an absolute reading of replay
+    # with nothing decoded, so a change in what replay costs moves it directly
+    # rather than cancelling out of a difference.
+    Figure(
+        id="projection-widths",
+        section="What a column costs: five projection widths over one file",
+        stage="warm",
+        depends=(*SCAN, *NESTED, *QUERY_CLI, *GEN_PERF),
+        warm_inputs=("arrays",),
+        run=run_projection_widths,
+    ),
 ]
 
 #: A figure that no sweep produces, because it is computed *across* two of

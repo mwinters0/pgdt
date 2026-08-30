@@ -9,7 +9,8 @@ discoveries are in `history/`.
 ## What exists
 
 P1–P4 and P9 are complete and were struck at a keystone review. **P5 is open**
-and nothing of it has landed; its checklist is below the table.
+and one slice of it has landed, which registers a figure and adds no library
+code; its checklist is below the table.
 
 | Capability | State |
 |---|---|
@@ -22,7 +23,7 @@ and nothing of it has landed; its checklist is below the table.
 | Array shape census | recorded by every mapping pass and consumed: a query retypes its top-level array columns from the union over the blocks it will replay, before the first batch |
 | CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, cache-only `info` | working; **`parse` is the only scanner** — it resumes from a matching cache, banks at `COPY` block boundaries under a self-tuning throttle, and saves unconditionally on Ctrl-C (exit 130/143). `info` reports from the cache and never scans. Text output shape is provisional; `--json` carries no shape promise at all |
 | Partial reporting | `info` reports an unfinished scan's cache for as far as it got, with `Scan completion: N%` stated once at the top and nothing below it qualified. An interrupted cache is **typed** for every database segment the scan finished (I1) |
-| Measurement harness | `scripts/measure.py` takes every figure in [`../design/measurements.md`](../design/measurements.md) and emits that doc's tables — twelve figures, eleven taken by a sweep and one derived across two, each declaring what invalidates it and which documents repeat it, plus one instrument built and not taken |
+| Measurement harness | `scripts/measure.py` takes every figure in [`../design/measurements.md`](../design/measurements.md) and emits that doc's tables — twelve figures, eleven taken by a sweep and one derived across two, each declaring what invalidates it and which documents repeat it, plus two instruments built and not taken |
 | Column projection; richer predicates (conjunction, typed ordering) | not started — P5, specified |
 | `object_store` I/O, Python bindings, DataFusion `TableProvider` | not started — P6 |
 | Device-bound scan performance campaign, sparse row index | not started — P7 |
@@ -36,26 +37,33 @@ apparatus line. `--check` reconciles twelve markers against twelve figures.
 `session-drift` is derived across that sweep and a second one taken two minutes
 later on the same commit, which is the pair `--drift` reads.
 
-**One instrument is built and deliberately unrun, and it will not be
-published.** `composite-isolated` isolates the composite column's decode cost
-by declaring one column two ways over byte-identical rows, which removes the
-normalization that gives the cross-file subtraction its floor. It is registered
-under `measure.UNTAKEN` — a sweep does not take it and the doc carries no table
-for it — so the standing figure keeps reading that cost as a bound. **P5
-supersedes it**: with column projection the same isolation is a subtraction
-between two widths of one file, needing no second file and no cross-file floor,
-so `P5.7` deletes it
-([`../design/roadmap-P5-pushdown.md`](../design/roadmap-P5-pushdown.md)). Until
-then the cost stays a bound, as it has been all along.
+**Two instruments are built and unrun**, both registered under
+`measure.UNTAKEN` — a sweep takes neither and the doc carries no table for
+either, so `--figure <id>` is the only way to reach one.
+
+- `composite-isolated` isolates the composite column's decode cost by declaring
+  one column two ways over byte-identical rows, which removes the normalization
+  that gives the cross-file subtraction its floor. It will not be published:
+  the standing figure keeps reading that cost as a bound, and **P5 supersedes
+  it** — with column projection the same isolation is a subtraction between two
+  widths of one file, needing no second file and no cross-file floor, so `P5.7`
+  deletes it.
+- `projection-widths` is that replacement: one file at five projection widths,
+  warm and typed, where every attribution the cross-file apparatus makes is a
+  subtraction between two adjacent rows. **It cannot be taken until `P5.4`**,
+  because its command shapes name `--column` and `--no-columns`; `P5.7` takes
+  it and folds it in
+  ([`../design/roadmap-P5-pushdown.md`](../design/roadmap-P5-pushdown.md)).
 
 ## P5 progress
 
 The spec is
 [`../design/roadmap-P5-pushdown.md`](../design/roadmap-P5-pushdown.md).
 
-- [ ] **P5.1** Register the figure — five projection widths over the existing
+- [x] **P5.1** Register the figure — five projection widths over the existing
       19-column input, under `measure.UNTAKEN`. No generator change, no
-      library code.
+      library code. Notes:
+      [`../design/roadmap-P5.1-projection-figure-notes.md`](../design/roadmap-P5.1-projection-figure-notes.md)
 - [ ] **P5.2** The source-span flush trigger — bounds what an in-flight batch
       pins, closing the known gap below.
 - [ ] **P5.3** Projection in the library — the `QueryOptions` field and API
