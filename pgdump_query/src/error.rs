@@ -30,6 +30,14 @@ pub enum Error {
     CacheModeMismatch(&'static str),
     #[error("predicate column `{column}` not found in COPY block at offset {header_offset}")]
     UnknownPredicateColumn { header_offset: u64, column: String },
+    #[error("projected column `{column}` not found in COPY block at offset {header_offset}")]
+    UnknownProjectionColumn { header_offset: u64, column: String },
+    #[error("projection names column `{column}` more than once")]
+    DuplicateProjectionColumn { column: String },
+    #[error(
+        "resume token belongs to a different query — the table, projection, filter and schema mode must all match the stream being resumed"
+    )]
+    ResumeQueryMismatch,
     #[error(
         "table `{name}` is ambiguous: matches {}; qualify the name or pass --database",
         candidates.join(", ")

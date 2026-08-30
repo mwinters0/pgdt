@@ -25,8 +25,8 @@ use arrow::array::builder::{
 use arrow::array::{
     Array, ArrayRef, BinaryArray, BooleanArray, Date32Array, Decimal128Array, Decimal256Array,
     DictionaryArray, FixedSizeBinaryArray, Float32Array, Float64Array, Int16Array, Int32Array,
-    Int64Array, ListArray, RecordBatch, StringArray, StringViewArray, StructArray,
-    Time64MicrosecondArray, TimestampMicrosecondArray,
+    Int64Array, ListArray, RecordBatch, RecordBatchOptions, StringArray, StringViewArray,
+    StructArray, Time64MicrosecondArray, TimestampMicrosecondArray,
 };
 use arrow::buffer::{Buffer, NullBuffer, OffsetBuffer, ScalarBuffer};
 use arrow::datatypes::{DataType, FieldRef, Fields, Int32Type, SchemaRef, TimeUnit};
@@ -46,13 +46,35 @@ use crate::scan::ScanOptions;
 use crate::stream::{ResumeToken, table_stream};
 use crate::{Error, Result};
 
-/// Tuning knobs for batch assembly.
+/// What one table query asks for, and how its batches are cut.
+///
+/// Both halves of a query live here — the projection and the filter beside
+/// the batching knobs — rather than the query half arriving as positional
+/// arguments: they are the same kind of thing, and a caller should not have
+/// to learn which of them is a field and which is an argument
+/// (`docs/design/architecture.md`, "Execution model and API surface").
 #[derive(Debug, Clone)]
-pub struct BatchOptions {
+pub struct QueryOptions {
+    /// Which columns to materialize, by name, in the order given. `None`
+    /// projects every column of the block; `Some(vec![])` projects none,
+    /// which is the `COUNT(*)` shape — every batch then carries a row count
+    /// and no arrays. Names are matched against the block's own column list
+    /// exactly as [`crate::predicate::Predicate::column`] is, so a name the
+    /// block does not carry is `Error::UnknownProjectionColumn` and a
+    /// repeated name is `Error::DuplicateProjectionColumn`
+    /// (`docs/design/architecture.md`, "Projection").
+    pub projection: Option<Vec<String>>,
+    /// Post-parse row filter (`docs/design/architecture.md`, "Predicates").
+    /// `None` yields every row. A filter may name a column the projection
+    /// does not: the projection decides what is *built*, never what may be
+    /// tested.
+    pub filter: Option<Predicate>,
     /// Rows per batch. A batch is flushed once it reaches this many rows.
     pub max_rows: usize,
-    /// Optional cap on a batch's total field-byte count. Whichever of this
-    /// or `max_rows` is hit first flushes the batch.
+    /// Optional cap on a batch's total field-byte count — counting only the
+    /// fields a projection actually builds, since those are the bytes the
+    /// batch holds. Whichever of this or `max_rows` is hit first flushes the
+    /// batch.
     pub max_bytes: Option<usize>,
     /// Cap on the source byte span an in-flight batch covers — the distance
     /// from the start of its first selected row to the end of its latest.
@@ -83,9 +105,11 @@ pub struct BatchOptions {
     pub scan_extent: ScanExtent,
 }
 
-impl Default for BatchOptions {
+impl Default for QueryOptions {
     fn default() -> Self {
         Self {
+            projection: None,
+            filter: None,
             max_rows: 8192,
             max_bytes: None,
             max_source_span: Some(64 << 20),
@@ -628,6 +652,12 @@ pub(crate) struct RowBatcher {
     schema: SchemaRef,
     /// Qualified table name, for `Error::FieldDecode`'s context.
     table: String,
+    /// One entry per field of the **block's own** column list, in file
+    /// order: the `columns` index that field feeds, or `None` for a field no
+    /// projection asked for. Its length — not `columns.len()` — is the field
+    /// count a row is checked against, since a short or long row is wrong
+    /// about the block, not about the projection.
+    field_targets: Vec<Option<usize>>,
     /// Parallel to `schema.fields()` — the declared PostgreSQL type string
     /// behind each `Mapped` column, for the same error.
     declared_types: Vec<Option<String>>,
@@ -642,11 +672,20 @@ pub(crate) struct RowBatcher {
     /// stops an empty batch from flushing while the scanner walks a long
     /// stretch that matches nothing.
     span: Option<(u64, u64)>,
-    options: BatchOptions,
+    options: QueryOptions,
 }
 
 impl RowBatcher {
-    pub(crate) fn new(resolved: &ResolvedSchema, table: String, options: BatchOptions) -> Self {
+    /// `resolved` is the **projected** schema — what this batcher's
+    /// `RecordBatch`es carry — and `field_targets` maps the block's own
+    /// fields onto it (see the field's docs). The two come from one producer
+    /// (`crate::stream::project`) so they cannot disagree.
+    pub(crate) fn new(
+        resolved: &ResolvedSchema,
+        table: String,
+        options: QueryOptions,
+        field_targets: Vec<Option<usize>>,
+    ) -> Self {
         let schema = resolved.schema.clone();
         let declared_types = resolved.notes.iter().map(|n| n.declared.clone()).collect();
         // `plans` is positional and parallel to `schema.fields()`, from the
@@ -662,6 +701,7 @@ impl RowBatcher {
         Self {
             schema,
             table,
+            field_targets,
             declared_types,
             columns,
             rows_in_batch: 0,
@@ -676,9 +716,13 @@ impl RowBatcher {
     }
 
     /// Columns in this block's schema — the field count a resumed stream
-    /// needs to rebuild the same schema without re-reading the header.
+    /// needs to rebuild the same schema without re-reading the header. It is
+    /// the block's own count, **not** the projected one: a headerless block
+    /// names its columns `column1..columnN` from this number, and a resumed
+    /// stream that rebuilt those names from a projection's width would name
+    /// different columns than the original.
     pub(crate) fn field_count(&self) -> usize {
-        self.schema.fields().len()
+        self.field_targets.len()
     }
 
     /// Whether any of the three flush triggers has fired. All three are
@@ -700,6 +744,14 @@ impl RowBatcher {
     }
 
     /// Append one raw (still-escaped) COPY TEXT data row.
+    ///
+    /// **The whole row is walked whatever the projection is.** Skipping is
+    /// per column — `decode_field` and the builder append, which is the
+    /// expensive half — never an early stop at the last projected field. The
+    /// walk is `memchr` and is cheap, and it is the system's only field-count
+    /// check: this is the sole site that raises `Error::ColumnCountMismatch`,
+    /// and the mapping pass never errors on a count
+    /// (`docs/design/architecture.md`, "Projection").
     pub(crate) fn push_row(
         &mut self,
         header_offset: u64,
@@ -712,7 +764,7 @@ impl RowBatcher {
         loop {
             let end = memchr::memchr(DELIMITER, &raw[pos..]).map_or(raw.len(), |i| pos + i);
             let field = &raw[pos..end];
-            let expected = self.columns.len();
+            let expected = self.field_targets.len();
             if col >= expected {
                 return Err(Error::ColumnCountMismatch {
                     header_offset,
@@ -721,19 +773,21 @@ impl RowBatcher {
                     found: col + 1,
                 });
             }
-            self.push_field(col, row_offset, row_offset + pos as u64, field, chunks)?;
-            self.bytes_in_batch += field.len();
+            if let Some(target) = self.field_targets[col] {
+                self.push_field(target, row_offset, row_offset + pos as u64, field, chunks)?;
+                self.bytes_in_batch += field.len();
+            }
             col += 1;
             if end == raw.len() {
                 break;
             }
             pos = end + 1;
         }
-        if col != self.columns.len() {
+        if col != self.field_targets.len() {
             return Err(Error::ColumnCountMismatch {
                 header_offset,
                 row_offset,
-                expected: self.columns.len(),
+                expected: self.field_targets.len(),
                 found: col,
             });
         }
@@ -783,12 +837,23 @@ impl RowBatcher {
         Ok(())
     }
 
+    /// Finish the in-flight batch. The row count is passed explicitly rather
+    /// than inferred from the arrays: a zero-column projection has no arrays
+    /// to infer it from, and `RecordBatch::try_new` fails outright on that
+    /// ("must either specify a row count or at least one column"). Stating it
+    /// unconditionally keeps one path for both widths — with arrays present,
+    /// `try_new_with_options` still checks every one of them against it.
     pub(crate) fn flush(&mut self) -> Result<RecordBatch> {
+        let rows = self.rows_in_batch;
         self.rows_in_batch = 0;
         self.bytes_in_batch = 0;
         self.span = None;
         let arrays: Vec<ArrayRef> = self.columns.iter_mut().map(finish_column).collect();
-        Ok(RecordBatch::try_new(self.schema.clone(), arrays)?)
+        Ok(RecordBatch::try_new_with_options(
+            self.schema.clone(),
+            arrays,
+            &RecordBatchOptions::new().with_row_count(Some(rows)),
+        )?)
     }
 }
 
@@ -996,7 +1061,8 @@ fn render_array(column: &dyn Array, row: usize, child_plan: &NestedPlan) -> Stri
 /// share one scan loop. The callback may return [`ControlFlow::Break`] to stop
 /// early, in which case the returned token resumes from just past the last
 /// batch delivered to it — see [`crate::stream::TableStream::resume_token`].
-/// `predicate` applies a post-parse row filter — see `table_stream`'s docs.
+/// `query_options` carries the projection and the post-parse row filter as
+/// well as the batching knobs — see `table_stream`'s docs.
 /// `cache` controls structure-cache consulting — see `table_stream`'s docs.
 /// Rejects `CacheMode::Offline` up front: `source` is mandatory here, and a
 /// cache-only mode paired with a live source in hand is a caller contract
@@ -1006,8 +1072,7 @@ pub async fn read_table<S, F>(
     source: &S,
     table: &str,
     scan_options: &ScanOptions,
-    batch_options: &BatchOptions,
-    predicate: Option<Predicate>,
+    query_options: &QueryOptions,
     cache: CacheMode,
     mut on_batch: F,
 ) -> Result<(ResolvedSchema, Option<ResumeToken>)>
@@ -1023,15 +1088,8 @@ where
         ));
     }
 
-    let mut stream = table_stream(
-        source,
-        table,
-        scan_options.clone(),
-        batch_options.clone(),
-        predicate,
-        None,
-        cache,
-    );
+    let mut stream =
+        table_stream(source, table, scan_options.clone(), query_options.clone(), None, cache);
     while let Some(batch) = stream.next().await.transpose()? {
         if on_batch(batch).is_break() {
             return Ok((stream.resolved_schema(), Some(stream.resume_token())));
@@ -1293,26 +1351,107 @@ mod tests {
         assert_eq!(batch.num_rows(), 2);
     }
 
-    /// A [`RowBatcher`] over one nullable `Utf8View` column, for driving
-    /// `push_row` at chosen file offsets — the flush triggers are arithmetic
-    /// over offsets and row lengths, and reaching a 64 MiB span through a
-    /// fixture would mean a 64 MiB fixture.
-    fn one_column_batcher(options: BatchOptions) -> RowBatcher {
+    /// A [`RowBatcher`] over one nullable `Utf8View` column, fed by field
+    /// `field_targets` says — for driving `push_row` at chosen file offsets.
+    /// The flush triggers are arithmetic over offsets and row lengths, and
+    /// reaching a 64 MiB span through a fixture would mean a 64 MiB fixture.
+    fn one_column_batcher_fed_by(
+        options: QueryOptions,
+        field_targets: Vec<Option<usize>>,
+        data_type: DataType,
+    ) -> RowBatcher {
         use arrow::datatypes::Schema;
 
         use crate::resolve::{ColumnNote, ColumnResolution};
 
+        let declared = if data_type == DataType::Int32 { "integer" } else { "text" };
         let resolved = ResolvedSchema {
-            schema: Arc::new(Schema::new(vec![Field::new("v", DataType::Utf8View, true)])),
+            schema: Arc::new(Schema::new(vec![Field::new("v", data_type, true)])),
             columns: vec![ColumnResolution::Mapped],
             notes: vec![ColumnNote {
                 column: "v".into(),
-                declared: Some("text".into()),
+                declared: Some(declared.into()),
                 resolution: ColumnResolution::Mapped,
             }],
             plans: vec![NestedPlan::Scalar],
         };
-        RowBatcher::new(&resolved, "public.t".into(), options)
+        RowBatcher::new(&resolved, "public.t".into(), options, field_targets)
+    }
+
+    /// The unprojected case: one `Utf8View` column, fed by the row's only
+    /// field.
+    fn one_column_batcher(options: QueryOptions) -> RowBatcher {
+        one_column_batcher_fed_by(options, vec![Some(0)], DataType::Utf8View)
+    }
+
+    /// A field no projection asked for is walked and skipped: it is never
+    /// decoded — the middle field here would be a hard `Int32` decode failure
+    /// if it were — and it does not count towards `max_bytes`, which counts
+    /// what the batch actually holds.
+    #[test]
+    fn an_unprojected_field_is_walked_but_never_decoded() {
+        let options = QueryOptions { max_bytes: Some(4), ..Default::default() };
+        let mut batcher = one_column_batcher_fed_by(options, vec![None, Some(0)], DataType::Int32);
+        let mut chunks = VecDeque::new();
+        batcher.push_row(0, 0, b"not an integer\t77", &mut chunks).unwrap();
+        assert!(!batcher.should_flush(), "only the projected field's bytes count");
+        batcher.push_row(0, 20, b"nor is this\t88", &mut chunks).unwrap();
+        assert!(batcher.should_flush(), "two projected bytes, then four");
+        let batch = batcher.flush().unwrap();
+        assert_eq!(batch.num_columns(), 1);
+        assert_eq!(rendered(&batch), vec![Some("77".to_string()), Some("88".to_string())]);
+    }
+
+    /// A row is checked against the **block's** field count, not the
+    /// projection's width — `push_row` is the system's only field-count
+    /// check, and a projection must not weaken it.
+    #[test]
+    fn the_field_count_check_is_against_the_block_not_the_projection() {
+        let mut batcher = one_column_batcher_fed_by(
+            QueryOptions::default(),
+            vec![None, Some(0), None],
+            DataType::Utf8View,
+        );
+        assert_eq!(batcher.field_count(), 3, "a resumed stream needs the block's own width");
+        let mut chunks = VecDeque::new();
+        let err = batcher.push_row(0, 0, b"a\t1", &mut chunks).unwrap_err();
+        match err {
+            Error::ColumnCountMismatch { expected, found, .. } => {
+                assert_eq!((expected, found), (3, 2));
+            }
+            other => panic!("expected ColumnCountMismatch, got {other:?}"),
+        }
+    }
+
+    /// A zero-column projection builds nothing and still reports its rows —
+    /// what `RecordBatch::try_new` cannot express.
+    #[test]
+    fn a_zero_column_batch_carries_only_its_row_count() {
+        use arrow::datatypes::Schema;
+
+        let resolved = ResolvedSchema {
+            schema: Arc::new(Schema::new(Vec::<Field>::new())),
+            ..ResolvedSchema::default()
+        };
+        let mut batcher = RowBatcher::new(
+            &resolved,
+            "public.t".into(),
+            QueryOptions::default(),
+            vec![None, None],
+        );
+        let mut chunks = VecDeque::new();
+        batcher.push_row(0, 0, b"a\tb", &mut chunks).unwrap();
+        batcher.push_row(0, 4, b"c\td", &mut chunks).unwrap();
+        let batch = batcher.flush().unwrap();
+        assert_eq!(batch.num_columns(), 0);
+        assert_eq!(batch.num_rows(), 2);
+    }
+
+    /// Every row of a one-column batch, rendered back to text.
+    fn rendered(batch: &RecordBatch) -> Vec<Option<String>> {
+        (0..batch.num_rows())
+            .map(|row| render_field(batch.column(0).as_ref(), row, &NestedPlan::Scalar))
+            .collect()
     }
 
     /// The span trigger measures from the first selected row's offset to one
@@ -1323,7 +1462,7 @@ mod tests {
     /// is off.
     #[test]
     fn the_source_span_trigger_fires_on_the_distance_between_selected_rows() {
-        let options = BatchOptions {
+        let options = QueryOptions {
             max_rows: usize::MAX,
             max_bytes: None,
             max_source_span: Some(100),
@@ -1357,7 +1496,7 @@ mod tests {
     /// time the scan crossed the cap.
     #[test]
     fn rows_that_were_never_pushed_do_not_widen_the_span() {
-        let options = BatchOptions {
+        let options = QueryOptions {
             max_rows: usize::MAX,
             max_bytes: None,
             max_source_span: Some(100),
@@ -1375,7 +1514,7 @@ mod tests {
     /// however wide, flushes on its own.
     #[test]
     fn a_none_source_span_leaves_a_batch_unbounded() {
-        let options = BatchOptions {
+        let options = QueryOptions {
             max_rows: usize::MAX,
             max_bytes: None,
             max_source_span: None,

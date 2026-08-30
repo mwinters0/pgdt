@@ -17,7 +17,7 @@ use futures::StreamExt;
 use pgdump_query::cache::{CacheMode, CacheStatus};
 use pgdump_query::resolve::{ColumnResolution, SchemaMode, resolve_columns};
 use pgdump_query::{
-    BatchOptions, ByteRangeSource, DumpIndex, LocalFileSource, ScanOptions, build_index, cache,
+    ByteRangeSource, DumpIndex, LocalFileSource, QueryOptions, ScanOptions, build_index, cache,
     map_file, preamble_only, table_stream,
 };
 
@@ -87,8 +87,7 @@ async fn a_partial_cache_is_finished_into_the_same_index_an_eager_scan_builds() 
         &source,
         "public.widgets",
         ScanOptions::default(),
-        BatchOptions::default(),
-        None,
+        QueryOptions::default(),
         None,
         mode.clone(),
     );
@@ -374,7 +373,7 @@ async fn a_cancelled_query_errors_rather_than_returning_a_prefix() {
     let options =
         ScanOptions { cancel: Some(Arc::new(AtomicBool::new(true))), ..ScanOptions::default() };
     let mut stream =
-        table_stream(&source, "public.widgets", options, BatchOptions::default(), None, None, mode);
+        table_stream(&source, "public.widgets", options, QueryOptions::default(), None, mode);
     let err = stream.next().await.expect("the stream yields once").expect_err("cancelled");
     assert!(matches!(err, pgdump_query::Error::ScanCancelled { .. }), "{err:?}");
 }

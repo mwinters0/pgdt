@@ -62,11 +62,12 @@ use std::time::{Duration, Instant};
 
 use arrow::array::RecordBatch;
 use arrow::buffer::Buffer;
+use arrow::datatypes::{Schema, SchemaRef};
 use async_stream::try_stream;
 use futures::Stream;
 
 use crate::batch::{
-    BatchOptions, RowBatcher, ScanExtent, SourceChunk, column_names, invalidate_block_cache,
+    QueryOptions, RowBatcher, ScanExtent, SourceChunk, column_names, invalidate_block_cache,
 };
 use crate::cache::CacheMode;
 use crate::copy::{CopyHeader, DELIMITER};
@@ -78,7 +79,7 @@ use crate::index::{
 use crate::io::ByteRangeSource;
 use crate::map::{Builder, Span, SpanBody, attach_text};
 use crate::preamble::{DumpMetadata, dump_metadata_from_spans};
-use crate::predicate::Predicate;
+use crate::predicate::{Predicate, PredicateOp};
 use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
 use crate::scan::{CopyScanner, Event, ScanOptions};
 use crate::{Error, Result};
@@ -88,6 +89,10 @@ use crate::{Error, Result};
 /// against this block's own schema (schemas can differ block-to-block, e.g.
 /// a headerless block's placeholder names), and the database this block is
 /// attributed to (`docs/design/architecture.md`, "One target per query").
+///
+/// The predicate's index is into the block's **unprojected** column list,
+/// because that is what the raw row's fields are numbered by — a filter may
+/// name a column the projection does not.
 type Active = (u64, CopyHeader, RowBatcher, Option<usize>, Option<String>);
 
 /// `database`, rendered as `database.schema.table`, or just `schema.table`
@@ -104,7 +109,7 @@ fn render_candidate((database, qualified_name): &(Option<String>, String)) -> St
 /// when there is no predicate to apply.
 fn resolve_predicate_index(
     predicate: Option<&Predicate>,
-    schema: &arrow::datatypes::SchemaRef,
+    schema: &SchemaRef,
     header_offset: u64,
 ) -> Result<Option<usize>> {
     let Some(predicate) = predicate else { return Ok(None) };
@@ -114,6 +119,97 @@ fn resolve_predicate_index(
         .position(|f| f.name() == &predicate.column)
         .map(Some)
         .ok_or(Error::UnknownPredicateColumn { header_offset, column: predicate.column.clone() })
+}
+
+/// Cut `resolved` down to `projection`, and say which of the block's fields
+/// each projected column is fed by.
+///
+/// All four of [`ResolvedSchema`]'s vectors are cut together, in the
+/// requested order: they are positional and parallel by construction, and
+/// `RecordBatch::try_new` checks the built arrays against `schema` exactly,
+/// so a stream advertising the full table while emitting narrow batches
+/// would put those two out of agreement
+/// (`docs/design/architecture.md`, "Projection").
+///
+/// Returns the projected schema and `field_targets` — one entry per field of
+/// the block, `Some(i)` when that field feeds projected column `i`. `None`
+/// projection is every column, in file order.
+///
+/// Duplicate names are the caller's to reject before the scan starts; this
+/// resolves each requested name independently and would silently accept one
+/// twice.
+fn project(
+    resolved: &ResolvedSchema,
+    projection: Option<&[String]>,
+    header_offset: u64,
+) -> Result<(ResolvedSchema, Vec<Option<usize>>)> {
+    let width = resolved.schema.fields().len();
+    let Some(names) = projection else {
+        return Ok((resolved.clone(), (0..width).map(Some).collect()));
+    };
+    let mut field_targets = vec![None; width];
+    let mut sources = Vec::with_capacity(names.len());
+    for name in names {
+        let source =
+            resolved.schema.fields().iter().position(|f| f.name() == name).ok_or_else(|| {
+                Error::UnknownProjectionColumn { header_offset, column: name.clone() }
+            })?;
+        field_targets[source] = Some(sources.len());
+        sources.push(source);
+    }
+    let projected = ResolvedSchema {
+        schema: Arc::new(Schema::new(
+            sources.iter().map(|&i| resolved.schema.field(i).clone()).collect::<Vec<_>>(),
+        )),
+        columns: sources.iter().map(|&i| resolved.columns[i].clone()).collect(),
+        notes: sources.iter().map(|&i| resolved.notes[i].clone()).collect(),
+        plans: sources.iter().map(|&i| resolved.plans[i].clone()).collect(),
+    };
+    Ok((projected, field_targets))
+}
+
+/// A [`ResumeToken`]'s stamp of the query that produced it: the table, the
+/// projection, the filter and the schema mode
+/// (`docs/design/architecture.md`, "Resume").
+///
+/// Every field is hashed through an explicit `match` rather than a derived
+/// `Hash`, so adding an operator or an option is a compile error here rather
+/// than a fingerprint that quietly stops covering it. The hasher's output is
+/// not stable across Rust releases, which costs nothing: a token is valid
+/// only within the process that produced it.
+fn query_fingerprint(table: &str, options: &QueryOptions) -> u64 {
+    use std::hash::{Hash, Hasher};
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    table.hash(&mut hasher);
+    match options.schema_mode {
+        SchemaMode::Typed => 0u8,
+        SchemaMode::Strings => 1u8,
+    }
+    .hash(&mut hasher);
+    match &options.projection {
+        None => 0u8.hash(&mut hasher),
+        Some(columns) => {
+            1u8.hash(&mut hasher);
+            columns.hash(&mut hasher);
+        }
+    }
+    match &options.filter {
+        None => 0u8.hash(&mut hasher),
+        Some(filter) => {
+            1u8.hash(&mut hasher);
+            filter.column.hash(&mut hasher);
+            match filter.op {
+                PredicateOp::Eq => 0u8,
+                PredicateOp::Ne => 1u8,
+                PredicateOp::IsNull => 2u8,
+                PredicateOp::IsNotNull => 3u8,
+            }
+            .hash(&mut hasher);
+            filter.value.hash(&mut hasher);
+        }
+    }
+    hasher.finish()
 }
 
 /// Replace everything a mapping scan covered with what it built: `prefix`
@@ -184,7 +280,7 @@ fn splice(
 /// would hand back one candidate's rows where
 /// `docs/design/architecture.md`'s "One target per query"
 /// requires `Error::AmbiguousTable`, which is a wrong answer with no signal,
-/// exactly what that decision exists to prevent. A `batch_options.database`
+/// exactly what that decision exists to prevent. A `query_options.database`
 /// selector does not lift this: two `\connect` segments can name the *same*
 /// database. So any `Connect` span means map the whole file.
 ///
@@ -614,6 +710,12 @@ pub async fn map_file<S: ByteRangeSource>(
 pub struct ResumeToken {
     offset: u64,
     rows_emitted: u64,
+    /// Stamp of the query this token came out of — see [`query_fingerprint`].
+    /// Resuming a stream whose options hash differently is
+    /// `Error::ResumeQueryMismatch`, which is what defends "one schema per
+    /// stream, resolved up front" now that a projection can change the
+    /// schema without changing the table.
+    query_fingerprint: u64,
     /// Reserved for the structural cache's generation stamp. The cache
     /// doesn't stamp generations, so this is always 0; carrying
     /// the field now avoids a later breaking change to this already-opaque
@@ -633,8 +735,8 @@ struct InCopyResume {
 }
 
 impl ResumeToken {
-    fn start() -> Self {
-        Self { offset: 0, rows_emitted: 0, generation: 0, in_copy: None }
+    fn start(query_fingerprint: u64) -> Self {
+        Self { offset: 0, rows_emitted: 0, query_fingerprint, generation: 0, in_copy: None }
     }
 }
 
@@ -728,8 +830,7 @@ fn resolve_block(
 /// from the same schema the original block used.
 fn resume_state(
     token: &ResumeToken,
-    batch_options: &BatchOptions,
-    predicate: Option<&Predicate>,
+    query_options: &QueryOptions,
     metadata: Option<&DumpMetadata>,
     census: &[ArrayShape],
 ) -> Result<(CopyScanner, Option<Active>, Option<ResolvedSchema>)> {
@@ -742,16 +843,27 @@ fn resume_state(
         .in_copy
         .as_ref()
         .map(|ic| {
-            let r = resolve_block(
+            let full = resolve_block(
                 &ic.header,
                 ic.field_count,
                 metadata,
                 ic.database.as_deref(),
-                batch_options.schema_mode,
+                query_options.schema_mode,
                 census,
             )?;
-            let predicate_index = resolve_predicate_index(predicate, &r.schema, ic.header_offset)?;
-            let batcher = RowBatcher::new(&r, ic.header.qualified_name(), batch_options.clone());
+            let predicate_index = resolve_predicate_index(
+                query_options.filter.as_ref(),
+                &full.schema,
+                ic.header_offset,
+            )?;
+            let (r, field_targets) =
+                project(&full, query_options.projection.as_deref(), ic.header_offset)?;
+            let batcher = RowBatcher::new(
+                &r,
+                ic.header.qualified_name(),
+                query_options.clone(),
+                field_targets,
+            );
             resolved = Some(r);
             Ok::<_, Error>((
                 ic.header_offset,
@@ -765,7 +877,12 @@ fn resume_state(
     Ok((scanner, active, resolved))
 }
 
-fn snapshot(scanner: &CopyScanner, active: &Option<Active>, rows_emitted: u64) -> ResumeToken {
+fn snapshot(
+    scanner: &CopyScanner,
+    active: &Option<Active>,
+    rows_emitted: u64,
+    query_fingerprint: u64,
+) -> ResumeToken {
     let in_copy =
         active.as_ref().map(|(header_offset, header, batcher, _, database)| InCopyResume {
             header: header.clone(),
@@ -774,7 +891,13 @@ fn snapshot(scanner: &CopyScanner, active: &Option<Active>, rows_emitted: u64) -
             field_count: batcher.field_count(),
             database: database.clone(),
         });
-    ResumeToken { offset: scanner.position(), rows_emitted, generation: 0, in_copy }
+    ResumeToken {
+        offset: scanner.position(),
+        rows_emitted,
+        query_fingerprint,
+        generation: 0,
+        in_copy,
+    }
 }
 
 /// Pull-mode entry point: stream `Utf8View` `RecordBatch`es for every row of
@@ -782,14 +905,23 @@ fn snapshot(scanner: &CopyScanner, active: &Option<Active>, rows_emitted: u64) -
 /// [`CopyHeader::matches`]). A table with zero rows yields no batches.
 ///
 /// `resume` continues a previous consumption from a [`ResumeToken`] it
-/// produced; `None` starts from the beginning of `source`.
+/// produced; `None` starts from the beginning of `source`. A token whose
+/// query fingerprint disagrees with `query_options` is
+/// `Error::ResumeQueryMismatch`.
 ///
-/// `predicate` applies `docs/design/architecture.md`'s post-parse row
-/// filter (`docs/design/architecture.md`, "Predicates"): `None`
+/// `query_options.filter` applies `docs/design/architecture.md`'s post-parse
+/// row filter (`docs/design/architecture.md`, "Predicates"): `None`
 /// yields every row, as before; `Some` drops any row whose named column
 /// doesn't satisfy it, after that row has been fully unescaped. Referencing a
 /// column absent from a matching block's own schema is
 /// `Error::UnknownPredicateColumn`.
+///
+/// `query_options.projection` decides which columns are materialized
+/// (`docs/design/architecture.md`, "Projection"). It cuts the schema
+/// [`TableStream::resolved_schema`] reports as well as the batches, may
+/// reorder, and may be empty — a zero-column projection yields batches
+/// carrying a row count and nothing else. A filter may name a column the
+/// projection does not.
 ///
 /// `cache` controls structure-cache consulting
 /// (`docs/design/architecture.md`, "The cache").
@@ -800,14 +932,13 @@ fn snapshot(scanner: &CopyScanner, active: &Option<Active>, rows_emitted: u64) -
 /// mapping in memory for this call only. Either way rows come from replaying
 /// mapped blocks, never from the mapping pass itself — see the module docs.
 ///
-/// `batch_options.scan_extent` decides how much of the file the mapping pass
+/// `query_options.scan_extent` decides how much of the file the mapping pass
 /// walks before any row comes back; see [`ScanExtent`].
 pub fn table_stream<'a, S>(
     source: &'a S,
     table: &str,
     scan_options: ScanOptions,
-    batch_options: BatchOptions,
-    predicate: Option<Predicate>,
+    query_options: QueryOptions,
     resume: Option<ResumeToken>,
     cache: CacheMode,
 ) -> TableStream<'a>
@@ -815,13 +946,30 @@ where
     S: ByteRangeSource + 'a,
 {
     let table = table.to_string();
-    let start_token = resume.clone().unwrap_or_else(ResumeToken::start);
+    let fingerprint = query_fingerprint(&table, &query_options);
+    let start_token = resume.clone().unwrap_or_else(|| ResumeToken::start(fingerprint));
     let position = Arc::new(Mutex::new(start_token));
     let position_for_stream = Arc::clone(&position);
     let resolved_schema = Arc::new(Mutex::new(ResolvedSchema::default()));
     let resolved_schema_for_stream = Arc::clone(&resolved_schema);
 
     let inner = try_stream! {
+        // Both checks are on the *request*, so they fire before a byte is
+        // read and regardless of whether the table turns up: a projection
+        // naming a column twice is wrong whatever the file holds, and a
+        // resume token from another query would otherwise be discovered only
+        // once its first block resolved.
+        if let Some(columns) = query_options.projection.as_deref() {
+            for (i, name) in columns.iter().enumerate() {
+                if columns[..i].contains(name) {
+                    Err(Error::DuplicateProjectionColumn { column: name.clone() })?;
+                }
+            }
+        }
+        if resume.as_ref().is_some_and(|t| t.query_fingerprint != fingerprint) {
+            Err(Error::ResumeQueryMismatch)?;
+        }
+
         let size = source.size().await?;
 
         let mut index = cache.load(source).await?.unwrap_or_default();
@@ -860,8 +1008,8 @@ where
         }
         // Pass 1: extend the map until this query's table is settled. No
         // rows come out of this, and nothing is yielded until it returns.
-        let selector = batch_options.database.as_deref();
-        let target = match batch_options.scan_extent {
+        let selector = query_options.database.as_deref();
+        let target = match query_options.scan_extent {
             ScanExtent::UntilTargetSettled => Some((table.as_str(), selector)),
             ScanExtent::Full => None,
         };
@@ -887,7 +1035,7 @@ where
         // "One target per query"): narrow the name-only matches down to at
         // most one `(database, qualified name)` candidate before reading any
         // of them, so a would-be silent union across schemas or databases
-        // errors instead. `batch_options.database`, when given, is the way
+        // errors instead. `query_options.database`, when given, is the way
         // out of an otherwise-ambiguous bare or cross-database name — it
         // filters candidates first, exactly like a `WHERE` clause narrowing
         // matches rather than picking among them after the fact.
@@ -936,13 +1084,8 @@ where
         // duplicated below.
         let (mut active, mut first_scanner) = match &resume {
             Some(token) if token.in_copy.is_some() => {
-                let (scanner, active, resolved) = resume_state(
-                    token,
-                    &batch_options,
-                    predicate.as_ref(),
-                    metadata.as_ref(),
-                    &census,
-                )?;
+                let (scanner, active, resolved) =
+                    resume_state(token, &query_options, metadata.as_ref(), &census)?;
                 if let Some(r) = resolved {
                     *resolved_schema_for_stream.lock().unwrap() = r;
                 }
@@ -988,23 +1131,33 @@ where
                                 pending =
                                     Some((start.header, start.header_offset, block_database.clone()));
                             } else {
-                                let resolved = resolve_block(
+                                let full = resolve_block(
                                     &start.header,
                                     start.header.columns.len(),
                                     metadata.as_ref(),
                                     block_database.as_deref(),
-                                    batch_options.schema_mode,
+                                    query_options.schema_mode,
                                     &census,
                                 )?;
+                                // Against the *unprojected* schema: the
+                                // predicate's index numbers the raw row's
+                                // fields, and a filter may name a column the
+                                // projection dropped.
                                 let predicate_index = resolve_predicate_index(
-                                    predicate.as_ref(),
-                                    &resolved.schema,
+                                    query_options.filter.as_ref(),
+                                    &full.schema,
+                                    start.header_offset,
+                                )?;
+                                let (resolved, field_targets) = project(
+                                    &full,
+                                    query_options.projection.as_deref(),
                                     start.header_offset,
                                 )?;
                                 let batcher = RowBatcher::new(
                                     &resolved,
                                     start.header.qualified_name(),
-                                    batch_options.clone(),
+                                    query_options.clone(),
+                                    field_targets,
                                 );
                                 *resolved_schema_for_stream.lock().unwrap() = resolved;
                                 active = Some((
@@ -1020,23 +1173,29 @@ where
                             if let Some((header, header_offset, block_database)) = pending.take() {
                                 let field_count =
                                     memchr::memchr_iter(DELIMITER, row.raw).count() + 1;
-                                let resolved = resolve_block(
+                                let full = resolve_block(
                                     &header,
                                     field_count,
                                     metadata.as_ref(),
                                     block_database.as_deref(),
-                                    batch_options.schema_mode,
+                                    query_options.schema_mode,
                                     &census,
                                 )?;
                                 let predicate_index = resolve_predicate_index(
-                                    predicate.as_ref(),
-                                    &resolved.schema,
+                                    query_options.filter.as_ref(),
+                                    &full.schema,
+                                    header_offset,
+                                )?;
+                                let (resolved, field_targets) = project(
+                                    &full,
+                                    query_options.projection.as_deref(),
                                     header_offset,
                                 )?;
                                 let batcher = RowBatcher::new(
                                     &resolved,
                                     header.qualified_name(),
-                                    batch_options.clone(),
+                                    query_options.clone(),
+                                    field_targets,
                                 );
                                 *resolved_schema_for_stream.lock().unwrap() = resolved;
                                 active = Some((
@@ -1050,7 +1209,7 @@ where
                             if let Some((header_offset, _, batcher, predicate_index, _)) =
                                 active.as_mut()
                             {
-                                let keep = match (predicate.as_ref(), *predicate_index) {
+                                let keep = match (query_options.filter.as_ref(), *predicate_index) {
                                     (Some(pred), Some(col)) => pred.matches(row.raw, col)?,
                                     _ => true,
                                 };
@@ -1067,7 +1226,7 @@ where
                                     invalidate_block_cache(&mut chunks);
                                     rows_emitted += batch.num_rows() as u64;
                                     *position_for_stream.lock().unwrap() =
-                                        snapshot(&scanner, &active, rows_emitted);
+                                        snapshot(&scanner, &active, rows_emitted, fingerprint);
                                     yield batch;
                                 }
                             }
@@ -1081,7 +1240,7 @@ where
                                 invalidate_block_cache(&mut chunks);
                                 rows_emitted += batch.num_rows() as u64;
                                 *position_for_stream.lock().unwrap() =
-                                    snapshot(&scanner, &active, rows_emitted);
+                                    snapshot(&scanner, &active, rows_emitted, fingerprint);
                                 yield batch;
                             }
                         }

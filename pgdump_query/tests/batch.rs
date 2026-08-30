@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
-    BatchOptions, LocalFileSource, NestedPlan, Predicate, PredicateOp, ScanOptions, read_table,
+    LocalFileSource, NestedPlan, Predicate, PredicateOp, QueryOptions, ScanOptions, read_table,
     render_field,
 };
 
@@ -21,13 +21,13 @@ async fn collect(
     path: &Path,
     table: &str,
     scan_options: &ScanOptions,
-    batch_options: &BatchOptions,
+    batch_options: &QueryOptions,
 ) -> (Vec<usize>, Vec<Vec<Option<String>>>) {
     let source = LocalFileSource::open(path).unwrap();
     let mut batch_sizes = Vec::new();
     let mut rows = Vec::new();
 
-    read_table(&source, table, scan_options, batch_options, None, CacheMode::Disabled, |batch| {
+    read_table(&source, table, scan_options, batch_options, CacheMode::Disabled, |batch| {
         batch_sizes.push(batch.num_rows());
         rows.extend(rows_of(&batch));
         ControlFlow::Continue(())
@@ -49,8 +49,7 @@ async fn collect_with_predicate(
         &source,
         table,
         &ScanOptions::default(),
-        &BatchOptions::default(),
-        Some(predicate),
+        &QueryOptions { filter: Some(predicate), ..Default::default() },
         CacheMode::Disabled,
         |batch| {
             rows.extend(rows_of(&batch));
@@ -64,7 +63,7 @@ async fn collect_with_predicate(
 #[tokio::test]
 async fn widgets_table_decodes_correctly() {
     let (_, rows) =
-        collect(&edge_cases(), "public.widgets", &ScanOptions::default(), &BatchOptions::default())
+        collect(&edge_cases(), "public.widgets", &ScanOptions::default(), &QueryOptions::default())
             .await;
     assert_eq!(rows, widgets_expected());
 }
@@ -149,18 +148,18 @@ async fn a_predicate_on_a_nested_column_matches_the_literal_text_in_either_schem
 
     async fn ids(path: &Path, mode: pgdump_query::SchemaMode, value: &str) -> Vec<Option<String>> {
         let source = LocalFileSource::open(path).unwrap();
-        let options = BatchOptions { schema_mode: mode, ..Default::default() };
         let predicate = Predicate {
             column: "v_text_special".into(),
             op: PredicateOp::Eq,
             value: Some(value.to_string()),
         };
+        let options =
+            QueryOptions { schema_mode: mode, filter: Some(predicate), ..Default::default() };
         let mut stream = table_stream(
             &source,
             "public.t_array",
             ScanOptions::default(),
             options,
-            Some(predicate),
             None,
             CacheMode::Disabled,
         );
@@ -215,7 +214,7 @@ async fn predicate_on_unknown_column_errors() {
 async fn table_matching_is_bare_or_qualified() {
     for name in ["widgets", "public.widgets"] {
         let (_, rows) =
-            collect(&edge_cases(), name, &ScanOptions::default(), &BatchOptions::default()).await;
+            collect(&edge_cases(), name, &ScanOptions::default(), &QueryOptions::default()).await;
         assert_eq!(rows, widgets_expected(), "matching on {name}");
     }
 }
@@ -226,7 +225,7 @@ async fn empty_table_produces_no_batches() {
         &edge_cases(),
         "public.empty_table",
         &ScanOptions::default(),
-        &BatchOptions::default(),
+        &QueryOptions::default(),
     )
     .await;
     assert!(sizes.is_empty());
@@ -236,7 +235,7 @@ async fn empty_table_produces_no_batches() {
 #[tokio::test]
 async fn unmatched_table_produces_no_batches() {
     let (sizes, rows) =
-        collect(&edge_cases(), "no.such.table", &ScanOptions::default(), &BatchOptions::default())
+        collect(&edge_cases(), "no.such.table", &ScanOptions::default(), &QueryOptions::default())
             .await;
     assert!(sizes.is_empty());
     assert!(rows.is_empty());
@@ -254,8 +253,7 @@ async fn header_without_column_list_gets_placeholder_schema() {
         &source,
         "public.no_column_list",
         &ScanOptions::default(),
-        &BatchOptions::default(),
-        None,
+        &QueryOptions::default(),
         CacheMode::Disabled,
         |batch| {
             batches.push(batch);
@@ -283,7 +281,7 @@ async fn quoted_identifiers_are_matched_and_decoded() {
         &edge_cases(),
         "My Schema.Odd Table",
         &ScanOptions::default(),
-        &BatchOptions::default(),
+        &QueryOptions::default(),
     )
     .await;
     assert_eq!(rows, vec![vec![Some("1".to_string()), Some("quoted identifiers".to_string())]]);
@@ -295,7 +293,7 @@ async fn quoted_identifiers_are_matched_and_decoded() {
 #[tokio::test]
 async fn max_rows_splits_batches() {
     for max_rows in [1, 2, 4, 100] {
-        let options = BatchOptions { max_rows, max_bytes: None, ..Default::default() };
+        let options = QueryOptions { max_rows, max_bytes: None, ..Default::default() };
         let (sizes, rows) =
             collect(&edge_cases(), "public.widgets", &ScanOptions::default(), &options).await;
         assert_eq!(rows, widgets_expected(), "max_rows {max_rows}");
@@ -318,7 +316,7 @@ async fn max_source_span_splits_batches() {
         &edge_cases_fixture(16, "default"),
         "public.escapes",
         &ScanOptions::default(),
-        &BatchOptions::default(),
+        &QueryOptions::default(),
     )
     .await
     .1;
@@ -327,7 +325,7 @@ async fn max_source_span_splits_batches() {
     let mut previous = 0;
     for max_source_span in [1 << 20, 512, 64, 16, 1] {
         for chunk_size in [7, 4096, 1 << 20] {
-            let options = BatchOptions {
+            let options = QueryOptions {
                 max_rows: usize::MAX,
                 max_bytes: None,
                 max_source_span: Some(max_source_span),
@@ -358,7 +356,7 @@ async fn max_source_span_splits_batches() {
 /// as well, a block is one batch however far apart its rows are.
 #[tokio::test]
 async fn a_none_source_span_leaves_the_block_as_one_batch() {
-    let options = BatchOptions {
+    let options = QueryOptions {
         max_rows: usize::MAX,
         max_bytes: None,
         max_source_span: None,
@@ -383,13 +381,13 @@ async fn a_none_source_span_leaves_the_block_as_one_batch() {
 #[tokio::test]
 async fn batch_contents_are_independent_of_chunk_size() {
     let reference =
-        collect(&edge_cases(), "public.widgets", &ScanOptions::default(), &BatchOptions::default())
+        collect(&edge_cases(), "public.widgets", &ScanOptions::default(), &QueryOptions::default())
             .await
             .1;
     for chunk_size in [1, 2, 3, 7, 13, 64, 511, 4096] {
         let options = ScanOptions { chunk_size, ..Default::default() };
         let (_, rows) =
-            collect(&edge_cases(), "public.widgets", &options, &BatchOptions::default()).await;
+            collect(&edge_cases(), "public.widgets", &options, &QueryOptions::default()).await;
         assert_eq!(rows, reference, "chunk_size {chunk_size}");
     }
 }
@@ -397,14 +395,13 @@ async fn batch_contents_are_independent_of_chunk_size() {
 #[tokio::test]
 async fn stops_early_on_break() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
-    let options = BatchOptions { max_rows: 1, max_bytes: None, ..Default::default() };
+    let options = QueryOptions { max_rows: 1, max_bytes: None, ..Default::default() };
     let mut batches = 0;
     let (_, token) = read_table(
         &source,
         "public.widgets",
         &ScanOptions::default(),
         &options,
-        None,
         CacheMode::Disabled,
         |_| {
             batches += 1;
@@ -425,14 +422,13 @@ async fn resume_token_from_break_continues_correctly() {
     use pgdump_query::table_stream;
 
     let source = LocalFileSource::open(edge_cases()).unwrap();
-    let options = BatchOptions { max_rows: 1, max_bytes: None, ..Default::default() };
+    let options = QueryOptions { max_rows: 1, max_bytes: None, ..Default::default() };
     let mut rows = Vec::new();
     let (_, token) = read_table(
         &source,
         "public.widgets",
         &ScanOptions::default(),
         &options,
-        None,
         CacheMode::Disabled,
         |batch| {
             rows.extend(rows_of(&batch));
@@ -448,7 +444,6 @@ async fn resume_token_from_break_continues_correctly() {
         "public.widgets",
         ScanOptions::default(),
         options,
-        None,
         Some(token),
         CacheMode::Disabled,
     );
@@ -477,7 +472,7 @@ async fn escapes_table_round_trips_through_postgres_batched() {
     for version in [13, 16, 18] {
         for schema_mode in [SchemaMode::Typed, SchemaMode::Strings] {
             let options =
-                BatchOptions { max_rows: 17, max_bytes: None, schema_mode, ..Default::default() };
+                QueryOptions { max_rows: 17, max_bytes: None, schema_mode, ..Default::default() };
             let (_, rows) = collect(
                 &edge_cases_fixture(version, "default"),
                 "public.escapes",
@@ -511,8 +506,7 @@ async fn read_table_rejects_offline_cache_mode() {
         &source,
         "widgets",
         &ScanOptions::default(),
-        &BatchOptions::default(),
-        None,
+        &QueryOptions::default(),
         CacheMode::Offline(PathBuf::from("/nonexistent.dqcache")),
         |_batch| ControlFlow::Continue(()),
     )

@@ -21,7 +21,7 @@ use pgdump_query::nested::{
 };
 use pgdump_query::resolve::SchemaMode;
 use pgdump_query::{
-    BatchOptions, LocalFileSource, NestedPlan, ScanOptions, read_table, render_field,
+    LocalFileSource, NestedPlan, QueryOptions, ScanOptions, read_table, render_field,
 };
 
 /// Which codec a column's literals belong to. Resolution does not choose this
@@ -72,29 +72,21 @@ use common::types_fixture;
 /// what `copy::decode_field` produced, which is this codec's input.
 async fn column_values(path: &Path, table: &str, column: &str) -> Vec<String> {
     let source = LocalFileSource::open(path).unwrap();
-    let options = BatchOptions { schema_mode: SchemaMode::Strings, ..Default::default() };
+    let options = QueryOptions { schema_mode: SchemaMode::Strings, ..Default::default() };
     let mut out = Vec::new();
-    read_table(
-        &source,
-        table,
-        &ScanOptions::default(),
-        &options,
-        None,
-        CacheMode::Disabled,
-        |batch| {
-            let index = batch.schema().index_of(column).expect("column is in the COPY header");
-            for row in 0..batch.num_rows() {
-                // `Strings` mode resolves every column `Utf8View`/`Scalar`,
-                // which is the point: what comes back is the codec's input,
-                // not something the typed path has already parsed.
-                let column = batch.column(index).as_ref();
-                if let Some(value) = render_field(column, row, &NestedPlan::Scalar) {
-                    out.push(value);
-                }
+    read_table(&source, table, &ScanOptions::default(), &options, CacheMode::Disabled, |batch| {
+        let index = batch.schema().index_of(column).expect("column is in the COPY header");
+        for row in 0..batch.num_rows() {
+            // `Strings` mode resolves every column `Utf8View`/`Scalar`,
+            // which is the point: what comes back is the codec's input,
+            // not something the typed path has already parsed.
+            let column = batch.column(index).as_ref();
+            if let Some(value) = render_field(column, row, &NestedPlan::Scalar) {
+                out.push(value);
             }
-            ControlFlow::Continue(())
-        },
-    )
+        }
+        ControlFlow::Continue(())
+    })
     .await
     .unwrap();
     out

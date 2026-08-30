@@ -32,7 +32,7 @@ through.
 | `pgtype.rs`, `resolve.rs`, the type mapping table | [Type resolution](#type-resolution) |
 | `decode.rs`, a new type's decode/render pair | [Decoders and render-back](#decoders-and-render-back) |
 | `batch.rs`, the zero-copy `Utf8View` path, a batch's flush triggers | [Arrow assembly and the zero-copy path](#arrow-assembly-and-the-zero-copy-path) |
-| `stream.rs`, `map_forward`/`map_file`, replay, resume, predicates | [Query: mapping and streaming are separate passes](#query-mapping-and-streaming-are-separate-passes) |
+| `stream.rs`, `map_forward`/`map_file`, replay, resume, projection, predicates | [Query: mapping and streaming are separate passes](#query-mapping-and-streaming-are-separate-passes) |
 | `cache.rs`, the format version, cache modes | [The cache](#the-cache) |
 | the CLI's flags or output, the save throttle, the interrupt guard | [CLI surface](#cli-surface) |
 | `scripts/`, a new fixture schema | [Fixtures](#fixtures) |
@@ -113,13 +113,18 @@ non-test caller, filed in
 [`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md)
 for the phase that decides whether push mode keeps its place.
 
+**One struct carries the whole query.** `QueryOptions` holds what the query
+*asks for* — the projection and the filter — beside how its batches are cut,
+and both entry points take it. The two halves are the same kind of thing, so
+splitting them across a struct and a positional argument would make every
+caller learn which is which; the name also follows from the struct already
+carrying `database` and `scan_extent`, neither of which is about batching.
+
 **Batch size** is caller-settable by row count, in-memory byte size and the
 source byte span a batch covers, whichever is hit first. Default 8192 rows
 (matching the common Arrow/DataFusion convention), no byte cap, and a 64 MiB
 source span. The third of those is a memory bound rather than a sizing knob —
 see "Three flush triggers, and only one of them bounds memory".
-
-**Every query returns all columns of its table** — there is no projection.
 
 **Eager versus incremental indexing is a caller choice.** Incremental (the
 default) discovers structure only as far as needed to answer the current query,
@@ -1557,7 +1562,7 @@ same qualified name in a later database, and a `batch_options.database`
 selector does not lift it — two `\connect` segments can name the same
 database). So early stopping applies to exactly the common case: a
 single-database, non-partition-root dump. koji is one.
-`BatchOptions::ScanExtent::Full` is the explicit opt-out.
+`QueryOptions::scan_extent`'s `ScanExtent::Full` is the explicit opt-out.
 
 ### One target per query
 
@@ -1571,7 +1576,7 @@ database across schemas.
 candidate. **Ambiguity is detected before any row goes out**, once, over every
 candidate the map holds, between the two phases; a second differing candidate
 raises `Error::AmbiguousTable { name, candidates }`. `--database` (CLI) /
-`BatchOptions::database` (library) resolves it by name.
+`QueryOptions::database` (library) resolves it by name.
 
 `pgdq info` groups its block listing by `database: <name>` whenever more than
 one is present (silent for the common single-database case) — that is what
@@ -1590,12 +1595,97 @@ token's offset instead of its header". There is **no fallback path**.
 `ResumeToken` carries a file offset, a cumulative row count, and — for a token
 taken mid-block — the block's header and in-block row count, which is what lets
 a fresh stream reconstruct the same schema and continue with no gap or repeat.
+The header's field count is the **block's** width, never the projection's: a
+headerless block names its columns `column1..columnN` from that number, so a
+resumed stream rebuilding them from a projected width would name different
+columns than the original did.
 A reserved `generation` field is always 0.
+
+**It also carries a fingerprint of the query that produced it** — the table,
+the projection, the filter and the schema mode, hashed — and resuming a stream
+whose options hash differently is `Error::ResumeQueryMismatch`. That defends
+"one schema per stream, resolved up front", which nothing else defends: the
+token never named even the table, so resuming against a different one was
+silently accepted, and a projection makes changing the schema without changing
+the table an ordinary thing to do rather than an exotic one. The hash is over
+an explicit `match` per field rather than a derived `Hash`, so a new operator
+or option is a compile error instead of a stamp that quietly stops covering it.
+`database` and `scan_extent` are deliberately outside it: they change which
+blocks are replayed, not the shape of what comes back.
 
 **`ResumeToken` exposes no public fields, and must stay that way.** A raw file
 offset is meaningless inside a compressed archive entry; opaque now means the
 representation can change without an API break. It is also valid only within
 the producing process.
+
+### Projection
+
+**A projection names columns**, resolved per block against that block's own
+`COPY` header exactly as a predicate's column is. A name the block does not
+carry is `Error::UnknownProjectionColumn`; a repeated name is
+`Error::DuplicateProjectionColumn`. Order is as requested, so a projection may
+reorder. `None` is every column; the empty projection is the `COUNT(*)` shape,
+and it is reachable rather than a degenerate case nobody can express.
+
+**The projected schema is what the stream reports.** All four of
+`ResolvedSchema`'s vectors — `schema`, `columns`, `notes`, `plans` — are cut
+together, in the requested order. They are positional and parallel by
+construction, and `RecordBatch::try_new` checks the built arrays against
+`schema` exactly, so a stream advertising the full table while emitting narrow
+batches would put those two out of agreement. An unprojected column's
+resolution note therefore is not reported by that stream, which costs nothing
+that matters: `pgdq query` does not print notes and `pgdq info` never projects.
+
+*Rejected: reporting the full table schema and projecting only the batches.* It
+reads as the friendlier API and it desynchronizes the one invariant
+`RecordBatch::try_new` is checking.
+
+*Rejected: addressing columns by index.* DataFusion's `TableProvider::scan`
+hands a provider `Option<Vec<usize>>`, and those indices are into the schema
+pgdq itself advertised — so the embedding layer translates them to names
+against that schema. Taking indices here instead would make the meaning of `2`
+depend on which block matched, which is what every other lookup avoids by going
+through the `COPY` header.
+
+**A filter may name a column the projection does not.** The projection decides
+what is *built*, never what may be *tested*: `Predicate::matches` walks the raw
+row itself, so the predicate's column index is resolved against the block's
+**unprojected** schema. That is also what makes a filtered row count —
+zero columns plus a filter — expressible.
+
+**A projection narrows what is decoded, never what is walked.**
+`RowBatcher::push_row` skips `decode_field` and the builder append for a column
+nobody asked for; it does not stop at the last needed field. The walk is
+`memchr` and is the cheap half, and it is the system's **only** field-count
+check — `push_row` is the sole site raising `Error::ColumnCountMismatch`, and
+the mapping pass, which walks every field for the array-shape census, never
+errors on a count. A row is checked against the block's width, not the
+projection's. Under the standing rule that the input contract is valid
+PostgreSQL rather than `pg_dump`'s output, a hand-edited dump with a stray tab
+is exactly what that check exists for, and an early stop turns it into a wrong
+answer with no error.
+
+*Rejected: stopping at the last needed column and counting the remaining
+delimiters with `memchr::count` to keep the check.* It is sound, and it
+optimizes the half that was never shown to cost anything.
+
+**Whether a query succeeds depends on its projection**, and that is intended.
+A column that is not projected is never decoded, so a value that would raise
+`Error::FieldDecode` no longer does — which is the per-column escape from a
+hard decode failure that `SchemaMode::Strings`, untyping the whole table, was
+previously the only form of. An array nested inside a composite is the
+motivating case (see `STATUS.md`'s known gaps).
+
+*Rejected: decoding unprojected columns anyway to preserve error parity.* It
+discards the entire saving to raise an error about a column nobody selected.
+*Rejected: a strict mode that restores the checking.* The strict answer is
+already reachable by projecting the column back in.
+
+**A zero-column batch needs `RecordBatch::try_new_with_options`.** `try_new`
+fails with "must either specify a row count or at least one column", so
+`RowBatcher::flush` states the row count explicitly — for every width, so the
+two do not become separate paths; with arrays present the row count is still
+checked against every one of them.
 
 ### Predicates
 
@@ -2026,8 +2116,9 @@ nowhere to travel.
 
 `Io`, `Join`, `UnterminatedCopyBlock`, `UnterminatedLargeObjectRegion`,
 `LineTooLong`, `InvalidUtf8`, `CacheEncode`, `CacheDisabled`,
-`UnknownPredicateColumn`, `AmbiguousTable`, `MetadataNotScanned`,
-`FieldDecode`. The CLI uses `anyhow` over these.
+`UnknownPredicateColumn`, `UnknownProjectionColumn`,
+`DuplicateProjectionColumn`, `ResumeQueryMismatch`, `AmbiguousTable`,
+`MetadataNotScanned`, `FieldDecode`. The CLI uses `anyhow` over these.
 
 A value that contradicts its declared type is an **error, not a null**: a dump
 is machine-generated, so the file is damaged or the mapping is wrong, and both

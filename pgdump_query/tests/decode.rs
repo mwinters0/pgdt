@@ -22,7 +22,7 @@ use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::resolve::SchemaMode;
 use pgdump_query::{
-    BatchOptions, Error, LocalFileSource, NestedPlan, ScanOptions, read_table, render_field,
+    Error, LocalFileSource, NestedPlan, QueryOptions, ScanOptions, read_table, render_field,
     table_stream,
 };
 
@@ -47,8 +47,7 @@ async fn resolved_schema(path: &Path, table: &str) -> pgdump_query::ResolvedSche
         &source,
         table,
         ScanOptions::default(),
-        BatchOptions::default(),
-        None,
+        QueryOptions::default(),
         None,
         CacheMode::Disabled,
     );
@@ -64,16 +63,9 @@ async fn try_rows(
     mode: SchemaMode,
 ) -> pgdump_query::Result<Vec<Vec<Option<String>>>> {
     let source = LocalFileSource::open(path).unwrap();
-    let options = BatchOptions { schema_mode: mode, ..Default::default() };
-    let mut stream = table_stream(
-        &source,
-        table,
-        ScanOptions::default(),
-        options,
-        None,
-        None,
-        CacheMode::Disabled,
-    );
+    let options = QueryOptions { schema_mode: mode, ..Default::default() };
+    let mut stream =
+        table_stream(&source, table, ScanOptions::default(), options, None, CacheMode::Disabled);
     let mut out = Vec::new();
     while let Some(batch) = stream.next().await.transpose()? {
         let plans = stream.resolved_schema().plans;
@@ -408,8 +400,7 @@ async fn nan_numeric_is_a_field_decode_error_naming_its_context() {
             &source,
             "public.t_numeric",
             &ScanOptions::default(),
-            &BatchOptions::default(),
-            None,
+            &QueryOptions::default(),
             CacheMode::Disabled,
             |_| ControlFlow::Continue(()),
         )
@@ -446,8 +437,7 @@ async fn date_infinity_is_a_field_decode_error_naming_its_context() {
             &source,
             "public.t_date",
             &ScanOptions::default(),
-            &BatchOptions::default(),
-            None,
+            &QueryOptions::default(),
             CacheMode::Disabled,
             |_| ControlFlow::Continue(()),
         )
@@ -475,8 +465,7 @@ async fn timestamp_infinity_is_a_field_decode_error_naming_its_context() {
             &source,
             "public.t_timestamp",
             &ScanOptions::default(),
-            &BatchOptions::default(),
-            None,
+            &QueryOptions::default(),
             CacheMode::Disabled,
             |_| ControlFlow::Continue(()),
         )

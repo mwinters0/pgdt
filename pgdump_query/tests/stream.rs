@@ -5,7 +5,7 @@ use arrow::datatypes::DataType;
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::resolve::{ColumnResolution, SchemaMode};
-use pgdump_query::{BatchOptions, BlockingTableIter, LocalFileSource, ScanOptions, table_stream};
+use pgdump_query::{BlockingTableIter, LocalFileSource, QueryOptions, ScanOptions, table_stream};
 
 mod common;
 use common::{
@@ -23,8 +23,7 @@ async fn stream_matches_push_mode_output() {
         &source,
         "public.widgets",
         ScanOptions::default(),
-        BatchOptions::default(),
-        None,
+        QueryOptions::default(),
         None,
         CacheMode::Disabled,
     );
@@ -41,7 +40,7 @@ async fn stream_matches_push_mode_output() {
 /// resume points at different row counts.
 #[tokio::test]
 async fn resume_continues_without_gap_or_repeat() {
-    let options = BatchOptions { max_rows: 1, max_bytes: None, ..Default::default() };
+    let options = QueryOptions { max_rows: 1, max_bytes: None, ..Default::default() };
     for stop_after in [1, 2, 5] {
         let source = LocalFileSource::open(edge_cases()).unwrap();
         let mut stream = table_stream(
@@ -49,7 +48,6 @@ async fn resume_continues_without_gap_or_repeat() {
             "public.widgets",
             ScanOptions::default(),
             options.clone(),
-            None,
             None,
             CacheMode::Disabled,
         );
@@ -67,7 +65,6 @@ async fn resume_continues_without_gap_or_repeat() {
             "public.widgets",
             ScanOptions::default(),
             options.clone(),
-            None,
             Some(token),
             CacheMode::Disabled,
         );
@@ -89,8 +86,7 @@ async fn resume_reconstructs_headerless_schema() {
         &source,
         "public.no_column_list",
         ScanOptions::default(),
-        BatchOptions { max_rows: 1, max_bytes: None, ..Default::default() },
-        None,
+        QueryOptions { max_rows: 1, max_bytes: None, ..Default::default() },
         None,
         CacheMode::Disabled,
     );
@@ -104,8 +100,7 @@ async fn resume_reconstructs_headerless_schema() {
         &source,
         "public.no_column_list",
         ScanOptions::default(),
-        BatchOptions { max_rows: 1, max_bytes: None, ..Default::default() },
-        None,
+        QueryOptions { max_rows: 1, max_bytes: None, ..Default::default() },
         Some(token),
         CacheMode::Disabled,
     );
@@ -125,13 +120,12 @@ async fn resume_at_a_block_boundary() {
     for version in [13, 16, 18] {
         let path = edge_cases_fixture(version, "default");
         let source = LocalFileSource::open(&path).unwrap();
-        let options = BatchOptions { max_rows: 132, max_bytes: None, ..Default::default() };
+        let options = QueryOptions { max_rows: 132, max_bytes: None, ..Default::default() };
         let mut stream = table_stream(
             &source,
             "public.escapes",
             ScanOptions::default(),
             options.clone(),
-            None,
             None,
             CacheMode::Disabled,
         );
@@ -147,7 +141,6 @@ async fn resume_at_a_block_boundary() {
             "public.escapes",
             ScanOptions::default(),
             options,
-            None,
             Some(token),
             CacheMode::Disabled,
         );
@@ -161,13 +154,12 @@ async fn resume_at_a_block_boundary() {
 #[tokio::test]
 async fn resolved_schema_matches_the_batches_it_describes() {
     let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
-    let batch_options = BatchOptions { schema_mode: SchemaMode::Typed, ..Default::default() };
+    let batch_options = QueryOptions { schema_mode: SchemaMode::Typed, ..Default::default() };
     let mut stream = table_stream(
         &source,
         "public.t_int",
         ScanOptions::default(),
         batch_options,
-        None,
         None,
         CacheMode::Disabled,
     );
@@ -196,13 +188,12 @@ async fn resolved_schema_matches_the_batches_it_describes() {
 #[tokio::test]
 async fn strings_mode_never_resolves_types() {
     let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
-    let batch_options = BatchOptions { schema_mode: SchemaMode::Strings, ..Default::default() };
+    let batch_options = QueryOptions { schema_mode: SchemaMode::Strings, ..Default::default() };
     let mut stream = table_stream(
         &source,
         "public.t_int",
         ScanOptions::default(),
         batch_options,
-        None,
         None,
         CacheMode::Disabled,
     );
@@ -217,13 +208,12 @@ async fn strings_mode_never_resolves_types() {
 #[tokio::test]
 async fn disabled_cache_still_resolves_types() {
     let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
-    let batch_options = BatchOptions { schema_mode: SchemaMode::Typed, ..Default::default() };
+    let batch_options = QueryOptions { schema_mode: SchemaMode::Typed, ..Default::default() };
     let mut stream = table_stream(
         &source,
         "public.t_int",
         ScanOptions::default(),
         batch_options,
-        None,
         None,
         CacheMode::Disabled,
     );
@@ -243,8 +233,7 @@ fn blocking_iterator_matches_async_stream() {
         &source,
         "public.widgets",
         ScanOptions::default(),
-        BatchOptions::default(),
-        None,
+        QueryOptions::default(),
         None,
         CacheMode::Disabled,
     );
@@ -265,8 +254,7 @@ async fn all_rows(source: &LocalFileSource, table: &str) -> Vec<Vec<Option<Strin
         source,
         table,
         ScanOptions::default(),
-        BatchOptions::default(),
-        None,
+        QueryOptions::default(),
         None,
         CacheMode::Disabled,
     );
@@ -292,8 +280,7 @@ async fn querying_a_table_name_shared_by_two_databases_errors_without_a_database
             &source,
             "public.widgets",
             ScanOptions::default(),
-            BatchOptions::default(),
-            None,
+            QueryOptions::default(),
             None,
             CacheMode::Disabled,
         );
@@ -321,7 +308,7 @@ async fn querying_a_table_name_shared_by_two_databases_errors_without_a_database
     }
 }
 
-/// `BatchOptions::database` (`--database` at the CLI) is the way out of that
+/// `QueryOptions::database` (`--database` at the CLI) is the way out of that
 /// ambiguity: naming the *first* database returns exactly that database's
 /// rows, matching what querying the un-concatenated single-database fixture
 /// returns. The first database is the one an incremental scan's preamble
@@ -337,13 +324,12 @@ async fn database_selector_resolves_the_ambiguity_to_the_first_databases_rows() 
         let (_dir, path) = multidb_fixture(version);
         let combined_source = LocalFileSource::open(&path).unwrap();
         let batch_options =
-            BatchOptions { database: Some("pgdq_fixture".to_string()), ..Default::default() };
+            QueryOptions { database: Some("pgdq_fixture".to_string()), ..Default::default() };
         let mut stream = table_stream(
             &combined_source,
             "public.widgets",
             ScanOptions::default(),
             batch_options,
-            None,
             None,
             CacheMode::Disabled,
         );
@@ -376,13 +362,12 @@ async fn selecting_a_later_databases_table_types_it_on_a_cold_query() {
         let source = LocalFileSource::open(&path).unwrap();
 
         let typed =
-            BatchOptions { database: Some("pgdq_fixture_2".to_string()), ..Default::default() };
+            QueryOptions { database: Some("pgdq_fixture_2".to_string()), ..Default::default() };
         let mut stream = table_stream(
             &source,
             "public.widgets",
             ScanOptions::default(),
             typed,
-            None,
             None,
             CacheMode::Disabled,
         );
@@ -399,7 +384,7 @@ async fn selecting_a_later_databases_table_types_it_on_a_cold_query() {
             "pg_dump {version}: really typed, not degraded to strings: {schema:?}"
         );
 
-        let strings = BatchOptions {
+        let strings = QueryOptions {
             database: Some("pgdq_fixture_2".to_string()),
             schema_mode: SchemaMode::Strings,
             ..Default::default()
@@ -409,7 +394,6 @@ async fn selecting_a_later_databases_table_types_it_on_a_cold_query() {
             "public.widgets",
             ScanOptions::default(),
             strings,
-            None,
             None,
             CacheMode::Disabled,
         );
@@ -440,8 +424,7 @@ async fn a_partition_root_name_yields_every_partitions_rows() {
                 &source,
                 "public.feel",
                 ScanOptions::default(),
-                BatchOptions::default(),
-                None,
+                QueryOptions::default(),
                 None,
                 CacheMode::Disabled,
             );
@@ -512,8 +495,7 @@ async fn an_unmarked_target_still_stops_early_in_a_file_containing_marked_blocks
         &source,
         "public.evt_m",
         ScanOptions::default(),
-        BatchOptions::default(),
-        None,
+        QueryOptions::default(),
         None,
         CacheMode::Enabled(cache_path.clone()),
     );

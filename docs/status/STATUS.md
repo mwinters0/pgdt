@@ -9,9 +9,10 @@ discoveries are in `history/`.
 ## What exists
 
 P1–P4 and P9 are complete and were struck at a keystone review. **P5 is open**
-and two slices of it have landed — one registering a figure and adding no
-library code, one bounding what an in-flight batch pins. Neither projection nor
-the richer predicates exists yet; the checklist is below the table.
+and three slices of it have landed — one registering a figure and adding no
+library code, one bounding what an in-flight batch pins, and one adding
+projection to the library. Projection has no CLI surface yet and the richer
+predicates do not exist; the checklist is below the table.
 
 | Capability | State |
 |---|---|
@@ -25,7 +26,8 @@ the richer predicates exists yet; the checklist is below the table.
 | CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, cache-only `info` | working; **`parse` is the only scanner** — it resumes from a matching cache, banks at `COPY` block boundaries under a self-tuning throttle, and saves unconditionally on Ctrl-C (exit 130/143). `info` reports from the cache and never scans. Text output shape is provisional; `--json` carries no shape promise at all |
 | Partial reporting | `info` reports an unfinished scan's cache for as far as it got, with `Scan completion: N%` stated once at the top and nothing below it qualified. An interrupted cache is **typed** for every database segment the scan finished (I1) |
 | Measurement harness | `scripts/measure.py` takes every figure in [`../design/measurements.md`](../design/measurements.md) and emits that doc's tables — twelve figures, eleven taken by a sweep and one derived across two, each declaring what invalidates it and which documents repeat it, plus two instruments built and not taken |
-| Column projection; richer predicates (conjunction, typed ordering) | not started — P5, specified |
+| Column projection | working in the library: `QueryOptions::projection` names columns, cuts the reported `ResolvedSchema` with the batches, may reorder, and may be empty (`COUNT(*)`). **No CLI surface yet** — P5.4. A filter may name a column the projection does not, and an unprojected column is never decoded, so projecting a column away escapes its `Error::FieldDecode` ([`../design/architecture.md`](../design/architecture.md), "Projection") |
+| Richer predicates (conjunction, typed ordering) | not started — P5.5, P5.6, specified |
 | `object_store` I/O, Python bindings, DataFusion `TableProvider` | not started — P6 |
 | Device-bound scan performance campaign, sparse row index | not started — P7 |
 | Per-row-group column statistics | not started — P10, which needs P7's sparse row index. `CopyBlock::column_stats` stays a reserved `None` |
@@ -38,10 +40,13 @@ apparatus line. `--check` reconciles twelve markers against twelve figures.
 `session-drift` is derived across that sweep and a second one taken two minutes
 later on the same commit, which is the pair `--drift` reads.
 
-**`nested-end-to-end` and `cross-file-floor` read stale** since `P5.2` put a
-branch and two `u64` writes on the per-row replay path both of them measure.
-Neither is acknowledgeable — a library change has no cheap oracle — so they
-stay stale until the next full sweep, which is `P5.7`'s neighbourhood.
+**Eight figures read stale** — `census-brace-free`, `census-arrays`,
+`scan-throughput-cold`, `scan-throughput-warm`, `nested-end-to-end`,
+`census-attribution`, `cross-file-floor` and `map-only` — since `P5.2` and
+`P5.3` between them touched `batch.rs`, `stream.rs` and the CLI, which all
+eight declare. None is acknowledgeable: a library change has no cheap oracle,
+and `P5.3` puts a per-field lookup on the replay path. They stay stale until
+the next full sweep, which is `P5.7`'s neighbourhood.
 
 **Two instruments are built and unrun**, both registered under
 `measure.UNTAKEN` — a sweep takes neither and the doc carries no table for
@@ -73,9 +78,10 @@ The spec is
 - [x] **P5.2** The source-span flush trigger — bounds what an in-flight batch
       pins. Notes:
       [`../design/roadmap-P5.2-source-span-flush-notes.md`](../design/roadmap-P5.2-source-span-flush-notes.md)
-- [ ] **P5.3** Projection in the library — the `QueryOptions` field and API
+- [x] **P5.3** Projection in the library — the `QueryOptions` field and API
       move, the projected `ResolvedSchema`, `push_row` skipping, the
-      zero-column `RecordBatch`.
+      zero-column `RecordBatch`. Notes:
+      [`../design/roadmap-P5.3-projection-notes.md`](../design/roadmap-P5.3-projection-notes.md)
 - [ ] **P5.4** The CLI for projection — `--column`, `--no-columns`.
 - [ ] **P5.5** The filter conjunction — repeatable `--filter`, terms ANDed.
 - [ ] **P5.6** Typed ordering operators — `<`, `<=`, `>`, `>=`, and the refusal
@@ -117,11 +123,16 @@ is safe, and where the mechanism or the fix is written down.
   multi-dimensional or `[lb:ub]=`-decorated value there is a hard
   `Error::FieldDecode` naming the column. Permanent as things stand: the census
   is keyed by column and has nowhere to record a shape at that depth, so
-  scanning more of the file cannot help. `--schema-mode strings`, which the
-  message names, returns the literal verbatim. A *top-level* array column does
-  not reach this, and neither does an array whose element type is an array
-  (refused outright, I26). Keying the census by path is a roadmap "Future"
-  item and purely additive.
+  scanning more of the file cannot help. There are now two escapes:
+  `--schema-mode strings`, which the message names, returns the literal
+  verbatim for the whole table, and — since P5.3 — **not projecting the column
+  leaves every other column typed**, because an unprojected column is never
+  decoded ([`../design/architecture.md`](../design/architecture.md),
+  "Projection"). The message still names only the first; the manual pass in
+  `P5.7` is where the second gets written down for users. A *top-level* array
+  column does not reach this, and neither does an array whose element type is
+  an array (refused outright, I26). Keying the census by path is a roadmap
+  "Future" item and purely additive.
 
 - **Two array shapes come back as text with no way to ask for more** —
   `NestedArrayElement` and `VaryingArrayShape`. Neither is opaque: both are

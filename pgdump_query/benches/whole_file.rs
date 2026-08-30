@@ -6,7 +6,7 @@
 //! turns up to koji-sized (~100 GB) runs and CPU%/bytes-per-second tracking;
 //! this only has to catch a regression on data that fits page cache.
 //!
-//! `SchemaMode::Typed` (`BatchOptions::default()`) is used deliberately: it's
+//! `SchemaMode::Typed` (`QueryOptions::default()`) is used deliberately: it's
 //! the mode that walks every field through `decode.rs`, which
 //! `SchemaMode::Strings` (the pure zero-copy path) does not, so
 //! only `Typed` can see a decode regression at all.
@@ -32,7 +32,7 @@ use std::process::Command;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use pgdump_query::cache::CacheMode;
-use pgdump_query::{BatchOptions, LocalFileSource, ScanOptions, read_table};
+use pgdump_query::{LocalFileSource, QueryOptions, ScanOptions, read_table};
 
 /// Fits page cache on any development machine; see the phase doc's
 /// "Synthetic performance dataset".
@@ -84,8 +84,7 @@ async fn scan_once(path: &Path) -> u64 {
         &source,
         "public.perf",
         &ScanOptions::default(),
-        &BatchOptions::default(),
-        None,
+        &QueryOptions::default(),
         CacheMode::Disabled,
         |batch| {
             rows += batch.num_rows() as u64;

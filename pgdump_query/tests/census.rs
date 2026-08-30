@@ -16,7 +16,7 @@ use pgdump_query::cache::CacheMode;
 use pgdump_query::index::ArrayShape;
 use pgdump_query::resolve::ColumnResolution;
 use pgdump_query::{
-    BatchOptions, LocalFileSource, ScanExtent, ScanOptions, build_index, table_stream, union_census,
+    LocalFileSource, QueryOptions, ScanExtent, ScanOptions, build_index, table_stream, union_census,
 };
 
 mod common;
@@ -121,13 +121,12 @@ async fn every_mapping_pass_censuses_whatever_its_extent() {
         // first pass answer for the second.
         let dir = tempfile::tempdir().unwrap();
         let cache = CacheMode::Enabled(dir.path().join("dump.dqcache"));
-        let options = BatchOptions { scan_extent: extent, ..Default::default() };
+        let options = QueryOptions { scan_extent: extent, ..Default::default() };
         let mut stream = table_stream(
             &source,
             "public.t_array",
             ScanOptions::default(),
             options,
-            None,
             None,
             cache.clone(),
         );
@@ -159,13 +158,12 @@ async fn a_cold_query_retypes_from_the_census_it_just_recorded() {
     for extent in [ScanExtent::UntilTargetSettled, ScanExtent::Full] {
         let dir = tempfile::tempdir().unwrap();
         let cache = CacheMode::Enabled(dir.path().join("dump.dqcache"));
-        let options = BatchOptions { scan_extent: extent, ..Default::default() };
+        let options = QueryOptions { scan_extent: extent, ..Default::default() };
         let mut stream = table_stream(
             &source,
             "public.t_array_shape",
             ScanOptions::default(),
             options,
-            None,
             None,
             cache,
         );

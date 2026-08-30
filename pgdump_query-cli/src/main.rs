@@ -12,8 +12,8 @@ use pgdump_query::cache::{CacheMode, CacheStatus};
 use pgdump_query::pgtype::RANGE_STRUCT_FIELDS;
 use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdump_query::{
-    ArrayShape, BatchOptions, ByteRangeSource, DataBlock, Diagnostic, DiagnosticKind, DumpIndex,
-    DumpMetadata, LocalFileSource, NestedPlan, Predicate, PredicateOp, ScanOptions, Severity, Span,
+    ArrayShape, ByteRangeSource, DataBlock, Diagnostic, DiagnosticKind, DumpIndex, DumpMetadata,
+    LocalFileSource, NestedPlan, Predicate, PredicateOp, QueryOptions, ScanOptions, Severity, Span,
     SpanBody, TypeKind, preamble_only, render_field,
 };
 
@@ -381,10 +381,11 @@ async fn main() -> Result<()> {
             let source = LocalFileSource::open(&file)?;
             let mut header_printed = false;
             let mut rows = 0u64;
-            let batch_options = BatchOptions {
+            let query_options = QueryOptions {
                 database,
                 schema_mode: schema_mode.into(),
-                ..BatchOptions::default()
+                filter: predicate,
+                ..QueryOptions::default()
             };
             // Pull mode, not `read_table`: rendering a nested column back to
             // its literal needs the stream's `NestedPlan`s, and push mode
@@ -396,8 +397,7 @@ async fn main() -> Result<()> {
                 &source,
                 &table,
                 ScanOptions::default(),
-                batch_options,
-                predicate,
+                query_options,
                 None,
                 mode,
             );
