@@ -9,11 +9,12 @@ discoveries are in `history/`.
 ## What exists
 
 P1–P4 and P9 are complete and were struck at a keystone review. **P5 is open**
-and five slices of it have landed — one registering a figure and adding no
+and six slices of it have landed — one registering a figure and adding no
 library code, one bounding what an in-flight batch pins, one adding projection
-to the library, one giving it a CLI, and one turning the single filter into a
-conjunction. The typed ordering operators do not exist; the checklist is below
-the table.
+to the library, one giving it a CLI, one turning the single filter into a
+conjunction, and one adding the typed ordering operators. What is left is
+taking the figure and retiring what it supersedes; the checklist is below the
+table.
 
 | Capability | State |
 |---|---|
@@ -29,7 +30,8 @@ the table.
 | Measurement harness | `scripts/measure.py` takes every figure in [`../design/measurements.md`](../design/measurements.md) and emits that doc's tables — twelve figures, eleven taken by a sweep and one derived across two, each declaring what invalidates it and which documents repeat it, plus two instruments built and not taken |
 | Column projection | working, library and CLI: `QueryOptions::projection` names columns, cuts the reported `ResolvedSchema` with the batches, may reorder, and may be empty (`COUNT(*)`); `pgdq query` spells it `--column <name>` repeated, or `--no-columns`, which prints no header so `\| wc -l` is a row count. A filter may name a column the projection does not, and an unprojected column is never decoded, so projecting a column away escapes its `Error::FieldDecode` ([`../design/architecture.md`](../design/architecture.md), "Projection") |
 | Predicate conjunction | working, library and CLI: `QueryOptions::filters` is a list of single-column terms ANDed, the empty list being "no filter"; `pgdq query` spells it `--filter <term>` repeated. Nothing folds two terms, so a contradictory pair is a query with no rows. `OR` and `NOT` are not expressible — the NULL collapse that is sound under `AND` is not under `NOT` ([`../design/architecture.md`](../design/architecture.md), "Predicates") |
-| Typed ordering operators (`<`, `<=`, `>`, `>=`) | not started — P5.6, specified |
+| Typed ordering operators (`<`, `<=`, `>`, `>=`) | working, library and CLI: each side is decoded with the column's own decoder — the field per row, the literal once when the block's schema resolves — and the decoded values compared, so `9 > 10` is true on an `integer`. Available on a column that resolved `Mapped` with a `Scalar` plan and refused on any other, which is also why `--schema-mode strings` refuses every one of them. An undecodable literal is `Error::PredicateValueDecode` before any row; an undecodable field is `Error::FieldDecode`, worded as the build path words it ([`../design/architecture.md`](../design/architecture.md), "Ordering operators compare typed") |
+| The ordering register | in code, as an exhaustive `match` over `DataType` in `predicate.rs`, and rendered as a table in [`../design/architecture.md`](../design/architecture.md), "Ordering operators compare typed". Nine of its rows agree with PostgreSQL (I33); four diverge — every one of them reaching `Utf8View` or the enum `Dictionary`. A divergence is announced by `pgdq query` once on stderr, and read by an embedder from `TableStream::ordering_notes` — a third channel, since the signal is per-column *and* predicate-conditional (L4) |
 | `object_store` I/O, Python bindings, DataFusion `TableProvider` | not started — P6 |
 | Device-bound scan performance campaign, sparse row index | not started — P7 |
 | Per-row-group column statistics | not started — P10, which needs P7's sparse row index. `CopyBlock::column_stats` stays a reserved `None` |
@@ -45,7 +47,7 @@ later on the same commit, which is the pair `--drift` reads.
 **Eight figures read stale** — `census-brace-free`, `census-arrays`,
 `scan-throughput-cold`, `scan-throughput-warm`, `nested-end-to-end`,
 `census-attribution`, `cross-file-floor` and `map-only` — since `P5.2`
-through `P5.5` between them touched `batch.rs`, `stream.rs` and the CLI,
+through `P5.6` between them touched `batch.rs`, `stream.rs` and the CLI,
 which all eight declare. None is acknowledgeable: a library change has no cheap
 oracle, and `P5.3` puts a per-field lookup on the replay path. They stay stale
 until the next full sweep, which is `P5.7`'s neighbourhood.
@@ -89,8 +91,9 @@ The spec is
 - [x] **P5.5** The filter conjunction — repeatable `--filter`, terms ANDed.
       Notes:
       [`../design/roadmap-P5.5-filter-conjunction-notes.md`](../design/roadmap-P5.5-filter-conjunction-notes.md)
-- [ ] **P5.6** Typed ordering operators — `<`, `<=`, `>`, `>=`, and the refusal
-      on a column that is not `Mapped` with a `Scalar` plan.
+- [x] **P5.6** Typed ordering operators — `<`, `<=`, `>`, `>=`, and the refusal
+      on a column that is not `Mapped` with a `Scalar` plan. Notes:
+      [`../design/roadmap-P5.6-ordering-operators-notes.md`](../design/roadmap-P5.6-ordering-operators-notes.md)
 - [ ] **P5.7** Take the figure, fold it in, re-read its consumers, delete
       `composite-isolated` and re-scope the cross-file figures it supersedes,
       update the manual.
@@ -133,7 +136,9 @@ is safe, and where the mechanism or the fix is written down.
   verbatim for the whole table, and — since P5.3 — **not projecting the column
   leaves every other column typed**, because an unprojected column is never
   decoded ([`../design/architecture.md`](../design/architecture.md),
-  "Projection"). The message still names only the first; the manual pass in
+  "Projection"). Neither escape survives *filtering* on the column with an
+  ordering operator: that decodes the field itself, so the same
+  `Error::FieldDecode` comes back. The message still names only the first; the manual pass in
   `P5.7` is where the second gets written down for users. A *top-level* array
   column does not reach this, and neither does an array whose element type is
   an array (refused outright, I26). Keying the census by path is a roadmap
@@ -184,17 +189,19 @@ is safe, and where the mechanism or the fix is written down.
   carries, for the same reason. koji's `backup` role is the motivating case.
   `ScanExtent::Full`, or a query after `pgdq parse`, gives the complete set.
 
-- **A bare `numeric` column will order lexicographically.** `map_numeric`
-  returns `Utf8View` when the declaration carries no typmod (and when the
-  precision exceeds `Decimal256`'s 76 digits), and that column still resolves
-  `Mapped` — so once P5's ordering operators exist, `v > 5` on an
-  unconstrained `numeric` compares text and `"9" < "10"` is false. Equality is
-  unaffected, and every value still decodes as the text the file holds. It is
-  the register row a user is likeliest to hit without suspecting anything,
-  which is why the CLI announces it; closing it needs an arbitrary-precision
-  decimal comparison and nothing external is missing. Register and remedy:
-  [`../design/roadmap-P5-pushdown.md`](../design/roadmap-P5-pushdown.md), the
-  ordering register; worklist:
+- **Three kinds of column order differently from PostgreSQL under `<`/`>`.**
+  A bare `numeric` (and one past `Decimal256`'s 76 digits) is `Mapped` to
+  `Utf8View`, so `v > 5` compares text and `"9" < "10"` is false; a text
+  column compares bytewise, which is the server's answer only under
+  `C`/`POSIX` (I32); an enum compares by label text where PostgreSQL uses
+  declaration order (I33). Every other text-held type — `interval`,
+  `time with time zone`, `json`/`jsonb`, the network types — is in the same
+  position. Equality is unaffected and every value still decodes as the text
+  the file holds. **Each of these announces itself**: `pgdq query` names the
+  column and the divergence on stderr, and an embedder reads
+  `TableStream::ordering_notes`. Register:
+  [`../design/architecture.md`](../design/architecture.md), "Ordering
+  operators compare typed"; per-type worklist:
   [`../design/roadmap-P11-typed-predicates-inbox.md`](../design/roadmap-P11-typed-predicates-inbox.md).
 
 - **An `INSERT` run is folded into one span but every line is still decoded**,
@@ -214,7 +221,26 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-*Nothing is open.* The two entries the 2026-08-30 sweep pair raised are closed:
-the floor check is now stated directionally and inside a tolerance, and the one
-open spec that repeated a figure's number no longer does
-([`history/2026-08-30.md`](history/2026-08-30.md)).
+### An ordering filter errors on a value that contradicts its DDL, rather than excluding the row
+
+**The call.** `--filter 'v > x'` decodes each row's `v` with the column's own
+decoder. When a value does not decode — `infinity` in a `date` column, `NaN`
+in a `numeric(p,s)` one — `P5.6` raises `Error::FieldDecode`, the same error
+with the same wording the typed *build* path raises for that value. The
+alternative is to treat the row as not matching, which is the collapse a NULL
+already gets.
+
+**Why this way.** A NULL is a value the file states; a value that does not
+decode is the file contradicting its own DDL, and everywhere else in this
+system that is an error rather than a quiet exclusion. Excluding would also
+mean a filter silently reporting fewer rows on a damaged file, which is the
+shape of answer the project refuses. The spec settles neither way.
+
+**What changes if reconsidered.** Some queries that error today would return
+rows instead — concretely, any ordering filter on a `date`/`timestamp` column
+holding `infinity`, which is legal PostgreSQL and appears in the `types`
+fixture. Reversing it is a two-line change in `Predicate::matches` and would
+retire `Error::FieldDecode`'s only non-`batch.rs` producer. It would also make
+`--column`'s decode escape apply to filters, which today it deliberately does
+not ([`../design/architecture.md`](../design/architecture.md), "Ordering
+operators compare typed").

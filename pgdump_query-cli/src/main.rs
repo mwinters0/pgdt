@@ -123,10 +123,17 @@ enum Command {
         #[arg(long)]
         dqcache: Option<PathBuf>,
         /// Single-column filter: `column=value`, `column!=value`,
-        /// `column IS NULL`, or `column IS NOT NULL`, compared against each
-        /// row's decoded field value. Repeatable — every term must match,
-        /// so the terms are ANDed. There is no `OR` and no negation of a
-        /// whole term (`docs/design/architecture.md`, "Predicates").
+        /// `column<value`, `column<=value`, `column>value`,
+        /// `column>=value`, `column IS NULL`, or `column IS NOT NULL`.
+        /// Repeatable — every term must match, so the terms are ANDed. There
+        /// is no `OR` and no negation of a whole term
+        /// (`docs/design/architecture.md`, "Predicates").
+        ///
+        /// `=`/`!=` compare the row's decoded field as text. The four
+        /// ordering operators compare **typed**, and are refused on a column
+        /// whose type did not resolve or that is nested. Do not put spaces
+        /// around the operator: everything after it is the value, leading
+        /// spaces included.
         #[arg(long)]
         filter: Vec<String>,
         /// Materialize only this column, repeatable — the output carries the
@@ -185,12 +192,46 @@ fn projection(columns: Vec<String>, no_columns: bool) -> Option<Vec<String>> {
     }
 }
 
+/// The comparison spellings, in the order they are tried **at one position**
+/// — longest first, so `>=` is never read as `>` followed by a stray `=`,
+/// the way `!=` has always been checked before `=`.
+const FILTER_OPS: [(&str, PredicateOp); 6] = [
+    ("!=", PredicateOp::Ne),
+    (">=", PredicateOp::Ge),
+    ("<=", PredicateOp::Le),
+    ("=", PredicateOp::Eq),
+    (">", PredicateOp::Gt),
+    ("<", PredicateOp::Lt),
+];
+
+/// Split `spec` at its operator: `(column, op, value)`.
+///
+/// **The earliest position wins, and the longest spelling at that position.**
+/// Scanning by position rather than by operator is what keeps a value that
+/// contains an operator byte from stealing the split — `name=a>b` is `name`
+/// equal to `a>b`, not `name=a` greater than `b` — which matters far more
+/// now that four more bytes are operators.
+fn split_filter_op(spec: &str) -> Option<(&str, PredicateOp, &str)> {
+    for (i, _) in spec.char_indices() {
+        for (symbol, op) in FILTER_OPS {
+            if spec[i..].starts_with(symbol) {
+                return Some((&spec[..i], op, &spec[i + symbol.len()..]));
+            }
+        }
+    }
+    None
+}
+
 /// Parse one `--filter` argument into a [`Predicate`] — one term of the
-/// conjunction the flag's repetitions build: `column=value`,
-/// `column!=value`, `column IS NULL`, or `column IS NOT NULL` (the `IS`
-/// forms matched case-insensitively after the column name — see
-/// `docs/design/architecture.md`, "Predicates"). `!=` is
-/// checked before `=` since it contains that byte.
+/// conjunction the flag's repetitions build: `column<op>value` for any of the
+/// six comparison spellings, or `column IS NULL` / `column IS NOT NULL` (the
+/// `IS` forms matched case-insensitively after the column name — see
+/// `docs/design/architecture.md`, "Predicates").
+///
+/// Trailing whitespace is trimmed off the **column** side of every form, so
+/// `v >= 5` names `v`; the value keeps its own leading whitespace, since a
+/// value may legitimately begin with a space and nothing else could restore
+/// it.
 fn parse_filter(spec: &str) -> Result<Predicate> {
     let trimmed = spec.trim_end();
     if let Some(column) = strip_ci_suffix(trimmed, "is not null") {
@@ -207,16 +248,28 @@ fn parse_filter(spec: &str) -> Result<Predicate> {
             value: None,
         });
     }
-    let (column, op, value) = match spec.split_once("!=") {
-        Some((column, value)) => (column, PredicateOp::Ne, value),
-        None => match spec.split_once('=') {
-            Some((column, value)) => (column, PredicateOp::Eq, value),
-            None => anyhow::bail!(
-                "--filter must be `column=value`, `column!=value`, `column IS NULL`, or `column IS NOT NULL`, got `{spec}`"
-            ),
-        },
+    let Some((column, op, value)) = split_filter_op(spec) else {
+        anyhow::bail!(
+            "--filter must be `column=value` (or `!=`, `<`, `<=`, `>`, `>=`), `column IS NULL`, or `column IS NOT NULL`, got `{spec}`"
+        )
     };
-    Ok(Predicate { column: column.to_string(), op, value: Some(value.to_string()) })
+    Ok(Predicate { column: column.trim_end().to_string(), op, value: Some(value.to_string()) })
+}
+
+/// Say, once per query and on stderr, which ordering comparisons do not
+/// order the way PostgreSQL's own operator does
+/// (`docs/design/architecture.md`, "Predicates", the ordering register).
+///
+/// **Announced by the CLI rather than carried by a library channel.** The
+/// signal is per-column *and* conditional on a predicate — L4 — while
+/// `DumpIndex.diagnostics` is L1 and `ResolvedSchema.notes` is L2, so writing
+/// it into either would invert the layering. An embedder reads
+/// `TableStream::ordering_notes` for the same facts; what it *should* be
+/// handed is filed in `docs/design/roadmap-P6-embeddable-engine-inbox.md`.
+fn announce_ordering(stream: &pgdump_query::TableStream<'_>) {
+    for note in stream.ordering_notes() {
+        eprintln!("warning: {}", note.message());
+    }
 }
 
 /// Case-insensitive suffix strip, for matching `IS NULL`/`IS NOT NULL` at
@@ -462,7 +515,12 @@ async fn main() -> Result<()> {
                 None,
                 mode,
             );
+            let mut announced = false;
             while let Some(batch) = stream.next().await.transpose()? {
+                if !announced {
+                    announce_ordering(&stream);
+                    announced = true;
+                }
                 any_batch = true;
                 // A zero-column projection prints no header. The header would
                 // be an empty line, and the row count `--no-columns | wc -l`
@@ -480,6 +538,13 @@ async fn main() -> Result<()> {
                 // from, not to the query.
                 print_batch(&batch, &stream.resolved_schema().plans);
                 rows += batch.num_rows() as u64;
+            }
+            // A query that matched a block but selected no rows still
+            // resolved a schema, so the announcement is owed either way; it
+            // is made at the first batch when there is one so it precedes the
+            // rows rather than trailing them.
+            if !announced {
+                announce_ordering(&stream);
             }
             if any_batch {
                 eprintln!("{rows} row(s)");

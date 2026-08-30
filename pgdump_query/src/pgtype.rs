@@ -121,7 +121,7 @@ pub const RANGE_STRUCT_FIELDS: [&str; 5] =
 /// `Microsecond`-precision or otherwise typmod-independent by design (see
 /// "Type mapping" in the phase doc), so this split is enough to let every
 /// other match ignore it entirely.
-fn split_typmod(s: &str) -> (&str, Option<&str>) {
+pub(crate) fn split_typmod(s: &str) -> (&str, Option<&str>) {
     match s.find('(') {
         Some(i) if s.ends_with(')') => (s[..i].trim_end(), Some(&s[i + 1..s.len() - 1])),
         _ => (s, None),

@@ -1717,23 +1717,35 @@ whether any batch arrived, not off whether a header was printed.
 ### Predicates
 
 Post-parse row filtering: a row is fully parsed, then dropped if it fails.
-Predicates are untyped — the compared value is a plain string, and
+`Eq`/`Ne` are untyped — the compared value is a plain string — and
 `IsNull`/`IsNotNull` are the two that exist because before typed columns there
-was no way to ask for a NULL at all. Evaluating predicates *during* the scan is
-future work; it inverts control, not dependency (see `layering.md`).
+was no way to ask for a NULL at all. The four ordering operators are typed;
+they have their own subsection below. Evaluating predicates *during* the scan
+is future work; it inverts control, not dependency (see `layering.md`).
 
 **A filter is a conjunction**: `QueryOptions::filters` is a list of
 single-column terms, and a row survives only if every one of them matches.
 The empty list is the default and yields every row, so "no filter" is the
 degenerate conjunction rather than a case of its own — nothing on the row
 path branches on whether a filter exists. Terms are resolved to column
-indices once per block, in term order, and an index vector parallel to the
-term list travels in the block's `Active` state; a term naming a column the
+indices once per block, in term order, and a `ResolvedTerm` vector parallel to
+the term list travels in the block's `Active` state; a term naming a column the
 block does not carry is `Error::UnknownPredicateColumn`, raised for the first
 such term. Evaluation short-circuits at the first term that fails, so the
 ordinary case costs one walk of the row; each term does walk it separately,
 which is only a real cost for a conjunction whose leading terms almost always
 pass.
+
+**`stream::resolve_terms` is the single site where a predicate meets a block.**
+Every refusal a term can earn — the unknown column, and the ordering
+refusals below — is raised there, against that block's own **unprojected**
+`ResolvedSchema`, before a row of the block flows. It takes the whole
+`ResolvedSchema` rather than its `schema` because the ordering refusal reads
+`columns` and `plans` too, and those three are positional and parallel:
+splitting them across two lookups is how they would come to disagree. A table
+whose blocks carry different schemas can therefore refuse at the third block
+after rows from the first two were emitted; that is true of
+`UnknownPredicateColumn` as well and adds no new shape of failure.
 
 **Nothing folds two terms together.** Two terms on one column are evaluated
 independently, so a contradictory pair is a query with no rows rather than an
@@ -1764,13 +1776,107 @@ supplying a non-canonical literal, where PostgreSQL matches and this comparison
 does not. It also costs nothing — no per-row render, no new code — which is why
 a nested column needs no special case here.
 
-*Rejected:* type-aware comparison at this layer. It needs the *input*-side
-grammar, which I20's scope limit flags as considerably more permissive than the
-`*_out` inverse the decoders commit to, plus canonicalization for the three
-discrete built-in ranges. That is one-time work belonging with typed
-predicates, and it is filed — with the measured PostgreSQL and DataFusion
-semantics — in
+*Rejected:* type-aware comparison of a **nested** column. It needs the
+*input*-side grammar, which I20's scope limit flags as considerably more
+permissive than the `*_out` inverse the decoders commit to, plus
+canonicalization for the three discrete built-in ranges. That is one-time work
+belonging with typed predicates, and it is filed — with the measured
+PostgreSQL and DataFusion semantics — in
 [`roadmap-P11-typed-predicates-inbox.md`](roadmap-P11-typed-predicates-inbox.md).
+
+### Ordering operators compare typed, and the register says where that differs
+
+`<`, `<=`, `>` and `>=` do **not** compare text. Each side is decoded with the
+column's own decoder — the field per row, the filter's literal once, when the
+block's schema resolves — and the decoded values are compared. That is the
+whole reason they exist: `9 > 10` is false as text and true as an `integer`,
+and a text comparison would be actively misleading on every numeric and
+temporal column.
+
+**They are available on a column that resolved `Mapped` with a
+`NestedPlan::Scalar` plan, and refused on any other**, with the reason named:
+a column whose type did not resolve has no order of its own (which is also
+what makes `SchemaMode::Strings` refuse every ordering operator — it resolves
+nothing, so the rule needs no case for it), and a nested column is refused
+because an order over an `array_out`/`record_out` literal is not a thing this
+layer defines. A nested column keeps `Eq`/`Ne`, for the reason the paragraph
+above gives.
+
+**Two faults are held apart, and both are named before the rows they would
+otherwise corrupt.** A *literal* that is not a value of the column's type is
+`Error::PredicateValueDecode`, raised once when the block resolves rather than
+per row — which is also what makes decoding it once, rather than per row,
+sound. A *field* that is not a value of its mapped type is
+`Error::FieldDecode`, worded exactly as the typed build path words it, because
+it is the same fault about the same value; projecting the column away does not
+escape it, since the filter named the column.
+
+*Rejected: rounding a literal finer than the column's scale.* A
+`numeric(10,2)` column compared against `1.005` is refused rather than
+silently rounded, because the literal is decoded with the column's own
+decoder and that decoder does not drop non-zero digits. Rounding would need
+PostgreSQL's half-even rule to be a comparison the user could trust, and a
+refusal that names the value costs the user one edit.
+
+*Rejected: excluding a row whose field does not decode.* It is the same
+"unknown collapses to false" the NULL rule makes, and it would silently drop
+exactly the rows a damaged file is made of. A NULL is a value the file
+*states*; an undecodable field is the file contradicting its own DDL, which
+everywhere else in this system is an error.
+
+**The register** is which Arrow types such a comparison lands on, and whether
+it means what PostgreSQL means. `predicate.rs`'s `ordering_register` is the
+authority: an **exhaustive `match` over `DataType` with no wildcard arm**, so
+a type this build starts producing cannot silently inherit a classification —
+the moment the register would otherwise go stale is a routine type-mapping
+change in `pgtype.rs`, and it fires there as a compile error rather than as a
+test someone might not run. The table below is the human-readable rendering.
+
+| Arrow type | Reached by | Agrees with PostgreSQL | What would close the gap |
+|---|---|---|---|
+| `Boolean` | `boolean` | yes — `false < true` (I33) | — |
+| `Int16`/`Int32`/`Int64` | `smallint`, `integer`, `bigint` | yes | — |
+| `Float32`/`Float64` | `real`, `double precision` | yes, **given the NaN rule** — `NaN` is above every value including infinity and equals itself (I33), which is neither IEEE's answer nor Rust's | — |
+| `Decimal128`/`Decimal256` | `numeric(p,s)`, `p ≤ 76` | yes — both sides carry the column's own scale, because the literal is decoded with the column's own decoder | — |
+| `Date32` | `date` | yes | — |
+| `Time64(µs)` | `time without time zone` | yes | — |
+| `Timestamp(µs[, tz])` | `timestamp`, `timestamptz` | yes — compared as the stored instant | — |
+| `FixedSizeBinary16` | `uuid` | yes — `uuid_internal_cmp` is `memcmp` over 16 bytes (I33) | — |
+| `Binary` | `bytea` | yes — `byteacmp` is `memcmp`, then length (I33) | — |
+| `Dictionary(Int32, Utf8)` | enum types | **no** — PostgreSQL orders an enum by *declaration* order (I33); we compare the label text, so an enum declared `('low','medium','high')` orders alphabetically instead | the declaration order, which the dump carries verbatim in `CREATE TYPE … AS ENUM (…)`. Purely additive |
+| `Utf8View` | `text`, `varchar`, `char`, `name` | **no** — PostgreSQL orders text by collation, and a plain dump records none (I32); we compare bytewise, which equals PostgreSQL only under `C`/`POSIX` | a collation the file does not carry |
+| `Utf8View` | **bare `numeric`**, and `numeric` beyond 76 digits | **no, and this is the sharp one** — an unconstrained `numeric` column has no Arrow decimal representation, so it is `Mapped` to `Utf8View` and orders lexicographically: `"9" < "10"` is false | an arbitrary-precision decimal comparison |
+| `Utf8View` | `interval`, `time with time zone`, `json`/`jsonb`, `inet`/`cidr`/`macaddr`/`macaddr8`, and any domain over them | **no** — each has a server-side operator of its own that a bytewise comparison does not implement | one decoder per type, each its own piece of work |
+
+The last row is why the classification is keyed by the Arrow type and the
+*message* by the declared one: four unrelated situations reach `Utf8View`, and
+a single sentence about "text" would be wrong for three of them.
+
+**A divergent comparison is announced by the CLI, once, on stderr**, after the
+schema resolves, naming the column and the divergence — including for a query
+that selected no rows, which is the case a user most wants explained. The
+library's side of it is `TableStream::ordering_notes`, a **third channel** and
+deliberately not a widening of either existing one: `DumpIndex.diagnostics` is
+the L1 file-level channel and `ResolvedSchema.notes` is the L2 per-column one,
+while this signal is per-column *and* conditional on a predicate — L4 — so
+writing it into either is the layering violation `layering.md` forbids. What
+an *embedder* should be handed instead is filed in
+[`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md),
+whose sink is the designated unification point for diagnostic channels.
+
+*Rejected: a test asserting the Markdown table above and `ordering_register`
+agree row for row.* Its own failure mode is bit-rot in the doc parser, and the
+table is small enough to be re-read whenever the register changes.
+
+**On the command line the operators are spelled as they read**, and a term is
+split at the **earliest** position any operator matches, longest spelling
+first. Both halves matter: longest-first is what keeps `>=` from being read as
+`>` with a stray `=`, exactly as `!=` has always beaten `=`; earliest-position
+is what keeps a *value* containing an operator byte from stealing the split, so
+`name=alpha>x` is `name` equal to `alpha>x`. Trailing whitespace comes off the
+column name, as the `IS NULL` forms already do; the value keeps its own leading
+whitespace, since a value may legitimately begin with a space and nothing else
+could restore it.
 
 ## The cache
 

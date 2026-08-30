@@ -62,7 +62,7 @@ use std::time::{Duration, Instant};
 
 use arrow::array::RecordBatch;
 use arrow::buffer::Buffer;
-use arrow::datatypes::{Schema, SchemaRef};
+use arrow::datatypes::Schema;
 use async_stream::try_stream;
 use futures::Stream;
 
@@ -79,22 +79,26 @@ use crate::index::{
 use crate::io::ByteRangeSource;
 use crate::map::{Builder, Span, SpanBody, attach_text};
 use crate::preamble::{DumpMetadata, dump_metadata_from_spans};
-use crate::predicate::{Predicate, PredicateOp, matches_all};
+use crate::predicate::{
+    OrderingNote, Predicate, PredicateOp, ResolvedTerm, matches_all, resolve_term,
+};
 use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
 use crate::scan::{CopyScanner, Event, ScanOptions};
 use crate::{Error, Result};
 
 /// State for a `COPY` block whose table matches the query: the batcher
-/// accumulating its rows, one column index per [`Predicate`] term resolved
-/// against this block's own schema (schemas can differ block-to-block, e.g.
-/// a headerless block's placeholder names), and the database this block is
-/// attributed to (`docs/design/architecture.md`, "One target per query").
+/// accumulating its rows, one [`ResolvedTerm`] per [`Predicate`] term
+/// resolved against this block's own schema (schemas can differ
+/// block-to-block, e.g. a headerless block's placeholder names), and the
+/// database this block is attributed to
+/// (`docs/design/architecture.md`, "One target per query").
 ///
-/// The indices are parallel to `QueryOptions::filters` and are into the
-/// block's **unprojected** column list, because that is what the raw row's
-/// fields are numbered by — a term may name a column the projection does
-/// not.
-type Active = (u64, CopyHeader, RowBatcher, Vec<usize>, Option<String>);
+/// The terms are parallel to `QueryOptions::filters`. Each carries the field
+/// index it reads — into the block's **unprojected** column list, because
+/// that is what the raw row's fields are numbered by, and a term may name a
+/// column the projection does not — plus, for an ordering operator, the
+/// typed comparison it makes.
+type Active = (u64, CopyHeader, RowBatcher, Vec<ResolvedTerm>, Option<String>);
 
 /// `database`, rendered as `database.schema.table`, or just `schema.table`
 /// when the file had no `\connect` at all — the form `Error::AmbiguousTable`
@@ -106,27 +110,52 @@ fn render_candidate((database, qualified_name): &(Option<String>, String)) -> St
     }
 }
 
-/// Resolve every filter term's column name against `schema`, once per block,
-/// returning one index per term in term order. An empty conjunction resolves
-/// to an empty vector, which is what makes "no filter" need no case of its
-/// own on the row path.
+/// Resolve every filter term against `resolved` — the block's own
+/// **unprojected** schema — once per block, returning one [`ResolvedTerm`]
+/// per term in term order. An empty conjunction resolves to an empty vector,
+/// which is what makes "no filter" need no case of its own on the row path.
 ///
-/// A term naming a column this block does not carry is
-/// `Error::UnknownPredicateColumn`, raised for the first such term in the
-/// order the caller gave them.
-fn resolve_predicate_indices(
+/// **This is where a predicate is validated against a block**, and the only
+/// place: a term naming a column this block does not carry is
+/// `Error::UnknownPredicateColumn`, and an ordering operator on a column that
+/// is not `Mapped` with a `NestedPlan::Scalar` plan is
+/// `Error::UnorderedPredicateColumn`. Both are raised for the first offending
+/// term in the order the caller gave them, before a row of this block flows.
+/// A table whose blocks carry different schemas can therefore refuse at the
+/// third block after rows from the first two were emitted; that is already
+/// true of `UnknownPredicateColumn` and adds no new shape of failure.
+///
+/// It takes the whole [`ResolvedSchema`] rather than its `schema` because the
+/// ordering refusal reads `columns` and `plans` as well — the three are
+/// positional and parallel, and splitting them across two lookups is how they
+/// would come to disagree.
+fn resolve_terms(
     filters: &[Predicate],
-    schema: &SchemaRef,
+    resolved: &ResolvedSchema,
     header_offset: u64,
-) -> Result<Vec<usize>> {
+) -> Result<Vec<ResolvedTerm>> {
     filters
         .iter()
         .map(|predicate| {
-            schema.fields().iter().position(|f| f.name() == &predicate.column).ok_or_else(|| {
-                Error::UnknownPredicateColumn { header_offset, column: predicate.column.clone() }
-            })
+            let index = resolved
+                .schema
+                .fields()
+                .iter()
+                .position(|f| f.name() == &predicate.column)
+                .ok_or_else(|| Error::UnknownPredicateColumn {
+                    header_offset,
+                    column: predicate.column.clone(),
+                })?;
+            resolve_term(predicate, index, resolved, header_offset)
         })
         .collect()
+}
+
+/// The divergence notes for one block's resolved terms, in term order — what
+/// `TableStream::ordering_notes` hands a caller. Derived rather than stored
+/// beside the terms, so the two cannot disagree.
+fn ordering_notes(terms: &[ResolvedTerm]) -> Vec<OrderingNote> {
+    terms.iter().filter_map(ResolvedTerm::ordering_note).collect()
 }
 
 /// Cut `resolved` down to `projection`, and say which of the block's fields
@@ -215,6 +244,10 @@ fn query_fingerprint(table: &str, options: &QueryOptions) -> u64 {
             PredicateOp::Ne => 1u8,
             PredicateOp::IsNull => 2u8,
             PredicateOp::IsNotNull => 3u8,
+            PredicateOp::Lt => 4u8,
+            PredicateOp::Le => 5u8,
+            PredicateOp::Gt => 6u8,
+            PredicateOp::Ge => 7u8,
         }
         .hash(&mut hasher);
         filter.value.hash(&mut hasher);
@@ -756,6 +789,7 @@ pub struct TableStream<'a> {
     inner: Pin<Box<dyn Stream<Item = Result<RecordBatch>> + Send + 'a>>,
     position: Arc<Mutex<ResumeToken>>,
     resolved_schema: Arc<Mutex<ResolvedSchema>>,
+    ordering_notes: Arc<Mutex<Vec<OrderingNote>>>,
 }
 
 impl<'a> Stream for TableStream<'a> {
@@ -786,6 +820,27 @@ impl<'a> TableStream<'a> {
     /// has been drained.
     pub fn resolved_schema(&self) -> ResolvedSchema {
         self.resolved_schema.lock().unwrap().clone()
+    }
+
+    /// The ordering terms of this query whose comparison does not order the
+    /// way PostgreSQL's own operator for that column's type does — one
+    /// [`OrderingNote`] per such term, in term order, empty until this
+    /// query's matching `COPY` block has resolved (and forever, for a table
+    /// that never appears).
+    ///
+    /// A **third channel, and deliberately not a fourth thing to unify**:
+    /// `DumpIndex.diagnostics` is L1 and `ResolvedSchema.notes` is L2, while
+    /// this signal is per-column *and* conditional on a predicate — L4 — so
+    /// writing it into either inverts the layering
+    /// (`docs/design/layering.md`). `pgdq query` announces these once on
+    /// stderr; what an embedder should be handed instead is filed in
+    /// `docs/design/roadmap-P6-embeddable-engine-inbox.md`.
+    ///
+    /// Like [`Self::resolved_schema`], it describes the **last** block whose
+    /// schema resolved: a table whose blocks carry different schemas can
+    /// diverge on one block and not on another.
+    pub fn ordering_notes(&self) -> Vec<OrderingNote> {
+        self.ordering_notes.lock().unwrap().clone()
     }
 }
 
@@ -861,8 +916,7 @@ fn resume_state(
                 query_options.schema_mode,
                 census,
             )?;
-            let predicate_indices =
-                resolve_predicate_indices(&query_options.filters, &full.schema, ic.header_offset)?;
+            let terms = resolve_terms(&query_options.filters, &full, ic.header_offset)?;
             let (r, field_targets) =
                 project(&full, query_options.projection.as_deref(), ic.header_offset)?;
             let batcher = RowBatcher::new(
@@ -876,7 +930,7 @@ fn resume_state(
                 ic.header_offset,
                 ic.header.clone(),
                 batcher,
-                predicate_indices,
+                terms,
                 ic.database.clone(),
             ))
         })
@@ -959,6 +1013,8 @@ where
     let position_for_stream = Arc::clone(&position);
     let resolved_schema = Arc::new(Mutex::new(ResolvedSchema::default()));
     let resolved_schema_for_stream = Arc::clone(&resolved_schema);
+    let ordering_notes_shared = Arc::new(Mutex::new(Vec::new()));
+    let ordering_notes_for_stream = Arc::clone(&ordering_notes_shared);
 
     let inner = try_stream! {
         // Both checks are on the *request*, so they fire before a byte is
@@ -1096,6 +1152,9 @@ where
                 if let Some(r) = resolved {
                     *resolved_schema_for_stream.lock().unwrap() = r;
                 }
+                if let Some((_, _, _, terms, _)) = &active {
+                    *ordering_notes_for_stream.lock().unwrap() = ordering_notes(terms);
+                }
                 (active, Some(scanner))
             }
             _ => (None, None),
@@ -1150,11 +1209,13 @@ where
                                 // term's index numbers the raw row's
                                 // fields, and a term may name a column the
                                 // projection dropped.
-                                let predicate_indices = resolve_predicate_indices(
+                                let terms = resolve_terms(
                                     &query_options.filters,
-                                    &full.schema,
+                                    &full,
                                     start.header_offset,
                                 )?;
+                                *ordering_notes_for_stream.lock().unwrap() =
+                                    ordering_notes(&terms);
                                 let (resolved, field_targets) = project(
                                     &full,
                                     query_options.projection.as_deref(),
@@ -1171,7 +1232,7 @@ where
                                     start.header_offset,
                                     start.header,
                                     batcher,
-                                    predicate_indices,
+                                    terms,
                                     block_database.clone(),
                                 ));
                             }
@@ -1188,11 +1249,10 @@ where
                                     query_options.schema_mode,
                                     &census,
                                 )?;
-                                let predicate_indices = resolve_predicate_indices(
-                                    &query_options.filters,
-                                    &full.schema,
-                                    header_offset,
-                                )?;
+                                let terms =
+                                    resolve_terms(&query_options.filters, &full, header_offset)?;
+                                *ordering_notes_for_stream.lock().unwrap() =
+                                    ordering_notes(&terms);
                                 let (resolved, field_targets) = project(
                                     &full,
                                     query_options.projection.as_deref(),
@@ -1205,21 +1265,15 @@ where
                                     field_targets,
                                 );
                                 *resolved_schema_for_stream.lock().unwrap() = resolved;
-                                active = Some((
-                                    header_offset,
-                                    header,
-                                    batcher,
-                                    predicate_indices,
-                                    block_database,
-                                ));
+                                active = Some((header_offset, header, batcher, terms, block_database));
                             }
-                            if let Some((header_offset, _, batcher, predicate_indices, _)) =
-                                active.as_mut()
-                            {
+                            if let Some((header_offset, _, batcher, terms, _)) = active.as_mut() {
                                 let keep = matches_all(
                                     &query_options.filters,
-                                    predicate_indices,
+                                    terms,
                                     row.raw,
+                                    batcher.table(),
+                                    row.offset,
                                 )?;
                                 if keep {
                                     batcher.push_row(
@@ -1286,7 +1340,12 @@ where
         }
     };
 
-    TableStream { inner: Box::pin(inner), position, resolved_schema }
+    TableStream {
+        inner: Box::pin(inner),
+        position,
+        resolved_schema,
+        ordering_notes: ordering_notes_shared,
+    }
 }
 
 /// Blocking [`Iterator`] wrapper over a [`TableStream`], for sync callers

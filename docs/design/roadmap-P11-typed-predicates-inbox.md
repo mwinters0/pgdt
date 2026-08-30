@@ -56,10 +56,10 @@ grilling deferred typed nested comparison (2026-08-29). Decision and rationale:
 
 ## The ordering register names the types whose comparison does not match the server
 
-**Fact.** P5 adds `<`, `<=`, `>`, `>=` on any column that resolved `Mapped`
+**Fact.** P5 added `<`, `<=`, `>`, `>=` on any column that resolved `Mapped`
 with a `Scalar` plan, and maintains a register of every Arrow type such a
 comparison can land on, stating whether it agrees with PostgreSQL and what
-would close the gap. Three rows do not agree, and each has a different remedy:
+would close the gap. Four rows do not agree, and each has a different remedy:
 
 - **`Utf8View` from `text`/`varchar`/`char`/`name`** — PostgreSQL orders by
   collation and a plain dump records none (I32). Bytewise equals the server
@@ -71,6 +71,11 @@ would close the gap. Three rows do not agree, and each has a different remedy:
   *declaration* order; label text orders alphabetically. The dump carries the
   declaration order verbatim in `CREATE TYPE … AS ENUM (…)`, so this is
   additive and needs no new evidence.
+- **`Utf8View` from every other text-held type** — `interval`,
+  `time with time zone`, `json`/`jsonb`, `inet`/`cidr`/`macaddr`/`macaddr8`,
+  and any domain over them. Each has a server-side operator of its own that a
+  bytewise comparison does not implement, and each needs its own decoder, so
+  this row is really a queue rather than a single item.
 
 **Why P11 cares.** This phase is where predicates are made to mean what
 PostgreSQL means, and the register is the worklist: it says which types are
@@ -80,8 +85,10 @@ being a scope boundary P11 has to state rather than discover. The maintainer's
 expectation is that this work proceeds **type by type**, which is what the
 register is shaped for.
 
-**Origin.** P5 grilling, 2026-08-29. The register itself lives in
-[`roadmap-P5-pushdown.md`](roadmap-P5-pushdown.md) until `P5.6` lands, then in
-[`architecture.md`](architecture.md), "Predicates". Evidence:
+**Origin.** P5 grilling, 2026-08-29; the fourth row was found when `P5.6`
+wrote the register into code, 2026-08-30. The register lives in
+[`architecture.md`](architecture.md), "Ordering operators compare typed", and
+is authoritative as `predicate.rs`'s `ordering_register` — an exhaustive
+`match` over `DataType`, so a new mapping cannot join it silently. Evidence:
 [`../status/history/2026-08-29.md`](../status/history/2026-08-29.md), and
-register entries I4 and I32.
+register entries I4, I32 and I33.

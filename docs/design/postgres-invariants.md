@@ -1768,8 +1768,8 @@ server from the dump alone: PostgreSQL orders `text` by collation, and under
 any non-`C` collation the answer differs from a bytewise comparison
 (`'a' < 'B'` is true in `en_US.UTF-8`, false bytewise). pgdq therefore compares
 bytewise and **registers the divergence** rather than claiming agreement — see
-`roadmap-P5-pushdown.md`'s ordering register, and after that phase lands
-`architecture.md`'s "Predicates".
+[`architecture.md`](architecture.md)'s "Predicates", which holds the ordering
+register.
 
 **Relied on by.** The ordering register's `Utf8View` rows.
 
@@ -1779,4 +1779,67 @@ bytewise and **registers the divergence** rather than claiming agreement — see
 grep -n 'outputCreateDB' /mnt/wd12t/upstream/postgres/release-v<N>/src/bin/pg_dump/pg_dump.c
 pg_dump --no-owner mydb | grep -ci 'lc_collate\|locale'   # expect 0
 pg_dump --create --no-owner mydb | grep -ci 'locale'      # expect > 0
+```
+
+---
+
+## I33 — The scalar comparison operators the ordering register claims agreement with are byte- or value-order, and NaN is the largest float
+
+**Claim.** For the types the ordering register marks *Agrees*, PostgreSQL's
+own `<`/`<=`/`>`/`>=` are exactly the order pgdq computes over the decoded
+value:
+
+- **`float4`/`float8`** — `NaN` sorts **above** every other value, infinity
+  included, and `NaN = NaN` is true. This is not IEEE and not Rust's
+  `partial_cmp`, which answers `None` for either.
+- **`uuid`** — `memcmp` over the 16 bytes, with no field-wise or
+  version-aware reordering.
+- **`bytea`** — `memcmp` over the shorter length, then the shorter value
+  first: `[u8]`'s own lexicographic order.
+- **`boolean`** — C's `>` on the two values, so `false < true`.
+- **`numeric`** — compared by value, which for two values already carried to
+  one scale is the order of their unscaled integers.
+- **enum** — ordered by `pg_enum.enumsortorder`, which `AddEnumLabel`
+  assigns from **declaration order**, never by the label text.
+
+**Proof.** `src/include/utils/float.h`:
+
+```c
+float8_gt(const float8 val1, const float8 val2)
+{
+	return !isnan(val2) && (isnan(val1) || val1 > val2);
+}
+```
+
+`float8_cmp_internal` is `float8_gt`/`float8_lt` and nothing else.
+`uuid_internal_cmp` (`src/backend/utils/adt/uuid.c`) is a bare
+`memcmp(arg1->data, arg2->data, UUID_LEN)`. `byteacmp`
+(`src/backend/utils/adt/varlena.c`) is `memcmp` over `Min(len1, len2)` then a
+length tiebreak. `boolgt` (`src/backend/utils/adt/bool.c`) is `arg1 > arg2`.
+`enum_cmp_internal` (`src/backend/utils/adt/enum.c`) compares OIDs on the fast
+path and `enumsortorder` otherwise, and `pg_enum.c` fills `enumsortorder` with
+`elemno + 1` in declaration order.
+
+**Scope limit.** *Agreement of the operator*, not of the value: a type whose
+decoder loses information diverges regardless, which is why bare `numeric`
+(held as text) and `text` (I32, collation) are registered as divergent rather
+than covered here. Says nothing about the nested types, whose comparison stays
+a string comparison.
+
+**Verified against.** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 and
+master — all seven carry the `float8_gt` and `uuid_internal_cmp` bodies quoted
+above verbatim.
+
+**Relied on by.** The ordering register's *Agrees* and enum rows —
+[`architecture.md`](architecture.md), "Predicates"; `predicate.rs`'s
+`ordering_register` and `pg_float_cmp`.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n -A3 'float8_gt(const float8' src/include/utils/float.h
+grep -n 'memcmp(arg1->data, arg2->data, UUID_LEN)' src/backend/utils/adt/uuid.c
+awk '/^byteacmp/,/^}/' src/backend/utils/adt/varlena.c
+grep -n 'Anum_pg_enum_enumsortorder' src/backend/catalog/pg_enum.c
 ```

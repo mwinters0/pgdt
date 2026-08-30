@@ -30,6 +30,19 @@ pub enum Error {
     CacheModeMismatch(&'static str),
     #[error("predicate column `{column}` not found in COPY block at offset {header_offset}")]
     UnknownPredicateColumn { header_offset: u64, column: String },
+    #[error(
+        "`{op}` on column `{column}` in the COPY block at offset {header_offset}: {reason}; use `=` or `!=` for a text comparison"
+    )]
+    UnorderedPredicateColumn {
+        header_offset: u64,
+        column: String,
+        op: &'static str,
+        reason: &'static str,
+    },
+    #[error(
+        "filter value `{value}` for `{column} {op} ...` does not parse as the column's declared type `{declared_type}`"
+    )]
+    PredicateValueDecode { column: String, op: &'static str, value: String, declared_type: String },
     #[error("projected column `{column}` not found in COPY block at offset {header_offset}")]
     UnknownProjectionColumn { header_offset: u64, column: String },
     #[error("projection names column `{column}` more than once")]

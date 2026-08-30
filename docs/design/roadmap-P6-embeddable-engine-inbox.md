@@ -233,29 +233,32 @@ that would rather see a stream end.
 
 ## An embedder gets no signal when an ordering comparison diverges from PostgreSQL
 
-**Fact.** P5 adds ordering operators that compare typed, and maintains a
-register of every Arrow type such a comparison can land on. Three rows do not
+**Fact.** P5 added ordering operators that compare typed, and maintains a
+register of every Arrow type such a comparison can land on. Four rows do not
 match the server: `Utf8View` from a text type (PostgreSQL orders by collation,
 which a plain dump does not record — I32), `Utf8View` from a bare `numeric`
-(orders lexicographically), and `Dictionary` from an enum (PostgreSQL orders by
-declaration order). P5 announces these **only in the CLI**, once on stderr
-after the schema resolves.
+(orders lexicographically), `Utf8View` from every other text-held type
+(`interval`, `time with time zone`, `json`/`jsonb`, the network types — each
+has a server operator of its own), and `Dictionary` from an enum (PostgreSQL
+orders by declaration order).
 
-It stops there deliberately. The signal is per-column *and* conditional on a
-predicate, which makes it L4, while `DumpIndex.diagnostics` is L1 and
-`ResolvedSchema.notes` is L2 — so writing it into either inverts the layering,
-and inventing a third channel would hand this phase's sink one more thing to
-unify before it has decided what it unifies.
+**`TableStream::ordering_notes()` is what an embedder can read**, and `pgdq
+query` prints each of them once on stderr. It is a **third channel** rather
+than a widening of either existing one, and deliberately: the signal is
+per-column *and* conditional on a predicate, which makes it L4, while
+`DumpIndex.diagnostics` is L1 and `ResolvedSchema.notes` is L2 — so writing it
+into either inverts the layering.
 
-**Why P6 cares.** It is the second entry in this inbox describing a case where
-the library returns a plausible answer with no programmatic signal — the first
-being the undetectable ambiguous table — and both resolve the same way or not
-at all. A sink design that carries the two existing channels and has no place
-for an L4, query-conditional note leaves this one in the CLI permanently, which
-means an embedded caller silently gets the divergence. Deciding that
-deliberately is fine; discovering it after the sink ships is not.
+**Why P6 cares.** The sink now has **three** channels to reconcile, not two,
+and the third is the one whose shape is least settled: a caller has to know to
+call `ordering_notes()` and to call it after the schema resolves, which is
+exactly the kind of "remember to ask" the sink exists to replace. A sink design
+that carries the two older channels and has no place for an L4,
+query-conditional note leaves this one as a method an embedder must poll.
+Deciding that deliberately is fine; discovering it after the sink ships is not.
 
-**Origin.** P5 grilling, 2026-08-29. Register:
-[`roadmap-P5-pushdown.md`](roadmap-P5-pushdown.md); evidence:
+**Origin.** P5 grilling, 2026-08-29; landed and widened by `P5.6`, 2026-08-30.
+Register: [`architecture.md`](architecture.md), "Ordering operators compare
+typed"; evidence:
 [`../status/history/2026-08-29.md`](../status/history/2026-08-29.md) and
-register entry I32.
+register entries I32 and I33.

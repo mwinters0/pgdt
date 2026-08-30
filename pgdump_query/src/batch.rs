@@ -729,6 +729,13 @@ impl RowBatcher {
         self.field_targets.len()
     }
 
+    /// The block's qualified table name — context for the `Error::FieldDecode`
+    /// an ordering predicate raises on a value that is not of its mapped
+    /// type, which is worded exactly as this batcher words its own.
+    pub(crate) fn table(&self) -> &str {
+        &self.table
+    }
+
     /// Whether any of the three flush triggers has fired. All three are
     /// evaluated after a row has been appended, so each may be overshot by at
     /// most one row. The span trigger is additionally incapable of firing on
