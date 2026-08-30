@@ -201,7 +201,8 @@ columns and one composite. The generator needs no change.
 
 Every attribution the cross-file apparatus makes is a subtraction between two
 adjacent rows of this one table, over identical rows of an identical file. The
-~0.5 µs/row cross-file floor does not enter, and neither does the
+cross-file subtraction floor `cross-file-floor` measures does not enter, and
+neither does the
 census's file-dependent untyped baseline. That is what makes it a supersession
 rather than one more figure.
 
@@ -210,19 +211,19 @@ arithmetic: a zero-column projection is `COUNT(*)`, and it measures the
 irreducible cost of replay once no field is decoded at all — the floor every
 other row is read against.
 
-**`composite-isolated` is not published by `M25`.** It stays in
+**`composite-isolated` is not published by the doc's sweep.** It stays in
 `measure.UNTAKEN` until this phase supersedes it. Publishing it first would
 mean writing its section and marker and deleting both a few slices later, when
 a strictly better instrument — the same rows in the same file, with no second
-file and no cross-file subtraction — exists. `M25` keeps the part that genuinely
-needs a quiet machine: two sweeps, the re-stamp, and `session-drift`.
+file and no cross-file subtraction — exists. That sweep keeps the part that genuinely
+needs a quiet machine: the re-stamp and `session-drift`.
 
 *Rejected: folding projection widths into `nested-end-to-end`.* A figure is
 exactly one whole table, and adding rows to a published one would silently
 restate a number under a heading that does not claim it.
 
 `--figure <id>` re-takes one table on its own, so this figure does not wait on
-`M25`'s sweep pair. It cannot be taken before the code lands, so `M25` runs
+a sweep pair. It cannot be taken before the code lands, so the re-stamp runs
 first regardless, and the fold-in re-reads whatever `--check` names as the
 figure's consumers.
 
@@ -233,8 +234,8 @@ and the typed builder append for a column nobody asked for; it does not stop at
 the last needed field.
 
 The walk is `memchr` over the row and is the cheap half. The expensive half is
-`decode_field` plus a builder append — what `nested-end-to-end`'s 13.0 µs/row
-is made of — and that is entirely what a projection removes. Stopping early
+`decode_field` plus a builder append — what the per-row gap `nested-end-to-end`
+reports is made of — and that is entirely what a projection removes. Stopping early
 would buy the cheap half at the cost of the system's **only** field-count
 check: `batch::RowBatcher::push_row` is the sole site that raises
 `Error::ColumnCountMismatch`, and the mapping pass, which does walk every field

@@ -32,31 +32,19 @@ and nothing of it has landed; its checklist is below the table.
 **Figures.** Every figure in
 [`../design/measurements.md`](../design/measurements.md) comes from the
 `4c2c3e7` sweep of 2026-08-30, folded in whole, each table carrying an
-apparatus line. `--check` reconciles twelve markers against twelve figures, and
-`measure.ACKNOWLEDGED` is empty: the new stamp spent both entries the previous
-one carried, and a spent acknowledgement is deleted rather than kept.
-**`session-drift` has been re-taken** — derived across that sweep and a second
-one two minutes later on the same commit, which is the pair `--drift` reads.
-It reads stale again until the fold-in commit is acknowledged, because that
-commit edits `scripts/measure.py`, which the figure declares
-([`history/2026-08-30.md`](history/2026-08-30.md)).
-
-**One published table was taken under a witnessed CPU episode.** `map-only`'s
-three readings come from a window at ≤12% machine-busy against ≤5% everywhere
-else in both sweeps — under the armed gate, so the harness published them, and
-the table's own apparatus line says so. They are 4–7% above what the quieter
-sweep read and their reps spread 7–11%. The sizes the figure exists for are
-unaffected; the third decimal is not defensible.
+apparatus line. `--check` reconciles twelve markers against twelve figures.
+`session-drift` is derived across that sweep and a second one taken two minutes
+later on the same commit, which is the pair `--drift` reads.
 
 **One instrument is built and deliberately unrun, and it will not be
-published.** `M23`'s `composite-isolated` isolates the composite column's
-decode cost by declaring one column two ways over byte-identical rows, which
-removes the normalization that gives the cross-file subtraction its ~0.5 µs/row
-floor. It is registered under `measure.UNTAKEN` — a sweep does not take it and
-the doc carries no table for it — so the standing figure keeps reading that
-cost as a bound. **P5 supersedes it**: with column projection the same
-isolation is a subtraction between two widths of one file, needing no second
-file and no cross-file floor, so `P5.7` deletes it
+published.** `composite-isolated` isolates the composite column's decode cost
+by declaring one column two ways over byte-identical rows, which removes the
+normalization that gives the cross-file subtraction its floor. It is registered
+under `measure.UNTAKEN` — a sweep does not take it and the doc carries no table
+for it — so the standing figure keeps reading that cost as a bound. **P5
+supersedes it**: with column projection the same isolation is a subtraction
+between two widths of one file, needing no second file and no cross-file floor,
+so `P5.7` deletes it
 ([`../design/roadmap-P5-pushdown.md`](../design/roadmap-P5-pushdown.md)). Until
 then the cost stays a bound, as it has been all along.
 
@@ -209,30 +197,7 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **The published sweep is the one with the flat floor, not the one with the
-  quiet counters.** `M25` ran two sweeps and they fail different tests. Sweep 1
-  (`runs/measure-20260830T025850`) matches the standing warm `dd` floor to
-  +0.6% on the control file and −0.6% on the arrays one, but its last two
-  tables ran at ≤12% and ≤9% machine-busy and its `map-only` readings are 4–7%
-  high. Sweep 2 (`runs/measure-20260830T032507`) never exceeded 4.7%
-  machine-busy and its reps are tight everywhere, but its warm `control` floor
-  read 0.294 s against the doc's 0.309 — a 5.5% move, which the standing gate
-  calls unpublishable. The gate was applied as written, so sweep 1 is what the
-  doc now carries. **What argues the other way**: the gate exists to catch
-  bandwidth contention hiding from the counters, and contention makes a floor
-  *slower*; sweep 2's is faster, in the direction contention cannot produce,
-  and 5.5% is inside the drift envelope that figure measures — its two-hour
-  pair's warm readings spanned 2.2–8.5%, and the two sweeps behind the previous
-  stamp differed by 4.3% on that same floor with both published. Reconsidering means folding sweep 2's `tables.md` instead;
-  `raw.json` for both is kept, so it costs no measuring.
-
-- **A live phase spec quotes a figure and is deliberately not declared as its
-  consumer.** `roadmap-P5-pushdown.md` cites `nested-end-to-end`'s per-row
-  number, which this sweep moved 13.0 → 13.1 µs/row. The spec was left
-  untouched, because a spec is edited only when a *decision* changes, and
-  `nested-end-to-end`'s `quoted_by` still does not name it — declaring it would
-  oblige every future sweep to edit a spec. So the two rules point opposite
-  ways and the figure register is silently incomplete. Reconsidering means
-  either adding open specs to `quoted_by` and accepting that a fold-in edits
-  them, or rewriting such citations to name the figure without repeating its
-  number.
+*Nothing is open.* The two entries the 2026-08-30 sweep pair raised are closed:
+the floor check is now stated directionally and inside a tolerance, and the one
+open spec that repeated a figure's number no longer does
+([`history/2026-08-30.md`](history/2026-08-30.md)).

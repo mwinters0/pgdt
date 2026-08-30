@@ -18,7 +18,7 @@ All figures are on the hardware `CLAUDE.local.md` describes. Synthetic inputs
 are regenerable with `--seed 42` and are **never committed** — they measure
 throughput, not correctness, which stays entirely fixture-based.
 
-Ten standing rules for reading anything below:
+Eleven standing rules for reading anything below:
 
 - **Every figure is a ratio, never a disk throughput.** Page-cache state
   dominates. A number taken warm on a freshly generated file can be twice what
@@ -102,6 +102,21 @@ Ten standing rules for reading anything below:
   "The cross-file subtraction bottoms out"), and no number of reps moves it.
   Reasoning:
   [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md).
+- **A move smaller than the apparatus resolves is not a finding.** The floor is
+  per regime, and each number below is read off "What a session's own drift
+  costs" rather than asserted: a **warm absolute compared across sessions**
+  resolves to no better than **~8%**, a **cold device-bound one** to **~0.5%**,
+  and a **cross-file per-row difference** to **~0.5 µs/row**. A move inside its
+  regime's floor is apparatus. Write it up as *reproduces*, never as a change —
+  in this doc, in a history entry, or in an argument about which of two sweeps
+  to publish; narrating one manufactures a finding that the next sweep silently
+  reverses. Two consequences: a warm table's third decimal carries no
+  information across sweeps, and the way to resolve something finer is a
+  difference taken **inside** one sweep, not more reps. These three numbers are
+  read off "What a session's own drift costs" below and off "The cross-file
+  subtraction bottoms out"; a re-derivation of either re-reads this rule, which
+  is a cross-reference rather than a `quoted_by` edge because a figure never
+  declares the doc it lives in.
 - **Long runs are detached.** A koji-scale scan is roughly an hour; see
   `CLAUDE.md`, "Long-running processes", for why waiting on one is expensive
   and what to do instead.
@@ -271,6 +286,32 @@ judged on both. Evidence:
 that passes cannot mean a machine that was quiet".
 
 Neither is a normaliser.
+
+**The floor is read directionally, and inside a tolerance.** Contention makes a
+floor *slower* — that is the entire mechanism it witnesses. So a co-measured
+warm floor **above** the standing one by more than the warm resolution floor
+(~8%, the rule above) disqualifies the sweep; one **below** it does not, and
+neither does any move inside that band. Without both halves the check fires on
+drift it cannot tell from contention: a sweep pair taken two minutes apart on
+one commit read their `control` floor 5.5% apart in the *fast* direction, with
+no contention available to produce it, and that was briefly read as grounds to
+reject the quieter of the two.
+
+That case is also why the doc carries the sweep it does. Both sweeps of
+2026-08-30 pass the check as now written, and every table they disagree on
+disagrees by less than the apparatus resolves — so re-stamping from one to the
+other would move numbers without moving information. The published sweep is
+therefore the one already folded in, and its softest table says so in its own
+apparatus line ("Per-block cache saving is quadratic in block count").
+
+*Rejected:* a **symmetric** tolerance, disqualifying a floor move beyond the
+envelope in either direction. A faster floor does mean something about staging
+changed, and in that pair the `control` file's warm readings moved with its
+floor while the `arrays` file's did not — but that is exactly what a warm
+figure being a *ratio against its own co-measured floor* already handles, and
+it is reported where it belongs, in the drift figure's own section. Rejecting
+a sweep for it would discard eleven good tables over a property the tables
+themselves express.
 
 *Rejected:* **pinning the CPU governor as part of the apparatus.** The
 hypothesis was that an 8× scaling range (0.56–4.67 GHz) under `powersave` was
@@ -901,6 +942,10 @@ standard error: a cross-file per-row difference under ~0.5 µs/row is apparatus,
 and five sweeps agree on that floor (−0.17, −0.11, −0.05, +0.07 and +0.07
 µs/row) far better than any of them agrees on the leg it came from.
 
+**The resolution floor in this doc's standing rules is read off this table**,
+so a re-derivation here re-reads that rule — the marker mechanism addresses this
+section, not a rule at the top of the same file.
+
 Both sweeps are `runs/measure-*` directories; the table is computed from their
 `raw.json`, never transcribed.
 
@@ -1180,8 +1225,11 @@ Apparatus over every run in this table: CPU stall ≤0.53%, I/O stall ≤11.63%,
 against ≤5% for every other table in the sweep, under the armed gate's 15 but
 well above the sweep's own baseline; the `preamble-prepass` table beside it,
 taken in the same window, reads ≤9%. The reps here spread 7–11% because of it,
-and the second sweep read these three 4–7% lower. The sizes are what the figure
-is for and they are not in question; the third decimal is.
+and that spread is within-sweep, so it measures these reps rather than the
+apparatus. The sizes are what the figure is for and they are not in question;
+the third decimal is. The second sweep read these three 4–7% lower, which is
+*not* additional evidence — it is inside the warm resolution floor, and a move
+that size across sweeps says nothing either way.
 
 So at 4000 blocks the map is **all but a fraction of what a throttled `parse`
 costs** — 20.9 s of 21.0 s — and the cache is what is left. That remainder is

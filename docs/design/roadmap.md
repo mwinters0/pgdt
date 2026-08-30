@@ -611,19 +611,18 @@ until a keystone, which strikes it along with the phase docs and leaves a
 watermark saying which numbers are spent (`../process.md`, "The out-of-band
 ledger is struck too").
 
-**M1–M23 are struck**, and nothing at or below `M23` is reused. That is a
+**M1–M25 are struck**, and nothing at or below `M25` is reused. That is a
 high-water mark rather than a claim that every one of them landed: `M14` was
 absorbed into `M17` and `M1`/`M2` were folded into a phase slice, and their
 numbers are spent all the same. What each struck item did is filed by
 subject — `architecture.md` for a mechanism, `measurements.md` for an apparatus
 change, `layering.md` and `../process.md` for a rule — and why it was done is
 in the dated history entry it was filed under. The table below opens again at
-`M24`.
+`M26`.
 
 | # | Date | What changed | Why |
 |---|---|---|---|
-| `M24` | 2026-08-29 | `--stale` can be told that a commit touched a declared path without moving a reading: a per-commit acknowledgement carrying its own evidence, `--verify-additive` to compute that evidence by regenerating every published figure's inputs at two revisions and comparing bytes, and `--check` reporting entries the session stamp has moved past | [`measurements.md`](measurements.md), "A commit can be acknowledged, and then it stops marking a figure stale" |
-| `M25` | 2026-08-30 | Two full sweeps back to back re-stamp `measurements.md` at `4c2c3e7`: every table replaced from the quieter sweep, `session-drift` re-derived across the pair with `--drift`, and the acknowledgement register emptied of the entries the new stamp made spent | [`../status/history/2026-08-30.md`](../status/history/2026-08-30.md) |
+| `M26` | 2026-08-30 | `measurements.md` states a resolution floor per regime and reads the warm `dd` floor directionally inside it, so a move smaller than the apparatus resolves stops being argued about | [`measurements.md`](measurements.md), the eleventh standing rule and "The floor is read directionally" |
 
 **One live obligation outlived them.** An `INSERT`-run scan costs **14.4×** a
 `COPY` scan per byte, CPU-bound, which argues for a scanner-level `INSERT`
