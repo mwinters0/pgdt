@@ -269,6 +269,63 @@ discards the entire saving to raise an error about a column nobody selected.
 *Rejected: a strict mode that restores the checking.* The strict answer is
 already reachable by projecting the column back in.
 
+## PostgreSQL's special values are ordered, not undecodable
+
+**An ordering operator answers `infinity`, `-infinity` and `NaN` exactly,
+rather than raising `Error::FieldDecode` on them.** These are legal values of
+their declared types — `pg_dump` emits them from any healthy database, and the
+`types` fixture carries them — with a *total* order PostgreSQL defines and this
+project verified against a live server (I33): `-infinity` below every finite
+value, `infinity` above, `NaN` above `infinity` and equal to itself. The
+comparison has a defined answer that needs no decoder.
+
+What cannot hold them is **Arrow**, not the file: `Date32` has no infinity and
+`Decimal128` has no NaN. That is a representation gap in the output type, and
+reading it as the file contradicting its own DDL inverts where the limitation
+lives.
+
+So two populations are separated that a single `Error::FieldDecode` had
+merged:
+
+- **A legal special value.** A closed, enumerable set — PostgreSQL's own, not
+  an open-ended class. `order_key` returns a sentinel that sorts correctly
+  against every finite value, which is what the server itself stores.
+  `OrderKey::Int` is already an `i64` while `Date32` is an `i32`, so the
+  sentinels are free at the bottom and top of the range.
+- **Text that is genuinely malformed for the declared type** — `abc` in an
+  `integer`. Nothing can be concluded, and `Error::FieldDecode` stays.
+
+This also repairs the ordering register rather than qualifying it. `Date32` is
+recorded as `Agrees`, and that claim was false wherever the server answers and
+this project errored.
+
+*Rejected: excluding the row instead, as a NULL is excluded.* A NULL is the
+absence of a value and has no order; `infinity` has one. Excluding returns a
+silently wrong answer, which is worse than the error it replaces.
+
+*Rejected: keeping the error and documenting the escape.* The escape the error
+names does not exist for this case: `--schema-mode strings` resolves no column,
+so it refuses ordering outright. A user filtering on a `date` column holding
+`infinity` has no way through at all.
+
+*Rejected: waiting for the build path to represent these values.* Deciding an
+order needs strictly less than materializing a value, and holding the cheap
+correct answer hostage to the expensive one buys a symmetry nobody asked for.
+
+### The filter is exact where the batch still cannot hold the value
+
+**A filter may correctly select a row the output column cannot then
+represent**, so `--filter 'v_date < 2020-01-01'` selects `-infinity`'s row and
+building the `Date32` column for it still fails. That is accepted and is a
+property to state in `docs/manual/`, not a defect: the two paths have
+different powers. The same asymmetry is already deliberate one section above,
+where projecting a column away escapes its decode failure.
+
+Materializing these values is a separate, harder question — a null, a sentinel
+indistinguishable from a real date, or the error — and it belongs to whichever
+phase owns typed materialization. It is carried in `STATUS.md`'s known gaps
+until then.
+
 ## A third flush trigger bounds what a batch pins
 
 **A batch flushes when the source byte span it covers exceeds a cap**, beside
@@ -380,7 +437,13 @@ Ordered so each makes the next one's mistakes visible. Progress is tracked in
 | **P5.4** | The CLI for projection | `--column`, `--no-columns`. What the figure invokes |
 | **P5.5** | The filter conjunction | Repeatable `--filter`, terms ANDed |
 | **P5.6** | Typed ordering operators | `<`, `<=`, `>`, `>=`, and the refusal on a column that is not `Mapped` with a `Scalar` plan |
+| **P5.8** | Special values are ordered | `infinity`/`-infinity`/`NaN` answered exactly by `order_key`; `Error::FieldDecode` kept for genuinely malformed text. Repairs `Date32`'s `Agrees` claim |
 | **P5.7** | Take the figure and retire what it replaces | Fold it in; re-read the consumers `--check` names; delete `composite-isolated` from `measure.UNTAKEN` and re-scope `cross-file-floor` and `nested-end-to-end`, whose cross-file subtraction this figure supersedes; update the manual |
+
+**`P5.8` runs before `P5.7` despite its number**, which is allocation order,
+not position: it was discovered when `P5.6`'s register was reviewed. The sweep
+has to measure the finished library, and `P5.7`'s manual pass is what documents
+`P5.8`'s property.
 
 Two seams are deliberate. **P5.2 is not part of P5.3**: it repairs
 already-tested behaviour, and a review judging that at the same time as a new

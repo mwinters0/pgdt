@@ -94,6 +94,9 @@ The spec is
 - [x] **P5.6** Typed ordering operators — `<`, `<=`, `>`, `>=`, and the refusal
       on a column that is not `Mapped` with a `Scalar` plan. Notes:
       [`../design/roadmap-P5.6-ordering-operators-notes.md`](../design/roadmap-P5.6-ordering-operators-notes.md)
+- [ ] **P5.8** Special values are ordered — `infinity`/`-infinity`/`NaN`
+      answered exactly rather than raising `FieldDecode`, which is kept for
+      genuinely malformed text. Runs before `P5.7` so the sweep measures it.
 - [ ] **P5.7** Take the figure, fold it in, re-read its consumers, delete
       `composite-isolated` and re-scope the cross-file figures it supersedes,
       update the manual.
@@ -204,6 +207,21 @@ is safe, and where the mechanism or the fix is written down.
   operators compare typed"; per-type worklist:
   [`../design/roadmap-P11-typed-predicates-inbox.md`](../design/roadmap-P11-typed-predicates-inbox.md).
 
+- **A typed column cannot hold `infinity`, `-infinity` or `NaN`**, so selecting
+  one raises `Error::FieldDecode` and there is no typed way to read the value.
+  `Date32` has no infinity and `Decimal128` no NaN; the file is not at fault,
+  and `pg_dump` emits these from any healthy database. `--schema-mode strings`
+  returns the literal verbatim, and after `P5.8` an ordering *filter* answers
+  them exactly — so a filter may select a row the output column then cannot
+  represent, which is accepted and deliberate. What is unresolved is
+  materialization: the choices are a null, a sentinel indistinguishable from a
+  real date, or the error, and it belongs to whichever phase owns typed
+  materialization. Evidence:
+  [`../design/postgres-invariants.md`](../design/postgres-invariants.md), I33;
+  decision:
+  [`../design/roadmap-P5-pushdown.md`](../design/roadmap-P5-pushdown.md),
+  "PostgreSQL's special values are ordered, not undecodable".
+
 - **An `INSERT` run is folded into one span but every line is still decoded**,
   unlike the large-object region, which is skipped unread. That costs **14.4×**
   the per-byte CPU of a `COPY` scan warm — ~40 minutes for a koji-scale 1 TB
@@ -221,26 +239,7 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-### An ordering filter errors on a value that contradicts its DDL, rather than excluding the row
-
-**The call.** `--filter 'v > x'` decodes each row's `v` with the column's own
-decoder. When a value does not decode — `infinity` in a `date` column, `NaN`
-in a `numeric(p,s)` one — `P5.6` raises `Error::FieldDecode`, the same error
-with the same wording the typed *build* path raises for that value. The
-alternative is to treat the row as not matching, which is the collapse a NULL
-already gets.
-
-**Why this way.** A NULL is a value the file states; a value that does not
-decode is the file contradicting its own DDL, and everywhere else in this
-system that is an error rather than a quiet exclusion. Excluding would also
-mean a filter silently reporting fewer rows on a damaged file, which is the
-shape of answer the project refuses. The spec settles neither way.
-
-**What changes if reconsidered.** Some queries that error today would return
-rows instead — concretely, any ordering filter on a `date`/`timestamp` column
-holding `infinity`, which is legal PostgreSQL and appears in the `types`
-fixture. Reversing it is a two-line change in `Predicate::matches` and would
-retire `Error::FieldDecode`'s only non-`batch.rs` producer. It would also make
-`--column`'s decode escape apply to filters, which today it deliberately does
-not ([`../design/architecture.md`](../design/architecture.md), "Ordering
-operators compare typed").
+*Nothing is open.* The entry `P5.6` raised was answered and reversed:
+special values are ordered, settled in
+[`../design/roadmap-P5-pushdown.md`](../design/roadmap-P5-pushdown.md) and
+scheduled as `P5.8` ([`history/2026-08-30.md`](history/2026-08-30.md)).
