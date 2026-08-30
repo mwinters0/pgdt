@@ -1687,9 +1687,11 @@ mod tests {
     /// and the `COPY` header it heads. Accepting the prefix would run the
     /// entry into that statement's span, where `push_statement_span`'s
     /// `Framing` veto discards the header outright; refusing keeps it on a
-    /// `Framing` span of its own. The data span is unattributed either way —
-    /// that is the accepted gap `STATUS.md` records, not what this test is
-    /// about.
+    /// `Framing` span of its own. The data span is unattributed either way,
+    /// which is not what this test is about.
+    ///
+    /// Gap register: `gap: G1` — the detail is
+    /// `docs/design/architecture.md`'s "TOC enrichment".
     #[test]
     fn a_data_entry_keeps_its_own_span_when_disable_triggers_intervenes() {
         let mut builder = Builder::new();

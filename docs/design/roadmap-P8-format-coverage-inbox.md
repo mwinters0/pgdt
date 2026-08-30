@@ -102,7 +102,7 @@ attributes an `--inserts` dump's rows" and "Grilling M7", I31 in
 [`postgres-invariants.md`](postgres-invariants.md), and `architecture.md`'s
 "Bulk regions: one span kind, three payloads".
 
-**Contingent on.** The `--disable-triggers` known gap staying open
-(`../status/STATUS.md`). If the unscheduled fix for it (`roadmap.md`, "Future")
+**Contingent on.** The `--disable-triggers` gap `G1` staying open
+(`../status/STATUS.md`, "Known gaps"). If the unscheduled fix for it (`roadmap.md`, "Future")
 lands first, both shapes collapse back to one and only the `data_offset`
 question remains.

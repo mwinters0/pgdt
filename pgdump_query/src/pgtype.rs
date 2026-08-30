@@ -132,6 +132,13 @@ pub(crate) fn split_typmod(s: &str) -> (&str, Option<&str>) {
 /// or a precision beyond `Decimal256`'s 76-digit ceiling stays `Utf8View`,
 /// same as arbitrary precision (I4: `NaN` is reachable through any numeric
 /// column regardless, and is a decode-time concern, not a mapping one).
+///
+/// The `Utf8View` arms carry a limitation nothing here shows: such a column
+/// *orders* lexicographically under `<`/`>`, so `"9" < "10"` is false where
+/// PostgreSQL says true.
+///
+/// Gap register: `gap: G7` — the detail is `docs/design/architecture.md`'s
+/// "Ordering operators compare typed".
 fn map_numeric(typmod: Option<&str>) -> DataType {
     let Some(typmod) = typmod else { return DataType::Utf8View };
     let mut parts = typmod.split(',').map(str::trim);
@@ -418,8 +425,11 @@ fn resolve_array(element: &str, types: &[TypeDef]) -> TypeOutcome {
 /// checking for a closing quote first is exactly what would break that. What
 /// such a name *does* cost is a weaker type, never a wrong one: `TypeDef.name`
 /// holds it dequoted while the declaration keeps its quotes, so the lookup
-/// misses and the column resolves `Unknown` (`STATUS.md`, "Known gaps"; the
-/// fix is `roadmap.md`'s "A real type-name tokenizer", not this function's).
+/// misses and the column resolves `Unknown`.
+///
+/// Gap register: `gap: G4` — the detail is `docs/design/architecture.md`'s
+/// "Type resolution", and the fix is `roadmap.md`'s "A real type-name
+/// tokenizer", not this function's.
 fn array_element(declared: &str) -> Option<&str> {
     let declared = declared.trim();
     // `SimpleTypename ARRAY '[' Iconst ']'` and `SimpleTypename ARRAY`: at

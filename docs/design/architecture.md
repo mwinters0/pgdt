@@ -16,6 +16,13 @@ Sections carry their **rejected alternatives** inline, marked *Rejected:*.
 Those are the paragraphs that cannot be recovered from the code, because the
 code records only what was built.
 
+They also carry that mechanism's **known gaps**, each opening with a
+`<!-- gap: G<k> -->` marker and indexed one line apiece in `../status/STATUS.md`
+("Known gaps"). The detail lives here rather than there so that a session
+reading this section before changing the mechanism cannot miss it;
+`cd scripts && uv run gaps.py` is what keeps the two halves resolving to each
+other.
+
 ## Contents
 
 Jump to the mechanism you are changing; there is no need to read the file
@@ -520,9 +527,6 @@ comment blocks themselves. What is lost is the coverage diagnostic and
 `Span::toc` on data spans; nothing else — the table name comes from the `COPY`
 header or the `INSERT INTO` line, the object census still reads `TABLE DATA:
 2` off the comment spans, and roles still come off the entry's own `Owner:`.
-See `../status/STATUS.md`'s known gaps for what a fix would cost, and
-`roadmap.md`'s "Future — wanted, unscheduled" for the fix itself.
-
 It is also the only known shape that reaches `on_copy_start`'s `Mode::Idle`
 arm, which passes `None` rather than inheriting `governing_toc` — unlike
 `step`'s own `Mode::Idle` arm, which seeds `toc: self.governing_toc.clone()`.
@@ -535,6 +539,14 @@ see, to a rule this section states as a decision, is what the out-of-band
 admission rule exists to refuse. It would also fix nothing by itself: the
 `Data for` comment closes as `Framing` and so leaves no `governing_toc` behind
 for the arm to inherit. All three changes land together or none do.
+
+<!-- gap: G1 -->
+**The attribution loss above is gap `G1`** (`../status/STATUS.md`, "Known
+gaps"), and it is unowned.
+The shape is opt-in — I31 emits nothing at all without
+`--data-only`/`--section=data` — which is why it is not scheduled; the fix is
+three coordinated changes, spelled out in `roadmap.md`'s "Future — wanted,
+unscheduled".
 
 ### Cross-references (roles and tablespaces)
 
@@ -812,7 +824,8 @@ a nested `Array` plan can only ever be one this transform built.
 censuses before emitting a row. So the evidence covers exactly the rows the
 stream will hand back, on a cold query as much as on a full scan. That holds
 even where the stop rule is fooled: the shape `stream::target_settled` cannot
-detect (`STATUS.md`'s known gap) is also one whose extra blocks the stream
+detect (gap `G6`, [One target per query](#one-target-per-query)) is also one
+whose extra blocks the stream
 never replays.
 
 *Rejected:* gating the streamed schema on `DumpIndex::is_complete` too. A cold
@@ -837,13 +850,26 @@ from the union over the blocks it will replay. A table whose first block holds
 `List(List(Int32))` on two `info` lines and comes back as text from a query. No
 fixture produces the shape.
 
-**What survives all this is the array nested inside a composite**, or inside
-another array's element type. The census is keyed by column and has nowhere to
-record a shape at that depth, so those stay on the optimistic path however
-much of the file has been scanned: a multi-dimensional value there is a hard
-`FieldDecode`, and `--schema-mode strings` — which the message names — is the
-only route to the data. Keying the census by path is a roadmap "Future" item
-and is purely additive whenever it lands.
+<!-- gap: G2 -->
+**What survives all this is the array nested inside a composite** — gap `G2` —
+or inside another array's element type. The census is keyed by column and has
+nowhere to record a shape at that depth, so those stay on the optimistic path
+however much of the file has been scanned: a multi-dimensional or
+`[lb:ub]=`-decorated value there is a hard `FieldDecode` naming the column, and
+scanning more of the file cannot help.
+
+**Two escapes leave the rest of the table usable**, and neither reaches the
+value typed. `--schema-mode strings`, which the message names, returns the
+literal verbatim for the whole table and is the only route to that column's
+data; and *not projecting the column* leaves every other column typed, since an
+unprojected column is never decoded ([Projection](#projection)). Neither
+survives *filtering* on the column with an ordering operator, which decodes the
+field itself and raises the same `FieldDecode`. The message names only the
+first, so the second is the manual's to state. A *top-level* array column does
+not reach this at all, and neither does an array whose element type is an
+array — that one is refused outright as `NestedArrayElement` (I26). Keying the
+census by path is a roadmap "Future" item, deferred on frequency, and is purely
+additive whenever it lands.
 
 The cache format bumps whenever this shape changes, like any other persisted
 field ([The cache](#the-cache)).
@@ -1166,8 +1192,14 @@ appears, so the closing quote is what the suffix strippers bail on: `s."x
 ARRAY"` is a scalar and `s."x ARRAY"[]` sheds only the bound outside the
 quotes. Such a name costs a weaker type rather than a wrong one — the lookup
 misses, because `TypeDef.name` is dequoted while the declaration is not, and
-the column resolves `Unknown` (`STATUS.md`, "Known gaps"). Fixing *that* means
-a real type-name tokenizer, a roadmap "Future" item.
+the column resolves `Unknown`.
+
+<!-- gap: G4 -->
+**That is gap `G4`**, and it is unowned. No spelling is *misread* and every
+value still decodes as the text the file holds, so what is lost is strength,
+not correctness; it is unreachable from any dump whose type names are ordinary
+identifiers, which is every fixture and the koji sample. Fixing it means a real
+type-name tokenizer, a roadmap "Future" item and strictly additive.
 
 ### Joining a header against the metadata
 
@@ -1199,6 +1231,15 @@ column text" has several answers a reader wants: its element type is opaque
 (never improves), its element type is itself an array (a shape we decline to
 represent and could), its arrays do not share one shape (what the file holds),
 or strings were asked for.
+
+<!-- gap: G3 -->
+**Two of those outcomes are gap `G3`.** `NestedArrayElement` and
+`VaryingArrayShape` leave a column as `Utf8View` with no way for a caller to
+ask for more, and neither is opaque: both shapes are fully understood, and one
+lossless representation — the shape-general `Struct{dims, lbounds, elements}`
+under `roadmap.md`'s "Future — wanted, unscheduled" — would cover both. Adding
+it only ever touches columns these two refusals leave as text, which is what
+makes it additive and what leaves it unowned.
 
 `MetadataNotScanned` is the odd one: a property of **how much of the file was
 read**, not of a declared type, and the only outcome no fixture can produce
@@ -1316,6 +1357,20 @@ a future reader to re-derive:
   `json` preserves source text verbatim. Affects neither the mapping (both stay
   `Utf8View`) nor round-trip testing, which compares against what the dump
   emits rather than the original `INSERT`.
+
+<!-- gap: G8 -->
+**No typed column can hold `infinity`, `-infinity` or `NaN`** — gap `G8`, and
+unowned. `Date32` has no infinity and `Decimal128` no NaN, so a field holding
+one is an `Error::FieldDecode` and there is no typed way to read the value.
+The file is not at fault: `pg_dump` emits these from any healthy database
+(I33). `--schema-mode strings` returns the literal verbatim. *Comparing* one is
+a separate question and is settled in
+[`roadmap-P5-pushdown.md`](roadmap-P5-pushdown.md), "PostgreSQL's special
+values are ordered, not undecodable" — which is why a filter may legitimately
+select a row the output column then cannot represent. What stays open is
+**materialization**, where the choices are a null, a sentinel indistinguishable
+from a real date, or the error; it belongs to whichever phase owns typed
+materialization.
 
 ### The nested literal codec
 
@@ -1584,8 +1639,19 @@ one is present (silent for the common single-database case) — that is what
 makes an `AmbiguousTable`'s candidate names actionable, since they are names
 the listing already showed.
 
-The residual gap — a file whose *first* segment is a plain dump with something
-concatenated after it — is in `STATUS.md`'s "Known gaps".
+<!-- gap: G6 -->
+**The residual gap is `G6`**: a conflicting table *past* a query's stopping
+point is never seen, so `Error::AmbiguousTable` is not raised for it and the
+query returns the candidate it found. The stop rule rules out the two shapes
+that announce themselves — a partition-root marker (I2) and any `\connect` at
+all — leaving one undetectable case, a file whose *first* segment is a plain
+dump with something concatenated after it. `ScanExtent::Full`, or a query after
+`pgdq parse`, gives exact detection; rows are never a union either way, and
+ambiguity is raised before any row is emitted. Closing it by default means
+abandoning early stopping, which is what makes a cold query on a large dump
+affordable — so what an embedded API promises here is P6's to decide, and the
+three shapes open to it are filed in
+[`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md).
 
 ### Resume
 
@@ -1679,7 +1745,8 @@ A column that is not projected is never decoded, so a value that would raise
 `Error::FieldDecode` no longer does — which is the per-column escape from a
 hard decode failure that `SchemaMode::Strings`, untyping the whole table, was
 previously the only form of. An array nested inside a composite is the
-motivating case (see `STATUS.md`'s known gaps).
+motivating case (gap `G2`, [What the census decides, and who may believe
+it](#what-the-census-decides-and-who-may-believe-it)).
 
 *Rejected: decoding unprojected columns anyway to preserve error parity.* It
 discards the entire saving to raise an error about a column nobody selected.
@@ -1863,6 +1930,16 @@ writing it into either is the layering violation `layering.md` forbids. What
 an *embedder* should be handed instead is filed in
 [`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md),
 whose sink is the designated unification point for diagnostic channels.
+
+<!-- gap: G7 -->
+**The four rows reading "no" are gap `G7`**, and they are one entry rather than
+four because this table is where they are told apart: its last column is what
+would close each one, and no two of them share it. Equality is unaffected and
+every value still decodes as the text the file holds, so what is missing is the
+ordering, not the data — and each divergence announces itself, which is what
+keeps it a weaker answer rather than a silent one. The per-type worklist
+belongs to P11 and is filed in
+[`roadmap-P11-typed-predicates-inbox.md`](roadmap-P11-typed-predicates-inbox.md).
 
 *Rejected: a test asserting the Markdown table above and `ordering_register`
 agree row for row.* Its own failure mode is bit-rot in the doc parser, and the

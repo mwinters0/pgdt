@@ -26,6 +26,9 @@ cd scripts && uv run measure.py --verify-additive # inputs regenerated at two re
 cd scripts && uv run measure.py --figure <id>     # re-take one figure — one whole table
 cd scripts && uv run measure.py --all             # the whole sweep: ~1 h, detach it
 cd scripts && uv run python -m unittest test_measure   # the harness's own tests
+
+cd scripts && uv run gaps.py                      # gap register: index vs. detail entries vs. code markers
+cd scripts && uv run python -m unittest test_gaps      # that check's own tests
 ```
 
 ## Long-running processes (>10 minutes)
@@ -128,7 +131,8 @@ the file map, `DumpIndex`, the preamble grammar, type resolution, the decoders,
 the zero-copy Arrow path, the query passes, the cache, the CLI, fixtures, or
 the testing approach — before changing that mechanism. Each section carries its
 own *Rejected:* paragraphs, which are the part that cannot be recovered from
-the code. Two sections are hard constraints rather than description: "Parser
+the code, **and that mechanism's known gaps** — a gap's detail lives beside the
+mechanism, not in a central list, so reading the section is how you meet it. Two sections are hard constraints rather than description: "Parser
 robustness requirements (hardcoded)" is what the `COPY`-block scanner
 (`scan.rs`, `copy.rs`) implements, and "`Event` is the scanner's contract"
 names every site that must change when a scanner event is added.
@@ -275,6 +279,20 @@ part of any change that alters implementation state — don't let it drift.
 During a sliced phase, `STATUS.md` is a **terse checklist** of what has landed
 this phase, each item linking to the subphase notes doc that holds the detail —
 not a prose summary duplicating them.
+
+`STATUS.md`'s **"Known gaps" is a register, not prose**: one indexed line per
+gap — a stable `G<k>`, one sentence, a declared stance ((a) a deliberate
+tradeoff never to be worked, (b) a defect owned by a named destination, (c) a
+defect with no owner, which says "unowned" in that word), and the file whose
+paragraph holds the detail. **The detail goes beside the mechanism**, in that
+mechanism's `architecture.md` section or wherever its analysis already lives,
+never in `STATUS.md`. A limitation whose remedy the user already has today is
+not a gap at all — it is a property, and it belongs beside its mechanism with
+no identifier. Mark a *line of code* with `gap: G<k>` only where the code would
+otherwise mislead — where it reads as a complete, deliberate choice and gives
+no sign a limitation hangs off it. `cd scripts && uv run gaps.py` reconciles the
+index, the detail entries and the markers, and fails on any of the three. Full
+rules: `docs/process.md`, "Known gaps".
 
 **When the maintainer answers an entry under `STATUS.md`'s "Decisions worth
 another look", close it in that same session** — before the work the answer

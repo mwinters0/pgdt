@@ -93,6 +93,12 @@ P7's "Measurement discipline" section is the right place to settle it.
 
 ## An `INSERT`-run scan is CPU-bound at 14.4× a `COPY` scan's per-byte cost
 
+<!-- gap: G9 -->
+**This entry is gap `G9`'s detail** (`../status/STATUS.md`, "Known gaps"),
+filed here because the analysis is here and this phase is the destination the
+index names. Draining this inbox moves the paragraph rather than deleting it —
+`scripts/gaps.py` fails until it lands somewhere.
+
 **Fact.** The warm figure exists now, and it settles the ratio this entry was
 filed under. Three 3.00 GiB synthetic dumps, one sweep, both regimes
 (512 MB-limited container, timer inside it, glibc):
@@ -116,6 +122,9 @@ The cause is structural, not incidental: the large-object region has a
 `crate::scan`-level fast path (lines skipped unread) but left `INSERT` runs
 decoding every line into `Event::Line` and pushing it through
 `preamble::statement_complete`, folding only the *spans* into one.
+
+Correctness, tiling and row counts are unaffected: the cost is CPU spent
+decoding lines whose spans are folded into one either way.
 
 **Why P7 cares.** This is a second scanner-level fast path — the same
 mechanism `State::InLargeObjectRegion` already is — and P7 owns scan
@@ -308,6 +317,12 @@ a row count, so an unrun instrument cannot rot silently into a wrong one.
 ---
 
 ## Mapping is O(blocks²) after the save throttle, and the remaining half is the span splice
+
+<!-- gap: G5 -->
+**This entry is gap `G5`'s detail** (`../status/STATUS.md`, "Known gaps"),
+filed here because the analysis is here and this phase is the destination the
+index names. Draining this inbox moves the paragraph rather than deleting it —
+`scripts/gaps.py` fails until it lands somewhere.
 
 **Fact.** `pgdq parse` serializes the **whole** cache at a `CopyEnd`
 watermark, throttled (`SaveThrottle`: skip a save unless 20x the last save's own

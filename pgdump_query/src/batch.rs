@@ -137,11 +137,13 @@ pub enum ScanExtent {
     /// keeps a query against an early table in a huge dump from costing a
     /// full scan.
     ///
-    /// What it gives up is stated in `STATUS.md`'s "Known gaps": a second,
-    /// conflicting candidate past the stopping point is never seen, so
-    /// `Error::AmbiguousTable` reports only what the scan reached. A file
-    /// concatenating two dumps of the *same* database name is the case with
-    /// no early signal at all.
+    /// What it gives up: a second, conflicting candidate past the stopping
+    /// point is never seen, so `Error::AmbiguousTable` reports only what the
+    /// scan reached. A file concatenating two dumps of the *same* database
+    /// name is the case with no early signal at all.
+    ///
+    /// Gap register: `gap: G6` — the detail is
+    /// `docs/design/architecture.md`'s "One target per query".
     #[default]
     UntilTargetSettled,
     /// Map the whole file before returning anything. Costs a full scan and

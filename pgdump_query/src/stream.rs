@@ -329,7 +329,10 @@ fn splice(
 ///
 /// What neither test catches is a file whose *first* segment has no
 /// `\connect` — a plain dump with something concatenated after it. Nothing in
-/// the prefix announces that; see `STATUS.md`'s "Known gaps".
+/// the prefix announces that.
+///
+/// Gap register: `gap: G6` — the detail is `docs/design/architecture.md`'s
+/// "One target per query".
 fn target_settled(index: &DumpIndex, table: &str, selector: Option<&str>) -> bool {
     if index.spans.iter().any(|s| matches!(s.body, SpanBody::Connect { .. })) {
         return false;

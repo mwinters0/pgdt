@@ -99,7 +99,8 @@ The spec is
       genuinely malformed text. Runs before `P5.7` so the sweep measures it.
 - [ ] **P5.7** Take the figure, fold it in, re-read its consumers, delete
       `composite-isolated` and re-scope the cross-file figures it supersedes,
-      update the manual.
+      update the manual — including `G2`'s second escape, which the error
+      message does not name.
 
 ## Not started
 
@@ -116,119 +117,82 @@ The spec is
 
 ## Known gaps
 
-Deficiencies that are known and **accepted**. Each says what is lost, why that
-is safe, and where the mechanism or the fix is written down.
+The gap register. Every known deficiency carries a stable `G<k>`, allocated on
+discovery and never reused, and **one line here**: what it costs, its stance,
+and the file whose paragraph holds the rest. That paragraph sits beside the
+mechanism, where `CLAUDE.md`'s read-triggers already send a session that is
+about to touch it. This is an index, not the document.
 
-- **A `--disable-triggers` dump loses TOC attribution on every data span**,
-  `COPY` and `INSERT` alike (I31). Not a correctness hazard: tiling stays
-  byte-exact, the table name still comes from the `COPY` header or the `INSERT
-  INTO` line, the object census still counts the entry, and roles still come
-  off its `Owner:`. What is lost is the coverage diagnostic and `Span::toc` on
-  data spans. Opt-in and gated on `--data-only`/`--section=data`. Mechanism:
-  [`../design/architecture.md`](../design/architecture.md), "TOC enrichment";
-  the fix is three coordinated changes and is named in
-  [`../design/roadmap.md`](../design/roadmap.md), "Future — wanted,
-  unscheduled".
+Three stances, because these are not one kind of thing and the difference
+decides whether anyone should act. **(a)** a consequence of a deliberate
+tradeoff, never to be worked. **(b)** a defect with a known fix and a named
+destination. **(c)** a defect with a known fix and no owner — a legitimate
+resting state, said in those words, naming whatever would promote it. A
+limitation whose remedy the user already has today is not here at all: it is a
+property of how the system works, and it lives beside its mechanism with no
+identifier.
 
-- **An array nested inside a composite** is decided optimistically, so a
+`cd scripts && uv run gaps.py` reconciles this index against those paragraphs
+and against the source-code markers, and fails on either half.
+
+- **G1** — a `--disable-triggers` dump loses TOC attribution on every data
+  span, `COPY` and `INSERT` alike (I31), costing the coverage diagnostic and
+  `Span::toc`. **(c) unowned**; promoted by a dump in hand whose data spans
+  need attribution. Detail:
+  [`../design/architecture.md`](../design/architecture.md), "TOC enrichment".
+
+- **G2** — an array nested inside a composite is decided optimistically, so a
   multi-dimensional or `[lb:ub]=`-decorated value there is a hard
-  `Error::FieldDecode` naming the column. Permanent as things stand: the census
-  is keyed by column and has nowhere to record a shape at that depth, so
-  scanning more of the file cannot help. There are now two escapes:
-  `--schema-mode strings`, which the message names, returns the literal
-  verbatim for the whole table, and — since P5.3 — **not projecting the column
-  leaves every other column typed**, because an unprojected column is never
-  decoded ([`../design/architecture.md`](../design/architecture.md),
-  "Projection"). Neither escape survives *filtering* on the column with an
-  ordering operator: that decodes the field itself, so the same
-  `Error::FieldDecode` comes back. The message still names only the first; the manual pass in
-  `P5.7` is where the second gets written down for users. A *top-level* array
-  column does not reach this, and neither does an array whose element type is
-  an array (refused outright, I26). Keying the census by path is a roadmap
-  "Future" item and purely additive.
+  `Error::FieldDecode`. **(c) unowned**; promoted by a schema that holds one,
+  the per-path census being deferred on frequency. Detail:
+  [`../design/architecture.md`](../design/architecture.md), "What the census
+  decides, and who may believe it".
 
-- **Two array shapes come back as text with no way to ask for more** —
-  `NestedArrayElement` and `VaryingArrayShape`. Neither is opaque: both are
-  fully understood, and one lossless representation would cover both. It is a
-  roadmap "Future" item, and adding it only ever touches columns these
-  refusals leave as `Utf8View`.
+- **G3** — two array shapes come back as text with no way to ask for more,
+  `NestedArrayElement` and `VaryingArrayShape`, though both are fully
+  understood. **(c) unowned**; promoted by a caller whose arrays are matrices
+  or scientific data, for whom a string is the wrong answer. Detail:
+  [`../design/architecture.md`](../design/architecture.md), "Joining a header
+  against the metadata".
 
-- **A type name that needs quoting resolves `Unknown`** (I29): `parse_ident`
-  dequotes it into `TypeDef.name` while the declaration keeps its quotes, so
-  the lookup misses. **No spelling is misread** — a column of a type named
-  `"x ARRAY"` is not mistaken for an array — so the cost is a weaker type,
-  never a wrong one, and every value still decodes as the text the file holds.
-  Unreachable from any dump whose type names are ordinary identifiers, which is
-  every fixture and the koji sample. Fix: the roadmap's "A real type-name
-  tokenizer", strictly additive.
+- **G4** — a type name that needs quoting resolves `Unknown` (I29): a weaker
+  type, never a wrong one. **(c) unowned**; promoted by a dump whose type names
+  are not ordinary identifiers, which neither any fixture nor koji is. Detail:
+  [`../design/architecture.md`](../design/architecture.md), "Type resolution".
 
-- **Mapping is O(blocks²), and the save throttle only halved it.** Every
-  `CopyEnd` rebuilds `DumpIndex::spans` whole, so a block-rich, byte-poor dump
-  pays quadratic CPU with the cache disabled entirely — 20.9 s for 4000 blocks,
-  which is all but a fraction of what a throttled `parse` of the same file
-  costs. Nothing koji-shaped is affected: 74 blocks over 784 GB pay it 74 times, at +1.5%.
-  Not scheduled, because the fix is the same code P7's parallel-scan plans
-  would rework — including a cheap variant that was weighed and refused for
-  reversing the interrupt guard's guarantee. The full analysis, so it is not
-  re-derived:
-  [`../design/roadmap-P7-scan-performance-inbox.md`](../design/roadmap-P7-scan-performance-inbox.md).
-  Figures: [`../design/measurements.md`](../design/measurements.md),
-  "Per-block cache saving is quadratic in block count".
+- **G5** — mapping is O(blocks²): every `CopyEnd` rebuilds `DumpIndex::spans`
+  whole, and the save throttle only halved the series. **(b) owned by P7**,
+  whose parallel-scan plans rework the same code. Detail:
+  [`../design/roadmap-P7-scan-performance-inbox.md`](../design/roadmap-P7-scan-performance-inbox.md),
+  "Mapping is O(blocks²) after the save throttle".
 
-- **A conflicting table past a query's stopping point is never seen**, so
+- **G6** — a conflicting table past a query's stopping point is never seen, so
   `Error::AmbiguousTable` is not raised for it and the query returns the
-  candidate it found. The stop rule rules out the two shapes that announce
-  themselves — a partition-root marker (I2) and any `\connect` at all — leaving
-  one undetectable case: a plain dump with something concatenated after it.
-  `ScanExtent::Full`, or a query after `pgdq parse`, gives exact detection.
-  Rows are never a union either way, and ambiguity is raised before any row is
-  emitted. Accepted because closing it means abandoning early stopping, which
-  is what makes a cold query on a large dump affordable; filed into
-  [`../design/roadmap-P6-embeddable-engine-inbox.md`](../design/roadmap-P6-embeddable-engine-inbox.md)
-  so the embedded API's promises are decided against it deliberately.
+  candidate it found. **(b) owned by P6**, where what the embedded API promises
+  is decided. Detail:
+  [`../design/architecture.md`](../design/architecture.md), "One target per
+  query".
 
-- **`DumpIndex::roles`/`tablespaces` are complete only once the scan reaches
-  the file's size** — the same partiality `metadata`'s `preamble_complete`
-  carries, for the same reason. koji's `backup` role is the motivating case.
-  `ScanExtent::Full`, or a query after `pgdq parse`, gives the complete set.
+- **G7** — four rows of the ordering register diverge from PostgreSQL under
+  `<`/`>`: a bare `numeric`, text under any collation but `C`/`POSIX`, an enum,
+  and every other text-held type. **(b) owned by P11**, which holds the
+  per-type worklist. Detail:
+  [`../design/architecture.md`](../design/architecture.md), "Ordering operators
+  compare typed".
 
-- **Three kinds of column order differently from PostgreSQL under `<`/`>`.**
-  A bare `numeric` (and one past `Decimal256`'s 76 digits) is `Mapped` to
-  `Utf8View`, so `v > 5` compares text and `"9" < "10"` is false; a text
-  column compares bytewise, which is the server's answer only under
-  `C`/`POSIX` (I32); an enum compares by label text where PostgreSQL uses
-  declaration order (I33). Every other text-held type — `interval`,
-  `time with time zone`, `json`/`jsonb`, the network types — is in the same
-  position. Equality is unaffected and every value still decodes as the text
-  the file holds. **Each of these announces itself**: `pgdq query` names the
-  column and the divergence on stderr, and an embedder reads
-  `TableStream::ordering_notes`. Register:
-  [`../design/architecture.md`](../design/architecture.md), "Ordering
-  operators compare typed"; per-type worklist:
-  [`../design/roadmap-P11-typed-predicates-inbox.md`](../design/roadmap-P11-typed-predicates-inbox.md).
+- **G8** — a typed column cannot hold `infinity`, `-infinity` or `NaN`, so
+  materializing one raises `Error::FieldDecode` and there is no typed way to
+  read the value. **(c) unowned**; promoted by whichever phase takes typed
+  materialization, which is where the choice between a null, a sentinel and the
+  error belongs. Detail:
+  [`../design/architecture.md`](../design/architecture.md), "Decoders and
+  render-back".
 
-- **A typed column cannot hold `infinity`, `-infinity` or `NaN`**, so selecting
-  one raises `Error::FieldDecode` and there is no typed way to read the value.
-  `Date32` has no infinity and `Decimal128` no NaN; the file is not at fault,
-  and `pg_dump` emits these from any healthy database. `--schema-mode strings`
-  returns the literal verbatim, and after `P5.8` an ordering *filter* answers
-  them exactly — so a filter may select a row the output column then cannot
-  represent, which is accepted and deliberate. What is unresolved is
-  materialization: the choices are a null, a sentinel indistinguishable from a
-  real date, or the error, and it belongs to whichever phase owns typed
-  materialization. Evidence:
-  [`../design/postgres-invariants.md`](../design/postgres-invariants.md), I33;
-  decision:
-  [`../design/roadmap-P5-pushdown.md`](../design/roadmap-P5-pushdown.md),
-  "PostgreSQL's special values are ordered, not undecodable".
-
-- **An `INSERT` run is folded into one span but every line is still decoded**,
-  unlike the large-object region, which is skipped unread. That costs **14.4×**
-  the per-byte CPU of a `COPY` scan warm — ~40 minutes for a koji-scale 1 TB
-  `--inserts` dump against the `COPY` path's ~3. Correctness, tiling and row
-  counts are unaffected. Not scheduled: the fix is a scanner-level `INSERT`
-  path, which changes a decision and so needs a slice, filed into
-  [`../design/roadmap-P7-scan-performance-inbox.md`](../design/roadmap-P7-scan-performance-inbox.md).
+- **G9** — an `INSERT` run is folded into one span but every line is still
+  decoded, at 14.4× a `COPY` scan's per-byte CPU. **(b) owned by P7**, since
+  the fix is a second scanner-level fast path. Detail:
+  [`../design/roadmap-P7-scan-performance-inbox.md`](../design/roadmap-P7-scan-performance-inbox.md),
+  "An `INSERT`-run scan is CPU-bound at 14.4× a `COPY` scan's per-byte cost".
 
 ## Decisions worth another look
 
@@ -239,7 +203,20 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-*Nothing is open.* The entry `P5.6` raised was answered and reversed:
-special values are ordered, settled in
+- **`G6` is filed as a gap rather than evicted as a property.** Building the
+  register applied one test to every entry — is the remedy already available to
+  the user today? — and it is what turned `DumpIndex::roles`/`tablespaces`
+  into a property with no identifier, since a full scan gives the complete set.
+  `G6` carries the same remedy sentence, `ScanExtent::Full` or a query after
+  `pgdq parse`, and was kept anyway: what it costs is not a partial answer the
+  user can ask for again, it is a possibly *wrong* one with no signal at all,
+  and the cheap fix P6 is weighing — a `Diagnostic` on every early stop — does
+  not exist today. Read the other way, the index line is deleted, the paragraph
+  stays where it is in
+  [`../design/architecture.md`](../design/architecture.md)'s "One target per
+  query", and P6's inbox entry carries the question by itself.
+
+The entry `P5.6` raised was answered and reversed: special values are ordered,
+settled in
 [`../design/roadmap-P5-pushdown.md`](../design/roadmap-P5-pushdown.md) and
 scheduled as `P5.8` ([`history/2026-08-30.md`](history/2026-08-30.md)).
