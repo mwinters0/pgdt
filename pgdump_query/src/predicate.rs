@@ -188,15 +188,59 @@ enum OrderKind {
 
 /// One side of an ordering comparison, decoded from text per the column's
 /// [`OrderKind`]. Both sides of any one comparison come from the same kind,
-/// so a variant mismatch is unreachable by construction.
+/// so a *finite* variant mismatch is unreachable by construction.
+///
+/// **Three variants are not values of the column's Arrow type at all**, and
+/// that is the point: `infinity`, `-infinity` and `numeric`'s `NaN` are legal
+/// values of their declared PostgreSQL types with a total order (I34), while
+/// `Date32` has no infinity and `Decimal128` no NaN. Deciding an order needs
+/// strictly less than materializing a value, so they are carried as their
+/// *position* — below every finite value, above every finite value, or above
+/// `infinity` — rather than as a number that would have to be indistinguishable
+/// from a real one. A `real`/`double precision` special is **not** here: IEEE
+/// has all three, so the column's own decoder yields them inside `Float` and
+/// [`pg_float_cmp`] already orders them PostgreSQL's way.
 #[derive(Debug, Clone, PartialEq)]
 enum OrderKey {
+    /// PostgreSQL's `-infinity`, below every finite value of its type.
+    NegativeInfinity,
     Bool(bool),
     Int(i64),
     Float(f64),
     Decimal(i256),
     Bytes(Vec<u8>),
     Text(String),
+    /// PostgreSQL's `infinity`, above every finite value of its type.
+    PositiveInfinity,
+    /// `numeric`'s `NaN`, which orders above `infinity` and equals itself
+    /// (I34). Reached only through [`OrderKind::Decimal`].
+    NotANumber,
+}
+
+/// The rank of a finite value — the middle of the four [`OrderKey::rank`]
+/// classes, and the only one whose members are compared by value.
+const FINITE: u8 = 1;
+
+impl OrderKey {
+    /// Where this key sits in PostgreSQL's total order relative to the finite
+    /// values of its own type. Ranks are compared before values are, which is
+    /// what lets a special value be carried as a position instead of as a
+    /// sentinel that a finite value could collide with — `Date32`'s would be
+    /// free at both ends, but a `Timestamp`'s would not: `i64::MAX` micros
+    /// since 1970 is a date PostgreSQL itself accepts.
+    fn rank(&self) -> u8 {
+        match self {
+            Self::NegativeInfinity => 0,
+            Self::Bool(_)
+            | Self::Int(_)
+            | Self::Float(_)
+            | Self::Decimal(_)
+            | Self::Bytes(_)
+            | Self::Text(_) => FINITE,
+            Self::PositiveInfinity => 2,
+            Self::NotANumber => 3,
+        }
+    }
 }
 
 /// **The ordering register, in code**, and the authority the Markdown table
@@ -222,10 +266,13 @@ fn ordering_register(data_type: &DataType) -> (OrderingSupport, Option<OrderKind
         DataType::Float64 => (Agrees, Some(OrderKind::Float64)),
         // Both sides carry the column's own scale, because the literal is
         // decoded with the column's own decoder, so unscaled integers compare
-        // directly.
+        // directly. `NaN` is the one value of such a column that has no
+        // `Decimal128`, and it is ordered rather than refused
+        // (`special_order_key`, I34).
         DataType::Decimal128(_, scale) | DataType::Decimal256(_, scale) => {
             (Agrees, Some(OrderKind::Decimal(*scale)))
         }
+        // `infinity`/`-infinity` are ordered here too, for the same reason.
         DataType::Date32 => (Agrees, Some(OrderKind::Date)),
         DataType::Time64(TimeUnit::Microsecond) => (Agrees, Some(OrderKind::Time)),
         // Compared as the stored instant, which is what PostgreSQL compares
@@ -279,12 +326,45 @@ fn ordering_register(data_type: &DataType) -> (OrderingSupport, Option<OrderKind
     }
 }
 
+/// PostgreSQL's special values, for the kinds whose columns can hold one and
+/// in the exact spelling that type's own `*_out` writes (I34): `date`,
+/// `timestamp` and `timestamptz` write `infinity`/`-infinity`, and a
+/// `numeric` writes `NaN`. Nothing else is accepted — a `date` field or
+/// literal reading `Infinity` is not what `date_out` writes, so it stays a
+/// decode failure, the same strictness the nested codec applies.
+///
+/// **Two absences are deliberate.** `real`/`double precision` are absent
+/// because IEEE represents all three and [`decode::decode_f64`] already
+/// returns them. A `numeric` **infinity** is absent for a sharper reason:
+/// `apply_typmod_special` rejects one under any typmod, and a `numeric`
+/// without a typmod is held as text, so no column that reaches
+/// [`OrderKind::Decimal`] can hold one (I34).
+fn special_order_key(kind: OrderKind, text: &str) -> Option<OrderKey> {
+    match kind {
+        OrderKind::Date | OrderKind::Timestamp { .. } => match text {
+            "infinity" => Some(OrderKey::PositiveInfinity),
+            "-infinity" => Some(OrderKey::NegativeInfinity),
+            _ => None,
+        },
+        OrderKind::Decimal(_) => (text == "NaN").then_some(OrderKey::NotANumber),
+        _ => None,
+    }
+}
+
 /// Decode one already-COPY-unescaped value into a comparable key. `None`
 /// when the text is not a value of that type — for a *field* that is
 /// `Error::FieldDecode`, exactly as the typed build path reports it; for the
 /// filter's own literal it is `Error::PredicateValueDecode`, raised before a
 /// row is read.
+///
+/// A special value is answered by [`special_order_key`] first, since it is a
+/// legal value of the declared type that the *Arrow* type cannot hold — a
+/// separate population from text that is genuinely malformed for the column,
+/// which is what a `None` from here now means.
 fn order_key(kind: OrderKind, text: &str) -> Option<OrderKey> {
+    if let Some(special) = special_order_key(kind, text) {
+        return Some(special);
+    }
     Some(match kind {
         OrderKind::Bool => OrderKey::Bool(decode::decode_bool(text)?),
         // Parsed as `i64` whatever the column's width: a literal outside a
@@ -324,7 +404,15 @@ fn pg_float_cmp(a: f64, b: f64) -> Ordering {
     }
 }
 
+/// Rank first, value second. A special value on either side is decided by
+/// [`OrderKey::rank`] alone, so two of the same special are equal —
+/// `-infinity = -infinity`, `infinity = infinity`, `NaN = NaN` (I34) — and a
+/// special against a finite never has to name a number.
 fn compare_keys(a: &OrderKey, b: &OrderKey) -> Ordering {
+    let (rank_a, rank_b) = (a.rank(), b.rank());
+    if rank_a != rank_b {
+        return rank_a.cmp(&rank_b);
+    }
     match (a, b) {
         (OrderKey::Bool(x), OrderKey::Bool(y)) => x.cmp(y),
         (OrderKey::Int(x), OrderKey::Int(y)) => x.cmp(y),
@@ -332,6 +420,7 @@ fn compare_keys(a: &OrderKey, b: &OrderKey) -> Ordering {
         (OrderKey::Decimal(x), OrderKey::Decimal(y)) => x.cmp(y),
         (OrderKey::Bytes(x), OrderKey::Bytes(y)) => x.cmp(y),
         (OrderKey::Text(x), OrderKey::Text(y)) => x.as_bytes().cmp(y.as_bytes()),
+        _ if rank_a != FINITE => Ordering::Equal,
         _ => unreachable!("both sides of a comparison decode through one column's `OrderKind`"),
     }
 }
@@ -729,8 +818,83 @@ mod tests {
         }
     }
 
+    /// The three special values are ordered exactly, on whichever side they
+    /// appear: `-infinity` below every finite value, `infinity` above it, and
+    /// each equal to itself (I34). What cannot hold them is `Date32`, not the
+    /// file.
+    #[test]
+    fn date_and_timestamp_infinities_are_ordered() {
+        let date = |op, value, field| ordered("date", DataType::Date32, op, value, field).unwrap();
+        assert!(date(PredicateOp::Gt, "2020-01-01", "infinity"));
+        assert!(!date(PredicateOp::Lt, "2020-01-01", "infinity"));
+        assert!(date(PredicateOp::Lt, "0044-01-01 BC", "-infinity"));
+        assert!(date(PredicateOp::Lt, "infinity", "-infinity"));
+        // Each special equals itself, so the boundary pair splits on it.
+        assert!(date(PredicateOp::Ge, "infinity", "infinity"));
+        assert!(!date(PredicateOp::Gt, "infinity", "infinity"));
+        assert!(date(PredicateOp::Le, "-infinity", "-infinity"));
+
+        let ts = |op, value, field| {
+            ordered(
+                "timestamp without time zone",
+                DataType::Timestamp(TimeUnit::Microsecond, None),
+                op,
+                value,
+                field,
+            )
+            .unwrap()
+        };
+        assert!(ts(PredicateOp::Gt, "2020-01-01 00:00:00", "infinity"));
+        assert!(ts(PredicateOp::Lt, "2020-01-01 00:00:00", "-infinity"));
+        let tstz = ordered(
+            "timestamp with time zone",
+            DataType::Timestamp(TimeUnit::Microsecond, Some("UTC".into())),
+            PredicateOp::Gt,
+            "2020-01-01 00:00:00+00",
+            "infinity",
+        );
+        assert!(tstz.unwrap());
+    }
+
+    /// A `numeric(p,s)` column can hold `NaN` — the typmod does not apply to
+    /// it — and PostgreSQL orders it above every other value, itself included
+    /// (I34). An *infinity* cannot reach this kind at all: any typmod rejects
+    /// one, and a `numeric` without a typmod is held as text.
+    #[test]
+    fn a_decimal_nan_is_the_largest_value_and_equals_itself() {
+        let t = DataType::Decimal128(10, 2);
+        let nan = |op, value, field| ordered("numeric(10,2)", t.clone(), op, value, field).unwrap();
+        assert!(nan(PredicateOp::Gt, "999999.99", "NaN"));
+        assert!(nan(PredicateOp::Gt, "-1.50", "NaN"));
+        assert!(nan(PredicateOp::Ge, "NaN", "NaN"));
+        assert!(!nan(PredicateOp::Gt, "NaN", "NaN"));
+        assert!(nan(PredicateOp::Lt, "NaN", "0.00"));
+    }
+
+    /// The spelling is the one that type's own `*_out` writes and nothing
+    /// else, so a `date` reading `Infinity` is still undecodable — on either
+    /// side. The same strictness the nested codec applies, and the reason a
+    /// text column holding the word is unaffected.
+    #[test]
+    fn only_the_types_own_spelling_is_special() {
+        let err = ordered("date", DataType::Date32, PredicateOp::Gt, "Infinity", "2020-01-01")
+            .unwrap_err();
+        assert!(matches!(err, Error::PredicateValueDecode { .. }), "{err:?}");
+        let err = ordered("date", DataType::Date32, PredicateOp::Gt, "2020-01-01", "Infinity")
+            .unwrap_err();
+        assert!(matches!(err, Error::FieldDecode { .. }), "{err:?}");
+
+        // A `text` column holding `infinity` holds the *word*: it compares
+        // bytewise, below `zzz`, where a special value would sort above it.
+        let text = |op, field| ordered("text", DataType::Utf8View, op, "zzz", field).unwrap();
+        assert!(text(PredicateOp::Lt, "infinity"));
+        assert!(!text(PredicateOp::Gt, "infinity"));
+    }
+
     /// A field that is not a value of its mapped type is the same fault the
     /// typed build path reports, with the same wording and the same escape.
+    /// This is the population the special values were separated *from*:
+    /// nothing can be concluded about `twelve` in an `integer`.
     #[test]
     fn an_undecodable_field_is_a_field_decode_error() {
         let err = ordered("integer", DataType::Int32, PredicateOp::Gt, "0", "twelve").unwrap_err();

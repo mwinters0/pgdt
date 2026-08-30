@@ -1363,14 +1363,12 @@ a future reader to re-derive:
 `KD8`, and unowned. `Date32` has no infinity and `Decimal128` no NaN, so a field holding
 one is an `Error::FieldDecode` and there is no typed way to read the value.
 The file is not at fault: `pg_dump` emits these from any healthy database
-(I33). `--schema-mode strings` returns the literal verbatim. *Comparing* one is
-a separate question and is settled in
-[`roadmap-P5-pushdown.md`](roadmap-P5-pushdown.md), "PostgreSQL's special
-values are ordered, not undecodable" — which is why a filter may legitimately
-select a row the output column then cannot represent. What stays open is
-**materialization**, where the choices are a null, a sentinel indistinguishable
-from a real date, or the error; it belongs to whichever phase owns typed
-materialization.
+(I34). `--schema-mode strings` returns the literal verbatim. *Comparing* one is
+a separate question and is already answered — see "Ordering operators compare
+typed" below, which is why a filter may legitimately select a row the output
+column then cannot represent. What stays open is **materialization**, where the
+choices are a null, a sentinel indistinguishable from a real date, or the
+error; it belongs to whichever phase owns typed materialization.
 
 ### The nested literal codec
 
@@ -1891,6 +1889,44 @@ exactly the rows a damaged file is made of. A NULL is a value the file
 *states*; an undecodable field is the file contradicting its own DDL, which
 everywhere else in this system is an error.
 
+**PostgreSQL's special values are ordered, not undecodable**, and they are the
+population that fault is held apart *from*. `infinity`, `-infinity` and a
+`numeric`'s `NaN` are legal values of their declared types with a total order
+PostgreSQL defines (I34): `-infinity` below every finite value, `infinity`
+above, `NaN` above `infinity` and equal to itself. What cannot hold them is
+**Arrow** — `Date32` has no infinity, `Decimal128` no NaN — so
+`predicate.rs`'s `OrderKey` carries each as its *position* in that order
+rather than as a number, and `compare_keys` decides a rank before it decides a
+value. A sentinel would have been enough for `Date32`, whose `i32` leaves both
+ends of an `i64` free, and not for `Timestamp`, where `i64::MAX` micros since
+1970 is a date PostgreSQL itself accepts.
+
+The set is closed and each spelling is the one that type's own `*_out` writes,
+so a `date` reading `Infinity` is still a decode failure, and a `text` column
+holding the word `infinity` still compares bytewise. Two absences are
+load-bearing: `real`/`double precision` are not here because IEEE represents
+all three and their decoder already returns them, and a `numeric` **infinity**
+is not here because no column that resolves to a decimal can hold one — any
+typmod rejects it, and a `numeric` without a typmod is held as text (I34).
+
+**A filter is therefore exact where the batch still cannot hold the value.**
+`--filter 'v_date < 2020-01-01'` selects `-infinity`'s row, and building the
+`Date32` column for that row still raises `Error::FieldDecode`. That is a
+property, not a defect: deciding an order needs strictly less than
+materializing a value, and the two paths have different powers — the same
+asymmetry projection already has, where projecting a column away escapes its
+decode failure. Materialization is the open question, and it is `KD8`.
+
+*Rejected: excluding the row instead, as a NULL is excluded.* A NULL is the
+absence of a value and has no order; `infinity` has one. Excluding returns a
+silently wrong answer, which is worse than the error it replaced.
+
+*Rejected: waiting for the build path to represent these values.* It holds the
+cheap correct answer hostage to the expensive one for a symmetry nobody asked
+for. The error it kept in the meantime also named an escape that does not
+exist for this case: `--schema-mode strings` resolves no column, so it refuses
+ordering outright.
+
 **The register** is which Arrow types such a comparison lands on, and whether
 it means what PostgreSQL means. `predicate.rs`'s `ordering_register` is the
 authority: an **exhaustive `match` over `DataType` with no wildcard arm**, so
@@ -1904,10 +1940,10 @@ test someone might not run. The table below is the human-readable rendering.
 | `Boolean` | `boolean` | yes — `false < true` (I33) | — |
 | `Int16`/`Int32`/`Int64` | `smallint`, `integer`, `bigint` | yes | — |
 | `Float32`/`Float64` | `real`, `double precision` | yes, **given the NaN rule** — `NaN` is above every value including infinity and equals itself (I33), which is neither IEEE's answer nor Rust's | — |
-| `Decimal128`/`Decimal256` | `numeric(p,s)`, `p ≤ 76` | yes — both sides carry the column's own scale, because the literal is decoded with the column's own decoder | — |
-| `Date32` | `date` | yes | — |
+| `Decimal128`/`Decimal256` | `numeric(p,s)`, `p ≤ 76` | yes — both sides carry the column's own scale, because the literal is decoded with the column's own decoder, and `NaN` orders above every other value (I34) | — |
+| `Date32` | `date` | yes — `infinity` and `-infinity` included (I34) | — |
 | `Time64(µs)` | `time without time zone` | yes | — |
-| `Timestamp(µs[, tz])` | `timestamp`, `timestamptz` | yes — compared as the stored instant | — |
+| `Timestamp(µs[, tz])` | `timestamp`, `timestamptz` | yes — compared as the stored instant, the two infinities included (I34) | — |
 | `FixedSizeBinary16` | `uuid` | yes — `uuid_internal_cmp` is `memcmp` over 16 bytes (I33) | — |
 | `Binary` | `bytea` | yes — `byteacmp` is `memcmp`, then length (I33) | — |
 | `Dictionary(Int32, Utf8)` | enum types | **no** — PostgreSQL orders an enum by *declaration* order (I33); we compare the label text, so an enum declared `('low','medium','high')` orders alphabetically instead | the declaration order, which the dump carries verbatim in `CREATE TYPE … AS ENUM (…)`. Purely additive |

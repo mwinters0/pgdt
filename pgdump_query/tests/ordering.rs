@@ -168,17 +168,40 @@ async fn strings_mode_refuses_every_ordering_operator() {
     assert!(matches!(err, Error::UnorderedPredicateColumn { .. }), "{err:?}");
 }
 
-/// A value that is not of its mapped type is the same fault the typed build
-/// path reports — `infinity` has no `Date32`, and a `date` column holding one
-/// says so whether it is being built or being compared. Projecting the
-/// column away does **not** escape it here: the filter named it.
+/// PostgreSQL's special values are ordered, against the fixture's own
+/// `infinity`/`-infinity`/`NaN` — the values `pg_dump` writes from any
+/// healthy database. `t_date` holds both infinities and `t_numeric.v_small`
+/// (`numeric(10,2)`) holds a `NaN`, which the typmod does not exclude.
 #[tokio::test]
-async fn a_field_that_does_not_decode_is_a_field_decode_error() {
+async fn the_special_values_are_ordered_not_undecodable() {
+    assert_eq!(
+        kept("public.t_date", "id", vec![term("v_date", PredicateOp::Gt, "9999-12-31")]).await,
+        [Some("1".to_string()), Some("6".to_string())],
+        "`infinity` is above the largest finite date, and `10000-01-01` above the literal"
+    );
+    assert_eq!(
+        kept("public.t_date", "id", vec![term("v_date", PredicateOp::Lt, "0001-01-01")]).await,
+        [Some("2".to_string()), Some("5".to_string())],
+        "`-infinity` is below every finite date, BC ones included"
+    );
+    assert_eq!(
+        kept("public.t_numeric", "id", vec![term("v_small", PredicateOp::Gt, "0.00")]).await,
+        [Some("3".to_string())],
+        "`NaN` is the only `numeric` value above zero here, and it is above every value"
+    );
+}
+
+/// **The filter is exact where the batch still cannot hold the value.** The
+/// same `date` column that answers `>` above fails to *build*, because
+/// `Date32` has no infinity — two paths with different powers, and the
+/// asymmetry is deliberate.
+#[tokio::test]
+async fn a_selected_special_value_still_cannot_be_materialized() {
     let err = drain(
         "public.t_date",
         QueryOptions {
-            filters: vec![term("v_date", PredicateOp::Gt, "2000-01-01")],
-            projection: Some(vec!["id".to_string()]),
+            filters: vec![term("v_date", PredicateOp::Gt, "9999-12-31")],
+            projection: Some(vec!["v_date".to_string()]),
             ..Default::default()
         },
     )
@@ -187,6 +210,31 @@ async fn a_field_that_does_not_decode_is_a_field_decode_error() {
     assert!(
         matches!(&err, Error::FieldDecode { column, value, .. }
             if column == "v_date" && value == "infinity"),
+        "{err:?}"
+    );
+}
+
+/// A field that is genuinely undecodable for its mapped type is still the
+/// fault the typed build path reports, and projecting the column away does
+/// **not** escape it: the filter named it. `t_timestamp` holds PostgreSQL's
+/// own documented maximum, which overflows `i64` micros counted from the Unix
+/// epoch — a representation limit, unlike an infinity, with no order to fall
+/// back on.
+#[tokio::test]
+async fn a_field_that_does_not_decode_is_a_field_decode_error() {
+    let err = drain(
+        "public.t_timestamp",
+        QueryOptions {
+            filters: vec![term("v_ts", PredicateOp::Gt, "2000-01-01 00:00:00")],
+            projection: Some(vec!["id".to_string()]),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(&err, Error::FieldDecode { column, value, .. }
+            if column == "v_ts" && value == "294276-12-31 23:59:59.999999"),
         "{err:?}"
     );
 }

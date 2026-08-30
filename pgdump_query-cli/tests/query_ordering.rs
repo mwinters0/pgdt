@@ -141,6 +141,16 @@ fn strings_mode_refuses_every_ordering_operator() {
     assert!(stderr_of(&out).contains("--schema-mode strings"), "{}", stderr_of(&out));
 }
 
+/// PostgreSQL's `infinity` is a value with an order, not a decode failure, so
+/// a filter over a `date` column holding one answers instead of erroring. The
+/// meaning is pinned against the library; what this adds is that the binary
+/// exits 0 on a dump every `pg_dump` can produce.
+#[test]
+fn a_special_value_is_ordered_rather_than_ending_the_query() {
+    assert_eq!(kept("public.t_date", "id", &["--filter", "v_date>9999-12-31"]), ["1", "6"]);
+    assert_eq!(kept("public.t_numeric", "id", &["--filter", "v_small>0.00"]), ["3"]);
+}
+
 /// A literal that is not a value of the column's type is refused by name,
 /// once, rather than silently matching nothing.
 #[test]

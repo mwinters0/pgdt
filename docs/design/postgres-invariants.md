@@ -1843,3 +1843,91 @@ grep -n 'memcmp(arg1->data, arg2->data, UUID_LEN)' src/backend/utils/adt/uuid.c
 awk '/^byteacmp/,/^}/' src/backend/utils/adt/varlena.c
 grep -n 'Anum_pg_enum_enumsortorder' src/backend/catalog/pg_enum.c
 ```
+
+---
+
+## I34 — `date`/`timestamp` infinities and `numeric` `NaN` are ordered values with one fixed spelling, and a typmod'd `numeric` cannot hold an infinity
+
+**Claim.** Four properties, each about a value a healthy database can hold and
+`pg_dump` therefore writes:
+
+- **`date`, `timestamp` and `timestamptz` have `infinity` and `-infinity`**,
+  written in exactly those two spellings, lower case and unsigned-positive.
+  Each type's own `<`/`>` places `-infinity` below and `infinity` above every
+  finite value of that type, and each equals itself.
+- **`numeric` has `NaN`**, written `NaN`, which orders **above** every non-NaN
+  value — `Infinity` included — and equals itself.
+- **A `numeric(p,s)` column can hold `NaN` but never `±Infinity`.** The typmod
+  does not apply to a `NaN`; an infinity is rejected by *any* typmod
+  restriction. Since a `numeric` without a typmod is the only other kind, no
+  column that resolves to a `Decimal128`/`Decimal256` can hold an infinity.
+- **`numeric` gained `±Infinity` in v14.** v13 has neither the values nor the
+  rejection, so the previous property is vacuous there rather than different.
+
+**Proof.** The spellings are `src/include/utils/datetime.h`:
+
+```c
+#define EARLY			"-infinity"
+#define LATE			"infinity"
+```
+
+which `EncodeSpecialDate`/`EncodeSpecialTimestamp` are the only writers of, and
+`src/backend/utils/adt/numeric.c`'s `numeric_out`, which returns a literal
+`"Infinity"` / `"-Infinity"` / `"NaN"` before it formats anything.
+
+The order is the representation. `src/include/utils/date.h` says *"Infinity and
+minus infinity must be the max and min values of DateADT"* and defines
+`DATEVAL_NOBEGIN`/`DATEVAL_NOEND` as `PG_INT32_MIN`/`PG_INT32_MAX`;
+`src/include/datatype/timestamp.h` defines `DT_NOBEGIN`/`DT_NOEND` as
+`PG_INT64_MIN`/`PG_INT64_MAX`. `date_lt` is `dateVal1 < dateVal2` and
+`timestamp_cmp_internal` is `(dt1 < dt2) ? -1 : ((dt1 > dt2) ? 1 : 0)` — plain
+integer comparisons over a range whose two ends are reserved.
+
+`numeric`'s is explicit rather than representational, in `cmp_numerics`:
+
+```c
+	/*
+	 * We consider all NANs to be equal and larger than any non-NAN (including
+	 * Infinity).  This is somewhat arbitrary; the important thing is to have
+	 * a consistent sort order.
+	 */
+```
+
+and the typmod rule is `apply_typmod_special`, whose comment says *"NaN is
+allowed regardless of the typmod … Inf is rejected if we have any typmod
+restriction"*, ending in `errdetail("A field with precision %d, scale %d cannot
+hold an infinite value.")`.
+
+**Scope limit.** Says nothing about `real`/`double precision`, whose three
+special values are IEEE's and are covered by I33. Says nothing about
+*materializing* one: this is the order, and no Arrow type gains a
+representation from it. `interval` also has infinities (v17+), but `interval`
+is held as text (`docs/manual/type-handling.md`), so it never reaches a typed
+comparison.
+
+**Verified against.** The spellings, `DATEVAL_*`, `DT_*` and the `cmp_numerics`
+comment are byte-identical in v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 and
+master. `apply_typmod_special` exists in v14 onward only. Confirmed live
+against the koji replica (PostgreSQL 16.15) on 2026-08-30: every one of
+`'infinity'::date > '2020-01-01'`, `'2020-01-01'::date > '-infinity'`,
+`'infinity'::timestamp > '2020-01-01'`, `'NaN'::numeric > 5`,
+`'NaN'::numeric = 'NaN'`, `'NaN'::numeric > 'Infinity'::numeric` and
+`'Infinity'::numeric > 5` answers `t`; `'NaN'::numeric(5,2)` yields `NaN`;
+`'Infinity'::numeric(5,2)` raises *numeric field overflow*.
+
+**Relied on by.** `predicate.rs`'s `special_order_key` and `OrderKey`'s three
+non-finite variants — [`architecture.md`](architecture.md), "Ordering
+operators compare typed", whose `Date32`, `Timestamp` and `Decimal` register
+rows are *Agrees* only because of this.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n 'define EARLY\|define LATE' src/include/utils/datetime.h
+grep -n 'define DATEVAL_NOBEGIN\|define DATEVAL_NOEND' src/include/utils/date.h
+grep -n 'define DT_NOBEGIN\|define DT_NOEND' src/include/datatype/timestamp.h
+awk '/^timestamp_cmp_internal/,/^}/' src/backend/utils/adt/timestamp.c
+grep -n -A8 '^cmp_numerics' src/backend/utils/adt/numeric.c
+grep -n -A15 '^apply_typmod_special' src/backend/utils/adt/numeric.c
+```

@@ -91,4 +91,26 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "taken figure executes"
         ),
     ),
+    Acknowledged(
+        commit="881379e",
+        figures=(),
+        why=(
+            "applied the deficiency register: every line it changes in a declared path is a "
+            "Rust comment — the KD markers and the sentences beside them — so no figure's "
+            "subject can see it"
+        ),
+        verified=(
+            "git show 881379e -- '*.rs' | grep -E '^[+-]' | grep -Ev '^(\\+\\+\\+|---)' "
+            "| grep -Ev '^[+-]\\s*(//|$)'   # prints nothing"
+        ),
+    ),
+    Acknowledged(
+        commit="b32ed24",
+        figures=(),
+        why="renamed that register's sigil in those same comments, and nowhere else in a declared path",
+        verified=(
+            "git show b32ed24 -- '*.rs' | grep -E '^[+-]' | grep -Ev '^(\\+\\+\\+|---)' "
+            "| grep -Ev '^[+-]\\s*(//|$)'   # prints nothing"
+        ),
+    ),
 )

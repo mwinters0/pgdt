@@ -92,3 +92,31 @@ is authoritative as `predicate.rs`'s `ordering_register` — an exhaustive
 `match` over `DataType`, so a new mapping cannot join it silently. Evidence:
 [`../status/history/2026-08-29.md`](../status/history/2026-08-29.md), and
 register entries I4, I32 and I33.
+
+---
+
+## A bare `numeric` can hold an infinity where a typmod'd one cannot, so the arbitrary-precision comparison has three special values to order, not one
+
+**Fact.** `P5.8` made the ordering operators answer PostgreSQL's special values
+exactly: `-infinity` below every finite value, `infinity` above, `NaN` above
+`infinity` and equal to itself (I34). For a `numeric(p,s)` column that meant
+`NaN` alone — `apply_typmod_special` rejects an infinity under *any* typmod, so
+a column that resolves to `Decimal128`/`Decimal256` cannot hold one. **A bare
+`numeric` has no such restriction**: it is the one numeric column that can hold
+all three, and it is exactly the column P11 would give a real comparison to,
+since it is registered as divergent today for having no decimal representation.
+
+The same applies to the nested row above wherever a range or array is over
+`date`/`timestamp`/`numeric` — `daterange` bounds may be `infinity` and
+`-infinity`, which are *values*, distinct from an unbounded `(`/`)` end.
+
+**Why P11 cares.** Two of its four divergent rows are closed by writing a
+comparison of its own — the bare `numeric` one, and each text-held type — and
+whichever representation that comparison decodes into has to carry the three
+special values or it will regress a case the typed columns already answer.
+`predicate.rs`'s `OrderKey` already models them as positions in the order
+rather than as numbers, which is the shape to extend rather than rebuild.
+
+**Origin.** `P5.8`, 2026-08-30; the server-side semantics, the typmod rule and
+its per-version scope are register entry I34, with the mechanism in
+[`architecture.md`](architecture.md), "Ordering operators compare typed".
