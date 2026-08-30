@@ -192,7 +192,9 @@ becomes a light that is always on. A signal that is always on is the same thing
 as no signal, which is the decay the register was built against, arriving from
 the other side.
 
-So `measure.ACKNOWLEDGED` records commits that touched a declared path without
+So `measure.ACKNOWLEDGED` — the register in `scripts/acknowledged.py`, which no
+figure declares, so that adding an entry does not mark stale the figure it
+excuses — records commits that touched a declared path without
 moving a reading: the commit, the figures it excuses, why, and the command that
 re-checks it. `--stale` then prints the excuse rather than the figure, so the
 acknowledgement is *visible* — an invisible excuse would be the same defect one
