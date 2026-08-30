@@ -623,6 +623,7 @@ in the dated history entry it was filed under. The table below opens again at
 | # | Date | What changed | Why |
 |---|---|---|---|
 | `M26` | 2026-08-30 | `measurements.md` states a resolution floor per regime and reads the warm `dd` floor directionally inside it, so a move smaller than the apparatus resolves stops being argued about | [`measurements.md`](measurements.md), the eleventh standing rule and "The floor is read directionally" |
+| `M27` | 2026-08-30 | The acknowledgement register moves to `scripts/acknowledged.py`, which no figure declares, so adding an entry stops marking stale the figure it excuses | [`../status/history/2026-08-30.md`](../status/history/2026-08-30.md), "An acknowledgement cannot excuse the commit that carries it" |
 
 **One live obligation outlived them.** An `INSERT`-run scan costs **14.4×** a
 `COPY` scan per byte, CPU-bound, which argues for a scanner-level `INSERT`
