@@ -74,4 +74,12 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "line on any timing path differs"
         ),
     ),
+    Acknowledged(
+        commit="925c0a9",
+        figures=("session-drift",),
+        why=(
+            "moved this register out of measure.py and imported it back; the only lines "
+            "that differ there are the import and the comment replacing the block"
+        ),
+    ),
 )
