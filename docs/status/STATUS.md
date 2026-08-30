@@ -9,10 +9,10 @@ discoveries are in `history/`.
 ## What exists
 
 P1–P4 and P9 are complete and were struck at a keystone review. **P5 is open**
-and three slices of it have landed — one registering a figure and adding no
-library code, one bounding what an in-flight batch pins, and one adding
-projection to the library. Projection has no CLI surface yet and the richer
-predicates do not exist; the checklist is below the table.
+and four slices of it have landed — one registering a figure and adding no
+library code, one bounding what an in-flight batch pins, one adding projection
+to the library, and one giving it a CLI. The richer predicates do not exist;
+the checklist is below the table.
 
 | Capability | State |
 |---|---|
@@ -26,7 +26,7 @@ predicates do not exist; the checklist is below the table.
 | CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, cache-only `info` | working; **`parse` is the only scanner** — it resumes from a matching cache, banks at `COPY` block boundaries under a self-tuning throttle, and saves unconditionally on Ctrl-C (exit 130/143). `info` reports from the cache and never scans. Text output shape is provisional; `--json` carries no shape promise at all |
 | Partial reporting | `info` reports an unfinished scan's cache for as far as it got, with `Scan completion: N%` stated once at the top and nothing below it qualified. An interrupted cache is **typed** for every database segment the scan finished (I1) |
 | Measurement harness | `scripts/measure.py` takes every figure in [`../design/measurements.md`](../design/measurements.md) and emits that doc's tables — twelve figures, eleven taken by a sweep and one derived across two, each declaring what invalidates it and which documents repeat it, plus two instruments built and not taken |
-| Column projection | working in the library: `QueryOptions::projection` names columns, cuts the reported `ResolvedSchema` with the batches, may reorder, and may be empty (`COUNT(*)`). **No CLI surface yet** — P5.4. A filter may name a column the projection does not, and an unprojected column is never decoded, so projecting a column away escapes its `Error::FieldDecode` ([`../design/architecture.md`](../design/architecture.md), "Projection") |
+| Column projection | working, library and CLI: `QueryOptions::projection` names columns, cuts the reported `ResolvedSchema` with the batches, may reorder, and may be empty (`COUNT(*)`); `pgdq query` spells it `--column <name>` repeated, or `--no-columns`, which prints no header so `\| wc -l` is a row count. A filter may name a column the projection does not, and an unprojected column is never decoded, so projecting a column away escapes its `Error::FieldDecode` ([`../design/architecture.md`](../design/architecture.md), "Projection") |
 | Richer predicates (conjunction, typed ordering) | not started — P5.5, P5.6, specified |
 | `object_store` I/O, Python bindings, DataFusion `TableProvider` | not started — P6 |
 | Device-bound scan performance campaign, sparse row index | not started — P7 |
@@ -42,11 +42,11 @@ later on the same commit, which is the pair `--drift` reads.
 
 **Eight figures read stale** — `census-brace-free`, `census-arrays`,
 `scan-throughput-cold`, `scan-throughput-warm`, `nested-end-to-end`,
-`census-attribution`, `cross-file-floor` and `map-only` — since `P5.2` and
-`P5.3` between them touched `batch.rs`, `stream.rs` and the CLI, which all
-eight declare. None is acknowledgeable: a library change has no cheap oracle,
-and `P5.3` puts a per-field lookup on the replay path. They stay stale until
-the next full sweep, which is `P5.7`'s neighbourhood.
+`census-attribution`, `cross-file-floor` and `map-only` — since `P5.2`,
+`P5.3` and `P5.4` between them touched `batch.rs`, `stream.rs` and the CLI,
+which all eight declare. None is acknowledgeable: a library change has no cheap
+oracle, and `P5.3` puts a per-field lookup on the replay path. They stay stale
+until the next full sweep, which is `P5.7`'s neighbourhood.
 
 **Two instruments are built and unrun**, both registered under
 `measure.UNTAKEN` — a sweep takes neither and the doc carries no table for
@@ -61,9 +61,9 @@ either, so `--figure <id>` is the only way to reach one.
   deletes it.
 - `projection-widths` is that replacement: one file at five projection widths,
   warm and typed, where every attribution the cross-file apparatus makes is a
-  subtraction between two adjacent rows. **It cannot be taken until `P5.4`**,
-  because its command shapes name `--column` and `--no-columns`; `P5.7` takes
-  it and folds it in
+  subtraction between two adjacent rows. Its command shapes are executable
+  since `P5.4` and the suite runs all five against a generated input; `P5.7`
+  takes it and folds it in
   ([`../design/roadmap-P5-pushdown.md`](../design/roadmap-P5-pushdown.md)).
 
 ## P5 progress
@@ -82,7 +82,8 @@ The spec is
       move, the projected `ResolvedSchema`, `push_row` skipping, the
       zero-column `RecordBatch`. Notes:
       [`../design/roadmap-P5.3-projection-notes.md`](../design/roadmap-P5.3-projection-notes.md)
-- [ ] **P5.4** The CLI for projection — `--column`, `--no-columns`.
+- [x] **P5.4** The CLI for projection — `--column`, `--no-columns`. Notes:
+      [`../design/roadmap-P5.4-projection-cli-notes.md`](../design/roadmap-P5.4-projection-cli-notes.md)
 - [ ] **P5.5** The filter conjunction — repeatable `--filter`, terms ANDed.
 - [ ] **P5.6** Typed ordering operators — `<`, `<=`, `>`, `>=`, and the refusal
       on a column that is not `Mapped` with a `Scalar` plan.

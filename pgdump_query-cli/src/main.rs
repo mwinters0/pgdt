@@ -108,7 +108,8 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Stream a table's rows, optionally filtered by a single-column predicate.
+    /// Stream a table's rows, optionally projected to named columns and
+    /// filtered by a single-column predicate.
     Query {
         /// The dump file to scan. `query` can never answer from a cache
         /// alone — row data is never cached — so this is always required.
@@ -126,6 +127,26 @@ enum Command {
         /// row's decoded field value.
         #[arg(long)]
         filter: Option<String>,
+        /// Materialize only this column, repeatable — the output carries the
+        /// columns in the order the flags give them, which need not be the
+        /// file's. A name the table does not carry is an error, and so is a
+        /// repeated one. Omit it entirely for every column
+        /// (`docs/design/architecture.md`, "Projection").
+        ///
+        /// A column that is not projected is never decoded, so projecting a
+        /// column away is also the way past a value that fails to decode
+        /// while keeping every other column typed.
+        ///
+        /// A `--filter` may name a column this does not: the projection
+        /// decides what is built, never what may be tested.
+        #[arg(long = "column", value_name = "NAME")]
+        column: Vec<String>,
+        /// Materialize no columns at all — the `COUNT(*)` shape. Each row
+        /// prints as an empty line and no header line is printed, so
+        /// `--no-columns | wc -l` is a row count. Incompatible with
+        /// `--column`.
+        #[arg(long, conflicts_with = "column")]
+        no_columns: bool,
         /// Select which database to query when `table` is ambiguous across
         /// a multi-`\connect` dump (`docs/design/architecture.md`,
         /// "One target per query").
@@ -138,6 +159,28 @@ enum Command {
         #[arg(long, value_enum, default_value_t)]
         schema_mode: CliSchemaMode,
     },
+}
+
+/// Turn the two projection flags into [`QueryOptions::projection`]. The three
+/// states are distinct and none of them is spelled the same way:
+/// `--no-columns` is the empty projection (`COUNT(*)`), one or more
+/// `--column` is that list in that order, and neither flag is `None` — every
+/// column (`docs/design/architecture.md`, "Projection").
+///
+/// The two flags cannot both be given: clap's `conflicts_with` refuses that
+/// before this is reached, so `--no-columns` wins here only in a case that
+/// cannot occur. Nothing rejects a repeated `--column` name at this layer —
+/// the library refuses it as `Error::DuplicateProjectionColumn` before a byte
+/// of the file is read, which is the same answer with the same wording
+/// whether the caller is the CLI or an embedder.
+fn projection(columns: Vec<String>, no_columns: bool) -> Option<Vec<String>> {
+    if no_columns {
+        Some(Vec::new())
+    } else if columns.is_empty() {
+        None
+    } else {
+        Some(columns)
+    }
 }
 
 /// Parse a `--filter` argument into a [`Predicate`]: `column=value`,
@@ -375,16 +418,27 @@ async fn main() -> Result<()> {
             }
             report(&index, total_size, verbose, map, json);
         }
-        Command::Query { source: file, table, dqcache, filter, database, schema_mode } => {
+        Command::Query {
+            source: file,
+            table,
+            dqcache,
+            filter,
+            column,
+            no_columns,
+            database,
+            schema_mode,
+        } => {
             let mode = CacheMode::resolve(&file, dqcache.as_deref());
             let predicate = filter.as_deref().map(parse_filter).transpose()?;
             let source = LocalFileSource::open(&file)?;
             let mut header_printed = false;
+            let mut any_batch = false;
             let mut rows = 0u64;
             let query_options = QueryOptions {
                 database,
                 schema_mode: schema_mode.into(),
                 filter: predicate,
+                projection: projection(column, no_columns),
                 ..QueryOptions::default()
             };
             // Pull mode, not `read_table`: rendering a nested column back to
@@ -402,7 +456,12 @@ async fn main() -> Result<()> {
                 mode,
             );
             while let Some(batch) = stream.next().await.transpose()? {
-                if !header_printed {
+                any_batch = true;
+                // A zero-column projection prints no header. The header would
+                // be an empty line, and the row count `--no-columns | wc -l`
+                // is asked for would come back one too many
+                // (`docs/design/architecture.md`, "Projection").
+                if !header_printed && batch.num_columns() > 0 {
                     let names: Vec<String> =
                         batch.schema().fields().iter().map(|f| f.name().clone()).collect();
                     println!("{}", names.join("\t"));
@@ -415,7 +474,7 @@ async fn main() -> Result<()> {
                 print_batch(&batch, &stream.resolved_schema().plans);
                 rows += batch.num_rows() as u64;
             }
-            if header_printed {
+            if any_batch {
                 eprintln!("{rows} row(s)");
             } else {
                 eprintln!("no rows found for {table} in {}", file.display());

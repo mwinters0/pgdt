@@ -1687,6 +1687,28 @@ fails with "must either specify a row count or at least one column", so
 two do not become separate paths; with arrays present the row count is still
 checked against every one of them.
 
+**On the command line a projection repeats rather than splits.** `pgdq query
+--column <name>`, once per column, in the order wanted; `--no-columns` for the
+empty projection; neither flag for every column. The two flags are mutually
+exclusive and clap refuses the pair, so the CLI's whole job is turning them
+into the three states `QueryOptions::projection` already has — a repeated name
+and an unknown one are the library's refusals, raised identically for an
+embedder.
+
+*Rejected: `--columns a,b,c`.* A PostgreSQL column name may legally contain a
+comma (`"a,b"` is a valid quoted identifier), so a comma-separated list either
+invents a CLI quoting grammar or has a case it cannot express — against the
+standing rule that the input contract is valid PostgreSQL rather than
+`pg_dump`'s usual output. Repeating needs no grammar and matches `--filter`.
+*Rejected: `--columns ''` for the zero-column case.* `--no-columns` says it.
+
+**A zero-column query prints no header line.** The header is the batch's own
+field names, so at width zero it would be an empty line — and
+`pgdq query --no-columns | wc -l` is the filtered row count, which that line
+would make `rows + 1`. Each row still prints as an empty line, which is what
+makes the count come out. The "no rows found" message is therefore keyed off
+whether any batch arrived, not off whether a header was printed.
+
 ### Predicates
 
 Post-parse row filtering: a row is fully parsed, then dropped if it fails.
@@ -2352,6 +2374,12 @@ what a verb split changes, and it is where the partial-cache reporting is
 pinned: its truncated caches are **built by hand** from a complete index (per
 the clamp rule under "A span's `end` is fixed up at push time"), so the
 assertions do not depend on where a real interruption happened to land.
+`query_projection.rs` beside it is the other half a library test cannot reach:
+the flags' exit statuses, and the *rendered* stream — a zero-column query's
+missing header line above all, since a stray line there breaks the row-count
+idiom silently. It also runs `measure.py`'s own registered projection widths
+against a generated input, so a command shape the harness would only execute
+mid-sweep is executed by the suite instead.
 `pgdump_query/tests/map_file.rs` separately covers that a real interruption
 leaves that same shape.
 

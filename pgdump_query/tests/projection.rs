@@ -1,8 +1,9 @@
 //! Column projection: what a query materializes, and what it therefore
 //! never decodes (`docs/design/architecture.md`, "Projection").
 //!
-//! The library-level tests only — projection has no CLI surface yet, so
-//! everything here drives `table_stream` directly.
+//! The library-level tests only: everything here drives `table_stream`
+//! directly. The flags are pinned separately, in
+//! `pgdump_query-cli/tests/query_projection.rs`.
 
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
