@@ -62,45 +62,6 @@ fn assert_every_column_maps(dump: &Path, cache: &Path) {
     }
 }
 
-/// The bytes after the `COPY … FROM stdin;` header.
-fn data_section(path: &Path) -> Vec<u8> {
-    let bytes = std::fs::read(path).expect("the generated file is readable");
-    let needle = b"FROM stdin;\n";
-    let at = bytes
-        .windows(needle.len())
-        .position(|w| w == needle)
-        .expect("the generated file has a COPY header")
-        + needle.len();
-    bytes[at..].to_vec()
-}
-
-/// `--composite` and `--weak-composite` are a *pair*, and the pairing is the
-/// whole instrument: the same rows, one file declaring `v_comp` as its real
-/// type and the other as `text`, so differencing the two isolates that one
-/// column's decode cost with nothing to normalize away
-/// (`docs/design/measurements.md`, "One column, isolated"). The moment their
-/// data sections stop matching, that difference silently becomes a comparison
-/// of two different files again — which is the imprecise instrument this pair
-/// exists to replace.
-fn assert_data_sections_match(a: &Path, b: &Path) {
-    let (da, db) = (data_section(a), data_section(b));
-    assert_eq!(
-        da.len(),
-        db.len(),
-        "--composite and --weak-composite wrote data sections of different lengths \
-         ({} vs {} bytes) — the two files no longer differ only in a declaration, so \
-         differencing them measures the files, not the column",
-        da.len(),
-        db.len()
-    );
-    if let Some(at) = da.iter().zip(&db).position(|(x, y)| x != y) {
-        panic!(
-            "--composite and --weak-composite diverge at data byte {at} — the same seed must \
-             draw the same rows, or differencing the two measures the files, not the column"
-        );
-    }
-}
-
 fn assert_modes_agree(dump: &Path) {
     let dump = dump.to_str().unwrap();
     let query = |mode: &str| {
@@ -169,13 +130,4 @@ fn the_perf_generator_writes_what_pgdq_reads_back() {
     generate(&composite, &["--composite"]);
     assert_every_column_maps(&composite, &dir.path().join("composite.dqcache"));
     assert_modes_agree(&composite);
-
-    // The weak half of the pair. `text` is a mapped declaration like any
-    // other, so the resolution check applies unchanged — what is specific to
-    // this file is that its data section must equal the one above's.
-    let weak = dir.path().join("weak.sql");
-    generate(&weak, &["--weak-composite"]);
-    assert_every_column_maps(&weak, &dir.path().join("weak.dqcache"));
-    assert_modes_agree(&weak);
-    assert_data_sections_match(&composite, &weak);
 }

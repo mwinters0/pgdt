@@ -27,17 +27,6 @@ scan-throughput table were both taken on. The array and composite stress
 columns live behind --arrays and --composite for exactly that reason -- see
 that doc's array sections.
 
---weak-composite is the sharp instrument for "what does one nested column
-cost". It writes the same rows as --composite and declares v_comp as `text`,
-so the two files' data sections are byte-identical and the only difference
-between them is whether pgdq decodes that column. Differencing across files of
-different row lengths bottoms out around half a microsecond a row
-(measurements.md, "The cross-file subtraction bottoms out at about half a
-microsecond a row"); differencing these two does not, because there is nothing
-to normalize. The pairing is a contract, not a coincidence:
-pgdump_query-cli/tests/perf_generator_fidelity.rs asserts the data sections
-match byte for byte.
-
 So the default output's *bytes* are frozen, and changing them is not a local
 decision: several recorded figures name this script as the command that
 reproduces them, and they have to be re-taken with the change. `scripts/measure.py
@@ -106,21 +95,14 @@ ARRAY_COLUMNS: list[tuple[str, str]] = [
 ]
 
 # --composite only, and separate from --arrays so a run can put the composite
-# on one axis by itself: `pgdq query` has no column projection, so separating
-# what one nested column costs end to end takes its own file
-# (measurements.md, "A typed query over nested columns").
+# on one axis by itself. What one nested column costs end to end is read off
+# `pgdq query --column`, one file at several projection widths (measurements.md,
+# "What a column costs: five projection widths over one file"); the separate
+# file is what the census figures need, since only --arrays puts a `{` in a
+# row.
 COMPOSITE_COLUMNS: list[tuple[str, str]] = [
     ("v_comp", COMPOSITE_TYPE),
 ]
-
-# --weak-composite declares that same column as `text`, so pgdq leaves its
-# values as the bytes the file holds instead of decoding them into a Struct.
-# Everything else -- the RNG draw, the row count, every byte after the COPY
-# header -- is unchanged, which is the whole point: differencing two files
-# generated with the same seed then isolates one column's decode cost with no
-# per-row normalization in the way. `text` rather than a dropped column
-# because dropping one would change the data section.
-WEAK_COMPOSITE_TYPE = "text"
 
 # A fixed word list rather than a `lorem`-style dependency -- this script has
 # no dependencies today (scripts/pyproject.toml) and generating throwaway
@@ -306,26 +288,18 @@ def generate(
     seed: int | None,
     arrays: bool,
     composites: bool,
-    weak_composite: bool = False,
 ) -> None:
     rng = random.Random(seed)
     columns = list(COLUMNS)
     if arrays:
         columns += ARRAY_COLUMNS
     if composites:
-        columns += [
-            (name, WEAK_COMPOSITE_TYPE if weak_composite else typ)
-            for name, typ in COMPOSITE_COLUMNS
-        ]
+        columns += COMPOSITE_COLUMNS
     col_decl = ",\n    ".join(f"{name} {typ}" for name, typ in columns)
     col_names = ", ".join(name for name, _ in columns)
 
     with out.open("w") as f:
         if composites:
-            # Written even under --weak-composite, where nothing declares the
-            # type: an unused CREATE TYPE is legal, and leaving it in keeps the
-            # two files' only difference the sixteen characters of one column's
-            # declared type.
             f.write(COMPOSITE_DDL)
         f.write(f"CREATE TABLE {TABLE} (\n    {col_decl}\n);\n\n")
         f.write(f"COPY {TABLE} ({col_names}) FROM stdin;\n")
@@ -364,13 +338,6 @@ def main() -> None:
         help="Append the composite stress column (v_comp) and the CREATE TYPE it needs. Off by "
         "default, and independent of --arrays so either nested shape can be measured alone.",
     )
-    parser.add_argument(
-        "--weak-composite",
-        action="store_true",
-        help="Implies --composite, but declares v_comp as text, so pgdq returns its values "
-        "verbatim instead of decoding them. Same seed, same rows, byte-identical data section: "
-        "differencing the two isolates one column's decode cost.",
-    )
     args = parser.parse_args()
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -379,8 +346,7 @@ def main() -> None:
         int(args.size_mb * 1024 * 1024),
         args.seed,
         args.arrays,
-        args.composite or args.weak_composite,
-        args.weak_composite,
+        args.composite,
     )
     print(f"wrote {args.out} ({args.out.stat().st_size / (1024 * 1024):.1f} MiB)")
 

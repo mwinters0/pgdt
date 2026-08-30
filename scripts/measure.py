@@ -770,10 +770,6 @@ INPUTS: dict[str, InputSpec] = {
     # The instrument's own floor: identical shape, different seed.
     "control43": _perf("control43", "--seed", "43"),
     "composite": _perf("composite", "--composite", "--seed", "42"),
-    # The composite file's twin: the same seed, so the same rows, with `v_comp`
-    # declared `text`. The two data sections are byte-identical, which is what
-    # lets one column's decode cost be differenced without normalizing per row.
-    "composite_text": _perf("composite_text", "--weak-composite", "--seed", "42"),
     "arrays": _perf("arrays", "--arrays", "--composite", "--seed", "42"),
     "large_object": InputSpec(
         "large_object",
@@ -1199,9 +1195,7 @@ def _script(command: str) -> str:
         )
     if command.startswith("query-project-"):
         # Typed, always: the figure is about what building a column costs, and
-        # `strings` builds every column the same cheap way. The flags this
-        # names do not exist until the CLI slice lands, which is harmless
-        # while the figure sits in `UNTAKEN` and nothing runs it.
+        # `strings` builds every column the same cheap way.
         width = command.rpartition("-")[2]
         if not width.isdigit():
             raise ValueError(f"unknown command shape {command!r}")
@@ -1720,73 +1714,6 @@ def run_cross_file_floor(session: Session) -> str:
     return md_table(["Reading", "Reps", "Paired median", "Per-rep readings"], rows)
 
 
-# -- one column, isolated ---------------------------------------------------
-
-
-def _same_rows_diffs(session: Session, figure: str, mode: str, a: str, b: str) -> list[float]:
-    """Per-rep µs/row differences between two files read in the same mode.
-
-    Legitimate only because the two files hold the *same rows*: `composite`
-    and `composite_text` are one seed's draw written twice, so nothing has to
-    be normalized away before the subtraction and the per-row division is a
-    division rather than a comparison of two row counts. That is the whole
-    difference between this instrument and `cross-file-floor`, which
-    differences files of different row lengths and bottoms out around half a
-    microsecond a row for it."""
-    counts = {name: session.stager.profile(name)["rows"] for name in (a, b)}
-    if counts[a] != counts[b]:
-        raise ValueError(
-            f"{a} holds {counts[a]:,} rows and {b} holds {counts[b]:,}: the pair is no longer "
-            "one draw written twice, so this difference measures the files, not the column"
-        )
-    va = session.get(figure, RunSpec("pgdq", a, f"query-{mode}", "warm", ""))
-    vb = session.get(figure, RunSpec("pgdq", b, f"query-{mode}", "warm", ""))
-    return [(x - y) / counts[a] * 1e6 for x, y in zip(va, vb)]
-
-
-def run_composite_isolated(session: Session) -> str:
-    figure = "composite-isolated"
-    files = ("composite", "composite_text")
-    specs = [
-        RunSpec("pgdq", name, f"query-{mode}", "warm", f"{name} {mode}")
-        for name in files
-        for mode in ("strings", "typed")
-    ]
-    session.sweep(figure, specs, session.cfg.reps(6))
-    typed = _same_rows_diffs(session, figure, "typed", *files)
-    strings = _same_rows_diffs(session, figure, "strings", *files)
-    rows = [
-        [
-            "composite column's cost — `typed` on both, `public.perf_comp` against `text`",
-            str(len(typed)),
-            f"**{median(typed):+.2f} µs**",
-            ", ".join(f"{v:+.2f}" for v in sorted(typed)),
-        ],
-        [
-            "**the instrument's own floor** — `strings` on the same two files, where neither "
-            "decodes the column",
-            str(len(strings)),
-            f"**{median(strings):+.2f} µs**",
-            ", ".join(f"{v:+.2f}" for v in sorted(strings)),
-        ],
-    ]
-    table = md_table(["Reading", "Reps", "Paired median", "Per-rep readings"], rows)
-    legs = "\n".join(
-        f"- {name} `{mode}`: "
-        f"{fmt_readings(session.get(figure, RunSpec('pgdq', name, f'query-{mode}', 'warm', '')))}"
-        for name in files
-        for mode in ("strings", "typed")
-    )
-    profile = session.stager.profile(files[0])
-    return (
-        table
-        + f"\n\nBoth files hold {profile['rows']:,} rows and data sections that are equal byte "
-        "for byte; only one column's declared type differs.\n\nPer-rep readings (s):\n"
-        + legs
-        + "\n"
-    )
-
-
 # -- projection widths ------------------------------------------------------
 
 #: The rows, in width order, each labelled by what its difference against the
@@ -2166,7 +2093,7 @@ FIGURES: list[Figure] = [
             "docs/design/roadmap-P7-scan-performance-inbox.md",
             "docs/status/STATUS.md",
         ),
-        section="A typed query over nested columns costs 13.1 µs a row more than a string one",
+        section="A typed query over nested columns costs 13.2 µs a row more than a string one",
         stage="warm",
         depends=(*NESTED, *MAP, *QUERY_CLI, *GEN_PERF),
         warm_inputs=("control", "composite", "arrays"),
@@ -2247,6 +2174,23 @@ FIGURES: list[Figure] = [
         depends=("pgdump_query/src/nested.rs", "pgdump_query/benches/decoders.rs"),
         run=run_nested_decode_micro,
     ),
+    # `depends` carries the scan path as well as the decode one, which no other
+    # query figure does: the zero-column row is an absolute reading of replay
+    # with nothing decoded, so a change in what replay costs moves it directly
+    # rather than cancelling out of a difference.
+    Figure(
+        id="projection-widths",
+        quoted_by=(
+            "docs/design/architecture.md",
+            "docs/design/roadmap-P7-scan-performance-inbox.md",
+            "docs/status/STATUS.md",
+        ),
+        section="What a column costs: five projection widths over one file",
+        stage="warm",
+        depends=(*SCAN, *NESTED, *QUERY_CLI, *GEN_PERF),
+        warm_inputs=("arrays",),
+        run=run_projection_widths,
+    ),
 ]
 
 FIGURES_BY_ID = {f.id: f for f in FIGURES}
@@ -2264,38 +2208,14 @@ FIGURES_BY_ID = {f.id: f for f in FIGURES}
 #: *taken* fail differently. An instrument nobody built is work; an instrument
 #: built and never run is a claim nobody checked, and it is invisible unless
 #: something names it.
-UNTAKEN: list[Figure] = [
-    # Superseded before publication: with P5's column projection the same
-    # isolation is a subtraction between two widths of *one* file, needing
-    # neither a second file nor the cross-file floor this was built to dodge.
-    # `P5.7` deletes it (docs/design/roadmap-P5-pushdown.md).
-    Figure(
-        id="composite-isolated",
-        section="One column, isolated: the same rows declared two ways",
-        stage="warm",
-        depends=(*NESTED, *QUERY_CLI, *GEN_PERF),
-        warm_inputs=("composite", "composite_text"),
-        run=run_composite_isolated,
-    ),
-    # Registered before the feature it measures exists: its command shapes name
-    # `--column`/`--no-columns`, which the CLI does not carry yet. Harmless
-    # while it sits here, because `UNTAKEN` is never swept and `--figure` is
-    # the only way to reach it. `P5.7` takes it, and taking it moves the entry
-    # into `FIGURES` (docs/design/roadmap-P5-pushdown.md).
-    #
-    # `depends` carries the scan path as well as the decode one, which no other
-    # query figure does: the zero-column row is an absolute reading of replay
-    # with nothing decoded, so a change in what replay costs moves it directly
-    # rather than cancelling out of a difference.
-    Figure(
-        id="projection-widths",
-        section="What a column costs: five projection widths over one file",
-        stage="warm",
-        depends=(*SCAN, *NESTED, *QUERY_CLI, *GEN_PERF),
-        warm_inputs=("arrays",),
-        run=run_projection_widths,
-    ),
-]
+#:
+#: **Empty is the healthy state, not a disused mechanism.** Both entries it
+#: carried have left by the two exits the list has: `projection-widths` was
+#: taken and moved into `FIGURES`, and `composite-isolated` — which isolated one
+#: column by declaring it two ways over byte-identical rows — was deleted
+#: unpublished, because `projection-widths` makes the same isolation a
+#: subtraction between two adjacent rows of one table over one file.
+UNTAKEN: list[Figure] = []
 
 #: A figure that no sweep produces, because it is computed *across* two of
 #: them. It still gets a section, a marker and both declared edges — it is one

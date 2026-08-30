@@ -94,6 +94,41 @@ Precision above 76 digits also falls back to a string (`Decimal256`'s limit).
 to round-trip without loss. `NaN`, `Infinity` and `-Infinity` are written in
 those exact spellings and are parsed as such.
 
+### `infinity` and `NaN` filter correctly even where the column cannot hold them
+
+`date`, `timestamp` and `timestamptz` accept `infinity` and `-infinity`;
+`numeric` accepts `NaN`. PostgreSQL gives all of these a place in the order —
+`-infinity` below every finite value, `infinity` above every one, `NaN` above
+`infinity` — and `<`, `<=`, `>` and `>=` answer them exactly, in the spelling
+each type writes.
+
+Arrow has nowhere to *put* them: `Date32` has no infinity and `Decimal128` has
+no `NaN`. So the two halves of a query have different powers, and it shows up
+like this:
+
+```sh
+# selects the -infinity row, prints it, and succeeds — v_date is not built
+pgdq query --source dump.sql --table public.t_date \
+  --filter 'v_date<2020-01-01' --column id
+
+# selects the same row and then fails building the Date32 column for it
+pgdq query --source dump.sql --table public.t_date --filter 'v_date<2020-01-01'
+# Error: public.t_date.v_date at row offset …: value `-infinity` does not
+# parse as its mapped type `date` — use --schema-mode strings to read this
+# column verbatim
+```
+
+The filter is right in both. What fails in the second is materializing a value
+the output type cannot represent, and the message is the ordinary decode error
+above. Project the column away, or read it with `--schema-mode strings`, and
+the value comes back as the text the dump holds.
+
+**A filter term is `<column><operator><value>` with no spaces around the
+operator.** Everything after the operator is the value, spaces included, because
+a text column may legitimately hold a leading space — so
+`--filter 'v_date < 2020-01-01'` looks for the date ` 2020-01-01` and is
+refused before any row is read.
+
 ### Arrays, composites, ranges, and multiranges
 
 All four map to real Arrow types, and they nest in any combination:
@@ -194,9 +229,27 @@ does not parse as its mapped type `public.boxed` — use --schema-mode strings
 to read this column verbatim
 ```
 
-Reading more of the file will not change this one, which is why the message
-names the remedy it does: `--schema-mode strings` (`SchemaMode::Strings`)
-hands the literal back verbatim, braces and all.
+Reading more of the file will not change this one, and there are **two** ways
+through it. The message names one: `--schema-mode strings`
+(`SchemaMode::Strings`) hands the literal back verbatim, braces and all — for
+every column in the table, which is a heavy price for one of them.
+
+The other is to leave the column out of the query. **A column you do not
+project is never decoded**, so `--column`/`QueryOptions::projection` is a
+per-column escape from this error where `--schema-mode strings` is a
+whole-table one:
+
+```sh
+# fails on v
+pgdq query --source dump.sql --table public.t_shipments
+
+# succeeds: v is never decoded
+pgdq query --source dump.sql --table public.t_shipments --column id
+```
+
+The error message does not mention this second remedy. Both work; which one
+you want depends on whether you need that column's *values* or only its
+absence.
 
 #### A predicate still matches the literal text
 

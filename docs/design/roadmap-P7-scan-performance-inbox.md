@@ -91,7 +91,7 @@ P7's "Measurement discipline" section is the right place to settle it.
 
 ---
 
-## An `INSERT`-run scan is CPU-bound at 14.4× a `COPY` scan's per-byte cost
+## An `INSERT`-run scan is CPU-bound at mid-teens times a `COPY` scan's per-byte cost
 
 <!-- deficiency: KD9 -->
 **This entry is deficiency `KD9`'s detail** (`../status/STATUS.md`, "Known
@@ -105,18 +105,20 @@ filed under. Three 3.00 GiB synthetic dumps, one sweep, both regimes
 
 | | `COPY` block | large object | `INSERT` run | `dd` floor |
 |---|---|---|---|---|
-| warm, tmpfs | 0.537 s | 0.455 s | **7.71 s** | 0.311 s |
-| cold, SSD | 5.77 s | 5.77 s | 9.27 s | 5.76 s |
+| warm, tmpfs | 0.500 s | 0.464 s | **8.37 s** | 0.275 s |
+| cold, SSD | 5.77 s | 5.76 s | 9.85 s | 5.75 s |
 
-**An `INSERT` run costs 14.4× a `COPY` block's per-byte CPU** — 7.71 s against
-0.537 s on the same 3.00 GiB — and 25× the warm device floor where the `COPY`
-path is 1.7×. The **"~5×" this entry was filed under was never a CPU ratio**:
+**An `INSERT` run costs 16.7× a `COPY` block's per-byte CPU** — 8.37 s against
+0.500 s on the same 3.00 GiB — and 30× the warm device floor where the `COPY`
+path is 1.8×. The **"~5×" this entry was filed under was never a CPU ratio**:
 it divided a cold `INSERT` rate, device included, by the `COPY` path's warm
-CPU. 14.4× is a single-regime measurement and replaces it, landing below the
+CPU. A single-regime measurement replaces it, landing below the
 16–26× the cold table alone was used to bound it at. Carry it as
-**mid-teens**: the four sweeps taken under an apparatus the telemetry witnesses
-quiet read 14.4×, 14.5×, 14.6× and 14.9× on the same binaries and inputs, both
-legs having moved inside the measured session drift.
+**mid-teens, never to three figures**: sweeps under an apparatus the telemetry
+witnesses quiet have read 14.4×, 14.5×, 14.6×, 14.9× and 16.7× on the same
+binaries and inputs, both legs moving inside the measured session drift. The
+`COPY` leg is the one that moves — half a second, memory-bandwidth-bound —
+which is why the ratio is carried as a magnitude rather than a value.
 
 The cause is structural, not incidental: the large-object region has a
 `crate::scan`-level fast path (lines skipped unread) but left `INSERT` runs
@@ -143,7 +145,7 @@ has no invariant behind it the way `COPY`'s `\.` (I7) and `BLOBS`' `COMMIT;`
 Track A's row reader needs anyway.
 
 **The cold `INSERT` reading also moved, and not because of the apparatus**:
-15.13–15.42 s when first taken, 9.27 s now. `2eb51f4` changed how an
+15.13–15.42 s when first taken, 9.85 s now. `2eb51f4` changed how an
 `--inserts` dump's runs are scanned in between — absorbing the `Data for`
 comment into the run. Attributing the difference needs a build from before that
 commit and a second cold table, which nothing yet requires —
@@ -187,34 +189,35 @@ complexity is worth it.
 **The copying baseline exists, and it says the parse is the smaller half.**
 On a 3.00 GiB dump whose every row carries a 4-element array, a 50-element
 array and a two-field composite, `pgdq query --schema-mode typed` costs
-3.74× the same query in `strings` mode, against 2.38× for the same file
+3.70× the same query in `strings` mode, against 2.35× for the same file
 without those three columns — so the three nested columns account for about
-**13.1 µs of every row**, nearly twice what the sixteen scalar columns cost
-together. **The two arrays carry all of it**: a third file holding the
-composite column and no arrays reads +0.72 µs/row against an instrument whose
-own floor is −0.05, which bounds that column at about a microsecond
-(see the entry below on what that subtraction can resolve). The
-`nested.rs` literal parse and its render account for only **6.1 µs** of the
-13.1; the remaining ~7.0 µs is the Arrow build — 56 per-element
+**13.2 µs of every row**, nearly twice what the sixteen scalar columns cost
+together. **The two arrays carry all of it, and that is now read directly
+rather than differenced across files**: projecting the columns in and out of
+one file puts the two arrays at **+12.98 µs/row** against the composite
+column's **+0.77** (the projection entry below). The
+`nested.rs` literal parse and its render account for **6.7 µs** of the
+13.2; the remaining ~6.5 µs is the Arrow build — 56 per-element
 `append_value` calls into child builders, plus list offsets. The
-micro also puts the array cost per *element* (73 ns decoding, 28 ns
+micro also puts the array cost per *element* (88 ns decoding, 28 ns
 rendering), which is the shape of one allocation each, since
 `ArrayLiteral::elements` is a `Vec<Option<String>>`. **Two targets, then, not
 one**: viewing instead of copying attacks the build, and it is the larger
 share — but a `Vec<Option<String>>` intermediate is paid before the build is
 reached, so a viewing builder that still routes through `decode_array` keeps
-the 6.1 µs.
+the 6.7 µs.
 
 **The prize, measured against the path this phase would widen.** One
-`append_view_unchecked` into a borrowed block costs **2.96 ns**, against
-20 ns to copy 49 bytes and 42 ns to copy 601 — so the two micro controls
-bracket the question: the literal parse is 26.9× a copy and 178× a view for a
-4-element array, 122.2× and 1740× for a 50-element one. 2.96 ns is a floor
+`append_view_unchecked` into a borrowed block costs **2.95 ns**, against
+19 ns to copy 49 bytes and 24 ns to copy 601 — so the two micro controls
+bracket the question: the literal parse is 26.0× a copy and 171× a view for a
+4-element array, 246.2× and 1967× for a 50-element one. 2.95 ns is a floor
 rather than the borrowed arm itself (`push_utf8view_field` also scans the chunk
 deque and calls `block_for`), so those view ratios bound the real ones from
 above. The copy control is itself the least stable number in that table — it
-has read 24 ns and 42 ns at 601 bytes across sweeps — so read the `÷ copy`
-ratios as an order of magnitude. Read together with the ~7 µs build share
+has read 24, 42, 41 and 24 ns at 601 bytes across four sweeps, which alone put
+the `÷ copy` ratio at 122× in one sweep and 246× in the next — so read the
+`÷ copy` ratios as an order of magnitude. Read together with the ~6.5 µs build share
 above, the shape of the answer is that **viewing is worth far more than the
 parse is**, and worth most on long arrays.
 
@@ -241,10 +244,10 @@ its bytes and never split into fields; a row containing either is split by
 Both sides are measured, on 3.00 GiB files served from tmpfs to a 512 MB
 container, alternating a census and a no-census glibc binary in one session,
 six reps each in both orders. On the brace-free `COPY` control — every row
-rejected by the pre-filter — the census costs **0.038 s per 3.00 GiB**, 47 ns
+rejected by the pre-filter — the census costs **0.039 s per 3.00 GiB**, 48 ns
 per 16-column row: **+8%** of a warm scan. On a file where **every** row
-carries an array it costs **1.103 s per 3.00 GiB**, 1.58 µs per 19-column row:
-**+219%** warm. Cold from this SSD the device floor hides both entirely, at
+carries an array it costs **1.123 s per 3.00 GiB**, 1.61 µs per 19-column row:
+**+225%** warm. Cold from this SSD the device floor hides both entirely, at
 +0% and +1% — measured in the same sweep, so the two regimes are one
 apparatus.
 
@@ -278,41 +281,53 @@ that day's warm-set sweep, which is what re-priced the pre-filter. See
 
 ---
 
-## The instrument that resolves a composite column's cost is built and unrun
+## What each column costs is now a within-file reading, at five projection widths
 
-**Fact.** `generate_perf_data.py --weak-composite` writes the same seed's rows
-as `--composite` with `v_comp` declared `text`, so the two files' data sections
-are byte-identical and the only difference between reading them is whether that
-one column is decoded into a `Struct`. `measure.py --figure composite-isolated`
-takes the paired difference; the same two files read in `strings` mode, where
-neither decodes the column, are its own zero control. Neither has been run
-under a quiet machine, so no figure exists and
-[`measurements.md`](measurements.md) still states that column's cost as a bound
-— "of the order of a microsecond a row, ~5% of the 13.1 µs the three nested
-columns cost together".
+**Fact.** `pgdq query --column`/`--no-columns` exists, and
+[`measurements.md`](measurements.md)'s "What a column costs: five projection
+widths over one file" reads one 3.00 GiB `--arrays --composite` file five ways,
+warm and typed, over identical rows:
 
-**Why this phase cares.** Two reasons, and the second outlives the first.
+| Projection | Median | Per row | Δ against the row above |
+|---|---|---|---|
+| 0 — `--no-columns` | 2.30 s | 3.28 µs | — |
+| 1 — `v_smallint` | 2.39 s | 3.41 µs | +0.13 µs |
+| 16 — every scalar | 9.59 s | 13.71 µs | +10.30 µs |
+| 17 — the scalars and `v_comp` | 10.17 s | 14.52 µs | **+0.77 µs** |
+| 19 — every column | 19.25 s | 27.50 µs | **+12.98 µs** |
 
-The nested-decode entries above turn on how much of the 13.1 µs is the literal
-parse and how much is the Arrow build, and the composite column is the term
-that six sweeps could not read consistently: +0.31, +0.39, +0.62, +0.69, +0.72
-and +0.99 µs/row, a spread wider than the quantity. Any plan that budgets work
-against that number needs it settled first, and this is the instrument that settles it
-— one warm run of one figure, not a sweep.
+**The zero-column row is the replay floor** — the block read, every row walked
+and field-counted, the predicate evaluated, nothing decoded or built: 3.28 µs a
+row, 2.30 s of the 19.25 s a complete typed read costs.
 
-More generally, it is a *method* this phase can reuse. The standing floor of
-~0.5 µs/row is a property of differencing two files with different row lengths,
-not a property of the machine; declaring one column two ways over identical
-bytes removes it entirely. Any figure this phase wants that isolates one
-column's or one decoder's cost can be built the same way, and the roadmap's
-rule that a slice committing to a measurement names its instrument makes that
-worth knowing before the slice rows are written.
+**Why P7 cares.** Three things, and the first is a method rather than a number.
 
-**Origin.** 2026-08-28, `M23`. The knob and the figure exist; what does not is
-a reading. The pairing is asserted by
-`pgdump_query-cli/tests/perf_generator_fidelity.rs` (the two data sections
-match byte for byte) and by the figure refusing to divide if they stop sharing
-a row count, so an unrun instrument cannot rot silently into a wrong one.
+**Every "what does this one thing cost" question this phase will ask can now be
+asked within one file.** The campaign's questions — what viewing instead of
+copying saves on `List<Utf8View>`, what a sparse row index costs per block —
+are all of that shape, and the cross-file subtraction they would otherwise use
+has a ±0.5 µs/row floor (the entry below). A projection difference has neither
+that floor nor the census's file-dependent untyped baseline: same file, same
+rows, same bytes. The roadmap's rule that a slice committing to a measurement
+names its instrument is much cheaper to satisfy with this one.
+
+**The 12.98 µs the two array columns cost is the number the viewing work is
+worth against**, and it is a within-file reading rather than the cross-file
+estimate the nested entries above were built on. The composite column's 0.77 µs
+lands inside the +0.31 to +0.99 range seven cross-file sweeps read for it,
+which is the cross-file instrument being imprecise rather than wrong.
+
+**The replay floor is what a device-bound target is measured against.** 2.30 s
+per 3.00 GiB warm is what replay costs before any column is built, so a phase
+that makes the scan CPU-bound is working against that floor and not against
+zero. It is also the figure that moves if `push_row`'s walk is ever changed:
+`projection-widths` is the one query figure declaring the scan path as well as
+the decode path, precisely because its top row is an absolute rather than a
+difference.
+
+**Origin.** `P5.7`, 2026-08-30. Figure, commands and apparatus:
+[`measurements.md`](measurements.md), "What a column costs". The mechanism:
+[`architecture.md`](architecture.md), "Projection".
 
 ---
 
@@ -327,14 +342,14 @@ than deleting it — `scripts/deficiencies.py` fails until it lands somewhere.
 **Fact.** `pgdq parse` serializes the **whole** cache at a `CopyEnd`
 watermark, throttled (`SaveThrottle`: skip a save unless 20x the last save's own
 duration has elapsed) — which holds 4000-block saves to 108 rather than 4003,
-and a 47.2 s scan to 21.0 s. The series is **still** 4x per doubling, because a
+and a 46.4 s scan to 20.3 s. The series is **still** 4x per doubling, because a
 second cost has the same shape: every `CopyEnd` rebuilds `DumpIndex::spans`
 whole — `map::Builder::snapshot` clones the builder's span vector, then
 `stream::splice` clones the prefix and concatenates — so the map alone is
-O(blocks²) with the cache disabled entirely (20.9 s for 4000 blocks under
+O(blocks²) with the cache disabled entirely (18.8 s for 4000 blocks under
 `query --dqcache none`, against 5 ms for the same bytes in one block).
-**The map is now all but a fraction of a throttled `parse` at 4000 blocks**, so
-the splice is what is left to close, not the cache. koji cannot show either
+**The map is most of a throttled `parse` at 4000 blocks** — 18.8 s of 20.3 —
+so the splice is what is left to close, not the cache. koji cannot show either
 half: 74 blocks over 784 GB.
 
 **The throttle is self-tuning, which matters for reading its counts.** `K` is
@@ -350,7 +365,7 @@ parse` nothing reads it between saves: `target` is `None`, so `target_settled`
 never runs, and the only consumers of a current `index` are the throttled save
 and the chunk-top interrupt save. Moving the `splice` *inside* the existing
 `if settled || cancelled || throttle.due()` arm would therefore fire it a few
-dozen times instead of `n` — roughly 20.9 s → 1 s at 4000 blocks — using the
+dozen times instead of `n` — roughly 18.8 s → 1 s at 4000 blocks — using the
 gate the throttle already built, no redesign. **It was rejected anyway**,
 because it trades away the interrupt guard's central guarantee: today an
 interrupt banks the last *completed block*, and under the gated splice it would bank the last
@@ -379,18 +394,21 @@ block count, and so is the map".
 
 ## Attributing a cost to one column by differencing two generated files bottoms out at ~0.5 µs/row
 
-**Fact.** `pgdq query` has no column projection, so the only way to say what
-one column costs end to end is to run the same query on two generated files
-that differ by that column and subtract their per-row `typed` − `strings`
-figures. That subtraction has a floor. Two 3.00 GiB files holding the *same*
+**Fact.** Attributing one column's cost by differencing two generated files
+that differ by that column — subtracting their per-row `typed` − `strings`
+figures — has a floor, and this is it. Column projection now answers that
+question within one file (the entry above), so what this figure is for is the
+calibration itself: any *cross-file* per-row difference this campaign takes is
+read against this number. Two 3.00 GiB files holding the *same*
 sixteen columns and differing only in their RNG seed (`--seed 42` against
-`--seed 43`) disagree by a paired median of **−0.05 µs/row**, spanning −0.29 to
-+0.41 over six interleaved reps, when they should disagree by zero; the file
-differing by one composite column reads a paired median of **+0.72 µs/row**
-over five reps, whose per-rep readings (+0.49 to +0.81) clear the floor's in
+`--seed 43`) disagree by a paired median of **+0.08 µs/row**, spanning −0.02 to
++0.29 over six interleaved reps, when they should disagree by zero; the file
+differing by one composite column reads a paired median of **+0.60 µs/row**
+over five reps, whose per-rep readings (+0.51 to +0.80) clear the floor's in
 this sweep, while other sweeps of the same quantity read +0.31, +0.39, +0.62,
-+0.69 and +0.99 — takes of one quantity 0.7 µs/row apart, which is wider than
-the floor.
++0.69, +0.72 and +0.99 — takes of one quantity 0.7 µs/row apart, which is wider
+than the floor. The within-file reading settles the quantity at +0.77, inside
+that whole range.
 Anything under roughly **±0.5 µs/row** out of this instrument is apparatus. Two
 contributors are known and neither is removable within it: the files hold
 different row counts at the same byte size, so a per-byte component does not
@@ -401,15 +419,15 @@ the runs interleave files rather than running them in blocks.
 **A third contributor is present and *is* removable — the census, measured.**
 A `strings` leg is a mapping pass plus a row pass, and the mapping pass runs
 the array-shape census, whose cost depends on whether the rows carry a `{`.
-The `--arrays --composite` file's `strings` leg is 28% above the control's;
+The `--arrays --composite` file's `strings` leg is 27% above the control's;
 with the **census-off** binary on the same two files the gap all but vanishes,
-from +1.230 s to +0.080 s — 93% of it is the census, on a file carrying 14%
+from +1.128 s to +0.036 s — 97% of it is the census, on a file carrying 14%
 *fewer* rows than the control. So a cross-file subtraction that changes the
 *brace-bearingness* of the rows compares two different baselines, and only the
 per-file `typed` − `strings` difference cancels it. The same run reproduces
-the census's own cost on a different command to within 1% of the `parse`
+the census's own cost on a different command to within 3% of the `parse`
 figure on the arrays file, and within a factor of two on the control, where
-the comparison is two sub-0.1 s readings off 4.3 s legs. Earlier sweeps could
+the comparison is two sub-0.1 s readings off 4.1 s legs. Earlier sweeps could
 not see this: at 9.6 s legs a 1 s difference was inside the spread.
 
 **And the floor cannot be tightened by taking more reps** — see the next
@@ -421,16 +439,19 @@ it will ask — what viewing instead of copying saves on `List<Utf8View>`, what
 a sparse row index costs per block, what a parallel scan wins — are mostly of
 the form "what does this one thing cost", against inputs from the same
 generator. A campaign that reads a 0.3 µs/row difference as a result will
-report noise as a win. The remedy, when a figure that sharp is actually
-needed, is an instrument whose two files are **byte-identical in the data
-section** and differ only in DDL — declare the column under test as its real
-type in one file and as `text` in the other, so the same rows are decoded two
-ways with the same row count and the same bytes. That needs a generator knob
-that writes a deliberately weaker declaration; it was named and not built,
-since nothing yet needs the resolution. Reviewed 2026-08-27 and still not
-built, with its real cost now named: the knob makes the generator write a
-declaration `pg_dump` would not, which is the opposite of what `M10` corrected
-it to do, so it needs an explicit exemption from
+report noise as a win. **The remedy is the projection instrument above**, not a
+sharper cross-file one: it needs no second file, so nothing has to be
+normalized away and nothing has to be held byte-identical.
+
+*The other remedy was tried and retired.* A pair of files byte-identical in the
+data section and differing only in one column's declared type — real type in
+one, `text` in the other — removes the same normalization, and it was built:
+`generate_perf_data.py --weak-composite`, the `composite-isolated` figure and a
+fidelity test asserting the two data sections matched. It was never run, and
+`P5.7` deleted the whole apparatus once projection landed. Its real cost, named
+at the 2026-08-27 review, is why it is not worth rebuilding: the knob makes the
+generator write a declaration `pg_dump` would not, which is the opposite of what
+`M10` corrected it to do, so it needed an explicit exemption from
 `pgdump_query-cli/tests/perf_generator_fidelity.rs` rather than just a flag.
 
 **Two standing rules came out of the same review**, both in

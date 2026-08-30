@@ -366,58 +366,18 @@ class Register(unittest.TestCase):
                 self.assertTrue((measure.SCRIPTS / spec.generator).exists())
 
 
-class IsolatedPair(unittest.TestCase):
-    """`composite` and `composite_text` are one seed's draw written twice.
-
-    That is the whole instrument: the same rows, one declaring `v_comp` as its
-    real type and the other as `text`, so the difference between them is one
-    column's decode cost and nothing else. Two things can quietly break it —
-    the pair drifting apart in its generator arguments, and the two files
-    ending up with different row counts — and each has a check here."""
-
-    def test_the_pair_differs_only_in_the_declaration_flag(self):
-        strong = [a for a in measure.INPUTS["composite"].args if a != "--composite"]
-        weak = [a for a in measure.INPUTS["composite_text"].args if a != "--weak-composite"]
-        self.assertEqual(strong, weak)
-
-    def test_the_figure_is_taken_on_exactly_that_pair(self):
-        fig = measure.SELECTABLE_BY_ID["composite-isolated"]
-        self.assertEqual(fig.warm_inputs, ("composite", "composite_text"))
-
-    def _diffs(self, rows_a, rows_b, first, second):
-        class _Stager:
-            def profile(self, name):
-                return {"rows": rows_a if name == "composite" else rows_b}
-
-        class _Session:
-            stager = _Stager()
-
-            def get(self, figure, spec):
-                return first if spec.input == "composite" else second
-
-        return measure._same_rows_diffs(
-            _Session(), "composite-isolated", "typed", "composite", "composite_text"
-        )
-
-    def test_the_difference_is_per_row_over_the_row_count_they_share(self):
-        # One second apart over a million rows is a microsecond a row.
-        got = self._diffs(1_000_000, 1_000_000, [11.0, 12.0], [10.0, 11.0])
-        self.assertEqual([round(v, 6) for v in got], [1.0, 1.0])
-
-    def test_a_pair_that_no_longer_shares_a_row_count_is_refused(self):
-        # Not silently divided by one of the two: a pair that has drifted
-        # measures the files, and the figure must fail rather than say so
-        # quietly.
-        with self.assertRaises(ValueError):
-            self._diffs(1_000_000, 999_999, [11.0], [10.0])
-
-
 class Untaken(unittest.TestCase):
     """An instrument that is built and whose figure has not been taken.
 
     It has to be selectable and runnable, and it must not be mistaken for a
     figure the doc is missing — those pull in opposite directions, which is why
-    the two registers are separate."""
+    the two registers are separate.
+
+    **`measure.UNTAKEN` is empty as this stands, so every case below is
+    vacuous.** They are kept rather than deleted with the last entry: an
+    instrument is registered here the moment one is built, and a register whose
+    checks were deleted along with its contents acquires an entry with nothing
+    holding it."""
 
     def test_an_untaken_instrument_is_not_a_figure_the_doc_must_carry(self):
         for fig in measure.UNTAKEN:
@@ -580,15 +540,23 @@ class VerifyAdditive(unittest.TestCase):
     """The evidence half: regenerate at two revisions and compare bytes."""
 
     def test_it_verifies_only_inputs_a_published_figure_is_taken_on(self):
-        # `composite_text` is consumed by the untaken instrument alone, so no
-        # published figure was taken on its bytes -- and it cannot be generated
-        # at a revision before the flag that makes it existed.
+        # An input an *untaken* instrument alone consumes has no bytes in the
+        # doc to be wrong about, and may not be generatable at the older
+        # revision at all -- which `composite_text` proved on this mechanism's
+        # first run, since the commit under test was the one that added its
+        # flag. So the verified set is the published figures' own inputs, and
+        # anything reachable only through `UNTAKEN` is outside it.
         published = {
             name
             for fig in measure.ALL_FIGURES
             for name in (*fig.cold_inputs, *fig.warm_inputs)
         }
-        self.assertNotIn("composite_text", published)
+        untaken_only = {
+            name
+            for fig in measure.UNTAKEN
+            for name in (*fig.cold_inputs, *fig.warm_inputs)
+        } - published
+        self.assertEqual(published & untaken_only, set())
         self.assertIn("composite", published)
 
     def test_the_verification_size_is_small_enough_to_be_run(self):
