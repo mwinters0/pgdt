@@ -1757,8 +1757,13 @@ database's collation** — no `LC_COLLATE`, no `LOCALE`, no `ICU_LOCALE` — unl
 it was taken with `--create` (or `-C`). The preamble states
 `client_encoding`, `standard_conforming_strings` and `search_path`, and stops
 there. A per-column `COLLATE` clause appears in `CREATE TABLE` only where the
-column's collation differs from the database default, so it never supplies the
-default either.
+column's collation differs from **its type's** default — not the database's —
+so it never supplies the database default either. It does, however, say more
+than nothing: a column whose type's default collation is `default` (`text`,
+`varchar`, `char`) and that carries no clause is on the database default and
+therefore unknown, while a clause that *is* present states the collation
+outright, and a `name` column with no clause is on `C`, because `name`'s
+`typcollation` is `C` rather than `default`.
 
 **Proof.** `dumpDatabase` is the only emitter of `LC_COLLATE`/`LOCALE`/
 `ICU_LOCALE`, and `pg_dump.c`'s `main` calls it under exactly one condition:
@@ -1773,18 +1778,39 @@ if (dopt.outputCreateDB)
 v15.19, v16.15, v17.11, v18.6 and master worktrees — the gating line is
 identical in all of them.
 
+The per-column half is `dumpTableSchema`'s own attribute query, whose comment
+states the rule verbatim: *"Since we only want to dump COLLATE clauses for
+attributes whose collation is different from their type's default, we use a
+CASE here to suppress uninteresting attcollations cheaply."* Observed against
+`postgres:16` (16.15, glibc 2.41): `pg_type.typcollation` is `default` for
+`text` and `C` for `name`, and `'A' < 'a'` answers false for `text`, `varchar`
+and `char(n)` while answering true for `name`.
+
 **Scope limit.** A `--create` dump *does* carry it, and so does `pg_dumpall`,
 whose per-database `CREATE DATABASE` statements come from the same function. So
 this is a statement about the ordinary single-database plain dump, which is the
 input pgdq is built around, not about every file `pg_dump` can write.
 
-**Consequence.** A text ordering comparison cannot be made to agree with the
-server from the dump alone: PostgreSQL orders `text` by collation, and under
-any non-`C` collation the answer differs from a bytewise comparison
-(`'a' < 'B'` is true in `en_US.UTF-8`, false bytewise). pgdq therefore compares
-bytewise and **registers the divergence** rather than claiming agreement — see
+**Consequence.** A text ordering comparison on a `default`-collation column
+with no `COLLATE` clause cannot be made to agree with the server from the dump
+alone: PostgreSQL orders `text` by collation, and under any non-`C` collation
+the answer differs from a bytewise comparison (`'a' < 'B'` is true in
+`en_US.UTF-8`, false bytewise). pgdq therefore compares bytewise and
+**registers the divergence** rather than claiming agreement — see
 [`architecture.md`](architecture.md)'s "Predicates", which holds the ordering
 register.
+
+Where the file *does* state the collation, the register says so instead: an
+explicit `COLLATE "C"`/`"POSIX"`, and a bare `name` column, agree with the
+server exactly and on every server. What is unknown is only the database
+default, and only for columns whose type defers to it.
+
+Nor would recording the database default be sufficient on its own.
+PostgreSQL applies whatever the platform's libc provides for a locale name and
+promises no more: `en_US.utf8` is `strcmp` on musl and glibc's collation on
+glibc, so `'A' < 'a'` answers `t` on the one and `f` on the other. The server
+tracks that itself in `pg_collation.collversion` — `2.41` for a libc-provider
+collation, the libc version verbatim — and no dump carries it.
 
 **Relied on by.** The ordering register's `Utf8View` rows.
 
@@ -1794,6 +1820,9 @@ register.
 grep -n 'outputCreateDB' /mnt/wd12t/upstream/postgres/release-v<N>/src/bin/pg_dump/pg_dump.c
 pg_dump --no-owner mydb | grep -ci 'lc_collate\|locale'   # expect 0
 pg_dump --create --no-owner mydb | grep -ci 'locale'      # expect > 0
+grep -n -B4 'suppress uninteresting attcollations' \
+  /mnt/wd12t/upstream/postgres/release-v<N>/src/bin/pg_dump/pg_dump.c
+psql -c "select typname, typcollation from pg_type where typname in ('text','name')"
 ```
 
 ---

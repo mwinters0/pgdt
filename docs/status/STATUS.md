@@ -98,6 +98,11 @@ progress.
 - [x] **11.2** The cross-major differ — the differ, the committed differences
       file, and the suite assertion that keeps it from going stale. Notes:
       [`../design/roadmap-P11.2-cross-major-differ-notes.md`](../design/roadmap-P11.2-cross-major-differ-notes.md)
+- [ ] **11.2.2** The fixture family moves to glibc — every image Debian rather
+      than Alpine and every fixture regenerated, text cases asked under
+      `COLLATE "C"` and the database collation for `<` and `=`, and the
+      platform triple and `collversion` guarded as apparatus keys. No library
+      code. Earned from the grilling of 11.1's musl finding.
 - [ ] **11.3** The comparison plan moves to L2 — `ordering_register` out of
       `predicate.rs`, keyed on the declared type, carried in `ResolvedSchema`
       as a fourth positional vector. No answer changes.
@@ -105,6 +110,11 @@ progress.
       resolves to at least one oracle case and every case back to an arm,
       failing on either direction. Earned from 11.2, whose row asked for a
       check against a register that 11.3 creates.
+- [ ] **11.11** The declared collation is read — `COLLATE` captured in the
+      preamble parser rather than stopped at, and carried to the register:
+      explicit `C`/`POSIX` and a bare `name` agree, an explicit non-`C` clause
+      diverges, no clause on a `default`-collation type is unknown. Changes no
+      comparison, only which columns are told they diverge.
 - [ ] **11.4** Enum and bare `numeric` — declaration order for the enum;
       arbitrary-precision decimal carrying `Infinity`, `-Infinity` and `NaN`.
 - [ ] **11.5** The text-held type queue — `interval` (with v17 infinities),
@@ -229,13 +239,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **The reconciliation became `11.2.1` rather than part of `11.3`.** 11.2's
-  spec row asked for a three-way reconciliation whose two live directions join
-  against the L2 comparison register, which 11.3 builds — so it could not land
-  in 11.2 at any effort, and the row was rewritten to what did land. The choice
-  was between an earned `11.2.1` sitting after 11.3 and folding the check into
-  11.3's own scope. It is its own increment because 11.3's review property is
-  "no answer changes", and a diff that also adds a coverage check is a diff
-  where that question is harder to ask. Reconsidering it would merge two small
-  slices into one and cost nothing else; the record of where the plan was weak
-  is in the spec's slice table either way.
+Nothing is open.

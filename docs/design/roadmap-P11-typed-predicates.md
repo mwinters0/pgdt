@@ -18,22 +18,33 @@ current thing works.
 
 ## What this phase closes, and what it declares
 
-**`KD7` is retired by this phase**, not narrowed. Its four rows close three
-different ways, and two of them close by *statement* rather than by code —
-which is not a weaker outcome, because in both the register was asking a
-question that has no answer in the file.
+**`KD7` is retired by this phase**, not narrowed. Its rows close three
+different ways, and the parts that close by *statement* rather than by code are
+not the weaker outcome: there the register was asking a question the file has
+no answer to. One of them turned out to be asking a question the file *does*
+answer, in part — see the text row.
 
 | Register row | Disposition |
 |---|---|
 | `Dictionary(Int32, Utf8)` from an enum | **Closed by code.** The dump carries `CREATE TYPE … AS ENUM (…)` verbatim and `TypeKind::Enum { labels }` already holds the labels in declaration order. |
 | `Utf8View` from bare `numeric` | **Closed by code.** An arbitrary-precision decimal comparison, carrying all three of `Infinity`, `-Infinity` and `NaN`. |
 | `Utf8View` from `interval`, `time with time zone`, `inet`/`cidr`/`macaddr`/`macaddr8`, `jsonb`, and domains over them | **Closed by code**, one comparison per type. |
-| `Utf8View` from `text`/`varchar`/`char`/`name` | **Closed by statement.** PostgreSQL orders text by collation and a plain dump records none (I32). Bytewise is the answer, exact under `C`/`POSIX`; it becomes a **property** beside the mechanism, with no identifier. |
+| `Utf8View` from `text`/`varchar`/`char`/`name` | **Closed by code *and* statement.** The file states more than the row assumed: `pg_dump` emits a `COLLATE` clause wherever a column's collation differs from **its type's** default, and `name`'s type default is `C` — so a bare `name` column, and any column carrying an explicit `COLLATE "C"`/`"POSIX"`, **agree exactly, on every server**. What stays closed by statement is the rest: a `default`-collation column with no clause is on the database default, which no plain dump records (I32). Bytewise remains the answer throughout; what changes is which columns are told they diverge. |
 | `Utf8View` from `json` (and `xml`) | **Closed by statement.** PostgreSQL defines *no* comparison for these types at all — no `=`, no ordering, no default operator class — so "agrees with PostgreSQL" is not a question they can be asked. Our text comparison offers more than the server does, and that is what gets said. |
 
-The last two rows are not deficiencies once stated: `STATUS.md`'s rule is that
-a limitation whose remedy the user already has today is a property of the
-mechanism, and both of these are the strongest answer the file supports.
+The `json`/`xml` row is not a deficiency once stated: `STATUS.md`'s rule is
+that a limitation whose remedy the user already has today is a property of the
+mechanism, and that is the strongest answer the file supports. So is the
+residue of the text row — a database default that is not in the file — once the
+part that *is* in the file has been read.
+
+**The text row was not merely weak, it was wrong**, and on every server rather
+than only under an unusual collation: `'A'::name < 'a'::name` is true where
+`'A'::text < 'a'::text` is false, because `pg_type.typcollation` is `C` for
+`name` and `default` for `text`. A blanket "text diverges" told a `name`
+column's user to distrust an answer that was exact. That is the shape of error
+this phase exists to remove — a statement standing where the file has
+something specific to say.
 
 *Rejected: closing only the two rows that change the register's shape, and
 leaving the rest of `KD7` open.* The remainder would be an unowned queue
@@ -46,6 +57,141 @@ type is one comparison function and one register row.
 comparison and `KD7` for later.* The three bodies share one surface and one
 evaluator; separating them means designing the expression model twice, once
 without knowing what its leaves can do.
+
+### The text row's closure, and the libc its evidence is taken under
+
+**PostgreSQL promises to apply what the platform provides, not that a collation
+name means the same order everywhere.** `en_US.utf8` on a musl server is
+`strcmp`, so `'A' < 'a'` answers `t`; on glibc 2.41 it is glibc's collation and
+the same comparison answers `f`. The server tracks this itself —
+`pg_collation.collversion` reads `2.41` for a libc-provider collation, which is
+the libc version verbatim — and claims no more than that. pgdq claims no more
+either: it compares bytewise, registers the divergence, and says which libc its
+evidence was taken under. What stays closed by *statement* is the residue — a
+`default`-collation column carrying no `COLLATE` clause, whose collation is the
+database's and so absent from the file (I32). Where the file states a column's
+collation, 11.11 reads it.
+
+**The evidence is glibc's, by choice.** The fixture family moves from the
+Alpine images to the Debian ones, so every text answer in the oracle is a glibc
+answer — which is what nearly every deployment runs. **"Only glibc collation"
+is then a stated limitation of the evidence**, not a claim about servers: a
+musl deployment orders text differently and the oracle does not speak for it.
+That is the honest shape, because the alternative is an apparatus whose text
+answers were C-collation answers by accident of the base image, with nothing
+saying so.
+
+**The agreement half becomes a case-table dimension rather than an accident.**
+Under musl the oracle's text cells *were* the `C` answers — the case where pgdq
+**agrees**, and the half a naive family switch would silently trade away. It is
+recovered by asking each text pair twice, under `COLLATE "C"` and under the
+database collation, so one file shows both halves: bytewise equals PostgreSQL
+under `C`, and does not under `en_US.utf8`. Neither half then depends on which
+image happened to be used.
+
+**Equality comes along for free, and it is the more interesting half.** A case
+is already asked for all six of `OPERATORS`, so a collation-qualified case
+carries `=` and `<>` without anything being added. Every libc collation is
+*deterministic*, so `texteq` stays bytewise and equality **agrees** under both
+collations where ordering diverges under one — exactly the split 11.6 inherits,
+now visible in the file rather than argued from the source. The
+non-deterministic case stays closed by statement: it needs an ICU collation
+declared `deterministic = false`, which a plain dump records no more than it
+records the collation.
+
+**The cases, measured on glibc 2.41 before being written down.** Four reasons
+diverge — case ordering (`A` vs `a`), letter before case (`a` vs `B`), an accent
+sorting with `e` rather than after `z` (`é` vs `f`), and punctuation ignored at
+the primary level (`_x` vs `ax`) — and four pairs agree (`de luge`/`deluge`,
+`e`/`é`, `1`/`a`, `co-op`/`coop`). **The agreeing pairs are kept
+deliberately**: a set in which every row diverges reads as "these two orders
+never coincide", which is false and is the wrong intuition to leave behind.
+
+**A second libc would make the differ's apparatus guard load-bearing, so it is
+fixed first.** `oracle_differences.py` requires nine `meta.tsv` keys to be
+identical across majors and deliberately excludes `version`, which is expected
+to differ — but `version` is the only key carrying the **platform triple**
+(`on x86_64-pc-linux-musl`). A major left on, or reverted to, a different base
+would pass the guard in silence while `datcollate` still read `en_US.utf8` and
+meant something else. The triple becomes a guarded key of its own, parsed out
+of `version` so the version number may still differ, and the default
+collation's `collversion` joins it — that being the server's own notion of
+"this collation may have changed underneath you".
+
+**The apparatus, fixed: `-trixie` at every pinned minor.** One suite for all
+six, never the unsuffixed tag — that pin is what keeps libc drift out of the
+cross-major differences, and the unsuffixed `postgres:16` has already moved
+suites once. Verified at both ends of the range: `13.23-trixie` and
+`18.6-trixie` are both glibc 2.41 with `collversion` `2.41`, `datcollate`
+`en_US.utf8` and `datlocprovider` `c` where that column exists, and both answer
+`'A' < 'a'` false and `'a' < 'B'` true. The two images report Debian revisions
+`2.41-12` and `2.41-12+deb13u3`, so uniformity holds at the granularity
+PostgreSQL itself tracks — which is also the granularity the guard can check.
+
+**The collation is a fourth field on the case, not a column on the row.** A
+text pair appears as two cases — `(text, 'A', 'a', C)` and
+`(text, 'A', 'a', en_US.utf8)` — rather than one row carrying `lt_c`/`lt_db`
+columns that are empty for the 1200 non-text rows. The committed files mean
+what they mean only by matching the case table in order, and their test walks
+`(type, left, right)` row for row; a fourth field extends that check unchanged,
+where extra columns add a second shape to learn. It also keeps the differ
+honest: a collation-qualified case is just a case, so comparing it across
+majors needs no special rule. The reason a pair was chosen stays a comment in
+the case table — the file records answers, and a rationale is not an answer.
+
+**The regeneration is diffed, not just re-tested.** Every fixture is
+regenerated on a different base image, so the slice regenerates into a scratch
+tree and diffs it against the committed one before accepting anything. The
+expectation is that the dumps come back **byte-identical** — same `pg_dump`
+minor, same schemas, and `pg_dump`'s TOC sort is `strcmp` rather than
+locale-collated — but that is a prediction, and the fixture tree is what every
+snapshot test reads. Whichever way it comes out is a fact worth one line on the
+page: byte-identity says the switch is confined to the oracle's answers, which
+is the claim the whole slice rests on, and a difference is something to read
+deliberately rather than meet inside a snapshot review.
+
+**What the switch touches, so none of it is missed.**
+`generate_fixtures.py`'s `FIXTURE_IMAGES` and the comment above it;
+`comparison_oracle.py`'s docstring, which states the musl limitation;
+`architecture.md`'s "The text answers are bytewise, and that is an artifact of
+the apparatus"; `I35`'s paragraph in `postgres-invariants.md`, which says the
+text answers are musl's; `pg-dump-compatibility.md`'s `postgres:*-alpine`
+mention in the `SECURITY LABEL` row, where the claim survives and only the
+image name moves; and 11.1's notes, whose musl paragraph becomes false rather
+than merely dated. **Not** `postgres-invariants.md`'s other
+`postgres:16-alpine` probe citations (I15, I17, I22): they record where a
+libc-independent observation was made, and re-taking them would change nothing
+but the sentence.
+
+**The manual gains its first sentence about collation**, in the same slice. A
+`grep` over `docs/manual/` finds none today, though text ordering shipped in P5
+and `pgdq query --filter 'name<x'` already answers in an order a user's server
+may not share — warned only by a line on stderr. It lands here rather than in
+11.6 because this is where the evidence exists, so the sentence can be
+concrete: `A` sorts before `a` here and after it on a `en_US.utf8` server,
+while `=` is unaffected. It closes a gap that exists today rather than one the
+phase creates.
+
+*Rejected: keeping the Alpine family and taking the glibc answers from a
+separate one-major witness file.* It is the smaller diff, and it was the plan
+until the question was put the right way round: what should the project's
+evidence *be* taken under? A witness bolted onto a musl apparatus answers "musl,
+plus a footnote", and every later reader of the oracle has to remember the
+footnote. Moving the family answers "glibc", once, in the place the answers come
+from. The cost is real and accepted — every generator edited, every fixture
+regenerated, every correctness test re-run — and it buys an apparatus that
+needs no footnote. No performance figure is affected: none declares
+`fixtures/` or `generate_fixtures.py`, since the measured inputs come from
+`generate_perf_data.py` and `generate_block_count_bench.py`.
+
+*Rejected: an ICU collation as the second one.* It was free — the Alpine images
+are built `--with-icu`, hold 870–908 ICU collations, and
+`('a' COLLATE "und-x-icu") < 'B'` already answered `true` where bytewise
+answered `false`, so no image change would have been needed at all. But the
+evidence should show what deployments actually run, and that is `C` and the
+UTF-8 locale. ICU's identity also floats with the base image — `und-x-icu`'s
+`collversion` is `153.128` on `13.23-alpine` against `153.136` on
+`18.6-alpine` — so an ICU case would need a guard the libc case does not.
 
 ## The predicate model becomes an expression tree
 
@@ -214,7 +360,18 @@ The **field** side is unchanged: the file holds canonical `*_out` form and
 `nested::decode_*` already reads it. The **literal** side gets its own parser,
 implementing the enumerable superset `array_in`/`record_in`/`range_in` accept
 over what the matching `*_out` writes — which is what makes
-`--filter 'tags={a, b}'` mean what it looks like. For arrays that superset is:
+`--filter 'tags={a, b}'` mean what it looks like.
+
+**They are three grammars, not one, and whitespace is where they first
+disagree.** `array_in` skips ASCII whitespace around elements and braces;
+`record_in` does not, so `'( 1 , a )'` into a composite preserves the blanks
+around an unquoted field and force-quotes them back on output as `(1," a ")`,
+while `'{ 1 , 2 }'` into `integer[]` canonicalizes to `{1,2}`. A parser written
+once against the array rules and reused for the other two strips spaces a
+composite field is entitled to keep, and matches nothing. Both literals are in
+the oracle's `literals.tsv` on all six majors.
+
+For arrays the superset is:
 
 - ASCII whitespace skipped around elements and braces — `array_isspace`, which
   is deliberately *not* the locale's `isspace`.
@@ -514,14 +671,16 @@ here.
 |---|---|---|
 | **11.1** | The comparison oracle | Per-major answer tables generated by `generate_fixtures.py` and committed. No library code. |
 | **11.2** | The cross-major differ | Differ, committed differences file, suite assertion. Exercised against 13–18 the day it is written. |
+| **11.2.2** | The fixture family moves to glibc | Every image Debian rather than Alpine, every fixture regenerated; text cases asked under `COLLATE "C"` and the database collation, for `<` and `=`; the platform triple and `collversion` as guarded apparatus keys. No library code. **Earned, not planned** — see below. |
 | **11.3** | The comparison plan moves to L2 | `ordering_register` out of `predicate.rs`, keyed on the declared type, carried in `ResolvedSchema`. **No answer changes** — that is the review property. |
 | **11.2.1** | The register-to-oracle reconciliation | Every arm of the comparison register resolves to at least one oracle case, and every oracle case to an arm; failing on either direction. **Earned, not planned** — see below. |
+| **11.11** | The declared collation is read | `COLLATE` captured in the preamble parser instead of stopped at, and carried to the register: explicit `C`/`POSIX` and a bare `name` register *Agrees*, an explicit non-`C` clause *Diverges*, no clause on a `default`-collation type *unknown, therefore diverges*. Changes no comparison — only which columns are told they diverge. |
 | **11.4** | Enum and bare `numeric` | The two rows the re-key was for: declaration order, and arbitrary-precision decimal with all three specials. |
 | **11.5** | The text-held type queue | `interval` (with v17 infinities), `time with time zone`, `inet`/`cidr`/`macaddr`/`macaddr8`, `jsonb`. Repetitive and additive; the oracle checks each. |
 | **11.6** | Typed `=` / `!=` | Routed through the now-complete plan, with the canonicalize-once fast path and its two exceptions. Renames the note channel. |
 | **11.7** | Three-valued evaluation | `Expr`, the `True`/`False`/`Unknown` domain, `IS DISTINCT FROM`. Library only. |
 | **11.8** | `--where` | The expression grammar, its own CLI module, leaf delegated to `parse_filter`. |
-| **11.9** | The nested literal input grammar | Parser for the `array_in`/`record_in`/`range_in` superset, checked against the oracle's malformed cases. No comparison yet. |
+| **11.9** | The nested literal input grammar | Parser for the `array_in`/`record_in`/`range_in` supersets — **three grammars, not one** — checked against the oracle's malformed cases. No comparison yet. |
 | **11.10** | Nested structural comparison | Element-wise/field-wise/bound-wise, the NULL rule, inherited comparability, range canonicalization, paths in the notes. |
 
 **11.2.1 was earned, not planned.** The reconciliation was written into 11.2's
@@ -532,6 +691,31 @@ before it may zip two files. So it sits after 11.3 instead, which is also where
 its second direction stops being a moving target: an arm added in 11.4 or 11.5
 without a case is exactly the decay the check exists to catch. That the seam
 was found on entry rather than at spec time is where this plan was weak.
+
+**11.2.2 was earned too, and runs before 11.3.** It is apparatus work with no
+library code, exactly like 11.1 and 11.2, and it runs next rather than after
+11.3 for the phase's own reason: evidence before the code that leans on it. It
+is the largest of the three by diff — every generator, every fixture, every
+correctness test — and the smallest by decision, since nothing it produces
+changes what pgdq answers. Once 11.3 moves the register to L2 the
+collation row's closure is a paragraph someone is reading rather than writing.
+That a `.2` lands before a `.1` is not a defect in the numbering — the number
+is identity and the table is the schedule, which is the case those rules exist
+for.
+
+*Rejected: folding the reconciliation into 11.3's own scope.* It is the
+cheaper-looking option — two small slices become one — but 11.3's review
+property is "no answer changes", and a diff that also adds a coverage check is
+a diff where that question is harder to ask. The check is an increment of its
+own for the same reason 11.3 is: what a reviewer must hold in mind at once is
+the thing being kept small.
+
+**11.11 is discovered scope, not a split**, so it takes the next free number
+rather than hanging off a parent; the table is the schedule, which is why it
+reads third and numbers last. It sits after 11.3 because it consults the
+register the re-key produces, and outside 11.3 because that slice's review
+property is "no answer changes". It is not folded into 11.6 either: it touches
+the preamble parser, and the note channel is only its consumer.
 
 Four seams are deliberate. **11.3 stands alone** because a refactor whose
 review question is "did anything change?" cannot share a diff with one that
