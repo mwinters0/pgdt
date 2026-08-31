@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P5, P9 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
-| P11 — typed predicates | Sketched; not grilled | this file, below; [inbox](roadmap-P11-typed-predicates-inbox.md) |
+| P11 — typed predicates | **Specified**; open, nothing landed | [`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md) |
 | P7 — scan performance | Sketched; design doc ahead of its phase | [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md); [inbox](roadmap-P7-scan-performance-inbox.md) |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
@@ -317,48 +317,20 @@ item; see below.
 
 ## P11 — Typed predicates
 
-**Inbox:** [`roadmap-P11-typed-predicates-inbox.md`](roadmap-P11-typed-predicates-inbox.md) — facts earlier
-phases filed for this one. Drain it when grilling this phase.
-
-Sketched only, to corner-avoidance depth; it gets its own grilling when it
-becomes current. What the pushdown grilling deferred, as one body of work
-rather than two:
-
-- **Full boolean structure** — `OR` and `NOT` over the conjunction that ships
-  today, which is not two more operators but a real three-valued evaluator. The
-  shipped predicate collapses unknown to false at each term, which is sound
-  under `AND` and unsound under `NOT`, so admitting `NOT` re-opens the semantics
-  of every operator that already exists
-  ([`architecture.md`](architecture.md), "Predicates").
-- **Type-aware comparison on nested columns** — needs the *input*-side grammar
-  (I20's scope limit: `array_in` is considerably more permissive than
-  `array_out`'s inverse) and canonicalization for the three discrete built-in
-  ranges. A nested column compares as text today, which is right for every
-  value a dump contains and wrong only for a user-supplied non-canonical
-  literal.
-
-**Wanted before 1.0, and taken first**, because the surface it reworks is the
-one pushdown has just finished building and the engine story is what would
-otherwise harden an API around it. A `TableProvider` presents whatever the
-predicate can express; built first, it commits to the conjunction of
-single-column comparisons that ships today, and this phase then changes that
-surface underneath it. Widening what a provider can push down is additive;
-rebuilding one around a changed predicate is not.
-
-Its worst bug is a different class from anything pushdown built — a silently
-wrong row *set*, where projection's worst is a wrong column list — so it cannot
-share a review cycle with a query-API change, which is the same argument that
-made statistics P10.
+**Specified.** The binding statement is
+[`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md): what a
+filter *means* — full boolean structure with a three-valued evaluator,
+type-aware comparison on nested columns, typed equality, and the retirement of
+`KD7`'s ordering-register divergences. Progress is the checklist in
+[`../status/STATUS.md`](../status/STATUS.md).
 
 *The reason that used to defer it behind the engine story is withdrawn:* that
 "DataFusion hands a `TableProvider` an `Expr` tree and asks, per filter,
 whether the pushdown is exact, inexact or unsupported", so designing a boolean
 expression language before seeing that would be inventing a second one to
 reconcile. That shape is documented, stable, and readable from the DataFusion
-source without building anything — and the measured v55 semantics for `List`
-and `Struct` comparison are already in this phase's inbox, filed by an earlier
-phase. It is a research input to the grilling, not a dependency on a phase. The
-withdrawn reason is recorded so it is not re-derived.
+source without building anything. The withdrawn reason is recorded so it is not
+re-derived.
 
 ## P7 — Scan performance
 

@@ -1871,9 +1871,9 @@ for NULL. A NULL field matches neither `Eq` nor `Ne`: unknown is collapsed to
 false at each term, which is sound under `AND` and unsound under `NOT`, since
 SQL's `NOT UNKNOWN` is `UNKNOWN` rather than `TRUE`. Admitting `NOT` does not
 add an operator, it obliges a real three-valued evaluator and re-opens the
-semantics of every operator that already exists. It is filed with typed
-predicates in
-[`roadmap-P11-typed-predicates-inbox.md`](roadmap-P11-typed-predicates-inbox.md).
+semantics of every operator that already exists. It is specified in
+[`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md), "The
+predicate model becomes an expression tree".
 
 **On the command line a filter repeats rather than splits**, exactly as a
 projection does: `pgdq query --filter <term>`, once per term, ANDed. Each
@@ -1894,9 +1894,10 @@ a nested column needs no special case here.
 *input*-side grammar, which I20's scope limit flags as considerably more
 permissive than the `*_out` inverse the decoders commit to, plus
 canonicalization for the three discrete built-in ranges. That is one-time work
-belonging with typed predicates, and it is filed — with the measured
-PostgreSQL and DataFusion semantics — in
-[`roadmap-P11-typed-predicates-inbox.md`](roadmap-P11-typed-predicates-inbox.md).
+belonging with typed predicates, and it is specified — with the measured
+PostgreSQL semantics — in
+[`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md), "Nested
+comparison is structural, two-valued, and inherits comparability".
 
 ### Ordering operators compare typed, and the register says where that differs
 
@@ -2035,8 +2036,9 @@ column is what would close each one, and no two of them share it. Equality is un
 every value still decodes as the text the file holds, so what is missing is the
 ordering, not the data — and each divergence announces itself, which is what
 keeps it a weaker answer rather than a silent one. The per-type worklist
-belongs to P11 and is filed in
-[`roadmap-P11-typed-predicates-inbox.md`](roadmap-P11-typed-predicates-inbox.md).
+belongs to P11, which retires this entry: two rows close by code and two by
+statement ([`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md),
+"What this phase closes, and what it declares").
 
 *Rejected: a test asserting the Markdown table above and `ordering_register`
 agree row for row.* Its own failure mode is bit-rot in the doc parser, and the

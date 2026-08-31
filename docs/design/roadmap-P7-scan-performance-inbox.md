@@ -617,3 +617,34 @@ whether the row-emission path — which allocates per nested element
 (`architecture.md`, "The nested literal codec") — is where an allocator change
 would actually be felt, since the block-serialization workload above is not
 the one users pay per row.
+
+---
+
+## A predicate's per-row cost is no longer bounded by "a conjunction with cheap leading terms"
+
+**Fact.** Every filter term walks the row itself —
+`predicate.rs`'s `matches` does `split_fields(raw_row).nth(term.index)` — so a
+query with *n* terms splits each row up to *n* times.
+[`architecture.md`](architecture.md), "Predicates" justifies that as "a real
+cost only for a conjunction whose leading terms nearly always pass", which was
+true while a filter was an `AND` list that short-circuits on the first failure.
+
+The typed-predicates phase replaces that list with a boolean expression tree
+carrying `OR` and `NOT`, and a disjunction short-circuits on the first term
+that *succeeds* — so the shape that costs *n* walks is now the ordinary one,
+not the pathological one. That phase deliberately does not fix it: the fix is a
+rework of an already-tested core path, and it must not share a review cycle
+with a change whose worst bug is a silently wrong row set.
+
+Two fixes were considered and neither was chosen here: splitting each row's
+field offsets once into a reusable buffer that every term indexes into, and
+collecting at block-resolve time the set of field indices any term needs, then
+gathering just those in one walk.
+
+**Why this phase cares.** It owns the row path and the zero-copy work that
+touches this same field splitting, so a field-offset buffer built here serves
+both — and building it in either place separately means building it twice.
+
+**Origin.** P11 grilling, 2026-08-31. Decision and rationale:
+[`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md), "The
+per-row field walk is left alone".

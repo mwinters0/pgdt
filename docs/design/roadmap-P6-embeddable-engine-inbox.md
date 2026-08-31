@@ -242,7 +242,12 @@ has a server operator of its own), and `Dictionary` from an enum (PostgreSQL
 orders by declaration order).
 
 **`TableStream::ordering_notes()` is what an embedder can read**, and `pgdq
-query` prints each of them once on stderr. It is a **third channel** rather
+query` prints each of them once on stderr. P11 renames it `comparison_notes`
+(equality diverges under a non-deterministic collation too) and gives each note
+a *path*, so a divergence inside an array element or a composite field names
+its position — read the current method name off the source rather than this
+entry.
+ It is a **third channel** rather
 than a widening of either existing one, and deliberately: the signal is
 per-column *and* conditional on a predicate, which makes it L4, while
 `DumpIndex.diagnostics` is L1 and `ResolvedSchema.notes` is L2 — so writing it
@@ -261,3 +266,47 @@ Register: [`architecture.md`](architecture.md), "Ordering operators compare
 typed"; evidence:
 [`../status/history/2026-08-29.md`](../status/history/2026-08-29.md) and
 register entries I32 and I33.
+
+---
+
+## A divergent comparison must be reported `Unsupported`, never `Inexact`
+
+**Fact.** DataFusion v55's `TableProviderFilterPushDown` has three values, and
+`Inexact` makes a specific promise: "the provider might still return some
+tuples that do not pass the filter" — a **superset**, which DataFusion then
+re-filters above the scan
+(`datafusion/expr/src/table_source.rs`, v55.0.0).
+
+A comparison this project classifies as *divergent* does not satisfy that. A
+bytewise-collated `<` on a `text` column, or an enum compared by label text,
+can **omit** a row that PostgreSQL's own operator would have passed — so
+pushing it down as `Inexact` returns a silently wrong answer, not a
+conservative one. Divergent maps to `Unsupported`.
+
+So `OrderingSupport::{Agrees, Diverges, Refused}` is **not** the same
+trichotomy as `{Exact, Inexact, Unsupported}`, despite the shapes matching:
+`Agrees` → `Exact`, and both `Diverges` and `Refused` → `Unsupported`.
+Nothing this project produces is naturally `Inexact`, and a provider that maps
+the two registers one-to-one is unsound.
+
+**Why P6 cares.** The provider's per-filter verdict is decided here, the
+mapping looks obvious enough to be written without checking, and its failure
+mode is a wrong row set with no error.
+
+**Origin.** P11 grilling, 2026-08-31, from the v55 source. The register itself
+is [`architecture.md`](architecture.md), "Ordering operators compare typed".
+
+Two further facts about the mapping, from the v55 source:
+
+- **Struct equality against a literal is coerced by field *name*** in
+  DataFusion (`datafusion/sqllogictest/test_files/struct.slt`: `s = {y: 2, x:
+  1}` matches `{x: 1, y: 2}`), where PostgreSQL's `record_eq` is positional. It
+  costs nothing here because a composite's fields are always built in
+  declaration order, which is also the order the dump writes them — but a
+  provider that reorders or name-matches would be answering a different
+  question from the one pgdq answers.
+- **`List` columns already have full `=`/`<`/`<=`/`>`/`>=` in v55**,
+  element-wise and lexicographic
+  (`datafusion/sqllogictest/test_files/array_query.slt`), so nothing about
+  DataFusion obstructs pushing a nested comparison down. Whether it *should* be
+  pushed down is the `Unsupported`/`Exact` question above, per element type.

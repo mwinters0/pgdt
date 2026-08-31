@@ -1,0 +1,533 @@
+# P11 — Typed predicates
+
+What a filter *means*. Two things the pushdown phase deferred, plus the
+per-type worklist its ordering register left behind:
+
+- **Full boolean structure** — `OR` and `NOT` over the conjunction that ships
+  today, which is a real three-valued evaluator rather than two more operators.
+- **Type-aware comparison on nested columns** — array, composite, range and
+  multirange, which compare as text today.
+- **`KD7`** — the four ordering-register rows that do not agree with
+  PostgreSQL.
+
+The mechanisms this phase reworks are described in
+[`architecture.md`](architecture.md), "Predicates", "Ordering operators compare
+typed, and the register says where that differs", and "A filter term is parsed
+for two audiences". Read those first: this doc states what changes, not how the
+current thing works.
+
+## What this phase closes, and what it declares
+
+**`KD7` is retired by this phase**, not narrowed. Its four rows close three
+different ways, and two of them close by *statement* rather than by code —
+which is not a weaker outcome, because in both the register was asking a
+question that has no answer in the file.
+
+| Register row | Disposition |
+|---|---|
+| `Dictionary(Int32, Utf8)` from an enum | **Closed by code.** The dump carries `CREATE TYPE … AS ENUM (…)` verbatim and `TypeKind::Enum { labels }` already holds the labels in declaration order. |
+| `Utf8View` from bare `numeric` | **Closed by code.** An arbitrary-precision decimal comparison, carrying all three of `Infinity`, `-Infinity` and `NaN`. |
+| `Utf8View` from `interval`, `time with time zone`, `inet`/`cidr`/`macaddr`/`macaddr8`, `jsonb`, and domains over them | **Closed by code**, one comparison per type. |
+| `Utf8View` from `text`/`varchar`/`char`/`name` | **Closed by statement.** PostgreSQL orders text by collation and a plain dump records none (I32). Bytewise is the answer, exact under `C`/`POSIX`; it becomes a **property** beside the mechanism, with no identifier. |
+| `Utf8View` from `json` (and `xml`) | **Closed by statement.** PostgreSQL defines *no* comparison for these types at all — no `=`, no ordering, no default operator class — so "agrees with PostgreSQL" is not a question they can be asked. Our text comparison offers more than the server does, and that is what gets said. |
+
+The last two rows are not deficiencies once stated: `STATUS.md`'s rule is that
+a limitation whose remedy the user already has today is a property of the
+mechanism, and both of these are the strongest answer the file supports.
+
+*Rejected: closing only the two rows that change the register's shape, and
+leaving the rest of `KD7` open.* The remainder would be an unowned queue
+sitting behind an owned phase, which reads exactly like an oversight and is
+the state the register exists to prevent. Once the register is re-keyed off the
+declared type — which the enum and bare-`numeric` rows force — each remaining
+type is one comparison function and one register row.
+
+*Rejected: splitting boolean structure into its own phase and leaving nested
+comparison and `KD7` for later.* The three bodies share one surface and one
+evaluator; separating them means designing the expression model twice, once
+without knowing what its leaves can do.
+
+## The predicate model becomes an expression tree
+
+`QueryOptions::filters: Vec<Predicate>` is **replaced**, not supplemented:
+
+```
+Expr = Term(Predicate) | And(Vec<Expr>) | Or(Vec<Expr>) | Not(Box<Expr>)
+```
+
+`And` and `Or` are n-ary. The list that ships today is `And(terms)`, which is
+what the CLI's repeated `--filter` keeps building, so nothing about the common
+shape changes. Pre-1.0 carries no compatibility obligation
+([`roadmap.md`](roadmap.md), "Pre-1.0"), so the old field goes rather than
+staying beside the new one.
+
+*Rejected: keeping `filters` and adding an expression field beside it.* Two
+ways to say one thing, with a rule needed for how they combine.
+
+*Rejected: normalizing to disjunctive normal form at parse time and evaluating
+a flat list of conjunctions.* That is a planner, and
+[`architecture.md`](architecture.md), "Predicates" states plainly that there is
+no simplifier and no plan. DNF also multiplies term count, and each term walks
+the row separately.
+
+*Rejected: binary `And`/`Or`.* The CLI's repeated `--filter` is n-ary by
+construction, and binary nesting would make the ordinary case a right-leaning
+chain that every reader has to flatten mentally.
+
+### The evaluator is three-valued
+
+An evaluation yields `True`, `False` or `Unknown`, and **a row survives only if
+the root is `True`**. Every operator that exists today is restated in those
+terms — `Eq` against a NULL field is `Unknown`, not `False` — which is
+*observably identical* for every query expressible today, since a conjunction
+containing an unknown still fails at the root. It is a restatement, not a
+behaviour change, and that is what makes it safe to land under a phase whose
+worst bug is a silently wrong row set.
+
+`IsNull` and `IsNotNull` stay two-valued by definition: they are the operators
+that exist because unknown collapses everywhere else.
+
+## The oracle is generated, committed, and version-swept
+
+**"Agrees with PostgreSQL" becomes a check rather than an assertion.**
+`scripts/generate_fixtures.py` already spins a throwaway memory-limited
+container per major (13–18); this phase adds a pass that runs a table of
+`(declared type, left literal, right literal, operator)` through the server and
+commits the answers as a fixture. The test suite then diffs this evaluator
+against that file with **no live dependency**, and regenerating re-verifies
+across every major.
+
+This is the phase's **first** slice. The two traps the inbox carries —
+`array[1,null] = array[1,null]` is **true** and `row(1,null) = row(1,null)` is
+**true**, both NULL-*aware* rather than NULL-propagating — were found by
+measuring, not by reasoning about the source, and this phase multiplies that
+surface by an order of magnitude.
+
+*Rejected: continuing to argue every claim from the PostgreSQL source alone.*
+That is the method that left two traps to be discovered by accident.
+
+*Rejected: testing against the koji replica behind `PGDQ_KOJI_PG_URL`.*
+`CLAUDE.local.md` scopes that replica to ad-hoc local validation and forbids
+anything committed from assuming it exists. A generated, committed answer table
+has neither problem and covers six majors instead of one.
+
+## Comparison is an L2 conclusion, carried in `ResolvedSchema`
+
+`ordering_register`'s exhaustive `match` over `DataType` **moves out of
+`predicate.rs` and into L2**, beside `pgtype.rs`'s mapping table. Resolution
+already holds everything the closed rows need — the declared type string and
+`DumpMetadata`'s `TypeKind::Enum { labels }` — and `resolve_columns` is where
+both are in hand at once.
+
+The result is a per-column comparison plan, a **fourth positional vector** in
+`ResolvedSchema` beside `columns`, `notes` and `plans`. `predicate.rs` consumes
+it and stops inspecting `DataType` at all; L4 asks "how does this column
+compare", never "what Arrow type is it".
+
+This is inside L2's rules rather than a stretch of them: it is a pure
+synchronous function over data L1 already produced, it names `DataType` without
+building an array, and it is not persisted (the cache holds L1 vocabulary only,
+[`layering.md`](layering.md) rule 5). L2 already owns *how a value of this
+column decodes*; *how two values of this column compare* is the same kind of
+fact.
+
+**The exhaustiveness property is strengthened, not lost.** It is what makes a
+new mapping in `pgtype.rs` a compile error rather than a silent
+misclassification, and after the move the arm that maps a type and the arm that
+says how it compares are edited in the same file instead of two layers apart.
+
+*Rejected: keeping the register in L4 and threading its extra inputs through
+`resolve_term`.* That signature grows by one argument per type that needs one
+more fact, and it leaves L4 asking L2-shaped questions.
+
+*Rejected: carrying the enum's labels in the Arrow field's metadata so that the
+`DataType` key still suffices.* It smuggles a PostgreSQL fact into a structure
+nothing type-checks it in, to preserve a key that is being replaced for good
+reasons.
+
+## `--where` is a new flag; `--filter` does not change meaning
+
+The expression grammar is **opt-in**: `pgdq query --where '<expr>'`, with
+parens, `AND`/`OR`/`NOT`, and the existing term grammar
+([`architecture.md`](architecture.md), "A filter term is parsed for two
+audiences") as its **leaf**. `--filter` keeps its current meaning exactly —
+one term, repeatable, ANDed — and a query using both ANDs the two.
+
+*Rejected: widening `--filter` itself to accept an expression.* It is the
+`IS NULL` hazard one level up and worse. `--filter 'note=a or b'` is an
+equality against the string `a or b` today; under an expression grammar the
+same unchanged command line would silently become a disjunction. A wrong row
+set from a command that did not change is this phase's worst failure class, and
+the simple audience the two-audience grammar was built for is exactly the
+audience that would hit it.
+
+*Rejected: landing the tree library-only and leaving the CLI for later.* The
+phase's point is what a filter means; reachable only through an embedder, it
+means nothing to the tool's actual users.
+
+## Nested comparison is structural, two-valued, and inherits comparability
+
+A nested column gets `=`/`!=` **and** the four ordering operators, compared
+structurally rather than as text:
+
+- **Array** — dimension count, dimensions and **lower bounds** first, then
+  element-wise. `array_eq` memcmps `dims` and `lbs` before it looks at an
+  element, so `'[0:1]={1,2}'` and `'{1,2}'` are unequal and the `[lb:ub]=`
+  decoration is semantically load-bearing.
+- **Composite** — field-wise in declaration order, which is also the order the
+  dump writes them in, so `record_eq`'s positional rule costs nothing here.
+- **Range** — lower bound then upper, after canonicalizing the three discrete
+  built-in ranges (`int4range`, `int8range`, `daterange`); `numrange`,
+  `tsrange` and `tstzrange` do not canonicalize.
+- **Multirange** — member-wise over canonicalized members.
+
+**One NULL rule, at every level: two NULLs are equal, and NULL sorts above
+not-NULL.** `array_cmp` and `record_cmp` carry that sentence verbatim, and it
+covers equality and ordering alike. So a nested comparison is **two-valued
+throughout** — it never yields `Unknown`. Only the whole field being NULL
+(`\N`) makes a nested term unknown, exactly as for a scalar.
+
+**Comparability is inherited.** A nested column is comparable exactly when
+every element or field type beneath it is, and is **refused** otherwise, naming
+the element type that has no order — the refusal shape `resolve_terms` already
+raises. That mirrors PostgreSQL, which looks up the element type's comparison
+proc and raises when there is none: a `json[]` column, and a composite with a
+`json` field, have no `=` and no `<` on the server either.
+
+Inheritance runs through divergence as well as refusal: a `text[]` column
+inherits the collation boundary and is a *divergence*, not a refusal. So
+`OrderingNote` has to be able to name a nested position rather than only a
+column.
+
+*Rejected: falling back to today's text comparison for a nested column whose
+elements are not comparable.* It is the worse half of both options — a `json[]`
+column would silently answer a question PostgreSQL declines to answer, under an
+operator that on every other array column means something structural.
+
+*Rejected: keeping nested columns as text and adding range canonicalization
+alone.* It leaves the array and composite traps in place, which are the two the
+inbox had to measure to find.
+
+## The literal side gets a bounded input grammar
+
+The **field** side is unchanged: the file holds canonical `*_out` form and
+`nested::decode_*` already reads it. The **literal** side gets its own parser,
+implementing the enumerable superset `array_in`/`record_in`/`range_in` accept
+over what the matching `*_out` writes — which is what makes
+`--filter 'tags={a, b}'` mean what it looks like. For arrays that superset is:
+
+- ASCII whitespace skipped around elements and braces — `array_isspace`, which
+  is deliberately *not* the locale's `isspace`.
+- An **unquoted** `NULL` matched case-insensitively (`pg_strcasecmp`, under the
+  `array_nulls` GUC, on by default), where `array_out` writes exactly `NULL`
+  and force-quotes an element whose text is `NULL`.
+- Quotes and backslash escapes accepted anywhere, not only where `needquote`
+  would have forced them.
+- The `[lb:ub]=` decoration accepted even when every lower bound is 1, which
+  `array_out` omits.
+
+**The risk runs toward over-acceptance**, not under: a literal we take that the
+server would reject is a divergence in the direction nothing else in this
+system permits. The oracle fixture is where that is checked — its table carries
+malformed literals, and refusing what the server refuses is part of the diff.
+
+*Rejected: accepting canonical output form only, by reusing `nested::decode_*`
+for the literal.* A space after a comma is what a person types, and refusing it
+makes nested comparison worse to use than the text comparison it replaces.
+
+*Rejected: normalizing the literal with a cheap pre-pass and feeding the strict
+decoder.* Stripping whitespace is wrong inside a quoted element, so the
+pre-pass has to parse the literal to know where it may strip — at which point
+it is the parser, written informally.
+
+**Canonicalization is not total.** `daterange_canonical` skips any bound that
+is `DATE_NOT_FINITE`, so `[2020-01-01,infinity]` keeps its inclusive upper
+rather than becoming `[…,infinity)`. The exception is exactly the values I34
+covers, and the range comparison must reproduce it.
+
+## Evaluation short-circuits, and an error surfaces only where it is reached
+
+Evaluation is left to right and stops as soon as the root's value is
+determined, as `matches_all` already does. A decode failure under an ordering
+operator stays a hard `Error::FieldDecode`, raised where it is reached — so
+**which rows error depends on where the term sits in the expression**.
+
+That is a property, not a defect. When `a=1 OR b<2` short-circuits past a
+corrupt `b`, the row's answer was already settled by a field that did decode,
+so nothing wrong is returned; it is the asymmetry
+[`architecture.md`](architecture.md) already records for projection, where
+deciding needs strictly less than materializing.
+
+*Rejected: evaluating every leaf of every row so that a corrupt field errors
+regardless of expression shape.* It gives up the documented one-walk hot path
+to buy determinism about which error message appears, on a file that is already
+contradicting its own DDL.
+
+## The operator surface, and what it deliberately excludes
+
+`OR` makes two candidate operators redundant before they are proposed: `IN` is
+a disjunction of `=`, and `BETWEEN` is two ordering terms ANDed. Neither is
+added.
+
+`LIKE` is not added: it is a matching engine of its own — pattern syntax,
+escapes, and case-folding that is collation-dependent, which is the boundary
+this phase is otherwise declaring. Column-to-column comparison is not added
+either; every `Predicate` is one column against one literal, and changing that
+is a different feature.
+
+**`IS DISTINCT FROM` / `IS NOT DISTINCT FROM` are added**, and they are the one
+addition three-valued logic makes necessary rather than redundant: `NOT
+UNKNOWN` is `UNKNOWN`, so `NOT (a = 1)` drops a NULL row while `a IS DISTINCT
+FROM 1` keeps it. Without them a user has no spelling at all for "different,
+counting NULL as a value". The cost is in the term grammar — an infix keyword
+means a third parse path beside the operator split and the `IS NULL` fallback,
+in the file whose ordering hazards are already documented at length.
+
+*Rejected: adding `IN` for the ergonomics of a long list.* A phase about what a
+filter means should not also be inventing list syntax. If repeated `OR` proves
+painful in use, `IN` is an out-of-band ergonomics item with no decision behind
+it, which is what that ledger is for.
+
+**The type fixtures already carry the columns this needs.**
+`scripts/fixture_schema_types.sql` has enum (including labels with a space, a
+comma and a quote), typed and untyped `numeric`, `interval`, `time with time
+zone`, `json` and `jsonb`, `inet`/`cidr`/`macaddr`/`macaddr8`, arrays with NULL
+elements, the `[lb:ub]=` decoration, multi-dimensional arrays, composites with
+array fields, built-in and user-defined ranges, multiranges, and domains. What
+the oracle slice adds is the answer table, not a schema.
+
+## A divergence names its position, not just its column
+
+`OrderingNote` gains a **path** — an array element, a composite field name, or
+a range bound — and its message is built from the declared type *at that
+position*. Notes stay per-stream, deduplicated by `(column, path, divergence)`,
+and are announced once after the schema resolves, as today.
+
+The path is what keeps the existing message rule working one level down: the
+sentence is chosen from the *declared* type, because several declared types
+reach one Arrow type for different reasons. A composite may diverge at one
+field and agree at another, and a `text[]` diverges at its element while the
+array structure around it agrees.
+
+*Rejected: keeping the note per-column and describing the nesting in prose.*
+The message-from-declared-type rule then has no structure under it, and the
+composition is re-derived per call site.
+
+*Rejected: reporting only that the column's comparison diverges.* It discards
+the only part of the note a user can act on.
+
+## `--where`'s grammar
+
+Parens group; `NOT` binds tighter than `AND`, which binds tighter than `OR`;
+keywords are case-insensitive and recognised **only outside quotes**. Anything
+that is not a paren or a keyword is a leaf, handed to today's `parse_filter`
+unchanged.
+
+Delegating the leaf is what makes the hazard tractable rather than merely
+avoided: `--where 'note=a and b'` tokenizes to `note=a` AND `b`, and `b` is a
+term with no operator and no `IS` suffix, so it is **refused loudly**. The same
+string under `--filter` is still the equality it reads as, which is what the
+flag split buys.
+
+`&&`, `||` and `!` are **not** accepted as alternate spellings: one spelling,
+and those symbols collide with values.
+
+The parser is a new module in the **CLI crate**, not the library. `Predicate`
+and now `Expr` stay plain structs an embedder fills in field by field, so
+nothing below L4 parses text — the rule
+[`architecture.md`](architecture.md), "A filter term is parsed for two
+audiences" already states.
+
+## The per-row field walk is left alone
+
+Each term walks the row itself (`split_fields(raw_row).nth(index)`), and a tree
+multiplies that: a five-way disjunction is up to five walks per row. **This
+phase does not change it.**
+
+P7 owns scan performance, runs next, and already owns `KD5` and `KD9`; its
+zero-copy work touches this same row splitting, so doing it here means doing it
+twice. And this phase's worst bug is a silently wrong row set, which
+`../process.md` ("Size a slice by its review") says must not share a review
+cycle with a rework of an already-tested core path. The sharpened fact — that
+the cost is no longer bounded by "a conjunction whose leading terms nearly
+always pass" — is filed in
+[`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md).
+
+## `=` and `!=` become typed too
+
+They route through the same per-column comparison plan wherever the column has
+one, and fall back to text where it does not — so equality and ordering agree
+with each other and with the server by one mechanism, and the register's rows
+describe both.
+
+The justification the current text comparison rests on — every value in a dump
+is already in canonical `*_out` form — is true of the **field** and says
+nothing about the **literal the user typed**. Three consequences, none of them
+registered anywhere before this phase:
+
+- `--filter 'v=1.5'` matches no row of a `numeric(10,2)` column written `1.50`.
+- `--filter 'v=a'` matches no row of a `char(5)` column: the dump writes the
+  value blank-padded, and `bpchareq` compares after `bcTruelen` strips the
+  padding.
+- `--filter 'v=2020-01-01'` matches no row of a `timestamp` column written
+  `2020-01-01 00:00:00`.
+
+In each case PostgreSQL says equal and we say no, with no error — a plausible
+command line and an empty result that reads as an answer, which is the shape
+the `--filter` trimming rule was written to remove one level up.
+
+*Rejected: leaving equality as text and documenting the three cases as
+properties.* A phase named for typed predicates would ship an untyped `=`.
+
+*Rejected: typed equality only for the types where the divergence is cheapest
+to close.* The same thing with an arbitrary line through it.
+
+## A census-refused array column compares as the column resolved
+
+Two array shapes resolve to text while still holding array literals —
+`NestedArrayElement` and `VaryingArrayShape`
+([`architecture.md`](architecture.md), "Joining a header against the
+metadata"). **They keep comparing as text.** The comparison plan follows the
+column's *resolution*, never the shape of an individual value, so there is one
+rule — compare as the column resolved — and no column whose meaning depends on
+which rows a query happened to scan.
+
+Comparing them structurally would break the property the census exists to
+create: a column's type is a union over the blocks a query will replay, so a
+structural comparison on a census-refused column would mean different things
+for different queries over one file.
+
+**This does not close `KD3`**, which is about materialization and stays
+unowned. `KD8` is untouched for the same reason.
+
+## Version-varying semantics: implement the union, and check the assumption
+
+The newest semantics are implemented unconditionally, with **no branch on the
+version the dump header records**. An older server cannot have produced the
+value, so a reader that understands v17's `interval` infinities is never wrong
+about a v13 file. Making `interval` typed is what puts this in play: I34's
+scope limit excused interval infinities on the grounds that interval is held as
+text and never reaches a typed comparison, which this phase makes false.
+
+The union is safe exactly where the difference is *which values can exist*. It
+stops being safe if two majors disagree about what the same text **means**, and
+that condition is not left as a sentence to be trusted — it is checked.
+
+### The oracle is cross-version, and the check is three-way
+
+Each cell of the answer table records **whether the server accepted the input**,
+not only the answer, and a table is generated and committed **per major**. A
+cross-major diff then classifies mechanically:
+
+| Older major | Newer major | Verdict |
+|---|---|---|
+| rejects the literal | accepts, answers | **additive** — the value could not previously exist; the union rule holds |
+| accepts | accepts, **different** answer | **non-additive** — a real break, and the check fails |
+| accepts | accepts, same answer | unchanged |
+
+**The differences that already exist are committed**, not merely computed, and
+the ordinary test suite asserts against that file — so a stale differences file
+cannot be committed, and a regeneration that discovers a change forces it to be
+filed. This is the discipline [`measurements.md`](measurements.md) uses for its
+tables.
+
+A **three-way reconciliation** keeps the check from quietly covering less over
+time, in the style of `scripts/deficiencies.py`, failing on any direction:
+every arm of the L2 comparison register resolves to at least one oracle case;
+every oracle case resolves to a register arm; every major present in
+`fixtures/` has an answer file. Coverage decaying as types are added to the
+register without cases is the real failure mode, not the differ going wrong.
+
+**It pays before the next major.** Run across 13–18 on first generation, the
+differ names every place the six supported majors already disagree —
+`interval` infinity (v17), `numeric` infinity (v14) and multiranges (v14) would
+each have announced themselves that way instead of being found by reading
+release notes.
+
+**What it does not catch, said plainly.** A change to a type or operator no
+case constructs — the case table is a living artifact and adding a case is
+cheap, which is the only answer available. And a change in a value's *output
+spelling* rather than its comparison answer, which is the fixture
+regeneration's job and already appears there as a file diff.
+
+*Rejected: a "things to check when a new major lands" process document.*
+Nothing fails when nobody follows a checklist, and this project has twice
+chosen a script over that — `measure.py --stale` and `deficiencies.py`. The
+ritual keeps the home it already has:
+[`postgres-invariants.md`](postgres-invariants.md) opens with "When a new major
+lands, walk this file", and that paragraph gains the mechanical half — add the
+version, regenerate, run the differ — while the prose half, re-running each
+entry's `Re-verify` grep, stays as it is. A second document would compete with
+that one for the same trigger.
+
+*Out of scope, and named so it is not lost:* `Verified against:` is prose, so
+nothing reports which invariant entries have never been checked against the
+newest major. A parser over that field would make the "walk this file" ritual
+auditable — but it is about all invariants rather than about comparison, so it
+is out-of-band work, not part of this phase.
+
+### Typed equality canonicalizes the literal once, not the field per row
+
+The field is always in canonical `*_out` form, so the **literal** is decoded
+once when the block resolves and rendered back into that same form; the per-row
+comparison stays bytewise. `--filter 'v=1.5'` on a `numeric(10,2)` column
+becomes a bytewise compare against `1.50`, a `char(5)` literal is padded, and a
+`timestamp` literal renders `2020-01-01 00:00:00`.
+
+**Two types in scope are exceptions**, and the comparison plan carries the flag
+that says so:
+
+- **bare `numeric`** preserves scale, so `1.5` and `1.50` are equal and both
+  writable;
+- **`interval`**, whose `interval_cmp_value` collapses months to 30 days and
+  days to 86400 s, so `'1 mon'`, `'30 days'` and `'720:00:00'` are equal and
+  written differently.
+
+Those two decode per row; everything else compares bytewise. The result is the
+rare shape where correctness improves and the hot path does not move: `=` on a
+`text` or `varchar` column stays exactly the compare it is today.
+
+*Rejected: decoding both sides per row, as ordering does.* It makes every
+column pay for the two that need it, on the commonest operator.
+
+*Rejected: canonicalizing the literal everywhere with no exception list.*
+Unsound for both types above.
+
+### The note channel is renamed
+
+`TableStream::ordering_notes` becomes `comparison_notes`. Equality can diverge
+for the same reason ordering does — under a non-deterministic collation neither
+`texteq` nor `bpchareq` is bytewise, and a plain dump records no collation
+(I32) — so a name saying "ordering" would leave the equality divergence
+homeless. The entry in
+[`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md)
+names the old method and is updated with it.
+
+## Slices
+
+Ordered so each makes the next one's mistakes visible: evidence first, and
+never a pure refactor in the same diff as a change that moves answers.
+Progress is tracked in [`../status/STATUS.md`](../status/STATUS.md), never
+here.
+
+| | Slice | What it lands |
+|---|---|---|
+| **11.1** | The comparison oracle | Per-major answer tables generated by `generate_fixtures.py` and committed. No library code. |
+| **11.2** | The cross-major differ | Differ, committed differences file, three-way reconciliation, suite assertion. Exercised against 13–18 the day it is written. |
+| **11.3** | The comparison plan moves to L2 | `ordering_register` out of `predicate.rs`, keyed on the declared type, carried in `ResolvedSchema`. **No answer changes** — that is the review property. |
+| **11.4** | Enum and bare `numeric` | The two rows the re-key was for: declaration order, and arbitrary-precision decimal with all three specials. |
+| **11.5** | The text-held type queue | `interval` (with v17 infinities), `time with time zone`, `inet`/`cidr`/`macaddr`/`macaddr8`, `jsonb`. Repetitive and additive; the oracle checks each. |
+| **11.6** | Typed `=` / `!=` | Routed through the now-complete plan, with the canonicalize-once fast path and its two exceptions. Renames the note channel. |
+| **11.7** | Three-valued evaluation | `Expr`, the `True`/`False`/`Unknown` domain, `IS DISTINCT FROM`. Library only. |
+| **11.8** | `--where` | The expression grammar, its own CLI module, leaf delegated to `parse_filter`. |
+| **11.9** | The nested literal input grammar | Parser for the `array_in`/`record_in`/`range_in` superset, checked against the oracle's malformed cases. No comparison yet. |
+| **11.10** | Nested structural comparison | Element-wise/field-wise/bound-wise, the NULL rule, inherited comparability, range canonicalization, paths in the notes. |
+
+Four seams are deliberate. **11.3 stands alone** because a refactor whose
+review question is "did anything change?" cannot share a diff with one that
+changes answers. **11.4 is apart from 11.5** because arbitrary-precision
+decimal with three ordered specials is a different confidence from "`inet`
+compares by family then bits". **11.6 follows 11.5** so equality inherits every
+type's comparison at once rather than being revisited per type. And **11.9
+precedes 11.10** because the input grammar is the part with an external oracle
+and the part most likely to be wrong.
