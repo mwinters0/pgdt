@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P4, P9 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
-| P5 — pushdown | **Specified** | [`roadmap-P5-pushdown.md`](roadmap-P5-pushdown.md) |
+| P5 — pushdown | **Complete**, wrapped | [`roadmap-P5-pushdown.md`](roadmap-P5-pushdown.md); [notes](roadmap-P5-pushdown-notes.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
 | P11 — typed predicates | Sketched; not grilled | this file, below; [inbox](roadmap-P11-typed-predicates-inbox.md) |
 | P7 — scan performance | Sketched; design doc ahead of its phase | [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md); [inbox](roadmap-P7-scan-performance-inbox.md) |
@@ -318,10 +318,13 @@ item; see below.
 
 ## P5 — Pushdown
 
-**Specified:** [`roadmap-P5-pushdown.md`](roadmap-P5-pushdown.md). Column
+**Complete and wrapped:** the spec is
+[`roadmap-P5-pushdown.md`](roadmap-P5-pushdown.md) and the residue is
+[`roadmap-P5-pushdown-notes.md`](roadmap-P5-pushdown-notes.md). Column
 projection, and a predicate that is a conjunction of single-column
 comparisons with typed ordering operators on scalar columns. Its inbox was
-drained at its grilling; what the grilling deferred is P11, below.
+drained at its grilling; what the grilling deferred is P11, below. How each
+mechanism works is [`architecture.md`](architecture.md), by subject.
 
 ## P6 — Embeddable engine story
 

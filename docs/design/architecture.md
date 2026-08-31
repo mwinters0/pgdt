@@ -1447,6 +1447,10 @@ appended, so each is overshot by at most one row. The span trigger alone
 cannot fire on an empty batch whatever its cap, since a batch has no span
 until a row lands.
 
+`max_bytes` counts only the fields a projection actually built, because it caps
+what the batch *holds* and a batch holds only what it built — so a zero-column
+projection never trips it, and `max_rows` is what cuts those batches.
+
 **The span cap is the only one that bounds what a batch pins.** A pinned chunk
 is one the builder holds a `Buffer` clone of, and it is held until the batch
 flushes; the `chunks` deque's own eviction at the scanner position cannot
@@ -1713,6 +1717,15 @@ carry is `Error::UnknownProjectionColumn`; a repeated name is
 reorder. `None` is every column; the empty projection is the `COUNT(*)` shape,
 and it is reachable rather than a degenerate case nobody can express.
 
+**The two refusals fire at different moments, and that is the ordering, not an
+accident.** A repeated name is wrong whatever the file holds, so it is refused
+on the request — before the source is even sized, alongside the resume
+fingerprint check, so a token from another query is not discovered only once
+its first block resolves. An unknown name is a fact about a *block*, so it
+waits for one to resolve. `stream::project` therefore does not re-check
+duplicates itself: the up-front check covers replay and resume both, where a
+per-block check would report the same fault later and once per block.
+
 **The projected schema is what the stream reports.** All four of
 `ResolvedSchema`'s vectors — `schema`, `columns`, `notes`, `plans` — are cut
 together, in the requested order. They are positional and parallel by
@@ -1935,7 +1948,16 @@ above, `NaN` above `infinity` and equal to itself. What cannot hold them is
 rather than as a number, and `compare_keys` decides a rank before it decides a
 value. A sentinel would have been enough for `Date32`, whose `i32` leaves both
 ends of an `i64` free, and not for `Timestamp`, where `i64::MAX` micros since
-1970 is a date PostgreSQL itself accepts.
+1970 is a date PostgreSQL itself accepts; widening the key to `i128` to keep
+the sentinel literally free buys nothing the rank does not, and puts a wider
+integer on the per-row path.
+
+**`OrderKey` derives no `Ord`, and must not.** Its variants are comparable
+only through `compare_keys`, which settles the rank first and descends to a
+value pair only when both sides are finite — so a special against a finite is a
+legitimate cross-variant pair that never reaches the value match. A derived
+lexicographic order over the variant list would happen to agree with that
+today and would stop agreeing the moment a variant is inserted.
 
 The set is closed and each spelling is the one that type's own `*_out` writes,
 so a `date` reading `Infinity` is still a decode failure, and a `text` column
@@ -1969,7 +1991,10 @@ authority: an **exhaustive `match` over `DataType` with no wildcard arm**, so
 a type this build starts producing cannot silently inherit a classification —
 the moment the register would otherwise go stale is a routine type-mapping
 change in `pgtype.rs`, and it fires there as a compile error rather than as a
-test someone might not run. The table below is the human-readable rendering.
+test someone might not run. A refused type pairs with no `OrderKind` in the
+same arm, so "refused" and "has no way to decode a value" are one fact rather
+than two that could come to disagree. The table below is the human-readable
+rendering.
 
 | Arrow type | Reached by | Agrees with PostgreSQL | What would close the gap |
 |---|---|---|---|
@@ -2760,7 +2785,11 @@ the flags' exit statuses, and the *rendered* stream — a zero-column query's
 missing header line above all, since a stray line there breaks the row-count
 idiom silently. It also runs `measure.py`'s own registered projection widths
 against a generated input, so a command shape the harness would only execute
-mid-sweep is executed by the suite instead. `query_filter.rs` does the same
+mid-sweep is executed by the suite instead — and the flags are *read out of*
+the harness rather than transcribed, so a width added there is exercised here
+without anyone remembering to. The failure that guards against has no other
+guard: a flag the binary does not accept is otherwise discovered minutes into
+a figure, with the figure lost. `query_filter.rs` does the same
 for the conjunction: what a repeated flag *accumulates* is a property of the
 parser, so the test that says a second `--filter` neither replaces nor is
 ignored has to count rows out of the real binary, with each term asserted

@@ -14,8 +14,10 @@ device-bound rather than CPU-bound, at flat memory.
 What works today: streaming row extraction from plain-format dumps into typed
 Arrow batches — arrays, composites, ranges and multiranges included — a full
 byte-exact file map and DDL object inventory, a resumable scan that reports
-what it has, and a best-effort structural cache. What is next — pushdown,
-engine bindings, the performance campaign, archive formats — is in
+what it has, a best-effort structural cache, and pushdown: column projection
+and a filter that is a conjunction of typed single-column comparisons. What is
+next — engine bindings, richer predicates, the performance campaign,
+row-group statistics, archive formats — is in
 [`docs/design/roadmap.md`](docs/design/roadmap.md). See
 [`docs/status/STATUS.md`](docs/status/STATUS.md) for exact implementation
 state, known deficiencies included.

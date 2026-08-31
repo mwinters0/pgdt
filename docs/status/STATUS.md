@@ -8,15 +8,18 @@ discoveries are in `history/`.
 
 ## What exists
 
-P1–P4 and P9 are complete and were struck at a keystone review. **P5 is open
-and every slice of it has landed** — one registering a figure and adding no
-library code, one bounding what an in-flight batch pins, one adding projection
-to the library, one giving it a CLI, one turning the single filter into a
-conjunction, one adding the typed ordering operators, one making PostgreSQL's
-special values answer them, one taking the figure and retiring the cross-file
-apparatus it supersedes, and one giving the filter term its grammar. **Nothing
-remains but the wrap**, which owes a full sweep: eleven figures read stale. The
-checklist is below the table.
+P1–P4, P9 and P5 are complete and were struck at keystone reviews; how each
+mechanism works is [`../design/architecture.md`](../design/architecture.md),
+filed by subject. **No phase is open**, and the next one is grilled and
+specified before anything else lands.
+
+**One obligation of P5's wrap is outstanding**: eleven figures read stale, and
+the full sweep that clears them is launched detached rather than waited on — an
+hour a session, so its result is a later session's input. That session folds
+its tables into
+[`../design/measurements.md`](../design/measurements.md) and re-stamps the doc;
+until then that doc's numbers are the `b70589f` stamp and `--stale` is red for
+the reason written below.
 
 | Capability | State |
 |---|---|
@@ -57,77 +60,35 @@ the projection table makes the same isolation a subtraction between two adjacent
 rows of one file.
 
 **Eleven figures read stale, from three causes.** Nine declare
-`scripts/generate_perf_data.py`, which `P5.7` edited to delete
-`composite-isolated`'s apparatus — the `--weak-composite` flag and the
-`composite_text` input. `session-drift` declares `scripts/measure.py`, edited
-in the same commit to move `projection-widths` into `FIGURES`; nothing on a
-timing path differs there, and the figure is derived rather than measured, so
-`--drift` re-derives it from the two sweeps' `raw.json` without measuring
-anything. `map-only` is `P5.9`'s: five figures declare the CLI's
-`main.rs`, four of them already stale on the generator, and `map-only` is the
-one that was not.
+`scripts/generate_perf_data.py`, edited to delete `composite-isolated`'s
+apparatus — the `--weak-composite` flag and the `composite_text` input.
+`session-drift` declares `scripts/measure.py`, edited in the same commit to
+move `projection-widths` into `FIGURES`; nothing on a timing path differs
+there, and the figure is derived rather than measured, so `--drift` re-derives
+it from the two sweeps' `raw.json` without measuring anything. The eleventh is
+`map-only`: five figures declare the CLI's `main.rs`, four of them already
+stale on the generator, and `map-only` is the one that was not.
 
-**They stay stale rather than being acknowledged.** The generator change is
-very likely additive for the surviving inputs, but that is a claim
-`--verify-additive` settles and it has not been run; an acknowledgement on a
+**None was acknowledged, and the sweep is what spends the whole range.** The
+generator change is very likely additive for the surviving inputs, but that is
+a claim `--verify-additive` settles and it was not run; an acknowledgement on a
 read of the diff alone is the weaker kind of entry. The CLI change is not
 acknowledgeable at all — `--verify-additive` settles generator changes only,
-and a library or CLI change has no cheap oracle — so the wrap sweep is where
-the whole range is spent, and it re-stamps every table anyway. Until then
-`--stale` is red for a reason that is written down here.
-
-## P5 progress
-
-The spec is
-[`../design/roadmap-P5-pushdown.md`](../design/roadmap-P5-pushdown.md).
-
-- [x] **P5.1** Register the figure — five projection widths over the existing
-      19-column input, under `measure.UNTAKEN`. No generator change, no
-      library code. Notes:
-      [`../design/roadmap-P5.1-projection-figure-notes.md`](../design/roadmap-P5.1-projection-figure-notes.md)
-- [x] **P5.2** The source-span flush trigger — bounds what an in-flight batch
-      pins. Notes:
-      [`../design/roadmap-P5.2-source-span-flush-notes.md`](../design/roadmap-P5.2-source-span-flush-notes.md)
-- [x] **P5.3** Projection in the library — the `QueryOptions` field and API
-      move, the projected `ResolvedSchema`, `push_row` skipping, the
-      zero-column `RecordBatch`. Notes:
-      [`../design/roadmap-P5.3-projection-notes.md`](../design/roadmap-P5.3-projection-notes.md)
-- [x] **P5.4** The CLI for projection — `--column`, `--no-columns`. Notes:
-      [`../design/roadmap-P5.4-projection-cli-notes.md`](../design/roadmap-P5.4-projection-cli-notes.md)
-- [x] **P5.5** The filter conjunction — repeatable `--filter`, terms ANDed.
-      Notes:
-      [`../design/roadmap-P5.5-filter-conjunction-notes.md`](../design/roadmap-P5.5-filter-conjunction-notes.md)
-- [x] **P5.6** Typed ordering operators — `<`, `<=`, `>`, `>=`, and the refusal
-      on a column that is not `Mapped` with a `Scalar` plan. Notes:
-      [`../design/roadmap-P5.6-ordering-operators-notes.md`](../design/roadmap-P5.6-ordering-operators-notes.md)
-- [x] **P5.8** Special values are ordered — `infinity`/`-infinity`/`NaN`
-      answered exactly rather than raising `FieldDecode`, which is kept for
-      genuinely malformed text. Ran before `P5.7` so the sweep measures it.
-      Notes:
-      [`../design/roadmap-P5.8-special-values-notes.md`](../design/roadmap-P5.8-special-values-notes.md)
-- [x] **P5.7** Take the figure, fold it in, re-read its consumers, delete
-      `composite-isolated` and re-scope the cross-file figures it supersedes,
-      update the manual — including `KD2`'s second escape, which the error
-      message does not name. Notes:
-      [`../design/roadmap-P5.7-projection-figure-fold-in-notes.md`](../design/roadmap-P5.7-projection-figure-fold-in-notes.md)
-- [x] **P5.9** The filter term is parsed for two audiences — whitespace
-      outside quotes trimmed, a quoted value taken as written, `'` and `"` both
-      opening one with an interior quote doubled, a quote-aware operator split,
-      quoted column names, and the `IS NULL` forms demoted to the fallback,
-      which fixes the `note=this is null` misparse. Notes:
-      [`../design/roadmap-P5.9-filter-term-grammar-notes.md`](../design/roadmap-P5.9-filter-term-grammar-notes.md)
+and a library or CLI change has no cheap oracle. So the range is spent by the
+wrap sweep, which re-stamps every table at once; it is launched detached and
+read by a later session, and `--stale` stays red until its fold-in.
 
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **Four phases are sketched and none grilled** — P6, P11, P7, P10, P8, in that
+- **Five phases are sketched and none grilled** — P6, P11, P7, P10, P8, in that
   schedule order. Numeric order is not plan order: P9 was taken ahead of P5,
   P10 was allocated when P5's grilling split statistics out of it, and P11 when
   the same grilling deferred full boolean structure and typed nested
   comparison. `process.md` step 6 re-grills the roadmap before the next phase is
-  specified, and each of the four has an inbox that must be drained as part of
+  specified, and each of the five has an inbox that must be drained as part of
   that grilling.
 
 ## Known deficiencies

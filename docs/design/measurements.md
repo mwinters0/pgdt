@@ -187,6 +187,14 @@ construction rather than by anyone keeping them in step. Evidence:
 [`../status/history/2026-08-28.md`](../status/history/2026-08-28.md),
 "`--stale`'s job is binary".
 
+**A declared path is matched by prefix, so moving code out of one silently
+un-declares it.** `QUERY_CLI` is the worked case: it names
+`pgdump_query-cli/src/main.rs`, one file rather than the crate, so a second
+module in that crate would sit outside every declaration that quotes it and be
+a staleness edge nobody declared. Splitting the CLI up is fine and the parser
+grammar was deliberately kept in `main.rs` rather than earning that — but
+whatever splits it moves `QUERY_CLI` to the directory in the same change.
+
 **A commit can be acknowledged, and then it stops marking a figure stale.**
 Coarse `depends` costs something in both directions. The paragraph above weighs
 the false negative; the false positive is the one that decays the mechanism. A
