@@ -160,4 +160,36 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "scripts/generate_block_count_bench.py)\""
         ),
     ),
+    Acknowledged(
+        commit="eca96be",
+        figures=(
+            "census-brace-free",
+            "census-arrays",
+            "scan-throughput-cold",
+            "scan-throughput-warm",
+            "census-attribution",
+            "nested-end-to-end",
+            "cross-file-floor",
+        ),
+        why=(
+            "11.11 read the COLLATE clause. Its touches to these figures' "
+            "declared paths carry no work: map.rs is a type change "
+            "(Vec<(String,String)> becomes Vec<ColumnDef>, no new call), "
+            "batch.rs is one line inside #[cfg(test)], and cache.rs is "
+            "FORMAT_VERSION 12->13, a constant compared once per cache open. "
+            "The commit's one executable addition on a scan path is "
+            "extract_collation in preamble.rs, called once per column of DDL "
+            "-- and every input these seven figures are taken on comes from "
+            "generate_perf_data.py, which writes exactly one CREATE TABLE per "
+            "file, so it runs at most a couple of dozen times against timed "
+            "legs measured in seconds. map-only, per-block-quadratic and "
+            "preamble-prepass are NOT excused: their input is blocks4000, "
+            "4000 tables of four columns each, and preamble-prepass measures "
+            "precisely the prepass that work is added to"
+        ),
+        verified=(
+            "test 1 -eq \"$(grep -c 'CREATE TABLE' "
+            "scripts/generate_perf_data.py)\""
+        ),
+    ),
 )

@@ -145,24 +145,18 @@ either giving up `Copy` — which 11.4 will do anyway, for the enum labels — o
 fifth positional vector in `ResolvedSchema`. Neither is worth doing for a
 sentence, and 11.4 makes the first one free.
 
-**No acknowledgement entry for the figures this made stale**, for 11.3's
-reason: an entry in `scripts/acknowledged.py` is keyed on a commit sha and this
-change has none yet. Every figure but `nested-decode-micro` was already red
-against the `b70589f` stamp before this slice; what this adds to that pile is
-`preamble.rs`, `map.rs`, `cache.rs`, `pgtype.rs`, `resolve.rs` and
-`predicate.rs`. Two reachability arguments are available once it is committed
-and are worth writing down before they are re-derived:
+**`eca96be` is acknowledged for seven figures, and three are deliberately left
+out.** The commit's touches to declared paths carry no work — `map.rs` is a
+type change with no new call, `batch.rs` is one line inside `#[cfg(test)]`,
+`cache.rs` is a `FORMAT_VERSION` bump — and its one executable addition on a
+scan path is `extract_collation`, once per column of DDL. That excuses every
+figure whose input comes from `generate_perf_data.py`, which writes exactly one
+`CREATE TABLE` per file.
 
-- The `parse`-shaped figures (`census-brace-free`, `census-arrays`,
-  `scan-throughput-cold`, `scan-throughput-warm`, `census-attribution`,
-  `map-only`) never reach `comparison_for`: `pgdq parse` enters `map_file`, and
-  the register's only production call site is `resolve_columns`, reached only
-  from `table_stream`. What they *do* reach is `parse_column_fragment`, which
-  now calls `extract_collation` once per column of DDL — a preamble cost, not a
-  per-row one, and `preamble-prepass` is the figure that would show it.
-- `preamble-prepass` is the one figure that measures the added work, and its
-  input is `blocks4000`, which `generate_block_count_bench.py` builds out of
-  `CREATE TABLE`s — so unlike `M28`'s entry, the reachability oracle does **not**
-  excuse it here: every one of those tables has columns, and every column now
-  gets a scan of its own fragment. It should stay red on its merits until a
-  sweep.
+It does not excuse the three whose input is `blocks4000`. `map-only` and
+`per-block-quadratic` run the same addition 16000 times, over 4000 tables of
+four columns; `preamble-prepass` *is* the measurement of the prepass the work
+was added to. Unlike `M28`'s entry, reachability argues nothing here —
+`blocks4000` carries no type DDL, but every one of its tables has columns. All
+three stay red until a sweep, which is the state the rule asks for: red with a
+reason.

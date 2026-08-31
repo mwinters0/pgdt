@@ -17,7 +17,7 @@ to glibc, the comparison plan's move to L2, the register-to-oracle
 reconciliation and the declared collation landed. Its checklist is below.
 
 [`../design/measurements.md`](../design/measurements.md) carries the `b70589f`
-stamp, and **twelve of its thirteen figures read stale** — the paragraphs below
+stamp, and **seven of its thirteen figures read stale** — the paragraphs below
 name each and what would settle it. A stale figure no longer obliges a sweep and neither does a
 wrap: a full sweep is an hour of a quiet machine and belongs to the phase that
 is about performance, which will re-take every table under its own apparatus
@@ -57,7 +57,7 @@ not oblige a sweep").
 apparatus line. `--check` reconciles thirteen markers against thirteen figures.
 `session-drift` is derived across that sweep and a second one taken three
 minutes later on the same commit, which is the pair `--drift` reads.
-`measure.ACKNOWLEDGED` carries four entries, each with mechanical evidence
+`measure.ACKNOWLEDGED` carries five entries, each with mechanical evidence
 attached — see the staleness paragraphs below.
 
 **Nothing is built and unrun.** `measure.UNTAKEN` is empty: `projection-widths`
@@ -67,7 +67,7 @@ flag, the `composite_text` input and the fidelity case pairing them — because
 the projection table makes the same isolation a subtraction between two adjacent
 rows of one file.
 
-**Four commits since the stamp touched a declared path, and all four are
+**Five commits since the stamp touched a declared path, and all five are
 acknowledged with mechanical evidence.** `8b97956` deleted
 `composite-isolated`'s generator apparatus — the `--weak-composite` flag and
 the `composite_text` input — and `--verify-additive` regenerates all five
@@ -122,18 +122,23 @@ DDL, so no `TypeDef` span, so `record_type` is never called. That is
 reachability, the same oracle `a6e713f`'s entry uses, and the entry carries the
 grep that re-checks it.
 
-**11.11 is uncommitted, so it earns no acknowledgement yet**, for 11.3's
-reason: an entry in `scripts/acknowledged.py` is keyed on a commit sha. It
-touches `preamble.rs`, `map.rs`, `cache.rs`, `pgtype.rs`, `resolve.rs` and
-`predicate.rs`, which is every declared path already red plus none that was
-green. **`preamble-prepass` is the one that genuinely moves**, and it must stay
-red on its merits rather than take `M28`'s reachability entry: `blocks4000` is
-built out of `CREATE TABLE`s, and every one of their columns now gets an
-`extract_collation` scan of its own fragment. The `parse`-shaped figures over
-`map.rs` remain excusable by reachability once there is a sha, since `pgdq
-parse` never enters `resolve_columns`
-([`../design/roadmap-P11.11-declared-collation-notes.md`](../design/roadmap-P11.11-declared-collation-notes.md),
-"What was left out, and why").
+**11.11 turned nothing new red, and `eca96be` is acknowledged for seven
+figures.** Its touches to declared paths carry no work: `map.rs` is a type
+change — `Vec<(String, String)>` becomes `Vec<ColumnDef>`, with no new call —
+`batch.rs` is one line inside `#[cfg(test)]`, and `cache.rs` is
+`FORMAT_VERSION` 12 → 13, a constant compared once per cache open. The
+commit's one executable addition on a scan path is `extract_collation` in
+`preamble.rs`, once per column of DDL, and every input those seven figures are
+taken on comes from `generate_perf_data.py`, which writes **exactly one**
+`CREATE TABLE` per file — a couple of dozen calls against timed legs measured
+in seconds. The entry carries the grep that re-checks it.
+
+**Three figures are deliberately left out of that entry**, because their input
+is `blocks4000` — 4000 tables of four columns each — so the same addition runs
+16000 times in them. `map-only` and `per-block-quadratic` stay red for that
+reason, and `preamble-prepass` stays red because it *is* the measurement of the
+prepass the work was added to. Unlike `M28`, reachability does not excuse it
+here: `blocks4000` has no type DDL but every one of its tables has columns.
 
 ## P11 progress
 
