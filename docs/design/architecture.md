@@ -911,6 +911,21 @@ stopping at the first column-constraint keyword (`NOT`, `DEFAULT`, `COLLATE`,
 (`numeric(38,10)`); a `--binary-upgrade` dummy column's type comment
 (`INTEGER /* dummy */`, I5) is stripped first.
 
+**`types` is keyed on the type, not on the statement.** `pg_dump` writes a
+completed C-level base type twice under one name — the shell, then the
+definition (I11) — so `record_type` replaces an entry whose name is already
+present, and a `TypeKind::Shell` never replaces anything. One entry per type
+follows: `TypeKind::Base` is what a lookup of `public.mybase` finds, and
+`pgdq info`'s `user-defined types` count says how many types the dump declares
+rather than how many `CREATE TYPE` statements it wrote. A type that never got a
+completion (`public.shellonly`) keeps its `Shell` entry, which no column can
+name.
+
+*Rejected:* deduplicating at the lookups instead — a helper every reader of
+`types` must remember to use, where the count is precisely the reader that
+forgot. The list is built in one place and read from several, so the rule
+belongs where it is built.
+
 **`--binary-upgrade` interleaves OID-preservation noise** — one to three
 `SELECT pg_catalog.binary_upgrade_set_next_pg_type_oid(…)`-style calls between
 a TOC comment and the statement it announces, for *every* object type, not just
@@ -2976,10 +2991,20 @@ no server had. Every other rejection *is* an answer, `json`'s missing operator
 (42883) and a malformed literal (22P02) among them.
 
 **One arm needs no case, and the granularity is what says so.** A shell type
-(`TypeKind::Shell`) cannot be a column's declared type, so no dump can ask how
-one compares and no oracle case can be written for it; it shares `Base`'s arm, which
-`public.mybase` covers. Splitting that arm per kind would demand evidence that
-cannot exist.
+(`TypeKind::Shell`) cannot be a column's declared type — the server refuses a
+column of a type that never got its I/O functions — so no dump can ask how one
+compares and no oracle case can be written for it; it shares `Base`'s arm,
+which `public.mybase` covers. Splitting that arm per kind would demand evidence
+that cannot exist.
+
+That is only true because `DumpMetadata::types` holds **one entry per type**,
+the completion winning over the shell `pg_dump` writes ahead of it (I11, "The
+preamble grammar and `DumpMetadata`"). A list carrying both entries would hand
+`public.mybase` to the first-match lookup as a `Shell`, putting the case on the
+kind that can have none and leaving `Base` unreachable from any real dump —
+agreeing with this check on the arm while disagreeing about which side of it
+the case sits, which is a trap for whoever splits the arm. `oracle_register.py`'s
+`parse_schema` keys its own walk the same way for the same reason.
 
 *Rejected: keying the built-in half on the match arm rather than the name.* It
 is the same rule as the user half and it would be wrong here: the four names

@@ -489,6 +489,29 @@ pub(crate) fn parse_alter_type_add_value_body(rest: &str) -> Option<(String, Str
     Some((name, label))
 }
 
+/// Record one `CREATE TYPE`/`CREATE DOMAIN` into `types`, keyed on the type
+/// name rather than on the statement: **one entry per type, not one per
+/// statement.**
+///
+/// `pg_dump` emits a completed C-level base type *twice* under one name —
+/// `CREATE TYPE x;` under `SHELL TYPE`, then the full definition (I11) — so a
+/// list that appended both would carry two entries for one type. Every lookup
+/// is a first-match `find` by name, so the shell would win and
+/// [`TypeKind::Base`] would be unreachable from any real dump; `pgdq info`'s
+/// `user-defined types` count would count that type twice.
+///
+/// Two rules, and the second is what makes the shell lose: a definition for a
+/// name already present **replaces** it, and a [`TypeKind::Shell`] never
+/// replaces anything. Replacement is in place, so the list stays in the order
+/// each name was first declared.
+fn record_type(types: &mut Vec<TypeDef>, name: &str, kind: &TypeKind) {
+    match types.iter_mut().find(|t| t.name == name) {
+        Some(_) if matches!(kind, TypeKind::Shell) => {}
+        Some(existing) => existing.kind = kind.clone(),
+        None => types.push(TypeDef { name: name.to_string(), kind: kind.clone() }),
+    }
+}
+
 /// Fold an already-parsed `ALTER TYPE <type_name> ADD VALUE '<label>'` (see
 /// [`parse_alter_type_add_value_body`]) into the matching `TypeDef` in
 /// `types`, if any — a no-op if the name isn't found or isn't an `Enum`.
@@ -827,7 +850,7 @@ pub fn dump_metadata_from_spans(spans: &[Span]) -> DumpMetadata {
                 current.tables.insert(name.clone(), columns.clone());
             }
             SpanBody::TypeDef { name, kind } if !current.preamble_complete => {
-                current.types.push(TypeDef { name: name.clone(), kind: kind.clone() });
+                record_type(&mut current.types, name, kind);
             }
             SpanBody::Extension { name, schema } if !current.preamble_complete => {
                 current.extensions.push(Extension { name: name.clone(), schema: schema.clone() });

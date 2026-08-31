@@ -119,9 +119,11 @@ public.events (98765 rows)
   coverage is stated — see "Reading a partial answer" below.
 - **The header** is the dump's own preamble: the server and `pg_dump`
   versions it was taken with, and how many extensions and user-defined types
-  it declares. A dump taken with `--create` (or `pg_dumpall`) that touches
-  more than one database repeats this block once per database, each under
-  its own `database: <name>` line.
+  it declares. The type count counts *types*, not statements — `pg_dump`
+  writes some of them twice, and each such type is counted once. A dump taken
+  with `--create` (or `pg_dumpall`) that touches more than one database
+  repeats this block once per database, each under its own `database: <name>`
+  line.
 - **`diagnostics`** is anything worth telling you that isn't a table, role,
   or object: how much of the map is explained by `pg_dump`'s own per-object
   comments (`TOC coverage`), a cache whose recorded mtime no longer matches

@@ -215,6 +215,40 @@ async fn default_dump_declares_every_mapped_column_type() {
     }
 }
 
+/// I11: `pg_dump` writes a completed C-level base type as *two* statements
+/// under one name — the shell first, then the definition. The metadata is
+/// keyed on the type, not the statement, so the completion wins and the pair
+/// leaves one entry. A hand-built type list cannot show this; only a real
+/// dump emits the pair at all, which is why this test reads the fixture.
+#[tokio::test]
+async fn a_completed_base_type_leaves_one_entry_and_the_shell_does_not_win() {
+    for version in [13, 16, 18] {
+        let db = single_database(&types_fixture(version, "default")).await;
+
+        let mybase: Vec<&TypeDef> = db.types.iter().filter(|t| t.name == "public.mybase").collect();
+        assert_eq!(
+            mybase.len(),
+            1,
+            "pg_dump {version}: the SHELL TYPE/TYPE pair must leave one entry, got {mybase:?}"
+        );
+        assert_eq!(
+            mybase[0].kind,
+            TypeKind::Base,
+            "pg_dump {version}: the completion must win over the shell"
+        );
+
+        // A type that never got a completion keeps its shell kind.
+        assert_eq!(find_type(&db, "public.shellonly").kind, TypeKind::Shell, "pg_dump {version}");
+
+        // The rule is per name, not special-cased to `mybase`.
+        let mut names: Vec<&str> = db.types.iter().map(|t| t.name.as_str()).collect();
+        let total = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), total, "pg_dump {version}: one entry per type, not per statement");
+    }
+}
+
 #[tokio::test]
 async fn binary_upgrade_dump_yields_the_same_enum_labels_via_alter_type() {
     for version in [13, 16, 18] {

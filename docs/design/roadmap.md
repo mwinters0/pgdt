@@ -625,6 +625,10 @@ change, `layering.md` and `../process.md` for a rule — and why it was done is
 in the dated history entry it was filed under. The table opens again at `M28`,
 the first item to land after this keystone.
 
+| # | Date | What changed | Why |
+|---|---|---|---|
+| `M28` | 2026-08-31 | `DumpMetadata::types` holds one entry per type, not one per `CREATE TYPE`: a definition replaces an entry of the same name and a shell never replaces a completion (I11), so `TypeKind::Base` is reachable, the reconciliation's restated walk and the library's agree on where `public.mybase` lands, and `pgdq info`'s `user-defined types` counts a completed base type once | [`../status/history/2026-08-31.md`](../status/history/2026-08-31.md) |
+
 **One live obligation outlived them.** An `INSERT`-run scan costs
 **mid-teens times** a `COPY` scan per byte, CPU-bound, which argues for a scanner-level `INSERT`
 path — and *that* changes a decision, so it goes through grilling → spec

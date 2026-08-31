@@ -260,6 +260,12 @@ def parse_schema(path: Path = SCHEMA) -> tuple[dict[str, Declared], set[str], li
     TYPE` for it either (I10), which is exactly why it reaches the register's
     absent arm. It is tracked separately so that "absent" can be told from "a
     case naming a type nothing creates".
+
+    One entry per type name, the completion winning over the shell it follows
+    (I11), mirrors `preamble.rs`'s `record_type` rather than being a local
+    convenience: the two walks must agree on which arm a case lands on, and a
+    dict that kept the shell would place `public.mybase` on `Shell` while the
+    library placed it on `Base`.
     """
     problems: list[str] = []
     if not path.is_file():
