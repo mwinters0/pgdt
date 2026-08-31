@@ -230,11 +230,11 @@ progress.
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **Four phases are sketched and none grilled** — P7, P10, P6, P8, in that
+- **Five phases are sketched and none grilled** — P7, P12, P10, P6, P8, in that
   schedule order — a `P<k>` is an identifier and the roadmap's table is the
   schedule, so the numbers say nothing about the order they run in.
   `process.md` step 6 re-grills the roadmap before the next phase is specified,
-  and each of the four has an inbox that must be drained as part of that
+  and each of the five has an inbox that must be drained as part of that
   grilling.
 
 ## Known deficiencies

@@ -16,8 +16,9 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P5, P9 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
-| P11 — typed predicates | **Specified**; open, nothing landed | [`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md) |
+| P11 — typed predicates | **Specified**; open | [`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md) |
 | P7 — scan performance | Sketched; design doc ahead of its phase | [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md); [inbox](roadmap-P7-scan-performance-inbox.md) |
+| P12 — ADBC type floor | Sketched; not grilled | this file, below; [inbox](roadmap-P12-adbc-type-floor-inbox.md) |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
 | P8 — format coverage | Sketched; not grilled | this file, below; [inbox](roadmap-P8-format-coverage-inbox.md) |
@@ -25,7 +26,7 @@ reused, including a struck phase's.
 The struck phases' mechanisms are described by subject in
 [`architecture.md`](architecture.md), not by phase; their specs and notes went
 at a keystone review (`../process.md`, "The keystone: striking the
-centering"). **Phase numbering continues from `P11`** — nothing at or below it
+centering"). **Phase numbering continues from `P12`** — nothing at or below it
 is reused, whether it was struck, sketched, or never specified.
 
 Two standing-constraint docs cut across everything below.
@@ -370,6 +371,64 @@ that same abstraction. What genuinely does not transfer is the *tuning* —
 readahead depth and chunk-size defaults measured against local devices say
 nothing about a high-latency ranged backend — and that is a second set of
 measured defaults the engine story adds, not a rework of this phase.
+
+## P12 — The ADBC type floor
+
+**Inbox:** [`roadmap-P12-adbc-type-floor-inbox.md`](roadmap-P12-adbc-type-floor-inbox.md) — the survey
+that discovered this phase, filed as facts its grilling must not miss. Drain it
+when grilling this phase.
+
+Declare the Arrow type the **Arrow ADBC PostgreSQL driver** returns for a given
+PostgreSQL type to be our **floor**: wherever that driver yields a real Arrow
+type, ours is never a widening of it. Doing better is expected and already
+happens — `numeric(p,s)` is a decimal where ADBC returns a string, an enum is a
+dictionary, a range is a struct where ADBC returns opaque bytes — but doing
+worse becomes a defect with a name rather than an unbounded backlog item.
+
+This absorbs the Future item *"Exhaustive built-in type coverage, with tests to
+match"*, which is what it replaces: an open-ended "every built-in type,
+eventually" becomes a bounded target set by somebody else's shipped driver,
+against which the answer "are we there" is a check rather than a judgement.
+
+Three things make it a phase rather than a mapping change, and the second is
+the one that decides what the phase actually produces:
+
+- **The floor has to be taken, not transcribed.** It is one C++ `switch` in an
+  actively developed upstream, so a table copied into a doc decays silently.
+  `generate_fixtures.py` already stands a Postgres container per major and
+  takes the comparison oracle; an ADBC schema oracle is the same apparatus
+  pointed at a different question.
+- **Their bar is not our bar.** ADBC reads the *binary* wire format with the
+  catalog in hand, so every value is session-independent and its bottom is raw
+  bytes plus a type name. We read text, under
+  [`architecture.md`](architecture.md)'s "the dump alone determines the value",
+  and our bottom is the file's own text. Some rows are therefore below the
+  floor **by decision**, and stating which, with the reason, is part of the
+  deliverable — not an omission from it.
+- **Where the floor and an existing design conflict, one of them gives.** The
+  array census is the live case: ADBC names `List<T>` from the type alone and
+  flattens what does not fit, where we demote to a string and say so. Resolving
+  that either scopes the rule to fidelity or pulls in the Future item *"the
+  shape-general array representation"*, and that is a decision this phase
+  makes.
+
+**Scheduled after P11, ahead of P10 and P6; its position relative to P7 is
+free.** After P11 because `builtin_scalar` answers "which Arrow type" and "how
+do two of these compare" in one arm, and the register-to-oracle reconciliation
+requires a case for every arm — so a type mapped before that register settles
+writes arms against a moving spec. Ahead of P10 because a per-row-group minimum
+over a `Utf8View` column is a lexicographic bound where a typed one is a real
+one, and statistics are worth more over the wider type coverage. Ahead of P6
+because "the schema you get is at least as good as ADBC's" is an
+embedder-facing promise, and P6 is the phase that presents promises over
+mechanisms that have stopped moving.
+
+**One item is deliberately not this phase's.** `oid` maps to an unsigned
+integer under the existing bar and changes no decision, so it goes in as
+out-of-band work during P11's run rather than waiting — see
+[`../status/history/2026-08-31.md`](../status/history/2026-08-31.md), "Queued:
+`oid` becomes an integer column". Everything else the survey turned up needs a
+decision this phase has not made yet.
 
 ## P10 — Per-row-group column statistics
 
@@ -728,15 +787,6 @@ this section when it acquires a phase number, not when it acquires a design.
   multi-dimensional array field is rare even by that phase's standards — and it
   is purely additive whenever it lands: it only ever converts a hard error into
   a resolved type, so nothing that works before it works differently after.
-
-- **Exhaustive built-in type coverage, with tests to match.** The mapping
-  covers the types that carry real data in real schemas and leaves the rest as
-  strings.
-  The eventual goal is every PostgreSQL built-in type, plus the types the
-  standard extensions (`hstore`, PostGIS, `citext`, …) introduce, each with a
-  round-trip test against real `pg_dump` output rather than a hand-written
-  literal — the pattern `public.escapes` already establishes. This is careful,
-  case-by-case work; the value is in the test coverage, not in the mapping table.
 
 - **Let a live scan emit rows again, by carrying the map in the resume token.**
   Map-building is separate from row emission
