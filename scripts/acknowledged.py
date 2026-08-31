@@ -106,4 +106,31 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         ),
         verified="test 0 -eq \"$(grep -c -- --filter scripts/measure.py)\"",
     ),
+    Acknowledged(
+        commit="a6e713f",
+        figures=(
+            "census-brace-free",
+            "census-arrays",
+            "scan-throughput-cold",
+            "scan-throughput-warm",
+        ),
+        why=(
+            "the comparison register moved to L2, which edited stream.rs -- "
+            "one more Copy vector cut per block in `project` -- and batch.rs "
+            "under #[cfg(test)]. These four figures are parse-shaped: every "
+            "timed run of theirs is `parse` or `dd`, and `pgdq parse` enters "
+            "map_file, which reaches neither `resolve_block` nor `project` "
+            "(their only non-test call sites are inside table_stream, "
+            "stream.rs:915/1204/1248 and 925/1223/1260). The three "
+            "query-shaped figures over the same paths are NOT excused here: "
+            "they run one comparison_for per column per block, and "
+            "projection-widths runs the extra cut too"
+        ),
+        verified=(
+            "jq -r '.readings|keys[]' runs/measure-20260830T191415/raw.json | "
+            "awk -F/ '$1~/^(census-brace-free|census-arrays|"
+            "scan-throughput-cold|scan-throughput-warm)$/{print $4}' | "
+            "sort -u  # dd, parse -- nothing query-shaped"
+        ),
+    ),
 )

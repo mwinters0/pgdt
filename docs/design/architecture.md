@@ -2941,6 +2941,18 @@ no case is a claim nothing checks — and the second is smaller but real, since 
 case for a type the oracle's own database does not declare answers `E42704` in
 every cell and reads as coverage.
 
+**An arm is one answer that can be closed on its own, at the finest
+granularity for which evidence can exist.** That is one rule, and the table
+below is it applied to three shapes of source rather than three policies —
+which is what makes a declared *name* the key on one side and a *match arm* on
+the other. A built-in name is separately closable: the eleven names answering
+`(Utf8View, text)` are exactly the queue P11 closes one at a time, so one case
+must not excuse the rest. A `TypeKind` sharing an arm with another shares one
+decision and is not separately closable until that arm splits — and for one of
+them, `Shell`, no oracle case can exist at all. The empty-enum arm is the same
+rule a third time: its guard is separately closable and `public.empty_enum` is
+its case.
+
 **An arm is read out of the source, because a `match` is not data.** Three
 functions are parsed, and each is anchored on a string the parse must find, so
 a rewrite is a reported problem rather than a shorter list that passes:
@@ -2948,7 +2960,7 @@ a rewrite is a reported problem rather than a shorter list that passes:
 | Read from | An arm is | Why that granularity |
 |---|---|---|
 | `builtin_scalar` | one **declared base name** | Several names share `(Utf8View, text)` and each is separately closable, so `text` having a case does not answer for `character varying`. |
-| `comparison_user_type` | one **match arm** over `TypeKind` | `Composite \| Range` and `Base \| Shell` are each one decision. Exhaustiveness over the kinds is rustc's job; what this check adds is that each *answer* has evidence. |
+| `comparison_user_type` | one **match arm** over `TypeKind`, a guarded arm counting as its own | `Composite \| Range` and `Base \| Shell` are each one decision, so neither is separately closable yet; when 11.10 splits the first, both halves already have cases. Exhaustiveness over the kinds is rustc's job; what this check adds is that each *answer* has evidence. |
 | `comparison_for` | one per branch that is not a match arm at all, its own two plus `comparison_user_type`'s early return | The array shape, the built-in name nothing recognises, and a type absent from the dump's `CREATE TYPE` list (I10's multirange companion lands there). |
 
 A case is placed by re-walking `comparison_for`'s three steps — array, then

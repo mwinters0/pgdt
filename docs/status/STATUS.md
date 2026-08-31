@@ -17,7 +17,7 @@ to glibc, the comparison plan's move to L2 and the register-to-oracle
 reconciliation landed. Its checklist is below.
 
 [`../design/measurements.md`](../design/measurements.md) carries the `b70589f`
-stamp, and **eight figures read stale** — named below, each with what would
+stamp, and **four figures read stale** — named below, each with what would
 settle it. A stale figure no longer obliges a sweep and neither does a
 wrap: a full sweep is an hour of a quiet machine and belongs to the phase that
 is about performance, which will re-take every table under its own apparatus
@@ -56,8 +56,8 @@ not oblige a sweep").
 apparatus line. `--check` reconciles thirteen markers against thirteen figures.
 `session-drift` is derived across that sweep and a second one taken three
 minutes later on the same commit, which is the pair `--drift` reads.
-`measure.ACKNOWLEDGED` carries two entries, both with mechanical evidence
-attached — see the staleness paragraph below.
+`measure.ACKNOWLEDGED` carries three entries, each with mechanical evidence
+attached — see the staleness paragraphs below.
 
 **Nothing is built and unrun.** `measure.UNTAKEN` is empty: `projection-widths`
 was taken and moved into `FIGURES`, and `composite-isolated` was deleted
@@ -66,7 +66,7 @@ flag, the `composite_text` input and the fidelity case pairing them — because
 the projection table makes the same isolation a subtraction between two adjacent
 rows of one file.
 
-**Two commits since the stamp touched a declared path, and both are
+**Three commits since the stamp touched a declared path, and all three are
 acknowledged with mechanical evidence.** `8b97956` deleted
 `composite-isolated`'s generator apparatus — the `--weak-composite` flag and
 the `composite_text` input — and `--verify-additive` regenerates all five
@@ -85,25 +85,27 @@ rather than measured, so `uv run measure.py --drift <sweep> <sweep>` re-derives
 it from two sweeps' `raw.json` without measuring anything; what it lacks is a
 pair taken past this commit. The scan-performance phase will supply one.
 
-**Seven more went red at 11.3, and none of them is acknowledged yet.** Moving
-the comparison register to L2 edited `stream.rs` (one more `Copy` vector cut
-per block in `project`) and `batch.rs` (inside `#[cfg(test)]` only), which are
-declared paths of `census-brace-free`, `census-arrays`,
-`scan-throughput-cold`, `scan-throughput-warm`, `nested-end-to-end`,
-`cross-file-floor` and `projection-widths`. **The evidence exists for four of
-them and the entry does not**, because `scripts/acknowledged.py` keys an entry
-on a commit sha and the change has none until it is committed: `pgdq parse`
-reaches `map_file`, never `resolve_block` or `project`, so the four
-`parse`-shaped figures execute none of the changed code — the reachability
-oracle, exactly as `9ed21d4`'s entry uses it. The three query-shaped figures
-are not excusable and stay red on their merits: they really do run one
-`comparison_for` per column per block, and `projection-widths` runs the extra
-cut in `project` too. **`nested-end-to-end` and `cross-file-floor` are the case
-to be careful with**: their *declared*-path change is the `#[cfg(test)]`-only
-one in `batch.rs`, so an entry excusing it would read as "no reading moved"
-while the change that could move them sits in `resolve.rs`, which no figure
-declares — the register's known false negative, arriving from the side that
-tempts an over-broad entry. The reasoning is in
+**11.3 turned seven more red; four are acknowledged and three stay red on
+their merits.** Moving the comparison register to L2 (`a6e713f`) edited
+`stream.rs` — one more `Copy` vector cut per block in `project` — and
+`batch.rs` inside `#[cfg(test)]` only, which are declared paths of
+`census-brace-free`, `census-arrays`, `scan-throughput-cold`,
+`scan-throughput-warm`, `nested-end-to-end`, `cross-file-floor` and
+`projection-widths`. The four `parse`-shaped figures are excused by the
+reachability oracle, exactly as `9ed21d4`'s entry uses it: every timed run of
+theirs is `parse` or `dd`, and `pgdq parse` enters `map_file`, which reaches
+neither `resolve_block` nor `project` — their only non-test call sites are
+inside `table_stream`. The entry's evidence is the stamped sweep's own
+`raw.json`, which records the command shape of every reading it took.
+
+**The three query-shaped figures are not excusable.** `projection-widths` runs
+one `comparison_for` per column per block *and* the extra cut in `project`.
+**`nested-end-to-end` and `cross-file-floor` are the case to be careful with**:
+their *declared*-path change is the `#[cfg(test)]`-only one in `batch.rs`, so
+an entry excusing it would read as "no reading moved" while the change that
+could move them sits in `resolve.rs`, which no figure declares — the register's
+known false negative, arriving from the side that tempts an over-broad entry.
+The reasoning is in
 [`../design/roadmap-P11.3-comparison-plan-l2-notes.md`](../design/roadmap-P11.3-comparison-plan-l2-notes.md),
 "What was left out, and why".
 
@@ -266,17 +268,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **What counts as one arm of the comparison register, for the purposes of
-  11.2.1's coverage check.** The user-defined half counts a *match arm*, so
-  `Composite | Range` and `Base | Shell` are one each; the built-in half counts
-  a declared *name*, so the four sharing `(Utf8View, text)` are four. Two
-  granularities in one check needs weighing. It was made that way because
-  `TypeKind::Shell` cannot be a column's declared type, so a per-variant rule
-  would demand an oracle case that cannot be written, while the four text names
-  are precisely the queue 11.5 closes one at a time and one case must not
-  excuse three. Reconsidering it per *variant* means either an exemption list
-  for `Shell` or a case whose every cell reads `E42704` — which the check's own
-  second direction rejects as coverage that tests nothing. Reconsidering the
-  built-in half per *arm* would let `text` answer for `character varying`.
-  Detail: [`../design/architecture.md`](../design/architecture.md), "The
-  register-to-oracle reconciliation".
+Nothing is open.
