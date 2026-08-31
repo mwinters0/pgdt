@@ -2,11 +2,11 @@
 
 use std::cmp::Ordering;
 
-use arrow::datatypes::{DataType, TimeUnit, i256};
+use arrow::datatypes::i256;
 
 use crate::copy::{decode_field, split_fields};
 use crate::decode;
-use crate::pgtype::{NestedPlan, split_typmod};
+use crate::pgtype::{CompareKind, ComparisonPlan, NestedPlan, OrderingDivergence, split_typmod};
 use crate::resolve::{ColumnResolution, ResolvedSchema};
 use crate::{Error, Result};
 
@@ -90,33 +90,6 @@ pub struct Predicate {
     pub value: Option<String>,
 }
 
-/// Whether an ordering comparison on a column of a given Arrow type orders
-/// values the way PostgreSQL's own operator for that column's type does —
-/// the *ordering register*, rendered as a table in
-/// `docs/design/architecture.md`, "Predicates".
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OrderingSupport {
-    /// This comparison and PostgreSQL's agree on every value a dump can hold.
-    Agrees,
-    /// Both orders are total and they are not the same order.
-    Diverges(OrderingDivergence),
-    /// No ordering is defined for this Arrow type here at all.
-    Refused,
-}
-
-/// How an ordering comparison differs from PostgreSQL's, keyed by the Arrow
-/// type — which is what the code can key on. The *declared* PostgreSQL type
-/// then sharpens the sentence a user reads, since several declared types
-/// reach `Utf8View` for different reasons (see [`OrderingNote::message`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OrderingDivergence {
-    /// The column is held as text (`Utf8View`) and compared bytewise.
-    AsText,
-    /// An enum, compared by label text where PostgreSQL uses declaration
-    /// order.
-    EnumLabels,
-}
-
 /// One column of one query whose ordering comparison diverges from
 /// PostgreSQL's — reported per stream by
 /// `crate::stream::TableStream::ordering_notes`.
@@ -169,25 +142,8 @@ impl OrderingNote {
     }
 }
 
-/// How one column's field text becomes a comparable value. Produced only by
-/// [`ordering_register`], so it cannot name a type that register refused.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OrderKind {
-    Bool,
-    Int,
-    Float32,
-    Float64,
-    Decimal(i8),
-    Date,
-    Time,
-    Timestamp { with_tz: bool },
-    Uuid,
-    Bytea,
-    Text,
-}
-
 /// One side of an ordering comparison, decoded from text per the column's
-/// [`OrderKind`]. Both sides of any one comparison come from the same kind,
+/// [`CompareKind`]. Both sides of any one comparison come from the same kind,
 /// so a *finite* variant mismatch is unreachable by construction.
 ///
 /// **Three variants are not values of the column's Arrow type at all**, and
@@ -213,7 +169,7 @@ enum OrderKey {
     /// PostgreSQL's `infinity`, above every finite value of its type.
     PositiveInfinity,
     /// `numeric`'s `NaN`, which orders above `infinity` and equals itself
-    /// (I34). Reached only through [`OrderKind::Decimal`].
+    /// (I34). Reached only through [`CompareKind::Decimal`].
     NotANumber,
 }
 
@@ -243,89 +199,6 @@ impl OrderKey {
     }
 }
 
-/// **The ordering register, in code**, and the authority the Markdown table
-/// in `docs/design/architecture.md`, "Predicates", renders for humans.
-///
-/// Exhaustive over `DataType` with **no wildcard arm**, so a type this build
-/// starts producing cannot silently inherit a classification: the arm it
-/// falls into has to be written down. That is the check the register needs,
-/// because the moment it would otherwise go stale is a routine type-mapping
-/// change in `pgtype.rs`, and it fires there as a compile error rather than
-/// as a test someone might not run.
-///
-/// *Rejected: a test asserting the Markdown table and this function agree row
-/// for row.* Its own failure mode is bit-rot in the doc parser, and the table
-/// is small enough to be re-read whenever the register changes.
-fn ordering_register(data_type: &DataType) -> (OrderingSupport, Option<OrderKind>) {
-    use OrderingSupport::{Agrees, Diverges, Refused};
-    match data_type {
-        DataType::Boolean => (Agrees, Some(OrderKind::Bool)),
-        // `false < true`, PostgreSQL's own boolean order.
-        DataType::Int16 | DataType::Int32 | DataType::Int64 => (Agrees, Some(OrderKind::Int)),
-        DataType::Float32 => (Agrees, Some(OrderKind::Float32)),
-        DataType::Float64 => (Agrees, Some(OrderKind::Float64)),
-        // Both sides carry the column's own scale, because the literal is
-        // decoded with the column's own decoder, so unscaled integers compare
-        // directly. `NaN` is the one value of such a column that has no
-        // `Decimal128`, and it is ordered rather than refused
-        // (`special_order_key`, I34).
-        DataType::Decimal128(_, scale) | DataType::Decimal256(_, scale) => {
-            (Agrees, Some(OrderKind::Decimal(*scale)))
-        }
-        // `infinity`/`-infinity` are ordered here too, for the same reason.
-        DataType::Date32 => (Agrees, Some(OrderKind::Date)),
-        DataType::Time64(TimeUnit::Microsecond) => (Agrees, Some(OrderKind::Time)),
-        // Compared as the stored instant, which is what PostgreSQL compares
-        // for both `timestamp` and `timestamptz`.
-        DataType::Timestamp(TimeUnit::Microsecond, tz) => {
-            (Agrees, Some(OrderKind::Timestamp { with_tz: tz.is_some() }))
-        }
-        // `uuid_internal_cmp` is `memcmp` over 16 bytes, and `byteacmp` is
-        // `memcmp` then length — both are `[u8]`'s own order (I33).
-        DataType::FixedSizeBinary(16) => (Agrees, Some(OrderKind::Uuid)),
-        DataType::Binary => (Agrees, Some(OrderKind::Bytea)),
-        DataType::Dictionary(key, value)
-            if **key == DataType::Int32 && **value == DataType::Utf8 =>
-        {
-            (Diverges(OrderingDivergence::EnumLabels), Some(OrderKind::Text))
-        }
-        DataType::Utf8View => (Diverges(OrderingDivergence::AsText), Some(OrderKind::Text)),
-        // Nothing below is produced by `pgtype.rs`'s mapping table with a
-        // `NestedPlan::Scalar` plan. The list is written out rather than
-        // wildcarded so that a new mapping has to choose an arm.
-        DataType::Null
-        | DataType::Int8
-        | DataType::UInt8
-        | DataType::UInt16
-        | DataType::UInt32
-        | DataType::UInt64
-        | DataType::Float16
-        | DataType::Timestamp(_, _)
-        | DataType::Date64
-        | DataType::Time32(_)
-        | DataType::Time64(_)
-        | DataType::Duration(_)
-        | DataType::Interval(_)
-        | DataType::FixedSizeBinary(_)
-        | DataType::LargeBinary
-        | DataType::BinaryView
-        | DataType::Utf8
-        | DataType::LargeUtf8
-        | DataType::List(_)
-        | DataType::ListView(_)
-        | DataType::FixedSizeList(_, _)
-        | DataType::LargeList(_)
-        | DataType::LargeListView(_)
-        | DataType::Struct(_)
-        | DataType::Union(_, _)
-        | DataType::Dictionary(_, _)
-        | DataType::Decimal32(_, _)
-        | DataType::Decimal64(_, _)
-        | DataType::Map(_, _)
-        | DataType::RunEndEncoded(_, _) => (Refused, None),
-    }
-}
-
 /// PostgreSQL's special values, for the kinds whose columns can hold one and
 /// in the exact spelling that type's own `*_out` writes (I34): `date`,
 /// `timestamp` and `timestamptz` write `infinity`/`-infinity`, and a
@@ -338,15 +211,15 @@ fn ordering_register(data_type: &DataType) -> (OrderingSupport, Option<OrderKind
 /// returns them. A `numeric` **infinity** is absent for a sharper reason:
 /// `apply_typmod_special` rejects one under any typmod, and a `numeric`
 /// without a typmod is held as text, so no column that reaches
-/// [`OrderKind::Decimal`] can hold one (I34).
-fn special_order_key(kind: OrderKind, text: &str) -> Option<OrderKey> {
+/// [`CompareKind::Decimal`] can hold one (I34).
+fn special_order_key(kind: CompareKind, text: &str) -> Option<OrderKey> {
     match kind {
-        OrderKind::Date | OrderKind::Timestamp { .. } => match text {
+        CompareKind::Date | CompareKind::Timestamp { .. } => match text {
             "infinity" => Some(OrderKey::PositiveInfinity),
             "-infinity" => Some(OrderKey::NegativeInfinity),
             _ => None,
         },
-        OrderKind::Decimal(_) => (text == "NaN").then_some(OrderKey::NotANumber),
+        CompareKind::Decimal(_) => (text == "NaN").then_some(OrderKey::NotANumber),
         _ => None,
     }
 }
@@ -361,30 +234,30 @@ fn special_order_key(kind: OrderKind, text: &str) -> Option<OrderKey> {
 /// legal value of the declared type that the *Arrow* type cannot hold — a
 /// separate population from text that is genuinely malformed for the column,
 /// which is what a `None` from here now means.
-fn order_key(kind: OrderKind, text: &str) -> Option<OrderKey> {
+fn order_key(kind: CompareKind, text: &str) -> Option<OrderKey> {
     if let Some(special) = special_order_key(kind, text) {
         return Some(special);
     }
     Some(match kind {
-        OrderKind::Bool => OrderKey::Bool(decode::decode_bool(text)?),
+        CompareKind::Bool => OrderKey::Bool(decode::decode_bool(text)?),
         // Parsed as `i64` whatever the column's width: a literal outside a
         // `smallint`'s range still orders correctly against every value the
         // column can hold, and refusing it would be a refusal PostgreSQL's
         // own comparison does not need to make.
-        OrderKind::Int => OrderKey::Int(text.parse::<i64>().ok()?),
-        OrderKind::Float32 => OrderKey::Float(f64::from(decode::decode_f32(text)?)),
-        OrderKind::Float64 => OrderKey::Float(decode::decode_f64(text)?),
-        OrderKind::Decimal(scale) => {
+        CompareKind::Int => OrderKey::Int(text.parse::<i64>().ok()?),
+        CompareKind::Float32 => OrderKey::Float(f64::from(decode::decode_f32(text)?)),
+        CompareKind::Float64 => OrderKey::Float(decode::decode_f64(text)?),
+        CompareKind::Decimal(scale) => {
             OrderKey::Decimal(i256::from_string(&decode::decimal_unscaled_digits(text, scale)?)?)
         }
-        OrderKind::Date => OrderKey::Int(decode::decode_date32(text)?.into()),
-        OrderKind::Time => OrderKey::Int(decode::decode_time64_micros(text)?),
-        OrderKind::Timestamp { with_tz } => {
+        CompareKind::Date => OrderKey::Int(decode::decode_date32(text)?.into()),
+        CompareKind::Time => OrderKey::Int(decode::decode_time64_micros(text)?),
+        CompareKind::Timestamp { with_tz } => {
             OrderKey::Int(decode::decode_timestamp_micros(text, with_tz)?)
         }
-        OrderKind::Uuid => OrderKey::Bytes(decode::decode_uuid(text)?.to_vec()),
-        OrderKind::Bytea => OrderKey::Bytes(decode::decode_bytea(text)?),
-        OrderKind::Text => OrderKey::Text(text.to_string()),
+        CompareKind::Uuid => OrderKey::Bytes(decode::decode_uuid(text)?.to_vec()),
+        CompareKind::Bytea => OrderKey::Bytes(decode::decode_bytea(text)?),
+        CompareKind::Text => OrderKey::Text(text.to_string()),
     })
 }
 
@@ -421,7 +294,7 @@ fn compare_keys(a: &OrderKey, b: &OrderKey) -> Ordering {
         (OrderKey::Bytes(x), OrderKey::Bytes(y)) => x.cmp(y),
         (OrderKey::Text(x), OrderKey::Text(y)) => x.as_bytes().cmp(y.as_bytes()),
         _ if rank_a != FINITE => Ordering::Equal,
-        _ => unreachable!("both sides of a comparison decode through one column's `OrderKind`"),
+        _ => unreachable!("both sides of a comparison decode through one column's `CompareKind`"),
     }
 }
 
@@ -430,7 +303,7 @@ fn compare_keys(a: &OrderKey, b: &OrderKey) -> Ordering {
 #[derive(Debug, Clone)]
 struct OrderTerm {
     column: String,
-    kind: OrderKind,
+    kind: CompareKind,
     /// The filter's literal, decoded once with the column's own decoder.
     bound: OrderKey,
     /// The declared PostgreSQL type, for `Error::FieldDecode`'s context and
@@ -472,7 +345,7 @@ const NOT_MAPPED: &str = "the column's declared type did not resolve to an Arrow
      (`--schema-mode strings` resolves no column, by design)";
 const NESTED: &str = "the column is nested (array, composite, range or multirange), and an order over such a \
      literal is not defined here";
-const NO_ORDER: &str = "this build defines no ordering for the column's resolved Arrow type";
+const NO_ORDER: &str = "this build defines no ordering for the column's declared type";
 
 /// Resolve one filter term against the block's **unprojected**
 /// [`ResolvedSchema`], at `index` — the column's position, already looked up
@@ -480,10 +353,16 @@ const NO_ORDER: &str = "this build defines no ordering for the column's resolved
 ///
 /// A non-ordering term needs nothing else. An ordering term is refused here,
 /// before a row of this block flows, unless the column resolved `Mapped` with
-/// a [`NestedPlan::Scalar`] plan and its Arrow type is in the ordering
-/// register; and its literal is decoded here too, so a value that is not of
-/// the column's type is a fault reported once rather than a filter that
-/// matches nothing.
+/// a [`NestedPlan::Scalar`] plan and the comparison register gave it a plan;
+/// and its literal is decoded here too, so a value that is not of the
+/// column's type is a fault reported once rather than a filter that matches
+/// nothing.
+///
+/// **Nothing here reads the Arrow type.** How a column compares is an L2
+/// conclusion resolution already reached
+/// (`crate::pgtype::comparison_for`), carried in
+/// [`ResolvedSchema::comparisons`]; this layer asks how the column compares,
+/// never what it was mapped to.
 pub(crate) fn resolve_term(
     predicate: &Predicate,
     index: usize,
@@ -505,8 +384,7 @@ pub(crate) fn resolve_term(
     if resolved.plans[index] != NestedPlan::Scalar {
         return Err(refuse(NESTED));
     }
-    let (support, kind) = ordering_register(resolved.schema.field(index).data_type());
-    let Some(kind) = kind else {
+    let ComparisonPlan::Compared { kind, divergence } = resolved.comparisons[index] else {
         return Err(refuse(NO_ORDER));
     };
     let declared_type = resolved.notes[index].declared.clone().unwrap_or_default();
@@ -527,10 +405,7 @@ pub(crate) fn resolve_term(
             kind,
             bound,
             declared_type,
-            divergence: match support {
-                OrderingSupport::Diverges(d) => Some(d),
-                OrderingSupport::Agrees | OrderingSupport::Refused => None,
-            },
+            divergence,
         }),
     })
 }
@@ -623,9 +498,11 @@ pub(crate) fn matches_all(
 mod tests {
     use std::sync::Arc;
 
-    use arrow::datatypes::{Field, Schema};
+    use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
 
     use super::*;
+    use crate::pgtype::comparison_for;
+    use crate::preamble::{TypeDef, TypeKind};
     use crate::resolve::ColumnNote;
 
     /// A term with no typed comparison behind it — what every `Eq`/`Ne`/NULL
@@ -638,8 +515,22 @@ mod tests {
         p.matches(raw_row, &text_term(index), "public.t", 0).unwrap()
     }
 
+    /// The type list every one-column schema below resolves against: one
+    /// enum, so a column declared `public.mood` reaches the register's enum
+    /// arm rather than its "no such type" one.
+    fn test_types() -> Vec<TypeDef> {
+        vec![TypeDef {
+            name: "public.mood".into(),
+            kind: TypeKind::Enum { labels: vec!["sad".into(), "ok".into()] },
+        }]
+    }
+
     /// A one-column `ResolvedSchema` for `declared`/`data_type`, mapped and
     /// scalar — the shape an ordering term is allowed on.
+    ///
+    /// The comparison plan comes from the register itself rather than being
+    /// stated here, so these tests exercise the same `declared -> plan` walk
+    /// `resolve_columns` makes.
     fn one_column(declared: &str, data_type: DataType) -> ResolvedSchema {
         ResolvedSchema {
             schema: Arc::new(Schema::new(vec![Field::new("v", data_type, true)])),
@@ -650,6 +541,7 @@ mod tests {
                 resolution: ColumnResolution::Mapped,
             }],
             plans: vec![NestedPlan::Scalar],
+            comparisons: vec![comparison_for(declared, &test_types())],
         }
     }
 
@@ -938,8 +830,10 @@ mod tests {
             Error::UnorderedPredicateColumn { reason, .. } if reason == NESTED
         ));
 
-        // A `Mapped` scalar column whose Arrow type the register refuses:
-        // unreachable from the mapping table today, and refused anyway.
+        // A `Mapped` scalar column whose *declared* type the register
+        // refuses: unreachable from the mapping table today — everything it
+        // maps to a scalar has a comparison in the same arm — and refused
+        // anyway.
         assert!(matches!(
             resolve_term(&p, 0, &one_column("mystery", DataType::UInt8), 0).unwrap_err(),
             Error::UnorderedPredicateColumn { reason, .. } if reason == NO_ORDER

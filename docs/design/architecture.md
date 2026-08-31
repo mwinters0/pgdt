@@ -59,8 +59,8 @@ through.
 | `DumpIndex`, `CopyBlock`, `build_index`/`scan_preamble`/`preamble_only` | `pgdump_query/src/index.rs` | L1 |
 | Structure cache (envelope, `CacheMode`, `CacheStatus`, source identity) | `pgdump_query/src/cache.rs` | L1 |
 | `Diagnostic`/`DiagnosticKind`/`Severity` — the file-level channel | `pgdump_query/src/diagnostic.rs` | L1 |
-| Declared-type string → Arrow `DataType`; domain/enum/range/multirange resolution; `NestedPlan` | `pgdump_query/src/pgtype.rs` | L2 |
-| `ResolvedSchema`/`ColumnResolution`/`ColumnNote` — joins a `COPY` header against `DumpMetadata` | `pgdump_query/src/resolve.rs` | L2 |
+| Declared-type string → Arrow `DataType`; domain/enum/range/multirange resolution; `NestedPlan`; the comparison register (`comparison_for`, `ComparisonPlan`) | `pgdump_query/src/pgtype.rs` | L2 |
+| `ResolvedSchema`/`ColumnResolution`/`ColumnNote` — joins a `COPY` header against `DumpMetadata`, and carries each column's comparison plan | `pgdump_query/src/resolve.rs` | L2 |
 | Per-type field decode + render-back | `pgdump_query/src/decode.rs` | L2 |
 | Array / record / range / multirange literal decode + render-back | `pgdump_query/src/nested.rs` | L2 |
 | Arrow batch assembly (`ColumnBuilder`, `RowBatcher`), push-mode `read_table` | `pgdump_query/src/batch.rs` | L3 |
@@ -1212,12 +1212,21 @@ ResolvedSchema` joins a `COPY` header's column list against `DumpMetadata` by
 name, requiring the caller's `database` — resolved from the matched block's own
 attribution, **never guessed** — to pick the right `DatabaseMetadata`.
 
-`ResolvedSchema { schema, columns, notes, plans }`: `columns` and `plans` are
-positional (parallel to `schema.fields()`); `notes` carries one `ColumnNote`
-per column, mapped and unmapped alike, with the raw declared-type string
-attached, since `pgdq info`'s display needs both. Every column has a `plans`
-entry, `NestedPlan::Scalar` included, so no consumer has to ask whether the
-vector applies to it.
+`ResolvedSchema { schema, columns, notes, plans, comparisons }`: `columns`,
+`plans` and `comparisons` are positional (parallel to `schema.fields()`);
+`notes` carries one `ColumnNote` per column, mapped and unmapped alike, with
+the raw declared-type string attached, since `pgdq info`'s display needs both.
+Every column has a `plans` entry, `NestedPlan::Scalar` included, and a
+`comparisons` entry, `ComparisonPlan::Refused` included, so no consumer has to
+ask whether either vector applies to it.
+
+`comparisons` is the comparison register's answer for each column's declared
+type ("Ordering operators compare typed"), decided here because this is where
+the declared type string and the database's own `CREATE TYPE` list meet. A
+column that did not resolve `Mapped` is `Refused` whatever its declared type
+said — the census speaks *after* the DDL and can take a column out of
+`Mapped`, so the two are kept in step here rather than at the one call site
+that reads them.
 
 *Rejected:* hanging the plan off `ColumnNote`, which is the human-facing
 per-column record and would become two things — the one display that reads a
@@ -1728,14 +1737,14 @@ waits for one to resolve. `stream::project` therefore does not re-check
 duplicates itself: the up-front check covers replay and resume both, where a
 per-block check would report the same fault later and once per block.
 
-**The projected schema is what the stream reports.** All four of
-`ResolvedSchema`'s vectors — `schema`, `columns`, `notes`, `plans` — are cut
-together, in the requested order. They are positional and parallel by
-construction, and `RecordBatch::try_new` checks the built arrays against
-`schema` exactly, so a stream advertising the full table while emitting narrow
-batches would put those two out of agreement. An unprojected column's
-resolution note therefore is not reported by that stream, which costs nothing
-that matters: `pgdq query` does not print notes and `pgdq info` never projects.
+**The projected schema is what the stream reports.** All five of
+`ResolvedSchema`'s vectors — `schema`, `columns`, `notes`, `plans`,
+`comparisons` — are cut together, in the requested order. They are positional
+and parallel by construction, and `RecordBatch::try_new` checks the built
+arrays against `schema` exactly, so a stream advertising the full table while
+emitting narrow batches would put those two out of agreement. An unprojected
+column's resolution note therefore is not reported by that stream, which costs
+nothing that matters: `pgdq query` does not print notes and `pgdq info` never projects.
 
 *Rejected: reporting the full table schema and projecting only the batches.* It
 reads as the friendlier API and it desynchronizes the one invariant
@@ -1857,10 +1866,10 @@ Every refusal a term can earn — the unknown column, and the ordering
 refusals below — is raised there, against that block's own **unprojected**
 `ResolvedSchema`, before a row of the block flows. It takes the whole
 `ResolvedSchema` rather than its `schema` because the ordering refusal reads
-`columns` and `plans` too, and those three are positional and parallel:
-splitting them across two lookups is how they would come to disagree. A table
-whose blocks carry different schemas can therefore refuse at the third block
-after rows from the first two were emitted; that is true of
+`columns`, `plans` and `comparisons` too, and those are positional and
+parallel: splitting them across two lookups is how they would come to
+disagree. A table whose blocks carry different schemas can therefore refuse at
+the third block after rows from the first two were emitted; that is true of
 `UnknownPredicateColumn` as well and adds no new shape of failure.
 
 **Nothing folds two terms together.** Two terms on one column are evaluated
@@ -1988,36 +1997,67 @@ for. The error it kept in the meantime also named an escape that does not
 exist for this case: `--schema-mode strings` resolves no column, so it refuses
 ordering outright.
 
-**The register** is which Arrow types such a comparison lands on, and whether
-it means what PostgreSQL means. `predicate.rs`'s `ordering_register` is the
-authority: an **exhaustive `match` over `DataType` with no wildcard arm**, so
-a type this build starts producing cannot silently inherit a classification —
-the moment the register would otherwise go stale is a routine type-mapping
-change in `pgtype.rs`, and it fires there as a compile error rather than as a
-test someone might not run. A refused type pairs with no `OrderKind` in the
-same arm, so "refused" and "has no way to decode a value" are one fact rather
-than two that could come to disagree. The table below is the human-readable
-rendering.
+**The register** is which declared types such a comparison lands on, and
+whether it means what PostgreSQL means. `pgtype.rs`'s `comparison_for` is the
+authority, and it is **L2**: a pure function of the declared type string and
+the database's own `CREATE TYPE`/`DOMAIN` list, walking that string exactly as
+`resolve_declared_type` does — array first, then the built-in table, then the
+user-defined lookup — so a domain compares as whatever it bottoms out at and
+the two answers cannot disagree about which types exist. Its result is a
+`ComparisonPlan`, carried per column as a fourth positional vector in
+`ResolvedSchema` beside `columns`, `notes` and `plans`. The table below is the
+human-readable rendering.
 
-| Arrow type | Reached by | Agrees with PostgreSQL | What would close the gap |
+**Keyed on the declared type, not on the Arrow one.** Four unrelated declared
+types reach `Utf8View` — a text type, a bare `numeric`, a text-held type such
+as `interval`, and `json`, which PostgreSQL does not order at all — so the
+Arrow type cannot say which comparison a column wants, and neither can it
+reach the enum's labels, which are the closure the divergent enum row needs.
+The rows below are therefore in declared-type order, with the Arrow type
+beside each as information rather than as the key.
+
+**The exhaustiveness check moved with it, and is stronger for the move.**
+`builtin_scalar` answers both questions in one arm — which Arrow type a
+built-in maps to, and how two of its values compare — so a mapping added
+without a comparison does not compile, where before the two lived in different
+layers and a new mapping only had to land on a `DataType` arm that already
+existed. The user-defined half is an exhaustive `match` over `TypeKind` with
+no wildcard, so a kind added to the preamble grammar has to choose too. And
+`ComparisonPlan` makes "refused" and "has no way to decode a value" one
+variant rather than a pairing that could come to disagree.
+
+**`predicate.rs` reads the plan and never the Arrow type.** L4 asks how a
+column compares; what it was mapped to is L2's business and stays there. The
+three refusals an ordering operator can earn are still raised in
+`resolve_term`, and the first two — not `Mapped`, and a nested `NestedPlan` —
+are still decided before the plan is consulted, so a nested column is refused
+with the reason that names its nesting rather than with "no order defined".
+
+| Declared type | Arrow type | Agrees with PostgreSQL | What would close the gap |
 |---|---|---|---|
-| `Boolean` | `boolean` | yes — `false < true` (I33) | — |
-| `Int16`/`Int32`/`Int64` | `smallint`, `integer`, `bigint` | yes | — |
-| `Float32`/`Float64` | `real`, `double precision` | yes, **given the NaN rule** — `NaN` is above every value including infinity and equals itself (I33), which is neither IEEE's answer nor Rust's | — |
-| `Decimal128`/`Decimal256` | `numeric(p,s)`, `p ≤ 76` | yes — both sides carry the column's own scale, because the literal is decoded with the column's own decoder, and `NaN` orders above every other value (I34) | — |
-| `Date32` | `date` | yes — `infinity` and `-infinity` included (I34) | — |
-| `Time64(µs)` | `time without time zone` | yes | — |
-| `Timestamp(µs[, tz])` | `timestamp`, `timestamptz` | yes — compared as the stored instant, the two infinities included (I34) | — |
-| `FixedSizeBinary16` | `uuid` | yes — `uuid_internal_cmp` is `memcmp` over 16 bytes (I33) | — |
-| `Binary` | `bytea` | yes — `byteacmp` is `memcmp`, then length (I33) | — |
-| `Dictionary(Int32, Utf8)` | enum types | **no** — PostgreSQL orders an enum by *declaration* order (I33); we compare the label text, so an enum declared `('low','medium','high')` orders alphabetically instead | the declaration order, which the dump carries verbatim in `CREATE TYPE … AS ENUM (…)`. Purely additive |
-| `Utf8View` | `text`, `varchar`, `char`, `name` | **no** — PostgreSQL orders text by collation, and a plain dump records none (I32); we compare bytewise, which equals PostgreSQL only under `C`/`POSIX` | a collation the file does not carry |
-| `Utf8View` | **bare `numeric`**, and `numeric` beyond 76 digits | **no, and this is the sharp one** — an unconstrained `numeric` column has no Arrow decimal representation, so it is `Mapped` to `Utf8View` and orders lexicographically: `"9" < "10"` is false | an arbitrary-precision decimal comparison |
-| `Utf8View` | `interval`, `time with time zone`, `json`/`jsonb`, `inet`/`cidr`/`macaddr`/`macaddr8`, and any domain over them | **no** — each has a server-side operator of its own that a bytewise comparison does not implement | one decoder per type, each its own piece of work |
+| `boolean` | `Boolean` | yes — `false < true` (I33) | — |
+| `smallint`, `integer`, `bigint` | `Int16`/`Int32`/`Int64` | yes | — |
+| `real`, `double precision` | `Float32`/`Float64` | yes, **given the NaN rule** — `NaN` is above every value including infinity and equals itself (I33), which is neither IEEE's answer nor Rust's | — |
+| `numeric(p,s)`, `p ≤ 76` | `Decimal128`/`Decimal256` | yes — both sides carry the column's own scale, because the literal is decoded with the column's own decoder, and `NaN` orders above every other value (I34) | — |
+| `date` | `Date32` | yes — `infinity` and `-infinity` included (I34) | — |
+| `time without time zone` | `Time64(µs)` | yes | — |
+| `timestamp`, `timestamptz` | `Timestamp(µs[, tz])` | yes — compared as the stored instant, the two infinities included (I34) | — |
+| `uuid` | `FixedSizeBinary16` | yes — `uuid_internal_cmp` is `memcmp` over 16 bytes (I33) | — |
+| `bytea` | `Binary` | yes — `byteacmp` is `memcmp`, then length (I33) | — |
+| enum types | `Dictionary(Int32, Utf8)` | **no** — PostgreSQL orders an enum by *declaration* order (I33); we compare the label text, so an enum declared `('low','medium','high')` orders alphabetically instead | the declaration order, which the dump carries verbatim in `CREATE TYPE … AS ENUM (…)`. Purely additive |
+| `text`, `varchar`, `char`, `name` | `Utf8View` | **no** — PostgreSQL orders text by collation, and a plain dump records none (I32); we compare bytewise, which equals PostgreSQL only under `C`/`POSIX` | a collation the file does not carry |
+| **bare `numeric`**, and `numeric` beyond 76 digits | `Utf8View` | **no, and this is the sharp one** — an unconstrained `numeric` column has no Arrow decimal representation, so it is `Mapped` to `Utf8View` and orders lexicographically: `"9" < "10"` is false | an arbitrary-precision decimal comparison |
+| `interval`, `time with time zone`, `json`/`jsonb`, `inet`/`cidr`/`macaddr`/`macaddr8`, and any domain over them | `Utf8View` | **no** — each has a server-side operator of its own that a bytewise comparison does not implement | one decoder per type, each its own piece of work |
 
-The last row is why the classification is keyed by the Arrow type and the
-*message* by the declared one: four unrelated situations reach `Utf8View`, and
-a single sentence about "text" would be wrong for three of them.
+A domain has no row of its own: it compares as the row its base type is on,
+through any chain, which is how the last row already covers "any domain over
+them".
+
+**The refusals are the rest of the table, and they are stated rather than
+listed**: every nested shape — array, composite, range, multirange — and every
+declared type this build maps to nothing at all. The first group is refused
+one step earlier, on the `NestedPlan`, so the register's answer for it is the
+second of two agreeing ones.
 
 **A divergent comparison is announced by the CLI, once, on stderr**, after the
 schema resolves, naming the column and the divergence — including for a query
@@ -2042,9 +2082,12 @@ belongs to P11, which retires this entry: two rows close by code and two by
 statement ([`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md),
 "What this phase closes, and what it declares").
 
-*Rejected: a test asserting the Markdown table above and `ordering_register`
+*Rejected: a test asserting the Markdown table above and `comparison_for`
 agree row for row.* Its own failure mode is bit-rot in the doc parser, and the
-table is small enough to be re-read whenever the register changes.
+table is small enough to be re-read whenever the register changes. What
+`pgtype.rs` carries instead is a hand-written Rust table naming every arm of
+`builtin_scalar` and its plan — an ordinary test over the register, not a
+parser over the document.
 
 **On the command line the operators are spelled as they read.** How a term is
 split into its three parts is the next section.

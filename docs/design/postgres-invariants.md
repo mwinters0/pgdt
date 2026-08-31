@@ -1815,7 +1815,8 @@ glibc, so `'A' < 'a'` answers `t` on the one and `f` on the other. The server
 tracks that itself in `pg_collation.collversion` — `2.41` for a libc-provider
 collation, the libc version verbatim — and no dump carries it.
 
-**Relied on by.** The ordering register's `Utf8View` rows.
+**Relied on by.** The comparison register's text rows — the declared types it
+answers `AsText` for.
 
 **Re-verify.**
 
@@ -1877,9 +1878,9 @@ a string comparison.
 master — all seven carry the `float8_gt` and `uuid_internal_cmp` bodies quoted
 above verbatim.
 
-**Relied on by.** The ordering register's *Agrees* and enum rows —
-[`architecture.md`](architecture.md), "Predicates"; `predicate.rs`'s
-`ordering_register` and `pg_float_cmp`.
+**Relied on by.** The comparison register's *Agrees* and enum rows —
+[`architecture.md`](architecture.md), "Ordering operators compare typed";
+`pgtype.rs`'s `comparison_for` and `predicate.rs`'s `pg_float_cmp`.
 
 **Re-verify.**
 

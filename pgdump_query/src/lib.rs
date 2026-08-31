@@ -28,11 +28,14 @@ pub use map::{
     DataBlock, InsertRun, LargeObjectRegion, Span, SpanBody, SpanText, TEXT_CAP, TilingIssue,
     TocHeader, attach_text, build_map, check_tiling,
 };
-pub use pgtype::{NestedPlan, TypeOutcome, resolve_declared_type};
+pub use pgtype::{
+    CompareKind, ComparisonPlan, NestedPlan, OrderingDivergence, TypeOutcome, comparison_for,
+    resolve_declared_type,
+};
 pub use preamble::{
     DatabaseMetadata, DumpMetadata, Extension, TypeDef, TypeKind, dump_metadata_from_spans,
 };
-pub use predicate::{OrderingDivergence, OrderingNote, Predicate, PredicateOp};
+pub use predicate::{OrderingNote, Predicate, PredicateOp};
 pub use resolve::{ColumnNote, ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 pub use scan::{
     CopyEnd, CopyScanner, CopyStart, Event, LargeObjectEnd, LargeObjectStart, Line, Row,

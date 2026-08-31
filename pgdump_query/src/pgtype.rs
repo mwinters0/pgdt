@@ -109,6 +109,76 @@ pub enum NestedPlan {
     Multirange(Box<NestedPlan>),
 }
 
+/// How one column's field text becomes a value two sides of a comparison can
+/// be ordered by — the decoding half of a [`ComparisonPlan`], and the only
+/// thing `crate::predicate` needs in order to read a side.
+///
+/// It is a small closed vocabulary rather than the Arrow type because the two
+/// do not correspond: `text`, bare `numeric`, `interval` and `inet` all reach
+/// `Utf8View` and are four different comparisons, while `Decimal128` and
+/// `Decimal256` are one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompareKind {
+    Bool,
+    Int,
+    Float32,
+    Float64,
+    Decimal(i8),
+    Date,
+    Time,
+    Timestamp { with_tz: bool },
+    Uuid,
+    Bytea,
+    Text,
+}
+
+/// How a comparison here differs from PostgreSQL's own for the same declared
+/// type. The declared type then sharpens the sentence a user reads, since
+/// several declared types share one divergence for different reasons (see
+/// `crate::predicate::OrderingNote::message`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderingDivergence {
+    /// The column is held as text and compared bytewise.
+    AsText,
+    /// An enum, compared by label text where PostgreSQL uses declaration
+    /// order.
+    EnumLabels,
+}
+
+/// **The comparison register's answer for one declared type**: how a column
+/// of it compares, and whether that is the order PostgreSQL itself defines.
+/// Rendered as a table in `docs/design/architecture.md`, "Ordering operators
+/// compare typed".
+///
+/// **One fact, not two.** "This type has no order here" and "there is no way
+/// to decode a value of it" are the same statement, so they are one variant
+/// rather than a pairing that could come to disagree.
+///
+/// Carried per column in [`crate::resolve::ResolvedSchema::comparisons`] and
+/// consumed by `crate::predicate`, which reads it instead of inspecting the
+/// Arrow type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ComparisonPlan {
+    /// Values decode through `kind` and compare by that order; `divergence`
+    /// is `None` when the order is PostgreSQL's own.
+    Compared { kind: CompareKind, divergence: Option<OrderingDivergence> },
+    /// No order is defined here for this declared type.
+    #[default]
+    Refused,
+}
+
+impl ComparisonPlan {
+    /// The order PostgreSQL itself defines for this type.
+    const fn agrees(kind: CompareKind) -> Self {
+        Self::Compared { kind, divergence: None }
+    }
+
+    /// Bytewise over the text the file holds, which is not what PostgreSQL
+    /// orders by — the answer for every type this build maps to `Utf8View`.
+    pub(crate) const AS_TEXT: Self =
+        Self::Compared { kind: CompareKind::Text, divergence: Some(OrderingDivergence::AsText) };
+}
+
 /// The field names of the range struct, in order. Reserved: a composite type
 /// resolves to a `Struct` too, and only the [`NestedPlan`] tells them apart —
 /// these names are for a human reading `pgdq info`, never for dispatch.
@@ -133,73 +203,102 @@ pub(crate) fn split_typmod(s: &str) -> (&str, Option<&str>) {
 /// same as arbitrary precision (I4: `NaN` is reachable through any numeric
 /// column regardless, and is a decode-time concern, not a mapping one).
 ///
-/// The `Utf8View` arms carry a limitation nothing here shows: such a column
-/// *orders* lexicographically under `<`/`>`, so `"9" < "10"` is false where
-/// PostgreSQL says true.
+/// The `Utf8View` arms' comparison is the limitation that carries: such a
+/// column *orders* lexicographically under `<`/`>`, so `"9" < "10"` is false
+/// where PostgreSQL says true. The typed arms carry the column's own scale
+/// into the comparison, so both sides of one are unscaled integers.
 ///
 /// Deficiency register: `deficiency: KD7` — the detail is
 /// `docs/design/architecture.md`'s "Ordering operators compare typed".
-fn map_numeric(typmod: Option<&str>) -> DataType {
-    let Some(typmod) = typmod else { return DataType::Utf8View };
+fn map_numeric(typmod: Option<&str>) -> (DataType, ComparisonPlan) {
+    let Some(typmod) = typmod else { return (DataType::Utf8View, ComparisonPlan::AS_TEXT) };
     let mut parts = typmod.split(',').map(str::trim);
     let precision: Option<u8> = parts.next().and_then(|p| p.parse().ok());
     let scale: i8 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let decimal = ComparisonPlan::agrees(CompareKind::Decimal(scale));
     match precision {
-        Some(p) if p <= 38 => DataType::Decimal128(p, scale),
-        Some(p) if p <= 76 => DataType::Decimal256(p, scale),
-        _ => DataType::Utf8View,
+        Some(p) if p <= 38 => (DataType::Decimal128(p, scale), decimal),
+        Some(p) if p <= 76 => (DataType::Decimal256(p, scale), decimal),
+        _ => (DataType::Utf8View, ComparisonPlan::AS_TEXT),
     }
 }
 
-/// The built-in half of "Type mapping"'s table — everything with no `.` in
-/// its declared name (I8). `None` means the base name isn't a built-in this
-/// build recognises (e.g. `money`, never specified).
+/// **The built-in scalar table** — "Type mapping"'s table for everything with
+/// no `.` in its declared name (I8) that is not a range. `None` means the base
+/// name isn't a built-in this build recognises (e.g. `money`, never
+/// specified).
 ///
-/// Includes PostgreSQL's twelve built-in range and multirange types: unlike a
-/// user-defined range (`CREATE TYPE ... AS RANGE`), these never appear
+/// **Each arm answers both questions at once**: which Arrow type the column
+/// gets, and how two of its values compare. That pairing is the comparison
+/// register's exhaustiveness check — a type added here without a comparison
+/// does not compile — and it replaces the exhaustive `match` over `DataType`
+/// the register used to be, which could only ever have been keyed on a type
+/// four unrelated declared types share (`docs/design/architecture.md`,
+/// "Ordering operators compare typed").
+fn builtin_scalar(base: &str, typmod: Option<&str>) -> Option<(DataType, ComparisonPlan)> {
+    use CompareKind as K;
+    use DataType::*;
+    use arrow::datatypes::TimeUnit::Microsecond;
+    let agrees = ComparisonPlan::agrees;
+    let text = ComparisonPlan::AS_TEXT;
+    Some(match base.to_ascii_lowercase().as_str() {
+        "smallint" => (Int16, agrees(K::Int)),
+        "integer" => (Int32, agrees(K::Int)),
+        "bigint" => (Int64, agrees(K::Int)),
+        // `false < true`, PostgreSQL's own boolean order.
+        "boolean" => (Boolean, agrees(K::Bool)),
+        // IEEE's three specials are representable and `pg_float_cmp` orders
+        // them PostgreSQL's way, so nothing here is carried as a position.
+        "real" => (Float32, agrees(K::Float32)),
+        "double precision" => (Float64, agrees(K::Float64)),
+        "numeric" => map_numeric(typmod),
+        "text" | "character varying" | "character" | "name" => (Utf8View, text),
+        // `infinity`/`-infinity` are ordered rather than refused, as
+        // positions rather than numbers (`special_order_key`, I34).
+        "date" => (Date32, agrees(K::Date)),
+        "timestamp without time zone" => {
+            (Timestamp(Microsecond, None), agrees(K::Timestamp { with_tz: false }))
+        }
+        "timestamp with time zone" => {
+            (Timestamp(Microsecond, Some("UTC".into())), agrees(K::Timestamp { with_tz: true }))
+        }
+        "time without time zone" => (Time64(Microsecond), agrees(K::Time)),
+        "time with time zone" => (Utf8View, text),
+        "interval" => (Utf8View, text),
+        // `uuid_internal_cmp` is `memcmp` over 16 bytes, and `byteacmp` is
+        // `memcmp` then length — both are `[u8]`'s own order (I33).
+        "uuid" => (FixedSizeBinary(16), agrees(K::Uuid)),
+        "bytea" => (Binary, agrees(K::Bytea)),
+        "json" | "jsonb" => (Utf8View, text),
+        "inet" | "cidr" | "macaddr" | "macaddr8" => (Utf8View, text),
+        _ => return None,
+    })
+}
+
+/// The built-in half of "Type mapping"'s table: [`builtin_scalar`], plus
+/// PostgreSQL's twelve built-in range and multirange types. Unlike a
+/// user-defined range (`CREATE TYPE ... AS RANGE`), those never appear
 /// schema-qualified and have no `CREATE TYPE` of their own anywhere in the
 /// file, so they need bare-name recognition here or they would wrongly fall
 /// through to `Unknown` (confirmed against `fixtures/*/types/default.sql`'s
 /// `t_range.v_range int4range`).
 fn map_builtin(base: &str, typmod: Option<&str>, types: &[TypeDef]) -> Option<TypeOutcome> {
-    use DataType::*;
-    use arrow::datatypes::TimeUnit::Microsecond;
-    let mapped = match base.to_ascii_lowercase().as_str() {
-        "smallint" => Int16,
-        "integer" => Int32,
-        "bigint" => Int64,
-        "boolean" => Boolean,
-        "real" => Float32,
-        "double precision" => Float64,
-        "numeric" => map_numeric(typmod),
-        "text" | "character varying" | "character" | "name" => Utf8View,
-        "date" => Date32,
-        "timestamp without time zone" => Timestamp(Microsecond, None),
-        "timestamp with time zone" => Timestamp(Microsecond, Some("UTC".into())),
-        "time without time zone" => Time64(Microsecond),
-        "time with time zone" => Utf8View,
-        "interval" => Utf8View,
-        "uuid" => FixedSizeBinary(16),
-        "bytea" => Binary,
-        "json" | "jsonb" => Utf8View,
-        "inet" | "cidr" | "macaddr" | "macaddr8" => Utf8View,
-        // Built-in ranges, and their PG14+ multirange counterparts (I10):
-        // both appear bare, never schema-qualified, so both need this table
-        // rather than the user-defined lookup below (I8).
-        other => {
-            let (subtype, multi) = builtin_range_subtype(other)?;
-            let (bound, bound_plan) = resolve_nested(subtype, types);
-            return Some(if multi {
-                TypeOutcome::Mapped(
-                    list_of(range_struct(bound)),
-                    NestedPlan::Multirange(Box::new(bound_plan)),
-                )
-            } else {
-                TypeOutcome::Mapped(range_struct(bound), NestedPlan::Range(Box::new(bound_plan)))
-            });
-        }
-    };
-    Some(TypeOutcome::Mapped(mapped, NestedPlan::Scalar))
+    if let Some((mapped, _)) = builtin_scalar(base, typmod) {
+        return Some(TypeOutcome::Mapped(mapped, NestedPlan::Scalar));
+    }
+    // Built-in ranges, and their PG14+ multirange counterparts (I10): both
+    // appear bare, never schema-qualified, so both need this table rather
+    // than the user-defined lookup (I8).
+    let (subtype, multi) = builtin_range_subtype(&base.to_ascii_lowercase())?;
+    let (bound, bound_plan) = resolve_nested(subtype, types);
+    Some(if multi {
+        TypeOutcome::Mapped(
+            list_of(range_struct(bound)),
+            NestedPlan::Multirange(Box::new(bound_plan)),
+        )
+    } else {
+        TypeOutcome::Mapped(range_struct(bound), NestedPlan::Range(Box::new(bound_plan)))
+    })
 }
 
 /// The subtype of one of PostgreSQL's twelve built-in range/multirange types,
@@ -530,6 +629,71 @@ pub fn resolve_declared_type(declared: &str, types: &[TypeDef]) -> TypeOutcome {
         return resolve_user_type(base, types);
     }
     map_builtin(base, typmod, types).unwrap_or(TypeOutcome::Unknown)
+}
+
+/// **The comparison register**: how a column declared `declared` compares, and
+/// whether that is PostgreSQL's own order.
+///
+/// It walks the declared type exactly as [`resolve_declared_type`] does —
+/// array first, then the built-in table, then the database's own
+/// `CREATE TYPE`/`DOMAIN` list — so the two answers are reached through one
+/// spelling of the same string and a domain compares as whatever it bottoms
+/// out at.
+///
+/// **Keyed on the declared type, not on the Arrow one.** Four unrelated
+/// declared types reach `Utf8View` — a text type, a bare `numeric`, a
+/// text-held type such as `interval`, and `json`, which PostgreSQL does not
+/// order at all — so the Arrow type cannot say which comparison a column
+/// wants, and the answers that will replace them are per declared type too.
+///
+/// Everything nested is [`ComparisonPlan::Refused`] here: an order over an
+/// `array_out`/`record_out`/`range_out` literal is not a thing this build
+/// defines. Its consumer refuses such a column earlier anyway, on the
+/// [`NestedPlan`], and with a sharper reason.
+pub fn comparison_for(declared: &str, types: &[TypeDef]) -> ComparisonPlan {
+    let declared = declared.trim();
+    if array_element(declared).is_some() {
+        return ComparisonPlan::Refused;
+    }
+    let (base, typmod) = split_typmod(declared);
+    if base.contains('.') {
+        return comparison_user_type(base, types);
+    }
+    // A built-in range name reaches neither arm of `builtin_scalar` and is
+    // refused, which is the same answer the nested check above gives a
+    // user-defined one.
+    builtin_scalar(base, typmod).map_or(ComparisonPlan::Refused, |(_, plan)| plan)
+}
+
+/// The user-defined half of [`comparison_for`], over the same `TypeKind` list
+/// [`resolve_user_type`] reads.
+///
+/// **Exhaustive over `TypeKind` with no wildcard arm**, so a kind added to the
+/// preamble grammar has to choose a comparison rather than inheriting one.
+fn comparison_user_type(name: &str, types: &[TypeDef]) -> ComparisonPlan {
+    // Absent from the list: either an unknown type or a range's multirange
+    // companion (I10). Neither has an order here.
+    let Some(def) = types.iter().find(|t| t.name == name) else {
+        return ComparisonPlan::Refused;
+    };
+    match &def.kind {
+        // An enum with no labels resolves to no Arrow type at all, so no
+        // column of it is ever asked how it compares.
+        TypeKind::Enum { labels } if labels.is_empty() => ComparisonPlan::Refused,
+        // PostgreSQL orders an enum by *declaration* order and this compares
+        // the label text (I33). The labels are in hand here — `def.kind` holds
+        // them — and using them is the closure P11 owns.
+        TypeKind::Enum { .. } => ComparisonPlan::Compared {
+            kind: CompareKind::Text,
+            divergence: Some(OrderingDivergence::EnumLabels),
+        },
+        // A domain compares as what it bottoms out at, through any chain,
+        // which is the same recursion `resolve_declared_type` makes and is
+        // finite for the same reason: PostgreSQL cannot create a cycle.
+        TypeKind::Domain { base_type } => comparison_for(base_type, types),
+        TypeKind::Composite { .. } | TypeKind::Range { .. } => ComparisonPlan::Refused,
+        TypeKind::Base | TypeKind::Shell => ComparisonPlan::Refused,
+    }
 }
 
 #[cfg(test)]
@@ -1053,5 +1217,149 @@ mod tests {
     #[test]
     fn a_user_type_absent_from_the_list_is_unknown() {
         assert_eq!(resolve_declared_type("public.nope", &[]), TypeOutcome::Unknown);
+    }
+
+    // -- the comparison register ------------------------------------------
+
+    fn agrees(kind: CompareKind) -> ComparisonPlan {
+        ComparisonPlan::agrees(kind)
+    }
+
+    /// The register, row for row: every declared type this build maps to a
+    /// scalar, and how a column of it compares. This is the authority the
+    /// Markdown table in `docs/design/architecture.md`, "Ordering operators
+    /// compare typed", renders for humans.
+    ///
+    /// **Every arm of [`builtin_scalar`] appears here**, which is what makes
+    /// the list a register rather than a sample: a type added to that table
+    /// without a row here is a type nothing states the comparison of.
+    #[test]
+    fn the_register_answers_every_builtin_scalar() {
+        use CompareKind as K;
+        let text = ComparisonPlan::AS_TEXT;
+        for (declared, expected) in [
+            ("smallint", agrees(K::Int)),
+            ("integer", agrees(K::Int)),
+            ("bigint", agrees(K::Int)),
+            ("boolean", agrees(K::Bool)),
+            ("real", agrees(K::Float32)),
+            ("double precision", agrees(K::Float64)),
+            ("numeric(10,2)", agrees(K::Decimal(2))),
+            ("numeric(50,0)", agrees(K::Decimal(0))),
+            // The two `numeric` shapes with no Arrow decimal behind them.
+            ("numeric", text),
+            ("numeric(77,0)", text),
+            ("text", text),
+            ("character varying(10)", text),
+            ("character(10)", text),
+            ("name", text),
+            ("date", agrees(K::Date)),
+            ("timestamp without time zone", agrees(K::Timestamp { with_tz: false })),
+            ("timestamp with time zone", agrees(K::Timestamp { with_tz: true })),
+            ("time without time zone", agrees(K::Time)),
+            ("time with time zone", text),
+            ("interval", text),
+            ("uuid", agrees(K::Uuid)),
+            ("bytea", agrees(K::Bytea)),
+            ("json", text),
+            ("jsonb", text),
+            ("inet", text),
+            ("cidr", text),
+            ("macaddr", text),
+            ("macaddr8", text),
+        ] {
+            assert_eq!(comparison_for(declared, &[]), expected, "{declared}");
+        }
+        // A declared type this build maps to nothing has no comparison
+        // either — the two answers are reached through one walk of the same
+        // string, so they cannot disagree about which types exist.
+        assert_eq!(comparison_for("money", &[]), ComparisonPlan::Refused);
+        // A keyword is a keyword on both walks (I5).
+        assert_eq!(comparison_for("INTEGER", &[]), agrees(K::Int));
+    }
+
+    /// Four unrelated declared types reach `Utf8View`, which is why the
+    /// register cannot be keyed on the Arrow type: the enum is a *different*
+    /// divergence from the text one, and `numeric` and `interval` are the
+    /// same divergence for reasons a user is told apart by the declared type
+    /// (`crate::predicate::OrderingNote::message`).
+    #[test]
+    fn the_register_tells_apart_types_that_share_one_arrow_type() {
+        let types = [ty("public.mood", TypeKind::Enum { labels: vec!["sad".into(), "ok".into()] })];
+        assert_eq!(
+            comparison_for("public.mood", &types),
+            ComparisonPlan::Compared {
+                kind: CompareKind::Text,
+                divergence: Some(OrderingDivergence::EnumLabels),
+            }
+        );
+        for declared in ["text", "numeric", "interval", "json"] {
+            assert_eq!(comparison_for(declared, &[]), ComparisonPlan::AS_TEXT, "{declared}");
+        }
+        // An enum with no labels resolves to no Arrow type at all, so no
+        // column of it is ever asked how it compares.
+        let empty = [ty("public.empty", TypeKind::Enum { labels: vec![] })];
+        assert_eq!(comparison_for("public.empty", &empty), ComparisonPlan::Refused);
+    }
+
+    /// A domain compares as whatever it bottoms out at, through any chain —
+    /// the same recursion `resolve_declared_type` makes, so a domain over
+    /// `integer` orders numerically rather than as text.
+    #[test]
+    fn a_domain_compares_as_the_type_it_bottoms_out_at() {
+        let types = [
+            ty("public.d1", TypeKind::Domain { base_type: "integer".to_string() }),
+            ty("public.d2", TypeKind::Domain { base_type: "public.d1".to_string() }),
+            ty("public.dtext", TypeKind::Domain { base_type: "text".to_string() }),
+            ty("public.darr", TypeKind::Domain { base_type: "integer[]".to_string() }),
+            ty("public.dmoney", TypeKind::Domain { base_type: "money".to_string() }),
+        ];
+        assert_eq!(comparison_for("public.d1", &types), agrees(CompareKind::Int));
+        assert_eq!(comparison_for("public.d2", &types), agrees(CompareKind::Int));
+        assert_eq!(comparison_for("public.dtext", &types), ComparisonPlan::AS_TEXT);
+        // A domain over something with no order here has none either.
+        assert_eq!(comparison_for("public.darr", &types), ComparisonPlan::Refused);
+        assert_eq!(comparison_for("public.dmoney", &types), ComparisonPlan::Refused);
+    }
+
+    /// Everything nested is refused: an order over an
+    /// `array_out`/`record_out`/`range_out` literal is not defined here.
+    /// Its consumer refuses such a column earlier, on the `NestedPlan`, so
+    /// this is the second of two agreeing answers rather than the only one.
+    #[test]
+    fn every_nested_shape_is_refused() {
+        let types = [
+            ty(
+                "public.point2d",
+                TypeKind::Composite {
+                    fields: Some(vec![("x".to_string(), "integer".to_string())]),
+                },
+            ),
+            ty(
+                "public.myrange",
+                TypeKind::Range {
+                    subtype: Some("integer".to_string()),
+                    multirange_type_name: Some("public.myrange_multi".to_string()),
+                },
+            ),
+            ty("public.gtype", TypeKind::Base),
+            ty("public.forward", TypeKind::Shell),
+        ];
+        for declared in [
+            "integer[]",
+            "integer ARRAY",
+            "text[]",
+            "public.point2d",
+            "public.point2d[]",
+            "int4range",
+            "int4multirange",
+            "public.myrange",
+            "public.myrange_multi",
+            "public.gtype",
+            "public.forward",
+            "public.nosuchtype",
+        ] {
+            assert_eq!(comparison_for(declared, &types), ComparisonPlan::Refused, "{declared}");
+        }
     }
 }

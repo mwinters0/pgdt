@@ -283,9 +283,10 @@ can **omit** a row that PostgreSQL's own operator would have passed — so
 pushing it down as `Inexact` returns a silently wrong answer, not a
 conservative one. Divergent maps to `Unsupported`.
 
-So `OrderingSupport::{Agrees, Diverges, Refused}` is **not** the same
-trichotomy as `{Exact, Inexact, Unsupported}`, despite the shapes matching:
-`Agrees` → `Exact`, and both `Diverges` and `Refused` → `Unsupported`.
+So the register's three answers — a `ComparisonPlan` that agrees, one that
+diverges, and `Refused` — are **not** the same trichotomy as
+`{Exact, Inexact, Unsupported}`, despite the shapes matching: agreement →
+`Exact`, and both divergence and refusal → `Unsupported`.
 Nothing this project produces is naturally `Inexact`, and a provider that maps
 the two registers one-to-one is unsound.
 

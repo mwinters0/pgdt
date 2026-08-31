@@ -15,7 +15,9 @@ use arrow::datatypes::{Field, Schema, SchemaRef};
 
 use crate::diagnostic::Severity;
 use crate::index::{ArrayShape, MAX_ARRAY_DIMS};
-use crate::pgtype::{NestedPlan, TypeOutcome, resolve_declared_type};
+use crate::pgtype::{
+    ComparisonPlan, NestedPlan, TypeOutcome, comparison_for, resolve_declared_type,
+};
 use crate::preamble::{DatabaseMetadata, DumpMetadata};
 
 /// Whether a query resolves column types at all. See "Output model" in the
@@ -156,6 +158,21 @@ pub struct ResolvedSchema {
     /// column's entry is `NestedPlan::Scalar`, so every column has one and no
     /// caller has to ask whether this vector applies to it.
     pub plans: Vec<NestedPlan>,
+    /// How each column compares — positional, parallel to `schema.fields()`
+    /// like `columns` and `plans`.
+    ///
+    /// **An L2 conclusion, produced here because this is where its inputs
+    /// meet**: the declared type string and the database's own `CREATE TYPE`
+    /// list. `crate::predicate` reads this instead of inspecting the Arrow
+    /// type, which cannot tell four unrelated declared types apart
+    /// (`crate::pgtype::comparison_for`).
+    ///
+    /// A column that did not resolve `Mapped` is
+    /// [`ComparisonPlan::Refused`] whatever its declared type said, so this
+    /// vector never claims an order for a column whose type is not the one
+    /// the DDL named — the census can take a column out of `Mapped` after the
+    /// declared type has been read.
+    pub comparisons: Vec<ComparisonPlan>,
 }
 
 impl Default for ResolvedSchema {
@@ -167,6 +184,7 @@ impl Default for ResolvedSchema {
             columns: Vec::new(),
             notes: Vec::new(),
             plans: Vec::new(),
+            comparisons: Vec::new(),
         }
     }
 }
@@ -325,29 +343,38 @@ pub fn resolve_columns(
     let mut resolutions = Vec::with_capacity(columns.len());
     let mut notes = Vec::with_capacity(columns.len());
     let mut plans = Vec::with_capacity(columns.len());
+    let mut comparisons = Vec::with_capacity(columns.len());
 
     let string = || (arrow::datatypes::DataType::Utf8View, NestedPlan::Scalar);
     for (i, name) in columns.iter().enumerate() {
         let declared = declared_cols.and_then(|cols| cols.iter().find(|(n, _)| n == name));
-        let (resolution, pair) = match declared {
-            None if unscanned_database => (ColumnResolution::MetadataNotScanned, string()),
-            None => (ColumnResolution::NotDeclared, string()),
+        let (resolution, pair, comparison) = match declared {
+            None if unscanned_database => {
+                (ColumnResolution::MetadataNotScanned, string(), ComparisonPlan::Refused)
+            }
+            None => (ColumnResolution::NotDeclared, string(), ComparisonPlan::Refused),
             Some((_, ty)) => {
                 // `db` is always `Some` here: `declared_cols` only came from
                 // `db.tables`, so `db.types` is the right list to resolve
                 // this same database's `CREATE TYPE`/`DOMAIN` references
-                // against.
-                match resolve_declared_type(ty, &db.unwrap().types) {
-                    TypeOutcome::Mapped(dt, plan) => (ColumnResolution::Mapped, (dt, plan)),
-                    TypeOutcome::Unknown => (ColumnResolution::UnknownType, string()),
+                // against — for the comparison plan as much as for the type.
+                let types = &db.unwrap().types;
+                let refused = ComparisonPlan::Refused;
+                match resolve_declared_type(ty, types) {
+                    TypeOutcome::Mapped(dt, plan) => {
+                        (ColumnResolution::Mapped, (dt, plan), comparison_for(ty, types))
+                    }
+                    TypeOutcome::Unknown => (ColumnResolution::UnknownType, string(), refused),
                     TypeOutcome::OpaqueElementType => {
-                        (ColumnResolution::OpaqueElementType, string())
+                        (ColumnResolution::OpaqueElementType, string(), refused)
                     }
                     TypeOutcome::NestedArrayElement => {
-                        (ColumnResolution::NestedArrayElement, string())
+                        (ColumnResolution::NestedArrayElement, string(), refused)
                     }
-                    TypeOutcome::OpaqueBaseType => (ColumnResolution::OpaqueBaseType, string()),
-                    TypeOutcome::EmptyEnum => (ColumnResolution::EmptyEnum, string()),
+                    TypeOutcome::OpaqueBaseType => {
+                        (ColumnResolution::OpaqueBaseType, string(), refused)
+                    }
+                    TypeOutcome::EmptyEnum => (ColumnResolution::EmptyEnum, string(), refused),
                 }
             }
         };
@@ -355,6 +382,15 @@ pub fn resolve_columns(
         // shape, and it speaks after the DDL, never instead of it.
         let (resolution, (arrow_type, plan)) =
             retype_from_census(census.get(i).copied().unwrap_or_default(), resolution, pair);
+        // ... and it may take the column *out* of `Mapped`, after the
+        // declared type has already been read. A comparison plan is only ever
+        // consulted for a column that stayed in it, so the two are kept in
+        // step here rather than at the one call site that reads them.
+        let comparison = if resolution == ColumnResolution::Mapped {
+            comparison
+        } else {
+            ComparisonPlan::Refused
+        };
         // Every Arrow field is nullable, regardless of a `NOT
         // NULL` in the DDL -- see "Nullability" in the phase doc.
         fields.push(Field::new(name, arrow_type, true));
@@ -365,9 +401,16 @@ pub fn resolve_columns(
         });
         resolutions.push(resolution);
         plans.push(plan);
+        comparisons.push(comparison);
     }
 
-    ResolvedSchema { schema: Arc::new(Schema::new(fields)), columns: resolutions, notes, plans }
+    ResolvedSchema {
+        schema: Arc::new(Schema::new(fields)),
+        columns: resolutions,
+        notes,
+        plans,
+        comparisons,
+    }
 }
 
 #[cfg(test)]
@@ -736,6 +779,80 @@ mod tests {
             resolved.schema.field(1).data_type(),
             &list_of(arrow::datatypes::DataType::Int32)
         );
+    }
+
+    /// The comparison plan is a fourth positional vector, one entry per
+    /// column whether or not the column has an order — so no consumer has to
+    /// ask whether it applies — and its value is the register's own answer
+    /// for the declared type.
+    #[test]
+    fn every_column_carries_a_comparison_plan() {
+        use crate::pgtype::{CompareKind, ComparisonPlan};
+
+        let types = vec![TypeDef {
+            name: "public.mood".to_string(),
+            kind: TypeKind::Enum { labels: vec!["sad".to_string()] },
+        }];
+        let meta = one_db(
+            &[(
+                "public.t",
+                &[
+                    ("i", "integer"),
+                    ("s", "text"),
+                    ("m", "public.mood"),
+                    ("v", "integer[]"),
+                    ("u", "money"),
+                ],
+            )],
+            types,
+        );
+        let cols: Vec<String> = ["i", "s", "m", "v", "u"].iter().map(ToString::to_string).collect();
+        let resolved =
+            resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Typed, &[]);
+        assert_eq!(resolved.comparisons.len(), resolved.schema.fields().len());
+        assert_eq!(
+            resolved.comparisons,
+            [
+                ComparisonPlan::Compared { kind: CompareKind::Int, divergence: None },
+                ComparisonPlan::AS_TEXT,
+                ComparisonPlan::Compared {
+                    kind: CompareKind::Text,
+                    divergence: Some(crate::pgtype::OrderingDivergence::EnumLabels),
+                },
+                // Nested, and a type this build never mapped: neither has an
+                // order here.
+                ComparisonPlan::Refused,
+                ComparisonPlan::Refused,
+            ]
+        );
+
+        // `SchemaMode::Strings` resolves nothing, so it claims no order for
+        // any column — which is what makes an ordering operator refuse under
+        // it with no case of its own.
+        let strings =
+            resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Strings, &[]);
+        assert_eq!(strings.comparisons, vec![ComparisonPlan::Refused; 5]);
+    }
+
+    /// The census speaks after the declared type, and can take a column out
+    /// of `Mapped` once the plan has already been read — so the plan is
+    /// re-answered against the outcome that survived, never against the one
+    /// the DDL alone gave.
+    #[test]
+    fn a_census_refused_column_claims_no_order() {
+        use crate::pgtype::ComparisonPlan;
+
+        let meta = one_db(&[("public.t", &[("v", "text")])], vec![]);
+        let cols = vec!["v".to_string()];
+        let text = resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Typed, &[]);
+        assert_eq!(text.comparisons, [ComparisonPlan::AS_TEXT]);
+
+        // The same column declared as an array, whose values do not share one
+        // list shape: `VaryingArrayShape` holds *array* literals as text, and
+        // comparing them as text is not an order this build defines.
+        let varying = array_column(&[shape(Some((1, 2)), false)]);
+        assert_eq!(varying.columns, [ColumnResolution::VaryingArrayShape]);
+        assert_eq!(varying.comparisons, [ComparisonPlan::Refused]);
     }
 
     #[test]

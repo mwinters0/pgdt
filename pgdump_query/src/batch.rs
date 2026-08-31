@@ -1375,6 +1375,7 @@ mod tests {
     ) -> RowBatcher {
         use arrow::datatypes::Schema;
 
+        use crate::pgtype::comparison_for;
         use crate::resolve::{ColumnNote, ColumnResolution};
 
         let declared = if data_type == DataType::Int32 { "integer" } else { "text" };
@@ -1387,6 +1388,7 @@ mod tests {
                 resolution: ColumnResolution::Mapped,
             }],
             plans: vec![NestedPlan::Scalar],
+            comparisons: vec![comparison_for(declared, &[])],
         };
         RowBatcher::new(&resolved, "public.t".into(), options, field_targets)
     }

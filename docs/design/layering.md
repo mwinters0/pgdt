@@ -15,7 +15,7 @@ split happening.
 | Layer | Concern | Modules |
 |---|---|---|
 | **L1 — Bytes and structure** | Byte-range I/O, line and `COPY` block structure, COPY TEXT field splitting/escaping/unescaping, DDL text grammar, the on-disk cache format, the full file map, the file-level diagnostic vocabulary | `io.rs`, `copy.rs`, `scan.rs`, `index.rs`, `cache.rs`, `preamble.rs`, `map.rs`, `diagnostic.rs` |
-| **L2 — PostgreSQL semantics** | Declared type string → Arrow `DataType`; domain/enum resolution; joining a `COPY` header against `DumpMetadata`; per-type field decode and render-back, scalar and nested | `pgtype.rs`, `resolve.rs`, `decode.rs`, `nested.rs` |
+| **L2 — PostgreSQL semantics** | Declared type string → Arrow `DataType`; domain/enum resolution; joining a `COPY` header against `DumpMetadata`; per-type field decode and render-back, scalar and nested; how two values of a column compare, and whether that is PostgreSQL's order | `pgtype.rs`, `resolve.rs`, `decode.rs`, `nested.rs` |
 | **L3 — Arrow assembly** | Building Arrow arrays and `RecordBatch`es, including the zero-copy `Utf8View` path into the reader's buffers | `batch.rs` |
 | **L4 — Query and planning** | Which blocks to read, cache segment planning, resume, predicate application, the streaming API | `stream.rs`, `predicate.rs` |
 

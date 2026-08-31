@@ -161,7 +161,7 @@ fn ordering_notes(terms: &[ResolvedTerm]) -> Vec<OrderingNote> {
 /// Cut `resolved` down to `projection`, and say which of the block's fields
 /// each projected column is fed by.
 ///
-/// All four of [`ResolvedSchema`]'s vectors are cut together, in the
+/// All five of [`ResolvedSchema`]'s vectors are cut together, in the
 /// requested order: they are positional and parallel by construction, and
 /// `RecordBatch::try_new` checks the built arrays against `schema` exactly,
 /// so a stream advertising the full table while emitting narrow batches
@@ -201,6 +201,7 @@ fn project(
         columns: sources.iter().map(|&i| resolved.columns[i].clone()).collect(),
         notes: sources.iter().map(|&i| resolved.notes[i].clone()).collect(),
         plans: sources.iter().map(|&i| resolved.plans[i].clone()).collect(),
+        comparisons: sources.iter().map(|&i| resolved.comparisons[i]).collect(),
     };
     Ok((projected, field_targets))
 }
