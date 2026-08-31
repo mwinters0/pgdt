@@ -14,8 +14,9 @@ library code, one bounding what an in-flight batch pins, one adding projection
 to the library, one giving it a CLI, one turning the single filter into a
 conjunction, one adding the typed ordering operators, one making PostgreSQL's
 special values answer them, and one taking the figure and retiring the
-cross-file apparatus it supersedes. The phase is ready to wrap; the checklist
-is below the table.
+cross-file apparatus it supersedes. **One slice remains**, `P5.9`, which a
+grilling over the review section added: the filter term's grammar. The
+checklist is below the table.
 
 | Capability | State |
 |---|---|
@@ -54,11 +55,22 @@ flag, the `composite_text` input and the fidelity case pairing them — because
 the projection table makes the same isolation a subtraction between two adjacent
 rows of one file.
 
-**One figure reads stale, and it is the fold-in's own edit.** `session-drift`
-declares `scripts/measure.py`, which `P5.7` edited to move `projection-widths`
-into `FIGURES`. Nothing on a timing path differs, and the figure is derived
-rather than measured, so `--drift` re-derives it from the two sweeps'
-`raw.json` without measuring anything.
+**Ten figures read stale, and both causes are the fold-in's own edits.** Nine
+declare `scripts/generate_perf_data.py`, which `P5.7` edited to delete
+`composite-isolated`'s apparatus — the `--weak-composite` flag and the
+`composite_text` input. `session-drift` declares `scripts/measure.py`, edited
+in the same commit to move `projection-widths` into `FIGURES`; nothing on a
+timing path differs there, and the figure is derived rather than measured, so
+`--drift` re-derives it from the two sweeps' `raw.json` without measuring
+anything.
+
+**They stay stale rather than being acknowledged.** The generator change is
+very likely additive for the surviving inputs, but that is a claim
+`--verify-additive` settles and it has not been run; an acknowledgement on a
+read of the diff alone is the weaker kind of entry, and it would buy a clean
+`--stale` for a range that `P5.9` keeps open anyway. The wrap sweep re-stamps
+every table and spends the whole range, which is the cheaper place to resolve
+it. Until then `--stale` is red for a reason that is written down here.
 
 ## P5 progress
 
@@ -94,6 +106,14 @@ The spec is
       update the manual — including `KD2`'s second escape, which the error
       message does not name. Notes:
       [`../design/roadmap-P5.7-projection-figure-fold-in-notes.md`](../design/roadmap-P5.7-projection-figure-fold-in-notes.md)
+- [ ] **P5.9** The filter term is parsed for two audiences — whitespace
+      outside quotes trimmed, a quoted value taken as written, `'` and `"` both
+      opening one with an interior quote doubled, a quote-aware operator split,
+      quoted column names, and the `IS NULL` forms demoted to the fallback,
+      which fixes the `note=this is null` misparse. Spec:
+      [`../design/roadmap-P5-pushdown.md`](../design/roadmap-P5-pushdown.md),
+      "A filter term is parsed for two audiences"; design:
+      [`history/2026-08-31.md`](history/2026-08-31.md)
 
 ## Not started
 
@@ -202,49 +222,13 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **The warm resolution floor is left at ~8% with an observation above it.**
-  The sweep pair behind this stamp moved one file's warm tmpfs `dd` floor
-  **13.6%** three minutes apart, on identical binaries and inputs, in the
-  *fast* direction — above anything the two-hour pair produced, and above the
-  ~8% the standing rule states.
-  [`../design/measurements.md`](../design/measurements.md) now says that
-  number bounds warm *figures* rather than every warm reading, since a floor
-  moves further than the figures riding on it. What was not changed is the
-  threshold itself, and the same ~8% is what disqualifies a sweep whose
-  co-measured floor comes in slow ("The floor is read directionally"). Raising
-  it would make a real contention episode harder to catch; leaving it means the
-  next slow-floor sweep at 9–13% is rejected on a number one reading already
-  exceeded in the other direction. Read the other way, the disqualification
-  threshold becomes its own number, measured on floors rather than on figures.
-
-- **A `--filter` term is refused if it carries spaces around its operator, and
-  that was documented rather than fixed.** `--filter 'v_date < 2020-01-01'` —
-  the spelling `roadmap-P5-pushdown.md` and this file both used — looks for the
-  date ` 2020-01-01` and fails before any row is read. The parse is not wrong:
-  everything after the operator is the value, and a text column may legitimately
-  hold a leading space, so trimming would make `--filter 'name= x'` unable to
-  express a value that starts with one. But a user writing SQL-like syntax hits
-  it immediately. Read the other way, the CLI trims around the operator and
-  gains an escape for the rare leading-space value, or trims only for the
-  ordering operators, where no value can begin with a space. Nothing was changed
-  here because it is a CLI contract, and a CLI-feedback pass is the section
-  above's standing home for that.
-
-- **`KD6` is filed as a deficiency rather than evicted as a property.**
-  Building the register applied one test to every entry — is the remedy already
-  available to the user today? — and it is what turned
-  `DumpIndex::roles`/`tablespaces` into a property with no identifier, since a
-  full scan gives the complete set.
-  `KD6` carries the same remedy sentence, `ScanExtent::Full` or a query after
-  `pgdq parse`, and was kept anyway: what it costs is not a partial answer the
-  user can ask for again, it is a possibly *wrong* one with no signal at all,
-  and the cheap fix P6 is weighing — a `Diagnostic` on every early stop — does
-  not exist today. Read the other way, the index line is deleted, the paragraph
-  stays where it is in
-  [`../design/architecture.md`](../design/architecture.md)'s "One target per
-  query", and P6's inbox entry carries the question by itself.
-
-The entry `P5.6` raised was answered and reversed: special values are ordered,
-settled in
+Nothing is open. The three entries this section held were answered together
+([`history/2026-08-31.md`](history/2026-08-31.md)): the warm floor's
+disqualification threshold became a number of its own, measured on floors and
+requiring a move shared across them; `KD6` was affirmed as a deficiency, with
+the reasoning filed beside "One target per query"; and the spaced `--filter`
+term became `P5.9`, which real CLI feedback widened into the whole term
+grammar. The entry `P5.6` raised was answered and reversed before them:
+special values are ordered, settled in
 [`../design/roadmap-P5-pushdown.md`](../design/roadmap-P5-pushdown.md) and
 scheduled as `P5.8` ([`history/2026-08-30.md`](history/2026-08-30.md)).

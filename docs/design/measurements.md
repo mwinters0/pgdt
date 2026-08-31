@@ -110,8 +110,9 @@ Eleven standing rules for reading anything below:
   the one with an observation outside it: the pair below moved one file's warm
   tmpfs `dd` floor 13.6%, so ~8% bounds the warm *figures* and not every warm
   reading — the floors themselves move further, which is why each warm table
-  co-measures its own. A move inside its
-  regime's floor is apparatus. Write it up as *reproduces*, never as a change —
+  co-measures its own, and why a **floor** is judged against a number of its
+  own ("The floor is read directionally") rather than against this one. A move
+  inside its regime's floor is apparatus. Write it up as *reproduces*, never as a change —
   in this doc, in a history entry, or in an argument about which of two sweeps
   to publish; narrating one manufactures a finding that the next sweep silently
   reverses. Two consequences: a warm table's third decimal carries no
@@ -293,15 +294,40 @@ that passes cannot mean a machine that was quiet".
 
 Neither is a normaliser.
 
-**The floor is read directionally, and inside a tolerance.** Contention makes a
-floor *slower* — that is the entire mechanism it witnesses. So a co-measured
-warm floor **above** the standing one by more than the warm resolution floor
-(~8%, the rule above) disqualifies the sweep; one **below** it does not, and
-neither does any move inside that band. Without both halves the check fires on
-drift it cannot tell from contention: the pair this doc is stamped with read
-their `control` warm floor **13.6% apart** in the *fast* direction, with no
-contention available to produce it, and a symmetric check would have rejected
-whichever of the two it happened to see second.
+**The floor is read directionally, against a threshold of its own, and it
+takes two conditions.** Contention makes a floor *slower* — that is the entire
+mechanism it witnesses. So the disqualifying observation is a co-measured warm
+floor **above** the standing one; one **below** it disqualifies nothing.
+Without that half the check fires on drift it cannot tell from contention: the
+pair this doc is stamped with read their `control` warm floor **13.6% apart**
+in the *fast* direction, with no contention available to produce it, and a
+symmetric check would have rejected whichever of the two it happened to see
+second.
+
+**The threshold is ~15%, and it is measured on floors rather than on figures.**
+The warm resolution floor (~8%) does not serve here: it is read off warm
+*figures*, and floors move further than the figures riding on them, so it sits
+inside the band drift alone demonstrably produces. The two populations this
+threshold has to separate are both measured here: pure drift moved a warm
+floor by **13.6%** ("What a session's own drift costs"), and the one witnessed
+contention episode moved the warm floors **+19–24%** while the cold floor held
+at +0.1% ("A gate that passes cannot mean a machine that was quiet"). ~15% is
+the gap between them.
+
+**And the slow move must be shared across the sweep's warm floors.** That is
+the measured signature of the thing being witnessed: contention is
+machine-wide, so it moved *every* warm floor together, while drift is per-file
+on tmpfs — in the stamped pair the `control` file's floor moved 13.6% and the
+`arrays` file's moved −0.9% in the same pair. One file's floor moving slow on
+its own is staging luck; every file's moving slow together is the machine. The
+number is the backstop, the shared move is the discriminator, and a sweep is
+disqualified only when both hold.
+
+Two costs come with that, and neither is hidden. A contention episode **milder
+than ~15%** now passes the gate — what catches it downstream is that a warm
+figure is a ratio against its own co-measured floor, not an absolute. And with
+two or three warm files in a sweep, "shared" is a weak test on its own, which
+is why it is a conjunct with the number rather than a replacement for it.
 
 That is also why the doc carries the sweep it does. Both sweeps pass the check
 as written, and the published one is the faster-floored of the pair — which is

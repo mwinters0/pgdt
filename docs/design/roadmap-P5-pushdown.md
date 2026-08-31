@@ -406,6 +406,86 @@ fails with "must either specify a row count or at least one column", so
 `RowBatcher::flush` passes an explicit `row_count`. Verified against
 arrow 59.2.0, which documents the option for exactly this.
 
+## A filter term is parsed for two audiences
+
+Two kinds of user read `--filter` differently, and the syntax serves both
+rather than choosing. Sysadmin-shaped users find the bare `column=value`
+spelling natural. SQL-fluent users assume a string literal must be quoted, and
+write `--filter 'foo = "the answer"'` — double quotes rather than SQL's single
+ones, because the term is already inside shell single quotes. Both spellings
+mean what they look like.
+
+**Whitespace outside quotes is not data.** A term is trimmed on both sides of
+the operator, so `--filter 'foo = the answer '` asks for `the answer`. The
+column side already trimmed; the value side now does too. Untrimmed, the
+failure was loud on a typed column — `Error::PredicateValueDecode`, naming the
+value — and silent on a text column under `=`, where a leading space made an
+empty result that read as an answer. Whitespace is Rust's `str::trim`, matching
+the column side, so the parser holds one definition of it and a non-breaking
+space pasted out of a web page is caught. An all-whitespace value collapses to
+the empty string with no special handling.
+
+**A quoted value is taken exactly as written**, which is what restores every
+value trimming would otherwise make unaskable — `--filter 'foo = " x"'` is a
+leading space, so a space-padded `char(n)` value is expressible from the
+command line and not only through the API.
+
+**Both `'` and `"` open a quoted value, matching pairs only, with an interior
+quote doubled** as SQL does it. Accepting one character would punish whichever
+half of the audience reached for the other, and which one a user picks is
+decided by the shell rather than by taste. Doubling keeps the grammar closed:
+no escape alphabet, and so no second decision about what a backslash-n or a
+doubled backslash mean. Two quote characters also give a lazier escape for
+free — a value holding one quote character can be written in the other.
+
+*Rejected: backslash escaping.* A backslash inside a shell double-quoted
+argument is itself shell-processed, so the correct spelling is one nobody
+writes right twice.
+
+**Quotes work on the column side too, and the operator split is quote-aware.**
+PostgreSQL identifiers hold spaces, case and operator characters, and SQL
+spells that `"my column"`; the quotes are stripped and nothing else happens,
+since column names are matched verbatim and there is no case-folding to
+reproduce. `split_filter_op` skips quoted regions rather than taking the
+earliest operator byte anywhere, which is what lets a column named `a=b` parse.
+The rule is otherwise unchanged — earliest position, longest spelling — so
+`name=alpha>x` still parses as before.
+
+**The `IS NULL` / `IS NOT NULL` forms are the fallback, not the first test.**
+An operator outside quotes is looked for first, and the `IS` forms are tried
+only on a term that has none. That is a fix rather than a reordering: stripping
+the suffix from the whole term first makes `--filter 'note=this is null'` an
+`IS NULL` on a column named `note=this`. Under this order it is an equality
+against `this is null`, which is what it says. Quote-awareness is needed on top
+rather than instead — that term goes wrong with no quotes anywhere — and it is
+what lets `--filter '"is null" = x'` name a column `is null`.
+
+**A malformed quote is refused, never reinterpreted.** If what remains after
+trimming opens with a quote, it must close with the matching one at the very
+end with every interior occurrence doubled; an unterminated quote and trailing
+text after the closing one are the same error with the same message. The
+alternative — falling back to the unquoted reading — is the silent-wrong-answer
+shape this whole grammar exists to remove.
+
+**A value that opens and closes with a matching quote is quoted, always.**
+There is no telling a SQL user quoting a string from someone searching a `json`
+column for a quoted word, and a rule that guessed from the column's type would
+make a term's meaning depend on a schema resolved much later. The escape is the
+doubling rule, and the manual shows that case beside the `char(n)` one, since
+they are where a user needs to know the rule exists.
+
+**Quoting stops at `--filter`.** `--column` and `--table` take their names
+verbatim, which is not an inconsistency with the above but the same reasoning:
+a filter term is one string that must be split into three parts, so quotes
+carry boundary information there, while the shell has already delimited a
+`--column` argument. This is also what keeps the rejection of `--columns
+a,b,c` above intact — that flag would have to *invent* a grammar, where
+`--filter` already has one. Quotes on `--column` would be decoration that made
+a column genuinely named with quote marks unaskable. The failure stays loud, so
+what is added is the missing sentence: a name that is not found and that opens
+and closes with a matching quote says it was matched literally, quote marks
+included.
+
 ## Resume carries a query fingerprint, and the projection cuts the diagnostics
 
 **`ResumeToken` gains an opaque `query_fingerprint: u64`** over the table, the
@@ -440,6 +520,12 @@ Ordered so each makes the next one's mistakes visible. Progress is tracked in
 | **P5.6** | Typed ordering operators | `<`, `<=`, `>`, `>=`, and the refusal on a column that is not `Mapped` with a `Scalar` plan |
 | **P5.8** | Special values are ordered | `infinity`/`-infinity`/`NaN` answered exactly by `order_key`; `Error::FieldDecode` kept for genuinely malformed text. Repairs `Date32`'s `Agrees` claim |
 | **P5.7** | Take the figure and retire what it replaces | Fold it in; re-read the consumers `--check` names; delete `composite-isolated` from `measure.UNTAKEN` and re-scope `cross-file-floor` and `nested-end-to-end`, whose cross-file subtraction this figure supersedes; update the manual |
+| **P5.9** | The filter term is parsed for two audiences | Trim outside quotes, a quoted value taken as written, both quote characters with a doubled interior quote, a quote-aware split, quoted column names, and the `IS` forms demoted to the fallback — which fixes the `note=this is null` misparse |
+
+**`P5.9` is a clarification of work `P5.5` and `P5.6` already landed** — the
+grammar that would have been in this spec had it been anticipated. It is a
+slice rather than an out-of-band item because it changes a documented contract
+of the mechanism those slices built, and the phase is open.
 
 **`P5.8` runs before `P5.7` despite its number**, which is allocation order,
 not position: it was discovered when `P5.6`'s register was reviewed. The sweep

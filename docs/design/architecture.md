@@ -1653,6 +1653,21 @@ affordable — so what an embedded API promises here is P6's to decide, and the
 three shapes open to it are filed in
 [`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md).
 
+*Rejected: evicting `KD6` from the register as a property rather than a
+deficiency.* The register's eviction test is whether the remedy is already the
+user's today, and `KD6` carries the same remedy sentence that turned
+`DumpIndex::roles`/`tablespaces` into properties with no identifier —
+`ScanExtent::Full`, or a query after `pgdq parse`. Two things separate it. An
+evicted property tells the user what it did not cover, so they know to ask
+again; this one is silent, and a user cannot invoke a remedy against a
+possibly-wrong answer they have no signal for. And the index line is what
+carries the question *past* P6: an inbox is drained and deleted as part of
+grilling the phase it belongs to, so if P6 picks the "leave the default as-is
+and document it" shape, the entry survives only as a `KD<k>` line whose stance
+moves from **(b) owned by P6** to (a) or (c). Evicting it now would mean the
+outcome most likely to keep the tradeoff is the one that erases the record of
+it.
+
 ### Resume
 
 A resume point is inside a mapped block by construction, so `resume` is "skip
