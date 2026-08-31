@@ -119,19 +119,36 @@ Future item *"the shape-general array representation"*
 `Utf8View`, which is narrower than a string and makes the floor hold honestly
 while closing `KD3`.
 
-## Metadata is a second dimension the rule has to rule on
+## The metadata rule is decided; the type name on every field is not
 
-**Fact.** ADBC attaches `ARROW:extension:name` — `arrow.json` for `json` and
-`jsonb`, `arrow.uuid` for `uuid` — and `ADBC:postgresql:typname` on every
-opaque field. We attach **no field metadata at all**: our `uuid` is the same
-`FixedSizeBinary(16)` without the extension name, and our `json` the same string
-without it.
+**Fact.** The rule question — does the floor cover a field's *metadata* as well
+as its Arrow type — was answered by the maintainer before this phase was
+grilled: **it does**. What that obliges is wider than the three columns that
+prompted it:
 
-**Why this phase cares.** The phase cannot say the floor is met without deciding
-whether metadata counts, and if it does, three columns are below it today on
-metadata alone. The `typname` half is independently worth having for our own
-opaque columns — a consumer receiving `Utf8View` currently has no in-band way to
-learn the column was `inet`.
+- `arrow.uuid` and `arrow.json` are cheap and leave with the out-of-band item
+  described in the roadmap section. Neither changes a type: `arrow.uuid`'s
+  storage type is `FixedSizeBinary(16)` and `arrow.json`'s is `Utf8`,
+  `LargeUtf8` or **`Utf8View`**, which is what we already emit for both — the
+  arrow-rs 59.2.0 `supports_data_type` implementations are the check.
+- ADBC writes `POSTGRESQL:type` — the `typname` — on **every** non-root field,
+  not only the ones it cannot model (`AddTypeMetadata`, called unconditionally
+  at the end of `SetSchema`). So under the decided rule every column we emit is
+  below the floor on that key.
+- For a type it cannot model, ADBC writes the canonical `arrow.opaque`
+  extension, whose metadata is `{"type_name", "vendor_name"}`, and keeps its own
+  `ADBC:postgresql:typname` beside it only as a deprecated alias — its source
+  says so.
+
+**Why this phase cares.** Carrying the declared PostgreSQL type name on every
+field is this phase's, and it is not a metadata detail but a small API decision:
+which key, in whose namespace, and whether it travels through the nested
+positions as well as the top level. `arrow.opaque` brings a sharper question
+with it — its documented meaning is that the receiver **cannot interpret** the
+value, which is true of ADBC's binary bytes and false of our text: an `inet`
+column of ours is a readable string. Claiming `arrow.opaque` over it would be
+below the floor in the direction the floor does not measure. Answer that before
+adopting the extension merely because ADBC does.
 
 ## Take the floor mechanically; it moves
 

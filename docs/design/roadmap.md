@@ -412,6 +412,17 @@ the one that decides what the phase actually produces:
   shape-general array representation"*, and that is a decision this phase
   makes.
 
+**The floor covers a field's metadata, not only its Arrow type.** Decided ahead
+of the grilling, because it changes what the phase is for: a `FixedSizeBinary(16)`
+that does not say it is a UUID is below the floor even though its type matches.
+What that obliges is larger than it first looks — ADBC writes a
+`POSTGRESQL:type` key on **every** non-root field, and `arrow.opaque` (with a
+`type_name` and `vendor_name`) on every field it cannot model — so carrying the
+declared PostgreSQL type name on every column is this phase's, and the question
+of whether a column holding readable text may honestly claim `arrow.opaque`,
+whose meaning is *cannot interpret*, comes with it. Only the two canonical
+extension names that need no such decision go out early with the item below.
+
 **Scheduled after P11, ahead of P10 and P6; its position relative to P7 is
 free.** After P11 because `builtin_scalar` answers "which Arrow type" and "how
 do two of these compare" in one arm, and the register-to-oracle reconciliation
@@ -423,12 +434,14 @@ because "the schema you get is at least as good as ADBC's" is an
 embedder-facing promise, and P6 is the phase that presents promises over
 mechanisms that have stopped moving.
 
-**One item is deliberately not this phase's.** `oid` maps to an unsigned
-integer under the existing bar and changes no decision, so it goes in as
-out-of-band work during P11's run rather than waiting — see
+**Three things are deliberately not this phase's**, and go in as out-of-band
+work during P11's run rather than waiting: `oid`, which maps to an unsigned
+integer under the existing bar, and the `arrow.json` and `arrow.uuid` extension
+names, which attach to types we already emit and are validated against exactly
+those storage types. See
 [`../status/history/2026-08-31.md`](../status/history/2026-08-31.md), "Queued:
-`oid` becomes an integer column". Everything else the survey turned up needs a
-decision this phase has not made yet.
+`oid`, and the two canonical extension names". Everything else the survey turned
+up needs a decision this phase has not made yet.
 
 ## P10 — Per-row-group column statistics
 
