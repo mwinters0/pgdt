@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use pgdump_query::preamble::{TypeDef, TypeKind};
+use pgdump_query::preamble::{ColumnDef, TypeDef, TypeKind};
 use pgdump_query::{DatabaseMetadata, LocalFileSource, ScanOptions, build_index};
 
 mod common;
@@ -38,10 +38,10 @@ async fn default_dump_declares_every_mapped_column_type() {
         assert_eq!(
             int_cols,
             &vec![
-                ("id".to_string(), "integer".to_string()),
-                ("v_smallint".to_string(), "smallint".to_string()),
-                ("v_integer".to_string(), "integer".to_string()),
-                ("v_bigint".to_string(), "bigint".to_string()),
+                ColumnDef::new("id", "integer"),
+                ColumnDef::new("v_smallint", "smallint"),
+                ColumnDef::new("v_integer", "integer"),
+                ColumnDef::new("v_bigint", "bigint"),
             ],
             "pg_dump {version}"
         );
@@ -50,11 +50,11 @@ async fn default_dump_declares_every_mapped_column_type() {
         assert_eq!(
             numeric_cols,
             &vec![
-                ("id".to_string(), "integer".to_string()),
-                ("v_typed".to_string(), "numeric(38,10)".to_string()),
-                ("v_typed39".to_string(), "numeric(39,10)".to_string()),
-                ("v_small".to_string(), "numeric(10,2)".to_string()),
-                ("v_untyped".to_string(), "numeric".to_string()),
+                ColumnDef::new("id", "integer"),
+                ColumnDef::new("v_typed", "numeric(38,10)"),
+                ColumnDef::new("v_typed39", "numeric(39,10)"),
+                ColumnDef::new("v_small", "numeric(10,2)"),
+                ColumnDef::new("v_untyped", "numeric"),
             ],
             "pg_dump {version}"
         );
@@ -63,9 +63,9 @@ async fn default_dump_declares_every_mapped_column_type() {
         assert_eq!(
             text_cols[1..],
             [
-                ("v_text".to_string(), "text".to_string()),
-                ("v_varchar".to_string(), "character varying(10)".to_string()),
-                ("v_char".to_string(), "character(10)".to_string()),
+                ColumnDef::new("v_text", "text"),
+                ColumnDef::new("v_varchar", "character varying(10)"),
+                ColumnDef::new("v_char", "character(10)"),
             ],
             "pg_dump {version}"
         );
@@ -91,12 +91,12 @@ async fn default_dump_declares_every_mapped_column_type() {
         // this just needs the immediate base type recorded).
         assert_eq!(
             find_type(&db, "public.base_domain").kind,
-            TypeKind::Domain { base_type: "integer".to_string() },
+            TypeKind::domain("integer"),
             "pg_dump {version}"
         );
         assert_eq!(
             find_type(&db, "public.derived_domain").kind,
-            TypeKind::Domain { base_type: "public.base_domain".to_string() },
+            TypeKind::domain("public.base_domain"),
             "pg_dump {version}"
         );
 
@@ -104,10 +104,7 @@ async fn default_dump_declares_every_mapped_column_type() {
         assert_eq!(
             find_type(&db, "public.point2d").kind,
             TypeKind::Composite {
-                fields: Some(vec![
-                    ("x".to_string(), "integer".to_string()),
-                    ("y".to_string(), "text".to_string()),
-                ])
+                fields: Some(vec![ColumnDef::new("x", "integer"), ColumnDef::new("y", "text"),])
             },
             "pg_dump {version}"
         );
@@ -119,8 +116,8 @@ async fn default_dump_declares_every_mapped_column_type() {
             find_type(&db, "public.tagged").kind,
             TypeKind::Composite {
                 fields: Some(vec![
-                    ("label".to_string(), "text".to_string()),
-                    ("tags".to_string(), "text[]".to_string()),
+                    ColumnDef::new("label", "text"),
+                    ColumnDef::new("tags", "text[]"),
                 ])
             },
             "pg_dump {version}"
@@ -144,7 +141,7 @@ async fn default_dump_declares_every_mapped_column_type() {
         // after the domain walk rather than over the declared spelling.
         assert_eq!(
             find_type(&db, "public.box_domain").kind,
-            TypeKind::Domain { base_type: "box".to_string() },
+            TypeKind::domain("box"),
             "pg_dump {version}"
         );
 
@@ -169,9 +166,9 @@ async fn default_dump_declares_every_mapped_column_type() {
         assert_eq!(
             shape_cols[1..],
             [
-                ("v_multidim".to_string(), "integer[]".to_string()),
-                ("v_mixed_dim".to_string(), "integer[]".to_string()),
-                ("v_lbound".to_string(), "integer[]".to_string()),
+                ColumnDef::new("v_multidim", "integer[]"),
+                ColumnDef::new("v_mixed_dim", "integer[]"),
+                ColumnDef::new("v_lbound", "integer[]"),
             ],
             "pg_dump {version}"
         );
@@ -186,10 +183,10 @@ async fn default_dump_declares_every_mapped_column_type() {
         assert_eq!(
             spelling_cols[1..],
             [
-                ("v_bounded".to_string(), "integer[]".to_string()),
-                ("v_bounded_2d".to_string(), "integer[]".to_string()),
-                ("v_array_kw".to_string(), "integer[]".to_string()),
-                ("v_array_kw_n".to_string(), "integer[]".to_string()),
+                ColumnDef::new("v_bounded", "integer[]"),
+                ColumnDef::new("v_bounded_2d", "integer[]"),
+                ColumnDef::new("v_array_kw", "integer[]"),
+                ColumnDef::new("v_array_kw_n", "integer[]"),
             ],
             "pg_dump {version}"
         );
@@ -201,8 +198,8 @@ async fn default_dump_declares_every_mapped_column_type() {
         assert_eq!(
             delim_cols[1..],
             [
-                ("v_box_domain".to_string(), "public.box_domain".to_string()),
-                ("v_box_domain_array".to_string(), "public.box_domain[]".to_string()),
+                ColumnDef::new("v_box_domain", "public.box_domain"),
+                ColumnDef::new("v_box_domain_array", "public.box_domain[]"),
             ],
             "pg_dump {version}"
         );
@@ -210,8 +207,8 @@ async fn default_dump_declares_every_mapped_column_type() {
         // A user-defined type used as a column's declared type is recorded
         // schema-qualified (I8), matching the type's own name.
         let enum_domain_cols = db.tables.get("public.t_enum_domain").unwrap();
-        assert_eq!(enum_domain_cols[1].1, "public.mood");
-        assert_eq!(enum_domain_cols[2].1, "public.derived_domain");
+        assert_eq!(enum_domain_cols[1].declared_type, "public.mood");
+        assert_eq!(enum_domain_cols[2].declared_type, "public.derived_domain");
     }
 }
 
@@ -294,11 +291,11 @@ async fn edge_cases_default_dump_declares_widgets_and_the_dropped_generated_tabl
         assert_eq!(
             db.tables.get("public.widgets").unwrap(),
             &vec![
-                ("id".to_string(), "integer".to_string()),
-                ("name".to_string(), "text".to_string()),
-                ("description".to_string(), "text".to_string()),
-                ("is_active".to_string(), "boolean".to_string()),
-                ("created_at".to_string(), "timestamp with time zone".to_string()),
+                ColumnDef::new("id", "integer"),
+                ColumnDef::new("name", "text"),
+                ColumnDef::new("description", "text"),
+                ColumnDef::new("is_active", "boolean"),
+                ColumnDef::new("created_at", "timestamp with time zone"),
             ],
             "pg_dump {version}"
         );
@@ -309,9 +306,9 @@ async fn edge_cases_default_dump_declares_widgets_and_the_dropped_generated_tabl
         assert_eq!(
             db.tables.get("public.dropped_column").unwrap(),
             &vec![
-                ("id".to_string(), "integer".to_string()),
-                ("keep_me".to_string(), "text".to_string()),
-                ("also_keep".to_string(), "boolean".to_string()),
+                ColumnDef::new("id", "integer"),
+                ColumnDef::new("keep_me", "text"),
+                ColumnDef::new("also_keep", "boolean"),
             ],
             "pg_dump {version}"
         );
@@ -320,7 +317,7 @@ async fn edge_cases_default_dump_declares_widgets_and_the_dropped_generated_tabl
         // but never appear in the COPY column list — the DDL's declared
         // type is still exactly what a by-name lookup should find.
         let generated = db.tables.get("public.generated_column").unwrap();
-        assert_eq!(generated.last().unwrap(), &("total".to_string(), "integer".to_string()));
+        assert_eq!(generated.last().unwrap(), &ColumnDef::new("total", "integer"));
     }
 }
 
@@ -329,12 +326,12 @@ async fn edge_cases_binary_upgrade_dump_recreates_the_dropped_column_as_a_dummy(
     for version in [13, 16, 18] {
         let db = single_database(&edge_cases_fixture(version, "binary-upgrade")).await;
         let cols = db.tables.get("public.dropped_column").unwrap();
-        assert_eq!(cols[0], ("id".to_string(), "integer".to_string()));
-        assert_eq!(cols[1], ("keep_me".to_string(), "text".to_string()));
+        assert_eq!(cols[0], ColumnDef::new("id", "integer"));
+        assert_eq!(cols[1], ColumnDef::new("keep_me", "text"));
         // I5: the mangled, quoted placeholder name and the C-comment-suffixed
         // dummy type, exactly as real `pg_dump --binary-upgrade` writes them.
-        assert_eq!(cols[2], ("........pg.dropped.3........".to_string(), "INTEGER".to_string()));
-        assert_eq!(cols[3], ("also_keep".to_string(), "boolean".to_string()));
+        assert_eq!(cols[2], ColumnDef::new("........pg.dropped.3........", "INTEGER"));
+        assert_eq!(cols[3], ColumnDef::new("also_keep", "boolean"));
     }
 }
 

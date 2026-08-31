@@ -29,7 +29,8 @@ answer, in part — see the text row.
 | `Dictionary(Int32, Utf8)` from an enum | **Closed by code.** The dump carries `CREATE TYPE … AS ENUM (…)` verbatim and `TypeKind::Enum { labels }` already holds the labels in declaration order. |
 | `Utf8View` from bare `numeric` | **Closed by code.** An arbitrary-precision decimal comparison, carrying all three of `Infinity`, `-Infinity` and `NaN`. |
 | `Utf8View` from `interval`, `time with time zone`, `inet`/`cidr`/`macaddr`/`macaddr8`, `jsonb`, and domains over them | **Closed by code**, one comparison per type. |
-| `Utf8View` from `text`/`varchar`/`char`/`name` | **Closed by code *and* statement.** The file states more than the row assumed: `pg_dump` emits a `COLLATE` clause wherever a column's collation differs from **its type's** default, and `name`'s type default is `C` — so a bare `name` column, and any column carrying an explicit `COLLATE "C"`/`"POSIX"`, **agree exactly, on every server**. What stays closed by statement is the rest: a `default`-collation column with no clause is on the database default, which no plain dump records (I32). Bytewise remains the answer throughout; what changes is which columns are told they diverge. |
+| `Utf8View` from `text`/`varchar`/`name` | **Closed by code *and* statement.** The file states more than the row assumed: `pg_dump` emits a `COLLATE` clause wherever a column's collation differs from **its type's** default, and `name`'s type default is `C` — so a bare `name` column, and any column carrying an explicit `COLLATE "C"`/`"POSIX"`, **agree exactly, on every server**. What stays closed by statement is the rest: a `default`-collation column with no clause is on the database default, which no plain dump records (I32). Bytewise remains the answer throughout; what changes is which columns are told they diverge. |
+| `Utf8View` from `char(n)` | **Closed by statement, and not by the collation rule.** A `character(n)` value is written blank-padded to `n` and `bpcharcmp` strips trailing blanks before it consults a collation at all (I38), so an explicit `COLLATE "C"` does *not* make it agree: a field whose significant text equals the literal sorts above it here and equal on the server. It stays a divergence with a reason of its own. Trimming both sides is the same canonicalization question 11.6 opens for equality, and it is 11.6's to answer, not 11.11's. |
 | `Utf8View` from `json` (and `xml`) | **Closed by statement.** PostgreSQL defines *no* comparison for these types at all — no `=`, no ordering, no default operator class — so "agrees with PostgreSQL" is not a question they can be asked. Our text comparison offers more than the server does, and that is what gets said. |
 
 The `json`/`xml` row is not a deficiency once stated: `STATUS.md`'s rule is
@@ -45,6 +46,15 @@ than only under an unusual collation: `'A'::name < 'a'::name` is true where
 column's user to distrust an answer that was exact. That is the shape of error
 this phase exists to remove — a statement standing where the file has
 something specific to say.
+
+**It was also wrong in the other direction, about `char(n)`**, and that half
+was found while 11.11 was being built: this doc originally put `char` with
+`text` and `varchar` and promised that an explicit `COLLATE "C"` closed all
+three. It does not close `char`, because `char`'s divergence is not a
+collation at all — see the row above, and
+[`../status/history/2026-08-31.md`](../status/history/2026-08-31.md) for the
+evidence. Promoting it would have been the error this row exists to remove,
+pointing the other way: a claim of agreement where the file supports none.
 
 *Rejected: closing only the two rows that change the register's shape, and
 leaving the rest of `KD7` open.* The remainder would be an unowned queue
@@ -675,6 +685,7 @@ here.
 | **11.3** | The comparison plan moves to L2 | `ordering_register` out of `predicate.rs`, keyed on the declared type, carried in `ResolvedSchema`. **No answer changes** — that is the review property. |
 | **11.2.1** | The register-to-oracle reconciliation | Every arm of the comparison register resolves to at least one oracle case, and every oracle case to an arm; failing on either direction. **Earned, not planned** — see below. |
 | **11.11** | The declared collation is read | `COLLATE` captured in the preamble parser instead of stopped at, and carried to the register: explicit `C`/`POSIX` and a bare `name` register *Agrees*, an explicit non-`C` clause *Diverges*, no clause on a `default`-collation type *unknown, therefore diverges*. Changes no comparison — only which columns are told they diverge. |
+| **11.11.1** | The collated fixture columns | A `t_collate` table in the `types` schema — an explicit `COLLATE "C"`, a non-`C` collation, a `name` column, a collated domain — regenerated across six majors, so the *agreeing* halves of 11.11's collation rule have a real dump behind them. No library code. **Earned, not planned** — see below. |
 | **11.4** | Enum and bare `numeric` | The two rows the re-key was for: declaration order, and arbitrary-precision decimal with all three specials. |
 | **11.5** | The text-held type queue | `interval` (with v17 infinities), `time with time zone`, `inet`/`cidr`/`macaddr`/`macaddr8`, `jsonb`. Repetitive and additive; the oracle checks each. |
 | **11.6** | Typed `=` / `!=` | Routed through the now-complete plan, with the canonicalize-once fast path and its two exceptions. Renames the note channel. |
@@ -709,6 +720,20 @@ property is "no answer changes", and a diff that also adds a coverage check is
 a diff where that question is harder to ask. The check is an increment of its
 own for the same reason 11.3 is: what a reviewer must hold in mind at once is
 the thing being kept small.
+
+**11.11.1 was earned on entry to 11.11.** No fixture in the tree carries a
+`COLLATE` clause or a `name` column, so nothing 11.11 could write would exercise
+the two cases where its answer *changes to agreement* — the half that matters,
+since a wrong "agrees" is the one error the register must not make. Adding them
+means editing `fixture_schema_types.sql` and regenerating all six majors, which
+rewrites every file under `fixtures/` (the `\restrict` token is fresh per dump),
+and that diff cannot share a review with the library change whose whole question
+is "did the right columns change verdict". It is apparatus work with no library
+code, exactly like 11.1, 11.2 and 11.2.2, and it lands as its own increment for
+the same reason those did. 11.11 ships with unit tests over the exact strings
+`pg_dump` writes — pinned by I37, which was taken from the source and observed
+on a throwaway container — and with the *divergent* halves exercised end to end
+on the existing `t_text`.
 
 **11.11 is discovered scope, not a split**, so it takes the next free number
 rather than hanging off a parent; the table is the schedule, which is why it

@@ -149,9 +149,10 @@ use crate::copy::split_fields;
 use crate::index::{ArrayShape, CopyBlock};
 use crate::io::ByteRangeSource;
 use crate::preamble::{
-    Extension, StatementShape, TypeDef, TypeKind, classify_statement, extract_statement_cross_refs,
-    in_open_quote, insert_role, insert_tablespace, parse_alter_type_add_value_body, parse_connect,
-    parse_qualified_name, push_stmt_line, statement_complete, strip_kw,
+    ColumnDef, Extension, StatementShape, TypeDef, TypeKind, classify_statement,
+    extract_statement_cross_refs, in_open_quote, insert_role, insert_tablespace,
+    parse_alter_type_add_value_body, parse_connect, parse_qualified_name, push_stmt_line,
+    statement_complete, strip_kw,
 };
 use crate::scan::{CopyEnd, CopyStart, Event, ScanOptions, scan};
 
@@ -421,7 +422,7 @@ pub struct LargeObjectRegion {
 pub enum SpanBody {
     Table {
         name: String,
-        columns: Vec<(String, String)>,
+        columns: Vec<ColumnDef>,
     },
     TypeDef {
         name: String,

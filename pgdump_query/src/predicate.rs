@@ -110,15 +110,17 @@ pub struct OrderingNote {
 impl OrderingNote {
     /// One sentence naming the column and what its order is not.
     ///
-    /// The `AsText` wording is chosen from the *declared* type because three
-    /// unrelated situations share `Utf8View`: a text type (PostgreSQL orders
-    /// by collation, which a plain dump does not record — I32), a bare
-    /// `numeric` (no Arrow decimal representation, so it orders
-    /// lexicographically), and everything else held as text, which has a
-    /// server-side operator of its own that this does not implement.
+    /// The `AsText` wording is chosen from the *declared* type because two
+    /// unrelated situations share it: a bare `numeric` (no Arrow decimal
+    /// representation, so it orders lexicographically) and everything else
+    /// held as text, which has a server-side operator of its own that this
+    /// does not implement. The collatable text types are no longer among them
+    /// — they carry their own divergences, which say what the *column* stated
+    /// rather than what its type usually means.
     pub fn message(&self) -> String {
         let column = &self.column;
         let declared = &self.declared_type;
+        let bytewise = |why: &str| format!("`{column}` ({declared}) is compared bytewise: {why}");
         match self.divergence {
             OrderingDivergence::EnumLabels => format!(
                 "`{column}` ({declared}) is an enum compared by label text, but PostgreSQL orders \
@@ -126,18 +128,28 @@ impl OrderingNote {
             ),
             OrderingDivergence::AsText => {
                 let why = match split_typmod(declared).0.to_ascii_lowercase().as_str() {
-                    "text" | "character varying" | "character" | "name" => {
-                        "PostgreSQL orders text by collation, which a plain dump does not record, \
-                         so this matches the server only under C/POSIX"
-                    }
                     "numeric" => {
                         "an unconstrained `numeric` has no decimal representation here, so `9` \
                          sorts after `10`"
                     }
                     _ => "PostgreSQL orders this type by its own operator, not bytewise",
                 };
-                format!("`{column}` ({declared}) is compared bytewise as text: {why}")
+                bytewise(why)
             }
+            OrderingDivergence::UnknownCollation => bytewise(
+                "the column declares no COLLATE clause, so its collation is the database's, which \
+                 a plain dump does not record — this matches the server only if that collation is \
+                 C or POSIX",
+            ),
+            OrderingDivergence::NonBytewiseCollation => bytewise(
+                "the column declares a collation other than C/POSIX, and PostgreSQL orders it by \
+                 that collation",
+            ),
+            OrderingDivergence::BlankPadded => bytewise(
+                "the dump writes every value blank-padded to the declared length, while \
+                 PostgreSQL strips trailing blanks before comparing, so a value equal to the \
+                 filter's own sorts after it here",
+            ),
         }
     }
 }
@@ -541,7 +553,7 @@ mod tests {
                 resolution: ColumnResolution::Mapped,
             }],
             plans: vec![NestedPlan::Scalar],
-            comparisons: vec![comparison_for(declared, &test_types())],
+            comparisons: vec![comparison_for(declared, None, &test_types())],
         }
     }
 
@@ -852,8 +864,14 @@ mod tests {
         assert_eq!(note("integer", DataType::Int32, "1"), None, "an agreeing type says nothing");
 
         let text = note("character varying(10)", DataType::Utf8View, "a").unwrap();
-        assert_eq!(text.divergence, OrderingDivergence::AsText);
+        assert_eq!(text.divergence, OrderingDivergence::UnknownCollation);
         assert!(text.message().contains("collation"), "{}", text.message());
+
+        // `character(n)` diverges for a reason that is not its collation, so
+        // its sentence must not be the collation one.
+        let padded = note("character(10)", DataType::Utf8View, "a").unwrap();
+        assert_eq!(padded.divergence, OrderingDivergence::BlankPadded);
+        assert!(padded.message().contains("blank-padded"), "{}", padded.message());
 
         let numeric = note("numeric", DataType::Utf8View, "10").unwrap();
         assert!(numeric.message().contains("unconstrained"), "{}", numeric.message());

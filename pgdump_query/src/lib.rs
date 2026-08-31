@@ -33,7 +33,8 @@ pub use pgtype::{
     resolve_declared_type,
 };
 pub use preamble::{
-    DatabaseMetadata, DumpMetadata, Extension, TypeDef, TypeKind, dump_metadata_from_spans,
+    ColumnDef, DatabaseMetadata, DumpMetadata, Extension, TypeDef, TypeKind,
+    dump_metadata_from_spans,
 };
 pub use predicate::{OrderingNote, Predicate, PredicateOp};
 pub use resolve::{ColumnNote, ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};

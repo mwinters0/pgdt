@@ -1815,8 +1815,9 @@ glibc, so `'A' < 'a'` answers `t` on the one and `f` on the other. The server
 tracks that itself in `pg_collation.collversion` — `2.41` for a libc-provider
 collation, the libc version verbatim — and no dump carries it.
 
-**Relied on by.** The comparison register's text rows — the declared types it
-answers `AsText` for.
+**Relied on by.** The comparison register's `UnknownCollation` verdict — the
+one it reaches for a `default`-collation column with no clause. The clause's own
+grammar, at every site it appears, is I37.
 
 **Re-verify.**
 
@@ -2074,4 +2075,145 @@ grep -n -A3 'archiveRemoteVersion' \
   /mnt/wd12t/upstream/postgres/release-v<N>/src/bin/pg_dump/pg_backup_archiver.c
 head -9 fixtures/16/types/default.sql | grep 'Dumped'
 head -9 /mnt/wd12t/fedora/koji/koji-2026-07-23.dump | grep 'Dumped'
+```
+
+---
+
+## I37 — A `COLLATE` clause is written at three sites, in one form, and only where the collation differs from the type's own default
+
+**Claim.** `pg_dump` writes `COLLATE <collation>` in exactly three places — a
+`CREATE TABLE` column, a `CREATE DOMAIN` base type, and a composite `CREATE
+TYPE`'s attribute — and in each it writes one only when that object's collation
+differs from **its own type's** default (`pg_type.typcollation`). The reference
+is always `fmtQualifiedDumpable`'s output: schema-qualified and quoted where
+quoting is needed, so `pg_catalog."C"`, `pg_catalog."en_US.utf8"`,
+`public.mycoll` — never a bare `C`.
+
+Three consequences a reader depends on:
+
+- **The clause is not adjacent to the type.** In a `CREATE TABLE` column it is
+  appended *after* `DEFAULT`/`GENERATED` and after `NOT NULL`, so a parser that
+  looks at the token following the type words finds nothing. In a `CREATE
+  DOMAIN` and a composite attribute it does directly follow the type.
+- **Its absence is a fact about the type, not about the column.** The four
+  collatable built-ins split two ways: `text`, `varchar` and `bpchar` have
+  `typcollation = default`, so a bare column of one is on the database's
+  collation, which a plain dump never states (I32); `name` has `typcollation =
+  C`, so a bare `name` column is bytewise on every server.
+- **A domain's own clause is a type default in turn.** A column declared with a
+  domain that itself says `COLLATE "C"` carries no clause of its own, and a
+  column-level clause is written exactly to override the domain's.
+
+**Proof.** Three emitters in `pg_dump.c`, each guarded by
+`OidIsValid(...collation)` over a value the fetching query has already reduced
+to zero where it matches the type's default:
+
+- `dumpTableSchema`, whose attribute query carries the comment *"Since we only
+  want to dump COLLATE clauses for attributes whose collation is different from
+  their type's default, we use a CASE here to suppress uninteresting
+  attcollations cheaply"*, and whose emission — `appendPQExpBuffer(q, " COLLATE
+  %s", fmtQualifiedDumpable(coll))` — sits under the comment `/* Add collation
+  if not default for the type */`, after the `DEFAULT`/`GENERATED` and
+  `NOT NULL` appends.
+- `dumpDomain`: `/* Print collation only if different from base type's
+  collation */`, emitted directly after `CREATE DOMAIN %s AS %s`.
+- `dumpCompositeType`: `/* Add collation if not default for the column type */`,
+  emitted directly after each attribute's `%s %s`.
+
+`typcollation` is `pg_type.dat`: `name` carries `typcollation => 'C'`, while
+`text`, `bpchar` and `varchar` carry `typcollation => 'default'`.
+
+**Observed.** On `postgres:16.15-trixie`, a table declaring `v_text text`,
+`v_text_c text COLLATE "C"`, `v_char_c character(10) NOT NULL DEFAULT 'x'
+COLLATE "C"`, `v_name name` and `v_user text COLLATE public.mycoll` dumps as
+`v_text text`, `v_text_c text COLLATE pg_catalog."C"`, `v_char_c character(10)
+DEFAULT 'x'::bpchar NOT NULL COLLATE pg_catalog."C"`, `v_name name` and
+`v_user text COLLATE public.mycoll` — the two bare columns being exactly the
+two whose collation is their type's own default.
+
+**Scope limit.** There is a **fourth** `COLLATE %s` emission,
+`createDummyViewAsClause`'s `NULL::<type> COLLATE <coll> AS <name>`, written
+only for a view whose real definition is postponed by a circular dependency. It
+is inside a `CREATE VIEW`, which is not one of the five statement shapes the
+preamble grammar triggers on, so it never reaches a column definition — but a
+count of `COLLATE %s` in `pg_dump.c` finds four, not three.
+
+Beyond that, the entry says nothing about which collations *exist* on a server,
+nor about what a named collation orders like: `pg_collation.collversion` is the
+server's own notion of that, and no dump carries it (I32). Nor does it cover
+`CREATE COLLATION` itself, which `pg_dump` emits as an ordinary object.
+
+**Verified against.** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 — all six
+carry the same three comments and four `COLLATE %s` emissions, and in all six
+the column emission follows the `GENERATED`/`DEFAULT`/`NOT NULL` appends.
+Observed on 16.15.
+
+**Relied on by.** `crate::preamble`'s `extract_collation` (the placement and the
+form) and `ColumnDef::collation`/`TypeKind::Domain::collation`; the comparison
+register's collatable arms in `crate::pgtype`, which read a clause's absence as
+the type's default.
+
+**Re-verify.**
+
+```sh
+grep -n -B2 'COLLATE %s' \
+  /mnt/wd12t/upstream/postgres/release-v<N>/src/bin/pg_dump/pg_dump.c
+grep -n -A6 "typname => 'name'" \
+  /mnt/wd12t/upstream/postgres/release-v<N>/src/include/catalog/pg_type.dat
+psql -c "select typname, typcollation::regtype from pg_type
+         where typname in ('text','varchar','bpchar','name')"
+```
+
+---
+
+## I38 — `character(n)` values are written blank-padded, and PostgreSQL compares them with trailing blanks stripped
+
+**Claim.** A `COPY` block writes every non-NULL value of a `character(n)`
+column padded with spaces to exactly `n` characters, while PostgreSQL's
+`bpchar` comparison operators first strip **all** trailing blanks from both
+sides. So a bytewise comparison of the stored text against an unpadded literal
+is not the server's answer, whatever the column's collation: a field whose
+significant text equals the literal compares *greater* bytewise and *equal* on
+the server.
+
+**Proof.** `bpcharcmp` (and `bpchareq`, `bpcharlt`, …) in
+`src/backend/utils/adt/varchar.c` call `bcTruelen` on both arguments before
+`varstr_cmp`:
+
+```c
+len1 = bcTruelen(arg1);
+len2 = bcTruelen(arg2);
+cmp = varstr_cmp(VARDATA_ANY(arg1), len1, VARDATA_ANY(arg2), len2,
+                 PG_GET_COLLATION());
+```
+
+`bcTruelen` is `bpchartruelen`, which walks back from the end while `s[i] ==
+' '`. The padding itself is `bpchar_input`/`bpchar`'s `maxlen` branch, which
+fills to the declared length. Trimming happens before the collation is consulted
+at all, which is why a `COLLATE "C"` clause does not make the two agree.
+
+**Observed.** `fixtures/16/types/default.sql`'s `public.t_text` writes
+`v_char char(10)` as ten spaces for `''` and as `hi` followed by eight spaces
+for `'hi'`.
+
+**Scope limit.** `character varying(n)` and `text` are not padded and not
+trimmed, so neither half applies to them. It is about the comparison operators;
+`length()` and the output function have their own rules.
+
+**Verified against.** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 — `bcTruelen`
+is called by every `bpchar` comparison in all six.
+
+**Relied on by.** The comparison register's `character` arm in `crate::pgtype`,
+which answers `OrderingDivergence::BlankPadded` regardless of the collation
+clause — see [`architecture.md`](architecture.md), "Ordering operators compare
+typed".
+
+**Re-verify.**
+
+```sh
+grep -n -A12 '^bpcharcmp' \
+  /mnt/wd12t/upstream/postgres/release-v<N>/src/backend/utils/adt/varchar.c
+grep -n -A6 'bpchartruelen(char' \
+  /mnt/wd12t/upstream/postgres/release-v<N>/src/backend/utils/adt/varchar.c
+grep -A4 'COPY public.t_text ' fixtures/16/types/default.sql | cat -A
 ```

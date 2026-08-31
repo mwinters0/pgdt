@@ -125,30 +125,42 @@ the value comes back as the text the dump holds.
 
 ### Text ordering is bytewise, and your server's may not be
 
-`<`, `<=`, `>` and `>=` on a text column compare **bytes**. PostgreSQL
-compares by the column's *collation*, and a plain dump does not record which
-collation the database used — so the two agree exactly where that collation is
+`<`, `<=`, `>` and `>=` on a text column compare **bytes**. PostgreSQL compares
+by the column's *collation* — so the two agree exactly where that collation is
 `C` or `POSIX`, and can differ anywhere else.
 
 On an `en_US.utf8` database — the usual default on a glibc server — `A` sorts
 *after* `a`, `a` sorts before `B`, and `é` sorts between `e` and `f`. Bytewise,
-`A` sorts before `a`, `B` before `a`, and `é` after every unaccented letter. A
-filter that orders a text column says so, once per query, on stderr:
+`A` sorts before `a`, `B` before `a`, and `é` after every unaccented letter.
+
+**Which collation a column has is read out of the dump where the dump says.**
+`pg_dump` writes a `COLLATE` clause on any column whose collation differs from
+its type's own default, so:
+
+- a column declared `COLLATE "C"` or `COLLATE "POSIX"` is answered **exactly**,
+  and says nothing;
+- a `name` column with no clause is answered exactly too — `name`'s own default
+  collation is `C`;
+- a column declared with any other collation is warned about, and so is a
+  `text`, `varchar` or `char` column with **no** clause, whose collation is the
+  database's and is the one thing a plain dump never records.
+
+A filter that orders such a column says so, once per query, on stderr:
 
 ```sh
 pgdq query --source dump.sql --table public.people --filter 'name<B'
-# warning: `name` (text) is compared bytewise as text: PostgreSQL orders text
-# by collation, which a plain dump does not record, so this matches the server
-# only under C/POSIX
+# warning: `name` (text) is compared bytewise: the column declares no COLLATE
+# clause, so its collation is the database's, which a plain dump does not
+# record — this matches the server only if that collation is C or POSIX
 ```
 
-**`=` and `!=` are unaffected.** Every libc collation calls two different
-strings different, so equality is bytewise on the server too.
+**`char(n)` is warned about whatever its collation**, for a different reason: a
+dump writes every value of it blank-padded to the declared length, and
+PostgreSQL strips trailing blanks before comparing. So `--filter 'code>ab'`
+selects a row whose `code` is exactly `ab`, where the server would not.
 
-The warning does not yet read the `COLLATE` clause a dump does carry for a
-column whose collation differs from its type's default, so it is printed for
-every text column a filter orders — including one declared `COLLATE "C"`, and
-including a `name` column, both of which pgdq in fact answers exactly.
+**`=` and `!=` are unaffected by collation.** Every libc collation calls two
+different strings different, so equality is bytewise on the server too.
 
 ### Writing a filter term
 

@@ -71,9 +71,9 @@ pub struct DatabaseMetadata {
     pub extensions: Vec<Extension>,
     pub types: Vec<TypeDef>,
     /// Qualified table name (`schema.table`, folded the same way
-    /// [`crate::copy::CopyHeader::qualified_name`] is) -> `(column, declared
-    /// type)` in DDL order.
-    pub tables: BTreeMap<String, Vec<(String, String)>>,
+    /// [`crate::copy::CopyHeader::qualified_name`] is) -> its columns in DDL
+    /// order.
+    pub tables: BTreeMap<String, Vec<ColumnDef>>,
 }
 
 impl DatabaseMetadata {
@@ -100,6 +100,34 @@ pub struct Extension {
     pub schema: Option<String>,
 }
 
+/// One column of a `CREATE TABLE`, as the DDL wrote it.
+///
+/// **Every field is the dump's own text, never a conclusion** (see the module
+/// docs). `declared_type` is the literal type string (`character
+/// varying(16)`), and `collation` is the `COLLATE` clause's reference exactly
+/// as written — `pg_catalog."C"`, schema-qualified and quoted the way
+/// `pg_dump` writes it (I37).
+///
+/// **`None` is "no clause", not "the database default".** `pg_dump` omits the
+/// clause whenever a column's collation is its *type's* default, so a bare
+/// `name` column is `C` and a bare `text` column is the database's — two
+/// different facts behind one absence. [`crate::pgtype::comparison_for`] is
+/// where that is decided.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ColumnDef {
+    pub name: String,
+    pub declared_type: String,
+    pub collation: Option<String>,
+}
+
+impl ColumnDef {
+    /// A column carrying no `COLLATE` clause — the ordinary case, and the one
+    /// a test or an embedder building metadata by hand wants.
+    pub fn new(name: impl Into<String>, declared_type: impl Into<String>) -> Self {
+        Self { name: name.into(), declared_type: declared_type.into(), collation: None }
+    }
+}
+
 /// A `CREATE TYPE` or `CREATE DOMAIN` definition.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TypeDef {
@@ -121,7 +149,13 @@ pub enum TypeKind {
     /// Reduces to a base type, resolved transitively by [`crate::pgtype`] (a
     /// domain over a domain is legal). `NOT NULL` is discarded — every Arrow
     /// field is nullable regardless.
-    Domain { base_type: String },
+    ///
+    /// `collation` is the domain's own `COLLATE` clause, verbatim, which
+    /// `pg_dump` writes only where the domain's collation differs from its
+    /// base type's (I37). It is the domain's *type default*, so a column
+    /// declared with this domain and carrying no clause of its own inherits
+    /// it — which is why it is kept rather than discarded like `NOT NULL`.
+    Domain { base_type: String, collation: Option<String> },
     /// Field name -> declared type, in declaration order — or `None` when the
     /// body held a fragment this grammar could not parse.
     ///
@@ -135,7 +169,7 @@ pub enum TypeKind {
     /// zero-field composite (`CREATE TYPE x AS ();`, I23) and maps to a
     /// zero-field `Struct`; `None` resolves the column to `Utf8View`, like
     /// anything else the grammar does not recognize.
-    Composite { fields: Option<Vec<(String, String)>> },
+    Composite { fields: Option<Vec<ColumnDef>> },
     /// The subtype named in the `CREATE TYPE ... AS RANGE (...)` parameter
     /// list, if the grammar found one, plus the name of its auto-created
     /// companion multirange type (PG14+), if the DDL named one explicitly
@@ -151,6 +185,14 @@ pub enum TypeKind {
     /// `CREATE TYPE x;` with no body at all, ahead of the real definition
     /// (forward-declaration shell type) or genuinely never completed.
     Shell,
+}
+
+impl TypeKind {
+    /// A domain carrying no `COLLATE` clause of its own — the ordinary shape,
+    /// and the one a test or an embedder building a type list by hand wants.
+    pub fn domain(base_type: impl Into<String>) -> Self {
+        Self::Domain { base_type: base_type.into(), collation: None }
+    }
 }
 
 /// Case-insensitive substring search, since none of `str`'s own methods do
@@ -216,6 +258,78 @@ fn skip_quoted(bytes: &[u8], open_idx: usize) -> usize {
         i += 1;
     }
     i
+}
+
+/// Skip over the double-quoted identifier starting at `open_idx`, returning
+/// the index just past its closing quote — `""` being the escape, exactly as
+/// `''` is inside a string literal. Unterminated behaves like
+/// [`skip_quoted`]'s: the scan ends rather than looping.
+fn skip_double_quoted(bytes: &[u8], open_idx: usize) -> usize {
+    debug_assert_eq!(bytes.get(open_idx), Some(&b'"'));
+    let mut i = open_idx + 1;
+    while i < bytes.len() {
+        if bytes[i] == b'"' {
+            if bytes.get(i + 1) == Some(&b'"') {
+                i += 2;
+                continue;
+            }
+            return i + 1;
+        }
+        i += 1;
+    }
+    i
+}
+
+/// Whether byte `i` starts a word — i.e. the byte before it cannot be part of
+/// an identifier. Keeps a keyword search from matching inside a longer name.
+fn is_word_start(bytes: &[u8], i: usize) -> bool {
+    let Some(prev) = i.checked_sub(1).and_then(|p| bytes.get(p)) else { return true };
+    !(prev.is_ascii_alphanumeric() || *prev == b'_' || *prev == b'$' || *prev >= 0x80)
+}
+
+/// The `COLLATE <collation>` clause of a column or domain definition, with
+/// the reference returned **verbatim** (`pg_catalog."C"`) — L1 stores what the
+/// dump said, and [`crate::pgtype`] decides what it means.
+///
+/// `rest` is the tail after a column's name, or a domain's base-type tail, so
+/// the clause is not adjacent to the type: `pg_dump` writes it *after*
+/// `DEFAULT` and `NOT NULL` (I37), which is why this is a scan rather than a
+/// look at the token following the type words. The scan is top-level only —
+/// paren depth zero, outside `'…'` and `"…"` — so a `CHECK (v COLLATE "C" >
+/// 'a')` constraint and a `DEFAULT 'collate me'` literal are both stepped
+/// over rather than mistaken for the column's own clause.
+fn extract_collation(rest: &str) -> Option<String> {
+    const KW: &[u8] = b"COLLATE";
+    let bytes = rest.as_bytes();
+    let mut depth: i32 = 0;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' => {
+                i = skip_quoted(bytes, i);
+                continue;
+            }
+            b'"' => {
+                i = skip_double_quoted(bytes, i);
+                continue;
+            }
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            _ => {}
+        }
+        let matched = depth == 0
+            && is_word_start(bytes, i)
+            && bytes.len() >= i + KW.len()
+            && bytes[i..i + KW.len()].eq_ignore_ascii_case(KW)
+            && bytes.get(i + KW.len()).is_some_and(u8::is_ascii_whitespace);
+        if matched {
+            let after = &rest[i + KW.len()..];
+            let (_, consumed) = parse_qualified_name(after)?;
+            return Some(after[..consumed].trim().to_string());
+        }
+        i += 1;
+    }
+    None
 }
 
 /// Find the index of `bytes[open_idx..]`'s matching `)`, respecting
@@ -359,7 +473,7 @@ fn extract_type_words(rest: &str) -> String {
 
 /// Parse one `<name> <type> [constraints...]` fragment from a column or
 /// composite-field list.
-fn parse_column_fragment(frag: &str) -> Option<(String, String)> {
+fn parse_column_fragment(frag: &str) -> Option<ColumnDef> {
     let frag = frag.trim();
     if frag.is_empty() {
         return None;
@@ -367,16 +481,16 @@ fn parse_column_fragment(frag: &str) -> Option<(String, String)> {
     let mut cur = Cursor::new(frag.as_bytes());
     let name = cur.parse_ident()?;
     let rest = &frag[cur.pos()..];
-    let type_str = extract_type_words(rest);
-    if type_str.is_empty() {
+    let declared_type = extract_type_words(rest);
+    if declared_type.is_empty() {
         return None;
     }
-    Some((name, type_str))
+    Some(ColumnDef { name, declared_type, collation: extract_collation(rest) })
 }
 
 /// `CREATE TABLE <name> (<col> <type>, ...);` (or, for a typed/partition
 /// table with no column list at all — I5 — just `<name>`).
-fn parse_create_table(rest: &str) -> Option<(String, Vec<(String, String)>)> {
+fn parse_create_table(rest: &str) -> Option<(String, Vec<ColumnDef>)> {
     let (name, consumed) = parse_qualified_name(rest)?;
     let after = rest[consumed..].trim_start();
     if !after.starts_with('(') {
@@ -389,7 +503,7 @@ fn parse_create_table(rest: &str) -> Option<(String, Vec<(String, String)>)> {
     Some((name, columns))
 }
 
-/// `CREATE DOMAIN <name> AS <basetype> [constraints...];`
+/// `CREATE DOMAIN <name> AS <basetype> [COLLATE ...] [constraints...];`
 fn parse_create_domain(rest: &str) -> Option<TypeDef> {
     let (name, consumed) = parse_qualified_name(rest)?;
     let after_as = strip_kw(rest[consumed..].trim_start(), "AS")?;
@@ -397,7 +511,8 @@ fn parse_create_domain(rest: &str) -> Option<TypeDef> {
     if base_type.is_empty() {
         return None;
     }
-    Some(TypeDef { name, kind: TypeKind::Domain { base_type } })
+    let collation = extract_collation(after_as);
+    Some(TypeDef { name, kind: TypeKind::Domain { base_type, collation } })
 }
 
 /// `CREATE EXTENSION [IF NOT EXISTS] <name> [WITH] [SCHEMA <schema>];`
@@ -632,7 +747,7 @@ pub(crate) fn extract_statement_cross_refs(
 /// folds that span's label into the `TypeDef` it targets).
 #[derive(Debug)]
 pub(crate) enum StatementShape {
-    Table { name: String, columns: Vec<(String, String)> },
+    Table { name: String, columns: Vec<ColumnDef> },
     Type(TypeDef),
     Extension(Extension),
 }
@@ -885,7 +1000,7 @@ mod tests {
         classify_statement(&lines.join("\n")).unwrap()
     }
 
-    fn parse_table(lines: &[&str]) -> (String, Vec<(String, String)>) {
+    fn parse_table(lines: &[&str]) -> (String, Vec<ColumnDef>) {
         match parse(lines) {
             StatementShape::Table { name, columns } => (name, columns),
             other => panic!("expected a Table shape, got {other:?}"),
@@ -918,9 +1033,9 @@ mod tests {
         assert_eq!(
             columns,
             vec![
-                ("id".to_string(), "integer".to_string()),
-                ("v_smallint".to_string(), "smallint".to_string()),
-                ("v_bigint".to_string(), "bigint".to_string()),
+                ColumnDef::new("id", "integer"),
+                ColumnDef::new("v_smallint", "smallint"),
+                ColumnDef::new("v_bigint", "bigint"),
             ]
         );
     }
@@ -935,10 +1050,10 @@ mod tests {
             "    d public.mood",
             ");",
         ]);
-        assert_eq!(cols[0], ("a".to_string(), "character varying(16)".to_string()));
-        assert_eq!(cols[1], ("b".to_string(), "numeric(38,10)".to_string()));
-        assert_eq!(cols[2], ("c".to_string(), "timestamp with time zone".to_string()));
-        assert_eq!(cols[3], ("d".to_string(), "public.mood".to_string()));
+        assert_eq!(cols[0], ColumnDef::new("a", "character varying(16)"));
+        assert_eq!(cols[1], ColumnDef::new("b", "numeric(38,10)"));
+        assert_eq!(cols[2], ColumnDef::new("c", "timestamp with time zone"));
+        assert_eq!(cols[3], ColumnDef::new("d", "public.mood"));
     }
 
     #[test]
@@ -956,7 +1071,79 @@ mod tests {
             "    also_keep boolean",
             ");",
         ]);
-        assert_eq!(cols[2], ("........pg.dropped.3........".to_string(), "INTEGER".to_string()));
+        assert_eq!(cols[2], ColumnDef::new("........pg.dropped.3........", "INTEGER"));
+    }
+
+    /// The `COLLATE` clause, in the shape `pg_dump` actually writes it (I37):
+    /// schema-qualified, the collation name double-quoted, and **after**
+    /// `DEFAULT` and `NOT NULL` rather than beside the type. That placement
+    /// is why the clause is found by a scan of the whole fragment rather than
+    /// by looking at the token after the type words.
+    #[test]
+    fn captures_the_collate_clause_pg_dump_writes() {
+        let (_, cols) = parse_table(&[
+            "CREATE TABLE public.t_collate (",
+            "    v_text text,",
+            "    v_text_c text COLLATE pg_catalog.\"C\",",
+            "    v_text_db text COLLATE pg_catalog.\"en_US.utf8\",",
+            "    v_char_c character(10) DEFAULT 'x'::bpchar NOT NULL COLLATE pg_catalog.\"C\",",
+            "    v_user text COLLATE public.mycoll",
+            ");",
+        ]);
+        assert_eq!(cols[0], ColumnDef::new("v_text", "text"));
+        assert_eq!(cols[1].collation.as_deref(), Some("pg_catalog.\"C\""));
+        assert_eq!(cols[2].collation.as_deref(), Some("pg_catalog.\"en_US.utf8\""));
+        // The type words still stop at `COLLATE`, wherever the clause sits.
+        assert_eq!(cols[3].declared_type, "character(10)");
+        assert_eq!(cols[3].collation.as_deref(), Some("pg_catalog.\"C\""));
+        assert_eq!(cols[4].collation.as_deref(), Some("public.mycoll"));
+    }
+
+    /// The scan is top-level and quote-aware, so neither a string literal
+    /// containing the word nor a parenthesized `CHECK` expression using the
+    /// operator can be mistaken for the column's own clause. Neither shape is
+    /// hypothetical — `pg_dump` writes a column's `CHECK` inline for a domain
+    /// and its `DEFAULT` inline for a table.
+    #[test]
+    fn a_collate_inside_a_literal_or_an_expression_is_not_the_column_s() {
+        let (_, cols) = parse_table(&[
+            "CREATE TABLE public.t (",
+            "    a text DEFAULT 'collate pg_catalog.\"C\"'::text,",
+            "    b text CHECK ((b COLLATE pg_catalog.\"C\") > 'a'::text),",
+            "    c text GENERATED ALWAYS AS (upper(a COLLATE pg_catalog.\"C\")) STORED",
+            ");",
+        ]);
+        assert!(cols.iter().all(|c| c.collation.is_none()), "{cols:?}");
+    }
+
+    /// A domain carries its own `COLLATE`, which is its *type default* — the
+    /// thing a column-level clause exists to override — so it is kept rather
+    /// than discarded the way `NOT NULL` is.
+    #[test]
+    fn a_domain_keeps_its_own_collate_clause() {
+        let plain = parse_type(&["CREATE DOMAIN public.d AS text;"]);
+        assert_eq!(plain.kind, TypeKind::domain("text"));
+
+        let collated = parse_type(&["CREATE DOMAIN public.dc AS text COLLATE pg_catalog.\"C\";"]);
+        assert_eq!(
+            collated.kind,
+            TypeKind::Domain {
+                base_type: "text".to_string(),
+                collation: Some("pg_catalog.\"C\"".to_string()),
+            }
+        );
+
+        let constrained = parse_type(&[
+            "CREATE DOMAIN public.dn AS character varying(10) COLLATE pg_catalog.\"C\" NOT NULL",
+            "    CONSTRAINT dn_check CHECK ((VALUE <> ''::text));",
+        ]);
+        assert_eq!(
+            constrained.kind,
+            TypeKind::Domain {
+                base_type: "character varying(10)".to_string(),
+                collation: Some("pg_catalog.\"C\"".to_string()),
+            }
+        );
     }
 
     #[test]
@@ -1029,7 +1216,7 @@ mod tests {
             def,
             TypeDef {
                 name: "public.derived".to_string(),
-                kind: TypeKind::Domain { base_type: "public.base_domain".to_string() },
+                kind: TypeKind::domain("public.base_domain"),
             }
         );
     }
@@ -1041,10 +1228,7 @@ mod tests {
         assert_eq!(
             def.kind,
             TypeKind::Composite {
-                fields: Some(vec![
-                    ("x".to_string(), "integer".to_string()),
-                    ("y".to_string(), "text".to_string())
-                ])
+                fields: Some(vec![ColumnDef::new("x", "integer"), ColumnDef::new("y", "text")])
             }
         );
     }
@@ -1164,7 +1348,7 @@ mod tests {
     fn plain_dump_has_no_connect_and_names_no_database() {
         let meta = dump_metadata_from_spans(&[span(SpanBody::Table {
             name: "public.t".to_string(),
-            columns: vec![("id".to_string(), "integer".to_string())],
+            columns: vec![ColumnDef::new("id", "integer")],
         })]);
         assert_eq!(meta.databases.len(), 1);
         assert_eq!(meta.databases[0].name, None);
@@ -1185,7 +1369,7 @@ mod tests {
             span(SpanBody::Connect { database: "koji".to_string() }),
             span(SpanBody::Table {
                 name: "public.t".to_string(),
-                columns: vec![("id".to_string(), "integer".to_string())],
+                columns: vec![ColumnDef::new("id", "integer")],
             }),
         ]);
 

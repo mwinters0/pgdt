@@ -13,12 +13,12 @@ mechanism works is [`../design/architecture.md`](../design/architecture.md),
 filed by subject. **P11 — typed predicates — is open**: grilled and specified
 ([`../design/roadmap-P11-typed-predicates.md`](../design/roadmap-P11-typed-predicates.md)),
 with the comparison oracle, its cross-major differ, the fixture family's move
-to glibc, the comparison plan's move to L2 and the register-to-oracle
-reconciliation landed. Its checklist is below.
+to glibc, the comparison plan's move to L2, the register-to-oracle
+reconciliation and the declared collation landed. Its checklist is below.
 
 [`../design/measurements.md`](../design/measurements.md) carries the `b70589f`
-stamp, and **four figures read stale** — named below, each with what would
-settle it. A stale figure no longer obliges a sweep and neither does a
+stamp, and **twelve of its thirteen figures read stale** — the paragraphs below
+name each and what would settle it. A stale figure no longer obliges a sweep and neither does a
 wrap: a full sweep is an hour of a quiet machine and belongs to the phase that
 is about performance, which will re-take every table under its own apparatus
 ([`../design/measurements.md`](../design/measurements.md), "A stale figure does
@@ -41,7 +41,8 @@ not oblige a sweep").
 | The `--filter` term grammar | working, CLI only — `Predicate` is a struct an embedder fills in, so nothing below L4 parses a term. Whitespace outside quotes is trimmed on both sides of the operator; `'` and `"` both quote either side, matching pairs only, with an interior quote doubled; the operator split skips quoted regions, so a column named `a=b` is askable; and the `IS NULL` forms are the fallback, tried only on a term with no operator, which is what makes `note=this is null` the equality it reads as. A malformed quote is refused, never reinterpreted. `--column` and `--table` take their names verbatim and say so when a quoted-looking name is not found ([`../design/architecture.md`](../design/architecture.md), "A filter term is parsed for two audiences"; [`../manual/type-handling.md`](../manual/type-handling.md), "Writing a filter term") |
 | Typed ordering operators (`<`, `<=`, `>`, `>=`) | working, library and CLI: each side is decoded with the column's own decoder — the field per row, the literal once when the block's schema resolves — and the decoded values compared, so `9 > 10` is true on an `integer`. Available on a column that resolved `Mapped` with a `Scalar` plan and refused on any other, which is also why `--schema-mode strings` refuses every one of them. An undecodable literal is `Error::PredicateValueDecode` before any row; a field that is genuinely undecodable is `Error::FieldDecode`, worded as the build path words it ([`../design/architecture.md`](../design/architecture.md), "Ordering operators compare typed") |
 | PostgreSQL's special values under an ordering operator | answered exactly, not raised as a fault: `-infinity` below every finite value, `infinity` above, a `numeric`'s `NaN` above `infinity` and equal to itself (I34), each in the spelling its own type writes. Carried as a position in the order rather than as a number, since no Arrow type has one. **A filter is therefore exact where the batch still cannot hold the value** — the row `--filter 'v_date<2020-01-01'` selects for `-infinity` fails to build if `v_date` is projected, which is a property of two paths with different powers, not a defect (`KD8` is the materialization question). ([`../manual/type-handling.md`](../manual/type-handling.md)) |
-| The comparison register | **L2**, in `pgtype.rs`: `comparison_for(declared, types)` answers a `ComparisonPlan` per declared type, carried per column as `ResolvedSchema::comparisons` and rendered as a table in [`../design/architecture.md`](../design/architecture.md), "Ordering operators compare typed". `predicate.rs` reads the plan and names no `DataType`. Nine of its rows agree with PostgreSQL (I33, I34); four diverge. Exhaustiveness is `builtin_scalar` answering the Arrow type and the comparison in one arm, plus a wildcard-free `match` over `TypeKind`. A divergence is announced by `pgdq query` once on stderr, and read by an embedder from `TableStream::ordering_notes` — a third channel, since the signal is per-column *and* predicate-conditional (L4) |
+| The comparison register | **L2**, in `pgtype.rs`: `comparison_for(declared, collation, types)` answers a `ComparisonPlan` per **column**, carried as `ResolvedSchema::comparisons` and rendered as a table in [`../design/architecture.md`](../design/architecture.md), "Ordering operators compare typed". `predicate.rs` reads the plan and names no `DataType`. Ten of its rows agree with PostgreSQL (I33, I34, I37); five diverge. Exhaustiveness is `builtin_scalar` answering the Arrow type and the comparison in one arm, plus a wildcard-free `match` over `TypeKind`. A divergence is announced by `pgdq query` once on stderr, and read by an embedder from `TableStream::ordering_notes` — a third channel, since the signal is per-column *and* predicate-conditional (L4) |
+| The declared collation | read, and it moves the verdict rather than the comparison: `ColumnDef::collation` keeps a column's `COLLATE` clause verbatim (`pg_catalog."C"`), `TypeKind::Domain` keeps a domain's own as the type default a column-level clause overrides, and the register answers **agrees** for an explicit `C`/`POSIX` and for a bare `name` column, **diverges** for any other stated collation and for a `text`/`varchar` column with no clause at all (I32, I37). `character(n)` is never promoted: it is blank-padded and `bpcharcmp` trims first (I38), which no collation fixes ([`../manual/type-handling.md`](../manual/type-handling.md), "Text ordering is bytewise") |
 | Comparison oracle | `fixtures/<13–18>/oracle/` holds what PostgreSQL itself answers for 1616 typed comparisons and 279 literals per major, each cell recording whether the server *accepted* the input, generated by `scripts/generate_fixtures.py --skip-dumps` and committed ([`../design/architecture.md`](../design/architecture.md), "The comparison oracle"). The answers are **glibc's** — every fixture container is the Debian (`-trixie`) image — and every text pair is asked twice, under `COLLATE "C"` and under the database's own collation, so both halves of the register's text row are in the file rather than argued. Nothing reads it from Rust; it is Python-side evidence |
 | Cross-major differ | working: `scripts/oracle_differences.py` walks the majors as a chain of adjacent pairs and files every cell that moved in `fixtures/oracle-differences.tsv` — **509 differences across 13–18, every one of them additive** (I35), so the union rule is checked rather than asserted. `test_oracle_differences.py` asserts the committed file against a fresh computation and, separately, that no difference is non-additive; an oracle pass of `generate_fixtures.py` ends by running the same check ([`../design/architecture.md`](../design/architecture.md), "The cross-major differ") |
 | Register-to-oracle reconciliation | working: `scripts/oracle_register.py` reads the register's arms out of `pgtype.rs` — one per declared base name in `builtin_scalar`, one per `TypeKind` match arm in `comparison_user_type`, plus the three branches of the walk that are not match arms — and joins them against the case table both ways, failing on either. **33 arms, 50 case types, nothing uncovered and nothing unplaced.** An oracle pass of `generate_fixtures.py` ends by running it beside the differ ([`../design/architecture.md`](../design/architecture.md), "The register-to-oracle reconciliation") |
@@ -121,6 +122,19 @@ DDL, so no `TypeDef` span, so `record_type` is never called. That is
 reachability, the same oracle `a6e713f`'s entry uses, and the entry carries the
 grep that re-checks it.
 
+**11.11 is uncommitted, so it earns no acknowledgement yet**, for 11.3's
+reason: an entry in `scripts/acknowledged.py` is keyed on a commit sha. It
+touches `preamble.rs`, `map.rs`, `cache.rs`, `pgtype.rs`, `resolve.rs` and
+`predicate.rs`, which is every declared path already red plus none that was
+green. **`preamble-prepass` is the one that genuinely moves**, and it must stay
+red on its merits rather than take `M28`'s reachability entry: `blocks4000` is
+built out of `CREATE TABLE`s, and every one of their columns now gets an
+`extract_collation` scan of its own fragment. The `parse`-shaped figures over
+`map.rs` remain excusable by reachability once there is a sha, since `pgdq
+parse` never enters `resolve_columns`
+([`../design/roadmap-P11.11-declared-collation-notes.md`](../design/roadmap-P11.11-declared-collation-notes.md),
+"What was left out, and why").
+
 ## P11 progress
 
 The spec is
@@ -151,11 +165,18 @@ progress.
       failing on either direction. Earned from 11.2, whose row asked for a
       check against a register that 11.3 creates. Notes:
       [`../design/roadmap-P11.2.1-register-oracle-reconciliation-notes.md`](../design/roadmap-P11.2.1-register-oracle-reconciliation-notes.md)
-- [ ] **11.11** The declared collation is read — `COLLATE` captured in the
+- [x] **11.11** The declared collation is read — `COLLATE` captured in the
       preamble parser rather than stopped at, and carried to the register:
       explicit `C`/`POSIX` and a bare `name` agree, an explicit non-`C` clause
-      diverges, no clause on a `default`-collation type is unknown. Changes no
-      comparison, only which columns are told they diverge.
+      diverges, no clause on a `default`-collation type is unknown. `char(n)`
+      is not promoted with them, for a reason that is not collation (I38).
+      Notes:
+      [`../design/roadmap-P11.11-declared-collation-notes.md`](../design/roadmap-P11.11-declared-collation-notes.md)
+- [ ] **11.11.1** The collated fixture columns — a `t_collate` table in the
+      `types` schema and a regeneration across six majors, so the *agreeing*
+      halves of 11.11's collation rule have a real dump behind them rather
+      than a unit test. No library code. Earned on entry to 11.11, whose
+      divergent halves the existing `t_text` already exercises.
 - [ ] **11.4** Enum and bare `numeric` — declaration order for the enum;
       arbitrary-precision decimal carrying `Infinity`, `-Infinity` and `NaN`.
 - [ ] **11.5** The text-held type queue — `interval` (with v17 infinities),
@@ -249,10 +270,11 @@ paragraphs and against the source-code markers, and fails on either half.
   [`../design/architecture.md`](../design/architecture.md), "One target per
   query".
 
-- **KD7** — four rows of the ordering register diverge from PostgreSQL under
-  `<`/`>`: a bare `numeric`, text under any collation but `C`/`POSIX`, an enum,
-  and every other text-held type. **(b) owned by P11**, which holds the
-  per-type worklist. Detail:
+- **KD7** — five rows of the ordering register diverge from PostgreSQL under
+  `<`/`>`: a bare `numeric`, an enum, a text column whose collation is stated
+  and is not `C`/`POSIX` or is not stated at all, `character(n)`'s blank
+  padding, and every other text-held type. **(b) owned by P11**, which holds
+  the per-type worklist. Detail:
   [`../design/architecture.md`](../design/architecture.md), "Ordering operators
   compare typed".
 
@@ -280,4 +302,19 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-Nothing is open.
+**11.11's box is ticked without a fixture behind its agreement cases.** The
+slice's spec row asks for the clause to be read and carried to the register,
+and it is; but no file under `fixtures/` carries a `COLLATE` clause or a `name`
+column, so the two verdicts that changed *to agreement* — the half where a
+wrong answer is silent rather than merely noisy — are pinned by unit tests
+against the strings a real `pg_dump` writes (I37, taken from source and observed
+on a throwaway container) rather than by a dump in the tree. The fixture work is
+written into the spec's slice table as **11.11.1** and sits unticked in the
+checklist above. It was split off because adding it rewrites *every* file under
+`fixtures/` — the `\restrict` token is fresh per dump — and that diff cannot
+share a review with a library change whose question is "did exactly the right
+columns change verdict". **Reconsidering it** means either running the
+regeneration before the tick, or accepting that a phase's evidence may lag its
+code by one slice; the second is what 11.1, 11.2 and 11.2.2 already established
+in the other direction, with evidence leading. Nothing else in the slice depends
+on which way it goes.

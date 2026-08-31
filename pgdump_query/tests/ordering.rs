@@ -260,13 +260,23 @@ async fn a_literal_of_the_wrong_type_is_refused_before_any_row() {
     );
 }
 
-/// The three divergent register rows, reported through the stream's own
-/// channel — per-column *and* conditional on the predicate, which is why it
-/// is neither a `Diagnostic` nor a `ColumnNote`.
+/// The divergent register rows a real dump can show, reported through the
+/// stream's own channel — per-column *and* conditional on the predicate,
+/// which is why it is neither a `Diagnostic` nor a `ColumnNote`.
+///
+/// Every text column in the fixture tree carries no `COLLATE` clause, which
+/// is why `UnknownCollation` is the text row here and the *agreeing* halves
+/// of the collation rule — an explicit `COLLATE "C"`, and a bare `name`
+/// column, whose type default is `C` — have unit tests rather than a fixture
+/// behind them.
 #[tokio::test]
 async fn a_divergent_comparison_is_reported_by_the_stream() {
     for (table, column, divergence, marker) in [
-        ("public.t_text", "v_text", OrderingDivergence::AsText, "collation"),
+        ("public.t_text", "v_text", OrderingDivergence::UnknownCollation, "no COLLATE clause"),
+        ("public.t_text", "v_varchar", OrderingDivergence::UnknownCollation, "no COLLATE clause"),
+        // `character(n)` diverges for a reason collation cannot fix: the
+        // dump writes its values blank-padded and `bpcharcmp` trims (I38).
+        ("public.t_text", "v_char", OrderingDivergence::BlankPadded, "blank-padded"),
         ("public.t_numeric", "v_untyped", OrderingDivergence::AsText, "unconstrained"),
         ("public.t_enum_domain", "v_mood", OrderingDivergence::EnumLabels, "declaration order"),
     ] {

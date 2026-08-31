@@ -1388,7 +1388,7 @@ mod tests {
                 resolution: ColumnResolution::Mapped,
             }],
             plans: vec![NestedPlan::Scalar],
-            comparisons: vec![comparison_for(declared, &[])],
+            comparisons: vec![comparison_for(declared, None, &[])],
         };
         RowBatcher::new(&resolved, "public.t".into(), options, field_targets)
     }

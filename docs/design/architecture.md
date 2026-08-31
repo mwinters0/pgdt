@@ -881,11 +881,11 @@ field ([The cache](#the-cache)).
 
 ## The preamble grammar and `DumpMetadata`
 
-`DumpMetadata` / `DatabaseMetadata` / `Extension` / `TypeDef` / `TypeKind`
-recover server and `pg_dump` versions, extensions, user-defined types, and each
-column's declared type **as the literal string `pg_dump` wrote** — never a
-parsed pair — per the layering rule that L1 stores what the dump said, not what
-a later layer concludes.
+`DumpMetadata` / `DatabaseMetadata` / `Extension` / `TypeDef` / `TypeKind` /
+`ColumnDef` recover server and `pg_dump` versions, extensions, user-defined
+types, and each column's declared type **as the literal string `pg_dump` wrote**
+— never a parsed pair — per the layering rule that L1 stores what the dump said,
+not what a later layer concludes.
 
 **Grammar approach: dispatch directly off five fixed line-start keywords**
 (`CREATE TABLE`, `CREATE TYPE`, `CREATE DOMAIN`, `CREATE EXTENSION`, `ALTER
@@ -910,6 +910,28 @@ stopping at the first column-constraint keyword (`NOT`, `DEFAULT`, `COLLATE`,
 `pg_dump` never puts a space inside a type's own parenthesized modifier
 (`numeric(38,10)`); a `--binary-upgrade` dummy column's type comment
 (`INTEGER /* dummy */`, I5) is stripped first.
+
+**A column is a `ColumnDef`, and its third field is the `COLLATE` clause.**
+`pg_dump` writes one only where the column's collation differs from its *type's*
+default, so the field is `None` far more often than not — and `None` is a fact
+about the type, not about the column (I37). The clause is kept **verbatim**,
+`pg_catalog."C"` and all, for the same reason the declared type is: what it
+means is L2's conclusion, and `crate::pgtype::comparison_for` is where it is
+reached. A `CREATE DOMAIN`'s own clause is kept the same way, on
+`TypeKind::Domain`, because it is the *type default* a column-level clause
+exists to override.
+
+**Finding it is a scan, not a lookahead.** `COLLATE` is one of `STOP_WORDS`, so
+the type words still end there — but the clause is appended *after*
+`DEFAULT`/`GENERATED` and after `NOT NULL` (I37), so the token following the
+type is usually something else entirely. `extract_collation` walks the whole
+fragment at paren depth zero, outside `'…'` and `"…"`, which is what keeps a
+`DEFAULT 'collate me'` literal and a `CHECK ((v COLLATE "C") > 'a')` expression
+from being read as the column's own.
+
+*Rejected:* folding the collation into the declared type string. It is not part
+of the type — two columns of one type can carry different clauses — and every
+reader of that string would have to strip it back off.
 
 **`types` is keyed on the type, not on the statement.** `pg_dump` writes a
 completed C-level base type twice under one name — the shell, then the
@@ -2015,14 +2037,41 @@ ordering outright.
 
 **The register** is which declared types such a comparison lands on, and
 whether it means what PostgreSQL means. `pgtype.rs`'s `comparison_for` is the
-authority, and it is **L2**: a pure function of the declared type string and
-the database's own `CREATE TYPE`/`DOMAIN` list, walking that string exactly as
-`resolve_declared_type` does — array first, then the built-in table, then the
-user-defined lookup — so a domain compares as whatever it bottoms out at and
-the two answers cannot disagree about which types exist. Its result is a
-`ComparisonPlan`, carried per column as a fourth positional vector in
-`ResolvedSchema` beside `columns`, `notes` and `plans`. The table below is the
-human-readable rendering.
+authority, and it is **L2**: a pure function of the declared type string, the
+column's own `COLLATE` clause and the database's own `CREATE TYPE`/`DOMAIN`
+list, walking that string exactly as `resolve_declared_type` does — array
+first, then the built-in table, then the user-defined lookup — so a domain
+compares as whatever it bottoms out at and the two answers cannot disagree
+about which types exist. Its result is a `ComparisonPlan`, carried per column
+as a fourth positional vector in `ResolvedSchema` beside `columns`, `notes` and
+`plans`. The table below is the human-readable rendering.
+
+**It is asked per column, not per declared type**, and the collation is why:
+two `text` columns of one table can compare differently, because one of them
+declares `COLLATE "C"` and the other declares nothing. The comparison itself is
+bytewise in both cases — **reading the clause moves the verdict, never the
+answer**. Three cases, and `pg_dump` writing a clause only where the collation
+differs from the *type's* default (I37) is what makes the third one decidable:
+
+| The column says | Verdict |
+|---|---|
+| `COLLATE "C"` or `COLLATE "POSIX"`, qualified `pg_catalog` or bare | **Agrees**, on every server and under every libc |
+| any other collation — a libc locale, an ICU collation, a user's own | **Diverges** (`NonBytewiseCollation`) |
+| nothing, and the type's default collation is `C` — i.e. `name` | **Agrees** |
+| nothing, and the type's default collation is the database's — `text`, `varchar` | **Diverges** (`UnknownCollation`), because a plain dump does not record it (I32) |
+
+The schema is checked and not only the name: a collation called `"C"` in some
+other schema is not `pg_catalog."C"`, and an *unquoted* `COLLATE C` names the
+collation `c`, which the built-in is not. Answering "agrees" wrongly is the one
+direction of error this register must not make, so anything it cannot resolve
+to the two built-ins diverges.
+
+**`character(n)` never consults the clause**, and that is the sharp case. Its
+values are written blank-padded to `n` while `bpcharcmp` strips trailing blanks
+before it looks at a collation at all (I38) — so a field whose significant text
+equals the filter's literal sorts *after* it here and *equal* on the server.
+`COLLATE "C"` does not close that, and a register that promoted `char` along
+with `text` and `varchar` would be claiming an agreement it does not have.
 
 **Keyed on the declared type, not on the Arrow one.** Four unrelated declared
 types reach `Utf8View` — a text type, a bare `numeric`, a text-held type such
@@ -2030,7 +2079,9 @@ as `interval`, and `json`, which PostgreSQL does not order at all — so the
 Arrow type cannot say which comparison a column wants, and neither can it
 reach the enum's labels, which are the closure the divergent enum row needs.
 The rows below are therefore in declared-type order, with the Arrow type
-beside each as information rather than as the key.
+beside each as information rather than as the key. `text` and `varchar` are
+spread over three of the rows, split by what the column's own `COLLATE` clause
+says.
 
 **The exhaustiveness check moved with it, and is stronger for the move.**
 `builtin_scalar` answers both questions in one arm — which Arrow type a
@@ -2061,7 +2112,10 @@ with the reason that names its nesting rather than with "no order defined".
 | `uuid` | `FixedSizeBinary16` | yes — `uuid_internal_cmp` is `memcmp` over 16 bytes (I33) | — |
 | `bytea` | `Binary` | yes — `byteacmp` is `memcmp`, then length (I33) | — |
 | enum types | `Dictionary(Int32, Utf8)` | **no** — PostgreSQL orders an enum by *declaration* order (I33); we compare the label text, so an enum declared `('low','medium','high')` orders alphabetically instead | the declaration order, which the dump carries verbatim in `CREATE TYPE … AS ENUM (…)`. Purely additive |
-| `text`, `varchar`, `char`, `name` | `Utf8View` | **no** — PostgreSQL orders text by collation, and a plain dump records none (I32); we compare bytewise, which equals PostgreSQL only under `C`/`POSIX` | a collation the file does not carry |
+| `text`, `varchar` declaring `COLLATE "C"`/`"POSIX"`, and `name` with no clause | `Utf8View` | yes — bytewise *is* what those collations order by, on every server and under every libc (I37) | — |
+| `text`, `varchar` with no clause | `Utf8View` | **no** — their collation is the database's, which a plain dump does not record (I32); bytewise equals PostgreSQL only if that collation is `C`/`POSIX` | a collation the file does not carry |
+| any column declaring a collation that is not `C`/`POSIX` | `Utf8View` | **no** — PostgreSQL orders it by that collation, which this build does not implement | one comparison per collation, i.e. a collation library |
+| `char(n)` | `Utf8View` | **no**, whatever its collation — the dump writes values blank-padded to `n` and `bpcharcmp` strips trailing blanks first (I38), so a field equal to the literal sorts above it here | trimming both sides before comparing, which is 11.6's canonicalization question |
 | **bare `numeric`**, and `numeric` beyond 76 digits | `Utf8View` | **no, and this is the sharp one** — an unconstrained `numeric` column has no Arrow decimal representation, so it is `Mapped` to `Utf8View` and orders lexicographically: `"9" < "10"` is false | an arbitrary-precision decimal comparison |
 | `interval`, `time with time zone`, `json`/`jsonb`, `inet`/`cidr`/`macaddr`/`macaddr8`, and any domain over them | `Utf8View` | **no** — each has a server-side operator of its own that a bytewise comparison does not implement | one decoder per type, each its own piece of work |
 
@@ -2088,15 +2142,18 @@ an *embedder* should be handed instead is filed in
 whose sink is the designated unification point for diagnostic channels.
 
 <!-- deficiency: KD7 -->
-**The four rows reading "no" are deficiency `KD7`**, and they are one entry
-rather than four because this table is where they are told apart: its last
-column is what would close each one, and no two of them share it. Equality is unaffected and
+**The rows reading "no" are deficiency `KD7`**, and they are one entry rather
+than several because this table is where they are told apart: its last column
+is what would close each one, and no two of them share it. Equality is unaffected and
 every value still decodes as the text the file holds, so what is missing is the
 ordering, not the data — and each divergence announces itself, which is what
 keeps it a weaker answer rather than a silent one. The per-type worklist
-belongs to P11, which retires this entry: two rows close by code and two by
-statement ([`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md),
-"What this phase closes, and what it declares").
+belongs to P11, which retires this entry
+([`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md), "What
+this phase closes, and what it declares"). The collation half of the text row
+is already closed: what remains of it is a database default the file does not
+carry, plus `char(n)`'s blank padding, which was never a collation question at
+all.
 
 **Adding an arm here obliges an oracle case**, and that is checked rather than
 remembered: `scripts/oracle_register.py` fails when a register arm has no case

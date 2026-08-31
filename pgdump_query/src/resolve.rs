@@ -347,22 +347,27 @@ pub fn resolve_columns(
 
     let string = || (arrow::datatypes::DataType::Utf8View, NestedPlan::Scalar);
     for (i, name) in columns.iter().enumerate() {
-        let declared = declared_cols.and_then(|cols| cols.iter().find(|(n, _)| n == name));
+        let declared = declared_cols.and_then(|cols| cols.iter().find(|c| &c.name == name));
         let (resolution, pair, comparison) = match declared {
             None if unscanned_database => {
                 (ColumnResolution::MetadataNotScanned, string(), ComparisonPlan::Refused)
             }
             None => (ColumnResolution::NotDeclared, string(), ComparisonPlan::Refused),
-            Some((_, ty)) => {
+            Some(column) => {
+                let ty = &column.declared_type;
                 // `db` is always `Some` here: `declared_cols` only came from
                 // `db.tables`, so `db.types` is the right list to resolve
                 // this same database's `CREATE TYPE`/`DOMAIN` references
                 // against — for the comparison plan as much as for the type.
                 let types = &db.unwrap().types;
                 let refused = ComparisonPlan::Refused;
+                // The register is asked per column rather than per declared
+                // type, because the column's own `COLLATE` clause is half the
+                // question for a text column.
+                let comparison = || comparison_for(ty, column.collation.as_deref(), types);
                 match resolve_declared_type(ty, types) {
                     TypeOutcome::Mapped(dt, plan) => {
-                        (ColumnResolution::Mapped, (dt, plan), comparison_for(ty, types))
+                        (ColumnResolution::Mapped, (dt, plan), comparison())
                     }
                     TypeOutcome::Unknown => (ColumnResolution::UnknownType, string(), refused),
                     TypeOutcome::OpaqueElementType => {
@@ -396,7 +401,7 @@ pub fn resolve_columns(
         fields.push(Field::new(name, arrow_type, true));
         notes.push(ColumnNote {
             column: name.clone(),
-            declared: declared.map(|(_, ty)| ty.clone()),
+            declared: declared.map(|c| c.declared_type.clone()),
             resolution: resolution.clone(),
         });
         resolutions.push(resolution);
@@ -416,7 +421,7 @@ pub fn resolve_columns(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::preamble::{DatabaseMetadata, TypeDef, TypeKind};
+    use crate::preamble::{ColumnDef, DatabaseMetadata, TypeDef, TypeKind};
 
     fn one_db(tables: &[(&str, &[(&str, &str)])], types: Vec<TypeDef>) -> DumpMetadata {
         let mut db = DatabaseMetadata {
@@ -431,7 +436,7 @@ mod tests {
         for (name, cols) in tables {
             db.tables.insert(
                 name.to_string(),
-                cols.iter().map(|(c, t)| (c.to_string(), t.to_string())).collect(),
+                cols.iter().map(|(c, t)| ColumnDef::new(*c, *t)).collect(),
             );
         }
         DumpMetadata { databases: vec![db] }
@@ -596,9 +601,7 @@ mod tests {
     fn a_nested_column_carries_its_plan_beside_its_type() {
         let types = vec![TypeDef {
             name: "public.point2d".to_string(),
-            kind: TypeKind::Composite {
-                fields: Some(vec![("x".to_string(), "integer".to_string())]),
-            },
+            kind: TypeKind::Composite { fields: Some(vec![ColumnDef::new("x", "integer")]) },
         }];
         let meta = one_db(
             &[("public.t", &[("id", "integer"), ("v", "integer[]"), ("p", "public.point2d")])],
@@ -722,14 +725,9 @@ mod tests {
         let types = vec![
             TypeDef {
                 name: "public.point2d".to_string(),
-                kind: TypeKind::Composite {
-                    fields: Some(vec![("x".to_string(), "integer".to_string())]),
-                },
+                kind: TypeKind::Composite { fields: Some(vec![ColumnDef::new("x", "integer")]) },
             },
-            TypeDef {
-                name: "public.intarr".to_string(),
-                kind: TypeKind::Domain { base_type: "integer[]".to_string() },
-            },
+            TypeDef { name: "public.intarr".to_string(), kind: TypeKind::domain("integer[]") },
         ];
         let meta = one_db(
             &[(
@@ -814,7 +812,7 @@ mod tests {
             resolved.comparisons,
             [
                 ComparisonPlan::Compared { kind: CompareKind::Int, divergence: None },
-                ComparisonPlan::AS_TEXT,
+                ComparisonPlan::text_diverging(crate::pgtype::OrderingDivergence::UnknownCollation),
                 ComparisonPlan::Compared {
                     kind: CompareKind::Text,
                     divergence: Some(crate::pgtype::OrderingDivergence::EnumLabels),
@@ -834,6 +832,34 @@ mod tests {
         assert_eq!(strings.comparisons, vec![ComparisonPlan::Refused; 5]);
     }
 
+    /// The register is consulted **per column**, not per declared type: two
+    /// `text` columns of one table get different verdicts, because the
+    /// `COLLATE` clause is half the question and it is a fact about the
+    /// column. This is the join `comparison_for`'s second argument exists
+    /// for.
+    #[test]
+    fn two_text_columns_of_one_table_can_compare_differently() {
+        use crate::pgtype::{CompareKind, OrderingDivergence};
+
+        let mut meta = one_db(&[("public.t", &[("plain", "text"), ("bytewise", "text")])], vec![]);
+        meta.databases[0].tables.get_mut("public.t").unwrap()[1].collation =
+            Some("pg_catalog.\"C\"".to_string());
+
+        let cols = vec!["plain".to_string(), "bytewise".to_string()];
+        let resolved =
+            resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Typed, &[]);
+        assert_eq!(
+            resolved.comparisons,
+            [
+                ComparisonPlan::text_diverging(OrderingDivergence::UnknownCollation),
+                ComparisonPlan::Compared { kind: CompareKind::Text, divergence: None },
+            ]
+        );
+        // Both are still the same Arrow type and the same comparison — only
+        // the verdict moved.
+        assert_eq!(resolved.schema.field(0).data_type(), resolved.schema.field(1).data_type());
+    }
+
     /// The census speaks after the declared type, and can take a column out
     /// of `Mapped` once the plan has already been read — so the plan is
     /// re-answered against the outcome that survived, never against the one
@@ -845,7 +871,10 @@ mod tests {
         let meta = one_db(&[("public.t", &[("v", "text")])], vec![]);
         let cols = vec!["v".to_string()];
         let text = resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Typed, &[]);
-        assert_eq!(text.comparisons, [ComparisonPlan::AS_TEXT]);
+        assert_eq!(
+            text.comparisons,
+            [ComparisonPlan::text_diverging(crate::pgtype::OrderingDivergence::UnknownCollation)]
+        );
 
         // The same column declared as an array, whose values do not share one
         // list shape: `VaryingArrayShape` holds *array* literals as text, and
