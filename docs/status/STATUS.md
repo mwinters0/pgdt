@@ -17,7 +17,7 @@ to glibc, the comparison plan's move to L2 and the register-to-oracle
 reconciliation landed. Its checklist is below.
 
 [`../design/measurements.md`](../design/measurements.md) carries the `b70589f`
-stamp, and **five figures read stale** — named below, each with what would
+stamp, and **four figures read stale** — named below, each with what would
 settle it. A stale figure no longer obliges a sweep and neither does a
 wrap: a full sweep is an hour of a quiet machine and belongs to the phase that
 is about performance, which will re-take every table under its own apparatus
@@ -56,7 +56,7 @@ not oblige a sweep").
 apparatus line. `--check` reconciles thirteen markers against thirteen figures.
 `session-drift` is derived across that sweep and a second one taken three
 minutes later on the same commit, which is the pair `--drift` reads.
-`measure.ACKNOWLEDGED` carries three entries, each with mechanical evidence
+`measure.ACKNOWLEDGED` carries four entries, each with mechanical evidence
 attached — see the staleness paragraphs below.
 
 **Nothing is built and unrun.** `measure.UNTAKEN` is empty: `projection-widths`
@@ -66,7 +66,7 @@ flag, the `composite_text` input and the fidelity case pairing them — because
 the projection table makes the same isolation a subtraction between two adjacent
 rows of one file.
 
-**Three commits since the stamp touched a declared path, and all three are
+**Four commits since the stamp touched a declared path, and all four are
 acknowledged with mechanical evidence.** `8b97956` deleted
 `composite-isolated`'s generator apparatus — the `--weak-composite` flag and
 the `composite_text` input — and `--verify-additive` regenerates all five
@@ -109,15 +109,17 @@ The reasoning is in
 [`../design/roadmap-P11.3-comparison-plan-l2-notes.md`](../design/roadmap-P11.3-comparison-plan-l2-notes.md),
 "What was left out, and why".
 
-**`M28` turned `preamble-prepass` red, and it stays red.** Keying
+**`M28` turned `preamble-prepass` red, and it is acknowledged.** Keying
 `DumpMetadata::types` on the type name puts a `find` over the types so far in
 front of every `CREATE TYPE`, in `preamble.rs` — a declared path of that
-figure, and one its timed command genuinely executes, since the figure *is*
-`pgdq parse --preamble-only`. So neither oracle applies: not reachability, and
-not byte-identity, which settles generator changes only. What the figure
-licenses — the prepass is bounded by the schema, not by the dump — is untouched
-by a per-statement scan of a list the schema also bounds, but that is
-reasoning, not evidence, and nothing but taking the figure settles it.
+figure. The command shape argues it executes, since the figure *is* `pgdq parse
+--preamble-only`; the input settles that it does not. `M28`'s only executable
+change is `record_type` and its one call site inside the `SpanBody::TypeDef`
+arm, and every timed run of this figure is on `blocks4000`, which
+`generate_block_count_bench.py` builds out of `CREATE TABLE`s alone — no type
+DDL, so no `TypeDef` span, so `record_type` is never called. That is
+reachability, the same oracle `a6e713f`'s entry uses, and the entry carries the
+grep that re-checks it.
 
 ## P11 progress
 
@@ -278,18 +280,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **The manual's `user-defined types: 3` was left alone.** `M28` moves that
-  count for any dump holding a completed base type, and the plan called for the
-  manual's example to be re-taken against a real run. It was not: the whole
-  `info` transcript in
-  [`../manual/dump-inspection.md`](../manual/dump-inspection.md) is a
-  hand-authored illustration of a `mydump.sql` that exists nowhere — two
-  extensions, `public.accounts`/`public.events`, roles `app_user`/`backup`, a
-  `fast_ssd` tablespace, `TOC coverage: 213/224` — and `3` is still exactly
-  what a real run prints for a dump declaring three types, so nothing in it was
-  made false. What *was* taken against a real run is the behaviour:
-  `fixtures/16/types/default.sql` now reports 17 user-defined types where it
-  reported 18, and the bullet under the example now says the count counts types
-  rather than statements. Reconsidering means re-basing the whole transcript on
-  a fixture run, which changes its tables, roles, tablespaces and coverage line
-  — a user-facing rewrite well outside one out-of-band item.
+Nothing is open.

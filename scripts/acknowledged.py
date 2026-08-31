@@ -36,6 +36,15 @@ class Acknowledged:
 
     So a commit can be excused, per figure, with its evidence attached.
 
+    **A command shape names an entry point, not the code that runs.** A
+    figure's shape says which command was timed; whether the changed code
+    executes is the entry point *and* the input together, and the input is the
+    half that is easy to forget. A change behind a conditional the figure's
+    input never triggers does not run in it, however squarely the shape lands
+    on the edited file -- so an entry claiming reachability names the input and
+    the reason it cannot reach, and its `verified` reads the generator rather
+    than a staging directory that may be gone.
+
     **Per commit, never per path.** Excusing a path would silently cover every
     future change to it, which is precisely the escape hatch that turns this
     into a way to wave away real staleness. A commit is a fixed diff that
@@ -131,6 +140,24 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "awk -F/ '$1~/^(census-brace-free|census-arrays|"
             "scan-throughput-cold|scan-throughput-warm)$/{print $4}' | "
             "sort -u  # dd, parse -- nothing query-shaped"
+        ),
+    ),
+    Acknowledged(
+        commit="682819d",
+        figures=("preamble-prepass",),
+        why=(
+            "M28 keyed DumpMetadata::types on the type name, which puts a "
+            "find over the types so far in front of every CREATE TYPE in "
+            "preamble.rs -- a declared path of this figure. The new code is "
+            "`record_type` and its one call site, inside the SpanBody::TypeDef "
+            "arm, and this figure's every timed run is on blocks4000, which "
+            "generate_block_count_bench.py builds out of CREATE TABLEs alone: "
+            "no type DDL, so no TypeDef span, so `record_type` is never called "
+            "in a timed run. Reachability, the same oracle a6e713f's entry uses"
+        ),
+        verified=(
+            "test 0 -eq \"$(grep -c 'CREATE TYPE\\|CREATE DOMAIN' "
+            "scripts/generate_block_count_bench.py)\""
         ),
     ),
 )

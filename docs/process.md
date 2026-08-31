@@ -660,6 +660,15 @@ tense, not by content. If it is true now, it is status. If it is a thing
 learned on a particular day whose consequence is already reflected in status,
 it is history — and if it is neither, it does not get written down at all.
 
+**The manual's transcripts are illustrations, not captured runs.** Each one
+shows every section of an output at once, over a dump chosen to have something
+in each — which no fixture is. So a change to what a command prints re-reads
+the manual for its **claims**, not for its numbers: the prose that says what a
+figure *means* can go false and must be checked, while the numbers stand
+because no run stands behind them and none is contradicted. Re-basing an
+example on a real run is a trade, not an upgrade — it buys a number someone
+could re-take and costs the sections the illustration was built to show.
+
 ---
 
 ## Naming and lifecycle
