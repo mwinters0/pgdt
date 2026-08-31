@@ -2,10 +2,10 @@
 -- PostgreSQL database dump
 --
 
-\restrict PtlZYX9VzJVaPZZqQi5AF8DzgjpOkzwj1kxyiM0jkxQwhQ0LzIQCm7Nmh6E7paR
+\restrict 9kEOs0bgsGeQz9m5ZhptwaDbnohdsVDcUdrRov7RjgJ3RLLha5eWAD4TuLCQGHb
 
--- Dumped from database version 14.24
--- Dumped by pg_dump version 14.24
+-- Dumped from database version 14.24 (Debian 14.24-1.pgdg13+2)
+-- Dumped by pg_dump version 14.24 (Debian 14.24-1.pgdg13+2)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -148,9 +148,9 @@ ALTER TABLE public.widgets OWNER TO postgres;
 -- Data for Name: events; Type: TABLE DATA; Schema: logs; Owner: postgres
 --
 
-INSERT INTO logs.events VALUES (100, 1, 'created', '2026-08-27 16:25:46.617027+00');
-INSERT INTO logs.events VALUES (101, 2, NULL, '2026-08-27 16:25:46.617027+00');
-INSERT INTO logs.events VALUES (102, 3, 'updated	with a tab char', '2026-08-27 16:25:46.617027+00');
+INSERT INTO logs.events VALUES (100, 1, 'created', '2026-08-31 14:43:12.062404+00');
+INSERT INTO logs.events VALUES (101, 2, NULL, '2026-08-31 14:43:12.062404+00');
+INSERT INTO logs.events VALUES (102, 3, 'updated	with a tab char', '2026-08-31 14:43:12.062404+00');
 
 
 --
@@ -387,5 +387,5 @@ ALTER TABLE ONLY logs.events
 -- PostgreSQL database dump complete
 --
 
-\unrestrict PtlZYX9VzJVaPZZqQi5AF8DzgjpOkzwj1kxyiM0jkxQwhQ0LzIQCm7Nmh6E7paR
+\unrestrict 9kEOs0bgsGeQz9m5ZhptwaDbnohdsVDcUdrRov7RjgJ3RLLha5eWAD4TuLCQGHb
 

@@ -2589,6 +2589,24 @@ the parse finishes.
 six routine versions (13–18). **"Absent" in this tree always means
 "deliberately absent", never "not yet generated."**
 
+**One image family for all six, pinned at an exact minor with the `-trixie`
+suffix.** The minor is pinned so a regeneration is reproducible rather than
+drifting to whatever the tag resolves to that day; the suffix is what pins the
+**libc**, and the libc is what the comparison oracle's text answers are taken
+under — on Alpine, musl's `strcoll` is `strcmp`, so every text comparison would
+silently be the `C`-collation answer. The unsuffixed `postgres:16` has already
+moved Debian suites once, which is the drift the suffix exists against.
+`meta.tsv` records the platform triple and the default collation's version, and
+the cross-major differ guards both, so a major generated on a different base is
+a reported fault rather than five hundred silent differences.
+
+**One consequence of the family reaches the `.sql` tree**, and it is the only
+one that did: a Debian build sets `--with-extra-version`, so every fixture's
+version header now reads `16.15 (Debian 16.15-1.pgdg13+2)` where an Alpine
+build wrote `16.15` (I36). The koji sample carries the bare form, so the tree
+holds both shapes rather than only one. Nothing parses those strings — they are
+reported verbatim — and no snapshot covers them.
+
 `fixtures/<version>/oracle/` is the one directory that is not `pg_dump` output
 — see [The comparison oracle](#the-comparison-oracle). It sits beside the
 schema directories rather than inside one because it has no flag set; the test
@@ -2730,9 +2748,9 @@ in L1:
 
 | File | Columns |
 |---|---|
-| `meta.tsv` | `key`, `value` — the apparatus: server version, the database's collation, and every session GUC that moves an output spelling |
+| `meta.tsv` | `key`, `value` — the apparatus: server version, the platform triple, the database's collation and that collation's version, and every session GUC that moves an output spelling |
 | `literals.tsv` | `type`, `literal`, `status`, `output` — whether the server accepted the input, and the exact `*_out` text it canonicalizes to |
-| `comparisons.tsv` | `type`, `left`, `right`, then one cell per operator in `<`, `<=`, `>`, `>=`, `=`, `<>` order |
+| `comparisons.tsv` | `type`, `left`, `right`, `collation`, then one cell per operator in `<`, `<=`, `>`, `>=`, `=`, `<>` order |
 
 A comparison cell is `t`, `f`, `u` (the comparison yielded SQL NULL) or
 `E<sqlstate>`; a literal's `status` is `ok` or `E<sqlstate>`. **Recording the
@@ -2769,16 +2787,33 @@ by being in the case table's order.** `scripts/test_comparison_oracle.py` is
 what stops an edited case table from landing beside stale answers: it walks
 every committed file and asserts the `(type, left, right)` triples equal
 `comparison_cases()` row for row, in order, for every major present in
-`fixtures/`.
+`fixtures/`. The `collation` column is part of that key: a text pair is asked
+under two collations, so a `(type, left, right)` triple no longer names one
+row.
 
-**The text answers are bytewise, and that is an artifact of the apparatus.**
-The fixture containers are the Alpine images, so the server is musl-libc:
-`datcollate` reads `en_US.utf8` while musl's `strcoll` is `strcmp`, and this
-oracle therefore *cannot* observe the collation divergence a glibc server would
-show. `meta.tsv` records `version()` and `datcollate` so a reader can see it.
-The collation row of the ordering register is closed by statement rather than
-by this file — PostgreSQL orders text by collation and a plain dump records
-none (I32), so there is no answer in the file to check against.
+**The collation is a dimension of the case, not an accident of the base
+image.** The fixture containers are the Debian (`-trixie`) images, so the
+server is glibc and `datcollate`'s `en_US.utf8` means glibc's collation. Every
+text pair is asked twice — once under `COLLATE "C"`, once under `COLLATE
+"default"`, which is the database's own — so one file holds both halves of the
+ordering register's text row: pgdq compares bytewise, which **is**
+PostgreSQL's answer under `C` and is **not** under a libc locale. Equality
+comes along for free and agrees under both, every libc collation being
+deterministic. The eight pairs that earn the alphabet are named in the case
+table with the reason each was chosen; four diverge on glibc 2.41 (case below
+letter, letter before case, an accent sorting with its base letter, punctuation
+ignored at the primary level) and four agree, the agreeing half kept
+deliberately so the file cannot be read as "these two orders never coincide".
+
+`"default"` rather than the locale's own name because `pg_catalog."default"`
+*is* the database's collation by definition and exists on every server, where a
+locale-named collation object exists only if `initdb` imported one.
+
+**"Only glibc" is a limitation of the evidence, not a claim about servers.** A
+musl deployment orders text differently and this oracle does not speak for it.
+What stays closed by *statement* is the residue: a `default`-collation column
+carrying no `COLLATE` clause is on the database's collation, which a plain dump
+does not record (I32), so there is no answer in the file to check it against.
 
 ### The cross-major differ
 
@@ -2814,10 +2849,20 @@ Two things are refused rather than diffed, because both would make a diff mean
 something other than it says. The answer files carry no case identifiers, so
 the differ re-checks every file against `comparison_cases()`/`literal_cases()`
 before zipping — mis-aligned files are a silent wrong answer, not an error. And
-every major's `meta.tsv` must agree on the pinned session GUCs and the
-database's collation: a `DateStyle` that differed between two runs would move
-every spelling in the file, which is a fault in the generation rather than a
-difference between majors.
+every major's `meta.tsv` must agree on the pinned session GUCs, the database's
+collation, the **platform triple** and the default collation's **version**: a
+`DateStyle` that differed between two runs would move every spelling in the
+file, which is a fault in the generation rather than a difference between
+majors. The last two keys are what make that guard load-bearing once a second
+libc is possible at all — `version()` is expected to differ, so it is excluded,
+and it was the only key carrying the triple; a major left on or reverted to a
+different base would otherwise pass in silence while `datcollate` still read
+`en_US.utf8` and meant a different order. The triple is parsed out of
+`version()` server-side so the version number itself may still move, and the
+`collversion` beside it is the server's own notion of "this collation may have
+changed underneath you", read off the collation object `initdb` imported for
+the database's locale (`pg_collation` records no version for `default` itself,
+and `pg_collation_actual_version(100)` answers SQL NULL before v15).
 
 **The file is committed and asserted, and the break check is separate.**
 `test_oracle_differences.py` asserts the committed file against a fresh

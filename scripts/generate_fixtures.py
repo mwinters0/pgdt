@@ -46,18 +46,29 @@ DOCKER = ["sudo", "-n", "docker"]
 # Routine version set: the latest minor release of every PostgreSQL major
 # from 13 onward (13 being the oldest still-supported major) -- see
 # docs/design/architecture.md ("Fixtures") for the policy.
-# Pinned to exact minors (not floating "16-alpine"-style tags) so a
+#
+# Pinned to exact minors (not floating "16-trixie"-style tags) so a
 # regeneration is reproducible instead of silently drifting to whatever
 # minor the tag resolves to that day. This list changes as new minors ship;
 # update it here and say so in the commit message (see the policy doc for
 # what that message needs to assert).
+#
+# **`-trixie` at every minor, never the unsuffixed tag and never `-alpine`.**
+# The suffix is what pins the libc, and the libc is what the comparison
+# oracle's text answers are taken under: on Alpine (musl) `strcoll` is
+# `strcmp`, so every text comparison would silently be the `C`-collation
+# answer. The unsuffixed `postgres:16` has already moved Debian suites once,
+# which is the drift the pin exists against. `meta.tsv` records the platform
+# triple and the default collation's version, and `oracle_differences.py`
+# guards both across majors, so a version left on a different base is a
+# reported fault rather than five hundred silent differences.
 ROUTINE_VERSIONS = {
-    "13": "postgres:13.23-alpine",
-    "14": "postgres:14.24-alpine",
-    "15": "postgres:15.19-alpine",
-    "16": "postgres:16.15-alpine",
-    "17": "postgres:17.11-alpine",
-    "18": "postgres:18.6-alpine",
+    "13": "postgres:13.23-trixie",
+    "14": "postgres:14.24-trixie",
+    "15": "postgres:15.19-trixie",
+    "16": "postgres:16.15-trixie",
+    "17": "postgres:17.11-trixie",
+    "18": "postgres:18.6-trixie",
 }
 
 DB_NAME = "pgdq_fixture"

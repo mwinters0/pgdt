@@ -2,10 +2,10 @@
 -- PostgreSQL database dump
 --
 
-\restrict N8yD1YRBHo3aiRPRRrcDJMsjCh61mf1emqxySjhfRPlVc9gr3QBN6QGgP90o2LT
+\restrict 2WJZ6xjdfA81n5j5PvKfG3K2uhgCcCp87zRW9AvvxGJAVz50CinGMhtIDEjxS5Z
 
--- Dumped from database version 14.24
--- Dumped by pg_dump version 14.24
+-- Dumped from database version 14.24 (Debian 14.24-1.pgdg13+2)
+-- Dumped by pg_dump version 14.24 (Debian 14.24-1.pgdg13+2)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -471,29 +471,29 @@ ALTER TABLE ONLY objects.widget_orders ALTER COLUMN quantity SET DEFAULT 0;
 
 
 --
--- Name: 16494; Type: BLOB; Schema: -; Owner: postgres
+-- Name: 16580; Type: BLOB; Schema: -; Owner: postgres
 --
 
-SELECT pg_catalog.lo_create('16494');
+SELECT pg_catalog.lo_create('16580');
 
 
-ALTER LARGE OBJECT 16494 OWNER TO postgres;
-
---
--- Name: LARGE OBJECT 16494; Type: COMMENT; Schema: -; Owner: postgres
---
-
-COMMENT ON LARGE OBJECT 16494 IS 'first large object';
-
+ALTER LARGE OBJECT 16580 OWNER TO postgres;
 
 --
--- Name: 16495; Type: BLOB; Schema: -; Owner: postgres
+-- Name: LARGE OBJECT 16580; Type: COMMENT; Schema: -; Owner: postgres
 --
 
-SELECT pg_catalog.lo_create('16495');
+COMMENT ON LARGE OBJECT 16580 IS 'first large object';
 
 
-ALTER LARGE OBJECT 16495 OWNER TO postgres;
+--
+-- Name: 16581; Type: BLOB; Schema: -; Owner: postgres
+--
+
+SELECT pg_catalog.lo_create('16581');
+
+
+ALTER LARGE OBJECT 16581 OWNER TO postgres;
 
 --
 -- Data for Name: events_2024; Type: TABLE DATA; Schema: objects; Owner: postgres
@@ -545,8 +545,8 @@ COPY objects.widget_audit (widget_id, changed_at) FROM stdin;
 --
 
 COPY objects.widgets (id, label, created_at) FROM stdin;
-1	alpha	2026-08-24 22:23:06.553814+00
-2	beta	2026-08-24 22:23:06.553814+00
+1	alpha	2026-08-31 14:43:16.539033+00
+2	beta	2026-08-31 14:43:16.539033+00
 \.
 
 
@@ -578,11 +578,11 @@ SELECT pg_catalog.setval('objects.standalone_seq', 100, true);
 
 BEGIN;
 
-SELECT pg_catalog.lo_open('16494', 131072);
+SELECT pg_catalog.lo_open('16580', 131072);
 SELECT pg_catalog.lowrite(0, '\x48656c6c6f2c204c4f21');
 SELECT pg_catalog.lo_close(0);
 
-SELECT pg_catalog.lo_open('16495', 131072);
+SELECT pg_catalog.lo_open('16581', 131072);
 SELECT pg_catalog.lowrite(0, '\x00010203040506070809');
 SELECT pg_catalog.lo_close(0);
 
@@ -756,10 +756,10 @@ GRANT SELECT ON TABLE objects.widgets TO PUBLIC;
 
 
 --
--- Name: LARGE OBJECT 16494; Type: ACL; Schema: -; Owner: postgres
+-- Name: LARGE OBJECT 16580; Type: ACL; Schema: -; Owner: postgres
 --
 
-GRANT SELECT ON LARGE OBJECT 16494 TO fixture_reader;
+GRANT SELECT ON LARGE OBJECT 16580 TO fixture_reader;
 
 
 --
@@ -792,5 +792,5 @@ REFRESH MATERIALIZED VIEW objects.widget_totals;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict N8yD1YRBHo3aiRPRRrcDJMsjCh61mf1emqxySjhfRPlVc9gr3QBN6QGgP90o2LT
+\unrestrict 2WJZ6xjdfA81n5j5PvKfG3K2uhgCcCp87zRW9AvvxGJAVz50CinGMhtIDEjxS5Z
 

@@ -12,7 +12,8 @@ and the four facts the generation turned up.
 - `scripts/generate_fixtures.py` — a second pass over the same containers,
   with `--skip-dumps` / `--skip-oracle` to run either alone.
 - `fixtures/<13…18>/oracle/{meta,literals,comparisons}.tsv` — 1224 comparison
-  rows and 279 literal rows per major, ~70 KB each.
+  rows and 279 literal rows per major, ~70 KB each. (11.2.2 took the
+  comparisons to 1616 by adding the collation dimension.)
 - `scripts/test_comparison_oracle.py` — 21 tests, of which the six structural
   ones walk the committed tree.
 
@@ -78,15 +79,15 @@ file". 11.6's canonicalize-the-literal-once path reads this column; had it
 been a `::text` cast, the `char(5)` case the spec names would have been
 recorded backwards.
 
-**The oracle cannot see a collation divergence.** The fixture containers are
-the Alpine images, so the server is musl-libc: `datcollate` reads `en_US.utf8`
-and musl's `strcoll` is `strcmp`, so `'A' < 'a'` answers `t` here and would
-answer `f` on a glibc `en_US.utf8` server. This costs nothing — the register's
-collation row is closed by *statement* in the spec, not by code, because a
-plain dump records no collation (I32) — but it does mean **no test may read
-this oracle as evidence that text ordering agrees with PostgreSQL in
-general.** `meta.tsv` records `version()` and `datcollate` so the constraint is
-visible beside the answers.
+**The oracle could not see a collation divergence, and 11.2.2 is what that
+finding became.** The fixture containers were the Alpine images, so the server
+was musl-libc: `datcollate` read `en_US.utf8` while musl's `strcoll` is
+`strcmp`, and the text cells were the `C`-collation answers by accident of the
+base image, with nothing in the tree saying so. 11.2.2 moved the family to the
+Debian images and made the collation a field on the case, so both halves are
+now in the file. What stays closed by *statement* is the residue — a
+`default`-collation column with no `COLLATE` clause, whose collation a plain
+dump does not record (I32).
 
 **A type that does not exist is `E42704`, and that is the mechanism, not a
 hole.** Nothing in the case table is version-gated: `int4multirange` and

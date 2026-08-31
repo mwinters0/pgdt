@@ -2,10 +2,10 @@
 -- PostgreSQL database dump
 --
 
-\restrict jLMdbIORPSPLQBV1a3dpKkH0U8bHB8ZxESP0jmxMBvEcgsYEKt4FPPhCVfkUsau
+\restrict GGlJxgWq7jSRhmaNLR0nW8L9DmTHcjTxtGtnZhcaLGVZeTgr38LFYVJDsaCQcPJ
 
--- Dumped from database version 17.11
--- Dumped by pg_dump version 17.11
+-- Dumped from database version 17.11 (Debian 17.11-1.pgdg13+2)
+-- Dumped by pg_dump version 17.11 (Debian 17.11-1.pgdg13+2)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -251,8 +251,6 @@ COPY public.evt (id, region) FROM stdin;
 
 COPY public.feel (id, m) FROM stdin;
 1	sad
-2	ok
-3	happy
 \.
 
 
@@ -272,6 +270,8 @@ unrelated
 -- load via partition root public.feel
 
 COPY public.feel (id, m) FROM stdin;
+2	ok
+3	happy
 \.
 
 
@@ -300,5 +300,5 @@ COPY public.spread (id, m) FROM stdin;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict jLMdbIORPSPLQBV1a3dpKkH0U8bHB8ZxESP0jmxMBvEcgsYEKt4FPPhCVfkUsau
+\unrestrict GGlJxgWq7jSRhmaNLR0nW8L9DmTHcjTxtGtnZhcaLGVZeTgr38LFYVJDsaCQcPJ
 

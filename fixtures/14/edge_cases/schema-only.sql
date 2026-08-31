@@ -2,10 +2,10 @@
 -- PostgreSQL database dump
 --
 
-\restrict GzAznWqSLpCQ2XhA18iwgvEbkNztH8saNDMjZnKyHMecRtirOthNVfqb3nXjIh3
+\restrict LivsG8QabJ2HnaotTSUQltR7qro4c3h3RKtbfAhvogZxxHuQD5hFgYorku2TSe2
 
--- Dumped from database version 14.24
--- Dumped by pg_dump version 14.24
+-- Dumped from database version 14.24 (Debian 14.24-1.pgdg13+2)
+-- Dumped by pg_dump version 14.24 (Debian 14.24-1.pgdg13+2)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -204,5 +204,5 @@ ALTER TABLE ONLY logs.events
 -- PostgreSQL database dump complete
 --
 
-\unrestrict GzAznWqSLpCQ2XhA18iwgvEbkNztH8saNDMjZnKyHMecRtirOthNVfqb3nXjIh3
+\unrestrict LivsG8QabJ2HnaotTSUQltR7qro4c3h3RKtbfAhvogZxxHuQD5hFgYorku2TSe2
 

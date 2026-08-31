@@ -123,6 +123,33 @@ the output type cannot represent, and the message is the ordinary decode error
 above. Project the column away, or read it with `--schema-mode strings`, and
 the value comes back as the text the dump holds.
 
+### Text ordering is bytewise, and your server's may not be
+
+`<`, `<=`, `>` and `>=` on a text column compare **bytes**. PostgreSQL
+compares by the column's *collation*, and a plain dump does not record which
+collation the database used — so the two agree exactly where that collation is
+`C` or `POSIX`, and can differ anywhere else.
+
+On an `en_US.utf8` database — the usual default on a glibc server — `A` sorts
+*after* `a`, `a` sorts before `B`, and `é` sorts between `e` and `f`. Bytewise,
+`A` sorts before `a`, `B` before `a`, and `é` after every unaccented letter. A
+filter that orders a text column says so, once per query, on stderr:
+
+```sh
+pgdq query --source dump.sql --table public.people --filter 'name<B'
+# warning: `name` (text) is compared bytewise as text: PostgreSQL orders text
+# by collation, which a plain dump does not record, so this matches the server
+# only under C/POSIX
+```
+
+**`=` and `!=` are unaffected.** Every libc collation calls two different
+strings different, so equality is bytewise on the server too.
+
+The warning does not yet read the `COLLATE` clause a dump does carry for a
+column whose collation differs from its type's default, so it is printed for
+every text column a filter orders — including one declared `COLLATE "C"`, and
+including a `name` column, both of which pgdq in fact answers exactly.
+
 ### Writing a filter term
 
 A term is `<column><operator><value>`, and it can be written either way round:

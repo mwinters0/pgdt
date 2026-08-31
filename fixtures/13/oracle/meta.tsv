@@ -1,7 +1,9 @@
-server_version	13.23
+server_version	13.23 (Debian 13.23-1.pgdg13+1)
 server_version_num	130023
 datcollate	en_US.utf8
 datctype	en_US.utf8
+default_collversion	2.41
+platform	x86_64-pc-linux-gnu
 DateStyle	ISO, MDY
 IntervalStyle	postgres
 TimeZone	UTC
@@ -9,4 +11,4 @@ extra_float_digits	3
 bytea_output	hex
 array_nulls	on
 client_encoding	UTF8
-version	PostgreSQL 13.23 on x86_64-pc-linux-musl, compiled by gcc (Alpine 14.2.0) 14.2.0, 64-bit
+version	PostgreSQL 13.23 (Debian 13.23-1.pgdg13+1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit

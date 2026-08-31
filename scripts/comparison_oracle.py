@@ -19,9 +19,9 @@ this repo already reads that encoding in L1:
 - `literals.tsv` -- `type`, `literal`, `status`, `output`. Whether the server
                     *accepted* the input, and if so the exact `*_out` text it
                     canonicalizes to.
-- `comparisons.tsv` -- `type`, `left`, `right`, then one cell per operator in
-                    `OPERATORS` order. Each cell is `t`, `f`, `u` (the
-                    comparison yielded SQL NULL) or `E<sqlstate>`.
+- `comparisons.tsv` -- `type`, `left`, `right`, `collation`, then one cell per
+                    operator in `OPERATORS` order. Each cell is `t`, `f`, `u`
+                    (the comparison yielded SQL NULL) or `E<sqlstate>`.
 
 **`output` is the type's own output function, not a cast to `text`.** The two
 differ for `character(n)`: `bpchar::text` strips the blank padding, while
@@ -29,13 +29,23 @@ differ for `character(n)`: `bpchar::text` strips the blank padding, while
 the whole point of the `output` column is "what does this literal look like in
 the file", it is produced by `textin(<typoutput>(...))`, looked up per type.
 
-**The text answers here are bytewise, and that is an artifact of the
-apparatus.** The fixture containers are the Alpine images, so the server is
-musl-libc: `datcollate` reads `en_US.utf8` and musl's `strcoll` is `strcmp`,
-so this oracle cannot observe the collation divergence a glibc server would
-show. `meta.tsv` records `version()` and `datcollate` so a reader can see
-that; the collation row of the ordering register is closed by statement rather
-than by this file (`docs/design/roadmap-P11-typed-predicates.md`).
+**The text answers are glibc's, and the collation is a dimension of the case
+rather than an accident of the base image.** The fixture containers are the
+Debian (`-trixie`) images, so the server is glibc and `datcollate`'s
+`en_US.utf8` means glibc's collation. Every text pair is asked twice -- once
+under `COLLATE "C"`, once under `COLLATE "default"`, which is the database's
+own collation -- so one file holds both halves: pgdq compares bytewise, which
+*is* PostgreSQL's answer under `C` and is not under `en_US.utf8`. Equality
+comes along with it, and agrees under both, every libc collation being
+deterministic.
+
+**"Only glibc" is a limitation of the evidence, not a claim about servers.** A
+musl deployment orders text differently and this oracle does not speak for it.
+`meta.tsv` records the platform triple, `datcollate` and the default
+collation's `collversion` -- the server's own notion of "this collation may
+have changed underneath you" -- and `oracle_differences.py` guards all three,
+so a major generated on a different base is a reported fault rather than five
+hundred silent differences.
 """
 
 from __future__ import annotations
@@ -47,7 +57,7 @@ from dataclasses import dataclass, field
 # operator, and `<>` is the one the SQL standard writes.
 OPERATORS = ["<", "<=", ">", ">=", "=", "<>"]
 
-COMPARISON_COLUMNS = ["type", "left", "right", *OPERATORS]
+COMPARISON_COLUMNS = ["type", "left", "right", "collation", *OPERATORS]
 LITERAL_COLUMNS = ["type", "literal", "status", "output"]
 META_COLUMNS = ["key", "value"]
 
@@ -72,11 +82,28 @@ class TypeCases:
     `None` is SQL NULL, and it is deliberately in most `values` lists: the
     three-valued answers (`u`) are the oracle for the evaluator that lands
     later in this phase.
+
+    `collation` names a collation every comparison of this case is qualified
+    with -- `C` for bytewise, `default` for the database's own. It is a field
+    on the *case*, so a text pair asked under two collations is two cases,
+    rather than a pair of extra columns that would be empty for the twelve
+    hundred rows where collation means nothing. A collated case asks no
+    literals: an input function and an output function do not consult one.
     """
 
     type: str
     values: tuple[str | None, ...]
     inputs: tuple[str | None, ...] = field(default=())
+    collation: str | None = None
+
+
+#: The two collations a text case is asked under. `default` rather than the
+#: locale's own name (`en_US.utf8`) because `pg_catalog."default"` is the
+#: database's collation by definition and exists on every server, where a
+#: locale-named collation object exists only if `initdb` imported one. What it
+#: resolved to is `meta.tsv`'s `datcollate` and `default_collversion`, which
+#: the differ guards.
+COLLATIONS = ("C", "default")
 
 
 # The declared types the comparison register will be keyed on, spelled the way
@@ -208,6 +235,35 @@ TYPE_CASES: list[TypeCases] = [
         (r"\xgg", "abc"),
     ),
     TypeCases("text", ("", "A", "a", "hello", None)),
+    # The collation dimension. The same alphabet is asked twice -- bytewise
+    # under `C`, and under the database's own collation, which on this
+    # apparatus is glibc's `en_US.utf8` -- so the file holds both halves of
+    # the register's text row: pgdq's bytewise order *is* PostgreSQL's answer
+    # under `C`, and is not under a libc locale. All ordered pairs, as
+    # everywhere else, because whether the two orders coincide is the property
+    # under test and a ladder would presume it.
+    #
+    # Eight pairs earn the alphabet, four of which diverge on glibc 2.41 and
+    # four of which agree. They diverge because case is a lower-weight
+    # difference than letter (`A`/`a`, `a`/`B`), because an accent sorts with
+    # its base letter rather than after `z` (`é`/`f`), and because punctuation
+    # is ignored at the primary level (`_x`/`ax`). They agree on a space and a
+    # hyphen inside a word (`de luge`/`deluge`, `co-op`/`coop`), on an accent
+    # against its own base letter (`e`/`é`) and on a digit against a letter
+    # (`1`/`a`). **The agreeing pairs are kept deliberately**: a set in which
+    # every row diverged would read as "these two orders never coincide",
+    # which is false.
+    *(
+        TypeCases(
+            "text",
+            (
+                "1", "A", "a", "B", "e", "é", "f",
+                "_x", "ax", "co-op", "coop", "de luge", "deluge", None,
+            ),
+            collation=collation,
+        )
+        for collation in COLLATIONS
+    ),
     TypeCases("character varying(10)", ("", "a", "hello", None), ("12345678901",)),
     # `bpchareq` compares after `bcTruelen` strips the padding, and the dump
     # writes the padded form: `a` and `a` + nine blanks are equal, and the
@@ -346,10 +402,14 @@ TYPE_CASES: list[TypeCases] = [
 def literal_cases() -> list[tuple[str, str | None]]:
     """Every `(type, literal)` the literal table asks about, in file order.
 
-    A literal repeated between `values` and `inputs` is asked once.
+    A literal repeated between `values` and `inputs` is asked once, and a
+    collated case asks none at all -- parsing and output are collation-blind,
+    so its literals would be the same rows a second and third time.
     """
     out: list[tuple[str, str | None]] = []
     for case in TYPE_CASES:
+        if case.collation is not None:
+            continue
         seen: set[str | None] = set()
         for literal in (*case.values, *case.inputs):
             if literal in seen:
@@ -359,19 +419,19 @@ def literal_cases() -> list[tuple[str, str | None]]:
     return out
 
 
-def comparison_cases() -> list[tuple[str, str | None, str | None]]:
-    """Every `(type, left, right)` the comparison table asks about, in file
-    order: all ordered pairs of `values`, then each `input` against
+def comparison_cases() -> list[tuple[str, str | None, str | None, str | None]]:
+    """Every `(type, left, right, collation)` the comparison table asks about,
+    in file order: all ordered pairs of `values`, then each `input` against
     `values[0]` in both directions."""
-    out: list[tuple[str, str | None, str | None]] = []
+    out: list[tuple[str, str | None, str | None, str | None]] = []
     for case in TYPE_CASES:
         for left in case.values:
             for right in case.values:
-                out.append((case.type, left, right))
+                out.append((case.type, left, right, case.collation))
         anchor = case.values[0]
         for extra in case.inputs:
-            out.append((case.type, extra, anchor))
-            out.append((case.type, anchor, extra))
+            out.append((case.type, extra, anchor, case.collation))
+            out.append((case.type, anchor, extra, case.collation))
     return out
 
 
@@ -406,11 +466,16 @@ SET array_nulls = on;
 # `EXCEPTION` block is what turns each case into its own subtransaction, so
 # one bad literal cannot abort the surrounding `COPY`.
 FUNCTIONS_SQL = """\
-CREATE FUNCTION pg_temp.pgdq_cmp(typ text, lhs text, rhs text, op text)
+-- `coll` is SQL NULL for a case that names no collation, which is every case
+-- but the text ones: the comparison is then whatever the column's declared
+-- type gives it, which is what a bare column in a dump does.
+CREATE FUNCTION pg_temp.pgdq_cmp(typ text, lhs text, rhs text, op text, coll text)
 RETURNS text LANGUAGE plpgsql AS $pgdq$
-DECLARE r boolean;
+DECLARE
+    r boolean;
+    c text := CASE WHEN coll IS NULL THEN '' ELSE ' COLLATE ' || quote_ident(coll) END;
 BEGIN
-    EXECUTE format('SELECT ($1::%s) %s ($2::%s)', typ, op, typ)
+    EXECUTE format('SELECT ($1::%s%s) %s ($2::%s%s)', typ, c, op, typ, c)
         INTO r USING lhs, rhs;
     RETURN CASE WHEN r IS NULL THEN 'u' WHEN r THEN 't' ELSE 'f' END;
 EXCEPTION WHEN others THEN
@@ -469,6 +534,22 @@ COPY (
                      WHERE datname = current_database())),
     ('datctype', (SELECT datctype FROM pg_database
                    WHERE datname = current_database())),
+    -- The default collation's version, which for a libc provider is the libc
+    -- version verbatim: the server's own notion of "this collation may have
+    -- changed underneath you". Read off the collation object `initdb`
+    -- imported for the database's locale, because `pg_collation` records no
+    -- version for `default` itself and `pg_collation_actual_version(100)`
+    -- answers SQL NULL before v15.
+    ('default_collversion', (SELECT c.collversion
+                               FROM pg_collation c, pg_database d
+                              WHERE d.datname = current_database()
+                                AND c.collname = d.datcollate
+                                AND c.collprovider = 'c'
+                              LIMIT 1)),
+    -- The platform triple, parsed out of `version()` so the version number
+    -- itself may still differ between majors. This is the key that says which
+    -- libc the text answers were taken under.
+    ('platform', substring(version() from ' on ([^,]*)')),
     ('DateStyle', current_setting('DateStyle')),
     ('IntervalStyle', current_setting('IntervalStyle')),
     ('TimeZone', current_setting('TimeZone')),
@@ -500,15 +581,16 @@ def comparisons_script() -> str:
     operator."""
     rows = list(comparison_cases())
     cells = ",\n".join(
-        f"         pg_temp.pgdq_cmp(c.ty, c.l, c.r, {sql_literal(op)})" for op in OPERATORS
+        f"         pg_temp.pgdq_cmp(c.ty, c.l, c.r, {sql_literal(op)}, c.coll)"
+        for op in OPERATORS
     )
     return (
         SESSION_SQL
         + FUNCTIONS_SQL
-        + "\nCOPY (\n  SELECT c.ty, c.l, c.r,\n"
+        + "\nCOPY (\n  SELECT c.ty, c.l, c.r, c.coll,\n"
         + cells
         + "\n"
-        + _values_list(rows, "o, ty, l, r")
+        + _values_list(rows, "o, ty, l, r, coll")
         + "\n) TO STDOUT;\n"
     )
 

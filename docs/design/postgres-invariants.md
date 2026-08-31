@@ -1798,7 +1798,10 @@ the answer differs from a bytewise comparison (`'a' < 'B'` is true in
 `en_US.UTF-8`, false bytewise). pgdq therefore compares bytewise and
 **registers the divergence** rather than claiming agreement — see
 [`architecture.md`](architecture.md)'s "Predicates", which holds the ordering
-register.
+register. Both halves of that are in the tree rather than argued: the
+comparison oracle asks each text pair under `COLLATE "C"` and under the
+database's own collation, so `fixtures/<version>/oracle/comparisons.tsv` shows
+bytewise agreeing under the first and diverging under the second.
 
 Where the file *does* state the collation, the register says so instead: an
 explicit `COLLATE "C"`/`"POSIX"`, and a bare `name` column, agree with the
@@ -1996,12 +1999,12 @@ file.
 PostgreSQL in general: a type or operator no case constructs is not covered,
 and adding a case is the only answer available (`comparison_oracle.py`'s
 `TYPE_CASES`). It says nothing about a *minor* release, which the tree pins to
-one per major. And the text answers are musl-libc's — the Alpine fixture
-containers make `strcoll` `strcmp` — so it cannot speak for a collation
-divergence, which is why the register's collation row is closed by statement
-instead ([`architecture.md`](architecture.md), "The comparison oracle").
+one per major. And the text answers are **glibc's** — the Debian (`-trixie`)
+fixture containers, `datcollate` `en_US.utf8`, `collversion` 2.41 — so it does
+not speak for a musl deployment, which orders the same locale bytewise
+([`architecture.md`](architecture.md), "The comparison oracle").
 
-**Proof.** Measured, not argued: `fixtures/<13…18>/oracle/` holds 1224
+**Proof.** Measured, not argued: `fixtures/<13…18>/oracle/` holds 1616
 comparisons and 279 literals per major as the server itself answered them, and
 `fixtures/oracle-differences.tsv` holds every cell that moved between adjacent
 majors — 509 of them, all additive. The three transitions that exist are the
@@ -2025,3 +2028,49 @@ cd scripts && uv run oracle_differences.py
 A non-additive difference is the failure, and it is reported by case with both
 answers. Re-taking the oracles themselves is
 `uv run generate_fixtures.py --skip-dumps`.
+
+---
+
+## I36 — The version header's version string is the build's full version string, which a packager may extend
+
+**Claim.** `-- Dumped from database version <s>` and `-- Dumped by pg_dump
+version <s>` do not carry a bare `<major>.<minor>`. `<s>` is whatever the
+build's version string is, and a distribution that configures
+`--with-extra-version` appends a parenthetical to it — Debian's PGDG packages
+write `16.15 (Debian 16.15-1.pgdg13+2)`. A reader must therefore take the rest
+of the line verbatim and must not parse a number out of it.
+
+**Proof.** `RestoreArchive()` in `pg_backup_archiver.c` prints
+`AH->archiveRemoteVersion` and `AH->archiveDumpVersion`. The first is
+`AH->public.remoteVersionStr` (`pg_backup_db.c`), which is the connected
+server's `server_version` GUC; the second is `PG_VERSION`, assigned once in
+`_allocAH()`. `configure` defines that as `PG_VERSION="$PACKAGE_VERSION$withval"`
+when `--with-extra-version` is given and as `$PACKAGE_VERSION` when it is not
+— so both strings carry the packager's suffix on a build that sets it, and
+neither does on a vanilla build.
+
+**Observed.** Every fixture in `fixtures/` is a Debian (`-trixie`) build and
+carries the parenthetical on both lines; the koji sample, dumped by a build
+that sets no extra version, carries `16.14` on both. Both shapes are in the
+tree.
+
+**Scope limit.** It says nothing about the *content* of the suffix, which is a
+packager's to choose, nor about the two lines agreeing with each other — a
+dump taken by a client of a different build than the server writes two
+different strings.
+
+**Verified against.** 13.23, 14.24, 15.19, 16.15, 17.11, 18.6 (Debian PGDG),
+and `pg_dump` 16.14 (koji, no extra version).
+
+**Relied on by.** `crate::map`'s `version_header_field`, which keeps the rest
+of the line whole, and `DatabaseMetadata::{server_version, pg_dump_version}`,
+which are reported and never compared or ordered.
+
+**Re-verify.**
+
+```sh
+grep -n -A3 'archiveRemoteVersion' \
+  /mnt/wd12t/upstream/postgres/release-v<N>/src/bin/pg_dump/pg_backup_archiver.c
+head -9 fixtures/16/types/default.sql | grep 'Dumped'
+head -9 /mnt/wd12t/fedora/koji/koji-2026-07-23.dump | grep 'Dumped'
+```

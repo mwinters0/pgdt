@@ -74,8 +74,10 @@ class SyntheticTree(unittest.TestCase):
         self.tmp = TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.addCleanup(self.tmp.cleanup)
+        self.first_op = len(co.COMPARISON_COLUMNS) - len(co.OPERATORS)
         self.comparisons = [
-            [t, l, r, *(["t"] * len(co.OPERATORS))] for t, l, r in co.comparison_cases()
+            [t, l, r, c, *(["t"] * len(co.OPERATORS))]
+            for t, l, r, c in co.comparison_cases()
         ]
         self.literals = [[t, lit, "ok", "out"] for t, lit in co.literal_cases()]
         for version in ("13", "14"):
@@ -105,7 +107,7 @@ class SyntheticTree(unittest.TestCase):
 
     def test_one_moved_comparison_cell(self):
         rows = [list(row) for row in self.comparisons]
-        rows[0][3] = "f"
+        rows[0][self.first_op] = "f"
         self.write("14", comparisons=rows)
         found = od.differences(self.root)
         self.assertEqual(len(found), 1)
@@ -135,6 +137,20 @@ class SyntheticTree(unittest.TestCase):
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0].field, "output")
         self.assertEqual(found[0].verdict, od.NON_ADDITIVE)
+
+    def test_a_collated_cell_carries_its_collation(self):
+        # A text pair is asked under two collations, so `(type, left, right)`
+        # no longer names one cell: the difference has to say which.
+        rows = [list(row) for row in self.comparisons]
+        n = next(
+            i for i, row in enumerate(self.comparisons) if row[3] is not None
+        )
+        rows[n][self.first_op] = "f"
+        self.write("14", comparisons=rows)
+        found = od.differences(self.root)
+        self.assertEqual(len(found), 1)
+        self.assertIn(found[0].collation, co.COLLATIONS)
+        self.assertIn(f"COLLATE {found[0].collation}", od.describe(found[0]))
 
     def test_a_mis_aligned_file_is_refused_rather_than_zipped(self):
         rows = [list(row) for row in self.comparisons]
@@ -176,7 +192,7 @@ class SyntheticTree(unittest.TestCase):
         rows = [list(row) for row in self.comparisons]
         # A bytea literal's backslash is the reason the differences file needs
         # a COPY TEXT *encoder* and not `"\t".join`.
-        rows[0][3] = "f"
+        rows[0][self.first_op] = "f"
         self.write("14", comparisons=rows)
         found = od.differences(self.root)
         path = self.root / "oracle-differences.tsv"
@@ -189,7 +205,7 @@ class SyntheticTree(unittest.TestCase):
         path = self.root / "oracle-differences.tsv"
         path.write_text(od.render([]))
         rows = [list(row) for row in self.comparisons]
-        rows[0][3] = "f"
+        rows[0][self.first_op] = "f"
         self.write("14", comparisons=rows)
         out = io.StringIO()
         self.assertEqual(od.check(self.root, path, out=out), 1)
@@ -209,7 +225,7 @@ class SyntheticTree(unittest.TestCase):
 
     def test_a_non_additive_difference_fails_even_when_filed(self):
         rows = [list(row) for row in self.comparisons]
-        rows[0][3] = "f"
+        rows[0][self.first_op] = "f"
         self.write("14", comparisons=rows)
         path = self.root / "oracle-differences.tsv"
         out = io.StringIO()

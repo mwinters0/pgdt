@@ -2,10 +2,10 @@
 -- PostgreSQL database dump
 --
 
-\restrict WIHu4ZSw0vIPcKBDbmTnVerOmVZi8Uzah42E9fOpnp9ZNC4oHiMS34XPpZHrDHe
+\restrict 5XFHXsLFSgJ61IGyQM88GxP4erkJEdwaDv9fmYRIb6TyYimVR7J8Qk0MfRHjvaI
 
--- Dumped from database version 18.6
--- Dumped by pg_dump version 18.6
+-- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
+-- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -37,9 +37,9 @@ COPY public.widgets (id, name, description, is_active, created_at) FROM stdin;
 --
 
 COPY logs.events (event_id, widget_id, message, logged_at) FROM stdin;
-100	1	created	2026-08-27 16:26:19.434632+00
-101	2	\N	2026-08-27 16:26:19.434632+00
-102	3	updated\twith a tab char	2026-08-27 16:26:19.434632+00
+100	1	created	2026-08-31 14:44:03.337164+00
+101	2	\N	2026-08-31 14:44:03.337164+00
+102	3	updated\twith a tab char	2026-08-31 14:44:03.337164+00
 \.
 
 
@@ -215,5 +215,5 @@ COPY public.generated_column (id, a, b) FROM stdin;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict WIHu4ZSw0vIPcKBDbmTnVerOmVZi8Uzah42E9fOpnp9ZNC4oHiMS34XPpZHrDHe
+\unrestrict 5XFHXsLFSgJ61IGyQM88GxP4erkJEdwaDv9fmYRIb6TyYimVR7J8Qk0MfRHjvaI
 

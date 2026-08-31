@@ -82,6 +82,7 @@ COLUMNS = [
     "type",
     "left",
     "right",
+    "collation",
     "field",
     "old",
     "new",
@@ -90,11 +91,18 @@ COLUMNS = [
 
 #: Everything in `meta.tsv` that must be *identical* across majors for their
 #: answers to be comparable at all -- the session GUCs `comparison_oracle`
-#: pins, plus the database's collation. `server_version`, `server_version_num`
-#: and `version` are the ones expected to differ.
+#: pins, the database's collation, and the two keys that say what that
+#: collation *is*: the platform triple and the collation's own version.
+#: `server_version`, `server_version_num` and `version` are the ones expected
+#: to differ, and `version` is why the triple is a key of its own -- a major
+#: left on, or reverted to, a different base image would otherwise pass this
+#: guard in silence while `datcollate` still read `en_US.utf8` and meant a
+#: different order.
 APPARATUS_KEYS = (
     "datcollate",
     "datctype",
+    "default_collversion",
+    "platform",
     "DateStyle",
     "IntervalStyle",
     "TimeZone",
@@ -118,6 +126,11 @@ class Difference:
     left: str | None
     #: The right literal of a comparison; SQL NULL for a literal row.
     right: str | None
+    #: The collation the comparison was qualified with, where the case named
+    #: one; SQL NULL otherwise and for every literal row. It is part of the
+    #: cell's identity: a text pair is asked under two collations, so
+    #: `(type, left, right)` alone no longer names one cell.
+    collation: str | None
     #: The operator for a comparison; `status` or `output` for a literal row.
     field: str
     old: str | None
@@ -132,6 +145,7 @@ class Difference:
             self.type,
             self.left,
             self.right,
+            self.collation,
             self.field,
             self.old,
             self.new,
@@ -211,7 +225,7 @@ def alignment_problems(fixtures: Path = FIXTURES) -> list[str]:
         return problems
 
     expected = {
-        "comparisons.tsv": (co.comparison_cases(), 3, len(co.COMPARISON_COLUMNS)),
+        "comparisons.tsv": (co.comparison_cases(), 4, len(co.COMPARISON_COLUMNS)),
         "literals.tsv": (co.literal_cases(), 2, len(co.LITERAL_COLUMNS)),
     }
     for version in versions:
@@ -276,14 +290,15 @@ def diff_pair(older: str, newer: str, fixtures: Path = FIXTURES) -> list[Differe
 
     old_rows = load(older, "comparisons.tsv", fixtures)
     new_rows = load(newer, "comparisons.tsv", fixtures)
+    first_op = len(co.COMPARISON_COLUMNS) - len(co.OPERATORS)
     for a, b in zip(old_rows, new_rows):
         for n, op in enumerate(co.OPERATORS):
-            verdict = classify(a[3 + n], b[3 + n])
+            verdict = classify(a[first_op + n], b[first_op + n])
             if verdict:
                 out.append(
                     Difference(
-                        older, newer, "comparisons", a[0], a[1], a[2],
-                        op, a[3 + n], b[3 + n], verdict,
+                        older, newer, "comparisons", a[0], a[1], a[2], a[3],
+                        op, a[first_op + n], b[first_op + n], verdict,
                     )
                 )
 
@@ -297,14 +312,14 @@ def diff_pair(older: str, newer: str, fixtures: Path = FIXTURES) -> list[Differe
             # difference, not two.
             out.append(
                 Difference(
-                    older, newer, "literals", a[0], a[1], None,
+                    older, newer, "literals", a[0], a[1], None, None,
                     "status", a[2], b[2], verdict,
                 )
             )
         elif a[2] == "ok" and a[3] != b[3]:
             out.append(
                 Difference(
-                    older, newer, "literals", a[0], a[1], None,
+                    older, newer, "literals", a[0], a[1], None, None,
                     "output", a[3], b[3], NON_ADDITIVE,
                 )
             )
@@ -342,8 +357,8 @@ def read_committed(path: Path = DIFFERENCES) -> tuple[list[Difference], list[str
         if len(row) != len(COLUMNS):
             problems.append(f"{path}:{n} has {len(row)} columns, expected {len(COLUMNS)}")
             continue
-        if row[9] not in (ADDITIVE, NON_ADDITIVE):
-            problems.append(f"{path}:{n} has an unknown verdict {row[9]!r}")
+        if row[-1] not in (ADDITIVE, NON_ADDITIVE):
+            problems.append(f"{path}:{n} has an unknown verdict {row[-1]!r}")
             continue
         out.append(Difference.of_row(row))
     return out, problems
@@ -373,6 +388,8 @@ def compare_to_committed(
 
 def describe(d: Difference) -> str:
     where = f"{d.type} {d.left!r}" + (f" {d.field} {d.right!r}" if d.right is not None else f" {d.field}")
+    if d.collation is not None:
+        where += f" COLLATE {d.collation}"
     return f"{d.older}→{d.newer} {d.file} {where}: {d.old!r} → {d.new!r} ({d.verdict})"
 
 

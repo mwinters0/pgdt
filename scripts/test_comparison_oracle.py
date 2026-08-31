@@ -31,9 +31,38 @@ FIXTURES = REPO_ROOT / "fixtures"
 
 
 class CaseTable(unittest.TestCase):
-    def test_each_type_appears_once(self):
-        names = [case.type for case in co.TYPE_CASES]
-        self.assertEqual(sorted(names), sorted(set(names)))
+    def test_each_type_and_collation_appears_once(self):
+        # A type may appear more than once only by naming a different
+        # collation: two entries with the same pair would ask the server the
+        # same question twice and align the differ on rows that mean the same
+        # thing while a real case went missing.
+        keys = [(case.type, case.collation or "") for case in co.TYPE_CASES]
+        self.assertEqual(sorted(keys), sorted(set(keys)))
+
+    def test_a_collated_case_asks_no_literals(self):
+        # Parsing and output are collation-blind, so a collated case's
+        # literals would be the same rows a second and third time -- and
+        # `literals.tsv` carries no collation column to tell them apart.
+        types = [co.TypeCases("text", ("A", "a"), collation="C")]
+        original = co.TYPE_CASES
+        try:
+            co.TYPE_CASES = types
+            self.assertEqual(co.literal_cases(), [])
+            self.assertEqual(len(co.comparison_cases()), 4)
+        finally:
+            co.TYPE_CASES = original
+
+    def test_both_collations_are_asked_over_the_same_alphabet(self):
+        # The register's text row has two halves -- bytewise agrees under `C`
+        # and does not under a libc locale -- and they are only comparable if
+        # the same pairs are asked under both.
+        by_collation = {
+            case.collation: case.values
+            for case in co.TYPE_CASES
+            if case.collation is not None
+        }
+        self.assertEqual(sorted(by_collation), sorted(co.COLLATIONS))
+        self.assertEqual(len(set(by_collation.values())), 1)
 
     def test_every_type_has_at_least_one_value(self):
         for case in co.TYPE_CASES:
@@ -89,7 +118,14 @@ class SqlBuilding(unittest.TestCase):
     def test_comparison_script_asks_every_operator_once_per_row(self):
         script = co.comparisons_script()
         for op in co.OPERATORS:
-            self.assertIn(f"pg_temp.pgdq_cmp(c.ty, c.l, c.r, '{op}')", script)
+            self.assertIn(f"pg_temp.pgdq_cmp(c.ty, c.l, c.r, '{op}', c.coll)", script)
+
+    def test_a_collation_reaches_the_comparison_as_a_quoted_identifier(self):
+        # `quote_ident` rather than interpolation: `default` is a reserved
+        # word and `C` is upper-case, so both need quoting and neither may be
+        # spelled by hand in two places.
+        self.assertIn("quote_ident(coll)", co.FUNCTIONS_SQL)
+        self.assertIn("' COLLATE '", co.FUNCTIONS_SQL)
 
     def test_scripts_are_ordered_and_complete(self):
         for build in co.SCRIPTS.values():
@@ -147,7 +183,7 @@ class CommittedTree(unittest.TestCase):
             self.assertEqual(len(rows), len(cases), path)
             for row, case in zip(rows, cases):
                 self.assertEqual(len(row), width, (path, row))
-                self.assertEqual(tuple(row[:3]), case, path)
+                self.assertEqual(tuple(row[:4]), case, path)
 
     def test_literals_match_the_case_table_row_for_row(self):
         cases = co.literal_cases()
@@ -163,8 +199,9 @@ class CommittedTree(unittest.TestCase):
     def test_every_comparison_cell_is_a_legal_outcome(self):
         for version in oracle_versions():
             path = FIXTURES / version / co.ORACLE_DIRNAME / "comparisons.tsv"
+            first_op = len(co.COMPARISON_COLUMNS) - len(co.OPERATORS)
             for row in co.parse_tsv(path.read_text()):
-                for cell in row[3:]:
+                for cell in row[first_op:]:
                     self.assertTrue(
                         cell in ("t", "f", "u") or self.is_sqlstate(cell),
                         (path, row[:3], cell),
@@ -188,8 +225,24 @@ class CommittedTree(unittest.TestCase):
             self.assertEqual(meta["server_version"].split(".")[0], version)
             # The collation and the libc behind it are what say how far the
             # text answers can be trusted -- see comparison_oracle's docstring.
-            for key in ("datcollate", "version", "DateStyle", "TimeZone"):
+            for key in (
+                "datcollate",
+                "default_collversion",
+                "platform",
+                "version",
+                "DateStyle",
+                "TimeZone",
+            ):
                 self.assertIn(key, meta)
+
+    def test_every_oracle_was_taken_on_the_same_libc(self):
+        # The text answers are glibc's by choice, and that is only true while
+        # every major's container is the Debian one -- `datcollate` reads
+        # `en_US.utf8` on musl too and means a different order there.
+        for version in oracle_versions():
+            path = FIXTURES / version / co.ORACLE_DIRNAME / "meta.tsv"
+            meta = dict(tuple(row) for row in co.parse_tsv(path.read_text()))
+            self.assertEqual(meta["platform"], "x86_64-pc-linux-gnu", path)
 
     @staticmethod
     def is_sqlstate(cell: str | None) -> bool:
