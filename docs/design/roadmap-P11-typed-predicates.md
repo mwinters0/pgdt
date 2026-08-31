@@ -638,8 +638,23 @@ is out-of-band work, not part of this phase.
 The field is always in canonical `*_out` form, so the **literal** is decoded
 once when the block resolves and rendered back into that same form; the per-row
 comparison stays bytewise. `--filter 'v=1.5'` on a `numeric(10,2)` column
-becomes a bytewise compare against `1.50`, a `char(5)` literal is padded, and a
-`timestamp` literal renders `2020-01-01 00:00:00`.
+becomes a bytewise compare against `1.50`, and a `timestamp` literal renders
+`2020-01-01 00:00:00`.
+
+**`char(n)` needs the field narrowed per row, and is a third category.** Padding
+the literal to `n` is sound for `=` and unsound for `<`: padding to a fixed
+width is a bijection on the trailing-blank equivalence classes, so equality
+survives it, but a byte below `0x20` sorts *under* the pad space where the
+server, having stripped the pad, ranks the longer string above (I38's
+corollary). The canonicalization that holds for both operators is to trim
+trailing blanks from **both** sides — which touches the field per row, the thing
+this section exists to avoid. It is admissible because it is not a decode: a
+reverse scan for `0x20` yielding a shorter length, then a compare of that many
+bytes. No allocation, no `*_in`, and only on a `char(n)` column. So the plan
+carries three canonicalizations, not two states: decode per row (below),
+canonicalize the literal once (everything else), and narrow the field per row
+(`char(n)` alone). **11.6 owns it**, and closing it is what retires
+`OrderingDivergence::BlankPadded`, which therefore lives exactly one slice.
 
 **Two types in scope are exceptions**, and the comparison plan carries the flag
 that says so:
@@ -685,10 +700,10 @@ here.
 | **11.3** | The comparison plan moves to L2 | `ordering_register` out of `predicate.rs`, keyed on the declared type, carried in `ResolvedSchema`. **No answer changes** — that is the review property. |
 | **11.2.1** | The register-to-oracle reconciliation | Every arm of the comparison register resolves to at least one oracle case, and every oracle case to an arm; failing on either direction. **Earned, not planned** — see below. |
 | **11.11** | The declared collation is read | `COLLATE` captured in the preamble parser instead of stopped at, and carried to the register: explicit `C`/`POSIX` and a bare `name` register *Agrees*, an explicit non-`C` clause *Diverges*, no clause on a `default`-collation type *unknown, therefore diverges*. Changes no comparison — only which columns are told they diverge. |
-| **11.11.1** | The collated fixture columns | A `t_collate` table in the `types` schema — an explicit `COLLATE "C"`, a non-`C` collation, a `name` column, a collated domain — regenerated across six majors, so the *agreeing* halves of 11.11's collation rule have a real dump behind them. No library code. **Earned, not planned** — see below. |
+| **11.11.1** | The collated fixture columns | A `t_collate` table in the `types` schema — `COLLATE "C"`, `COLLATE "en_US.utf8"`, `COLLATE "ucs_basic"`, a bare `name` column and a domain `AS text COLLATE "C"` — regenerated across six majors, so the *agreeing* halves of 11.11's collation rule have a real dump behind them; plus `oracle_register.py` taught the collation dimension, so the three collated arms stop collapsing to one; `character(10)` asked under both collations and given a `"a\t"` value, putting I38's ordering corollary in the oracle and sparing 11.6 a regeneration; a composite with a collated attribute, closing I37's last unobserved emission site; one assertion per column in `tests/ordering.rs`; and `generate_fixtures.py` reporting its own elapsed time, with the recorded figure in `architecture.md` and a stale-past-30-minutes warning. No library code. **Earned, not planned** — see below. |
 | **11.4** | Enum and bare `numeric` | The two rows the re-key was for: declaration order, and arbitrary-precision decimal with all three specials. |
 | **11.5** | The text-held type queue | `interval` (with v17 infinities), `time with time zone`, `inet`/`cidr`/`macaddr`/`macaddr8`, `jsonb`. Repetitive and additive; the oracle checks each. |
-| **11.6** | Typed `=` / `!=` | Routed through the now-complete plan, with the canonicalize-once fast path and its two exceptions. Renames the note channel. |
+| **11.6** | Typed `=` / `!=` | Routed through the now-complete plan, with the canonicalize-once fast path, its two decode-per-row exceptions and the `char(n)` trim — which retires `OrderingDivergence::BlankPadded` and gives `character` the same three collation arms `text` has. Renames the note channel. |
 | **11.7** | Three-valued evaluation | `Expr`, the `True`/`False`/`Unknown` domain, `IS DISTINCT FROM`. Library only. |
 | **11.8** | `--where` | The expression grammar, its own CLI module, leaf delegated to `parse_filter`. |
 | **11.9** | The nested literal input grammar | Parser for the `array_in`/`record_in`/`range_in` supersets — **three grammars, not one** — checked against the oracle's malformed cases. No comparison yet. |
@@ -734,6 +749,160 @@ the same reason those did. 11.11 ships with unit tests over the exact strings
 `pg_dump` writes — pinned by I37, which was taken from the source and observed
 on a throwaway container — and with the *divergent* halves exercised end to end
 on the existing `t_text`.
+
+*Rejected: regenerating the fixtures first, so no slice's code lands ahead of
+its evidence.* This phase orders evidence first and 11.1, 11.2 and 11.2.2 all
+obeyed it, so 11.11 is the one place it inverts — and the inversion is still
+right. The two halves ask different review questions: "did exactly the right
+columns change verdict" against "is this the DDL a real server writes". And a
+regeneration rewrites all 109 files under `fixtures/` whether or not their
+schema moved, because `\restrict` carries a fresh random token per dump, so a
+combined diff buries the library change in churn that says nothing about it.
+The agreeing cases are not unevidenced either: I37 records the clause's emission
+condition, placement and spelling from `pg_dump`'s source and observed on a live
+server at all six majors, which is the stronger of the two kinds of evidence.
+11.11.1 adds a regression guard on top of it rather than the first proof.
+
+**Which five columns, and why no ICU.** Every fixture database is `en_US.utf8`
+at all six majors (`fixtures/<v>/oracle/meta.tsv`, `datcollate`), so a no-clause
+`text` column already carries the non-bytewise case and `COLLATE "C"` really
+does emit a clause. `en_US.utf8` named explicitly emits one too — `pg_dump`
+compares collation *OIDs*, not semantics, so a column pinned to the collation
+that happens to be the default is still not the default — and it is the only
+genuinely non-bytewise choice available at every major without generating a
+locale. `ucs_basic` earns its column for the opposite reason: it is
+`collcollate = C`, bytewise in fact, and not named `C`, so the register must
+call it divergent. It is the one place the asymmetry rule is pinned by a dump
+rather than by a sentence. ICU stays out at both ends — `unicode` and the
+`*-x-icu` family carry a `collversion` that moves with the ICU release, which
+is a new apparatus key guaranteed to drift, and the oracle already refused a
+locale-named collation for the same class of reason.
+
+**Why the reconciliation comes along.** 11.11 split one `builtin_scalar` arm
+into three that branch on the clause, and `oracle_register.py` joins on the
+declared type alone — so the three collapse to one `text` arm and a fourth
+could be added with nothing behind it. The oracle already carries the
+dimension, since every text pair is asked under `COLLATE "C"` and under
+`default`; what is missing is that `TypeCases.collation` describes the
+comparison rather than the column, and the join never reads it. Both halves are
+apparatus with no library code, which is the property that separated 11.11.1
+from 11.11 in the first place, so they share a review without costing the
+distinction the split was for.
+
+**Three arms, two case groups, and the mapping that joins them.** The oracle
+asks each text pair under `COLLATE "C"` and under `COLLATE "default"` only, so
+the non-`C`-clause arm has no group of its own. It joins to the `default` group,
+as the no-clause arm does: "asked under something that is not `C`" is one
+population, and the database's own collation is a member of it. *Rejected:
+asking a third collation by name.* `datcollate` is `en_US.utf8` at all six
+majors, so `COLLATE "en_US.utf8"` and `COLLATE "default"` are the same
+collation — every added cell would be byte-identical to one already in the file.
+**The mapping's soundness is asserted, not assumed**: it holds only while the
+database's collation is not itself bytewise, so the check reads `datcollate`
+from `meta.tsv` and fails if it is `C` or `POSIX`. Without that, an apparatus
+initdb'd under `C` would invert the `default` group's meaning and the join would
+go on passing while meaning the opposite thing.
+
+**`collation=None` is made to mean one thing, and the case table is edited to
+keep it that way.** It currently means two: for the plain `text` and `character
+varying(10)` groups, asked with no qualifier, the server uses the database's
+collation — the *divergent* population, identical in meaning to `"default"` —
+while for `name` it is the *agreeing* one, that type's own default being `C`. A
+join that resolved `None` per type would be a second copy of the register's
+type-default rule living in Python, which is the fork 11.2.1 exists to prevent,
+arriving from inside the check. So the plain `text` and `character varying(10)`
+groups state `collation="default"` explicitly, and `None` is left to mean **the
+register does not branch on the clause for this type**. That covers `name` and every
+non-collatable type at once, and it leaves a collation label only where the
+register genuinely branches.
+
+**`character(10)` is asked under both collations too, ahead of 11.6.** It looks
+today like an instance of the `None` rule — the register is clause-blind there,
+one arm, no branch — and it stops being one the moment 11.6 lands: a `char(n)`
+compared *trimmed under its collation* splits into the same three arms as
+`text`. Its cases are labelled now, in the regeneration that is already
+happening, rather than costing 11.6 a six-major run of its own. The added rows
+carry real information, unlike the third collation rejected above: under
+`default` a
+`char` comparison runs the locale over the trimmed text, which nothing in the
+file holds. `name` is then the one deliberate `None` among collatable types.
+
+*Rejected: relabelling `name`'s cases `collation="C"`.* It is true, and it is
+the register's claim rather than the oracle's observation. A `name` case asked
+under an explicit `COLLATE "C"` is a different question from one asked bare, and
+only the bare one shows what a `name` column does.
+
+**The `character(10)` cases gain `"a\t"`.** They are `("a", "a" + nine blanks,
+"hello", None)` today, which pins the equality half of I38 — a padded and an
+unpadded value are equal — and cannot reach the ordering half at all, since
+pad-and-compare and trim-and-compare disagree only against a byte below `0x20`
+and every value there is printable. Two rows appear, against `"a"` and against
+the padded `"a"`, and they are exactly that disagreement. It lands here rather
+than in 11.6 because it is oracle apparatus and this slice already regenerates
+all six majors: 11.6 then opens with its evidence committed instead of producing
+it as a side effect of the change it is meant to check, and the differ sweeps
+the corollary across 13–18, which the single probe behind I38 cannot claim.
+`escape_copy_text` already maps `"\t"`, so the TSV needs no format work.
+
+**A composite with a collated attribute closes I37's last unobserved site.**
+That entry's **Observed** paragraph covers a `CREATE TABLE` column only; the
+`CREATE DOMAIN` and `dumpCompositeType` emissions rest on source greps, and the
+container that produced even the one observation is gone. `t_collate`'s domain
+covers the second site; a `CREATE TYPE public.collated_pair AS (plain text, c
+text COLLATE "C")` with a column holding it covers the third — which 11.11 has
+already leaned on, having widened `TypeKind::Composite`'s field list to
+`Vec<ColumnDef>` on the strength of it. 11.10 inherits the fixture for a
+composite whose field carries a collation boundary. I37's **Observed** paragraph
+is rewritten to cite the committed dumps instead of a throwaway container.
+
+**`t_collate` is populated with the divergent alphabet, not with placeholder
+values.** The Rust assertions above test *notes*, which are independent of the
+data, so any values would pass them and it would be easy to pick a set that can
+never support a stronger test. The rows are `A`, `a`, `B`, `é`, `f`, `_x`, `ax`,
+`''` and a NULL, replicated across all five columns — the pairs the oracle
+already identifies as divergent on glibc 2.41, so `--filter 'v_text_c>A'` and
+its `en_US.utf8` sibling genuinely return different rows. Deciding this after
+the regeneration costs a second one.
+
+**A non-additive cross-major difference is a stop, not a fix.** The new case
+groups have never been swept, and a `char` comparison asked under a locale is
+the shape most likely to move a cell from one *answer* to another rather than
+from unsupported to supported — which is what I35 says never happens.
+`oracle_differences.py` fails on it either way; what needs saying ahead of time
+is that the response is to re-plan, never to widen the assertion or drop the
+case that tripped it. The published counts move in the same pass — `1616 typed
+comparisons`, `509 differences`, `33 arms, 50 case types`, in
+[`../status/STATUS.md`](../status/STATUS.md) and the differences count also in
+[`architecture.md`](architecture.md) — and each is read out of the regenerated
+file rather than recomputed by hand.
+
+**The baseline regeneration is also the timing probe, and the number is
+recorded.** Nothing records how long a six-major run takes, and the slice runs
+one twice. The baseline run above supplies the figure as a side effect of work
+already required; it goes in [`architecture.md`](architecture.md), "Fixtures",
+beside the mechanism. **The trigger is mechanical, not a comment**:
+`generate_fixtures.py` prints its total elapsed time at the end, and past
+**30 minutes** prints that the recorded figure is stale and must be updated —
+30 being the threshold at which a job stops fitting inside one session and has
+to be handed off. A prose "update this if it ever gets slower" would be a
+trigger nobody reads at the moment it fires. If the baseline run itself comes in
+near or over the threshold, the second regeneration is dispatched as a detached
+job rather than run inline.
+
+**The regeneration is run twice, and the first run is the instrument.** 11.11.1
+opens by regenerating with `fixture_schema_types.sql` *unchanged* and asserting
+that `git diff -I'^\\(un\\)?restrict '` is empty. That proves the token is the
+only nondeterminism in a plain dump — the assumption this split's whole argument
+rests on, and one nothing has tested — and it leaves a baseline against which
+the second regeneration's diff is exactly the new table. A non-empty result is a
+finding worth more than the slice, and the plan changes rather than proceeds.
+
+**The five columns are asserted from Rust, in `tests/ordering.rs`.** "No library
+code" is about `pgdump_query/src/`, as it was for 11.1 and 11.2.2; a fixture
+nothing reads is inert, and the reconciliation's claim is coverage — that an arm
+has a case — not that the arm answers correctly. One assertion per column:
+`COLLATE "C"` and the bare `name` produce no note, `en_US.utf8` and `ucs_basic`
+each produce one, and the domain inherits `C` and is silent.
 
 **11.11 is discovered scope, not a split**, so it takes the next free number
 rather than hanging off a parent; the table is the schedule, which is why it

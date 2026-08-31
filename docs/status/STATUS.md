@@ -178,17 +178,28 @@ progress.
       Notes:
       [`../design/roadmap-P11.11-declared-collation-notes.md`](../design/roadmap-P11.11-declared-collation-notes.md)
 - [ ] **11.11.1** The collated fixture columns — a `t_collate` table in the
-      `types` schema and a regeneration across six majors, so the *agreeing*
-      halves of 11.11's collation rule have a real dump behind them rather
-      than a unit test. No library code. Earned on entry to 11.11, whose
+      `types` schema (`COLLATE "C"`, `COLLATE "en_US.utf8"`, `COLLATE
+      "ucs_basic"`, a bare `name` column, a domain `AS text COLLATE "C"`) and a
+      regeneration across six majors, so the *agreeing* halves of 11.11's
+      collation rule have a real dump behind them rather than a unit test; plus
+      `oracle_register.py` taught the collation dimension, so 11.11's three
+      collated arms stop collapsing to one; `character(10)` asked under both
+      collations and given a `"a\t"` value, putting I38's ordering corollary
+      in the oracle and sparing 11.6 a regeneration; a composite with a
+      collated attribute, closing I37's last unobserved emission site; one
+      assertion per column in `tests/ordering.rs`; and `generate_fixtures.py`
+      reporting its own elapsed time, with the recorded figure in
+      `architecture.md` and a stale-past-30-minutes warning. No library code. Earned on entry to 11.11, whose
       divergent halves the existing `t_text` already exercises.
 - [ ] **11.4** Enum and bare `numeric` — declaration order for the enum;
       arbitrary-precision decimal carrying `Infinity`, `-Infinity` and `NaN`.
 - [ ] **11.5** The text-held type queue — `interval` (with v17 infinities),
       `time with time zone`, `inet`/`cidr`/`macaddr`/`macaddr8`, `jsonb`.
 - [ ] **11.6** Typed `=` / `!=` — routed through the comparison plan, with the
-      canonicalize-the-literal-once fast path and its two exceptions;
-      `ordering_notes` becomes `comparison_notes`.
+      canonicalize-the-literal-once fast path, its two decode-per-row
+      exceptions and the `char(n)` trim, which retires
+      `OrderingDivergence::BlankPadded`; `ordering_notes` becomes
+      `comparison_notes`.
 - [ ] **11.7** Three-valued evaluation — `Expr`, the `True`/`False`/`Unknown`
       domain, `IS DISTINCT FROM`. Library only.
 - [ ] **11.8** `--where` — the expression grammar in its own CLI module, leaf
@@ -307,19 +318,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-**11.11's box is ticked without a fixture behind its agreement cases.** The
-slice's spec row asks for the clause to be read and carried to the register,
-and it is; but no file under `fixtures/` carries a `COLLATE` clause or a `name`
-column, so the two verdicts that changed *to agreement* — the half where a
-wrong answer is silent rather than merely noisy — are pinned by unit tests
-against the strings a real `pg_dump` writes (I37, taken from source and observed
-on a throwaway container) rather than by a dump in the tree. The fixture work is
-written into the spec's slice table as **11.11.1** and sits unticked in the
-checklist above. It was split off because adding it rewrites *every* file under
-`fixtures/` — the `\restrict` token is fresh per dump — and that diff cannot
-share a review with a library change whose question is "did exactly the right
-columns change verdict". **Reconsidering it** means either running the
-regeneration before the tick, or accepting that a phase's evidence may lag its
-code by one slice; the second is what 11.1, 11.2 and 11.2.2 already established
-in the other direction, with evidence leading. Nothing else in the slice depends
-on which way it goes.
+Nothing is open.

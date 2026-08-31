@@ -106,10 +106,15 @@ of two.
 
 ## What later slices inherit
 
-**11.6 owns the `char(n)` trim.** See above. Its "canonicalize the literal
-once" fast path is where blank-padding a `char(n)` literal already belongs; the
-same canonicalization settles ordering, and `OrderingDivergence::BlankPadded`
-is the row it would close.
+**11.6 owns the `char(n)` trim**, and it is a trim, not the padding the spec
+first prescribed. Padding the literal to `n` is sound for `=` and unsound for
+`<`: a byte below `0x20` sorts under the pad space, where the server, having
+stripped the pad, ranks the longer string above (I38's corollary). Trimming
+both sides holds for both operators, and it is admissible on the per-row path
+because it is a reverse scan for `0x20` and a shorter length, not a decode —
+the spec's third canonicalization category. Closing it retires
+`OrderingDivergence::BlankPadded` and gives `character` the same three
+collation arms `text` has.
 
 **11.10 gets a collation per composite field for free**, and `OrderingNote`'s
 path — which the spec says that slice adds — is where a `text[]` column's

@@ -2066,6 +2066,17 @@ collation `c`, which the built-in is not. Answering "agrees" wrongly is the one
 direction of error this register must not make, so anything it cannot resolve
 to the two built-ins diverges.
 
+**Two collations are bytewise in fact and divergent by this rule**, and that is
+the asymmetry costing what it is supposed to cost rather than a defect.
+`pg_catalog."ucs_basic"` is defined with `collcollate = C`, and glibc's
+`C.utf8` sorts by code point; both answer `'B' < 'a'` exactly as `C` does, and
+both are reported divergent because neither is named `C` or `POSIX`. Closing
+either would mean the register deciding a collation's *behaviour* from
+somewhere other than its name — for `ucs_basic` a second hardcoded name, for
+`C.utf8` a claim about a libc this file cannot see. The user's remedy is the
+one the warning already offers: the answers are right, and the note says the
+comparison is bytewise.
+
 **`character(n)` never consults the clause**, and that is the sharp case. Its
 values are written blank-padded to `n` while `bpcharcmp` strips trailing blanks
 before it looks at a collation at all (I38) — so a field whose significant text

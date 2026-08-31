@@ -2200,6 +2200,19 @@ for `'hi'`.
 trimmed, so neither half applies to them. It is about the comparison operators;
 `length()` and the output function have their own rules.
 
+**Corollary: padding the literal is sound for `=` and unsound for `<`.** Padding
+both sides to `n` and comparing bytewise agrees with trim-then-compare for
+equality — padding to a fixed width is a bijection on the trailing-blank
+equivalence classes — but not for ordering, because a byte below `0x20` sorts
+under the pad space while the server, having stripped the pad, ranks the longer
+string above the shorter. Trimming both sides is the canonicalization that holds
+for both operators. Probed on 16.15:
+
+```
+select ('ab'||chr(9))::char(3) > 'ab'::char(3);                     -- t
+select rpad('ab'||chr(9),3,' ') > rpad('ab',3,' ') COLLATE "C";     -- f
+```
+
 **Verified against.** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 — `bcTruelen`
 is called by every `bpchar` comparison in all six.
 
