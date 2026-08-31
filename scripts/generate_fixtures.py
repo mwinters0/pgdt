@@ -9,6 +9,14 @@ process, per this repo's CPU-heavy-machine / glibc-arena caution), loads one
 of two fixture schemas, runs pg_dump across each schema's own flag matrix, and
 writes the output under fixtures/<major-version>/<schema>/<flag-set>.sql.
 
+It also generates the **comparison oracle** -- what the server itself answers
+for a table of typed comparisons, written under
+fixtures/<major-version>/oracle/ (docs/design/architecture.md, "The comparison
+oracle"). That pass lives here rather than in its own script because it runs
+against the `types` schema's own database, so it must see the same DDL, in the
+same container, as fixtures/<major-version>/types/*.sql. The case table and the
+SQL are scripts/comparison_oracle.py.
+
 Requires `docker` (aliased to `nerdctl` in this environment) runnable via
 passwordless `sudo`.
 """
@@ -20,6 +28,8 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+
+import comparison_oracle
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
@@ -276,24 +286,79 @@ def stop_container(name: str) -> None:
     subprocess.run(DOCKER + ["rm", "-f", name], capture_output=True)
 
 
-def generate_for_version(version: str, image: str, schemas: list[str]) -> None:
+# The oracle's cases name user-defined types -- the enum, the composites, the
+# two user-defined ranges, the domains -- that exist only in this schema, so
+# it is the database the oracle is asked in.
+ORACLE_SCHEMA = "types"
+
+
+def write_oracle(name: str, version: str) -> None:
+    """Run the comparison oracle's scripts against a loaded ORACLE_SCHEMA
+    database and write each one's `COPY ... TO STDOUT` output verbatim.
+
+    One `psql` per file: each script is self-contained (its helpers live in
+    `pg_temp`, which dies with the session), and psql is quiet so that the
+    only thing on stdout is the COPY stream.
+    """
+    out_dir = FIXTURES_DIR / version / comparison_oracle.ORACLE_DIRNAME
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for filename, build in comparison_oracle.SCRIPTS.items():
+        result = run(
+            DOCKER
+            + [
+                "exec",
+                "-i",
+                name,
+                "psql",
+                "-U",
+                DB_USER,
+                "-d",
+                DB_NAME,
+                "-q",
+                "-X",
+                "-v",
+                "ON_ERROR_STOP=1",
+            ],
+            input=build(),
+            text=True,
+            stdout=subprocess.PIPE,
+        )
+        out_path = out_dir / filename
+        out_path.write_text(result.stdout)
+        rows = result.stdout.count("\n")
+        print(f"  oracle/{filename}: {out_path.relative_to(REPO_ROOT)} ({rows} rows)")
+
+
+def generate_for_version(
+    version: str, image: str, schemas: list[str], dumps: bool, oracle: bool
+) -> None:
     print(f"== {version} ({image}) ==")
     name = start_container(version, image)
     try:
         wait_ready(name)
-        for schema in schemas:
-            create_fixture_db(name, schema)
-            for flag_name, flag_spec in SCHEMAS[schema].items():
-                if isinstance(flag_spec, tuple):
-                    min_version, flags = flag_spec
-                    if int(version) < int(min_version):
-                        continue
-                else:
-                    flags = flag_spec
-                out_path = dump_flag_set(name, version, schema, flag_name, flags)
-                size = out_path.stat().st_size
-                print(f"  {schema}/{flag_name}: {out_path.relative_to(REPO_ROOT)} ({size} bytes)")
-            drop_fixture_db(name)
+        if dumps:
+            for schema in schemas:
+                create_fixture_db(name, schema)
+                for flag_name, flag_spec in SCHEMAS[schema].items():
+                    if isinstance(flag_spec, tuple):
+                        min_version, flags = flag_spec
+                        if int(version) < int(min_version):
+                            continue
+                    else:
+                        flags = flag_spec
+                    out_path = dump_flag_set(name, version, schema, flag_name, flags)
+                    size = out_path.stat().st_size
+                    print(
+                        f"  {schema}/{flag_name}: "
+                        f"{out_path.relative_to(REPO_ROOT)} ({size} bytes)"
+                    )
+                drop_fixture_db(name)
+        if oracle:
+            create_fixture_db(name, ORACLE_SCHEMA)
+            try:
+                write_oracle(name, version)
+            finally:
+                drop_fixture_db(name)
     finally:
         stop_container(name)
 
@@ -314,12 +379,31 @@ def main() -> int:
         choices=sorted(SCHEMAS),
         help="limit to specific fixture schema(s); default: all schemas",
     )
+    parser.add_argument(
+        "--skip-dumps",
+        action="store_true",
+        help="don't run pg_dump at all; useful with the oracle, which is a "
+        "separate pass over the same containers",
+    )
+    parser.add_argument(
+        "--skip-oracle",
+        action="store_true",
+        help="don't regenerate fixtures/<version>/oracle/",
+    )
     args = parser.parse_args()
     versions = args.versions or sorted(ROUTINE_VERSIONS)
     schemas = args.schemas or sorted(SCHEMAS)
+    if args.skip_dumps and args.skip_oracle:
+        parser.error("--skip-dumps and --skip-oracle together leave nothing to do")
 
     for version in versions:
-        generate_for_version(version, ROUTINE_VERSIONS[version], schemas)
+        generate_for_version(
+            version,
+            ROUTINE_VERSIONS[version],
+            schemas,
+            dumps=not args.skip_dumps,
+            oracle=not args.skip_oracle,
+        )
 
     print("done.")
     return 0

@@ -1,0 +1,12 @@
+server_version	17.11
+server_version_num	170011
+datcollate	en_US.utf8
+datctype	en_US.utf8
+DateStyle	ISO, MDY
+IntervalStyle	postgres
+TimeZone	UTC
+extra_float_digits	3
+bytea_output	hex
+array_nulls	on
+client_encoding	UTF8
+version	PostgreSQL 17.11 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit

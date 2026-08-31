@@ -1,0 +1,12 @@
+server_version	18.6
+server_version_num	180006
+datcollate	en_US.utf8
+datctype	en_US.utf8
+DateStyle	ISO, MDY
+IntervalStyle	postgres
+TimeZone	UTC
+extra_float_digits	3
+bytea_output	hex
+array_nulls	on
+client_encoding	UTF8
+version	PostgreSQL 18.6 on x86_64-pc-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit

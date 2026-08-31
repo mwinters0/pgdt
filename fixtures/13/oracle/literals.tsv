@@ -1,0 +1,279 @@
+boolean	false	ok	f
+boolean	true	ok	t
+boolean	\N	ok	\N
+boolean	t	ok	t
+boolean	yes	ok	t
+boolean	maybe	E22P02	\N
+smallint	-32768	ok	-32768
+smallint	0	ok	0
+smallint	32767	ok	32767
+smallint	\N	ok	\N
+smallint	32768	E22003	\N
+integer	-2147483648	ok	-2147483648
+integer	0	ok	0
+integer	2147483647	ok	2147483647
+integer	\N	ok	\N
+integer	2147483648	E22003	\N
+integer	 42 	ok	42
+integer	1e3	E22P02	\N
+bigint	-9223372036854775808	ok	-9223372036854775808
+bigint	0	ok	0
+bigint	9223372036854775807	ok	9223372036854775807
+bigint	\N	ok	\N
+bigint	9223372036854775808	E22003	\N
+real	-Infinity	ok	-Infinity
+real	-0	ok	-0
+real	0	ok	0
+real	1.5	ok	1.5
+real	Infinity	ok	Infinity
+real	NaN	ok	NaN
+real	\N	ok	\N
+real	1e400	E22003	\N
+real	inf	ok	Infinity
+double precision	-Infinity	ok	-Infinity
+double precision	-0	ok	-0
+double precision	0	ok	0
+double precision	1.5	ok	1.5
+double precision	Infinity	ok	Infinity
+double precision	NaN	ok	NaN
+double precision	\N	ok	\N
+double precision	1e400	E22003	\N
+double precision	inf	ok	Infinity
+numeric(10,2)	-1.50	ok	-1.50
+numeric(10,2)	0	ok	0.00
+numeric(10,2)	1.5	ok	1.50
+numeric(10,2)	1.50	ok	1.50
+numeric(10,2)	NaN	ok	NaN
+numeric(10,2)	\N	ok	\N
+numeric(10,2)	12345678901	E22003	\N
+numeric(10,2)	1.005	ok	1.01
+numeric(38,10)	-1.5	ok	-1.5000000000
+numeric(38,10)	0	ok	0.0000000000
+numeric(38,10)	1234567890123456789012345678.1234567890	ok	1234567890123456789012345678.1234567890
+numeric(38,10)	NaN	ok	NaN
+numeric(38,10)	\N	ok	\N
+numeric	-Infinity	E22P02	\N
+numeric	-1	ok	-1
+numeric	0	ok	0
+numeric	1.5	ok	1.5
+numeric	1.50	ok	1.50
+numeric	Infinity	E22P02	\N
+numeric	NaN	ok	NaN
+numeric	\N	ok	\N
+numeric	abc	E22P02	\N
+date	-infinity	ok	-infinity
+date	0001-01-01	ok	0001-01-01
+date	2024-01-01	ok	2024-01-01
+date	9999-12-31	ok	9999-12-31
+date	infinity	ok	infinity
+date	\N	ok	\N
+date	2024-13-01	E22008	\N
+date	0044-01-01 BC	ok	0044-01-01 BC
+date	10000-01-01	ok	10000-01-01
+time without time zone	00:00:00	ok	00:00:00
+time without time zone	12:34:56.789012	ok	12:34:56.789012
+time without time zone	24:00:00	ok	24:00:00
+time without time zone	\N	ok	\N
+time without time zone	25:00:00	E22008	\N
+time with time zone	00:00:00+00	ok	00:00:00+00
+time with time zone	00:00:00-05	ok	00:00:00-05
+time with time zone	05:00:00+00	ok	05:00:00+00
+time with time zone	24:00:00+00	ok	24:00:00+00
+time with time zone	\N	ok	\N
+timestamp without time zone	-infinity	ok	-infinity
+timestamp without time zone	0001-01-01 00:00:00	ok	0001-01-01 00:00:00
+timestamp without time zone	2024-01-01 00:00:00	ok	2024-01-01 00:00:00
+timestamp without time zone	2024-01-01 00:00:00.123456	ok	2024-01-01 00:00:00.123456
+timestamp without time zone	infinity	ok	infinity
+timestamp without time zone	\N	ok	\N
+timestamp without time zone	294277-01-01 00:00:00	E22008	\N
+timestamp with time zone	-infinity	ok	-infinity
+timestamp with time zone	2024-01-01 00:00:00+00	ok	2024-01-01 00:00:00+00
+timestamp with time zone	2024-01-01 05:30:00+05:30	ok	2024-01-01 00:00:00+00
+timestamp with time zone	infinity	ok	infinity
+timestamp with time zone	\N	ok	\N
+interval	-infinity	E22007	\N
+interval	-1 day	ok	-1 days
+interval	00:00:00	ok	00:00:00
+interval	1 mon	ok	1 mon
+interval	30 days	ok	30 days
+interval	720:00:00	ok	720:00:00
+interval	infinity	E22007	\N
+interval	\N	ok	\N
+interval	1.5 hours	ok	01:30:00
+interval	P1Y2M	ok	1 year 2 mons
+interval	1 century	ok	100 years
+uuid	00000000-0000-0000-0000-000000000000	ok	00000000-0000-0000-0000-000000000000
+uuid	a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11	ok	a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
+uuid	A0EEBC99-9C0B-4EF8-BB6D-6BB9BD380A11	ok	a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
+uuid	\N	ok	\N
+uuid	not-a-uuid	E22P02	\N
+uuid	{a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11}	ok	a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11
+bytea	\\x	ok	\\x
+bytea	\\x00	ok	\\x00
+bytea	\\xdeadbeef	ok	\\xdeadbeef
+bytea	\\xff	ok	\\xff
+bytea	\N	ok	\N
+bytea	\\xgg	E22023	\N
+bytea	abc	ok	\\x616263
+text		ok	
+text	A	ok	A
+text	a	ok	a
+text	hello	ok	hello
+text	\N	ok	\N
+character varying(10)		ok	
+character varying(10)	a	ok	a
+character varying(10)	hello	ok	hello
+character varying(10)	\N	ok	\N
+character varying(10)	12345678901	ok	1234567890
+character(10)	a	ok	a         
+character(10)	a         	ok	a         
+character(10)	hello	ok	hello     
+character(10)	\N	ok	\N
+name	A	ok	A
+name	a	ok	a
+name	hello	ok	hello
+name	\N	ok	\N
+public.mood	sad	ok	sad
+public.mood	ok	ok	ok
+public.mood	happy	ok	happy
+public.mood	has space	ok	has space
+public.mood	\N	ok	\N
+public.mood	nope	E22P02	\N
+public.mood	SAD	E22P02	\N
+json	1	ok	1
+json	{"a": 1}	ok	{"a": 1}
+json	null	ok	null
+json	\N	ok	\N
+json	{a:1}	E22P02	\N
+jsonb	1	ok	1
+jsonb	{"a": 1}	ok	{"a": 1}
+jsonb	{"a":1}	ok	{"a": 1}
+jsonb	[1, 2]	ok	[1, 2]
+jsonb	null	ok	null
+jsonb	\N	ok	\N
+jsonb	{	E22P02	\N
+xml	<a/>	ok	<a/>
+xml	<b/>	ok	<b/>
+xml	\N	ok	\N
+xml	<a>	E2200N	\N
+inet	10.0.0.1	ok	10.0.0.1
+inet	192.168.1.0/24	ok	192.168.1.0/24
+inet	192.168.1.1	ok	192.168.1.1
+inet	::1	ok	::1
+inet	\N	ok	\N
+inet	999.1.1.1	E22P02	\N
+cidr	10.0.0.0/8	ok	10.0.0.0/8
+cidr	192.168.1.0/24	ok	192.168.1.0/24
+cidr	::/0	ok	::/0
+cidr	\N	ok	\N
+cidr	192.168.1.1/24	E22P02	\N
+macaddr	08:00:2b:01:02:03	ok	08:00:2b:01:02:03
+macaddr	08:00:2b:01:02:04	ok	08:00:2b:01:02:04
+macaddr	\N	ok	\N
+macaddr	08-00-2b-01-02-04	ok	08:00:2b:01:02:04
+macaddr	zz:00:2b:01:02:03	E22P02	\N
+macaddr8	08:00:2b:01:02:03:04:05	ok	08:00:2b:01:02:03:04:05
+macaddr8	08:00:2b:01:02:03:04:06	ok	08:00:2b:01:02:03:04:06
+macaddr8	\N	ok	\N
+public.base_domain	-1	ok	-1
+public.base_domain	0	ok	0
+public.base_domain	1	ok	1
+public.base_domain	\N	ok	\N
+public.derived_domain	-1	ok	-1
+public.derived_domain	0	ok	0
+public.derived_domain	1	ok	1
+public.derived_domain	\N	E23502	\N
+public.box_domain	(1,1),(0,0)	ok	(1,1),(0,0)
+public.box_domain	(3,3),(2,2)	ok	(3,3),(2,2)
+public.box_domain	\N	ok	\N
+public.mybase	hello	ok	hello
+public.mybase	world	ok	world
+public.mybase	\N	ok	\N
+integer[]	{}	ok	{}
+integer[]	{1,2}	ok	{1,2}
+integer[]	{1,NULL}	ok	{1,NULL}
+integer[]	[0:1]={1,2}	ok	[0:1]={1,2}
+integer[]	{{1,2},{3,4}}	ok	{{1,2},{3,4}}
+integer[]	\N	ok	\N
+integer[]	{ 1 , 2 }	ok	{1,2}
+integer[]	{1,null}	ok	{1,NULL}
+integer[]	[1:2]={1,2}	ok	{1,2}
+integer[]	{1,2	E22P02	\N
+integer[]	{1,,2}	E22P02	\N
+integer[]	{{1,2},{3}}	E22P02	\N
+text[]	{}	ok	{}
+text[]	{a,b}	ok	{a,b}
+text[]	{a,B}	ok	{a,B}
+text[]	{NULL}	ok	{NULL}
+text[]	{"NULL"}	ok	{"NULL"}
+text[]	\N	ok	\N
+text[]	{ a , b }	ok	{a,b}
+text[]	{"a","b"}	ok	{a,b}
+text[]	{a\\,b}	ok	{"a,b"}
+public.mood[]	{sad,ok}	ok	{sad,ok}
+public.mood[]	{ok,sad}	ok	{ok,sad}
+public.mood[]	\N	ok	\N
+public.intarr[]	{"{1,2}","{3}"}	ok	{"{1,2}","{3}"}
+public.intarr[]	{"{}"}	ok	{"{}"}
+public.intarr[]	\N	ok	\N
+public.point2d	(1,a)	ok	(1,a)
+public.point2d	(1,b)	ok	(1,b)
+public.point2d	(2,a)	ok	(2,a)
+public.point2d	(,a)	ok	(,a)
+public.point2d	(1,)	ok	(1,)
+public.point2d	\N	ok	\N
+public.point2d	()	E22P02	\N
+public.point2d	( 1 , a )	ok	(1," a ")
+public.point2d	(1,a	E22P02	\N
+public.point2d	(1,a,b)	E22P02	\N
+public.tagged	(a,"{x,y}")	ok	(a,"{x,y}")
+public.tagged	(a,)	ok	(a,)
+public.tagged	\N	ok	\N
+public.empty_comp	()	ok	()
+public.empty_comp	\N	ok	\N
+public.empty_comp	(1)	E22P02	\N
+int4range	empty	ok	empty
+int4range	[1,10)	ok	[1,10)
+int4range	[1,10]	ok	[1,11)
+int4range	(0,10)	ok	[1,10)
+int4range	[1,)	ok	[1,)
+int4range	(,5)	ok	(,5)
+int4range	\N	ok	\N
+int4range	[1,10	E22P02	\N
+int4range	[10,1)	E22000	\N
+numrange	empty	ok	empty
+numrange	[1,10)	ok	[1,10)
+numrange	(1,10)	ok	(1,10)
+numrange	[1,10]	ok	[1,10]
+numrange	\N	ok	\N
+daterange	empty	ok	empty
+daterange	[2020-01-01,2020-01-02)	ok	[2020-01-01,2020-01-02)
+daterange	[2020-01-01,2020-01-01]	ok	[2020-01-01,2020-01-02)
+daterange	[2020-01-01,infinity]	ok	[2020-01-01,infinity]
+daterange	\N	ok	\N
+tsrange	empty	ok	empty
+tsrange	[2020-01-01 00:00:00,2020-01-02 00:00:00)	ok	["2020-01-01 00:00:00","2020-01-02 00:00:00")
+tsrange	\N	ok	\N
+tstzrange	empty	ok	empty
+tstzrange	[2020-01-01 00:00:00+00,2020-01-02 00:00:00+00)	ok	["2020-01-01 00:00:00+00","2020-01-02 00:00:00+00")
+tstzrange	\N	ok	\N
+public.myrange	empty	ok	empty
+public.myrange	[1.5,10.5)	ok	[1.5,10.5)
+public.myrange	[1.5,10.5]	ok	[1.5,10.5]
+public.myrange	\N	ok	\N
+public.textrange	["a,b","c""d")	ok	["a,b","c""d")
+public.textrange	["","a")	ok	["",a)
+public.textrange	(,"z")	ok	(,z)
+public.textrange	empty	ok	empty
+public.textrange	\N	ok	\N
+public.textrange	["a,b","c"d")	E22P02	\N
+int4multirange	{}	E42704	\N
+int4multirange	{[1,10)}	E42704	\N
+int4multirange	{[1,5),[6,10)}	E42704	\N
+int4multirange	\N	E42704	\N
+public.myrange_multi	{}	E42704	\N
+public.myrange_multi	{[1.5,10.5)}	E42704	\N
+public.myrange_multi	\N	E42704	\N
+public.empty_enum	\N	ok	\N
+public.empty_enum	x	E22P02	\N

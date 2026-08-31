@@ -1,0 +1,1224 @@
+boolean	false	false	f	t	f	t	t	f
+boolean	false	true	t	t	f	f	f	t
+boolean	false	\N	u	u	u	u	u	u
+boolean	true	false	f	f	t	t	f	t
+boolean	true	true	f	t	f	t	t	f
+boolean	true	\N	u	u	u	u	u	u
+boolean	\N	false	u	u	u	u	u	u
+boolean	\N	true	u	u	u	u	u	u
+boolean	\N	\N	u	u	u	u	u	u
+boolean	t	false	f	f	t	t	f	t
+boolean	false	t	t	t	f	f	f	t
+boolean	yes	false	f	f	t	t	f	t
+boolean	false	yes	t	t	f	f	f	t
+boolean	maybe	false	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+boolean	false	maybe	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+smallint	-32768	-32768	f	t	f	t	t	f
+smallint	-32768	0	t	t	f	f	f	t
+smallint	-32768	32767	t	t	f	f	f	t
+smallint	-32768	\N	u	u	u	u	u	u
+smallint	0	-32768	f	f	t	t	f	t
+smallint	0	0	f	t	f	t	t	f
+smallint	0	32767	t	t	f	f	f	t
+smallint	0	\N	u	u	u	u	u	u
+smallint	32767	-32768	f	f	t	t	f	t
+smallint	32767	0	f	f	t	t	f	t
+smallint	32767	32767	f	t	f	t	t	f
+smallint	32767	\N	u	u	u	u	u	u
+smallint	\N	-32768	u	u	u	u	u	u
+smallint	\N	0	u	u	u	u	u	u
+smallint	\N	32767	u	u	u	u	u	u
+smallint	\N	\N	u	u	u	u	u	u
+smallint	32768	-32768	E22003	E22003	E22003	E22003	E22003	E22003
+smallint	-32768	32768	E22003	E22003	E22003	E22003	E22003	E22003
+integer	-2147483648	-2147483648	f	t	f	t	t	f
+integer	-2147483648	0	t	t	f	f	f	t
+integer	-2147483648	2147483647	t	t	f	f	f	t
+integer	-2147483648	\N	u	u	u	u	u	u
+integer	0	-2147483648	f	f	t	t	f	t
+integer	0	0	f	t	f	t	t	f
+integer	0	2147483647	t	t	f	f	f	t
+integer	0	\N	u	u	u	u	u	u
+integer	2147483647	-2147483648	f	f	t	t	f	t
+integer	2147483647	0	f	f	t	t	f	t
+integer	2147483647	2147483647	f	t	f	t	t	f
+integer	2147483647	\N	u	u	u	u	u	u
+integer	\N	-2147483648	u	u	u	u	u	u
+integer	\N	0	u	u	u	u	u	u
+integer	\N	2147483647	u	u	u	u	u	u
+integer	\N	\N	u	u	u	u	u	u
+integer	2147483648	-2147483648	E22003	E22003	E22003	E22003	E22003	E22003
+integer	-2147483648	2147483648	E22003	E22003	E22003	E22003	E22003	E22003
+integer	 42 	-2147483648	f	f	t	t	f	t
+integer	-2147483648	 42 	t	t	f	f	f	t
+integer	1e3	-2147483648	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+integer	-2147483648	1e3	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+bigint	-9223372036854775808	-9223372036854775808	f	t	f	t	t	f
+bigint	-9223372036854775808	0	t	t	f	f	f	t
+bigint	-9223372036854775808	9223372036854775807	t	t	f	f	f	t
+bigint	-9223372036854775808	\N	u	u	u	u	u	u
+bigint	0	-9223372036854775808	f	f	t	t	f	t
+bigint	0	0	f	t	f	t	t	f
+bigint	0	9223372036854775807	t	t	f	f	f	t
+bigint	0	\N	u	u	u	u	u	u
+bigint	9223372036854775807	-9223372036854775808	f	f	t	t	f	t
+bigint	9223372036854775807	0	f	f	t	t	f	t
+bigint	9223372036854775807	9223372036854775807	f	t	f	t	t	f
+bigint	9223372036854775807	\N	u	u	u	u	u	u
+bigint	\N	-9223372036854775808	u	u	u	u	u	u
+bigint	\N	0	u	u	u	u	u	u
+bigint	\N	9223372036854775807	u	u	u	u	u	u
+bigint	\N	\N	u	u	u	u	u	u
+bigint	9223372036854775808	-9223372036854775808	E22003	E22003	E22003	E22003	E22003	E22003
+bigint	-9223372036854775808	9223372036854775808	E22003	E22003	E22003	E22003	E22003	E22003
+real	-Infinity	-Infinity	f	t	f	t	t	f
+real	-Infinity	-0	t	t	f	f	f	t
+real	-Infinity	0	t	t	f	f	f	t
+real	-Infinity	1.5	t	t	f	f	f	t
+real	-Infinity	Infinity	t	t	f	f	f	t
+real	-Infinity	NaN	t	t	f	f	f	t
+real	-Infinity	\N	u	u	u	u	u	u
+real	-0	-Infinity	f	f	t	t	f	t
+real	-0	-0	f	t	f	t	t	f
+real	-0	0	f	t	f	t	t	f
+real	-0	1.5	t	t	f	f	f	t
+real	-0	Infinity	t	t	f	f	f	t
+real	-0	NaN	t	t	f	f	f	t
+real	-0	\N	u	u	u	u	u	u
+real	0	-Infinity	f	f	t	t	f	t
+real	0	-0	f	t	f	t	t	f
+real	0	0	f	t	f	t	t	f
+real	0	1.5	t	t	f	f	f	t
+real	0	Infinity	t	t	f	f	f	t
+real	0	NaN	t	t	f	f	f	t
+real	0	\N	u	u	u	u	u	u
+real	1.5	-Infinity	f	f	t	t	f	t
+real	1.5	-0	f	f	t	t	f	t
+real	1.5	0	f	f	t	t	f	t
+real	1.5	1.5	f	t	f	t	t	f
+real	1.5	Infinity	t	t	f	f	f	t
+real	1.5	NaN	t	t	f	f	f	t
+real	1.5	\N	u	u	u	u	u	u
+real	Infinity	-Infinity	f	f	t	t	f	t
+real	Infinity	-0	f	f	t	t	f	t
+real	Infinity	0	f	f	t	t	f	t
+real	Infinity	1.5	f	f	t	t	f	t
+real	Infinity	Infinity	f	t	f	t	t	f
+real	Infinity	NaN	t	t	f	f	f	t
+real	Infinity	\N	u	u	u	u	u	u
+real	NaN	-Infinity	f	f	t	t	f	t
+real	NaN	-0	f	f	t	t	f	t
+real	NaN	0	f	f	t	t	f	t
+real	NaN	1.5	f	f	t	t	f	t
+real	NaN	Infinity	f	f	t	t	f	t
+real	NaN	NaN	f	t	f	t	t	f
+real	NaN	\N	u	u	u	u	u	u
+real	\N	-Infinity	u	u	u	u	u	u
+real	\N	-0	u	u	u	u	u	u
+real	\N	0	u	u	u	u	u	u
+real	\N	1.5	u	u	u	u	u	u
+real	\N	Infinity	u	u	u	u	u	u
+real	\N	NaN	u	u	u	u	u	u
+real	\N	\N	u	u	u	u	u	u
+real	1e400	-Infinity	E22003	E22003	E22003	E22003	E22003	E22003
+real	-Infinity	1e400	E22003	E22003	E22003	E22003	E22003	E22003
+real	inf	-Infinity	f	f	t	t	f	t
+real	-Infinity	inf	t	t	f	f	f	t
+double precision	-Infinity	-Infinity	f	t	f	t	t	f
+double precision	-Infinity	-0	t	t	f	f	f	t
+double precision	-Infinity	0	t	t	f	f	f	t
+double precision	-Infinity	1.5	t	t	f	f	f	t
+double precision	-Infinity	Infinity	t	t	f	f	f	t
+double precision	-Infinity	NaN	t	t	f	f	f	t
+double precision	-Infinity	\N	u	u	u	u	u	u
+double precision	-0	-Infinity	f	f	t	t	f	t
+double precision	-0	-0	f	t	f	t	t	f
+double precision	-0	0	f	t	f	t	t	f
+double precision	-0	1.5	t	t	f	f	f	t
+double precision	-0	Infinity	t	t	f	f	f	t
+double precision	-0	NaN	t	t	f	f	f	t
+double precision	-0	\N	u	u	u	u	u	u
+double precision	0	-Infinity	f	f	t	t	f	t
+double precision	0	-0	f	t	f	t	t	f
+double precision	0	0	f	t	f	t	t	f
+double precision	0	1.5	t	t	f	f	f	t
+double precision	0	Infinity	t	t	f	f	f	t
+double precision	0	NaN	t	t	f	f	f	t
+double precision	0	\N	u	u	u	u	u	u
+double precision	1.5	-Infinity	f	f	t	t	f	t
+double precision	1.5	-0	f	f	t	t	f	t
+double precision	1.5	0	f	f	t	t	f	t
+double precision	1.5	1.5	f	t	f	t	t	f
+double precision	1.5	Infinity	t	t	f	f	f	t
+double precision	1.5	NaN	t	t	f	f	f	t
+double precision	1.5	\N	u	u	u	u	u	u
+double precision	Infinity	-Infinity	f	f	t	t	f	t
+double precision	Infinity	-0	f	f	t	t	f	t
+double precision	Infinity	0	f	f	t	t	f	t
+double precision	Infinity	1.5	f	f	t	t	f	t
+double precision	Infinity	Infinity	f	t	f	t	t	f
+double precision	Infinity	NaN	t	t	f	f	f	t
+double precision	Infinity	\N	u	u	u	u	u	u
+double precision	NaN	-Infinity	f	f	t	t	f	t
+double precision	NaN	-0	f	f	t	t	f	t
+double precision	NaN	0	f	f	t	t	f	t
+double precision	NaN	1.5	f	f	t	t	f	t
+double precision	NaN	Infinity	f	f	t	t	f	t
+double precision	NaN	NaN	f	t	f	t	t	f
+double precision	NaN	\N	u	u	u	u	u	u
+double precision	\N	-Infinity	u	u	u	u	u	u
+double precision	\N	-0	u	u	u	u	u	u
+double precision	\N	0	u	u	u	u	u	u
+double precision	\N	1.5	u	u	u	u	u	u
+double precision	\N	Infinity	u	u	u	u	u	u
+double precision	\N	NaN	u	u	u	u	u	u
+double precision	\N	\N	u	u	u	u	u	u
+double precision	1e400	-Infinity	E22003	E22003	E22003	E22003	E22003	E22003
+double precision	-Infinity	1e400	E22003	E22003	E22003	E22003	E22003	E22003
+double precision	inf	-Infinity	f	f	t	t	f	t
+double precision	-Infinity	inf	t	t	f	f	f	t
+numeric(10,2)	-1.50	-1.50	f	t	f	t	t	f
+numeric(10,2)	-1.50	0	t	t	f	f	f	t
+numeric(10,2)	-1.50	1.5	t	t	f	f	f	t
+numeric(10,2)	-1.50	1.50	t	t	f	f	f	t
+numeric(10,2)	-1.50	NaN	t	t	f	f	f	t
+numeric(10,2)	-1.50	\N	u	u	u	u	u	u
+numeric(10,2)	0	-1.50	f	f	t	t	f	t
+numeric(10,2)	0	0	f	t	f	t	t	f
+numeric(10,2)	0	1.5	t	t	f	f	f	t
+numeric(10,2)	0	1.50	t	t	f	f	f	t
+numeric(10,2)	0	NaN	t	t	f	f	f	t
+numeric(10,2)	0	\N	u	u	u	u	u	u
+numeric(10,2)	1.5	-1.50	f	f	t	t	f	t
+numeric(10,2)	1.5	0	f	f	t	t	f	t
+numeric(10,2)	1.5	1.5	f	t	f	t	t	f
+numeric(10,2)	1.5	1.50	f	t	f	t	t	f
+numeric(10,2)	1.5	NaN	t	t	f	f	f	t
+numeric(10,2)	1.5	\N	u	u	u	u	u	u
+numeric(10,2)	1.50	-1.50	f	f	t	t	f	t
+numeric(10,2)	1.50	0	f	f	t	t	f	t
+numeric(10,2)	1.50	1.5	f	t	f	t	t	f
+numeric(10,2)	1.50	1.50	f	t	f	t	t	f
+numeric(10,2)	1.50	NaN	t	t	f	f	f	t
+numeric(10,2)	1.50	\N	u	u	u	u	u	u
+numeric(10,2)	NaN	-1.50	f	f	t	t	f	t
+numeric(10,2)	NaN	0	f	f	t	t	f	t
+numeric(10,2)	NaN	1.5	f	f	t	t	f	t
+numeric(10,2)	NaN	1.50	f	f	t	t	f	t
+numeric(10,2)	NaN	NaN	f	t	f	t	t	f
+numeric(10,2)	NaN	\N	u	u	u	u	u	u
+numeric(10,2)	\N	-1.50	u	u	u	u	u	u
+numeric(10,2)	\N	0	u	u	u	u	u	u
+numeric(10,2)	\N	1.5	u	u	u	u	u	u
+numeric(10,2)	\N	1.50	u	u	u	u	u	u
+numeric(10,2)	\N	NaN	u	u	u	u	u	u
+numeric(10,2)	\N	\N	u	u	u	u	u	u
+numeric(10,2)	12345678901	-1.50	E22003	E22003	E22003	E22003	E22003	E22003
+numeric(10,2)	-1.50	12345678901	E22003	E22003	E22003	E22003	E22003	E22003
+numeric(10,2)	1.005	-1.50	f	f	t	t	f	t
+numeric(10,2)	-1.50	1.005	t	t	f	f	f	t
+numeric(38,10)	-1.5	-1.5	f	t	f	t	t	f
+numeric(38,10)	-1.5	0	t	t	f	f	f	t
+numeric(38,10)	-1.5	1234567890123456789012345678.1234567890	t	t	f	f	f	t
+numeric(38,10)	-1.5	NaN	t	t	f	f	f	t
+numeric(38,10)	-1.5	\N	u	u	u	u	u	u
+numeric(38,10)	0	-1.5	f	f	t	t	f	t
+numeric(38,10)	0	0	f	t	f	t	t	f
+numeric(38,10)	0	1234567890123456789012345678.1234567890	t	t	f	f	f	t
+numeric(38,10)	0	NaN	t	t	f	f	f	t
+numeric(38,10)	0	\N	u	u	u	u	u	u
+numeric(38,10)	1234567890123456789012345678.1234567890	-1.5	f	f	t	t	f	t
+numeric(38,10)	1234567890123456789012345678.1234567890	0	f	f	t	t	f	t
+numeric(38,10)	1234567890123456789012345678.1234567890	1234567890123456789012345678.1234567890	f	t	f	t	t	f
+numeric(38,10)	1234567890123456789012345678.1234567890	NaN	t	t	f	f	f	t
+numeric(38,10)	1234567890123456789012345678.1234567890	\N	u	u	u	u	u	u
+numeric(38,10)	NaN	-1.5	f	f	t	t	f	t
+numeric(38,10)	NaN	0	f	f	t	t	f	t
+numeric(38,10)	NaN	1234567890123456789012345678.1234567890	f	f	t	t	f	t
+numeric(38,10)	NaN	NaN	f	t	f	t	t	f
+numeric(38,10)	NaN	\N	u	u	u	u	u	u
+numeric(38,10)	\N	-1.5	u	u	u	u	u	u
+numeric(38,10)	\N	0	u	u	u	u	u	u
+numeric(38,10)	\N	1234567890123456789012345678.1234567890	u	u	u	u	u	u
+numeric(38,10)	\N	NaN	u	u	u	u	u	u
+numeric(38,10)	\N	\N	u	u	u	u	u	u
+numeric	-Infinity	-Infinity	f	t	f	t	t	f
+numeric	-Infinity	-1	t	t	f	f	f	t
+numeric	-Infinity	0	t	t	f	f	f	t
+numeric	-Infinity	1.5	t	t	f	f	f	t
+numeric	-Infinity	1.50	t	t	f	f	f	t
+numeric	-Infinity	Infinity	t	t	f	f	f	t
+numeric	-Infinity	NaN	t	t	f	f	f	t
+numeric	-Infinity	\N	u	u	u	u	u	u
+numeric	-1	-Infinity	f	f	t	t	f	t
+numeric	-1	-1	f	t	f	t	t	f
+numeric	-1	0	t	t	f	f	f	t
+numeric	-1	1.5	t	t	f	f	f	t
+numeric	-1	1.50	t	t	f	f	f	t
+numeric	-1	Infinity	t	t	f	f	f	t
+numeric	-1	NaN	t	t	f	f	f	t
+numeric	-1	\N	u	u	u	u	u	u
+numeric	0	-Infinity	f	f	t	t	f	t
+numeric	0	-1	f	f	t	t	f	t
+numeric	0	0	f	t	f	t	t	f
+numeric	0	1.5	t	t	f	f	f	t
+numeric	0	1.50	t	t	f	f	f	t
+numeric	0	Infinity	t	t	f	f	f	t
+numeric	0	NaN	t	t	f	f	f	t
+numeric	0	\N	u	u	u	u	u	u
+numeric	1.5	-Infinity	f	f	t	t	f	t
+numeric	1.5	-1	f	f	t	t	f	t
+numeric	1.5	0	f	f	t	t	f	t
+numeric	1.5	1.5	f	t	f	t	t	f
+numeric	1.5	1.50	f	t	f	t	t	f
+numeric	1.5	Infinity	t	t	f	f	f	t
+numeric	1.5	NaN	t	t	f	f	f	t
+numeric	1.5	\N	u	u	u	u	u	u
+numeric	1.50	-Infinity	f	f	t	t	f	t
+numeric	1.50	-1	f	f	t	t	f	t
+numeric	1.50	0	f	f	t	t	f	t
+numeric	1.50	1.5	f	t	f	t	t	f
+numeric	1.50	1.50	f	t	f	t	t	f
+numeric	1.50	Infinity	t	t	f	f	f	t
+numeric	1.50	NaN	t	t	f	f	f	t
+numeric	1.50	\N	u	u	u	u	u	u
+numeric	Infinity	-Infinity	f	f	t	t	f	t
+numeric	Infinity	-1	f	f	t	t	f	t
+numeric	Infinity	0	f	f	t	t	f	t
+numeric	Infinity	1.5	f	f	t	t	f	t
+numeric	Infinity	1.50	f	f	t	t	f	t
+numeric	Infinity	Infinity	f	t	f	t	t	f
+numeric	Infinity	NaN	t	t	f	f	f	t
+numeric	Infinity	\N	u	u	u	u	u	u
+numeric	NaN	-Infinity	f	f	t	t	f	t
+numeric	NaN	-1	f	f	t	t	f	t
+numeric	NaN	0	f	f	t	t	f	t
+numeric	NaN	1.5	f	f	t	t	f	t
+numeric	NaN	1.50	f	f	t	t	f	t
+numeric	NaN	Infinity	f	f	t	t	f	t
+numeric	NaN	NaN	f	t	f	t	t	f
+numeric	NaN	\N	u	u	u	u	u	u
+numeric	\N	-Infinity	u	u	u	u	u	u
+numeric	\N	-1	u	u	u	u	u	u
+numeric	\N	0	u	u	u	u	u	u
+numeric	\N	1.5	u	u	u	u	u	u
+numeric	\N	1.50	u	u	u	u	u	u
+numeric	\N	Infinity	u	u	u	u	u	u
+numeric	\N	NaN	u	u	u	u	u	u
+numeric	\N	\N	u	u	u	u	u	u
+numeric	abc	-Infinity	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+numeric	-Infinity	abc	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+date	-infinity	-infinity	f	t	f	t	t	f
+date	-infinity	0001-01-01	t	t	f	f	f	t
+date	-infinity	2024-01-01	t	t	f	f	f	t
+date	-infinity	9999-12-31	t	t	f	f	f	t
+date	-infinity	infinity	t	t	f	f	f	t
+date	-infinity	\N	u	u	u	u	u	u
+date	0001-01-01	-infinity	f	f	t	t	f	t
+date	0001-01-01	0001-01-01	f	t	f	t	t	f
+date	0001-01-01	2024-01-01	t	t	f	f	f	t
+date	0001-01-01	9999-12-31	t	t	f	f	f	t
+date	0001-01-01	infinity	t	t	f	f	f	t
+date	0001-01-01	\N	u	u	u	u	u	u
+date	2024-01-01	-infinity	f	f	t	t	f	t
+date	2024-01-01	0001-01-01	f	f	t	t	f	t
+date	2024-01-01	2024-01-01	f	t	f	t	t	f
+date	2024-01-01	9999-12-31	t	t	f	f	f	t
+date	2024-01-01	infinity	t	t	f	f	f	t
+date	2024-01-01	\N	u	u	u	u	u	u
+date	9999-12-31	-infinity	f	f	t	t	f	t
+date	9999-12-31	0001-01-01	f	f	t	t	f	t
+date	9999-12-31	2024-01-01	f	f	t	t	f	t
+date	9999-12-31	9999-12-31	f	t	f	t	t	f
+date	9999-12-31	infinity	t	t	f	f	f	t
+date	9999-12-31	\N	u	u	u	u	u	u
+date	infinity	-infinity	f	f	t	t	f	t
+date	infinity	0001-01-01	f	f	t	t	f	t
+date	infinity	2024-01-01	f	f	t	t	f	t
+date	infinity	9999-12-31	f	f	t	t	f	t
+date	infinity	infinity	f	t	f	t	t	f
+date	infinity	\N	u	u	u	u	u	u
+date	\N	-infinity	u	u	u	u	u	u
+date	\N	0001-01-01	u	u	u	u	u	u
+date	\N	2024-01-01	u	u	u	u	u	u
+date	\N	9999-12-31	u	u	u	u	u	u
+date	\N	infinity	u	u	u	u	u	u
+date	\N	\N	u	u	u	u	u	u
+date	2024-13-01	-infinity	E22008	E22008	E22008	E22008	E22008	E22008
+date	-infinity	2024-13-01	E22008	E22008	E22008	E22008	E22008	E22008
+date	0044-01-01 BC	-infinity	f	f	t	t	f	t
+date	-infinity	0044-01-01 BC	t	t	f	f	f	t
+date	10000-01-01	-infinity	f	f	t	t	f	t
+date	-infinity	10000-01-01	t	t	f	f	f	t
+time without time zone	00:00:00	00:00:00	f	t	f	t	t	f
+time without time zone	00:00:00	12:34:56.789012	t	t	f	f	f	t
+time without time zone	00:00:00	24:00:00	t	t	f	f	f	t
+time without time zone	00:00:00	\N	u	u	u	u	u	u
+time without time zone	12:34:56.789012	00:00:00	f	f	t	t	f	t
+time without time zone	12:34:56.789012	12:34:56.789012	f	t	f	t	t	f
+time without time zone	12:34:56.789012	24:00:00	t	t	f	f	f	t
+time without time zone	12:34:56.789012	\N	u	u	u	u	u	u
+time without time zone	24:00:00	00:00:00	f	f	t	t	f	t
+time without time zone	24:00:00	12:34:56.789012	f	f	t	t	f	t
+time without time zone	24:00:00	24:00:00	f	t	f	t	t	f
+time without time zone	24:00:00	\N	u	u	u	u	u	u
+time without time zone	\N	00:00:00	u	u	u	u	u	u
+time without time zone	\N	12:34:56.789012	u	u	u	u	u	u
+time without time zone	\N	24:00:00	u	u	u	u	u	u
+time without time zone	\N	\N	u	u	u	u	u	u
+time without time zone	25:00:00	00:00:00	E22008	E22008	E22008	E22008	E22008	E22008
+time without time zone	00:00:00	25:00:00	E22008	E22008	E22008	E22008	E22008	E22008
+time with time zone	00:00:00+00	00:00:00+00	f	t	f	t	t	f
+time with time zone	00:00:00+00	00:00:00-05	t	t	f	f	f	t
+time with time zone	00:00:00+00	05:00:00+00	t	t	f	f	f	t
+time with time zone	00:00:00+00	24:00:00+00	t	t	f	f	f	t
+time with time zone	00:00:00+00	\N	u	u	u	u	u	u
+time with time zone	00:00:00-05	00:00:00+00	f	f	t	t	f	t
+time with time zone	00:00:00-05	00:00:00-05	f	t	f	t	t	f
+time with time zone	00:00:00-05	05:00:00+00	f	f	t	t	f	t
+time with time zone	00:00:00-05	24:00:00+00	t	t	f	f	f	t
+time with time zone	00:00:00-05	\N	u	u	u	u	u	u
+time with time zone	05:00:00+00	00:00:00+00	f	f	t	t	f	t
+time with time zone	05:00:00+00	00:00:00-05	t	t	f	f	f	t
+time with time zone	05:00:00+00	05:00:00+00	f	t	f	t	t	f
+time with time zone	05:00:00+00	24:00:00+00	t	t	f	f	f	t
+time with time zone	05:00:00+00	\N	u	u	u	u	u	u
+time with time zone	24:00:00+00	00:00:00+00	f	f	t	t	f	t
+time with time zone	24:00:00+00	00:00:00-05	f	f	t	t	f	t
+time with time zone	24:00:00+00	05:00:00+00	f	f	t	t	f	t
+time with time zone	24:00:00+00	24:00:00+00	f	t	f	t	t	f
+time with time zone	24:00:00+00	\N	u	u	u	u	u	u
+time with time zone	\N	00:00:00+00	u	u	u	u	u	u
+time with time zone	\N	00:00:00-05	u	u	u	u	u	u
+time with time zone	\N	05:00:00+00	u	u	u	u	u	u
+time with time zone	\N	24:00:00+00	u	u	u	u	u	u
+time with time zone	\N	\N	u	u	u	u	u	u
+timestamp without time zone	-infinity	-infinity	f	t	f	t	t	f
+timestamp without time zone	-infinity	0001-01-01 00:00:00	t	t	f	f	f	t
+timestamp without time zone	-infinity	2024-01-01 00:00:00	t	t	f	f	f	t
+timestamp without time zone	-infinity	2024-01-01 00:00:00.123456	t	t	f	f	f	t
+timestamp without time zone	-infinity	infinity	t	t	f	f	f	t
+timestamp without time zone	-infinity	\N	u	u	u	u	u	u
+timestamp without time zone	0001-01-01 00:00:00	-infinity	f	f	t	t	f	t
+timestamp without time zone	0001-01-01 00:00:00	0001-01-01 00:00:00	f	t	f	t	t	f
+timestamp without time zone	0001-01-01 00:00:00	2024-01-01 00:00:00	t	t	f	f	f	t
+timestamp without time zone	0001-01-01 00:00:00	2024-01-01 00:00:00.123456	t	t	f	f	f	t
+timestamp without time zone	0001-01-01 00:00:00	infinity	t	t	f	f	f	t
+timestamp without time zone	0001-01-01 00:00:00	\N	u	u	u	u	u	u
+timestamp without time zone	2024-01-01 00:00:00	-infinity	f	f	t	t	f	t
+timestamp without time zone	2024-01-01 00:00:00	0001-01-01 00:00:00	f	f	t	t	f	t
+timestamp without time zone	2024-01-01 00:00:00	2024-01-01 00:00:00	f	t	f	t	t	f
+timestamp without time zone	2024-01-01 00:00:00	2024-01-01 00:00:00.123456	t	t	f	f	f	t
+timestamp without time zone	2024-01-01 00:00:00	infinity	t	t	f	f	f	t
+timestamp without time zone	2024-01-01 00:00:00	\N	u	u	u	u	u	u
+timestamp without time zone	2024-01-01 00:00:00.123456	-infinity	f	f	t	t	f	t
+timestamp without time zone	2024-01-01 00:00:00.123456	0001-01-01 00:00:00	f	f	t	t	f	t
+timestamp without time zone	2024-01-01 00:00:00.123456	2024-01-01 00:00:00	f	f	t	t	f	t
+timestamp without time zone	2024-01-01 00:00:00.123456	2024-01-01 00:00:00.123456	f	t	f	t	t	f
+timestamp without time zone	2024-01-01 00:00:00.123456	infinity	t	t	f	f	f	t
+timestamp without time zone	2024-01-01 00:00:00.123456	\N	u	u	u	u	u	u
+timestamp without time zone	infinity	-infinity	f	f	t	t	f	t
+timestamp without time zone	infinity	0001-01-01 00:00:00	f	f	t	t	f	t
+timestamp without time zone	infinity	2024-01-01 00:00:00	f	f	t	t	f	t
+timestamp without time zone	infinity	2024-01-01 00:00:00.123456	f	f	t	t	f	t
+timestamp without time zone	infinity	infinity	f	t	f	t	t	f
+timestamp without time zone	infinity	\N	u	u	u	u	u	u
+timestamp without time zone	\N	-infinity	u	u	u	u	u	u
+timestamp without time zone	\N	0001-01-01 00:00:00	u	u	u	u	u	u
+timestamp without time zone	\N	2024-01-01 00:00:00	u	u	u	u	u	u
+timestamp without time zone	\N	2024-01-01 00:00:00.123456	u	u	u	u	u	u
+timestamp without time zone	\N	infinity	u	u	u	u	u	u
+timestamp without time zone	\N	\N	u	u	u	u	u	u
+timestamp without time zone	294277-01-01 00:00:00	-infinity	E22008	E22008	E22008	E22008	E22008	E22008
+timestamp without time zone	-infinity	294277-01-01 00:00:00	E22008	E22008	E22008	E22008	E22008	E22008
+timestamp with time zone	-infinity	-infinity	f	t	f	t	t	f
+timestamp with time zone	-infinity	2024-01-01 00:00:00+00	t	t	f	f	f	t
+timestamp with time zone	-infinity	2024-01-01 05:30:00+05:30	t	t	f	f	f	t
+timestamp with time zone	-infinity	infinity	t	t	f	f	f	t
+timestamp with time zone	-infinity	\N	u	u	u	u	u	u
+timestamp with time zone	2024-01-01 00:00:00+00	-infinity	f	f	t	t	f	t
+timestamp with time zone	2024-01-01 00:00:00+00	2024-01-01 00:00:00+00	f	t	f	t	t	f
+timestamp with time zone	2024-01-01 00:00:00+00	2024-01-01 05:30:00+05:30	f	t	f	t	t	f
+timestamp with time zone	2024-01-01 00:00:00+00	infinity	t	t	f	f	f	t
+timestamp with time zone	2024-01-01 00:00:00+00	\N	u	u	u	u	u	u
+timestamp with time zone	2024-01-01 05:30:00+05:30	-infinity	f	f	t	t	f	t
+timestamp with time zone	2024-01-01 05:30:00+05:30	2024-01-01 00:00:00+00	f	t	f	t	t	f
+timestamp with time zone	2024-01-01 05:30:00+05:30	2024-01-01 05:30:00+05:30	f	t	f	t	t	f
+timestamp with time zone	2024-01-01 05:30:00+05:30	infinity	t	t	f	f	f	t
+timestamp with time zone	2024-01-01 05:30:00+05:30	\N	u	u	u	u	u	u
+timestamp with time zone	infinity	-infinity	f	f	t	t	f	t
+timestamp with time zone	infinity	2024-01-01 00:00:00+00	f	f	t	t	f	t
+timestamp with time zone	infinity	2024-01-01 05:30:00+05:30	f	f	t	t	f	t
+timestamp with time zone	infinity	infinity	f	t	f	t	t	f
+timestamp with time zone	infinity	\N	u	u	u	u	u	u
+timestamp with time zone	\N	-infinity	u	u	u	u	u	u
+timestamp with time zone	\N	2024-01-01 00:00:00+00	u	u	u	u	u	u
+timestamp with time zone	\N	2024-01-01 05:30:00+05:30	u	u	u	u	u	u
+timestamp with time zone	\N	infinity	u	u	u	u	u	u
+timestamp with time zone	\N	\N	u	u	u	u	u	u
+interval	-infinity	-infinity	f	t	f	t	t	f
+interval	-infinity	-1 day	t	t	f	f	f	t
+interval	-infinity	00:00:00	t	t	f	f	f	t
+interval	-infinity	1 mon	t	t	f	f	f	t
+interval	-infinity	30 days	t	t	f	f	f	t
+interval	-infinity	720:00:00	t	t	f	f	f	t
+interval	-infinity	infinity	t	t	f	f	f	t
+interval	-infinity	\N	u	u	u	u	u	u
+interval	-1 day	-infinity	f	f	t	t	f	t
+interval	-1 day	-1 day	f	t	f	t	t	f
+interval	-1 day	00:00:00	t	t	f	f	f	t
+interval	-1 day	1 mon	t	t	f	f	f	t
+interval	-1 day	30 days	t	t	f	f	f	t
+interval	-1 day	720:00:00	t	t	f	f	f	t
+interval	-1 day	infinity	t	t	f	f	f	t
+interval	-1 day	\N	u	u	u	u	u	u
+interval	00:00:00	-infinity	f	f	t	t	f	t
+interval	00:00:00	-1 day	f	f	t	t	f	t
+interval	00:00:00	00:00:00	f	t	f	t	t	f
+interval	00:00:00	1 mon	t	t	f	f	f	t
+interval	00:00:00	30 days	t	t	f	f	f	t
+interval	00:00:00	720:00:00	t	t	f	f	f	t
+interval	00:00:00	infinity	t	t	f	f	f	t
+interval	00:00:00	\N	u	u	u	u	u	u
+interval	1 mon	-infinity	f	f	t	t	f	t
+interval	1 mon	-1 day	f	f	t	t	f	t
+interval	1 mon	00:00:00	f	f	t	t	f	t
+interval	1 mon	1 mon	f	t	f	t	t	f
+interval	1 mon	30 days	f	t	f	t	t	f
+interval	1 mon	720:00:00	f	t	f	t	t	f
+interval	1 mon	infinity	t	t	f	f	f	t
+interval	1 mon	\N	u	u	u	u	u	u
+interval	30 days	-infinity	f	f	t	t	f	t
+interval	30 days	-1 day	f	f	t	t	f	t
+interval	30 days	00:00:00	f	f	t	t	f	t
+interval	30 days	1 mon	f	t	f	t	t	f
+interval	30 days	30 days	f	t	f	t	t	f
+interval	30 days	720:00:00	f	t	f	t	t	f
+interval	30 days	infinity	t	t	f	f	f	t
+interval	30 days	\N	u	u	u	u	u	u
+interval	720:00:00	-infinity	f	f	t	t	f	t
+interval	720:00:00	-1 day	f	f	t	t	f	t
+interval	720:00:00	00:00:00	f	f	t	t	f	t
+interval	720:00:00	1 mon	f	t	f	t	t	f
+interval	720:00:00	30 days	f	t	f	t	t	f
+interval	720:00:00	720:00:00	f	t	f	t	t	f
+interval	720:00:00	infinity	t	t	f	f	f	t
+interval	720:00:00	\N	u	u	u	u	u	u
+interval	infinity	-infinity	f	f	t	t	f	t
+interval	infinity	-1 day	f	f	t	t	f	t
+interval	infinity	00:00:00	f	f	t	t	f	t
+interval	infinity	1 mon	f	f	t	t	f	t
+interval	infinity	30 days	f	f	t	t	f	t
+interval	infinity	720:00:00	f	f	t	t	f	t
+interval	infinity	infinity	f	t	f	t	t	f
+interval	infinity	\N	u	u	u	u	u	u
+interval	\N	-infinity	u	u	u	u	u	u
+interval	\N	-1 day	u	u	u	u	u	u
+interval	\N	00:00:00	u	u	u	u	u	u
+interval	\N	1 mon	u	u	u	u	u	u
+interval	\N	30 days	u	u	u	u	u	u
+interval	\N	720:00:00	u	u	u	u	u	u
+interval	\N	infinity	u	u	u	u	u	u
+interval	\N	\N	u	u	u	u	u	u
+interval	1.5 hours	-infinity	f	f	t	t	f	t
+interval	-infinity	1.5 hours	t	t	f	f	f	t
+interval	P1Y2M	-infinity	f	f	t	t	f	t
+interval	-infinity	P1Y2M	t	t	f	f	f	t
+interval	1 century	-infinity	f	f	t	t	f	t
+interval	-infinity	1 century	t	t	f	f	f	t
+uuid	00000000-0000-0000-0000-000000000000	00000000-0000-0000-0000-000000000000	f	t	f	t	t	f
+uuid	00000000-0000-0000-0000-000000000000	a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11	t	t	f	f	f	t
+uuid	00000000-0000-0000-0000-000000000000	A0EEBC99-9C0B-4EF8-BB6D-6BB9BD380A11	t	t	f	f	f	t
+uuid	00000000-0000-0000-0000-000000000000	\N	u	u	u	u	u	u
+uuid	a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11	00000000-0000-0000-0000-000000000000	f	f	t	t	f	t
+uuid	a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11	a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11	f	t	f	t	t	f
+uuid	a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11	A0EEBC99-9C0B-4EF8-BB6D-6BB9BD380A11	f	t	f	t	t	f
+uuid	a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11	\N	u	u	u	u	u	u
+uuid	A0EEBC99-9C0B-4EF8-BB6D-6BB9BD380A11	00000000-0000-0000-0000-000000000000	f	f	t	t	f	t
+uuid	A0EEBC99-9C0B-4EF8-BB6D-6BB9BD380A11	a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11	f	t	f	t	t	f
+uuid	A0EEBC99-9C0B-4EF8-BB6D-6BB9BD380A11	A0EEBC99-9C0B-4EF8-BB6D-6BB9BD380A11	f	t	f	t	t	f
+uuid	A0EEBC99-9C0B-4EF8-BB6D-6BB9BD380A11	\N	u	u	u	u	u	u
+uuid	\N	00000000-0000-0000-0000-000000000000	u	u	u	u	u	u
+uuid	\N	a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11	u	u	u	u	u	u
+uuid	\N	A0EEBC99-9C0B-4EF8-BB6D-6BB9BD380A11	u	u	u	u	u	u
+uuid	\N	\N	u	u	u	u	u	u
+uuid	not-a-uuid	00000000-0000-0000-0000-000000000000	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+uuid	00000000-0000-0000-0000-000000000000	not-a-uuid	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+uuid	{a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11}	00000000-0000-0000-0000-000000000000	f	f	t	t	f	t
+uuid	00000000-0000-0000-0000-000000000000	{a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11}	t	t	f	f	f	t
+bytea	\\x	\\x	f	t	f	t	t	f
+bytea	\\x	\\x00	t	t	f	f	f	t
+bytea	\\x	\\xdeadbeef	t	t	f	f	f	t
+bytea	\\x	\\xff	t	t	f	f	f	t
+bytea	\\x	\N	u	u	u	u	u	u
+bytea	\\x00	\\x	f	f	t	t	f	t
+bytea	\\x00	\\x00	f	t	f	t	t	f
+bytea	\\x00	\\xdeadbeef	t	t	f	f	f	t
+bytea	\\x00	\\xff	t	t	f	f	f	t
+bytea	\\x00	\N	u	u	u	u	u	u
+bytea	\\xdeadbeef	\\x	f	f	t	t	f	t
+bytea	\\xdeadbeef	\\x00	f	f	t	t	f	t
+bytea	\\xdeadbeef	\\xdeadbeef	f	t	f	t	t	f
+bytea	\\xdeadbeef	\\xff	t	t	f	f	f	t
+bytea	\\xdeadbeef	\N	u	u	u	u	u	u
+bytea	\\xff	\\x	f	f	t	t	f	t
+bytea	\\xff	\\x00	f	f	t	t	f	t
+bytea	\\xff	\\xdeadbeef	f	f	t	t	f	t
+bytea	\\xff	\\xff	f	t	f	t	t	f
+bytea	\\xff	\N	u	u	u	u	u	u
+bytea	\N	\\x	u	u	u	u	u	u
+bytea	\N	\\x00	u	u	u	u	u	u
+bytea	\N	\\xdeadbeef	u	u	u	u	u	u
+bytea	\N	\\xff	u	u	u	u	u	u
+bytea	\N	\N	u	u	u	u	u	u
+bytea	\\xgg	\\x	E22023	E22023	E22023	E22023	E22023	E22023
+bytea	\\x	\\xgg	E22023	E22023	E22023	E22023	E22023	E22023
+bytea	abc	\\x	f	f	t	t	f	t
+bytea	\\x	abc	t	t	f	f	f	t
+text			f	t	f	t	t	f
+text		A	t	t	f	f	f	t
+text		a	t	t	f	f	f	t
+text		hello	t	t	f	f	f	t
+text		\N	u	u	u	u	u	u
+text	A		f	f	t	t	f	t
+text	A	A	f	t	f	t	t	f
+text	A	a	t	t	f	f	f	t
+text	A	hello	t	t	f	f	f	t
+text	A	\N	u	u	u	u	u	u
+text	a		f	f	t	t	f	t
+text	a	A	f	f	t	t	f	t
+text	a	a	f	t	f	t	t	f
+text	a	hello	t	t	f	f	f	t
+text	a	\N	u	u	u	u	u	u
+text	hello		f	f	t	t	f	t
+text	hello	A	f	f	t	t	f	t
+text	hello	a	f	f	t	t	f	t
+text	hello	hello	f	t	f	t	t	f
+text	hello	\N	u	u	u	u	u	u
+text	\N		u	u	u	u	u	u
+text	\N	A	u	u	u	u	u	u
+text	\N	a	u	u	u	u	u	u
+text	\N	hello	u	u	u	u	u	u
+text	\N	\N	u	u	u	u	u	u
+character varying(10)			f	t	f	t	t	f
+character varying(10)		a	t	t	f	f	f	t
+character varying(10)		hello	t	t	f	f	f	t
+character varying(10)		\N	u	u	u	u	u	u
+character varying(10)	a		f	f	t	t	f	t
+character varying(10)	a	a	f	t	f	t	t	f
+character varying(10)	a	hello	t	t	f	f	f	t
+character varying(10)	a	\N	u	u	u	u	u	u
+character varying(10)	hello		f	f	t	t	f	t
+character varying(10)	hello	a	f	f	t	t	f	t
+character varying(10)	hello	hello	f	t	f	t	t	f
+character varying(10)	hello	\N	u	u	u	u	u	u
+character varying(10)	\N		u	u	u	u	u	u
+character varying(10)	\N	a	u	u	u	u	u	u
+character varying(10)	\N	hello	u	u	u	u	u	u
+character varying(10)	\N	\N	u	u	u	u	u	u
+character varying(10)	12345678901		f	f	t	t	f	t
+character varying(10)		12345678901	t	t	f	f	f	t
+character(10)	a	a	f	t	f	t	t	f
+character(10)	a	a         	f	t	f	t	t	f
+character(10)	a	hello	t	t	f	f	f	t
+character(10)	a	\N	u	u	u	u	u	u
+character(10)	a         	a	f	t	f	t	t	f
+character(10)	a         	a         	f	t	f	t	t	f
+character(10)	a         	hello	t	t	f	f	f	t
+character(10)	a         	\N	u	u	u	u	u	u
+character(10)	hello	a	f	f	t	t	f	t
+character(10)	hello	a         	f	f	t	t	f	t
+character(10)	hello	hello	f	t	f	t	t	f
+character(10)	hello	\N	u	u	u	u	u	u
+character(10)	\N	a	u	u	u	u	u	u
+character(10)	\N	a         	u	u	u	u	u	u
+character(10)	\N	hello	u	u	u	u	u	u
+character(10)	\N	\N	u	u	u	u	u	u
+name	A	A	f	t	f	t	t	f
+name	A	a	t	t	f	f	f	t
+name	A	hello	t	t	f	f	f	t
+name	A	\N	u	u	u	u	u	u
+name	a	A	f	f	t	t	f	t
+name	a	a	f	t	f	t	t	f
+name	a	hello	t	t	f	f	f	t
+name	a	\N	u	u	u	u	u	u
+name	hello	A	f	f	t	t	f	t
+name	hello	a	f	f	t	t	f	t
+name	hello	hello	f	t	f	t	t	f
+name	hello	\N	u	u	u	u	u	u
+name	\N	A	u	u	u	u	u	u
+name	\N	a	u	u	u	u	u	u
+name	\N	hello	u	u	u	u	u	u
+name	\N	\N	u	u	u	u	u	u
+public.mood	sad	sad	f	t	f	t	t	f
+public.mood	sad	ok	t	t	f	f	f	t
+public.mood	sad	happy	t	t	f	f	f	t
+public.mood	sad	has space	t	t	f	f	f	t
+public.mood	sad	\N	u	u	u	u	u	u
+public.mood	ok	sad	f	f	t	t	f	t
+public.mood	ok	ok	f	t	f	t	t	f
+public.mood	ok	happy	t	t	f	f	f	t
+public.mood	ok	has space	t	t	f	f	f	t
+public.mood	ok	\N	u	u	u	u	u	u
+public.mood	happy	sad	f	f	t	t	f	t
+public.mood	happy	ok	f	f	t	t	f	t
+public.mood	happy	happy	f	t	f	t	t	f
+public.mood	happy	has space	t	t	f	f	f	t
+public.mood	happy	\N	u	u	u	u	u	u
+public.mood	has space	sad	f	f	t	t	f	t
+public.mood	has space	ok	f	f	t	t	f	t
+public.mood	has space	happy	f	f	t	t	f	t
+public.mood	has space	has space	f	t	f	t	t	f
+public.mood	has space	\N	u	u	u	u	u	u
+public.mood	\N	sad	u	u	u	u	u	u
+public.mood	\N	ok	u	u	u	u	u	u
+public.mood	\N	happy	u	u	u	u	u	u
+public.mood	\N	has space	u	u	u	u	u	u
+public.mood	\N	\N	u	u	u	u	u	u
+public.mood	nope	sad	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+public.mood	sad	nope	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+public.mood	SAD	sad	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+public.mood	sad	SAD	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+json	1	1	E42883	E42883	E42883	E42883	E42883	E42883
+json	1	{"a": 1}	E42883	E42883	E42883	E42883	E42883	E42883
+json	1	null	E42883	E42883	E42883	E42883	E42883	E42883
+json	1	\N	E42883	E42883	E42883	E42883	E42883	E42883
+json	{"a": 1}	1	E42883	E42883	E42883	E42883	E42883	E42883
+json	{"a": 1}	{"a": 1}	E42883	E42883	E42883	E42883	E42883	E42883
+json	{"a": 1}	null	E42883	E42883	E42883	E42883	E42883	E42883
+json	{"a": 1}	\N	E42883	E42883	E42883	E42883	E42883	E42883
+json	null	1	E42883	E42883	E42883	E42883	E42883	E42883
+json	null	{"a": 1}	E42883	E42883	E42883	E42883	E42883	E42883
+json	null	null	E42883	E42883	E42883	E42883	E42883	E42883
+json	null	\N	E42883	E42883	E42883	E42883	E42883	E42883
+json	\N	1	E42883	E42883	E42883	E42883	E42883	E42883
+json	\N	{"a": 1}	E42883	E42883	E42883	E42883	E42883	E42883
+json	\N	null	E42883	E42883	E42883	E42883	E42883	E42883
+json	\N	\N	E42883	E42883	E42883	E42883	E42883	E42883
+json	{a:1}	1	E42883	E42883	E42883	E42883	E42883	E42883
+json	1	{a:1}	E42883	E42883	E42883	E42883	E42883	E42883
+jsonb	1	1	f	t	f	t	t	f
+jsonb	1	{"a": 1}	t	t	f	f	f	t
+jsonb	1	{"a":1}	t	t	f	f	f	t
+jsonb	1	[1, 2]	t	t	f	f	f	t
+jsonb	1	null	f	f	t	t	f	t
+jsonb	1	\N	u	u	u	u	u	u
+jsonb	{"a": 1}	1	f	f	t	t	f	t
+jsonb	{"a": 1}	{"a": 1}	f	t	f	t	t	f
+jsonb	{"a": 1}	{"a":1}	f	t	f	t	t	f
+jsonb	{"a": 1}	[1, 2]	f	f	t	t	f	t
+jsonb	{"a": 1}	null	f	f	t	t	f	t
+jsonb	{"a": 1}	\N	u	u	u	u	u	u
+jsonb	{"a":1}	1	f	f	t	t	f	t
+jsonb	{"a":1}	{"a": 1}	f	t	f	t	t	f
+jsonb	{"a":1}	{"a":1}	f	t	f	t	t	f
+jsonb	{"a":1}	[1, 2]	f	f	t	t	f	t
+jsonb	{"a":1}	null	f	f	t	t	f	t
+jsonb	{"a":1}	\N	u	u	u	u	u	u
+jsonb	[1, 2]	1	f	f	t	t	f	t
+jsonb	[1, 2]	{"a": 1}	t	t	f	f	f	t
+jsonb	[1, 2]	{"a":1}	t	t	f	f	f	t
+jsonb	[1, 2]	[1, 2]	f	t	f	t	t	f
+jsonb	[1, 2]	null	f	f	t	t	f	t
+jsonb	[1, 2]	\N	u	u	u	u	u	u
+jsonb	null	1	t	t	f	f	f	t
+jsonb	null	{"a": 1}	t	t	f	f	f	t
+jsonb	null	{"a":1}	t	t	f	f	f	t
+jsonb	null	[1, 2]	t	t	f	f	f	t
+jsonb	null	null	f	t	f	t	t	f
+jsonb	null	\N	u	u	u	u	u	u
+jsonb	\N	1	u	u	u	u	u	u
+jsonb	\N	{"a": 1}	u	u	u	u	u	u
+jsonb	\N	{"a":1}	u	u	u	u	u	u
+jsonb	\N	[1, 2]	u	u	u	u	u	u
+jsonb	\N	null	u	u	u	u	u	u
+jsonb	\N	\N	u	u	u	u	u	u
+jsonb	{	1	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+jsonb	1	{	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+xml	<a/>	<a/>	E42883	E42883	E42883	E42883	E42883	E42883
+xml	<a/>	<b/>	E42883	E42883	E42883	E42883	E42883	E42883
+xml	<a/>	\N	E42883	E42883	E42883	E42883	E42883	E42883
+xml	<b/>	<a/>	E42883	E42883	E42883	E42883	E42883	E42883
+xml	<b/>	<b/>	E42883	E42883	E42883	E42883	E42883	E42883
+xml	<b/>	\N	E42883	E42883	E42883	E42883	E42883	E42883
+xml	\N	<a/>	E42883	E42883	E42883	E42883	E42883	E42883
+xml	\N	<b/>	E42883	E42883	E42883	E42883	E42883	E42883
+xml	\N	\N	E42883	E42883	E42883	E42883	E42883	E42883
+xml	<a>	<a/>	E42883	E42883	E42883	E42883	E42883	E42883
+xml	<a/>	<a>	E42883	E42883	E42883	E42883	E42883	E42883
+inet	10.0.0.1	10.0.0.1	f	t	f	t	t	f
+inet	10.0.0.1	192.168.1.0/24	t	t	f	f	f	t
+inet	10.0.0.1	192.168.1.1	t	t	f	f	f	t
+inet	10.0.0.1	::1	t	t	f	f	f	t
+inet	10.0.0.1	\N	u	u	u	u	u	u
+inet	192.168.1.0/24	10.0.0.1	f	f	t	t	f	t
+inet	192.168.1.0/24	192.168.1.0/24	f	t	f	t	t	f
+inet	192.168.1.0/24	192.168.1.1	t	t	f	f	f	t
+inet	192.168.1.0/24	::1	t	t	f	f	f	t
+inet	192.168.1.0/24	\N	u	u	u	u	u	u
+inet	192.168.1.1	10.0.0.1	f	f	t	t	f	t
+inet	192.168.1.1	192.168.1.0/24	f	f	t	t	f	t
+inet	192.168.1.1	192.168.1.1	f	t	f	t	t	f
+inet	192.168.1.1	::1	t	t	f	f	f	t
+inet	192.168.1.1	\N	u	u	u	u	u	u
+inet	::1	10.0.0.1	f	f	t	t	f	t
+inet	::1	192.168.1.0/24	f	f	t	t	f	t
+inet	::1	192.168.1.1	f	f	t	t	f	t
+inet	::1	::1	f	t	f	t	t	f
+inet	::1	\N	u	u	u	u	u	u
+inet	\N	10.0.0.1	u	u	u	u	u	u
+inet	\N	192.168.1.0/24	u	u	u	u	u	u
+inet	\N	192.168.1.1	u	u	u	u	u	u
+inet	\N	::1	u	u	u	u	u	u
+inet	\N	\N	u	u	u	u	u	u
+inet	999.1.1.1	10.0.0.1	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+inet	10.0.0.1	999.1.1.1	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+cidr	10.0.0.0/8	10.0.0.0/8	f	t	f	t	t	f
+cidr	10.0.0.0/8	192.168.1.0/24	t	t	f	f	f	t
+cidr	10.0.0.0/8	::/0	t	t	f	f	f	t
+cidr	10.0.0.0/8	\N	u	u	u	u	u	u
+cidr	192.168.1.0/24	10.0.0.0/8	f	f	t	t	f	t
+cidr	192.168.1.0/24	192.168.1.0/24	f	t	f	t	t	f
+cidr	192.168.1.0/24	::/0	t	t	f	f	f	t
+cidr	192.168.1.0/24	\N	u	u	u	u	u	u
+cidr	::/0	10.0.0.0/8	f	f	t	t	f	t
+cidr	::/0	192.168.1.0/24	f	f	t	t	f	t
+cidr	::/0	::/0	f	t	f	t	t	f
+cidr	::/0	\N	u	u	u	u	u	u
+cidr	\N	10.0.0.0/8	u	u	u	u	u	u
+cidr	\N	192.168.1.0/24	u	u	u	u	u	u
+cidr	\N	::/0	u	u	u	u	u	u
+cidr	\N	\N	u	u	u	u	u	u
+cidr	192.168.1.1/24	10.0.0.0/8	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+cidr	10.0.0.0/8	192.168.1.1/24	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+macaddr	08:00:2b:01:02:03	08:00:2b:01:02:03	f	t	f	t	t	f
+macaddr	08:00:2b:01:02:03	08:00:2b:01:02:04	t	t	f	f	f	t
+macaddr	08:00:2b:01:02:03	\N	u	u	u	u	u	u
+macaddr	08:00:2b:01:02:04	08:00:2b:01:02:03	f	f	t	t	f	t
+macaddr	08:00:2b:01:02:04	08:00:2b:01:02:04	f	t	f	t	t	f
+macaddr	08:00:2b:01:02:04	\N	u	u	u	u	u	u
+macaddr	\N	08:00:2b:01:02:03	u	u	u	u	u	u
+macaddr	\N	08:00:2b:01:02:04	u	u	u	u	u	u
+macaddr	\N	\N	u	u	u	u	u	u
+macaddr	08-00-2b-01-02-04	08:00:2b:01:02:03	f	f	t	t	f	t
+macaddr	08:00:2b:01:02:03	08-00-2b-01-02-04	t	t	f	f	f	t
+macaddr	zz:00:2b:01:02:03	08:00:2b:01:02:03	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+macaddr	08:00:2b:01:02:03	zz:00:2b:01:02:03	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+macaddr8	08:00:2b:01:02:03:04:05	08:00:2b:01:02:03:04:05	f	t	f	t	t	f
+macaddr8	08:00:2b:01:02:03:04:05	08:00:2b:01:02:03:04:06	t	t	f	f	f	t
+macaddr8	08:00:2b:01:02:03:04:05	\N	u	u	u	u	u	u
+macaddr8	08:00:2b:01:02:03:04:06	08:00:2b:01:02:03:04:05	f	f	t	t	f	t
+macaddr8	08:00:2b:01:02:03:04:06	08:00:2b:01:02:03:04:06	f	t	f	t	t	f
+macaddr8	08:00:2b:01:02:03:04:06	\N	u	u	u	u	u	u
+macaddr8	\N	08:00:2b:01:02:03:04:05	u	u	u	u	u	u
+macaddr8	\N	08:00:2b:01:02:03:04:06	u	u	u	u	u	u
+macaddr8	\N	\N	u	u	u	u	u	u
+public.base_domain	-1	-1	f	t	f	t	t	f
+public.base_domain	-1	0	t	t	f	f	f	t
+public.base_domain	-1	1	t	t	f	f	f	t
+public.base_domain	-1	\N	u	u	u	u	u	u
+public.base_domain	0	-1	f	f	t	t	f	t
+public.base_domain	0	0	f	t	f	t	t	f
+public.base_domain	0	1	t	t	f	f	f	t
+public.base_domain	0	\N	u	u	u	u	u	u
+public.base_domain	1	-1	f	f	t	t	f	t
+public.base_domain	1	0	f	f	t	t	f	t
+public.base_domain	1	1	f	t	f	t	t	f
+public.base_domain	1	\N	u	u	u	u	u	u
+public.base_domain	\N	-1	u	u	u	u	u	u
+public.base_domain	\N	0	u	u	u	u	u	u
+public.base_domain	\N	1	u	u	u	u	u	u
+public.base_domain	\N	\N	u	u	u	u	u	u
+public.derived_domain	-1	-1	f	t	f	t	t	f
+public.derived_domain	-1	0	t	t	f	f	f	t
+public.derived_domain	-1	1	t	t	f	f	f	t
+public.derived_domain	-1	\N	E23502	E23502	E23502	E23502	E23502	E23502
+public.derived_domain	0	-1	f	f	t	t	f	t
+public.derived_domain	0	0	f	t	f	t	t	f
+public.derived_domain	0	1	t	t	f	f	f	t
+public.derived_domain	0	\N	E23502	E23502	E23502	E23502	E23502	E23502
+public.derived_domain	1	-1	f	f	t	t	f	t
+public.derived_domain	1	0	f	f	t	t	f	t
+public.derived_domain	1	1	f	t	f	t	t	f
+public.derived_domain	1	\N	E23502	E23502	E23502	E23502	E23502	E23502
+public.derived_domain	\N	-1	E23502	E23502	E23502	E23502	E23502	E23502
+public.derived_domain	\N	0	E23502	E23502	E23502	E23502	E23502	E23502
+public.derived_domain	\N	1	E23502	E23502	E23502	E23502	E23502	E23502
+public.derived_domain	\N	\N	E23502	E23502	E23502	E23502	E23502	E23502
+public.box_domain	(1,1),(0,0)	(1,1),(0,0)	f	t	f	t	t	E42883
+public.box_domain	(1,1),(0,0)	(3,3),(2,2)	f	t	f	t	t	E42883
+public.box_domain	(1,1),(0,0)	\N	u	u	u	u	u	E42883
+public.box_domain	(3,3),(2,2)	(1,1),(0,0)	f	t	f	t	t	E42883
+public.box_domain	(3,3),(2,2)	(3,3),(2,2)	f	t	f	t	t	E42883
+public.box_domain	(3,3),(2,2)	\N	u	u	u	u	u	E42883
+public.box_domain	\N	(1,1),(0,0)	u	u	u	u	u	E42883
+public.box_domain	\N	(3,3),(2,2)	u	u	u	u	u	E42883
+public.box_domain	\N	\N	u	u	u	u	u	E42883
+public.mybase	hello	hello	E42883	E42883	E42883	E42883	E42883	E42883
+public.mybase	hello	world	E42883	E42883	E42883	E42883	E42883	E42883
+public.mybase	hello	\N	E42883	E42883	E42883	E42883	E42883	E42883
+public.mybase	world	hello	E42883	E42883	E42883	E42883	E42883	E42883
+public.mybase	world	world	E42883	E42883	E42883	E42883	E42883	E42883
+public.mybase	world	\N	E42883	E42883	E42883	E42883	E42883	E42883
+public.mybase	\N	hello	E42883	E42883	E42883	E42883	E42883	E42883
+public.mybase	\N	world	E42883	E42883	E42883	E42883	E42883	E42883
+public.mybase	\N	\N	E42883	E42883	E42883	E42883	E42883	E42883
+integer[]	{}	{}	f	t	f	t	t	f
+integer[]	{}	{1,2}	t	t	f	f	f	t
+integer[]	{}	{1,NULL}	t	t	f	f	f	t
+integer[]	{}	[0:1]={1,2}	t	t	f	f	f	t
+integer[]	{}	{{1,2},{3,4}}	t	t	f	f	f	t
+integer[]	{}	\N	u	u	u	u	u	u
+integer[]	{1,2}	{}	f	f	t	t	f	t
+integer[]	{1,2}	{1,2}	f	t	f	t	t	f
+integer[]	{1,2}	{1,NULL}	t	t	f	f	f	t
+integer[]	{1,2}	[0:1]={1,2}	f	f	t	t	f	t
+integer[]	{1,2}	{{1,2},{3,4}}	t	t	f	f	f	t
+integer[]	{1,2}	\N	u	u	u	u	u	u
+integer[]	{1,NULL}	{}	f	f	t	t	f	t
+integer[]	{1,NULL}	{1,2}	f	f	t	t	f	t
+integer[]	{1,NULL}	{1,NULL}	f	t	f	t	t	f
+integer[]	{1,NULL}	[0:1]={1,2}	f	f	t	t	f	t
+integer[]	{1,NULL}	{{1,2},{3,4}}	f	f	t	t	f	t
+integer[]	{1,NULL}	\N	u	u	u	u	u	u
+integer[]	[0:1]={1,2}	{}	f	f	t	t	f	t
+integer[]	[0:1]={1,2}	{1,2}	t	t	f	f	f	t
+integer[]	[0:1]={1,2}	{1,NULL}	t	t	f	f	f	t
+integer[]	[0:1]={1,2}	[0:1]={1,2}	f	t	f	t	t	f
+integer[]	[0:1]={1,2}	{{1,2},{3,4}}	t	t	f	f	f	t
+integer[]	[0:1]={1,2}	\N	u	u	u	u	u	u
+integer[]	{{1,2},{3,4}}	{}	f	f	t	t	f	t
+integer[]	{{1,2},{3,4}}	{1,2}	f	f	t	t	f	t
+integer[]	{{1,2},{3,4}}	{1,NULL}	t	t	f	f	f	t
+integer[]	{{1,2},{3,4}}	[0:1]={1,2}	f	f	t	t	f	t
+integer[]	{{1,2},{3,4}}	{{1,2},{3,4}}	f	t	f	t	t	f
+integer[]	{{1,2},{3,4}}	\N	u	u	u	u	u	u
+integer[]	\N	{}	u	u	u	u	u	u
+integer[]	\N	{1,2}	u	u	u	u	u	u
+integer[]	\N	{1,NULL}	u	u	u	u	u	u
+integer[]	\N	[0:1]={1,2}	u	u	u	u	u	u
+integer[]	\N	{{1,2},{3,4}}	u	u	u	u	u	u
+integer[]	\N	\N	u	u	u	u	u	u
+integer[]	{ 1 , 2 }	{}	f	f	t	t	f	t
+integer[]	{}	{ 1 , 2 }	t	t	f	f	f	t
+integer[]	{1,null}	{}	f	f	t	t	f	t
+integer[]	{}	{1,null}	t	t	f	f	f	t
+integer[]	[1:2]={1,2}	{}	f	f	t	t	f	t
+integer[]	{}	[1:2]={1,2}	t	t	f	f	f	t
+integer[]	{1,2	{}	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+integer[]	{}	{1,2	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+integer[]	{1,,2}	{}	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+integer[]	{}	{1,,2}	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+integer[]	{{1,2},{3}}	{}	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+integer[]	{}	{{1,2},{3}}	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+text[]	{}	{}	f	t	f	t	t	f
+text[]	{}	{a,b}	t	t	f	f	f	t
+text[]	{}	{a,B}	t	t	f	f	f	t
+text[]	{}	{NULL}	t	t	f	f	f	t
+text[]	{}	{"NULL"}	t	t	f	f	f	t
+text[]	{}	\N	u	u	u	u	u	u
+text[]	{a,b}	{}	f	f	t	t	f	t
+text[]	{a,b}	{a,b}	f	t	f	t	t	f
+text[]	{a,b}	{a,B}	f	f	t	t	f	t
+text[]	{a,b}	{NULL}	t	t	f	f	f	t
+text[]	{a,b}	{"NULL"}	f	f	t	t	f	t
+text[]	{a,b}	\N	u	u	u	u	u	u
+text[]	{a,B}	{}	f	f	t	t	f	t
+text[]	{a,B}	{a,b}	t	t	f	f	f	t
+text[]	{a,B}	{a,B}	f	t	f	t	t	f
+text[]	{a,B}	{NULL}	t	t	f	f	f	t
+text[]	{a,B}	{"NULL"}	f	f	t	t	f	t
+text[]	{a,B}	\N	u	u	u	u	u	u
+text[]	{NULL}	{}	f	f	t	t	f	t
+text[]	{NULL}	{a,b}	f	f	t	t	f	t
+text[]	{NULL}	{a,B}	f	f	t	t	f	t
+text[]	{NULL}	{NULL}	f	t	f	t	t	f
+text[]	{NULL}	{"NULL"}	f	f	t	t	f	t
+text[]	{NULL}	\N	u	u	u	u	u	u
+text[]	{"NULL"}	{}	f	f	t	t	f	t
+text[]	{"NULL"}	{a,b}	t	t	f	f	f	t
+text[]	{"NULL"}	{a,B}	t	t	f	f	f	t
+text[]	{"NULL"}	{NULL}	t	t	f	f	f	t
+text[]	{"NULL"}	{"NULL"}	f	t	f	t	t	f
+text[]	{"NULL"}	\N	u	u	u	u	u	u
+text[]	\N	{}	u	u	u	u	u	u
+text[]	\N	{a,b}	u	u	u	u	u	u
+text[]	\N	{a,B}	u	u	u	u	u	u
+text[]	\N	{NULL}	u	u	u	u	u	u
+text[]	\N	{"NULL"}	u	u	u	u	u	u
+text[]	\N	\N	u	u	u	u	u	u
+text[]	{ a , b }	{}	f	f	t	t	f	t
+text[]	{}	{ a , b }	t	t	f	f	f	t
+text[]	{"a","b"}	{}	f	f	t	t	f	t
+text[]	{}	{"a","b"}	t	t	f	f	f	t
+text[]	{a\\,b}	{}	f	f	t	t	f	t
+text[]	{}	{a\\,b}	t	t	f	f	f	t
+public.mood[]	{sad,ok}	{sad,ok}	f	t	f	t	t	f
+public.mood[]	{sad,ok}	{ok,sad}	t	t	f	f	f	t
+public.mood[]	{sad,ok}	\N	u	u	u	u	u	u
+public.mood[]	{ok,sad}	{sad,ok}	f	f	t	t	f	t
+public.mood[]	{ok,sad}	{ok,sad}	f	t	f	t	t	f
+public.mood[]	{ok,sad}	\N	u	u	u	u	u	u
+public.mood[]	\N	{sad,ok}	u	u	u	u	u	u
+public.mood[]	\N	{ok,sad}	u	u	u	u	u	u
+public.mood[]	\N	\N	u	u	u	u	u	u
+public.intarr[]	{"{1,2}","{3}"}	{"{1,2}","{3}"}	f	t	f	t	t	f
+public.intarr[]	{"{1,2}","{3}"}	{"{}"}	f	f	t	t	f	t
+public.intarr[]	{"{1,2}","{3}"}	\N	u	u	u	u	u	u
+public.intarr[]	{"{}"}	{"{1,2}","{3}"}	t	t	f	f	f	t
+public.intarr[]	{"{}"}	{"{}"}	f	t	f	t	t	f
+public.intarr[]	{"{}"}	\N	u	u	u	u	u	u
+public.intarr[]	\N	{"{1,2}","{3}"}	u	u	u	u	u	u
+public.intarr[]	\N	{"{}"}	u	u	u	u	u	u
+public.intarr[]	\N	\N	u	u	u	u	u	u
+public.point2d	(1,a)	(1,a)	f	t	f	t	t	f
+public.point2d	(1,a)	(1,b)	t	t	f	f	f	t
+public.point2d	(1,a)	(2,a)	t	t	f	f	f	t
+public.point2d	(1,a)	(,a)	t	t	f	f	f	t
+public.point2d	(1,a)	(1,)	t	t	f	f	f	t
+public.point2d	(1,a)	\N	u	u	u	u	u	u
+public.point2d	(1,b)	(1,a)	f	f	t	t	f	t
+public.point2d	(1,b)	(1,b)	f	t	f	t	t	f
+public.point2d	(1,b)	(2,a)	t	t	f	f	f	t
+public.point2d	(1,b)	(,a)	t	t	f	f	f	t
+public.point2d	(1,b)	(1,)	t	t	f	f	f	t
+public.point2d	(1,b)	\N	u	u	u	u	u	u
+public.point2d	(2,a)	(1,a)	f	f	t	t	f	t
+public.point2d	(2,a)	(1,b)	f	f	t	t	f	t
+public.point2d	(2,a)	(2,a)	f	t	f	t	t	f
+public.point2d	(2,a)	(,a)	t	t	f	f	f	t
+public.point2d	(2,a)	(1,)	f	f	t	t	f	t
+public.point2d	(2,a)	\N	u	u	u	u	u	u
+public.point2d	(,a)	(1,a)	f	f	t	t	f	t
+public.point2d	(,a)	(1,b)	f	f	t	t	f	t
+public.point2d	(,a)	(2,a)	f	f	t	t	f	t
+public.point2d	(,a)	(,a)	f	t	f	t	t	f
+public.point2d	(,a)	(1,)	f	f	t	t	f	t
+public.point2d	(,a)	\N	u	u	u	u	u	u
+public.point2d	(1,)	(1,a)	f	f	t	t	f	t
+public.point2d	(1,)	(1,b)	f	f	t	t	f	t
+public.point2d	(1,)	(2,a)	t	t	f	f	f	t
+public.point2d	(1,)	(,a)	t	t	f	f	f	t
+public.point2d	(1,)	(1,)	f	t	f	t	t	f
+public.point2d	(1,)	\N	u	u	u	u	u	u
+public.point2d	\N	(1,a)	u	u	u	u	u	u
+public.point2d	\N	(1,b)	u	u	u	u	u	u
+public.point2d	\N	(2,a)	u	u	u	u	u	u
+public.point2d	\N	(,a)	u	u	u	u	u	u
+public.point2d	\N	(1,)	u	u	u	u	u	u
+public.point2d	\N	\N	u	u	u	u	u	u
+public.point2d	()	(1,a)	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+public.point2d	(1,a)	()	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+public.point2d	( 1 , a )	(1,a)	t	t	f	f	f	t
+public.point2d	(1,a)	( 1 , a )	f	f	t	t	f	t
+public.point2d	(1,a	(1,a)	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+public.point2d	(1,a)	(1,a	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+public.point2d	(1,a,b)	(1,a)	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+public.point2d	(1,a)	(1,a,b)	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+public.tagged	(a,"{x,y}")	(a,"{x,y}")	f	t	f	t	t	f
+public.tagged	(a,"{x,y}")	(a,)	t	t	f	f	f	t
+public.tagged	(a,"{x,y}")	\N	u	u	u	u	u	u
+public.tagged	(a,)	(a,"{x,y}")	f	f	t	t	f	t
+public.tagged	(a,)	(a,)	f	t	f	t	t	f
+public.tagged	(a,)	\N	u	u	u	u	u	u
+public.tagged	\N	(a,"{x,y}")	u	u	u	u	u	u
+public.tagged	\N	(a,)	u	u	u	u	u	u
+public.tagged	\N	\N	u	u	u	u	u	u
+public.empty_comp	()	()	f	t	f	t	t	f
+public.empty_comp	()	\N	u	u	u	u	u	u
+public.empty_comp	\N	()	u	u	u	u	u	u
+public.empty_comp	\N	\N	u	u	u	u	u	u
+public.empty_comp	(1)	()	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+public.empty_comp	()	(1)	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+int4range	empty	empty	f	t	f	t	t	f
+int4range	empty	[1,10)	t	t	f	f	f	t
+int4range	empty	[1,10]	t	t	f	f	f	t
+int4range	empty	(0,10)	t	t	f	f	f	t
+int4range	empty	[1,)	t	t	f	f	f	t
+int4range	empty	(,5)	t	t	f	f	f	t
+int4range	empty	\N	u	u	u	u	u	u
+int4range	[1,10)	empty	f	f	t	t	f	t
+int4range	[1,10)	[1,10)	f	t	f	t	t	f
+int4range	[1,10)	[1,10]	t	t	f	f	f	t
+int4range	[1,10)	(0,10)	f	t	f	t	t	f
+int4range	[1,10)	[1,)	t	t	f	f	f	t
+int4range	[1,10)	(,5)	f	f	t	t	f	t
+int4range	[1,10)	\N	u	u	u	u	u	u
+int4range	[1,10]	empty	f	f	t	t	f	t
+int4range	[1,10]	[1,10)	f	f	t	t	f	t
+int4range	[1,10]	[1,10]	f	t	f	t	t	f
+int4range	[1,10]	(0,10)	f	f	t	t	f	t
+int4range	[1,10]	[1,)	t	t	f	f	f	t
+int4range	[1,10]	(,5)	f	f	t	t	f	t
+int4range	[1,10]	\N	u	u	u	u	u	u
+int4range	(0,10)	empty	f	f	t	t	f	t
+int4range	(0,10)	[1,10)	f	t	f	t	t	f
+int4range	(0,10)	[1,10]	t	t	f	f	f	t
+int4range	(0,10)	(0,10)	f	t	f	t	t	f
+int4range	(0,10)	[1,)	t	t	f	f	f	t
+int4range	(0,10)	(,5)	f	f	t	t	f	t
+int4range	(0,10)	\N	u	u	u	u	u	u
+int4range	[1,)	empty	f	f	t	t	f	t
+int4range	[1,)	[1,10)	f	f	t	t	f	t
+int4range	[1,)	[1,10]	f	f	t	t	f	t
+int4range	[1,)	(0,10)	f	f	t	t	f	t
+int4range	[1,)	[1,)	f	t	f	t	t	f
+int4range	[1,)	(,5)	f	f	t	t	f	t
+int4range	[1,)	\N	u	u	u	u	u	u
+int4range	(,5)	empty	f	f	t	t	f	t
+int4range	(,5)	[1,10)	t	t	f	f	f	t
+int4range	(,5)	[1,10]	t	t	f	f	f	t
+int4range	(,5)	(0,10)	t	t	f	f	f	t
+int4range	(,5)	[1,)	t	t	f	f	f	t
+int4range	(,5)	(,5)	f	t	f	t	t	f
+int4range	(,5)	\N	u	u	u	u	u	u
+int4range	\N	empty	u	u	u	u	u	u
+int4range	\N	[1,10)	u	u	u	u	u	u
+int4range	\N	[1,10]	u	u	u	u	u	u
+int4range	\N	(0,10)	u	u	u	u	u	u
+int4range	\N	[1,)	u	u	u	u	u	u
+int4range	\N	(,5)	u	u	u	u	u	u
+int4range	\N	\N	u	u	u	u	u	u
+int4range	[1,10	empty	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+int4range	empty	[1,10	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+int4range	[10,1)	empty	E22000	E22000	E22000	E22000	E22000	E22000
+int4range	empty	[10,1)	E22000	E22000	E22000	E22000	E22000	E22000
+numrange	empty	empty	f	t	f	t	t	f
+numrange	empty	[1,10)	t	t	f	f	f	t
+numrange	empty	(1,10)	t	t	f	f	f	t
+numrange	empty	[1,10]	t	t	f	f	f	t
+numrange	empty	\N	u	u	u	u	u	u
+numrange	[1,10)	empty	f	f	t	t	f	t
+numrange	[1,10)	[1,10)	f	t	f	t	t	f
+numrange	[1,10)	(1,10)	t	t	f	f	f	t
+numrange	[1,10)	[1,10]	t	t	f	f	f	t
+numrange	[1,10)	\N	u	u	u	u	u	u
+numrange	(1,10)	empty	f	f	t	t	f	t
+numrange	(1,10)	[1,10)	f	f	t	t	f	t
+numrange	(1,10)	(1,10)	f	t	f	t	t	f
+numrange	(1,10)	[1,10]	f	f	t	t	f	t
+numrange	(1,10)	\N	u	u	u	u	u	u
+numrange	[1,10]	empty	f	f	t	t	f	t
+numrange	[1,10]	[1,10)	f	f	t	t	f	t
+numrange	[1,10]	(1,10)	t	t	f	f	f	t
+numrange	[1,10]	[1,10]	f	t	f	t	t	f
+numrange	[1,10]	\N	u	u	u	u	u	u
+numrange	\N	empty	u	u	u	u	u	u
+numrange	\N	[1,10)	u	u	u	u	u	u
+numrange	\N	(1,10)	u	u	u	u	u	u
+numrange	\N	[1,10]	u	u	u	u	u	u
+numrange	\N	\N	u	u	u	u	u	u
+daterange	empty	empty	f	t	f	t	t	f
+daterange	empty	[2020-01-01,2020-01-02)	t	t	f	f	f	t
+daterange	empty	[2020-01-01,2020-01-01]	t	t	f	f	f	t
+daterange	empty	[2020-01-01,infinity]	t	t	f	f	f	t
+daterange	empty	\N	u	u	u	u	u	u
+daterange	[2020-01-01,2020-01-02)	empty	f	f	t	t	f	t
+daterange	[2020-01-01,2020-01-02)	[2020-01-01,2020-01-02)	f	t	f	t	t	f
+daterange	[2020-01-01,2020-01-02)	[2020-01-01,2020-01-01]	f	t	f	t	t	f
+daterange	[2020-01-01,2020-01-02)	[2020-01-01,infinity]	t	t	f	f	f	t
+daterange	[2020-01-01,2020-01-02)	\N	u	u	u	u	u	u
+daterange	[2020-01-01,2020-01-01]	empty	f	f	t	t	f	t
+daterange	[2020-01-01,2020-01-01]	[2020-01-01,2020-01-02)	f	t	f	t	t	f
+daterange	[2020-01-01,2020-01-01]	[2020-01-01,2020-01-01]	f	t	f	t	t	f
+daterange	[2020-01-01,2020-01-01]	[2020-01-01,infinity]	t	t	f	f	f	t
+daterange	[2020-01-01,2020-01-01]	\N	u	u	u	u	u	u
+daterange	[2020-01-01,infinity]	empty	f	f	t	t	f	t
+daterange	[2020-01-01,infinity]	[2020-01-01,2020-01-02)	f	f	t	t	f	t
+daterange	[2020-01-01,infinity]	[2020-01-01,2020-01-01]	f	f	t	t	f	t
+daterange	[2020-01-01,infinity]	[2020-01-01,infinity]	f	t	f	t	t	f
+daterange	[2020-01-01,infinity]	\N	u	u	u	u	u	u
+daterange	\N	empty	u	u	u	u	u	u
+daterange	\N	[2020-01-01,2020-01-02)	u	u	u	u	u	u
+daterange	\N	[2020-01-01,2020-01-01]	u	u	u	u	u	u
+daterange	\N	[2020-01-01,infinity]	u	u	u	u	u	u
+daterange	\N	\N	u	u	u	u	u	u
+tsrange	empty	empty	f	t	f	t	t	f
+tsrange	empty	[2020-01-01 00:00:00,2020-01-02 00:00:00)	t	t	f	f	f	t
+tsrange	empty	\N	u	u	u	u	u	u
+tsrange	[2020-01-01 00:00:00,2020-01-02 00:00:00)	empty	f	f	t	t	f	t
+tsrange	[2020-01-01 00:00:00,2020-01-02 00:00:00)	[2020-01-01 00:00:00,2020-01-02 00:00:00)	f	t	f	t	t	f
+tsrange	[2020-01-01 00:00:00,2020-01-02 00:00:00)	\N	u	u	u	u	u	u
+tsrange	\N	empty	u	u	u	u	u	u
+tsrange	\N	[2020-01-01 00:00:00,2020-01-02 00:00:00)	u	u	u	u	u	u
+tsrange	\N	\N	u	u	u	u	u	u
+tstzrange	empty	empty	f	t	f	t	t	f
+tstzrange	empty	[2020-01-01 00:00:00+00,2020-01-02 00:00:00+00)	t	t	f	f	f	t
+tstzrange	empty	\N	u	u	u	u	u	u
+tstzrange	[2020-01-01 00:00:00+00,2020-01-02 00:00:00+00)	empty	f	f	t	t	f	t
+tstzrange	[2020-01-01 00:00:00+00,2020-01-02 00:00:00+00)	[2020-01-01 00:00:00+00,2020-01-02 00:00:00+00)	f	t	f	t	t	f
+tstzrange	[2020-01-01 00:00:00+00,2020-01-02 00:00:00+00)	\N	u	u	u	u	u	u
+tstzrange	\N	empty	u	u	u	u	u	u
+tstzrange	\N	[2020-01-01 00:00:00+00,2020-01-02 00:00:00+00)	u	u	u	u	u	u
+tstzrange	\N	\N	u	u	u	u	u	u
+public.myrange	empty	empty	f	t	f	t	t	f
+public.myrange	empty	[1.5,10.5)	t	t	f	f	f	t
+public.myrange	empty	[1.5,10.5]	t	t	f	f	f	t
+public.myrange	empty	\N	u	u	u	u	u	u
+public.myrange	[1.5,10.5)	empty	f	f	t	t	f	t
+public.myrange	[1.5,10.5)	[1.5,10.5)	f	t	f	t	t	f
+public.myrange	[1.5,10.5)	[1.5,10.5]	t	t	f	f	f	t
+public.myrange	[1.5,10.5)	\N	u	u	u	u	u	u
+public.myrange	[1.5,10.5]	empty	f	f	t	t	f	t
+public.myrange	[1.5,10.5]	[1.5,10.5)	f	f	t	t	f	t
+public.myrange	[1.5,10.5]	[1.5,10.5]	f	t	f	t	t	f
+public.myrange	[1.5,10.5]	\N	u	u	u	u	u	u
+public.myrange	\N	empty	u	u	u	u	u	u
+public.myrange	\N	[1.5,10.5)	u	u	u	u	u	u
+public.myrange	\N	[1.5,10.5]	u	u	u	u	u	u
+public.myrange	\N	\N	u	u	u	u	u	u
+public.textrange	["a,b","c""d")	["a,b","c""d")	f	t	f	t	t	f
+public.textrange	["a,b","c""d")	["","a")	f	f	t	t	f	t
+public.textrange	["a,b","c""d")	(,"z")	f	f	t	t	f	t
+public.textrange	["a,b","c""d")	empty	f	f	t	t	f	t
+public.textrange	["a,b","c""d")	\N	u	u	u	u	u	u
+public.textrange	["","a")	["a,b","c""d")	t	t	f	f	f	t
+public.textrange	["","a")	["","a")	f	t	f	t	t	f
+public.textrange	["","a")	(,"z")	f	f	t	t	f	t
+public.textrange	["","a")	empty	f	f	t	t	f	t
+public.textrange	["","a")	\N	u	u	u	u	u	u
+public.textrange	(,"z")	["a,b","c""d")	t	t	f	f	f	t
+public.textrange	(,"z")	["","a")	t	t	f	f	f	t
+public.textrange	(,"z")	(,"z")	f	t	f	t	t	f
+public.textrange	(,"z")	empty	f	f	t	t	f	t
+public.textrange	(,"z")	\N	u	u	u	u	u	u
+public.textrange	empty	["a,b","c""d")	t	t	f	f	f	t
+public.textrange	empty	["","a")	t	t	f	f	f	t
+public.textrange	empty	(,"z")	t	t	f	f	f	t
+public.textrange	empty	empty	f	t	f	t	t	f
+public.textrange	empty	\N	u	u	u	u	u	u
+public.textrange	\N	["a,b","c""d")	u	u	u	u	u	u
+public.textrange	\N	["","a")	u	u	u	u	u	u
+public.textrange	\N	(,"z")	u	u	u	u	u	u
+public.textrange	\N	empty	u	u	u	u	u	u
+public.textrange	\N	\N	u	u	u	u	u	u
+public.textrange	["a,b","c"d")	["a,b","c""d")	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+public.textrange	["a,b","c""d")	["a,b","c"d")	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+int4multirange	{}	{}	f	t	f	t	t	f
+int4multirange	{}	{[1,10)}	t	t	f	f	f	t
+int4multirange	{}	{[1,5),[6,10)}	t	t	f	f	f	t
+int4multirange	{}	\N	u	u	u	u	u	u
+int4multirange	{[1,10)}	{}	f	f	t	t	f	t
+int4multirange	{[1,10)}	{[1,10)}	f	t	f	t	t	f
+int4multirange	{[1,10)}	{[1,5),[6,10)}	f	f	t	t	f	t
+int4multirange	{[1,10)}	\N	u	u	u	u	u	u
+int4multirange	{[1,5),[6,10)}	{}	f	f	t	t	f	t
+int4multirange	{[1,5),[6,10)}	{[1,10)}	t	t	f	f	f	t
+int4multirange	{[1,5),[6,10)}	{[1,5),[6,10)}	f	t	f	t	t	f
+int4multirange	{[1,5),[6,10)}	\N	u	u	u	u	u	u
+int4multirange	\N	{}	u	u	u	u	u	u
+int4multirange	\N	{[1,10)}	u	u	u	u	u	u
+int4multirange	\N	{[1,5),[6,10)}	u	u	u	u	u	u
+int4multirange	\N	\N	u	u	u	u	u	u
+public.myrange_multi	{}	{}	f	t	f	t	t	f
+public.myrange_multi	{}	{[1.5,10.5)}	t	t	f	f	f	t
+public.myrange_multi	{}	\N	u	u	u	u	u	u
+public.myrange_multi	{[1.5,10.5)}	{}	f	f	t	t	f	t
+public.myrange_multi	{[1.5,10.5)}	{[1.5,10.5)}	f	t	f	t	t	f
+public.myrange_multi	{[1.5,10.5)}	\N	u	u	u	u	u	u
+public.myrange_multi	\N	{}	u	u	u	u	u	u
+public.myrange_multi	\N	{[1.5,10.5)}	u	u	u	u	u	u
+public.myrange_multi	\N	\N	u	u	u	u	u	u
+public.empty_enum	\N	\N	u	u	u	u	u	u
+public.empty_enum	x	\N	u	u	u	u	u	u
+public.empty_enum	\N	x	u	u	u	u	u	u

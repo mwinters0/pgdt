@@ -18,6 +18,8 @@ cargo run -p pgdump_query-cli -- info --source <file> [--verbose]   # never scan
 cargo run -p pgdump_query-cli -- info --dqcache <path>       # cache-only, no dump file needed
 
 cd scripts && uv run generate_fixtures.py [--version 13|16|18]  # regenerate fixtures/
+cd scripts && uv run generate_fixtures.py --skip-dumps          # re-take the comparison oracle only
+cd scripts && uv run python -m unittest test_comparison_oracle  # case table vs. the committed answers
 
 cd scripts && uv run measure.py --list            # every figure, and what invalidates each
 cd scripts && uv run measure.py --stale           # which figures a diff has made stale
@@ -128,10 +130,10 @@ to read from and can execute garbage. Let it finish, or kill it first.
 `docs/design/architecture.md` describes how the built system works, filed by
 subject. **Read the section for the mechanism you are touching** — the scanner,
 the file map, `DumpIndex`, the preamble grammar, type resolution, the decoders,
-the zero-copy Arrow path, the query passes, the cache, the CLI, fixtures, or
-the testing approach — before changing that mechanism. Each section carries its
-own *Rejected:* paragraphs, which are the part that cannot be recovered from
-the code, **and that mechanism's known deficiencies** — a register entry's
+the zero-copy Arrow path, the query passes, the cache, the CLI, fixtures, the
+comparison oracle, or the testing approach — before changing that mechanism.
+Each section carries its own *Rejected:* paragraphs, which are the part that
+cannot be recovered from the code, **and that mechanism's known deficiencies** — a register entry's
 detail lives beside the mechanism, not in a central list, so reading the section
 is how you meet it. Two sections are hard constraints rather than description: "Parser
 robustness requirements (hardcoded)" is what the `COPY`-block scanner
