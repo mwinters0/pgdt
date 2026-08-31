@@ -186,6 +186,25 @@ progress.
       `generate_fixtures.py` reporting its own elapsed time. No library code.
       Earned on entry to 11.11. Notes:
       [`../design/roadmap-P11.11.1-collated-fixture-columns-notes.md`](../design/roadmap-P11.11.1-collated-fixture-columns-notes.md)
+- [ ] **11.11.2** The displaced `COLLATE` clause, observed — four more
+      columns on `t_collate`, none costing the one-alphabet property: a
+      nullable `DEFAULT`-bearing collated column that holds the alphabet and
+      puts I37's placement claim into committed bytes at six majors; a
+      `GENERATED ... STORED NOT NULL` collated column with its source, which
+      stacks all three displacers for free because a generated column is
+      absent from `COPY`, and is the only real-dump stress on
+      `extract_collation`'s paren-aware scan; and a user-defined collation
+      with a column of it, pinning the register's conservative answer for a
+      collation the dump itself shows to be `locale = 'C'`. I37 amended for
+      v18's `CONSTRAINT <name> NOT NULL`, `NO INHERIT` and virtual
+      `GENERATED`, and given a re-runnable probe recipe; plus a
+      `pg-dump-compatibility.md` row marking those two v18 shapes untested and
+      naming the blocker. Asserted in two
+      files — `tests/ordering.rs` for the reachable columns, and
+      `tests/preamble.rs` for the one with no data. No oracle cases and no
+      `KD<k>`: the user collation is a pgdq verdict rather than a server
+      answer, and a spurious note over correct rows is a property. No library
+      code. Earned from grilling 11.11.1's leftover.
 - [ ] **11.4** Enum and bare `numeric` — declaration order for the enum;
       arbitrary-precision decimal carrying `Infinity`, `-Infinity` and `NaN`.
 - [ ] **11.5** The text-held type queue — `interval` (with v17 infinities),
@@ -313,20 +332,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **I37's clause *placement* is still a one-off probe, and `t_collate` does
-  not close it.** `pg_dump` appends a table column's `COLLATE` after
-  `DEFAULT`/`GENERATED` and after `NOT NULL`, which is the whole reason
-  `extract_collation` scans a column's entire fragment rather than the token
-  after the type. No committed fixture shows it: no collated fixture column
-  carries a default or a `NOT NULL`, so the only observation is a throwaway
-  16.15 container whose output is quoted in the invariant and cannot be
-  re-run. 11.11.1's row named five collated columns and none of them has one,
-  so the column that would close it was left out rather than added
-  unilaterally — and it would cost that table's "one alphabet replicated
-  across every column" property a `NOT NULL` exception. **Reconsidering it
-  means** adding a sixth column, `v_text_placed text DEFAULT 'x' NOT NULL
-  COLLATE "C"`, whose ninth row holds `''` where the others hold NULL, plus one
-  more regeneration (80 s) and one more row in
-  `a_collated_column_is_judged_by_its_clause`. The source greps behind I37 are
-  unaffected either way; what is at stake is whether the *observed* half of the
-  entry is reproducible.
+Nothing is open.

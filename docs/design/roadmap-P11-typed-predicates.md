@@ -701,6 +701,7 @@ here.
 | **11.2.1** | The register-to-oracle reconciliation | Every arm of the comparison register resolves to at least one oracle case, and every oracle case to an arm; failing on either direction. **Earned, not planned** — see below. |
 | **11.11** | The declared collation is read | `COLLATE` captured in the preamble parser instead of stopped at, and carried to the register: explicit `C`/`POSIX` and a bare `name` register *Agrees*, an explicit non-`C` clause *Diverges*, no clause on a `default`-collation type *unknown, therefore diverges*. Changes no comparison — only which columns are told they diverge. |
 | **11.11.1** | The collated fixture columns | A `t_collate` table in the `types` schema — `COLLATE "C"`, `COLLATE "en_US.utf8"`, `COLLATE "ucs_basic"`, a bare `name` column and a domain `AS text COLLATE "C"` — regenerated across six majors, so the *agreeing* halves of 11.11's collation rule have a real dump behind them; plus `oracle_register.py` taught the collation dimension, so the three collated arms stop collapsing to one; `character(10)` asked under both collations and given a `"a\t"` value, putting I38's ordering corollary in the oracle and sparing 11.6 a regeneration; a composite with a collated attribute, closing I37's last unobserved emission site; one assertion per column in `tests/ordering.rs`; and `generate_fixtures.py` reporting its own elapsed time, with the recorded figure in `architecture.md` and a stale-past-30-minutes warning. No library code. **Earned, not planned** — see below. |
+| **11.11.2** | The displaced `COLLATE` clause, observed | Four more columns on `t_collate`, none costing the one-alphabet property: `v_text_def text DEFAULT 'x' COLLATE "C"`, which holds the alphabet, enters the stream and puts I37's *placement* claim — the clause written after `DEFAULT`/`GENERATED`/`NOT NULL` rather than beside the type — into committed bytes at six majors instead of one lost container; `v_gen_nn text GENERATED ALWAYS AS (upper(v_src)) STORED NOT NULL COLLATE "C"` with its `v_src`, which stacks all three displacers in one fragment at no cost to the alphabet, because a `STORED` generated column is absent from `COPY` — and which is the only real-dump stress on `extract_collation`'s paren-aware scan, the existing generated fixture column being `integer` with nothing after its expression; and `CREATE COLLATION public.c_collation FROM "C"` with a column of it, which observes the user-collation reference form (schema-qualified, unquoted, outside `pg_catalog`) and pins `collated_text`'s deliberately conservative `NonBytewiseCollation` answer for a collation the same dump shows to be `locale = 'C'`. Plus I37 amended for v18's two new displacers and given a re-runnable probe recipe, and a `pg-dump-compatibility.md` row marking those two shapes untested and naming the blocker. **Asserted in two files**: the reachable columns in `tests/ordering.rs` beside the existing five, and `v_gen_nn` in `tests/preamble.rs`, which walks `DatabaseMetadata` over all six majors — because a column with no data never enters a `TableStream`. **No oracle cases and no `KD<k>`**: the user collation is a pgdq verdict rather than a server answer, and a spurious note over correct rows is a property, not a deficiency — its paragraph is mirrored into `architecture.md`, "Ordering operators compare typed". No library code. **Earned, not planned** — see below. |
 | **11.4** | Enum and bare `numeric` | The two rows the re-key was for: declaration order, and arbitrary-precision decimal with all three specials. |
 | **11.5** | The text-held type queue | `interval` (with v17 infinities), `time with time zone`, `inet`/`cidr`/`macaddr`/`macaddr8`, `jsonb`. Repetitive and additive; the oracle checks each. |
 | **11.6** | Typed `=` / `!=` | Routed through the now-complete plan, with the canonicalize-once fast path, its two decode-per-row exceptions and the `char(n)` trim — which retires `OrderingDivergence::BlankPadded` and gives `character` the same three collation arms `text` has. Renames the note channel. |
@@ -903,6 +904,82 @@ nothing reads is inert, and the reconciliation's claim is coverage — that an a
 has a case — not that the arm answers correctly. One assertion per column:
 `COLLATE "C"` and the bare `name` produce no note, `en_US.utf8` and `ucs_basic`
 each produce one, and the domain inherits `C` and is silent.
+
+**11.11.2 was earned from grilling 11.11.1's leftover.** 11.11.1 closed with a
+"Decisions worth another look" entry asking whether I37's *placement* consequence
+deserved a fixture column, and priced it at a `NOT NULL` exception to
+`t_collate`'s one-alphabet property. Re-running the probe showed the price was
+imaginary: `DEFAULT` alone displaces the clause and `NOT NULL` alone displaces
+it, so a *nullable* column with a default observes the placement and still holds
+the alphabet with `NULL` in its ninth row. The entry's other premise — that the
+16.15 observation could not be re-run — was also false; every `-trixie` image is
+cached locally and the probe takes twenty seconds. What is genuinely missing is
+not the observation but its *form*: I37's strongest claim rests on a string
+hand-transcribed into a unit test, where every other claim in that entry rests
+on committed bytes at six majors.
+
+The same probe turned up two things 11.11.1 could not have known. **I37 is wrong
+by omission about v18**: `dumpTableSchema`'s append order there admits
+`CONSTRAINT <name> NOT NULL` and `NO INHERIT`, and a *virtual* `GENERATED ALWAYS
+AS (expr)` with no `STORED`, none of which v13–v17 can write and none of which
+I37 names — so a reader building a parser from that entry meets a v18 dump it
+does not describe. And **`objects.c_collation` exists as an object that no column
+references**, leaving the user-collation reference form unobserved and the
+register's most interesting cell — conservative and knowably wrong, kept
+deliberately — with no test standing in front of it.
+
+**The stack costs nothing, because the column that carries it has no data.**
+A `STORED` generated column is excluded from the `COPY` column list, so
+`v_gen_nn` can be `NOT NULL` without any row having to hold a value for it —
+which puts `GENERATED`, `NOT NULL` and `COLLATE` in one fragment while
+`t_collate` keeps one alphabet replicated across every column that has one.
+The cost is that no ordering test can reach it: filtering or projecting a
+column absent from `COPY` is not a query the stream can answer. So this slice
+is the first where `t_collate`'s columns are asserted in two files rather than
+one, and the split is by reachability, not by subject.
+
+**The v18 shapes get a coverage row, not an owner.** I37 must name them or it
+stays wrong, but "named and not exercised" is a coverage statement, and
+`pg-dump-compatibility.md` is the register whose whole value is telling tested
+from assumed — without a row there, someone walking the invariants at a PG19
+release reads the amended claim with no way to see that two of its shapes rest
+on source reading alone. The row says the blocker is schema-level version
+conditioning: `generate_fixtures.py` conditions flag *sets* on version — that
+is how `fixtures/18/objects/stats.sql` exists — but one schema `.sql` runs
+against every major. That gap gets no further home. It is not a deficiency,
+since nothing is wrong and no user is affected, and a roadmap "Future" row
+would manufacture intent nobody holds; the matrix row names the blocker at the
+one place a session wanting a version-specific DDL fixture will actually hit
+it.
+
+**Neither the oracle nor the deficiency register gains anything.** The oracle
+records what the server answered, and `public.c_collation` is `FROM "C"`, so a
+third collation column would duplicate the `C` column by construction while
+being the first row in that file to exist for a decision of ours rather than a
+fact of PostgreSQL's. And the register's answer for it — `NonBytewiseCollation`
+on the strength of the schema, not the behaviour — produces *correct rows* with
+a spurious advisory note, which is the definition of a property rather than a
+deficiency: there is nothing for a user to remedy and nothing to fix. `KD7` is
+the list of places the order genuinely differs, and this is precisely not one.
+The reasoning already half-exists in `collation_is_bytewise`'s doc comment;
+this slice mirrors it where a reader looks.
+
+**The probe recipe stays even though the fixture supersedes it**, because the
+two answer different questions. Once the columns land, the existing
+`grep -n -A9 'CREATE TABLE public.t_collate' fixtures/*/types/default.sql`
+re-verifies placement from committed bytes at the six majors we generate. The
+recipe answers it for a *seventh* — a newly released major, before any fixture
+for it exists — which is exactly the walk-the-register ritual a release
+triggers, and it should not have to wait on a regeneration. It goes inline in
+`Re-verify` rather than into `scripts/`, where nothing would consume it and it
+would rot unrun.
+
+**The two v18-only shapes are named in I37 and not fixtured**, which is the one
+piece of this deliberately left undone. `generate_fixtures.py` carries
+`min_version` for dump *flags* only; one schema `.sql` runs against all six
+majors, so an 18-only DDL shape fails on 13–17. Version-conditional schema SQL is
+a fixture-family capability, not a collation errand, and it wants its own slice
+rather than riding in on this one.
 
 **11.11 is discovered scope, not a split**, so it takes the next free number
 rather than hanging off a parent; the table is the schedule, which is why it
