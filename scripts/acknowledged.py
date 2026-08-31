@@ -64,4 +64,46 @@ class Acknowledged:
 #: The excused commits, live for the current session stamp only. Empty is the
 #: state a fresh stamp leaves behind: every entry a sweep re-stamps past is
 #: spent, and `--check` names it so it is deleted rather than kept as sediment.
-ACKNOWLEDGED: tuple[Acknowledged, ...] = ()
+ACKNOWLEDGED: tuple[Acknowledged, ...] = (
+    Acknowledged(
+        commit="8b97956",
+        figures=(
+            "census-brace-free",
+            "census-arrays",
+            "scan-throughput-cold",
+            "scan-throughput-warm",
+            "nested-end-to-end",
+            "census-attribution",
+            "cross-file-floor",
+            "per-block-quadratic",
+            "projection-widths",
+        ),
+        why=(
+            "deleted composite-isolated's generator support -- the "
+            "--weak-composite flag and the composite_text input -- which no "
+            "surviving input's row logic reaches; all five inputs a published "
+            "figure is taken on are byte-identical across the change"
+        ),
+        verified="cd scripts && uv run measure.py --verify-additive",
+    ),
+    Acknowledged(
+        commit="9ed21d4",
+        figures=(
+            "nested-end-to-end",
+            "census-attribution",
+            "cross-file-floor",
+            "map-only",
+            "projection-widths",
+        ),
+        why=(
+            "the filter term grammar, which no registered command shape "
+            "executes: none passes --filter, so parse_filter and everything "
+            "under it is unreachable in every timed run. The one added "
+            "function a shape does reach is quoted_name_note, called once on "
+            "query-nomatch's not-found path, where it compares the first and "
+            "last byte of `public.nosuchtable` and returns None -- against a "
+            "timed leg measured in seconds"
+        ),
+        verified="test 0 -eq \"$(grep -c -- --filter scripts/measure.py)\"",
+    ),
+)

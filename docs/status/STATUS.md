@@ -13,12 +13,13 @@ mechanism works is [`../design/architecture.md`](../design/architecture.md),
 filed by subject. **No phase is open**, and the next one is grilled and
 specified before anything else lands.
 
-**One obligation of the last wrap is outstanding**: eleven figures read stale,
-and the full sweep that clears them is launched detached rather than waited on —
-an hour a run, so its result is a later session's input. That session folds its
-tables into [`../design/measurements.md`](../design/measurements.md) and
-re-stamps the doc; until then that doc's numbers are the `b70589f` stamp and
-`--stale` is red for the reason written below.
+[`../design/measurements.md`](../design/measurements.md) carries the `b70589f`
+stamp, and **one figure reads stale** — `session-drift`, named below with what
+would settle it. A stale figure no longer obliges a sweep and neither does a
+wrap: a full sweep is an hour of a quiet machine and belongs to the phase that
+is about performance, which will re-take every table under its own apparatus
+([`../design/measurements.md`](../design/measurements.md), "A stale figure does
+not oblige a sweep").
 
 | Capability | State |
 |---|---|
@@ -49,7 +50,8 @@ re-stamps the doc; until then that doc's numbers are the `b70589f` stamp and
 apparatus line. `--check` reconciles thirteen markers against thirteen figures.
 `session-drift` is derived across that sweep and a second one taken three
 minutes later on the same commit, which is the pair `--drift` reads.
-`measure.ACKNOWLEDGED` is empty, which is what a fresh stamp leaves behind.
+`measure.ACKNOWLEDGED` carries two entries, both with mechanical evidence
+attached — see the staleness paragraph below.
 
 **Nothing is built and unrun.** `measure.UNTAKEN` is empty: `projection-widths`
 was taken and moved into `FIGURES`, and `composite-isolated` was deleted
@@ -58,33 +60,35 @@ flag, the `composite_text` input and the fidelity case pairing them — because
 the projection table makes the same isolation a subtraction between two adjacent
 rows of one file.
 
-**Eleven figures read stale, from three causes.** Nine declare
-`scripts/generate_perf_data.py`, edited to delete `composite-isolated`'s
-apparatus — the `--weak-composite` flag and the `composite_text` input.
-`session-drift` declares `scripts/measure.py`, edited in the same commit to
-move `projection-widths` into `FIGURES`; nothing on a timing path differs
-there, and the figure is derived rather than measured, so `--drift` re-derives
-it from the two sweeps' `raw.json` without measuring anything. The eleventh is
-`map-only`: five figures declare the CLI's `main.rs`, four of them already
-stale on the generator, and `map-only` is the one that was not.
+**Two commits since the stamp touched a declared path, and both are
+acknowledged with mechanical evidence.** `8b97956` deleted
+`composite-isolated`'s generator apparatus — the `--weak-composite` flag and
+the `composite_text` input — and `--verify-additive` regenerates all five
+surviving inputs at both revisions and finds them byte-identical, which covers
+nine figures. `9ed21d4` landed the `--filter` term grammar in the CLI's
+`main.rs`, which five figures declare, and **no registered command shape passes
+`--filter`**, so none of it runs in a timed command; the one added function a
+shape reaches is `quoted_name_note`, called once on `query-nomatch`'s
+not-found path. Each entry carries the command that re-checks it.
 
-**None was acknowledged, and the sweep is what spends the whole range.** The
-generator change is very likely additive for the surviving inputs, but that is
-a claim `--verify-additive` settles and it was not run; an acknowledgement on a
-read of the diff alone is the weaker kind of entry. The CLI change is not
-acknowledgeable at all — `--verify-additive` settles generator changes only,
-and a library or CLI change has no cheap oracle. So the range is spent by the
-wrap sweep, which re-stamps every table at once; it is launched detached and
-read by a later session, and `--stale` stays red until its fold-in.
+**`session-drift` stays stale, and that is the honest state.** It declares
+`scripts/measure.py`, which `8b97956` also edited to move `projection-widths`
+into `FIGURES`, and the harness *is* the apparatus that figure measures — so
+neither oracle applies and nothing but taking it settles it. It is derived
+rather than measured, so `uv run measure.py --drift <sweep> <sweep>` re-derives
+it from two sweeps' `raw.json` without measuring anything; what it lacks is a
+pair taken past this commit. The scan-performance phase will supply one. One
+red figure with its reason written here is a signal; eleven were not.
 
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **Five phases are sketched and none grilled** — P6, P11, P7, P10, P8, in that
+- **Five phases are sketched and none grilled** — P11, P7, P10, P6, P8, in that
   schedule order — a `P<k>` is an identifier and the roadmap's table is the
-  schedule, so the numbers say nothing about the order they run in.
+  schedule, so the numbers say nothing about the order they run in. **P11 is
+  next.**
   `process.md` step 6 re-grills the roadmap before the next phase is specified,
   and each of the five has an inbox that must be drained as part of that
   grilling.

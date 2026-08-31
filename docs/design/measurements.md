@@ -239,14 +239,37 @@ only the inputs a *published* figure is taken on, since an input that exists
 for an untaken instrument has no bytes in the doc to be wrong about and may not
 be generatable at the older revision at all.
 
+**Reachability is the second mechanical oracle, and it is narrower than
+byte-identity.** A change inside a declared path that **no registered command
+shape executes** moves no reading, and whether a shape passes a flag is a grep
+over `_script` rather than a judgement. It says the changed code did not
+*run* — not that it runs identically — so an entry using it names the command
+shapes and, where a shape reaches part of the change, says which part and how
+often. The worked case is the `--filter` term grammar: it lives in `main.rs`,
+which five figures declare, and no command shape passes `--filter` at all.
+
 *Rejected:* letting an acknowledgement cover library or harness changes on a
-reading of the diff. There is no cheap oracle for those — the only way to know
-whether a change to `map.rs` or to the harness's own timing path moved a number
-is to take the number — so they stay stale and `--stale` keeps saying so. The
-worked case is `session-drift`, which declares `scripts/measure.py` because the
-harness *is* the apparatus it measures: the commits that armed the contention
-gate are not acknowledgeable, and that figure waits for the sweep pair
-`--drift` needs.
+reading of the diff. Neither oracle above is a diff read: one regenerates bytes
+and compares them, the other resolves what a fixed set of commands can reach.
+Where neither applies — a change to `map.rs`, or to the harness's own timing
+path, that a published command *does* execute — the only way to know whether a
+number moved is to take it, so the figure stays stale and `--stale` keeps
+saying so. The worked case is `session-drift`, which declares
+`scripts/measure.py` because the harness *is* the apparatus it measures.
+
+**A stale figure does not oblige a sweep, and neither does a phase boundary.**
+Red is the honest state for a figure whose evidence nobody has taken, and the
+requirement is that the reason is *written down* — in `STATUS.md`, naming the
+figure and what would settle it — not that the red is cleared. A full sweep is
+an hour of a machine that has to be quiet, and taking one at each wrap spends
+it on a stamp the next phase invalidates before anyone reads it for a decision.
+Sweeps belong to the phase that is *about* performance, which is also the phase
+that will re-take every table under its own apparatus. What protects a reader
+in the meantime is not freshness but the standing rules below: quote a
+magnitude rather than three significant figures, and read a move against the
+resolution floor for its regime. Reasoning:
+[`../status/history/2026-08-31.md`](../status/history/2026-08-31.md), "A sweep
+at every wrap buys a stamp the next phase invalidates".
 
 **Every reading carries a witness to how quiet the machine was.** Two procfile
 reads bracket each timed run — PSI's monotonic `total=` stall counters and

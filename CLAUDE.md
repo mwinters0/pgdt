@@ -209,8 +209,15 @@ transcription errors lived. Its unit tests are `scripts/test_measure.py`.
 figure declares the paths that invalidate it, so the harness answers "which
 figures did this diff make stale" instead of someone remembering to — which is
 the half that failed twice. A declared path is coarse, so a change inside one
-that provably moves nothing still reads stale; **acknowledge that commit rather
-than leaving `--stale` red**, because a signal that is always on is no signal.
+that provably moves nothing still reads stale; **acknowledge that commit where
+mechanical evidence exists, and where it does not, leave the figure red with
+the reason written down** — what must never happen is red with no explanation,
+because a signal that is always on is no signal. Two oracles are mechanical:
+byte-identity of the regenerated inputs (`--verify-additive`, generator changes
+only) and **reachability** — a change no registered command shape executes.
+Neither a stale figure nor a phase boundary obliges a sweep: a full sweep is an
+hour of a quiet machine, and it belongs to a phase that is about performance,
+not to every wrap.
 `--verify-additive` regenerates every published figure's inputs at two
 revisions and compares them byte for byte — that is the evidence an
 acknowledgement carries, and it settles generator changes only. Library and

@@ -16,10 +16,10 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P5, P9 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
-| P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
 | P11 — typed predicates | Sketched; not grilled | this file, below; [inbox](roadmap-P11-typed-predicates-inbox.md) |
 | P7 — scan performance | Sketched; design doc ahead of its phase | [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md); [inbox](roadmap-P7-scan-performance-inbox.md) |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
+| P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
 | P8 — format coverage | Sketched; not grilled | this file, below; [inbox](roadmap-P8-format-coverage-inbox.md) |
 
 The struck phases' mechanisms are described by subject in
@@ -315,27 +315,6 @@ out of it. See
 Note that CSV-format `COPY` blocks are **not** on this list. They are a Future
 item; see below.
 
-## P6 — Embeddable engine story
-
-**Inbox:** [`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md) — facts earlier
-phases filed for this one. Drain it when grilling this phase.
-
-The least-specified phase — the user has explicitly flagged unfamiliarity
-with this space, so treat its eventual grilling session as needing real
-research (prior art from `object_store`/DataFusion/similar embedded-source
-crates), not just architectural taste. Rough shape, informed by the decisions
-under "Standing rules" above, made to keep this open:
-
-- Feature-gated `object_store`-backed I/O implementation of the MVP's
-  internal byte-range trait, alongside the lightweight local-only default —
-  unlocks S3/GCS/Azure and any other `object_store`-supported backend.
-- Python bindings (likely `pyo3`), as a new workspace member.
-- Apache DataFusion `TableProvider` integration, as a new workspace member —
-  the async core and the `Utf8View` column choice were made with this
-  destination specifically in mind.
-- Apache Spark / Trino integration — order and approach TBD; likely follows
-  whatever pattern the DataFusion integration establishes, if applicable.
-
 ## P11 — Typed predicates
 
 **Inbox:** [`roadmap-P11-typed-predicates-inbox.md`](roadmap-P11-typed-predicates-inbox.md) — facts earlier
@@ -358,14 +337,28 @@ rather than two:
   value a dump contains and wrong only for a user-supplied non-canonical
   literal.
 
-**Wanted before 1.0**, and scheduled after P6 rather than alongside pushdown
-for two reasons. Its worst bug is a different class from anything pushdown
-built — a silently wrong row *set*, where projection's worst is a wrong column
-list — so bundling them would force one review confidence across both, the same
-argument that made statistics P10. And P6 is what settles the shape of the expression this has to
-accept: DataFusion hands a `TableProvider` an `Expr` tree and asks, per filter,
-whether the pushdown is exact, inexact or unsupported. Designing a boolean
-expression language before seeing that is inventing a second one to reconcile.
+**Wanted before 1.0, and taken first**, because the surface it reworks is the
+one pushdown has just finished building and the engine story is what would
+otherwise harden an API around it. A `TableProvider` presents whatever the
+predicate can express; built first, it commits to the conjunction of
+single-column comparisons that ships today, and this phase then changes that
+surface underneath it. Widening what a provider can push down is additive;
+rebuilding one around a changed predicate is not.
+
+Its worst bug is a different class from anything pushdown built — a silently
+wrong row *set*, where projection's worst is a wrong column list — so it cannot
+share a review cycle with a query-API change, which is the same argument that
+made statistics P10.
+
+*The reason that used to defer it behind the engine story is withdrawn:* that
+"DataFusion hands a `TableProvider` an `Expr` tree and asks, per filter,
+whether the pushdown is exact, inexact or unsupported", so designing a boolean
+expression language before seeing that would be inventing a second one to
+reconcile. That shape is documented, stable, and readable from the DataFusion
+source without building anything — and the measured v55 semantics for `List`
+and `Struct` comparison are already in this phase's inbox, filed by an earlier
+phase. It is a research input to the grilling, not a dependency on a phase. The
+withdrawn reason is recorded so it is not re-derived.
 
 ## P7 — Scan performance
 
@@ -379,21 +372,32 @@ parallel on NVMe). Full sketch, including the measurements that should gate
 each piece and the decisions it constrains, in this phase and before it:
 `docs/design/roadmap-P7-scan-performance.md`.
 
-Scheduled here, after the engine story, because P6's `object_store` backend
-settles the I/O layer that any readahead/parallelism scheme has to live behind.
-Deliberately *before* P8 — the format work multiplies the surface area that any
-later optimization has to be correct against, so the fast path should exist
-first and archive containers should be built to fit it. And before P10, which
-needs the sparse row index this phase builds.
+Scheduled ahead of the engine story, and ahead of P8 and P10, for three
+independent reasons. Local-file performance is a project goal rather than a
+later optimization, and two deficiencies wait on this phase (`KD5`, `KD9`). The
+format work multiplies the surface area any later optimization has to be
+correct against, so the fast path should exist first and archive containers
+should be built to fit it. And statistics need the sparse row index this phase
+builds.
 
-*The reason that used to head this list is withdrawn:* that pushdown
-"changes which bytes get touched at all, so optimizing the pre-pushdown parser
-would partly optimize code that pushdown deletes". Pushdown deletes no parser
-code — it never did. A projection skips `decode_field` and the builder append
-for a column nobody asked for and changes nothing about what the scanner does
-([`architecture.md`](architecture.md), "Projection"). Nothing about the ordering
-changed, because the `object_store` reason was always the load-bearing one; the
-withdrawn half is recorded so it is not re-derived.
+**Two reasons for a later placement have been withdrawn, and both are recorded
+so they are not re-derived.** The first was that pushdown "changes which bytes
+get touched at all, so optimizing the pre-pushdown parser would partly optimize
+code that pushdown deletes" — pushdown deletes no parser code and never did; a
+projection skips `decode_field` and the builder append for a column nobody
+asked for and changes nothing about what the scanner does
+([`architecture.md`](architecture.md), "Projection").
+
+The second was that the engine story's `object_store` backend "settles the I/O
+layer that any readahead or parallelism scheme has to live behind". That
+question is already settled *here* rather than there:
+[`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md) rejects mmap
+precisely because it bypasses `ByteRangeSource` and so could never be the path
+an `object_store` backend takes, and commits instead to positioned reads behind
+that same abstraction. What genuinely does not transfer is the *tuning* —
+readahead depth and chunk-size defaults measured against local devices say
+nothing about a high-latency ranged backend — and that is a second set of
+measured defaults the engine story adds, not a rework of this phase.
 
 ## P10 — Per-row-group column statistics
 
@@ -416,7 +420,11 @@ where it sits in the table above:
   [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md) fills. So
   this phase is scheduled after that one; running it earlier means inventing a
   second addressing scheme that P7 then has to reconcile with the one it
-  wanted.
+  wanted. It is not only an addressing question: this phase's best outcome —
+  sortedness plus the sparse index turning a range predicate into a binary
+  search for a byte range, below — is *unreachable* without that index, so
+  running it first would deliver row-group pruning and leave the payoff that
+  motivated the phase on the table.
 
 Reasoning for the split:
 [`../status/history/2026-08-29.md`](../status/history/2026-08-29.md), "Statistics
@@ -528,6 +536,38 @@ the opt-in-and-column-selectable rule above, which is what keeps a caller who
 will never benefit from paying. Reasoning:
 [`../status/history/2026-08-29.md`](../status/history/2026-08-29.md), "Pushdown
 cannot touch the mapping pass".
+
+## P6 — Embeddable engine story
+
+**Inbox:** [`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md) — facts earlier
+phases filed for this one. Drain it when grilling this phase.
+
+The least-specified phase — the user has explicitly flagged unfamiliarity
+with this space, so treat its eventual grilling session as needing real
+research (prior art from `object_store`/DataFusion/similar embedded-source
+crates), not just architectural taste. Rough shape, informed by the decisions
+under "Standing rules" above, made to keep this open:
+
+- Feature-gated `object_store`-backed I/O implementation of the MVP's
+  internal byte-range trait, alongside the lightweight local-only default —
+  unlocks S3/GCS/Azure and any other `object_store`-supported backend.
+- Python bindings (likely `pyo3`), as a new workspace member.
+- Apache DataFusion `TableProvider` integration, as a new workspace member —
+  the async core and the `Utf8View` column choice were made with this
+  destination specifically in mind.
+- Apache Spark / Trino integration — order and approach TBD; likely follows
+  whatever pattern the DataFusion integration establishes, if applicable.
+
+**Scheduled after the three above**, because it is the phase that *presents* a
+surface over mechanisms they are still changing. A `TableProvider` commits to
+what the predicate can express and to the I/O layer beneath it; built while
+either is in motion, it is built twice. Each phase ahead of it hands it a
+settled input instead — the predicate surface from typed predicates, and the
+byte-range abstraction with its measured defaults from scan performance — and
+this is also the least-specified phase, whose grilling needs real research
+rather than architectural taste, so it gains most from going last. Its inbox is
+the largest of the five and none of it decays by waiting: the entries are
+questions this phase must answer, not evidence that ages.
 
 ## P8 — Format coverage beyond plain COPY TEXT
 
