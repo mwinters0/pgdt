@@ -2006,8 +2006,8 @@ fixture containers, `datcollate` `en_US.utf8`, `collversion` 2.41 — so it does
 not speak for a musl deployment, which orders the same locale bytewise
 ([`architecture.md`](architecture.md), "The comparison oracle").
 
-**Proof.** Measured, not argued: `fixtures/<13…18>/oracle/` holds 1616
-comparisons and 279 literals per major as the server itself answered them, and
+**Proof.** Measured, not argued: `fixtures/<13…18>/oracle/` holds 1745
+comparisons and 291 literals per major as the server itself answered them, and
 `fixtures/oracle-differences.tsv` holds every cell that moved between adjacent
 majors — 509 of them, all additive. The three transitions that exist are the
 ones the release notes would have named: `numeric`'s infinities and the two
@@ -2123,13 +2123,42 @@ to zero where it matches the type's default:
 `typcollation` is `pg_type.dat`: `name` carries `typcollation => 'C'`, while
 `text`, `bpchar` and `varchar` carry `typcollation => 'default'`.
 
-**Observed.** On `postgres:16.15-trixie`, a table declaring `v_text text`,
-`v_text_c text COLLATE "C"`, `v_char_c character(10) NOT NULL DEFAULT 'x'
-COLLATE "C"`, `v_name name` and `v_user text COLLATE public.mycoll` dumps as
-`v_text text`, `v_text_c text COLLATE pg_catalog."C"`, `v_char_c character(10)
-DEFAULT 'x'::bpchar NOT NULL COLLATE pg_catalog."C"`, `v_name name` and
-`v_user text COLLATE public.mycoll` — the two bare columns being exactly the
-two whose collation is their type's own default.
+**Observed, in committed bytes.** `scripts/fixture_schema_types.sql`'s
+`public.t_collate` reaches all three emission sites, and
+`fixtures/<13–18>/types/default.sql` is what each of the six servers wrote:
+
+```
+CREATE TYPE public.collated_pair AS (
+	plain text,
+	c text COLLATE pg_catalog."C"
+);
+CREATE DOMAIN public.text_c AS text COLLATE pg_catalog."C";
+CREATE TABLE public.t_collate (
+    id integer NOT NULL,
+    v_text_c text COLLATE pg_catalog."C",
+    v_text_locale text COLLATE pg_catalog."en_US.utf8",
+    v_text_ucs text COLLATE pg_catalog.ucs_basic,
+    v_name name,
+    v_domain_c public.text_c,
+    v_pair public.collated_pair
+);
+```
+
+Three things are visible there and nowhere else in the tree. The reference is
+schema-qualified and quoted **only where quoting is needed** — `pg_catalog."C"`
+against `pg_catalog.ucs_basic`. The two bare columns are exactly the two whose
+collation is their type's own default: `name`'s is `C`, and `v_domain_c`'s is
+the domain's own clause, which the `CREATE DOMAIN` carries instead. And the
+composite's attribute clause sits directly after its type, as the domain's
+does.
+
+**One consequence is still a one-off probe**: the *placement* inside a table
+column, after `DEFAULT`/`GENERATED` and after `NOT NULL`, which no committed
+fixture carries because no collated fixture column has either. On
+`postgres:16.15-trixie` a column declared `v_char_c character(10) NOT NULL
+DEFAULT 'x' COLLATE "C"` dumped as `v_char_c character(10) DEFAULT 'x'::bpchar
+NOT NULL COLLATE pg_catalog."C"`; the container is gone, and the source greps
+below are what stands behind it at all six majors.
 
 **Scope limit.** There is a **fourth** `COLLATE %s` emission,
 `createDummyViewAsClause`'s `NULL::<type> COLLATE <coll> AS <name>`, written
@@ -2162,6 +2191,7 @@ grep -n -A6 "typname => 'name'" \
   /mnt/wd12t/upstream/postgres/release-v<N>/src/include/catalog/pg_type.dat
 psql -c "select typname, typcollation::regtype from pg_type
          where typname in ('text','varchar','bpchar','name')"
+grep -n -A9 'CREATE TABLE public.t_collate' fixtures/*/types/default.sql
 ```
 
 ---

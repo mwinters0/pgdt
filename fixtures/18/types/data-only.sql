@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict GoOUfFmW563qD5swvwsvJJqNF1Pwkb3dX3TeWOf0GFW7EfvZrZjgR1WIR7mlwhB
+\restrict GxgPffnnvKZXoWjmwETlcDUMBzgznsjO3byOcJJtTzLjoFAALUHbcmwMPB2pb1Z
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -70,6 +70,23 @@ COPY public.t_bytea (id, v_bytea) FROM stdin;
 2	\N
 3	\\xdeadbeef00ff
 4	\\x5c6261636b736c617368
+\.
+
+
+--
+-- Data for Name: t_collate; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_collate (id, v_text_c, v_text_locale, v_text_ucs, v_name, v_domain_c, v_pair) FROM stdin;
+1	A	A	A	A	A	(A,A)
+2	a	a	a	a	a	(a,a)
+3	B	B	B	B	B	(B,B)
+4	é	é	é	é	é	(é,é)
+5	f	f	f	f	f	(f,f)
+6	_x	_x	_x	_x	_x	(_x,_x)
+7	ax	ax	ax	ax	ax	(ax,ax)
+8						("","")
+9	\N	\N	\N	\N	\N	\N
 \.
 
 
@@ -310,5 +327,5 @@ COPY public.t_uuid (id, v_uuid) FROM stdin;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict GoOUfFmW563qD5swvwsvJJqNF1Pwkb3dX3TeWOf0GFW7EfvZrZjgR1WIR7mlwhB
+\unrestrict GxgPffnnvKZXoWjmwETlcDUMBzgznsjO3byOcJJtTzLjoFAALUHbcmwMPB2pb1Z
 

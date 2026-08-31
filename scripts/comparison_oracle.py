@@ -87,8 +87,18 @@ class TypeCases:
     with -- `C` for bytewise, `default` for the database's own. It is a field
     on the *case*, so a text pair asked under two collations is two cases,
     rather than a pair of extra columns that would be empty for the twelve
-    hundred rows where collation means nothing. A collated case asks no
-    literals: an input function and an output function do not consult one.
+    hundred rows where collation means nothing.
+
+    **`None` means the comparison register does not branch on the clause for
+    this type**, and nothing else. It used to mean two things at once -- for
+    `text` and `character varying`, "asked bare", which is the database's
+    collation and so the *divergent* population; for `name`, "asked bare",
+    which is that type's own `C` default and so the *agreeing* one -- and a
+    join that resolved it per type would be a second copy of the register's
+    type-default rule living in Python. So every case of a type whose arm reads
+    the clause states its collation explicitly, and `None` is left to the types
+    where the register has no branch to name. `scripts/oracle_register.py` is
+    the join that reads it.
     """
 
     type: str
@@ -234,7 +244,6 @@ TYPE_CASES: list[TypeCases] = [
         (r"\x", r"\x00", r"\xdeadbeef", r"\xff", None),
         (r"\xgg", "abc"),
     ),
-    TypeCases("text", ("", "A", "a", "hello", None)),
     # The collation dimension. The same alphabet is asked twice -- bytewise
     # under `C`, and under the database's own collation, which on this
     # apparatus is glibc's `en_US.utf8` -- so the file holds both halves of
@@ -253,23 +262,61 @@ TYPE_CASES: list[TypeCases] = [
     # (`1`/`a`). **The agreeing pairs are kept deliberately**: a set in which
     # every row diverged would read as "these two orders never coincide",
     # which is false.
+    #
+    # `text` has **no third, uncollated case**, and the empty string and
+    # `hello` are here rather than in one. A bare case would have to be
+    # labelled `default` to keep `None` meaning one thing (see
+    # `TypeCases.collation`), and two `default` cases of one type share nine
+    # ordered pairs -- duplicate rows in a file the differ aligns positionally.
     *(
         TypeCases(
             "text",
             (
-                "1", "A", "a", "B", "e", "é", "f",
-                "_x", "ax", "co-op", "coop", "de luge", "deluge", None,
+                "", "1", "A", "a", "B", "e", "é", "f",
+                "_x", "ax", "co-op", "coop", "de luge", "deluge", "hello", None,
             ),
             collation=collation,
         )
         for collation in COLLATIONS
     ),
-    TypeCases("character varying(10)", ("", "a", "hello", None), ("12345678901",)),
+    TypeCases(
+        "character varying(10)",
+        ("", "a", "hello", None),
+        ("12345678901",),
+        collation="default",
+    ),
     # `bpchareq` compares after `bcTruelen` strips the padding, and the dump
     # writes the padded form: `a` and `a` + nine blanks are equal, and the
     # literal table's `output` column is what says the file holds the padded
     # one.
-    TypeCases("character(10)", ("a", "a         ", "hello", None)),
+    #
+    # **`a` + a tab is the ordering half of I38**, which the other three values
+    # cannot reach: pad-and-compare and trim-and-compare disagree only against a
+    # byte below `0x20`, and every other value here is printable. Trimmed, the
+    # tab ranks above bare `a`; padded, it ranks below, because the tab sorts
+    # under the pad space.
+    #
+    # Asked under both collations ahead of the slice that closes `character`.
+    # Today the register is clause-blind here -- blank padding is what makes it
+    # diverge, not the collation -- so this looks like an instance of the `None`
+    # rule and stops being one the moment a trimmed `char(n)` compares under its
+    # own collation. Labelling now costs nothing in a regeneration that is
+    # happening anyway; labelling later costs a six-major run of its own.
+    *(
+        TypeCases(
+            "character(10)",
+            ("a", "a         ", "a\t", "hello", None),
+            collation=collation,
+        )
+        for collation in COLLATIONS
+    ),
+    # The one deliberate `None` among the collatable types, and it is asked
+    # *bare*: `name`'s own type default is `C`, so a bare `name` column is the
+    # whole of what the register claims about it. Relabelling these cases
+    # `collation="C"` would be true and would be the register's claim rather
+    # than the oracle's observation -- a `name` pair asked under an explicit
+    # `COLLATE "C"` is a different question from one asked bare, and only the
+    # bare one shows what a bare column does.
     TypeCases("name", ("A", "a", "hello", None)),
     # Declaration order, not label text: `sad` < `ok` < `happy` on the server
     # and the reverse bytewise, which is the whole of the enum register row.
@@ -402,19 +449,21 @@ TYPE_CASES: list[TypeCases] = [
 def literal_cases() -> list[tuple[str, str | None]]:
     """Every `(type, literal)` the literal table asks about, in file order.
 
-    A literal repeated between `values` and `inputs` is asked once, and a
-    collated case asks none at all -- parsing and output are collation-blind,
-    so its literals would be the same rows a second and third time.
+    **A literal is asked once per type**, wherever it is first named, whether
+    that is `values` or `inputs` and whichever case carries it. Collation does
+    not enter: an input function and an output function do not consult one, so
+    a type asked under two collations would otherwise repeat every literal of
+    the first case a second time. Deduplicating rather than skipping a collated
+    case is what keeps a value that exists only there -- `character(10)`'s tab,
+    `text`'s alphabet -- in the file.
     """
     out: list[tuple[str, str | None]] = []
+    seen: set[tuple[str, str | None]] = set()
     for case in TYPE_CASES:
-        if case.collation is not None:
-            continue
-        seen: set[str | None] = set()
         for literal in (*case.values, *case.inputs):
-            if literal in seen:
+            if (case.type, literal) in seen:
                 continue
-            seen.add(literal)
+            seen.add((case.type, literal))
             out.append((case.type, literal))
     return out
 

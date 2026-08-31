@@ -302,6 +302,80 @@ async fn a_divergent_comparison_is_reported_by_the_stream() {
     }
 }
 
+/// One assertion per column of `public.t_collate`, which is the whole of
+/// what a real dump can say about the collation rule.
+///
+/// Two of the five are *silences*, and they are the half no unit test can
+/// stand in for: `pg_dump` writes a `COLLATE` clause only where the column's
+/// collation differs from its type's default (I37), so `v_name` and
+/// `v_domain_c` carry none — the first because `name`'s type default is `C`,
+/// the second because the domain's own `COLLATE "C"` is the default it would
+/// have to differ from. A register that read the absence as "unknown" would
+/// warn on both.
+///
+/// `v_text_ucs` is the asymmetry, pinned by a dump rather than by a sentence:
+/// `ucs_basic` really is bytewise (`collcollate = C`) and is not named `C`, so
+/// the register must still call it divergent. `pg_dump` writes it unquoted —
+/// `pg_catalog.ucs_basic` — which is also the shape `collation_is_bytewise`
+/// must not fold to `"C"`.
+#[tokio::test]
+async fn a_collated_column_is_judged_by_its_clause() {
+    for (column, divergence) in [
+        ("v_text_c", None),
+        ("v_name", None),
+        ("v_domain_c", None),
+        ("v_text_locale", Some(OrderingDivergence::NonBytewiseCollation)),
+        ("v_text_ucs", Some(OrderingDivergence::NonBytewiseCollation)),
+    ] {
+        let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
+        let mut stream = table_stream(
+            &source,
+            "public.t_collate",
+            ScanOptions::default(),
+            QueryOptions {
+                filters: vec![term(column, PredicateOp::Ge, "a")],
+                projection: Some(vec![column.to_string()]),
+                ..Default::default()
+            },
+            None,
+            CacheMode::Disabled,
+        );
+        while stream.next().await.transpose().unwrap().is_some() {}
+        let notes = stream.ordering_notes();
+        match divergence {
+            None => assert!(notes.is_empty(), "{column}: {notes:?}"),
+            Some(expected) => {
+                assert_eq!(notes.len(), 1, "{column}: {notes:?}");
+                assert_eq!(notes[0].column, column);
+                assert_eq!(notes[0].divergence, expected);
+                assert!(
+                    notes[0].message().contains("other than C/POSIX"),
+                    "{}",
+                    notes[0].message()
+                );
+            }
+        }
+    }
+}
+
+/// The five columns hold one alphabet, so the note is the only thing that
+/// separates them: every one answers bytewise, including the two the note
+/// says PostgreSQL would order differently. `_x` surviving `> B` is the
+/// divergence made concrete — underscore is above `B` in ASCII and is ignored
+/// at glibc's primary level, where the server ranks it below.
+#[tokio::test]
+async fn every_collation_answers_the_same_bytewise_row_set() {
+    let expected: Vec<Option<String>> =
+        ["a", "é", "f", "_x", "ax"].iter().map(|v| Some(v.to_string())).collect();
+    for column in ["v_text_c", "v_text_locale", "v_text_ucs", "v_name", "v_domain_c"] {
+        assert_eq!(
+            kept("public.t_collate", column, vec![term(column, PredicateOp::Gt, "B")]).await,
+            expected,
+            "{column}"
+        );
+    }
+}
+
 /// A comparison that agrees with PostgreSQL reports nothing, and neither
 /// does a query with no ordering term at all: the channel is a divergence
 /// report, not a record of which operators were used.

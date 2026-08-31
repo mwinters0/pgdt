@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict mKwiZcOF44pOtKQxzOOrzArPzImXz4Jy00hX579wf7r5Bf9BK9aRZT7CmlcB0Bc
+\restrict Y8QDPiWMLRPdd9xCf4X7UhfpnsBSjc6Zv4AxPej5p0A4MCkaKsDzgSBCGswc1Xf
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -521,8 +521,8 @@ COPY objects.widget_audit (widget_id, changed_at) FROM stdin;
 --
 
 COPY objects.widgets (id, label, created_at) FROM stdin;
-1	alpha	2026-08-31 14:44:06.463092+00
-2	beta	2026-08-31 14:44:06.463092+00
+1	alpha	2026-08-31 22:50:21.413753+00
+2	beta	2026-08-31 22:50:21.413753+00
 \.
 
 
@@ -1009,5 +1009,5 @@ ALTER EVENT TRIGGER objects_ddl_log OWNER TO postgres;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict mKwiZcOF44pOtKQxzOOrzArPzImXz4Jy00hX579wf7r5Bf9BK9aRZT7CmlcB0Bc
+\unrestrict Y8QDPiWMLRPdd9xCf4X7UhfpnsBSjc6Zv4AxPej5p0A4MCkaKsDzgSBCGswc1Xf
 

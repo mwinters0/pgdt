@@ -150,6 +150,67 @@ INSERT INTO public.t_text VALUES
     (2, NULL, NULL, NULL),
     (3, 'hello', 'hello', 'hi');
 
+-- The COLLATE clause. Every column below is Utf8View and every one is compared
+-- bytewise; what the clause moves is the *verdict* -- whether bytewise is
+-- PostgreSQL's own answer for that column (docs/design/architecture.md,
+-- "Ordering operators compare typed"). t_text, above, carries the divergent
+-- half of that rule; this table is the agreeing half, which nothing in the
+-- tree had until it existed.
+--
+-- pg_dump writes a clause only where the column's collation differs from its
+-- type's own default (I37), so the two silent columns here are silent for two
+-- different reasons: `name`'s type default *is* C, and v_domain_c's type
+-- default is the domain's own COLLATE "C", which text_c's DDL carries instead.
+-- Do not "fix" either into an explicit clause: the absence is the fact under
+-- test.
+--
+-- en_US.utf8 is the one genuinely non-bytewise collation available at all six
+-- majors without generating a locale -- it is also the database's own
+-- collation (fixtures/<v>/oracle/meta.tsv, datcollate), and naming it
+-- explicitly still emits a clause, because pg_dump compares collation OIDs
+-- rather than semantics. ucs_basic earns its column for the opposite reason:
+-- it is collcollate = C, bytewise in fact, and not named C, so the register
+-- must call it divergent. ICU stays out at both ends -- `unicode` and the
+-- *-x-icu family carry a collversion that moves with the ICU release, which is
+-- an apparatus key guaranteed to drift.
+CREATE DOMAIN public.text_c AS text COLLATE "C";
+
+-- I37's third emission site, dumpCompositeType: a per-attribute COLLATE inside
+-- a CREATE TYPE, which nothing else in the tree reaches. Nothing reads a
+-- field's collation yet -- a nested column is refused a step earlier, on the
+-- NestedPlan -- and the nested structural comparison slice is what will want
+-- it.
+CREATE TYPE public.collated_pair AS (plain text, c text COLLATE "C");
+
+CREATE TABLE public.t_collate (
+    id integer PRIMARY KEY,
+    v_text_c text COLLATE "C",
+    v_text_locale text COLLATE "en_US.utf8",
+    v_text_ucs text COLLATE "ucs_basic",
+    v_name name,
+    v_domain_c public.text_c,
+    v_pair public.collated_pair
+);
+
+-- One alphabet, replicated across every column, so a filter over two of them
+-- differs only by the collation. These are the values the comparison oracle
+-- already answers on: A/a and a/B diverge because case is a lower-weight
+-- difference than letter, é/f because an accent sorts with its base letter,
+-- and _x/ax because punctuation is ignored at the primary level -- all on
+-- glibc 2.41. Do not "fix" them into placeholders: a set that could not
+-- separate the two orders would pass every note-level assertion and support no
+-- stronger one.
+INSERT INTO public.t_collate VALUES
+    (1, 'A', 'A', 'A', 'A', 'A', ROW('A', 'A')::public.collated_pair),
+    (2, 'a', 'a', 'a', 'a', 'a', ROW('a', 'a')::public.collated_pair),
+    (3, 'B', 'B', 'B', 'B', 'B', ROW('B', 'B')::public.collated_pair),
+    (4, 'é', 'é', 'é', 'é', 'é', ROW('é', 'é')::public.collated_pair),
+    (5, 'f', 'f', 'f', 'f', 'f', ROW('f', 'f')::public.collated_pair),
+    (6, '_x', '_x', '_x', '_x', '_x', ROW('_x', '_x')::public.collated_pair),
+    (7, 'ax', 'ax', 'ax', 'ax', 'ax', ROW('ax', 'ax')::public.collated_pair),
+    (8, '', '', '', '', '', ROW('', '')::public.collated_pair),
+    (9, NULL, NULL, NULL, NULL, NULL, NULL);
+
 CREATE TABLE public.t_json (
     id integer PRIMARY KEY,
     v_json json,

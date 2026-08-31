@@ -575,31 +575,23 @@ bytea	\\xgg	\\x	\N	E22023	E22023	E22023	E22023	E22023	E22023
 bytea	\\x	\\xgg	\N	E22023	E22023	E22023	E22023	E22023	E22023
 bytea	abc	\\x	\N	f	f	t	t	f	t
 bytea	\\x	abc	\N	t	t	f	f	f	t
-text			\N	f	t	f	t	t	f
-text		A	\N	t	t	f	f	f	t
-text		a	\N	t	t	f	f	f	t
-text		hello	\N	t	t	f	f	f	t
-text		\N	\N	u	u	u	u	u	u
-text	A		\N	f	f	t	t	f	t
-text	A	A	\N	f	t	f	t	t	f
-text	A	a	\N	f	f	t	t	f	t
-text	A	hello	\N	t	t	f	f	f	t
-text	A	\N	\N	u	u	u	u	u	u
-text	a		\N	f	f	t	t	f	t
-text	a	A	\N	t	t	f	f	f	t
-text	a	a	\N	f	t	f	t	t	f
-text	a	hello	\N	t	t	f	f	f	t
-text	a	\N	\N	u	u	u	u	u	u
-text	hello		\N	f	f	t	t	f	t
-text	hello	A	\N	f	f	t	t	f	t
-text	hello	a	\N	f	f	t	t	f	t
-text	hello	hello	\N	f	t	f	t	t	f
-text	hello	\N	\N	u	u	u	u	u	u
-text	\N		\N	u	u	u	u	u	u
-text	\N	A	\N	u	u	u	u	u	u
-text	\N	a	\N	u	u	u	u	u	u
-text	\N	hello	\N	u	u	u	u	u	u
-text	\N	\N	\N	u	u	u	u	u	u
+text			C	f	t	f	t	t	f
+text		1	C	t	t	f	f	f	t
+text		A	C	t	t	f	f	f	t
+text		a	C	t	t	f	f	f	t
+text		B	C	t	t	f	f	f	t
+text		e	C	t	t	f	f	f	t
+text		é	C	t	t	f	f	f	t
+text		f	C	t	t	f	f	f	t
+text		_x	C	t	t	f	f	f	t
+text		ax	C	t	t	f	f	f	t
+text		co-op	C	t	t	f	f	f	t
+text		coop	C	t	t	f	f	f	t
+text		de luge	C	t	t	f	f	f	t
+text		deluge	C	t	t	f	f	f	t
+text		hello	C	t	t	f	f	f	t
+text		\N	C	u	u	u	u	u	u
+text	1		C	f	f	t	t	f	t
 text	1	1	C	f	t	f	t	t	f
 text	1	A	C	t	t	f	f	f	t
 text	1	a	C	t	t	f	f	f	t
@@ -613,7 +605,9 @@ text	1	co-op	C	t	t	f	f	f	t
 text	1	coop	C	t	t	f	f	f	t
 text	1	de luge	C	t	t	f	f	f	t
 text	1	deluge	C	t	t	f	f	f	t
+text	1	hello	C	t	t	f	f	f	t
 text	1	\N	C	u	u	u	u	u	u
+text	A		C	f	f	t	t	f	t
 text	A	1	C	f	f	t	t	f	t
 text	A	A	C	f	t	f	t	t	f
 text	A	a	C	t	t	f	f	f	t
@@ -627,7 +621,9 @@ text	A	co-op	C	t	t	f	f	f	t
 text	A	coop	C	t	t	f	f	f	t
 text	A	de luge	C	t	t	f	f	f	t
 text	A	deluge	C	t	t	f	f	f	t
+text	A	hello	C	t	t	f	f	f	t
 text	A	\N	C	u	u	u	u	u	u
+text	a		C	f	f	t	t	f	t
 text	a	1	C	f	f	t	t	f	t
 text	a	A	C	f	f	t	t	f	t
 text	a	a	C	f	t	f	t	t	f
@@ -641,7 +637,9 @@ text	a	co-op	C	t	t	f	f	f	t
 text	a	coop	C	t	t	f	f	f	t
 text	a	de luge	C	t	t	f	f	f	t
 text	a	deluge	C	t	t	f	f	f	t
+text	a	hello	C	t	t	f	f	f	t
 text	a	\N	C	u	u	u	u	u	u
+text	B		C	f	f	t	t	f	t
 text	B	1	C	f	f	t	t	f	t
 text	B	A	C	f	f	t	t	f	t
 text	B	a	C	t	t	f	f	f	t
@@ -655,7 +653,9 @@ text	B	co-op	C	t	t	f	f	f	t
 text	B	coop	C	t	t	f	f	f	t
 text	B	de luge	C	t	t	f	f	f	t
 text	B	deluge	C	t	t	f	f	f	t
+text	B	hello	C	t	t	f	f	f	t
 text	B	\N	C	u	u	u	u	u	u
+text	e		C	f	f	t	t	f	t
 text	e	1	C	f	f	t	t	f	t
 text	e	A	C	f	f	t	t	f	t
 text	e	a	C	f	f	t	t	f	t
@@ -669,7 +669,9 @@ text	e	co-op	C	f	f	t	t	f	t
 text	e	coop	C	f	f	t	t	f	t
 text	e	de luge	C	f	f	t	t	f	t
 text	e	deluge	C	f	f	t	t	f	t
+text	e	hello	C	t	t	f	f	f	t
 text	e	\N	C	u	u	u	u	u	u
+text	é		C	f	f	t	t	f	t
 text	é	1	C	f	f	t	t	f	t
 text	é	A	C	f	f	t	t	f	t
 text	é	a	C	f	f	t	t	f	t
@@ -683,7 +685,9 @@ text	é	co-op	C	f	f	t	t	f	t
 text	é	coop	C	f	f	t	t	f	t
 text	é	de luge	C	f	f	t	t	f	t
 text	é	deluge	C	f	f	t	t	f	t
+text	é	hello	C	f	f	t	t	f	t
 text	é	\N	C	u	u	u	u	u	u
+text	f		C	f	f	t	t	f	t
 text	f	1	C	f	f	t	t	f	t
 text	f	A	C	f	f	t	t	f	t
 text	f	a	C	f	f	t	t	f	t
@@ -697,7 +701,9 @@ text	f	co-op	C	f	f	t	t	f	t
 text	f	coop	C	f	f	t	t	f	t
 text	f	de luge	C	f	f	t	t	f	t
 text	f	deluge	C	f	f	t	t	f	t
+text	f	hello	C	t	t	f	f	f	t
 text	f	\N	C	u	u	u	u	u	u
+text	_x		C	f	f	t	t	f	t
 text	_x	1	C	f	f	t	t	f	t
 text	_x	A	C	f	f	t	t	f	t
 text	_x	a	C	t	t	f	f	f	t
@@ -711,7 +717,9 @@ text	_x	co-op	C	t	t	f	f	f	t
 text	_x	coop	C	t	t	f	f	f	t
 text	_x	de luge	C	t	t	f	f	f	t
 text	_x	deluge	C	t	t	f	f	f	t
+text	_x	hello	C	t	t	f	f	f	t
 text	_x	\N	C	u	u	u	u	u	u
+text	ax		C	f	f	t	t	f	t
 text	ax	1	C	f	f	t	t	f	t
 text	ax	A	C	f	f	t	t	f	t
 text	ax	a	C	f	f	t	t	f	t
@@ -725,7 +733,9 @@ text	ax	co-op	C	t	t	f	f	f	t
 text	ax	coop	C	t	t	f	f	f	t
 text	ax	de luge	C	t	t	f	f	f	t
 text	ax	deluge	C	t	t	f	f	f	t
+text	ax	hello	C	t	t	f	f	f	t
 text	ax	\N	C	u	u	u	u	u	u
+text	co-op		C	f	f	t	t	f	t
 text	co-op	1	C	f	f	t	t	f	t
 text	co-op	A	C	f	f	t	t	f	t
 text	co-op	a	C	f	f	t	t	f	t
@@ -739,7 +749,9 @@ text	co-op	co-op	C	f	t	f	t	t	f
 text	co-op	coop	C	t	t	f	f	f	t
 text	co-op	de luge	C	t	t	f	f	f	t
 text	co-op	deluge	C	t	t	f	f	f	t
+text	co-op	hello	C	t	t	f	f	f	t
 text	co-op	\N	C	u	u	u	u	u	u
+text	coop		C	f	f	t	t	f	t
 text	coop	1	C	f	f	t	t	f	t
 text	coop	A	C	f	f	t	t	f	t
 text	coop	a	C	f	f	t	t	f	t
@@ -753,7 +765,9 @@ text	coop	co-op	C	f	f	t	t	f	t
 text	coop	coop	C	f	t	f	t	t	f
 text	coop	de luge	C	t	t	f	f	f	t
 text	coop	deluge	C	t	t	f	f	f	t
+text	coop	hello	C	t	t	f	f	f	t
 text	coop	\N	C	u	u	u	u	u	u
+text	de luge		C	f	f	t	t	f	t
 text	de luge	1	C	f	f	t	t	f	t
 text	de luge	A	C	f	f	t	t	f	t
 text	de luge	a	C	f	f	t	t	f	t
@@ -767,7 +781,9 @@ text	de luge	co-op	C	f	f	t	t	f	t
 text	de luge	coop	C	f	f	t	t	f	t
 text	de luge	de luge	C	f	t	f	t	t	f
 text	de luge	deluge	C	t	t	f	f	f	t
+text	de luge	hello	C	t	t	f	f	f	t
 text	de luge	\N	C	u	u	u	u	u	u
+text	deluge		C	f	f	t	t	f	t
 text	deluge	1	C	f	f	t	t	f	t
 text	deluge	A	C	f	f	t	t	f	t
 text	deluge	a	C	f	f	t	t	f	t
@@ -781,7 +797,25 @@ text	deluge	co-op	C	f	f	t	t	f	t
 text	deluge	coop	C	f	f	t	t	f	t
 text	deluge	de luge	C	f	f	t	t	f	t
 text	deluge	deluge	C	f	t	f	t	t	f
+text	deluge	hello	C	t	t	f	f	f	t
 text	deluge	\N	C	u	u	u	u	u	u
+text	hello		C	f	f	t	t	f	t
+text	hello	1	C	f	f	t	t	f	t
+text	hello	A	C	f	f	t	t	f	t
+text	hello	a	C	f	f	t	t	f	t
+text	hello	B	C	f	f	t	t	f	t
+text	hello	e	C	f	f	t	t	f	t
+text	hello	é	C	t	t	f	f	f	t
+text	hello	f	C	f	f	t	t	f	t
+text	hello	_x	C	f	f	t	t	f	t
+text	hello	ax	C	f	f	t	t	f	t
+text	hello	co-op	C	f	f	t	t	f	t
+text	hello	coop	C	f	f	t	t	f	t
+text	hello	de luge	C	f	f	t	t	f	t
+text	hello	deluge	C	f	f	t	t	f	t
+text	hello	hello	C	f	t	f	t	t	f
+text	hello	\N	C	u	u	u	u	u	u
+text	\N		C	u	u	u	u	u	u
 text	\N	1	C	u	u	u	u	u	u
 text	\N	A	C	u	u	u	u	u	u
 text	\N	a	C	u	u	u	u	u	u
@@ -795,7 +829,25 @@ text	\N	co-op	C	u	u	u	u	u	u
 text	\N	coop	C	u	u	u	u	u	u
 text	\N	de luge	C	u	u	u	u	u	u
 text	\N	deluge	C	u	u	u	u	u	u
+text	\N	hello	C	u	u	u	u	u	u
 text	\N	\N	C	u	u	u	u	u	u
+text			default	f	t	f	t	t	f
+text		1	default	t	t	f	f	f	t
+text		A	default	t	t	f	f	f	t
+text		a	default	t	t	f	f	f	t
+text		B	default	t	t	f	f	f	t
+text		e	default	t	t	f	f	f	t
+text		é	default	t	t	f	f	f	t
+text		f	default	t	t	f	f	f	t
+text		_x	default	t	t	f	f	f	t
+text		ax	default	t	t	f	f	f	t
+text		co-op	default	t	t	f	f	f	t
+text		coop	default	t	t	f	f	f	t
+text		de luge	default	t	t	f	f	f	t
+text		deluge	default	t	t	f	f	f	t
+text		hello	default	t	t	f	f	f	t
+text		\N	default	u	u	u	u	u	u
+text	1		default	f	f	t	t	f	t
 text	1	1	default	f	t	f	t	t	f
 text	1	A	default	t	t	f	f	f	t
 text	1	a	default	t	t	f	f	f	t
@@ -809,7 +861,9 @@ text	1	co-op	default	t	t	f	f	f	t
 text	1	coop	default	t	t	f	f	f	t
 text	1	de luge	default	t	t	f	f	f	t
 text	1	deluge	default	t	t	f	f	f	t
+text	1	hello	default	t	t	f	f	f	t
 text	1	\N	default	u	u	u	u	u	u
+text	A		default	f	f	t	t	f	t
 text	A	1	default	f	f	t	t	f	t
 text	A	A	default	f	t	f	t	t	f
 text	A	a	default	f	f	t	t	f	t
@@ -823,7 +877,9 @@ text	A	co-op	default	t	t	f	f	f	t
 text	A	coop	default	t	t	f	f	f	t
 text	A	de luge	default	t	t	f	f	f	t
 text	A	deluge	default	t	t	f	f	f	t
+text	A	hello	default	t	t	f	f	f	t
 text	A	\N	default	u	u	u	u	u	u
+text	a		default	f	f	t	t	f	t
 text	a	1	default	f	f	t	t	f	t
 text	a	A	default	t	t	f	f	f	t
 text	a	a	default	f	t	f	t	t	f
@@ -837,7 +893,9 @@ text	a	co-op	default	t	t	f	f	f	t
 text	a	coop	default	t	t	f	f	f	t
 text	a	de luge	default	t	t	f	f	f	t
 text	a	deluge	default	t	t	f	f	f	t
+text	a	hello	default	t	t	f	f	f	t
 text	a	\N	default	u	u	u	u	u	u
+text	B		default	f	f	t	t	f	t
 text	B	1	default	f	f	t	t	f	t
 text	B	A	default	f	f	t	t	f	t
 text	B	a	default	f	f	t	t	f	t
@@ -851,7 +909,9 @@ text	B	co-op	default	t	t	f	f	f	t
 text	B	coop	default	t	t	f	f	f	t
 text	B	de luge	default	t	t	f	f	f	t
 text	B	deluge	default	t	t	f	f	f	t
+text	B	hello	default	t	t	f	f	f	t
 text	B	\N	default	u	u	u	u	u	u
+text	e		default	f	f	t	t	f	t
 text	e	1	default	f	f	t	t	f	t
 text	e	A	default	f	f	t	t	f	t
 text	e	a	default	f	f	t	t	f	t
@@ -865,7 +925,9 @@ text	e	co-op	default	f	f	t	t	f	t
 text	e	coop	default	f	f	t	t	f	t
 text	e	de luge	default	f	f	t	t	f	t
 text	e	deluge	default	f	f	t	t	f	t
+text	e	hello	default	t	t	f	f	f	t
 text	e	\N	default	u	u	u	u	u	u
+text	é		default	f	f	t	t	f	t
 text	é	1	default	f	f	t	t	f	t
 text	é	A	default	f	f	t	t	f	t
 text	é	a	default	f	f	t	t	f	t
@@ -879,7 +941,9 @@ text	é	co-op	default	f	f	t	t	f	t
 text	é	coop	default	f	f	t	t	f	t
 text	é	de luge	default	f	f	t	t	f	t
 text	é	deluge	default	f	f	t	t	f	t
+text	é	hello	default	t	t	f	f	f	t
 text	é	\N	default	u	u	u	u	u	u
+text	f		default	f	f	t	t	f	t
 text	f	1	default	f	f	t	t	f	t
 text	f	A	default	f	f	t	t	f	t
 text	f	a	default	f	f	t	t	f	t
@@ -893,7 +957,9 @@ text	f	co-op	default	f	f	t	t	f	t
 text	f	coop	default	f	f	t	t	f	t
 text	f	de luge	default	f	f	t	t	f	t
 text	f	deluge	default	f	f	t	t	f	t
+text	f	hello	default	t	t	f	f	f	t
 text	f	\N	default	u	u	u	u	u	u
+text	_x		default	f	f	t	t	f	t
 text	_x	1	default	f	f	t	t	f	t
 text	_x	A	default	f	f	t	t	f	t
 text	_x	a	default	f	f	t	t	f	t
@@ -907,7 +973,9 @@ text	_x	co-op	default	f	f	t	t	f	t
 text	_x	coop	default	f	f	t	t	f	t
 text	_x	de luge	default	f	f	t	t	f	t
 text	_x	deluge	default	f	f	t	t	f	t
+text	_x	hello	default	f	f	t	t	f	t
 text	_x	\N	default	u	u	u	u	u	u
+text	ax		default	f	f	t	t	f	t
 text	ax	1	default	f	f	t	t	f	t
 text	ax	A	default	f	f	t	t	f	t
 text	ax	a	default	f	f	t	t	f	t
@@ -921,7 +989,9 @@ text	ax	co-op	default	t	t	f	f	f	t
 text	ax	coop	default	t	t	f	f	f	t
 text	ax	de luge	default	t	t	f	f	f	t
 text	ax	deluge	default	t	t	f	f	f	t
+text	ax	hello	default	t	t	f	f	f	t
 text	ax	\N	default	u	u	u	u	u	u
+text	co-op		default	f	f	t	t	f	t
 text	co-op	1	default	f	f	t	t	f	t
 text	co-op	A	default	f	f	t	t	f	t
 text	co-op	a	default	f	f	t	t	f	t
@@ -935,7 +1005,9 @@ text	co-op	co-op	default	f	t	f	t	t	f
 text	co-op	coop	default	t	t	f	f	f	t
 text	co-op	de luge	default	t	t	f	f	f	t
 text	co-op	deluge	default	t	t	f	f	f	t
+text	co-op	hello	default	t	t	f	f	f	t
 text	co-op	\N	default	u	u	u	u	u	u
+text	coop		default	f	f	t	t	f	t
 text	coop	1	default	f	f	t	t	f	t
 text	coop	A	default	f	f	t	t	f	t
 text	coop	a	default	f	f	t	t	f	t
@@ -949,7 +1021,9 @@ text	coop	co-op	default	f	f	t	t	f	t
 text	coop	coop	default	f	t	f	t	t	f
 text	coop	de luge	default	t	t	f	f	f	t
 text	coop	deluge	default	t	t	f	f	f	t
+text	coop	hello	default	t	t	f	f	f	t
 text	coop	\N	default	u	u	u	u	u	u
+text	de luge		default	f	f	t	t	f	t
 text	de luge	1	default	f	f	t	t	f	t
 text	de luge	A	default	f	f	t	t	f	t
 text	de luge	a	default	f	f	t	t	f	t
@@ -963,7 +1037,9 @@ text	de luge	co-op	default	f	f	t	t	f	t
 text	de luge	coop	default	f	f	t	t	f	t
 text	de luge	de luge	default	f	t	f	t	t	f
 text	de luge	deluge	default	t	t	f	f	f	t
+text	de luge	hello	default	t	t	f	f	f	t
 text	de luge	\N	default	u	u	u	u	u	u
+text	deluge		default	f	f	t	t	f	t
 text	deluge	1	default	f	f	t	t	f	t
 text	deluge	A	default	f	f	t	t	f	t
 text	deluge	a	default	f	f	t	t	f	t
@@ -977,7 +1053,25 @@ text	deluge	co-op	default	f	f	t	t	f	t
 text	deluge	coop	default	f	f	t	t	f	t
 text	deluge	de luge	default	f	f	t	t	f	t
 text	deluge	deluge	default	f	t	f	t	t	f
+text	deluge	hello	default	t	t	f	f	f	t
 text	deluge	\N	default	u	u	u	u	u	u
+text	hello		default	f	f	t	t	f	t
+text	hello	1	default	f	f	t	t	f	t
+text	hello	A	default	f	f	t	t	f	t
+text	hello	a	default	f	f	t	t	f	t
+text	hello	B	default	f	f	t	t	f	t
+text	hello	e	default	f	f	t	t	f	t
+text	hello	é	default	f	f	t	t	f	t
+text	hello	f	default	f	f	t	t	f	t
+text	hello	_x	default	t	t	f	f	f	t
+text	hello	ax	default	f	f	t	t	f	t
+text	hello	co-op	default	f	f	t	t	f	t
+text	hello	coop	default	f	f	t	t	f	t
+text	hello	de luge	default	f	f	t	t	f	t
+text	hello	deluge	default	f	f	t	t	f	t
+text	hello	hello	default	f	t	f	t	t	f
+text	hello	\N	default	u	u	u	u	u	u
+text	\N		default	u	u	u	u	u	u
 text	\N	1	default	u	u	u	u	u	u
 text	\N	A	default	u	u	u	u	u	u
 text	\N	a	default	u	u	u	u	u	u
@@ -991,41 +1085,76 @@ text	\N	co-op	default	u	u	u	u	u	u
 text	\N	coop	default	u	u	u	u	u	u
 text	\N	de luge	default	u	u	u	u	u	u
 text	\N	deluge	default	u	u	u	u	u	u
+text	\N	hello	default	u	u	u	u	u	u
 text	\N	\N	default	u	u	u	u	u	u
-character varying(10)			\N	f	t	f	t	t	f
-character varying(10)		a	\N	t	t	f	f	f	t
-character varying(10)		hello	\N	t	t	f	f	f	t
-character varying(10)		\N	\N	u	u	u	u	u	u
-character varying(10)	a		\N	f	f	t	t	f	t
-character varying(10)	a	a	\N	f	t	f	t	t	f
-character varying(10)	a	hello	\N	t	t	f	f	f	t
-character varying(10)	a	\N	\N	u	u	u	u	u	u
-character varying(10)	hello		\N	f	f	t	t	f	t
-character varying(10)	hello	a	\N	f	f	t	t	f	t
-character varying(10)	hello	hello	\N	f	t	f	t	t	f
-character varying(10)	hello	\N	\N	u	u	u	u	u	u
-character varying(10)	\N		\N	u	u	u	u	u	u
-character varying(10)	\N	a	\N	u	u	u	u	u	u
-character varying(10)	\N	hello	\N	u	u	u	u	u	u
-character varying(10)	\N	\N	\N	u	u	u	u	u	u
-character varying(10)	12345678901		\N	f	f	t	t	f	t
-character varying(10)		12345678901	\N	t	t	f	f	f	t
-character(10)	a	a	\N	f	t	f	t	t	f
-character(10)	a	a         	\N	f	t	f	t	t	f
-character(10)	a	hello	\N	t	t	f	f	f	t
-character(10)	a	\N	\N	u	u	u	u	u	u
-character(10)	a         	a	\N	f	t	f	t	t	f
-character(10)	a         	a         	\N	f	t	f	t	t	f
-character(10)	a         	hello	\N	t	t	f	f	f	t
-character(10)	a         	\N	\N	u	u	u	u	u	u
-character(10)	hello	a	\N	f	f	t	t	f	t
-character(10)	hello	a         	\N	f	f	t	t	f	t
-character(10)	hello	hello	\N	f	t	f	t	t	f
-character(10)	hello	\N	\N	u	u	u	u	u	u
-character(10)	\N	a	\N	u	u	u	u	u	u
-character(10)	\N	a         	\N	u	u	u	u	u	u
-character(10)	\N	hello	\N	u	u	u	u	u	u
-character(10)	\N	\N	\N	u	u	u	u	u	u
+character varying(10)			default	f	t	f	t	t	f
+character varying(10)		a	default	t	t	f	f	f	t
+character varying(10)		hello	default	t	t	f	f	f	t
+character varying(10)		\N	default	u	u	u	u	u	u
+character varying(10)	a		default	f	f	t	t	f	t
+character varying(10)	a	a	default	f	t	f	t	t	f
+character varying(10)	a	hello	default	t	t	f	f	f	t
+character varying(10)	a	\N	default	u	u	u	u	u	u
+character varying(10)	hello		default	f	f	t	t	f	t
+character varying(10)	hello	a	default	f	f	t	t	f	t
+character varying(10)	hello	hello	default	f	t	f	t	t	f
+character varying(10)	hello	\N	default	u	u	u	u	u	u
+character varying(10)	\N		default	u	u	u	u	u	u
+character varying(10)	\N	a	default	u	u	u	u	u	u
+character varying(10)	\N	hello	default	u	u	u	u	u	u
+character varying(10)	\N	\N	default	u	u	u	u	u	u
+character varying(10)	12345678901		default	f	f	t	t	f	t
+character varying(10)		12345678901	default	t	t	f	f	f	t
+character(10)	a	a	C	f	t	f	t	t	f
+character(10)	a	a         	C	f	t	f	t	t	f
+character(10)	a	a\t	C	t	t	f	f	f	t
+character(10)	a	hello	C	t	t	f	f	f	t
+character(10)	a	\N	C	u	u	u	u	u	u
+character(10)	a         	a	C	f	t	f	t	t	f
+character(10)	a         	a         	C	f	t	f	t	t	f
+character(10)	a         	a\t	C	t	t	f	f	f	t
+character(10)	a         	hello	C	t	t	f	f	f	t
+character(10)	a         	\N	C	u	u	u	u	u	u
+character(10)	a\t	a	C	f	f	t	t	f	t
+character(10)	a\t	a         	C	f	f	t	t	f	t
+character(10)	a\t	a\t	C	f	t	f	t	t	f
+character(10)	a\t	hello	C	t	t	f	f	f	t
+character(10)	a\t	\N	C	u	u	u	u	u	u
+character(10)	hello	a	C	f	f	t	t	f	t
+character(10)	hello	a         	C	f	f	t	t	f	t
+character(10)	hello	a\t	C	f	f	t	t	f	t
+character(10)	hello	hello	C	f	t	f	t	t	f
+character(10)	hello	\N	C	u	u	u	u	u	u
+character(10)	\N	a	C	u	u	u	u	u	u
+character(10)	\N	a         	C	u	u	u	u	u	u
+character(10)	\N	a\t	C	u	u	u	u	u	u
+character(10)	\N	hello	C	u	u	u	u	u	u
+character(10)	\N	\N	C	u	u	u	u	u	u
+character(10)	a	a	default	f	t	f	t	t	f
+character(10)	a	a         	default	f	t	f	t	t	f
+character(10)	a	a\t	default	t	t	f	f	f	t
+character(10)	a	hello	default	t	t	f	f	f	t
+character(10)	a	\N	default	u	u	u	u	u	u
+character(10)	a         	a	default	f	t	f	t	t	f
+character(10)	a         	a         	default	f	t	f	t	t	f
+character(10)	a         	a\t	default	t	t	f	f	f	t
+character(10)	a         	hello	default	t	t	f	f	f	t
+character(10)	a         	\N	default	u	u	u	u	u	u
+character(10)	a\t	a	default	f	f	t	t	f	t
+character(10)	a\t	a         	default	f	f	t	t	f	t
+character(10)	a\t	a\t	default	f	t	f	t	t	f
+character(10)	a\t	hello	default	t	t	f	f	f	t
+character(10)	a\t	\N	default	u	u	u	u	u	u
+character(10)	hello	a	default	f	f	t	t	f	t
+character(10)	hello	a         	default	f	f	t	t	f	t
+character(10)	hello	a\t	default	f	f	t	t	f	t
+character(10)	hello	hello	default	f	t	f	t	t	f
+character(10)	hello	\N	default	u	u	u	u	u	u
+character(10)	\N	a	default	u	u	u	u	u	u
+character(10)	\N	a         	default	u	u	u	u	u	u
+character(10)	\N	a\t	default	u	u	u	u	u	u
+character(10)	\N	hello	default	u	u	u	u	u	u
+character(10)	\N	\N	default	u	u	u	u	u	u
 name	A	A	\N	f	t	f	t	t	f
 name	A	a	\N	f	f	t	t	f	t
 name	A	hello	\N	t	t	f	f	f	t

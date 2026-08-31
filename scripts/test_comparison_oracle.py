@@ -39,16 +39,23 @@ class CaseTable(unittest.TestCase):
         keys = [(case.type, case.collation or "") for case in co.TYPE_CASES]
         self.assertEqual(sorted(keys), sorted(set(keys)))
 
-    def test_a_collated_case_asks_no_literals(self):
-        # Parsing and output are collation-blind, so a collated case's
-        # literals would be the same rows a second and third time -- and
-        # `literals.tsv` carries no collation column to tell them apart.
-        types = [co.TypeCases("text", ("A", "a"), collation="C")]
+    def test_a_literal_asked_under_two_collations_is_asked_once(self):
+        # Parsing and output are collation-blind, so the second collation's
+        # literals would be the same rows again -- and `literals.tsv` carries
+        # no collation column to tell them apart. Deduplicating rather than
+        # skipping a collated case is what keeps a value that exists only
+        # there, such as `character(10)`'s tab, in the file.
+        types = [
+            co.TypeCases("text", ("A", "a"), collation="C"),
+            co.TypeCases("text", ("A", "z"), collation="default"),
+        ]
         original = co.TYPE_CASES
         try:
             co.TYPE_CASES = types
-            self.assertEqual(co.literal_cases(), [])
-            self.assertEqual(len(co.comparison_cases()), 4)
+            self.assertEqual(
+                co.literal_cases(), [("text", "A"), ("text", "a"), ("text", "z")]
+            )
+            self.assertEqual(len(co.comparison_cases()), 8)
         finally:
             co.TYPE_CASES = original
 

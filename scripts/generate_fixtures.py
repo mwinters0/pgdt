@@ -384,7 +384,40 @@ def generate_for_version(
         stop_container(name)
 
 
+# How long a full regeneration takes is recorded in
+# docs/design/architecture.md ("Fixtures"), and this is the threshold past
+# which that figure has stopped being true. Thirty minutes is where a job
+# stops fitting inside one session and has to be handed off (CLAUDE.md,
+# "Long-running processes"), so a run that crosses it changes what a later
+# session has to plan for. The trigger is this print rather than a comment
+# asking someone to notice, because a comment is read when the file is edited
+# and this has to fire when the run is slow.
+STALE_AFTER_SECONDS = 30 * 60
+
+
+def report_elapsed(seconds: float) -> None:
+    """The run's own duration, printed unconditionally, with the staleness
+    warning when it crosses [`STALE_AFTER_SECONDS`]."""
+    print(f"\nelapsed: {seconds / 60:.1f} min ({seconds:.0f} s)")
+    if seconds > STALE_AFTER_SECONDS:
+        print(
+            f"this run took longer than {STALE_AFTER_SECONDS // 60} minutes: the "
+            'figure in docs/design/architecture.md ("Fixtures") is stale and must '
+            "be updated, and a regeneration now has to be handed off to a later "
+            "session rather than run inline.",
+            file=sys.stderr,
+        )
+
+
 def main() -> int:
+    started = time.monotonic()
+    try:
+        return _run()
+    finally:
+        report_elapsed(time.monotonic() - started)
+
+
+def _run() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--version",

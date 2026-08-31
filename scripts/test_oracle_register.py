@@ -27,15 +27,36 @@ from tempfile import TemporaryDirectory
 import comparison_oracle as co
 import oracle_register as orr
 
+#: The three arms the collation dimension adds, for the tests that assert on
+#: them as a set.
+COLLATION_KEYS = [arm.key for arm in orr.COLLATION_ARMS]
+
 #: A register with one of everything: two names sharing a built-in arm, the
-#: unrecognised fallthrough, a guarded arm, a two-kind arm, and the two
-#: branches that are not match arms at all.
+#: unrecognised fallthrough, a guarded arm, a two-kind arm, the two branches
+#: that are not match arms at all, and one built-in arm that branches on the
+#: column's collation where the other does not.
 REGISTER_RS = """
+fn collated_text(collation: Option<&str>, type_default: TypeCollation) -> ComparisonPlan {
+    let bytewise = match collation {
+        Some(reference) => collation_is_bytewise(reference),
+        None => type_default == TypeCollation::Bytewise,
+    };
+    if bytewise {
+        return ComparisonPlan::agrees(CompareKind::Text);
+    }
+    ComparisonPlan::text_diverging(match collation {
+        Some(_) => OrderingDivergence::NonBytewiseCollation,
+        None => OrderingDivergence::UnknownCollation,
+    })
+}
+
 fn builtin_scalar(base: &str, typmod: Option<&str>) -> Option<(DataType, ComparisonPlan)> {
     Some(match base.to_ascii_lowercase().as_str() {
         "integer" => (Int32, agrees(K::Int)),
         // A comment with a "quoted" word in it.
-        "text" | "character varying" => (Utf8View, text),
+        "text" | "character varying" => {
+            (Utf8View, collated_text(collation, TypeCollation::Database))
+        }
         _ => return None,
     })
 }
@@ -141,6 +162,34 @@ class ParsingTheRegister(unittest.TestCase):
         self.assertTrue(any("labels.len() < 2" in p for p in parsed.problems))
         self.assertNotIn("user/Enum(empty)", parsed.kinds.get("Enum", []))
 
+    def test_only_the_arm_whose_body_branches_on_the_clause_is_collatable(self):
+        # It is read from the arm's own body, so `character` joins the set the
+        # day its arm starts consulting a clause and not before.
+        parsed = self.parse()
+        self.assertEqual(
+            parsed.collatable, {"builtin/text", "builtin/character varying"}
+        )
+
+    def test_the_collation_arms_are_always_present(self):
+        keys = {arm.key for arm in self.parse().arms}
+        self.assertLessEqual(
+            {"collation/bytewise", "collation/other", "collation/absent"}, keys
+        )
+
+    def test_a_register_that_stopped_branching_on_the_clause_is_a_problem(self):
+        parsed = self.parse(
+            REGISTER_RS.replace(
+                "collated_text(collation, TypeCollation::Database)", "text"
+            )
+        )
+        self.assertTrue(any("collated_text" in p for p in parsed.problems))
+
+    def test_a_missing_collated_text_anchor_is_a_problem(self):
+        parsed = self.parse(
+            REGISTER_RS.replace("type_default == TypeCollation::Bytewise", "false")
+        )
+        self.assertTrue(any("TypeCollation::Bytewise" in p for p in parsed.problems))
+
 
 class ParsingTheSchema(unittest.TestCase):
     def setUp(self):
@@ -241,9 +290,9 @@ class Reconciling(unittest.TestCase):
         self.addCleanup(self.dir.cleanup)
         self.register_path, self.schema_path = write(self.tmp)
 
-    def fixtures(self, cell: str) -> Path:
+    def fixtures(self, cell: str, datcollate: str = "en_US.utf8") -> Path:
         """A two-major tree whose every comparison cell reads `cell`."""
-        root = self.tmp / f"fixtures-{cell}"
+        root = self.tmp / f"fixtures-{cell}-{datcollate}"
         rows = [
             [case[0], case[1], case[2], case[3]] + [cell] * len(co.OPERATORS)
             for case in co.comparison_cases()
@@ -252,6 +301,9 @@ class Reconciling(unittest.TestCase):
             oracle = root / version / co.ORACLE_DIRNAME
             oracle.mkdir(parents=True)
             (oracle / "comparisons.tsv").write_text(co.format_tsv(rows))
+            (oracle / "meta.tsv").write_text(
+                co.format_tsv([["datcollate", datcollate]])
+            )
         return root
 
     def test_every_arm_this_register_names_is_covered_by_the_real_cases(self):
@@ -276,18 +328,53 @@ class Reconciling(unittest.TestCase):
         found = orr.reconcile(
             self.register_path, self.schema_path, self.fixtures(orr.UNDEFINED_OBJECT)
         )
-        # Every case type is unplaced, and the ones the synthetic schema does
+        # Every case is unplaced, and the ones the synthetic schema does
         # declare are unplaced for the evidence rule rather than for want of a
         # `CREATE TYPE`.
-        self.assertEqual(len(found.unplaced), len({c.type for c in co.TYPE_CASES}))
-        for declared in ("integer", "text", "public.mood", "integer[]"):
-            self.assertIn("exercises nothing", found.unplaced[declared])
+        self.assertEqual(
+            len(found.unplaced), len({(c.type, c.collation) for c in co.TYPE_CASES})
+        )
+        for declared, collation in (
+            ("integer", None),
+            ("text", "C"),
+            ("public.mood", None),
+            ("integer[]", None),
+        ):
+            label = orr.case_label(declared, collation)
+            self.assertIn("exercises nothing", found.unplaced[label])
 
     def test_a_missing_answer_file_is_a_problem(self):
         root = self.tmp / "empty"
         (root / "13").mkdir(parents=True)
         found = orr.reconcile(self.register_path, self.schema_path, root)
         self.assertTrue(any("comparisons.tsv" in p for p in found.problems))
+
+    def test_each_collation_arm_is_reached_by_the_group_that_exercises_it(self):
+        found = orr.reconcile(self.register_path, self.schema_path, self.fixtures("t"))
+        self.assertEqual(
+            found.cases_by_arm["collation/bytewise"], ['text COLLATE "C"']
+        )
+        # `default` covers both of the remaining branches, there being no third
+        # collation in the file to separate them.
+        for key in ("collation/other", "collation/absent"):
+            self.assertIn('text COLLATE "default"', found.cases_by_arm[key])
+
+    def test_a_case_on_a_clause_blind_arm_reaches_no_collation_arm(self):
+        # `character(10)` is labelled ahead of the slice that makes a `char(n)`
+        # compare under its own collation; until then its arm does not read a
+        # clause, so its labels buy no collation coverage.
+        found = orr.reconcile(self.register_path, self.schema_path, self.fixtures("t"))
+        for key in COLLATION_KEYS:
+            for label in found.cases_by_arm[key]:
+                self.assertNotIn("character(10)", label)
+
+    def test_a_bytewise_database_collation_is_a_problem(self):
+        # The `default` group would then exercise the agreeing arm rather than
+        # the two diverging ones it is mapped onto.
+        found = orr.reconcile(
+            self.register_path, self.schema_path, self.fixtures("t", datcollate="C")
+        )
+        self.assertTrue(any("datcollate" in p for p in found.problems))
 
     def test_the_check_fails_on_either_direction(self):
         out = io.StringIO()
@@ -317,7 +404,7 @@ class CommittedTree(unittest.TestCase):
         # vacuously, so the shape of what it found is asserted too.
         found = orr.reconcile()
         groups = {arm.group for arm in found.arms}
-        self.assertEqual(groups, {"builtin", "user", "structural"})
+        self.assertEqual(groups, {"builtin", "user", "structural", "collation"})
         self.assertGreaterEqual(len(found.arms), 20)
 
 

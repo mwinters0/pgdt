@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict 4iQ3kzTC6vGJ3Pwv9wX3T1ZQ21IYG2uGU0wfAnRFrRueOa2snAtcMpddsxhDZd2
+\restrict LKSMJjaK5xfsPOF0Zs6akWbWucOjjlk5xm7vlJ83fmmIEXlT6q7QiXE2n7dAxMx
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -205,5 +205,5 @@ ALTER TABLE ONLY logs.events
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 4iQ3kzTC6vGJ3Pwv9wX3T1ZQ21IYG2uGU0wfAnRFrRueOa2snAtcMpddsxhDZd2
+\unrestrict LKSMJjaK5xfsPOF0Zs6akWbWucOjjlk5xm7vlJ83fmmIEXlT6q7QiXE2n7dAxMx
 

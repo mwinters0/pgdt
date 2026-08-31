@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict 4QCkl7BSnJP4cau47kw53nIbSGp6Sf5V2cVNlsaiLJrnrBXpF9Gn6YlTY0olc0o
+\restrict MbFOEmgMkZJ0E0VioHAlV1Wm2scSl4NpRPrR6noUBGTezc76l4S2IEJZBU6OGqW
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -81,6 +81,18 @@ CREATE TYPE public.boxed_point AS (
 
 
 ALTER TYPE public.boxed_point OWNER TO postgres;
+
+--
+-- Name: collated_pair; Type: TYPE; Schema: public; Owner: postgres
+--
+
+CREATE TYPE public.collated_pair AS (
+	plain text,
+	c text COLLATE pg_catalog."C"
+);
+
+
+ALTER TYPE public.collated_pair OWNER TO postgres;
 
 --
 -- Name: derived_domain; Type: DOMAIN; Schema: public; Owner: postgres
@@ -223,6 +235,15 @@ CREATE TYPE public.tagged AS (
 ALTER TYPE public.tagged OWNER TO postgres;
 
 --
+-- Name: text_c; Type: DOMAIN; Schema: public; Owner: postgres
+--
+
+CREATE DOMAIN public.text_c AS text COLLATE pg_catalog."C";
+
+
+ALTER DOMAIN public.text_c OWNER TO postgres;
+
+--
 -- Name: textrange; Type: TYPE; Schema: public; Owner: postgres
 --
 
@@ -308,6 +329,23 @@ CREATE TABLE public.t_bytea (
 
 
 ALTER TABLE public.t_bytea OWNER TO postgres;
+
+--
+-- Name: t_collate; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.t_collate (
+    id integer NOT NULL,
+    v_text_c text COLLATE pg_catalog."C",
+    v_text_locale text COLLATE pg_catalog."en_US.utf8",
+    v_text_ucs text COLLATE pg_catalog.ucs_basic,
+    v_name name,
+    v_domain_c public.text_c,
+    v_pair public.collated_pair
+);
+
+
+ALTER TABLE public.t_collate OWNER TO postgres;
 
 --
 -- Name: t_composite; Type: TABLE; Schema: public; Owner: postgres
@@ -619,6 +657,23 @@ COPY public.t_bytea (id, v_bytea) FROM stdin;
 
 
 --
+-- Data for Name: t_collate; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_collate (id, v_text_c, v_text_locale, v_text_ucs, v_name, v_domain_c, v_pair) FROM stdin;
+1	A	A	A	A	A	(A,A)
+2	a	a	a	a	a	(a,a)
+3	B	B	B	B	B	(B,B)
+4	é	é	é	é	é	(é,é)
+5	f	f	f	f	f	(f,f)
+6	_x	_x	_x	_x	_x	(_x,_x)
+7	ax	ax	ax	ax	ax	(ax,ax)
+8						("","")
+9	\N	\N	\N	\N	\N	\N
+\.
+
+
+--
 -- Data for Name: t_composite; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
@@ -892,6 +947,14 @@ ALTER TABLE ONLY public.t_bytea
 
 
 --
+-- Name: t_collate t_collate_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.t_collate
+    ADD CONSTRAINT t_collate_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: t_composite t_composite_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -1047,5 +1110,5 @@ ALTER TABLE ONLY public.t_uuid
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 4QCkl7BSnJP4cau47kw53nIbSGp6Sf5V2cVNlsaiLJrnrBXpF9Gn6YlTY0olc0o
+\unrestrict MbFOEmgMkZJ0E0VioHAlV1Wm2scSl4NpRPrR6noUBGTezc76l4S2IEJZBU6OGqW
 

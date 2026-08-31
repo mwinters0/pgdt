@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict Yr5SezDTvtoExNWbDhPHrUsjTIvA5LxOFAYuG5L4fqdUiY1LxOh3TbbPqz3ctMJ
+\restrict xl2L5mKfAaGWigDMRfgauJ7Q0KUEzY72dIHnEWEWpPCEnQzoahU9A3KYVbno0Gh
 
 -- Dumped from database version 15.19 (Debian 15.19-1.pgdg13+2)
 -- Dumped by pg_dump version 15.19 (Debian 15.19-1.pgdg13+2)
@@ -204,5 +204,5 @@ ALTER TABLE ONLY logs.events
 -- PostgreSQL database dump complete
 --
 
-\unrestrict Yr5SezDTvtoExNWbDhPHrUsjTIvA5LxOFAYuG5L4fqdUiY1LxOh3TbbPqz3ctMJ
+\unrestrict xl2L5mKfAaGWigDMRfgauJ7Q0KUEzY72dIHnEWEWpPCEnQzoahU9A3KYVbno0Gh
 

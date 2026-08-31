@@ -40,6 +40,27 @@ reads its markers in. Three functions are read:
   `CREATE TYPE` list (I10's multirange companion arrives there). Those three
   are named here rather than parsed, and the parse asserts the anchors they
   hang off so a rewrite is a reported problem rather than a silent pass.
+* `collated_text` -- **three more arms, on a second dimension.** A collatable
+  built-in's answer depends on the column's `COLLATE` clause as well as its
+  declared type, so one match arm carries three answers: an explicit
+  `C`/`POSIX` clause agrees, an explicit clause that is not bytewise diverges,
+  and no clause at all falls back to the type's own default. Joining on the
+  declared type alone collapses those to one, and a fourth could be added with
+  nothing behind it. Which built-in arms branch is read from the source too --
+  an arm whose body calls `collated_text` is one -- so `character` stops
+  counting the moment its arm starts consulting a clause, and starts counting
+  the moment it does.
+
+**Three arms, two case groups.** The oracle asks each text pair under `COLLATE
+"C"` and under `COLLATE "default"` only, so the non-`C`-clause arm has no group
+of its own: it joins to the `default` group, as the no-clause arm does, because
+"asked under something that is not `C`" is one population and the database's
+own collation is a member of it. **That mapping is asserted rather than
+assumed** -- it holds only while the database's collation is not itself
+bytewise, so `datcollate` is read out of each major's `meta.tsv` and a `C` or
+`POSIX` apparatus is a reported problem. Without that check, an apparatus
+initdb'd under `C` would invert the `default` group's meaning and this join
+would go on passing while meaning the opposite thing.
 
 **A case is placed by re-walking `comparison_for`'s three steps** -- array,
 then schema-qualified, then the built-in table. That is a second statement of
@@ -111,11 +132,42 @@ STRUCTURAL_ARMS = (
     Arm("user/absent", "comparison_user_type", "structural"),
 )
 
+#: The second dimension: what a collatable arm answers, given the column's
+#: clause. Three branches of one `if`, named here for the same reason the
+#: structural arms are, with `parse_register` asserting the anchor they hang
+#: off.
+COLLATION_ARMS = (
+    Arm("collation/bytewise", "collated_text", "collation"),
+    Arm("collation/other", "collated_text", "collation"),
+    Arm("collation/absent", "collated_text", "collation"),
+)
+
+#: Which collation arms a case labelled with each collation exercises. `C` is
+#: the bytewise branch; `default` covers *both* remaining branches, because the
+#: oracle asks no third collation by name -- `datcollate` is `en_US.utf8` at
+#: every major, so `COLLATE "en_US.utf8"` and `COLLATE "default"` would be the
+#: same collation and every added cell byte-identical to one already in the
+#: file. See [`database_collation_problems`] for what makes that sound.
+COLLATION_GROUPS = {
+    "C": ("collation/bytewise",),
+    "default": ("collation/other", "collation/absent"),
+}
+
+#: The call that makes a `builtin_scalar` arm collation-branching. Read out of
+#: the arm's own body rather than listed here, so an arm that gains or loses
+#: the branch moves on its own.
+COLLATED_CALL = "collated_text("
+
+#: A database collation that is itself bytewise would make the `default` case
+#: group mean the opposite of what [`COLLATION_GROUPS`] says.
+BYTEWISE_COLLATIONS = {"C", "POSIX", "C.UTF-8", "C.utf8"}
+
 #: What `parse_register` must find, or the source has moved under it.
 ANCHORS = {
     "builtin_scalar": ("fn builtin_scalar(", "_ => return None,"),
     "comparison_user_type": ("fn comparison_user_type(", "let Some(def) ="),
     "comparison_for": ("pub fn comparison_for(", "array_element(declared).is_some()"),
+    "collated_text": ("fn collated_text(", "type_default == TypeCollation::Bytewise"),
 }
 
 #: The one match guard this check understands. An arm carrying any other guard
@@ -166,6 +218,11 @@ class Register:
     kinds: dict[str, list[str]] = field(default_factory=dict)
     #: Arm keys that only match when an enum has no labels.
     guarded_empty: set[str] = field(default_factory=set)
+    #: Arm keys whose answer depends on the column's `COLLATE` clause, read
+    #: from the arm's own body. A case on one of these carries its collation
+    #: through to [`COLLATION_ARMS`]; a case on any other arm does not, however
+    #: it is labelled.
+    collatable: set[str] = field(default_factory=set)
     problems: list[str] = field(default_factory=list)
 
 
@@ -194,16 +251,28 @@ def parse_register(path: Path = REGISTER) -> Register:
     if len(bodies) != len(ANCHORS):
         return out
 
-    for line in bodies["builtin_scalar"].splitlines():
-        match = _ARM_NAMES_RE.match(line)
-        if not match:
-            continue
+    # One chunk per arm — head line through to the next arm's head — because
+    # whether the arm branches on the clause is a fact about its *body*, and a
+    # body is routinely on the line after the `=>`.
+    lines = bodies["builtin_scalar"].splitlines()
+    heads = [(i, m) for i, line in enumerate(lines) if (m := _ARM_NAMES_RE.match(line))]
+    for position, (start, match) in enumerate(heads):
+        stop = heads[position + 1][0] if position + 1 < len(heads) else len(lines)
+        collatable = COLLATED_CALL in "\n".join(lines[start:stop])
         for name in re.findall(r'"([^"]*)"', match.group(1)):
             key = f"builtin/{name}"
             out.builtin[name] = key
             out.arms.append(Arm(key, "builtin_scalar", "builtin"))
+            if collatable:
+                out.collatable.add(key)
     if not out.builtin:
         out.problems.append(f"{path}: `builtin_scalar` has no named arms")
+    if not out.collatable:
+        out.problems.append(
+            f"{path}: no arm of `builtin_scalar` calls `collated_text` — the "
+            "collation dimension has moved and this check can no longer place a "
+            "collated case"
+        )
 
     for line in bodies["comparison_user_type"].splitlines():
         match = _KIND_ARM_RE.match(line)
@@ -228,6 +297,7 @@ def parse_register(path: Path = REGISTER) -> Register:
         out.problems.append(f"{path}: `comparison_user_type` has no `TypeKind` arms")
 
     out.arms.extend(STRUCTURAL_ARMS)
+    out.arms.extend(COLLATION_ARMS)
     return out
 
 
@@ -381,6 +451,35 @@ def majors(fixtures: Path = FIXTURES) -> list[str]:
     )
 
 
+def database_collation_problems(fixtures: Path = FIXTURES) -> list[str]:
+    """Whatever stops the `default` case group meaning "not bytewise".
+
+    [`COLLATION_GROUPS`] maps a case asked under `COLLATE "default"` onto the
+    two arms a *non*-bytewise clause reaches, which is sound only while the
+    database's own collation is non-bytewise. An apparatus initdb'd under `C`
+    would invert that and the join would go on passing while meaning the
+    opposite thing, so the premise is read off the apparatus rather than
+    assumed.
+    """
+    problems: list[str] = []
+    for version in majors(fixtures):
+        path = fixtures / version / co.ORACLE_DIRNAME / "meta.tsv"
+        if not path.is_file():
+            problems.append(f"{version} has no meta.tsv — regenerate its oracle")
+            continue
+        meta = {row[0]: row[1] for row in co.parse_tsv(path.read_text()) if len(row) > 1}
+        collation = meta.get("datcollate")
+        if collation is None:
+            problems.append(f"{version}/meta.tsv records no datcollate")
+        elif collation in BYTEWISE_COLLATIONS:
+            problems.append(
+                f"{version} was generated under datcollate={collation!r}, which is "
+                "bytewise — a case asked under COLLATE \"default\" then exercises "
+                "the agreeing arm, not the diverging ones this check maps it to"
+            )
+    return problems
+
+
 def types_the_servers_have(fixtures: Path = FIXTURES) -> tuple[set[str], list[str]]:
     """Every case type at least one major answered something other than
     "no such type" for.
@@ -414,9 +513,10 @@ def types_the_servers_have(fixtures: Path = FIXTURES) -> tuple[set[str], list[st
 class Reconciliation:
     """Both directions, and everything that stopped either being answered."""
 
-    #: Arm key -> the case types that reach it, in case-table order.
+    #: Arm key -> the cases that reach it, in case-table order, labelled the
+    #: way [`case_label`] writes them.
     cases_by_arm: dict[str, list[str]] = field(default_factory=dict)
-    #: Case type -> why it reaches no arm.
+    #: Case label -> why it reaches no arm.
     unplaced: dict[str, str] = field(default_factory=dict)
     arms: list[Arm] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
@@ -424,6 +524,12 @@ class Reconciliation:
     @property
     def uncovered(self) -> list[Arm]:
         return [arm for arm in self.arms if not self.cases_by_arm.get(arm.key)]
+
+
+def case_label(type_name: str, collation: str | None) -> str:
+    """How a case is named in a report: the declared type, plus the collation
+    it is asked under where it is asked under one."""
+    return type_name if collation is None else f'{type_name} COLLATE "{collation}"'
 
 
 def reconcile(
@@ -442,23 +548,42 @@ def reconcile(
 
     have, evidence_problems = types_the_servers_have(fixtures)
     out.problems += evidence_problems
+    out.problems += database_collation_problems(fixtures)
 
-    seen: set[str] = set()
+    # The key is `(type, collation)`, not the type alone: a text pair asked
+    # under two collations is two cases about two different arms, which is the
+    # whole of what the second dimension buys.
+    seen: set[tuple[str, str | None]] = set()
     for case in co.TYPE_CASES:
-        if case.type in seen:
+        if (case.type, case.collation) in seen:
             continue
-        seen.add(case.type)
+        seen.add((case.type, case.collation))
+        label = case_label(case.type, case.collation)
         key, why = arm_for(case.type, register, schema, companions)
         if key is None:
-            out.unplaced[case.type] = why
+            out.unplaced[label] = why
             continue
         if case.type not in have:
-            out.unplaced[case.type] = (
+            out.unplaced[label] = (
                 "no major answers anything but “no such type” for it, so it "
                 "exercises nothing"
             )
             continue
-        out.cases_by_arm.setdefault(key, []).append(case.type)
+        out.cases_by_arm.setdefault(key, []).append(label)
+        if case.collation is None or key not in register.collatable:
+            # Either the case names no collation, or the arm it lands on does
+            # not read one — `character(10)`'s labels are the second, until the
+            # slice that makes a `char(n)` compare under its own collation.
+            continue
+        groups = COLLATION_GROUPS.get(case.collation)
+        if groups is None:
+            out.problems.append(
+                f"{label}: `{case.collation}` is not a collation this check can "
+                f"place — it knows {sorted(COLLATION_GROUPS)}"
+            )
+            continue
+        for arm_key in groups:
+            out.cases_by_arm.setdefault(arm_key, []).append(label)
     return out
 
 
@@ -468,9 +593,9 @@ def reconcile(
 
 
 def report(found: Reconciliation, out=sys.stdout) -> None:
-    cases = sum(len(v) for v in found.cases_by_arm.values())
+    cases = len({label for labels in found.cases_by_arm.values() for label in labels})
     print(
-        f"{len(found.arms)} register arms, {cases} oracle case types "
+        f"{len(found.arms)} register arms, {cases} oracle cases "
         f"({len(found.unplaced)} placed nowhere).\n",
         file=out,
     )
@@ -478,6 +603,7 @@ def report(found: Reconciliation, out=sys.stdout) -> None:
         ("builtin", "builtin_scalar"),
         ("user", "comparison_user_type"),
         ("structural", "the walk itself"),
+        ("collation", "collated_text (the clause)"),
     ):
         arms = [arm for arm in found.arms if arm.group == group]
         if not arms:

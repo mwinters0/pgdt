@@ -2751,23 +2751,40 @@ belongs to no single major — see
 into directories only, so it is invisible to each.
 
 `scripts/generate_fixtures.py [--version N] [--schema <name>] [--skip-dumps]
-[--skip-oracle]` regenerates; everything across all six versions is roughly two
-minutes in throwaway 512MB containers, never a host-run Postgres. The two
-`--skip-*` flags split the two passes, and `--skip-dumps` is the ordinary way
-to re-take the oracle: a dump regeneration is not byte-reproducible (below), so
-touching the `.sql` tree to change an answer table would bury the change in
-noise.
+[--skip-oracle]` regenerates; **everything across all six versions is 80
+seconds** in throwaway 512MB containers, never a host-run Postgres, with the
+images already pulled. The two `--skip-*` flags split the two passes, and
+`--skip-dumps` is the ordinary way to re-take the oracle: a dump regeneration
+is not byte-reproducible (below), so touching the `.sql` tree to change an
+answer table would bury the change in noise.
 
-**A regeneration is not byte-reproducible, and three things move on their
-own.** `\restrict`/`\unrestrict` carry a random token per dump (v17.6+/v18+);
-`logs.events.logged_at` defaults to `now()`; and `--binary-upgrade`'s OIDs can
-shift by one, because `create_fixture_db` retries `createdb` against the
-image's transient init instance and a failed attempt still consumes an OID. The
-first two move on every run, the third only sometimes and per version — two
-consecutive runs agreed while both differed from what was committed. So a
-regeneration diff is expected to touch every flag set of the schema, not only
-the fixture that motivated it, and **nothing may assert on those three**. No
-insta snapshot covers any of them.
+**That figure has a mechanical trigger, not a comment asking someone to notice
+it.** The script prints its own elapsed time at the end of every run, and past
+**30 minutes** prints that this paragraph is stale and must be updated — 30
+being where a job stops fitting inside one session and has to be handed off
+(`CLAUDE.md`, "Long-running processes"). What the number is for is that
+decision: at 80 seconds a regeneration is something a session runs twice
+without planning around it.
+
+**A regeneration is not byte-reproducible, and four things move on their own.**
+`\restrict`/`\unrestrict` carry a random token per dump (v17.6+/v18+);
+`logs.events.logged_at` and its `pgdq_tenant` counterpart default to `now()`;
+`--verbose`'s `-- Started on` / `-- Completed on` header lines are wall-clock
+times, so `objects/verbose.sql` moves where the other `objects` sets do not;
+and `--binary-upgrade`'s OIDs can shift by one, because `create_fixture_db`
+retries `createdb` against the image's transient init instance and a failed
+attempt still consumes an OID. The first three move on every run, the fourth
+only sometimes and per version — two consecutive runs agreed while both
+differed from what was committed. So a regeneration diff is expected to touch
+every flag set of the schema, not only the fixture that motivated it, and
+**nothing may assert on those four**. No insta snapshot covers any of them.
+
+**Those four are the whole of it, which is checked rather than believed.** A
+regeneration with no schema change was run and diffed against the committed
+tree: 109 files moved, and every changed line was a `\restrict` token, a
+`now()` timestamp or a `--verbose` header — no DDL, no OID drift on that run.
+That is what makes a schema change's diff readable, since the alternative is a
+reviewer unable to tell an added table from noise.
 
 | Schema | Flag sets | What it is for |
 |---|---|---|
@@ -2789,6 +2806,24 @@ DDL. `t_delimiter` is separate from `t_base_type` for the same reason one level
 over — the delimiter trap (I22) in one table and the opaque-element case it is
 easily confused with in the other is what lets a test say which of the two it
 means.
+
+**`t_collate` is the `types` schema's collation table, and it is separate from
+`t_text` for the same reason**: `t_text`'s three columns carry no `COLLATE`
+clause, so they are read as "what a column that says nothing about its
+collation does", which is the *divergent* half of the register's collation rule.
+`t_collate` is the agreeing half — `COLLATE "C"`, a bare `name`, and a column
+of a domain declared `AS text COLLATE "C"` — plus the two clauses that must
+still diverge, `en_US.utf8` and `ucs_basic`. It also carries the only column in
+the tree whose type is a composite with a collated attribute, which is I37's
+third emission site and had rested on a source grep until this table existed.
+
+Its nine rows are one alphabet replicated across every column, so a filter over
+two of them differs by nothing but the collation: `A`, `a`, `B`, `é`, `f`, `_x`,
+`ax`, the empty string and a NULL — the pairs the comparison oracle already
+answers as divergent on glibc 2.41. **Do not replace them with placeholders.**
+The Rust assertions over this table are about *notes*, which are independent of
+the data, so any values at all would pass them and it would be easy to pick a
+set that could never support a stronger test.
 
 `SCHEMAS` uses two sentinels: `None` as a flag set means "swap the binary,
 don't append flags" (that is how `dumpall` is produced), and a value may be
@@ -2946,6 +2981,42 @@ deliberately so the file cannot be read as "these two orders never coincide".
 *is* the database's collation by definition and exists on every server, where a
 locale-named collation object exists only if `initdb` imported one.
 
+**`TypeCases.collation = None` means one thing: the register does not branch on
+the clause for this type.** It used to mean two, and the difference was
+invisible: a bare `text` or `character varying` case is on the database's
+collation, which is the *divergent* population, while a bare `name` case is on
+that type's own `C` default, which is the *agreeing* one. A join resolving
+`None` per type would be a second copy of the register's type-default rule
+living in Python — the fork the reconciliation exists to prevent, arriving from
+inside the check — so every case of a type whose arm reads a clause states its
+collation, and `None` is left to the types where there is no branch to name.
+`text` and `character varying(10)` therefore say `"default"` explicitly, which
+changes no answer: `pg_catalog."default"` is what a bare comparison already
+used.
+
+`name` is the one deliberate `None` among the collatable types, and it is asked
+*bare*. *Rejected: relabelling its cases `collation="C"`.* True, and it is the
+register's claim rather than the oracle's observation — a `name` pair asked
+under an explicit clause is a different question from one asked bare, and only
+the bare one shows what a bare column does.
+
+**`character(10)` is asked under both collations, ahead of the slice that
+closes it.** Today the register is clause-blind there — blank padding is what
+makes a `char(n)` diverge, not the collation (I38) — so it looks like an
+instance of the `None` rule and stops being one the moment a trimmed `char(n)`
+compares under its own collation. Labelling it in a regeneration that is
+happening anyway costs nothing; labelling it later costs a six-major run of its
+own. Its values carry `"a"` followed by a **tab**, which is I38's ordering
+corollary and the one thing its other values cannot reach: pad-and-compare and
+trim-and-compare disagree only against a byte below `0x20`, and every other
+value in the case is printable.
+
+**A literal is asked once per type, wherever it is first named**, and collation
+does not enter — an input function and an output function do not consult one.
+Deduplicating rather than skipping a collated case is what keeps a value that
+exists only in one, such as `character(10)`'s tab or the text alphabet, in
+`literals.tsv`.
+
 **"Only glibc" is a limitation of the evidence, not a claim about servers.** A
 musl deployment orders text differently and this oracle does not speak for it.
 What stays closed by *statement* is the residue: a `default`-collation column
@@ -3045,6 +3116,31 @@ a rewrite is a reported problem rather than a shorter list that passes:
 | `builtin_scalar` | one **declared base name** | Several names share `(Utf8View, text)` and each is separately closable, so `text` having a case does not answer for `character varying`. |
 | `comparison_user_type` | one **match arm** over `TypeKind`, a guarded arm counting as its own | `Composite \| Range` and `Base \| Shell` are each one decision, so neither is separately closable yet; when 11.10 splits the first, both halves already have cases. Exhaustiveness over the kinds is rustc's job; what this check adds is that each *answer* has evidence. |
 | `comparison_for` | one per branch that is not a match arm at all, its own two plus `comparison_user_type`'s early return | The array shape, the built-in name nothing recognises, and a type absent from the dump's `CREATE TYPE` list (I10's multirange companion lands there). |
+| `collated_text` | one per **collation branch**, three in all | A collatable built-in's answer depends on the column's clause as well as its declared type, so one match arm carries three separately closable answers. |
+
+**The collation is a second dimension, and joining on the declared type alone
+collapses it.** An explicit `C`/`POSIX` clause agrees, an explicit clause that
+is not bytewise diverges, and no clause at all falls back to the type's own
+default; without the dimension all three are answered by one `text` case and a
+fourth could be added with nothing behind it. **Which built-in arms branch is
+read from the source too** — an arm whose body calls `collated_text` is one —
+so `character` stops counting the day its arm consults a clause and starts
+counting the day it does, rather than being listed here and going stale.
+
+**Three arms, two case groups.** The oracle asks each text pair under `COLLATE
+"C"` and under `COLLATE "default"` only, so the non-`C`-clause arm has no group
+of its own: it joins to the `default` group, as the no-clause arm does, because
+"asked under something that is not `C`" is one population and the database's own
+collation is a member of it. *Rejected: asking a third collation by name.*
+`datcollate` is `en_US.utf8` at all six majors, so `COLLATE "en_US.utf8"` and
+`COLLATE "default"` are the same collation and every added cell would be
+byte-identical to one already in the file.
+
+**That mapping is asserted rather than assumed.** It holds only while the
+database's collation is not itself bytewise, so the check reads `datcollate` out
+of each major's `meta.tsv` and fails on `C` or `POSIX`. Without it, an apparatus
+initdb'd under `C` would invert the `default` group's meaning and the join would
+go on passing while meaning the opposite thing.
 
 A case is placed by re-walking `comparison_for`'s three steps — array, then
 schema-qualified, then the built-in table — and that walk is the only thing the

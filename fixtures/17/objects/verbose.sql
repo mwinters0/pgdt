@@ -2,12 +2,12 @@
 -- PostgreSQL database dump
 --
 
-\restrict cownxNNcNt1Py0vtm9xclNNrLqojme0ANQCPddcKILgI8cdWGYVD7evqz0Bk54x
+\restrict MQwrbXhmdeNZtSzwvIq3Yz7bfSaDhjITpKqueqgYsHxE2jQGYhWt9o9DynppH24
 
 -- Dumped from database version 17.11 (Debian 17.11-1.pgdg13+2)
 -- Dumped by pg_dump version 17.11 (Debian 17.11-1.pgdg13+2)
 
--- Started on 2026-08-31 14:43:55 UTC
+-- Started on 2026-08-31 22:50:10 UTC
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -574,8 +574,8 @@ COPY objects.widget_audit (widget_id, changed_at) FROM stdin;
 --
 
 COPY objects.widgets (id, label, created_at) FROM stdin;
-1	alpha	2026-08-31 14:43:54.904245+00
-2	beta	2026-08-31 14:43:54.904245+00
+1	alpha	2026-08-31 22:50:09.778609+00
+2	beta	2026-08-31 22:50:09.778609+00
 \.
 
 
@@ -896,11 +896,11 @@ ALTER EVENT TRIGGER objects_ddl_log OWNER TO postgres;
 REFRESH MATERIALIZED VIEW objects.widget_totals;
 
 
--- Completed on 2026-08-31 14:43:55 UTC
+-- Completed on 2026-08-31 22:50:10 UTC
 
 --
 -- PostgreSQL database dump complete
 --
 
-\unrestrict cownxNNcNt1Py0vtm9xclNNrLqojme0ANQCPddcKILgI8cdWGYVD7evqz0Bk54x
+\unrestrict MQwrbXhmdeNZtSzwvIq3Yz7bfSaDhjITpKqueqgYsHxE2jQGYhWt9o9DynppH24
 

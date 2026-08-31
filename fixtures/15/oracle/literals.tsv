@@ -117,8 +117,19 @@ bytea	\N	ok	\N
 bytea	\\xgg	E22023	\N
 bytea	abc	ok	\\x616263
 text		ok	
+text	1	ok	1
 text	A	ok	A
 text	a	ok	a
+text	B	ok	B
+text	e	ok	e
+text	é	ok	é
+text	f	ok	f
+text	_x	ok	_x
+text	ax	ok	ax
+text	co-op	ok	co-op
+text	coop	ok	coop
+text	de luge	ok	de luge
+text	deluge	ok	deluge
 text	hello	ok	hello
 text	\N	ok	\N
 character varying(10)		ok	
@@ -128,6 +139,7 @@ character varying(10)	\N	ok	\N
 character varying(10)	12345678901	ok	1234567890
 character(10)	a	ok	a         
 character(10)	a         	ok	a         
+character(10)	a\t	ok	a\t        
 character(10)	hello	ok	hello     
 character(10)	\N	ok	\N
 name	A	ok	A
