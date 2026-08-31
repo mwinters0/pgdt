@@ -17,6 +17,11 @@ against the `types` schema's own database, so it must see the same DDL, in the
 same container, as fixtures/<major-version>/types/*.sql. The case table and the
 SQL are scripts/comparison_oracle.py.
 
+An oracle pass ends by re-checking the cross-major differences
+(scripts/oracle_differences.py) against fixtures/oracle-differences.tsv, and
+fails when they have moved: a regenerated answer that changed something has to
+be filed rather than noticed later.
+
 Requires `docker` (aliased to `nerdctl` in this environment) runnable via
 passwordless `sudo`.
 """
@@ -30,6 +35,7 @@ import time
 from pathlib import Path
 
 import comparison_oracle
+import oracle_differences
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
@@ -404,6 +410,17 @@ def main() -> int:
             dumps=not args.skip_dumps,
             oracle=not args.skip_oracle,
         )
+
+    if not args.skip_oracle:
+        print("\ncross-major differences:")
+        if oracle_differences.check() != 0:
+            print(
+                "the committed differences no longer match the oracles — re-file "
+                "them with `uv run oracle_differences.py --write` and read what "
+                "moved before committing.",
+                file=sys.stderr,
+            )
+            return 1
 
     print("done.")
     return 0

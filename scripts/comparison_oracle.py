@@ -564,3 +564,38 @@ def parse_tsv(text: str) -> list[list[str | None]]:
         for line in text.split("\n")
         if line
     ]
+
+
+#: The inverse of `_UNESCAPE`, holding only what `CopyAttributeOutText` escapes:
+#: the backslash, the six named control characters, and the delimiter (which is
+#: the tab, already in the set). Every other byte is written as itself --
+#: notably, an ordinary control character is **not** escaped, so this is not
+#: `repr`.
+_ESCAPE = {
+    "\\": "\\\\",
+    "\b": "\\b",
+    "\f": "\\f",
+    "\n": "\\n",
+    "\r": "\\r",
+    "\t": "\\t",
+    "\v": "\\v",
+}
+
+
+def escape_copy_text(value: str | None) -> str:
+    """One value as a COPY TEXT field: the inverse of [`unescape_copy_text`].
+
+    The server writes the oracle files; this writes the differences file
+    derived from them, so the two must agree on the encoding or a `bytea`
+    literal -- which is a backslash and hex digits -- comes back wrong.
+    """
+    if value is None:
+        return r"\N"
+    return "".join(_ESCAPE.get(ch, ch) for ch in value)
+
+
+def format_tsv(rows: list[list[str | None]]) -> str:
+    """Rows of values back to a COPY TEXT file, newline-terminated."""
+    return "".join(
+        "\t".join(escape_copy_text(v) for v in row) + "\n" for row in rows
+    )

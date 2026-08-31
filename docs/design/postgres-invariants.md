@@ -13,6 +13,21 @@ step against the new source tree, and update "Verified against" — or, if an
 invariant broke, fix the design doc named in "Relied on by" before anything
 else.
 
+**Half of that walk is mechanical, and it goes first.** Add the new major to
+`ROUTINE_VERSIONS` in `scripts/generate_fixtures.py`, regenerate
+(`cd scripts && uv run generate_fixtures.py --version <N>`), and read what the
+cross-major differ says:
+
+```sh
+cd scripts && uv run oracle_differences.py
+```
+
+Every comparison the new server answers differently from its predecessor is
+named there with a verdict, and a **non-additive** one fails the run: it is a
+break in the union rule I35 records, and it has to be understood before
+anything is re-verified by hand. Re-file the differences with `--write` once it
+is. The prose half — re-running each entry's `Re-verify` grep — is unchanged.
+
 Source checkouts live at `/mnt/wd12t/upstream/postgres/` (worktrees per
 release tag). All line numbers below are from `release-v18.6` and are a
 starting point, not an anchor — grep for the quoted code instead.
@@ -1931,3 +1946,53 @@ awk '/^timestamp_cmp_internal/,/^}/' src/backend/utils/adt/timestamp.c
 grep -n -A8 '^cmp_numerics' src/backend/utils/adt/numeric.c
 grep -n -A15 '^apply_typmod_special' src/backend/utils/adt/numeric.c
 ```
+
+---
+
+## I35 — No two supported majors disagree about a typed comparison both accept
+
+**Claim.** Across PostgreSQL 13–18, for every case in the comparison oracle's
+table, two adjacent majors that both *accept* an input agree about it: the same
+six operators answer the same way, and an accepted literal canonicalizes to the
+same `*_out` text. Every difference between two adjacent majors is **additive**
+— the older one rejected an input the newer one accepts.
+
+This is what licenses implementing version-varying semantics as the *newest*
+semantics unconditionally, with no branch on the version the dump header
+records. An older server cannot have produced a value it does not accept, so a
+reader that understands v17's `interval` infinities is never wrong about a v13
+file.
+
+**Scope limit.** It is a property of the **cases the oracle asks**, not of
+PostgreSQL in general: a type or operator no case constructs is not covered,
+and adding a case is the only answer available (`comparison_oracle.py`'s
+`TYPE_CASES`). It says nothing about a *minor* release, which the tree pins to
+one per major. And the text answers are musl-libc's — the Alpine fixture
+containers make `strcoll` `strcmp` — so it cannot speak for a collation
+divergence, which is why the register's collation row is closed by statement
+instead ([`architecture.md`](architecture.md), "The comparison oracle").
+
+**Proof.** Measured, not argued: `fixtures/<13…18>/oracle/` holds 1224
+comparisons and 279 literals per major as the server itself answered them, and
+`fixtures/oracle-differences.tsv` holds every cell that moved between adjacent
+majors — 509 of them, all additive. The three transitions that exist are the
+ones the release notes would have named: `numeric`'s infinities and the two
+multirange types in v14, and `interval`'s infinities in v17.
+
+**Verified against.** 13.23, 14.24, 15.19, 16.15, 17.11, 18.6 — the versions
+`meta.tsv` records per major, on 2026-08-31.
+
+**Relied on by.** [`architecture.md`](architecture.md), "The cross-major
+differ", and every comparison in
+[`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md) that
+implements one semantics for all majors.
+
+**Re-verify.**
+
+```sh
+cd scripts && uv run oracle_differences.py
+```
+
+A non-additive difference is the failure, and it is reported by case with both
+answers. Re-taking the oracles themselves is
+`uv run generate_fixtures.py --skip-dumps`.

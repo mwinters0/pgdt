@@ -20,6 +20,9 @@ cargo run -p pgdump_query-cli -- info --dqcache <path>       # cache-only, no du
 cd scripts && uv run generate_fixtures.py [--version 13|16|18]  # regenerate fixtures/
 cd scripts && uv run generate_fixtures.py --skip-dumps          # re-take the comparison oracle only
 cd scripts && uv run python -m unittest test_comparison_oracle  # case table vs. the committed answers
+cd scripts && uv run oracle_differences.py        # where two adjacent majors disagree, vs. the committed file
+cd scripts && uv run oracle_differences.py --write  # re-file it after regenerating an oracle
+cd scripts && uv run python -m unittest test_oracle_differences  # the differ's own tests
 
 cd scripts && uv run measure.py --list            # every figure, and what invalidates each
 cd scripts && uv run measure.py --stale           # which figures a diff has made stale

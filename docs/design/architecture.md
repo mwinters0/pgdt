@@ -44,6 +44,7 @@ through.
 | the CLI's flags or output, the save throttle, the interrupt guard | [CLI surface](#cli-surface) |
 | `scripts/`, a new fixture schema | [Fixtures](#fixtures) |
 | what PostgreSQL answers for a comparison, a new comparison case | [The comparison oracle](#the-comparison-oracle) |
+| whether two majors disagree, the committed differences file | [The cross-major differ](#the-cross-major-differ) |
 | adding or changing a test | [Testing philosophy](#testing-philosophy) |
 
 ## Module map
@@ -2593,6 +2594,11 @@ six routine versions (13–18). **"Absent" in this tree always means
 schema directories rather than inside one because it has no flag set; the test
 vocabulary's `all_fixtures()` walks for `*.sql` and steps over it.
 
+`fixtures/oracle-differences.tsv` is the one file at the tree's top, because it
+belongs to no single major — see
+[The cross-major differ](#the-cross-major-differ). Both fixture walks recurse
+into directories only, so it is invisible to each.
+
 `scripts/generate_fixtures.py [--version N] [--schema <name>] [--skip-dumps]
 [--skip-oracle]` regenerates; everything across all six versions is roughly two
 minutes in throwaway 512MB containers, never a host-run Postgres. The two
@@ -2773,6 +2779,56 @@ show. `meta.tsv` records `version()` and `datcollate` so a reader can see it.
 The collation row of the ordering register is closed by statement rather than
 by this file — PostgreSQL orders text by collation and a plain dump records
 none (I32), so there is no answer in the file to check against.
+
+### The cross-major differ
+
+`scripts/oracle_differences.py` reads the committed oracles as a **chain of
+adjacent majors** and records every cell that moved, in
+`fixtures/oracle-differences.tsv`. It is what turns the union rule — implement
+the newest semantics unconditionally, with no branch on the version the dump
+header records — from an assertion into a check (I35).
+
+Three verdicts, and only the first is benign:
+
+| Older major | Newer major | Verdict |
+|---|---|---|
+| rejects the input | accepts, answers | **additive** — the value could not previously exist |
+| accepts | accepts, **different** answer | **non-additive** — a real break |
+| accepts | accepts, same answer | unchanged, and not recorded |
+
+**Every other transition is non-additive too**, deliberately: a newer major
+*rejecting* what an older accepted, two rejections whose SQLSTATE moved, and an
+accepted literal whose canonical `output` spelling moved. The last is what
+`comparisons.tsv` cannot see on its own and is the reason the differ covers
+both tables — the canonicalize-the-literal-once path renders a literal into the
+form the *file* holds, so a spelling that differs between majors is a rendering
+no single implementation can get right. The strict reading is the conservative
+direction; the one place it could raise an alarm that means nothing is a
+SQLSTATE change between two rejections, which has never fired.
+
+**Adjacent pairs rather than all pairs.** If any two majors disagree then some
+adjacent pair does, so the chain is complete, and it names *where* the
+transition happened rather than only that one exists.
+
+Two things are refused rather than diffed, because both would make a diff mean
+something other than it says. The answer files carry no case identifiers, so
+the differ re-checks every file against `comparison_cases()`/`literal_cases()`
+before zipping — mis-aligned files are a silent wrong answer, not an error. And
+every major's `meta.tsv` must agree on the pinned session GUCs and the
+database's collation: a `DateStyle` that differed between two runs would move
+every spelling in the file, which is a fault in the generation rather than a
+difference between majors.
+
+**The file is committed and asserted, and the break check is separate.**
+`test_oracle_differences.py` asserts the committed file against a fresh
+computation, so a regeneration that moves an answer cannot land without being
+re-filed (`uv run oracle_differences.py --write`); a second assertion says no
+difference is non-additive, so *filing* a real break does not silence it. An
+oracle pass of `generate_fixtures.py` ends by running the same check.
+
+*Rejected: classifying a two-rejection SQLSTATE change as unchanged.* It is the
+only strictness with no consequence today, and buying it costs a third verdict
+that every reader of the file then has to learn.
 
 ## Testing philosophy
 

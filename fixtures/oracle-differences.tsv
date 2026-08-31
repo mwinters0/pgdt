@@ -1,0 +1,510 @@
+older	newer	file	type	left	right	field	old	new	verdict
+13	14	comparisons	numeric	-Infinity	-Infinity	<	E22P02	f	additive
+13	14	comparisons	numeric	-Infinity	-Infinity	<=	E22P02	t	additive
+13	14	comparisons	numeric	-Infinity	-Infinity	>	E22P02	f	additive
+13	14	comparisons	numeric	-Infinity	-Infinity	>=	E22P02	t	additive
+13	14	comparisons	numeric	-Infinity	-Infinity	=	E22P02	t	additive
+13	14	comparisons	numeric	-Infinity	-Infinity	<>	E22P02	f	additive
+13	14	comparisons	numeric	-Infinity	-1	<	E22P02	t	additive
+13	14	comparisons	numeric	-Infinity	-1	<=	E22P02	t	additive
+13	14	comparisons	numeric	-Infinity	-1	>	E22P02	f	additive
+13	14	comparisons	numeric	-Infinity	-1	>=	E22P02	f	additive
+13	14	comparisons	numeric	-Infinity	-1	=	E22P02	f	additive
+13	14	comparisons	numeric	-Infinity	-1	<>	E22P02	t	additive
+13	14	comparisons	numeric	-Infinity	0	<	E22P02	t	additive
+13	14	comparisons	numeric	-Infinity	0	<=	E22P02	t	additive
+13	14	comparisons	numeric	-Infinity	0	>	E22P02	f	additive
+13	14	comparisons	numeric	-Infinity	0	>=	E22P02	f	additive
+13	14	comparisons	numeric	-Infinity	0	=	E22P02	f	additive
+13	14	comparisons	numeric	-Infinity	0	<>	E22P02	t	additive
+13	14	comparisons	numeric	-Infinity	1.5	<	E22P02	t	additive
+13	14	comparisons	numeric	-Infinity	1.5	<=	E22P02	t	additive
+13	14	comparisons	numeric	-Infinity	1.5	>	E22P02	f	additive
+13	14	comparisons	numeric	-Infinity	1.5	>=	E22P02	f	additive
+13	14	comparisons	numeric	-Infinity	1.5	=	E22P02	f	additive
+13	14	comparisons	numeric	-Infinity	1.5	<>	E22P02	t	additive
+13	14	comparisons	numeric	-Infinity	1.50	<	E22P02	t	additive
+13	14	comparisons	numeric	-Infinity	1.50	<=	E22P02	t	additive
+13	14	comparisons	numeric	-Infinity	1.50	>	E22P02	f	additive
+13	14	comparisons	numeric	-Infinity	1.50	>=	E22P02	f	additive
+13	14	comparisons	numeric	-Infinity	1.50	=	E22P02	f	additive
+13	14	comparisons	numeric	-Infinity	1.50	<>	E22P02	t	additive
+13	14	comparisons	numeric	-Infinity	Infinity	<	E22P02	t	additive
+13	14	comparisons	numeric	-Infinity	Infinity	<=	E22P02	t	additive
+13	14	comparisons	numeric	-Infinity	Infinity	>	E22P02	f	additive
+13	14	comparisons	numeric	-Infinity	Infinity	>=	E22P02	f	additive
+13	14	comparisons	numeric	-Infinity	Infinity	=	E22P02	f	additive
+13	14	comparisons	numeric	-Infinity	Infinity	<>	E22P02	t	additive
+13	14	comparisons	numeric	-Infinity	NaN	<	E22P02	t	additive
+13	14	comparisons	numeric	-Infinity	NaN	<=	E22P02	t	additive
+13	14	comparisons	numeric	-Infinity	NaN	>	E22P02	f	additive
+13	14	comparisons	numeric	-Infinity	NaN	>=	E22P02	f	additive
+13	14	comparisons	numeric	-Infinity	NaN	=	E22P02	f	additive
+13	14	comparisons	numeric	-Infinity	NaN	<>	E22P02	t	additive
+13	14	comparisons	numeric	-Infinity	\N	<	E22P02	u	additive
+13	14	comparisons	numeric	-Infinity	\N	<=	E22P02	u	additive
+13	14	comparisons	numeric	-Infinity	\N	>	E22P02	u	additive
+13	14	comparisons	numeric	-Infinity	\N	>=	E22P02	u	additive
+13	14	comparisons	numeric	-Infinity	\N	=	E22P02	u	additive
+13	14	comparisons	numeric	-Infinity	\N	<>	E22P02	u	additive
+13	14	comparisons	numeric	-1	-Infinity	<	E22P02	f	additive
+13	14	comparisons	numeric	-1	-Infinity	<=	E22P02	f	additive
+13	14	comparisons	numeric	-1	-Infinity	>	E22P02	t	additive
+13	14	comparisons	numeric	-1	-Infinity	>=	E22P02	t	additive
+13	14	comparisons	numeric	-1	-Infinity	=	E22P02	f	additive
+13	14	comparisons	numeric	-1	-Infinity	<>	E22P02	t	additive
+13	14	comparisons	numeric	-1	Infinity	<	E22P02	t	additive
+13	14	comparisons	numeric	-1	Infinity	<=	E22P02	t	additive
+13	14	comparisons	numeric	-1	Infinity	>	E22P02	f	additive
+13	14	comparisons	numeric	-1	Infinity	>=	E22P02	f	additive
+13	14	comparisons	numeric	-1	Infinity	=	E22P02	f	additive
+13	14	comparisons	numeric	-1	Infinity	<>	E22P02	t	additive
+13	14	comparisons	numeric	0	-Infinity	<	E22P02	f	additive
+13	14	comparisons	numeric	0	-Infinity	<=	E22P02	f	additive
+13	14	comparisons	numeric	0	-Infinity	>	E22P02	t	additive
+13	14	comparisons	numeric	0	-Infinity	>=	E22P02	t	additive
+13	14	comparisons	numeric	0	-Infinity	=	E22P02	f	additive
+13	14	comparisons	numeric	0	-Infinity	<>	E22P02	t	additive
+13	14	comparisons	numeric	0	Infinity	<	E22P02	t	additive
+13	14	comparisons	numeric	0	Infinity	<=	E22P02	t	additive
+13	14	comparisons	numeric	0	Infinity	>	E22P02	f	additive
+13	14	comparisons	numeric	0	Infinity	>=	E22P02	f	additive
+13	14	comparisons	numeric	0	Infinity	=	E22P02	f	additive
+13	14	comparisons	numeric	0	Infinity	<>	E22P02	t	additive
+13	14	comparisons	numeric	1.5	-Infinity	<	E22P02	f	additive
+13	14	comparisons	numeric	1.5	-Infinity	<=	E22P02	f	additive
+13	14	comparisons	numeric	1.5	-Infinity	>	E22P02	t	additive
+13	14	comparisons	numeric	1.5	-Infinity	>=	E22P02	t	additive
+13	14	comparisons	numeric	1.5	-Infinity	=	E22P02	f	additive
+13	14	comparisons	numeric	1.5	-Infinity	<>	E22P02	t	additive
+13	14	comparisons	numeric	1.5	Infinity	<	E22P02	t	additive
+13	14	comparisons	numeric	1.5	Infinity	<=	E22P02	t	additive
+13	14	comparisons	numeric	1.5	Infinity	>	E22P02	f	additive
+13	14	comparisons	numeric	1.5	Infinity	>=	E22P02	f	additive
+13	14	comparisons	numeric	1.5	Infinity	=	E22P02	f	additive
+13	14	comparisons	numeric	1.5	Infinity	<>	E22P02	t	additive
+13	14	comparisons	numeric	1.50	-Infinity	<	E22P02	f	additive
+13	14	comparisons	numeric	1.50	-Infinity	<=	E22P02	f	additive
+13	14	comparisons	numeric	1.50	-Infinity	>	E22P02	t	additive
+13	14	comparisons	numeric	1.50	-Infinity	>=	E22P02	t	additive
+13	14	comparisons	numeric	1.50	-Infinity	=	E22P02	f	additive
+13	14	comparisons	numeric	1.50	-Infinity	<>	E22P02	t	additive
+13	14	comparisons	numeric	1.50	Infinity	<	E22P02	t	additive
+13	14	comparisons	numeric	1.50	Infinity	<=	E22P02	t	additive
+13	14	comparisons	numeric	1.50	Infinity	>	E22P02	f	additive
+13	14	comparisons	numeric	1.50	Infinity	>=	E22P02	f	additive
+13	14	comparisons	numeric	1.50	Infinity	=	E22P02	f	additive
+13	14	comparisons	numeric	1.50	Infinity	<>	E22P02	t	additive
+13	14	comparisons	numeric	Infinity	-Infinity	<	E22P02	f	additive
+13	14	comparisons	numeric	Infinity	-Infinity	<=	E22P02	f	additive
+13	14	comparisons	numeric	Infinity	-Infinity	>	E22P02	t	additive
+13	14	comparisons	numeric	Infinity	-Infinity	>=	E22P02	t	additive
+13	14	comparisons	numeric	Infinity	-Infinity	=	E22P02	f	additive
+13	14	comparisons	numeric	Infinity	-Infinity	<>	E22P02	t	additive
+13	14	comparisons	numeric	Infinity	-1	<	E22P02	f	additive
+13	14	comparisons	numeric	Infinity	-1	<=	E22P02	f	additive
+13	14	comparisons	numeric	Infinity	-1	>	E22P02	t	additive
+13	14	comparisons	numeric	Infinity	-1	>=	E22P02	t	additive
+13	14	comparisons	numeric	Infinity	-1	=	E22P02	f	additive
+13	14	comparisons	numeric	Infinity	-1	<>	E22P02	t	additive
+13	14	comparisons	numeric	Infinity	0	<	E22P02	f	additive
+13	14	comparisons	numeric	Infinity	0	<=	E22P02	f	additive
+13	14	comparisons	numeric	Infinity	0	>	E22P02	t	additive
+13	14	comparisons	numeric	Infinity	0	>=	E22P02	t	additive
+13	14	comparisons	numeric	Infinity	0	=	E22P02	f	additive
+13	14	comparisons	numeric	Infinity	0	<>	E22P02	t	additive
+13	14	comparisons	numeric	Infinity	1.5	<	E22P02	f	additive
+13	14	comparisons	numeric	Infinity	1.5	<=	E22P02	f	additive
+13	14	comparisons	numeric	Infinity	1.5	>	E22P02	t	additive
+13	14	comparisons	numeric	Infinity	1.5	>=	E22P02	t	additive
+13	14	comparisons	numeric	Infinity	1.5	=	E22P02	f	additive
+13	14	comparisons	numeric	Infinity	1.5	<>	E22P02	t	additive
+13	14	comparisons	numeric	Infinity	1.50	<	E22P02	f	additive
+13	14	comparisons	numeric	Infinity	1.50	<=	E22P02	f	additive
+13	14	comparisons	numeric	Infinity	1.50	>	E22P02	t	additive
+13	14	comparisons	numeric	Infinity	1.50	>=	E22P02	t	additive
+13	14	comparisons	numeric	Infinity	1.50	=	E22P02	f	additive
+13	14	comparisons	numeric	Infinity	1.50	<>	E22P02	t	additive
+13	14	comparisons	numeric	Infinity	Infinity	<	E22P02	f	additive
+13	14	comparisons	numeric	Infinity	Infinity	<=	E22P02	t	additive
+13	14	comparisons	numeric	Infinity	Infinity	>	E22P02	f	additive
+13	14	comparisons	numeric	Infinity	Infinity	>=	E22P02	t	additive
+13	14	comparisons	numeric	Infinity	Infinity	=	E22P02	t	additive
+13	14	comparisons	numeric	Infinity	Infinity	<>	E22P02	f	additive
+13	14	comparisons	numeric	Infinity	NaN	<	E22P02	t	additive
+13	14	comparisons	numeric	Infinity	NaN	<=	E22P02	t	additive
+13	14	comparisons	numeric	Infinity	NaN	>	E22P02	f	additive
+13	14	comparisons	numeric	Infinity	NaN	>=	E22P02	f	additive
+13	14	comparisons	numeric	Infinity	NaN	=	E22P02	f	additive
+13	14	comparisons	numeric	Infinity	NaN	<>	E22P02	t	additive
+13	14	comparisons	numeric	Infinity	\N	<	E22P02	u	additive
+13	14	comparisons	numeric	Infinity	\N	<=	E22P02	u	additive
+13	14	comparisons	numeric	Infinity	\N	>	E22P02	u	additive
+13	14	comparisons	numeric	Infinity	\N	>=	E22P02	u	additive
+13	14	comparisons	numeric	Infinity	\N	=	E22P02	u	additive
+13	14	comparisons	numeric	Infinity	\N	<>	E22P02	u	additive
+13	14	comparisons	numeric	NaN	-Infinity	<	E22P02	f	additive
+13	14	comparisons	numeric	NaN	-Infinity	<=	E22P02	f	additive
+13	14	comparisons	numeric	NaN	-Infinity	>	E22P02	t	additive
+13	14	comparisons	numeric	NaN	-Infinity	>=	E22P02	t	additive
+13	14	comparisons	numeric	NaN	-Infinity	=	E22P02	f	additive
+13	14	comparisons	numeric	NaN	-Infinity	<>	E22P02	t	additive
+13	14	comparisons	numeric	NaN	Infinity	<	E22P02	f	additive
+13	14	comparisons	numeric	NaN	Infinity	<=	E22P02	f	additive
+13	14	comparisons	numeric	NaN	Infinity	>	E22P02	t	additive
+13	14	comparisons	numeric	NaN	Infinity	>=	E22P02	t	additive
+13	14	comparisons	numeric	NaN	Infinity	=	E22P02	f	additive
+13	14	comparisons	numeric	NaN	Infinity	<>	E22P02	t	additive
+13	14	comparisons	numeric	\N	-Infinity	<	E22P02	u	additive
+13	14	comparisons	numeric	\N	-Infinity	<=	E22P02	u	additive
+13	14	comparisons	numeric	\N	-Infinity	>	E22P02	u	additive
+13	14	comparisons	numeric	\N	-Infinity	>=	E22P02	u	additive
+13	14	comparisons	numeric	\N	-Infinity	=	E22P02	u	additive
+13	14	comparisons	numeric	\N	-Infinity	<>	E22P02	u	additive
+13	14	comparisons	numeric	\N	Infinity	<	E22P02	u	additive
+13	14	comparisons	numeric	\N	Infinity	<=	E22P02	u	additive
+13	14	comparisons	numeric	\N	Infinity	>	E22P02	u	additive
+13	14	comparisons	numeric	\N	Infinity	>=	E22P02	u	additive
+13	14	comparisons	numeric	\N	Infinity	=	E22P02	u	additive
+13	14	comparisons	numeric	\N	Infinity	<>	E22P02	u	additive
+13	14	comparisons	int4multirange	{}	{}	<	E42704	f	additive
+13	14	comparisons	int4multirange	{}	{}	<=	E42704	t	additive
+13	14	comparisons	int4multirange	{}	{}	>	E42704	f	additive
+13	14	comparisons	int4multirange	{}	{}	>=	E42704	t	additive
+13	14	comparisons	int4multirange	{}	{}	=	E42704	t	additive
+13	14	comparisons	int4multirange	{}	{}	<>	E42704	f	additive
+13	14	comparisons	int4multirange	{}	{[1,10)}	<	E42704	t	additive
+13	14	comparisons	int4multirange	{}	{[1,10)}	<=	E42704	t	additive
+13	14	comparisons	int4multirange	{}	{[1,10)}	>	E42704	f	additive
+13	14	comparisons	int4multirange	{}	{[1,10)}	>=	E42704	f	additive
+13	14	comparisons	int4multirange	{}	{[1,10)}	=	E42704	f	additive
+13	14	comparisons	int4multirange	{}	{[1,10)}	<>	E42704	t	additive
+13	14	comparisons	int4multirange	{}	{[1,5),[6,10)}	<	E42704	t	additive
+13	14	comparisons	int4multirange	{}	{[1,5),[6,10)}	<=	E42704	t	additive
+13	14	comparisons	int4multirange	{}	{[1,5),[6,10)}	>	E42704	f	additive
+13	14	comparisons	int4multirange	{}	{[1,5),[6,10)}	>=	E42704	f	additive
+13	14	comparisons	int4multirange	{}	{[1,5),[6,10)}	=	E42704	f	additive
+13	14	comparisons	int4multirange	{}	{[1,5),[6,10)}	<>	E42704	t	additive
+13	14	comparisons	int4multirange	{}	\N	<	E42704	u	additive
+13	14	comparisons	int4multirange	{}	\N	<=	E42704	u	additive
+13	14	comparisons	int4multirange	{}	\N	>	E42704	u	additive
+13	14	comparisons	int4multirange	{}	\N	>=	E42704	u	additive
+13	14	comparisons	int4multirange	{}	\N	=	E42704	u	additive
+13	14	comparisons	int4multirange	{}	\N	<>	E42704	u	additive
+13	14	comparisons	int4multirange	{[1,10)}	{}	<	E42704	f	additive
+13	14	comparisons	int4multirange	{[1,10)}	{}	<=	E42704	f	additive
+13	14	comparisons	int4multirange	{[1,10)}	{}	>	E42704	t	additive
+13	14	comparisons	int4multirange	{[1,10)}	{}	>=	E42704	t	additive
+13	14	comparisons	int4multirange	{[1,10)}	{}	=	E42704	f	additive
+13	14	comparisons	int4multirange	{[1,10)}	{}	<>	E42704	t	additive
+13	14	comparisons	int4multirange	{[1,10)}	{[1,10)}	<	E42704	f	additive
+13	14	comparisons	int4multirange	{[1,10)}	{[1,10)}	<=	E42704	t	additive
+13	14	comparisons	int4multirange	{[1,10)}	{[1,10)}	>	E42704	f	additive
+13	14	comparisons	int4multirange	{[1,10)}	{[1,10)}	>=	E42704	t	additive
+13	14	comparisons	int4multirange	{[1,10)}	{[1,10)}	=	E42704	t	additive
+13	14	comparisons	int4multirange	{[1,10)}	{[1,10)}	<>	E42704	f	additive
+13	14	comparisons	int4multirange	{[1,10)}	{[1,5),[6,10)}	<	E42704	f	additive
+13	14	comparisons	int4multirange	{[1,10)}	{[1,5),[6,10)}	<=	E42704	f	additive
+13	14	comparisons	int4multirange	{[1,10)}	{[1,5),[6,10)}	>	E42704	t	additive
+13	14	comparisons	int4multirange	{[1,10)}	{[1,5),[6,10)}	>=	E42704	t	additive
+13	14	comparisons	int4multirange	{[1,10)}	{[1,5),[6,10)}	=	E42704	f	additive
+13	14	comparisons	int4multirange	{[1,10)}	{[1,5),[6,10)}	<>	E42704	t	additive
+13	14	comparisons	int4multirange	{[1,10)}	\N	<	E42704	u	additive
+13	14	comparisons	int4multirange	{[1,10)}	\N	<=	E42704	u	additive
+13	14	comparisons	int4multirange	{[1,10)}	\N	>	E42704	u	additive
+13	14	comparisons	int4multirange	{[1,10)}	\N	>=	E42704	u	additive
+13	14	comparisons	int4multirange	{[1,10)}	\N	=	E42704	u	additive
+13	14	comparisons	int4multirange	{[1,10)}	\N	<>	E42704	u	additive
+13	14	comparisons	int4multirange	{[1,5),[6,10)}	{}	<	E42704	f	additive
+13	14	comparisons	int4multirange	{[1,5),[6,10)}	{}	<=	E42704	f	additive
+13	14	comparisons	int4multirange	{[1,5),[6,10)}	{}	>	E42704	t	additive
+13	14	comparisons	int4multirange	{[1,5),[6,10)}	{}	>=	E42704	t	additive
+13	14	comparisons	int4multirange	{[1,5),[6,10)}	{}	=	E42704	f	additive
+13	14	comparisons	int4multirange	{[1,5),[6,10)}	{}	<>	E42704	t	additive
+13	14	comparisons	int4multirange	{[1,5),[6,10)}	{[1,10)}	<	E42704	t	additive
+13	14	comparisons	int4multirange	{[1,5),[6,10)}	{[1,10)}	<=	E42704	t	additive
+13	14	comparisons	int4multirange	{[1,5),[6,10)}	{[1,10)}	>	E42704	f	additive
+13	14	comparisons	int4multirange	{[1,5),[6,10)}	{[1,10)}	>=	E42704	f	additive
+13	14	comparisons	int4multirange	{[1,5),[6,10)}	{[1,10)}	=	E42704	f	additive
+13	14	comparisons	int4multirange	{[1,5),[6,10)}	{[1,10)}	<>	E42704	t	additive
+13	14	comparisons	int4multirange	{[1,5),[6,10)}	{[1,5),[6,10)}	<	E42704	f	additive
+13	14	comparisons	int4multirange	{[1,5),[6,10)}	{[1,5),[6,10)}	<=	E42704	t	additive
+13	14	comparisons	int4multirange	{[1,5),[6,10)}	{[1,5),[6,10)}	>	E42704	f	additive
+13	14	comparisons	int4multirange	{[1,5),[6,10)}	{[1,5),[6,10)}	>=	E42704	t	additive
+13	14	comparisons	int4multirange	{[1,5),[6,10)}	{[1,5),[6,10)}	=	E42704	t	additive
+13	14	comparisons	int4multirange	{[1,5),[6,10)}	{[1,5),[6,10)}	<>	E42704	f	additive
+13	14	comparisons	int4multirange	{[1,5),[6,10)}	\N	<	E42704	u	additive
+13	14	comparisons	int4multirange	{[1,5),[6,10)}	\N	<=	E42704	u	additive
+13	14	comparisons	int4multirange	{[1,5),[6,10)}	\N	>	E42704	u	additive
+13	14	comparisons	int4multirange	{[1,5),[6,10)}	\N	>=	E42704	u	additive
+13	14	comparisons	int4multirange	{[1,5),[6,10)}	\N	=	E42704	u	additive
+13	14	comparisons	int4multirange	{[1,5),[6,10)}	\N	<>	E42704	u	additive
+13	14	comparisons	int4multirange	\N	{}	<	E42704	u	additive
+13	14	comparisons	int4multirange	\N	{}	<=	E42704	u	additive
+13	14	comparisons	int4multirange	\N	{}	>	E42704	u	additive
+13	14	comparisons	int4multirange	\N	{}	>=	E42704	u	additive
+13	14	comparisons	int4multirange	\N	{}	=	E42704	u	additive
+13	14	comparisons	int4multirange	\N	{}	<>	E42704	u	additive
+13	14	comparisons	int4multirange	\N	{[1,10)}	<	E42704	u	additive
+13	14	comparisons	int4multirange	\N	{[1,10)}	<=	E42704	u	additive
+13	14	comparisons	int4multirange	\N	{[1,10)}	>	E42704	u	additive
+13	14	comparisons	int4multirange	\N	{[1,10)}	>=	E42704	u	additive
+13	14	comparisons	int4multirange	\N	{[1,10)}	=	E42704	u	additive
+13	14	comparisons	int4multirange	\N	{[1,10)}	<>	E42704	u	additive
+13	14	comparisons	int4multirange	\N	{[1,5),[6,10)}	<	E42704	u	additive
+13	14	comparisons	int4multirange	\N	{[1,5),[6,10)}	<=	E42704	u	additive
+13	14	comparisons	int4multirange	\N	{[1,5),[6,10)}	>	E42704	u	additive
+13	14	comparisons	int4multirange	\N	{[1,5),[6,10)}	>=	E42704	u	additive
+13	14	comparisons	int4multirange	\N	{[1,5),[6,10)}	=	E42704	u	additive
+13	14	comparisons	int4multirange	\N	{[1,5),[6,10)}	<>	E42704	u	additive
+13	14	comparisons	int4multirange	\N	\N	<	E42704	u	additive
+13	14	comparisons	int4multirange	\N	\N	<=	E42704	u	additive
+13	14	comparisons	int4multirange	\N	\N	>	E42704	u	additive
+13	14	comparisons	int4multirange	\N	\N	>=	E42704	u	additive
+13	14	comparisons	int4multirange	\N	\N	=	E42704	u	additive
+13	14	comparisons	int4multirange	\N	\N	<>	E42704	u	additive
+13	14	comparisons	public.myrange_multi	{}	{}	<	E42704	f	additive
+13	14	comparisons	public.myrange_multi	{}	{}	<=	E42704	t	additive
+13	14	comparisons	public.myrange_multi	{}	{}	>	E42704	f	additive
+13	14	comparisons	public.myrange_multi	{}	{}	>=	E42704	t	additive
+13	14	comparisons	public.myrange_multi	{}	{}	=	E42704	t	additive
+13	14	comparisons	public.myrange_multi	{}	{}	<>	E42704	f	additive
+13	14	comparisons	public.myrange_multi	{}	{[1.5,10.5)}	<	E42704	t	additive
+13	14	comparisons	public.myrange_multi	{}	{[1.5,10.5)}	<=	E42704	t	additive
+13	14	comparisons	public.myrange_multi	{}	{[1.5,10.5)}	>	E42704	f	additive
+13	14	comparisons	public.myrange_multi	{}	{[1.5,10.5)}	>=	E42704	f	additive
+13	14	comparisons	public.myrange_multi	{}	{[1.5,10.5)}	=	E42704	f	additive
+13	14	comparisons	public.myrange_multi	{}	{[1.5,10.5)}	<>	E42704	t	additive
+13	14	comparisons	public.myrange_multi	{}	\N	<	E42704	u	additive
+13	14	comparisons	public.myrange_multi	{}	\N	<=	E42704	u	additive
+13	14	comparisons	public.myrange_multi	{}	\N	>	E42704	u	additive
+13	14	comparisons	public.myrange_multi	{}	\N	>=	E42704	u	additive
+13	14	comparisons	public.myrange_multi	{}	\N	=	E42704	u	additive
+13	14	comparisons	public.myrange_multi	{}	\N	<>	E42704	u	additive
+13	14	comparisons	public.myrange_multi	{[1.5,10.5)}	{}	<	E42704	f	additive
+13	14	comparisons	public.myrange_multi	{[1.5,10.5)}	{}	<=	E42704	f	additive
+13	14	comparisons	public.myrange_multi	{[1.5,10.5)}	{}	>	E42704	t	additive
+13	14	comparisons	public.myrange_multi	{[1.5,10.5)}	{}	>=	E42704	t	additive
+13	14	comparisons	public.myrange_multi	{[1.5,10.5)}	{}	=	E42704	f	additive
+13	14	comparisons	public.myrange_multi	{[1.5,10.5)}	{}	<>	E42704	t	additive
+13	14	comparisons	public.myrange_multi	{[1.5,10.5)}	{[1.5,10.5)}	<	E42704	f	additive
+13	14	comparisons	public.myrange_multi	{[1.5,10.5)}	{[1.5,10.5)}	<=	E42704	t	additive
+13	14	comparisons	public.myrange_multi	{[1.5,10.5)}	{[1.5,10.5)}	>	E42704	f	additive
+13	14	comparisons	public.myrange_multi	{[1.5,10.5)}	{[1.5,10.5)}	>=	E42704	t	additive
+13	14	comparisons	public.myrange_multi	{[1.5,10.5)}	{[1.5,10.5)}	=	E42704	t	additive
+13	14	comparisons	public.myrange_multi	{[1.5,10.5)}	{[1.5,10.5)}	<>	E42704	f	additive
+13	14	comparisons	public.myrange_multi	{[1.5,10.5)}	\N	<	E42704	u	additive
+13	14	comparisons	public.myrange_multi	{[1.5,10.5)}	\N	<=	E42704	u	additive
+13	14	comparisons	public.myrange_multi	{[1.5,10.5)}	\N	>	E42704	u	additive
+13	14	comparisons	public.myrange_multi	{[1.5,10.5)}	\N	>=	E42704	u	additive
+13	14	comparisons	public.myrange_multi	{[1.5,10.5)}	\N	=	E42704	u	additive
+13	14	comparisons	public.myrange_multi	{[1.5,10.5)}	\N	<>	E42704	u	additive
+13	14	comparisons	public.myrange_multi	\N	{}	<	E42704	u	additive
+13	14	comparisons	public.myrange_multi	\N	{}	<=	E42704	u	additive
+13	14	comparisons	public.myrange_multi	\N	{}	>	E42704	u	additive
+13	14	comparisons	public.myrange_multi	\N	{}	>=	E42704	u	additive
+13	14	comparisons	public.myrange_multi	\N	{}	=	E42704	u	additive
+13	14	comparisons	public.myrange_multi	\N	{}	<>	E42704	u	additive
+13	14	comparisons	public.myrange_multi	\N	{[1.5,10.5)}	<	E42704	u	additive
+13	14	comparisons	public.myrange_multi	\N	{[1.5,10.5)}	<=	E42704	u	additive
+13	14	comparisons	public.myrange_multi	\N	{[1.5,10.5)}	>	E42704	u	additive
+13	14	comparisons	public.myrange_multi	\N	{[1.5,10.5)}	>=	E42704	u	additive
+13	14	comparisons	public.myrange_multi	\N	{[1.5,10.5)}	=	E42704	u	additive
+13	14	comparisons	public.myrange_multi	\N	{[1.5,10.5)}	<>	E42704	u	additive
+13	14	comparisons	public.myrange_multi	\N	\N	<	E42704	u	additive
+13	14	comparisons	public.myrange_multi	\N	\N	<=	E42704	u	additive
+13	14	comparisons	public.myrange_multi	\N	\N	>	E42704	u	additive
+13	14	comparisons	public.myrange_multi	\N	\N	>=	E42704	u	additive
+13	14	comparisons	public.myrange_multi	\N	\N	=	E42704	u	additive
+13	14	comparisons	public.myrange_multi	\N	\N	<>	E42704	u	additive
+13	14	literals	numeric	-Infinity	\N	status	E22P02	ok	additive
+13	14	literals	numeric	Infinity	\N	status	E22P02	ok	additive
+13	14	literals	int4multirange	{}	\N	status	E42704	ok	additive
+13	14	literals	int4multirange	{[1,10)}	\N	status	E42704	ok	additive
+13	14	literals	int4multirange	{[1,5),[6,10)}	\N	status	E42704	ok	additive
+13	14	literals	int4multirange	\N	\N	status	E42704	ok	additive
+13	14	literals	public.myrange_multi	{}	\N	status	E42704	ok	additive
+13	14	literals	public.myrange_multi	{[1.5,10.5)}	\N	status	E42704	ok	additive
+13	14	literals	public.myrange_multi	\N	\N	status	E42704	ok	additive
+16	17	comparisons	interval	-infinity	-infinity	<	E22007	f	additive
+16	17	comparisons	interval	-infinity	-infinity	<=	E22007	t	additive
+16	17	comparisons	interval	-infinity	-infinity	>	E22007	f	additive
+16	17	comparisons	interval	-infinity	-infinity	>=	E22007	t	additive
+16	17	comparisons	interval	-infinity	-infinity	=	E22007	t	additive
+16	17	comparisons	interval	-infinity	-infinity	<>	E22007	f	additive
+16	17	comparisons	interval	-infinity	-1 day	<	E22007	t	additive
+16	17	comparisons	interval	-infinity	-1 day	<=	E22007	t	additive
+16	17	comparisons	interval	-infinity	-1 day	>	E22007	f	additive
+16	17	comparisons	interval	-infinity	-1 day	>=	E22007	f	additive
+16	17	comparisons	interval	-infinity	-1 day	=	E22007	f	additive
+16	17	comparisons	interval	-infinity	-1 day	<>	E22007	t	additive
+16	17	comparisons	interval	-infinity	00:00:00	<	E22007	t	additive
+16	17	comparisons	interval	-infinity	00:00:00	<=	E22007	t	additive
+16	17	comparisons	interval	-infinity	00:00:00	>	E22007	f	additive
+16	17	comparisons	interval	-infinity	00:00:00	>=	E22007	f	additive
+16	17	comparisons	interval	-infinity	00:00:00	=	E22007	f	additive
+16	17	comparisons	interval	-infinity	00:00:00	<>	E22007	t	additive
+16	17	comparisons	interval	-infinity	1 mon	<	E22007	t	additive
+16	17	comparisons	interval	-infinity	1 mon	<=	E22007	t	additive
+16	17	comparisons	interval	-infinity	1 mon	>	E22007	f	additive
+16	17	comparisons	interval	-infinity	1 mon	>=	E22007	f	additive
+16	17	comparisons	interval	-infinity	1 mon	=	E22007	f	additive
+16	17	comparisons	interval	-infinity	1 mon	<>	E22007	t	additive
+16	17	comparisons	interval	-infinity	30 days	<	E22007	t	additive
+16	17	comparisons	interval	-infinity	30 days	<=	E22007	t	additive
+16	17	comparisons	interval	-infinity	30 days	>	E22007	f	additive
+16	17	comparisons	interval	-infinity	30 days	>=	E22007	f	additive
+16	17	comparisons	interval	-infinity	30 days	=	E22007	f	additive
+16	17	comparisons	interval	-infinity	30 days	<>	E22007	t	additive
+16	17	comparisons	interval	-infinity	720:00:00	<	E22007	t	additive
+16	17	comparisons	interval	-infinity	720:00:00	<=	E22007	t	additive
+16	17	comparisons	interval	-infinity	720:00:00	>	E22007	f	additive
+16	17	comparisons	interval	-infinity	720:00:00	>=	E22007	f	additive
+16	17	comparisons	interval	-infinity	720:00:00	=	E22007	f	additive
+16	17	comparisons	interval	-infinity	720:00:00	<>	E22007	t	additive
+16	17	comparisons	interval	-infinity	infinity	<	E22007	t	additive
+16	17	comparisons	interval	-infinity	infinity	<=	E22007	t	additive
+16	17	comparisons	interval	-infinity	infinity	>	E22007	f	additive
+16	17	comparisons	interval	-infinity	infinity	>=	E22007	f	additive
+16	17	comparisons	interval	-infinity	infinity	=	E22007	f	additive
+16	17	comparisons	interval	-infinity	infinity	<>	E22007	t	additive
+16	17	comparisons	interval	-1 day	-infinity	<	E22007	f	additive
+16	17	comparisons	interval	-1 day	-infinity	<=	E22007	f	additive
+16	17	comparisons	interval	-1 day	-infinity	>	E22007	t	additive
+16	17	comparisons	interval	-1 day	-infinity	>=	E22007	t	additive
+16	17	comparisons	interval	-1 day	-infinity	=	E22007	f	additive
+16	17	comparisons	interval	-1 day	-infinity	<>	E22007	t	additive
+16	17	comparisons	interval	-1 day	infinity	<	E22007	t	additive
+16	17	comparisons	interval	-1 day	infinity	<=	E22007	t	additive
+16	17	comparisons	interval	-1 day	infinity	>	E22007	f	additive
+16	17	comparisons	interval	-1 day	infinity	>=	E22007	f	additive
+16	17	comparisons	interval	-1 day	infinity	=	E22007	f	additive
+16	17	comparisons	interval	-1 day	infinity	<>	E22007	t	additive
+16	17	comparisons	interval	00:00:00	-infinity	<	E22007	f	additive
+16	17	comparisons	interval	00:00:00	-infinity	<=	E22007	f	additive
+16	17	comparisons	interval	00:00:00	-infinity	>	E22007	t	additive
+16	17	comparisons	interval	00:00:00	-infinity	>=	E22007	t	additive
+16	17	comparisons	interval	00:00:00	-infinity	=	E22007	f	additive
+16	17	comparisons	interval	00:00:00	-infinity	<>	E22007	t	additive
+16	17	comparisons	interval	00:00:00	infinity	<	E22007	t	additive
+16	17	comparisons	interval	00:00:00	infinity	<=	E22007	t	additive
+16	17	comparisons	interval	00:00:00	infinity	>	E22007	f	additive
+16	17	comparisons	interval	00:00:00	infinity	>=	E22007	f	additive
+16	17	comparisons	interval	00:00:00	infinity	=	E22007	f	additive
+16	17	comparisons	interval	00:00:00	infinity	<>	E22007	t	additive
+16	17	comparisons	interval	1 mon	-infinity	<	E22007	f	additive
+16	17	comparisons	interval	1 mon	-infinity	<=	E22007	f	additive
+16	17	comparisons	interval	1 mon	-infinity	>	E22007	t	additive
+16	17	comparisons	interval	1 mon	-infinity	>=	E22007	t	additive
+16	17	comparisons	interval	1 mon	-infinity	=	E22007	f	additive
+16	17	comparisons	interval	1 mon	-infinity	<>	E22007	t	additive
+16	17	comparisons	interval	1 mon	infinity	<	E22007	t	additive
+16	17	comparisons	interval	1 mon	infinity	<=	E22007	t	additive
+16	17	comparisons	interval	1 mon	infinity	>	E22007	f	additive
+16	17	comparisons	interval	1 mon	infinity	>=	E22007	f	additive
+16	17	comparisons	interval	1 mon	infinity	=	E22007	f	additive
+16	17	comparisons	interval	1 mon	infinity	<>	E22007	t	additive
+16	17	comparisons	interval	30 days	-infinity	<	E22007	f	additive
+16	17	comparisons	interval	30 days	-infinity	<=	E22007	f	additive
+16	17	comparisons	interval	30 days	-infinity	>	E22007	t	additive
+16	17	comparisons	interval	30 days	-infinity	>=	E22007	t	additive
+16	17	comparisons	interval	30 days	-infinity	=	E22007	f	additive
+16	17	comparisons	interval	30 days	-infinity	<>	E22007	t	additive
+16	17	comparisons	interval	30 days	infinity	<	E22007	t	additive
+16	17	comparisons	interval	30 days	infinity	<=	E22007	t	additive
+16	17	comparisons	interval	30 days	infinity	>	E22007	f	additive
+16	17	comparisons	interval	30 days	infinity	>=	E22007	f	additive
+16	17	comparisons	interval	30 days	infinity	=	E22007	f	additive
+16	17	comparisons	interval	30 days	infinity	<>	E22007	t	additive
+16	17	comparisons	interval	720:00:00	-infinity	<	E22007	f	additive
+16	17	comparisons	interval	720:00:00	-infinity	<=	E22007	f	additive
+16	17	comparisons	interval	720:00:00	-infinity	>	E22007	t	additive
+16	17	comparisons	interval	720:00:00	-infinity	>=	E22007	t	additive
+16	17	comparisons	interval	720:00:00	-infinity	=	E22007	f	additive
+16	17	comparisons	interval	720:00:00	-infinity	<>	E22007	t	additive
+16	17	comparisons	interval	720:00:00	infinity	<	E22007	t	additive
+16	17	comparisons	interval	720:00:00	infinity	<=	E22007	t	additive
+16	17	comparisons	interval	720:00:00	infinity	>	E22007	f	additive
+16	17	comparisons	interval	720:00:00	infinity	>=	E22007	f	additive
+16	17	comparisons	interval	720:00:00	infinity	=	E22007	f	additive
+16	17	comparisons	interval	720:00:00	infinity	<>	E22007	t	additive
+16	17	comparisons	interval	infinity	-infinity	<	E22007	f	additive
+16	17	comparisons	interval	infinity	-infinity	<=	E22007	f	additive
+16	17	comparisons	interval	infinity	-infinity	>	E22007	t	additive
+16	17	comparisons	interval	infinity	-infinity	>=	E22007	t	additive
+16	17	comparisons	interval	infinity	-infinity	=	E22007	f	additive
+16	17	comparisons	interval	infinity	-infinity	<>	E22007	t	additive
+16	17	comparisons	interval	infinity	-1 day	<	E22007	f	additive
+16	17	comparisons	interval	infinity	-1 day	<=	E22007	f	additive
+16	17	comparisons	interval	infinity	-1 day	>	E22007	t	additive
+16	17	comparisons	interval	infinity	-1 day	>=	E22007	t	additive
+16	17	comparisons	interval	infinity	-1 day	=	E22007	f	additive
+16	17	comparisons	interval	infinity	-1 day	<>	E22007	t	additive
+16	17	comparisons	interval	infinity	00:00:00	<	E22007	f	additive
+16	17	comparisons	interval	infinity	00:00:00	<=	E22007	f	additive
+16	17	comparisons	interval	infinity	00:00:00	>	E22007	t	additive
+16	17	comparisons	interval	infinity	00:00:00	>=	E22007	t	additive
+16	17	comparisons	interval	infinity	00:00:00	=	E22007	f	additive
+16	17	comparisons	interval	infinity	00:00:00	<>	E22007	t	additive
+16	17	comparisons	interval	infinity	1 mon	<	E22007	f	additive
+16	17	comparisons	interval	infinity	1 mon	<=	E22007	f	additive
+16	17	comparisons	interval	infinity	1 mon	>	E22007	t	additive
+16	17	comparisons	interval	infinity	1 mon	>=	E22007	t	additive
+16	17	comparisons	interval	infinity	1 mon	=	E22007	f	additive
+16	17	comparisons	interval	infinity	1 mon	<>	E22007	t	additive
+16	17	comparisons	interval	infinity	30 days	<	E22007	f	additive
+16	17	comparisons	interval	infinity	30 days	<=	E22007	f	additive
+16	17	comparisons	interval	infinity	30 days	>	E22007	t	additive
+16	17	comparisons	interval	infinity	30 days	>=	E22007	t	additive
+16	17	comparisons	interval	infinity	30 days	=	E22007	f	additive
+16	17	comparisons	interval	infinity	30 days	<>	E22007	t	additive
+16	17	comparisons	interval	infinity	720:00:00	<	E22007	f	additive
+16	17	comparisons	interval	infinity	720:00:00	<=	E22007	f	additive
+16	17	comparisons	interval	infinity	720:00:00	>	E22007	t	additive
+16	17	comparisons	interval	infinity	720:00:00	>=	E22007	t	additive
+16	17	comparisons	interval	infinity	720:00:00	=	E22007	f	additive
+16	17	comparisons	interval	infinity	720:00:00	<>	E22007	t	additive
+16	17	comparisons	interval	infinity	infinity	<	E22007	f	additive
+16	17	comparisons	interval	infinity	infinity	<=	E22007	t	additive
+16	17	comparisons	interval	infinity	infinity	>	E22007	f	additive
+16	17	comparisons	interval	infinity	infinity	>=	E22007	t	additive
+16	17	comparisons	interval	infinity	infinity	=	E22007	t	additive
+16	17	comparisons	interval	infinity	infinity	<>	E22007	f	additive
+16	17	comparisons	interval	1.5 hours	-infinity	<	E22007	f	additive
+16	17	comparisons	interval	1.5 hours	-infinity	<=	E22007	f	additive
+16	17	comparisons	interval	1.5 hours	-infinity	>	E22007	t	additive
+16	17	comparisons	interval	1.5 hours	-infinity	>=	E22007	t	additive
+16	17	comparisons	interval	1.5 hours	-infinity	=	E22007	f	additive
+16	17	comparisons	interval	1.5 hours	-infinity	<>	E22007	t	additive
+16	17	comparisons	interval	-infinity	1.5 hours	<	E22007	t	additive
+16	17	comparisons	interval	-infinity	1.5 hours	<=	E22007	t	additive
+16	17	comparisons	interval	-infinity	1.5 hours	>	E22007	f	additive
+16	17	comparisons	interval	-infinity	1.5 hours	>=	E22007	f	additive
+16	17	comparisons	interval	-infinity	1.5 hours	=	E22007	f	additive
+16	17	comparisons	interval	-infinity	1.5 hours	<>	E22007	t	additive
+16	17	comparisons	interval	P1Y2M	-infinity	<	E22007	f	additive
+16	17	comparisons	interval	P1Y2M	-infinity	<=	E22007	f	additive
+16	17	comparisons	interval	P1Y2M	-infinity	>	E22007	t	additive
+16	17	comparisons	interval	P1Y2M	-infinity	>=	E22007	t	additive
+16	17	comparisons	interval	P1Y2M	-infinity	=	E22007	f	additive
+16	17	comparisons	interval	P1Y2M	-infinity	<>	E22007	t	additive
+16	17	comparisons	interval	-infinity	P1Y2M	<	E22007	t	additive
+16	17	comparisons	interval	-infinity	P1Y2M	<=	E22007	t	additive
+16	17	comparisons	interval	-infinity	P1Y2M	>	E22007	f	additive
+16	17	comparisons	interval	-infinity	P1Y2M	>=	E22007	f	additive
+16	17	comparisons	interval	-infinity	P1Y2M	=	E22007	f	additive
+16	17	comparisons	interval	-infinity	P1Y2M	<>	E22007	t	additive
+16	17	comparisons	interval	1 century	-infinity	<	E22007	f	additive
+16	17	comparisons	interval	1 century	-infinity	<=	E22007	f	additive
+16	17	comparisons	interval	1 century	-infinity	>	E22007	t	additive
+16	17	comparisons	interval	1 century	-infinity	>=	E22007	t	additive
+16	17	comparisons	interval	1 century	-infinity	=	E22007	f	additive
+16	17	comparisons	interval	1 century	-infinity	<>	E22007	t	additive
+16	17	comparisons	interval	-infinity	1 century	<	E22007	t	additive
+16	17	comparisons	interval	-infinity	1 century	<=	E22007	t	additive
+16	17	comparisons	interval	-infinity	1 century	>	E22007	f	additive
+16	17	comparisons	interval	-infinity	1 century	>=	E22007	f	additive
+16	17	comparisons	interval	-infinity	1 century	=	E22007	f	additive
+16	17	comparisons	interval	-infinity	1 century	<>	E22007	t	additive
+16	17	literals	interval	-infinity	\N	status	E22007	ok	additive
+16	17	literals	interval	infinity	\N	status	E22007	ok	additive

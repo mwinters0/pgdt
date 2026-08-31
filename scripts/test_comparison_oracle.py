@@ -12,9 +12,11 @@ assert that every committed file still lines up with the case table, row for
 row and in order: that is the only thing standing between an edited case table
 and answer files that silently describe different questions.
 
-What is *not* here is the register-to-oracle reconciliation or the cross-major
-differ. Those are the next slice's, and they need the L2 comparison register
-to exist first.
+The cross-major differ is `oracle_differences.py`, with its own tests: it reads
+these same files but answers a different question, and its committed artifact
+is one file for the whole tree rather than one per major. What is *not* in
+either is the register-to-oracle reconciliation, which needs the L2 comparison
+register to exist first.
 """
 
 from __future__ import annotations
