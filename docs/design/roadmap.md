@@ -15,8 +15,7 @@ reused, including a struck phase's.
 
 | Phase | State | Where it is |
 |---|---|---|
-| P1–P4, P9 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
-| P5 — pushdown | **Complete**, wrapped | [`roadmap-P5-pushdown.md`](roadmap-P5-pushdown.md); [notes](roadmap-P5-pushdown-notes.md) |
+| P1–P5, P9 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
 | P11 — typed predicates | Sketched; not grilled | this file, below; [inbox](roadmap-P11-typed-predicates-inbox.md) |
 | P7 — scan performance | Sketched; design doc ahead of its phase | [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md); [inbox](roadmap-P7-scan-performance-inbox.md) |
@@ -26,8 +25,8 @@ reused, including a struck phase's.
 The struck phases' mechanisms are described by subject in
 [`architecture.md`](architecture.md), not by phase; their specs and notes went
 at a keystone review (`../process.md`, "The keystone: striking the
-centering"). **Phase numbering continues from `P9`** — nothing at or below it
-is reused, whether it was struck or never specified.
+centering"). **Phase numbering continues from `P11`** — nothing at or below it
+is reused, whether it was struck, sketched, or never specified.
 
 Two standing-constraint docs cut across everything below.
 [`layering.md`](layering.md) assigns each module to one of four layers and
@@ -316,16 +315,6 @@ out of it. See
 Note that CSV-format `COPY` blocks are **not** on this list. They are a Future
 item; see below.
 
-## P5 — Pushdown
-
-**Complete and wrapped:** the spec is
-[`roadmap-P5-pushdown.md`](roadmap-P5-pushdown.md) and the residue is
-[`roadmap-P5-pushdown-notes.md`](roadmap-P5-pushdown-notes.md). Column
-projection, and a predicate that is a conjunction of single-column
-comparisons with typed ordering operators on scalar columns. Its inbox was
-drained at its grilling; what the grilling deferred is P11, below. How each
-mechanism works is [`architecture.md`](architecture.md), by subject.
-
 ## P6 — Embeddable engine story
 
 **Inbox:** [`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md) — facts earlier
@@ -353,26 +342,27 @@ under "Standing rules" above, made to keep this open:
 phases filed for this one. Drain it when grilling this phase.
 
 Sketched only, to corner-avoidance depth; it gets its own grilling when it
-becomes current. What P5's grilling deferred, as one body of work rather than
-two:
+becomes current. What the pushdown grilling deferred, as one body of work
+rather than two:
 
-- **Full boolean structure** — `OR` and `NOT` over the conjunction P5 builds,
-  which is not two more operators but a real three-valued evaluator. P5's
-  predicate collapses unknown to false at each term, which is sound under `AND`
-  and unsound under `NOT`, so admitting `NOT` re-opens the semantics of every
-  operator that already exists.
+- **Full boolean structure** — `OR` and `NOT` over the conjunction that ships
+  today, which is not two more operators but a real three-valued evaluator. The
+  shipped predicate collapses unknown to false at each term, which is sound
+  under `AND` and unsound under `NOT`, so admitting `NOT` re-opens the semantics
+  of every operator that already exists
+  ([`architecture.md`](architecture.md), "Predicates").
 - **Type-aware comparison on nested columns** — needs the *input*-side grammar
   (I20's scope limit: `array_in` is considerably more permissive than
   `array_out`'s inverse) and canonicalization for the three discrete built-in
-  ranges. P5 leaves a nested column comparing as text, which is right for every
+  ranges. A nested column compares as text today, which is right for every
   value a dump contains and wrong only for a user-supplied non-canonical
   literal.
 
-**Wanted before 1.0**, and scheduled after P6 rather than inside P5 for two
-reasons. Its worst bug is a different class from anything in P5 — a silently
-wrong row *set*, where projection's worst is a wrong column list — so bundling
-them would force one review confidence across both, the same argument that made
-statistics P10. And P6 is what settles the shape of the expression this has to
+**Wanted before 1.0**, and scheduled after P6 rather than alongside pushdown
+for two reasons. Its worst bug is a different class from anything pushdown
+built — a silently wrong row *set*, where projection's worst is a wrong column
+list — so bundling them would force one review confidence across both, the same
+argument that made statistics P10. And P6 is what settles the shape of the expression this has to
 accept: DataFusion hands a `TableProvider` an `Expr` tree and asks, per filter,
 whether the pushdown is exact, inexact or unsupported. Designing a boolean
 expression language before seeing that is inventing a second one to reconcile.
@@ -396,10 +386,12 @@ later optimization has to be correct against, so the fast path should exist
 first and archive containers should be built to fit it. And before P10, which
 needs the sparse row index this phase builds.
 
-*The reason that used to head this list is withdrawn:* that P5's pushdown
+*The reason that used to head this list is withdrawn:* that pushdown
 "changes which bytes get touched at all, so optimizing the pre-pushdown parser
 would partly optimize code that pushdown deletes". Pushdown deletes no parser
-code — it never did, and [`roadmap-P5-pushdown.md`](roadmap-P5-pushdown.md) says why. Nothing about the ordering
+code — it never did. A projection skips `decode_field` and the builder append
+for a column nobody asked for and changes nothing about what the scanner does
+([`architecture.md`](architecture.md), "Projection"). Nothing about the ordering
 changed, because the `object_store` reason was always the load-bearing one; the
 withdrawn half is recorded so it is not re-derived.
 
@@ -408,11 +400,9 @@ withdrawn half is recorded so it is not re-derived.
 **Inbox:** [`roadmap-P10-row-group-statistics-inbox.md`](roadmap-P10-row-group-statistics-inbox.md) — facts earlier
 phases filed for this one. Drain it when grilling this phase.
 
-Sketched as P5's companion until P5's grilling separated them, and the number
-is later than its neighbours' because it was allocated when that happened
-(`../process.md`, "Phase identity is `P<k>`"). Three things make it a phase
-rather than a companion, and the last one also fixes where it sits in the
-table above:
+Sketched as pushdown's companion until that grilling separated them. Three
+things make it a phase rather than a companion, and the last one also fixes
+where it sits in the table above:
 
 - It is the only work here that spans **all four layers**, which
   [`layering.md`](layering.md) calls the sharpest test of its own rules.
@@ -535,7 +525,7 @@ puts two things in the frame together whenever this phase's value is argued:
 the cache's own lifetime, which pre-1.0 ends at the next format bump
 (`architecture.md`, "The cache" — koji's cache was unreadable within days), and
 the opt-in-and-column-selectable rule above, which is what keeps a caller who
-will never benefit from paying. Found during P5's grilling:
+will never benefit from paying. Reasoning:
 [`../status/history/2026-08-29.md`](../status/history/2026-08-29.md), "Pushdown
 cannot touch the mapping pass".
 
@@ -614,19 +604,14 @@ until a keystone, which strikes it along with the phase docs and leaves a
 watermark saying which numbers are spent (`../process.md`, "The out-of-band
 ledger is struck too").
 
-**M1–M25 are struck**, and nothing at or below `M25` is reused. That is a
+**M1–M27 are struck**, and nothing at or below `M27` is reused. That is a
 high-water mark rather than a claim that every one of them landed: `M14` was
 absorbed into `M17` and `M1`/`M2` were folded into a phase slice, and their
 numbers are spent all the same. What each struck item did is filed by
 subject — `architecture.md` for a mechanism, `measurements.md` for an apparatus
 change, `layering.md` and `../process.md` for a rule — and why it was done is
-in the dated history entry it was filed under. The table below opens again at
-`M26`.
-
-| # | Date | What changed | Why |
-|---|---|---|---|
-| `M26` | 2026-08-30 | `measurements.md` states a resolution floor per regime and reads the warm `dd` floor directionally inside it, so a move smaller than the apparatus resolves stops being argued about | [`measurements.md`](measurements.md), the eleventh standing rule and "The floor is read directionally" |
-| `M27` | 2026-08-30 | The acknowledgement register moves to `scripts/acknowledged.py`, which no figure declares, so adding an entry stops marking stale the figure it excuses | [`../status/history/2026-08-30.md`](../status/history/2026-08-30.md), "An acknowledgement cannot excuse the commit that carries it" |
+in the dated history entry it was filed under. The table opens again at `M28`,
+the first item to land after this keystone.
 
 **One live obligation outlived them.** An `INSERT`-run scan costs
 **mid-teens times** a `COPY` scan per byte, CPU-bound, which argues for a scanner-level `INSERT`

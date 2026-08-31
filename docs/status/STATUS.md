@@ -8,18 +8,17 @@ discoveries are in `history/`.
 
 ## What exists
 
-P1–P4, P9 and P5 are complete and were struck at keystone reviews; how each
+P1–P5 and P9 are complete and were struck at keystone reviews; how each
 mechanism works is [`../design/architecture.md`](../design/architecture.md),
 filed by subject. **No phase is open**, and the next one is grilled and
 specified before anything else lands.
 
-**One obligation of P5's wrap is outstanding**: eleven figures read stale, and
-the full sweep that clears them is launched detached rather than waited on — an
-hour a session, so its result is a later session's input. That session folds
-its tables into
-[`../design/measurements.md`](../design/measurements.md) and re-stamps the doc;
-until then that doc's numbers are the `b70589f` stamp and `--stale` is red for
-the reason written below.
+**One obligation of the last wrap is outstanding**: eleven figures read stale,
+and the full sweep that clears them is launched detached rather than waited on —
+an hour a run, so its result is a later session's input. That session folds its
+tables into [`../design/measurements.md`](../design/measurements.md) and
+re-stamps the doc; until then that doc's numbers are the `b70589f` stamp and
+`--stale` is red for the reason written below.
 
 | Capability | State |
 |---|---|
@@ -84,12 +83,11 @@ read by a later session, and `--stale` stays red until its fold-in.
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 - **Five phases are sketched and none grilled** — P6, P11, P7, P10, P8, in that
-  schedule order. Numeric order is not plan order: P9 was taken ahead of P5,
-  P10 was allocated when P5's grilling split statistics out of it, and P11 when
-  the same grilling deferred full boolean structure and typed nested
-  comparison. `process.md` step 6 re-grills the roadmap before the next phase is
-  specified, and each of the five has an inbox that must be drained as part of
-  that grilling.
+  schedule order — a `P<k>` is an identifier and the roadmap's table is the
+  schedule, so the numbers say nothing about the order they run in.
+  `process.md` step 6 re-grills the roadmap before the next phase is specified,
+  and each of the five has an inbox that must be drained as part of that
+  grilling.
 
 ## Known deficiencies
 
@@ -185,13 +183,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-Nothing is open. The three entries this section held were answered together
-([`history/2026-08-31.md`](history/2026-08-31.md)): the warm floor's
-disqualification threshold became a number of its own, measured on floors and
-requiring a move shared across them; `KD6` was affirmed as a deficiency, with
-the reasoning filed beside "One target per query"; and the spaced `--filter`
-term became `P5.9`, which real CLI feedback widened into the whole term
-grammar. The entry `P5.6` raised was answered and reversed before them:
-special values are ordered, settled in
-[`../design/roadmap-P5-pushdown.md`](../design/roadmap-P5-pushdown.md) and
-scheduled as `P5.8` ([`history/2026-08-30.md`](history/2026-08-30.md)).
+Nothing is open.
