@@ -17,10 +17,13 @@ against the `types` schema's own database, so it must see the same DDL, in the
 same container, as fixtures/<major-version>/types/*.sql. The case table and the
 SQL are scripts/comparison_oracle.py.
 
-An oracle pass ends by re-checking the cross-major differences
-(scripts/oracle_differences.py) against fixtures/oracle-differences.tsv, and
-fails when they have moved: a regenerated answer that changed something has to
-be filed rather than noticed later.
+An oracle pass ends by re-checking two things, and fails on either. The
+cross-major differences (scripts/oracle_differences.py) against
+fixtures/oracle-differences.tsv: a regenerated answer that changed something
+has to be filed rather than noticed later. And the register-to-oracle
+reconciliation (scripts/oracle_register.py), which is where a case added for a
+type fixture_schema_types.sql does not declare surfaces -- the moment it is
+generated, rather than as a column of `E42704` nobody reads.
 
 Requires `docker` (aliased to `nerdctl` in this environment) runnable via
 passwordless `sudo`.
@@ -36,6 +39,7 @@ from pathlib import Path
 
 import comparison_oracle
 import oracle_differences
+import oracle_register
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
@@ -429,6 +433,16 @@ def main() -> int:
                 "the committed differences no longer match the oracles — re-file "
                 "them with `uv run oracle_differences.py --write` and read what "
                 "moved before committing.",
+                file=sys.stderr,
+            )
+            return 1
+
+        print("\nregister-to-oracle reconciliation:")
+        if oracle_register.check() != 0:
+            print(
+                "the comparison register and the case table no longer cover each "
+                "other — read what `uv run oracle_register.py` names before "
+                "committing.",
                 file=sys.stderr,
             )
             return 1

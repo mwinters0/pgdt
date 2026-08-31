@@ -23,6 +23,8 @@ cd scripts && uv run python -m unittest test_comparison_oracle  # case table vs.
 cd scripts && uv run oracle_differences.py        # where two adjacent majors disagree, vs. the committed file
 cd scripts && uv run oracle_differences.py --write  # re-file it after regenerating an oracle
 cd scripts && uv run python -m unittest test_oracle_differences  # the differ's own tests
+cd scripts && uv run oracle_register.py           # register arms vs. oracle cases, both ways
+cd scripts && uv run python -m unittest test_oracle_register  # that check's own tests
 
 cd scripts && uv run measure.py --list            # every figure, and what invalidates each
 cd scripts && uv run measure.py --stale           # which figures a diff has made stale

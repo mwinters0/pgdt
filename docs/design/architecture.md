@@ -45,6 +45,7 @@ through.
 | `scripts/`, a new fixture schema | [Fixtures](#fixtures) |
 | what PostgreSQL answers for a comparison, a new comparison case | [The comparison oracle](#the-comparison-oracle) |
 | whether two majors disagree, the committed differences file | [The cross-major differ](#the-cross-major-differ) |
+| a comparison-register arm, whether the oracle still covers one | [The register-to-oracle reconciliation](#the-register-to-oracle-reconciliation) |
 | adding or changing a test | [Testing philosophy](#testing-philosophy) |
 
 ## Module map
@@ -2082,6 +2083,12 @@ belongs to P11, which retires this entry: two rows close by code and two by
 statement ([`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md),
 "What this phase closes, and what it declares").
 
+**Adding an arm here obliges an oracle case**, and that is checked rather than
+remembered: `scripts/oracle_register.py` fails when a register arm has no case
+answering for it (see "The register-to-oracle reconciliation"). It is the one
+reason to touch `scripts/comparison_oracle.py` while closing a row of the table
+above.
+
 *Rejected: a test asserting the Markdown table above and `comparison_for`
 agree row for row.* Its own failure mode is bit-rot in the doc parser, and the
 table is small enough to be re-read whenever the register changes. What
@@ -2783,7 +2790,11 @@ It runs **against the `types` schema's own database**, in the same container,
 from the same DDL as `fixtures/<version>/types/*.sql`. That is what lets a case
 name `public.mood`, `public.point2d`, `public.myrange` or `public.intarr[]` — a
 case's type string is the spelling `pg_dump` writes in a `CREATE TABLE`, so it
-resolves against a register arm by string equality.
+resolves against a register arm by string equality. That join is checked in
+both directions; see "The register-to-oracle reconciliation" below. **A case
+naming a type this schema does not declare answers `E42704` in every cell**,
+which is coverage that tests nothing, so add it to
+`scripts/fixture_schema_types.sql` first.
 
 Three files, all in PostgreSQL's own COPY TEXT encoding, because the server
 writes them with `COPY … TO STDOUT` and this repo already reads that encoding
@@ -2912,11 +2923,61 @@ and `pg_collation_actual_version(100)` answers SQL NULL before v15).
 computation, so a regeneration that moves an answer cannot land without being
 re-filed (`uv run oracle_differences.py --write`); a second assertion says no
 difference is non-additive, so *filing* a real break does not silence it. An
-oracle pass of `generate_fixtures.py` ends by running the same check.
+oracle pass of `generate_fixtures.py` ends by running the same check, and the
+reconciliation below beside it.
 
 *Rejected: classifying a two-rejection SQLSTATE change as unchanged.* It is the
 only strictness with no consequence today, and buying it costs a third verdict
 that every reader of the file then has to learn.
+
+### The register-to-oracle reconciliation
+
+`scripts/oracle_register.py` joins the comparison register in `pgtype.rs`
+against the oracle's case table and **fails on either direction**: every
+register arm must have at least one oracle case, and every oracle case must
+reach an arm it actually exercises. The register grows one arm at a time as
+types are closed, so the direction that decays is the first — an arm added with
+no case is a claim nothing checks — and the second is smaller but real, since a
+case for a type the oracle's own database does not declare answers `E42704` in
+every cell and reads as coverage.
+
+**An arm is read out of the source, because a `match` is not data.** Three
+functions are parsed, and each is anchored on a string the parse must find, so
+a rewrite is a reported problem rather than a shorter list that passes:
+
+| Read from | An arm is | Why that granularity |
+|---|---|---|
+| `builtin_scalar` | one **declared base name** | Several names share `(Utf8View, text)` and each is separately closable, so `text` having a case does not answer for `character varying`. |
+| `comparison_user_type` | one **match arm** over `TypeKind` | `Composite \| Range` and `Base \| Shell` are each one decision. Exhaustiveness over the kinds is rustc's job; what this check adds is that each *answer* has evidence. |
+| `comparison_for` | one per branch that is not a match arm at all, its own two plus `comparison_user_type`'s early return | The array shape, the built-in name nothing recognises, and a type absent from the dump's `CREATE TYPE` list (I10's multirange companion lands there). |
+
+A case is placed by re-walking `comparison_for`'s three steps — array, then
+schema-qualified, then the built-in table — and that walk is the only thing the
+check restates: it decides which arm a case belongs to, never what the arm
+answers. The `TypeKind` a schema-qualified name carries comes from
+`scripts/fixture_schema_types.sql`, which is the DDL the oracle's database is
+loaded from, so the classification reads the same source the server did.
+
+The evidence half of the second direction is the oracle's own answers: a case
+every major answers `E42704` — `undefined_object` — for is a case about a type
+no server had. Every other rejection *is* an answer, `json`'s missing operator
+(42883) and a malformed literal (22P02) among them.
+
+**One arm needs no case, and the granularity is what says so.** A shell type
+(`TypeKind::Shell`) cannot be a column's declared type, so no dump can ask how
+one compares and no oracle case can be written for it; it shares `Base`'s arm, which
+`public.mybase` covers. Splitting that arm per kind would demand evidence that
+cannot exist.
+
+*Rejected: keying the built-in half on the match arm rather than the name.* It
+is the same rule as the user half and it would be wrong here: the four names
+sharing `(Utf8View, text)` are exactly the queue the phase closes one at a
+time, and one case would excuse the other three.
+
+*Rejected: a Rust test holding the arm list by hand.* The list already exists —
+`the_register_answers_every_builtin_scalar` — and its completeness rests on
+discipline, which is the thing a reconciliation is for. Reading the `match`
+itself is the only mechanical enumeration available.
 
 ## Testing philosophy
 
