@@ -115,7 +115,8 @@ enum Command {
         /// alone — row data is never cached — so this is always required.
         #[arg(long)]
         source: PathBuf,
-        /// Table name, qualified (`schema.table`) or bare.
+        /// Table name, qualified (`schema.table`) or bare. Taken exactly as
+        /// given, like `--column` and unlike a `--filter` term.
         #[arg(long)]
         table: String,
         /// Cache file path, or `none` to ignore any existing cache and
@@ -131,9 +132,14 @@ enum Command {
         ///
         /// `=`/`!=` compare the row's decoded field as text. The four
         /// ordering operators compare **typed**, and are refused on a column
-        /// whose type did not resolve or that is nested. Do not put spaces
-        /// around the operator: everything after it is the value, leading
-        /// spaces included.
+        /// whose type did not resolve or that is nested.
+        ///
+        /// Spaces around the operator are not data: `name = alpha` asks for
+        /// `alpha`. Quote either side — `'` and `"` both work — to say
+        /// otherwise: `name = " x"` keeps the leading space, and a quote
+        /// inside a quoted part is doubled (`name = 'it''s'`). Quotes work on
+        /// the column side too, which is how a column named `a=b` is asked
+        /// for: `"a=b"=x`.
         #[arg(long)]
         filter: Vec<String>,
         /// Materialize only this column, repeatable — the output carries the
@@ -148,6 +154,10 @@ enum Command {
         ///
         /// A `--filter` term may name a column this does not: the
         /// projection decides what is built, never what may be tested.
+        ///
+        /// The name is taken exactly as given — the shell has already
+        /// delimited it, so there is no quoting to strip and a column whose
+        /// name really does carry quote marks stays askable.
         #[arg(long = "column", value_name = "NAME")]
         column: Vec<String>,
         /// Materialize no columns at all — the `COUNT(*)` shape. Each row
@@ -204,56 +214,200 @@ const FILTER_OPS: [(&str, PredicateOp); 6] = [
     ("<", PredicateOp::Lt),
 ];
 
-/// Split `spec` at its operator: `(column, op, value)`.
+/// Split `spec` at its operator.
 ///
 /// **The earliest position wins, and the longest spelling at that position.**
 /// Scanning by position rather than by operator is what keeps a value that
 /// contains an operator byte from stealing the split — `name=a>b` is `name`
-/// equal to `a>b`, not `name=a` greater than `b` — which matters far more
-/// now that four more bytes are operators.
-fn split_filter_op(spec: &str) -> Option<(&str, PredicateOp, &str)> {
-    for (i, _) in spec.char_indices() {
-        for (symbol, op) in FILTER_OPS {
-            if spec[i..].starts_with(symbol) {
-                return Some((&spec[..i], op, &spec[i + symbol.len()..]));
+/// equal to `a>b`, not `name=a` greater than `b`.
+///
+/// **The scan skips quoted regions**, so a column named `a=b` is askable as
+/// `"a=b"=x`. A quote that never closes is its own outcome rather than "no
+/// operator": the operator it swallowed is real, and reinterpreting the term
+/// without it is the silent-wrong-answer shape this grammar exists to remove.
+fn split_filter_op(spec: &str) -> FilterSplit<'_> {
+    let bytes = spec.as_bytes();
+    // The scan walks *bytes*, and compares bytes: every character it looks
+    // for is ASCII and no byte of a multi-byte UTF-8 character is, so a match
+    // is always at a character boundary and the `spec[..i]` slices below are
+    // safe. Matching an operator through `str` instead would panic on the
+    // interior byte of a multi-byte character — which is not hypothetical,
+    // since trimming is Unicode's and a non-breaking space is what brings one
+    // into a term.
+    let mut i = 0;
+    let mut quote: Option<u8> = None;
+    while i < bytes.len() {
+        let b = bytes[i];
+        match quote {
+            // A doubled quote is an escaped one and keeps the region open.
+            Some(q) if b == q => {
+                if bytes.get(i + 1) == Some(&q) {
+                    i += 2;
+                } else {
+                    quote = None;
+                    i += 1;
+                }
+            }
+            Some(_) => i += 1,
+            None if b == b'\'' || b == b'"' => {
+                quote = Some(b);
+                i += 1;
+            }
+            None => {
+                if let Some((symbol, op)) = FILTER_OPS
+                    .into_iter()
+                    .find(|(symbol, _)| bytes[i..].starts_with(symbol.as_bytes()))
+                {
+                    return FilterSplit::Op(&spec[..i], op, &spec[i + symbol.len()..]);
+                }
+                i += 1;
             }
         }
     }
-    None
+    match quote {
+        // Whatever opened it sits left of any operator, since the scan
+        // returns at the first operator it reaches outside a quote.
+        Some(q) => FilterSplit::UnbalancedQuote(q as char),
+        None => FilterSplit::NoOperator,
+    }
+}
+
+/// What [`split_filter_op`] found. `NoOperator` is the `IS NULL` forms' cue,
+/// not a fault: they are the fallback, tried only on a term with no operator
+/// outside quotes.
+enum FilterSplit<'a> {
+    Op(&'a str, PredicateOp, &'a str),
+    NoOperator,
+    UnbalancedQuote(char),
+}
+
+/// The text a quoted part holds: the outer pair stripped and every doubled
+/// interior quote collapsed to one, SQL's own escape.
+///
+/// `None` — the part does not open with a quote, so it is data exactly as
+/// written. `Some(Err(quote))` — it opens with one and what follows is not a
+/// well-formed quoted string. An unterminated quote and text after the
+/// closing one are deliberately the *same* fault: the alternative is falling
+/// back to the unquoted reading, which hands a user who mistyped one quote a
+/// value nobody meant and an empty result that reads as an answer.
+fn dequote(part: &str) -> Option<Result<String, char>> {
+    let quote = part.chars().next()?;
+    if quote != '\'' && quote != '"' {
+        return None;
+    }
+    let mut out = String::new();
+    let mut rest = &part[quote.len_utf8()..];
+    loop {
+        let Some(at) = rest.find(quote) else { return Some(Err(quote)) };
+        out.push_str(&rest[..at]);
+        rest = &rest[at + quote.len_utf8()..];
+        if let Some(after) = rest.strip_prefix(quote) {
+            out.push(quote);
+            rest = after;
+        } else if rest.is_empty() {
+            return Some(Ok(out));
+        } else {
+            return Some(Err(quote));
+        }
+    }
+}
+
+/// One side of a filter term as the [`Predicate`] should carry it: whitespace
+/// outside the quotes trimmed off, and a quoted part taken exactly as
+/// written. `what` names the side for the error message and nothing else.
+///
+/// Trimming is `str::trim`, the same definition the `IS NULL` forms use, so
+/// the parser holds one notion of whitespace and a non-breaking space pasted
+/// out of a web page is caught by it.
+fn filter_part(part: &str, what: &str, spec: &str) -> Result<String> {
+    let part = part.trim();
+    match dequote(part) {
+        None => Ok(part.to_string()),
+        Some(Ok(text)) => Ok(text),
+        Some(Err(quote)) => Err(unbalanced_quote(what, quote, spec)),
+    }
+}
+
+/// The one message every malformed quote earns, wherever it was found.
+fn unbalanced_quote(what: &str, quote: char, spec: &str) -> anyhow::Error {
+    anyhow::anyhow!(
+        "--filter `{spec}`: unbalanced `{quote}` quote in the {what} — a quoted {what} closes with the matching `{quote}` at its very end, and any `{quote}` inside it is doubled"
+    )
 }
 
 /// Parse one `--filter` argument into a [`Predicate`] — one term of the
 /// conjunction the flag's repetitions build: `column<op>value` for any of the
 /// six comparison spellings, or `column IS NULL` / `column IS NOT NULL` (the
 /// `IS` forms matched case-insensitively after the column name — see
-/// `docs/design/architecture.md`, "Predicates").
+/// `docs/design/architecture.md`, "A filter term is parsed for two
+/// audiences").
 ///
-/// Trailing whitespace is trimmed off the **column** side of every form, so
-/// `v >= 5` names `v`; the value keeps its own leading whitespace, since a
-/// value may legitimately begin with a space and nothing else could restore
-/// it.
+/// **The `IS` forms are the fallback, not the first test.** An operator
+/// outside quotes is looked for first, and the suffix is only stripped from a
+/// term that has none. Testing the suffix first made `note=this is null` an
+/// `IS NULL` on a column called `note=this`; under this order it is an
+/// equality against `this is null`, which is what it says.
 fn parse_filter(spec: &str) -> Result<Predicate> {
-    let trimmed = spec.trim_end();
-    if let Some(column) = strip_ci_suffix(trimmed, "is not null") {
-        return Ok(Predicate {
-            column: column.trim_end().to_string(),
-            op: PredicateOp::IsNotNull,
-            value: None,
-        });
+    match split_filter_op(spec) {
+        FilterSplit::Op(column, op, value) => Ok(Predicate {
+            column: filter_part(column, "column name", spec)?,
+            op,
+            value: Some(filter_part(value, "value", spec)?),
+        }),
+        FilterSplit::UnbalancedQuote(quote) => Err(unbalanced_quote("column name", quote, spec)),
+        FilterSplit::NoOperator => {
+            let trimmed = spec.trim();
+            for (suffix, op) in
+                [("is not null", PredicateOp::IsNotNull), ("is null", PredicateOp::IsNull)]
+            {
+                if let Some(column) = strip_ci_suffix(trimmed, suffix) {
+                    return Ok(Predicate {
+                        column: filter_part(column, "column name", spec)?,
+                        op,
+                        value: None,
+                    });
+                }
+            }
+            anyhow::bail!(
+                "--filter must be `column=value` (or `!=`, `<`, `<=`, `>`, `>=`), `column IS NULL`, or `column IS NOT NULL`, got `{spec}`"
+            )
+        }
     }
-    if let Some(column) = strip_ci_suffix(trimmed, "is null") {
-        return Ok(Predicate {
-            column: column.trim_end().to_string(),
-            op: PredicateOp::IsNull,
-            value: None,
-        });
+}
+
+/// The sentence a name that was not found earns when it opens and closes with
+/// a matching quote: `--column` and `--table` take their names exactly as
+/// given, so the quote marks were part of what was looked for.
+///
+/// **Only a `--filter` term has quoting to strip**, and that is not an
+/// inconsistency: a term is one string that must be split into three parts,
+/// so quotes carry boundary information there, while the shell has already
+/// delimited a `--column` argument. Stripping them here would instead make a
+/// column genuinely named with quote marks unaskable
+/// (`docs/design/architecture.md`, "A filter term is parsed for two
+/// audiences").
+fn quoted_name_note(flag: &str, name: &str) -> Option<String> {
+    let quote = name.chars().next()?;
+    if quote != '\'' && quote != '"' {
+        return None;
     }
-    let Some((column, op, value)) = split_filter_op(spec) else {
-        anyhow::bail!(
-            "--filter must be `column=value` (or `!=`, `<`, `<=`, `>`, `>=`), `column IS NULL`, or `column IS NOT NULL`, got `{spec}`"
+    (name.len() > quote.len_utf8() && name.ends_with(quote)).then(|| {
+        format!(
+            "`{flag}` takes the name exactly as given, so `{name}` was matched literally, quote marks included — only a `--filter` term has quoting to strip"
         )
-    };
-    Ok(Predicate { column: column.trim_end().to_string(), op, value: Some(value.to_string()) })
+    })
+}
+
+/// Add [`quoted_name_note`] to the one library refusal that can carry it. The
+/// failure is loud either way; what the note adds is *why* a name the user is
+/// sure exists was not found.
+fn name_taken_verbatim(err: pgdump_query::Error) -> anyhow::Error {
+    if let pgdump_query::Error::UnknownProjectionColumn { column, .. } = &err
+        && let Some(note) = quoted_name_note("--column", column)
+    {
+        return anyhow::anyhow!("{err}; {note}");
+    }
+    err.into()
 }
 
 /// Say, once per query and on stderr, which ordering comparisons do not
@@ -516,7 +670,7 @@ async fn main() -> Result<()> {
                 mode,
             );
             let mut announced = false;
-            while let Some(batch) = stream.next().await.transpose()? {
+            while let Some(batch) = stream.next().await.transpose().map_err(name_taken_verbatim)? {
                 if !announced {
                     announce_ordering(&stream);
                     announced = true;
@@ -550,6 +704,9 @@ async fn main() -> Result<()> {
                 eprintln!("{rows} row(s)");
             } else {
                 eprintln!("no rows found for {table} in {}", file.display());
+                if let Some(note) = quoted_name_note("--table", &table) {
+                    eprintln!("note: {note}");
+                }
             }
         }
     }
@@ -1188,6 +1345,183 @@ mod tests {
     use super::*;
     use arrow::datatypes::{Field, Fields};
     use std::sync::Arc;
+
+    /// One parsed term, or the message it was refused with.
+    fn filter(spec: &str) -> Result<(String, PredicateOp, Option<String>), String> {
+        match parse_filter(spec) {
+            Ok(p) => Ok((p.column, p.op, p.value)),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    /// `column`, `op` and `value` of a term that must parse.
+    fn ok(spec: &str) -> (String, PredicateOp, Option<String>) {
+        filter(spec).unwrap_or_else(|e| panic!("`{spec}` should parse: {e}"))
+    }
+
+    /// The message a term that must not parse was refused with.
+    fn err(spec: &str) -> String {
+        match filter(spec) {
+            Err(message) => message,
+            Ok(parsed) => panic!("`{spec}` should be refused, parsed as {parsed:?}"),
+        }
+    }
+
+    /// The bare spelling, unchanged: no whitespace anywhere means nothing to
+    /// trim and no quote to strip, so the sysadmin-shaped half of the
+    /// audience sees exactly what it always did.
+    #[test]
+    fn a_bare_term_parses_as_it_reads() {
+        assert_eq!(ok("name=alpha"), ("name".into(), PredicateOp::Eq, Some("alpha".into())));
+        assert_eq!(ok("v>=5"), ("v".into(), PredicateOp::Ge, Some("5".into())));
+        assert_eq!(ok("v!=5"), ("v".into(), PredicateOp::Ne, Some("5".into())));
+    }
+
+    /// Whitespace outside quotes is not data, on **both** sides of the
+    /// operator. Untrimmed, the value side failed loudly on a typed column
+    /// and silently on a text one — an empty result that reads as an answer.
+    #[test]
+    fn whitespace_outside_quotes_is_trimmed_on_both_sides() {
+        assert_eq!(ok(" name = alpha "), ("name".into(), PredicateOp::Eq, Some("alpha".into())));
+        assert_eq!(ok("v >= 5"), ("v".into(), PredicateOp::Ge, Some("5".into())));
+    }
+
+    /// Whitespace is `str::trim`'s, not ASCII space's, so a non-breaking
+    /// space pasted out of a web page is caught rather than searched for.
+    #[test]
+    fn trimming_is_unicode_whitespace() {
+        assert_eq!(
+            ok("name\u{a0}=\u{a0}alpha\u{a0}"),
+            ("name".into(), PredicateOp::Eq, Some("alpha".into()))
+        );
+    }
+
+    /// An all-whitespace value collapses to the empty string, which needs no
+    /// special handling: it is a legitimate value to search for and the
+    /// quoted spelling is there for anyone who meant the spaces.
+    #[test]
+    fn an_all_whitespace_value_collapses_to_empty() {
+        assert_eq!(ok("name=   "), ("name".into(), PredicateOp::Eq, Some(String::new())));
+    }
+
+    /// A quoted value is taken exactly as written, which is what restores
+    /// every value trimming would otherwise make unaskable — a space-padded
+    /// `char(n)` value is expressible from the command line, not only through
+    /// the API.
+    #[test]
+    fn a_quoted_value_is_taken_as_written() {
+        assert_eq!(ok(r#"name = " x""#), ("name".into(), PredicateOp::Eq, Some(" x".into())));
+        assert_eq!(ok("name = 'x '"), ("name".into(), PredicateOp::Eq, Some("x ".into())));
+        assert_eq!(ok("name=''"), ("name".into(), PredicateOp::Eq, Some(String::new())));
+    }
+
+    /// Both quote characters open a value. Which one a user reaches for is
+    /// decided by the shell rather than by taste — the term is normally
+    /// already inside shell single quotes — so accepting one would punish
+    /// whichever half of the audience picked the other.
+    #[test]
+    fn both_quote_characters_open_a_value() {
+        let (_, _, double) = ok(r#"name="the answer""#);
+        let (_, _, single) = ok("name='the answer'");
+        assert_eq!(double, Some("the answer".into()));
+        assert_eq!(single, double);
+    }
+
+    /// A quote inside a quoted part is doubled, as SQL does it. Two quote
+    /// characters also give a lazier escape for free: a value holding one can
+    /// be written in the other, with no doubling at all.
+    #[test]
+    fn an_interior_quote_is_doubled_or_written_in_the_other_quote() {
+        assert_eq!(ok("note='it''s'").2, Some("it's".into()));
+        assert_eq!(ok(r#"note="say ""hi""""#).2, Some(r#"say "hi""#.into()));
+        assert_eq!(ok(r#"note="it's""#).2, Some("it's".into()));
+    }
+
+    /// A quote that does not open the part is ordinary data — nothing scans
+    /// for quotes inside an unquoted value.
+    #[test]
+    fn a_quote_inside_an_unquoted_value_is_data() {
+        assert_eq!(ok("note=don't").2, Some("don't".into()));
+        assert_eq!(ok(r#"note=a"b"#).2, Some(r#"a"b"#.into()));
+    }
+
+    /// Quotes work on the column side too, and the operator split skips
+    /// them — which is the whole point, since it is what makes a column named
+    /// `a=b` askable at all.
+    #[test]
+    fn a_quoted_column_name_survives_the_split() {
+        assert_eq!(ok(r#""my column"=x"#).0, "my column");
+        assert_eq!(ok(r#""a=b"=x"#), ("a=b".into(), PredicateOp::Eq, Some("x".into())));
+        assert_eq!(ok(r#" "a=b" = "y=z" "#).2, Some("y=z".into()));
+    }
+
+    /// The split rule is otherwise unchanged: earliest position, longest
+    /// spelling, so a value carrying an operator byte still cannot steal it.
+    #[test]
+    fn the_earliest_operator_outside_quotes_still_wins() {
+        assert_eq!(ok("name=alpha>x"), ("name".into(), PredicateOp::Eq, Some("alpha>x".into())));
+    }
+
+    /// **The `IS` forms are the fallback.** Stripping the suffix from the
+    /// whole term first made this an `IS NULL` on a column called
+    /// `note=this`; an operator outside quotes is looked for first, so it is
+    /// the equality it plainly reads as.
+    #[test]
+    fn a_value_ending_in_is_null_is_not_an_is_null_term() {
+        assert_eq!(
+            ok("note=this is null"),
+            ("note".into(), PredicateOp::Eq, Some("this is null".into()))
+        );
+    }
+
+    /// The `IS` forms still parse, still case-insensitively, and now take a
+    /// quoted column name — which is what lets a column called `is null` be
+    /// named at all.
+    #[test]
+    fn the_is_forms_parse_on_a_term_with_no_operator() {
+        assert_eq!(ok("created_at IS NULL"), ("created_at".into(), PredicateOp::IsNull, None));
+        assert_eq!(
+            ok("created_at is not null"),
+            ("created_at".into(), PredicateOp::IsNotNull, None)
+        );
+        assert_eq!(ok(r#" "my column" Is Null "#).0, "my column");
+        assert_eq!(ok(r#""is null" = x"#), ("is null".into(), PredicateOp::Eq, Some("x".into())));
+    }
+
+    /// A malformed quote is refused, never reinterpreted — falling back to
+    /// the unquoted reading would hand a user who mistyped one quote a value
+    /// nobody meant. Unterminated and trailing-text are one fault with one
+    /// message, wherever in the term they sit.
+    #[test]
+    fn a_malformed_quote_is_refused() {
+        for spec in ["name='x", "name='x'y", "'name=x", r#"name = "x'"#, "'name' 'is null"] {
+            let message = err(spec);
+            assert!(message.contains("unbalanced"), "`{spec}`: {message}");
+            assert!(message.contains(spec), "`{spec}`: {message}");
+        }
+    }
+
+    /// A term with neither an operator nor an `IS` form is the usage fault it
+    /// always was, and the message still quotes the term back.
+    #[test]
+    fn a_term_with_no_operator_at_all_is_a_usage_fault() {
+        let message = err("nonsense");
+        assert!(message.contains("--filter must be"), "{message}");
+        assert!(message.contains("nonsense"), "{message}");
+    }
+
+    /// The note a name that was not found earns when it looks quoted —
+    /// `--column` and `--table` take their names verbatim, so the quote marks
+    /// were part of what was looked for.
+    #[test]
+    fn a_quoted_looking_name_earns_the_verbatim_note() {
+        let note = quoted_name_note("--column", "\"id\"").expect("a quoted-looking name");
+        assert!(note.contains("--column"), "{note}");
+        assert!(note.contains("matched literally"), "{note}");
+        assert_eq!(quoted_name_note("--column", "id"), None);
+        assert_eq!(quoted_name_note("--table", "\"id"), None, "one quote is not a pair");
+        assert_eq!(quoted_name_note("--table", "\""), None, "one character is not a pair");
+    }
 
     fn list_of(child: DataType) -> DataType {
         DataType::List(Arc::new(Field::new("item", child, true)))

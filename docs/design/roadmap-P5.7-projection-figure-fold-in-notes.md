@@ -87,14 +87,15 @@ at 30 MiB instead of by hand at 20.
 
 ## Facts the wrap should not have to re-derive
 
-**A `--filter` term takes no spaces around its operator.** Everything after the
-operator is the value — a text column may legitimately hold a leading space —
-so `--filter 'v_date < 2020-01-01'` looks for the date ` 2020-01-01` and is
-refused before any row is read. Both the spec and `STATUS.md` had been writing
-the spaced spelling; `STATUS.md` and the manual are corrected, the spec is not,
-because a spec is not edited for anything but a decision change. Whether the
-CLI should accept the spaced form is open — `STATUS.md`, "Decisions worth
-another look".
+**A `--filter` term's spacing was this slice's open question, and `P5.9`
+answered it.** At the time of this slice everything after the operator was the
+value, spaces included, so `--filter 'v_date < 2020-01-01'` looked for the date
+` 2020-01-01`; the manual and `STATUS.md` were corrected to the unspaced
+spelling and the spec was not, because a spec is not edited for anything but a
+decision change. `P5.9` then made whitespace outside quotes not data, so both
+spellings now mean the same thing — see
+[`roadmap-P5.9-filter-term-grammar-notes.md`](roadmap-P5.9-filter-term-grammar-notes.md).
+The wrap should carry `P5.9`'s rule, not this one.
 
 **Both manual claims were executed, not reasoned about.** Projecting away a
 `KD2` column (`(a,"{{1,2},{3,4}}")` in a `public.boxed`) turns a hard

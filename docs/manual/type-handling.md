@@ -123,11 +123,50 @@ the output type cannot represent, and the message is the ordinary decode error
 above. Project the column away, or read it with `--schema-mode strings`, and
 the value comes back as the text the dump holds.
 
-**A filter term is `<column><operator><value>` with no spaces around the
-operator.** Everything after the operator is the value, spaces included, because
-a text column may legitimately hold a leading space — so
-`--filter 'v_date < 2020-01-01'` looks for the date ` 2020-01-01` and is
-refused before any row is read.
+### Writing a filter term
+
+A term is `<column><operator><value>`, and it can be written either way round:
+
+```sh
+pgdq query --source dump.sql --table public.widgets --filter 'name=alpha'
+pgdq query --source dump.sql --table public.widgets --filter 'name = "alpha"'
+```
+
+Spaces around the operator are not part of the value — `name = alpha` asks for
+`alpha`. **Quote the value when you mean the spaces**, or when you mean quote
+marks:
+
+```sh
+--filter 'code = " x"'           # a space-padded char(n) value
+--filter "note = 'it''s'"        # an interior quote is doubled, as in SQL
+--filter 'note = "it'"'"'s"'     # or written in the other quote character
+--filter 'tag = """hello"""'     # the seven characters "hello", quotes and all
+```
+
+(The third line's contortion is the shell's doing, not this grammar's: `it's`
+cannot be written inside shell single quotes at all.)
+
+Both `'` and `"` open a quoted value; the pair must match, and a value that
+opens with one has to close with it at the very end. An unbalanced quote is
+refused before any row is read rather than searched for literally.
+
+Quotes work on the column side too, which is how a column whose name holds a
+space or an operator character is named:
+
+```sh
+--filter '"my column" = alpha'
+--filter '"a=b" = alpha'        # a column named a=b
+--filter '"is null" = alpha'    # a column named is null
+```
+
+`column IS NULL` and `column IS NOT NULL` are matched only on a term with no
+operator in it, so `--filter 'note=this is null'` is an equality against the
+value `this is null`.
+
+**`--column` and `--table` take their names exactly as given** — there is no
+quoting to strip there, because the shell has already delimited the argument.
+`--column '"name"'` looks for a column whose name really does begin and end
+with a quote mark, and says so when it does not find one.
 
 ### Arrays, composites, ranges, and multiranges
 

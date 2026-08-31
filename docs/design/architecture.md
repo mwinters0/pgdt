@@ -39,7 +39,7 @@ through.
 | `pgtype.rs`, `resolve.rs`, the type mapping table | [Type resolution](#type-resolution) |
 | `decode.rs`, a new type's decode/render pair | [Decoders and render-back](#decoders-and-render-back) |
 | `batch.rs`, the zero-copy `Utf8View` path, a batch's flush triggers | [Arrow assembly and the zero-copy path](#arrow-assembly-and-the-zero-copy-path) |
-| `stream.rs`, `map_forward`/`map_file`, replay, resume, projection, predicates | [Query: mapping and streaming are separate passes](#query-mapping-and-streaming-are-separate-passes) |
+| `stream.rs`, `map_forward`/`map_file`, replay, resume, projection, predicates, the `--filter` term grammar | [Query: mapping and streaming are separate passes](#query-mapping-and-streaming-are-separate-passes) |
 | `cache.rs`, the format version, cache modes | [The cache](#the-cache) |
 | the CLI's flags or output, the save throttle, the interrupt guard | [CLI surface](#cli-surface) |
 | `scripts/`, a new fixture schema | [Fixtures](#fixtures) |
@@ -2017,15 +2017,103 @@ belongs to P11 and is filed in
 agree row for row.* Its own failure mode is bit-rot in the doc parser, and the
 table is small enough to be re-read whenever the register changes.
 
-**On the command line the operators are spelled as they read**, and a term is
-split at the **earliest** position any operator matches, longest spelling
-first. Both halves matter: longest-first is what keeps `>=` from being read as
-`>` with a stray `=`, exactly as `!=` has always beaten `=`; earliest-position
-is what keeps a *value* containing an operator byte from stealing the split, so
-`name=alpha>x` is `name` equal to `alpha>x`. Trailing whitespace comes off the
-column name, as the `IS NULL` forms already do; the value keeps its own leading
-whitespace, since a value may legitimately begin with a space and nothing else
-could restore it.
+**On the command line the operators are spelled as they read.** How a term is
+split into its three parts is the next section.
+
+### A filter term is parsed for two audiences
+
+`parse_filter` in `pgdump_query-cli/src/main.rs` is the grammar, and it is the
+CLI's alone: `Predicate` is a plain public struct an embedder fills in field by
+field, so nothing below L4 parses `column=value` and none of the trimming or
+unquoting below reaches an embedder's values.
+
+Two kinds of user read `--filter` differently and the grammar serves both
+rather than choosing. Sysadmin-shaped users find the bare `column=value`
+spelling natural. SQL-fluent users assume a string literal must be quoted and
+write `--filter 'foo = "the answer"'` — double quotes rather than SQL's single
+ones, because the term is already inside shell single quotes. Both spellings
+mean what they look like.
+
+**A term is split at the earliest operator position outside quotes, longest
+spelling first.** Longest-first is what keeps `>=` from being read as `>` with
+a stray `=`, exactly as `!=` has always beaten `=`; earliest-position is what
+keeps a *value* containing an operator byte from stealing the split, so
+`name=alpha>x` is `name` equal to `alpha>x`. `split_filter_op` walks bytes and
+compares bytes — every character it looks for is ASCII and no byte of a
+multi-byte UTF-8 character is, so a match is always at a character boundary,
+where matching through `str` would panic on the interior byte of one. That is
+not hypothetical: trimming is Unicode's, so a non-breaking space is a character
+a term legitimately carries.
+
+**Whitespace outside quotes is not data**, on both sides of the operator, using
+Rust's `str::trim` — one definition of whitespace for the whole parser,
+matching the `trim_end` the column side always did, and the reason a
+non-breaking space pasted out of a web page is caught rather than searched for.
+Untrimmed, the failure was loud on a typed column (`Error::PredicateValueDecode`,
+naming the value) and *silent* on a text column under `=`, where a leading space
+made an empty result that read as an answer. An all-whitespace value collapses
+to the empty string with no special handling.
+
+**A quoted part is taken exactly as written**, which is what restores every
+value trimming would otherwise make unaskable: `--filter 'foo = " x"'` is a
+leading space, so a space-padded `char(n)` value is expressible from the command
+line and not only through the API.
+
+**Both `'` and `"` open a quoted part, matching pairs only, with an interior
+quote doubled** as SQL does it. Which one a user reaches for is decided by the
+shell rather than by taste, so accepting one would punish whichever half of the
+audience picked the other. Doubling keeps the grammar closed — no escape
+alphabet, and so no second decision about what a backslash-n or a doubled
+backslash mean — and two quote characters give a lazier escape for free, since
+a part holding one quote character can be written in the other.
+
+*Rejected: backslash escaping.* A backslash inside a shell double-quoted
+argument is itself shell-processed, so the correct spelling is one nobody
+writes right twice.
+
+**Quotes work on the column side too, and that is what the quote-aware split is
+for**: `"a=b"=x` names a column `a=b`. The quotes are stripped and nothing else
+happens — column names are matched verbatim and there is no case-folding to
+reproduce. The cost is that a bare quote character left of the operator now
+opens a quoted region, so a column named `it's` must be written `"it's"`; that
+is the price of quotes carrying boundary information, and it is loud rather than
+silent.
+
+**The `IS NULL` / `IS NOT NULL` forms are the fallback, not the first test**,
+and the next reader must not restore the order that reads more naturally. An
+operator outside quotes is looked for first; the `IS` suffix is stripped only
+from a term that has none. Stripping it from the whole term first made
+`--filter 'note=this is null'` an `IS NULL` on a column named `note=this`.
+Under this order it is an equality against `this is null`, which is what it
+says. Quote-awareness is needed on top rather than instead — that term goes
+wrong with no quotes anywhere — and it is what lets `--filter '"is null" = x'`
+name a column `is null`.
+
+**A malformed quote is refused, never reinterpreted.** If what remains after
+trimming opens with a quote, it must close with the matching one at the very
+end with every interior occurrence doubled; an unterminated quote, trailing text
+after the closing one, and a quote the split scan never saw closed are one fault
+with one message. The alternative — falling back to the unquoted reading — hands
+a user who mistyped one quote a value nobody meant and an empty result that
+reads as an answer, which is the shape this whole grammar exists to remove.
+
+**A part that opens and closes with a matching quote is quoted, always.** There
+is no telling a SQL user quoting a string from someone searching a `json` column
+for a quoted word, and a rule that guessed from the column's type would make a
+term's meaning depend on a schema resolved much later. The escape is the
+doubling rule.
+
+**Quoting stops at `--filter`.** `--column` and `--table` take their names
+verbatim, which is the same reasoning rather than an inconsistency with it: a
+filter term is one string that must be split into three parts, so quotes carry
+boundary information there, while the shell has already delimited a `--column`
+argument. Quotes there would be decoration that made a column genuinely named
+with quote marks unaskable. It is also what keeps the rejection of
+`--columns a,b,c` above intact — that flag would have to *invent* a grammar,
+where `--filter` already has one. The failure stays loud, and `quoted_name_note`
+adds the missing sentence to it: a name that was not found and that opens and
+closes with a matching quote says it was matched literally, quote marks
+included.
 
 ## The cache
 

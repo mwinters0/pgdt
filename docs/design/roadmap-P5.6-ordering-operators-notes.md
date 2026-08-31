@@ -91,9 +91,12 @@ and nothing had hit it. Column names now also lose their trailing whitespace,
 as the `IS NULL` forms already did — strictly widening, since a trailing space
 previously produced `UnknownPredicateColumn`. The value keeps its leading
 whitespace, because a value may legitimately begin with a space and nothing
-else could restore it; so `--filter 'v >= 5'` names column `v` and value
-` 5`, and ` 5` does not parse as an integer. That is a refusal with a message,
-not a wrong answer.
+else could restore it; so `--filter 'v >= 5'` named column `v` and value
+` 5`, and ` 5` does not parse as an integer. **`P5.9` reversed that half**: the
+value side is trimmed too, and a quoted value is what restores a space now —
+see
+[`roadmap-P5.9-filter-term-grammar-notes.md`](roadmap-P5.9-filter-term-grammar-notes.md).
+The split rule itself is unchanged, and only skips quoted regions.
 
 **The announcement is a third channel, and stays one.** `ordering_notes` is
 per-column *and* conditional on a predicate — L4 — where

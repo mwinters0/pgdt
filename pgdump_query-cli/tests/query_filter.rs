@@ -116,3 +116,67 @@ fn a_conjunction_composes_with_a_projection() {
     let lines: Vec<&str> = stdout.lines().collect();
     assert_eq!(lines, vec!["name", "alpha", "delta"]);
 }
+
+/// **Whitespace around the operator is not data.** The value side is trimmed
+/// like the column side, so the SQL-shaped spelling finds the row; untrimmed
+/// this looked for `" alpha"`, matched nothing, and printed an empty result
+/// that read as an answer.
+#[test]
+fn a_spaced_term_finds_the_row_it_names() {
+    assert_eq!(kept(&["--filter", "name = alpha"]), 1);
+    assert_eq!(kept(&["--filter", "name=alpha"]), 1, "the bare spelling is unchanged");
+}
+
+/// A quoted value is taken exactly as written — which is both halves of the
+/// grammar in one test: the quotes are stripped rather than searched for, and
+/// what is inside them is not trimmed.
+#[test]
+fn a_quoted_value_is_stripped_of_its_quotes_but_not_of_its_spaces() {
+    assert_eq!(kept(&["--filter", "name = \"alpha\""]), 1);
+    assert_eq!(kept(&["--filter", "name = 'alpha'"]), 1);
+    assert_eq!(kept(&["--filter", "name = \" alpha\""]), 0, "the space is data");
+}
+
+/// **The `IS NULL` forms are the fallback, not the first test.** Stripping the
+/// suffix from the whole term first made this an `IS NULL` on a column called
+/// `description=this`, which the library then refused; it is the equality it
+/// plainly reads as, and a query with no rows.
+#[test]
+fn a_value_ending_in_is_null_is_an_equality_not_a_null_test() {
+    let out = widgets(&["--filter", "description=this is null"]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert_eq!(stdout_of(&out), "");
+    assert!(stderr_of(&out).contains("no rows found"), "{}", stderr_of(&out));
+}
+
+/// A malformed quote is refused, never reinterpreted — and, like every other
+/// term fault, before the dump is opened.
+#[test]
+fn a_malformed_quote_is_refused() {
+    let out = widgets(&["--filter", "name='alpha"]);
+    assert!(!out.status.success());
+    assert!(stderr_of(&out).contains("unbalanced"), "{}", stderr_of(&out));
+}
+
+/// Quoting stops at `--filter`: `--column` takes its name exactly as given,
+/// so a name that looks quoted was matched with the quote marks in it. The
+/// failure was always loud; the note says why.
+#[test]
+fn a_quoted_column_flag_is_matched_literally_and_says_so() {
+    let dump = fixture("16/edge_cases/default.sql");
+    let out = run(&[
+        "query",
+        "--source",
+        dump.to_str().unwrap(),
+        "--table",
+        "public.widgets",
+        "--dqcache",
+        "none",
+        "--column",
+        "\"name\"",
+    ]);
+    assert!(!out.status.success());
+    let stderr = stderr_of(&out);
+    assert!(stderr.contains("matched literally"), "{stderr}");
+    assert!(stderr.contains("--column"), "{stderr}");
+}

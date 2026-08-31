@@ -13,9 +13,9 @@ and every slice of it has landed** — one registering a figure and adding no
 library code, one bounding what an in-flight batch pins, one adding projection
 to the library, one giving it a CLI, one turning the single filter into a
 conjunction, one adding the typed ordering operators, one making PostgreSQL's
-special values answer them, and one taking the figure and retiring the
-cross-file apparatus it supersedes. **One slice remains**, `P5.9`, which a
-grilling over the review section added: the filter term's grammar. The
+special values answer them, one taking the figure and retiring the cross-file
+apparatus it supersedes, and one giving the filter term its grammar. **Nothing
+remains but the wrap**, which owes a full sweep: eleven figures read stale. The
 checklist is below the table.
 
 | Capability | State |
@@ -32,8 +32,9 @@ checklist is below the table.
 | Measurement harness | `scripts/measure.py` takes every figure in [`../design/measurements.md`](../design/measurements.md) and emits that doc's tables — thirteen figures, twelve taken by a sweep and one derived across two, each declaring what invalidates it and which documents repeat it. `measure.UNTAKEN` is empty: nothing is built and unrun |
 | Column projection | working, library and CLI: `QueryOptions::projection` names columns, cuts the reported `ResolvedSchema` with the batches, may reorder, and may be empty (`COUNT(*)`); `pgdq query` spells it `--column <name>` repeated, or `--no-columns`, which prints no header so `\| wc -l` is a row count. A filter may name a column the projection does not, and an unprojected column is never decoded, so projecting a column away escapes its `Error::FieldDecode` — including `KD2`'s, which the error message does not name ([`../design/architecture.md`](../design/architecture.md), "Projection"; [`../manual/type-handling.md`](../manual/type-handling.md)). Measured on one 3.00 GiB file at five widths: `--no-columns` is 3.28 µs a row against 27.50 for all 19, the two array columns alone are +12.98 and the composite +0.77 ([`../design/measurements.md`](../design/measurements.md), "What a column costs") |
 | Predicate conjunction | working, library and CLI: `QueryOptions::filters` is a list of single-column terms ANDed, the empty list being "no filter"; `pgdq query` spells it `--filter <term>` repeated. Nothing folds two terms, so a contradictory pair is a query with no rows. `OR` and `NOT` are not expressible — the NULL collapse that is sound under `AND` is not under `NOT` ([`../design/architecture.md`](../design/architecture.md), "Predicates") |
+| The `--filter` term grammar | working, CLI only — `Predicate` is a struct an embedder fills in, so nothing below L4 parses a term. Whitespace outside quotes is trimmed on both sides of the operator; `'` and `"` both quote either side, matching pairs only, with an interior quote doubled; the operator split skips quoted regions, so a column named `a=b` is askable; and the `IS NULL` forms are the fallback, tried only on a term with no operator, which is what makes `note=this is null` the equality it reads as. A malformed quote is refused, never reinterpreted. `--column` and `--table` take their names verbatim and say so when a quoted-looking name is not found ([`../design/architecture.md`](../design/architecture.md), "A filter term is parsed for two audiences"; [`../manual/type-handling.md`](../manual/type-handling.md), "Writing a filter term") |
 | Typed ordering operators (`<`, `<=`, `>`, `>=`) | working, library and CLI: each side is decoded with the column's own decoder — the field per row, the literal once when the block's schema resolves — and the decoded values compared, so `9 > 10` is true on an `integer`. Available on a column that resolved `Mapped` with a `Scalar` plan and refused on any other, which is also why `--schema-mode strings` refuses every one of them. An undecodable literal is `Error::PredicateValueDecode` before any row; a field that is genuinely undecodable is `Error::FieldDecode`, worded as the build path words it ([`../design/architecture.md`](../design/architecture.md), "Ordering operators compare typed") |
-| PostgreSQL's special values under an ordering operator | answered exactly, not raised as a fault: `-infinity` below every finite value, `infinity` above, a `numeric`'s `NaN` above `infinity` and equal to itself (I34), each in the spelling its own type writes. Carried as a position in the order rather than as a number, since no Arrow type has one. **A filter is therefore exact where the batch still cannot hold the value** — the row `--filter 'v_date<2020-01-01'` selects for `-infinity` fails to build if `v_date` is projected, which is a property of two paths with different powers, not a defect (`KD8` is the materialization question). A filter term takes no spaces around its operator: everything after it is the value, so a spaced spelling looks for ` 2020-01-01` and is refused before any row is read ([`../manual/type-handling.md`](../manual/type-handling.md)) |
+| PostgreSQL's special values under an ordering operator | answered exactly, not raised as a fault: `-infinity` below every finite value, `infinity` above, a `numeric`'s `NaN` above `infinity` and equal to itself (I34), each in the spelling its own type writes. Carried as a position in the order rather than as a number, since no Arrow type has one. **A filter is therefore exact where the batch still cannot hold the value** — the row `--filter 'v_date<2020-01-01'` selects for `-infinity` fails to build if `v_date` is projected, which is a property of two paths with different powers, not a defect (`KD8` is the materialization question). ([`../manual/type-handling.md`](../manual/type-handling.md)) |
 | The ordering register | in code, as an exhaustive `match` over `DataType` in `predicate.rs`, and rendered as a table in [`../design/architecture.md`](../design/architecture.md), "Ordering operators compare typed". Nine of its rows agree with PostgreSQL (I33, I34); four diverge — every one of them reaching `Utf8View` or the enum `Dictionary`. A divergence is announced by `pgdq query` once on stderr, and read by an embedder from `TableStream::ordering_notes` — a third channel, since the signal is per-column *and* predicate-conditional (L4) |
 | `object_store` I/O, Python bindings, DataFusion `TableProvider` | not started — P6 |
 | Device-bound scan performance campaign, sparse row index | not started — P7 |
@@ -55,22 +56,25 @@ flag, the `composite_text` input and the fidelity case pairing them — because
 the projection table makes the same isolation a subtraction between two adjacent
 rows of one file.
 
-**Ten figures read stale, and both causes are the fold-in's own edits.** Nine
-declare `scripts/generate_perf_data.py`, which `P5.7` edited to delete
+**Eleven figures read stale, from three causes.** Nine declare
+`scripts/generate_perf_data.py`, which `P5.7` edited to delete
 `composite-isolated`'s apparatus — the `--weak-composite` flag and the
 `composite_text` input. `session-drift` declares `scripts/measure.py`, edited
 in the same commit to move `projection-widths` into `FIGURES`; nothing on a
 timing path differs there, and the figure is derived rather than measured, so
 `--drift` re-derives it from the two sweeps' `raw.json` without measuring
-anything.
+anything. `map-only` is `P5.9`'s: five figures declare the CLI's
+`main.rs`, four of them already stale on the generator, and `map-only` is the
+one that was not.
 
 **They stay stale rather than being acknowledged.** The generator change is
 very likely additive for the surviving inputs, but that is a claim
 `--verify-additive` settles and it has not been run; an acknowledgement on a
-read of the diff alone is the weaker kind of entry, and it would buy a clean
-`--stale` for a range that `P5.9` keeps open anyway. The wrap sweep re-stamps
-every table and spends the whole range, which is the cheaper place to resolve
-it. Until then `--stale` is red for a reason that is written down here.
+read of the diff alone is the weaker kind of entry. The CLI change is not
+acknowledgeable at all — `--verify-additive` settles generator changes only,
+and a library or CLI change has no cheap oracle — so the wrap sweep is where
+the whole range is spent, and it re-stamps every table anyway. Until then
+`--stale` is red for a reason that is written down here.
 
 ## P5 progress
 
@@ -106,14 +110,12 @@ The spec is
       update the manual — including `KD2`'s second escape, which the error
       message does not name. Notes:
       [`../design/roadmap-P5.7-projection-figure-fold-in-notes.md`](../design/roadmap-P5.7-projection-figure-fold-in-notes.md)
-- [ ] **P5.9** The filter term is parsed for two audiences — whitespace
+- [x] **P5.9** The filter term is parsed for two audiences — whitespace
       outside quotes trimmed, a quoted value taken as written, `'` and `"` both
       opening one with an interior quote doubled, a quote-aware operator split,
       quoted column names, and the `IS NULL` forms demoted to the fallback,
-      which fixes the `note=this is null` misparse. Spec:
-      [`../design/roadmap-P5-pushdown.md`](../design/roadmap-P5-pushdown.md),
-      "A filter term is parsed for two audiences"; design:
-      [`history/2026-08-31.md`](history/2026-08-31.md)
+      which fixes the `note=this is null` misparse. Notes:
+      [`../design/roadmap-P5.9-filter-term-grammar-notes.md`](../design/roadmap-P5.9-filter-term-grammar-notes.md)
 
 ## Not started
 
