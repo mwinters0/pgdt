@@ -2189,4 +2189,371 @@ mod tests {
             .unwrap()
         );
     }
+
+    /// The comparison register against the committed comparison oracle:
+    /// every cell of `fixtures/<13-18>/oracle/comparisons.tsv`, answered by
+    /// the same `resolve_term`/`matches` path a `--filter` takes, and
+    /// compared with what the server itself said
+    /// (`docs/design/architecture.md`, "The comparison oracle").
+    ///
+    /// **This is the check the oracle exists for.** `oracle_register.py`
+    /// reconciles register arms against oracle *cases* and
+    /// `oracle_differences.py` reconciles majors against each other; both are
+    /// about which rows exist. Nothing else compares an answer to an answer.
+    mod oracle {
+        use std::collections::{BTreeMap, BTreeSet};
+        use std::path::{Path, PathBuf};
+
+        use super::*;
+        use crate::cache::CacheMode;
+        use crate::copy::encode_field;
+        use crate::index::preamble_only;
+        use crate::io::LocalFileSource;
+        use crate::scan::ScanOptions;
+
+        /// The majors `scripts/generate_fixtures.py` generates, which is what
+        /// `fixtures/` holds a directory per.
+        const MAJORS: [u32; 6] = [13, 14, 15, 16, 17, 18];
+
+        /// The four operators this asserts, in `comparisons.tsv`'s own column
+        /// order, paired with their cell offset after the four key columns.
+        ///
+        /// **`=` and `<>` are deliberately not here.** They are the two cells
+        /// the register does not answer: `PredicateOp::Eq`/`Ne` compare the
+        /// field as an unparsed string and never reach `resolve_term`'s
+        /// typed path at all, so asserting them would be asserting a
+        /// different mechanism whose contract is textual by design (see
+        /// [`Predicate`]). Nothing about the register's *equality* is lost:
+        /// `<=` and `>=` carry it, which is why `numeric(10,2)`'s `1.5`
+        /// against `1.50` is checked here at all.
+        const ASSERTED: [(usize, PredicateOp); 4] = [
+            (0, PredicateOp::Lt),
+            (1, PredicateOp::Le),
+            (2, PredicateOp::Gt),
+            (3, PredicateOp::Ge),
+        ];
+
+        /// The declared types whose columns the register refuses an ordering
+        /// operator on, so no cell of theirs is asserted: everything nested
+        /// (array, composite, range, multirange), `xml`, an enum with no
+        /// labels, and a user-defined base type with no operator class.
+        /// PostgreSQL orders all of them and this build does not.
+        ///
+        /// **`json` is not here**, and the difference is the point: it *is*
+        /// compared, bytewise, and every cell of it is `E42883` because
+        /// PostgreSQL defines no comparison at all — so the walk skips it as
+        /// a server refusal rather than as a refusal of ours.
+        ///
+        /// It is asserted as an exact set, so a type that quietly stops
+        /// comparing fails here rather than passing as one more skip.
+        const REFUSED: [&str; 20] = [
+            "integer[]",
+            "text[]",
+            "public.mood[]",
+            "public.intarr[]",
+            "public.point2d",
+            "public.tagged",
+            "public.empty_comp",
+            "public.myrange",
+            "public.myrange_multi",
+            "public.textrange",
+            "public.box_domain",
+            "public.mybase",
+            "public.empty_enum",
+            "xml",
+            "int4range",
+            "int4multirange",
+            "numrange",
+            "daterange",
+            "tsrange",
+            "tstzrange",
+        ];
+
+        /// The cases where this build's answer is knowingly not
+        /// PostgreSQL's, as `(type, collation, left, right)` — the exception
+        /// set, and it is **met**: every entry is a real disagreement in the
+        /// committed files, and every disagreement is an entry.
+        ///
+        /// Each entry's column also has to *announce* its divergence through
+        /// [`OrderingDivergence`], which is asserted alongside — so an
+        /// exception cannot be claimed for a column the register tells the
+        /// user it is confident about. Three populations, and the first is
+        /// the one the `jsonb` cases exist to reach:
+        ///
+        /// - **A `jsonb` string leaf.** `compareJsonbScalarValue` passes
+        ///   `DEFAULT_COLLATION_OID` to `varstr_cmp`, so a leaf is ordered by
+        ///   the database's collation, which a plain dump does not record
+        ///   (I32); everything structural above it — the kind order, a
+        ///   container's size, storage order, the raw-scalar wrapper — is
+        ///   asserted rather than excepted, which is what makes this list two
+        ///   entries rather than the arm.
+        /// - **`character(10)` against a value holding a byte below `0x20`.**
+        ///   The dump writes the padded form and `bpcharcmp` strips the
+        ///   padding before comparing (I38), and the two orders disagree only
+        ///   under the pad space — which is why the case table carries a tab.
+        ///   Its collation is not what does it, and both collations are here.
+        /// - **`text` under the database's own collation**, which is glibc's
+        ///   `en_US.utf8` on this apparatus: case is a lower-weight
+        ///   difference than letter, an accent sorts with its base letter
+        ///   rather than after `z`, and punctuation is ignored at the primary
+        ///   level, so `_x` sorts where `x` does. The four unordered pairs the
+        ///   case table chose for those reasons are here in both directions,
+        ///   and `_x` reaches every letter in the alphabet rather than only
+        ///   `ax`.
+        const EXCEPTIONS: &[(&str, &str, &str, &str)] = &[
+            ("jsonb", "\\N", "{\"a\": \"a\"}", "{\"a\": \"A\"}"),
+            ("jsonb", "\\N", "{\"a\": \"A\"}", "{\"a\": \"a\"}"),
+            ("character(10)", "C", "a", "a\t"),
+            ("character(10)", "C", "a\t", "a"),
+            ("character(10)", "C", "a\t", "a         "),
+            ("character(10)", "C", "a         ", "a\t"),
+            ("character(10)", "default", "a", "a\t"),
+            ("character(10)", "default", "a\t", "a"),
+            ("character(10)", "default", "a\t", "a         "),
+            ("character(10)", "default", "a         ", "a\t"),
+            // Case is a lower-weight difference than letter.
+            ("text", "default", "A", "a"),
+            ("text", "default", "a", "A"),
+            ("text", "default", "a", "B"),
+            ("text", "default", "B", "a"),
+            ("text", "default", "ax", "B"),
+            ("text", "default", "B", "ax"),
+            // An accent sorts with its base letter, not after `z`.
+            ("text", "default", "é", "f"),
+            ("text", "default", "f", "é"),
+            ("text", "default", "é", "hello"),
+            ("text", "default", "hello", "é"),
+            // Punctuation is ignored at the primary level, so `_x` sorts
+            // where `x` does — above every letter in the alphabet.
+            ("text", "default", "_x", "a"),
+            ("text", "default", "a", "_x"),
+            ("text", "default", "_x", "ax"),
+            ("text", "default", "ax", "_x"),
+            ("text", "default", "_x", "co-op"),
+            ("text", "default", "co-op", "_x"),
+            ("text", "default", "_x", "coop"),
+            ("text", "default", "coop", "_x"),
+            ("text", "default", "_x", "de luge"),
+            ("text", "default", "de luge", "_x"),
+            ("text", "default", "_x", "deluge"),
+            ("text", "default", "deluge", "_x"),
+            ("text", "default", "_x", "e"),
+            ("text", "default", "e", "_x"),
+            ("text", "default", "_x", "é"),
+            ("text", "default", "é", "_x"),
+            ("text", "default", "_x", "f"),
+            ("text", "default", "f", "_x"),
+            ("text", "default", "_x", "hello"),
+            ("text", "default", "hello", "_x"),
+        ];
+
+        fn fixture(major: u32, rest: &str) -> PathBuf {
+            Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../fixtures/{major}/{rest}"))
+        }
+
+        /// Split one COPY TEXT line of a committed oracle file into its
+        /// decoded fields — the same L1 decoder that reads a dump, because
+        /// the server wrote these files with `COPY ... TO STDOUT`.
+        fn fields(line: &[u8]) -> Vec<Option<String>> {
+            split_fields(line).map(|f| decode_field(f).unwrap().map(|v| v.into_owned())).collect()
+        }
+
+        fn rows(path: &Path) -> Vec<Vec<Option<String>>> {
+            let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            bytes.split(|&b| b == b'\n').filter(|l| !l.is_empty()).map(fields).collect()
+        }
+
+        /// The `COLLATE` clause a dump would carry for a case labelled with
+        /// this collation. `C` is written; `default` is *not*, because
+        /// `pg_dump` writes a clause only where the column's collation is not
+        /// its type's default (I37) — so the dump-realistic form of the
+        /// oracle's `COLLATE "default"` case is a bare column, which is the
+        /// register's `UnknownCollation` arm. Both reach the same comparison.
+        fn clause(collation: Option<&String>) -> Option<&'static str> {
+            match collation.map(String::as_str) {
+                Some("C") => Some("pg_catalog.\"C\""),
+                _ => None,
+            }
+        }
+
+        /// A one-column schema for a case's declared type and collation. The
+        /// Arrow type is `Utf8View` throughout and never consulted:
+        /// `resolve_term` reads the comparison the register gave the column,
+        /// never what it was mapped to.
+        fn schema(declared: &str, collation: Option<&str>, types: &[TypeDef]) -> ResolvedSchema {
+            ResolvedSchema {
+                schema: Arc::new(Schema::new(vec![Field::new("v", DataType::Utf8View, true)])),
+                columns: vec![ColumnResolution::Mapped],
+                notes: vec![ColumnNote {
+                    column: "v".into(),
+                    declared: Some(declared.into()),
+                    resolution: ColumnResolution::Mapped,
+                }],
+                plans: vec![NestedPlan::Scalar],
+                comparisons: vec![comparison_for(declared, collation, types)],
+            }
+        }
+
+        /// `t`/`f` for a cell this build answers, or the fault it raised
+        /// instead — a literal it will not decode, or a field it will not.
+        /// `field` is `None` for a SQL NULL one, which reaches the row as
+        /// `\N` like any other.
+        fn answer(
+            declared: &str,
+            collation: Option<&str>,
+            types: &[TypeDef],
+            op: PredicateOp,
+            field: Option<&str>,
+            bound: &str,
+        ) -> std::result::Result<bool, String> {
+            let resolved = schema(declared, collation, types);
+            let p = Predicate { column: "v".into(), op, value: Some(bound.into()) };
+            let term = resolve_term(&p, 0, &resolved, 0).map_err(|e| e.to_string())?;
+            p.matches(&encode_field(field), &term, "public.t", 0).map_err(|e| e.to_string())
+        }
+
+        /// Every major's `CREATE TYPE`/`CREATE DOMAIN` list, read from the
+        /// `types` fixture that major's oracle database was loaded from — the
+        /// same DDL, so a case's declared type resolves against the list the
+        /// server itself had.
+        async fn types_of(major: u32) -> Vec<TypeDef> {
+            let source = LocalFileSource::open(fixture(major, "types/default.sql")).unwrap();
+            let (metadata, _) =
+                preamble_only(&source, &ScanOptions::default(), &CacheMode::Disabled)
+                    .await
+                    .unwrap();
+            metadata.databases.into_iter().next().expect("a dump names a database").types
+        }
+
+        #[tokio::test]
+        async fn the_register_answers_every_committed_oracle_cell() {
+            // Keyed by case so one disagreement is reported as the pair it
+            // is, not as four cells; the value is the majors and operators
+            // it showed up under.
+            let mut disagreed: BTreeMap<(String, String, String, String), BTreeSet<String>> =
+                BTreeMap::new();
+            let mut refused: BTreeSet<String> = BTreeSet::new();
+            let mut asserted = 0usize;
+
+            for major in MAJORS {
+                let types = types_of(major).await;
+                // The `*_out` text the server canonicalizes each accepted
+                // literal to, keyed by type and literal. It is what a dump
+                // *holds*, so every value below is put to the register in
+                // this form rather than as the case's input spelling: a
+                // `character(10)`'s blank padding, a `jsonb`'s single space
+                // after each `:`, a `numeric(10,2)`'s rounded scale.
+                let outputs: BTreeMap<(String, String), String> =
+                    rows(&fixture(major, "oracle/literals.tsv"))
+                        .into_iter()
+                        .filter_map(|r| Some(((r[0].clone()?, r[1].clone()?), r[3].clone()?)))
+                        .collect();
+
+                for row in rows(&fixture(major, "oracle/comparisons.tsv")) {
+                    let declared = row[0].clone().expect("a case names a type");
+                    let collation = clause(row[3].as_ref());
+                    if !matches!(
+                        comparison_for(&declared, collation, &types),
+                        ComparisonPlan::Compared { .. }
+                    ) {
+                        refused.insert(declared);
+                        continue;
+                    }
+                    // How the case names itself in a report and in
+                    // `EXCEPTIONS`: the raw cells, so an entry can be copied
+                    // out of a failure straight into the table.
+                    let case = |left: &str, right: &str| {
+                        (
+                            declared.clone(),
+                            row[3].clone().unwrap_or_else(|| "\\N".into()),
+                            left.to_string(),
+                            right.to_string(),
+                        )
+                    };
+                    let output = |literal: &str| {
+                        outputs.get(&(declared.clone(), literal.to_string())).cloned()
+                    };
+                    for (offset, op) in ASSERTED {
+                        let cell = row[4 + offset].as_deref().expect("a cell is never NULL");
+                        // A cell recording what the server *refused* says
+                        // nothing about how it compares.
+                        if cell.starts_with('E') {
+                            continue;
+                        }
+                        // A NULL *right* operand has no spelling in the
+                        // filter grammar at all — `IS NULL` is how a filter
+                        // asks for one — so there is no question to put to
+                        // the register.
+                        let Some(right) = row[2].as_deref() else { continue };
+                        let bound = output(right).expect("an accepted literal has an output");
+                        // A NULL *left* operand is the field, and this build
+                        // collapses unknown to "excluded" for every operator
+                        // — which is what the server's `u` means to a
+                        // `WHERE` clause.
+                        let Some(left) = row[1].as_deref() else {
+                            assert_eq!(cell, "u", "{major} {declared}: a NULL operand");
+                            assert_eq!(
+                                answer(&declared, collation, &types, op, None, &bound),
+                                Ok(false),
+                                "{major} {declared}: a NULL field matches nothing"
+                            );
+                            continue;
+                        };
+                        let field = output(left).expect("an accepted literal has an output");
+                        asserted += 1;
+                        let got = answer(&declared, collation, &types, op, Some(&field), &bound);
+                        let expected = match cell {
+                            "t" => true,
+                            "f" => false,
+                            other => panic!("{major} {declared}: unexpected cell {other:?}"),
+                        };
+                        if got != Ok(expected) {
+                            // An exception is only ever claimable where the
+                            // register has already told the user its answer
+                            // may differ.
+                            assert!(
+                                matches!(
+                                    comparison_for(&declared, collation, &types),
+                                    ComparisonPlan::Compared { divergence: Some(_), .. }
+                                ),
+                                "{major} {declared}: disagrees while announcing no divergence"
+                            );
+                            disagreed
+                                .entry(case(left, right))
+                                .or_default()
+                                .insert(format!("{major} {} {got:?}", op.symbol()));
+                        }
+                    }
+                }
+            }
+
+            let expected_exceptions: BTreeSet<_> = EXCEPTIONS
+                .iter()
+                .map(|(t, c, l, r)| (t.to_string(), c.to_string(), l.to_string(), r.to_string()))
+                .collect();
+            let found: BTreeSet<_> = disagreed.keys().cloned().collect();
+            let unexpected: Vec<_> = found.difference(&expected_exceptions).collect();
+            let stale: Vec<_> = expected_exceptions.difference(&found).collect();
+            assert!(
+                unexpected.is_empty(),
+                "{} cases disagree with the server and are not in the exception set:\n{}",
+                unexpected.len(),
+                unexpected
+                    .iter()
+                    .map(|k| format!("  {k:?} {:?}", disagreed[*k]))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+            assert!(stale.is_empty(), "exceptions that no longer disagree: {stale:?}");
+            assert_eq!(
+                refused,
+                REFUSED.iter().map(|s| s.to_string()).collect::<BTreeSet<_>>(),
+                "the set of declared types the register refuses an ordering operator on"
+            );
+            // A floor, not a count: the walk skips a cell for four good
+            // reasons, and a bug in any of them would leave it asserting
+            // almost nothing while passing. 28,536 today.
+            assert!(asserted > 25_000, "only {asserted} cells asserted");
+        }
+    }
 }

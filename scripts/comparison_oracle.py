@@ -365,10 +365,63 @@ TYPE_CASES: list[TypeCases] = [
     # default operator class -- so every cell is `E42883`. That is the row
     # this phase closes by statement.
     TypeCases("json", ("1", '{"a": 1}', "null", None), ("{a:1}",)),
+    # `jsonb` is the widest arm in the register -- `compareJsonbContainers`
+    # decides on the kind, then on a container's size, then on a scalar leaf
+    # (I41) -- so its values are chosen one per branch rather than as a
+    # sample. Five carry facts that nothing else in the file reaches:
+    #
+    # - **Both booleans**, because `false < true` is the boolean branch and
+    #   `true` alone would only ever reach the kind order.
+    # - **A string**, the one scalar kind the four original values missed, and
+    #   the kind that sorts below every number.
+    # - **`[]` and `{}`**, the empty containers. `[]` is the raw-scalar
+    #   anomaly's other half: a top-level scalar is stored in a one-element
+    #   pseudo-array and the element count overwrites the flag, so `1 > []`
+    #   and `null > []` while `1 < [1, 2]`.
+    # - **`{"zzz": 1}` against a two-pair object**, whose key sorts *after*
+    #   both of the pair's. A one-pair object below a two-pair one is the
+    #   count deciding before any key; had the short object's key sorted
+    #   first, count and key would point the same way and the case would
+    #   prove nothing.
+    # - **`{"z": 1, "aa": 2}` and `{"y": 3, "zz": 4}`**, which separate storage
+    #   order from alphabetical: stored, the walk is `z` against `y`, and
+    #   sorted the other way it would be `aa` against `y`, which answers the
+    #   other way. Storage order also lands in `literals.tsv` with no
+    #   comparison at all -- `{"z": 1, "aa": 2}` is its own `output`, not
+    #   alphabetized.
+    #
+    # `{"a": "a"}` against `{"a": "A"}` is the string *leaf*, and it is the
+    # one pair here the register is known to answer differently:
+    # `compareJsonbScalarValue` passes `DEFAULT_COLLATION_OID` to
+    # `varstr_cmp`, so a leaf is ordered by the database's collation, which a
+    # plain dump does not record (I32). pgdq compares it bytewise and
+    # announces `OrderingDivergence::JsonbStringCollation`.
+    #
+    # The inputs are I41's input grammar: a number's exponent and a signed
+    # zero are accepted and canonicalized away, a duplicate key resolves to
+    # the *last* one written, a leading zero is refused, and `{` is
+    # truncated.
     TypeCases(
         "jsonb",
-        ("1", '{"a": 1}', '{"a":1}', "[1, 2]", "null", None),
-        ("{",),
+        (
+            "null",
+            "false",
+            "true",
+            "1",
+            '"a"',
+            "[]",
+            "[1, 2]",
+            "{}",
+            '{"a": 1}',
+            '{"a":1}',
+            '{"a": "a"}',
+            '{"a": "A"}',
+            '{"y": 3, "zz": 4}',
+            '{"z": 1, "aa": 2}',
+            '{"zzz": 1}',
+            None,
+        ),
+        ("{", "01", "1e2", "-0.0", '{"a":1,"a":2}'),
     ),
     TypeCases("xml", ("<a/>", "<b/>", None), ("<a>",)),
     TypeCases(

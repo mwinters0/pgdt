@@ -2051,8 +2051,8 @@ fixture containers, `datcollate` `en_US.utf8`, `collversion` 2.41 — so it does
 not speak for a musl deployment, which orders the same locale bytewise
 ([`architecture.md`](architecture.md), "The comparison oracle").
 
-**Proof.** Measured, not argued: `fixtures/<13…18>/oracle/` holds 1792
-comparisons and 303 literals per major as the server itself answered them, and
+**Proof.** Measured, not argued: `fixtures/<13…18>/oracle/` holds 2020
+comparisons and 317 literals per major as the server itself answered them, and
 `fixtures/oracle-differences.tsv` holds every cell that moved between adjacent
 majors — 533 of them, all additive. The three transitions that exist are the
 ones the release notes would have named: `numeric`'s infinities and the two
@@ -2647,11 +2647,21 @@ prints `{"z": 1, "aa": 2}`, `'{"a":1,"a":2}'` prints `{"a": 2}`, `'1e2'` prints
 `NaN`, `1 2`, `"\x41"`, `"\ud83d"`, `"\u0000"` and a string holding a raw
 newline are each refused.
 
-The behavioural half is also committed:
-`fixtures/<13–18>/oracle/comparisons.tsv` holds the server's own answer for
-every pair of the `jsonb` case list — 972 cells across the six majors, over a
-number, two spellings of one object, an array and JSON `null` — which is where
-the kind order among those four is pinned without a container of any kind.
+**The behavioural half is committed, and it reaches every branch of the order.**
+`fixtures/<13–18>/oracle/comparisons.tsv` holds the server's own answer for all
+225 ordered pairs of the `jsonb` case list — 8,316 cells across the six majors
+— over both booleans, a string, a number, JSON `null`, both empty containers,
+an array, five one-pair objects and two two-pair ones. That is where the kind
+numbering, `false < true`, a container's size deciding before any member,
+storage order differing from alphabetical, and the raw-scalar anomaly
+(`'1' > '[]'`, `'null' > '[]'`, `'1' < '[1, 2]'`) are each pinned.
+`literals.tsv` carries the output and input half over the same values:
+`{"z": 1, "aa": 2}` is its own `output`, unsorted; `{"a":1,"a":2}` prints
+`{"a": 2}`; `1e2` prints `100` and `-0.0` prints `0.0`; `{` and `01` are
+refused. The four ordering operators of every one of those cells are asserted
+against this build's comparison ([`architecture.md`](architecture.md), "The
+register against the oracle's answers"), so the **Observed** paragraph above is
+now a probe of these facts rather than their only evidence.
 
 **Scope limit.** The *output* form and the input grammar, not the wider
 question of what a `json` value looks like: `json` stores its input verbatim

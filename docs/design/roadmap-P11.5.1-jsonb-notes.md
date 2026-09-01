@@ -92,29 +92,26 @@ exists to prevent, one type over.
 **A throwaway cross-check ran the register against every committed `jsonb`
 oracle cell** — `order_key` and `compare_keys` over
 `fixtures/<13–18>/oracle/comparisons.tsv`, **972 cells across the six majors,
-zero mismatches**, the refused `{` literal included. It was deleted before the
-slice landed, for the reason 11.5's was: that file is Python-side evidence and
-a Rust reader would be a second consumer of a format whose rows mean what they
-mean only positionally. The permanent tests are hand-written with their answers
-read out of the same file.
+zero mismatches**, the refused `{` literal included. It was deleted before this
+slice landed and then rebuilt as a permanent test over every type, which is
+`M35` (`../status/history/2026-09-01.md`, "`M35`: the register is asserted
+against the oracle's answers, cell for cell").
 
-**The oracle's `jsonb` case list reaches four kinds and no container
-structure** — a number, two spellings of one object, an array and JSON `null`.
-Everything else was taken by probe against `postgres:13.23-trixie`,
-`16.15-trixie` and `18.6-trixie`, which answered identically, and is written
-into I41's **Observed** paragraph with a re-runnable recipe. The cases a probe
-was the only route to: the boolean and string kinds, an object's pair count,
-storage order against alphabetical order, and the raw-scalar anomaly.
+**The `jsonb` case list this slice checked itself against reached four kinds
+and no container structure** — a number, two spellings of one object, an array
+and JSON `null` — so the boolean and string kinds, an object's pair count,
+storage order against alphabetical order, and the raw-scalar anomaly rested on
+a probe against `postgres:13.23-trixie`, `16.15-trixie` and `18.6-trixie`,
+written into I41's **Observed** paragraph with a re-runnable recipe.
 
-**No fixture was regenerated, and that was the call.** Adding `jsonb` cases to
+**Not regenerating the fixtures was this slice's call, and it was made on a
+cost that does not exist.** The claim was that adding `jsonb` cases to
 `comparison_oracle.py` would rewrite all 109 files under `fixtures/` — the
-`\restrict` token is fresh per dump — and the phase has already earned two
-slices (11.2.2, 11.11.1) on the rule that such a diff cannot share a review
-with a library change. `oracle_register.py` stays green because splitting the
-`"json" | "jsonb"` arm in two leaves the base-name set unchanged, so nothing
-obliged one. What it costs is that the six facts above rest on a probe rather
-than on committed bytes, which is the weaker of the two kinds of evidence and
-is why the recipe is inline in I41 rather than in a session's memory.
+`\restrict` token is fresh per dump — and so could not share a review with a
+library change, the rule that earned 11.2.2 and 11.11.1. It would not:
+`generate_fixtures.py --skip-dumps` rewrites the 18 oracle TSVs and touches no
+`.sql` file at all. `M35` took the cases on that basis, and the six facts above
+are committed bytes now rather than a probe.
 
 ## What later slices inherit
 

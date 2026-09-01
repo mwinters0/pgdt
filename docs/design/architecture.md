@@ -46,6 +46,7 @@ through.
 | what PostgreSQL answers for a comparison, a new comparison case | [The comparison oracle](#the-comparison-oracle) |
 | whether two majors disagree, the committed differences file | [The cross-major differ](#the-cross-major-differ) |
 | a comparison-register arm, whether the oracle still covers one | [The register-to-oracle reconciliation](#the-register-to-oracle-reconciliation) |
+| a comparison's *answer*, or the set of cases it is knowingly wrong on | [The register against the oracle's answers](#the-register-against-the-oracles-answers) |
 | adding or changing a test | [Testing philosophy](#testing-philosophy) |
 
 ## Module map
@@ -2312,7 +2313,11 @@ padding, which was never a collation question at all.
 remembered: `scripts/oracle_register.py` fails when a register arm has no case
 answering for it (see "The register-to-oracle reconciliation"). It is the one
 reason to touch `scripts/comparison_oracle.py` while closing a row of the table
-above.
+above. What that check cannot say is whether the arm's cases reach every branch
+of the answer, so the cases are owed by whoever writes the arm — and once
+written, every one of their cells is asserted against this register (see "The
+register against the oracle's answers"), which is where a row that closes and
+then quietly stops agreeing is caught.
 
 *Rejected: a test asserting the Markdown table above and `comparison_for`
 agree row for row.* Its own failure mode is bit-rot in the doc parser, and the
@@ -3174,6 +3179,20 @@ deliberately so the file cannot be read as "these two orders never coincide".
 *is* the database's collation by definition and exists on every server, where a
 locale-named collation object exists only if `initdb` imported one.
 
+**`jsonb`'s values are one per branch of the comparison, not a sample.**
+`compareJsonbContainers` decides on the kind, then on a container's size, then
+on a scalar leaf (I41), and a case list that reaches only some of those passes
+the reconciliation below while proving nothing about the rest. So the list
+carries both booleans (`false < true` is a branch; `true` alone only ever
+reaches the kind order), a string, both empty containers, a one-pair object
+whose key sorts *after* a two-pair object's — otherwise the count and the key
+point the same way and the case is silent about which decided — and the pair
+that separates storage order from alphabetical. `{"a": "a"}` against
+`{"a": "A"}` is the string leaf, and it is the one `jsonb` pair this build
+answers differently. The grid is all ordered pairs, so each value costs
+quadratically; sixteen of them make `jsonb` about an eighth of the file, which
+is proportionate to its being the widest arm in the register.
+
 **`TypeCases.collation = None` means one thing: the register does not branch on
 the clause for this type.** It used to mean two, and the difference was
 invisible: a bare `text` or `character varying` case is on the database's
@@ -3334,9 +3353,9 @@ every cell and reads as coverage.
 **The join is existence, not branch coverage, and that is the boundary of what
 it promises.** An arm is satisfied by one case, so a row whose cases exercise
 one branch of a multi-branch comparison passes identically to one whose cases
-exercise every branch. `jsonb` is where the gap is widest:
+exercise every branch. `jsonb` is the widest arm and was the worked example:
 `compareJsonbContainers` decides on kind, then on a container's size, then on a
-scalar leaf (I41), and the arm counts as covered by cases that reach four of the
+scalar leaf (I41), and the arm counted as covered by cases reaching four of the
 six kinds and no container structure at all. Nothing mechanical closes that — a
 branch-coverage check over a `match` written in another language is not
 something this join can become — so an arm's cases are owed by whoever writes
@@ -3429,6 +3448,84 @@ time, and one case would excuse the other three.
 `the_register_answers_every_builtin_scalar` — and its completeness rests on
 discipline, which is the thing a reconciliation is for. Reading the `match`
 itself is the only mechanical enumeration available.
+
+### The register against the oracle's answers
+
+The two checks above are about which rows *exist* — arms against cases,
+majors against each other. `the_register_answers_every_committed_oracle_cell`,
+in `predicate.rs`'s unit tests, is the one that compares an answer to an
+answer: it walks every cell of `fixtures/<13–18>/oracle/comparisons.tsv` and
+puts the same question to the register through `resolve_term` and
+`Predicate::matches`, the path a `--filter` takes. 28,536 cells today.
+
+**It is the check the oracle was built for**, and until it existed the oracle's
+answers had only ever been compared by hand. Two register defects had reached
+the committed tree behind that gap, and both were found in one throwaway run of
+the walk that became this test.
+
+Four things are skipped, and each is a different fact:
+
+- **An `E<sqlstate>` cell**, which records what the server *refused*. It says
+  nothing about how the type compares, and it is why `json` — every one of
+  whose cells is `E42883` — is skipped as a server refusal rather than listed
+  as a refusal of ours.
+- **A NULL right operand**, because SQL NULL has no spelling in the filter
+  grammar at all; `IS NULL` is how a filter asks for one. A NULL *left*
+  operand is not skipped: it is the field, this build collapses unknown to
+  "excluded" for every operator, and the server's `u` is what a `WHERE` clause
+  does with the same row.
+- **`=` and `<>`.** `PredicateOp::Eq`/`Ne` compare the field as an unparsed
+  string and never reach the typed path, so asserting those two cells would be
+  asserting a different mechanism whose contract is textual by design. Nothing
+  about the register's *equality* is lost — `<=` and `>=` carry it, which is
+  why `numeric(10,2)`'s `1.5` against `1.50` is checked at all.
+- **A column the register refuses an ordering operator on**: every nested
+  shape, `xml`, an enum with no labels, a user-defined base type. That set is
+  asserted exactly, so a type that quietly stops comparing fails here rather
+  than passing as one more skip.
+
+**Both sides are put in the type's own `*_out` form**, read from
+`literals.tsv`'s `output` column — the field because that is what a dump holds,
+and the literal because a filter's value is the canonical spelling by contract.
+The oracle's non-canonical `inputs` are an input-grammar question, not a
+comparison one, and asking them here would report the filter grammar's
+deliberate strictness as an ordering disagreement.
+
+**The exception set is enumerated by pair, and it is met.** Forty
+`(type, collation, left, right)` cases are permitted to disagree; every one of
+them does disagree in the committed files, and every disagreement is one of
+them — so a case that starts agreeing fails as loudly as one that stops.
+Alongside it, a disagreeing column must *announce* its divergence through
+`OrderingDivergence`, so an exception cannot be claimed for a column the
+register tells the user it is confident about. Three populations:
+
+| Population | Why | Cases |
+|---|---|---|
+| a `jsonb` string leaf | `compareJsonbScalarValue` passes `DEFAULT_COLLATION_OID` to `varstr_cmp`, so a leaf takes the database's collation (I32, I41) | 2 |
+| `character(10)` against a value holding a byte below `0x20` | the dump writes the padded form and `bpcharcmp` strips the padding first, and the two orders disagree only under the pad space (I38) | 8 |
+| `text` under the database's own collation | glibc `en_US.utf8`: case is lower-weight than letter, an accent sorts with its base letter, and punctuation is ignored at the primary level, so `_x` sorts where `x` does | 30 |
+
+The first row is the one the `jsonb` cases were grown for: everything
+structural above the leaf — the kind order, a container's size, storage order,
+the raw-scalar wrapper — is *asserted*, which is what keeps that population two
+entries rather than the whole arm.
+
+**`character varying(10)` announces a divergence and appears in no row**, and
+that is a fact about its case list rather than about the register: its three
+values are `""`, `a` and `hello`, which glibc and `memcmp` order identically,
+so the arm's `UnknownCollation` verdict is correct and unexercised. The list is
+what disagrees, not what could.
+
+*Rejected: permitting any disagreement on a column that announces a
+divergence.* Far smaller and churn-free, and it would have let a `jsonb`
+structural regression hide behind an announcement that is only ever about the
+leaves. The pair list churns only when the apparatus's collation moves, which
+`meta.tsv`'s `default_collversion` already makes a reported event.
+
+*Rejected: living in `tests/` beside the other fixture-driven suites.* The
+question is what the register answers, which is `resolve_term`'s and
+`compare_keys`', and neither is public API. Exporting them to be tested would
+widen the surface for the test's convenience.
 
 ## Testing philosophy
 

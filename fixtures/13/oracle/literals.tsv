@@ -170,13 +170,27 @@ json	{"a": 1}	ok	{"a": 1}
 json	null	ok	null
 json	\N	ok	\N
 json	{a:1}	E22P02	\N
+jsonb	null	ok	null
+jsonb	false	ok	false
+jsonb	true	ok	true
 jsonb	1	ok	1
+jsonb	"a"	ok	"a"
+jsonb	[]	ok	[]
+jsonb	[1, 2]	ok	[1, 2]
+jsonb	{}	ok	{}
 jsonb	{"a": 1}	ok	{"a": 1}
 jsonb	{"a":1}	ok	{"a": 1}
-jsonb	[1, 2]	ok	[1, 2]
-jsonb	null	ok	null
+jsonb	{"a": "a"}	ok	{"a": "a"}
+jsonb	{"a": "A"}	ok	{"a": "A"}
+jsonb	{"y": 3, "zz": 4}	ok	{"y": 3, "zz": 4}
+jsonb	{"z": 1, "aa": 2}	ok	{"z": 1, "aa": 2}
+jsonb	{"zzz": 1}	ok	{"zzz": 1}
 jsonb	\N	ok	\N
 jsonb	{	E22P02	\N
+jsonb	01	E22P02	\N
+jsonb	1e2	ok	100
+jsonb	-0.0	ok	0.0
+jsonb	{"a":1,"a":2}	ok	{"a": 2}
 xml	<a/>	ok	<a/>
 xml	<b/>	ok	<b/>
 xml	\N	ok	\N

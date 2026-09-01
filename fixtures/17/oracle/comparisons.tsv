@@ -1265,44 +1265,272 @@ json	\N	null	\N	E42883	E42883	E42883	E42883	E42883	E42883
 json	\N	\N	\N	E42883	E42883	E42883	E42883	E42883	E42883
 json	{a:1}	1	\N	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
 json	1	{a:1}	\N	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
-jsonb	1	1	\N	f	t	f	t	t	f
-jsonb	1	{"a": 1}	\N	t	t	f	f	f	t
-jsonb	1	{"a":1}	\N	t	t	f	f	f	t
-jsonb	1	[1, 2]	\N	t	t	f	f	f	t
-jsonb	1	null	\N	f	f	t	t	f	t
-jsonb	1	\N	\N	u	u	u	u	u	u
-jsonb	{"a": 1}	1	\N	f	f	t	t	f	t
-jsonb	{"a": 1}	{"a": 1}	\N	f	t	f	t	t	f
-jsonb	{"a": 1}	{"a":1}	\N	f	t	f	t	t	f
-jsonb	{"a": 1}	[1, 2]	\N	f	f	t	t	f	t
-jsonb	{"a": 1}	null	\N	f	f	t	t	f	t
-jsonb	{"a": 1}	\N	\N	u	u	u	u	u	u
-jsonb	{"a":1}	1	\N	f	f	t	t	f	t
-jsonb	{"a":1}	{"a": 1}	\N	f	t	f	t	t	f
-jsonb	{"a":1}	{"a":1}	\N	f	t	f	t	t	f
-jsonb	{"a":1}	[1, 2]	\N	f	f	t	t	f	t
-jsonb	{"a":1}	null	\N	f	f	t	t	f	t
-jsonb	{"a":1}	\N	\N	u	u	u	u	u	u
-jsonb	[1, 2]	1	\N	f	f	t	t	f	t
-jsonb	[1, 2]	{"a": 1}	\N	t	t	f	f	f	t
-jsonb	[1, 2]	{"a":1}	\N	t	t	f	f	f	t
-jsonb	[1, 2]	[1, 2]	\N	f	t	f	t	t	f
-jsonb	[1, 2]	null	\N	f	f	t	t	f	t
-jsonb	[1, 2]	\N	\N	u	u	u	u	u	u
+jsonb	null	null	\N	f	t	f	t	t	f
+jsonb	null	false	\N	t	t	f	f	f	t
+jsonb	null	true	\N	t	t	f	f	f	t
 jsonb	null	1	\N	t	t	f	f	f	t
+jsonb	null	"a"	\N	t	t	f	f	f	t
+jsonb	null	[]	\N	f	f	t	t	f	t
+jsonb	null	[1, 2]	\N	t	t	f	f	f	t
+jsonb	null	{}	\N	t	t	f	f	f	t
 jsonb	null	{"a": 1}	\N	t	t	f	f	f	t
 jsonb	null	{"a":1}	\N	t	t	f	f	f	t
-jsonb	null	[1, 2]	\N	t	t	f	f	f	t
-jsonb	null	null	\N	f	t	f	t	t	f
+jsonb	null	{"a": "a"}	\N	t	t	f	f	f	t
+jsonb	null	{"a": "A"}	\N	t	t	f	f	f	t
+jsonb	null	{"y": 3, "zz": 4}	\N	t	t	f	f	f	t
+jsonb	null	{"z": 1, "aa": 2}	\N	t	t	f	f	f	t
+jsonb	null	{"zzz": 1}	\N	t	t	f	f	f	t
 jsonb	null	\N	\N	u	u	u	u	u	u
+jsonb	false	null	\N	f	f	t	t	f	t
+jsonb	false	false	\N	f	t	f	t	t	f
+jsonb	false	true	\N	t	t	f	f	f	t
+jsonb	false	1	\N	f	f	t	t	f	t
+jsonb	false	"a"	\N	f	f	t	t	f	t
+jsonb	false	[]	\N	f	f	t	t	f	t
+jsonb	false	[1, 2]	\N	t	t	f	f	f	t
+jsonb	false	{}	\N	t	t	f	f	f	t
+jsonb	false	{"a": 1}	\N	t	t	f	f	f	t
+jsonb	false	{"a":1}	\N	t	t	f	f	f	t
+jsonb	false	{"a": "a"}	\N	t	t	f	f	f	t
+jsonb	false	{"a": "A"}	\N	t	t	f	f	f	t
+jsonb	false	{"y": 3, "zz": 4}	\N	t	t	f	f	f	t
+jsonb	false	{"z": 1, "aa": 2}	\N	t	t	f	f	f	t
+jsonb	false	{"zzz": 1}	\N	t	t	f	f	f	t
+jsonb	false	\N	\N	u	u	u	u	u	u
+jsonb	true	null	\N	f	f	t	t	f	t
+jsonb	true	false	\N	f	f	t	t	f	t
+jsonb	true	true	\N	f	t	f	t	t	f
+jsonb	true	1	\N	f	f	t	t	f	t
+jsonb	true	"a"	\N	f	f	t	t	f	t
+jsonb	true	[]	\N	f	f	t	t	f	t
+jsonb	true	[1, 2]	\N	t	t	f	f	f	t
+jsonb	true	{}	\N	t	t	f	f	f	t
+jsonb	true	{"a": 1}	\N	t	t	f	f	f	t
+jsonb	true	{"a":1}	\N	t	t	f	f	f	t
+jsonb	true	{"a": "a"}	\N	t	t	f	f	f	t
+jsonb	true	{"a": "A"}	\N	t	t	f	f	f	t
+jsonb	true	{"y": 3, "zz": 4}	\N	t	t	f	f	f	t
+jsonb	true	{"z": 1, "aa": 2}	\N	t	t	f	f	f	t
+jsonb	true	{"zzz": 1}	\N	t	t	f	f	f	t
+jsonb	true	\N	\N	u	u	u	u	u	u
+jsonb	1	null	\N	f	f	t	t	f	t
+jsonb	1	false	\N	t	t	f	f	f	t
+jsonb	1	true	\N	t	t	f	f	f	t
+jsonb	1	1	\N	f	t	f	t	t	f
+jsonb	1	"a"	\N	f	f	t	t	f	t
+jsonb	1	[]	\N	f	f	t	t	f	t
+jsonb	1	[1, 2]	\N	t	t	f	f	f	t
+jsonb	1	{}	\N	t	t	f	f	f	t
+jsonb	1	{"a": 1}	\N	t	t	f	f	f	t
+jsonb	1	{"a":1}	\N	t	t	f	f	f	t
+jsonb	1	{"a": "a"}	\N	t	t	f	f	f	t
+jsonb	1	{"a": "A"}	\N	t	t	f	f	f	t
+jsonb	1	{"y": 3, "zz": 4}	\N	t	t	f	f	f	t
+jsonb	1	{"z": 1, "aa": 2}	\N	t	t	f	f	f	t
+jsonb	1	{"zzz": 1}	\N	t	t	f	f	f	t
+jsonb	1	\N	\N	u	u	u	u	u	u
+jsonb	"a"	null	\N	f	f	t	t	f	t
+jsonb	"a"	false	\N	t	t	f	f	f	t
+jsonb	"a"	true	\N	t	t	f	f	f	t
+jsonb	"a"	1	\N	t	t	f	f	f	t
+jsonb	"a"	"a"	\N	f	t	f	t	t	f
+jsonb	"a"	[]	\N	f	f	t	t	f	t
+jsonb	"a"	[1, 2]	\N	t	t	f	f	f	t
+jsonb	"a"	{}	\N	t	t	f	f	f	t
+jsonb	"a"	{"a": 1}	\N	t	t	f	f	f	t
+jsonb	"a"	{"a":1}	\N	t	t	f	f	f	t
+jsonb	"a"	{"a": "a"}	\N	t	t	f	f	f	t
+jsonb	"a"	{"a": "A"}	\N	t	t	f	f	f	t
+jsonb	"a"	{"y": 3, "zz": 4}	\N	t	t	f	f	f	t
+jsonb	"a"	{"z": 1, "aa": 2}	\N	t	t	f	f	f	t
+jsonb	"a"	{"zzz": 1}	\N	t	t	f	f	f	t
+jsonb	"a"	\N	\N	u	u	u	u	u	u
+jsonb	[]	null	\N	t	t	f	f	f	t
+jsonb	[]	false	\N	t	t	f	f	f	t
+jsonb	[]	true	\N	t	t	f	f	f	t
+jsonb	[]	1	\N	t	t	f	f	f	t
+jsonb	[]	"a"	\N	t	t	f	f	f	t
+jsonb	[]	[]	\N	f	t	f	t	t	f
+jsonb	[]	[1, 2]	\N	t	t	f	f	f	t
+jsonb	[]	{}	\N	t	t	f	f	f	t
+jsonb	[]	{"a": 1}	\N	t	t	f	f	f	t
+jsonb	[]	{"a":1}	\N	t	t	f	f	f	t
+jsonb	[]	{"a": "a"}	\N	t	t	f	f	f	t
+jsonb	[]	{"a": "A"}	\N	t	t	f	f	f	t
+jsonb	[]	{"y": 3, "zz": 4}	\N	t	t	f	f	f	t
+jsonb	[]	{"z": 1, "aa": 2}	\N	t	t	f	f	f	t
+jsonb	[]	{"zzz": 1}	\N	t	t	f	f	f	t
+jsonb	[]	\N	\N	u	u	u	u	u	u
+jsonb	[1, 2]	null	\N	f	f	t	t	f	t
+jsonb	[1, 2]	false	\N	f	f	t	t	f	t
+jsonb	[1, 2]	true	\N	f	f	t	t	f	t
+jsonb	[1, 2]	1	\N	f	f	t	t	f	t
+jsonb	[1, 2]	"a"	\N	f	f	t	t	f	t
+jsonb	[1, 2]	[]	\N	f	f	t	t	f	t
+jsonb	[1, 2]	[1, 2]	\N	f	t	f	t	t	f
+jsonb	[1, 2]	{}	\N	t	t	f	f	f	t
+jsonb	[1, 2]	{"a": 1}	\N	t	t	f	f	f	t
+jsonb	[1, 2]	{"a":1}	\N	t	t	f	f	f	t
+jsonb	[1, 2]	{"a": "a"}	\N	t	t	f	f	f	t
+jsonb	[1, 2]	{"a": "A"}	\N	t	t	f	f	f	t
+jsonb	[1, 2]	{"y": 3, "zz": 4}	\N	t	t	f	f	f	t
+jsonb	[1, 2]	{"z": 1, "aa": 2}	\N	t	t	f	f	f	t
+jsonb	[1, 2]	{"zzz": 1}	\N	t	t	f	f	f	t
+jsonb	[1, 2]	\N	\N	u	u	u	u	u	u
+jsonb	{}	null	\N	f	f	t	t	f	t
+jsonb	{}	false	\N	f	f	t	t	f	t
+jsonb	{}	true	\N	f	f	t	t	f	t
+jsonb	{}	1	\N	f	f	t	t	f	t
+jsonb	{}	"a"	\N	f	f	t	t	f	t
+jsonb	{}	[]	\N	f	f	t	t	f	t
+jsonb	{}	[1, 2]	\N	f	f	t	t	f	t
+jsonb	{}	{}	\N	f	t	f	t	t	f
+jsonb	{}	{"a": 1}	\N	t	t	f	f	f	t
+jsonb	{}	{"a":1}	\N	t	t	f	f	f	t
+jsonb	{}	{"a": "a"}	\N	t	t	f	f	f	t
+jsonb	{}	{"a": "A"}	\N	t	t	f	f	f	t
+jsonb	{}	{"y": 3, "zz": 4}	\N	t	t	f	f	f	t
+jsonb	{}	{"z": 1, "aa": 2}	\N	t	t	f	f	f	t
+jsonb	{}	{"zzz": 1}	\N	t	t	f	f	f	t
+jsonb	{}	\N	\N	u	u	u	u	u	u
+jsonb	{"a": 1}	null	\N	f	f	t	t	f	t
+jsonb	{"a": 1}	false	\N	f	f	t	t	f	t
+jsonb	{"a": 1}	true	\N	f	f	t	t	f	t
+jsonb	{"a": 1}	1	\N	f	f	t	t	f	t
+jsonb	{"a": 1}	"a"	\N	f	f	t	t	f	t
+jsonb	{"a": 1}	[]	\N	f	f	t	t	f	t
+jsonb	{"a": 1}	[1, 2]	\N	f	f	t	t	f	t
+jsonb	{"a": 1}	{}	\N	f	f	t	t	f	t
+jsonb	{"a": 1}	{"a": 1}	\N	f	t	f	t	t	f
+jsonb	{"a": 1}	{"a":1}	\N	f	t	f	t	t	f
+jsonb	{"a": 1}	{"a": "a"}	\N	f	f	t	t	f	t
+jsonb	{"a": 1}	{"a": "A"}	\N	f	f	t	t	f	t
+jsonb	{"a": 1}	{"y": 3, "zz": 4}	\N	t	t	f	f	f	t
+jsonb	{"a": 1}	{"z": 1, "aa": 2}	\N	t	t	f	f	f	t
+jsonb	{"a": 1}	{"zzz": 1}	\N	t	t	f	f	f	t
+jsonb	{"a": 1}	\N	\N	u	u	u	u	u	u
+jsonb	{"a":1}	null	\N	f	f	t	t	f	t
+jsonb	{"a":1}	false	\N	f	f	t	t	f	t
+jsonb	{"a":1}	true	\N	f	f	t	t	f	t
+jsonb	{"a":1}	1	\N	f	f	t	t	f	t
+jsonb	{"a":1}	"a"	\N	f	f	t	t	f	t
+jsonb	{"a":1}	[]	\N	f	f	t	t	f	t
+jsonb	{"a":1}	[1, 2]	\N	f	f	t	t	f	t
+jsonb	{"a":1}	{}	\N	f	f	t	t	f	t
+jsonb	{"a":1}	{"a": 1}	\N	f	t	f	t	t	f
+jsonb	{"a":1}	{"a":1}	\N	f	t	f	t	t	f
+jsonb	{"a":1}	{"a": "a"}	\N	f	f	t	t	f	t
+jsonb	{"a":1}	{"a": "A"}	\N	f	f	t	t	f	t
+jsonb	{"a":1}	{"y": 3, "zz": 4}	\N	t	t	f	f	f	t
+jsonb	{"a":1}	{"z": 1, "aa": 2}	\N	t	t	f	f	f	t
+jsonb	{"a":1}	{"zzz": 1}	\N	t	t	f	f	f	t
+jsonb	{"a":1}	\N	\N	u	u	u	u	u	u
+jsonb	{"a": "a"}	null	\N	f	f	t	t	f	t
+jsonb	{"a": "a"}	false	\N	f	f	t	t	f	t
+jsonb	{"a": "a"}	true	\N	f	f	t	t	f	t
+jsonb	{"a": "a"}	1	\N	f	f	t	t	f	t
+jsonb	{"a": "a"}	"a"	\N	f	f	t	t	f	t
+jsonb	{"a": "a"}	[]	\N	f	f	t	t	f	t
+jsonb	{"a": "a"}	[1, 2]	\N	f	f	t	t	f	t
+jsonb	{"a": "a"}	{}	\N	f	f	t	t	f	t
+jsonb	{"a": "a"}	{"a": 1}	\N	t	t	f	f	f	t
+jsonb	{"a": "a"}	{"a":1}	\N	t	t	f	f	f	t
+jsonb	{"a": "a"}	{"a": "a"}	\N	f	t	f	t	t	f
+jsonb	{"a": "a"}	{"a": "A"}	\N	t	t	f	f	f	t
+jsonb	{"a": "a"}	{"y": 3, "zz": 4}	\N	t	t	f	f	f	t
+jsonb	{"a": "a"}	{"z": 1, "aa": 2}	\N	t	t	f	f	f	t
+jsonb	{"a": "a"}	{"zzz": 1}	\N	t	t	f	f	f	t
+jsonb	{"a": "a"}	\N	\N	u	u	u	u	u	u
+jsonb	{"a": "A"}	null	\N	f	f	t	t	f	t
+jsonb	{"a": "A"}	false	\N	f	f	t	t	f	t
+jsonb	{"a": "A"}	true	\N	f	f	t	t	f	t
+jsonb	{"a": "A"}	1	\N	f	f	t	t	f	t
+jsonb	{"a": "A"}	"a"	\N	f	f	t	t	f	t
+jsonb	{"a": "A"}	[]	\N	f	f	t	t	f	t
+jsonb	{"a": "A"}	[1, 2]	\N	f	f	t	t	f	t
+jsonb	{"a": "A"}	{}	\N	f	f	t	t	f	t
+jsonb	{"a": "A"}	{"a": 1}	\N	t	t	f	f	f	t
+jsonb	{"a": "A"}	{"a":1}	\N	t	t	f	f	f	t
+jsonb	{"a": "A"}	{"a": "a"}	\N	f	f	t	t	f	t
+jsonb	{"a": "A"}	{"a": "A"}	\N	f	t	f	t	t	f
+jsonb	{"a": "A"}	{"y": 3, "zz": 4}	\N	t	t	f	f	f	t
+jsonb	{"a": "A"}	{"z": 1, "aa": 2}	\N	t	t	f	f	f	t
+jsonb	{"a": "A"}	{"zzz": 1}	\N	t	t	f	f	f	t
+jsonb	{"a": "A"}	\N	\N	u	u	u	u	u	u
+jsonb	{"y": 3, "zz": 4}	null	\N	f	f	t	t	f	t
+jsonb	{"y": 3, "zz": 4}	false	\N	f	f	t	t	f	t
+jsonb	{"y": 3, "zz": 4}	true	\N	f	f	t	t	f	t
+jsonb	{"y": 3, "zz": 4}	1	\N	f	f	t	t	f	t
+jsonb	{"y": 3, "zz": 4}	"a"	\N	f	f	t	t	f	t
+jsonb	{"y": 3, "zz": 4}	[]	\N	f	f	t	t	f	t
+jsonb	{"y": 3, "zz": 4}	[1, 2]	\N	f	f	t	t	f	t
+jsonb	{"y": 3, "zz": 4}	{}	\N	f	f	t	t	f	t
+jsonb	{"y": 3, "zz": 4}	{"a": 1}	\N	f	f	t	t	f	t
+jsonb	{"y": 3, "zz": 4}	{"a":1}	\N	f	f	t	t	f	t
+jsonb	{"y": 3, "zz": 4}	{"a": "a"}	\N	f	f	t	t	f	t
+jsonb	{"y": 3, "zz": 4}	{"a": "A"}	\N	f	f	t	t	f	t
+jsonb	{"y": 3, "zz": 4}	{"y": 3, "zz": 4}	\N	f	t	f	t	t	f
+jsonb	{"y": 3, "zz": 4}	{"z": 1, "aa": 2}	\N	t	t	f	f	f	t
+jsonb	{"y": 3, "zz": 4}	{"zzz": 1}	\N	f	f	t	t	f	t
+jsonb	{"y": 3, "zz": 4}	\N	\N	u	u	u	u	u	u
+jsonb	{"z": 1, "aa": 2}	null	\N	f	f	t	t	f	t
+jsonb	{"z": 1, "aa": 2}	false	\N	f	f	t	t	f	t
+jsonb	{"z": 1, "aa": 2}	true	\N	f	f	t	t	f	t
+jsonb	{"z": 1, "aa": 2}	1	\N	f	f	t	t	f	t
+jsonb	{"z": 1, "aa": 2}	"a"	\N	f	f	t	t	f	t
+jsonb	{"z": 1, "aa": 2}	[]	\N	f	f	t	t	f	t
+jsonb	{"z": 1, "aa": 2}	[1, 2]	\N	f	f	t	t	f	t
+jsonb	{"z": 1, "aa": 2}	{}	\N	f	f	t	t	f	t
+jsonb	{"z": 1, "aa": 2}	{"a": 1}	\N	f	f	t	t	f	t
+jsonb	{"z": 1, "aa": 2}	{"a":1}	\N	f	f	t	t	f	t
+jsonb	{"z": 1, "aa": 2}	{"a": "a"}	\N	f	f	t	t	f	t
+jsonb	{"z": 1, "aa": 2}	{"a": "A"}	\N	f	f	t	t	f	t
+jsonb	{"z": 1, "aa": 2}	{"y": 3, "zz": 4}	\N	f	f	t	t	f	t
+jsonb	{"z": 1, "aa": 2}	{"z": 1, "aa": 2}	\N	f	t	f	t	t	f
+jsonb	{"z": 1, "aa": 2}	{"zzz": 1}	\N	f	f	t	t	f	t
+jsonb	{"z": 1, "aa": 2}	\N	\N	u	u	u	u	u	u
+jsonb	{"zzz": 1}	null	\N	f	f	t	t	f	t
+jsonb	{"zzz": 1}	false	\N	f	f	t	t	f	t
+jsonb	{"zzz": 1}	true	\N	f	f	t	t	f	t
+jsonb	{"zzz": 1}	1	\N	f	f	t	t	f	t
+jsonb	{"zzz": 1}	"a"	\N	f	f	t	t	f	t
+jsonb	{"zzz": 1}	[]	\N	f	f	t	t	f	t
+jsonb	{"zzz": 1}	[1, 2]	\N	f	f	t	t	f	t
+jsonb	{"zzz": 1}	{}	\N	f	f	t	t	f	t
+jsonb	{"zzz": 1}	{"a": 1}	\N	f	f	t	t	f	t
+jsonb	{"zzz": 1}	{"a":1}	\N	f	f	t	t	f	t
+jsonb	{"zzz": 1}	{"a": "a"}	\N	f	f	t	t	f	t
+jsonb	{"zzz": 1}	{"a": "A"}	\N	f	f	t	t	f	t
+jsonb	{"zzz": 1}	{"y": 3, "zz": 4}	\N	t	t	f	f	f	t
+jsonb	{"zzz": 1}	{"z": 1, "aa": 2}	\N	t	t	f	f	f	t
+jsonb	{"zzz": 1}	{"zzz": 1}	\N	f	t	f	t	t	f
+jsonb	{"zzz": 1}	\N	\N	u	u	u	u	u	u
+jsonb	\N	null	\N	u	u	u	u	u	u
+jsonb	\N	false	\N	u	u	u	u	u	u
+jsonb	\N	true	\N	u	u	u	u	u	u
 jsonb	\N	1	\N	u	u	u	u	u	u
+jsonb	\N	"a"	\N	u	u	u	u	u	u
+jsonb	\N	[]	\N	u	u	u	u	u	u
+jsonb	\N	[1, 2]	\N	u	u	u	u	u	u
+jsonb	\N	{}	\N	u	u	u	u	u	u
 jsonb	\N	{"a": 1}	\N	u	u	u	u	u	u
 jsonb	\N	{"a":1}	\N	u	u	u	u	u	u
-jsonb	\N	[1, 2]	\N	u	u	u	u	u	u
-jsonb	\N	null	\N	u	u	u	u	u	u
+jsonb	\N	{"a": "a"}	\N	u	u	u	u	u	u
+jsonb	\N	{"a": "A"}	\N	u	u	u	u	u	u
+jsonb	\N	{"y": 3, "zz": 4}	\N	u	u	u	u	u	u
+jsonb	\N	{"z": 1, "aa": 2}	\N	u	u	u	u	u	u
+jsonb	\N	{"zzz": 1}	\N	u	u	u	u	u	u
 jsonb	\N	\N	\N	u	u	u	u	u	u
-jsonb	{	1	\N	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
-jsonb	1	{	\N	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+jsonb	{	null	\N	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+jsonb	null	{	\N	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+jsonb	01	null	\N	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+jsonb	null	01	\N	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+jsonb	1e2	null	\N	f	f	t	t	f	t
+jsonb	null	1e2	\N	t	t	f	f	f	t
+jsonb	-0.0	null	\N	f	f	t	t	f	t
+jsonb	null	-0.0	\N	t	t	f	f	f	t
+jsonb	{"a":1,"a":2}	null	\N	f	f	t	t	f	t
+jsonb	null	{"a":1,"a":2}	\N	t	t	f	f	f	t
 xml	<a/>	<a/>	\N	E42883	E42883	E42883	E42883	E42883	E42883
 xml	<a/>	<b/>	\N	E42883	E42883	E42883	E42883	E42883	E42883
 xml	<a/>	\N	\N	E42883	E42883	E42883	E42883	E42883	E42883
