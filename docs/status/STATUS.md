@@ -389,25 +389,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-### The oracle-answer test's exception set is enumerated by pair, not by divergence class
-
-`M35`'s test permits a disagreement only on forty named
-`(type, collation, left, right)` cases, and requires every one of them to
-actually disagree. The alternative — permit any disagreement on a column whose
-plan announces an `OrderingDivergence`, which is what the register already
-says — is four lines instead of forty and never churns.
-
-**Why it was made this way.** `jsonb` announces `JsonbStringCollation`
-unconditionally, and that announcement is only ever about the string leaves; a
-structural regression in `compareJsonbContainers`' walk would hide behind it
-completely, and closing exactly that hole is what `M35` was admitted for. Both
-halves are kept: the pair list bounds *where*, and the announcement check
-bounds *which columns may claim an exception at all*.
-
-**What would change if reconsidered.** Thirty of the forty are `text` under
-glibc's `en_US.utf8`, and they are the entries that would move if the fixture
-images' collation ever did — a reported event (`meta.tsv`'s
-`default_collversion`, which `oracle_differences.py` guards), but a re-edit of
-a 40-line table rather than nothing. Narrowing the pair list to `jsonb` alone
-and letting the two text-shaped populations pass by announcement would keep the
-property that matters and drop that churn.

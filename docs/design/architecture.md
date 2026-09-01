@@ -3510,17 +3510,45 @@ structural above the leaf — the kind order, a container's size, storage order,
 the raw-scalar wrapper — is *asserted*, which is what keeps that population two
 entries rather than the whole arm.
 
+**Met means met somewhere in the walk.** The key is the case, unioned over the
+six majors and the four operators, so an entry satisfied by one major alone —
+or by `<` while `>=` agrees — still counts as met. All thirty-eight non-`jsonb`
+entries in fact disagree in every major under every operator; asserting that is
+`M36` in the out-of-band ledger ([`roadmap.md`](roadmap.md), "Out-of-band
+work").
+
 **`character varying(10)` announces a divergence and appears in no row**, and
 that is a fact about its case list rather than about the register: its three
 values are `""`, `a` and `hello`, which glibc and `memcmp` order identically,
 so the arm's `UnknownCollation` verdict is correct and unexercised. The list is
 what disagrees, not what could.
 
+**The pairing is one-directional on purpose.** A disagreement must be
+announced; an announcement need not disagree, and no assert asks it to. It
+could not: `json` announces `AsText` with every one of its cells `E42883`, and
+`character varying(10)` announces `UnknownCollation` over 264 asserted cells
+with no disagreement among them — both honest. Over-announcement is caught by
+reading the register table in "Ordering operators compare typed" as a table,
+not here.
+
 *Rejected: permitting any disagreement on a column that announces a
-divergence.* Far smaller and churn-free, and it would have let a `jsonb`
-structural regression hide behind an announcement that is only ever about the
-leaves. The pair list churns only when the apparatus's collation moves, which
-`meta.tsv`'s `default_collversion` already makes a reported event.
+divergence, in place of the pair list.* Four lines against forty, churn-free,
+and it is only what the register already says — but the two text-shaped
+populations are asked **twice**. `text` and `character(10)` each get the same
+pair set under `COLLATE "C"` and under the database's own collation, and
+`collated_text` returns the same bytewise comparison for both, so their
+`default`-collation cells assert nothing about this build's comparator that the
+`C` twin does not already assert. What those cells carry is *which* pairs glibc
+puts in a different order — the pair list itself. Permitting them by
+announcement therefore makes 6,432 of the 28,536 cells inert while they keep
+running, and the `asserted > 25_000` floor cannot see it, since it counts cells
+walked rather than cells that constrain; extending the same rule to `jsonb`
+reaches 11,976 and reopens exactly the hole this test was built to close, since
+`JsonbStringCollation` is announced unconditionally and is only ever about the
+leaves. What it would buy off is one 40-line block re-edited when the fixture
+images' collation moves — a reported event, `meta.tsv` committing `datcollate`
+and `default_collversion` beside the answers, and one that moves the block as a
+block, since all six majors run glibc 2.41 off a single base image.
 
 *Rejected: living in `tests/` beside the other fixture-driven suites.* The
 question is what the register answers, which is `resolve_term`'s and
