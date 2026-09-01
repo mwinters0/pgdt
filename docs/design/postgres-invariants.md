@@ -2818,3 +2818,115 @@ grep -n -B4 -A6 'carry over the collation version' \
 grep -n -B2 -A4 'nondeterministic collations not supported' \
   /mnt/wd12t/upstream/postgres/release-v<N>/src/backend/commands/collationcmds.c
 ```
+
+---
+
+## I43 — Three collations order by `memcmp` on every server, whatever the provider version
+
+**Claim.** `varstr_cmp` — the one function all text ordering funnels through —
+short-circuits to `memcmp` (then shorter-first) whenever the collation's
+`collate_is_c` flag is set, without consulting libc or ICU at all. Three
+collation shapes set it, and their ordering is therefore **independent of the
+server's libc version, ICU version, platform and major**:
+
+- **The libc provider with `collcollate` exactly `C` or `POSIX`.** Not
+  `C.UTF-8`, which is a locale name like any other and goes through
+  `strcoll_l`.
+- **The builtin provider, unconditionally** (PG 17+). `C`, `C.UTF-8` and
+  `PG_UNICODE_FAST` (PG 18) differ from each other only in *ctype*; all three
+  order by code point.
+- **`pg_catalog."ucs_basic"`**, in every supported major — though by two
+  different routes, which is exactly the kind of drift this register exists to
+  catch.
+
+This is the **forward** direction only: these order bytewise. It makes no claim
+that nothing else does — glibc's `C.UTF-8` happens to sort by code point too,
+and that is a fact about one libc, not a guarantee (see the scope limit).
+
+**Proof.** The short-circuit is `varstr_cmp` in
+`src/backend/utils/adt/varlena.c`:
+
+```c
+if (mylocale->collate_is_c)
+{
+    result = memcmp(arg1, arg2, Min(len1, len2));
+    if ((result == 0) && (len1 != len2))
+        result = (len1 < len2) ? -1 : 1;
+}
+```
+
+The flag is set in one place per provider. In v18 it is
+`src/backend/utils/adt/pg_locale_libc.c`'s `create_pg_locale_libc`:
+
+```c
+result->collate_is_c = (strcmp(collate, "C") == 0) ||
+    (strcmp(collate, "POSIX") == 0);
+```
+
+and `pg_locale_builtin.c`'s `create_pg_locale_builtin`, which does not test the
+locale at all:
+
+```c
+result->provider = COLLPROVIDER_BUILTIN;
+result->deterministic = true;
+result->collate_is_c = true;
+result->ctype_is_c = (strcmp(locstr, "C") == 0);
+```
+
+Through v17 both live in one `pg_locale.c`, in `lookup_collation_cache`, with
+the same tests: a `COLLPROVIDER_BUILTIN` branch setting `collate_is_c = true`
+(v17 only — the provider does not exist before it), a `COLLPROVIDER_LIBC`
+branch testing `C`/`POSIX`, and an `else` setting it false. v13 and v14 do not
+branch on provider at all and apply the `C`/`POSIX` test to `collcollate`
+directly.
+
+`ucs_basic` is created two ways across the range, and both are `C`:
+
+| majors | where | how |
+|---|---|---|
+| 13, 14, 15 | `src/bin/initdb/initdb.c` | an `INSERT` into `pg_collation` with `'C', 'C'` as `collcollate`/`collctype` |
+| 16 | `src/include/catalog/pg_collation.dat` | `collprovider => 'c', collcollate => 'C', collctype => 'C'` |
+| 17, 18 | `src/include/catalog/pg_collation.dat` | `collprovider => 'b', colllocale => 'C'` |
+
+Verified in the v13.23, v14.24, v15.19, v16.15, v17.11 and v18.6 worktrees.
+
+**Scope limit.** Ordering only. `ctype_is_c` is a separate flag and the builtin
+provider's three locales differ precisely there, so nothing here licenses a
+claim about `upper`/`lower`/`initcap` or pattern matching. It says nothing
+about *equality* either, which for a deterministic collation never consults the
+collation at all and for a non-deterministic one does (I42) — and the builtin
+and libc providers are always deterministic, so no shape named here is
+affected. And it is not a claim that a collation absent from this list is
+non-bytewise: glibc 2.41's `C.UTF-8` orders by code point in fact, which pgdq
+must not act on, because it is a property of that libc and the file names only
+the collation.
+
+**Consequence.** These are the collations pgdq can order **without knowing
+anything about the server that wrote the dump** — no libc version, no ICU
+version, no platform. That is what the comparison register's *Agrees, on every
+server* verdict means and the only thing that earns it; every other collation's
+order is a function of the source server's provider version, which no plain
+dump carries (I32, I42). The register reaches the verdict from the collation's
+**name** rather than from this invariant, and so under-claims it — deliberately,
+and the reasoning is beside the mechanism
+([`architecture.md`](architecture.md), "Ordering operators compare typed").
+
+**Relied on by.** The comparison register's *Agrees* verdict for `COLLATE "C"`,
+`COLLATE "POSIX"` and a bare `name` column
+([`architecture.md`](architecture.md), "Ordering operators compare typed"), and
+I37's "a bare `name` column is bytewise on every server", which asserts this
+without proving it. The roadmap's Future item "Collation-aware comparison"
+names this set as the half that needs no environment.
+
+**Re-verify.**
+
+```sh
+grep -n -A6 'collate_is_c' \
+  /mnt/wd12t/upstream/postgres/release-v<N>/src/backend/utils/adt/varlena.c
+# v18+: two files; v17 and earlier: pg_locale.c's lookup_collation_cache
+grep -rn 'collate_is_c = ' \
+  /mnt/wd12t/upstream/postgres/release-v<N>/src/backend/utils/adt/
+grep -rn -A2 'ucs_basic' \
+  /mnt/wd12t/upstream/postgres/release-v<N>/src/include/catalog/pg_collation.dat \
+  /mnt/wd12t/upstream/postgres/release-v<N>/src/bin/initdb/initdb.c
+```

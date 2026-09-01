@@ -758,33 +758,74 @@ this section when it acquires a phase number, not when it acquires a design.
   --disable-triggers`), which by I31's scope limit is the only combination that
   emits anything.
 
-- **Collation-aware comparison, libc first and ICU after it.** A column that
-  states a collation other than `C`/`POSIX` is ordered bytewise today, so
-  `<`/`>` return a row set the server would not (deficiency `KD7`); the fix is a
-  comparison per named collation. **Complete collation support is the goal, and
-  that includes ICU** — both providers, whatever the clause names. What is
-  staged is the order, not the ambition: the MVP is the libc pair the oracle
-  already asks every text pair under, `C` and `en_US.utf8`
-  ([`architecture.md`](architecture.md), "Ordering operators compare typed"), so
-  the first increment lands against evidence that is already committed.
+- **Collation-aware comparison: the `S`-irrelevant set widened, then the
+  remainder deferred to an environment.** Call the server that wrote the dump
+  `S` and the environment pgdq runs in `E`. A column that states a collation
+  other than `C`/`POSIX` is ordered bytewise today, so `<`/`>` return a row set
+  the server would not (deficiency `KD7`). The partition that shapes the fix is
+  exhaustive, which is why it is two increments and not a queue of collations:
 
-  **ICU is post-MVP because it costs the apparatus something libc does not.**
-  `und-x-icu`'s `collversion` reads `153.128` on `13.23-alpine` against
-  `153.136` on `18.6-alpine`, so oracle cases under an ICU collation need a
-  guard the libc cases do not — the reason the comparison oracle excludes ICU
-  today. That guard is part of ICU's price and should be designed with it, not
-  bolted onto the libc increment. **Non-deterministic** ICU collations are a
-  second, separable piece: they change what `=` means rather than what `<`
-  means, a plain dump states them outright (I42), and P11's 11.12 puts the shape
-  in committed bytes ahead of any of this.
+  **The `S`-irrelevant half is exact and needs no environment.** A collation
+  whose ordering reduces to `memcmp` is right on every server, whatever its
+  libc, ICU, platform or major (I43). Today the register resolves two stated
+  names, `C` and `POSIX` — plus `name`, which reaches the same verdict through
+  its type's default rather than through a clause — where I43's set also holds
+  `ucs_basic` and anything the file declares under the **builtin** provider,
+  whose provider `pg_dump` writes verbatim (I42). Widening it is a parser over `CREATE COLLATION` and a
+  register arm — no FFI, no environment, no conditional — and each column it
+  reaches moves from an advisory divergence to an exact answer. This is where
+  the increment starts, and it is worth landing even if the second half never
+  is.
 
-  **Neither increment closes the row absolutely** — a plain dump carries a
-  collation's name and never its version (I32, I42) — so the register verdict
-  either earns is conditional on the provider matching, never the unqualified
-  "agrees, on every server" that `COLLATE "C"` earns. Unscheduled: it acquires a
-  phase number when it acquires a design, and nothing in the current register is
-  shaped against it, since new arms split
-  `ComparisonDivergence::NonBytewiseCollation` additively.
+  **The `S`-relevant remainder cannot be closed from the file, at any price.**
+  A plain dump carries a collation's name and never its version (I32, I42), and
+  the ordering *is* a function of that version — measured, not supposed: ICU 70
+  → 76 moves 3.0% of a broad Unicode corpus, and the same locale name under ICU
+  versus glibc moves 5,796 of 5,998 strings. So bundling rules for `en_US.utf8`
+  is not a cheaper approximation of this work, it is a different and wrong
+  answer: it would be a snapshot of one glibc's tables presented with no sign
+  that it is one. There is no third source. Either pgdq answers bytewise and
+  registers the divergence, as it does now, or it **delegates to a provider in
+  `E`** — the same libc and ICU the server would call — and states which one it
+  used.
+
+  **Deferral makes the conditional the user's to discharge, which is the whole
+  move.** pgdq cannot know `S`'s provider version; a user who owns `S` usually
+  can, and can run pgdq in an environment that matches it. That is a recourse
+  they can execute — matching an *image* is cheap where restoring the dump into
+  a real server is exactly the cost pgdq exists to avoid — and it is the same
+  shape as `--database` resolving an ambiguity this build refuses to guess.
+  It transitively reaches every collation, ICU included, without pgdq carrying
+  a single collation rule. What it does not do is close `KD7` absolutely: the
+  verdict such a comparison earns is *agrees with a server*, conditional on the
+  provider matching, never the unqualified *agrees, on every server* that the
+  `S`-irrelevant set earns. Two things make that honest rather than hopeful —
+  `ucol_getVersion()` reproduces `pg_collation.collversion` exactly, so pgdq can
+  report the version it computed under, and pgdq can name what a user must
+  match.
+
+  **The feasibility is demonstrated, not assumed**, by a spike outside this
+  repo (`pgcollate`; see `CLAUDE.local.md` for the path). A zero-dependency Rust
+  binary, built once, reproduced real `ORDER BY` byte for byte across seven
+  container environments — PG 13–18, glibc and musl, ICU 70/76/78 — over a
+  5,998-string corpus for six collations each, with zero mismatches. Its
+  constraints, which any spec here inherits: ICU must be `dlopen`'d and its
+  symbols are version-suffixed, so the `postgres` binary's own ELF `DT_NEEDED`
+  is what names the right soname; a fully static build is foreclosed, which
+  costs this project nothing since it already ships glibc-only; the `varstr_cmp`
+  tie-break is load-bearing; and `=` is not `cmp() == 0`, since `texteq` never
+  consults the collation for a deterministic collation.
+
+  **Unscheduled, and deliberately after P11 rather than before it.** Nothing in
+  the current register is shaped against this — new arms split
+  `ComparisonDivergence::NonBytewiseCollation` additively, and a collator would
+  ride in `ComparisonPlan`, which is already per-column and already carries two
+  per-column facts. P11's own collation slices are a **prerequisite** and not a
+  duplicate: nothing can defer to a collation it has not read out of the
+  preamble. It acquires a phase number when it acquires a design, which is a
+  grilling to run after P11 wraps. Reasoning and evidence:
+  [`../status/history/2026-09-01.md`](../status/history/2026-09-01.md),
+  "Collation splits by whether the answer depends on the source server".
 
 - **CSV-format `COPY` blocks, as part of alternate-format support, post-1.0.**
   `pg_dump` has no CSV mode at all (I13), but `psql` writes `COPY ... WITH

@@ -2149,22 +2149,56 @@ collation `c`, which the built-in is not. Answering "agrees" wrongly is the one
 direction of error this register must not make, so anything it cannot resolve
 to the two built-ins diverges.
 
+**What the three verdicts are really sorting is whether the answer depends on
+the server that wrote the file.** Call that server `S`. A collation whose
+ordering is `memcmp` is **`S`-irrelevant**: it needs no libc version, no ICU
+version, no platform and no major, so pgdq computes it exactly and the verdict
+is *agrees, on every server* (I43). Every other collation is **`S`-relevant** —
+its order is a function of `S`'s provider version, which no plain dump carries
+(I32, I42) — and pgdq answers bytewise and says so. `UnknownCollation` and
+`NonBytewiseCollation` are then the same verdict reached two ways: the first
+does not know which collation `S` used, the second knows the name and not the
+version, and neither is recoverable from the bytes.
+
+That framing is what the register's own shape is for, and it is also the
+boundary of what any amount of work here could close: the `S`-irrelevant set
+can be widened by reading the file more carefully, and the `S`-relevant
+remainder cannot be closed from the file at all, only by binding to an
+environment a user asserts matches `S`. The roadmap's Future item
+"Collation-aware comparison" is that second half, and it is deliberately not
+scheduled inside P11 — see [`roadmap.md`](roadmap.md).
+
 **Some collations are bytewise in fact and divergent by this rule**, and that
-is the asymmetry costing what it is supposed to cost rather than a defect.
-`pg_catalog."ucs_basic"` is defined with `collcollate = C`, and glibc's
-`C.utf8` sorts by code point; both answer `'B' < 'a'` exactly as `C` does, and
-both are reported divergent because neither is named `C` or `POSIX`. A
-**user-defined** collation is the same case at its sharpest: a dump can carry
+is the asymmetry costing what it is supposed to cost rather than a defect. The
+register decides from the collation's **name**, where I43 decides from its
+provider and locale, so the `S`-irrelevant set is knowably wider than the two
+names this build resolves. Three shapes sit in the gap, and they are not
+equally closable:
+
+- **`pg_catalog."ucs_basic"`** is `C` ordering in every supported major (I43),
+  by two different routes — `initdb` writes `collcollate = 'C'` through v15,
+  the catalog carries it in 16, and 17 moved it to the builtin provider. It is
+  reported divergent because it is named neither `C` nor `POSIX`.
+- **A collation the dump itself declares under the builtin provider** —
+  `CREATE COLLATION x (provider = builtin, locale = 'C.UTF-8')`. This one is
+  decidable *from the file*: `pg_dump` writes a user-defined collation's
+  provider verbatim (I42) and the builtin provider's ordering is `memcmp`
+  whatever its locale (I43), so nothing about the environment is being assumed.
+- **glibc's `C.utf8` under the libc provider**, which sorts by code point on
+  glibc and is not required to anywhere else. This one is *not* decidable from
+  the file, and the difference from the case above is the whole point: it is a
+  property of one libc, and the file names only the collation.
+
+A **user-defined** collation is the same case at its sharpest: a dump can carry
 `CREATE COLLATION public.c_collation (provider = libc, locale = 'C')` and a
 column of it, saying in the same file that the collation is bytewise, and the
 register still answers `NonBytewiseCollation` — because the name is not in
 `pg_catalog`, and nothing stops a different user defining a non-bytewise
 collation of their own with any name at all. Closing any of these would mean
 the register deciding a collation's *behaviour* from somewhere other than its
-name — for `ucs_basic` a second hardcoded name, for `C.utf8` a claim about a
-libc this file cannot see, for a user's collation a second parser over
-`CREATE COLLATION` whose answer would still not cover an ICU or a provider
-this build does not model.
+name — for `ucs_basic` a second hardcoded name, for the builtin and libc
+provider cases a second parser over `CREATE COLLATION` whose answer would still
+not cover an ICU or a provider this build does not model.
 
 **That is a property, not a deficiency, and the distinction is the row set.**
 What a spurious divergence produces is *correct rows* with an advisory note the
@@ -2361,9 +2395,14 @@ entirely.
 
 **The entry is `(c) unowned`, and the intent that exists does not make it
 `(b)`.** Complete collation support is the goal, **ICU included** —
-`roadmap.md`'s Future item "collation-aware comparison" holds it, with the libc
-pair `C`/`en_US.utf8` first and ICU after, since ICU's `collversion` moves with
-the base image and so needs an oracle guard the libc cases do not. But a Future
+`roadmap.md`'s Future item "Collation-aware comparison" holds it, in two
+increments split by whether an answer depends on the source server: widening the
+`S`-irrelevant set, which the file settles on its own, and then delegating the
+`S`-relevant remainder to a provider in the environment pgdq runs in, which
+reaches ICU without this build carrying a collation rule. An ICU collation
+under the *oracle* still costs a guard the libc cases do not, since its
+`collversion` moves with the base image, and that cost belongs to whichever
+increment puts ICU cases in committed bytes. But a Future
 item is not a phase, and `(b)` names a destination the phase index can resolve.
 That item is what would promote the entry. *Rejected: a promotion
 trigger reading "a dump whose text columns state a real locale".* Our own
