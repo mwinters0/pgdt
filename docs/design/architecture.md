@@ -2133,7 +2133,7 @@ differs from the *type's* default (I37) is what makes the third one decidable:
 | `COLLATE "C"` or `COLLATE "POSIX"`, qualified `pg_catalog` or bare | **Agrees**, on every server and under every libc |
 | any other collation — a libc locale, an ICU collation, a user's own | **Diverges** (`NonBytewiseCollation`) |
 | nothing, and the type's default collation is `C` — i.e. `name` | **Agrees** |
-| nothing, and the type's default collation is the database's — `text`, `varchar` | **Diverges** (`UnknownCollation`), because a plain dump does not record it (I32) |
+| nothing, and the type's default collation is the database's — `text`, `varchar`, `char(n)` | **Diverges** (`UnknownCollation`), because a plain dump does not record it (I32) |
 
 The schema is checked and not only the name: a collation called `"C"` in some
 other schema is not `pg_catalog."C"`, and an *unquoted* `COLLATE C` names the
@@ -2167,12 +2167,24 @@ oracle case. `fixtures/<13-18>/types/default.sql`'s `t_collate.v_user` is what
 stands in front of the cell, since "conservative and knowably wrong" is exactly
 the answer a later session is most tempted to improve.
 
-**`character(n)` never consults the clause**, and that is the sharp case. Its
-values are written blank-padded to `n` while `bpcharcmp` strips trailing blanks
-before it looks at a collation at all (I38) — so a field whose significant text
-equals the filter's literal sorts *after* it here and *equal* on the server.
-`COLLATE "C"` does not close that, and a register that promoted `char` along
-with `text` and `varchar` would be claiming an agreement it does not have.
+**`character(n)` is the fourth arm, and it reaches the same three verdicts
+through a comparison of its own.** Its values are written blank-padded to `n`
+while `bpcharcmp` calls `bcTruelen` on **both** operands before it looks at a
+collation at all (I38), so the padding is not part of the value: `CompareKind::PaddedText`
+trims trailing `0x20` off each side and what is left is exactly the `text`
+question. Order matters and only one order is sound — trim, then consult the
+clause — because the padding is what a collation would otherwise be asked to
+rank. A `char(n)` column declaring `COLLATE "C"` therefore **agrees**, where
+before every `char` column was told it diverged for a reason no clause could
+fix.
+
+The trim is admissible on the per-row path because it is not a decode: a
+reverse scan for `0x20` yielding a shorter slice, no allocation and no `*_in`,
+and only on a `char(n)` column. *Rejected: padding the literal out to `n`
+instead.* It is sound for equality and unsound for ordering — a byte below
+`0x20` sorts *under* the pad space where the server, having stripped the pad,
+ranks the longer string above (I38's corollary), which is the disagreement the
+oracle's tab-bearing `character(10)` cases are built out of.
 
 **Keyed on the declared type, not on the Arrow one.** Seven unrelated declared
 types reach `Utf8View` — a text type, a bare `numeric`, an `interval`, a
@@ -2188,8 +2200,10 @@ declaration order, and `CompareKind::Enum` carries them. That is why the plan
 is not `Copy` — an enum's labels and a `numeric`'s typmod flag are facts about
 the column, not about its Arrow type. The rows below are therefore in
 declared-type order, with the Arrow type beside each as information rather than
-as the key. `text` and `varchar` are spread over three of the rows, split by
-what the column's own `COLLATE` clause says.
+as the key. `text`, `varchar` and `char(n)` are spread over four of the rows,
+split by what the column's own `COLLATE` clause says — and `char(n)` is on a
+different *comparison* from the other two, which is the second reason the
+declared type has to be the key.
 
 **The exhaustiveness check moved with it, and is stronger for the move.**
 `builtin_scalar` answers both questions in one arm — which Arrow type a
@@ -2224,7 +2238,8 @@ with the reason that names its nesting rather than with "no order defined".
 | `text`, `varchar` declaring `COLLATE "C"`/`"POSIX"`, and `name` with no clause | `Utf8View` | yes — bytewise *is* what those collations order by, on every server and under every libc (I37) | — |
 | `text`, `varchar` with no clause | `Utf8View` | **no** — their collation is the database's, which a plain dump does not record (I32); bytewise equals PostgreSQL only if that collation is `C`/`POSIX` | a collation the file does not carry |
 | any column declaring a collation that is not `C`/`POSIX` | `Utf8View` | **no** — PostgreSQL orders it by that collation, which this build does not implement | one comparison per collation, i.e. a collation library |
-| `char(n)` | `Utf8View` | **no**, whatever its collation — the dump writes values blank-padded to `n` and `bpcharcmp` strips trailing blanks first (I38), so a field equal to the literal sorts above it here | trimming both sides before comparing, which is 11.6's canonicalization question |
+| `char(n)` declaring `COLLATE "C"`/`"POSIX"` | `Utf8View` | yes — the dump's blank padding comes off both sides first, which is `bcTruelen` (I38), and bytewise is what those collations order the remainder by | — |
+| `char(n)` with no clause | `Utf8View` | **no** — the padding is handled, and what is left is the `text` row's residue: its collation is the database's, which a plain dump does not record (I32) | a collation the file does not carry |
 | **bare `numeric`**, and `numeric` beyond 76 digits | `Utf8View` | yes — compared as an arbitrary-precision decimal over the text the file holds, which is `cmp_var_common`'s own value order and so insensitive to display scale: `1.5` and `1.50` are one value (I33). The bare form carries all three of `Infinity`, `-Infinity` and `NaN`; the constrained one carries only `NaN` (I34) | — |
 | `interval` | `Utf8View` | yes — compared as `interval_cmp_value`'s 128-bit span, so `1 mon`, `30 days` and `720:00:00` are one value (I40), with the v17 infinities read on every file (I34) | — |
 | `time with time zone` | `Utf8View` | yes — the UTC-equivalent instant, then the stored zone, so two spellings of one instant are ordered rather than equal (I40) | — |
@@ -2287,27 +2302,47 @@ an *embedder* should be handed instead is filed in
 [`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md),
 whose sink is the designated unification point for diagnostic channels.
 
+**The rows reading "no" are three different things, and only one of them is a
+deficiency.** The table's last column is what tells them apart — it says what
+would close each row, and two of the three answers are "nothing anyone could
+write".
+
+**Two of them are properties of a plain dump, not of this build.** A
+`text`/`varchar`/`char(n)` column with no `COLLATE` clause is on the
+*database's* collation, and a plain dump does not record it (I32) — so there is
+no fact to read and no code to write; the same statement one level down is
+every string leaf and object key inside a `jsonb` document (I41), which is why
+that row's structure is exact and its strings are not. And `json` has no server
+order to disagree with at all: PostgreSQL defines no `=`, no `<` and no
+operator class for it, so bytewise offers *more* than the server does. None of
+the three has a remedy anybody could hold, which is what makes them properties
+and not register entries. Each announces itself per query, so the answer is a
+stated one rather than a silent one.
+
 <!-- deficiency: KD7 -->
-**The rows reading "no" are deficiency `KD7`**, and they are one entry rather
-than several because this table is where they are told apart: its last column
-is what would close each one, and no two of them share it. Equality is unaffected and
-every value still decodes as the text the file holds, so what is missing is the
-ordering, not the data — and each divergence announces itself, which is what
-keeps it a weaker answer rather than a silent one. The per-type worklist
-belongs to P11, which retires this entry
-([`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md), "What
-this phase closes, and what it declares"). Four of its rows are already
-closed: the enum, by reading the declaration order the dump carries; the bare
-`numeric`, by comparing arbitrary-precision decimal rather than text; the
-collation half of the text row, by reading the clause; and `jsonb`'s
-*structure*, by walking two containers (I41). The text-held row is down to
-`json` alone — `interval`, `time with time zone` and the four network types
-each carry a comparison of their own (I40) — and it will close by *statement*,
-since a type the server defines no order for cannot be disagreed with. What
-remains beside it is a database default the file does not carry, now reached
-from two directions rather than one: a `text`/`varchar` column that states no
-clause, and every string inside a `jsonb` document. Plus `char(n)`'s blank
-padding, which was never a collation question at all.
+**The one that is a deficiency is `KD7`**: a column that *states* a collation
+this build does not implement — a libc locale, an ICU collation — and whose
+order therefore genuinely differs. There the file does carry the fact, so
+`<`/`>` return a row set the server would not and something could be written
+that closes it: a comparison per named collation, which is a collation library.
+Nobody holds that intent, so the entry is **`(c) unowned`**; a dump whose text
+columns state a real locale is what would promote it. It is announced per
+column, and equality is unaffected for every *deterministic* collation, which
+is every libc one — so what is wrong is the ordering, not the data and not `=`.
+
+A stated collation that is bytewise **in fact** and not named `C`/`POSIX` —
+`ucs_basic`, a user's `CREATE COLLATION … FROM "C"` — is not this entry: it is
+the spurious-divergence case two paragraphs up, which produces correct rows and
+an advisory note the user can ignore, and there is nothing there to fix.
+
+The rest of what this entry once covered has closed as the register was
+re-keyed off the declared type: the enum, by reading the declaration order the
+dump carries; the bare `numeric`, by comparing arbitrary-precision decimal
+rather than text; `interval`, `time with time zone` and the four network types,
+each by its own comparison (I40); `jsonb`'s structure, by walking two
+containers (I41); the collation *verdict*, by reading the clause (I37); and
+`char(n)`'s blank padding, by trimming both sides before the clause is
+consulted (I38).
 
 **Adding an arm here obliges an oracle case**, and that is checked rather than
 remembered: `scripts/oracle_register.py` fails when a register arm has no case
@@ -3255,13 +3290,14 @@ not the relabelling rejected above. It still asserts that a column inherits
 `typcollation` instead of observing that it does, and that step is the one
 under scrutiny.
 
-**`character(10)` is asked under both collations, ahead of the slice that
-closes it.** Today the register is clause-blind there — blank padding is what
-makes a `char(n)` diverge, not the collation (I38) — so it looks like an
-instance of the `None` rule and stops being one the moment a trimmed `char(n)`
-compares under its own collation. Labelling it in a regeneration that is
-happening anyway costs nothing; labelling it later costs a six-major run of its
-own. Its values carry `"a"` followed by a **tab**, which is I38's ordering
+**`character(10)` is asked under both collations**, and it was labelled one
+slice before the register read the labels: while `char(n)` was compared padded
+it diverged for a reason no clause could fix, so its labels bought nothing, and
+they became coverage the moment the trim made a `char(n)` compare under its own
+collation. Labelling it in a regeneration that was happening anyway cost
+nothing; labelling it later would have cost a six-major run of its own.
+
+Its values carry `"a"` followed by a **tab**, which is I38's ordering
 corollary and the one thing its other values cannot reach: pad-and-compare and
 trim-and-compare disagree only against a byte below `0x20`, and every other
 value in the case is printable.
@@ -3393,8 +3429,8 @@ is not bytewise diverges, and no clause at all falls back to the type's own
 default; without the dimension all three are answered by one `text` case and a
 fourth could be added with nothing behind it. **Which built-in arms branch is
 read from the source too** — an arm whose body calls `collated_text` is one —
-so `character` stops counting the day its arm consults a clause and starts
-counting the day it does, rather than being listed here and going stale.
+so `character` started counting on the day its arm began consulting a clause,
+rather than being listed here and going stale.
 
 **Three arms, two case groups.** The oracle asks each text pair under `COLLATE
 "C"` and under `COLLATE "default"` only, so the non-`C`-clause arm has no group
@@ -3491,18 +3527,20 @@ The oracle's non-canonical `inputs` are an input-grammar question, not a
 comparison one, and asking them here would report the filter grammar's
 deliberate strictness as an ordering disagreement.
 
-**The exception set is enumerated by pair, and it is met.** Forty
+**The exception set is enumerated by pair, and it is met.** Thirty-two
 `(type, collation, left, right)` cases are permitted to disagree; every one of
 them does disagree in the committed files, and every disagreement is one of
 them — so a case that starts agreeing fails as loudly as one that stops.
 Alongside it, a disagreeing column must *announce* its divergence through
 `OrderingDivergence`, so an exception cannot be claimed for a column the
-register tells the user it is confident about. Three populations:
+register tells the user it is confident about. Two populations, and they are
+**one statement asked at two depths** — a collation the file does not carry
+(I32), reached once through a column and once through a string inside a
+document:
 
 | Population | Why | Cases |
 |---|---|---|
 | a `jsonb` string leaf | `compareJsonbScalarValue` passes `DEFAULT_COLLATION_OID` to `varstr_cmp`, so a leaf takes the database's collation (I32, I41) | 2 |
-| `character(10)` against a value holding a byte below `0x20` | the dump writes the padded form and `bpcharcmp` strips the padding first, and the two orders disagree only under the pad space (I38) | 8 |
 | `text` under the database's own collation | glibc `en_US.utf8`: case is lower-weight than letter, an accent sorts with its base letter, and punctuation is ignored at the primary level, so `_x` sorts where `x` does | 30 |
 
 The first row is the one the `jsonb` cases were grown for: everything
@@ -3510,12 +3548,19 @@ structural above the leaf — the kind order, a container's size, storage order,
 the raw-scalar wrapper — is *asserted*, which is what keeps that population two
 entries rather than the whole arm.
 
+**`character(10)` used to be a third population and is not one now.** Its eight
+tab-bearing cases are the ordering corollary of I38, and they disagreed for as
+long as the padding was compared rather than trimmed; the trim retired all
+eight at once, under both collations and at all six majors. That they were in
+the file *before* the trim landed is what let the change be checked against
+evidence it did not produce.
+
 **Met means met everywhere in the walk.** The key is the case, so a union over
 the six majors and the four operators would count an entry satisfied by one
 major alone — or by `<` while `>=` agrees, which is a comparator that has
 stopped being antisymmetric — and neither is the property the list claims. So
 an entry must disagree in **every** cell of its case: 24 today, six majors by
-four operators, and all forty do. That is one assertion against the cells each
+four operators, and all thirty-two do. That is one assertion against the cells each
 case was walked over rather than a table by major and operator, which was
 costed at ~400 rows and rejected — it multiplies exactly the churn the pair
 list was kept to avoid.

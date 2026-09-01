@@ -147,6 +147,25 @@ pub enum CompareKind {
     Uuid,
     Bytea,
     Text,
+    /// `character(n)`: bytewise over the text the file holds, after **both**
+    /// sides give up their trailing blanks. A dump writes every value of such
+    /// a column padded to `n` and every `bpchar` comparison calls `bcTruelen`
+    /// on both operands first (I38), so the padding is not part of the value
+    /// and trimming it is what makes this the same comparison the server
+    /// makes.
+    ///
+    /// Held apart from [`Self::Text`] rather than carried as a flag on it
+    /// because it is a different comparison, not a different column: the
+    /// register has one arm per declared type and `character` is that arm.
+    /// The trim is a reverse scan for `0x20` yielding a shorter slice — no
+    /// allocation and no decode — which is why it is admissible on the
+    /// per-row path where a decode would not be.
+    ///
+    /// It is collatable exactly as [`Self::Text`] is, and for the same
+    /// reason: `bpcharcmp` hands the two trimmed strings to `varstr_cmp`
+    /// under the column's collation, so what the clause decides here is the
+    /// verdict, never the comparison.
+    PaddedText,
     /// Arbitrary-precision decimal read straight out of the text the file
     /// holds — a bare `numeric`, or one whose declared precision is past
     /// `Decimal256`'s 76 digits. Held apart from [`Self::Decimal`] because
@@ -229,32 +248,33 @@ pub enum CompareKind {
 /// `crate::predicate::OrderingNote::message`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrderingDivergence {
-    /// The column is held as text and compared bytewise rather than by the
-    /// order its declared type has on the server. Never a *collatable* type:
-    /// those get one of the two variants below, or no divergence at all.
+    /// The column is held as text and compared bytewise where the server has
+    /// no comparison at all. **`json` is its one member**, and the sentence
+    /// it prints says exactly that: PostgreSQL defines no `=`, no order and
+    /// no operator class for `json`, so bytewise offers *more* than the
+    /// server does rather than less, and "agrees with PostgreSQL" is not a
+    /// question the type can be asked.
     ///
-    /// **`json` is its one remaining member, and the sentence it prints does
-    /// not fit it.** `OrderingNote::message` says "PostgreSQL orders this type
-    /// by its own operator, not bytewise", which was written when `jsonb`
-    /// shared the arm; the server defines *no* comparison for `json` at all,
-    /// so bytewise offers more than it does rather than less. Splitting that
-    /// sentence belongs to the slice that strikes `KD7`
-    /// (`docs/design/roadmap-P11.5.1-jsonb-notes.md`, "What later slices
-    /// inherit").
+    /// Every other text-held type now carries a comparison of its own, and
+    /// every collatable one carries one of the two collation variants below.
     AsText,
     /// A collatable text column whose collation the file does not state: it
     /// carries no `COLLATE` clause and its type's default collation is the
     /// *database's*, which a plain dump never records (I32). Bytewise is
     /// PostgreSQL's answer only if that collation is `C`/`POSIX`.
     UnknownCollation,
-    /// A collatable text column that states a collation other than
-    /// `C`/`POSIX`, whose order this build does not implement.
+    /// A collatable column that states a collation other than `C`/`POSIX`,
+    /// whose order this build does not implement.
+    ///
+    /// Deficiency register: `deficiency: KD7` — this is the one register row
+    /// whose divergence the file gives enough information to close and this
+    /// build does not, and the detail is `docs/design/architecture.md`'s
+    /// "Ordering operators compare typed". The two collation variants either
+    /// side of it are *not* that: [`Self::UnknownCollation`] names a fact no
+    /// plain dump carries (I32), and a stated collation that is bytewise in
+    /// fact but not named `C`/`POSIX` lands here with correct rows and a
+    /// spurious note.
     NonBytewiseCollation,
-    /// A `character(n)` column, whose values the dump writes blank-padded to
-    /// `n` while `bpcharcmp` strips trailing blanks before comparing (I38).
-    /// Independent of collation, and the reason a `COLLATE "C"` clause does
-    /// not close this row.
-    BlankPadded,
     /// A `jsonb` column, whose *structure* is compared exactly and whose
     /// string leaves and object keys are not: `compareJsonbScalarValue` orders
     /// every one of them by `varstr_cmp` under `DEFAULT_COLLATION_OID` (I41),
@@ -309,27 +329,21 @@ impl ComparisonPlan {
         Self::Compared { kind, divergence: None }
     }
 
-    /// Bytewise over the text the file holds, which is not what PostgreSQL
-    /// orders by. A collatable type goes through [`collated_text`] instead,
-    /// and every other `Utf8View` type now carries a comparison of its own,
-    /// so this constant has exactly one member left: `json`, for which
-    /// PostgreSQL defines no comparison at all.
+    /// Bytewise over the text the file holds, for the one type PostgreSQL
+    /// orders not at all. A collatable type goes through [`collated_text`]
+    /// instead and every other `Utf8View` type carries a comparison of its
+    /// own, so this constant has exactly one member: `json`.
     ///
-    /// Deficiency register: `deficiency: KD7` — the register's remaining
-    /// text-held row is this constant, and the detail is
-    /// `docs/design/architecture.md`'s "Ordering operators compare typed".
+    /// It is a *stronger* answer than the server's rather than a weaker one,
+    /// which is why it is not a deficiency: there is no order to disagree
+    /// with. The note it produces says so.
     pub(crate) const AS_TEXT: Self =
         Self::Compared { kind: CompareKind::Text, divergence: Some(OrderingDivergence::AsText) };
-
-    /// Bytewise, and diverging for `divergence`.
-    pub(crate) const fn text_diverging(divergence: OrderingDivergence) -> Self {
-        Self::Compared { kind: CompareKind::Text, divergence: Some(divergence) }
-    }
 
     /// PostgreSQL's own comparison but for the residue `divergence` names —
     /// the shape a type takes when its order is implemented and one part of
     /// it rests on a fact the file does not carry.
-    fn diverging(kind: CompareKind, divergence: OrderingDivergence) -> Self {
+    pub(crate) fn diverging(kind: CompareKind, divergence: OrderingDivergence) -> Self {
         Self::Compared { kind, divergence: Some(divergence) }
     }
 }
@@ -364,27 +378,39 @@ fn collation_is_bytewise(reference: &str) -> bool {
     known_schema && (name == "C" || name == "POSIX")
 }
 
-/// The comparison for a collatable text type, given the column's own
-/// `COLLATE` clause (`None` for a column that carries none) and the type's
-/// default collation.
+/// The comparison for a collatable type, given its bytewise comparison
+/// `kind`, the column's own `COLLATE` clause (`None` for a column that
+/// carries none) and the type's default collation.
 ///
-/// **Bytewise is the comparison in every case; only the verdict moves.** That
+/// **`kind` is the comparison in every case; only the verdict moves.** That
 /// is the whole of what reading the clause buys: `text COLLATE "C"` and a
 /// bare `name` are told they agree, where before every text column was told
 /// it diverged (`docs/design/architecture.md`, "Ordering operators compare
 /// typed").
-fn collated_text(collation: Option<&str>, type_default: TypeCollation) -> ComparisonPlan {
+///
+/// `kind` exists because `character(n)` joins this rule with a comparison of
+/// its own: `bpcharcmp` trims both operands' trailing blanks and *then*
+/// consults the collation (I38), so the trim is orthogonal to the clause and
+/// the three collation arms are the same three.
+fn collated_text(
+    kind: CompareKind,
+    collation: Option<&str>,
+    type_default: TypeCollation,
+) -> ComparisonPlan {
     let bytewise = match collation {
         Some(reference) => collation_is_bytewise(reference),
         None => type_default == TypeCollation::Bytewise,
     };
     if bytewise {
-        return ComparisonPlan::agrees(CompareKind::Text);
+        return ComparisonPlan::agrees(kind);
     }
-    ComparisonPlan::text_diverging(match collation {
-        Some(_) => OrderingDivergence::NonBytewiseCollation,
-        None => OrderingDivergence::UnknownCollation,
-    })
+    ComparisonPlan::diverging(
+        kind,
+        match collation {
+            Some(_) => OrderingDivergence::NonBytewiseCollation,
+            None => OrderingDivergence::UnknownCollation,
+        },
+    )
 }
 
 /// The field names of the range struct, in order. Reserved: a composite type
@@ -492,15 +518,17 @@ fn builtin_scalar(
         // database's collation and `name` to `C` (I37), which is why a bare
         // `name` column agrees and a bare `text` column cannot be said to.
         "text" | "character varying" => {
-            (Utf8View, collated_text(collation, TypeCollation::Database))
+            (Utf8View, collated_text(K::Text, collation, TypeCollation::Database))
         }
-        "name" => (Utf8View, collated_text(collation, TypeCollation::Bytewise)),
-        // `character(n)` is collatable too, and its collation is not what
-        // stops it agreeing: the dump writes every value blank-padded to `n`
-        // while `bpcharcmp` compares after stripping trailing blanks (I38),
-        // so a field equal to the literal sorts *after* it here. A `COLLATE
-        // "C"` clause does not close that, so this arm never consults one.
-        "character" => (Utf8View, ComparisonPlan::text_diverging(OrderingDivergence::BlankPadded)),
+        "name" => (Utf8View, collated_text(K::Text, collation, TypeCollation::Bytewise)),
+        // The fourth collatable arm, and the one that needs a comparison of
+        // its own: the dump writes every `character(n)` value blank-padded to
+        // `n` and `bpcharcmp` calls `bcTruelen` on both sides before it
+        // consults a collation at all (I38). So the padding is stripped by
+        // `K::PaddedText` and what is left is exactly the `text` question —
+        // an explicit `C`/`POSIX` agrees, anything else diverges, and a bare
+        // column is on the database's collation (I32).
+        "character" => (Utf8View, collated_text(K::PaddedText, collation, TypeCollation::Database)),
         // `infinity`/`-infinity` are ordered rather than refused, as
         // positions rather than numbers (`special_order_key`, I34).
         "date" => (Date32, agrees(K::Date)),
@@ -1710,8 +1738,10 @@ mod tests {
         use CompareKind as K;
         let text = || ComparisonPlan::AS_TEXT;
         let unknown_collation =
-            || ComparisonPlan::text_diverging(OrderingDivergence::UnknownCollation);
-        let blank_padded = || ComparisonPlan::text_diverging(OrderingDivergence::BlankPadded);
+            || ComparisonPlan::diverging(CompareKind::Text, OrderingDivergence::UnknownCollation);
+        let unknown_padded = || {
+            ComparisonPlan::diverging(CompareKind::PaddedText, OrderingDivergence::UnknownCollation)
+        };
         for (declared, expected) in [
             ("smallint", agrees(K::Int)),
             ("integer", agrees(K::Int)),
@@ -1727,14 +1757,15 @@ mod tests {
             // an infinity, so only the bare form admits the spelling (I34).
             ("numeric", agrees(K::Numeric { infinities: true })),
             ("numeric(77,0)", agrees(K::Numeric { infinities: false })),
-            // The three collatable arms, each asked with no `COLLATE`
+            // The four collatable arms, each asked with no `COLLATE`
             // clause — which is the shape of every column in the tree today.
-            // `name`'s type default is `C`, so it agrees where the other two
-            // cannot; `character(n)` is blank-padded and diverges whatever
-            // its collation.
+            // `name`'s type default is `C`, so it agrees where the others
+            // cannot; `character(n)` carries a comparison of its own (the
+            // padding is trimmed off both sides, I38) and then asks the same
+            // collation question the other three do.
             ("text", unknown_collation()),
             ("character varying(10)", unknown_collation()),
-            ("character(10)", blank_padded()),
+            ("character(10)", unknown_padded()),
             ("name", agrees(K::Text)),
             ("date", agrees(K::Date)),
             ("timestamp without time zone", agrees(K::Timestamp { with_tz: false })),
@@ -1810,7 +1841,7 @@ mod tests {
         // reading the collation is what tells them apart.
         assert_eq!(
             comparison_for("text", None, &[]),
-            ComparisonPlan::text_diverging(OrderingDivergence::UnknownCollation),
+            ComparisonPlan::diverging(CompareKind::Text, OrderingDivergence::UnknownCollation),
         );
         // An enum with no labels resolves to no Arrow type at all, so no
         // column of it is ever asked how it compares.
@@ -1824,8 +1855,11 @@ mod tests {
     #[test]
     fn a_text_column_is_judged_by_the_collation_it_states() {
         let agrees_text = || ComparisonPlan::agrees(CompareKind::Text);
-        let unknown = || ComparisonPlan::text_diverging(OrderingDivergence::UnknownCollation);
-        let named = || ComparisonPlan::text_diverging(OrderingDivergence::NonBytewiseCollation);
+        let unknown =
+            || ComparisonPlan::diverging(CompareKind::Text, OrderingDivergence::UnknownCollation);
+        let named = || {
+            ComparisonPlan::diverging(CompareKind::Text, OrderingDivergence::NonBytewiseCollation)
+        };
         for (declared, collation, expected) in [
             // No clause: the type's own default decides, and only `name`'s is
             // `C` (I37).
@@ -1846,12 +1880,30 @@ mod tests {
             ("text", Some("C"), named()),
             // Nor is a `"C"` some other schema happens to define.
             ("text", Some("public.\"C\""), named()),
-            // `character(n)` never consults the clause: it is blank-padded
-            // (I38), which `COLLATE "C"` does not fix.
+            // `character(n)` reads the clause exactly as `text` does, and
+            // answers over its own comparison: `bpcharcmp` trims both sides'
+            // trailing blanks and *then* consults the collation (I38), so an
+            // explicit `COLLATE "C"` agrees and a bare column does not.
             (
                 "character(10)",
                 Some("pg_catalog.\"C\""),
-                ComparisonPlan::text_diverging(OrderingDivergence::BlankPadded),
+                ComparisonPlan::agrees(CompareKind::PaddedText),
+            ),
+            (
+                "character(10)",
+                Some("pg_catalog.\"en_US.utf8\""),
+                ComparisonPlan::diverging(
+                    CompareKind::PaddedText,
+                    OrderingDivergence::NonBytewiseCollation,
+                ),
+            ),
+            (
+                "character(10)",
+                None,
+                ComparisonPlan::diverging(
+                    CompareKind::PaddedText,
+                    OrderingDivergence::UnknownCollation,
+                ),
             ),
             // A non-collatable type ignores a clause it cannot carry.
             ("integer", Some("pg_catalog.\"C\""), ComparisonPlan::agrees(CompareKind::Int)),
@@ -1885,8 +1937,11 @@ mod tests {
             ty("public.dom_over_c", TypeKind::domain("public.dom_c")),
         ];
         let agrees_text = || ComparisonPlan::agrees(CompareKind::Text);
-        let unknown = || ComparisonPlan::text_diverging(OrderingDivergence::UnknownCollation);
-        let named = || ComparisonPlan::text_diverging(OrderingDivergence::NonBytewiseCollation);
+        let unknown =
+            || ComparisonPlan::diverging(CompareKind::Text, OrderingDivergence::UnknownCollation);
+        let named = || {
+            ComparisonPlan::diverging(CompareKind::Text, OrderingDivergence::NonBytewiseCollation)
+        };
 
         assert_eq!(comparison_for("public.dom_c", None, &types), agrees_text());
         assert_eq!(comparison_for("public.dom_plain", None, &types), unknown());
@@ -1919,7 +1974,7 @@ mod tests {
         assert_eq!(comparison_for("public.d2", None, &types), agrees(CompareKind::Int));
         assert_eq!(
             comparison_for("public.dtext", None, &types),
-            ComparisonPlan::text_diverging(OrderingDivergence::UnknownCollation),
+            ComparisonPlan::diverging(CompareKind::Text, OrderingDivergence::UnknownCollation),
         );
         // A domain over something with no order here has none either.
         assert_eq!(comparison_for("public.darr", None, &types), ComparisonPlan::Refused);

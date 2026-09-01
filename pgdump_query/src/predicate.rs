@@ -120,9 +120,14 @@ impl OrderingNote {
         let declared = &self.declared_type;
         let bytewise = |why: &str| format!("`{column}` ({declared}) is compared bytewise: {why}");
         match self.divergence {
-            OrderingDivergence::AsText => {
-                bytewise("PostgreSQL orders this type by its own operator, not bytewise")
-            }
+            // Not "PostgreSQL orders this differently": it does not order it
+            // at all. The sentence has to say which way the difference runs,
+            // because a user who reads "diverges" and assumes the server has
+            // a better answer will go looking for one that does not exist.
+            OrderingDivergence::AsText => bytewise(
+                "PostgreSQL defines no comparison for this type at all — no equality, no \
+                 ordering, no operator class — so this order is one the server does not have",
+            ),
             OrderingDivergence::UnknownCollation => bytewise(
                 "the column declares no COLLATE clause, so its collation is the database's, which \
                  a plain dump does not record — this matches the server only if that collation is \
@@ -131,11 +136,6 @@ impl OrderingNote {
             OrderingDivergence::NonBytewiseCollation => bytewise(
                 "the column declares a collation other than C/POSIX, and PostgreSQL orders it by \
                  that collation",
-            ),
-            OrderingDivergence::BlankPadded => bytewise(
-                "the dump writes every value blank-padded to the declared length, while \
-                 PostgreSQL strips trailing blanks before comparing, so a value equal to the \
-                 filter's own sorts after it here",
             ),
             // Not a `bytewise` sentence: the structure *is* compared the way
             // PostgreSQL compares it, and only a string leaf is left.
@@ -1094,6 +1094,11 @@ fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
         CompareKind::Uuid => OrderKey::Bytes(decode::decode_uuid(text)?.to_vec()),
         CompareKind::Bytea => OrderKey::Bytes(decode::decode_bytea(text)?),
         CompareKind::Text => OrderKey::Text(text.to_string()),
+        // `bcTruelen` on both sides, which is what makes this the server's
+        // comparison rather than one over the padding (I38). The blank is
+        // ASCII `0x20` and nothing else — a tab is a value byte, and it is
+        // the byte that separates trim-and-compare from pad-and-compare.
+        CompareKind::PaddedText => OrderKey::Text(text.trim_end_matches(' ').to_string()),
     })
 }
 
@@ -1724,17 +1729,18 @@ mod tests {
         assert_eq!(text.divergence, OrderingDivergence::UnknownCollation);
         assert!(text.message().contains("collation"), "{}", text.message());
 
-        // `character(n)` diverges for a reason that is not its collation, so
-        // its sentence must not be the collation one.
+        // `character(n)` asks the same collation question, over its own
+        // trimming comparison — so a bare column gets the collation
+        // sentence and one declaring `COLLATE "C"` gets no note at all.
         let padded = note("character(10)", DataType::Utf8View, "a").unwrap();
-        assert_eq!(padded.divergence, OrderingDivergence::BlankPadded);
-        assert!(padded.message().contains("blank-padded"), "{}", padded.message());
+        assert_eq!(padded.divergence, OrderingDivergence::UnknownCollation);
+        assert!(padded.message().contains("collation"), "{}", padded.message());
 
-        // `json` is what `AsText` has left: the server defines no order for
-        // it, so bytewise offers more than the server does.
+        // `json` is what `AsText` has left: the server defines no comparison
+        // for it at all, so bytewise offers more than the server does.
         let other = note("json", DataType::Utf8View, "1").unwrap();
         assert_eq!(other.divergence, OrderingDivergence::AsText);
-        assert!(other.message().contains("its own operator"), "{}", other.message());
+        assert!(other.message().contains("no comparison"), "{}", other.message());
 
         // Types that share `Utf8View` with the rows above and say nothing:
         // a bare `numeric`, an enum, and the four the text-held row lost.
@@ -1925,7 +1931,7 @@ mod tests {
 
         let json = note("json", "anything").unwrap();
         assert_eq!(json.divergence, OrderingDivergence::AsText);
-        assert!(json.message().contains("its own operator"), "{}", json.message());
+        assert!(json.message().contains("no comparison"), "{}", json.message());
     }
 
     /// A bare `numeric` orders as a decimal, which is the row's whole
@@ -2284,8 +2290,10 @@ mod tests {
         /// Each entry's column also has to *announce* its divergence through
         /// [`OrderingDivergence`], which is asserted alongside — so an
         /// exception cannot be claimed for a column the register tells the
-        /// user it is confident about. Three populations, and the first is
-        /// the one the `jsonb` cases exist to reach:
+        /// user it is confident about. **Two populations, and they are one
+        /// statement asked at two depths** — a collation the file does not
+        /// carry (I32), reached once through a column and once through a
+        /// string inside a document:
         ///
         /// - **A `jsonb` string leaf.** `compareJsonbScalarValue` passes
         ///   `DEFAULT_COLLATION_OID` to `varstr_cmp`, so a leaf is ordered by
@@ -2294,11 +2302,6 @@ mod tests {
         ///   container's size, storage order, the raw-scalar wrapper — is
         ///   asserted rather than excepted, which is what makes this list two
         ///   entries rather than the arm.
-        /// - **`character(10)` against a value holding a byte below `0x20`.**
-        ///   The dump writes the padded form and `bpcharcmp` strips the
-        ///   padding before comparing (I38), and the two orders disagree only
-        ///   under the pad space — which is why the case table carries a tab.
-        ///   Its collation is not what does it, and both collations are here.
         /// - **`text` under the database's own collation**, which is glibc's
         ///   `en_US.utf8` on this apparatus: case is a lower-weight
         ///   difference than letter, an accent sorts with its base letter
@@ -2310,14 +2313,6 @@ mod tests {
         const EXCEPTIONS: &[(&str, &str, &str, &str)] = &[
             ("jsonb", "\\N", "{\"a\": \"a\"}", "{\"a\": \"A\"}"),
             ("jsonb", "\\N", "{\"a\": \"A\"}", "{\"a\": \"a\"}"),
-            ("character(10)", "C", "a", "a\t"),
-            ("character(10)", "C", "a\t", "a"),
-            ("character(10)", "C", "a\t", "a         "),
-            ("character(10)", "C", "a         ", "a\t"),
-            ("character(10)", "default", "a", "a\t"),
-            ("character(10)", "default", "a\t", "a"),
-            ("character(10)", "default", "a\t", "a         "),
-            ("character(10)", "default", "a         ", "a\t"),
             // Case is a lower-weight difference than letter.
             ("text", "default", "A", "a"),
             ("text", "default", "a", "A"),

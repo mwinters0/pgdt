@@ -827,7 +827,10 @@ mod tests {
             resolved.comparisons,
             [
                 ComparisonPlan::Compared { kind: CompareKind::Int, divergence: None },
-                ComparisonPlan::text_diverging(crate::pgtype::OrderingDivergence::UnknownCollation),
+                ComparisonPlan::diverging(
+                    CompareKind::Text,
+                    crate::pgtype::OrderingDivergence::UnknownCollation,
+                ),
                 ComparisonPlan::Compared {
                     kind: CompareKind::Enum(["sad".to_string()].into_iter().collect()),
                     divergence: None,
@@ -866,7 +869,7 @@ mod tests {
         assert_eq!(
             resolved.comparisons,
             [
-                ComparisonPlan::text_diverging(OrderingDivergence::UnknownCollation),
+                ComparisonPlan::diverging(CompareKind::Text, OrderingDivergence::UnknownCollation),
                 ComparisonPlan::Compared { kind: CompareKind::Text, divergence: None },
             ]
         );
@@ -888,7 +891,10 @@ mod tests {
         let text = resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Typed, &[]);
         assert_eq!(
             text.comparisons,
-            [ComparisonPlan::text_diverging(crate::pgtype::OrderingDivergence::UnknownCollation)]
+            [ComparisonPlan::diverging(
+                crate::pgtype::CompareKind::Text,
+                crate::pgtype::OrderingDivergence::UnknownCollation,
+            )]
         );
 
         // The same column declared as an array, whose values do not share one

@@ -821,9 +821,15 @@ class ThisRepo(unittest.TestCase):
             self.assertTrue(entry.id[2:].isdigit())
 
     def test_every_sliced_owner_is_paired_both_ways(self):
-        """Not a restatement of the check: this asserts the tree actually
-        exercises the fourth relation, so a repo where every `(b)` entry
-        happens to be owned by an unsliced phase cannot pass it vacuously."""
+        """The fourth relation, against the tree rather than a fixture.
+
+        **Whether the tree holds such an entry at all is not a rule**, and this
+        does not pretend it is: an entry owned by a sliced phase is struck or
+        rewritten the moment its phase closes it, so the population is
+        legitimately empty between one being allocated and the next. The rule
+        itself is carried in both directions by the fixture tests above; what
+        this adds is that the real files satisfy it while there is anything to
+        satisfy."""
         text = (deficiencies.STATUS).read_text()
         entries, problems = deficiencies.parse_index(text)
         self.assertEqual(problems, [])
@@ -836,7 +842,8 @@ class ThisRepo(unittest.TestCase):
             and (m := deficiencies.DESTINATION_PHASE_RE.search(e.destination))
             and int(m.group(1)) in checklists
         ]
-        self.assertTrue(paired, "no (b) entry is owned by a sliced phase")
+        if not paired:
+            self.skipTest("no (b) entry is owned by a sliced phase right now")
         for entry in paired:
             phase = int(deficiencies.DESTINATION_PHASE_RE.search(entry.destination).group(1))
             self.assertTrue(deficiencies.slice_refs(entry.text, phase), entry.id)

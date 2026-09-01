@@ -572,8 +572,9 @@ def reconcile(
         out.cases_by_arm.setdefault(key, []).append(label)
         if case.collation is None or key not in register.collatable:
             # Either the case names no collation, or the arm it lands on does
-            # not read one — `character(10)`'s labels are the second, until the
-            # slice that makes a `char(n)` compare under its own collation.
+            # not read one. Every collatable built-in reads one today, so the
+            # second branch is what keeps a label on a *non*-collatable arm
+            # from buying coverage it does not have.
             continue
         groups = COLLATION_GROUPS.get(case.collation)
         if groups is None:

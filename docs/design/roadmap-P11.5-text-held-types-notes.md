@@ -146,10 +146,10 @@ opposite reasons: PostgreSQL defines no comparison for `json` at all — no `=`,
 no order, no operator class — so bytewise offers *more* than the server does,
 while `jsonb` has a full order bytewise does not implement. The `AsText`
 message ("PostgreSQL orders this type by its own operator, not bytewise") is
-false for `json` and will need splitting when 11.6 strikes `KD7`, or a
-`json`-specific sentence before then.
+false for `json`; 11.5.1 took `jsonb` off the arm and 11.6 rewrote the
+sentence, so `AsText` now says the server has no comparison at all.
 
-**11.6 inherits both decode-per-row exemptions, and both now exist.** The spec
+**Typed equality inherits both decode-per-row exemptions, and both now exist.** The spec
 names bare `numeric` and `interval` as the two types whose equality cannot use
 the canonicalize-the-literal-once path. `CompareKind::Numeric` was the first;
 `CompareKind::Interval` is the second, and `interval_span` is exactly the

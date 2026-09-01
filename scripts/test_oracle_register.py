@@ -360,9 +360,10 @@ class Reconciling(unittest.TestCase):
             self.assertIn('text COLLATE "default"', found.cases_by_arm[key])
 
     def test_a_case_on_a_clause_blind_arm_reaches_no_collation_arm(self):
-        # `character(10)` is labelled ahead of the slice that makes a `char(n)`
-        # compare under its own collation; until then its arm does not read a
-        # clause, so its labels buy no collation coverage.
+        # A label is not coverage on its own: the arm the case lands on has to
+        # read a clause. `character(10)` is labelled in the real case table and
+        # reaches no arm at all in this synthetic register, so its labels buy
+        # nothing here.
         found = orr.reconcile(self.register_path, self.schema_path, self.fixtures("t"))
         for key in COLLATION_KEYS:
             for label in found.cases_by_arm[key]:

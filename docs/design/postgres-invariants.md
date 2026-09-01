@@ -2353,9 +2353,12 @@ select rpad('ab'||chr(9),3,' ') > rpad('ab',3,' ') COLLATE "C";     -- f
 is called by every `bpchar` comparison in all six.
 
 **Relied on by.** The comparison register's `character` arm in `crate::pgtype`,
-which answers `OrderingDivergence::BlankPadded` regardless of the collation
-clause — see [`architecture.md`](architecture.md), "Ordering operators compare
-typed".
+which is `CompareKind::PaddedText` — trailing `0x20` off both sides, then the
+same collation question `text` asks, in that order because the corollary above
+says the other order is unsound — see [`architecture.md`](architecture.md),
+"Ordering operators compare typed". The corollary itself is checked across all
+six majors rather than at 16.15 alone: `fixtures/<13-18>/oracle/comparisons.tsv`
+asks `character(10)` against a tab-bearing value under both collations.
 
 **Re-verify.**
 

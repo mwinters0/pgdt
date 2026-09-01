@@ -275,15 +275,45 @@ async fn the_network_types_order_by_address_not_by_text() {
     }
 }
 
+/// A `character(n)` column compares with the blank padding gone from **both**
+/// sides, which is `bpcharcmp` calling `bcTruelen` on its two operands before
+/// anything else (I38). `t_text.v_char` holds ten blanks and `hi` + eight,
+/// and both assertions below are cases the padded comparison gets wrong:
+///
+/// - `<= hi` keeps `hi` + eight blanks, which padded sorts *above* the
+///   unpadded literal and so used to be dropped — the row the server keeps
+///   and the direction the divergence used to run in;
+/// - a literal carrying padding of its own is the same value, so `>= hi` and
+///   `>= hi` + three blanks keep the same rows.
+///
+/// The blank is `0x20` alone: a tab is a value byte, and it is the byte that
+/// separates trim-and-compare from pad-and-compare, which is why the oracle's
+/// `character(10)` cases carry one.
+#[tokio::test]
+async fn a_char_column_compares_with_the_padding_off_both_sides() {
+    assert_eq!(
+        kept("public.t_text", "v_char", vec![term("v_char", PredicateOp::Le, "hi")]).await,
+        [Some("          ".to_string()), Some("hi        ".to_string())]
+    );
+    for literal in ["hi", "hi   "] {
+        assert_eq!(
+            kept("public.t_text", "v_char", vec![term("v_char", PredicateOp::Ge, literal)]).await,
+            [Some("hi        ".to_string())],
+            "{literal:?}"
+        );
+    }
+}
+
 /// `json` is what the text-held row has left, so it is the column that still
 /// announces itself that way — the regression guard on the four rows above,
 /// since a note that stopped being raised at all would pass every assertion
-/// there.
+/// there. Its sentence says which way the difference runs: PostgreSQL has no
+/// comparison for `json`, so bytewise is more than the server offers.
 #[tokio::test]
 async fn json_is_still_announced_as_compared_bytewise() {
     let notes = notes_for("public.t_json", "v_json", "1").await;
     assert_eq!(notes.len(), 1, "{notes:?}");
-    assert!(notes[0].contains("its own operator"), "{}", notes[0]);
+    assert!(notes[0].contains("no comparison"), "{}", notes[0]);
 }
 
 /// `jsonb` compares as a container, against the fixture's own two values —
@@ -502,13 +532,14 @@ async fn a_divergent_comparison_is_reported_by_the_stream() {
             OrderingDivergence::UnknownCollation,
             "no COLLATE clause",
         ),
-        // `character(n)` diverges for a reason collation cannot fix: the
-        // dump writes its values blank-padded and `bpcharcmp` trims (I38).
-        ("public.t_text", "v_char", "a", OrderingDivergence::BlankPadded, "blank-padded"),
+        // `character(n)` is the same collation row: the dump's blank padding
+        // is trimmed off both sides (I38), and what is left is a bare column
+        // whose collation the file does not carry.
+        ("public.t_text", "v_char", "a", OrderingDivergence::UnknownCollation, "no COLLATE clause"),
         // `json` is what `AsText` covers now: the enum, the bare `numeric`,
         // the four types the text-held row lost and `jsonb` all order by
         // their own values.
-        ("public.t_json", "v_json", "a", OrderingDivergence::AsText, "its own operator"),
+        ("public.t_json", "v_json", "a", OrderingDivergence::AsText, "no comparison"),
         // `jsonb` is compared structurally and diverges only at a string
         // leaf, which is a different sentence for a different reason. Its
         // literal has to be a JSON document, which is the same row's other

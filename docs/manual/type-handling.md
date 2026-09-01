@@ -177,6 +177,9 @@ its type's own default, so:
   `text`, `varchar` or `char` column with **no** clause, whose collation is the
   database's and is the one thing a plain dump never records.
 
+A `char(n)` column is read exactly like a `text` one, once its blank padding is
+out of the way — see below.
+
 Only `C` and `POSIX` from `pg_catalog` are answered exactly, by name. A
 collation of your own that happens to be bytewise — `CREATE COLLATION mycoll
 FROM "C"` — is still warned about, even though the dump that declares it says
@@ -193,13 +196,22 @@ pgdq query --source dump.sql --table public.people --filter 'name<B'
 # record — this matches the server only if that collation is C or POSIX
 ```
 
-**`char(n)` is warned about whatever its collation**, for a different reason: a
-dump writes every value of it blank-padded to the declared length, and
-PostgreSQL strips trailing blanks before comparing. So `--filter 'code>ab'`
-selects a row whose `code` is exactly `ab`, where the server would not.
+**A `char(n)` column's blank padding is not part of its value.** A dump writes
+every value of such a column padded with spaces to the declared length, and
+PostgreSQL strips the trailing blanks off *both* sides before comparing. `<`,
+`<=`, `>` and `>=` do the same here, so `--filter 'code>=ab'` and `--filter
+'code<=ab'` both select a row whose `code` is `ab` followed by padding, exactly
+as the server does — and you may write the padding into the literal or leave it
+out, since neither side keeps it.
 
 **`=` and `!=` are unaffected by collation.** Every libc collation calls two
 different strings different, so equality is bytewise on the server too.
+
+**They are not blank-insensitive, though.** `=` and `!=` still compare a
+`char(n)` field as the text the dump holds, so `--filter 'code=ab'` matches no
+row of a padded column. Write the padding — `--filter 'code="ab        "'` — or
+ask with the pair `--filter 'code>=ab' --filter 'code<=ab'`, which is the same
+question through the operators that do trim.
 
 ### Seven string-shaped types still order the way PostgreSQL orders them
 

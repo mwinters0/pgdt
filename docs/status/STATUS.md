@@ -15,8 +15,9 @@ filed by subject. **P11 — typed predicates — is open**: grilled and specifie
 with the comparison oracle, its cross-major differ, the fixture family's move
 to glibc, the comparison plan's move to L2, the register-to-oracle
 reconciliation, the declared collation and the fixture columns that observe
-it — the displaced clause included — the enum and bare `numeric`, and the
-whole text-held type queue, `jsonb` included, landed. Its checklist is below.
+it — the displaced clause included — the enum and bare `numeric`, the
+whole text-held type queue, `jsonb` included, and `character(n)`'s trim
+landed. Its checklist is below.
 
 [`../design/measurements.md`](../design/measurements.md) carries the `b70589f`
 stamp, and **`uv run measure.py --stale` names seven of its thirteen figures**
@@ -44,10 +45,10 @@ not oblige a sweep").
 | Typed ordering operators (`<`, `<=`, `>`, `>=`) | working, library and CLI: each side is decoded with the column's own decoder — the field per row, the literal once when the block's schema resolves — and the decoded values compared, so `9 > 10` is true on an `integer`. Available on a column that resolved `Mapped` with a `Scalar` plan and refused on any other, which is also why `--schema-mode strings` refuses every one of them. An undecodable literal is `Error::PredicateValueDecode` before any row; a field that is genuinely undecodable is `Error::FieldDecode`, worded as the build path words it ([`../design/architecture.md`](../design/architecture.md), "Ordering operators compare typed") |
 | Seven string-shaped types that still order typed | working: `interval` by `interval_cmp_value`'s 128-bit span, so `1 mon`, `30 days` and `720:00:00` are one bound; `time with time zone` by the UTC instant then the stored zone; `inet`/`cidr` by family, shorter prefix, netmask, address; `macaddr`/`macaddr8` by their octets (I40); and `jsonb` by `compareJsonbContainers`' walk down two documents — kind before value, a container's size before its members, and a top-level scalar inside the pseudo-array that makes it outrank `[]` (I41). None has an Arrow type, so the *ordering* is the only path that decodes them. The first six read a literal in the type's own `*_out` spelling and no wider — `1 month` and `08-00-2b-01-02-03` are refused by name, which is a property rather than a deficiency since every value a dump holds is already in the accepted form. `jsonb` is the exception and takes the whole of `jsonb_in`, because `{"a":1}` is what a person types and `{"a": 1}` is what the file holds ([`../manual/type-handling.md`](../manual/type-handling.md), "Seven string-shaped types still order the way PostgreSQL orders them") |
 | PostgreSQL's special values under an ordering operator | answered exactly, not raised as a fault: `-infinity` below every finite value, `infinity` above, a `numeric`'s `NaN` above `infinity` and equal to itself (I34), each in the spelling its own type writes — `date` writes `infinity` and `numeric` writes `Infinity`, and neither answers to the other's. A **bare** `numeric` carries all three; one with a typmod carries only `NaN`, since any typmod rejects an infinity, so the two infinity spellings are refused there as a filter literal. Carried as a position in the order rather than as a number, since no Arrow type has one. **A filter is therefore exact where the batch still cannot hold the value** — the row `--filter 'v_date<2020-01-01'` selects for `-infinity` fails to build if `v_date` is projected, which is a property of two paths with different powers, not a defect (`KD8` is the materialization question). ([`../manual/type-handling.md`](../manual/type-handling.md)) |
-| The comparison register | **L2**, in `pgtype.rs`: `comparison_for(declared, collation, types)` answers a `ComparisonPlan` per **column**, carried as `ResolvedSchema::comparisons` and rendered as a table in [`../design/architecture.md`](../design/architecture.md), "Ordering operators compare typed". `predicate.rs` reads the plan and names no `DataType`. Sixteen of its twenty-one rows agree with PostgreSQL (I33, I34, I37, I40, I41); five diverge, and one of those five — `jsonb` — is exact about structure and diverges only where a string leaf decides. The plan is `Clone` rather than `Copy`, because two of its comparisons carry a fact about the column: an enum's labels, and whether a `numeric`'s typmod excludes the infinities. Exhaustiveness is `builtin_scalar` answering the Arrow type and the comparison in one arm, plus a wildcard-free `match` over `TypeKind`. A divergence is announced by `pgdq query` once on stderr, and read by an embedder from `TableStream::ordering_notes` — a third channel, since the signal is per-column *and* predicate-conditional (L4) |
-| The declared collation | read, and it moves the verdict rather than the comparison: `ColumnDef::collation` keeps a column's `COLLATE` clause verbatim (`pg_catalog."C"`), `TypeKind::Domain` keeps a domain's own as the type default a column-level clause overrides, and the register answers **agrees** for an explicit `C`/`POSIX` and for a bare `name` column, **diverges** for any other stated collation and for a `text`/`varchar` column with no clause at all (I32, I37) — a user-defined collation the same dump declares `locale = 'C'` included, which is correct rows plus a note the user can ignore, and so a property rather than a `KD<k>`. The clause is found wherever `pg_dump` displaced it, past a `DEFAULT`, a `GENERATED … STORED` expression and a `NOT NULL`, which `fixtures/<13–18>/types/default.sql` now carries. `character(n)` is never promoted: it is blank-padded and `bpcharcmp` trims first (I38), which no collation fixes ([`../manual/type-handling.md`](../manual/type-handling.md), "Text ordering is bytewise") |
+| The comparison register | **L2**, in `pgtype.rs`: `comparison_for(declared, collation, types)` answers a `ComparisonPlan` per **column**, carried as `ResolvedSchema::comparisons` and rendered as a table in [`../design/architecture.md`](../design/architecture.md), "Ordering operators compare typed". `predicate.rs` reads the plan and names no `DataType`. Seventeen of its twenty-two rows agree with PostgreSQL (I33, I34, I37, I38, I40, I41); five diverge, and only one of the five is a deficiency — a column that *states* a collation this build does not implement (`KD7`). The other four are properties: a collation no plain dump records, reached through a column and through a `jsonb` string leaf, and `json`, which the server does not order at all. The plan is `Clone` rather than `Copy`, because two of its comparisons carry a fact about the column: an enum's labels, and whether a `numeric`'s typmod excludes the infinities. Exhaustiveness is `builtin_scalar` answering the Arrow type and the comparison in one arm, plus a wildcard-free `match` over `TypeKind`. A divergence is announced by `pgdq query` once on stderr, and read by an embedder from `TableStream::ordering_notes` — a third channel, since the signal is per-column *and* predicate-conditional (L4) |
+| The declared collation | read, and it moves the verdict rather than the comparison: `ColumnDef::collation` keeps a column's `COLLATE` clause verbatim (`pg_catalog."C"`), `TypeKind::Domain` keeps a domain's own as the type default a column-level clause overrides, and the register answers **agrees** for an explicit `C`/`POSIX` and for a bare `name` column, **diverges** for any other stated collation and for a `text`/`varchar` column with no clause at all (I32, I37) — a user-defined collation the same dump declares `locale = 'C'` included, which is correct rows plus a note the user can ignore, and so a property rather than a `KD<k>`. The clause is found wherever `pg_dump` displaced it, past a `DEFAULT`, a `GENERATED … STORED` expression and a `NOT NULL`, which `fixtures/<13–18>/types/default.sql` now carries. `character(n)` is the fourth collatable arm and reaches the same three verdicts: `CompareKind::PaddedText` takes the dump's blank padding off both sides first, which is `bcTruelen` (I38), and the clause then decides exactly as it does for `text` — so a `char(n)` declaring `COLLATE "C"` agrees ([`../manual/type-handling.md`](../manual/type-handling.md), "Text ordering is bytewise") |
 | Comparison oracle | `fixtures/<13–18>/oracle/` holds what PostgreSQL itself answers for 2020 typed comparisons and 317 literals per major, each cell recording whether the server *accepted* the input, generated by `scripts/generate_fixtures.py --skip-dumps` and committed ([`../design/architecture.md`](../design/architecture.md), "The comparison oracle"). The answers are **glibc's** — every fixture container is the Debian (`-trixie`) image — and every text pair is asked twice, under `COLLATE "C"` and under the database's own collation, so both halves of the register's text row are in the file rather than argued. `character(10)` is asked under both too, with a tab-bearing value that puts I38's ordering corollary in the file ahead of 11.6, and a case's `collation` now means one thing only: `None` says the register does not branch on the clause for that type. A pair is asked through two *columns* of the declared type, so a bare case measures what a bare column in a dump does: `name`'s cells are its own `C` type default, and `public.text_c` — the domain whose own DDL carries the clause — is in the file beside it on the `user/Domain` arm. A literal the server refuses therefore never reaches an operator, and answers all six cells with the rejection `literals.tsv` records for it. `jsonb`'s sixteen values are one per branch of `compareJsonbContainers` — both booleans, a string, both empty containers, a one-pair object whose key sorts after a two-pair object's, and the pair separating storage order from alphabetical — so I41's facts are in the file rather than in a probe |
-| Register against the oracle's answers | working: `the_register_answers_every_committed_oracle_cell`, a unit test in `predicate.rs`, puts every committed cell to the register through the same `resolve_term`/`Predicate::matches` path a `--filter` takes — **28,536 cells over six majors**. It skips an `E`-cell (what the server refused), a NULL right operand (which the filter grammar cannot spell), `=`/`<>` (compared as text by design, and their equality carried by `<=`/`>=`), and a column the register refuses an ordering operator on, whose set is asserted exactly. **Forty cases are permitted to disagree and every one of them does, in all 24 cells of its case** — six majors by four operators, so an entry cannot be met by the majors and operators it still disagrees under: a `jsonb` string leaf (2), `character(10)` against a tab (8), and `text` under glibc's `en_US.utf8` (30) — and a disagreeing column must announce an `OrderingDivergence` ([`../design/architecture.md`](../design/architecture.md), "The register against the oracle's answers") |
+| Register against the oracle's answers | working: `the_register_answers_every_committed_oracle_cell`, a unit test in `predicate.rs`, puts every committed cell to the register through the same `resolve_term`/`Predicate::matches` path a `--filter` takes — **28,536 cells over six majors**. It skips an `E`-cell (what the server refused), a NULL right operand (which the filter grammar cannot spell), `=`/`<>` (compared as text by design, and their equality carried by `<=`/`>=`), and a column the register refuses an ordering operator on, whose set is asserted exactly. **Thirty-two cases are permitted to disagree and every one of them does, in all 24 cells of its case** — six majors by four operators, so an entry cannot be met by the majors and operators it still disagrees under: a `jsonb` string leaf (2) and `text` under glibc's `en_US.utf8` (30), which are one statement at two depths — and a disagreeing column must announce an `OrderingDivergence`. `character(10)`'s eight tab-bearing cases were a third population until the trim retired all eight at once, under both collations and at all six majors ([`../design/architecture.md`](../design/architecture.md), "The register against the oracle's answers") |
 | Cross-major differ | working: `scripts/oracle_differences.py` walks the majors as a chain of adjacent pairs and files every cell that moved in `fixtures/oracle-differences.tsv` — **533 differences across 13–18, every one of them additive** (I35), so the union rule is checked rather than asserted. `test_oracle_differences.py` asserts the committed file against a fresh computation and, separately, that no difference is non-additive; an oracle pass of `generate_fixtures.py` ends by running the same check ([`../design/architecture.md`](../design/architecture.md), "The cross-major differ") |
 | Register-to-oracle reconciliation | working: `scripts/oracle_register.py` reads the register's arms out of `pgtype.rs` — one per declared base name in `builtin_scalar`, one per `TypeKind` match arm in `comparison_user_type`, the three branches of the walk that are not match arms, and the three branches of `collated_text` — and joins them against the case table both ways, failing on either. **37 arms, 54 cases, nothing uncovered and nothing unplaced.** The collation is a second dimension: a case's label picks the arm, `C` reaching the bytewise branch and `default` the other two, and the `datcollate` that makes that mapping sound is read out of `meta.tsv` rather than assumed. An oracle pass of `generate_fixtures.py` ends by running it beside the differ ([`../design/architecture.md`](../design/architecture.md), "The register-to-oracle reconciliation") |
 | `object_store` I/O, Python bindings, DataFusion `TableProvider` | not started — P6 |
@@ -239,12 +240,21 @@ progress.
       added, and `KD7`'s text-held row is down to `json`. Earned on entry to
       11.5, whose row promised a closure the register cannot support. Notes:
       [`../design/roadmap-P11.5.1-jsonb-notes.md`](../design/roadmap-P11.5.1-jsonb-notes.md)
-- [ ] **11.6** Typed `=` / `!=` — routed through the comparison plan, with the
-      canonicalize-the-literal-once fast path, its two decode-per-row
-      exceptions and the `char(n)` trim, which retires
-      `OrderingDivergence::BlankPadded`; `ordering_notes` becomes
-      `comparison_notes`. Closes `KD7`'s last row, and **strikes `KD7`** —
-      index line, detail paragraph and the `ComparisonPlan::AS_TEXT` marker.
+- [x] **11.6** The `character(n)` trim — `CompareKind::PaddedText` takes the
+      dump's blank padding off both sides before the collation is consulted
+      (I38), so `character` becomes the fourth collatable arm and reaches the
+      same three verdicts `text` does; `OrderingDivergence::BlankPadded` is
+      retired and the oracle's eight tab-bearing `character(10)` exceptions go
+      with it. `KD7` is **rewritten, not struck**: its `char(n)`, `json` and
+      unknown-collation statements close and the one that survives — a column
+      stating a collation this build does not implement — drops to
+      `(c) unowned`. Typed `=`/`!=` was split out; see 11.6.1. Notes:
+      [`../design/roadmap-P11.6-char-trim-notes.md`](../design/roadmap-P11.6-char-trim-notes.md)
+- [ ] **11.6.1** Typed `=` / `!=` — routed through the comparison plan, with
+      the canonicalize-the-literal-once fast path and its decode-per-row
+      exceptions; `ordering_notes` becomes `comparison_notes`. Earned from
+      11.6, whose row paired a self-contained register correction with a new
+      mechanism over every `CompareKind`.
 - [ ] **11.7** Three-valued evaluation — `Expr`, the `True`/`False`/`Unknown`
       domain, `IS DISTINCT FROM`. Library only.
 - [ ] **11.8** `--where` — the expression grammar in its own CLI module, leaf
@@ -356,12 +366,12 @@ here rather than reading as a phase nobody has sliced.
   [`../design/architecture.md`](../design/architecture.md), "One target per
   query".
 
-- **KD7** — five rows of the ordering register diverge under `<`/`>`, in four
-  statements: a stated collation that is not `C`/`POSIX`, none stated on
-  `text`/`varchar`, `character(n)`'s blank padding, and `json`. `jsonb` is the
-  fifth row and the second statement one level down — structurally exact, on
-  the unrecorded database collation at every string (I41). **(b) owned by P11,
-  struck at 11.6**, which closes `character(n)`; the rest by statement. Detail:
+- **KD7** — a column that *states* a collation this build does not implement —
+  a libc locale, an ICU collation — is ordered bytewise under `<`/`>`, so the
+  row set is not the server's; the fix is a comparison per named collation.
+  **(c) unowned**; promoted by a dump whose text columns state a real locale.
+  The register's four other divergent rows are properties, not parts of this
+  entry. Detail:
   [`../design/architecture.md`](../design/architecture.md), "Ordering operators
   compare typed".
 
@@ -388,4 +398,26 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **`KD7` was rewritten rather than struck, against the spec's binding.** P11's
+  spec says *"`KD7` is retired by this phase"* and 11.6's checklist line said
+  this slice strikes it. Three of the entry's four statements did close as
+  properties — a database collation no plain dump records (I32), through a bare
+  text column and through a `jsonb` string leaf, and `json`, which the server
+  does not order at all. The fourth did not: a column that *states* `COLLATE
+  "de_DE.utf8"` carries the fact in the file, this build orders it bytewise, and
+  the fix is a comparison per named collation. That is a defect with a known fix
+  and no owner, and calling it a property to complete the strike would be the
+  "property filed as a deficiency" rule running backwards. So the entry survives
+  at one statement and drops to `(c) unowned`. **The spec never decided this** —
+  it was written before 11.11 invented a separate verdict for a stated non-`C`
+  clause, so its `text` row speaks only of the no-clause residue. Reversibility
+  picked the direction: an entry kept and struck later costs one edit, where a
+  struck number reinstated is a state the register cannot express. If the call
+  goes the other way, `KD7` is struck — index line, the `architecture.md`
+  paragraph and the `OrderingDivergence::NonBytewiseCollation` marker — and the
+  collation limitation stays where it already is, in the register table and in
+  the per-query note. Reasoning:
+  [`history/2026-09-01.md`](history/2026-09-01.md), "`KD7` survives at one
+  statement rather than being struck".
 

@@ -31,7 +31,7 @@ answer, in part — see the text row.
 | `Utf8View` from `interval`, `time with time zone`, `inet`/`cidr`/`macaddr`/`macaddr8`, and domains over them | **Closed by code**, one comparison per type. |
 | `Utf8View` from `jsonb` | **Closed by code, with a residue that closes by statement.** `compareJsonbContainers` is structural — type rank, then length, then member-wise — and its *scalar string* leaves, keys included, go through `varstr_cmp` under `DEFAULT_COLLATION_OID`. That is the database's collation, which a plain dump does not record (I32), so a `jsonb` column reaches exactly the residue the text row reaches, one level down. The structural half is worth closing and the collation half is the same statement made twice. |
 | `Utf8View` from `text`/`varchar`/`name` | **Closed by code *and* statement.** The file states more than the row assumed: `pg_dump` emits a `COLLATE` clause wherever a column's collation differs from **its type's** default, and `name`'s type default is `C` — so a bare `name` column, and any column carrying an explicit `COLLATE "C"`/`"POSIX"`, **agree exactly, on every server**. What stays closed by statement is the rest: a `default`-collation column with no clause is on the database default, which no plain dump records (I32). Bytewise remains the answer throughout; what changes is which columns are told they diverge. |
-| `Utf8View` from `char(n)` | **Closed by statement, and not by the collation rule.** A `character(n)` value is written blank-padded to `n` and `bpcharcmp` strips trailing blanks before it consults a collation at all (I38), so an explicit `COLLATE "C"` does *not* make it agree: a field whose significant text equals the literal sorts above it here and equal on the server. It stays a divergence with a reason of its own. Trimming both sides is the same canonicalization question 11.6 opens for equality, and it is 11.6's to answer, not 11.11's. |
+| `Utf8View` from `char(n)` | **Closed by code, down to the collation statement.** A `character(n)` value is written blank-padded to `n` and `bpcharcmp` strips trailing blanks from *both* sides before it consults a collation at all (I38), so trimming both sides is the comparison — after which `char(n)` is the text row exactly, with the same three collation arms and the same residue. An explicit `COLLATE "C"` therefore does close it, but only once the trim is there, which is why 11.11 could not promote it and 11.6 can. |
 | `Utf8View` from `json` (and `xml`) | **Closed by statement.** PostgreSQL defines *no* comparison for these types at all — no `=`, no ordering, no default operator class — so "agrees with PostgreSQL" is not a question they can be asked. Our text comparison offers more than the server does, and that is what gets said. |
 
 The `json`/`xml` row is not a deficiency once stated: `STATUS.md`'s rule is
@@ -706,7 +706,8 @@ here.
 | **11.4** | Enum and bare `numeric` | The two rows the re-key was for: declaration order, and arbitrary-precision decimal with all three specials. |
 | **11.5** | The text-held type queue | `interval` (with v17 infinities), `time with time zone`, `inet`/`cidr`/`macaddr`/`macaddr8`. Repetitive and additive; the oracle checks each. |
 | **11.5.1** | `jsonb` | The one text-held type whose comparison is a container walk rather than a scalar decode, and the one whose leaves reopen the collation question `text` already has. **Earned, not planned** — see below. |
-| **11.6** | Typed `=` / `!=` | Routed through the now-complete plan, with the canonicalize-once fast path, its two decode-per-row exceptions and the `char(n)` trim — which retires `OrderingDivergence::BlankPadded` and gives `character` the same three collation arms `text` has. Renames the note channel. |
+| **11.6** | The `character(n)` trim | `CompareKind::PaddedText` — trailing blanks off both sides, then the clause — which retires `OrderingDivergence::BlankPadded` and gives `character` the same three collation arms `text` has. Rewrites `KD7` to the one statement that survives. **Rewritten to the scope that landed** — see below. |
+| **11.6.1** | Typed `=` / `!=` | Routed through the now-complete plan, with the canonicalize-once fast path and its decode-per-row exceptions. Renames the note channel. **Earned, not planned** — see below. |
 | **11.7** | Three-valued evaluation | `Expr`, the `True`/`False`/`Unknown` domain, `IS DISTINCT FROM`. Library only. |
 | **11.8** | `--where` | The expression grammar, its own CLI module, leaf delegated to `parse_filter`. |
 | **11.9** | The nested literal input grammar | Parser for the `array_in`/`record_in`/`range_in` supersets — **three grammars, not one** — checked against the oracle's malformed cases. No comparison yet. |
@@ -1013,11 +1014,32 @@ so. Landing that under a row promising a full closure would have shipped a
 split exists to make visible. The evidence is in
 [`../status/history/2026-09-01.md`](../status/history/2026-09-01.md).
 
+**11.6 was mis-sized, and 11.6.1 was earned from it.** Its row paired two
+things with different review questions. The `char(n)` trim is a **register
+correction**: one `CompareKind`, one arm, and an oracle that already carried
+its evidence — 11.11.1 put the tab-bearing `character(10)` cases in the file
+one slice early, precisely so this change could be checked against evidence it
+did not produce, and it retires eight exception entries under both collations
+at six majors. Typed equality is a **new mechanism over every `CompareKind`**:
+a canonical rendering per kind, whose exception list turned out to be longer
+than this doc's two — `jsonb` re-renders a number through `numeric_out`, so
+`{"a": 1.50}` and `{"a": 1.5}` are one value written two ways, and a
+`double precision` field written `-0` equals the literal `0`. Landing both
+together would have made a reviewer accept the second at the first's
+confidence, which is what `../process.md`'s "Size a slice by its review"
+forbids. The evidence for the split is in
+[`../status/history/2026-09-01.md`](../status/history/2026-09-01.md).
+
+**And the trim is the better half to land first**, which is why it keeps the
+number: equality's `char(n)` canonicalization is *this* trim, so 11.6.1 inherits
+a comparison rather than inventing one, and the phase's own rule — evidence
+before the code that leans on it — is obeyed twice over.
+
 Five seams are deliberate. **11.3 stands alone** because a refactor whose
 review question is "did anything change?" cannot share a diff with one that
 changes answers. **11.4 is apart from 11.5** because arbitrary-precision
 decimal with three ordered specials is a different confidence from "`inet`
-compares by family then bits". **11.6 follows 11.5** so equality inherits every
+compares by family then bits". **11.6.1 follows 11.5** so equality inherits every
 type's comparison at once rather than being revisited per type. **11.9
 precedes 11.10** because the input grammar is the part with an external oracle
 and the part most likely to be wrong. And **11.5.1 is apart from 11.5** for the

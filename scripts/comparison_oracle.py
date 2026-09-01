@@ -318,12 +318,12 @@ TYPE_CASES: list[TypeCases] = [
     # tab ranks above bare `a`; padded, it ranks below, because the tab sorts
     # under the pad space.
     #
-    # Asked under both collations ahead of the slice that closes `character`.
-    # Today the register is clause-blind here -- blank padding is what makes it
-    # diverge, not the collation -- so this looks like an instance of the `None`
-    # rule and stops being one the moment a trimmed `char(n)` compares under its
-    # own collation. Labelling now costs nothing in a regeneration that is
-    # happening anyway; labelling later costs a six-major run of its own.
+    # Asked under both collations, and labelled one slice before the register
+    # read the labels: while a `char(n)` was compared padded it diverged for a
+    # reason no clause could fix, so the labels bought nothing, and they became
+    # coverage the moment the trim made a `char(n)` compare under its own
+    # collation. Labelling in a regeneration that was happening anyway cost
+    # nothing; labelling later would have cost a six-major run of its own.
     *(
         TypeCases(
             "character(10)",
