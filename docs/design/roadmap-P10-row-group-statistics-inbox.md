@@ -52,10 +52,10 @@ longer follows the Arrow type. Two columns held as strings now have a real
 order: a bare `numeric` (`Utf8View`) compares as an arbitrary-precision
 decimal, and an enum (`Dictionary(Int32, Utf8)`) compares by the declaration
 order the dump carries. Both are exactly PostgreSQL's own order (I33, I34).
-Four rows of the register still order bytewise where the server does not — a
-`text` column whose collation the file does not state or states as something
-other than `C`/`POSIX`, `character(n)`, and the text-held types — and each of
-those says so through `TableStream::ordering_notes`.
+Some rows of the register still order bytewise where the server does not — a
+`text` or `character(n)` column whose collation the file does not state or
+states as something other than `C`/`POSIX`, a `jsonb` string leaf, and `json` —
+and each of those says so through `TableStream::comparison_notes`.
 
 **Why P10 cares.** `roadmap.md`'s P12 section justifies its own position with
 "a per-row-group minimum over a `Utf8View` column is a lexicographic bound

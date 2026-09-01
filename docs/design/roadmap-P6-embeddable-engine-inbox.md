@@ -241,12 +241,12 @@ which a plain dump does not record — I32), `Utf8View` from a bare `numeric`
 has a server operator of its own), and `Dictionary` from an enum (PostgreSQL
 orders by declaration order).
 
-**`TableStream::ordering_notes()` is what an embedder can read**, and `pgdq
-query` prints each of them once on stderr. P11 renames it `comparison_notes`
-(equality diverges under a non-deterministic collation too) and gives each note
-a *path*, so a divergence inside an array element or a composite field names
-its position — read the current method name off the source rather than this
-entry.
+**`TableStream::comparison_notes()` is what an embedder can read**, and `pgdq
+query` prints each of them once on stderr. It is per **term**, not per column:
+`=` routes through the same comparison plan the ordering operators do, and most
+divergences reach ordering alone, so one column filtered with `<` and `=` can
+carry one note. P11 still owes each note a *path*, so a divergence inside an
+array element or a composite field names its position.
  It is a **third channel** rather
 than a widening of either existing one, and deliberately: the signal is
 per-column *and* conditional on a predicate, which makes it L4, while
@@ -255,7 +255,7 @@ into either inverts the layering.
 
 **Why P6 cares.** The sink now has **three** channels to reconcile, not two,
 and the third is the one whose shape is least settled: a caller has to know to
-call `ordering_notes()` and to call it after the schema resolves, which is
+call `comparison_notes()` and to call it after the schema resolves, which is
 exactly the kind of "remember to ask" the sink exists to replace. A sink design
 that carries the two older channels and has no place for an L4,
 query-conditional note leaves this one as a method an embedder must poll.

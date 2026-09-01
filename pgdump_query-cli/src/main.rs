@@ -130,9 +130,12 @@ enum Command {
         /// is no `OR` and no negation of a whole term
         /// (`docs/design/architecture.md`, "Predicates").
         ///
-        /// `=`/`!=` compare the row's decoded field as text. The four
-        /// ordering operators compare **typed**, and are refused on a column
-        /// whose type did not resolve or that is nested.
+        /// Every operator but the two NULL tests compares **typed**: the
+        /// filter's value is read with the column's own decoder, so a value
+        /// that is not of that type is refused by name rather than matching
+        /// nothing. The four ordering operators are additionally refused on a
+        /// column whose type did not resolve or that is nested; `=`/`!=`
+        /// compare such a column as text.
         ///
         /// Spaces around the operator are not data: `name = alpha` asks for
         /// `alpha`. Quote either side — `'` and `"` both work — to say
@@ -410,18 +413,22 @@ fn name_taken_verbatim(err: pgdump_query::Error) -> anyhow::Error {
     err.into()
 }
 
-/// Say, once per query and on stderr, which ordering comparisons do not
-/// order the way PostgreSQL's own operator does
-/// (`docs/design/architecture.md`, "Predicates", the ordering register).
+/// Say, once per query and on stderr, which of this query's comparisons do
+/// not answer what PostgreSQL's own operator would
+/// (`docs/design/architecture.md`, "Predicates", the comparison register).
+///
+/// It is per *term*, not per column: most divergences are divergences of
+/// order alone, so a `text` column filtered with both `<` and `=` warns about
+/// the first and not the second.
 ///
 /// **Announced by the CLI rather than carried by a library channel.** The
 /// signal is per-column *and* conditional on a predicate — L4 — while
 /// `DumpIndex.diagnostics` is L1 and `ResolvedSchema.notes` is L2, so writing
 /// it into either would invert the layering. An embedder reads
-/// `TableStream::ordering_notes` for the same facts; what it *should* be
+/// `TableStream::comparison_notes` for the same facts; what it *should* be
 /// handed is filed in `docs/design/roadmap-P6-embeddable-engine-inbox.md`.
-fn announce_ordering(stream: &pgdump_query::TableStream<'_>) {
-    for note in stream.ordering_notes() {
+fn announce_comparisons(stream: &pgdump_query::TableStream<'_>) {
+    for note in stream.comparison_notes() {
         eprintln!("warning: {}", note.message());
     }
 }
@@ -672,7 +679,7 @@ async fn main() -> Result<()> {
             let mut announced = false;
             while let Some(batch) = stream.next().await.transpose().map_err(name_taken_verbatim)? {
                 if !announced {
-                    announce_ordering(&stream);
+                    announce_comparisons(&stream);
                     announced = true;
                 }
                 any_batch = true;
@@ -698,7 +705,7 @@ async fn main() -> Result<()> {
             // is made at the first batch when there is one so it precedes the
             // rows rather than trailing them.
             if !announced {
-                announce_ordering(&stream);
+                announce_comparisons(&stream);
             }
             if any_batch {
                 eprintln!("{rows} row(s)");

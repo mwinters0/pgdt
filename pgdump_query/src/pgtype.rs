@@ -234,8 +234,8 @@ pub enum CompareKind {
     /// string, object keys included, is ordered by `varstr_cmp` under
     /// `DEFAULT_COLLATION_OID` — the *database's* collation, which a plain
     /// dump does not record (I32) — so a `jsonb` column carries
-    /// [`OrderingDivergence::JsonbStringCollation`] for exactly the reason a
-    /// bare `text` column carries [`OrderingDivergence::UnknownCollation`],
+    /// [`ComparisonDivergence::JsonbStringCollation`] for exactly the reason a
+    /// bare `text` column carries [`ComparisonDivergence::UnknownCollation`],
     /// one level down. A `jsonb` column cannot state a clause of its own:
     /// `jsonb` is not a collatable type, so there is nothing for `pg_dump` to
     /// write and nothing for the register to read.
@@ -245,9 +245,9 @@ pub enum CompareKind {
 /// How a comparison here differs from PostgreSQL's own for the same declared
 /// type. The declared type then sharpens the sentence a user reads, since
 /// several declared types share one divergence for different reasons (see
-/// `crate::predicate::OrderingNote::message`).
+/// `crate::predicate::ComparisonNote::message`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OrderingDivergence {
+pub enum ComparisonDivergence {
     /// The column is held as text and compared bytewise where the server has
     /// no comparison at all. **`json` is its one member**, and the sentence
     /// it prints says exactly that: PostgreSQL defines no `=`, no order and
@@ -284,6 +284,66 @@ pub enum OrderingDivergence {
     /// sentence about a missing `COLLATE` clause would be describing a clause
     /// that has no place to be written.
     JsonbStringCollation,
+    /// A column whose declared type resolved, is not nested, and has no
+    /// comparison in this register at all — `box`, `money`, `xml`, a
+    /// user-defined base type. An ordering operator is *refused* on such a
+    /// column ([`ComparisonPlan::Refused`]); `=`/`!=` are not, because the
+    /// text a dump holds is canonical `*_out` form and a byte comparison over
+    /// it is right for most of these types. This says it is not right for all
+    /// of them.
+    ///
+    /// **`box` is the member that proves it**, and the committed oracle holds
+    /// the proof: `box_eq` compares *areas*, so the server calls
+    /// `(1,1),(0,0)` and `(3,3),(2,2)` equal and a byte comparison does not
+    /// (`fixtures/<13-18>/oracle/comparisons.tsv`, `public.box_domain`).
+    /// Whether any given unmodelled type is like `box` or like `money` —
+    /// whose `=` is its value's and whose `*_out` is unique per value, so
+    /// bytewise agrees — is exactly what this register does not know, and
+    /// announcing is the conservative answer.
+    ///
+    /// Deficiency register: `deficiency: KD10`.
+    ///
+    /// *Rejected: refusing `=` here as ordering is refused.* It takes a
+    /// working capability away from every type in the group to protect the
+    /// geometric handful, where an announcement protects both — and for
+    /// `xml`, whose `=` PostgreSQL does not define at all, filtering by exact
+    /// text is a thing a user legitimately wants.
+    UnmodelledType,
+}
+
+impl ComparisonDivergence {
+    /// Whether this divergence reaches `=`/`!=` as well as the four ordering
+    /// operators.
+    ///
+    /// **Only [`Self::AsText`] does, and the reason the other three do not is
+    /// one fact about every collation this build can meet**: a libc collation
+    /// is always *deterministic*, so `varstr_cmp` returns zero exactly when
+    /// the bytes are equal, and `texteq`/`bpchareq` are byte comparisons
+    /// whatever the collation is. A collation the file does not name, one it
+    /// names and this build does not implement, and one reached through a
+    /// `jsonb` string leaf are therefore all divergences of *order* alone —
+    /// the row set an `=` returns is the server's either way.
+    ///
+    /// A non-deterministic collation is the shape that breaks that, and the
+    /// dump states it outright (I42). Reading it is what
+    /// `docs/design/roadmap-P11-typed-predicates.md` gives to 11.6.2; until
+    /// then the two variants that answer `true` do so for a reason that is
+    /// not a collation at all — the server defines no comparison
+    /// ([`Self::AsText`]), or this register models none ([`Self::UnmodelledType`]).
+    ///
+    /// There is no `affects_ordering` beside this: every variant does, which
+    /// is what makes one method enough.
+    pub fn affects_equality(self) -> bool {
+        match self {
+            // PostgreSQL defines no `=` for `json` any more than it defines
+            // an order, so bytewise equality is as much an answer the server
+            // does not have as the ordering is.
+            Self::AsText | Self::UnmodelledType => true,
+            Self::UnknownCollation | Self::NonBytewiseCollation | Self::JsonbStringCollation => {
+                false
+            }
+        }
+    }
 }
 
 /// A collatable type's *default* collation — `pg_type.typcollation`, which is
@@ -317,7 +377,7 @@ enum TypeCollation {
 pub enum ComparisonPlan {
     /// Values decode through `kind` and compare by that order; `divergence`
     /// is `None` when the order is PostgreSQL's own.
-    Compared { kind: CompareKind, divergence: Option<OrderingDivergence> },
+    Compared { kind: CompareKind, divergence: Option<ComparisonDivergence> },
     /// No order is defined here for this declared type.
     #[default]
     Refused,
@@ -338,12 +398,12 @@ impl ComparisonPlan {
     /// which is why it is not a deficiency: there is no order to disagree
     /// with. The note it produces says so.
     pub(crate) const AS_TEXT: Self =
-        Self::Compared { kind: CompareKind::Text, divergence: Some(OrderingDivergence::AsText) };
+        Self::Compared { kind: CompareKind::Text, divergence: Some(ComparisonDivergence::AsText) };
 
     /// PostgreSQL's own comparison but for the residue `divergence` names —
     /// the shape a type takes when its order is implemented and one part of
     /// it rests on a fact the file does not carry.
-    pub(crate) fn diverging(kind: CompareKind, divergence: OrderingDivergence) -> Self {
+    pub(crate) fn diverging(kind: CompareKind, divergence: ComparisonDivergence) -> Self {
         Self::Compared { kind, divergence: Some(divergence) }
     }
 }
@@ -407,8 +467,8 @@ fn collated_text(
     ComparisonPlan::diverging(
         kind,
         match collation {
-            Some(_) => OrderingDivergence::NonBytewiseCollation,
-            None => OrderingDivergence::UnknownCollation,
+            Some(_) => ComparisonDivergence::NonBytewiseCollation,
+            None => ComparisonDivergence::UnknownCollation,
         },
     )
 }
@@ -561,7 +621,7 @@ fn builtin_scalar(
         // residue.
         "jsonb" => (
             Utf8View,
-            ComparisonPlan::diverging(K::Jsonb, OrderingDivergence::JsonbStringCollation),
+            ComparisonPlan::diverging(K::Jsonb, ComparisonDivergence::JsonbStringCollation),
         ),
         // `network_cmp_internal`'s order for the two address types, and the
         // plain byte order for the two MAC types (I40). `cidr` differs from
@@ -1738,9 +1798,12 @@ mod tests {
         use CompareKind as K;
         let text = || ComparisonPlan::AS_TEXT;
         let unknown_collation =
-            || ComparisonPlan::diverging(CompareKind::Text, OrderingDivergence::UnknownCollation);
+            || ComparisonPlan::diverging(CompareKind::Text, ComparisonDivergence::UnknownCollation);
         let unknown_padded = || {
-            ComparisonPlan::diverging(CompareKind::PaddedText, OrderingDivergence::UnknownCollation)
+            ComparisonPlan::diverging(
+                CompareKind::PaddedText,
+                ComparisonDivergence::UnknownCollation,
+            )
         };
         for (declared, expected) in [
             ("smallint", agrees(K::Int)),
@@ -1782,7 +1845,7 @@ mod tests {
             // string leaf decides, which is the database's collation (I41).
             (
                 "jsonb",
-                ComparisonPlan::diverging(K::Jsonb, OrderingDivergence::JsonbStringCollation),
+                ComparisonPlan::diverging(K::Jsonb, ComparisonDivergence::JsonbStringCollation),
             ),
             // `cidr` differs from `inet` only in refusing a literal with a
             // bit set below its netmask, and `macaddr8` from `macaddr` only
@@ -1835,13 +1898,16 @@ mod tests {
         // verdict: it is a container walk that diverges only at a string.
         assert_eq!(
             comparison_for("jsonb", None, &[]),
-            ComparisonPlan::diverging(CompareKind::Jsonb, OrderingDivergence::JsonbStringCollation),
+            ComparisonPlan::diverging(
+                CompareKind::Jsonb,
+                ComparisonDivergence::JsonbStringCollation
+            ),
         );
         // `text` is the last, and it does not share `AS_TEXT` with them:
         // reading the collation is what tells them apart.
         assert_eq!(
             comparison_for("text", None, &[]),
-            ComparisonPlan::diverging(CompareKind::Text, OrderingDivergence::UnknownCollation),
+            ComparisonPlan::diverging(CompareKind::Text, ComparisonDivergence::UnknownCollation),
         );
         // An enum with no labels resolves to no Arrow type at all, so no
         // column of it is ever asked how it compares.
@@ -1856,9 +1922,9 @@ mod tests {
     fn a_text_column_is_judged_by_the_collation_it_states() {
         let agrees_text = || ComparisonPlan::agrees(CompareKind::Text);
         let unknown =
-            || ComparisonPlan::diverging(CompareKind::Text, OrderingDivergence::UnknownCollation);
+            || ComparisonPlan::diverging(CompareKind::Text, ComparisonDivergence::UnknownCollation);
         let named = || {
-            ComparisonPlan::diverging(CompareKind::Text, OrderingDivergence::NonBytewiseCollation)
+            ComparisonPlan::diverging(CompareKind::Text, ComparisonDivergence::NonBytewiseCollation)
         };
         for (declared, collation, expected) in [
             // No clause: the type's own default decides, and only `name`'s is
@@ -1894,7 +1960,7 @@ mod tests {
                 Some("pg_catalog.\"en_US.utf8\""),
                 ComparisonPlan::diverging(
                     CompareKind::PaddedText,
-                    OrderingDivergence::NonBytewiseCollation,
+                    ComparisonDivergence::NonBytewiseCollation,
                 ),
             ),
             (
@@ -1902,7 +1968,7 @@ mod tests {
                 None,
                 ComparisonPlan::diverging(
                     CompareKind::PaddedText,
-                    OrderingDivergence::UnknownCollation,
+                    ComparisonDivergence::UnknownCollation,
                 ),
             ),
             // A non-collatable type ignores a clause it cannot carry.
@@ -1938,9 +2004,9 @@ mod tests {
         ];
         let agrees_text = || ComparisonPlan::agrees(CompareKind::Text);
         let unknown =
-            || ComparisonPlan::diverging(CompareKind::Text, OrderingDivergence::UnknownCollation);
+            || ComparisonPlan::diverging(CompareKind::Text, ComparisonDivergence::UnknownCollation);
         let named = || {
-            ComparisonPlan::diverging(CompareKind::Text, OrderingDivergence::NonBytewiseCollation)
+            ComparisonPlan::diverging(CompareKind::Text, ComparisonDivergence::NonBytewiseCollation)
         };
 
         assert_eq!(comparison_for("public.dom_c", None, &types), agrees_text());
@@ -1974,7 +2040,7 @@ mod tests {
         assert_eq!(comparison_for("public.d2", None, &types), agrees(CompareKind::Int));
         assert_eq!(
             comparison_for("public.dtext", None, &types),
-            ComparisonPlan::diverging(CompareKind::Text, OrderingDivergence::UnknownCollation),
+            ComparisonPlan::diverging(CompareKind::Text, ComparisonDivergence::UnknownCollation),
         );
         // A domain over something with no order here has none either.
         assert_eq!(comparison_for("public.darr", None, &types), ComparisonPlan::Refused);

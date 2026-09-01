@@ -12,8 +12,8 @@
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
-    Error, LocalFileSource, OrderingDivergence, Predicate, PredicateOp, QueryOptions, ScanOptions,
-    SchemaMode, table_stream,
+    ComparisonDivergence, Error, LocalFileSource, Predicate, PredicateOp, QueryOptions,
+    ScanOptions, SchemaMode, table_stream,
 };
 
 mod common;
@@ -139,7 +139,7 @@ async fn notes_for(table: &str, column: &str, literal: &str) -> Vec<String> {
         CacheMode::Disabled,
     );
     while stream.next().await.transpose().unwrap().is_some() {}
-    stream.ordering_notes().iter().map(|n| n.message()).collect()
+    stream.comparison_notes().iter().map(|n| n.message()).collect()
 }
 
 /// A bare `numeric` orders by decimal value, against the fixture's own
@@ -524,27 +524,45 @@ async fn a_literal_of_the_wrong_type_is_refused_before_any_row() {
 #[tokio::test]
 async fn a_divergent_comparison_is_reported_by_the_stream() {
     for (table, column, literal, divergence, marker) in [
-        ("public.t_text", "v_text", "a", OrderingDivergence::UnknownCollation, "no COLLATE clause"),
+        (
+            "public.t_text",
+            "v_text",
+            "a",
+            ComparisonDivergence::UnknownCollation,
+            "no COLLATE clause",
+        ),
         (
             "public.t_text",
             "v_varchar",
             "a",
-            OrderingDivergence::UnknownCollation,
+            ComparisonDivergence::UnknownCollation,
             "no COLLATE clause",
         ),
         // `character(n)` is the same collation row: the dump's blank padding
         // is trimmed off both sides (I38), and what is left is a bare column
         // whose collation the file does not carry.
-        ("public.t_text", "v_char", "a", OrderingDivergence::UnknownCollation, "no COLLATE clause"),
+        (
+            "public.t_text",
+            "v_char",
+            "a",
+            ComparisonDivergence::UnknownCollation,
+            "no COLLATE clause",
+        ),
         // `json` is what `AsText` covers now: the enum, the bare `numeric`,
         // the four types the text-held row lost and `jsonb` all order by
         // their own values.
-        ("public.t_json", "v_json", "a", OrderingDivergence::AsText, "no comparison"),
+        ("public.t_json", "v_json", "a", ComparisonDivergence::AsText, "no comparison"),
         // `jsonb` is compared structurally and diverges only at a string
         // leaf, which is a different sentence for a different reason. Its
         // literal has to be a JSON document, which is the same row's other
         // half: `a` is refused where every column above takes it.
-        ("public.t_json", "v_jsonb", "1", OrderingDivergence::JsonbStringCollation, "structurally"),
+        (
+            "public.t_json",
+            "v_jsonb",
+            "1",
+            ComparisonDivergence::JsonbStringCollation,
+            "structurally",
+        ),
     ] {
         let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
         let mut stream = table_stream(
@@ -560,7 +578,7 @@ async fn a_divergent_comparison_is_reported_by_the_stream() {
             CacheMode::Disabled,
         );
         while stream.next().await.transpose().unwrap().is_some() {}
-        let notes = stream.ordering_notes();
+        let notes = stream.comparison_notes();
         assert_eq!(notes.len(), 1, "{table}.{column}: {notes:?}");
         assert_eq!(notes[0].column, column);
         assert_eq!(notes[0].divergence, divergence);
@@ -602,9 +620,9 @@ async fn a_collated_column_is_judged_by_its_clause() {
         ("v_name", None),
         ("v_domain_c", None),
         ("v_text_def", None),
-        ("v_text_locale", Some(OrderingDivergence::NonBytewiseCollation)),
-        ("v_text_ucs", Some(OrderingDivergence::NonBytewiseCollation)),
-        ("v_user", Some(OrderingDivergence::NonBytewiseCollation)),
+        ("v_text_locale", Some(ComparisonDivergence::NonBytewiseCollation)),
+        ("v_text_ucs", Some(ComparisonDivergence::NonBytewiseCollation)),
+        ("v_user", Some(ComparisonDivergence::NonBytewiseCollation)),
     ] {
         let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
         let mut stream = table_stream(
@@ -620,7 +638,7 @@ async fn a_collated_column_is_judged_by_its_clause() {
             CacheMode::Disabled,
         );
         while stream.next().await.transpose().unwrap().is_some() {}
-        let notes = stream.ordering_notes();
+        let notes = stream.comparison_notes();
         match divergence {
             None => assert!(notes.is_empty(), "{column}: {notes:?}"),
             Some(expected) => {
@@ -675,7 +693,7 @@ async fn an_agreeing_comparison_reports_nothing() {
         CacheMode::Disabled,
     );
     while stream.next().await.transpose().unwrap().is_some() {}
-    assert!(stream.ordering_notes().is_empty());
+    assert!(stream.comparison_notes().is_empty());
 }
 
 /// The resume fingerprint covers each term's operator, so a token taken from
@@ -710,4 +728,123 @@ async fn a_resume_token_does_not_cross_two_ordering_operators() {
     );
     let err = resumed.next().await.unwrap().unwrap_err();
     assert!(matches!(err, Error::ResumeQueryMismatch), "{err:?}");
+}
+
+/// Typed `=` against the fixture's own values, each a case the untyped
+/// comparison answered with an empty result that read like an answer.
+///
+/// `v_small` is `numeric(10,2)` holding `-1.50`, so the literal `-1.5` a
+/// person types is the same value; `v_char` is `char(10)` holding `hi`
+/// blank-padded to ten, so `hi` is the same value; `v_untyped` is a bare
+/// `numeric` holding `100.00`, so `100` is the same value and no rendering
+/// of the literal could have made it a byte comparison.
+#[tokio::test]
+async fn typed_equality_matches_a_value_written_another_way() {
+    assert_eq!(
+        kept("public.t_numeric", "v_small", vec![term("v_small", PredicateOp::Eq, "-1.5")]).await,
+        [Some("-1.50".to_string())]
+    );
+    assert_eq!(
+        kept("public.t_text", "v_char", vec![term("v_char", PredicateOp::Eq, "hi")]).await,
+        [Some("hi        ".to_string())]
+    );
+    assert_eq!(
+        kept("public.t_numeric", "v_untyped", vec![term("v_untyped", PredicateOp::Eq, "100")])
+            .await,
+        [Some("100.00".to_string())]
+    );
+    // An `interval` collapses months to 30 days and days to 86400 s, so the
+    // fixture's `1 year 2 mons 3 days 04:05:06` is the same value as the 423
+    // days it comes to — which no rendering of the literal could have made a
+    // byte comparison.
+    assert_eq!(
+        kept(
+            "public.t_interval",
+            "v_interval",
+            vec![term("v_interval", PredicateOp::Eq, "423 days 04:05:06")]
+        )
+        .await,
+        [Some("1 year 2 mons 3 days 04:05:06".to_string())]
+    );
+    // `inet_out` drops a full-width netmask, so the literal carrying one is
+    // the same address.
+    assert_eq!(
+        kept("public.t_net", "v_inet", vec![term("v_inet", PredicateOp::Eq, "192.168.1.1/32")])
+            .await,
+        [Some("192.168.1.1".to_string())]
+    );
+}
+
+/// A literal that is not a value of the column's type is refused before a row
+/// is read, under `=` exactly as under `<` — the answer it replaces is an
+/// empty result a user reads as "no such row".
+#[tokio::test]
+async fn an_equality_literal_of_the_wrong_type_is_refused() {
+    let err = drain(
+        "public.t_numeric",
+        QueryOptions {
+            filters: vec![term("v_small", PredicateOp::Eq, "not-a-number")],
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(&err, Error::PredicateValueDecode { value, op, .. }
+            if value == "not-a-number" && *op == "="),
+        "{err}"
+    );
+}
+
+/// The collation divergences do not reach `=`: every libc collation is
+/// deterministic, so `texteq` is a byte comparison whatever the collation is
+/// and the same column that warns under `>=` is silent under `=`.
+#[tokio::test]
+async fn a_collation_note_is_raised_for_ordering_and_not_for_equality() {
+    let equality_notes = |column: &'static str| async move {
+        let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
+        let mut stream = table_stream(
+            &source,
+            "public.t_collate",
+            ScanOptions::default(),
+            QueryOptions {
+                filters: vec![term(column, PredicateOp::Eq, "a")],
+                projection: Some(vec![column.to_string()]),
+                ..Default::default()
+            },
+            None,
+            CacheMode::Disabled,
+        );
+        while stream.next().await.transpose().unwrap().is_some() {}
+        stream.comparison_notes()
+    };
+    for column in ["v_text_locale", "v_text_ucs", "v_user"] {
+        assert_eq!(notes_for("public.t_collate", column, "a").await.len(), 1, "{column} under >=");
+        assert!(equality_notes(column).await.is_empty(), "{column} under =");
+    }
+}
+
+/// A `box` column has no comparison in the register: the four ordering
+/// operators are refused on it, `=` falls back to text, and the note says so
+/// — because `box_eq` compares areas and a byte comparison does not (`KD10`).
+#[tokio::test]
+async fn a_column_with_no_registered_comparison_announces_its_equality() {
+    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
+    let mut stream = table_stream(
+        &source,
+        "public.t_delimiter",
+        ScanOptions::default(),
+        QueryOptions {
+            filters: vec![term("v_box_domain", PredicateOp::Eq, "(1,1),(0,0)")],
+            projection: Some(vec!["v_box_domain".to_string()]),
+            ..Default::default()
+        },
+        None,
+        CacheMode::Disabled,
+    );
+    while stream.next().await.transpose().unwrap().is_some() {}
+    let notes = stream.comparison_notes();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].divergence, ComparisonDivergence::UnmodelledType);
+    assert!(notes[0].message().contains("models no comparison"), "{}", notes[0].message());
 }

@@ -829,7 +829,7 @@ mod tests {
                 ComparisonPlan::Compared { kind: CompareKind::Int, divergence: None },
                 ComparisonPlan::diverging(
                     CompareKind::Text,
-                    crate::pgtype::OrderingDivergence::UnknownCollation,
+                    crate::pgtype::ComparisonDivergence::UnknownCollation,
                 ),
                 ComparisonPlan::Compared {
                     kind: CompareKind::Enum(["sad".to_string()].into_iter().collect()),
@@ -857,7 +857,7 @@ mod tests {
     /// for.
     #[test]
     fn two_text_columns_of_one_table_can_compare_differently() {
-        use crate::pgtype::{CompareKind, OrderingDivergence};
+        use crate::pgtype::{CompareKind, ComparisonDivergence};
 
         let mut meta = one_db(&[("public.t", &[("plain", "text"), ("bytewise", "text")])], vec![]);
         meta.databases[0].tables.get_mut("public.t").unwrap()[1].collation =
@@ -869,7 +869,10 @@ mod tests {
         assert_eq!(
             resolved.comparisons,
             [
-                ComparisonPlan::diverging(CompareKind::Text, OrderingDivergence::UnknownCollation),
+                ComparisonPlan::diverging(
+                    CompareKind::Text,
+                    ComparisonDivergence::UnknownCollation
+                ),
                 ComparisonPlan::Compared { kind: CompareKind::Text, divergence: None },
             ]
         );
@@ -893,7 +896,7 @@ mod tests {
             text.comparisons,
             [ComparisonPlan::diverging(
                 crate::pgtype::CompareKind::Text,
-                crate::pgtype::OrderingDivergence::UnknownCollation,
+                crate::pgtype::ComparisonDivergence::UnknownCollation,
             )]
         );
 

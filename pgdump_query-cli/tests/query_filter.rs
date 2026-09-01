@@ -180,3 +180,18 @@ fn a_quoted_column_flag_is_matched_literally_and_says_so() {
     assert!(stderr.contains("matched literally"), "{stderr}");
     assert!(stderr.contains("--column"), "{stderr}");
 }
+
+/// **`=` is typed.** `is_active` is `boolean` and the dump writes `t`/`f`, so
+/// `--filter 'is_active=t'` selects and `--filter 'is_active=true'` is refused
+/// by name rather than matching nothing — which is what the untyped
+/// comparison did with the same command line.
+#[test]
+fn typed_equality_reads_the_literal_with_the_columns_decoder() {
+    assert_eq!(kept(&["--filter", "is_active=t"]), 3);
+
+    let out = widgets(&["--filter", "is_active=true"]);
+    assert!(!out.status.success());
+    let stderr = stderr_of(&out);
+    assert!(stderr.contains("filter value `true`"), "{stderr}");
+    assert!(stderr.contains("boolean"), "{stderr}");
+}

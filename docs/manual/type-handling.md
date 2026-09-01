@@ -97,10 +97,10 @@ can choose what to do with the values that do not fit.
 
 Precision above 76 digits also falls back to a string (`Decimal256`'s limit).
 
-**The `<`, `<=`, `>` and `>=` operators are not fooled by that.** They compare
-such a column as a decimal, exactly as PostgreSQL does, over the digits the
-dump holds — so `--filter 'v>9'` keeps a row whose `v` is `100.00`, and `1.5`
-and `1.50` are one value however the file spelled them. Bare `numeric` also
+**The filter operators are not fooled by that.** They compare such a column as
+a decimal, exactly as PostgreSQL does, over the digits the dump holds — so
+`--filter 'v>9'` keeps a row whose `v` is `100.00`, and `1.5` and `1.50` are
+one value however the file spelled them, under `=` as much as under `<`. Bare `numeric` also
 answers `Infinity`, `-Infinity` and `NaN` in those exact spellings. A
 `numeric(p,s)` column cannot hold an infinity at all — PostgreSQL rejects one
 under any precision — so a filter naming one there is refused rather than
@@ -196,6 +196,12 @@ pgdq query --source dump.sql --table public.people --filter 'name<B'
 # record — this matches the server only if that collation is C or POSIX
 ```
 
+**`=` and `!=` on that same column say nothing, and are exact.** Every libc
+collation calls two different strings different, so equality is a byte
+comparison on the server whatever the collation is. The warning is about the
+*order*, and it is raised per filter term, not per column — so a query that
+asks `name<B` and `name=alpha` warns once.
+
 **A `char(n)` column's blank padding is not part of its value.** A dump writes
 every value of such a column padded with spaces to the declared length, and
 PostgreSQL strips the trailing blanks off *both* sides before comparing. `<`,
@@ -204,14 +210,9 @@ PostgreSQL strips the trailing blanks off *both* sides before comparing. `<`,
 as the server does — and you may write the padding into the literal or leave it
 out, since neither side keeps it.
 
-**`=` and `!=` are unaffected by collation.** Every libc collation calls two
-different strings different, so equality is bytewise on the server too.
-
-**They are not blank-insensitive, though.** `=` and `!=` still compare a
-`char(n)` field as the text the dump holds, so `--filter 'code=ab'` matches no
-row of a padded column. Write the padding — `--filter 'code="ab        "'` — or
-ask with the pair `--filter 'code>=ab' --filter 'code<=ab'`, which is the same
-question through the operators that do trim.
+**`=` and `!=` trim it too**, so `--filter 'code=ab'` selects a row whose
+`code` is `ab` followed by padding, exactly as the server does — with or
+without the padding written into the literal.
 
 ### Seven string-shaped types still order the way PostgreSQL orders them
 
@@ -269,12 +270,54 @@ comma.
 PostgreSQL orders every string *inside* a `jsonb` document — values and object
 keys alike — by the database's collation, which a plain dump does not record.
 So pgdq compares those bytewise, exactly as it does a bare `text` column, and
-says so once on stderr. A document with no strings in it, or one whose
-comparison is settled before a string is reached, is unaffected.
+says so once on stderr — for an *ordering* filter. `=` and `!=` on a `jsonb`
+column are exact, for the same reason they are on a text one. A document with
+no strings in it, or one whose comparison is settled before a string is
+reached, is unaffected either way.
 
 **`json` is compared as text**, and warned about the way a text column is,
 because PostgreSQL defines no comparison for `json` at all — no `=`, no `<`,
 nothing. There is no server answer to agree with.
+
+### `=` and `!=` compare values, not spellings
+
+Every filter operator but `IS NULL`/`IS NOT NULL` reads your value with the
+column's own decoder, so `=` asks the question you meant rather than the one
+your keyboard typed:
+
+```sh
+--filter 'price=1.5'      # matches a numeric(10,2) column written 1.50
+--filter 'code=ab'        # matches a char(10) column written "ab" + padding
+--filter 'span=30 days'   # matches an interval written 1 mon
+--filter 'addr=10.0.0.1/32'   # matches an inet written 10.0.0.1
+```
+
+On a `text` or `varchar` column nothing changes — the value you type is already
+the value the file holds.
+
+**A value that is not of the column's type is refused by name**, before any row
+is read, instead of quietly matching nothing:
+
+```
+$ pgdq query --source dump.sql --table public.t --filter 'v_flag=true'
+Error: filter value `true` for `v_flag = ...` does not parse as the column's declared type `boolean`
+```
+
+Write it the way the dump writes it — a `boolean` is `t` or `f`, a `timestamp`
+carries a time part (`2020-01-01 00:00:00`), an `interval` uses the spellings
+`interval` prints. Every value in the file is already in that form, so the only
+thing this rules out is a spelling you would have had to guess at anyway.
+
+**One thing `=` does not do is search.** It is exact equality against one
+column; there is no `LIKE`, no pattern and no case folding.
+
+**A column whose type we cannot type at all still answers `=`, as text, and
+says so.** For most such types the dump's text *is* the value, so the answer is
+the server's; for the geometric types it is not — PostgreSQL's `box` equality
+compares *areas*, so it calls two differently-placed rectangles of one size
+equal and a text comparison does not. That is what the warning is for, and it
+is why the ordering operators are refused on those columns outright rather than
+answered.
 
 ### Writing a filter term
 
@@ -290,7 +333,7 @@ Spaces around the operator are not part of the value — `name = alpha` asks for
 marks:
 
 ```sh
---filter 'code = " x"'           # a space-padded char(n) value
+--filter 'code = " x"'           # a value with a leading space
 --filter "note = 'it''s'"        # an interior quote is doubled, as in SQL
 --filter 'note = "it'"'"'s"'     # or written in the other quote character
 --filter 'tag = """hello"""'     # the seven characters "hello", quotes and all

@@ -784,7 +784,7 @@ this section when it acquires a phase number, not when it acquires a design.
   "agrees, on every server" that `COLLATE "C"` earns. Unscheduled: it acquires a
   phase number when it acquires a design, and nothing in the current register is
   shaped against it, since new arms split
-  `OrderingDivergence::NonBytewiseCollation` additively.
+  `ComparisonDivergence::NonBytewiseCollation` additively.
 
 - **CSV-format `COPY` blocks, as part of alternate-format support, post-1.0.**
   `pg_dump` has no CSV mode at all (I13), but `psql` writes `COPY ... WITH

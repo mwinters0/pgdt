@@ -1946,11 +1946,12 @@ whether any batch arrived, not off whether a header was printed.
 ### Predicates
 
 Post-parse row filtering: a row is fully parsed, then dropped if it fails.
-`Eq`/`Ne` are untyped — the compared value is a plain string — and
-`IsNull`/`IsNotNull` are the two that exist because before typed columns there
-was no way to ask for a NULL at all. The four ordering operators are typed;
-they have their own subsection below. Evaluating predicates *during* the scan
-is future work; it inverts control, not dependency (see `layering.md`).
+`IsNull`/`IsNotNull` are the two operators that exist because before typed
+columns there was no way to ask for a NULL at all, and they compare nothing.
+Every other operator is **typed**, through the column's own comparison plan —
+the four ordering ones and `=`/`!=` alike — and they have their own subsection
+below. Evaluating predicates *during* the scan is future work; it inverts
+control, not dependency (see `layering.md`).
 
 **A filter is a conjunction**: `QueryOptions::filters` is a list of
 single-column terms, and a row survives only if every one of them matches.
@@ -1966,8 +1967,9 @@ which is only a real cost for a conjunction whose leading terms almost always
 pass.
 
 **`stream::resolve_terms` is the single site where a predicate meets a block.**
-Every refusal a term can earn — the unknown column, and the ordering
-refusals below — is raised there, against that block's own **unprojected**
+Every refusal a term can earn — the unknown column, the ordering refusals
+below, and a literal that is not a value of the column's type under *any*
+comparing operator — is raised there, against that block's own **unprojected**
 `ResolvedSchema`, before a row of the block flows. It takes the whole
 `ResolvedSchema` rather than its `schema` because the ordering refusal reads
 `columns`, `plans` and `comparisons` too, and those are positional and
@@ -2000,10 +2002,11 @@ its refusal are the library's, identical for an embedder.
 and the reason is a property of the input rather than of the comparison: every
 value in a dump is already in canonical *output* form — discrete ranges
 canonicalize on input, array input whitespace is dropped — so the literal in
-the file is the one `*_out` would write. The divergence is one class: a user
-supplying a non-canonical literal, where PostgreSQL matches and this comparison
-does not. It also costs nothing — no per-row render, no new code — which is why
-a nested column needs no special case here.
+the file is the one `*_out` would write. That is what still carries `=`/`!=`
+on a **nested** column, and on any column the register has no comparison for:
+the field's own bytes are the value, so comparing them is right. What the
+argument never covered is the *literal the user typed*, which is what typed
+equality closes — see "Equality is typed too" below.
 
 *Rejected:* type-aware comparison of a **nested** column. It needs the
 *input*-side grammar, which I20's scope limit flags as considerably more
@@ -2015,6 +2018,11 @@ PostgreSQL semantics — in
 comparison is structural, two-valued, and inherits comparability".
 
 ### Ordering operators compare typed, and the register says where that differs
+
+**The heading is narrower than the section.** `=` and `!=` come through the
+same register — see "Equality is typed too", below — and the heading is left as
+it is because a dozen documents cite it by name; a keystone re-files this by
+subject anyway.
 
 `<`, `<=`, `>` and `>=` do **not** compare text. Each side is decoded with the
 column's own decoder — the field per row, the filter's literal once, when the
@@ -2292,8 +2300,11 @@ second of two agreeing ones.
 
 **A divergent comparison is announced by the CLI, once, on stderr**, after the
 schema resolves, naming the column and the divergence — including for a query
-that selected no rows, which is the case a user most wants explained. The
-library's side of it is `TableStream::ordering_notes`, a **third channel** and
+that selected no rows, which is the case a user most wants explained. It is
+announced per **term**, not per column, because a divergence is
+operator-conditional: three of the five are divergences of *order* alone, so a
+`text` column filtered with both `<` and `=` is warned about once. The
+library's side of it is `TableStream::comparison_notes`, a **third channel** and
 deliberately not a widening of either existing one: `DumpIndex.diagnostics` is
 the L1 file-level channel and `ResolvedSchema.notes` is the L2 per-column one,
 while this signal is per-column *and* conditional on a predicate — L4 — so
@@ -2332,12 +2343,11 @@ data and not `=`.
 **Equality has one column shape it answers wrongly and silently**, and it is
 not this entry: a user-defined ICU collation declared `deterministic = false`,
 which a plain dump states outright (I42). Under one, `texteq` is not a byte
-comparison, so `=` here returns a row set the server would not — and
-`ResolvedTerm::ordering_note` yields `None` for every non-ordering term, so no
-note is raised on any channel. It is P11's 11.6.1 that answers for it: that
-slice routes `=` through the comparison plan and renames the channel to
-`comparison_notes` precisely because an equality divergence has nowhere to be
-reported today.
+comparison, so `=` here returns a row set the server would not, and nothing is
+announced. The channel to announce it on now exists — `=` routes through the
+comparison plan and `comparison_notes` carries an equality divergence — but
+nothing reads the `CREATE COLLATION` that states the fact, which is what P11's
+11.6.2 is for.
 
 **The fix closes it up to a provider version, not absolutely**, and the entry
 says so rather than promising more. A plain dump carries a collation's *name*
@@ -2409,6 +2419,112 @@ parser over the document.
 
 **On the command line the operators are spelled as they read.** How a term is
 split into its three parts is the next section.
+
+### Equality is typed too
+
+`=` and `!=` route through the same per-column `ComparisonPlan` the ordering
+operators do, and for the same reason: the justification the old text
+comparison rested on — every value in a dump is already in canonical `*_out`
+form — is true of the **field** and says nothing about the **literal the user
+typed**. `--filter 'v=1.5'` matched no row of a `numeric(10,2)` column written
+`1.50`; `--filter 'v=a'` matched no row of a `char(5)` column, whose values are
+blank-padded. A plausible command line and an empty result that reads like an
+answer is the shape this closes.
+
+**Three canonicalizations, not two states**, decided by one question about each
+`CompareKind`: is the file's `*_out` text a *unique* spelling of the value it
+holds?
+
+| How | Which kinds | What happens per row |
+|---|---|---|
+| **Canonicalize the literal once** | everything not below — `text`, `varchar`, `name`, the integers, `oid`, `numeric(p,s)`, `date`, `time`, `timestamp`, `timestamptz`, `uuid`, `bytea`, an enum, `macaddr`/`macaddr8` | a byte comparison; nothing moved |
+| **Narrow the field per row** | `character(n)` | trailing `0x20` off both sides, then a byte comparison |
+| **Decode both sides per row** | `real`, `double precision`, bare `numeric`, `interval`, `jsonb`, `time with time zone`, `inet`/`cidr` | the same `OrderKey` comparison `<` makes, asked for `Equal` |
+
+So `=` on a `text` or `varchar` column is exactly the compare it always was —
+`CompareKind::Text` renders the literal to itself — which is the rare shape
+where correctness improves and the hot path does not move.
+
+**Five kinds decode because `*_out` is not injective over the values one file
+can hold.** A bare `numeric` keeps its display scale, so `1.5` and `1.50` are
+one value written two ways (I33); an `interval` collapses months to 30 days and
+days to 86400 s, so `1 mon`, `30 days` and `720:00:00` are one value written
+three ways (I40); `jsonb` prints its numbers through `numeric_out` and compares
+them by value, so `{"a": 1.50}` and `{"a": 1.5}` are one document written two
+ways (I41); and `real`/`double precision` have two zeros, `-0` being a value a
+dump can write and `float8eq` calling it equal to `0`. No rendering of the
+literal makes any of those a byte comparison.
+
+**Two more decode for a reason about this build rather than about PostgreSQL.**
+`time with time zone` and `inet`/`cidr` *are* uniquely spelled by their output
+functions, but reproducing those spellings means re-implementing
+`EncodeTimeOnly` plus `EncodeTimezone`, and `pg_inet_net_ntop`'s IPv6 zero-run
+compression. Writing an output function to save a fixed-size parse per row is
+the wrong trade, and getting one subtly wrong is a silently empty result rather
+than an error. `macaddr` goes the other way on the same test: its output rule
+is two sentences long — lowercase hex pairs joined by colons — so it renders.
+
+**A literal is read on the same output-form-only grammar the ordering operators
+use**, so `--filter 'flag=true'` on a `boolean` column is
+`Error::PredicateValueDecode` naming the value, where `boolout` writes `t`. The
+spec's third motivating case lands here rather than on a match:
+`--filter 'v=2020-01-01'` on a `timestamp` column is refused, because
+`timestamp_out` writes a time part and `decode_timestamp_micros` requires one.
+Both replace an empty result with a named refusal, which is the failure shape
+that motivated the change; widening the literal grammar past `*_out` would
+contradict the property the register states two sections up, and is not done.
+
+**The divergences become operator-conditional**, which is why the note channel
+is `TableStream::comparison_notes` and its notes are per *term*. Three of the
+five reach ordering alone — `UnknownCollation`, `NonBytewiseCollation`,
+`JsonbStringCollation` — and one fact settles all three: every libc collation
+is *deterministic*, so `varstr_cmp` returns zero exactly when the bytes are
+equal and `texteq`/`bpchareq` are byte comparisons whatever the collation is.
+A `text` column with no clause therefore warns under `<` and is silent under
+`=`, which is not a softening: it is the register saying the row set an `=`
+returns is the server's. `ComparisonDivergence::affects_equality` is the whole
+rule, and `AsText` is the one pre-existing variant that answers `true` —
+PostgreSQL defines no `=` for `json` any more than it defines an order.
+
+<!-- deficiency: KD10 -->
+**A column the register has no comparison for still answers `=`, as text, and
+`UnmodelledType` is where that stops being safe.** The four ordering operators
+are refused on such a column; equality is not, because for most of these types
+the field's own bytes are the value. `box` is the member that proves it is not
+all of them: `box_eq` compares *areas*, so the server calls `(1,1),(0,0)` and
+`(3,3),(2,2)` equal and a byte comparison does not — which the committed oracle
+holds at six majors (`fixtures/<13-18>/oracle/comparisons.tsv`,
+`public.box_domain`, and two entries in the register-against-oracle exception
+set). That is `KD10`, and the note is announced for exactly the two column
+resolutions that mean *the file named a type and this build models nothing for
+it*: `UnknownType` and `OpaqueBaseType`. Whether a given member is like `box`
+or like `money` — whose `=` is its value's and whose `*_out` is unique per
+value, so bytewise agrees — is what the register does not know, and announcing
+is the conservative answer.
+
+*Rejected: refusing `=` on such a column as ordering is refused.* It takes a
+working capability away from every type in the group to protect the geometric
+handful, and for `xml`, whose `=` PostgreSQL does not define at all, filtering
+by exact text is a thing a user legitimately wants.
+
+**Everything else stays silent, and the two populations are different
+arguments.** A **nested** column's `array_out`/`record_out` text is a faithful
+rendering of the value, so bytewise equality is the server's — subject to an
+*inherited comparability* (a `box[]` column would have the same problem one
+level down) that
+[`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md) gives to
+its nested slice. A column with no DDL behind it at all — `--data-only`,
+`--schema-mode strings` — has nothing said about its type to qualify, and
+`ResolvedSchema::notes` already reports that on L2.
+
+**The oracle asserts all six operators now.** `=` and `<>` are asked over a
+wider population than the other four, since equality is never refused, and both
+operands of a cell are values the server itself stored — so for a canonicalized
+kind the assertion is that the file's own spelling compares byte for byte, and
+the content is in the kinds where it cannot. Every one of those has a case:
+`real`'s `-0` against `0`, a bare `numeric`'s `1.5` against `1.50`, a `jsonb`
+number written two ways, and a `character(10)` value padded against one that is
+not. See "The register against the oracle's answers".
 
 ### A filter term is parsed for two audiences
 
@@ -3538,14 +3654,23 @@ majors against each other. `the_register_answers_every_committed_oracle_cell`,
 in `predicate.rs`'s unit tests, is the one that compares an answer to an
 answer: it walks every cell of `fixtures/<13–18>/oracle/comparisons.tsv` and
 puts the same question to the register through `resolve_term` and
-`Predicate::matches`, the path a `--filter` takes. 28,536 cells today.
+`Predicate::matches`, the path a `--filter` takes. 45,394 cells today.
 
 **It is the check the oracle was built for**, and until it existed the oracle's
 answers had only ever been compared by hand. Two register defects had reached
 the committed tree behind that gap, and both were found in one throwaway run of
 the walk that became this test.
 
-Four things are skipped, and each is a different fact:
+**The one-column schema it puts each case to is built by `resolve_columns`**,
+from a synthetic one-table `DumpMetadata` — the same function a real block
+resolves through, not a hand-built `ResolvedSchema`. That matters now that `=`
+is asserted: the resolution, the nested plan and the comparison plan have to
+agree the way they do in a real query, because which of them `resolve_term`
+consults is what decides whether an equality term announces a divergence. A
+schema claiming every case is `Mapped` and `Scalar` would put `integer[]` and
+`box` in one population no dump ever produces.
+
+Three things are skipped, and each is a different fact:
 
 - **An `E<sqlstate>` cell**, which records what the server *refused*. It says
   nothing about how the type compares, and it is why `json` — every one of
@@ -3556,15 +3681,12 @@ Four things are skipped, and each is a different fact:
   operand is not skipped: it is the field, this build collapses unknown to
   "excluded" for every operator, and the server's `u` is what a `WHERE` clause
   does with the same row.
-- **`=` and `<>`.** `PredicateOp::Eq`/`Ne` compare the field as an unparsed
-  string and never reach the typed path, so asserting those two cells would be
-  asserting a different mechanism whose contract is textual by design. Nothing
-  about the register's *equality* is lost — `<=` and `>=` carry it, which is
-  why `numeric(10,2)`'s `1.5` against `1.50` is checked at all.
-- **A column the register refuses an ordering operator on**: every nested
-  shape, `xml`, an enum with no labels, a user-defined base type. That set is
-  asserted exactly, so a type that quietly stops comparing fails here rather
-  than passing as one more skip.
+- **A column the register refuses an ordering operator on**, *for the four
+  ordering operators only*: every nested shape, `xml`, an enum with no labels,
+  a user-defined base type. That set is asserted exactly, so a type that
+  quietly stops comparing fails here rather than passing as one more skip.
+  `=` and `<>` are still asked of those columns, because equality is never
+  refused — which is how `box`'s area comparison reached the exception set.
 
 **Both sides are put in the type's own `*_out` form**, read from
 `literals.tsv`'s `output` column — the field because that is what a dump holds,
@@ -3573,21 +3695,28 @@ The oracle's non-canonical `inputs` are an input-grammar question, not a
 comparison one, and asking them here would report the filter grammar's
 deliberate strictness as an ordering disagreement.
 
-**The exception set is enumerated by pair, and it is met.** Thirty-two
+**The exception set is enumerated by pair, and it is met.** Thirty-four
 `(type, collation, left, right)` cases are permitted to disagree; every one of
 them does disagree in the committed files, and every disagreement is one of
 them — so a case that starts agreeing fails as loudly as one that stops.
-Alongside it, a disagreeing column must *announce* its divergence through
-`OrderingDivergence`, so an exception cannot be claimed for a column the
-register tells the user it is confident about. Two populations, and they are
-**one statement asked at two depths** — a collation the file does not carry
-(I32), reached once through a column and once through a string inside a
+Alongside it, a disagreeing term must *announce* its divergence through
+`ComparisonNote` — **under that operator**, read off the term rather than off
+the register's plan — so an exception cannot be claimed for a column the
+register tells the user it is confident about. Three populations, and the first
+two are **one statement asked at two depths** — a collation the file does not
+carry (I32), reached once through a column and once through a string inside a
 document:
 
 | Population | Why | Cases |
 |---|---|---|
 | a `jsonb` string leaf | `compareJsonbScalarValue` passes `DEFAULT_COLLATION_OID` to `varstr_cmp`, so a leaf takes the database's collation (I32, I41) | 2 |
 | `text` under the database's own collation | glibc `en_US.utf8`: case is lower-weight than letter, an accent sorts with its base letter, and punctuation is ignored at the primary level, so `_x` sorts where `x` does | 30 |
+| `box`'s area equality | `box_eq` compares the two rectangles' areas, so the server calls `(1,1),(0,0)` and `(3,3),(2,2)` equal and a byte comparison does not; the column announces `UnmodelledType` and the deficiency is `KD10` | 2 |
+
+The third is the only one this build could close by writing code, and it is the
+only one whose cells are `=` rather than the four ordering operators — the
+first two are divergences of *order* alone, so their equality cells agree and
+would fail the announcement check if they did not.
 
 The first row is the one the `jsonb` cases were grown for: everything
 structural above the leaf — the kind order, a container's size, storage order,
@@ -3601,12 +3730,16 @@ eight at once, under both collations and at all six majors. That they were in
 the file *before* the trim landed is what let the change be checked against
 evidence it did not produce.
 
-**Met means met everywhere in the walk.** The key is the case, so a union over
-the six majors and the four operators would count an entry satisfied by one
+**Met means met everywhere it is permitted.** The key is the case, so a union
+over the six majors and the six operators would count an entry satisfied by one
 major alone — or by `<` while `>=` agrees, which is a comparator that has
 stopped being antisymmetric — and neither is the property the list claims. So
-an entry must disagree in **every** cell of its case: 24 today, six majors by
-four operators, and all thirty-two do. That is one assertion against the cells each
+an entry must disagree in **every** cell of its case that its divergence
+*reaches*: 24 for the two collation populations, six majors by four ordering
+operators, and 6 for `box`, six majors by `=` alone, PostgreSQL defining no
+`box <> box`. Counting only the cells where a disagreement is permitted is
+what keeps a `text` case from being asked to disagree under `=`, which it must
+not. That is one assertion against the cells each
 case was walked over rather than a table by major and operator, which was
 costed at ~400 rows and rejected — it multiplies exactly the churn the pair
 list was kept to avoid.
@@ -3620,8 +3753,8 @@ what disagrees, not what could.
 **The pairing is one-directional on purpose.** A disagreement must be
 announced; an announcement need not disagree, and no assert asks it to. It
 could not: `json` announces `AsText` with every one of its cells `E42883`, and
-`character varying(10)` announces `UnknownCollation` over 264 asserted cells
-with no disagreement among them — both honest. Over-announcement is caught by
+`character varying(10)` announces `UnknownCollation` over 264 asserted ordering
+cells with no disagreement among them — both honest. Over-announcement is caught by
 reading the register table in "Ordering operators compare typed" as a table,
 not here.
 
@@ -3634,8 +3767,8 @@ pair set under `COLLATE "C"` and under the database's own collation, and
 `default`-collation cells assert nothing about this build's comparator that the
 `C` twin does not already assert. What those cells carry is *which* pairs glibc
 puts in a different order — the pair list itself. Permitting them by
-announcement therefore makes 6,432 of the 28,536 cells inert while they keep
-running, and the `asserted > 25_000` floor cannot see it, since it counts cells
+announcement therefore makes 6,432 of the 45,394 cells inert while they keep
+running, and the `asserted > 40_000` floor cannot see it, since it counts cells
 walked rather than cells that constrain; extending the same rule to `jsonb`
 reaches 11,976 and reopens exactly the hole this test was built to close, since
 `JsonbStringCollation` is announced unconditionally and is only ever about the

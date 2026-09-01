@@ -45,8 +45,8 @@ fn collated_text(collation: Option<&str>, type_default: TypeCollation) -> Compar
         return ComparisonPlan::agrees(CompareKind::Text);
     }
     ComparisonPlan::text_diverging(match collation {
-        Some(_) => OrderingDivergence::NonBytewiseCollation,
-        None => OrderingDivergence::UnknownCollation,
+        Some(_) => ComparisonDivergence::NonBytewiseCollation,
+        None => ComparisonDivergence::UnknownCollation,
     })
 }
 

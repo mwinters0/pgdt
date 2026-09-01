@@ -655,6 +655,13 @@ is out-of-band work, not part of this phase.
 
 ### Typed equality canonicalizes the literal once, not the field per row
 
+*The exception list below was written as two and is seven.* Four more kinds
+were found by reading the committed oracle rather than the source — `jsonb`,
+`real`/`double precision` — and two more decode for a reason about this build
+rather than about PostgreSQL. Reasoning:
+[`../status/history/2026-09-01.md`](../status/history/2026-09-01.md), "Typed
+equality's decode-per-row list is seven, not two".
+
 The field is always in canonical `*_out` form, so the **literal** is decoded
 once when the block resolves and rendered back into that same form; the per-row
 comparison stays bytewise. `--filter 'v=1.5'` on a `numeric(10,2)` column
@@ -676,8 +683,8 @@ canonicalize the literal once (everything else), and narrow the field per row
 (`char(n)` alone). **11.6 owns it**, and closing it is what retires
 `OrderingDivergence::BlankPadded`, which therefore lives exactly one slice.
 
-**Two types in scope are exceptions**, and the comparison plan carries the flag
-that says so:
+**Several types in scope are exceptions**, and the `CompareKind` is what says
+which. The two this doc was written around:
 
 - **bare `numeric`** preserves scale, so `1.5` and `1.50` are equal and both
   writable;
@@ -685,9 +692,25 @@ that says so:
   days to 86400 s, so `'1 mon'`, `'30 days'` and `'720:00:00'` are equal and
   written differently.
 
-Those two decode per row; everything else compares bytewise. The result is the
-rare shape where correctness improves and the hot path does not move: `=` on a
-`text` or `varchar` column stays exactly the compare it is today.
+Two more join them for the same reason, found in the oracle rather than in the
+source: **`jsonb`**, which prints its numbers through `numeric_out` and
+compares them by value, so `{"a": 1.50}` and `{"a": 1.5}` are one document; and
+**`real`/`double precision`**, which have two zeros, `-0` being a value a dump
+can write and `float8eq` calling it equal to `0`.
+
+**Two decode for a reason about this build rather than about PostgreSQL**, and
+the rule is worth stating because it is the one a later type will be judged by:
+a kind canonicalizes when reproducing its `*_out` is a rule that fits in a
+sentence, and decodes when reproducing it means re-implementing an output
+function whose corner cases are the ones we would get wrong — silently, as an
+empty result. `time with time zone` (`EncodeTimeOnly` plus `EncodeTimezone`)
+and `inet`/`cidr` (`pg_inet_net_ntop`'s IPv6 zero-run compression) fail that
+test; `macaddr` passes it, its output being lowercase hex pairs joined by
+colons.
+
+Those seven decode per row; everything else compares bytewise. The result is
+the rare shape where correctness improves and the hot path does not move: `=`
+on a `text` or `varchar` column stays exactly the compare it is today.
 
 *Rejected: decoding both sides per row, as ordering does.* It makes every
 column pay for the two that need it, on the commonest operator.
@@ -728,7 +751,8 @@ here.
 | **11.5** | The text-held type queue | `interval` (with v17 infinities), `time with time zone`, `inet`/`cidr`/`macaddr`/`macaddr8`. Repetitive and additive; the oracle checks each. |
 | **11.5.1** | `jsonb` | The one text-held type whose comparison is a container walk rather than a scalar decode, and the one whose leaves reopen the collation question `text` already has. **Earned, not planned** — see below. |
 | **11.6** | The `character(n)` trim | `CompareKind::PaddedText` — trailing blanks off both sides, then the clause — which retires `OrderingDivergence::BlankPadded` and gives `character` the same three collation arms `text` has. Rewrites `KD7` to the one statement that survives. **Rewritten to the scope that landed** — see below. |
-| **11.6.1** | Typed `=` / `!=` | Routed through the now-complete plan, with the canonicalize-once fast path and its decode-per-row exceptions. Renames the note channel — which is also where the one equality divergence the file *states* gets reported: a column on a user-defined collation the dump declares `deterministic = false` (I42), for which `texteq` is not a byte comparison and nothing is raised today. **Earned, not planned** — see below. |
+| **11.6.1** | Typed `=` / `!=` | Routed through the now-complete plan, with the canonicalize-once fast path and its decode-per-row exceptions; the note channel renamed to `comparison_notes` and its divergences made operator-conditional; the oracle's `=`/`<>` cells asserted. **Earned, not planned** — see below. **Rewritten to the scope that landed** — see below. |
+| **11.6.2** | The non-deterministic collation is read | `CREATE COLLATION … deterministic = false` parsed out of the preamble and carried to the register, so a column of such a collation announces that `=` is not a byte comparison (I42) — the one equality divergence a plain dump *states* and nothing raises today. **Earned, not planned** — see below. |
 | **11.7** | Three-valued evaluation | `Expr`, the `True`/`False`/`Unknown` domain, `IS DISTINCT FROM`. Library only. |
 | **11.8** | `--where` | The expression grammar, its own CLI module, leaf delegated to `parse_filter`. |
 | **11.9** | The nested literal input grammar | Parser for the `array_in`/`record_in`/`range_in` supersets — **three grammars, not one** — checked against the oracle's malformed cases. No comparison yet. |
@@ -1079,6 +1103,25 @@ forbids. The evidence for the split is in
 number: equality's `char(n)` canonicalization is *this* trim, so 11.6.1 inherits
 a comparison rather than inventing one, and the phase's own rule — evidence
 before the code that leans on it — is obeyed twice over.
+
+**11.6.1 was mis-sized in turn, and 11.6.2 was earned from it.** Its row paired
+the equality mechanism with reading `deterministic = false` out of the dump,
+and the second is not a predicate change at all: `CREATE COLLATION` reaches the
+file map as an `Unparsed` span, so recognising it means a new `SpanBody`, a
+preamble parse, a field on `DatabaseMetadata` and therefore a cache format
+version — a blast radius that shares nothing with `predicate.rs` and whose
+review question is "does the parser find the clause", not "does equality answer
+what the server answers". Its evidence is 11.12's fixture, which lands after
+either way, so nothing is gained by carrying it in. The two halves would have
+forced one confidence, which `../process.md`'s "Size a slice by its review"
+forbids — the same seam 11.6 was split on, one level down. Reasoning:
+[`../status/history/2026-09-01.md`](../status/history/2026-09-01.md), "11.6.1
+splits: the equality mechanism and the collation the dump states".
+
+**The equality half is the one that keeps the number**, because it is what the
+note channel's rename is *for*: until `=` routes through the plan there is no
+equality divergence to report, and 11.6.2 then has a channel to report on
+rather than one to build.
 
 Five seams are deliberate. **11.3 stands alone** because a refactor whose
 review question is "did anything change?" cannot share a diff with one that

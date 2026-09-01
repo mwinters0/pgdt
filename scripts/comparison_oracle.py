@@ -395,7 +395,7 @@ TYPE_CASES: list[TypeCases] = [
     # `compareJsonbScalarValue` passes `DEFAULT_COLLATION_OID` to
     # `varstr_cmp`, so a leaf is ordered by the database's collation, which a
     # plain dump does not record (I32). pgdq compares it bytewise and
-    # announces `OrderingDivergence::JsonbStringCollation`.
+    # announces `ComparisonDivergence::JsonbStringCollation`.
     #
     # The inputs are I41's input grammar: a number's exponent and a signed
     # zero are accepted and canonicalized away, a duplicate key resolves to

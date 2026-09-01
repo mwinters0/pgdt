@@ -29,14 +29,14 @@ pub use map::{
     TocHeader, attach_text, build_map, check_tiling,
 };
 pub use pgtype::{
-    CanonicalExtension, CompareKind, ComparisonPlan, NestedPlan, OrderingDivergence, TypeOutcome,
+    CanonicalExtension, CompareKind, ComparisonDivergence, ComparisonPlan, NestedPlan, TypeOutcome,
     comparison_for, extension_for, resolve_declared_type,
 };
 pub use preamble::{
     ColumnDef, DatabaseMetadata, DumpMetadata, Extension, TypeDef, TypeKind,
     dump_metadata_from_spans,
 };
-pub use predicate::{OrderingNote, Predicate, PredicateOp};
+pub use predicate::{ComparisonNote, Predicate, PredicateOp};
 pub use resolve::{ColumnNote, ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 pub use scan::{
     CopyEnd, CopyScanner, CopyStart, Event, LargeObjectEnd, LargeObjectStart, Line, Row,

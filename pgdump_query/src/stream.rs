@@ -80,7 +80,7 @@ use crate::io::ByteRangeSource;
 use crate::map::{Builder, Span, SpanBody, attach_text};
 use crate::preamble::{DumpMetadata, dump_metadata_from_spans};
 use crate::predicate::{
-    OrderingNote, Predicate, PredicateOp, ResolvedTerm, matches_all, resolve_term,
+    ComparisonNote, Predicate, PredicateOp, ResolvedTerm, matches_all, resolve_term,
 };
 use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
 use crate::scan::{CopyScanner, Event, ScanOptions};
@@ -117,9 +117,11 @@ fn render_candidate((database, qualified_name): &(Option<String>, String)) -> St
 ///
 /// **This is where a predicate is validated against a block**, and the only
 /// place: a term naming a column this block does not carry is
-/// `Error::UnknownPredicateColumn`, and an ordering operator on a column that
+/// `Error::UnknownPredicateColumn`, an ordering operator on a column that
 /// is not `Mapped` with a `NestedPlan::Scalar` plan is
-/// `Error::UnorderedPredicateColumn`. Both are raised for the first offending
+/// `Error::UnorderedPredicateColumn`, and a literal that is not a value of
+/// the column's type — under any comparing operator, `=` included — is
+/// `Error::PredicateValueDecode`. All are raised for the first offending
 /// term in the order the caller gave them, before a row of this block flows.
 /// A table whose blocks carry different schemas can therefore refuse at the
 /// third block after rows from the first two were emitted; that is already
@@ -152,10 +154,12 @@ fn resolve_terms(
 }
 
 /// The divergence notes for one block's resolved terms, in term order — what
-/// `TableStream::ordering_notes` hands a caller. Derived rather than stored
-/// beside the terms, so the two cannot disagree.
-fn ordering_notes(terms: &[ResolvedTerm]) -> Vec<OrderingNote> {
-    terms.iter().filter_map(ResolvedTerm::ordering_note).collect()
+/// `TableStream::comparison_notes` hands a caller. Derived rather than stored
+/// beside the terms, so the two cannot disagree, and per *term* rather than
+/// per column because which divergences reach an operator depends on the
+/// operator.
+fn comparison_notes(terms: &[ResolvedTerm]) -> Vec<ComparisonNote> {
+    terms.iter().filter_map(ResolvedTerm::comparison_note).collect()
 }
 
 /// Cut `resolved` down to `projection`, and say which of the block's fields
@@ -793,7 +797,7 @@ pub struct TableStream<'a> {
     inner: Pin<Box<dyn Stream<Item = Result<RecordBatch>> + Send + 'a>>,
     position: Arc<Mutex<ResumeToken>>,
     resolved_schema: Arc<Mutex<ResolvedSchema>>,
-    ordering_notes: Arc<Mutex<Vec<OrderingNote>>>,
+    comparison_notes: Arc<Mutex<Vec<ComparisonNote>>>,
 }
 
 impl<'a> Stream for TableStream<'a> {
@@ -826,11 +830,17 @@ impl<'a> TableStream<'a> {
         self.resolved_schema.lock().unwrap().clone()
     }
 
-    /// The ordering terms of this query whose comparison does not order the
-    /// way PostgreSQL's own operator for that column's type does — one
-    /// [`OrderingNote`] per such term, in term order, empty until this
+    /// The terms of this query whose comparison does not answer what
+    /// PostgreSQL's own operator for that column's type would — one
+    /// [`ComparisonNote`] per such term, in term order, empty until this
     /// query's matching `COPY` block has resolved (and forever, for a table
     /// that never appears).
+    ///
+    /// **Per term, because a divergence is operator-conditional.** Most of
+    /// them are divergences of *order* alone
+    /// (`crate::pgtype::ComparisonDivergence::affects_equality`), so a `text`
+    /// column with no `COLLATE` clause earns a note under `<` and none under
+    /// `=`.
     ///
     /// A **third channel, and deliberately not a fourth thing to unify**:
     /// `DumpIndex.diagnostics` is L1 and `ResolvedSchema.notes` is L2, while
@@ -843,8 +853,8 @@ impl<'a> TableStream<'a> {
     /// Like [`Self::resolved_schema`], it describes the **last** block whose
     /// schema resolved: a table whose blocks carry different schemas can
     /// diverge on one block and not on another.
-    pub fn ordering_notes(&self) -> Vec<OrderingNote> {
-        self.ordering_notes.lock().unwrap().clone()
+    pub fn comparison_notes(&self) -> Vec<ComparisonNote> {
+        self.comparison_notes.lock().unwrap().clone()
     }
 }
 
@@ -1017,8 +1027,8 @@ where
     let position_for_stream = Arc::clone(&position);
     let resolved_schema = Arc::new(Mutex::new(ResolvedSchema::default()));
     let resolved_schema_for_stream = Arc::clone(&resolved_schema);
-    let ordering_notes_shared = Arc::new(Mutex::new(Vec::new()));
-    let ordering_notes_for_stream = Arc::clone(&ordering_notes_shared);
+    let comparison_notes_shared = Arc::new(Mutex::new(Vec::new()));
+    let comparison_notes_for_stream = Arc::clone(&comparison_notes_shared);
 
     let inner = try_stream! {
         // Both checks are on the *request*, so they fire before a byte is
@@ -1157,7 +1167,7 @@ where
                     *resolved_schema_for_stream.lock().unwrap() = r;
                 }
                 if let Some((_, _, _, terms, _)) = &active {
-                    *ordering_notes_for_stream.lock().unwrap() = ordering_notes(terms);
+                    *comparison_notes_for_stream.lock().unwrap() = comparison_notes(terms);
                 }
                 (active, Some(scanner))
             }
@@ -1218,8 +1228,8 @@ where
                                     &full,
                                     start.header_offset,
                                 )?;
-                                *ordering_notes_for_stream.lock().unwrap() =
-                                    ordering_notes(&terms);
+                                *comparison_notes_for_stream.lock().unwrap() =
+                                    comparison_notes(&terms);
                                 let (resolved, field_targets) = project(
                                     &full,
                                     query_options.projection.as_deref(),
@@ -1255,8 +1265,8 @@ where
                                 )?;
                                 let terms =
                                     resolve_terms(&query_options.filters, &full, header_offset)?;
-                                *ordering_notes_for_stream.lock().unwrap() =
-                                    ordering_notes(&terms);
+                                *comparison_notes_for_stream.lock().unwrap() =
+                                    comparison_notes(&terms);
                                 let (resolved, field_targets) = project(
                                     &full,
                                     query_options.projection.as_deref(),
@@ -1348,7 +1358,7 @@ where
         inner: Box::pin(inner),
         position,
         resolved_schema,
-        ordering_notes: ordering_notes_shared,
+        comparison_notes: comparison_notes_shared,
     }
 }
 

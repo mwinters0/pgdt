@@ -6,20 +6,23 @@ use arrow::datatypes::i256;
 
 use crate::copy::{decode_field, split_fields};
 use crate::decode;
-use crate::pgtype::{CompareKind, ComparisonPlan, NestedPlan, OrderingDivergence};
+use crate::pgtype::{CompareKind, ComparisonDivergence, ComparisonPlan, NestedPlan};
 use crate::resolve::{ColumnResolution, ResolvedSchema};
 use crate::{Error, Result};
 
 /// Comparison operator for [`Predicate`].
 ///
-/// `Eq`/`Ne` compare the field as an unparsed string; the four ordering
-/// operators compare **typed**, decoding both the field and the filter's own
-/// literal with the column's resolved decoder and comparing the values
-/// (`docs/design/architecture.md`, "Predicates"). That split is why a
-/// nested column still answers `Eq`/`Ne` and refuses `<`: every value in a
-/// dump is already in canonical `*_out` form, so a string comparison against
-/// it is right, while an *order* over a composite or an array literal is not
-/// a thing this layer can define.
+/// **Every operator but the two NULL tests compares typed**, through the
+/// column's own [`ComparisonPlan`] — the four ordering operators by decoding
+/// both sides and comparing the values, `Eq`/`Ne` by the cheapest of three
+/// canonicalizations that gives the server's answer for that column
+/// ([`equality_comparison`]). Where the register has no plan for a column —
+/// it did not resolve, it is nested, or this build orders its type not at all
+/// — `Eq`/`Ne` fall back to the string comparison every column made before,
+/// which is right for the reason it always was: every value in a dump is
+/// already in canonical `*_out` form. The ordering operators are *refused*
+/// there instead, because an order over a composite or an array literal is
+/// not a thing this layer can define.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PredicateOp {
     Eq,
@@ -67,13 +70,15 @@ impl PredicateOp {
 /// none). `value` is `None` for `IsNull`/`IsNotNull`, which need no
 /// comparison value; it is always `Some` for every other operator.
 ///
-/// **How `value` is compared depends on the operator.** `Eq`/`Ne` compare it
-/// against each row's decoded (unescaped) field as a plain string. The four
-/// ordering operators decode it once, when the block's schema resolves, with
-/// the column's own decoder, and compare decoded values — so both sides of a
-/// `numeric(p,s)` comparison carry that column's scale, and a literal that
-/// does not parse as the column's type is `Error::PredicateValueDecode`
-/// before any row is read.
+/// **`value` is read with the column's own decoder, whatever the operator**,
+/// once when the block's schema resolves rather than per row — so a literal
+/// that is not a value of the column's type is `Error::PredicateValueDecode`
+/// before any row is read, and both sides of a `numeric(p,s)` comparison
+/// carry that column's scale. What differs between the operators is what is
+/// kept: an ordering operator keeps the decoded key and decodes the field to
+/// match, while `Eq`/`Ne` usually keep the literal *rendered back* into the
+/// `*_out` spelling the file holds and compare bytes
+/// ([`equality_comparison`]).
 ///
 /// A NULL field matches nothing at all — not `Eq`, not `Ne`, and not an
 /// ordering operator — because SQL's own three-valued logic collapses
@@ -90,9 +95,17 @@ pub struct Predicate {
     pub value: Option<String>,
 }
 
-/// One column of one query whose ordering comparison diverges from
-/// PostgreSQL's — reported per stream by
-/// `crate::stream::TableStream::ordering_notes`.
+/// One term of one query whose comparison does not answer what PostgreSQL's
+/// own operator for that column would — reported per stream by
+/// `crate::stream::TableStream::comparison_notes`.
+///
+/// **Per term rather than per column, because a divergence is
+/// operator-conditional**: three of the four
+/// [`ComparisonDivergence`] variants are divergences of *order* alone
+/// ([`ComparisonDivergence::affects_equality`]), so a `text` column with no
+/// `COLLATE` clause earns a note under `<` and none under `=`. A query
+/// filtering that column with both operators therefore carries one note, not
+/// two, and neither zero.
 ///
 /// **Neither a `Diagnostic` nor a [`crate::resolve::ColumnNote`]**, and
 /// deliberately: `DumpIndex.diagnostics` is the L1 file-level channel and
@@ -100,15 +113,15 @@ pub struct Predicate {
 /// *and* conditional on a predicate — L4. Writing it into either would
 /// invert the layering (`docs/design/layering.md`).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OrderingNote {
+pub struct ComparisonNote {
     pub column: String,
     /// The declared PostgreSQL type, as the DDL spelled it.
     pub declared_type: String,
-    pub divergence: OrderingDivergence,
+    pub divergence: ComparisonDivergence,
 }
 
-impl OrderingNote {
-    /// One sentence naming the column and what its order is not.
+impl ComparisonNote {
+    /// One sentence naming the column and what its comparison is not.
     ///
     /// Each sentence names the column and its declared type, and the
     /// declared type is what sharpens it: the collatable text types say what
@@ -124,22 +137,28 @@ impl OrderingNote {
             // at all. The sentence has to say which way the difference runs,
             // because a user who reads "diverges" and assumes the server has
             // a better answer will go looking for one that does not exist.
-            OrderingDivergence::AsText => bytewise(
+            ComparisonDivergence::AsText => bytewise(
                 "PostgreSQL defines no comparison for this type at all — no equality, no \
-                 ordering, no operator class — so this order is one the server does not have",
+                 ordering, no operator class — so this comparison is one the server does not \
+                 have",
             ),
-            OrderingDivergence::UnknownCollation => bytewise(
+            ComparisonDivergence::UnknownCollation => bytewise(
                 "the column declares no COLLATE clause, so its collation is the database's, which \
                  a plain dump does not record — this matches the server only if that collation is \
                  C or POSIX",
             ),
-            OrderingDivergence::NonBytewiseCollation => bytewise(
+            ComparisonDivergence::NonBytewiseCollation => bytewise(
                 "the column declares a collation other than C/POSIX, and PostgreSQL orders it by \
                  that collation",
             ),
+            ComparisonDivergence::UnmodelledType => bytewise(
+                "this build models no comparison for the column's declared type — the four \
+                 ordering operators are refused on it, and PostgreSQL's own equality for such a \
+                 type need not be a byte comparison (`box` compares areas)",
+            ),
             // Not a `bytewise` sentence: the structure *is* compared the way
             // PostgreSQL compares it, and only a string leaf is left.
-            OrderingDivergence::JsonbStringCollation => format!(
+            ComparisonDivergence::JsonbStringCollation => format!(
                 "`{column}` ({declared}) is compared structurally, but every string value and \
                  object key inside it is ordered by the database's collation, which a plain dump \
                  does not record — this matches the server only if that collation is C or POSIX",
@@ -356,7 +375,7 @@ impl Jsonb {
     /// `varstr_cmp`, so every string value and every object key is ordered by
     /// the database's collation — which a plain dump does not record (I32).
     /// Bytewise is what this build has, and
-    /// `OrderingDivergence::JsonbStringCollation` is the column's announcement
+    /// `ComparisonDivergence::JsonbStringCollation` is the column's announcement
     /// of it.
     fn cmp(&self, other: &Self) -> Ordering {
         if self.rank() != other.rank() {
@@ -1147,23 +1166,144 @@ fn compare_keys(a: &OrderKey, b: &OrderKey) -> Ordering {
     }
 }
 
-/// Everything an ordering term needs, settled once when the block's schema
+/// A `macaddr`/`macaddr8` literal in `macaddr_out`'s own spelling: `octets`
+/// lowercase hex pairs joined by colons (I40). The whole of that output
+/// function is those two rules, which is why this type canonicalizes where
+/// the two beside it decode per row — see [`equality_comparison`].
+fn render_macaddr(text: &str, octets: usize) -> Option<String> {
+    let OrderKey::Bytes(bytes) = macaddr_key(text, octets)? else {
+        unreachable!("`macaddr_key` yields its octets")
+    };
+    Some(bytes.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(":"))
+}
+
+/// How `=`/`!=` compare two values of a column of `kind`, given the filter's
+/// own literal — settled once, when the block's schema resolves.
+///
+/// **Three canonicalizations, not two states**, and which one a kind takes is
+/// decided by one question: is the file's `*_out` text a *unique* spelling of
+/// the value it holds?
+///
+/// - **[`Comparison::Canonical`] — the literal rendered once.** The field is
+///   already in `*_out` form and that form is unique, so rendering the
+///   literal into it makes the per-row comparison a byte comparison and
+///   nothing on the hot path moves. `=` on a `text` or `varchar` column is
+///   exactly the compare it always was, since `text`'s rendering is the
+///   identity.
+/// - **[`Comparison::Trimmed`] — the field narrowed per row.** `character(n)`
+///   alone. The dump writes every value padded to `n` and `bpchareq` strips
+///   the padding from both sides (I38), so the trim is the comparison. It is
+///   admissible on the per-row path because it is not a decode: a reverse
+///   scan for `0x20` yielding a shorter slice, no allocation.
+/// - **[`Comparison::Decoded`] — both sides decoded per row.** For the kinds
+///   where `*_out` is *not* injective over the values one file can hold, so
+///   no rendering of the literal can make the comparison bytewise.
+///
+/// **Five kinds decode, and the spec that named two was short by three.** A
+/// bare `numeric` keeps its display scale, so `1.5` and `1.50` are one value
+/// written two ways (I33); an `interval` collapses months and days, so
+/// `1 mon`, `30 days` and `720:00:00` are one value written three ways (I40);
+/// `jsonb` prints its numbers through `numeric_out` and compares them by
+/// value, so `{"a": 1.50}` and `{"a": 1.5}` are one document written two ways
+/// (I41); and `real`/`double precision` have two zeros, `-0` being a value a
+/// dump can write and `float8eq` calling it equal to `0`.
+///
+/// **Two more decode for a different reason, and it is a reason about this
+/// build rather than about PostgreSQL.** `time with time zone` and
+/// `inet`/`cidr` *are* uniquely spelled by their output functions — but
+/// reproducing those spellings means re-implementing `EncodeTimeOnly` plus
+/// `EncodeTimezone`, and `pg_inet_net_ntop`'s IPv6 zero-run compression.
+/// Writing an output function to save a fixed-size parse per row is the wrong
+/// trade, and getting one subtly wrong is a silently empty result. `macaddr`
+/// goes the other way for the same test: its output rule is two sentences
+/// long, so it renders.
+///
+/// `None` when the literal is not a value of the column's type at all, which
+/// is `Error::PredicateValueDecode` — the same refusal an ordering operator
+/// makes, on the same output-form-only grammar (`docs/design/architecture.md`,
+/// "Ordering operators compare typed").
+fn equality_comparison(kind: &CompareKind, text: &str) -> Option<Comparison> {
+    use CompareKind as K;
+    let rendered = match kind {
+        // Both sides per row. `order_key` reads a special value on the way,
+        // so `NaN = NaN` and `Infinity = Infinity` come out of the same rank
+        // rule the ordering operators use (I34).
+        K::Float32
+        | K::Float64
+        | K::Numeric { .. }
+        | K::Interval
+        | K::Jsonb
+        | K::TimeTz
+        | K::Network { .. } => {
+            return Some(Comparison::Decoded { kind: kind.clone(), bound: order_key(kind, text)? });
+        }
+        K::PaddedText => return Some(Comparison::Trimmed(text.trim_end_matches(' ').to_string())),
+        // A special value is written in its own type's `*_out` spelling on
+        // both sides, so it renders to itself. Only `date`, `timestamp` and
+        // `numeric(p,s)` reach this arm and admit one; the other two kinds
+        // `special_order_key` answers for decode above.
+        _ if special_order_key(kind, text).is_some() => text.to_string(),
+        K::Bool => decode::render_bool(decode::decode_bool(text)?).to_string(),
+        K::Int => text.parse::<i64>().ok()?.to_string(),
+        K::UnsignedInt => text.parse::<u32>().ok()?.to_string(),
+        K::Decimal(scale) => {
+            decode::render_decimal(&decode::decimal_unscaled_digits(text, *scale)?, *scale)
+        }
+        // A label is its own canonical form; what the lookup buys is the
+        // refusal, since a string the type does not declare is not a value of
+        // the column and equality against it is a fault rather than a miss.
+        K::Enum(labels) => labels.iter().find(|label| label.as_str() == text)?.clone(),
+        K::Date => decode::render_date32(decode::decode_date32(text)?),
+        K::Time => decode::render_time64_micros(decode::decode_time64_micros(text)?),
+        K::Timestamp { with_tz } => decode::render_timestamp_micros(
+            decode::decode_timestamp_micros(text, *with_tz)?,
+            *with_tz,
+        ),
+        K::MacAddr { octets } => render_macaddr(text, *octets)?,
+        K::Uuid => decode::render_uuid(&decode::decode_uuid(text)?),
+        K::Bytea => decode::render_bytea(&decode::decode_bytea(text)?),
+        // The identity, and that is the point: `=` on a text column is the
+        // byte comparison it has always been, with no per-row work added.
+        K::Text => text.to_string(),
+    };
+    Some(Comparison::Canonical(rendered))
+}
+
+/// What one term compares, settled once when the block's schema resolves
+/// rather than per row.
+#[derive(Debug, Clone)]
+enum Comparison {
+    /// The four ordering operators: the field is decoded per row with the
+    /// column's own decoder and its key compared against `bound`.
+    Ordered { kind: CompareKind, bound: OrderKey },
+    /// `=`/`!=` against the literal already rendered into the `*_out` form the
+    /// file holds — a byte comparison per row (see [`equality_comparison`]).
+    Canonical(String),
+    /// `=`/`!=` on a `character(n)` column, against the literal with its own
+    /// trailing blanks already gone.
+    Trimmed(String),
+    /// `=`/`!=` where the field has to be decoded per row too, because the
+    /// file's spelling of a value is not unique.
+    Decoded { kind: CompareKind, bound: OrderKey },
+}
+
+/// Everything a comparing term needs, settled once when the block's schema
 /// resolves rather than per row.
 #[derive(Debug, Clone)]
-struct OrderTerm {
+struct ComparedTerm {
     column: String,
-    kind: CompareKind,
-    /// The filter's literal, decoded once with the column's own decoder.
-    bound: OrderKey,
+    comparison: Comparison,
     /// The declared PostgreSQL type, for `Error::FieldDecode`'s context and
-    /// for [`OrderingNote::message`].
+    /// for [`ComparisonNote::message`].
     declared_type: String,
-    divergence: Option<OrderingDivergence>,
+    /// The register's divergence for this column, already filtered to the
+    /// ones that reach *this* term's operator
+    /// ([`ComparisonDivergence::affects_equality`]).
+    divergence: Option<ComparisonDivergence>,
 }
 
 /// One filter term resolved against one `COPY` block: the field index it
-/// reads, plus — for an ordering operator only — the typed comparison it
-/// will make.
+/// reads, plus the comparison it will make.
 ///
 /// The index is into the block's **unprojected** column list, because that is
 /// what the raw row's fields are numbered by: a term may name a column the
@@ -1171,19 +1311,21 @@ struct OrderTerm {
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedTerm {
     index: usize,
-    order: Option<OrderTerm>,
+    /// `None` for `IS NULL`/`IS NOT NULL`, the two operators that compare
+    /// nothing.
+    compared: Option<ComparedTerm>,
 }
 
 impl ResolvedTerm {
     /// This term's divergence from PostgreSQL's own comparison, if it has
-    /// one. `None` for every non-ordering term and for every ordering term
-    /// whose type agrees.
-    pub(crate) fn ordering_note(&self) -> Option<OrderingNote> {
-        let order = self.order.as_ref()?;
-        Some(OrderingNote {
-            column: order.column.clone(),
-            declared_type: order.declared_type.clone(),
-            divergence: order.divergence?,
+    /// one. `None` for the two NULL tests, and for every term whose column
+    /// answers this operator the way the server does.
+    pub(crate) fn comparison_note(&self) -> Option<ComparisonNote> {
+        let compared = self.compared.as_ref()?;
+        Some(ComparisonNote {
+            column: compared.column.clone(),
+            declared_type: compared.declared_type.clone(),
+            divergence: compared.divergence?,
         })
     }
 }
@@ -1200,12 +1342,18 @@ const NO_ORDER: &str = "this build defines no ordering for the column's declared
 /// [`ResolvedSchema`], at `index` — the column's position, already looked up
 /// by the caller.
 ///
-/// A non-ordering term needs nothing else. An ordering term is refused here,
-/// before a row of this block flows, unless the column resolved `Mapped` with
-/// a [`NestedPlan::Scalar`] plan and the comparison register gave it a plan;
-/// and its literal is decoded here too, so a value that is not of the
-/// column's type is a fault reported once rather than a filter that matches
-/// nothing.
+/// The two NULL tests need nothing. Every other operator reads the column's
+/// [`ComparisonPlan`] and decodes the filter's own literal here, so a value
+/// that is not of the column's type is a fault reported once rather than a
+/// filter that matches nothing.
+///
+/// **The two operator families part company on a column with no plan.** An
+/// ordering operator is *refused*, before a row of this block flows, unless
+/// the column resolved `Mapped` with a [`NestedPlan::Scalar`] plan and the
+/// register gave it a comparison. `Eq`/`Ne` fall back to the string
+/// comparison instead, which is the comparison every column made before this
+/// and is right for the same reason: the file holds canonical `*_out` form.
+/// So a nested column still answers `=` and still refuses `<`.
 ///
 /// **Nothing here reads the Arrow type.** How a column compares is an L2
 /// conclusion resolution already reached
@@ -1218,43 +1366,86 @@ pub(crate) fn resolve_term(
     resolved: &ResolvedSchema,
     header_offset: u64,
 ) -> Result<ResolvedTerm> {
-    if !predicate.op.is_ordering() {
-        return Ok(ResolvedTerm { index, order: None });
+    if matches!(predicate.op, PredicateOp::IsNull | PredicateOp::IsNotNull) {
+        return Ok(ResolvedTerm { index, compared: None });
     }
+    let ordering = predicate.op.is_ordering();
     let refuse = |reason: &'static str| Error::UnorderedPredicateColumn {
         header_offset,
         column: predicate.column.clone(),
         op: predicate.op.symbol(),
         reason,
     };
-    if resolved.columns[index] != ColumnResolution::Mapped {
-        return Err(refuse(NOT_MAPPED));
-    }
-    if resolved.plans[index] != NestedPlan::Scalar {
-        return Err(refuse(NESTED));
-    }
-    let ComparisonPlan::Compared { kind, divergence } = &resolved.comparisons[index] else {
-        return Err(refuse(NO_ORDER));
-    };
     let declared_type = resolved.notes[index].declared.clone().unwrap_or_default();
     // `value` is `Some` for every operator but the two NULL tests; an
     // embedder that builds a `Gt` term without one gets the same fault as an
     // unparseable literal, named the same way.
     let text = predicate.value.as_deref().unwrap_or_default();
-    let bound = order_key(kind, text).ok_or_else(|| Error::PredicateValueDecode {
+    let refuse_literal = || Error::PredicateValueDecode {
         column: predicate.column.clone(),
         op: predicate.op.symbol(),
         value: text.to_string(),
         declared_type: declared_type.clone(),
-    })?;
+    };
+    let mut plan = Some(&resolved.comparisons[index]);
+    if resolved.columns[index] != ColumnResolution::Mapped {
+        if ordering {
+            return Err(refuse(NOT_MAPPED));
+        }
+        plan = None;
+    } else if resolved.plans[index] != NestedPlan::Scalar {
+        if ordering {
+            return Err(refuse(NESTED));
+        }
+        plan = None;
+    }
+    let (comparison, divergence) = match plan {
+        Some(ComparisonPlan::Compared { kind, divergence }) => {
+            let comparison = if ordering {
+                Comparison::Ordered {
+                    kind: kind.clone(),
+                    bound: order_key(kind, text).ok_or_else(refuse_literal)?,
+                }
+            } else {
+                equality_comparison(kind, text).ok_or_else(refuse_literal)?
+            };
+            (comparison, divergence.filter(|d| ordering || d.affects_equality()))
+        }
+        // No plan at all: an ordering operator has already been refused, so
+        // this is `Eq`/`Ne` on a column the register does not compare — the
+        // string comparison every column made before this one, which the
+        // file's own canonical form is what makes right.
+        _ if ordering => return Err(refuse(NO_ORDER)),
+        //
+        // **What it announces is read off the column's own resolution**, and
+        // only two of those outcomes are claims this build cannot stand
+        // behind: `UnknownType` and `OpaqueBaseType` say the file *named* a
+        // type and this build models nothing for it — `box`, `money`, a
+        // C-level base type — and `box_eq` compares areas, so bytewise is a
+        // guess there ([`ComparisonDivergence::UnmodelledType`]). Every other
+        // outcome is silent. A **nested** column's `array_out`/`record_out`
+        // text is a faithful rendering of the value, so bytewise equality is
+        // the server's, subject to an inherited comparability that
+        // `docs/design/roadmap-P11-typed-predicates.md` gives to 11.10; and a
+        // column with no DDL behind it at all — `--data-only`,
+        // `--schema-mode strings` — has nothing said about its type to
+        // qualify, which `ResolvedSchema::notes` reports on L2 anyway.
+        _ => (
+            Comparison::Canonical(text.to_string()),
+            matches!(
+                resolved.columns[index],
+                ColumnResolution::UnknownType | ColumnResolution::OpaqueBaseType
+            )
+            .then_some(ComparisonDivergence::UnmodelledType),
+        ),
+    };
     Ok(ResolvedTerm {
         index,
-        order: Some(OrderTerm {
+        compared: Some(ComparedTerm {
             column: predicate.column.clone(),
-            kind: kind.clone(),
-            bound,
+            comparison,
             declared_type,
-            divergence: *divergence,
+            divergence,
         }),
     })
 }
@@ -1263,9 +1454,13 @@ impl Predicate {
     /// Evaluate this predicate against `raw_row`'s field, per `term` — the
     /// resolution of *this* predicate against the block being replayed.
     /// `table` and `row_offset` are context for the one error this can
-    /// raise: a field that does not decode as its mapped type under an
-    /// ordering operator, which is `Error::FieldDecode`, worded exactly as
-    /// the typed build path words it.
+    /// raise: a field that does not decode as its mapped type under a
+    /// comparison that reads it, which is `Error::FieldDecode`, worded
+    /// exactly as the typed build path words it.
+    ///
+    /// **A NULL field matches nothing**, whatever the operator — unknown
+    /// collapses to "excluded", which is what `IsNull`/`IsNotNull` exist to
+    /// let a filter get past.
     pub(crate) fn matches(
         &self,
         raw_row: &[u8],
@@ -1278,40 +1473,46 @@ impl Predicate {
             Some(f) => decode_field(f)?,
             None => None,
         };
-        Ok(match self.op {
-            PredicateOp::IsNull => decoded.is_none(),
-            PredicateOp::IsNotNull => decoded.is_some(),
-            PredicateOp::Eq => decoded.is_some_and(|v| Some(v.as_ref()) == self.value.as_deref()),
-            PredicateOp::Ne => decoded.is_some_and(|v| Some(v.as_ref()) != self.value.as_deref()),
-            PredicateOp::Lt | PredicateOp::Le | PredicateOp::Gt | PredicateOp::Ge => {
-                let order = term
-                    .order
-                    .as_ref()
-                    .expect("an ordering predicate resolves to a term carrying its comparison");
-                match decoded {
-                    // A NULL compares to nothing: unknown collapses to false,
-                    // exactly as it does under `Eq`/`Ne`.
-                    None => false,
-                    Some(text) => {
-                        let key =
-                            order_key(&order.kind, &text).ok_or_else(|| Error::FieldDecode {
-                                table: table.to_string(),
-                                column: order.column.clone(),
-                                row_offset,
-                                declared_type: order.declared_type.clone(),
-                                value: text.to_string(),
-                            })?;
-                        let ord = compare_keys(&key, &order.bound);
-                        match self.op {
-                            PredicateOp::Lt => ord.is_lt(),
-                            PredicateOp::Le => ord.is_le(),
-                            PredicateOp::Gt => ord.is_gt(),
-                            _ => ord.is_ge(),
-                        }
-                    }
+        let Some(compared) = term.compared.as_ref() else {
+            return Ok(match self.op {
+                PredicateOp::IsNull => decoded.is_none(),
+                _ => decoded.is_some(),
+            });
+        };
+        let Some(text) = decoded else { return Ok(false) };
+        let key = |kind: &CompareKind| {
+            order_key(kind, &text).ok_or_else(|| Error::FieldDecode {
+                table: table.to_string(),
+                column: compared.column.clone(),
+                row_offset,
+                declared_type: compared.declared_type.clone(),
+                value: text.to_string(),
+            })
+        };
+        Ok(match &compared.comparison {
+            Comparison::Ordered { kind, bound } => {
+                let ord = compare_keys(&key(kind)?, bound);
+                match self.op {
+                    PredicateOp::Lt => ord.is_lt(),
+                    PredicateOp::Le => ord.is_le(),
+                    PredicateOp::Gt => ord.is_gt(),
+                    _ => ord.is_ge(),
                 }
             }
+            Comparison::Canonical(bound) => (text.as_ref() == bound.as_str()) == self.wants_equal(),
+            Comparison::Trimmed(bound) => {
+                (text.trim_end_matches(' ') == bound.as_str()) == self.wants_equal()
+            }
+            Comparison::Decoded { kind, bound } => {
+                compare_keys(&key(kind)?, bound).is_eq() == self.wants_equal()
+            }
         })
+    }
+
+    /// Whether this predicate keeps the rows its comparison called equal —
+    /// `Eq` does, `Ne` does not, and no other operator reaches it.
+    fn wants_equal(&self) -> bool {
+        self.op == PredicateOp::Eq
     }
 }
 
@@ -1354,14 +1555,21 @@ mod tests {
     use crate::preamble::{TypeDef, TypeKind};
     use crate::resolve::ColumnNote;
 
-    /// A term with no typed comparison behind it — what every `Eq`/`Ne`/NULL
-    /// test resolves to.
-    fn text_term(index: usize) -> ResolvedTerm {
-        ResolvedTerm { index, order: None }
+    /// A term resolved against a column the register has no plan for — what
+    /// every `Eq`/`Ne` on an unresolved column falls back to, and what the
+    /// two NULL tests always are.
+    fn text_term(p: &Predicate, index: usize) -> ResolvedTerm {
+        let compared = p.value.as_ref().map(|value| ComparedTerm {
+            column: p.column.clone(),
+            comparison: Comparison::Canonical(value.clone()),
+            declared_type: String::new(),
+            divergence: None,
+        });
+        ResolvedTerm { index, compared: if p.op.is_ordering() { None } else { compared } }
     }
 
     fn matches(p: &Predicate, raw_row: &[u8], index: usize) -> bool {
-        p.matches(raw_row, &text_term(index), "public.t", 0).unwrap()
+        p.matches(raw_row, &text_term(p, index), "public.t", 0).unwrap()
     }
 
     /// The type list every one-column schema below resolves against: one
@@ -1455,7 +1663,7 @@ mod tests {
             Predicate { column: "a".into(), op: PredicateOp::Eq, value: Some("1".into()) },
             Predicate { column: "b".into(), op: PredicateOp::Eq, value: Some("2".into()) },
         ];
-        let terms = [text_term(0), text_term(1)];
+        let terms = [text_term(&filters[0], 0), text_term(&filters[1], 1)];
         assert!(matches_all(&filters, &terms, b"1\t2", "public.t", 0).unwrap());
         assert!(!matches_all(&filters, &terms, b"1\t3", "public.t", 0).unwrap());
         assert!(!matches_all(&filters, &terms, b"9\t2", "public.t", 0).unwrap());
@@ -1469,7 +1677,7 @@ mod tests {
             Predicate { column: "a".into(), op: PredicateOp::Ne, value: Some("1".into()) },
             Predicate { column: "a".into(), op: PredicateOp::Ne, value: Some("2".into()) },
         ];
-        let terms = [text_term(0), text_term(0)];
+        let terms = [text_term(&filters[0], 0), text_term(&filters[1], 0)];
         assert!(matches_all(&filters, &terms, b"3", "public.t", 0).unwrap());
         assert!(!matches_all(&filters, &terms, b"2", "public.t", 0).unwrap());
     }
@@ -1720,26 +1928,26 @@ mod tests {
     fn a_divergent_comparison_produces_a_note_naming_why() {
         let note = |declared, data_type, literal| {
             let p = order_predicate(PredicateOp::Gt, literal);
-            resolve_term(&p, 0, &one_column(declared, data_type), 0).unwrap().ordering_note()
+            resolve_term(&p, 0, &one_column(declared, data_type), 0).unwrap().comparison_note()
         };
 
         assert_eq!(note("integer", DataType::Int32, "1"), None, "an agreeing type says nothing");
 
         let text = note("character varying(10)", DataType::Utf8View, "a").unwrap();
-        assert_eq!(text.divergence, OrderingDivergence::UnknownCollation);
+        assert_eq!(text.divergence, ComparisonDivergence::UnknownCollation);
         assert!(text.message().contains("collation"), "{}", text.message());
 
         // `character(n)` asks the same collation question, over its own
         // trimming comparison — so a bare column gets the collation
         // sentence and one declaring `COLLATE "C"` gets no note at all.
         let padded = note("character(10)", DataType::Utf8View, "a").unwrap();
-        assert_eq!(padded.divergence, OrderingDivergence::UnknownCollation);
+        assert_eq!(padded.divergence, ComparisonDivergence::UnknownCollation);
         assert!(padded.message().contains("collation"), "{}", padded.message());
 
         // `json` is what `AsText` has left: the server defines no comparison
         // for it at all, so bytewise offers more than the server does.
         let other = note("json", DataType::Utf8View, "1").unwrap();
-        assert_eq!(other.divergence, OrderingDivergence::AsText);
+        assert_eq!(other.divergence, ComparisonDivergence::AsText);
         assert!(other.message().contains("no comparison"), "{}", other.message());
 
         // Types that share `Utf8View` with the rows above and say nothing:
@@ -1922,15 +2130,15 @@ mod tests {
             let p = order_predicate(PredicateOp::Gt, literal);
             resolve_term(&p, 0, &one_column(declared, DataType::Utf8View), 0)
                 .unwrap()
-                .ordering_note()
+                .comparison_note()
         };
         let jsonb = note("jsonb", "1").unwrap();
-        assert_eq!(jsonb.divergence, OrderingDivergence::JsonbStringCollation);
+        assert_eq!(jsonb.divergence, ComparisonDivergence::JsonbStringCollation);
         assert!(jsonb.message().contains("structurally"), "{}", jsonb.message());
         assert!(jsonb.message().contains("object key"), "{}", jsonb.message());
 
         let json = note("json", "anything").unwrap();
-        assert_eq!(json.divergence, OrderingDivergence::AsText);
+        assert_eq!(json.divergence, ComparisonDivergence::AsText);
         assert!(json.message().contains("no comparison"), "{}", json.message());
     }
 
@@ -2196,6 +2404,219 @@ mod tests {
         );
     }
 
+    /// `=` renders the filter's literal into the spelling the file holds and
+    /// compares bytes, so a literal that is the same *value* written
+    /// differently now matches — which is what the untyped comparison could
+    /// not do.
+    #[test]
+    fn equality_canonicalizes_the_literal_once() {
+        let eq = |declared, data_type, literal, field| {
+            ordered(declared, data_type, PredicateOp::Eq, literal, field).unwrap()
+        };
+        // The scale the column declares, which the file always writes out in
+        // full and a person never does.
+        assert!(eq("numeric(10,2)", DataType::Decimal128(10, 2), "1.5", "1.50"));
+        assert!(!eq("numeric(10,2)", DataType::Decimal128(10, 2), "1.5", "1.51"));
+        // A leading zero, a leading plus, a case difference, an input-only
+        // separator: every one of them is the same value the file spells one
+        // way.
+        assert!(eq("integer", DataType::Int32, "+007", "7"));
+        assert!(eq("oid", DataType::UInt32, "0042", "42"));
+        assert!(eq(
+            "uuid",
+            DataType::FixedSizeBinary(16),
+            "0AF1C2D3-0000-0000-0000-000000000000",
+            "0af1c2d3-0000-0000-0000-000000000000"
+        ));
+        assert!(eq("macaddr", DataType::Utf8View, "08:00:2B:01:02:03", "08:00:2b:01:02:03"));
+        // The two `numeric` kinds part company on `NaN`, and both spell it
+        // the way their own `*_out` does, so it renders to itself.
+        assert!(eq("numeric(10,2)", DataType::Decimal128(10, 2), "NaN", "NaN"));
+        assert!(eq("date", DataType::Date32, "infinity", "infinity"));
+        assert!(!eq("date", DataType::Date32, "infinity", "-infinity"));
+    }
+
+    /// `=` on a `text` or `varchar` column is the byte comparison it has
+    /// always been: `CompareKind::Text` renders the literal to itself, so
+    /// nothing on the per-row path moved for the commonest column there is.
+    #[test]
+    fn equality_on_a_text_column_is_unchanged() {
+        for declared in ["text", "character varying(10)", "name", "json"] {
+            assert!(ordered(declared, DataType::Utf8View, PredicateOp::Eq, "a b", "a b").unwrap());
+            assert!(
+                !ordered(declared, DataType::Utf8View, PredicateOp::Eq, "a b", "a  b").unwrap()
+            );
+        }
+    }
+
+    /// `character(n)` is the third category — the *field* narrowed per row.
+    /// The dump writes every value padded to `n` and `bpchareq` strips the
+    /// padding from both sides (I38), so an unpadded literal matches.
+    #[test]
+    fn equality_on_a_char_column_trims_both_sides() {
+        let eq = |literal, field| {
+            ordered("character(10)", DataType::Utf8View, PredicateOp::Eq, literal, field).unwrap()
+        };
+        assert!(eq("a", "a         "));
+        assert!(eq("a         ", "a"));
+        // A tab is a value byte, not padding — the byte that separates
+        // trim-and-compare from pad-and-compare. The *field* side is COPY
+        // TEXT, so the tab is written escaped; the literal side is a
+        // `Predicate`'s own value and is not.
+        assert!(!eq("a", "a\\t        "));
+        assert!(eq("a\t", "a\\t        "));
+    }
+
+    /// The five kinds whose `*_out` is not injective over the values one file
+    /// can hold: no rendering of the literal makes them bytewise, so both
+    /// sides are decoded per row.
+    #[test]
+    fn the_decoded_kinds_call_two_spellings_of_one_value_equal() {
+        let eq = |declared, literal, field| {
+            ordered(declared, DataType::Utf8View, PredicateOp::Eq, literal, field).unwrap()
+        };
+        // A bare `numeric` keeps its display scale (I33).
+        assert!(eq("numeric", "1.5", "1.50"));
+        assert!(eq("numeric", "1.50", "1.5"));
+        assert!(!eq("numeric", "1.5", "1.51"));
+        // An `interval` collapses months to 30 days and days to 86400 s (I40).
+        assert!(eq("interval", "1 mon", "30 days"));
+        assert!(eq("interval", "30 days", "720:00:00"));
+        // `float8eq` has one zero, and a dump can write `-0`.
+        assert!(
+            ordered("double precision", DataType::Float64, PredicateOp::Eq, "0", "-0").unwrap()
+        );
+        // ... and `NaN = NaN` is true on the server, which is neither IEEE's
+        // answer nor Rust's (I33).
+        assert!(
+            ordered("double precision", DataType::Float64, PredicateOp::Eq, "NaN", "NaN").unwrap()
+        );
+        // `jsonb` prints its numbers through `numeric_out` and compares them
+        // by value (I41), so one document is written two ways.
+        assert!(eq("jsonb", "{\"a\": 1.50}", "{\"a\": 1.5}"));
+        assert!(!eq("jsonb", "{\"a\": 1.5}", "{\"a\": 2}"));
+        // The two that decode for a reason about this build rather than about
+        // PostgreSQL: reproducing their output functions is the cost being
+        // refused, not a non-unique spelling.
+        assert!(eq("inet", "10.0.0.1/32", "10.0.0.1"));
+        assert!(eq("time with time zone", "00:00:00+00", "00:00:00+00"));
+        assert!(!eq("time with time zone", "00:00:00+00", "01:00:00+01"));
+    }
+
+    /// `!=` is `=` inverted, and a NULL field matches neither — the collapse
+    /// `IS NULL` exists to get past.
+    #[test]
+    fn typed_inequality_inverts_and_a_null_matches_neither() {
+        let ne = |literal, field| {
+            ordered("numeric(10,2)", DataType::Decimal128(10, 2), PredicateOp::Ne, literal, field)
+                .unwrap()
+        };
+        assert!(!ne("1.5", "1.50"));
+        assert!(ne("1.5", "1.51"));
+        for op in [PredicateOp::Eq, PredicateOp::Ne] {
+            assert!(
+                !ordered("integer", DataType::Int32, op, "1", "\\N").unwrap(),
+                "a NULL field matches no comparison"
+            );
+        }
+    }
+
+    /// A literal that is not a value of the column's type is
+    /// `Error::PredicateValueDecode` before a row is read — the same refusal
+    /// an ordering operator makes, on the same output-form-only grammar. The
+    /// answer it replaces is an empty result that reads like an answer.
+    #[test]
+    fn an_undecodable_equality_literal_is_refused_at_resolution() {
+        for (declared, data_type, literal) in [
+            ("integer", DataType::Int32, "abc"),
+            ("boolean", DataType::Boolean, "true"),
+            ("oid", DataType::UInt32, "-1"),
+            ("bytea", DataType::Binary, "abc"),
+            ("public.mood", DataType::Utf8View, "furious"),
+            ("numeric(10,2)", DataType::Decimal128(10, 2), "1.005"),
+            ("interval", DataType::Utf8View, "1 month"),
+        ] {
+            let p = order_predicate(PredicateOp::Eq, literal);
+            assert!(
+                matches!(
+                    resolve_term(&p, 0, &one_column(declared, data_type), 0).unwrap_err(),
+                    Error::PredicateValueDecode { value, .. } if value == literal
+                ),
+                "{declared} = {literal}"
+            );
+        }
+    }
+
+    /// A divergence is operator-conditional, and three of the five reach
+    /// ordering alone: every libc collation is deterministic, so `texteq` is a
+    /// byte comparison whatever the collation is.
+    #[test]
+    fn a_collation_divergence_does_not_reach_equality() {
+        let note = |declared, op, literal| {
+            let p = order_predicate(op, literal);
+            resolve_term(&p, 0, &one_column(declared, DataType::Utf8View), 0)
+                .unwrap()
+                .comparison_note()
+        };
+        for declared in ["text", "character varying(10)", "character(10)"] {
+            assert_eq!(
+                note(declared, PredicateOp::Gt, "a").map(|n| n.divergence),
+                Some(ComparisonDivergence::UnknownCollation),
+                "{declared} under an ordering operator"
+            );
+            assert_eq!(note(declared, PredicateOp::Eq, "a"), None, "{declared} under `=`");
+        }
+        assert_eq!(
+            note("jsonb", PredicateOp::Gt, "1").map(|n| n.divergence),
+            Some(ComparisonDivergence::JsonbStringCollation)
+        );
+        assert_eq!(note("jsonb", PredicateOp::Eq, "1"), None);
+        // `json` is the one that reaches both, because the server defines
+        // neither operator for it.
+        for op in [PredicateOp::Gt, PredicateOp::Eq] {
+            assert_eq!(
+                note("json", op, "1").map(|n| n.divergence),
+                Some(ComparisonDivergence::AsText)
+            );
+        }
+    }
+
+    /// A column the register has no comparison for still answers `=`, as
+    /// text — and says so where the column is a resolved scalar, because
+    /// `box_eq` compares areas and a byte comparison does not.
+    #[test]
+    fn a_column_with_no_comparison_answers_equality_and_says_when_that_is_a_guess() {
+        let p = order_predicate(PredicateOp::Eq, "(1,1),(0,0)");
+
+        // `box` is `ColumnResolution::UnknownType` in a real query — this
+        // build maps no Arrow type for it — which is the outcome the
+        // announcement is keyed on.
+        let mut scalar = one_column("box", DataType::Utf8View);
+        scalar.columns[0] = ColumnResolution::UnknownType;
+        let term = resolve_term(&p, 0, &scalar, 0).unwrap();
+        let note = term.comparison_note().expect("an unmodelled scalar announces");
+        assert_eq!(note.divergence, ComparisonDivergence::UnmodelledType);
+        assert!(note.message().contains("`box` compares areas"), "{}", note.message());
+        assert!(p.matches(b"(1,1),(0,0)", &term, "public.t", 0).unwrap());
+        assert!(!p.matches(b"(3,3),(2,2)", &term, "public.t", 0).unwrap());
+
+        // A nested column is the other plan-less population and is silent:
+        // its `array_out` text is a faithful rendering of the value, and
+        // whether its elements are comparable is the inherited-comparability
+        // question P11's nested slice owns.
+        let mut nested = one_column("integer[]", DataType::Utf8View);
+        nested.plans[0] = NestedPlan::Array(Box::new(NestedPlan::Scalar));
+        assert_eq!(resolve_term(&p, 0, &nested, 0).unwrap().comparison_note(), None);
+
+        // So is a column no DDL explained — `--data-only`, or
+        // `--schema-mode strings`, which resolves nothing by design. There is
+        // no declared type to qualify, and `ResolvedSchema::notes` has
+        // already said so on L2.
+        let mut undeclared = one_column("mystery", DataType::Utf8View);
+        undeclared.columns[0] = ColumnResolution::NotDeclared;
+        assert_eq!(resolve_term(&p, 0, &undeclared, 0).unwrap().comparison_note(), None);
+    }
+
     /// The comparison register against the committed comparison oracle:
     /// every cell of `fixtures/<13-18>/oracle/comparisons.tsv`, answered by
     /// the same `resolve_term`/`matches` path a `--filter` takes, and
@@ -2215,28 +2636,39 @@ mod tests {
         use crate::copy::encode_field;
         use crate::index::preamble_only;
         use crate::io::LocalFileSource;
+        use crate::preamble::{ColumnDef, DatabaseMetadata, DumpMetadata};
+        use crate::resolve::{SchemaMode, resolve_columns};
         use crate::scan::ScanOptions;
 
         /// The majors `scripts/generate_fixtures.py` generates, which is what
         /// `fixtures/` holds a directory per.
         const MAJORS: [u32; 6] = [13, 14, 15, 16, 17, 18];
 
-        /// The four operators this asserts, in `comparisons.tsv`'s own column
+        /// The six operators this asserts, in `comparisons.tsv`'s own column
         /// order, paired with their cell offset after the four key columns.
         ///
-        /// **`=` and `<>` are deliberately not here.** They are the two cells
-        /// the register does not answer: `PredicateOp::Eq`/`Ne` compare the
-        /// field as an unparsed string and never reach `resolve_term`'s
-        /// typed path at all, so asserting them would be asserting a
-        /// different mechanism whose contract is textual by design (see
-        /// [`Predicate`]). Nothing about the register's *equality* is lost:
-        /// `<=` and `>=` carry it, which is why `numeric(10,2)`'s `1.5`
-        /// against `1.50` is checked here at all.
-        const ASSERTED: [(usize, PredicateOp); 4] = [
+        /// **`=` and `<>` are asked over a wider population than the other
+        /// four**, because equality is never refused: a column the register
+        /// has no comparison for still answers `=` as text, so a nested or
+        /// unmapped case is skipped for the ordering operators and asserted
+        /// for these two.
+        ///
+        /// What they add over `<=`/`>=`, which already carried the register's
+        /// equality, is the **canonicalization** — the three-way choice
+        /// `equality_comparison` makes. Both operands of a cell are values the
+        /// server itself stored, so for a canonicalized kind the assertion is
+        /// that the file's own spelling compares byte for byte; the content is
+        /// in the kinds where it cannot, and every one of them has a case
+        /// here: `real`'s `-0` against `0`, a bare `numeric`'s `1.5` against
+        /// `1.50`, a `jsonb` number written two ways, and a `character(10)`
+        /// value padded against one that is not.
+        const ASSERTED: [(usize, PredicateOp); 6] = [
             (0, PredicateOp::Lt),
             (1, PredicateOp::Le),
             (2, PredicateOp::Gt),
             (3, PredicateOp::Ge),
+            (4, PredicateOp::Eq),
+            (5, PredicateOp::Ne),
         ];
 
         /// The declared types whose columns the register refuses an ordering
@@ -2280,17 +2712,27 @@ mod tests {
         /// set, and it is **met**: every entry is a real disagreement in the
         /// committed files, and every disagreement is an entry.
         ///
-        /// **Met means met everywhere.** An entry is keyed by the case, so it
-        /// has to disagree in every major that carries the case and under all
-        /// four asserted operators — 24 cells each today. Taking *somewhere
-        /// in the walk* as met would instead leave the block passing after a
-        /// collation moved for one major, or after the comparator stopped
-        /// being antisymmetric under one operator.
+        /// **Met means met everywhere it is permitted.** An entry is keyed by
+        /// the case, so it has to disagree in every major that carries the
+        /// case and under every operator its divergence reaches — 24 cells
+        /// each today, four ordering operators by six majors. Taking
+        /// *somewhere in the walk* as met would instead leave the block
+        /// passing after a collation moved for one major, or after the
+        /// comparator stopped being antisymmetric under one operator.
+        ///
+        /// **`=` and `<>` are not among those cells, and that is the
+        /// assertion rather than an omission.** Every divergence in this list
+        /// is a divergence of *order*
+        /// ([`ComparisonDivergence::affects_equality`]) — a libc collation is
+        /// deterministic, so `texteq` is a byte comparison whatever the
+        /// collation is — so a disagreement under `=` would fail the
+        /// announcement check below rather than count toward an entry.
         ///
         /// Each entry's column also has to *announce* its divergence through
-        /// [`OrderingDivergence`], which is asserted alongside — so an
-        /// exception cannot be claimed for a column the register tells the
-        /// user it is confident about. **Two populations, and they are one
+        /// [`ComparisonDivergence`], **under this operator**, which is
+        /// asserted alongside — so an exception cannot be claimed for a
+        /// column the register tells the user it is confident about. **Two
+        /// populations, and they are one
         /// statement asked at two depths** — a collation the file does not
         /// carry (I32), reached once through a column and once through a
         /// string inside a document:
@@ -2302,6 +2744,17 @@ mod tests {
         ///   container's size, storage order, the raw-scalar wrapper — is
         ///   asserted rather than excepted, which is what makes this list two
         ///   entries rather than the arm.
+        /// - **`box`'s area equality**, which is the third population and the
+        ///   only one this build could close by writing code. `box_eq`
+        ///   compares the two rectangles' *areas*, so the server calls
+        ///   `(1,1),(0,0)` and `(3,3),(2,2)` equal where a byte comparison
+        ///   does not — and `box` has no comparison in the register, so the
+        ///   four ordering operators are refused on it and `=` falls back to
+        ///   text. `<>` is not among the cells because PostgreSQL defines no
+        ///   `box <> box` at all, which is why each entry is met over six
+        ///   cells rather than twenty-four. The column announces
+        ///   `ComparisonDivergence::UnmodelledType`, and the deficiency is
+        ///   `KD10`.
         /// - **`text` under the database's own collation**, which is glibc's
         ///   `en_US.utf8` on this apparatus: case is a lower-weight
         ///   difference than letter, an accent sorts with its base letter
@@ -2311,6 +2764,9 @@ mod tests {
         ///   and `_x` reaches every letter in the alphabet rather than only
         ///   `ax`.
         const EXCEPTIONS: &[(&str, &str, &str, &str)] = &[
+            // `box_eq` is an area comparison, not a value one.
+            ("public.box_domain", "\\N", "(1,1),(0,0)", "(3,3),(2,2)"),
+            ("public.box_domain", "\\N", "(3,3),(2,2)", "(1,1),(0,0)"),
             ("jsonb", "\\N", "{\"a\": \"a\"}", "{\"a\": \"A\"}"),
             ("jsonb", "\\N", "{\"a\": \"A\"}", "{\"a\": \"a\"}"),
             // Case is a lower-weight difference than letter.
@@ -2378,28 +2834,55 @@ mod tests {
             }
         }
 
-        /// A one-column schema for a case's declared type and collation. The
-        /// Arrow type is `Utf8View` throughout and never consulted:
-        /// `resolve_term` reads the comparison the register gave the column,
-        /// never what it was mapped to.
+        /// A one-column schema for a case's declared type and collation,
+        /// built by handing `resolve_columns` a one-table `DumpMetadata` —
+        /// the same function a real block resolves through.
+        ///
+        /// **Not a hand-built `ResolvedSchema`**, and the difference is
+        /// load-bearing now that `=` is asserted: the resolution, the nested
+        /// plan and the comparison plan have to agree the way they do in a
+        /// real query, because which of them `resolve_term` consults decides
+        /// whether an equality term announces a divergence. A schema claiming
+        /// every case is `Mapped` and `Scalar` would put `integer[]` and
+        /// `box` in one population that no dump ever produces.
         fn schema(declared: &str, collation: Option<&str>, types: &[TypeDef]) -> ResolvedSchema {
-            ResolvedSchema {
-                schema: Arc::new(Schema::new(vec![Field::new("v", DataType::Utf8View, true)])),
-                columns: vec![ColumnResolution::Mapped],
-                notes: vec![ColumnNote {
-                    column: "v".into(),
-                    declared: Some(declared.into()),
-                    resolution: ColumnResolution::Mapped,
+            let column = ColumnDef {
+                name: "v".into(),
+                declared_type: declared.into(),
+                collation: collation.map(str::to_string),
+            };
+            let metadata = DumpMetadata {
+                databases: vec![DatabaseMetadata {
+                    name: None,
+                    preamble_complete: true,
+                    server_version: None,
+                    pg_dump_version: None,
+                    extensions: Vec::new(),
+                    types: types.to_vec(),
+                    tables: [("public.t".to_string(), vec![column])].into_iter().collect(),
                 }],
-                plans: vec![NestedPlan::Scalar],
-                comparisons: vec![comparison_for(declared, collation, types)],
-            }
+            };
+            resolve_columns(
+                "public.t",
+                &["v".to_string()],
+                Some(&metadata),
+                None,
+                SchemaMode::Typed,
+                &[],
+            )
         }
 
         /// `t`/`f` for a cell this build answers, or the fault it raised
         /// instead — a literal it will not decode, or a field it will not.
         /// `field` is `None` for a SQL NULL one, which reaches the row as
         /// `\N` like any other.
+        ///
+        /// The second half of the pair is whether the resolved term
+        /// **announces** a divergence, read off `ComparisonNote` — the channel
+        /// a user actually sees — rather than off the register's plan. Which
+        /// divergences reach which operator is the term's own conclusion
+        /// ([`ComparisonDivergence::affects_equality`]), and asking the plan
+        /// would be a second copy of that rule living in the test.
         fn answer(
             declared: &str,
             collation: Option<&str>,
@@ -2407,11 +2890,17 @@ mod tests {
             op: PredicateOp,
             field: Option<&str>,
             bound: &str,
-        ) -> std::result::Result<bool, String> {
+        ) -> (std::result::Result<bool, String>, bool) {
             let resolved = schema(declared, collation, types);
             let p = Predicate { column: "v".into(), op, value: Some(bound.into()) };
-            let term = resolve_term(&p, 0, &resolved, 0).map_err(|e| e.to_string())?;
-            p.matches(&encode_field(field), &term, "public.t", 0).map_err(|e| e.to_string())
+            let term = match resolve_term(&p, 0, &resolved, 0) {
+                Ok(term) => term,
+                Err(e) => return (Err(e.to_string()), false),
+            };
+            let announced = term.comparison_note().is_some();
+            let got =
+                p.matches(&encode_field(field), &term, "public.t", 0).map_err(|e| e.to_string());
+            (got, announced)
         }
 
         /// Every major's `CREATE TYPE`/`CREATE DOMAIN` list, read from the
@@ -2457,12 +2946,13 @@ mod tests {
                 for row in rows(&fixture(major, "oracle/comparisons.tsv")) {
                     let declared = row[0].clone().expect("a case names a type");
                     let collation = clause(row[3].as_ref());
-                    if !matches!(
-                        comparison_for(&declared, collation, &types),
-                        ComparisonPlan::Compared { .. }
-                    ) {
-                        refused.insert(declared);
-                        continue;
+                    let plan = comparison_for(&declared, collation, &types);
+                    // A column the register has no comparison for is skipped
+                    // for the four ordering operators, which it refuses, and
+                    // still asserted for `=`/`<>`, which fall back to text.
+                    let ordered = matches!(plan, ComparisonPlan::Compared { .. });
+                    if !ordered {
+                        refused.insert(declared.clone());
                     }
                     // How the case names itself in a report and in
                     // `EXCEPTIONS`: the raw cells, so an entry can be copied
@@ -2479,6 +2969,9 @@ mod tests {
                         outputs.get(&(declared.clone(), literal.to_string())).cloned()
                     };
                     for (offset, op) in ASSERTED {
+                        if op.is_ordering() && !ordered {
+                            continue;
+                        }
                         let cell = row[4 + offset].as_deref().expect("a cell is never NULL");
                         // A cell recording what the server *refused* says
                         // nothing about how it compares.
@@ -2498,7 +2991,7 @@ mod tests {
                         let Some(left) = row[1].as_deref() else {
                             assert_eq!(cell, "u", "{major} {declared}: a NULL operand");
                             assert_eq!(
-                                answer(&declared, collation, &types, op, None, &bound),
+                                answer(&declared, collation, &types, op, None, &bound).0,
                                 Ok(false),
                                 "{major} {declared}: a NULL field matches nothing"
                             );
@@ -2506,8 +2999,17 @@ mod tests {
                         };
                         let field = output(left).expect("an accepted literal has an output");
                         asserted += 1;
-                        *walked.entry(case(left, right)).or_default() += 1;
-                        let got = answer(&declared, collation, &types, op, Some(&field), &bound);
+                        // `announced` is whether a disagreement is *permitted*
+                        // here — the term announces a divergence that reaches
+                        // this operator. It is what an exception is checked
+                        // against and what the cell count is taken over, so an
+                        // entry is never asked to be met under an operator its
+                        // divergence does not claim.
+                        let (got, announced) =
+                            answer(&declared, collation, &types, op, Some(&field), &bound);
+                        if announced {
+                            *walked.entry(case(left, right)).or_default() += 1;
+                        }
                         let expected = match cell {
                             "t" => true,
                             "f" => false,
@@ -2516,13 +3018,13 @@ mod tests {
                         if got != Ok(expected) {
                             // An exception is only ever claimable where the
                             // register has already told the user its answer
-                            // may differ.
+                            // may differ *under this operator*.
                             assert!(
-                                matches!(
-                                    comparison_for(&declared, collation, &types),
-                                    ComparisonPlan::Compared { divergence: Some(_), .. }
-                                ),
-                                "{major} {declared}: disagrees while announcing no divergence"
+                                announced,
+                                "{major} {declared} {}: disagrees under {} while announcing no \
+                                 divergence that reaches it",
+                                row[1].as_deref().unwrap_or("\\N"),
+                                op.symbol()
                             );
                             disagreed
                                 .entry(case(left, right))
@@ -2574,8 +3076,8 @@ mod tests {
             );
             // A floor, not a count: the walk skips a cell for four good
             // reasons, and a bug in any of them would leave it asserting
-            // almost nothing while passing. 28,536 today.
-            assert!(asserted > 25_000, "only {asserted} cells asserted");
+            // almost nothing while passing. 45,394 today.
+            assert!(asserted > 40_000, "only {asserted} cells asserted");
         }
     }
 }
