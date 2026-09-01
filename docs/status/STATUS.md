@@ -280,19 +280,30 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. **`KD1`–`KD9` are allocated; none is struck yet.**
-That watermark is what keeps a `KD<k>` in an old commit message resolvable once
-one is. Where a `(b)` entry's owning phase has been sliced, the entry names the
-slice and the slice names the entry, so landing one re-reads the other and a
-re-slice is obliged to re-target.
+rather than being deleted. <!-- deficiency-watermark: KD9 -->
+**`KD1`–`KD9` are allocated; none is struck yet.** That watermark is what keeps
+a `KD<k>` in an old commit message resolvable once one is, and the marker beside
+it is what a citation resolves against — the sentence is rewritten at every
+strike, and again at the keystone that deletes the named struck entries.
+
+Where a `(b)` entry's owning phase has been sliced, the entry names the slice
+and the slice names the entry, so landing one re-reads the other and a re-slice
+is obliged to re-target. The two directions are asymmetric: a checklist line is
+a **record**, so its `KD<k>` is a citation that may name a struck entry and may
+not name a number nobody allocated; an entry is **present tense**, so it may
+name only live slices, and naming a ticked one is an error — closing a part
+rewrites the entry in the change that ticks the box. A `(b)` stance also needs
+its destination to exist: an entry owned by a phase the roadmap's index calls
+`Complete` or `Struck`, or does not list, drops to `(c) unowned` unless a phase
+actually absorbs it.
 
 `cd scripts && uv run deficiencies.py` reconciles this index against those
-paragraphs, against the source-code markers and against the slice checklist
-above, and fails on any of them. The pairing is checked both ways, so a
-re-slice that leaves an entry aimed at a number whose meaning changed fails
-rather than owing a re-target on discipline; an entry owned by a phase with no
-checklist yet names no slice and is not asked to, and a ticked line is a record
-rather than a promise.
+paragraphs, against the source-code markers, against the slice checklist above
+and against the roadmap's phase index, and fails on any of them. An entry owned
+by a phase with no checklist yet names no slice and is not asked to. That last
+read has one honest edge: `Complete` is a cell a person sets at the wrap, and
+while a `Complete` phase carrying a checklist fails here, a checklist deleted
+with the state left at `Specified` reads as "not sliced yet" and goes quiet.
 
 - **KD1** — a `--disable-triggers` dump loses TOC attribution on every data
   span, `COPY` and `INSERT` alike (I31), costing the coverage diagnostic and
@@ -365,4 +376,15 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-Nothing is open.
+- **The phase index's state vocabulary is closed, and `deficiencies.py` fails
+  on a word it does not know.** It accepts `Sketched`, `Specified`, `Current`,
+  `Complete` and `Struck` — the set `process.md` names plus the one `M32` added
+  — and reports anything else, as it reports a roadmap with no `| Phase | State
+  |` table at all. `M32` settled what `Complete` and `Struck` mean for a `(b)`
+  entry and not what an unrecognised word means. Strict was chosen because the
+  lenient reading — an unknown state is still running — fails open on the
+  likeliest mistake, which is the silence `Complete` was added to end. What it
+  costs: giving the roadmap a new state (`Paused`, say) means editing
+  `PHASE_STATES` in the same change, and the register check can now fail on a
+  roadmap edit that touches no deficiency. Reversing it is one line — treat an
+  unknown state as live.

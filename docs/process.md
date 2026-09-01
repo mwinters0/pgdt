@@ -84,7 +84,10 @@ and point it at the notes doc.
 
 **5. Wrap the phase.** Consolidate the per-slice notes into one
 `roadmap-P<N>-<slug>-notes.md` and delete the per-slice files. Rewrite
-`STATUS.md`.
+`STATUS.md`. **Deleting the phase's checklist and setting its index row to
+`Complete` is one edit**, because from that moment the index is the only thing
+that can say the phase ran and finished — see "Known deficiencies" below, which
+reads that cell.
 
 **6. Grill again.** A completed phase produces discoveries that invalidate
 guesses about later phases. Re-grill the roadmap before specifying phase N+1,
@@ -228,7 +231,7 @@ Three sections earn their keep beyond the checklist:
   every document that used the word in its plain sense disclaim it, and that is
   prose paying for a naming mistake.
 
-  Seven rules keep it working, and the first is the one whose absence is
+  Eight rules keep it working, and the first is the one whose absence is
   hardest to see:
 
   - **Each entry declares one of three stances**, because they are not one kind
@@ -286,6 +289,18 @@ Three sections earn their keep beyond the checklist:
     leave a one-line watermark saying which are allocated and which were
     struck; an identifier cited in an old commit message must still resolve to
     something, and "struck" has to be tellable from "typo".
+
+    **The watermark carries a marker, and resolution keys off the range rather
+    than off the named struck entries.** Those names are provenance — they
+    answer *when*, and `git log` answers *when* — so a keystone deletes them and
+    leaves the high-water mark exactly as the out-of-band ledger does, which a
+    check reading a named list would not survive. Reading only the mark tolerates
+    both forms by construction: a number at or below it that the index does not
+    carry *is* struck. The mark therefore goes in an
+    `<!-- deficiency-watermark: … -->` marker rather than in the sentence around
+    it, which is rewritten at every strike; deriving it instead as the highest
+    indexed entry breaks exactly when the highest-numbered entry is struck,
+    which is when it is needed.
   - **A slice that anticipates closing an entry, and that entry, name each
     other.** The forward reference alone rots: a slice list is rewritten as a
     phase is grilled, split and re-sliced, and the entry that named a slice
@@ -307,6 +322,46 @@ Three sections earn their keep beyond the checklist:
     obligation on; and a **ticked** line is a record of what a slice closed, not
     a promise, so it is not held to a pairing the entry beside it has already
     been rewritten out of.
+
+    **The two directions are asymmetric, and deliberately so.** A checklist line
+    is a record, so its identifier is a *citation* and resolves against the
+    allocated range: it may name a struck entry — that is what the watermark is
+    for — and may not name a number nobody allocated. An index entry is present
+    tense, so it may name only live slices, and **an entry naming a ticked slice
+    is an error**: partial closure rewrites the entry in the change that ticks
+    the box, so either that slice closed its part and the entry should no longer
+    name it, or it did not and the entry is aimed at the wrong slice. Making it
+    fail is what enforces the partial-closure rewrite mechanically, and that is
+    the rule most likely to be skipped — striking an entry is a visible
+    ceremony, rewriting one because a single row closed is quiet.
+  - **A `(b)` entry's owner is read from the roadmap's phase index, which is
+    where "this phase finished" lives.** A completed phase's checklist is
+    deleted at its wrap, so an entry owned by it otherwise reverts to "no
+    checklist means not sliced yet" and goes quiet at the moment its pointer is
+    most wrong — still naming a slice number that now exists nowhere. That is
+    why the index carries a `Complete` state at all: it is the only cell that
+    distinguishes *not yet sliced* from *sliced, run and finished*, and a
+    keystone that would strike the phase may be years after its wrap. A `(b)`
+    entry owned by a phase that is `Complete`, `Struck`, or absent from the
+    index **fails, and the failure says the entry drops to `(c)` unless a phase
+    actually absorbs it** — a finished phase is not a named destination, and
+    inventing a new owner to preserve the stance manufactures intent nobody
+    holds. Keeping a completed phase's checklist until the keystone is the
+    alternative and needs no index at all; it is rejected because phases
+    complete routinely while a keystone lands once or twice, so the ticked boxes
+    accumulate, putting chronology back into the document the keystone exists to
+    take it out of.
+
+    **That read has one honest edge, and it is stated rather than implied.** The
+    check learns "finished" from a cell a person sets, so half of the discipline
+    it removes comes back one level up. Half of *that* closes mechanically — a
+    phase carrying a checklist may not be `Complete`, and a `Complete` phase may
+    not carry one, which catches the state moving without the checklist and the
+    checklist going without the state. The remaining half, a checklist deleted
+    with the state left at `Specified`, is indistinguishable from "specified, not
+    yet sliced" and closes only by splitting that state into `Specified` and
+    `Sliced` — rejected as costing an index edit at slicing time, with nothing
+    else pulling a session to that table, to cover a wrap that half happened.
 - **Decisions worth another look** — calls made without the maintainer
   present that a person should still weigh in on: cautionary and
   informational, never blocking. Each entry states the call, why it was made
@@ -762,8 +817,11 @@ a keystone or abandoned before it was specified.
 
 **Order lives in the roadmap's section order**, which is the only place it is
 true. Head that file with an index whose rows are the schedule, and give each
-row an explicit state — sketched, specified, current, struck — rather than
-leaving maturity to be inferred from how large the number is.
+row an explicit state — sketched, specified, current, complete, struck —
+rather than leaving maturity to be inferred from how large the number is.
+`Complete` is set at the wrap, in the change that deletes the phase's checklist;
+it is what lets a reader — and a check — tell a phase that ran and finished from
+one nobody has sliced yet.
 
 **The slug is informal.** `P<k>` alone resolves; the slug beside it in a
 filename or a heading is a caption, there because
@@ -1042,6 +1100,10 @@ Each of these means a specific rule has stopped being followed.
 - **A register entry with a `(b)` stance that names a phase but no slice**,
   once that phase has been sliced. Nothing will re-read the entry at the moment
   it comes due, and a re-slice has nothing obliging it to re-target.
+- **A `(b)` entry owned by a phase that has finished**, or that names a slice
+  whose box is ticked. Both are the same failure seen from two sides: the entry
+  is present tense and its pointer is aimed at work that is over, so it is
+  either owned by whoever picks it up next or it is `(c)` unowned.
 - **An invariant has no re-verification step.** It will not be checked at the
   next upstream release, which is the only reason it was written down.
 - **`CLAUDE.md` explains a design.** It should be pointing at a doc instead.

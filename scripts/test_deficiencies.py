@@ -27,7 +27,25 @@ INDEX_HEAD = """# Status
 ## Known deficiencies
 
 The deficiency register. Prose above the entries, which the parser must skip.
+<!-- deficiency-watermark: KD9 -->
+`KD1`–`KD9` are allocated.
 
+"""
+
+#: The roadmap's phase index, which is where a `(b)` entry's owner is resolved.
+#: A range, a state read through its emphasis, and a phase that has wrapped.
+ROADMAP = """# Roadmap
+
+Prose above the table, which the parser must skip.
+
+| Phase | State | Where it is |
+|---|---|---|
+| P1–P3, P9 | **Struck** at a keystone review | architecture.md |
+| P11 — typed predicates | **Specified**; open | roadmap-P11-typed-predicates.md |
+| P7 — scan performance | Sketched; design doc ahead of its phase | this file |
+| P12 — a phase that wrapped | Complete | this file |
+
+Prose below the table.
 """
 
 ENTRY_D1 = """- **KD1** — a thing that costs something. **(c) unowned**; promoted by a
@@ -60,8 +78,19 @@ Prose above the boxes, which the parser must skip.
 
 """
 
+#: An entry whose owning phase has wrapped: `(b)` naming no live destination.
+ENTRY_D4 = """- **KD4** — a thing P12 was going to fix. **(b) owned by P12**, whose
+  wrap left it stranded. Detail:
+  [`../design/architecture.md`](../design/architecture.md), "Another".
+
+"""
+
 ARCH_D3 = """<!-- deficiency: KD3 -->
 Why KD3 costs what it costs.
+"""
+
+ARCH_D4 = """<!-- deficiency: KD4 -->
+Why KD4 costs what it costs.
 """
 
 ARCH_D1_D3 = """## A mechanism
@@ -81,12 +110,21 @@ TAIL = """## Decisions worth another look
 """
 
 
-def build(tmp: Path, *, status: str, arch: str = "", code: str = "", extra=None) -> Path:
+def build(
+    tmp: Path,
+    *,
+    status: str,
+    arch: str = "",
+    code: str = "",
+    roadmap: str = ROADMAP,
+    extra=None,
+) -> Path:
     """A repo shaped like this one: an index, a doc tree, a crate source dir."""
     (tmp / "docs" / "status").mkdir(parents=True)
     (tmp / "docs" / "design").mkdir(parents=True)
     (tmp / "pgdump_query" / "src").mkdir(parents=True)
     (tmp / "docs" / "status" / "STATUS.md").write_text(status)
+    (tmp / "docs" / "design" / "roadmap.md").write_text(roadmap)
     (tmp / "docs" / "design" / "architecture.md").write_text(arch)
     (tmp / "pgdump_query" / "src" / "lib.rs").write_text(code)
     for rel, text in (extra or {}).items():
@@ -227,7 +265,7 @@ class Reconciliation(unittest.TestCase):
                 Path(d),
                 status=INDEX_HEAD + ENTRY_D1 + TAIL,
                 arch="## A mechanism\n",
-                extra={"docs/design/roadmap.md": "<!-- deficiency: KD1 -->\nfiled elsewhere\n"},
+                extra={"docs/design/layering.md": "<!-- deficiency: KD1 -->\nfiled elsewhere\n"},
             )
             code, text = run(Path(d))
             self.assertEqual(code, 1)
@@ -265,6 +303,150 @@ class Reconciliation(unittest.TestCase):
             code, text = run(Path(d))
             self.assertEqual(code, 1)
             self.assertIn("names a detail file that does not exist", text)
+
+
+class WatermarkParsing(unittest.TestCase):
+    def test_the_marker_carries_the_allocated_range(self):
+        mark, problems = deficiencies.parse_watermark(INDEX_HEAD + ENTRY_D1 + TAIL)
+        self.assertEqual(mark, "KD9")
+        self.assertEqual(problems, [])
+
+    def test_the_prose_around_it_is_not_read(self):
+        """The sentence is rewritten at every strike and again at the keystone
+        that deletes the named struck entries; the marker is not."""
+        text = INDEX_HEAD.replace(
+            "`KD1`–`KD9` are allocated.", "`KD1`–`KD9` are allocated; `KD3` is struck."
+        )
+        self.assertEqual(deficiencies.parse_watermark(text)[0], "KD9")
+
+    def test_a_missing_marker_is_a_problem(self):
+        text = INDEX_HEAD.replace("<!-- deficiency-watermark: KD9 -->\n", "")
+        mark, problems = deficiencies.parse_watermark(text)
+        self.assertIsNone(mark)
+        self.assertIn("deficiency-watermark", problems[0])
+
+    def test_two_markers_are_a_problem(self):
+        text = INDEX_HEAD + "<!-- deficiency-watermark: KD12 -->\n"
+        mark, problems = deficiencies.parse_watermark(text)
+        self.assertIsNone(mark)
+        self.assertIn("the allocated range is one number", problems[0])
+
+    def test_an_entry_indexed_above_the_watermark_fails(self):
+        """Allocation is what the marker records, so a new entry bumps it."""
+        with tempfile.TemporaryDirectory() as d:
+            build(
+                Path(d),
+                status=INDEX_HEAD + ENTRY_D1.replace("KD1", "KD12") + TAIL,
+                arch="<!-- deficiency: KD12 -->\ntext\n",
+            )
+            code, text = run(Path(d))
+            self.assertEqual(code, 1)
+            self.assertIn("KD12 is indexed above the watermark (KD9)", text)
+
+
+class PhaseIndexParsing(unittest.TestCase):
+    def test_a_range_and_a_list_are_expanded(self):
+        phases, problems = deficiencies.parse_phase_index(ROADMAP)
+        self.assertEqual(problems, [])
+        self.assertEqual(
+            phases,
+            {
+                1: "struck",
+                2: "struck",
+                3: "struck",
+                9: "struck",
+                11: "specified",
+                7: "sketched",
+                12: "complete",
+            },
+        )
+
+    def test_the_state_is_read_through_its_emphasis_and_its_caption(self):
+        self.assertEqual(deficiencies.phase_state("**Specified**; open"), "specified")
+        self.assertEqual(deficiencies.phase_state("Sketched; not grilled"), "sketched")
+        self.assertEqual(deficiencies.phase_state("**Struck** at a keystone"), "struck")
+
+    def test_an_unknown_state_is_named(self):
+        """The vocabulary is closed: a word the check does not know would
+        otherwise read as "still running", which is the silence `Complete` was
+        added to end."""
+        phases, problems = deficiencies.parse_phase_index(
+            ROADMAP.replace("| Complete |", "| Done |")
+        )
+        self.assertNotIn(12, phases)
+        self.assertTrue(any("carries state 'Done'" in p for p in problems))
+
+    def test_a_missing_table_is_a_problem(self):
+        phases, problems = deficiencies.parse_phase_index("# Roadmap\n\nNo table.\n")
+        self.assertEqual(phases, {})
+        self.assertIn("no `| Phase | State", problems[0])
+
+    def test_the_table_ends_at_the_first_non_row(self):
+        phases, _ = deficiencies.parse_phase_index(
+            ROADMAP + "\n| P13 — later | Sketched | elsewhere |\n"
+        )
+        self.assertNotIn(13, phases)
+
+
+class OwningPhaseState(unittest.TestCase):
+    """A `(b)` stance names a destination, and a finished phase is not one."""
+
+    def test_an_entry_owned_by_a_complete_phase_fails(self):
+        with tempfile.TemporaryDirectory() as d:
+            build(Path(d), status=INDEX_HEAD + ENTRY_D4 + TAIL, arch=ARCH_D4)
+            code, text = run(Path(d))
+            self.assertEqual(code, 1)
+            self.assertIn("KD4 is (b) owned by P12, which is complete", text)
+            self.assertIn("drops to (c) unowned", text)
+
+    def test_an_entry_owned_by_a_struck_phase_fails(self):
+        with tempfile.TemporaryDirectory() as d:
+            build(
+                Path(d),
+                status=INDEX_HEAD + ENTRY_D4.replace("P12", "P2") + TAIL,
+                arch=ARCH_D4,
+            )
+            code, text = run(Path(d))
+            self.assertEqual(code, 1)
+            self.assertIn("KD4 is (b) owned by P2, which is struck", text)
+
+    def test_an_entry_owned_by_a_phase_the_index_does_not_list_fails(self):
+        with tempfile.TemporaryDirectory() as d:
+            build(
+                Path(d),
+                status=INDEX_HEAD + ENTRY_D4.replace("P12", "P42") + TAIL,
+                arch=ARCH_D4,
+            )
+            code, text = run(Path(d))
+            self.assertEqual(code, 1)
+            self.assertIn("which the roadmap's phase index does not list", text)
+
+    def test_a_complete_phase_may_not_carry_a_checklist(self):
+        """Half of the phase-index read's discipline closes mechanically: the
+        wrap deletes the checklist and sets the state in one change."""
+        with tempfile.TemporaryDirectory() as d:
+            build(
+                Path(d),
+                status=INDEX_HEAD
+                + ENTRY_D1
+                + "## P12 progress\n\n- [x] **12.1** A slice that landed.\n\n"
+                + TAIL,
+                arch="<!-- deficiency: KD1 -->\ntext\n",
+            )
+            code, text = run(Path(d))
+            self.assertEqual(code, 1)
+            self.assertIn('P12 is complete', text)
+            self.assertIn('still carries a "## P12 progress" checklist', text)
+
+    def test_a_live_owner_of_any_open_state_is_accepted(self):
+        with tempfile.TemporaryDirectory() as d:
+            build(
+                Path(d),
+                status=INDEX_HEAD + ENTRY_D2 + TAIL,
+                arch="<!-- deficiency: KD2 -->\nAnother.\n",
+            )
+            code, text = run(Path(d))
+            self.assertEqual(code, 0, text)
 
 
 class ChecklistParsing(unittest.TestCase):
@@ -435,6 +617,68 @@ class SlicePairing(unittest.TestCase):
                 text,
             )
 
+    def test_an_entry_naming_a_ticked_slice_fails(self):
+        """Present tense, the other way from a checklist line: closing a part
+        rewrites the entry in the change that ticks the box, so an entry naming
+        a landed slice is stale whichever way it happened."""
+        with tempfile.TemporaryDirectory() as d:
+            build(
+                Path(d),
+                status=INDEX_HEAD
+                + ENTRY_D3
+                + CHECKLIST.replace(
+                    "- [ ] **11.5** The first row.", "- [x] **11.5** The first row."
+                )
+                + TAIL,
+                arch=ARCH_D3,
+            )
+            code, text = run(Path(d))
+            self.assertEqual(code, 1)
+            self.assertIn("KD3 names slice 11.5, which has landed", text)
+
+    def test_a_ticked_line_may_cite_a_struck_entry(self):
+        """A record's `KD<k>` is a citation: `KD8` was allocated and struck, and
+        the line that closed it goes on saying so."""
+        with tempfile.TemporaryDirectory() as d:
+            build(
+                Path(d),
+                status=INDEX_HEAD
+                + ENTRY_D1
+                + CHECKLIST.replace(
+                    "- [x] **11.1** A slice that landed.",
+                    "- [x] **11.1** A slice that landed, striking `KD8`.",
+                )
+                .replace("- [ ] **11.5** The first row. Closes `KD3`'s first row.\n", "")
+                .replace("- [ ] **11.6** The last row, and **strikes `KD3`**.\n", "")
+                + TAIL,
+                arch="<!-- deficiency: KD1 -->\nWhy KD1 costs what it costs.\n",
+            )
+            code, text = run(Path(d))
+            self.assertEqual(code, 0, text)
+
+    def test_a_ticked_line_citing_a_number_never_allocated_fails(self):
+        """The other half of citation-resolves-against-the-range: a number
+        above the watermark is a typo, not a struck entry."""
+        with tempfile.TemporaryDirectory() as d:
+            build(
+                Path(d),
+                status=INDEX_HEAD
+                + ENTRY_D1
+                + CHECKLIST.replace(
+                    "- [x] **11.1** A slice that landed.",
+                    "- [x] **11.1** A slice that landed, striking `KD12`.",
+                )
+                .replace("- [ ] **11.5** The first row. Closes `KD3`'s first row.\n", "")
+                .replace("- [ ] **11.6** The last row, and **strikes `KD3`**.\n", "")
+                + TAIL,
+                arch="<!-- deficiency: KD1 -->\nWhy KD1 costs what it costs.\n",
+            )
+            code, text = run(Path(d))
+            self.assertEqual(code, 1)
+            self.assertIn(
+                "P11 checklist line 11.1 cites KD12, which was never allocated", text
+            )
+
     def test_a_ticked_line_is_a_record_and_owes_no_pairing(self):
         """A landed slice's line still says which entry it closed; the entry
         has since been rewritten to what is still true, or struck outright.
@@ -508,6 +752,32 @@ class ThisRepo(unittest.TestCase):
         for entry in paired:
             phase = int(deficiencies.DESTINATION_PHASE_RE.search(entry.destination).group(1))
             self.assertTrue(deficiencies.slice_refs(entry.text, phase), entry.id)
+
+    def test_the_watermark_covers_every_indexed_entry(self):
+        """Not a restatement of the check: this asserts the marker is actually
+        in the file, so a repo that lost it cannot pass the citation rule
+        vacuously."""
+        mark, problems = deficiencies.parse_watermark((deficiencies.STATUS).read_text())
+        self.assertEqual(problems, [])
+        entries, _ = deficiencies.parse_index((deficiencies.STATUS).read_text())
+        for entry in entries:
+            self.assertLessEqual(deficiencies._index(entry.id), deficiencies._index(mark))
+
+    def test_every_b_entry_is_owned_by_a_phase_the_index_calls_live(self):
+        text = (deficiencies.STATUS).read_text()
+        entries, problems = deficiencies.parse_index(text)
+        self.assertEqual(problems, [])
+        phases, problems = deficiencies.parse_phase_index(
+            (deficiencies.ROADMAP).read_text()
+        )
+        self.assertEqual(problems, [])
+        self.assertTrue(phases, "the roadmap's phase index did not parse")
+        owned = [e for e in entries if e.stance == "b"]
+        self.assertTrue(owned, "no (b) entry is owned by a phase")
+        for entry in owned:
+            n = int(deficiencies.DESTINATION_PHASE_RE.search(entry.destination).group(1))
+            self.assertIn(n, phases, entry.id)
+            self.assertNotIn(phases[n], deficiencies.FINISHED_STATES, entry.id)
 
     def test_the_index_carries_no_paragraph(self):
         """One line per entry, wrapped — an entry that has grown into a

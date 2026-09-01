@@ -23,6 +23,16 @@ reused, including a struck phase's.
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
 | P8 — format coverage | Sketched; not grilled | this file, below; [inbox](roadmap-P8-format-coverage-inbox.md) |
 
+**A row's state is one of `Sketched`, `Specified`, `Current`, `Complete` or
+`Struck`**, and the prose after it is a caption. `Complete` is set at the phase
+wrap, in the same change that deletes the phase's `STATUS.md` checklist — the
+two are one edit, since this table is then the only thing that can say a phase
+ran and finished, and a keystone that would strike it may be years later. That
+matters beyond bookkeeping: `scripts/deficiencies.py` reads this column, and a
+known deficiency owned by a phase that is `Complete`, `Struck`, or absent from
+this table has no destination, so it drops to `(c) unowned` unless another phase
+absorbs it (`../status/STATUS.md`, "Known deficiencies").
+
 The struck phases' mechanisms are described by subject in
 [`architecture.md`](architecture.md), not by phase; their specs and notes went
 at a keystone review (`../process.md`, "The keystone: striking the
@@ -709,7 +719,7 @@ the first item to land after this keystone.
 | `M29` | 2026-08-31 | `oid` maps to `UInt32` and compares unsigned, with a `public.t_oid` fixture column and an oracle case behind it, and a `uuid`/`json`/`jsonb` column's field carries its canonical Arrow extension name — the three rows of the ADBC floor that need no decision `P12` has not made | [`../status/history/2026-08-31.md`](../status/history/2026-08-31.md) |
 | `M30` | 2026-09-01 | an acknowledgement excuses a commit, so one unexamined commit on a path makes every earlier entry on it inert — `--stale` now names an inert entry and what holds the path red, `acknowledged.py` states the rule where an entry is written, and `c614c4b` is acknowledged for the four figures 11.4 re-reddened | [`../status/history/2026-09-01.md`](../status/history/2026-09-01.md) |
 | `M31` | 2026-09-01 | `deficiencies.py` carries a fourth relation — a `(b)` entry naming a slice and that slice's checklist line naming the entry, reconciled both ways over a new parser for `STATUS.md`'s slice checklists — so a re-slice fails the check rather than owing a re-target on discipline; an unsliced owning phase and a ticked line are the two boundaries where no obligation exists | [`../status/history/2026-09-01.md`](../status/history/2026-09-01.md) |
-| `M32` | | `deficiencies.py`'s pairing, reviewed: a ticked checklist line's `KD<k>` is a citation that resolves against an `<!-- deficiency-watermark: … -->` allocated range rather than the index, a `(b)` entry may not name a ticked slice, and the roadmap's phase index gains a `Complete` state so an entry owned by a finished phase fails instead of going quiet — a stranded entry drops to `(c)` unless a phase absorbs it | [`../status/history/2026-09-01.md`](../status/history/2026-09-01.md) |
+| `M32` | 2026-09-01 | `deficiencies.py`'s pairing, reviewed: a ticked checklist line's `KD<k>` is a citation that resolves against an `<!-- deficiency-watermark: … -->` allocated range rather than the index, a `(b)` entry may not name a ticked slice, and the roadmap's phase index gains a `Complete` state so an entry owned by a finished phase fails instead of going quiet — a stranded entry drops to `(c)` unless a phase absorbs it | [`../status/history/2026-09-01.md`](../status/history/2026-09-01.md) |
 
 **One live obligation outlived them.** An `INSERT`-run scan costs
 **mid-teens times** a `COPY` scan per byte, CPU-bound, which argues for a scanner-level `INSERT`

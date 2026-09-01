@@ -14,8 +14,11 @@ directions and with no discipline in the loop:
 * every detail paragraph resolves back to an index entry;
 * every source-code marker resolves to an index entry, so one outliving its
   entry is an error rather than a slow lie;
-* every `(b)` entry whose owning phase has been sliced names a slice of it, and
-  that slice's checklist line names the entry back.
+* every `(b)` entry is owned by a phase the roadmap's index lists as still
+  running, and where that phase has been sliced the entry names a slice of it
+  and that slice's checklist line names the entry back;
+* every `KD<k>` a *ticked* checklist line cites falls inside the allocated
+  range, which an `<!-- deficiency-watermark: KD<k> -->` marker carries.
 
 Failing on *either* half is the point. A one-directional check leaves the other
 direction free to rot, which is exactly how a register stops being one.
@@ -40,6 +43,42 @@ Two boundaries keep it from firing where there is no obligation:
   still true (or struck outright), so requiring it to name a landed slice back
   would force one of the two to lie. The reverse direction therefore reads
   unticked lines only.
+
+**The two directions are asymmetric on purpose.** A checklist line is a record,
+so its `KD<k>` is a *citation* and resolves against the allocated range -- it
+may name a struck entry, and may not name a number nobody ever allocated. An
+index entry is present tense, so it may name only live slices: **an entry naming
+a ticked slice is stale by construction**, since partial closure rewrites the
+entry in the same change that ticks the box. Making that an error is what
+enforces the rewrite mechanically, and the rewrite is the rule most likely to be
+skipped -- striking an entry is a visible ceremony, rewriting one because a
+single row closed is quiet.
+
+**The allocated range comes from a marker, not from the prose.** The watermark
+sentence is rewritten at every strike, and again at the keystone that deletes
+the named struck entries, so a regex over that wording is the fragility
+`measurements.md` set its figure markers against. Deriving the mark instead as
+`max(indexed)` was rejected: it breaks exactly when the highest-numbered entry
+is struck, which is when it is needed.
+
+**A `(b)` entry's owner is read from the roadmap's phase index**, because a
+completed phase's checklist is deleted from `STATUS.md` at its wrap -- so an
+entry owned by it would otherwise revert to "no checklist means not sliced yet"
+and go quiet at the moment its pointer became most wrong. `Complete` and
+`Struck` are not destinations, and neither is a phase the index does not list:
+a stranded entry drops to `(c) unowned` unless a phase actually absorbs it, and
+this says so rather than only reporting the contradiction.
+
+That read has one honest edge, and it is stated rather than implied: the check
+learns "finished" from a cell a person sets at the wrap. Half of that closes
+mechanically -- a phase carrying a checklist may not be `Complete`, and a
+`Complete` phase may not carry one, which catches the state moving without the
+checklist and the checklist going without the state. The other half, a checklist
+deleted with the state left at `Specified`, is indistinguishable from
+"specified, not yet sliced" and would close only by splitting that state into
+`Specified` and `Sliced` -- rejected as costing an index edit at slicing time,
+with nothing else pulling a session to that table, to cover a wrap that half
+happened.
 
 This is `measure.py --check`'s idiom -- the doc addresses an entry by a marker
 comment, never by a heading, because a heading is rewritten whenever the thing
@@ -76,6 +115,11 @@ REPO = Path(__file__).resolve().parent.parent
 #: document, and the session editing the mechanism will not see it.
 STATUS = REPO / "docs" / "status" / "STATUS.md"
 
+#: The phase index, which is where a `(b)` entry's owner is resolved: it is the
+#: only place that can say a phase ran and finished, since the wrap deletes the
+#: checklist that would otherwise stand in for one.
+ROADMAP = REPO / "docs" / "design" / "roadmap.md"
+
 #: Where a detail paragraph may live. Any Markdown under here.
 DOC_ROOT = REPO / "docs"
 
@@ -103,6 +147,26 @@ REFERENCE_RE = re.compile(r"\bKD\d+\b")
 
 #: The phase in a `(b)` entry's destination -- "P11, struck at 11.6" is P11.
 DESTINATION_PHASE_RE = re.compile(r"\bP(\d+)\b")
+
+#: The allocated range, carried by a marker rather than by the sentence that
+#: states it, which is rewritten at every strike.
+WATERMARK_RE = re.compile(r"<!--\s*deficiency-watermark:\s*(KD\d+)\s*-->")
+
+#: The roadmap's phase index: the table whose header opens `| Phase | State |`.
+PHASE_TABLE_HEAD_RE = re.compile(r"^\|\s*Phase\s*\|\s*State\s*\|")
+
+#: A Phase cell names one phase, a comma-separated few, or a range: `P1–P5, P9`.
+PHASE_RANGE_RE = re.compile(r"P(\d+)\s*[–—-]\s*P?(\d+)")
+PHASE_ONE_RE = re.compile(r"P(\d+)")
+
+#: The states a row may carry, lower-cased. `Complete` is set at the phase wrap,
+#: because the index cannot otherwise say "this phase ran and finished" short of
+#: striking it -- and a keystone may be years after the wrap.
+PHASE_STATES = ("sketched", "specified", "current", "complete", "struck")
+
+#: The two that mean the phase will absorb no more work, so a `(b)` entry naming
+#: one names no destination.
+FINISHED_STATES = ("complete", "struck")
 
 
 def _index(ident: str) -> int:
@@ -353,6 +417,96 @@ def parse_checklists(text: str) -> dict[int, list[Slice]]:
     return out
 
 
+def parse_watermark(text: str) -> tuple[str | None, list[str]]:
+    """The allocated range's high-water mark, and what is wrong with it.
+
+    One marker, or the register has lost the promise that a spent identifier
+    stays resolvable -- which is what a ticked line's citation leans on.
+    """
+    marks = WATERMARK_RE.findall(text)
+    if not marks:
+        return None, [
+            "no `<!-- deficiency-watermark: KD<k> -->` marker — a ticked line's "
+            "`KD<k>` is a citation, and it has nothing to resolve against"
+        ]
+    if len(marks) > 1:
+        return None, [
+            f"{len(marks)} deficiency-watermark markers ({', '.join(marks)}) — "
+            "the allocated range is one number"
+        ]
+    return marks[0], []
+
+
+def phase_numbers(cell: str) -> list[int]:
+    """The phases a Phase cell names: `P11`, `P1–P5, P9`, `P1-P5`."""
+    out: list[int] = []
+    for m in PHASE_RANGE_RE.finditer(cell):
+        lo, hi = int(m.group(1)), int(m.group(2))
+        if lo <= hi:
+            out.extend(range(lo, hi + 1))
+    for m in PHASE_ONE_RE.finditer(PHASE_RANGE_RE.sub(" ", cell)):
+        out.append(int(m.group(1)))
+    return sorted(set(out))
+
+
+def phase_state(cell: str) -> str:
+    """A State cell's state word: `**Specified**; open` is "specified"."""
+    plain = re.sub(r"[*`]", " ", cell).strip()
+    if not plain:
+        return ""
+    return re.split(r"[\s;,.]+", plain, maxsplit=1)[0].lower()
+
+
+def parse_phase_index(text: str) -> tuple[dict[int, str], list[str]]:
+    """The roadmap's phase index, as phase number to state word.
+
+    The vocabulary is closed on purpose: a state the check does not know reads
+    as "still running" by default, which is exactly the silence a `Complete`
+    state was added to end, so an unrecognised word is an error instead.
+    """
+    problems: list[str] = []
+    states: dict[int, str] = {}
+    rows: list[str] = []
+    inside = False
+    for line in text.splitlines():
+        if not inside:
+            if PHASE_TABLE_HEAD_RE.match(line):
+                inside = True
+            continue
+        if not line.startswith("|"):
+            break
+        rows.append(line)
+    if not inside:
+        return {}, [
+            "the roadmap carries no `| Phase | State | … |` index table — a (b) "
+            "entry's owning phase has nothing to resolve against"
+        ]
+
+    for row in rows:
+        cells = [c.strip() for c in row.strip().strip("|").split("|")]
+        if not cells or not cells[0] or set(cells[0]) <= set("-: "):
+            continue
+        numbers = phase_numbers(cells[0])
+        if not numbers:
+            problems.append(
+                f"phase index row names no `P<k>`: {cells[0][:60]}"
+            )
+            continue
+        cell = cells[1] if len(cells) > 1 else ""
+        state = phase_state(cell)
+        if state not in PHASE_STATES:
+            problems.append(
+                f"phase index row {cells[0]} carries state {cell!r} — expected "
+                f"one of {', '.join(PHASE_STATES)}"
+            )
+            continue
+        for n in numbers:
+            if n in states:
+                problems.append(f"P{n} appears twice in the phase index")
+            states[n] = state
+    return states, problems
+
+
 def markers_in(path: Path, repo: Path) -> list[Marker]:
     rel = repo_rel(path, repo)
     out: list[Marker] = []
@@ -440,18 +594,42 @@ def reconcile(
 
 
 def reconcile_slices(
-    entries: Sequence[Entry], checklists: dict[int, list[Slice]]
+    entries: Sequence[Entry],
+    checklists: dict[int, list[Slice]],
+    phases: dict[int, str],
+    watermark: str | None,
 ) -> list[str]:
     """The pairing between a `(b)` entry and the slice that will close it.
 
     Both ways, and neither half is redundant. Entry to slice catches the
-    renumbering: the entry names an id the checklist no longer lists, or one
-    whose line has stopped claiming it. Slice to entry catches the other
-    half of a split -- a new slice that takes over the closure without the
-    entry being re-aimed at it.
+    renumbering: the entry names an id the checklist no longer lists, one whose
+    line has stopped claiming it, or one that has landed. Slice to entry catches
+    the other half of a split -- a new slice that takes over the closure without
+    the entry being re-aimed at it.
+
+    Ahead of both sits the owner: a `(b)` entry whose phase the index calls
+    finished, or does not list, has no destination at all, and the slice pairing
+    beneath it would be noise.
     """
     problems: list[str] = []
     indexed = {e.id: e for e in entries}
+    mark = _index(watermark) if watermark else None
+
+    if mark is not None:
+        for entry in entries:
+            if _index(entry.id) > mark:
+                problems.append(
+                    f"{entry.id} is indexed above the watermark ({watermark}) — "
+                    "the marker is what records that a number is allocated"
+                )
+
+    for n, state in sorted(phases.items()):
+        if state in FINISHED_STATES and n in checklists:
+            problems.append(
+                f'P{n} is {state} in the roadmap\'s phase index and still carries '
+                f'a "## P{n} progress" checklist — the wrap deletes the checklist '
+                "and sets the state, in one change"
+            )
 
     for entry in entries:
         if entry.stance != "b":
@@ -462,6 +640,21 @@ def reconcile_slices(
             # reconcile against, and inventing one is not this check's job.
             continue
         n = int(phase.group(1))
+        state = phases.get(n)
+        if state is None:
+            problems.append(
+                f"{entry.id} is (b) owned by P{n}, which the roadmap's phase "
+                "index does not list — the entry drops to (c) unowned unless a "
+                "phase actually absorbs it"
+            )
+            continue
+        if state in FINISHED_STATES:
+            problems.append(
+                f"{entry.id} is (b) owned by P{n}, which is {state} — a finished "
+                "phase is not a named destination, so the entry drops to (c) "
+                "unowned unless another phase absorbs it"
+            )
+            continue
         named = slice_refs(entry.text, n)
         listed = checklists.get(n)
         if listed is None:
@@ -487,6 +680,13 @@ def reconcile_slices(
                     f"not list — a re-slice re-targets every entry pointing at it"
                 )
                 continue
+            if found.done:
+                problems.append(
+                    f"{entry.id} names slice {ref}, which has landed — closing a "
+                    "part rewrites the entry in the change that ticks the box, so "
+                    "an entry naming a ticked slice is stale either way"
+                )
+                continue
             if entry.id not in entry_refs(found.text):
                 problems.append(
                     f"{entry.id} names slice {ref}, whose checklist line does not "
@@ -497,7 +697,15 @@ def reconcile_slices(
         for item in slices:
             if item.done:
                 # A landed slice's line records what it closed; the entry it
-                # named has since been rewritten or struck.
+                # named has since been rewritten or struck. So its `KD<k>` is a
+                # citation, held only to resolving against the allocated range.
+                for ref in entry_refs(item.text):
+                    if mark is not None and _index(ref) > mark:
+                        problems.append(
+                            f"P{n} checklist line {item.id} cites {ref}, which "
+                            f"was never allocated — the register is allocated "
+                            f"through {watermark}"
+                        )
                 continue
             for ref in entry_refs(item.text):
                 entry = indexed.get(ref)
@@ -521,9 +729,12 @@ def report(
     code: Sequence[Marker],
     problems: Sequence[str],
     checklists: dict[int, list[Slice]] | None = None,
+    watermark: str | None = None,
+    phases: dict[int, str] | None = None,
     out=sys.stdout,
 ) -> None:
     checklists = checklists or {}
+    phases = phases or {}
     by_code: dict[str, list[Marker]] = {}
     for m in code:
         by_code.setdefault(m.id, []).append(m)
@@ -548,9 +759,21 @@ def report(
     # rather than guessed -- a run-together line reads as a missing field.
     width = max((len(stance_of(e)) for e in entries), default=0) + 2
 
+    by_state: dict[str, list[int]] = {}
+    for n, state in sorted(phases.items()):
+        by_state.setdefault(state, []).append(n)
+    index_summary = "; ".join(
+        f"{state} {', '.join(f'P{n}' for n in ns)}" for state, ns in sorted(by_state.items())
+    ) or "not read"
+
     print(
         f"{len(entries)} deficiencies indexed, {len(details)} detail entries, "
-        f"{len(code)} code markers. Sliced phases: {sliced}.\n",
+        f"{len(code)} code markers. Sliced phases: {sliced}.",
+        file=out,
+    )
+    print(
+        f"Allocated through {watermark or '(no watermark)'}. "
+        f"Phase index: {index_summary}.\n",
         file=out,
     )
     for entry in sorted(entries, key=lambda e: _index(e.id)):
@@ -564,33 +787,45 @@ def report(
     print(file=out)
 
     if problems:
-        print("The index and its detail entries disagree:", file=out)
+        print("The register does not reconcile:", file=out)
         for p in problems:
             print(f"  {p}", file=out)
     else:
         print(
-            "Index, detail entries, code markers and slice pairings all resolve.",
+            "Index, detail entries, code markers, slice pairings and phase "
+            "states all resolve.",
             file=out,
         )
 
 
 def check(repo: Path = REPO, out=sys.stdout) -> int:
     status = repo / "docs" / "status" / "STATUS.md"
+    roadmap = repo / "docs" / "design" / "roadmap.md"
     doc_root = repo / "docs"
     code_roots = tuple(repo / p for p in ("pgdump_query/src", "pgdump_query-cli/src"))
 
     text = status.read_text()
     entries, problems = parse_index(text)
     checklists = parse_checklists(text)
+    watermark, watermark_problems = parse_watermark(text)
+    if roadmap.exists():
+        phases, phase_problems = parse_phase_index(roadmap.read_text())
+    else:
+        phases, phase_problems = {}, [
+            f"{repo_rel(roadmap, repo)} does not exist — the phase index is "
+            "where a (b) entry's owner is resolved"
+        ]
     details = markers_under((doc_root,), ".md", repo, skip=status)
     code = markers_under(code_roots, ".rs", repo)
     status_markers = markers_in(status, repo)
     problems = (
         list(problems)
+        + watermark_problems
+        + phase_problems
         + reconcile(entries, details, code, status_markers, repo, status)
-        + reconcile_slices(entries, checklists)
+        + reconcile_slices(entries, checklists, phases, watermark)
     )
-    report(entries, details, code, problems, checklists, out=out)
+    report(entries, details, code, problems, checklists, watermark, phases, out=out)
     return 1 if problems else 0
 
 

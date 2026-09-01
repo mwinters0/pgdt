@@ -66,6 +66,21 @@ Two obligations that fire at spec time, not at landing, and both are about
   `deficiencies.py` fails until the re-target lands — see `docs/process.md`,
   "Known deficiencies".
 
+## When you wrap a phase
+
+Three edits are one change, because each of the first two makes the register
+lie without the third:
+
+- **The phase's `STATUS.md` checklist is deleted**, its slice notes
+  consolidated.
+- **The roadmap index row goes to `Complete`.** That cell is the only thing
+  left that can say the phase ran and finished, and `deficiencies.py` reads it.
+- **Every `(b)` entry the phase owned is re-homed.** A finished phase is not a
+  destination: the entry either names the phase that actually absorbs it, or it
+  drops to `(c) unowned` — which is a legitimate resting state and the right
+  one unless somebody genuinely holds the intent. `deficiencies.py` fails until
+  it does.
+
 ## What to do when a slice cannot be finished as specified
 
 Do not tick it and describe the gap in prose. Leave the box unchecked, say in

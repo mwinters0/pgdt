@@ -34,7 +34,7 @@ cd scripts && uv run measure.py --figure <id>     # re-take one figure — one w
 cd scripts && uv run measure.py --all             # the whole sweep: ~1 h, detach it
 cd scripts && uv run python -m unittest test_measure   # the harness's own tests
 
-cd scripts && uv run deficiencies.py              # deficiency register: index vs. detail entries vs. code markers vs. the slice pairing
+cd scripts && uv run deficiencies.py              # deficiency register: index vs. detail entries vs. code markers vs. the slice pairing vs. the roadmap's phase index
 cd scripts && uv run python -m unittest test_deficiencies  # that check's own tests
 ```
 
@@ -314,14 +314,23 @@ as a complete, deliberate choice and gives no sign a limitation hangs off it.
 boundary — index line, detail paragraph and any code marker in one change,
 rewriting rather than annotating on partial closure, and migrating a part that
 closes into a *property* beside its mechanism instead of deleting it. The
-number stays spent. **Where a `(b)` entry's owning phase has been sliced, the
-entry and the slice name each other**, so landing one re-reads the other and a
-re-slice must re-target; slicing a phase means checking the register for the
-entries it owns. `cd scripts && uv run deficiencies.py` reconciles the index,
-the detail entries, the markers and that pairing, and fails on any of the four —
-so a re-slice that leaves an entry aimed at a number whose meaning changed fails
-the check rather than owing a re-target on discipline. Full rules:
-`docs/process.md`, "Known deficiencies".
+number stays spent, and the `<!-- deficiency-watermark: KD<k> -->` marker beside
+the watermark sentence is what records the allocated range. **Where a `(b)`
+entry's owning phase has been sliced, the entry and the slice name each other**,
+so landing one re-reads the other and a re-slice must re-target; slicing a phase
+means checking the register for the entries it owns. The two directions are
+asymmetric: a **ticked** checklist line is a record, so its `KD<k>` is a citation
+that may name a struck entry but not an unallocated number, while an **entry**
+is present tense and may not name a ticked slice — closing a part rewrites the
+entry in the change that ticks the box. A `(b)` entry's owner is read from
+`roadmap.md`'s phase index, so an entry owned by a `Complete`, `Struck` or
+unlisted phase fails and drops to `(c) unowned` unless a phase absorbs it —
+which is why **a phase wrap sets that row to `Complete` in the same change that
+deletes its checklist**. `cd scripts && uv run deficiencies.py` reconciles the
+index, the detail entries, the markers, that pairing and the phase index, and
+fails on any of them — so a re-slice that leaves an entry aimed at a number
+whose meaning changed fails the check rather than owing a re-target on
+discipline. Full rules: `docs/process.md`, "Known deficiencies".
 
 **When the maintainer answers an entry under `STATUS.md`'s "Decisions worth
 another look", close it in that same session** — before the work the answer
