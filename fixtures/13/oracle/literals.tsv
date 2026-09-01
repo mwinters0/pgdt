@@ -154,6 +154,10 @@ name	A	ok	A
 name	a	ok	a
 name	hello	ok	hello
 name	\N	ok	\N
+public.text_c	A	ok	A
+public.text_c	a	ok	a
+public.text_c	hello	ok	hello
+public.text_c	\N	ok	\N
 public.mood	sad	ok	sad
 public.mood	ok	ok	ok
 public.mood	happy	ok	happy

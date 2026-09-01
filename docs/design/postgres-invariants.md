@@ -2051,15 +2051,15 @@ fixture containers, `datcollate` `en_US.utf8`, `collversion` 2.41 — so it does
 not speak for a musl deployment, which orders the same locale bytewise
 ([`architecture.md`](architecture.md), "The comparison oracle").
 
-**Proof.** Measured, not argued: `fixtures/<13…18>/oracle/` holds 1776
-comparisons and 299 literals per major as the server itself answered them, and
+**Proof.** Measured, not argued: `fixtures/<13…18>/oracle/` holds 1792
+comparisons and 303 literals per major as the server itself answered them, and
 `fixtures/oracle-differences.tsv` holds every cell that moved between adjacent
-majors — 509 of them, all additive. The three transitions that exist are the
+majors — 533 of them, all additive. The three transitions that exist are the
 ones the release notes would have named: `numeric`'s infinities and the two
 multirange types in v14, and `interval`'s infinities in v17.
 
 **Verified against.** 13.23, 14.24, 15.19, 16.15, 17.11, 18.6 — the versions
-`meta.tsv` records per major, on 2026-08-31.
+`meta.tsv` records per major, on 2026-09-01.
 
 **Relied on by.** [`architecture.md`](architecture.md), "The cross-major
 differ", and every comparison in

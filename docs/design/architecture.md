@@ -3078,9 +3078,23 @@ older major rejects this literal, the newer one accepts it and answers" as
 branch on the dump's version. Nothing is version-gated for that reason — a
 multirange answers `E42704` on 13, which is the transition rather than a hole.
 
-**Neither side raises.** Each case is one `EXECUTE` inside a PL/pgSQL
-`EXCEPTION` block, so it is its own subtransaction and a malformed literal
-cannot abort the surrounding `COPY`. The session pins `standard_conforming_strings`,
+**A pair is asked through two typed columns.** Each comparison case builds a
+temp table declared `(a <typ>, b <typ>)`, inserts the two literals through a
+cast, and asks `a <op> b`. A column is what a dump holds, and its
+`attcollation` is the declared type's own default wherever the DDL writes no
+clause — so a case naming no collation measures what a bare column does, and a
+case naming one declares it on the column, which is where `pg_dump` writes it
+(I37). *Rejected: casting the two `text` parameters instead.* A cast derives
+its collation from its **input**, so every bare case would carry the
+parameter's `default`, and `name` — whose type default is `C` — would record
+the database locale's order under a case that names none.
+
+**Neither side raises**, and building the pair is its own subtransaction ahead
+of the six comparisons. Each is a PL/pgSQL `EXCEPTION` block, so a malformed
+literal cannot abort the surrounding `COPY`, and the split is what decides how
+far a rejection reaches: a type the server does not have, or a literal it
+refuses, is a pair that cannot exist and answers all six cells, while a type
+with no `<` fails that cell alone. The session pins `standard_conforming_strings`,
 `DateStyle`, `IntervalStyle`, `extra_float_digits`, `TimeZone`,
 `client_encoding`, `bytea_output` and `array_nulls`; the first four match
 `pg_dump`'s own `_doSetFixedOutputState`, so `output` is the form a dump
@@ -3140,55 +3154,54 @@ collation, and `None` is left to the types where there is no branch to name.
 changes no answer: `pg_catalog."default"` is what a bare comparison already
 used.
 
-`name` is the one deliberate `None` among the collatable types, and it is asked
-*bare*. *Rejected: relabelling its cases `collation="C"`.* True, and it is the
-register's claim rather than the oracle's observation — a `name` pair asked
-under an explicit clause is a different question from one asked bare, and only
-the bare one shows what a bare column does.
+`name` is one of the two deliberate `None`s among the collatable types —
+`public.text_c` below is the other — and it is asked *bare*, through two `name`
+columns whose `attcollation` is the type's own `C`. *Rejected: relabelling its
+cases `collation="C"`.* True, and it is the register's claim rather than the
+oracle's observation — a `name` pair asked under an explicit clause is a
+different question from one asked bare, and only the bare one shows what a bare
+column does.
 
-**`name`'s cells do not, in fact, answer that question, and they are the one
-place this oracle is measuring something other than what it names.** The SQL
-is `EXECUTE format('SELECT ($1::%s) %s ($2::%s)', …) USING lhs, rhs`, and
-`lhs`/`rhs` are `text`. A cast derives its collation from its *input*, so
-`$1::name` carries the `text` parameter's `default` collation rather than
-`name`'s own `C` type default — and `namelt` reads what it is given. The file
-therefore records `'A'::name < 'a'::name` as **false**, which is the database
-locale's answer; the same server answers **true** for `'A'::name < 'a'::name`
-written as literals, and for two `name` *columns*, whose `attcollation` is `C`.
-Confirmed on one session against PostgreSQL 16.15, both spellings side by
-side.
+**A refused literal answers every cell of every comparison it appears in**,
+the left side winning where both are refused — a property `literals.tsv` can
+be read against, and `test_comparison_oracle.py` does. It follows from the pair being
+built before it is compared, and it is the second reason the cast form is
+rejected: it broke the property in fifty-two of this tree's rows, twice over
+and both times as something that reads like an answer. A strict comparison
+against a constant NULL is folded away by the planner before the other side is
+evaluated, so a rejected literal paired with SQL NULL reads `u` wherever the
+type's input function is `stable` and leaves the pair non-constant — the
+datetime family — while `numeric`'s immutable one raises; and a type with no
+`<`, such as `json` or `xml`, fails at analysis time ahead of its own malformed
+literal. It is also why the differences file's 16→17 `interval` transition
+covers the pairs where an infinity meets SQL NULL: under a fold there is
+nothing there to move.
 
-Only `name` is affected, and the bound is structural rather than lucky: every
-other collatable case states a collation explicitly, and an explicit `COLLATE`
-overrides the derived one. So the register's `name` row rests on I37 and
-`pg_type.dat`'s `typcollation => 'C'`, as it always did, and on
-`tests/ordering.rs`'s assertion over `t_collate.v_name` — not on these cells,
-which stand as evidence for the opposite claim. Until `M34` re-asks them, this
-paragraph is what stops them being read as a contradiction.
+**`public.text_c` is the case standing under the general rule.** What the
+column form fixes belongs to any type whose `typcollation` is not `default`,
+and `name` is the only *case* type where that holds — `text`, `varchar`,
+`bpchar` and `text[]` all read `"default"`. `text_c`, the domain declared `AS
+text COLLATE "C"`, is the other type in the oracle's own schema where it does:
+a column of it is bytewise while nothing in the case names a collation, which
+makes it the case that would have caught the cast. It joins `base_domain`,
+`derived_domain` and `box_domain` on the register's existing `user/Domain` arm
+and needed no register change.
 
-**The fix is `M34`, and its cost is an oracle pass, not a fixture rebuild.**
-`generate_fixtures.py --skip-dumps` re-takes `fixtures/<major>/oracle/` alone —
-eighteen TSVs, no dump touched — against images pinned to an exact patch and
-suite, so the run is reproducible and its diff is the answer's, not the
-environment's. `M34` asks each pair through two *columns* of the declared type
-rather than a cast of a `text` parameter: a column's `attcollation` is the
-type's own default, which is the thing a bare case is modelling, and a case
-that names a collation declares it on the column, where a dump writes it
-(I37). That predicts every cell but `name`'s stands, and
-`oracle_differences.py` is what tests the prediction rather than asserting it.
-*Rejected: inlining the literals* — an unknown-literal cast derives no
-collation either, but it swaps every case from a cast-from-`text` to an input
-function, so any cell may move and the confined blast radius is lost.
-*Rejected: emitting the type's `typcollation` as an explicit clause* — it
-asserts that a column inherits `typcollation` rather than observing that it
-does, which is the step under scrutiny.
+The register's `name` row rests on I37 and `pg_type.dat`'s `typcollation =>
+'C'`, on `tests/ordering.rs`'s assertion over `t_collate.v_name` — and now on
+these cells, which say the same thing rather than the opposite.
 
-The defect is a property of how the pair is passed, not of `name`: it appears
-wherever a type's `typcollation` differs from `default`. `name` is the only
-*case* type where it does — `text`, `varchar`, `bpchar` and `text[]` are all
-`default` — but `public.text_c`, the domain declared `AS text COLLATE "C"`, is
-in the oracle's schema and is asked by nothing. `M34` adds it, on the existing
-`user/Domain` arm, so the general rule has a case standing under it.
+*Rejected: inlining the literals.* `format('SELECT (%L::%s) …')` derives no
+collation either, since an unknown literal has none to give, and it is a much
+smaller diff. It swaps every case from a cast-from-`text` to the type's input
+function, so any cell may move; the property worth having is that the diff is
+confined and checkable, not that it is small.
+
+*Rejected: emitting the type's `typcollation` as an explicit `COLLATE`.*
+Cheapest of the three, and it reads the catalog rather than our claim, so it is
+not the relabelling rejected above. It still asserts that a column inherits
+`typcollation` instead of observing that it does, and that step is the one
+under scrutiny.
 
 **`character(10)` is asked under both collations, ahead of the slice that
 closes it.** Today the register is clause-blind there — blank padding is what

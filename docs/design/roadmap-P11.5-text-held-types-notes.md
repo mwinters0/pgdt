@@ -112,15 +112,14 @@ because nothing revisited it, not because the format prevents it, and
 Arrow's `Interval(MonthDayNano)` fits. That is filed under STATUS's "Decisions
 worth another look" rather than acted on.
 
-**The oracle's `name` cases measure the wrong collation.** `pgdq_cmp` casts a
-`text` parameter, and a cast derives its collation from its input, so
-`$1::name` is compared under `default` rather than under `name`'s own `C` type
-default. The committed cells therefore say `'A'::name < 'a'::name` is false
-where the same server answers true for two `name` literals and for two `name`
-columns. Only `name` is affected — every other collatable case states a
-collation, which overrides the derived one. Recorded beside the mechanism and
-in "Decisions worth another look"; not fixed, because re-asking the case
-regenerates six majors.
+**Running the register against every committed cell** — 2454 ordered pairs over
+all types and all six majors, as a throwaway Rust test, which is a check
+nothing in the tree performs — turned up two mismatching families. `jsonb` is
+the open row above. `name`'s was the oracle's own: `pgdq_cmp` cast a `text`
+parameter, and a cast derives its collation from its input, so `$1::name` was
+compared under `default` rather than under `name`'s own `C` type default. The
+oracle now asks every pair through two columns of the declared type
+([`../status/history/2026-09-01.md`](../status/history/2026-09-01.md), `M34`).
 
 ## Why the split
 

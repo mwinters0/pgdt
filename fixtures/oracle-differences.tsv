@@ -368,6 +368,12 @@ older	newer	file	type	left	right	collation	field	old	new	verdict
 16	17	comparisons	interval	-infinity	infinity	\N	>=	E22007	f	additive
 16	17	comparisons	interval	-infinity	infinity	\N	=	E22007	f	additive
 16	17	comparisons	interval	-infinity	infinity	\N	<>	E22007	t	additive
+16	17	comparisons	interval	-infinity	\N	\N	<	E22007	u	additive
+16	17	comparisons	interval	-infinity	\N	\N	<=	E22007	u	additive
+16	17	comparisons	interval	-infinity	\N	\N	>	E22007	u	additive
+16	17	comparisons	interval	-infinity	\N	\N	>=	E22007	u	additive
+16	17	comparisons	interval	-infinity	\N	\N	=	E22007	u	additive
+16	17	comparisons	interval	-infinity	\N	\N	<>	E22007	u	additive
 16	17	comparisons	interval	-1 day	-infinity	\N	<	E22007	f	additive
 16	17	comparisons	interval	-1 day	-infinity	\N	<=	E22007	f	additive
 16	17	comparisons	interval	-1 day	-infinity	\N	>	E22007	t	additive
@@ -470,6 +476,24 @@ older	newer	file	type	left	right	collation	field	old	new	verdict
 16	17	comparisons	interval	infinity	infinity	\N	>=	E22007	t	additive
 16	17	comparisons	interval	infinity	infinity	\N	=	E22007	t	additive
 16	17	comparisons	interval	infinity	infinity	\N	<>	E22007	f	additive
+16	17	comparisons	interval	infinity	\N	\N	<	E22007	u	additive
+16	17	comparisons	interval	infinity	\N	\N	<=	E22007	u	additive
+16	17	comparisons	interval	infinity	\N	\N	>	E22007	u	additive
+16	17	comparisons	interval	infinity	\N	\N	>=	E22007	u	additive
+16	17	comparisons	interval	infinity	\N	\N	=	E22007	u	additive
+16	17	comparisons	interval	infinity	\N	\N	<>	E22007	u	additive
+16	17	comparisons	interval	\N	-infinity	\N	<	E22007	u	additive
+16	17	comparisons	interval	\N	-infinity	\N	<=	E22007	u	additive
+16	17	comparisons	interval	\N	-infinity	\N	>	E22007	u	additive
+16	17	comparisons	interval	\N	-infinity	\N	>=	E22007	u	additive
+16	17	comparisons	interval	\N	-infinity	\N	=	E22007	u	additive
+16	17	comparisons	interval	\N	-infinity	\N	<>	E22007	u	additive
+16	17	comparisons	interval	\N	infinity	\N	<	E22007	u	additive
+16	17	comparisons	interval	\N	infinity	\N	<=	E22007	u	additive
+16	17	comparisons	interval	\N	infinity	\N	>	E22007	u	additive
+16	17	comparisons	interval	\N	infinity	\N	>=	E22007	u	additive
+16	17	comparisons	interval	\N	infinity	\N	=	E22007	u	additive
+16	17	comparisons	interval	\N	infinity	\N	<>	E22007	u	additive
 16	17	comparisons	interval	1.5 hours	-infinity	\N	<	E22007	f	additive
 16	17	comparisons	interval	1.5 hours	-infinity	\N	<=	E22007	f	additive
 16	17	comparisons	interval	1.5 hours	-infinity	\N	>	E22007	t	additive

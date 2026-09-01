@@ -123,9 +123,26 @@ class SqlBuilding(unittest.TestCase):
         self.assertIn("standard_conforming_strings = on", co.SESSION_SQL)
 
     def test_comparison_script_asks_every_operator_once_per_row(self):
+        # One call per row, six cells projected back out of it: the operators
+        # live in the function's own loop, so the two lists agreeing is what
+        # keeps column n of the file meaning `OPERATORS[n]`.
         script = co.comparisons_script()
-        for op in co.OPERATORS:
-            self.assertIn(f"pg_temp.pgdq_cmp(c.ty, c.l, c.r, '{op}', c.coll)", script)
+        self.assertIn("pg_temp.pgdq_cmp(c.ty, c.l, c.r, c.coll)", script)
+        for n, op in enumerate(co.OPERATORS, 1):
+            self.assertIn(f"'{op}'", co._OPERATOR_ARRAY)
+            self.assertIn(f"x.cells[{n}]", script)
+        self.assertNotIn(f"x.cells[{len(co.OPERATORS) + 1}]", script)
+
+    def test_the_pair_is_asked_through_two_typed_columns(self):
+        # Not a cast of the two `text` parameters: a cast derives its
+        # collation from its input, so a bare `name` pair would answer under
+        # the database's collation rather than under `name`'s own `C`. A
+        # column's collation is its type's default, which is what a bare
+        # column in a dump has.
+        self.assertIn(
+            "CREATE TEMP TABLE pgdq_pair (a %s%s, b %s%s)", co.FUNCTIONS_SQL
+        )
+        self.assertIn("SELECT a %s b FROM pg_temp.pgdq_pair", co.FUNCTIONS_SQL)
 
     def test_a_collation_reaches_the_comparison_as_a_quoted_identifier(self):
         # `quote_ident` rather than interpolation: `default` is a reserved
@@ -213,6 +230,37 @@ class CommittedTree(unittest.TestCase):
                         cell in ("t", "f", "u") or self.is_sqlstate(cell),
                         (path, row[:3], cell),
                     )
+
+    def test_a_refused_literal_answers_every_cell_of_its_comparisons(self):
+        """A pair is two columns, so a value the server will not accept never
+        reaches an operator.
+
+        That is what makes the two files agree: whatever `literals.tsv`
+        records as a rejection is the whole answer for every comparison the
+        literal appears in, the left side winning where both are refused. It
+        was not true while the pair was a cast of two `text` parameters —
+        fifty-two rows disagreed, because the planner folded a strict
+        comparison against a constant NULL away before evaluating the other
+        side, and because a type with no `<` failed at analysis time ahead of
+        its own malformed literal.
+        """
+        for version in oracle_versions():
+            directory = FIXTURES / version / co.ORACLE_DIRNAME
+            status = {
+                (row[0], row[1]): row[2]
+                for row in co.parse_tsv((directory / "literals.tsv").read_text())
+            }
+            first_op = len(co.COMPARISON_COLUMNS) - len(co.OPERATORS)
+            path = directory / "comparisons.tsv"
+            for row in co.parse_tsv(path.read_text()):
+                left = status[(row[0], row[1])]
+                right = status[(row[0], row[2])]
+                refusal = left if left != "ok" else right
+                if refusal == "ok":
+                    continue
+                self.assertEqual(
+                    set(row[first_op:]), {refusal}, (path, row[:3])
+                )
 
     def test_every_literal_status_is_ok_or_a_sqlstate(self):
         for version in oracle_versions():

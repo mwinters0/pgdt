@@ -494,7 +494,7 @@ interval	-infinity	1 mon	\N	E22007	E22007	E22007	E22007	E22007	E22007
 interval	-infinity	30 days	\N	E22007	E22007	E22007	E22007	E22007	E22007
 interval	-infinity	720:00:00	\N	E22007	E22007	E22007	E22007	E22007	E22007
 interval	-infinity	infinity	\N	E22007	E22007	E22007	E22007	E22007	E22007
-interval	-infinity	\N	\N	u	u	u	u	u	u
+interval	-infinity	\N	\N	E22007	E22007	E22007	E22007	E22007	E22007
 interval	-1 day	-infinity	\N	E22007	E22007	E22007	E22007	E22007	E22007
 interval	-1 day	-1 day	\N	f	t	f	t	t	f
 interval	-1 day	00:00:00	\N	t	t	f	f	f	t
@@ -542,14 +542,14 @@ interval	infinity	1 mon	\N	E22007	E22007	E22007	E22007	E22007	E22007
 interval	infinity	30 days	\N	E22007	E22007	E22007	E22007	E22007	E22007
 interval	infinity	720:00:00	\N	E22007	E22007	E22007	E22007	E22007	E22007
 interval	infinity	infinity	\N	E22007	E22007	E22007	E22007	E22007	E22007
-interval	infinity	\N	\N	u	u	u	u	u	u
-interval	\N	-infinity	\N	u	u	u	u	u	u
+interval	infinity	\N	\N	E22007	E22007	E22007	E22007	E22007	E22007
+interval	\N	-infinity	\N	E22007	E22007	E22007	E22007	E22007	E22007
 interval	\N	-1 day	\N	u	u	u	u	u	u
 interval	\N	00:00:00	\N	u	u	u	u	u	u
 interval	\N	1 mon	\N	u	u	u	u	u	u
 interval	\N	30 days	\N	u	u	u	u	u	u
 interval	\N	720:00:00	\N	u	u	u	u	u	u
-interval	\N	infinity	\N	u	u	u	u	u	u
+interval	\N	infinity	\N	E22007	E22007	E22007	E22007	E22007	E22007
 interval	\N	\N	\N	u	u	u	u	u	u
 interval	1.5 hours	-infinity	\N	E22007	E22007	E22007	E22007	E22007	E22007
 interval	-infinity	1.5 hours	\N	E22007	E22007	E22007	E22007	E22007	E22007
@@ -1187,10 +1187,10 @@ character(10)	\N	a\t	default	u	u	u	u	u	u
 character(10)	\N	hello	default	u	u	u	u	u	u
 character(10)	\N	\N	default	u	u	u	u	u	u
 name	A	A	\N	f	t	f	t	t	f
-name	A	a	\N	f	f	t	t	f	t
+name	A	a	\N	t	t	f	f	f	t
 name	A	hello	\N	t	t	f	f	f	t
 name	A	\N	\N	u	u	u	u	u	u
-name	a	A	\N	t	t	f	f	f	t
+name	a	A	\N	f	f	t	t	f	t
 name	a	a	\N	f	t	f	t	t	f
 name	a	hello	\N	t	t	f	f	f	t
 name	a	\N	\N	u	u	u	u	u	u
@@ -1202,6 +1202,22 @@ name	\N	A	\N	u	u	u	u	u	u
 name	\N	a	\N	u	u	u	u	u	u
 name	\N	hello	\N	u	u	u	u	u	u
 name	\N	\N	\N	u	u	u	u	u	u
+public.text_c	A	A	\N	f	t	f	t	t	f
+public.text_c	A	a	\N	t	t	f	f	f	t
+public.text_c	A	hello	\N	t	t	f	f	f	t
+public.text_c	A	\N	\N	u	u	u	u	u	u
+public.text_c	a	A	\N	f	f	t	t	f	t
+public.text_c	a	a	\N	f	t	f	t	t	f
+public.text_c	a	hello	\N	t	t	f	f	f	t
+public.text_c	a	\N	\N	u	u	u	u	u	u
+public.text_c	hello	A	\N	f	f	t	t	f	t
+public.text_c	hello	a	\N	f	f	t	t	f	t
+public.text_c	hello	hello	\N	f	t	f	t	t	f
+public.text_c	hello	\N	\N	u	u	u	u	u	u
+public.text_c	\N	A	\N	u	u	u	u	u	u
+public.text_c	\N	a	\N	u	u	u	u	u	u
+public.text_c	\N	hello	\N	u	u	u	u	u	u
+public.text_c	\N	\N	\N	u	u	u	u	u	u
 public.mood	sad	sad	\N	f	t	f	t	t	f
 public.mood	sad	ok	\N	t	t	f	f	f	t
 public.mood	sad	happy	\N	t	t	f	f	f	t
@@ -1247,8 +1263,8 @@ json	\N	1	\N	E42883	E42883	E42883	E42883	E42883	E42883
 json	\N	{"a": 1}	\N	E42883	E42883	E42883	E42883	E42883	E42883
 json	\N	null	\N	E42883	E42883	E42883	E42883	E42883	E42883
 json	\N	\N	\N	E42883	E42883	E42883	E42883	E42883	E42883
-json	{a:1}	1	\N	E42883	E42883	E42883	E42883	E42883	E42883
-json	1	{a:1}	\N	E42883	E42883	E42883	E42883	E42883	E42883
+json	{a:1}	1	\N	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+json	1	{a:1}	\N	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
 jsonb	1	1	\N	f	t	f	t	t	f
 jsonb	1	{"a": 1}	\N	t	t	f	f	f	t
 jsonb	1	{"a":1}	\N	t	t	f	f	f	t
@@ -1296,8 +1312,8 @@ xml	<b/>	\N	\N	E42883	E42883	E42883	E42883	E42883	E42883
 xml	\N	<a/>	\N	E42883	E42883	E42883	E42883	E42883	E42883
 xml	\N	<b/>	\N	E42883	E42883	E42883	E42883	E42883	E42883
 xml	\N	\N	\N	E42883	E42883	E42883	E42883	E42883	E42883
-xml	<a>	<a/>	\N	E42883	E42883	E42883	E42883	E42883	E42883
-xml	<a/>	<a>	\N	E42883	E42883	E42883	E42883	E42883	E42883
+xml	<a>	<a/>	\N	E2200N	E2200N	E2200N	E2200N	E2200N	E2200N
+xml	<a/>	<a>	\N	E2200N	E2200N	E2200N	E2200N	E2200N	E2200N
 inet	10.0.0.1	10.0.0.1	\N	f	t	f	t	t	f
 inet	10.0.0.1	192.168.1.0/24	\N	t	t	f	f	f	t
 inet	10.0.0.1	192.168.1.1	\N	t	t	f	f	f	t
@@ -1772,5 +1788,5 @@ public.myrange_multi	\N	{}	\N	E42704	E42704	E42704	E42704	E42704	E42704
 public.myrange_multi	\N	{[1.5,10.5)}	\N	E42704	E42704	E42704	E42704	E42704	E42704
 public.myrange_multi	\N	\N	\N	E42704	E42704	E42704	E42704	E42704	E42704
 public.empty_enum	\N	\N	\N	u	u	u	u	u	u
-public.empty_enum	x	\N	\N	u	u	u	u	u	u
-public.empty_enum	\N	x	\N	u	u	u	u	u	u
+public.empty_enum	x	\N	\N	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+public.empty_enum	\N	x	\N	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02

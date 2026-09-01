@@ -23,6 +23,16 @@ this repo already reads that encoding in L1:
                     operator in `OPERATORS` order. Each cell is `t`, `f`, `u`
                     (the comparison yielded SQL NULL) or `E<sqlstate>`.
 
+**A pair is asked through two typed columns, not through a cast.** Each
+comparison case builds a temp table declared `(a <typ>, b <typ>)` -- carrying
+the case's collation on the columns, which is where `pg_dump` writes one (I37)
+-- inserts the two literals, and asks `a <op> b`. A column's collation is its
+type's own default wherever no clause is written, so a bare case measures what
+a bare column in a dump does; a cast would derive the collation of its *input*
+instead, which for a `text` parameter is the database's own. It also means a
+literal the server refuses never reaches a comparison: all six cells are that
+rejection, which is the answer `literals.tsv` records for it.
+
 **`output` is the type's own output function, not a cast to `text`.** The two
 differ for `character(n)`: `bpchar::text` strips the blank padding, while
 `bpcharout` -- which is what a dump's `COPY` block writes -- keeps it. Since
@@ -83,11 +93,11 @@ class TypeCases:
     three-valued answers (`u`) are the oracle for the evaluator that lands
     later in this phase.
 
-    `collation` names a collation every comparison of this case is qualified
-    with -- `C` for bytewise, `default` for the database's own. It is a field
-    on the *case*, so a text pair asked under two collations is two cases,
-    rather than a pair of extra columns that would be empty for the twelve
-    hundred rows where collation means nothing.
+    `collation` names a collation the case's two columns are declared with --
+    `C` for bytewise, `default` for the database's own. It is a field on the
+    *case*, so a text pair asked under two collations is two cases, rather
+    than a pair of extra columns that would be empty for the twelve hundred
+    rows where collation means nothing.
 
     **`None` means the comparison register does not branch on the clause for
     this type**, and nothing else. It used to mean two things at once -- for
@@ -322,27 +332,28 @@ TYPE_CASES: list[TypeCases] = [
         )
         for collation in COLLATIONS
     ),
-    # The one deliberate `None` among the collatable types, and it is asked
-    # *bare*: `name`'s own type default is `C`, so a bare `name` column is the
-    # whole of what the register claims about it. Relabelling these cases
+    # One of the two deliberate `None`s among the collatable types --
+    # `public.text_c` below is the other -- and it is asked *bare*: `name`'s
+    # own type default is `C`, so a bare `name` column is the whole of what
+    # the register claims about it. Relabelling these cases
     # `collation="C"` would be true and would be the register's claim rather
     # than the oracle's observation -- a `name` pair asked under an explicit
     # `COLLATE "C"` is a different question from one asked bare, and only the
     # bare one shows what a bare column does.
     #
-    # **These cells do not currently answer that question**, and it is the one
-    # place this file measures something other than what it names.
-    # `pgdq_cmp` casts a `text` parameter, and a cast derives its collation
-    # from its input -- so `$1::name` carries the parameter's `default`
-    # collation rather than `name`'s own `C`, and the committed answer for
-    # `A`/`a` is the database locale's. Only `name` is affected among the cases
-    # here: every other collatable one states a collation, which overrides the
-    # derived one. The bound is the case table's, not the defect's -- it
-    # reaches any type whose `typcollation` is not `default`, which
-    # `public.text_c` also is and nothing asks. `M34` re-asks the pair through
-    # two columns of the declared type and adds that case. See
-    # `docs/design/architecture.md`, "The comparison oracle".
+    # The cells answer it because the pair is two `name` *columns*, whose
+    # `attcollation` is the type's own `C`. A cast of a `text` parameter would
+    # not: a cast derives its collation from its input, so `$1::name` would
+    # carry the parameter's `default` and record the database locale's order
+    # under a case that names none.
     TypeCases("name", ("A", "a", "hello", None)),
+    # The same rule reached from the other side, and the case that would have
+    # caught the cast: a domain whose own DDL carries the clause, so a column
+    # of it is bytewise while nothing in the case names a collation. It is the
+    # only type in the oracle's schema whose collation comes from neither an
+    # explicit clause nor `default`, and it joins `base_domain`,
+    # `derived_domain` and `box_domain` on the register's `user/Domain` arm.
+    TypeCases("public.text_c", ("A", "a", "hello", None)),
     # Declaration order, not label text: `sad` < `ok` < `happy` on the server
     # and the reverse bytewise, which is the whole of the enum register row.
     TypeCases(
@@ -534,26 +545,62 @@ SET bytea_output = 'hex';
 SET array_nulls = on;
 """
 
+#: The six operators as a SQL array literal, so the loop inside `pgdq_cmp` and
+#: the cells `comparisons_script` projects out of it are one list in one order.
+_OPERATOR_ARRAY = "ARRAY[" + ", ".join(sql_literal(op) for op in OPERATORS) + "]"
+
 # Both helpers answer with a *string* rather than raising, because a rejected
 # input is an answer this file records rather than a failure of the run: the
 # cross-major differ reads "older rejects, newer accepts" as additive. The
-# `EXCEPTION` block is what turns each case into its own subtransaction, so
+# `EXCEPTION` blocks are what turn each case into its own subtransaction, so
 # one bad literal cannot abort the surrounding `COPY`.
-FUNCTIONS_SQL = """\
+FUNCTIONS_SQL = f"""\
+-- The pair is asked through two *columns* of the declared type, because a
+-- column is what a dump holds: `attcollation` is the type's own default
+-- wherever the DDL writes no clause, and a case that names a collation
+-- declares it on the column, which is where `pg_dump` writes one (I37).
+--
 -- `coll` is SQL NULL for a case that names no collation, which is every case
 -- but the text ones: the comparison is then whatever the column's declared
 -- type gives it, which is what a bare column in a dump does.
-CREATE FUNCTION pg_temp.pgdq_cmp(typ text, lhs text, rhs text, op text, coll text)
-RETURNS text LANGUAGE plpgsql AS $pgdq$
+--
+-- Building the pair and comparing it are separate subtransactions, and the
+-- split is what decides how far a rejection reaches. A type the server does
+-- not have, or a literal it refuses, is a pair that cannot exist, so it
+-- answers all six cells; a type with no `<` fails that cell alone.
+CREATE FUNCTION pg_temp.pgdq_cmp(typ text, lhs text, rhs text, coll text)
+RETURNS text[] LANGUAGE plpgsql AS $pgdq$
 DECLARE
-    r boolean;
     c text := CASE WHEN coll IS NULL THEN '' ELSE ' COLLATE ' || quote_ident(coll) END;
+    cells text[] := ARRAY[]::text[];
+    setup text := NULL;
+    op text;
+    r boolean;
 BEGIN
-    EXECUTE format('SELECT ($1::%s%s) %s ($2::%s%s)', typ, c, op, typ, c)
-        INTO r USING lhs, rhs;
-    RETURN CASE WHEN r IS NULL THEN 'u' WHEN r THEN 't' ELSE 'f' END;
-EXCEPTION WHEN others THEN
-    RETURN 'E' || SQLSTATE;
+    BEGIN
+        EXECUTE format('CREATE TEMP TABLE pgdq_pair (a %s%s, b %s%s)', typ, c, typ, c);
+        EXECUTE format('INSERT INTO pg_temp.pgdq_pair VALUES ($1::%s, $2::%s)', typ, typ)
+            USING lhs, rhs;
+    EXCEPTION WHEN others THEN
+        setup := 'E' || SQLSTATE;
+    END;
+    FOREACH op IN ARRAY {_OPERATOR_ARRAY} LOOP
+        IF setup IS NOT NULL THEN
+            cells := cells || setup;
+            CONTINUE;
+        END IF;
+        BEGIN
+            EXECUTE format('SELECT a %s b FROM pg_temp.pgdq_pair', op) INTO r;
+            cells := cells || CASE WHEN r IS NULL THEN 'u' WHEN r THEN 't' ELSE 'f' END;
+        EXCEPTION WHEN others THEN
+            cells := cells || ('E' || SQLSTATE);
+        END;
+    END LOOP;
+    -- Only where the setup succeeded: its own rollback took the table with it.
+    IF setup IS NULL THEN
+        EXECUTE 'DROP TABLE pg_temp.pgdq_pair';
+    END IF;
+    RETURN cells;
 END
 $pgdq$;
 
@@ -580,9 +627,14 @@ $pgdq$;
 """
 
 
-def _values_list(rows: list[tuple[str | None, ...]], names: str) -> str:
+def _values_list(rows: list[tuple[str | None, ...]], names: str, join: str = "") -> str:
     """A `VALUES` list with an explicit ordinal, cast on its first row so the
-    columns are `text` even where the first value is NULL."""
+    columns are `text` even where the first value is NULL.
+
+    `join` is whatever has to sit between the list and the `ORDER BY` -- the
+    lateral call that asks one row's pair, for the comparisons script, and
+    nothing for the literals one.
+    """
     lines = []
     for ordinal, row in enumerate(rows):
         cells = [sql_literal(v) for v in row]
@@ -591,7 +643,13 @@ def _values_list(rows: list[tuple[str | None, ...]], names: str) -> str:
             lines.append(f"    ({ordinal}::int, " + ", ".join(cells) + ")")
         else:
             lines.append(f"    ({ordinal}, " + ", ".join(cells) + ")")
-    return "  FROM (VALUES\n" + ",\n".join(lines) + f"\n  ) AS c({names})\n  ORDER BY c.o"
+    return (
+        "  FROM (VALUES\n"
+        + ",\n".join(lines)
+        + f"\n  ) AS c({names})\n"
+        + join
+        + "  ORDER BY c.o"
+    )
 
 
 def meta_script() -> str:
@@ -651,12 +709,19 @@ def literals_script() -> str:
 
 
 def comparisons_script() -> str:
-    """`comparisons.tsv`: one row per `(type, left, right)`, one cell per
-    operator."""
+    """`comparisons.tsv`: one row per `(type, left, right, collation)`, one
+    cell per operator.
+
+    **One call per row, not one per cell.** The pair is a table the call
+    builds, so asking each operator separately would build it six times -- and
+    would lose the thing the split buys, that a pair which cannot exist
+    answers all six cells with the same rejection. The six answers come back
+    as an array and are projected back out positionally, in `OPERATORS` order.
+    """
     rows = list(comparison_cases())
-    cells = ",\n".join(
-        f"         pg_temp.pgdq_cmp(c.ty, c.l, c.r, {sql_literal(op)}, c.coll)"
-        for op in OPERATORS
+    cells = ",\n".join(f"         x.cells[{n}]" for n in range(1, len(OPERATORS) + 1))
+    lateral = (
+        "  CROSS JOIN LATERAL pg_temp.pgdq_cmp(c.ty, c.l, c.r, c.coll) AS x(cells)\n"
     )
     return (
         SESSION_SQL
@@ -664,7 +729,7 @@ def comparisons_script() -> str:
         + "\nCOPY (\n  SELECT c.ty, c.l, c.r, c.coll,\n"
         + cells
         + "\n"
-        + _values_list(rows, "o, ty, l, r, coll")
+        + _values_list(rows, "o, ty, l, r, coll", lateral)
         + "\n) TO STDOUT;\n"
     )
 
