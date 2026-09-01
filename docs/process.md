@@ -228,8 +228,8 @@ Three sections earn their keep beyond the checklist:
   every document that used the word in its plain sense disclaim it, and that is
   prose paying for a naming mistake.
 
-  Five rules keep it working, and the first is the one whose absence is hardest
-  to see:
+  Seven rules keep it working, and the first is the one whose absence is
+  hardest to see:
 
   - **Each entry declares one of three stances**, because they are not one kind
     of thing and the difference decides whether anyone should act. **(a)** A
@@ -268,6 +268,32 @@ Three sections earn their keep beyond the checklist:
     gives no sign that a limitation hangs off it — mark it with the identifier
     and let the same check cover markers too, so one outliving its entry is an
     error rather than a slow lie.
+  - **An entry is struck when its last part closes, in the change that closes
+    it** — not at a phase boundary. Allocation happens on discovery rather than
+    at a boundary, and discharge mirrors it: the register's whole job is that a
+    session touching a mechanism meets its limitations, and an entry describing
+    a defect the code no longer has runs that backwards, sending someone to
+    code around nothing or to fix it twice. It is a present-tense document, so
+    the moment the last part closes it is already wrong. **Partial closure
+    rewrites the entry rather than annotating it** — the entry says what is
+    still true, never "four of five remain" — and a part that closes into a
+    *property* migrates beside its mechanism rather than being deleted, since
+    the property is what is now true. Striking is one atomic change: index
+    line, detail paragraph, and any code marker, which the reconciliation
+    already fails on if you drop one. **The number is spent, never reused**, so
+    leave a one-line watermark saying which are allocated and which were
+    struck; an identifier cited in an old commit message must still resolve to
+    something, and "struck" has to be tellable from "typo".
+  - **A slice that anticipates closing an entry, and that entry, name each
+    other.** The forward reference alone rots: a slice list is rewritten as a
+    phase is grilled, split and re-sliced, and the entry that named a slice
+    number quietly starts pointing at work that no longer exists. Naming both
+    directions makes the pair self-checking — landing a slice is also the
+    moment its entry is re-read, and **a slice that splits is obliged to
+    re-target the entry** rather than leaving it aimed at a number that has
+    changed meaning. It also answers, at spec time rather than at wrap, the
+    question a `(b)` stance raises and cannot itself answer: *which* piece of
+    the owning phase actually discharges this.
 - **Decisions worth another look** — calls made without the maintainer
   present that a person should still weigh in on: cautionary and
   informational, never blocking. Each entry states the call, why it was made
@@ -996,6 +1022,13 @@ Each of these means a specific rule has stopped being followed.
 - **A code marker naming a deficiency that no longer has an entry**, or an
   entry nothing resolves to. The reconciliation is not being run, so the
   register has started lying in whichever direction is not checked.
+- **A register entry whose defect the code no longer has.** It outlived its
+  closure, and the reconciliation cannot see it — every identifier still
+  resolves. The next session reads a limitation that is gone and either codes
+  around it or closes it a second time.
+- **A register entry with a `(b)` stance that names a phase but no slice**,
+  once that phase has been sliced. Nothing will re-read the entry at the moment
+  it comes due, and a re-slice has nothing obliging it to re-target.
 - **An invariant has no re-verification step.** It will not be checked at the
   next upstream release, which is the only reason it was written down.
 - **`CLAUDE.md` explains a design.** It should be pointing at a doc instead.

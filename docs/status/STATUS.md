@@ -226,11 +226,13 @@ progress.
       [`../design/roadmap-P11.4-enum-and-bare-numeric-notes.md`](../design/roadmap-P11.4-enum-and-bare-numeric-notes.md)
 - [ ] **11.5** The text-held type queue — `interval` (with v17 infinities),
       `time with time zone`, `inet`/`cidr`/`macaddr`/`macaddr8`, `jsonb`.
+      Closes `KD7`'s text-held row.
 - [ ] **11.6** Typed `=` / `!=` — routed through the comparison plan, with the
       canonicalize-the-literal-once fast path, its two decode-per-row
       exceptions and the `char(n)` trim, which retires
       `OrderingDivergence::BlankPadded`; `ordering_notes` becomes
-      `comparison_notes`.
+      `comparison_notes`. Closes `KD7`'s last row, and **strikes `KD7`** —
+      index line, detail paragraph and the `ComparisonPlan::AS_TEXT` marker.
 - [ ] **11.7** Three-valued evaluation — `Expr`, the `True`/`False`/`Unknown`
       domain, `IS DISTINCT FROM`. Library only.
 - [ ] **11.8** `--where` — the expression grammar in its own CLI module, leaf
@@ -276,6 +278,14 @@ A coverage statement is not a deficiency:
 `Unsupported` and `Untested` rows are scope and evidence, and earn a `KD<k>`
 only by naming one.
 
+An entry is struck by the change that closes its last part, not at a phase
+boundary, and a part closing into a *property* migrates beside its mechanism
+rather than being deleted. **`KD1`–`KD9` are allocated; none is struck yet.**
+That watermark is what keeps a `KD<k>` in an old commit message resolvable once
+one is. Where a `(b)` entry's owning phase has been sliced, the entry names the
+slice and the slice names the entry, so landing one re-reads the other and a
+re-slice is obliged to re-target.
+
 `cd scripts && uv run deficiencies.py` reconciles this index against those
 paragraphs and against the source-code markers, and fails on either half.
 
@@ -320,8 +330,9 @@ paragraphs and against the source-code markers, and fails on either half.
 - **KD7** — four rows of the ordering register diverge from PostgreSQL under
   `<`/`>`: a text column whose collation is stated and is not `C`/`POSIX`, one
   whose collation is not stated at all, `character(n)`'s blank padding, and
-  every text-held type. **(b) owned by P11**, which holds the per-type
-  worklist. Detail:
+  every text-held type. **(b) owned by P11, struck at 11.6** — 11.5 closes the
+  text-held row and 11.6 the last one; the collation rows close by statement,
+  into properties. Detail:
   [`../design/architecture.md`](../design/architecture.md), "Ordering operators
   compare typed".
 

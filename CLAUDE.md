@@ -310,9 +310,16 @@ user already has today is not a deficiency at all — it is a property, and it
 belongs beside its mechanism with no identifier. Mark a *line of code* with
 `deficiency: KD<k>` only where the code would otherwise mislead — where it reads
 as a complete, deliberate choice and gives no sign a limitation hangs off it.
-`cd scripts && uv run deficiencies.py` reconciles the index, the detail entries
-and the markers, and fails on any of the three. Full rules: `docs/process.md`,
-"Known deficiencies".
+**An entry is struck by the change that closes its last part**, not at a phase
+boundary — index line, detail paragraph and any code marker in one change,
+rewriting rather than annotating on partial closure, and migrating a part that
+closes into a *property* beside its mechanism instead of deleting it. The
+number stays spent. **Where a `(b)` entry's owning phase has been sliced, the
+entry and the slice name each other**, so landing one re-reads the other and a
+re-slice must re-target; slicing a phase means checking the register for the
+entries it owns. `cd scripts && uv run deficiencies.py` reconciles the index,
+the detail entries and the markers, and fails on any of the three. Full rules:
+`docs/process.md`, "Known deficiencies".
 
 **When the maintainer answers an entry under `STATUS.md`'s "Decisions worth
 another look", close it in that same session** — before the work the answer

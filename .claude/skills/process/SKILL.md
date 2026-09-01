@@ -45,6 +45,25 @@ Every one of these belongs in the *same* change as the code, not a follow-up:
    where it came from; if you can't name why that phase cares, it isn't one.
    Most forward-looking remarks belong somewhere else — see `docs/process.md`,
    "Inboxes: facts filed by destination".
+7. **The deficiency register re-read**, if the slice's checklist line names a
+   `KD<k>`. Closing its last part means **striking the entry in this same
+   change** — index line, detail paragraph, code marker — and a part that
+   closed into a *property* migrates beside its mechanism rather than being
+   deleted. Closing only some parts rewrites the entry to what is still true;
+   it is never annotated with what was fixed.
+
+## When you write or re-slice a phase's slice list
+
+Two obligations that fire at spec time, not at landing, and both are about
+`STATUS.md`'s deficiency register:
+
+- **Check the register for `(b)` entries naming this phase**, and make the
+  entry and the slice that will close it name each other. This is the only
+  moment anyone will think to; the entry may have been written by a session
+  months earlier.
+- **A slice that splits re-targets every entry pointing at it.** The pointer
+  going stale is the failure the pairing exists to catch — see
+  `docs/process.md`, "Known deficiencies".
 
 ## What to do when a slice cannot be finished as specified
 
