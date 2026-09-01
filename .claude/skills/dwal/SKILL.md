@@ -1,6 +1,6 @@
 ---
 name: dwal
-description: Grill the open entries under STATUS's "Decisions worth another look", then close each one in the same session. Use when the user invokes /dwal, or asks to review, settle, or grill the open decisions worth another look.
+description: Grill the open entries under STATUS's "Decisions worth another look", close each one in the same session, and commit once the frontier is empty. Use when the user invokes /dwal, or asks to review, settle, or grill the open decisions worth another look.
 ---
 
 The maintainer is here, and is answering the calls that unattended sessions
@@ -86,6 +86,31 @@ stays empty until it lands, and the row points at today's history entry.
 Do not implement it here. This skill settles decisions and files them; a fresh
 session with a clean context builds. Say plainly what was admitted and what
 should pick it up.
+
+## 6. Commit, once the frontier is empty
+
+**The frontier being empty is the commit condition, and nothing earlier is.**
+A closure is one reviewed thought: the entry deleted, the reasoning filed
+beside its mechanism, and the work admitted. Committing mid-tree splits that
+across revisions and leaves a `STATUS.md` in history with an entry deleted and
+its reasoning nowhere — which is exactly the state the closure rules exist to
+prevent. So grill every entry to the end, close them all, *then* commit.
+
+Run the repo's own consistency checks first — `CLAUDE.md` names them, and a
+closure that edits the deficiency register or a phase index is precisely what
+they are for. A docs-only closure needs no build or test run; say so rather
+than running one for form.
+
+**One commit for the whole round**, listing each entry and what its review
+settled. The admitted work is *not* in it: step 5 files a ledger row with an
+empty Date, and the implementation belongs to the session that picks it up.
+
+Two things this step does not license. It is not permission to commit anything
+else that happens to be in the tree — if the working tree carries unrelated
+changes, commit only the closure's files and say what you left. And a round
+that ends **without** an empty frontier commits nothing: leave it in the tree,
+say which entries are still open and what they are waiting on, so the next
+session sees what you saw.
 
 ## What this skill is not
 
