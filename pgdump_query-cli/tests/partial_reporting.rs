@@ -330,8 +330,14 @@ async fn preamble_only_moved_to_parse_and_leaves_a_cache_info_reads() {
 /// summary, which are not per-column resolution.
 ///
 /// An enum's `labels:` continuation line is kept, with its extra indent
-/// intact, because it is per-column resolution too and the cross-check below
-/// holds it against the JSON like any other line.
+/// intact, because it is per-column resolution too — the export states those
+/// labels once per *type* rather than once per column, so it is pinned by
+/// `an_enum_columns_declared_labels_are_listed_beneath_it` instead of by the
+/// cross-check below.
+///
+/// The type listing `--verbose` prints under `user-defined types:` is indented
+/// the same way and is not per-column resolution, but it sits in the metadata
+/// header above every block line, so no block is open to collect it.
 fn verbose_column_lines(text: &str) -> Vec<Vec<String>> {
     const NOT_A_COLUMN: [&str; 5] =
         ["columns:", "header offset:", "data offset:", "terminator:", "end offset:"];
@@ -376,7 +382,6 @@ async fn the_json_export_and_the_verbose_listing_agree_column_for_column() {
     assert!(resolution.len() > 1, "sanity: this fixture has several blocks");
 
     let mut checked = 0usize;
-    let mut labelled = 0usize;
     for (block, lines) in resolution.iter().zip(&per_block) {
         for column in block["columns"].as_array().unwrap() {
             let name = column["name"].as_str().unwrap();
@@ -404,36 +409,29 @@ async fn the_json_export_and_the_verbose_listing_agree_column_for_column() {
                 "no --verbose line for {expected:?} among {lines:?}"
             );
             checked += 1;
-
-            // An enum's labels ride a continuation line beneath that one, and
-            // the two renderings are held to agreeing about them too: the
-            // export carries each label raw, the listing quotes it.
-            if let Some(labels) = column["labels"].as_array() {
-                let rendered: Vec<String> = labels
-                    .iter()
-                    .map(|l| format!("'{}'", l.as_str().unwrap().replace('\'', "''")))
-                    .collect();
-                let line = format!("    labels: {}", rendered.join(", "));
-                assert!(lines.contains(&line), "no --verbose line for {line:?} among {lines:?}");
-                labelled += 1;
-            }
         }
     }
     assert!(checked > 10, "sanity: this fixture exercises a real spread of outcomes");
-    assert!(labelled > 0, "sanity: this fixture has an enum column");
 }
 
 /// **Which columns carry labels, and how they are spelled.** The cross-check
-/// above only makes the two renderings agree; this pins what they say.
+/// above only makes the two renderings agree about a column's type and
+/// outcome; this pins what the labels line says.
 ///
 /// The list is the type's own declaration order, uncapped, and each label is
 /// single-quoted with any interior quote doubled — the fixture's `public.mood`
 /// declares `has space`, `has,comma` and `has'quote` precisely so an unquoted
 /// join cannot pass. Labels attach to a column whose *own* comparison plan is
-/// an enum: a scalar enum column and a domain over one, which is exactly the
-/// set a label-valued `--filter` term can name. An empty enum has no plan and
-/// says `empty enum` instead, and an enum inside an array is a nested column
-/// no label-valued filter reaches.
+/// an enum: a scalar enum column and a domain over one. An empty enum has no
+/// plan and says `empty enum` instead, and an enum inside an array is a nested
+/// column no label-valued filter reaches.
+///
+/// **`--json` states the labels once per type, not once per column.** The
+/// export has carried `metadata.databases[].types[]` in full from the start,
+/// so a per-column `labels` field would duplicate — and duplicate worse, since
+/// a consumer joining `declared` against that list gets an answer for
+/// `public.mood[]` too. The per-column line survives only in the text, where
+/// it answers a user standing at one refused column.
 #[tokio::test]
 async fn an_enum_columns_declared_labels_are_listed_beneath_it() {
     let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
@@ -459,29 +457,111 @@ async fn an_enum_columns_declared_labels_are_listed_beneath_it() {
     ])))
     .expect("--json emits JSON");
 
-    let of_interest = ["v_mood", "v_empty_enum", "v_enum_array", "v_text"];
-    let mut seen: BTreeMap<&str, Option<Vec<&str>>> = BTreeMap::new();
     for block in json["resolution"].as_array().unwrap() {
         for column in block["columns"].as_array().unwrap() {
-            let name = column["name"].as_str().unwrap();
-            if !of_interest.contains(&name) {
-                continue;
-            }
-            let labels = column["labels"]
-                .as_array()
-                .map(|ls| ls.iter().map(|l| l.as_str().unwrap()).collect());
-            seen.insert(name, labels);
+            assert!(
+                column["labels"].is_null(),
+                "the export states labels per type, not per column: {column}"
+            );
         }
     }
-    let expected: BTreeMap<&str, Option<Vec<&str>>> = BTreeMap::from([
-        // A nested enum: the column's own plan is not an enum's.
-        ("v_enum_array", None),
-        ("v_empty_enum", None),
-        ("v_mood", Some(vec!["sad", "ok", "happy", "has space", "has,comma", "has'quote"])),
-        // Every non-enum column omits the key rather than carrying null.
-        ("v_text", None),
-    ]);
-    assert_eq!(seen, expected, "only a column whose own plan is an enum carries labels");
+    assert_eq!(
+        json_types(&json)["public.mood"]["Enum"]["labels"],
+        serde_json::json!(["sad", "ok", "happy", "has space", "has,comma", "has'quote"]),
+        "the export carries the same labels, raw, on the type itself"
+    );
+}
+
+/// The `kind` of every user-defined type the export names, keyed by name —
+/// `metadata.databases[].types[]` flattened across databases, which is
+/// unambiguous here because a type name is schema-qualified.
+fn json_types(json: &serde_json::Value) -> BTreeMap<String, serde_json::Value> {
+    let mut out = BTreeMap::new();
+    for db in json["metadata"]["databases"].as_array().expect("per-database metadata") {
+        for def in db["types"].as_array().expect("the type list") {
+            out.insert(def["name"].as_str().unwrap().to_string(), def["kind"].clone());
+        }
+    }
+    out
+}
+
+/// **`--verbose` names every user-defined type, beneath the count that had
+/// been their only trace.** Nothing else in `info` names one at any
+/// verbosity, so a user could not learn from it that `public.mood` exists.
+///
+/// The listing is one line per type in declaration order, and **every
+/// `TypeKind` arm renders** — a listing headed `user-defined types` that
+/// showed only enums would be a lie about what the dump holds. The type
+/// fixture declares all six emission shapes, so the arms checked here are the
+/// ones a real `pg_dump` writes; the two it never writes (an unparseable
+/// composite body, a range naming no subtype) are pinned as a unit test on
+/// `type_kind_summary` instead.
+#[tokio::test]
+async fn the_verbose_listing_names_every_user_defined_type() {
+    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
+    assert!(run(&["parse", "--source", dump.to_str().unwrap()]).status.success());
+
+    let plain = stdout_of(&run(&["info", "--source", dump.to_str().unwrap()]));
+    assert!(!plain.contains("public.mood "), "the listing is a --verbose addition: {plain}");
+
+    let verbose = stdout_of(&run(&["info", "--source", dump.to_str().unwrap(), "--verbose"]));
+    let lines: Vec<&str> = verbose.lines().collect();
+    let heading = lines
+        .iter()
+        .position(|l| l.starts_with("user-defined types: "))
+        .expect("the count heads the listing");
+    let count: usize =
+        lines[heading].trim_start_matches("user-defined types: ").parse().expect("a count");
+    let listed: Vec<&str> = lines[heading + 1..]
+        .iter()
+        .take_while(|l| l.starts_with("    "))
+        .map(|l| l.trim())
+        .collect();
+    assert_eq!(listed.len(), count, "one line per type the count counts: {listed:?}");
+
+    // One of each emission shape, with the payload that shape carries.
+    let expected = [
+        "public.mood            enum: 'sad', 'ok', 'happy', 'has space', 'has,comma', 'has''quote'",
+        "public.empty_enum      enum: (no labels)",
+        "public.text_c          domain over text COLLATE pg_catalog.\"C\"",
+        "public.derived_domain  domain over public.base_domain",
+        "public.point2d         composite: x integer, y text",
+        "public.collated_pair   composite: plain text, c text COLLATE pg_catalog.\"C\"",
+        "public.empty_comp      composite: (no fields)",
+        "public.myrange         range over double precision",
+        "public.mybase          base type",
+        "public.shellonly       shell type",
+    ];
+    for want in expected {
+        let squashed = squash(want);
+        assert!(
+            listed.iter().any(|l| squash(l) == squashed),
+            "no type line for {want:?} among {listed:?}"
+        );
+    }
+
+    // The listing and the export state one fact, so they may not disagree
+    // about which types the dump declares.
+    let json: serde_json::Value = serde_json::from_str(&stdout_of(&run(&[
+        "info",
+        "--source",
+        dump.to_str().unwrap(),
+        "--json",
+    ])))
+    .expect("--json emits JSON");
+    let exported = json_types(&json);
+    assert_eq!(exported.len(), count, "the export names the same types the count counts");
+    for line in &listed {
+        let name = line.split_whitespace().next().unwrap();
+        assert!(exported.contains_key(name), "{name} is listed but not exported");
+    }
+}
+
+/// A type line's name column is padded to the widest name the database
+/// declares, so a comparison against a literal must not depend on how wide
+/// that happens to be.
+fn squash(line: &str) -> String {
+    line.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// `--json` carries the coverage as components, not as the rendered

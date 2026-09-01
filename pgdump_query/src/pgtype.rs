@@ -2047,6 +2047,31 @@ mod tests {
         assert_eq!(comparison_for("public.dmoney", None, &types), ComparisonPlan::Refused);
     }
 
+    /// A domain over an enum carries the enum's labels, through any chain —
+    /// which is what lets `pgdq info --verbose` list them beneath such a
+    /// column and what lets a `--filter` term name one. **No fixture column
+    /// is one**: `public.derived_domain` bottoms out at `integer` and
+    /// `public.text_c` at `text`, so the recursion above is the only thing
+    /// that makes the claim true and this is the only thing that checks it.
+    ///
+    /// A domain over an *empty* enum is refused like the enum itself: it
+    /// resolves to no Arrow type, so no column of it is ever asked.
+    #[test]
+    fn a_domain_over_an_enum_compares_by_that_enum_s_declaration_order() {
+        let labels = ["sad".to_string(), "ok".to_string(), "happy".to_string()];
+        let types = [
+            ty("public.mood", TypeKind::Enum { labels: labels.to_vec() }),
+            ty("public.empty_enum", TypeKind::Enum { labels: Vec::new() }),
+            ty("public.moodish", TypeKind::domain("public.mood")),
+            ty("public.moodisher", TypeKind::domain("public.moodish")),
+            ty("public.nothingish", TypeKind::domain("public.empty_enum")),
+        ];
+        let by_declaration = agrees(CompareKind::Enum(labels.iter().cloned().collect()));
+        assert_eq!(comparison_for("public.moodish", None, &types), by_declaration);
+        assert_eq!(comparison_for("public.moodisher", None, &types), by_declaration);
+        assert_eq!(comparison_for("public.nothingish", None, &types), ComparisonPlan::Refused);
+    }
+
     /// Everything nested is refused: an order over an
     /// `array_out`/`record_out`/`range_out` literal is not defined here.
     /// Its consumer refuses such a column earlier, on the `NestedPlan`, so

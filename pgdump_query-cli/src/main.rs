@@ -542,7 +542,7 @@ async fn main() -> Result<()> {
             if preamble_only_flag {
                 let (metadata, diagnostics) =
                     preamble_only(&source, &ScanOptions::default(), &mode).await?;
-                print_metadata(&metadata);
+                print_metadata(&metadata, false);
                 print_diagnostics(&diagnostics);
                 println!();
                 println!("wrote cache to {}", path.display());
@@ -975,7 +975,13 @@ impl<'a> DatabaseHeadings<'a> {
 /// a single unnamed database (a plain, non-`--create` dump: the overwhelming
 /// common case) is printed with no header line, since one would just be
 /// noise.
-fn print_metadata(metadata: &DumpMetadata) {
+///
+/// Under `verbose`, the `user-defined types` count becomes the heading of a
+/// listing of the types themselves, one line each, in the order the dump
+/// declares them. The count is otherwise their only trace: nothing else in
+/// `info` names a user-defined type, so a user cannot learn from it that
+/// `public.mood` exists, let alone what it holds.
+fn print_metadata(metadata: &DumpMetadata, verbose: bool) {
     let multi = metadata.databases.len() > 1;
     for db in &metadata.databases {
         let show_name = multi || db.name.is_some();
@@ -991,6 +997,64 @@ fn print_metadata(metadata: &DumpMetadata) {
         }
         println!("{indent}extensions: {}", db.extensions.len());
         println!("{indent}user-defined types: {}", db.types.len());
+        if verbose {
+            // The name column is padded to the widest name this database
+            // declares, so the kinds line up; the right edge stays ragged,
+            // an enum's label list being as long as the type is.
+            let width = db.types.iter().map(|t| t.name.chars().count()).max().unwrap_or(0);
+            for def in &db.types {
+                println!(
+                    "{indent}    {:width$}  {}",
+                    def.name,
+                    type_kind_summary(&def.kind),
+                    width = width
+                );
+            }
+        }
+    }
+}
+
+/// One user-defined type's kind, rendered with whatever payload that kind
+/// carries — the enum's labels, the domain's base type and `COLLATE` clause,
+/// the composite's fields, the range's subtype
+/// (`docs/design/architecture.md`, "CLI surface").
+///
+/// **Every arm renders**, not the enum alone: a listing headed `user-defined
+/// types` that showed only enums would be a lie about what the dump holds.
+/// `Composite { fields: None }` says `(fields not parsed)` explicitly, because
+/// that is the one arm whose absence changes how a column of the type
+/// resolves; a `Range` naming no subtype says so for symmetry. Neither shape
+/// is one `pg_dump` writes, so both are pinned by this module's unit test
+/// rather than against a fixture.
+///
+/// Not to be confused with [`type_kind_label`], which is `--map`'s one-word
+/// name for the same vocabulary — a span line has no room for a payload.
+fn type_kind_summary(kind: &TypeKind) -> String {
+    match kind {
+        TypeKind::Enum { labels } if labels.is_empty() => "enum: (no labels)".to_string(),
+        TypeKind::Enum { labels } => format!("enum: {}", label_list(labels)),
+        TypeKind::Domain { base_type, collation: None } => format!("domain over {base_type}"),
+        TypeKind::Domain { base_type, collation: Some(c) } => {
+            format!("domain over {base_type} COLLATE {c}")
+        }
+        TypeKind::Composite { fields: None } => "composite: (fields not parsed)".to_string(),
+        TypeKind::Composite { fields: Some(fields) } if fields.is_empty() => {
+            "composite: (no fields)".to_string()
+        }
+        TypeKind::Composite { fields: Some(fields) } => {
+            let rendered: Vec<String> = fields
+                .iter()
+                .map(|f| match &f.collation {
+                    Some(c) => format!("{} {} COLLATE {c}", f.name, f.declared_type),
+                    None => format!("{} {}", f.name, f.declared_type),
+                })
+                .collect();
+            format!("composite: {}", rendered.join(", "))
+        }
+        TypeKind::Range { subtype: Some(subtype), .. } => format!("range over {subtype}"),
+        TypeKind::Range { subtype: None, .. } => "range (subtype not parsed)".to_string(),
+        TypeKind::Base => "base type".to_string(),
+        TypeKind::Shell => "shell type".to_string(),
     }
 }
 
@@ -1077,13 +1141,6 @@ struct ColumnResolutionJson<'a> {
     outcome: &'static str,
     arrow_type: String,
     plan: &'a NestedPlan,
-    /// An enum column's declared labels, in declaration order — the same list
-    /// `--verbose` renders beneath the column, unquoted here because JSON has
-    /// its own string encoding. **Absent for every other column**, rather than
-    /// `null`: the field answers "is this an enum, and which one", so a key
-    /// that is always present would have to be read for its value.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    labels: Option<&'a [String]>,
 }
 
 fn print_index_json(index: &DumpIndex, total_size: u64, complete: bool) {
@@ -1107,7 +1164,6 @@ fn print_index_json(index: &DumpIndex, total_size: u64, complete: bool) {
                         &resolved.plans[i],
                     ),
                     plan: &resolved.plans[i],
-                    labels: enum_labels(&resolved.comparisons[i]),
                 })
                 .collect(),
         })
@@ -1155,7 +1211,7 @@ fn report(index: &DumpIndex, total_size: u64, verbose: bool, map: bool, json: bo
 /// per block would suggest a variation that does not exist.
 fn print_index(index: &DumpIndex, verbose: bool, map: bool, complete: bool) {
     if let Some(metadata) = &index.metadata {
-        print_metadata(metadata);
+        print_metadata(metadata, verbose);
         println!();
     }
 
@@ -1391,7 +1447,8 @@ fn span_summary(span: &Span) -> String {
 
 /// Short label for a [`TypeKind`] — `--map`'s compact form of the same
 /// six-emission-shape vocabulary `docs/manual/type-handling.md` explains for
-/// readers.
+/// readers. [`type_kind_summary`] is the `--verbose` type listing's fuller
+/// rendering, payload included.
 fn type_kind_label(kind: &TypeKind) -> &'static str {
     match kind {
         TypeKind::Enum { .. } => "enum",
@@ -1672,5 +1729,62 @@ mod tests {
             arrow_type_label(&impostor, &NestedPlan::Record(vec![NestedPlan::Scalar; 5]));
         assert!(rendered.starts_with(r#"Struct("lower": Int32"#), "{rendered}");
         assert!(!rendered.contains("Range<"), "{rendered}");
+    }
+
+    /// Every `TypeKind` arm renders, with whatever payload it carries. The
+    /// fixtures reach all but two of these — a composite whose body held an
+    /// unparseable fragment and a range whose parameter list named no
+    /// `subtype` are shapes `pg_dump` does not write — so this is where those
+    /// two say what they say.
+    #[test]
+    fn every_type_kind_renders_with_its_own_payload() {
+        use pgdump_query::ColumnDef;
+
+        let labels =
+            |ls: &[&str]| TypeKind::Enum { labels: ls.iter().map(|l| l.to_string()).collect() };
+        assert_eq!(type_kind_summary(&labels(&["sad", "has'quote"])), "enum: 'sad', 'has''quote'");
+        assert_eq!(type_kind_summary(&labels(&[])), "enum: (no labels)");
+        assert_eq!(type_kind_summary(&TypeKind::domain("integer")), "domain over integer");
+        assert_eq!(
+            type_kind_summary(&TypeKind::Domain {
+                base_type: "text".to_string(),
+                collation: Some(r#"pg_catalog."C""#.to_string()),
+            }),
+            r#"domain over text COLLATE pg_catalog."C""#
+        );
+        assert_eq!(
+            type_kind_summary(&TypeKind::Composite {
+                fields: Some(vec![
+                    ColumnDef::new("x", "integer"),
+                    ColumnDef {
+                        name: "c".to_string(),
+                        declared_type: "text".to_string(),
+                        collation: Some(r#"pg_catalog."C""#.to_string()),
+                    },
+                ]),
+            }),
+            r#"composite: x integer, c text COLLATE pg_catalog."C""#
+        );
+        assert_eq!(
+            type_kind_summary(&TypeKind::Composite { fields: Some(vec![]) }),
+            "composite: (no fields)"
+        );
+        assert_eq!(
+            type_kind_summary(&TypeKind::Composite { fields: None }),
+            "composite: (fields not parsed)"
+        );
+        assert_eq!(
+            type_kind_summary(&TypeKind::Range {
+                subtype: Some("double precision".to_string()),
+                multirange_type_name: Some("public.myrange_multi".to_string()),
+            }),
+            "range over double precision"
+        );
+        assert_eq!(
+            type_kind_summary(&TypeKind::Range { subtype: None, multirange_type_name: None }),
+            "range (subtype not parsed)"
+        );
+        assert_eq!(type_kind_summary(&TypeKind::Base), "base type");
+        assert_eq!(type_kind_summary(&TypeKind::Shell), "shell type");
     }
 }

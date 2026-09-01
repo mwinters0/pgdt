@@ -148,8 +148,35 @@ it became: the Arrow type it resolved to, or — for a column that came back as
 a string — why (see [type handling](type-handling.md) for what "resolved"
 means and why a column sometimes isn't).
 
+`--verbose` also turns the `user-defined types` count into a listing of the
+types themselves, one line each, in the order the dump declares them:
+
+```
+user-defined types: 7
+    public.mood            enum: 'sad', 'ok', 'happy', 'has space', 'it''s fine'
+    public.empty_enum      enum: (no labels)
+    public.text_c          domain over text COLLATE pg_catalog."C"
+    public.point2d         composite: x double precision, y double precision
+    public.myrange         range over integer
+    public.mybase          base type
+    public.shellonly       shell type
+```
+
+That is every type, not only the enums, and each line carries whatever its
+kind has to say: an enum's labels, a domain's base type and any `COLLATE`
+clause, a composite's fields, a range's subtype. The two `pg_dump` never
+writes but pgdq can still meet are spelled out rather than left blank —
+`composite: (fields not parsed)` for a body pgdq could not read (that is the
+one case that changes how a column of the type resolves), and `range (subtype
+not parsed)`. A C-level type says `base type` or `shell type` because that is
+genuinely all the dump records about it: the *server* knows how to parse its
+values, and the dump does not say.
+
+Nothing else in `info` names a user-defined type, so this is where you find
+out that `public.mood` exists before going looking for what it holds.
+
 An enum column also gets its declared labels, in the type's own order, on the
-line beneath:
+line beneath — the same list, repeated where you are already looking:
 
 ```
 public.t_enum_domain (4 rows)
@@ -284,10 +311,14 @@ Alongside the file map it carries two things the text views state differently:
 - **`resolution`**, one record per `COPY` block, with the per-column outcome
   `--verbose` renders as prose. Each column carries its name, the declared
   PostgreSQL type, the outcome as a token (`mapped`, `varying_array_shape`,
-  `metadata_not_scanned`, …), the Arrow type, and the nested plan. An enum
-  column carries a `labels` array too, unquoted; the key is absent, not null,
-  on every column that is not one. This is the only machine-readable form of
-  "why is this column a string".
+  `metadata_not_scanned`, …), the Arrow type, and the nested plan. This is the
+  only machine-readable form of "why is this column a string".
+
+  There is no per-column `labels` array: the whole preamble is already in the
+  object, so every user-defined type is under `metadata.databases[].types[]`
+  with its kind and payload — an enum's labels included, unquoted, JSON having
+  its own string encoding. Join a column's `declared` against that list and you
+  get an answer for `public.mood[]` as well as for `public.mood`.
 
   Records are keyed by **block**, not by table — one table's data can occupy
   several `COPY` blocks, and pgdq does not yet have a rule for merging blocks

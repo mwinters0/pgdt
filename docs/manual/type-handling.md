@@ -529,7 +529,8 @@ either side of the operator.
 That last one is the way an enum filter usually goes wrong — a label mistyped,
 or in the wrong case. `pgdq info --verbose` lists an enum column's declared
 labels beneath it, in full, so you can read the spelling off the dump instead
-of guessing at it; see
+of guessing at it — and lists every enum type's labels once, up in the header,
+which is where to look for the ones no column of yours happens to use; see
 [inspecting a dump](dump-inspection.md#info-reporting-what-is-known).
 
 ### Domains resolve to their base type

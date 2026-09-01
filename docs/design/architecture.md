@@ -3005,6 +3005,45 @@ same way the block listing is. `span_summary` is the one place in the codebase
 that matches every `SpanBody`/`DataBlock` variant for display, and a future
 `--filter-kind` should extend it rather than duplicate the match. 
 
+**`--verbose` lists the user-defined types beneath the count that had been
+their only trace.** `print_metadata` prints `user-defined types: <n>`, and
+nothing else in `info` names a user-defined type at any verbosity — `object
+kinds:` beneath it counts `TYPE`/`DOMAIN`/`SHELL TYPE` TOC entries, which do
+not even sum to it (`types` is keyed on the type, not the statement). So a user
+could not learn from `info` that `public.mood` exists, let alone what it holds.
+Under `--verbose` the count becomes that listing's heading: one line per type
+per database, in declaration order, name then `type_kind_summary`'s rendering
+of its `TypeKind`.
+
+**Every arm renders, with whatever payload it carries** — the enum's labels,
+the domain's base type and `COLLATE` clause, the composite's fields (each with
+its own clause), the range's subtype. A listing headed `user-defined types`
+that showed only enums would be a lie about what the dump holds. Kind is in
+hand for every arm, so this is a rendering of `DatabaseMetadata::types`, not
+new resolution. `Composite { fields: None }` says `(fields not parsed)`
+explicitly, because that is the one arm whose absence changes how a column of
+the type resolves; a `Range` naming no subtype says so for symmetry. Neither
+shape is one `pg_dump` writes, so both are pinned as a unit test on
+`type_kind_summary` rather than against a fixture.
+
+The name column is padded to the widest name the database declares and the
+right edge is left ragged, an enum's label list being as long as the type is.
+**Uncapped**, for the reason the per-column labels line is: `--verbose` is the
+mode that exists to be the complete rendering. The cost accepted is a wide,
+ragged block for a dump declaring hundreds of types.
+
+*Rejected:* keying the listing on the column instead, carrying the enum labels
+alone off each column's `ComparisonPlan`. The labels are a property of `CREATE
+TYPE public.mood AS ENUM (…)`; the plan is a derived intermediary that happens
+to carry them, and it refuses arrays, composites and ranges for reasons that
+have nothing to do with whether the labels are knowable — so a `public.mood[]`
+column would print `List(Dictionary(Int32, Utf8))` and nothing else, which is
+the same "resolved them and showed them to nobody" failure one level down.
+Keying on the type also prints the list once per dump instead of once per
+column per block, and never has to say *where* in a column an enum sits: a
+composite with two enum fields raises a format question a type listing never
+meets.
+
 **`--verbose`'s per-column line is a complete statement of the Arrow schema.**
 One line per column that has something to say: an unmapped column gets
 `resolution_words`' sentence, a mapped one gets its Arrow type — unless that
@@ -3031,14 +3070,15 @@ and exactly as consequential to a caller building against the schema.
 (`list<struct<a: int32>>`). It is a second spelling of a type vocabulary the
 reader already meets everywhere else Arrow is named.
 
-**An enum column's declared labels ride a continuation line beneath it,
-uncapped**, and `--json` carries them as a `labels` field absent for every
-other column. `Dictionary(Int32, Utf8)` says *that* a column is an enum and
-never *which* labels, so without this the build resolves them and shows them to
-nobody: the only other route is to read the type name off the listing and grep
-the dump for its `CREATE TYPE`. That matters most to a user whose `--filter`
-was refused, since a mistyped or wrong-case label is the only way to fail an
-enum term — `--verbose` is where that error's clause sends them.
+**An enum column's declared labels also ride a continuation line beneath it,
+uncapped.** `Dictionary(Int32, Utf8)` says *that* a column is an enum and never
+*which* labels, and the type listing above answers that only for a reader
+willing to carry the type name up to it. This is the in-place answer, and it
+matters most to a user whose `--filter` was refused — a mistyped or wrong-case
+label is the only way to fail an enum term, and `--verbose` is where that
+error's clause sends them. Duplicating a short list is cheaper than the trip;
+the type listing carries the completeness obligation, this line carries
+locality.
 
 They come from the column's own
 [`ComparisonPlan`](#ordering-operators-compare-typed-and-the-register-says-where-that-differs)
@@ -3065,6 +3105,13 @@ row around it. *Rejected:* a count cap. `--verbose` is the mode that exists to
 be the complete rendering, and it is what a capped rendering elsewhere can send
 a reader to; capping here leaves the labels reachable nowhere.
 
+**A domain over an enum carries the labels too**, through any chain, and no
+fixture column is one — `public.derived_domain` bottoms out at `integer` and
+`public.text_c` at `text`. `comparison_user_type`'s recursion is the only thing
+that makes the claim true, so a unit test on `comparison_for` against a
+synthetic `TypeDef` list is what checks it, rather than a fixture column that
+would cost six majors of regeneration to add.
+
 **`pgdq info --json` dumps the internal struct, not a designed format.**
 `IndexJson` (`pgdump_query-cli/src/main.rs`) flattens `DumpIndex` and adds the
 three things it does not carry: `total_size`, `diagnostics` (the one field
@@ -3086,13 +3133,20 @@ trials. **No `version` field either**: that is precisely the compatibility shim
 
 `resolution` is what `--verbose` prints per column, in a form a script can
 branch on: per column the name, the declared PostgreSQL type, the outcome as a
-stable token, the Arrow type as the *exact string* `--verbose` renders, the
+stable token, the Arrow type as the *exact string* `--verbose` renders, and the
 `NestedPlan` structurally (which is the one thing the Arrow type cannot say —
-`int4range[]` and `int4multirange` share it), and an enum column's `labels`,
-raw rather than quoted, JSON having its own string encoding. **`labels` is
-absent for every other column rather than `null`**: it answers "is this an
-enum, and which one", so a key that were always present would have to be read
-for its value.
+`int4range[]` and `int4multirange` share it).
+
+**It carries no per-column `labels` field.** `IndexJson` flattens `DumpIndex`,
+so `metadata.databases[].types[]` is already in the export in full — every
+user-defined type by name with its whole `TypeKind`, `public.mood` as
+`{"name":"public.mood","kind":{"Enum":{"labels":[…]}}}`. A per-column field
+would duplicate that, and duplicate it worse: a consumer joining
+`resolution[].declared` against the type list gets an answer for `public.mood[]`
+too, where the field did not. `resolution`'s job is to say what each column
+resolved *to*; the labels are a fact about the type. The text listing is where
+the per-column line earns its keep, because there the reader is a person
+standing at one refused column rather than a script that can join.
 
 **One resolution pass, two renderings.** `block_resolutions` is the single
 pass that `print_index` and `print_index_json` both consume, and
@@ -3102,10 +3156,10 @@ a second implementation would drift into describing a different vocabulary from
 the listing. The cross-check reconstructs every expected `--verbose` line out
 of the JSON and finds it in the text, which works because **every sentence
 begins with its token's words**, underscores replaced by spaces; a variant
-breaking that property fails the test rather than quietly weakening it. An
-enum's `labels:` continuation line is reconstructed the same way, quoting
-applied, so the two renderings cannot come to disagree about which labels a
-column has either.
+breaking that property fails the test rather than quietly weakening it. The
+labels are held to the same standard one level up: the `--verbose` type
+listing and `metadata.databases[].types[]` are checked to name the same types,
+and `public.mood`'s printed list against the exported one.
 
 **Keyed by `COPY` block** — `(database, qualified name, header_offset)` — not
 rolled up per table. *Rejected:* keying by table, which is what a script most
