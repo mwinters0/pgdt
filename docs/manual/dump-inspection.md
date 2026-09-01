@@ -148,6 +148,28 @@ it became: the Arrow type it resolved to, or — for a column that came back as
 a string — why (see [type handling](type-handling.md) for what "resolved"
 means and why a column sometimes isn't).
 
+An enum column also gets its declared labels, in the type's own order, on the
+line beneath:
+
+```
+public.t_enum_domain (4 rows)
+    columns: id integer, v_mood public.mood
+    id: Int32
+    v_mood: Dictionary(Int32, Utf8)
+        labels: 'sad', 'ok', 'happy', 'has space', 'it''s fine'
+```
+
+That is the whole list, however long it is, and it is the answer to "what may
+I write on the right of `--filter 'v_mood=…'`". Each label is quoted the way
+the dump itself writes it — an interior `'` doubled — so a label with a space
+or a comma in it can still be told apart, and so you can paste one straight in:
+`--filter "v_mood='has space'"`. The quotes are optional for an ordinary
+label; `--filter 'v_mood=sad'` is the same term.
+
+Labels are listed for a plain enum column and for a domain over one. An enum
+*inside* an array or a composite does not get them, and does not need them — a
+filter cannot compare against a single label there anyway.
+
 ### When `info` says it cannot answer
 
 `info` exits non-zero rather than scanning. Four things can go wrong, and they
@@ -262,8 +284,10 @@ Alongside the file map it carries two things the text views state differently:
 - **`resolution`**, one record per `COPY` block, with the per-column outcome
   `--verbose` renders as prose. Each column carries its name, the declared
   PostgreSQL type, the outcome as a token (`mapped`, `varying_array_shape`,
-  `metadata_not_scanned`, …), the Arrow type, and the nested plan. This is the
-  only machine-readable form of "why is this column a string".
+  `metadata_not_scanned`, …), the Arrow type, and the nested plan. An enum
+  column carries a `labels` array too, unquoted; the key is absent, not null,
+  on every column that is not one. This is the only machine-readable form of
+  "why is this column a string".
 
   Records are keyed by **block**, not by table — one table's data can occupy
   several `COPY` blocks, and pgdq does not yet have a rule for merging blocks

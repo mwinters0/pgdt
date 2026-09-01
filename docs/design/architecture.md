@@ -3031,6 +3031,40 @@ and exactly as consequential to a caller building against the schema.
 (`list<struct<a: int32>>`). It is a second spelling of a type vocabulary the
 reader already meets everywhere else Arrow is named.
 
+**An enum column's declared labels ride a continuation line beneath it,
+uncapped**, and `--json` carries them as a `labels` field absent for every
+other column. `Dictionary(Int32, Utf8)` says *that* a column is an enum and
+never *which* labels, so without this the build resolves them and shows them to
+nobody: the only other route is to read the type name off the listing and grep
+the dump for its `CREATE TYPE`. That matters most to a user whose `--filter`
+was refused, since a mistyped or wrong-case label is the only way to fail an
+enum term — `--verbose` is where that error's clause sends them.
+
+They come from the column's own
+[`ComparisonPlan`](#ordering-operators-compare-typed-and-the-register-says-where-that-differs)
+(`enum_labels`, `pgdump_query-cli/src/main.rs`), which is where resolution
+already put them, so **a scalar enum column and a domain over one carry
+labels and nothing else does** — an enum inside an array or a composite has a
+`Refused` plan of its own. That is the same set a label-valued `--filter` term
+can name, which is the question the line answers; an empty enum has no plan
+either, and the line above it already says `empty enum`.
+
+Each label is single-quoted with any interior quote doubled. **Quoting is
+forced by the data**: a label is arbitrary text, and the type fixtures declare
+`has space`, `has,comma` and `has'quote` for exactly this reason, so a bare
+comma-joined list cannot be read back apart. Single quotes are then the one
+spelling two precedents agree on — it is what the dump's own `CREATE TYPE … AS
+ENUM (…)` writes, and what a `--filter` value accepts, so a printed label
+pastes straight into `--filter "mood=<label>"`. *Rejected:* Rust's `{:?}`,
+which `arrow_type_label` uses for a composite's field names. Unambiguous too,
+but it spells a PostgreSQL literal in Rust's escape vocabulary, and the double
+quote it produces is the one the filter grammar treats as the *other* quote.
+*Rejected:* the labels inline on the column's own line, which is already four
+fields wide — one eight-label enum would wrap and break the alignment of every
+row around it. *Rejected:* a count cap. `--verbose` is the mode that exists to
+be the complete rendering, and it is what a capped rendering elsewhere can send
+a reader to; capping here leaves the labels reachable nowhere.
+
 **`pgdq info --json` dumps the internal struct, not a designed format.**
 `IndexJson` (`pgdump_query-cli/src/main.rs`) flattens `DumpIndex` and adds the
 three things it does not carry: `total_size`, `diagnostics` (the one field
@@ -3052,9 +3086,13 @@ trials. **No `version` field either**: that is precisely the compatibility shim
 
 `resolution` is what `--verbose` prints per column, in a form a script can
 branch on: per column the name, the declared PostgreSQL type, the outcome as a
-stable token, the Arrow type as the *exact string* `--verbose` renders, and the
+stable token, the Arrow type as the *exact string* `--verbose` renders, the
 `NestedPlan` structurally (which is the one thing the Arrow type cannot say —
-`int4range[]` and `int4multirange` share it).
+`int4range[]` and `int4multirange` share it), and an enum column's `labels`,
+raw rather than quoted, JSON having its own string encoding. **`labels` is
+absent for every other column rather than `null`**: it answers "is this an
+enum, and which one", so a key that were always present would have to be read
+for its value.
 
 **One resolution pass, two renderings.** `block_resolutions` is the single
 pass that `print_index` and `print_index_json` both consume, and
@@ -3064,7 +3102,10 @@ a second implementation would drift into describing a different vocabulary from
 the listing. The cross-check reconstructs every expected `--verbose` line out
 of the JSON and finds it in the text, which works because **every sentence
 begins with its token's words**, underscores replaced by spaces; a variant
-breaking that property fails the test rather than quietly weakening it.
+breaking that property fails the test rather than quietly weakening it. An
+enum's `labels:` continuation line is reconstructed the same way, quoting
+applied, so the two renderings cannot come to disagree about which labels a
+column has either.
 
 **Keyed by `COPY` block** — `(database, qualified name, header_offset)` — not
 rolled up per table. *Rejected:* keying by table, which is what a script most

@@ -12,9 +12,9 @@ use pgdump_query::cache::{CacheMode, CacheStatus};
 use pgdump_query::pgtype::RANGE_STRUCT_FIELDS;
 use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdump_query::{
-    ArrayShape, ByteRangeSource, DataBlock, Diagnostic, DiagnosticKind, DumpIndex, DumpMetadata,
-    LocalFileSource, NestedPlan, Predicate, PredicateOp, QueryOptions, ScanOptions, Severity, Span,
-    SpanBody, TypeKind, preamble_only, render_field,
+    ArrayShape, ByteRangeSource, CompareKind, ComparisonPlan, DataBlock, Diagnostic,
+    DiagnosticKind, DumpIndex, DumpMetadata, LocalFileSource, NestedPlan, Predicate, PredicateOp,
+    QueryOptions, ScanOptions, Severity, Span, SpanBody, TypeKind, preamble_only, render_field,
 };
 
 #[derive(Parser)]
@@ -891,6 +891,42 @@ fn range_label(data_type: &DataType, bound: &NestedPlan) -> String {
     }
 }
 
+/// An enum column's declared labels, in declaration order, or `None` for
+/// every other column — read off the column's own [`ComparisonPlan`], which is
+/// where resolution already put them (`docs/design/architecture.md`,
+/// "CLI surface").
+///
+/// A domain over an enum answers here too, because
+/// `pgtype::comparison_user_type` recurses through the domain chain; that is
+/// the right answer, since such a column takes exactly those labels. An
+/// *empty* enum is `ComparisonPlan::Refused` and so has nothing to list, which
+/// matches the `empty enum` sentence the line above it already prints.
+fn enum_labels(plan: &ComparisonPlan) -> Option<&[String]> {
+    match plan {
+        ComparisonPlan::Compared { kind: CompareKind::Enum(labels), .. } => Some(labels),
+        _ => None,
+    }
+}
+
+/// The labels as `info --verbose` prints them: each one single-quoted with any
+/// interior quote doubled, comma-separated.
+///
+/// **Quoting is forced by the data, and this quoting by two precedents that
+/// agree.** A label is arbitrary text — `has space`, `has,comma`,
+/// `has'quote` are all legal and all in the fixtures — so a bare comma-joined
+/// list cannot be read back apart. Single quotes with `''` doubling is both
+/// what the dump's own `CREATE TYPE … AS ENUM (…)` writes and what a
+/// `--filter` value accepts ([`dequote`]), so a printed label pastes straight
+/// into `--filter "mood=<label>"` and reads the same as the file it came from.
+///
+/// *Rejected:* Rust's `{:?}`, which `arrow_type_label` uses for a composite's
+/// field names. It is unambiguous too, but it spells a PostgreSQL literal in
+/// Rust's escape vocabulary, and the double quote it produces is the one this
+/// project's filter grammar treats as the *other* quote.
+fn label_list(labels: &[String]) -> String {
+    labels.iter().map(|l| format!("'{}'", l.replace('\'', "''"))).collect::<Vec<_>>().join(", ")
+}
+
 /// How a database is named in the listing. A `\connect`-less dump has no
 /// name to print, and `(unnamed)` is what the listing calls that database —
 /// one spelling, so the metadata header, the block listing and `--map` cannot
@@ -1041,6 +1077,13 @@ struct ColumnResolutionJson<'a> {
     outcome: &'static str,
     arrow_type: String,
     plan: &'a NestedPlan,
+    /// An enum column's declared labels, in declaration order — the same list
+    /// `--verbose` renders beneath the column, unquoted here because JSON has
+    /// its own string encoding. **Absent for every other column**, rather than
+    /// `null`: the field answers "is this an enum, and which one", so a key
+    /// that is always present would have to be read for its value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    labels: Option<&'a [String]>,
 }
 
 fn print_index_json(index: &DumpIndex, total_size: u64, complete: bool) {
@@ -1064,6 +1107,7 @@ fn print_index_json(index: &DumpIndex, total_size: u64, complete: bool) {
                         &resolved.plans[i],
                     ),
                     plan: &resolved.plans[i],
+                    labels: enum_labels(&resolved.comparisons[i]),
                 })
                 .collect(),
         })
@@ -1166,6 +1210,15 @@ fn print_index(index: &DumpIndex, verbose: bool, map: bool, complete: bool) {
                 // no-information answer, and the only Arrow type a
                 // non-`Mapped` resolution ever produces, so the two arms
                 // never both fire.
+                //
+                // An enum column then carries its declared labels on a
+                // continuation line beneath, uncapped: `Dictionary(Int32,
+                // Utf8)` says nothing about *which* labels, and this is the
+                // only place a user can read them without grepping the dump
+                // for its `CREATE TYPE`. It is a continuation rather than a
+                // suffix because one eight-label enum on the column's own
+                // line would wrap and break the alignment of every row around
+                // it.
                 for (i, note) in resolved.notes.iter().enumerate() {
                     let data_type = resolved.schema.field(i).data_type();
                     if note.resolution != ColumnResolution::Mapped {
@@ -1176,6 +1229,9 @@ fn print_index(index: &DumpIndex, verbose: bool, map: bool, complete: bool) {
                             note.column,
                             arrow_type_label(data_type, &resolved.plans[i])
                         );
+                    }
+                    if let Some(labels) = enum_labels(&resolved.comparisons[i]) {
+                        println!("        labels: {}", label_list(labels));
                     }
                 }
             }

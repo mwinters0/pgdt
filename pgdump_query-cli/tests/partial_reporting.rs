@@ -14,6 +14,7 @@
 //! produces this shape, and that its metadata covers every database segment
 //! the scan finished.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use pgdump_query::{
@@ -327,6 +328,10 @@ async fn preamble_only_moved_to_parse_and_leaves_a_cache_info_reads() {
 /// The indented lines `info --verbose` prints under each block, grouped by
 /// block in file order — minus the four byte-offset lines and the column
 /// summary, which are not per-column resolution.
+///
+/// An enum's `labels:` continuation line is kept, with its extra indent
+/// intact, because it is per-column resolution too and the cross-check below
+/// holds it against the JSON like any other line.
 fn verbose_column_lines(text: &str) -> Vec<Vec<String>> {
     const NOT_A_COLUMN: [&str; 5] =
         ["columns:", "header offset:", "data offset:", "terminator:", "end offset:"];
@@ -371,6 +376,7 @@ async fn the_json_export_and_the_verbose_listing_agree_column_for_column() {
     assert!(resolution.len() > 1, "sanity: this fixture has several blocks");
 
     let mut checked = 0usize;
+    let mut labelled = 0usize;
     for (block, lines) in resolution.iter().zip(&per_block) {
         for column in block["columns"].as_array().unwrap() {
             let name = column["name"].as_str().unwrap();
@@ -398,9 +404,84 @@ async fn the_json_export_and_the_verbose_listing_agree_column_for_column() {
                 "no --verbose line for {expected:?} among {lines:?}"
             );
             checked += 1;
+
+            // An enum's labels ride a continuation line beneath that one, and
+            // the two renderings are held to agreeing about them too: the
+            // export carries each label raw, the listing quotes it.
+            if let Some(labels) = column["labels"].as_array() {
+                let rendered: Vec<String> = labels
+                    .iter()
+                    .map(|l| format!("'{}'", l.as_str().unwrap().replace('\'', "''")))
+                    .collect();
+                let line = format!("    labels: {}", rendered.join(", "));
+                assert!(lines.contains(&line), "no --verbose line for {line:?} among {lines:?}");
+                labelled += 1;
+            }
         }
     }
     assert!(checked > 10, "sanity: this fixture exercises a real spread of outcomes");
+    assert!(labelled > 0, "sanity: this fixture has an enum column");
+}
+
+/// **Which columns carry labels, and how they are spelled.** The cross-check
+/// above only makes the two renderings agree; this pins what they say.
+///
+/// The list is the type's own declaration order, uncapped, and each label is
+/// single-quoted with any interior quote doubled — the fixture's `public.mood`
+/// declares `has space`, `has,comma` and `has'quote` precisely so an unquoted
+/// join cannot pass. Labels attach to a column whose *own* comparison plan is
+/// an enum: a scalar enum column and a domain over one, which is exactly the
+/// set a label-valued `--filter` term can name. An empty enum has no plan and
+/// says `empty enum` instead, and an enum inside an array is a nested column
+/// no label-valued filter reaches.
+#[tokio::test]
+async fn an_enum_columns_declared_labels_are_listed_beneath_it() {
+    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
+    assert!(run(&["parse", "--source", dump.to_str().unwrap()]).status.success());
+
+    let verbose = stdout_of(&run(&["info", "--source", dump.to_str().unwrap(), "--verbose"]));
+    let lines: Vec<&str> = verbose.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| *l == "    v_mood: Dictionary(Int32, Utf8)")
+        .expect("the enum column's own line");
+    assert_eq!(
+        lines[at + 1],
+        "        labels: 'sad', 'ok', 'happy', 'has space', 'has,comma', 'has''quote'",
+        "the labels sit directly beneath their column, quoted"
+    );
+
+    let json: serde_json::Value = serde_json::from_str(&stdout_of(&run(&[
+        "info",
+        "--source",
+        dump.to_str().unwrap(),
+        "--json",
+    ])))
+    .expect("--json emits JSON");
+
+    let of_interest = ["v_mood", "v_empty_enum", "v_enum_array", "v_text"];
+    let mut seen: BTreeMap<&str, Option<Vec<&str>>> = BTreeMap::new();
+    for block in json["resolution"].as_array().unwrap() {
+        for column in block["columns"].as_array().unwrap() {
+            let name = column["name"].as_str().unwrap();
+            if !of_interest.contains(&name) {
+                continue;
+            }
+            let labels = column["labels"]
+                .as_array()
+                .map(|ls| ls.iter().map(|l| l.as_str().unwrap()).collect());
+            seen.insert(name, labels);
+        }
+    }
+    let expected: BTreeMap<&str, Option<Vec<&str>>> = BTreeMap::from([
+        // A nested enum: the column's own plan is not an enum's.
+        ("v_enum_array", None),
+        ("v_empty_enum", None),
+        ("v_mood", Some(vec!["sad", "ok", "happy", "has space", "has,comma", "has'quote"])),
+        // Every non-enum column omits the key rather than carrying null.
+        ("v_text", None),
+    ]);
+    assert_eq!(seen, expected, "only a column whose own plan is an enum carries labels");
 }
 
 /// `--json` carries the coverage as components, not as the rendered
