@@ -3331,6 +3331,20 @@ no case is a claim nothing checks — and the second is smaller but real, since 
 case for a type the oracle's own database does not declare answers `E42704` in
 every cell and reads as coverage.
 
+**The join is existence, not branch coverage, and that is the boundary of what
+it promises.** An arm is satisfied by one case, so a row whose cases exercise
+one branch of a multi-branch comparison passes identically to one whose cases
+exercise every branch. `jsonb` is where the gap is widest:
+`compareJsonbContainers` decides on kind, then on a container's size, then on a
+scalar leaf (I41), and the arm counts as covered by cases that reach four of the
+six kinds and no container structure at all. Nothing mechanical closes that — a
+branch-coverage check over a `match` written in another language is not
+something this join can become — so an arm's cases are owed by whoever writes
+the arm, and "the reconciliation passes" is not the question to ask of a new
+row. What makes that cheap to act on is that the remedy costs almost nothing:
+adding cases is `generate_fixtures.py --skip-dumps`, which rewrites the
+`oracle/` TSVs and touches no `.sql` file (["Fixtures"](#fixtures)).
+
 **An arm is one answer that can be closed on its own, at the finest
 granularity for which evidence can exist.** That is one rule, and the table
 below is it applied to three shapes of source rather than three policies —

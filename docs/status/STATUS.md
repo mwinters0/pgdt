@@ -387,24 +387,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-**`jsonb`'s evidence is a probe, where every other register row's is committed
-bytes.** 11.5.1 closed the `jsonb` row against the oracle's existing case list —
-972 cells across six majors, zero mismatches — but that list reaches four kinds
-and no container structure: a number, two spellings of one object, an array and
-JSON `null`. Six load-bearing facts are therefore backed only by a twenty-second
-container probe recorded in I41's **Observed** paragraph: the boolean and string
-kinds, an object's pair count deciding before its keys, storage order (key
-length first) differing from alphabetical, and the raw-scalar anomaly that makes
-`'1'::jsonb > '[]'::jsonb`. The call was to take the probe rather than to add
-oracle cases, because adding them regenerates all 109 files under `fixtures/`
-(the `\restrict` token is fresh per dump) and this phase has already earned two
-slices — 11.2.2 and 11.11.1 — on the rule that such a diff cannot share a review
-with a library change; `oracle_register.py` obliged nothing, since splitting the
-`"json" | "jsonb"` arm in two leaves the base-name set unchanged. **The decision
-is whether `jsonb` earns an apparatus slice of its own** adding those cases —
-`true`, `"a"`, `[]`, `[1]`, `{}`, a two-pair object and a nested one — so the
-cross-major differ sweeps them like everything else. Reconsidering costs one
-six-major regeneration and buys the same standing of evidence the other twenty
-rows have; leaving it costs nothing until a major moves one of the six, which
-nothing would then catch.
