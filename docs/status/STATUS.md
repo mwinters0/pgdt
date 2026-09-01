@@ -255,6 +255,13 @@ progress.
       exceptions; `ordering_notes` becomes `comparison_notes`. Earned from
       11.6, whose row paired a self-contained register correction with a new
       mechanism over every `CompareKind`.
+- [ ] **11.12** The non-deterministic collation, observed — a `CREATE
+      COLLATION` with `provider = icu, deterministic = false` and one
+      `t_collate` column of it, regenerated across six majors, so I42 rests on
+      committed bytes and not on `pg_dump.c` alone. No oracle case, which is
+      what keeps the ICU exclusion intact. No library code. Earned by the
+      ordering-register review, which scoped that exclusion to behaviour; see
+      [`../design/roadmap-P11-typed-predicates.md`](../design/roadmap-P11-typed-predicates.md).
 - [ ] **11.7** Three-valued evaluation — `Expr`, the `True`/`False`/`Unknown`
       domain, `IS DISTINCT FROM`. Library only.
 - [ ] **11.8** `--where` — the expression grammar in its own CLI module, leaf
@@ -368,10 +375,10 @@ here rather than reading as a phase nobody has sliced.
 
 - **KD7** — a column that *states* a collation this build does not implement —
   a libc locale, an ICU collation — is ordered bytewise under `<`/`>`, so the
-  row set is not the server's; the fix is a comparison per named collation.
-  **(c) unowned**; promoted by a dump whose text columns state a real locale.
-  The register's four other divergent rows are properties, not parts of this
-  entry. Detail:
+  row set is not the server's; the fix is a comparison per named collation, and
+  closes the row only up to a provider version. **(c) unowned**; promoted by
+  [`../design/roadmap.md`](../design/roadmap.md)'s Future item
+  "collation-aware comparison", which is intent without a phase. Detail:
   [`../design/architecture.md`](../design/architecture.md), "Ordering operators
   compare typed".
 
@@ -399,25 +406,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`KD7` was rewritten rather than struck, against the spec's binding.** P11's
-  spec says *"`KD7` is retired by this phase"* and 11.6's checklist line said
-  this slice strikes it. Three of the entry's four statements did close as
-  properties — a database collation no plain dump records (I32), through a bare
-  text column and through a `jsonb` string leaf, and `json`, which the server
-  does not order at all. The fourth did not: a column that *states* `COLLATE
-  "de_DE.utf8"` carries the fact in the file, this build orders it bytewise, and
-  the fix is a comparison per named collation. That is a defect with a known fix
-  and no owner, and calling it a property to complete the strike would be the
-  "property filed as a deficiency" rule running backwards. So the entry survives
-  at one statement and drops to `(c) unowned`. **The spec never decided this** —
-  it was written before 11.11 invented a separate verdict for a stated non-`C`
-  clause, so its `text` row speaks only of the no-clause residue. Reversibility
-  picked the direction: an entry kept and struck later costs one edit, where a
-  struck number reinstated is a state the register cannot express. If the call
-  goes the other way, `KD7` is struck — index line, the `architecture.md`
-  paragraph and the `OrderingDivergence::NonBytewiseCollation` marker — and the
-  collation limitation stays where it already is, in the register table and in
-  the per-query note. Reasoning:
-  [`history/2026-09-01.md`](history/2026-09-01.md), "`KD7` survives at one
-  statement rather than being struck".
-
+Nothing open.

@@ -18,11 +18,23 @@ current thing works.
 
 ## What this phase closes, and what it declares
 
-**`KD7` is retired by this phase**, not narrowed. Its rows close three
-different ways, and the parts that close by *statement* rather than by code are
-not the weaker outcome: there the register was asking a question the file has
-no answer to. One of them turned out to be asking a question the file *does*
-answer, in part — see the text row.
+**`KD7` is narrowed by this phase to one statement, not retired.** Its rows
+close three different ways, and the parts that close by *statement* rather than
+by code are not the weaker outcome: there the register was asking a question
+the file has no answer to. One of them turned out to be asking a question the
+file *does* answer, in part — see the text row — and that part is what survives:
+a column that *states* a collation other than `C`/`POSIX` is ordered bytewise,
+which the file gives enough information to close and this build does not. It is
+`(c) unowned`, and the collation work that would close it is a Future item
+rather than a phase.
+
+*This doc originally bound `KD7` to be retired here.* It was written before
+11.11 gave a stated non-`C` clause its own verdict, so the text row below spoke
+only of the no-clause residue and the stated case had nowhere to be counted.
+Amended rather than delivered as written, because striking the entry would have
+been the "property filed as a deficiency" rule run backwards. Reasoning:
+[`../status/history/2026-09-01.md`](../status/history/2026-09-01.md), "`KD7`
+survives at one statement rather than being struck".
 
 | Register row | Disposition |
 |---|---|
@@ -30,7 +42,7 @@ answer, in part — see the text row.
 | `Utf8View` from bare `numeric` | **Closed by code.** An arbitrary-precision decimal comparison, carrying all three of `Infinity`, `-Infinity` and `NaN`. |
 | `Utf8View` from `interval`, `time with time zone`, `inet`/`cidr`/`macaddr`/`macaddr8`, and domains over them | **Closed by code**, one comparison per type. |
 | `Utf8View` from `jsonb` | **Closed by code, with a residue that closes by statement.** `compareJsonbContainers` is structural — type rank, then length, then member-wise — and its *scalar string* leaves, keys included, go through `varstr_cmp` under `DEFAULT_COLLATION_OID`. That is the database's collation, which a plain dump does not record (I32), so a `jsonb` column reaches exactly the residue the text row reaches, one level down. The structural half is worth closing and the collation half is the same statement made twice. |
-| `Utf8View` from `text`/`varchar`/`name` | **Closed by code *and* statement.** The file states more than the row assumed: `pg_dump` emits a `COLLATE` clause wherever a column's collation differs from **its type's** default, and `name`'s type default is `C` — so a bare `name` column, and any column carrying an explicit `COLLATE "C"`/`"POSIX"`, **agree exactly, on every server**. What stays closed by statement is the rest: a `default`-collation column with no clause is on the database default, which no plain dump records (I32). Bytewise remains the answer throughout; what changes is which columns are told they diverge. |
+| `Utf8View` from `text`/`varchar`/`name` | **Closed by code *and* statement.** The file states more than the row assumed: `pg_dump` emits a `COLLATE` clause wherever a column's collation differs from **its type's** default, and `name`'s type default is `C` — so a bare `name` column, and any column carrying an explicit `COLLATE "C"`/`"POSIX"`, **agree exactly, on every server**. What stays open splits in two, and only the first closes by statement: a `default`-collation column with no clause is on the database default, which no plain dump records (I32); a column that *states* a collation other than `C`/`POSIX` carries the fact in the file, so bytewise is a wrong answer to a question the file asked — that is the one statement `KD7` survives at. Bytewise remains the answer throughout; what changes is which columns are told they diverge. |
 | `Utf8View` from `char(n)` | **Closed by code, down to the collation statement.** A `character(n)` value is written blank-padded to `n` and `bpcharcmp` strips trailing blanks from *both* sides before it consults a collation at all (I38), so trimming both sides is the comparison — after which `char(n)` is the text row exactly, with the same three collation arms and the same residue. An explicit `COLLATE "C"` therefore does close it, but only once the trim is there, which is why 11.11 could not promote it and 11.6 can. |
 | `Utf8View` from `json` (and `xml`) | **Closed by statement.** PostgreSQL defines *no* comparison for these types at all — no `=`, no ordering, no default operator class — so "agrees with PostgreSQL" is not a question they can be asked. Our text comparison offers more than the server does, and that is what gets said. |
 
@@ -105,10 +117,14 @@ is already asked for all six of `OPERATORS`, so a collation-qualified case
 carries `=` and `<>` without anything being added. Every libc collation is
 *deterministic*, so `texteq` stays bytewise and equality **agrees** under both
 collations where ordering diverges under one — exactly the split 11.6 inherits,
-now visible in the file rather than argued from the source. The
-non-deterministic case stays closed by statement: it needs an ICU collation
-declared `deterministic = false`, which a plain dump records no more than it
-records the collation.
+now visible in the file rather than argued from the source. **The
+non-deterministic case does not close by statement**, and this doc originally
+said it did: it needs an ICU collation declared `deterministic = false`, and a
+plain dump *does* record that — `dumpCollation` writes `, deterministic = false`
+into the `CREATE COLLATION` unconditionally for a user-defined collation. So the
+file can state that `=` on such a column is not `texteq`, and this build answers
+bytewise with no note at all. 11.6.1 designs against that rather than declaring
+it away.
 
 **The cases, measured on glibc 2.41 before being written down.** Four reasons
 diverge — case ordering (`A` vs `a`), letter before case (`a` vs `B`), an accent
@@ -202,7 +218,10 @@ answered `false`, so no image change would have been needed at all. But the
 evidence should show what deployments actually run, and that is `C` and the
 UTF-8 locale. ICU's identity also floats with the base image — `und-x-icu`'s
 `collversion` is `153.128` on `13.23-alpine` against `153.136` on
-`18.6-alpine` — so an ICU case would need a guard the libc case does not.
+`18.6-alpine` — so an ICU case would need a guard the libc case does not. That
+argument is about an *oracle case*, whose cells are the server's answers, and it
+does not carry to a fixture column whose committed bytes hold no version; 11.12
+is where that distinction is spent.
 
 ## The predicate model becomes an expression tree
 
@@ -680,9 +699,11 @@ Unsound for both types above.
 
 `TableStream::ordering_notes` becomes `comparison_notes`. Equality can diverge
 for the same reason ordering does — under a non-deterministic collation neither
-`texteq` nor `bpchareq` is bytewise, and a plain dump records no collation
-(I32) — so a name saying "ordering" would leave the equality divergence
-homeless. The entry in
+`texteq` nor `bpchareq` is bytewise — so a name saying "ordering" would leave
+the equality divergence homeless. It diverges *knowably* where the collation is
+user-defined, since the dump carries the `deterministic = false` outright, and
+unknowably where the column has no clause and the database default is not in the
+file (I32). The entry in
 [`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md)
 names the old method and is updated with it.
 
@@ -707,10 +728,11 @@ here.
 | **11.5** | The text-held type queue | `interval` (with v17 infinities), `time with time zone`, `inet`/`cidr`/`macaddr`/`macaddr8`. Repetitive and additive; the oracle checks each. |
 | **11.5.1** | `jsonb` | The one text-held type whose comparison is a container walk rather than a scalar decode, and the one whose leaves reopen the collation question `text` already has. **Earned, not planned** — see below. |
 | **11.6** | The `character(n)` trim | `CompareKind::PaddedText` — trailing blanks off both sides, then the clause — which retires `OrderingDivergence::BlankPadded` and gives `character` the same three collation arms `text` has. Rewrites `KD7` to the one statement that survives. **Rewritten to the scope that landed** — see below. |
-| **11.6.1** | Typed `=` / `!=` | Routed through the now-complete plan, with the canonicalize-once fast path and its decode-per-row exceptions. Renames the note channel. **Earned, not planned** — see below. |
+| **11.6.1** | Typed `=` / `!=` | Routed through the now-complete plan, with the canonicalize-once fast path and its decode-per-row exceptions. Renames the note channel — which is also where the one equality divergence the file *states* gets reported: a column on a user-defined collation the dump declares `deterministic = false` (I42), for which `texteq` is not a byte comparison and nothing is raised today. **Earned, not planned** — see below. |
 | **11.7** | Three-valued evaluation | `Expr`, the `True`/`False`/`Unknown` domain, `IS DISTINCT FROM`. Library only. |
 | **11.8** | `--where` | The expression grammar, its own CLI module, leaf delegated to `parse_filter`. |
 | **11.9** | The nested literal input grammar | Parser for the `array_in`/`record_in`/`range_in` supersets — **three grammars, not one** — checked against the oracle's malformed cases. No comparison yet. |
+| **11.12** | The non-deterministic collation, observed | A `CREATE COLLATION` with `provider = icu` and `deterministic = false`, and one `t_collate` column of it, regenerated across six majors — so I42's claim that a plain dump *states* non-determinism rests on committed bytes rather than on `pg_dump.c` alone. **No oracle case**, which is what keeps the ICU exclusion above intact: the oracle builds its own temp tables per case, so the column obliges none, and the dump text holds no `collversion` to drift. Asserted in `tests/ordering.rs` beside the other collated columns, and the `fixture_schema_types.sql` comment rewritten to say which end ICU is now out of. No library code. **Earned, not planned** — see below. |
 | **11.10** | Nested structural comparison | Element-wise/field-wise/bound-wise, the NULL rule, inherited comparability, range canonicalization, paths in the notes. |
 
 **11.2.1 was earned, not planned.** The reconciliation was written into 11.2's
@@ -777,10 +799,18 @@ genuinely non-bytewise choice available at every major without generating a
 locale. `ucs_basic` earns its column for the opposite reason: it is
 `collcollate = C`, bytewise in fact, and not named `C`, so the register must
 call it divergent. It is the one place the asymmetry rule is pinned by a dump
-rather than by a sentence. ICU stays out at both ends — `unicode` and the
-`*-x-icu` family carry a `collversion` that moves with the ICU release, which
-is a new apparatus key guaranteed to drift, and the oracle already refused a
-locale-named collation for the same class of reason.
+rather than by a sentence. **ICU stays out of the *comparison* columns** —
+`unicode` and the `*-x-icu` family carry a `collversion` that moves with the ICU
+release, which is a new apparatus key guaranteed to drift, and the oracle
+already refused a locale-named collation for the same class of reason.
+
+*That exclusion is scoped to behaviour, and 11.12 adds the one ICU shape it does
+not reach.* A non-deterministic collation is always ICU (I42), and its dump text
+— provider, locale, `deterministic = false` — carries no `collversion`, because
+`pg_dump` emits `version =` only under `--binary-upgrade`. So a column of one
+puts the shape in committed bytes without importing the drift, provided it earns
+no oracle case: the oracle builds its own temp tables per case, so a `t_collate`
+column obliges none.
 
 **Why the reconciliation comes along.** 11.11 split one `builtin_scalar` arm
 into three that branch on the clause, and `oracle_register.py` joins on the
@@ -1013,6 +1043,21 @@ so. Landing that under a row promising a full closure would have shipped a
 `KD7` strike the register cannot support, which is the failure the spec/notes
 split exists to make visible. The evidence is in
 [`../status/history/2026-09-01.md`](../status/history/2026-09-01.md).
+
+**11.12 was earned by a review, and it amends a decision rather than adding
+one.** This doc rejected ICU twice — once for the oracle, once for the fixture
+columns — and both arguments are about `collversion` drifting with the base
+image, which is a statement about *answers*. Reviewing `KD7` turned up a shape
+neither argument reaches: a non-deterministic collation is ICU-only (I42), its
+dump text carries no version, and what it puts in the file is a fact about
+*equality* rather than about order. The exclusion is therefore scoped rather
+than reversed, and the slice takes the next free number rather than hanging off
+a parent, since it is discovered scope and not a split. It runs after 11.11 and
+so lands after 11.6.1 consumes I42; that is deliberate — the invariant rests on
+upstream source, which is the register's strongest proof class, and the column
+is a regression guard on top of it exactly as 11.11.1 was. Reasoning:
+[`../status/history/2026-09-01.md`](../status/history/2026-09-01.md), "A plain
+dump *does* record `deterministic = false`".
 
 **11.6 was mis-sized, and 11.6.1 was earned from it.** Its row paired two
 things with different review questions. The `char(n)` trim is a **register

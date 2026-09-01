@@ -2325,15 +2325,61 @@ this build does not implement — a libc locale, an ICU collation — and whose
 order therefore genuinely differs. There the file does carry the fact, so
 `<`/`>` return a row set the server would not and something could be written
 that closes it: a comparison per named collation, which is a collation library.
-Nobody holds that intent, so the entry is **`(c) unowned`**; a dump whose text
-columns state a real locale is what would promote it. It is announced per
-column, and equality is unaffected for every *deterministic* collation, which
-is every libc one — so what is wrong is the ordering, not the data and not `=`.
+It is announced per column, and equality is unaffected for every *deterministic*
+collation, which is every libc one — so what is wrong is the ordering, not the
+data and not `=`.
+
+**Equality has one column shape it answers wrongly and silently**, and it is
+not this entry: a user-defined ICU collation declared `deterministic = false`,
+which a plain dump states outright (I42). Under one, `texteq` is not a byte
+comparison, so `=` here returns a row set the server would not — and
+`ResolvedTerm::ordering_note` yields `None` for every non-ordering term, so no
+note is raised on any channel. It is P11's 11.6.1 that answers for it: that
+slice routes `=` through the comparison plan and renames the channel to
+`comparison_notes` precisely because an equality divergence has nowhere to be
+reported today.
+
+**The fix closes it up to a provider version, not absolutely**, and the entry
+says so rather than promising more. A plain dump carries a collation's *name*
+and never its version (I42), and PostgreSQL applies whatever the platform
+provides for a name (I32) — `en_US.utf8` is `strcmp` on musl and glibc's
+collation on glibc. So a collation library would agree with *a* server, not *the*
+server, and the register's verdict for such a column would have to stay
+conditional on the provider matching. That is still a fix, because the answer it
+replaces is not approximate: it is bytewise, which is a different order
+entirely.
+
+**The entry is `(c) unowned`, and the intent that exists does not make it
+`(b)`.** Complete collation support is the goal, **ICU included** —
+`roadmap.md`'s Future item "collation-aware comparison" holds it, with the libc
+pair `C`/`en_US.utf8` first and ICU after, since ICU's `collversion` moves with
+the base image and so needs an oracle guard the libc cases do not. But a Future
+item is not a phase, and `(b)` names a destination the phase index can resolve.
+That item is what would promote the entry. *Rejected: a promotion
+trigger reading "a dump whose text columns state a real locale".* Our own
+`fixtures/<13-18>/types/default.sql` is such a dump — `v_text_locale text
+COLLATE pg_catalog."en_US.utf8"` — so the trigger was satisfied by the apparatus
+that tests the arm, while koji, 784 GB across 75 tables, carries no `COLLATE`
+clause at all. A trigger a fixture fires and no real input does is not a trigger.
+
+*Rejected: closing this as a property alongside the other three, to strike
+`KD7` as P11's spec bound.* The three that closed are properties because
+nothing anybody could write would change the answer — the database default is
+not in the file, and `json` has no server order at all. This one is the
+opposite: the file states the collation, the row set is wrong, and the code that
+would fix it is nameable. Calling it a property to complete a strike is the
+"property filed as a deficiency" rule running backwards, and it is the one
+direction the register cannot recover from — a struck number reinstated is a
+state it has no way to express, where an entry kept and struck later costs one
+edit. The spec's binding was amended instead; reasoning in
+[`../status/history/2026-09-01.md`](../status/history/2026-09-01.md), "`KD7`
+survives at one statement rather than being struck".
 
 A stated collation that is bytewise **in fact** and not named `C`/`POSIX` —
 `ucs_basic`, a user's `CREATE COLLATION … FROM "C"` — is not this entry: it is
-the spurious-divergence case two paragraphs up, which produces correct rows and
-an advisory note the user can ignore, and there is nothing there to fix.
+the spurious-divergence case above, where the register answers on the strength
+of the name rather than the behaviour, which produces correct rows and an
+advisory note the user can ignore. There is nothing there to fix.
 
 The rest of what this entry once covered has closed as the register was
 re-keyed off the declared type: the enum, by reading the declaration order the

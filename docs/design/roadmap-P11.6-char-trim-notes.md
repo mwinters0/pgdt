@@ -62,9 +62,10 @@ back in the file, and nobody would have to guess which half was doing the work.
 
 ## `KD7` was rewritten, not struck
 
-The spec binds *"`KD7` is retired by this phase"* and the checklist line said
-this slice strikes it. It did not, and the reasoning is filed as an open
-question under `STATUS.md`'s "Decisions worth another look".
+The spec bound *"`KD7` is retired by this phase"* and the checklist line said
+this slice strikes it. It did not, and the spec's binding was amended rather
+than delivered — reviewed and affirmed, with the reasoning now beside the
+mechanism in `../design/architecture.md`, "Ordering operators compare typed".
 
 In short: of the four statements `KD7` carried, three close as **properties** —
 a database collation no plain dump records (I32), reached through a bare
@@ -80,6 +81,9 @@ So the entry survives at one statement and drops from `(b) owned by P11` to
 
 Reversibility decided it: an entry kept and later struck costs one edit, where
 a number struck and later reinstated is a state the register cannot express.
+What the entry inherits from the review is a sharper claim — the fix closes the
+row only up to a provider version, since a plain dump carries a collation's name
+and never its version — and a promotion trigger that a fixture cannot fire.
 
 **One repo-state assertion was relaxed to a skip.**
 `test_deficiencies.ThisRepo.test_every_sliced_owner_is_paired_both_ways`

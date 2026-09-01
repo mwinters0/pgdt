@@ -2728,3 +2728,93 @@ and, from the repo root, the committed cells the source predicts:
 grep -P '^jsonb\t' fixtures/16/oracle/comparisons.tsv
 grep -P '^jsonb\t' fixtures/16/oracle/literals.tsv
 ```
+
+---
+
+## I42 — A plain dump carries a user-defined collation's provider, locale and determinism, and never its version
+
+**Claim.** `pg_dump` writes a user-defined collation as `CREATE COLLATION
+<name> (provider = …[, deterministic = false][, locale = …| , lc_collate = …,
+lc_ctype = …][, rules = …]);`. Three parts of that are load-bearing:
+
+- **`deterministic = false` is emitted unconditionally** wherever the collation
+  is non-deterministic — it is not gated on any dump option — so an ordinary
+  plain dump *does* state that `texteq`/`bpchareq` on a column of that
+  collation is not a byte comparison.
+- **`version =` is emitted only under `--binary-upgrade`.** An ordinary plain
+  dump carries a collation's *name and definition* and never the
+  `pg_collation.collversion` the server computed for it, which is the libc or
+  ICU version verbatim.
+- **A non-deterministic collation is always ICU.** The server refuses
+  `deterministic = false` for any other provider, so this shape never appears
+  with `provider = libc`.
+
+Together those say what a dump can and cannot settle about a stated collation:
+it settles determinism, and therefore whether `=` is bytewise; it does not
+settle the *order*, because that is what the provider version supplies.
+Collations `initdb` created in `pg_catalog` — `en_US.utf8`, `ucs_basic`,
+`und-x-icu` — are not dumped at all, so for those the file carries only the
+name a `COLLATE` clause spells (I37).
+
+**Proof.** `dumpCollation` in `pg_dump.c`. The determinism append sits before
+every provider branch and is guarded only on the catalog value:
+
+```c
+if (strcmp(PQgetvalue(res, 0, i_collisdeterministic), "f") == 0)
+    appendPQExpBufferStr(q, ", deterministic = false");
+```
+
+while the version append is inside `if (dopt->binary_upgrade)`, under the
+comment *"For binary upgrade, carry over the collation version. For normal
+dump/restore, omit the version, so that it is computed upon restore."* The
+provider restriction is the backend's, in `collationcmds.c`'s
+`DefineCollation`:
+
+```c
+if (!collisdeterministic && collprovider != COLLPROVIDER_ICU)
+    ereport(ERROR,
+            (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+             errmsg("nondeterministic collations not supported with this provider")));
+```
+
+Verified in the v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 and master
+worktrees. What *does* differ across them is only how the ICU locale is read —
+v15+ takes `colliculocale`, earlier majors take `collcollate` — and both emit
+the same `, locale = '…'` text.
+
+**Scope limit.** This is about a **user-defined** collation, which is the only
+kind `pg_dump` emits a definition for. It says nothing about `--binary-upgrade`
+output, which does carry the version, and nothing about the database's own
+collation, which needs `--create` (I32).
+
+**Not yet in committed bytes.** No fixture holds a non-deterministic collation:
+`scripts/fixture_schema_types.sql` keeps ICU out, and adding the shape is
+`P11`'s slice **11.12**. Until then this entry rests on upstream source, which
+is the register's strongest proof class — but the standing rule
+([`roadmap.md`](roadmap.md), "Expand the generated fixtures freely") wants the
+bytes, and the drift objection that excluded ICU does not reach them, precisely
+because `version =` is absent.
+
+**Consequence.** Equality's divergence is **knowable per column** wherever the
+collation is user-defined and the dump says `deterministic = false`, and
+unknowable only where the column carries no clause and the database default is
+absent (I32). Ordering's is the mirror: the clause names the collation, so the
+divergence is knowable, and the *order* is not, so a comparison per named
+collation would agree with a server rather than with the server — which is
+what keeps `KD7`'s fix conditional on a provider version rather than absolute.
+
+**Relied on by.** `KD7`'s claim about what its fix can close
+([`architecture.md`](architecture.md), "Ordering operators compare typed"), and
+`P11`'s typed-equality slice 11.6.1, which must answer for a column whose
+collation the file states as non-deterministic.
+
+**Re-verify.**
+
+```sh
+grep -n -A3 'collisdeterministic' \
+  /mnt/wd12t/upstream/postgres/release-v<N>/src/bin/pg_dump/pg_dump.c
+grep -n -B4 -A6 'carry over the collation version' \
+  /mnt/wd12t/upstream/postgres/release-v<N>/src/bin/pg_dump/pg_dump.c
+grep -n -B2 -A4 'nondeterministic collations not supported' \
+  /mnt/wd12t/upstream/postgres/release-v<N>/src/backend/commands/collationcmds.c
+```

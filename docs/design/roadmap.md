@@ -758,6 +758,34 @@ this section when it acquires a phase number, not when it acquires a design.
   --disable-triggers`), which by I31's scope limit is the only combination that
   emits anything.
 
+- **Collation-aware comparison, libc first and ICU after it.** A column that
+  states a collation other than `C`/`POSIX` is ordered bytewise today, so
+  `<`/`>` return a row set the server would not (deficiency `KD7`); the fix is a
+  comparison per named collation. **Complete collation support is the goal, and
+  that includes ICU** — both providers, whatever the clause names. What is
+  staged is the order, not the ambition: the MVP is the libc pair the oracle
+  already asks every text pair under, `C` and `en_US.utf8`
+  ([`architecture.md`](architecture.md), "Ordering operators compare typed"), so
+  the first increment lands against evidence that is already committed.
+
+  **ICU is post-MVP because it costs the apparatus something libc does not.**
+  `und-x-icu`'s `collversion` reads `153.128` on `13.23-alpine` against
+  `153.136` on `18.6-alpine`, so oracle cases under an ICU collation need a
+  guard the libc cases do not — the reason the comparison oracle excludes ICU
+  today. That guard is part of ICU's price and should be designed with it, not
+  bolted onto the libc increment. **Non-deterministic** ICU collations are a
+  second, separable piece: they change what `=` means rather than what `<`
+  means, a plain dump states them outright (I42), and P11's 11.12 puts the shape
+  in committed bytes ahead of any of this.
+
+  **Neither increment closes the row absolutely** — a plain dump carries a
+  collation's name and never its version (I32, I42) — so the register verdict
+  either earns is conditional on the provider matching, never the unqualified
+  "agrees, on every server" that `COLLATE "C"` earns. Unscheduled: it acquires a
+  phase number when it acquires a design, and nothing in the current register is
+  shaped against it, since new arms split
+  `OrderingDivergence::NonBytewiseCollation` additively.
+
 - **CSV-format `COPY` blocks, as part of alternate-format support, post-1.0.**
   `pg_dump` has no CSV mode at all (I13), but `psql` writes `COPY ... WITH
   (FORMAT csv)` and that is valid PostgreSQL, so it is inside the input
