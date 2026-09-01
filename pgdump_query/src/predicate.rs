@@ -1269,6 +1269,75 @@ fn equality_comparison(kind: &CompareKind, text: &str) -> Option<Comparison> {
     Some(Comparison::Canonical(rendered))
 }
 
+/// The form a literal of `kind` has to be written in, as one clause of
+/// `Error::PredicateValueDecode`'s sentence — read after "which is written".
+///
+/// **It lives beside the grammar rather than beside [`CompareKind`]** because
+/// it describes what [`order_key`] and [`equality_comparison`] accept, and
+/// those are here: a widening or a tightening of either has this function in
+/// the same file and the same screen, where a phrase carried on the L2 type
+/// would drift from the L4 code that decides it.
+///
+/// **What it buys is a sentence about this build's grammar rather than about
+/// the type.** Without it the refusal reads as a claim that `true` is not a
+/// `boolean`, which is false; the grammar these two functions implement is
+/// each type's `*_out` form and no wider (`docs/design/architecture.md`, "A
+/// literal is read in the type's own output form and no wider"), so the one
+/// thing the user is missing is what that form looks like. `jsonb` is the
+/// exception there and so needs the least here — its grammar is the whole of
+/// `jsonb_in`, so "a JSON document" is the complete answer.
+///
+/// [`CompareKind::Text`] and [`CompareKind::PaddedText`] never refuse a
+/// literal — every string is a value of a text column — so their arm is
+/// unreachable rather than wrong; it is written out anyway because a
+/// `unreachable!` here would turn a future kind's mistake into a panic on a
+/// diagnostic path.
+fn accepted_form(kind: &CompareKind) -> &'static str {
+    use CompareKind as K;
+    match kind {
+        K::Bool => "`t` or `f`",
+        K::Int => "as an optionally signed whole number",
+        // The width *is* the refusal: `oidin` wraps a negative and this does
+        // not, so the range is the useful half of the sentence.
+        K::UnsignedInt => "as a whole number from 0 to 4294967295",
+        K::Float32 | K::Float64 => "as a number, or `Infinity`, `-Infinity` or `NaN`",
+        // A typmod rejects an infinity (I34), so a `numeric(p,s)` — and a
+        // `numeric` past 76 digits — has `NaN` and nothing else.
+        K::Decimal(_) | K::Numeric { infinities: false } => "as a number, or `NaN`",
+        K::Numeric { infinities: true } => "as a number, or `NaN`, `Infinity` or `-Infinity`",
+        K::Enum(_) => "as one of the type's own declared labels",
+        K::Date => "`YYYY-MM-DD`, optionally suffixed ` BC`, or `infinity`/`-infinity`",
+        K::Time => "`HH:MM:SS`, optionally with a fractional second",
+        K::Timestamp { with_tz: false } => {
+            "`YYYY-MM-DD HH:MM:SS`, optionally with a fractional second and suffixed ` BC`, or \
+             `infinity`/`-infinity`"
+        }
+        K::Timestamp { with_tz: true } => {
+            "`YYYY-MM-DD HH:MM:SS+HH`, the offset required, optionally with a fractional second \
+             and suffixed ` BC`, or `infinity`/`-infinity`"
+        }
+        K::TimeTz => "`HH:MM:SS+HH`, the offset required, optionally with a fractional second",
+        // `interval_out` under `IntervalStyle = postgres` (I4), which is the
+        // only style a `pg_dump` connection writes.
+        K::Interval => {
+            "the way `interval` prints it — `1 year 2 mons 3 days`, `-01:00:00`, `00:00:00` for \
+             zero — or `infinity`/`-infinity`"
+        }
+        K::Network { cidr: false } => {
+            "as a full IPv4 or IPv6 address, optionally followed by `/bits`"
+        }
+        K::Network { cidr: true } => {
+            "as a full IPv4 or IPv6 address followed by `/bits`, with no bit set below the netmask"
+        }
+        K::MacAddr { octets: 8 } => "as eight colon-separated hex pairs",
+        K::MacAddr { .. } => "as six colon-separated hex pairs",
+        K::Uuid => "as 32 hex digits, grouped `8-4-4-4-12`",
+        K::Bytea => "as `\\x` followed by hex pairs",
+        K::Jsonb => "as a JSON document",
+        K::Text | K::PaddedText => "as any text",
+    }
+}
+
 /// What one term compares, settled once when the block's schema resolves
 /// rather than per row.
 #[derive(Debug, Clone)]
@@ -1381,11 +1450,16 @@ pub(crate) fn resolve_term(
     // embedder that builds a `Gt` term without one gets the same fault as an
     // unparseable literal, named the same way.
     let text = predicate.value.as_deref().unwrap_or_default();
-    let refuse_literal = || Error::PredicateValueDecode {
+    // `kind` is what knows which grammar was applied, so the refusal is built
+    // where it is in scope — which is every site that can raise it, since a
+    // column with no `Compared` plan either refuses the operator outright or
+    // falls back to a text comparison that cannot fail.
+    let refuse_literal = |kind: &CompareKind| Error::PredicateValueDecode {
         column: predicate.column.clone(),
         op: predicate.op.symbol(),
         value: text.to_string(),
         declared_type: declared_type.clone(),
+        accepted: accepted_form(kind),
     };
     let mut plan = Some(&resolved.comparisons[index]);
     if resolved.columns[index] != ColumnResolution::Mapped {
@@ -1404,10 +1478,10 @@ pub(crate) fn resolve_term(
             let comparison = if ordering {
                 Comparison::Ordered {
                     kind: kind.clone(),
-                    bound: order_key(kind, text).ok_or_else(refuse_literal)?,
+                    bound: order_key(kind, text).ok_or_else(|| refuse_literal(kind))?,
                 }
             } else {
-                equality_comparison(kind, text).ok_or_else(refuse_literal)?
+                equality_comparison(kind, text).ok_or_else(|| refuse_literal(kind))?
             };
             (comparison, divergence.filter(|d| ordering || d.affects_equality()))
         }
@@ -2544,6 +2618,26 @@ mod tests {
                 ),
                 "{declared} = {literal}"
             );
+        }
+    }
+
+    /// The refusal names the form the column's `CompareKind` reads, not only
+    /// the value it turned down — so a `boolean` is told how a `boolean` is
+    /// written rather than told that `true` is not one, and `interval`,
+    /// `inet` and `macaddr` are answered by the same sentence.
+    #[test]
+    fn a_refused_literal_names_the_form_the_column_accepts() {
+        for (declared, data_type, literal, accepted) in [
+            ("boolean", DataType::Boolean, "true", "`t` or `f`"),
+            ("interval", DataType::Utf8View, "1 month", "the way `interval` prints it"),
+            ("inet", DataType::Utf8View, "10", "a full IPv4 or IPv6 address"),
+            ("macaddr", DataType::Utf8View, "08-00-2b-01-02-03", "six colon-separated hex pairs"),
+        ] {
+            let p = order_predicate(PredicateOp::Eq, literal);
+            let message =
+                resolve_term(&p, 0, &one_column(declared, data_type), 0).unwrap_err().to_string();
+            assert!(message.contains(literal), "{declared} = {literal}: {message}");
+            assert!(message.contains(accepted), "{declared} = {literal}: {message}");
         }
     }
 

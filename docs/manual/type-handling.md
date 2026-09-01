@@ -296,17 +296,19 @@ On a `text` or `varchar` column nothing changes — the value you type is alread
 the value the file holds.
 
 **A value that is not of the column's type is refused by name**, before any row
-is read, instead of quietly matching nothing:
+is read, instead of quietly matching nothing — and the refusal says what the
+column *does* read:
 
 ```
 $ pgdq query --source dump.sql --table public.t --filter 'v_flag=true'
-Error: filter value `true` for `v_flag = ...` does not parse as the column's declared type `boolean`
+Error: filter value `true` for `v_flag = ...` does not parse as the column's declared type `boolean`, which is written `t` or `f`
 ```
 
-Write it the way the dump writes it — a `boolean` is `t` or `f`, a `timestamp`
-carries a time part (`2020-01-01 00:00:00`), an `interval` uses the spellings
-`interval` prints. Every value in the file is already in that form, so the only
-thing this rules out is a spelling you would have had to guess at anyway.
+Write it the way the dump writes it — a `timestamp` carries a time part
+(`2020-01-01 00:00:00`), an `interval` uses the spellings `interval` prints, a
+`macaddr` is colon-separated. Every value in the file is already in that form,
+so the only thing this rules out is a spelling you would have had to guess at
+anyway.
 
 **One thing `=` does not do is search.** It is exact equality against one
 column; there is no `LIKE`, no pattern and no case folding.

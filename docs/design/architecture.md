@@ -2341,14 +2341,26 @@ and one that went the whole way would inherit prefix matching — `--filter
 'flag=tr'` — a spelling nobody wants and this build would then owe forever.
 
 **What the refusal owes the user is the accepted form, and that is a diagnostic
-rather than a grammar.** `Error::PredicateValueDecode` names the value and the
-declared type, so a user who writes `true` is told it does not parse as
-`boolean` — a sentence that reads as a claim about the type rather than about
-this build's grammar, which is the one place the property is genuinely hard on
-someone. [`../manual/type-handling.md`](../manual/type-handling.md), "`=` and
-`!=` compare values, not spellings", carries the accepted forms today; naming
-the form each `CompareKind` accepts in the refusal itself is the ledger's
-`M37`, and it reaches `interval`, `inet` and `macaddr` by the same edit.
+rather than a grammar.** `Error::PredicateValueDecode` names the value, the
+declared type **and the form that column's `CompareKind` reads**, so a user who
+writes `true` is told that a `boolean` is written `t` or `f` rather than told
+that `true` does not parse as a `boolean` — the second is a claim about the
+type, where what the user is short of is this build's grammar. `interval`,
+`inet` and `macaddr`, the other three types the property is hard on, are
+answered by the same clause list.
+
+**The clause lives beside the grammar, not on the type.** `predicate.rs`'s
+`accepted_form` is one `&'static str` per `CompareKind`, filed next to
+`order_key` and `equality_comparison` — the two functions that decide what is
+accepted — rather than on `CompareKind` in `pgtype.rs`, so a widening or
+tightening has its own description on the same screen. Carrying the phrase on
+the L2 type would put the sentence a file away from the L4 code it describes,
+which is how a diagnostic goes quietly stale. `jsonb` needs the least of it,
+its literal grammar being the whole of `jsonb_in`, and `text`/`character(n)`
+need none: every string is a value of a text column, so their arm is
+unreachable and is written out rather than made a panic on a diagnostic path.
+[`../manual/type-handling.md`](../manual/type-handling.md), "`=` and `!=`
+compare values, not spellings", carries the same forms in prose.
 
 **The refusals are the rest of the table, and they are stated rather than
 listed**: every nested shape — array, composite, range, multirange — and every

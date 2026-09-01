@@ -40,9 +40,21 @@ pub enum Error {
         reason: &'static str,
     },
     #[error(
-        "filter value `{value}` for `{column} {op} ...` does not parse as the column's declared type `{declared_type}`"
+        "filter value `{value}` for `{column} {op} ...` does not parse as the column's declared type `{declared_type}`, which is written {accepted}"
     )]
-    PredicateValueDecode { column: String, op: &'static str, value: String, declared_type: String },
+    PredicateValueDecode {
+        column: String,
+        op: &'static str,
+        value: String,
+        declared_type: String,
+        /// The form the column's comparison actually reads, named so the
+        /// sentence is about this build's grammar rather than about the type:
+        /// a `boolean` is refused `true` because it is written `t` or `f`,
+        /// not because `boolean` has no such value. Supplied by
+        /// `crate::predicate::accepted_form`, which sits beside the grammar
+        /// it describes.
+        accepted: &'static str,
+    },
     #[error("projected column `{column}` not found in COPY block at offset {header_offset}")]
     UnknownProjectionColumn { header_offset: u64, column: String },
     #[error("projection names column `{column}` more than once")]
