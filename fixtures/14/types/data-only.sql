@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict 2IlYfrnys3TFiMCrGsldttgbkzivdO0SSnKsuBMADGlZEuyzqXUr0VrtBOMrUly
+\restrict QRabbZo26wefhPlqDxpaov1qbHtMTILDqXmKNGaYtTcXveuQ1CJgd0oEaOERPUw
 
 -- Dumped from database version 14.24 (Debian 14.24-1.pgdg13+2)
 -- Dumped by pg_dump version 14.24 (Debian 14.24-1.pgdg13+2)
@@ -237,6 +237,19 @@ COPY public.t_numeric (id, v_typed, v_typed39, v_small, v_untyped) FROM stdin;
 
 
 --
+-- Data for Name: t_oid; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_oid (id, v_oid) FROM stdin;
+1	0
+2	2147483647
+3	2147483648
+4	4294967295
+5	\N
+\.
+
+
+--
 -- Data for Name: t_range; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
@@ -326,5 +339,5 @@ COPY public.t_uuid (id, v_uuid) FROM stdin;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 2IlYfrnys3TFiMCrGsldttgbkzivdO0SSnKsuBMADGlZEuyzqXUr0VrtBOMrUly
+\unrestrict QRabbZo26wefhPlqDxpaov1qbHtMTILDqXmKNGaYtTcXveuQ1CJgd0oEaOERPUw
 

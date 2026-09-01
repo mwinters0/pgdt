@@ -1046,6 +1046,7 @@ almost every column in a real 75-table schema.
 | Declared type | Arrow type | Notes |
 |---|---|---|
 | `smallint`, `integer`, `bigint` | `Int16`, `Int32`, `Int64` | |
+| `oid` | `UInt32` | PostgreSQL's one unsigned integer type, and `oidout` writes `%u` (I39) — the ADBC driver's `Int32` turns every OID at or above 2^31 negative |
 | `boolean` | `Boolean` | Rendered `t` / `f` |
 | `real`, `double precision` | `Float32`, `Float64` | `extra_float_digits = 3` guarantees exact round-trip (I4). `NaN`/`Infinity`/`-Infinity` parsed explicitly — Rust accepts `inf`/`NaN`, not PostgreSQL's spellings |
 | `numeric(p,s)` | `Decimal128` (p ≤ 38), `Decimal256` (p ≤ 76) | `NaN` bypasses PostgreSQL's precision/scale check and is reachable through *any* numeric column, typed or not — a `FieldDecode`, same as the untyped column |
@@ -1074,6 +1075,37 @@ almost every column in a real 75-table schema.
 Microsecond precision throughout, because that is PostgreSQL's storage
 resolution. **Every Arrow field is nullable**, regardless of a `NOT NULL` in
 the DDL.
+
+**Two columns carry a canonical Arrow extension name**, which is the part of
+the mapping the `DataType` column above cannot hold: `uuid`'s field is stamped
+`arrow.uuid` and `json`/`jsonb`'s `arrow.json`, through any chain of domains.
+Neither changes a byte — both extensions' storage types are exactly what we
+already emit — and both let a consumer tell a UUID from sixteen arbitrary
+bytes, and JSON from any other string, without asking what the declared
+PostgreSQL type was. `pgtype.rs`'s `extension_for` is the walk (the same one
+`comparison_for` makes) and arrow-rs's own `Field::try_with_extension_type`
+does the writing, so the metadata's spelling is the crate's rather than ours —
+which matters more than it looks, since `arrow.json` requires its metadata key
+to be *present and empty* and a reader calling arrow-rs's
+`try_canonical_extension_type` rejects a field where it is absent.
+
+**Only a top-level column's field is stamped, and only while it is `Mapped`.**
+A `uuid` inside a composite or an array element keeps its
+`FixedSizeBinary(16)` unnamed: the nested `Field`s are built by this module's
+shared type constructors, and a `uuid[]` column's own field is a `List`, which
+is not a UUID. A column the census took back to `Utf8View` holds an
+`array_out` literal rather than the value its declared type names, so it
+claims nothing either. None of this is load-bearing for decoding — the name is
+a claim *about* the bytes, never an input to producing them.
+
+*Rejected: hand-writing the two `ARROW:extension:*` keys, to avoid naming
+`arrow-schema` as a dependency of its own.* `arrow::datatypes` re-exports the
+type list and not the `extension` module, so the canonical types are reachable
+only through the crate underneath — but four lines of hand-written metadata
+would also have to restate two storage-type rules and `arrow.json`'s empty
+metadata value, and getting that last one wrong produces a field arrow-rs
+itself refuses to read back. The check being upstream's `supports_data_type` is
+the point of the dependency, not a side effect of it.
 
 **Looking up a declared type is a two-way split on the qualified name** (I8).
 `pg_dump` empties `search_path`, so built-ins are written bare and
@@ -2115,6 +2147,7 @@ with the reason that names its nesting rather than with "no order defined".
 |---|---|---|---|
 | `boolean` | `Boolean` | yes — `false < true` (I33) | — |
 | `smallint`, `integer`, `bigint` | `Int16`/`Int32`/`Int64` | yes | — |
+| `oid` | `UInt32` | yes, over every value a column can hold — `oidgt` is C's `>` on two unsigned `Oid`s and so is this (I39). A filter *literal* carrying a minus sign is refused rather than wrapped the way `oidin` wraps it (`-1` is 4294967295 at every major from 13): a refusal the user can see, not a comparison that means something else | — |
 | `real`, `double precision` | `Float32`/`Float64` | yes, **given the NaN rule** — `NaN` is above every value including infinity and equals itself (I33), which is neither IEEE's answer nor Rust's | — |
 | `numeric(p,s)`, `p ≤ 76` | `Decimal128`/`Decimal256` | yes — both sides carry the column's own scale, because the literal is decoded with the column's own decoder, and `NaN` orders above every other value (I34) | — |
 | `date` | `Date32` | yes — `infinity` and `-infinity` included (I34) | — |

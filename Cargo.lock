@@ -232,6 +232,10 @@ name = "arrow-schema"
 version = "59.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6fed2ca0d1eade57e811cbe73b98ad50cc08a1183e13b2d2aa43a7df593f40e"
+dependencies = [
+ "serde_core",
+ "serde_json",
+]
 
 [[package]]
 name = "arrow-select"
@@ -961,6 +965,7 @@ name = "pgdump_query"
 version = "0.1.0"
 dependencies = [
  "arrow",
+ "arrow-schema",
  "async-stream",
  "bincode",
  "bytes",

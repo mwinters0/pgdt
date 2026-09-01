@@ -9,6 +9,9 @@
 use std::sync::Arc;
 
 use arrow::datatypes::{DataType, Field, Fields};
+// The canonical extension types live in `arrow-schema`, which `arrow`'s own
+// `datatypes` re-export does not cover — see `CanonicalExtension`.
+use arrow_schema::extension::{Json, Uuid};
 
 use crate::copy::Cursor;
 use crate::preamble::{TypeDef, TypeKind};
@@ -122,12 +125,20 @@ pub enum NestedPlan {
 pub enum CompareKind {
     Bool,
     Int,
+    /// An unsigned 32-bit integer — `oid`. Held apart from [`Self::Int`]
+    /// because the two differ on a *literal* carrying a minus sign, which
+    /// `oidin` wraps and this refuses: the values order identically, so
+    /// sharing the arm would order correctly and accept a literal it must
+    /// not.
+    UnsignedInt,
     Float32,
     Float64,
     Decimal(i8),
     Date,
     Time,
-    Timestamp { with_tz: bool },
+    Timestamp {
+        with_tz: bool,
+    },
     Uuid,
     Bytea,
     Text,
@@ -343,6 +354,21 @@ fn builtin_scalar(
         "smallint" => (Int16, agrees(K::Int)),
         "integer" => (Int32, agrees(K::Int)),
         "bigint" => (Int64, agrees(K::Int)),
+        // `oidout` is `snprintf("%u")`, so the file holds an unsigned 32-bit
+        // integer and `UInt32` is what it says (I39). The ADBC PostgreSQL
+        // driver maps `oid` to `Int32`, which misreads every OID at or above 2^31 —
+        // the floor rule permits a different type, never a wider one, and a
+        // narrower reading of the same bytes is not what this is.
+        //
+        // `UnsignedInt`, not `Int`, and the difference is only ever visible
+        // on a filter's literal: `oidin` accepts a leading minus and wraps
+        // (`-1` is 4294967295 on every major from 13 — I39), where this refuses the
+        // literal with `Error::PredicateValueDecode`. Refusing is what keeps
+        // the row honest — the wrap is an input-grammar behaviour this build
+        // does not implement, and reading `-1` as −1 would be a wrong answer
+        // where this is merely a weaker one. No *field* is affected: no dump
+        // ever writes a signed OID.
+        "oid" => (UInt32, agrees(K::UnsignedInt)),
         // `false < true`, PostgreSQL's own boolean order.
         "boolean" => (Boolean, agrees(K::Bool)),
         // IEEE's three specials are representable and `pg_float_cmp` orders
@@ -383,6 +409,95 @@ fn builtin_scalar(
         "inet" | "cidr" | "macaddr" | "macaddr8" => (Utf8View, text),
         _ => return None,
     })
+}
+
+/// A canonical Arrow extension type one of our columns claims — the *name*
+/// half of the mapping, which the Arrow type alone cannot carry
+/// (`docs/design/architecture.md`, "Type resolution").
+///
+/// Two of them exist for us, because the Arrow spec defines two whose storage
+/// type is already what we emit: `arrow.uuid` over `FixedSizeBinary(16)`, and
+/// `arrow.json` over `Utf8View`. Neither changes a column's Arrow type or a
+/// single byte of its data; both let a consumer tell a UUID from sixteen
+/// arbitrary bytes, and JSON from any other string, without asking us what the
+/// declared PostgreSQL type was.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CanonicalExtension {
+    /// `arrow.uuid`, over `FixedSizeBinary(16)`.
+    Uuid,
+    /// `arrow.json`, over `Utf8` / `LargeUtf8` / `Utf8View`.
+    Json,
+}
+
+impl CanonicalExtension {
+    /// Stamp `field` with this extension's `ARROW:extension:*` metadata.
+    ///
+    /// **arrow-rs's own types do the writing, and its `supports_data_type`
+    /// does the checking.** Hand-writing the two metadata keys would be four
+    /// lines and would get `arrow.json` subtly wrong: its metadata key must be
+    /// *present and empty*, and a reader calling arrow-rs's
+    /// `Field::try_canonical_extension_type` rejects the field outright when
+    /// it is absent. So the spelling comes from the crate that defines it.
+    ///
+    /// The `expect` is by construction: [`extension_for`] answers `Some` only
+    /// where it walked to the same base name [`builtin_scalar`] maps to that
+    /// extension's storage type, and both walks are the one in
+    /// [`resolve_declared_type`]. `the_extension_names_fit_their_storage_type`
+    /// is the test that keeps the two in step.
+    fn apply(self, mut field: Field) -> Field {
+        let stamped = match self {
+            Self::Uuid => field.try_with_extension_type(Uuid),
+            Self::Json => field.try_with_extension_type(Json::default()),
+        };
+        stamped.expect("an extension is only ever named for a type mapped to its storage type");
+        field
+    }
+}
+
+/// The canonical Arrow extension a **column** of `declared` carries, if any.
+///
+/// The walk is [`comparison_for`]'s: an array first — an extension names the
+/// element type, not the column's, and stamping the column's own field would
+/// claim the list *is* a UUID — then a `.`-qualified user type, where only a
+/// domain can bottom out at a built-in, then the built-in name itself.
+///
+/// **Only a top-level column's field is stamped.** A `uuid` inside a composite
+/// or an array element keeps its `FixedSizeBinary(16)` with no name on it: the
+/// nested `Field`s are built inside this module's type constructors, which are
+/// shared by every position, and a value read through `record_out`/`array_out`
+/// is reachable through the declared type anyway. Nothing here is load-bearing
+/// for decoding — the metadata is a claim about the bytes, never an input to
+/// producing them.
+pub fn extension_for(declared: &str, types: &[TypeDef]) -> Option<CanonicalExtension> {
+    let declared = declared.trim();
+    if array_element(declared).is_some() {
+        return None;
+    }
+    let (base, _) = split_typmod(declared);
+    if base.contains('.') {
+        // A domain is the only user-defined kind that can reach a built-in;
+        // an enum, composite, range or opaque base type maps to a type no
+        // canonical extension names.
+        let TypeKind::Domain { base_type, .. } = &types.iter().find(|t| t.name == base)?.kind
+        else {
+            return None;
+        };
+        return extension_for(base_type, types);
+    }
+    match base.to_ascii_lowercase().as_str() {
+        "uuid" => Some(CanonicalExtension::Uuid),
+        "json" | "jsonb" => Some(CanonicalExtension::Json),
+        _ => None,
+    }
+}
+
+/// [`extension_for`], applied — the one call site's whole job, kept here so
+/// that `apply` need not be public.
+pub(crate) fn with_extension(field: Field, declared: &str, types: &[TypeDef]) -> Field {
+    match extension_for(declared, types) {
+        Some(extension) => extension.apply(field),
+        None => field,
+    }
 }
 
 /// The built-in half of "Type mapping"'s table: [`builtin_scalar`], plus
@@ -854,6 +969,18 @@ mod tests {
         assert_eq!(
             resolve_declared_type("uuid", &[]),
             TypeOutcome::Mapped(DataType::FixedSizeBinary(16), NestedPlan::Scalar)
+        );
+    }
+
+    /// `oid` is PostgreSQL's one unsigned integer type, and the width is the
+    /// point: the ADBC driver reads the *binary* wire format into `Int32`,
+    /// which turns every OID at or above 2^31 negative. `oidout` writes
+    /// `%u`, so the text says what it says.
+    #[test]
+    fn oid_is_unsigned() {
+        assert_eq!(
+            resolve_declared_type("oid", &[]),
+            TypeOutcome::Mapped(DataType::UInt32, NestedPlan::Scalar)
         );
     }
 
@@ -1340,6 +1467,93 @@ mod tests {
         assert_eq!(resolve_declared_type("public.nope", &[]), TypeOutcome::Unknown);
     }
 
+    // -- the canonical extension names -------------------------------------
+
+    /// The table the extension names are keyed on, and the storage type each
+    /// requires. Kept beside the tests so both directions read it.
+    const EXTENSIONS: [(&str, CanonicalExtension, DataType); 3] = [
+        ("uuid", CanonicalExtension::Uuid, DataType::FixedSizeBinary(16)),
+        ("json", CanonicalExtension::Json, DataType::Utf8View),
+        ("jsonb", CanonicalExtension::Json, DataType::Utf8View),
+    ];
+
+    /// **The join that keeps `extension_for` and `builtin_scalar` in step.**
+    /// The two are separate walks of the same string, so the failure to guard
+    /// against is one of them moving: a `uuid` remapped away from
+    /// `FixedSizeBinary(16)` would make `apply`'s `expect` a panic on a real
+    /// dump. `try_with_extension_type` is arrow-rs's own
+    /// `supports_data_type`, so what this asserts is the crate's rule and not
+    /// a restatement of it.
+    #[test]
+    fn the_extension_names_fit_their_storage_type() {
+        for (declared, extension, storage) in EXTENSIONS {
+            assert_eq!(extension_for(declared, &[]), Some(extension), "{declared}");
+            assert_eq!(
+                builtin_scalar(declared, None, None).map(|(dt, _)| dt),
+                Some(storage.clone()),
+                "{declared}"
+            );
+            let field = extension.apply(Field::new("v", storage, true));
+            assert!(
+                field.try_canonical_extension_type().is_ok(),
+                "{declared}: arrow-rs must read back what we wrote"
+            );
+        }
+    }
+
+    /// The names themselves, in the metadata a consumer reads. `arrow.json`
+    /// carries an empty metadata value and `arrow.uuid` carries none, which
+    /// is the difference hand-writing the two keys would get wrong.
+    #[test]
+    fn the_extension_metadata_is_the_canonical_spelling() {
+        let uuid =
+            with_extension(Field::new("v", DataType::FixedSizeBinary(16), true), "uuid", &[]);
+        assert_eq!(
+            uuid.metadata().get("ARROW:extension:name").map(String::as_str),
+            Some("arrow.uuid")
+        );
+        assert_eq!(uuid.metadata().get("ARROW:extension:metadata"), None);
+
+        let json = with_extension(Field::new("v", DataType::Utf8View, true), "jsonb", &[]);
+        assert_eq!(
+            json.metadata().get("ARROW:extension:name").map(String::as_str),
+            Some("arrow.json")
+        );
+        assert_eq!(json.metadata().get("ARROW:extension:metadata").map(String::as_str), Some(""));
+    }
+
+    /// A domain bottoms out at the extension its base type names, through any
+    /// chain — the same recursion `resolve_declared_type` makes, so the two
+    /// cannot disagree about what a domain column holds.
+    #[test]
+    fn a_domain_over_uuid_carries_the_name() {
+        let types = [
+            ty("public.d_uuid", TypeKind::Domain { base_type: "uuid".into(), collation: None }),
+            ty(
+                "public.d_deep",
+                TypeKind::Domain { base_type: "public.d_uuid".into(), collation: None },
+            ),
+        ];
+        assert_eq!(extension_for("public.d_deep", &types), Some(CanonicalExtension::Uuid));
+    }
+
+    /// Everything that carries no name, and the array is the one worth
+    /// stating: `uuid[]` is a `List<FixedSizeBinary(16)>`, and `arrow.uuid`
+    /// on the column's own field would claim the *list* is a UUID.
+    #[test]
+    fn nothing_else_carries_a_name() {
+        let types = [
+            ty("public.mood", TypeKind::Enum { labels: vec!["sad".into()] }),
+            ty("public.d_int", TypeKind::Domain { base_type: "integer".into(), collation: None }),
+        ];
+        for declared in ["uuid[]", "json[]", "text", "integer", "public.mood", "public.d_int"] {
+            assert_eq!(extension_for(declared, &types), None, "{declared}");
+        }
+        // A `.`-qualified name the dump never declared resolves to nothing at
+        // all, so it certainly names no extension.
+        assert_eq!(extension_for("public.nope", &types), None);
+    }
+
     // -- the comparison register ------------------------------------------
 
     fn agrees(kind: CompareKind) -> ComparisonPlan {
@@ -1365,6 +1579,7 @@ mod tests {
             ("smallint", agrees(K::Int)),
             ("integer", agrees(K::Int)),
             ("bigint", agrees(K::Int)),
+            ("oid", agrees(K::UnsignedInt)),
             ("boolean", agrees(K::Bool)),
             ("real", agrees(K::Float32)),
             ("double precision", agrees(K::Float64)),

@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict Hw9D6WoP7QjCvH2WrxQwKrGFanS65Cuce5LIbn456VnnYZCMZ1pMC8x8YP6WRcO
+\restrict 0J5ruAKYFVcVOHffeel3aen4SAz2NkyOB9g6hzzhu34lGoR3J2k7ekl6Ln5vxhz
 
 -- Dumped from database version 13.23 (Debian 13.23-1.pgdg13+1)
 -- Dumped by pg_dump version 13.23 (Debian 13.23-1.pgdg13+1)
@@ -539,8 +539,8 @@ COPY objects.widget_audit (widget_id, changed_at) FROM stdin;
 --
 
 COPY objects.widgets (id, label, created_at) FROM stdin;
-1	alpha	2026-08-31 22:49:15.021522+00
-2	beta	2026-08-31 22:49:15.021522+00
+1	alpha	2026-08-31 23:52:44.748302+00
+2	beta	2026-08-31 23:52:44.748302+00
 \.
 
 
@@ -786,5 +786,5 @@ REFRESH MATERIALIZED VIEW objects.widget_totals;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict Hw9D6WoP7QjCvH2WrxQwKrGFanS65Cuce5LIbn456VnnYZCMZ1pMC8x8YP6WRcO
+\unrestrict 0J5ruAKYFVcVOHffeel3aen4SAz2NkyOB9g6hzzhu34lGoR3J2k7ekl6Ln5vxhz
 

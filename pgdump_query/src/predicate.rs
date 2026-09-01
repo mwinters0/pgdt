@@ -257,6 +257,13 @@ fn order_key(kind: CompareKind, text: &str) -> Option<OrderKey> {
         // column can hold, and refusing it would be a refusal PostgreSQL's
         // own comparison does not need to make.
         CompareKind::Int => OrderKey::Int(text.parse::<i64>().ok()?),
+        // `u32`, and the width *is* the refusal: `oidin` reads `-1` as
+        // 4294967295 and this build does not implement that wrap, so a
+        // signed literal is `Error::PredicateValueDecode` rather than a
+        // negative key no OID could equal. Every value the column can hold
+        // widens into `i64` and orders against the rest of the key space
+        // unchanged.
+        CompareKind::UnsignedInt => OrderKey::Int(text.parse::<u32>().ok()?.into()),
         CompareKind::Float32 => OrderKey::Float(f64::from(decode::decode_f32(text)?)),
         CompareKind::Float64 => OrderKey::Float(decode::decode_f64(text)?),
         CompareKind::Decimal(scale) => {
@@ -673,6 +680,31 @@ mod tests {
     fn integers_order_numerically_not_lexicographically() {
         assert!(ordered("integer", DataType::Int32, PredicateOp::Gt, "9", "10").unwrap());
         assert!(!ordered("integer", DataType::Int32, PredicateOp::Lt, "9", "10").unwrap());
+    }
+
+    /// An `oid` is unsigned across its whole range: `4294967295` is above
+    /// `2147483648`, which an `Int32` reading of the same bytes would make
+    /// two negative numbers.
+    #[test]
+    fn an_oid_orders_over_the_whole_unsigned_range() {
+        let oid = |op, value, field| ordered("oid", DataType::UInt32, op, value, field).unwrap();
+        assert!(oid(PredicateOp::Gt, "2147483648", "4294967295"));
+        assert!(oid(PredicateOp::Lt, "2147483648", "0"));
+        assert!(oid(PredicateOp::Ge, "4294967295", "4294967295"));
+    }
+
+    /// `oidin` reads a signed literal by wrapping it — `-1` is 4294967295 —
+    /// and this build does not implement that. The literal is refused rather
+    /// than read as −1, which no OID could equal: a weaker answer, never a
+    /// wrong one.
+    #[test]
+    fn a_signed_oid_literal_is_refused_rather_than_wrapped() {
+        let p = order_predicate(PredicateOp::Lt, "-1");
+        let err = resolve_term(&p, 0, &one_column("oid", DataType::UInt32), 0).unwrap_err();
+        assert!(
+            matches!(err, Error::PredicateValueDecode { ref column, .. } if column == "v"),
+            "{err:?}"
+        );
     }
 
     /// A `numeric(10,2)` literal and field are both taken to the column's

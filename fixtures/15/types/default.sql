@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict IAxfMzZBUMjGuXYp9S02CqTkHCZrvcF9picoO8N3wOYkqE74gpPlsoX4eua8JSm
+\restrict QaqOr0chfAa3rFr3Zv19oN8XmfJHA7pmnqWy25u9CYuHiRFR17nrVLkIYIf8tWV
 
 -- Dumped from database version 15.19 (Debian 15.19-1.pgdg13+2)
 -- Dumped by pg_dump version 15.19 (Debian 15.19-1.pgdg13+2)
@@ -514,6 +514,18 @@ CREATE TABLE public.t_numeric (
 ALTER TABLE public.t_numeric OWNER TO postgres;
 
 --
+-- Name: t_oid; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.t_oid (
+    id integer NOT NULL,
+    v_oid oid
+);
+
+
+ALTER TABLE public.t_oid OWNER TO postgres;
+
+--
 -- Name: t_range; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -820,6 +832,19 @@ COPY public.t_numeric (id, v_typed, v_typed39, v_small, v_untyped) FROM stdin;
 
 
 --
+-- Data for Name: t_oid; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_oid (id, v_oid) FROM stdin;
+1	0
+2	2147483647
+3	2147483648
+4	4294967295
+5	\N
+\.
+
+
+--
 -- Data for Name: t_range; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
@@ -1050,6 +1075,14 @@ ALTER TABLE ONLY public.t_numeric
 
 
 --
+-- Name: t_oid t_oid_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.t_oid
+    ADD CONSTRAINT t_oid_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: t_range t_range_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -1109,5 +1142,5 @@ ALTER TABLE ONLY public.t_uuid
 -- PostgreSQL database dump complete
 --
 
-\unrestrict IAxfMzZBUMjGuXYp9S02CqTkHCZrvcF9picoO8N3wOYkqE74gpPlsoX4eua8JSm
+\unrestrict QaqOr0chfAa3rFr3Zv19oN8XmfJHA7pmnqWy25u9CYuHiRFR17nrVLkIYIf8tWV
 

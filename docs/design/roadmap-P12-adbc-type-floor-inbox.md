@@ -28,14 +28,13 @@ is the more useful bottom — nobody can read ADBC's `inet`, and anybody can rea
 `192.168.1.0/24`. Scope the rule to ADBC's *non-opaque* answers, or it reads as
 a demand to emit bytes a text dump does not contain.
 
-## The delta, as of `be5f50f08`: five types, and four of them are not cheap
+## The delta, as of `be5f50f08`: four types, and none of them is cheap
 
 **Fact.** Comparing `SetSchema` against `builtin_scalar`, we already meet or
 beat the floor everywhere except these:
 
 | Type | ADBC | Us | What it costs |
 |---|---|---|---|
-| `oid` | `Int32` | `Utf8View` | Nothing — see below; not this phase's |
 | `regproc` | `Int32` | `Utf8View` | Not a floor row at all — see below |
 | `money` | `Int64` | `Utf8View` | Blocked by the bar — see below |
 | `interval` | `Interval(MonthDayNano)` | `Utf8View` | An invariant, and a collision with P11.5 |
@@ -44,6 +43,10 @@ beat the floor everywhere except these:
 And we are already **narrower** than the floor for `numeric(p,s)` (decimal vs.
 their string), enums (dictionary vs. their string), and ranges and multiranges
 (struct and list-of-struct vs. their opaque bytes).
+
+`oid` was the fifth row and is gone: it maps to `UInt32` under the existing
+bar, which is narrower than ADBC's `Int32` rather than wider, and it landed as
+`M29` during P11's run.
 
 **Why this phase cares.** It sizes the phase honestly: the mapping table barely
 moves, so the work is the rule, the oracle that checks it, and two types with
@@ -126,11 +129,17 @@ as its Arrow type — was answered by the maintainer before this phase was
 grilled: **it does**. What that obliges is wider than the three columns that
 prompted it:
 
-- `arrow.uuid` and `arrow.json` are cheap and leave with the out-of-band item
-  described in the roadmap section. Neither changes a type: `arrow.uuid`'s
-  storage type is `FixedSizeBinary(16)` and `arrow.json`'s is `Utf8`,
-  `LargeUtf8` or **`Utf8View`**, which is what we already emit for both — the
-  arrow-rs 59.2.0 `supports_data_type` implementations are the check.
+- `arrow.uuid` and `arrow.json` were the cheap half and are **already landed**
+  (`M29`), on a column's own field only: neither changes a type, since
+  `arrow.uuid`'s storage type is `FixedSizeBinary(16)` and `arrow.json`'s is
+  `Utf8`, `LargeUtf8` or **`Utf8View`**, which is what we already emit for
+  both. arrow-rs's `supports_data_type` is what checks that, and the
+  `arrow-schema` dependency that carries it is in place — so this phase's
+  metadata work has the mechanism to extend rather than to build
+  ([`architecture.md`](architecture.md), "Type resolution"). What that landing
+  did **not** settle is nested positions: a `uuid` inside a composite or an
+  array element carries no name, deliberately, and whether the floor reaches
+  there is this phase's to decide.
 - ADBC writes `POSTGRESQL:type` — the `typname` — on **every** non-root field,
   not only the ones it cannot model (`AddTypeMetadata`, called unconditionally
   at the end of `SetSchema`). So under the decided rule every column we emit is

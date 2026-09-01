@@ -2006,8 +2006,8 @@ fixture containers, `datcollate` `en_US.utf8`, `collversion` 2.41 — so it does
 not speak for a musl deployment, which orders the same locale bytewise
 ([`architecture.md`](architecture.md), "The comparison oracle").
 
-**Proof.** Measured, not argued: `fixtures/<13…18>/oracle/` holds 1745
-comparisons and 291 literals per major as the server itself answered them, and
+**Proof.** Measured, not argued: `fixtures/<13…18>/oracle/` holds 1776
+comparisons and 299 literals per major as the server itself answered them, and
 `fixtures/oracle-differences.tsv` holds every cell that moved between adjacent
 majors — 509 of them, all additive. The three transitions that exist are the
 ones the release notes would have named: `numeric`'s infinities and the two
@@ -2259,4 +2259,84 @@ grep -n -A12 '^bpcharcmp' \
 grep -n -A6 'bpchartruelen(char' \
   /mnt/wd12t/upstream/postgres/release-v<N>/src/backend/utils/adt/varchar.c
 grep -A4 'COPY public.t_text ' fixtures/16/types/default.sql | cat -A
+```
+
+---
+
+## I39 — `oid` is unsigned in the file and in the order, and the server reads a signed literal by wrapping it
+
+**Claim.** Three properties of PostgreSQL's `oid`, which is `unsigned int`
+(`typedef unsigned int Oid`, `src/include/postgres_ext.h`):
+
+- **In the file** — `oidout` is `snprintf(result, 12, "%u", o)`, so a `COPY`
+  block writes an OID as unsigned decimal digits with no sign, whatever its
+  value. `4294967295` is what the file holds, never `-1`.
+- **In the order** — `oidlt`/`oidgt` are C's `<`/`>` on two `Oid`s, hence
+  unsigned comparison, and `oid_cmp` is the same three-way. So the order over
+  the whole range is the numeric order of the digits the file holds.
+- **On input** — `oidin` accepts a leading minus and **wraps** it: `strtoul`
+  is allowed to return a value that does not fit, and the branch commented
+  *"For backwards compatibility, we want to accept inputs that are given with
+  a minus sign"* keeps it when it matches after signed extension. `'-1'::oid`
+  is 4294967295.
+
+**Proof.** `src/backend/utils/adt/oid.c`:
+
+```c
+Oid			o = PG_GETARG_OID(0);
+char	   *result = (char *) palloc(12);
+snprintf(result, 12, "%u", o);
+```
+
+```c
+oidgt(PG_FUNCTION_ARGS)
+{
+	Oid			arg1 = PG_GETARG_OID(0);
+	Oid			arg2 = PG_GETARG_OID(1);
+	PG_RETURN_BOOL(arg1 > arg2);
+}
+```
+
+The input wrap is `oidin_subr`'s
+
+```c
+	if (cvt != (unsigned long) result &&
+		cvt != (unsigned long) ((int) result))
+```
+
+which is in `oid.c` at v13–v15 and moved verbatim into `numutils.c`'s
+`uint32in_subr` at v16, where `oidin` now delegates. It is also in master.
+The oracle records the behaviour rather than the source:
+`fixtures/<13…18>/oracle/literals.tsv` carries `oid  -1  ok  4294967295` at all
+six majors.
+
+**Scope limit.** The v16 move changed the `strtoul` base from 10 to **0**, so
+`0x2a` is accepted as an OID from v16 and rejected below it. That affects
+which literals the *server* takes, not the file's spelling and not the order;
+no oracle case asks for one.
+
+**Verified against.** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 — all six
+carry the `oidout` and `oidgt` bodies quoted above verbatim, and all six carry
+the minus-sign branch (in `oid.c` up to v15, `numutils.c` from v16).
+
+**Relied on by.** `oid`'s `UInt32` mapping and its `CompareKind::UnsignedInt`
+comparison in `pgtype.rs` — [`architecture.md`](architecture.md), "Type
+resolution" and "Ordering operators compare typed". The third property is why
+a signed filter literal is refused there rather than compared: this build does
+not implement the wrap, and a refusal the user can see beats a comparison that
+silently means something else.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n 'snprintf(result, 12, "%u", o)' src/backend/utils/adt/oid.c
+awk '/^oidgt\(PG_FUNCTION_ARGS\)/,/^}/' src/backend/utils/adt/oid.c
+grep -rn 'cvt != (unsigned long) ((int) result)' src/backend/utils/adt/
+```
+
+and, from the repo root, the behaviour the source predicts:
+
+```sh
+grep -P '^oid\t-1\t' fixtures/*/oracle/literals.tsv
 ```

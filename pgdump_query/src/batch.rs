@@ -20,13 +20,13 @@ use arrow::array::builder::{
     BinaryBuilder, BooleanBuilder, Date32Builder, Decimal128Builder, Decimal256Builder,
     FixedSizeBinaryBuilder, Float32Builder, Float64Builder, Int16Builder, Int32Builder,
     Int64Builder, StringDictionaryBuilder, StringViewBuilder, Time64MicrosecondBuilder,
-    TimestampMicrosecondBuilder,
+    TimestampMicrosecondBuilder, UInt32Builder,
 };
 use arrow::array::{
     Array, ArrayRef, BinaryArray, BooleanArray, Date32Array, Decimal128Array, Decimal256Array,
     DictionaryArray, FixedSizeBinaryArray, Float32Array, Float64Array, Int16Array, Int32Array,
     Int64Array, ListArray, RecordBatch, RecordBatchOptions, StringArray, StringViewArray,
-    StructArray, Time64MicrosecondArray, TimestampMicrosecondArray,
+    StructArray, Time64MicrosecondArray, TimestampMicrosecondArray, UInt32Array,
 };
 use arrow::buffer::{Buffer, NullBuffer, OffsetBuffer, ScalarBuffer};
 use arrow::datatypes::{DataType, FieldRef, Fields, Int32Type, SchemaRef, TimeUnit};
@@ -222,6 +222,8 @@ enum ColumnBuilder {
     Int16(Int16Builder),
     Int32(Int32Builder),
     Int64(Int64Builder),
+    /// `oid`, and nothing else: PostgreSQL's only unsigned integer type.
+    UInt32(UInt32Builder),
     Float32(Float32Builder),
     Float64(Float64Builder),
     Date32(Date32Builder),
@@ -287,6 +289,7 @@ fn builder_len(builder: &ColumnBuilder) -> usize {
         ColumnBuilder::Int16(b) => b.len(),
         ColumnBuilder::Int32(b) => b.len(),
         ColumnBuilder::Int64(b) => b.len(),
+        ColumnBuilder::UInt32(b) => b.len(),
         ColumnBuilder::Float32(b) => b.len(),
         ColumnBuilder::Float64(b) => b.len(),
         ColumnBuilder::Date32(b) => b.len(),
@@ -364,6 +367,7 @@ fn new_column_builder(data_type: &DataType, plan: &NestedPlan) -> ColumnBuilder 
         DataType::Int16 => ColumnBuilder::Int16(Int16Builder::new()),
         DataType::Int32 => ColumnBuilder::Int32(Int32Builder::new()),
         DataType::Int64 => ColumnBuilder::Int64(Int64Builder::new()),
+        DataType::UInt32 => ColumnBuilder::UInt32(UInt32Builder::new()),
         DataType::Float32 => ColumnBuilder::Float32(Float32Builder::new()),
         DataType::Float64 => ColumnBuilder::Float64(Float64Builder::new()),
         DataType::Date32 => ColumnBuilder::Date32(Date32Builder::new()),
@@ -404,6 +408,7 @@ fn append_null(builder: &mut ColumnBuilder) {
         ColumnBuilder::Int16(b) => b.append_null(),
         ColumnBuilder::Int32(b) => b.append_null(),
         ColumnBuilder::Int64(b) => b.append_null(),
+        ColumnBuilder::UInt32(b) => b.append_null(),
         ColumnBuilder::Float32(b) => b.append_null(),
         ColumnBuilder::Float64(b) => b.append_null(),
         ColumnBuilder::Date32(b) => b.append_null(),
@@ -579,6 +584,9 @@ fn append_typed(builder: &mut ColumnBuilder, text: &str) -> std::result::Result<
         ColumnBuilder::Int16(b) => b.append_value(text.parse::<i16>().map_err(|_| fail())?),
         ColumnBuilder::Int32(b) => b.append_value(text.parse::<i32>().map_err(|_| fail())?),
         ColumnBuilder::Int64(b) => b.append_value(text.parse::<i64>().map_err(|_| fail())?),
+        // `u32`: `oidout` writes `%u`, so a field carrying a sign is the file
+        // contradicting its own DDL, same as any other undecodable field.
+        ColumnBuilder::UInt32(b) => b.append_value(text.parse::<u32>().map_err(|_| fail())?),
         ColumnBuilder::Float32(b) => b.append_value(decode::decode_f32(text).ok_or_else(fail)?),
         ColumnBuilder::Float64(b) => b.append_value(decode::decode_f64(text).ok_or_else(fail)?),
         ColumnBuilder::Date32(b) => b.append_value(decode::decode_date32(text).ok_or_else(fail)?),
@@ -615,6 +623,7 @@ fn finish_column(builder: &mut ColumnBuilder) -> ArrayRef {
         ColumnBuilder::Int16(b) => Arc::new(b.finish()) as ArrayRef,
         ColumnBuilder::Int32(b) => Arc::new(b.finish()) as ArrayRef,
         ColumnBuilder::Int64(b) => Arc::new(b.finish()) as ArrayRef,
+        ColumnBuilder::UInt32(b) => Arc::new(b.finish()) as ArrayRef,
         ColumnBuilder::Float32(b) => Arc::new(b.finish()) as ArrayRef,
         ColumnBuilder::Float64(b) => Arc::new(b.finish()) as ArrayRef,
         ColumnBuilder::Date32(b) => Arc::new(b.finish()) as ArrayRef,
@@ -982,6 +991,9 @@ pub fn render_field(column: &dyn Array, row: usize, plan: &NestedPlan) -> Option
         }
         DataType::Int64 => {
             column.as_any().downcast_ref::<Int64Array>().unwrap().value(row).to_string()
+        }
+        DataType::UInt32 => {
+            column.as_any().downcast_ref::<UInt32Array>().unwrap().value(row).to_string()
         }
         DataType::Float32 => {
             decode::render_f32(column.as_any().downcast_ref::<Float32Array>().unwrap().value(row))

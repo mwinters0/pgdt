@@ -84,6 +84,29 @@ async fn each_agreeing_type_orders_by_its_own_decoder() {
     );
 }
 
+/// An `oid` orders over its whole unsigned range, against the fixture's own
+/// values: the two above 2^31 are the pair an `Int32` reading turns negative,
+/// which would put them *below* zero instead of above it. A signed literal is
+/// refused rather than wrapped the way `oidin` wraps it, which is the one
+/// place this row is weaker than the server rather than equal to it.
+#[tokio::test]
+async fn an_oid_orders_unsigned_and_refuses_a_signed_literal() {
+    assert_eq!(
+        kept("public.t_oid", "v_oid", vec![term("v_oid", PredicateOp::Gt, "2147483647")]).await,
+        [Some("2147483648".to_string()), Some("4294967295".to_string())]
+    );
+    let err = drain(
+        "public.t_oid",
+        QueryOptions { filters: vec![term("v_oid", PredicateOp::Lt, "-1")], ..Default::default() },
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(err, Error::PredicateValueDecode { ref column, .. } if column == "v_oid"),
+        "{err:?}"
+    );
+}
+
 /// A `numeric(p,s)` literal is taken to the column's own scale before
 /// comparing, so `-1.5` and the stored `-1.50` are one value — the property
 /// that makes the `Decimal` register row unconditional.

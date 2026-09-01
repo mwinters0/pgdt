@@ -420,8 +420,8 @@ What that obliges is larger than it first looks — ADBC writes a
 `type_name` and `vendor_name`) on every field it cannot model — so carrying the
 declared PostgreSQL type name on every column is this phase's, and the question
 of whether a column holding readable text may honestly claim `arrow.opaque`,
-whose meaning is *cannot interpret*, comes with it. Only the two canonical
-extension names that need no such decision go out early with the item below.
+whose meaning is *cannot interpret*, comes with it. The two canonical extension
+names that need no such decision are already out, as `M29`.
 
 **Scheduled after P11, ahead of P10 and P6; its position relative to P7 is
 free.** After P11 because `builtin_scalar` answers "which Arrow type" and "how
@@ -434,14 +434,14 @@ because "the schema you get is at least as good as ADBC's" is an
 embedder-facing promise, and P6 is the phase that presents promises over
 mechanisms that have stopped moving.
 
-**Three things are deliberately not this phase's**, and go in as out-of-band
-work during P11's run rather than waiting: `oid`, which maps to an unsigned
-integer under the existing bar, and the `arrow.json` and `arrow.uuid` extension
-names, which attach to types we already emit and are validated against exactly
-those storage types. See
-[`../status/history/2026-08-31.md`](../status/history/2026-08-31.md), "Queued:
-`oid`, and the two canonical extension names". Everything else the survey turned
-up needs a decision this phase has not made yet.
+**Three of the survey's rows were never this phase's**, and landed as
+out-of-band work during P11's run rather than waiting: `oid`, which maps to an
+unsigned integer under the existing bar, and the `arrow.json` and `arrow.uuid`
+extension names, which attach to types we already emit and are validated
+against exactly those storage types. That is `M29` in the ledger below; see
+[`../status/history/2026-08-31.md`](../status/history/2026-08-31.md), "`oid`,
+and the two canonical extension names". Everything else the survey turned up
+needs a decision this phase has not made yet.
 
 ## P10 — Per-row-group column statistics
 
@@ -700,6 +700,7 @@ the first item to land after this keystone.
 | # | Date | What changed | Why |
 |---|---|---|---|
 | `M28` | 2026-08-31 | `DumpMetadata::types` holds one entry per type, not one per `CREATE TYPE`: a definition replaces an entry of the same name and a shell never replaces a completion (I11), so `TypeKind::Base` is reachable, the reconciliation's restated walk and the library's agree on where `public.mybase` lands, and `pgdq info`'s `user-defined types` counts a completed base type once | [`../status/history/2026-08-31.md`](../status/history/2026-08-31.md) |
+| `M29` | 2026-08-31 | `oid` maps to `UInt32` and compares unsigned, with a `public.t_oid` fixture column and an oracle case behind it, and a `uuid`/`json`/`jsonb` column's field carries its canonical Arrow extension name — the three rows of the ADBC floor that need no decision `P12` has not made | [`../status/history/2026-08-31.md`](../status/history/2026-08-31.md) |
 
 **One live obligation outlived them.** An `INSERT`-run scan costs
 **mid-teens times** a `COPY` scan per byte, CPU-bound, which argues for a scanner-level `INSERT`

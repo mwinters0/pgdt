@@ -88,6 +88,17 @@ can choose what to do with the values that do not fit.
 
 Precision above 76 digits also falls back to a string (`Decimal256`'s limit).
 
+### `oid` is unsigned
+
+PostgreSQL's `oid` is a 32-bit *unsigned* integer, and it comes back as
+`UInt32` — so an OID at or above 2147483648 reads as the large positive number
+it is, not as a negative one.
+
+The server accepts a filter literal with a minus sign and silently wraps it
+(`-1` means 4294967295 to PostgreSQL). We do not: `--filter 'v_oid<-1'` is
+refused with a message naming the value, rather than compared as −1, which no
+OID could ever equal. Write the value you mean.
+
 ### Floating point round-trips exactly
 
 `pg_dump` sets `extra_float_digits = 3`, which is enough for `float4`/`float8`
@@ -338,10 +349,18 @@ knowing: a spelling PostgreSQL would accept but never write — `{a, b}`, with a
 space — matches nothing, because the dump holds the canonical form and that is
 what is being compared.
 
-### `json` and `jsonb` are strings
+### `json` and `jsonb` are strings, and say so in the schema
 
 Arrow has no JSON type. `jsonb` is normalized JSON text by the time it reaches
 the dump; `json` is whatever was inserted. Both come back as strings, parse-ready.
+
+The field carries Arrow's canonical `arrow.json` extension name, so a consumer
+that understands extension types can tell a JSON column from any other string
+without knowing what the dump declared. A `uuid` column carries `arrow.uuid`
+the same way, over the `FixedSizeBinary(16)` it already was. Neither name
+changes a value, a type or a byte — it is a label on the column. Nested
+positions do not carry one: a `uuid` inside a composite or an array is
+`FixedSizeBinary(16)` with nothing said about it.
 
 ### Enums work, with one exception
 

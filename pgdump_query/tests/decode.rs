@@ -94,6 +94,7 @@ async fn round_trip_matches_strings_mode_for_every_always_decodable_table() {
         let path = types_fixture(version, "default");
         for table in [
             "public.t_int",
+            "public.t_oid",
             "public.t_float",
             "public.t_text",
             "public.t_uuid",

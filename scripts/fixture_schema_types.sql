@@ -34,6 +34,21 @@ INSERT INTO public.t_int VALUES
     (3, 0, 0, 0),
     (4, NULL, NULL, NULL);
 
+-- `oid` is PostgreSQL's one unsigned integer type, and the values are chosen
+-- for the boundary a signed reading gets wrong: 2147483648 is 2^31, the first
+-- OID an Int32 turns negative, and 4294967295 is the type's maximum. `oidout`
+-- is `snprintf("%u")`, so the file holds all four as plain digits.
+CREATE TABLE public.t_oid (
+    id integer PRIMARY KEY,
+    v_oid oid
+);
+INSERT INTO public.t_oid VALUES
+    (1, 0),
+    (2, 2147483647),
+    (3, 2147483648),
+    (4, 4294967295),
+    (5, NULL);
+
 -- v_typed is exactly the Decimal128 boundary (38 total digits); v_typed39
 -- crosses it into Decimal256. v_small carries a typmod but still accepts
 -- NaN -- PostgreSQL's precision/scale check does not apply to NaN, so NaN is

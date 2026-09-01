@@ -5,6 +5,13 @@ edition.workspace = true
 
 [dependencies]
 arrow = { version = "59.2.0", default-features = false }
+# The same `arrow-schema` `arrow` itself depends on, named directly because
+# `arrow::datatypes` re-exports the type list and not the `extension` module:
+# `arrow.uuid`/`arrow.json` and the `supports_data_type` check that stamps
+# them live there (see `pgtype::CanonicalExtension`).
+arrow-schema = { version = "59.2.0", default-features = false, features = [
+    "canonical_extension_types",
+] }
 async-stream = "0.3"
 bincode = { version = "2", features = ["serde"] }
 bytes = "1.12.1"

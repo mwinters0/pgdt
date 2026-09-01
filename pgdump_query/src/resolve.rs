@@ -16,7 +16,7 @@ use arrow::datatypes::{Field, Schema, SchemaRef};
 use crate::diagnostic::Severity;
 use crate::index::{ArrayShape, MAX_ARRAY_DIMS};
 use crate::pgtype::{
-    ComparisonPlan, NestedPlan, TypeOutcome, comparison_for, resolve_declared_type,
+    ComparisonPlan, NestedPlan, TypeOutcome, comparison_for, resolve_declared_type, with_extension,
 };
 use crate::preamble::{DatabaseMetadata, DumpMetadata};
 
@@ -398,7 +398,22 @@ pub fn resolve_columns(
         };
         // Every Arrow field is nullable, regardless of a `NOT
         // NULL` in the DDL -- see "Nullability" in the phase doc.
-        fields.push(Field::new(name, arrow_type, true));
+        let field = Field::new(name, arrow_type, true);
+        // A canonical extension name is a claim about what the column's bytes
+        // *are*, so only a column that is still `Mapped` may carry one: one
+        // the census took back to `Utf8View` holds an `array_out` literal,
+        // not the value its declared type names.
+        let field = match declared {
+            Some(column) if resolution == ColumnResolution::Mapped => with_extension(
+                field,
+                &column.declared_type,
+                // `db` is `Some` wherever `declared` is: `declared_cols` came
+                // out of it.
+                &db.expect("a declared column came from a database entry").types,
+            ),
+            _ => field,
+        };
+        fields.push(field);
         notes.push(ColumnNote {
             column: name.clone(),
             declared: declared.map(|c| c.declared_type.clone()),

@@ -21,6 +21,14 @@ bigint	0	ok	0
 bigint	9223372036854775807	ok	9223372036854775807
 bigint	\N	ok	\N
 bigint	9223372036854775808	E22003	\N
+oid	0	ok	0
+oid	2147483647	ok	2147483647
+oid	2147483648	ok	2147483648
+oid	4294967295	ok	4294967295
+oid	\N	ok	\N
+oid	-1	ok	4294967295
+oid	4294967296	E22003	\N
+oid	abc	E22P02	\N
 real	-Infinity	ok	-Infinity
 real	-0	ok	-0
 real	0	ok	0

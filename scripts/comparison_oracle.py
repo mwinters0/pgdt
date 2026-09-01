@@ -139,6 +139,18 @@ TYPE_CASES: list[TypeCases] = [
         ("-9223372036854775808", "0", "9223372036854775807", None),
         ("9223372036854775808",),
     ),
+    # PostgreSQL's one unsigned integer type. The values straddle 2^31, which
+    # is where a signed reading of the same text goes wrong, and reach the
+    # type's maximum. `-1` is an *input* rather than a value because the server
+    # accepts it and wraps it to 4294967295 -- `oidin` has read a leading minus
+    # since well before 13, and still does through v18's `uint32in_subr` -- and
+    # this build refuses the literal instead, so the wrap belongs in the file as
+    # the server's answer rather than as a value pgdq claims to order.
+    TypeCases(
+        "oid",
+        ("0", "2147483647", "2147483648", "4294967295", None),
+        ("-1", "4294967296", "abc"),
+    ),
     # IEEE has all three specials, so `real`/`double precision` reach them
     # through the column's own decoder rather than as a carried position.
     # `-0` and `0` are equal and written differently, which is the float

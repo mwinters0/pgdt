@@ -358,6 +358,63 @@ async fn enum_column_maps_to_a_dictionary_and_domain_to_its_base_type() {
     }
 }
 
+/// `oid` against real `pg_dump` output, at the boundary a signed reading gets
+/// wrong: `UInt32`, and the file holding 2147483648 and 4294967295 as plain
+/// unsigned digits.
+#[tokio::test]
+async fn an_oid_column_resolves_unsigned() {
+    for version in [13, 16, 18] {
+        let meta = metadata(&types_fixture(version, "default")).await;
+        let resolved = resolve_table(&meta, "public.t_oid");
+        assert_eq!(resolved.schema.field(1).name(), "v_oid", "pg_dump {version}");
+        assert_eq!(resolved.schema.field(1).data_type(), &DataType::UInt32, "pg_dump {version}");
+    }
+}
+
+/// The two canonical extension names, on the fields of real columns
+/// (`docs/design/architecture.md`, "Type resolution"). What a consumer reads
+/// is the metadata, so that is what is asserted — and `arrow.json`'s empty
+/// metadata value is part of the spelling, not an accident.
+///
+/// The `id` column beside each is the negative half: a name is a claim about
+/// the column it sits on, so an `Int32` must carry none.
+#[tokio::test]
+async fn the_canonical_extension_names_land_on_the_columns_that_claim_them() {
+    const NAME: &str = "ARROW:extension:name";
+    for version in [13, 16, 18] {
+        let meta = metadata(&types_fixture(version, "default")).await;
+
+        let uuid = resolve_table(&meta, "public.t_uuid");
+        assert_eq!(uuid.schema.field(0).metadata().get(NAME), None, "pg_dump {version}: id");
+        assert_eq!(
+            uuid.schema.field(1).metadata().get(NAME).map(String::as_str),
+            Some("arrow.uuid"),
+            "pg_dump {version}: v_uuid"
+        );
+
+        let json = resolve_table(&meta, "public.t_json");
+        for column in [1, 2] {
+            let field = json.schema.field(column);
+            assert_eq!(
+                field.metadata().get(NAME).map(String::as_str),
+                Some("arrow.json"),
+                "pg_dump {version}: {}",
+                field.name()
+            );
+            assert_eq!(
+                field.metadata().get("ARROW:extension:metadata").map(String::as_str),
+                Some(""),
+                "pg_dump {version}: {}",
+                field.name()
+            );
+        }
+
+        // A `text` column reaches the same `Utf8View` and claims nothing.
+        let text = resolve_table(&meta, "public.t_text");
+        assert!(text.schema.fields().iter().all(|f| f.metadata().get(NAME).is_none()));
+    }
+}
+
 /// Real-shape smoke test for `resolve_columns` against genuine multi-database
 /// `DumpMetadata` (as opposed to `resolve.rs`'s hand-built
 /// `database_selects_by_attributed_name_not_by_first_match`, which proves
