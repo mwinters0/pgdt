@@ -106,6 +106,11 @@ answers `Infinity`, `-Infinity` and `NaN` in those exact spellings. A
 under any precision — so a filter naming one there is refused rather than
 compared.
 
+**A literal finer than the column's scale is refused too**, rather than being
+rounded to fit: `--filter 'price>1.005'` on a `numeric(10,2)` is told the
+column is written as a number with at most 2 decimal places. Rounding it would
+mean guessing which way you meant it to go; writing `1.00` or `1.01` says so.
+
 ### `oid` is unsigned
 
 PostgreSQL's `oid` is a 32-bit *unsigned* integer, and it comes back as
@@ -527,9 +532,17 @@ declared labels is reported as a decode error rather than being compared, on
 either side of the operator.
 
 That last one is the way an enum filter usually goes wrong — a label mistyped,
-or in the wrong case. `pgdq info --verbose` lists an enum column's declared
-labels beneath it, in full, so you can read the spelling off the dump instead
-of guessing at it — and lists every enum type's labels once, up in the header,
+or in the wrong case — so **the refusal lists the labels back to you**, quoted
+the way you would write them:
+
+```
+Error: filter value `furious` for `v_mood = ...` does not parse as the column's declared type `public.mood`, which is written as one of the type's declared labels: 'sad', 'ok', 'happy'
+```
+
+A type declaring more than a dozen labels gets the first twelve and a count of
+the rest. `pgdq info --verbose` lists an enum column's declared labels beneath
+it, in full, so you can read the spelling off the dump instead of guessing at
+it — and lists every enum type's labels once, up in the header,
 which is where to look for the ones no column of yours happens to use; see
 [inspecting a dump](dump-inspection.md#info-reporting-what-is-known).
 

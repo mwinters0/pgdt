@@ -1287,54 +1287,148 @@ fn equality_comparison(kind: &CompareKind, text: &str) -> Option<Comparison> {
 /// exception there and so needs the least here — its grammar is the whole of
 /// `jsonb_in`, so "a JSON document" is the complete answer.
 ///
+/// **Two arms answer with the kind's own payload, because there the payload
+/// *is* the answer.** An enum's declared labels are the whole of what a
+/// refused enum literal is missing, and a `numeric(p,s)`'s scale is what makes
+/// the clause true at all — see [`ENUM_LABELS_SHOWN`] and
+/// [`decimal_accepted_form`]. Nothing forbids a diagnostic naming resolved
+/// schema data; the question at each arm is whether the payload answers the
+/// user's question, which for the rest of the table it does not.
+///
 /// [`CompareKind::Text`] and [`CompareKind::PaddedText`] never refuse a
 /// literal — every string is a value of a text column — so their arm is
 /// unreachable rather than wrong; it is written out anyway because a
 /// `unreachable!` here would turn a future kind's mistake into a panic on a
-/// diagnostic path.
-fn accepted_form(kind: &CompareKind) -> &'static str {
+/// diagnostic path. An enum with no labels is unreachable for a second
+/// reason — `pgtype::comparison_for` refuses such a column outright — and is
+/// written out the same way.
+fn accepted_form(kind: &CompareKind) -> String {
     use CompareKind as K;
     match kind {
-        K::Bool => "`t` or `f`",
-        K::Int => "as an optionally signed whole number",
+        K::Bool => "`t` or `f`".into(),
+        K::Int => "as an optionally signed whole number".into(),
         // The width *is* the refusal: `oidin` wraps a negative and this does
         // not, so the range is the useful half of the sentence.
-        K::UnsignedInt => "as a whole number from 0 to 4294967295",
-        K::Float32 | K::Float64 => "as a number, or `Infinity`, `-Infinity` or `NaN`",
+        K::UnsignedInt => "as a whole number from 0 to 4294967295".into(),
+        K::Float32 | K::Float64 => "as a number, or `Infinity`, `-Infinity` or `NaN`".into(),
         // A typmod rejects an infinity (I34), so a `numeric(p,s)` — and a
-        // `numeric` past 76 digits — has `NaN` and nothing else.
-        K::Decimal(_) | K::Numeric { infinities: false } => "as a number, or `NaN`",
-        K::Numeric { infinities: true } => "as a number, or `NaN`, `Infinity` or `-Infinity`",
-        K::Enum(_) => "as one of the type's own declared labels",
-        K::Date => "`YYYY-MM-DD`, optionally suffixed ` BC`, or `infinity`/`-infinity`",
-        K::Time => "`HH:MM:SS`, optionally with a fractional second",
+        // `numeric` past 76 digits — has `NaN` and nothing else. Only the
+        // typed arm carries a scale to be finer than: the `p > 76` column is
+        // compared as text through `NumericKey`, which normalizes rather than
+        // rescaling and so refuses no literal for its shape.
+        K::Decimal(scale) => decimal_accepted_form(*scale),
+        K::Numeric { infinities: false } => "as a number, or `NaN`".into(),
+        K::Numeric { infinities: true } => {
+            "as a number, or `NaN`, `Infinity` or `-Infinity`".into()
+        }
+        K::Enum(labels) if !labels.is_empty() => enum_accepted_form(labels),
+        K::Enum(_) => "as one of the type's own declared labels".into(),
+        K::Date => "`YYYY-MM-DD`, optionally suffixed ` BC`, or `infinity`/`-infinity`".into(),
+        K::Time => "`HH:MM:SS`, optionally with a fractional second".into(),
         K::Timestamp { with_tz: false } => {
             "`YYYY-MM-DD HH:MM:SS`, optionally with a fractional second and suffixed ` BC`, or \
              `infinity`/`-infinity`"
+                .into()
         }
         K::Timestamp { with_tz: true } => {
             "`YYYY-MM-DD HH:MM:SS+HH`, the offset required, optionally with a fractional second \
              and suffixed ` BC`, or `infinity`/`-infinity`"
+                .into()
         }
-        K::TimeTz => "`HH:MM:SS+HH`, the offset required, optionally with a fractional second",
+        K::TimeTz => {
+            "`HH:MM:SS+HH`, the offset required, optionally with a fractional second".into()
+        }
         // `interval_out` under `IntervalStyle = postgres` (I4), which is the
         // only style a `pg_dump` connection writes.
         K::Interval => {
             "the way `interval` prints it — `1 year 2 mons 3 days`, `-01:00:00`, `00:00:00` for \
              zero — or `infinity`/`-infinity`"
+                .into()
         }
         K::Network { cidr: false } => {
-            "as a full IPv4 or IPv6 address, optionally followed by `/bits`"
+            "as a full IPv4 or IPv6 address, optionally followed by `/bits`".into()
         }
         K::Network { cidr: true } => {
             "as a full IPv4 or IPv6 address followed by `/bits`, with no bit set below the netmask"
+                .into()
         }
-        K::MacAddr { octets: 8 } => "as eight colon-separated hex pairs",
-        K::MacAddr { .. } => "as six colon-separated hex pairs",
-        K::Uuid => "as 32 hex digits, grouped `8-4-4-4-12`",
-        K::Bytea => "as `\\x` followed by hex pairs",
-        K::Jsonb => "as a JSON document",
-        K::Text | K::PaddedText => "as any text",
+        K::MacAddr { octets: 8 } => "as eight colon-separated hex pairs".into(),
+        K::MacAddr { .. } => "as six colon-separated hex pairs".into(),
+        K::Uuid => "as 32 hex digits, grouped `8-4-4-4-12`".into(),
+        K::Bytea => "as `\\x` followed by hex pairs".into(),
+        K::Jsonb => "as a JSON document".into(),
+        K::Text | K::PaddedText => "as any text".into(),
+    }
+}
+
+/// How many of an enum's labels [`accepted_form`] names before it stops
+/// counting them out.
+///
+/// **A count cap rather than a length cap**, which is the other shape this
+/// project uses for unbounded file-derived text (`map.rs`'s `TEXT_CAP`): every
+/// label a message prints is printed whole, where a length cap would cut one
+/// mid-word and hand the user a spelling that is not a label. Nothing bounds
+/// how many labels a type declares, and a generated schema with a few hundred
+/// of them turns an uncapped clause into a message that scrolls the error
+/// itself off screen.
+///
+/// **The overflow clause has somewhere to send the reader**: `pgdq info
+/// --verbose` prints every label of an enum column *and* lists every
+/// user-defined type with its labels, both uncapped
+/// (`docs/design/architecture.md`, "CLI surface"). A terse rendering is
+/// licensed by a complete one existing where the user can reach it.
+const ENUM_LABELS_SHOWN: usize = 12;
+
+/// The enum clause: the declared labels themselves, which are the whole of
+/// what a refused enum literal is missing — a mistyped or wrong-case label is
+/// the only way to fail an enum filter, so the arm that could not answer was
+/// the arm that always fires.
+///
+/// Each label is single-quoted with any interior quote doubled, the spelling
+/// the dump's own `CREATE TYPE … AS ENUM (…)` writes and the CLI's `dequote`
+/// accepts,
+/// so a printed label pastes straight back into `--filter "col=<label>"`. The
+/// CLI's own `label_list` renders the same way for the same reason and is not
+/// shared with it: it sits a layer above this one.
+fn enum_accepted_form(labels: &[String]) -> String {
+    let shown = labels.len().min(ENUM_LABELS_SHOWN);
+    let list = labels[..shown]
+        .iter()
+        .map(|label| format!("'{}'", label.replace('\'', "''")))
+        .collect::<Vec<_>>()
+        .join(", ");
+    match labels.len() - shown {
+        0 => format!("as one of the type's declared labels: {list}"),
+        more => format!(
+            "as one of the type's declared labels: {list}, and {more} more; see `info --verbose`"
+        ),
+    }
+}
+
+/// The `numeric(p,s)` clause, which is about the **scale** because that is
+/// what the refusal is about: `decode::decimal_unscaled_digits` drops a
+/// trailing digit only when it is zero, so `--filter 'price>1.005'` on a
+/// `numeric(10,2)` is refused — and `1.005` is a number, which makes the
+/// scale-free clause false rather than merely narrow.
+///
+/// Precision says nothing here and is not carried by
+/// [`CompareKind::Decimal`]: a literal wider than the column can hold still
+/// compares against every value in it.
+///
+/// A negative scale is legal from PostgreSQL 15 and means the column stores
+/// multiples of a power of ten, which the decoder enforces by refusing to drop
+/// a non-zero digit off the integer part.
+fn decimal_accepted_form(scale: i8) -> String {
+    match scale {
+        0 => "as a whole number, or `NaN`".into(),
+        s if s > 0 => {
+            let plural = if s == 1 { "" } else { "s" };
+            format!("as a number with at most {s} decimal place{plural}, or `NaN`")
+        }
+        s => {
+            let step = format!("1{}", "0".repeat(usize::from(s.unsigned_abs())));
+            format!("as a whole number that is a multiple of {step}, or `NaN`")
+        }
     }
 }
 
@@ -2632,6 +2726,16 @@ mod tests {
             ("interval", DataType::Utf8View, "1 month", "the way `interval` prints it"),
             ("inet", DataType::Utf8View, "10", "a full IPv4 or IPv6 address"),
             ("macaddr", DataType::Utf8View, "08-00-2b-01-02-03", "six colon-separated hex pairs"),
+            // The two arms where the kind's own payload is the answer: the
+            // labels the enum actually declares, and the scale that makes the
+            // `numeric` clause true rather than false.
+            ("public.mood", DataType::Utf8View, "furious", "declared labels: 'sad', 'ok'"),
+            (
+                "numeric(10,2)",
+                DataType::Decimal128(10, 2),
+                "1.005",
+                "as a number with at most 2 decimal places, or `NaN`",
+            ),
         ] {
             let p = order_predicate(PredicateOp::Eq, literal);
             let message =
@@ -2639,6 +2743,51 @@ mod tests {
             assert!(message.contains(literal), "{declared} = {literal}: {message}");
             assert!(message.contains(accepted), "{declared} = {literal}: {message}");
         }
+    }
+
+    /// The enum clause names the labels themselves, quoted the way the dump
+    /// writes them and a `--filter` value reads them back, and stops at
+    /// [`ENUM_LABELS_SHOWN`] with a pointer at the output that carries the
+    /// rest.
+    #[test]
+    fn the_enum_clause_quotes_its_labels_and_caps_the_list() {
+        let kind = |labels: &[&str]| {
+            CompareKind::Enum(labels.iter().map(|l| (*l).to_string()).collect::<Arc<[String]>>())
+        };
+        assert_eq!(
+            accepted_form(&kind(&["sad", "has space", "has'quote"])),
+            "as one of the type's declared labels: 'sad', 'has space', 'has''quote'"
+        );
+
+        let many: Vec<String> = (0..ENUM_LABELS_SHOWN + 3).map(|i| format!("l{i}")).collect();
+        let clause = accepted_form(&CompareKind::Enum(many.iter().cloned().collect()));
+        assert!(clause.contains("'l0'"), "{clause}");
+        assert!(clause.contains(&format!("'l{}'", ENUM_LABELS_SHOWN - 1)), "{clause}");
+        assert!(!clause.contains(&format!("'l{ENUM_LABELS_SHOWN}'")), "{clause}");
+        assert!(clause.ends_with("and 3 more; see `info --verbose`"), "{clause}");
+    }
+
+    /// The `numeric(p,s)` clause branches on the sign of the scale, because
+    /// what the column refuses does: a positive scale bounds the fraction, a
+    /// zero scale admits no fraction at all, and a negative one — legal from
+    /// PostgreSQL 15 — admits only multiples of a power of ten.
+    #[test]
+    fn the_numeric_clause_branches_on_the_sign_of_the_scale() {
+        for (scale, expected) in [
+            (2i8, "as a number with at most 2 decimal places, or `NaN`"),
+            (1, "as a number with at most 1 decimal place, or `NaN`"),
+            (0, "as a whole number, or `NaN`"),
+            (-2, "as a whole number that is a multiple of 100, or `NaN`"),
+        ] {
+            assert_eq!(accepted_form(&CompareKind::Decimal(scale)), expected, "scale {scale}");
+        }
+        // The scale-free arm keeps the scale-free clause, and it is true
+        // there: a `p > 76` column compares as text and refuses no literal
+        // for its shape.
+        assert_eq!(
+            accepted_form(&CompareKind::Numeric { infinities: false }),
+            "as a number, or `NaN`"
+        );
     }
 
     /// A divergence is operator-conditional, and three of the five reach

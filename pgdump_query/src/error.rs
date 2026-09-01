@@ -53,7 +53,15 @@ pub enum Error {
         /// not because `boolean` has no such value. Supplied by
         /// `crate::predicate::accepted_form`, which sits beside the grammar
         /// it describes.
-        accepted: &'static str,
+        ///
+        /// A `String` rather than a `&'static str` because two arms answer
+        /// with the column's own comparison payload — an enum's declared
+        /// labels, a `numeric(p,s)`'s scale — and those are the arms where
+        /// the payload *is* the answer. The clause is formatted at the raise
+        /// site so the rendering stays beside the grammar; carrying a
+        /// comparison type here instead would point this module at one that
+        /// sits above it.
+        accepted: String,
     },
     #[error("projected column `{column}` not found in COPY block at offset {header_offset}")]
     UnknownProjectionColumn { header_offset: u64, column: String },

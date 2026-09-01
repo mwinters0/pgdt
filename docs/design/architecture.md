@@ -2350,17 +2350,51 @@ type, where what the user is short of is this build's grammar. `interval`,
 answered by the same clause list.
 
 **The clause lives beside the grammar, not on the type.** `predicate.rs`'s
-`accepted_form` is one `&'static str` per `CompareKind`, filed next to
-`order_key` and `equality_comparison` — the two functions that decide what is
-accepted — rather than on `CompareKind` in `pgtype.rs`, so a widening or
-tightening has its own description on the same screen. Carrying the phrase on
-the L2 type would put the sentence a file away from the L4 code it describes,
-which is how a diagnostic goes quietly stale. `jsonb` needs the least of it,
-its literal grammar being the whole of `jsonb_in`, and `text`/`character(n)`
-need none: every string is a value of a text column, so their arm is
-unreachable and is written out rather than made a panic on a diagnostic path.
+`accepted_form` is one clause per `CompareKind`, filed next to `order_key` and
+`equality_comparison` — the two functions that decide what is accepted —
+rather than on `CompareKind` in `pgtype.rs`, so a widening or tightening has
+its own description on the same screen. Carrying the phrase on the L2 type
+would put the sentence a file away from the L4 code it describes, which is how
+a diagnostic goes quietly stale. `jsonb` needs the least of it, its literal
+grammar being the whole of `jsonb_in`, and `text`/`character(n)` need none:
+every string is a value of a text column, so their arm is unreachable and is
+written out rather than made a panic on a diagnostic path.
 [`../manual/type-handling.md`](../manual/type-handling.md), "`=` and `!=`
 compare values, not spellings", carries the same forms in prose.
+
+**Two arms render the kind's own payload, because there the payload is the
+answer.** Nothing forbids a diagnostic naming resolved schema data — the
+question at each arm is whether the payload answers the user's question, and
+for most of the table it does not. `CompareKind::Enum` carries the declared
+labels and a mistyped or wrong-case label is the *only* way to fail an enum
+filter, so the arm that could not answer was the arm that always fires; it now
+names the labels, single-quoted with any interior quote doubled, the spelling
+`CREATE TYPE … AS ENUM (…)` writes and a `--filter` value reads back, so a
+printed label pastes straight into the term that was refused. `Decimal(scale)`
+is the arm that was *false* rather than narrow: it refuses a literal finer than
+the column's scale — `decimal_unscaled_digits` drops a trailing digit only when
+it is zero — and told the user a `numeric(10,2)` is written "as a number, or
+`NaN`", which `1.005` is. The clause now branches on the sign of the scale: at
+most *s* decimal places, a whole number at `s = 0`, and a multiple of 10⁻ˢ for
+the negative scales legal from PostgreSQL 15. Precision is not carried and
+constrains no literal, since a value wider than the column can hold still
+compares. The clause is a `String` built at the raise site, where the kind is
+in scope: `Error::PredicateValueDecode` already carries three owned strings, so
+the allocation is the existing price, and keeping the rendering in
+`accepted_form` keeps it beside the grammar rather than pointing `error.rs` at
+a type from a layer above it.
+
+*Rejected: an uncapped label list.* `accepted_form` prints at most twelve
+labels and then ", and *k* more; see `info --verbose`". A count cap keeps every
+label it prints intact where a length cap on `map.rs`'s `TEXT_CAP` pattern
+would truncate one mid-word and offer a spelling that is not a label; and the
+overflow clause has somewhere to send the reader because `info --verbose`
+prints an enum column's labels and lists every user-defined type's, both
+uncapped ("CLI surface"). Uncapped fails on one real input — a generated schema
+with a few hundred labels — where the message scrolls the error itself off
+screen. The asymmetry with `info --verbose` is the same shape as
+`arrow_type_label`'s elisions: a terse rendering is licensed by a complete one
+existing where the user can reach it.
 
 **The refusals are the rest of the table, and they are stated rather than
 listed**: every nested shape — array, composite, range, multirange — and every
