@@ -3510,12 +3510,15 @@ structural above the leaf — the kind order, a container's size, storage order,
 the raw-scalar wrapper — is *asserted*, which is what keeps that population two
 entries rather than the whole arm.
 
-**Met means met somewhere in the walk.** The key is the case, unioned over the
-six majors and the four operators, so an entry satisfied by one major alone —
-or by `<` while `>=` agrees — still counts as met. All thirty-eight non-`jsonb`
-entries in fact disagree in every major under every operator; asserting that is
-`M36` in the out-of-band ledger ([`roadmap.md`](roadmap.md), "Out-of-band
-work").
+**Met means met everywhere in the walk.** The key is the case, so a union over
+the six majors and the four operators would count an entry satisfied by one
+major alone — or by `<` while `>=` agrees, which is a comparator that has
+stopped being antisymmetric — and neither is the property the list claims. So
+an entry must disagree in **every** cell of its case: 24 today, six majors by
+four operators, and all forty do. That is one assertion against the cells each
+case was walked over rather than a table by major and operator, which was
+costed at ~400 rows and rejected — it multiplies exactly the churn the pair
+list was kept to avoid.
 
 **`character varying(10)` announces a divergence and appears in no row**, and
 that is a fact about its case list rather than about the register: its three

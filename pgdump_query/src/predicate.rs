@@ -2274,6 +2274,13 @@ mod tests {
         /// set, and it is **met**: every entry is a real disagreement in the
         /// committed files, and every disagreement is an entry.
         ///
+        /// **Met means met everywhere.** An entry is keyed by the case, so it
+        /// has to disagree in every major that carries the case and under all
+        /// four asserted operators — 24 cells each today. Taking *somewhere
+        /// in the walk* as met would instead leave the block passing after a
+        /// collation moved for one major, or after the comparator stopped
+        /// being antisymmetric under one operator.
+        ///
         /// Each entry's column also has to *announce* its divergence through
         /// [`OrderingDivergence`], which is asserted alongside — so an
         /// exception cannot be claimed for a column the register tells the
@@ -2432,6 +2439,9 @@ mod tests {
             // it showed up under.
             let mut disagreed: BTreeMap<(String, String, String, String), BTreeSet<String>> =
                 BTreeMap::new();
+            // How many cells each case was asserted over at all, so "met"
+            // can mean met everywhere rather than met somewhere.
+            let mut walked: BTreeMap<(String, String, String, String), usize> = BTreeMap::new();
             let mut refused: BTreeSet<String> = BTreeSet::new();
             let mut asserted = 0usize;
 
@@ -2501,6 +2511,7 @@ mod tests {
                         };
                         let field = output(left).expect("an accepted literal has an output");
                         asserted += 1;
+                        *walked.entry(case(left, right)).or_default() += 1;
                         let got = answer(&declared, collation, &types, op, Some(&field), &bound);
                         let expected = match cell {
                             "t" => true,
@@ -2545,6 +2556,22 @@ mod tests {
                     .join("\n")
             );
             assert!(stale.is_empty(), "exceptions that no longer disagree: {stale:?}");
+            // An entry is keyed by the case, so "met" has to mean met over
+            // every cell the case has: a collation that moves for one major,
+            // or a comparator that stops being antisymmetric under one
+            // operator, would otherwise leave the entry satisfied by the
+            // majors and operators it still disagrees under.
+            let partial: Vec<_> = expected_exceptions
+                .iter()
+                .filter(|case| disagreed[*case].len() != walked[*case])
+                .map(|case| format!("  {case:?} {:?} of {} cells", disagreed[case], walked[case]))
+                .collect();
+            assert!(
+                partial.is_empty(),
+                "{} exceptions disagree in only part of the walk:\n{}",
+                partial.len(),
+                partial.join("\n")
+            );
             assert_eq!(
                 refused,
                 REFUSED.iter().map(|s| s.to_string()).collect::<BTreeSet<_>>(),
