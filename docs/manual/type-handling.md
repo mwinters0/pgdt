@@ -201,19 +201,20 @@ selects a row whose `code` is exactly `ab`, where the server would not.
 **`=` and `!=` are unaffected by collation.** Every libc collation calls two
 different strings different, so equality is bytewise on the server too.
 
-### Six string-shaped types still order the way PostgreSQL orders them
+### Seven string-shaped types still order the way PostgreSQL orders them
 
 A column that comes back as text is not necessarily *compared* as text.
-`interval`, `time with time zone`, `inet`, `cidr`, `macaddr` and `macaddr8` all
-arrive as strings — no Arrow type fits them — and all six order exactly as the
-server does:
+`interval`, `time with time zone`, `inet`, `cidr`, `macaddr`, `macaddr8` and
+`jsonb` all arrive as strings — no Arrow type fits them — and all seven order
+the way the server orders them:
 
 - an `interval` by its duration, as above;
 - a `time with time zone` by the instant it names, so `00:00:00-05` is five
   hours after `00:00:00+00` and sorts above it;
 - an `inet` or `cidr` by address family first (every IPv4 address below every
   IPv6 one), then the network, then the netmask length, then the host part;
-- a `macaddr` or `macaddr8` by its octets.
+- a `macaddr` or `macaddr8` by its octets;
+- a `jsonb` by its structure — see below, since it is the one with a caveat.
 
 **Write the value the way the dump writes it.** The filter reads each of these
 in PostgreSQL's *output* spelling only, which is what every value in the file
@@ -228,9 +229,40 @@ pgdq query --source dump.sql --table public.jobs --filter 'ran_for>1 month'
 # column's declared type `interval`
 ```
 
-**`json` and `jsonb` are still compared as text**, and are warned about the way
-a text column is. PostgreSQL orders `jsonb` structurally — an object above an
-array above a number — and does not order `json` at all.
+### `jsonb` compares as a document, with one caveat about strings
+
+A `jsonb` filter compares the way PostgreSQL compares two documents, not the
+way their text sorts. The rules that surprise people are the server's own:
+
+- **Kind decides first**, and the order is object, then array, then boolean,
+  then number, then string, then JSON `null`. So `--filter 'doc>1'` keeps every
+  object and array in the column and drops every string.
+- **Then size**: a two-key object sorts above a one-key object whatever the
+  keys say, and a two-element array above a one-element array.
+- **Then the members**, left to right — for an object, key and then value, with
+  the keys in the order the server stores them, which is *shortest first* and
+  only then alphabetical.
+- One genuine oddity, which PostgreSQL's own source calls a mild anomaly and
+  has frozen: a bare scalar sorts **above** an empty array. `1 > []` is true,
+  and so is `1 < [1]`.
+
+**Write the literal as JSON, not as the file spells it.** This is the one
+string-shaped type that reads more than the dump writes: `{"a":1}` and
+`{ "a" : 1 }` both work, keys may be in any order, a duplicate key resolves to
+the last one, and `1`, `1.0` and `1e2` are one number. What is refused is what
+the server refuses — `01`, `+1`, `.5`, `1.`, `NaN`, an unquoted key, a trailing
+comma.
+
+**The caveat is collation, and it is the text caveat one level down.**
+PostgreSQL orders every string *inside* a `jsonb` document — values and object
+keys alike — by the database's collation, which a plain dump does not record.
+So pgdq compares those bytewise, exactly as it does a bare `text` column, and
+says so once on stderr. A document with no strings in it, or one whose
+comparison is settled before a string is reached, is unaffected.
+
+**`json` is compared as text**, and warned about the way a text column is,
+because PostgreSQL defines no comparison for `json` at all — no `=`, no `<`,
+nothing. There is no server answer to agree with.
 
 ### Writing a filter term
 
@@ -411,7 +443,9 @@ what is being compared.
 ### `json` and `jsonb` are strings, and say so in the schema
 
 Arrow has no JSON type. `jsonb` is normalized JSON text by the time it reaches
-the dump; `json` is whatever was inserted. Both come back as strings, parse-ready.
+the dump; `json` is whatever was inserted. Both come back as strings,
+parse-ready. A `jsonb` column is still *compared* as a document under `<` and
+friends — see "`jsonb` compares as a document" above.
 
 The field carries Arrow's canonical `arrow.json` extension name, so a consumer
 that understands extension types can tell a JSON column from any other string

@@ -2173,11 +2173,11 @@ equals the filter's literal sorts *after* it here and *equal* on the server.
 `COLLATE "C"` does not close that, and a register that promoted `char` along
 with `text` and `varchar` would be claiming an agreement it does not have.
 
-**Keyed on the declared type, not on the Arrow one.** Six unrelated declared
+**Keyed on the declared type, not on the Arrow one.** Seven unrelated declared
 types reach `Utf8View` — a text type, a bare `numeric`, an `interval`, a
-`timetz`, an `inet`, and `json`, which PostgreSQL does not order at all — and
-they are six *different* comparisons under one Arrow type, so the Arrow type
-cannot say which one a column wants. Two pairs go further and are not even
+`timetz`, an `inet`, a `jsonb`, and `json`, which PostgreSQL does not order at
+all — and they are seven *different* comparisons under one Arrow type, so the
+Arrow type cannot say which one a column wants. Two pairs go further and are not even
 distinguishable by declared type alone once the plan is built: `cidr` differs
 from `inet` only in refusing a literal below its netmask, and `macaddr8` from
 `macaddr` only in its width, so the plan carries each fact rather than
@@ -2228,7 +2228,8 @@ with the reason that names its nesting rather than with "no order defined".
 | `interval` | `Utf8View` | yes — compared as `interval_cmp_value`'s 128-bit span, so `1 mon`, `30 days` and `720:00:00` are one value (I40), with the v17 infinities read on every file (I34) | — |
 | `time with time zone` | `Utf8View` | yes — the UTC-equivalent instant, then the stored zone, so two spellings of one instant are ordered rather than equal (I40) | — |
 | `inet`, `cidr`, `macaddr`, `macaddr8` | `Utf8View` | yes — family, then the shorter netmask's worth of address bits, then the netmask, then the address (I40); the MAC types are their octets' own order | — |
-| `json`, `jsonb`, and any domain over them | `Utf8View` | **no**, for opposite reasons — PostgreSQL defines *no* comparison for `json` at all, so bytewise offers more than the server does; `jsonb` has a full order that a bytewise comparison does not implement | for `jsonb`, a decoder; for `json`, nothing, since there is no order to agree with |
+| `jsonb`, and any domain over it | `Utf8View` | **no**, and only because of its strings — the structure is compared exactly as `compareJsonbContainers` compares it (kind, then a container's size, then member-wise, with a top-level scalar inside the pseudo-array that makes it outrank `[]`), while every string leaf and object key goes through `varstr_cmp` under the *database's* collation (I41), which a plain dump does not record (I32) | the same collation the text row wants, one level down |
+| `json`, and any domain over it | `Utf8View` | **no** — PostgreSQL defines *no* comparison for `json` at all, so bytewise offers more than the server does rather than less | nothing, since there is no order to agree with |
 
 A domain has no row of its own: it compares as the row its base type is on,
 through any chain, which is how the last row already covers "any domain over
@@ -2247,6 +2248,19 @@ the user's hands, since every value the file holds is already in the accepted
 form and `pgdq query` names the literal it would not read. Implementing more of
 `*_in` would be re-implementing four input functions to accept spellings that
 no dump contains.
+
+**`jsonb` is the exception, and it is the exception for a reason.** Its
+literal side implements the whole of `jsonb_in` — JSON with PostgreSQL's own
+refusals, keys sorted into storage order and duplicates resolved to the last
+(I41) — rather than only the spelling `jsonb_out` writes, because a JSON
+document's canonical form is not something a person types: `{"a":1}`, with no
+space after the colon, is what everyone writes and is not what the file holds.
+The cost is a parser, and it is paid once rather than per spelling, which is
+exactly what the four types above have no equivalent of. A number normalizes
+through `numeric_cmp`'s own order, so `1`, `1.0` and `1e2` are one value, and
+an exponent past ±100000 is refused — a bound of ours, reachable only by a
+literal, since `jsonb_out` prints through `numeric_out` and that writes no
+exponent at all.
 
 *Rejected: normalizing an unknown literal by round-tripping it through the
 type's own decoder.* There is no decoder to round-trip through — these four
@@ -2281,16 +2295,18 @@ ordering, not the data — and each divergence announces itself, which is what
 keeps it a weaker answer rather than a silent one. The per-type worklist
 belongs to P11, which retires this entry
 ([`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md), "What
-this phase closes, and what it declares"). Three of its rows are already
+this phase closes, and what it declares"). Four of its rows are already
 closed: the enum, by reading the declaration order the dump carries; the bare
-`numeric`, by comparing arbitrary-precision decimal rather than text; and the
-collation half of the text row, by reading the clause. The text-held row is
-down to `json` and `jsonb`: `interval`, `time with time zone` and the four
-network types each carry a comparison of their own (I40), and `json` will close
-by *statement*, since a type the server defines no order for cannot be
-disagreed with. What remains beside those is a database default the file does
-not carry, plus `char(n)`'s blank padding, which was never a collation question
-at all.
+`numeric`, by comparing arbitrary-precision decimal rather than text; the
+collation half of the text row, by reading the clause; and `jsonb`'s
+*structure*, by walking two containers (I41). The text-held row is down to
+`json` alone — `interval`, `time with time zone` and the four network types
+each carry a comparison of their own (I40) — and it will close by *statement*,
+since a type the server defines no order for cannot be disagreed with. What
+remains beside it is a database default the file does not carry, now reached
+from two directions rather than one: a `text`/`varchar` column that states no
+clause, and every string inside a `jsonb` document. Plus `char(n)`'s blank
+padding, which was never a collation question at all.
 
 **Adding an arm here obliges an oracle case**, and that is checked rather than
 remembered: `scripts/oracle_register.py` fails when a register arm has no case

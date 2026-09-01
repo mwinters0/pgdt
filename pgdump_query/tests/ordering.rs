@@ -275,14 +275,50 @@ async fn the_network_types_order_by_address_not_by_text() {
     }
 }
 
-/// `jsonb` is what the text-held row has left, so it is the column that still
-/// announces itself — the regression guard on the four rows above, since a
-/// note that stopped being raised at all would pass every assertion there.
+/// `json` is what the text-held row has left, so it is the column that still
+/// announces itself that way — the regression guard on the four rows above,
+/// since a note that stopped being raised at all would pass every assertion
+/// there.
 #[tokio::test]
-async fn jsonb_is_still_announced_as_compared_bytewise() {
-    let notes = notes_for("public.t_json", "v_jsonb", "1").await;
+async fn json_is_still_announced_as_compared_bytewise() {
+    let notes = notes_for("public.t_json", "v_json", "1").await;
     assert_eq!(notes.len(), 1, "{notes:?}");
     assert!(notes[0].contains("its own operator"), "{}", notes[0]);
+}
+
+/// `jsonb` compares as a container, against the fixture's own two values —
+/// an object (`{"a": 1, "b": [1, 2, 3]}`) and the JSON scalar `null`. Both
+/// filters below are cases the bytewise comparison this replaced gets wrong,
+/// and they are wrong in opposite directions: the first keeps a row that
+/// should go, the second drops the only row that should stay.
+///
+/// A `jsonb` string sorts *below* every number, array and object and above
+/// JSON `null`, so `> "zzz"` keeps the object alone — where bytewise the
+/// literal starts `0x22` and both rows are above it. And a top-level scalar
+/// sorts below a one-element array, so `< [1]` keeps `null` alone — where
+/// bytewise `[` is `0x5b` and neither row is below it.
+#[tokio::test]
+async fn jsonb_compares_as_a_container_not_as_its_text() {
+    assert_eq!(
+        kept("public.t_json", "v_jsonb", vec![term("v_jsonb", PredicateOp::Gt, "\"zzz\"")]).await,
+        [Some(r#"{"a": 1, "b": [1, 2, 3]}"#.to_string())]
+    );
+    assert_eq!(
+        kept("public.t_json", "v_jsonb", vec![term("v_jsonb", PredicateOp::Lt, "[1]")]).await,
+        [Some("null".to_string())]
+    );
+}
+
+/// A `jsonb` column announces the one thing its comparison cannot reach: the
+/// string leaves and object keys, which the server orders by the database's
+/// collation and a plain dump does not record (I32, I41). The sentence is not
+/// the text-held one — the structure *is* compared PostgreSQL's way.
+#[tokio::test]
+async fn jsonb_announces_its_string_leaves() {
+    let notes = notes_for("public.t_json", "v_jsonb", "1").await;
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains("structurally"), "{}", notes[0]);
+    assert!(notes[0].contains("object key"), "{}", notes[0]);
 }
 
 /// A NULL is excluded by every ordering operator, exactly as it is by
@@ -457,16 +493,27 @@ async fn a_literal_of_the_wrong_type_is_refused_before_any_row() {
 /// behind them.
 #[tokio::test]
 async fn a_divergent_comparison_is_reported_by_the_stream() {
-    for (table, column, divergence, marker) in [
-        ("public.t_text", "v_text", OrderingDivergence::UnknownCollation, "no COLLATE clause"),
-        ("public.t_text", "v_varchar", OrderingDivergence::UnknownCollation, "no COLLATE clause"),
+    for (table, column, literal, divergence, marker) in [
+        ("public.t_text", "v_text", "a", OrderingDivergence::UnknownCollation, "no COLLATE clause"),
+        (
+            "public.t_text",
+            "v_varchar",
+            "a",
+            OrderingDivergence::UnknownCollation,
+            "no COLLATE clause",
+        ),
         // `character(n)` diverges for a reason collation cannot fix: the
         // dump writes its values blank-padded and `bpcharcmp` trims (I38).
-        ("public.t_text", "v_char", OrderingDivergence::BlankPadded, "blank-padded"),
-        // `jsonb` is what `AsText` covers now: the enum and the bare
-        // `numeric` order by their own values, and so do the four types the
-        // text-held row lost.
-        ("public.t_json", "v_jsonb", OrderingDivergence::AsText, "its own operator"),
+        ("public.t_text", "v_char", "a", OrderingDivergence::BlankPadded, "blank-padded"),
+        // `json` is what `AsText` covers now: the enum, the bare `numeric`,
+        // the four types the text-held row lost and `jsonb` all order by
+        // their own values.
+        ("public.t_json", "v_json", "a", OrderingDivergence::AsText, "its own operator"),
+        // `jsonb` is compared structurally and diverges only at a string
+        // leaf, which is a different sentence for a different reason. Its
+        // literal has to be a JSON document, which is the same row's other
+        // half: `a` is refused where every column above takes it.
+        ("public.t_json", "v_jsonb", "1", OrderingDivergence::JsonbStringCollation, "structurally"),
     ] {
         let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
         let mut stream = table_stream(
@@ -474,7 +521,7 @@ async fn a_divergent_comparison_is_reported_by_the_stream() {
             table,
             ScanOptions::default(),
             QueryOptions {
-                filters: vec![term(column, PredicateOp::Ge, "a")],
+                filters: vec![term(column, PredicateOp::Ge, literal)],
                 projection: Some(vec![column.to_string()]),
                 ..Default::default()
             },

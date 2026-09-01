@@ -204,6 +204,23 @@ pub enum CompareKind {
     MacAddr {
         octets: usize,
     },
+    /// `jsonb`, compared as `compareJsonbContainers` compares it: a walk down
+    /// two containers in lockstep, deciding on the first position where they
+    /// differ — the *kind* at that position first (an object outranks an
+    /// array, an array outranks every scalar, a boolean outranks a number),
+    /// then a container's element or pair count, then the members themselves
+    /// (I41).
+    ///
+    /// **The one thing it cannot reproduce is a string leaf.** Every JSON
+    /// string, object keys included, is ordered by `varstr_cmp` under
+    /// `DEFAULT_COLLATION_OID` — the *database's* collation, which a plain
+    /// dump does not record (I32) — so a `jsonb` column carries
+    /// [`OrderingDivergence::JsonbStringCollation`] for exactly the reason a
+    /// bare `text` column carries [`OrderingDivergence::UnknownCollation`],
+    /// one level down. A `jsonb` column cannot state a clause of its own:
+    /// `jsonb` is not a collatable type, so there is nothing for `pg_dump` to
+    /// write and nothing for the register to read.
+    Jsonb,
 }
 
 /// How a comparison here differs from PostgreSQL's own for the same declared
@@ -212,9 +229,18 @@ pub enum CompareKind {
 /// `crate::predicate::OrderingNote::message`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrderingDivergence {
-    /// The column is held as text and compared bytewise, where the type has
-    /// a server-side operator of its own. Never a *collatable* type: those
-    /// get one of the two variants below, or no divergence at all.
+    /// The column is held as text and compared bytewise rather than by the
+    /// order its declared type has on the server. Never a *collatable* type:
+    /// those get one of the two variants below, or no divergence at all.
+    ///
+    /// **`json` is its one remaining member, and the sentence it prints does
+    /// not fit it.** `OrderingNote::message` says "PostgreSQL orders this type
+    /// by its own operator, not bytewise", which was written when `jsonb`
+    /// shared the arm; the server defines *no* comparison for `json` at all,
+    /// so bytewise offers more than it does rather than less. Splitting that
+    /// sentence belongs to the slice that strikes `KD7`
+    /// (`docs/design/roadmap-P11.5.1-jsonb-notes.md`, "What later slices
+    /// inherit").
     AsText,
     /// A collatable text column whose collation the file does not state: it
     /// carries no `COLLATE` clause and its type's default collation is the
@@ -229,6 +255,15 @@ pub enum OrderingDivergence {
     /// Independent of collation, and the reason a `COLLATE "C"` clause does
     /// not close this row.
     BlankPadded,
+    /// A `jsonb` column, whose *structure* is compared exactly and whose
+    /// string leaves and object keys are not: `compareJsonbScalarValue` orders
+    /// every one of them by `varstr_cmp` under `DEFAULT_COLLATION_OID` (I41),
+    /// which is the database's collation and is absent from a plain dump
+    /// (I32). Held apart from [`Self::UnknownCollation`] because the column
+    /// states nothing and could not — `jsonb` is not collatable, so the
+    /// sentence about a missing `COLLATE` clause would be describing a clause
+    /// that has no place to be written.
+    JsonbStringCollation,
 }
 
 /// A collatable type's *default* collation — `pg_type.typcollation`, which is
@@ -277,8 +312,8 @@ impl ComparisonPlan {
     /// Bytewise over the text the file holds, which is not what PostgreSQL
     /// orders by. A collatable type goes through [`collated_text`] instead,
     /// and every other `Utf8View` type now carries a comparison of its own,
-    /// so this constant has exactly two members left: `json`, which the
-    /// server does not order at all, and `jsonb`, which it does.
+    /// so this constant has exactly one member left: `json`, for which
+    /// PostgreSQL defines no comparison at all.
     ///
     /// Deficiency register: `deficiency: KD7` — the register's remaining
     /// text-held row is this constant, and the detail is
@@ -289,6 +324,13 @@ impl ComparisonPlan {
     /// Bytewise, and diverging for `divergence`.
     pub(crate) const fn text_diverging(divergence: OrderingDivergence) -> Self {
         Self::Compared { kind: CompareKind::Text, divergence: Some(divergence) }
+    }
+
+    /// PostgreSQL's own comparison but for the residue `divergence` names —
+    /// the shape a type takes when its order is implemented and one part of
+    /// it rests on a fact the file does not carry.
+    fn diverging(kind: CompareKind, divergence: OrderingDivergence) -> Self {
+        Self::Compared { kind, divergence: Some(divergence) }
     }
 }
 
@@ -479,12 +521,20 @@ fn builtin_scalar(
         // `memcmp` then length — both are `[u8]`'s own order (I33).
         "uuid" => (FixedSizeBinary(16), agrees(K::Uuid)),
         "bytea" => (Binary, agrees(K::Bytea)),
-        // The two that are still text, and for opposite reasons. PostgreSQL
-        // defines *no* comparison for `json` — no `=`, no order, no operator
-        // class — so bytewise offers more than the server does rather than
-        // less. `jsonb` has a full order, and it is the one remaining member
-        // of the register's text-held row.
-        "json" | "jsonb" => (Utf8View, text),
+        // The two JSON types part company here. PostgreSQL defines *no*
+        // comparison for `json` — no `=`, no order, no operator class — so
+        // bytewise offers more than the server does rather than less, and
+        // `json` is the one remaining member of the register's text-held row.
+        "json" => (Utf8View, text),
+        // `jsonb` has a full order and this implements it, structurally
+        // (I41). What it cannot implement is the string leaves: they go
+        // through the database's own collation, which the file does not
+        // carry (I32), so the plan agrees about the shape and announces the
+        // residue.
+        "jsonb" => (
+            Utf8View,
+            ComparisonPlan::diverging(K::Jsonb, OrderingDivergence::JsonbStringCollation),
+        ),
         // `network_cmp_internal`'s order for the two address types, and the
         // plain byte order for the two MAC types (I40). `cidr` differs from
         // `inet` only in refusing a literal with a bit set below its netmask.
@@ -1694,11 +1744,15 @@ mod tests {
             ("interval", agrees(K::Interval)),
             ("uuid", agrees(K::Uuid)),
             ("bytea", agrees(K::Bytea)),
-            // The two the register still holds as text, for opposite
-            // reasons: PostgreSQL orders `jsonb` and does not order `json`
-            // at all.
+            // The one the register still holds as text, because the server
+            // defines no order for it to be wrong about.
             ("json", text()),
-            ("jsonb", text()),
+            // `jsonb` is ordered structurally and diverges only where a
+            // string leaf decides, which is the database's collation (I41).
+            (
+                "jsonb",
+                ComparisonPlan::diverging(K::Jsonb, OrderingDivergence::JsonbStringCollation),
+            ),
             // `cidr` differs from `inet` only in refusing a literal with a
             // bit set below its netmask, and `macaddr8` from `macaddr` only
             // in its width — both distinctions the plan has to carry, since
@@ -1718,12 +1772,13 @@ mod tests {
         assert_eq!(comparison_for("INTEGER", None, &[]), agrees(K::Int));
     }
 
-    /// Six unrelated declared types reach `Utf8View`, which is why the
+    /// Seven unrelated declared types reach `Utf8View`, which is why the
     /// register cannot be keyed on the Arrow type: an enum compares by
     /// declaration order, a bare `numeric` by decimal value, an `interval` by
-    /// a 128-bit span, an `inet` by family-then-prefix, `text` bytewise with
-    /// the column's own collation deciding whether that is right, and `json`
-    /// bytewise because the server defines no order at all.
+    /// a 128-bit span, an `inet` by family-then-prefix, a `jsonb` by a walk
+    /// down two containers, `text` bytewise with the column's own collation
+    /// deciding whether that is right, and `json` bytewise because the server
+    /// defines no order at all.
     #[test]
     fn the_register_tells_apart_types_that_share_one_arrow_type() {
         let labels = ["sad".to_string(), "ok".to_string()];
@@ -1744,9 +1799,13 @@ mod tests {
             comparison_for("inet", None, &[]),
             ComparisonPlan::agrees(CompareKind::Network { cidr: false }),
         );
-        for declared in ["json", "jsonb"] {
-            assert_eq!(comparison_for(declared, None, &[]), ComparisonPlan::AS_TEXT, "{declared}");
-        }
+        assert_eq!(comparison_for("json", None, &[]), ComparisonPlan::AS_TEXT);
+        // `jsonb` shares the Arrow type and neither the comparison nor the
+        // verdict: it is a container walk that diverges only at a string.
+        assert_eq!(
+            comparison_for("jsonb", None, &[]),
+            ComparisonPlan::diverging(CompareKind::Jsonb, OrderingDivergence::JsonbStringCollation),
+        );
         // `text` is the last, and it does not share `AS_TEXT` with them:
         // reading the collation is what tells them apart.
         assert_eq!(

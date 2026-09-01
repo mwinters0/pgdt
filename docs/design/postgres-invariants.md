@@ -2563,3 +2563,155 @@ and, from the repo root, the answers the source predicts:
 grep -P '^interval\t(1 mon|30 days|720:00:00)\t' fixtures/17/oracle/comparisons.tsv
 grep -P '^(inet|cidr|macaddr|macaddr8|time with time zone)\t' fixtures/16/oracle/literals.tsv
 ```
+
+---
+
+## I41 — `jsonb` has one output form and a structural order, and a top-level scalar is stored inside a one-element array
+
+**Claim.** Four properties: the text a dump can hold, the text the server will
+read back, the order two documents are put in, and the one part of that order
+that is not a fact about the documents.
+
+- **Output.** `jsonb_out` walks the *stored* value, so it is canonical and not
+  the text that was inserted. `,` and `:` are each followed by exactly one
+  space and nothing else is; a number goes through `numeric_out`, which never
+  writes an exponent; a string goes through `escape_json`, which writes `\b`,
+  `\f`, `\n`, `\r`, `\t`, `\"` and `\\` and renders every other byte below
+  `0x20` as `\u00xx`, leaving everything else — non-ASCII included — as itself;
+  and an object's pairs are written in **storage order**, which is
+  `lengthCompareJsonbString`: key length first, then `memcmp`. So
+  `{"z":1,"aa":2}` comes back `{"z": 1, "aa": 2}`, not alphabetized.
+
+- **Input.** `jsonb_in` is RFC 8259 with two refusals of its own. A JSON number
+  is `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?` and is stored as a
+  `numeric`, so `1`, `1.0` and `1e2` are accepted while `01`, `+1`, `.5`, `1.`
+  and `NaN` are not. A string may not carry an unescaped byte below `0x20`;
+  `\u0000` is refused outright, because a `jsonb` string is `text` and `text`
+  cannot hold a NUL; and a `\uD800`-range escape must be followed by its low
+  half. Duplicate object keys are accepted and resolved to the **last** one
+  written.
+
+- **Order.** `compareJsonbContainers` walks two documents in lockstep and
+  decides at the first position they differ at. A position where the two kinds
+  differ is decided by the kind alone, in `JsonbValue.type`'s own numbering —
+  `jbvNull` `0x0`, `jbvString` `0x1`, `jbvNumeric` `0x2`, `jbvBool` `0x3`,
+  `jbvArray` `0x10`, `jbvObject` `0x11`. A position where both are containers
+  of one kind is decided by the element or pair **count** before any member is
+  looked at. Otherwise: two numbers by `numeric_cmp`, two booleans by
+  `false < true`, two nulls equal, and two strings by `varstr_cmp`. An object's
+  pairs are visited in storage order while its keys are compared as strings,
+  and those are two different orders.
+
+- **The raw-scalar wrapper.** A top-level scalar is stored as a one-element
+  array with `rawScalar` set, and `compareJsonbContainers` tests that flag
+  *and then lets the element count overwrite what it concluded*. So a scalar
+  sorts below a one-element or longer array and **above an empty one**:
+  `'1'::jsonb > '[]'::jsonb` is true, and so is `'null'::jsonb > '[]'::jsonb`.
+  v18 added a comment saying so — *"There should be an "else" here, to prevent
+  us from overriding the above, but we can't change the sort order now, so
+  there is a mild anomaly that an empty top level array sorts less than null."*
+  — which is upstream declaring the behaviour frozen rather than a bug about to
+  be fixed.
+
+**Proof.** `src/backend/utils/adt/jsonb_util.c` carries
+`compareJsonbContainers`, `compareJsonbScalarValue`,
+`lengthCompareJsonbString`, `lengthCompareJsonbPair` and
+`uniqueifyJsonbObject`; `src/include/utils/jsonb.h` carries the `JsonbValue`
+type numbering quoted above. The kind-order fallback is one line, reached from
+both branches of the walk:
+
+```c
+			/* Type-defined order */
+			res = (va.type > vb.type) ? 1 : -1;
+```
+
+The last-duplicate-wins rule is two facts together: `lengthCompareJsonbPair`
+breaks a key tie on *descending* insertion order (`res = (pa->order >
+pb->order) ? -1 : 1`, under the comment *"Unique algorithm will prefer first
+element as value"*), and `uniqueifyJsonbObject` then keeps the first of each
+run. `src/backend/utils/adt/jsonb.c`'s `JsonbToCStringWorker` is the output
+walk — `numeric_out` for a number, `escape_json` for a string —
+`src/backend/utils/adt/json.c` carries `escape_json`, and
+`src/common/jsonapi.c` carries `json_lex_number` and `json_lex_string`.
+
+**Observed**, on `postgres:13.23-trixie`, `postgres:16.15-trixie` and
+`postgres:18.6-trixie`, all three answering identically: `'1' > '[]'`,
+`'null' > '[]'`, `'1' < '[1]'`, `'1' < '[1,2]'`, `'1' < '{}'`, `'[]' < '{}'`,
+`'"a"' < '1'`, `'true' > '1'`, `'null' < '"a"'`, `'[1,2]' > '[3]'`,
+`'{"b":1}' < '{"a":1,"c":2}'`, `'{"z":1}' > '{"a":2}'` and
+`'{"z":1,"aa":2}' > '{"y":3,"zz":4}'` all true — the last being the pair that
+separates storage order from alphabetical, since sorted the other way it
+answers false. Output and input on the same containers: `'{"z":1,"aa":2}'`
+prints `{"z": 1, "aa": 2}`, `'{"a":1,"a":2}'` prints `{"a": 2}`, `'1e2'` prints
+`100`, `'-0.0'` prints `0.0`, and `01`, `+1`, `.5`, `1.`, `[1,]`, `{a:1}`,
+`NaN`, `1 2`, `"\x41"`, `"\ud83d"`, `"\u0000"` and a string holding a raw
+newline are each refused.
+
+The behavioural half is also committed:
+`fixtures/<13–18>/oracle/comparisons.tsv` holds the server's own answer for
+every pair of the `jsonb` case list — 972 cells across the six majors, over a
+number, two spellings of one object, an array and JSON `null` — which is where
+the kind order among those four is pinned without a container of any kind.
+
+**Scope limit.** The *output* form and the input grammar, not the wider
+question of what a `json` value looks like: `json` stores its input verbatim
+and normalizes nothing, so none of the output half applies to it, and
+PostgreSQL defines no comparison for `json` at all. Says nothing about the
+containment and existence operators (`@>`, `?`), which are not an order.
+`varstr_cmp` is called with `DEFAULT_COLLATION_OID`, so every string leaf and
+object key is ordered by the **database's** collation — which a plain dump does
+not record (I32), and which is why this entry cannot support a claim of
+agreement for a document with a string anywhere in it.
+
+**Verified against.** v13.23, v14.24, v15.19, v16.15, v17.11 and v18.6.
+`compareJsonbContainers` is byte-identical across all six but for v18's added
+comment, quoted above, which changes no code. `compareJsonbScalarValue` differs
+only in its two parameter names (`aScalar`/`bScalar` → `a`/`b`, at v16).
+`uniqueifyJsonbObject` gained `unique_keys` and `skip_nulls` parameters at v16
+for the SQL/JSON object constructors; `jsonb_in` passes neither, so the sort
+and the duplicate rule are unchanged. `escape_json`'s body moved into an
+`escape_json_char` helper at v18 with every arm identical.
+`lengthCompareJsonbString` and `lengthCompareJsonbPair` are byte-identical
+across all six. `json_lex_number` gained the incremental-parser branch at v17,
+which `jsonb_in` does not enter.
+
+**Relied on by.** `pgtype.rs`'s `CompareKind::Jsonb` arm and `predicate.rs`'s
+`Jsonb`, `JsonCursor` and `storage_order` —
+[`architecture.md`](architecture.md), "Ordering operators compare typed", where
+this is the row that agrees about structure and diverges at a string.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+awk '/^compareJsonbContainers/,/^}/' src/backend/utils/adt/jsonb_util.c
+awk '/^compareJsonbScalarValue/,/^}/' src/backend/utils/adt/jsonb_util.c
+awk '/^lengthCompareJsonbPair/,/^}/' src/backend/utils/adt/jsonb_util.c
+awk '/^uniqueifyJsonbObject/,/^}/' src/backend/utils/adt/jsonb_util.c
+sed -n '/typedef enum jbvType/,/} jbvType;/p' src/include/utils/jsonb.h
+```
+
+and the behaviour, against a throwaway container of the major in question —
+twenty seconds, and the only way to reach the raw-scalar anomaly, which no
+`fixtures/` case constructs. The SQL arrives on stdin rather than inside the
+`sh -c` string, which is what keeps its quoting readable:
+
+```sh
+sudo nerdctl run --rm -i -m 512m -e POSTGRES_HOST_AUTH_METHOD=trust \
+  postgres:<N>-trixie sh -c 'docker-entrypoint.sh postgres >/tmp/pg.log 2>&1 &
+    for i in $(seq 60); do pg_isready -q && break; sleep 1; done
+    cat > /tmp/q.sql; psql -U postgres -X -q -f /tmp/q.sql' <<'SQL'
+SELECT '1'::jsonb > '[]'::jsonb    AS scalar_gt_empty_array,
+       '1'::jsonb < '[1]'::jsonb   AS scalar_lt_one_elem_array,
+       'true'::jsonb > '1'::jsonb  AS bool_gt_number,
+       '"a"'::jsonb < '1'::jsonb   AS string_lt_number,
+       '{"z":1,"aa":2}'::jsonb     AS storage_order_out;
+SQL
+```
+
+and, from the repo root, the committed cells the source predicts:
+
+```sh
+grep -P '^jsonb\t' fixtures/16/oracle/comparisons.tsv
+grep -P '^jsonb\t' fixtures/16/oracle/literals.tsv
+```

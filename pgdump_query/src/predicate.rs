@@ -137,6 +137,13 @@ impl OrderingNote {
                  PostgreSQL strips trailing blanks before comparing, so a value equal to the \
                  filter's own sorts after it here",
             ),
+            // Not a `bytewise` sentence: the structure *is* compared the way
+            // PostgreSQL compares it, and only a string leaf is left.
+            OrderingDivergence::JsonbStringCollation => format!(
+                "`{column}` ({declared}) is compared structurally, but every string value and \
+                 object key inside it is ordered by the database's collation, which a plain dump \
+                 does not record — this matches the server only if that collation is C or POSIX",
+            ),
         }
     }
 }
@@ -185,13 +192,22 @@ impl NumericKey {
         if !int.bytes().all(|b| b.is_ascii_digit()) || !frac.bytes().all(|b| b.is_ascii_digit()) {
             return None;
         }
+        Some(Self::from_parts(negative, int, frac))
+    }
+
+    /// Drop the insignificant digits from an already-split sign/integer part/
+    /// fraction, which is the whole of the normalization. The one shared
+    /// entry point, because the two callers reach a split differently: a
+    /// `numeric` field is read straight out of the text, while a `jsonb`
+    /// number's point has to be moved by its exponent first.
+    fn from_parts(negative: bool, int: &str, frac: &str) -> Self {
         let int = int.trim_start_matches('0');
         let frac = frac.trim_end_matches('0');
-        Some(Self {
+        Self {
             negative: negative && !(int.is_empty() && frac.is_empty()),
             int: int.to_string(),
             frac: frac.to_string(),
-        })
+        }
     }
 
     /// Sign first, then magnitude: how many integer digits, then those digits,
@@ -274,6 +290,445 @@ fn bitncmp(left: &[u8; 16], right: &[u8; 16], n: u8) -> Ordering {
     (left[whole] & mask).cmp(&(right[whole] & mask))
 }
 
+/// One `jsonb` value, in the shape PostgreSQL stores and compares one in.
+///
+/// **The variants are `JsonbValue`'s own type codes, in their order**, because
+/// those codes *are* the fallback order `compareJsonbContainers` uses whenever
+/// two positions hold different kinds: `jbvNull` 0x0, `jbvString` 0x1,
+/// `jbvNumeric` 0x2, `jbvBool` 0x3, `jbvArray` 0x10, `jbvObject` 0x11 (I41).
+/// So an object outranks an array, an array outranks every scalar, and a
+/// boolean outranks a number — none of which is JSON's own idea of an order,
+/// and none of which a bytewise comparison of the text produces.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Jsonb {
+    Null,
+    String(String),
+    /// A JSON number is stored as a `numeric` and compared by `numeric_cmp`,
+    /// which is exactly [`NumericKey`] — so `1`, `1.0` and `1e0` are one
+    /// value, as they are for a bare `numeric` column.
+    Number(NumericKey),
+    Bool(bool),
+    /// `raw_scalar` marks the **pseudo-array a top-level scalar is stored
+    /// in**, and it is not cosmetic: `compareJsonbContainers` tests it before
+    /// the element count and lets the count *overwrite* the answer, so a
+    /// scalar sorts below a one- or many-element array and **above an empty
+    /// one** (I41). Only [`jsonb_key`] ever sets it; a nested array is a real
+    /// array at every depth.
+    Array {
+        raw_scalar: bool,
+        items: Vec<Jsonb>,
+    },
+    /// Pairs in **storage** order — key length first, then bytes — which is
+    /// the order the walk visits them in and is *not* the order the keys are
+    /// compared in ([`Jsonb::cmp`]).
+    Object(Vec<(String, Jsonb)>),
+}
+
+impl Jsonb {
+    /// `JsonbValue.type`, which is the type-defined order itself (I41).
+    fn rank(&self) -> u8 {
+        match self {
+            Self::Null => 0x0,
+            Self::String(_) => 0x1,
+            Self::Number(_) => 0x2,
+            Self::Bool(_) => 0x3,
+            Self::Array { .. } => 0x10,
+            Self::Object(_) => 0x11,
+        }
+    }
+
+    /// `compareJsonbContainers`, as a recursion rather than as a lockstep walk
+    /// over two token streams.
+    ///
+    /// The two agree because both stop at the first position where the values
+    /// differ, and up to that position the streams are identical: a kind
+    /// mismatch anywhere is the type-defined order, and a container's size is
+    /// settled at its opening token, before any member of it is looked at.
+    ///
+    /// **Two details are PostgreSQL's and would not be guessed.** An object is
+    /// ordered by its pair *count* before its first key, so `{"z":1}` sorts
+    /// below `{"a":1,"b":2}`; and the keys are compared by `varstr_cmp` while
+    /// being *stored* by length-then-bytes, so the walk visits `{"z":1,"aa":2}`
+    /// as `z` then `aa` and compares those keys in that order (I41).
+    ///
+    /// **A string leaf is where this stops being PostgreSQL's answer.**
+    /// `compareJsonbScalarValue` passes `DEFAULT_COLLATION_OID` to
+    /// `varstr_cmp`, so every string value and every object key is ordered by
+    /// the database's collation — which a plain dump does not record (I32).
+    /// Bytewise is what this build has, and
+    /// `OrderingDivergence::JsonbStringCollation` is the column's announcement
+    /// of it.
+    fn cmp(&self, other: &Self) -> Ordering {
+        if self.rank() != other.rank() {
+            return self.rank().cmp(&other.rank());
+        }
+        match (self, other) {
+            (Self::Null, Self::Null) => Ordering::Equal,
+            (Self::String(a), Self::String(b)) => a.as_bytes().cmp(b.as_bytes()),
+            (Self::Number(a), Self::Number(b)) => a.cmp(b),
+            (Self::Bool(a), Self::Bool(b)) => a.cmp(b),
+            (
+                Self::Array { raw_scalar: raw_a, items: a },
+                Self::Array { raw_scalar: raw_b, items: b },
+            ) => {
+                // Written in the source's own order, overwrite included: the
+                // flag is decided first and the length then replaces the
+                // answer rather than refining it.
+                let mut container = Ordering::Equal;
+                if raw_a != raw_b {
+                    container = if *raw_a { Ordering::Less } else { Ordering::Greater };
+                }
+                if a.len() != b.len() {
+                    container = a.len().cmp(&b.len());
+                }
+                container.then_with(|| first_difference(a.iter().zip(b).map(|(x, y)| x.cmp(y))))
+            }
+            (Self::Object(a), Self::Object(b)) => a.len().cmp(&b.len()).then_with(|| {
+                first_difference(a.iter().zip(b).map(|((ka, va), (kb, vb))| {
+                    ka.as_bytes().cmp(kb.as_bytes()).then_with(|| va.cmp(vb))
+                }))
+            }),
+            _ => unreachable!("two `Jsonb` values of one rank are of one variant"),
+        }
+    }
+}
+
+/// The first non-`Equal` answer, or `Equal` when there is none — the
+/// member-wise half of [`Jsonb::cmp`], where the walk stops at the first
+/// position the two containers differ at.
+fn first_difference(mut answers: impl Iterator<Item = Ordering>) -> Ordering {
+    answers.find(|answer| answer.is_ne()).unwrap_or(Ordering::Equal)
+}
+
+/// How deep [`parse_jsonb`] will descend before refusing. PostgreSQL's own
+/// parser recurses too and is bounded by `check_stack_depth()`, so it has a
+/// limit of its own; ours is a fixed number because a Rust stack overflow
+/// aborts the process where a refusal is an error a user can read. Nothing a
+/// `jsonb_out` field of a real dump holds comes near it.
+const JSONB_MAX_DEPTH: usize = 1000;
+
+/// The furthest a `jsonb` number's exponent may move the decimal point. It
+/// bounds the digit string this builds, and it is ours rather than
+/// PostgreSQL's — `numeric` reaches further. No *field* is affected: `jsonb`
+/// prints its numbers through `numeric_out`, which never writes an exponent,
+/// so only a literal can reach this at all, and refusing one is the weaker
+/// answer rather than the wrong one.
+const JSONB_MAX_EXPONENT: i64 = 100_000;
+
+/// A recursive-descent reader over one JSON document, implementing what
+/// `jsonb_in` accepts and nothing wider (I41): RFC 8259 with PostgreSQL's two
+/// extra refusals — `\u0000`, which cannot be part of a `text` value, and a
+/// lone surrogate half.
+struct JsonCursor<'a> {
+    bytes: &'a [u8],
+    at: usize,
+    depth: usize,
+}
+
+impl<'a> JsonCursor<'a> {
+    /// The four bytes RFC 8259 calls whitespace, which is also what the
+    /// server's lexer skips — not `char::is_whitespace`, and not
+    /// `array_isspace` either.
+    fn skip_ws(&mut self) {
+        while matches!(self.bytes.get(self.at), Some(b' ' | b'\t' | b'\n' | b'\r')) {
+            self.at += 1;
+        }
+    }
+
+    fn eat(&mut self, byte: u8) -> bool {
+        let found = self.bytes.get(self.at) == Some(&byte);
+        self.at += usize::from(found);
+        found
+    }
+
+    fn keyword(&mut self, word: &str) -> Option<()> {
+        let end = self.at + word.len();
+        (self.bytes.get(self.at..end)? == word.as_bytes()).then(|| self.at = end)
+    }
+
+    /// A run of one or more ASCII digits, as the number grammar's three
+    /// positions all want.
+    fn digits(&mut self) -> Option<&'a str> {
+        let start = self.at;
+        while self.bytes.get(self.at).is_some_and(u8::is_ascii_digit) {
+            self.at += 1;
+        }
+        if self.at == start {
+            return None;
+        }
+        // ASCII digits, so this can only be valid UTF-8.
+        std::str::from_utf8(&self.bytes[start..self.at]).ok()
+    }
+
+    /// One value, and the only place the depth is counted.
+    fn value(&mut self) -> Option<Jsonb> {
+        self.depth += 1;
+        if self.depth > JSONB_MAX_DEPTH {
+            return None;
+        }
+        let value = match self.bytes.get(self.at)? {
+            b'{' => {
+                self.at += 1;
+                self.object()?
+            }
+            b'[' => {
+                self.at += 1;
+                self.array()?
+            }
+            b'"' => Jsonb::String(self.string()?),
+            b't' => {
+                self.keyword("true")?;
+                Jsonb::Bool(true)
+            }
+            b'f' => {
+                self.keyword("false")?;
+                Jsonb::Bool(false)
+            }
+            b'n' => {
+                self.keyword("null")?;
+                Jsonb::Null
+            }
+            // Anything else is a number or nothing: a leading `+`, a bare
+            // `.5` and `NaN` all fail inside, exactly as the server's lexer
+            // fails them.
+            _ => Jsonb::Number(self.number()?),
+        };
+        self.depth -= 1;
+        Some(value)
+    }
+
+    /// The body of an array, its `[` already eaten.
+    fn array(&mut self) -> Option<Jsonb> {
+        let mut items = Vec::new();
+        self.skip_ws();
+        if !self.eat(b']') {
+            loop {
+                self.skip_ws();
+                items.push(self.value()?);
+                self.skip_ws();
+                if self.eat(b',') {
+                    continue;
+                }
+                if self.eat(b']') {
+                    break;
+                }
+                return None;
+            }
+        }
+        Some(Jsonb::Array { raw_scalar: false, items })
+    }
+
+    /// The body of an object, its `{` already eaten. The pairs come out in
+    /// storage order with duplicate keys resolved, which is the state a
+    /// stored `jsonb` is always in.
+    fn object(&mut self) -> Option<Jsonb> {
+        let mut pairs: Vec<(String, Jsonb)> = Vec::new();
+        self.skip_ws();
+        if !self.eat(b'}') {
+            loop {
+                self.skip_ws();
+                let key = self.string()?;
+                self.skip_ws();
+                if !self.eat(b':') {
+                    return None;
+                }
+                self.skip_ws();
+                pairs.push((key, self.value()?));
+                self.skip_ws();
+                if self.eat(b',') {
+                    continue;
+                }
+                if self.eat(b'}') {
+                    break;
+                }
+                return None;
+            }
+        }
+        Some(Jsonb::Object(storage_order(pairs)))
+    }
+
+    /// A JSON string, its escapes resolved. An unescaped byte below `0x20` is
+    /// refused, which is what the server refuses and what `escape_json` never
+    /// writes — it renders every one of them as `\b`/`\f`/`\n`/`\r`/`\t` or a
+    /// `\u00xx` (I41).
+    fn string(&mut self) -> Option<String> {
+        if !self.eat(b'"') {
+            return None;
+        }
+        let mut out: Vec<u8> = Vec::new();
+        loop {
+            let byte = *self.bytes.get(self.at)?;
+            self.at += 1;
+            match byte {
+                b'"' => return String::from_utf8(out).ok(),
+                b'\\' => {
+                    let escape = *self.bytes.get(self.at)?;
+                    self.at += 1;
+                    match escape {
+                        b'"' => out.push(b'"'),
+                        b'\\' => out.push(b'\\'),
+                        b'/' => out.push(b'/'),
+                        b'b' => out.push(0x08),
+                        b'f' => out.push(0x0c),
+                        b'n' => out.push(b'\n'),
+                        b'r' => out.push(b'\r'),
+                        b't' => out.push(b'\t'),
+                        b'u' => {
+                            let mut buffer = [0u8; 4];
+                            out.extend_from_slice(
+                                self.unicode_escape()?.encode_utf8(&mut buffer).as_bytes(),
+                            );
+                        }
+                        _ => return None,
+                    }
+                }
+                0x00..=0x1f => return None,
+                // Every other byte is copied verbatim, and each is either
+                // ASCII or part of a multi-byte sequence copied whole — the
+                // input is a `&str`, so the result is valid UTF-8 by
+                // construction and `from_utf8` above never fails.
+                _ => out.push(byte),
+            }
+        }
+    }
+
+    /// `\uXXXX`, its `\u` already eaten. Surrogates must come as a matched
+    /// high-then-low pair, and `\u0000` is refused outright: `jsonb` stores
+    /// strings as `text`, which cannot hold a NUL (I41).
+    fn unicode_escape(&mut self) -> Option<char> {
+        let first = self.hex4()?;
+        if first == 0 {
+            return None;
+        }
+        if (0xd800..0xdc00).contains(&first) {
+            if !(self.eat(b'\\') && self.eat(b'u')) {
+                return None;
+            }
+            let second = self.hex4()?;
+            if !(0xdc00..0xe000).contains(&second) {
+                return None;
+            }
+            return char::from_u32(0x10000 + ((first - 0xd800) << 10) + (second - 0xdc00));
+        }
+        // A low surrogate with no high half in front of it.
+        char::from_u32(first).filter(|_| !(0xdc00..0xe000).contains(&first))
+    }
+
+    fn hex4(&mut self) -> Option<u32> {
+        let digits = self.bytes.get(self.at..self.at.checked_add(4)?)?;
+        if !digits.iter().all(u8::is_ascii_hexdigit) {
+            return None;
+        }
+        self.at += 4;
+        u32::from_str_radix(std::str::from_utf8(digits).ok()?, 16).ok()
+    }
+
+    /// A JSON number: an optional `-`, then `0` or a digit run that does not
+    /// start with `0`, then an optional `.` with at least one digit, then an
+    /// optional `e`/`E` exponent with an optional sign. `01`, `+1`, `.5`,
+    /// `1.` and `NaN` are refused, as the server refuses them (I41).
+    ///
+    /// The result is the [`NumericKey`] the stored `numeric` would compare
+    /// by, so the exponent is applied by moving the decimal point rather than
+    /// kept: `1e2`, `100` and `100.00` are one value, which is what
+    /// `numeric_cmp` says of them.
+    fn number(&mut self) -> Option<NumericKey> {
+        let negative = self.eat(b'-');
+        let int = self.digits()?;
+        if int.len() > 1 && int.starts_with('0') {
+            return None;
+        }
+        let frac = if self.eat(b'.') { self.digits()? } else { "" };
+        let mut exponent: i64 = 0;
+        if matches!(self.bytes.get(self.at), Some(b'e' | b'E')) {
+            self.at += 1;
+            let signed = if self.eat(b'-') {
+                true
+            } else {
+                self.eat(b'+');
+                false
+            };
+            let digits = self.digits()?;
+            // Parsed as `i64` and then bounded, so a run of digits too long
+            // for the integer is refused rather than wrapping.
+            exponent = digits.parse::<i64>().ok()?;
+            if signed {
+                exponent = -exponent;
+            }
+        }
+        // Where the point lands, counted in digits from the left of
+        // `int ++ frac`. Both directions need padding, and both are bounded.
+        let point = i64::try_from(int.len()).ok()? + exponent;
+        if !(-JSONB_MAX_EXPONENT..=JSONB_MAX_EXPONENT).contains(&point) {
+            return None;
+        }
+        let digits = format!("{int}{frac}");
+        let width = i64::try_from(digits.len()).ok()?;
+        Some(match point {
+            _ if point <= 0 => {
+                NumericKey::from_parts(negative, "", &format!("{}{digits}", zeros(-point)))
+            }
+            _ if point >= width => {
+                NumericKey::from_parts(negative, &format!("{digits}{}", zeros(point - width)), "")
+            }
+            _ => {
+                let split = usize::try_from(point).ok()?;
+                NumericKey::from_parts(negative, &digits[..split], &digits[split..])
+            }
+        })
+    }
+}
+
+/// `n` zeros, for the padding a moved decimal point needs on either side.
+fn zeros(n: i64) -> String {
+    "0".repeat(usize::try_from(n).unwrap_or(0))
+}
+
+/// `uniqueifyJsonbObject`: sort the pairs into storage order and drop every
+/// duplicate key but the **last** one written.
+///
+/// Storage order is `lengthCompareJsonbString` — key length first, then
+/// `memcmp` — which is why `{"z":1,"aa":2}` is stored, printed and walked in
+/// that order rather than alphabetically. The duplicate rule comes out of
+/// `lengthCompareJsonbPair` breaking a tie on *descending* insertion order
+/// while the uniqueify pass keeps the first of each run, which is what the
+/// `reverse` here reproduces against a stable sort.
+fn storage_order(mut pairs: Vec<(String, Jsonb)>) -> Vec<(String, Jsonb)> {
+    pairs.reverse();
+    pairs.sort_by(|(a, _), (b, _)| {
+        a.len().cmp(&b.len()).then_with(|| a.as_bytes().cmp(b.as_bytes()))
+    });
+    pairs.dedup_by(|(a, _), (b, _)| a == b);
+    pairs
+}
+
+/// One `jsonb` document, parsed. `None` for text the server's own parser would
+/// refuse — which for a *field* is `Error::FieldDecode` and for a filter's
+/// literal `Error::PredicateValueDecode`, the same two faults every other
+/// comparison raises.
+fn parse_jsonb(text: &str) -> Option<Jsonb> {
+    let mut cursor = JsonCursor { bytes: text.as_bytes(), at: 0, depth: 0 };
+    cursor.skip_ws();
+    let value = cursor.value()?;
+    cursor.skip_ws();
+    (cursor.at == cursor.bytes.len()).then_some(value)
+}
+
+/// A `jsonb` comparison key: the document, with a **top-level scalar wrapped
+/// in the one-element pseudo-array PostgreSQL stores it in** (I41).
+///
+/// The wrapper is not bookkeeping. `compareJsonbContainers` reads the
+/// `rawScalar` flag and then lets the element count overwrite what it
+/// concluded, so `1 < [1]`, `1 < [1,2]` and `1 > []` — the last of which no
+/// "a scalar sorts below every array" rule produces, and which falls out here
+/// only because the wrapping is modelled rather than special-cased.
+fn jsonb_key(text: &str) -> Option<OrderKey> {
+    Some(OrderKey::Jsonb(match parse_jsonb(text)? {
+        container @ (Jsonb::Array { .. } | Jsonb::Object(_)) => container,
+        scalar => Jsonb::Array { raw_scalar: true, items: vec![scalar] },
+    }))
+}
+
 /// One side of an ordering comparison, decoded from text per the column's
 /// [`CompareKind`]. Both sides of any one comparison come from the same kind,
 /// so a *finite* variant mismatch is unreachable by construction.
@@ -309,6 +764,9 @@ enum OrderKey {
         zone: i64,
     },
     Network(NetworkKey),
+    /// A `jsonb` document, with a top-level scalar already wrapped in the
+    /// pseudo-array PostgreSQL stores it in — see [`jsonb_key`].
+    Jsonb(Jsonb),
     Bytes(Vec<u8>),
     Text(String),
     /// PostgreSQL's `infinity`, above every finite value of its type.
@@ -340,6 +798,7 @@ impl OrderKey {
             | Self::Interval(_)
             | Self::TimeTz { .. }
             | Self::Network(_)
+            | Self::Jsonb(_)
             | Self::Bytes(_)
             | Self::Text(_) => FINITE,
             Self::PositiveInfinity => 2,
@@ -631,6 +1090,7 @@ fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
         CompareKind::TimeTz => timetz_key(text)?,
         CompareKind::Network { cidr } => network_key(text, *cidr)?,
         CompareKind::MacAddr { octets } => macaddr_key(text, *octets)?,
+        CompareKind::Jsonb => jsonb_key(text)?,
         CompareKind::Uuid => OrderKey::Bytes(decode::decode_uuid(text)?.to_vec()),
         CompareKind::Bytea => OrderKey::Bytes(decode::decode_bytea(text)?),
         CompareKind::Text => OrderKey::Text(text.to_string()),
@@ -674,6 +1134,7 @@ fn compare_keys(a: &OrderKey, b: &OrderKey) -> Ordering {
             OrderKey::TimeTz { utc: utc_y, zone: zone_y },
         ) => utc_x.cmp(utc_y).then_with(|| zone_x.cmp(zone_y)),
         (OrderKey::Network(x), OrderKey::Network(y)) => x.cmp(y),
+        (OrderKey::Jsonb(x), OrderKey::Jsonb(y)) => x.cmp(y),
         (OrderKey::Bytes(x), OrderKey::Bytes(y)) => x.cmp(y),
         (OrderKey::Text(x), OrderKey::Text(y)) => x.as_bytes().cmp(y.as_bytes()),
         _ if rank_a != FINITE => Ordering::Equal,
@@ -1269,7 +1730,9 @@ mod tests {
         assert_eq!(padded.divergence, OrderingDivergence::BlankPadded);
         assert!(padded.message().contains("blank-padded"), "{}", padded.message());
 
-        let other = note("jsonb", DataType::Utf8View, "1").unwrap();
+        // `json` is what `AsText` has left: the server defines no order for
+        // it, so bytewise offers more than the server does.
+        let other = note("json", DataType::Utf8View, "1").unwrap();
         assert_eq!(other.divergence, OrderingDivergence::AsText);
         assert!(other.message().contains("its own operator"), "{}", other.message());
 
@@ -1292,6 +1755,177 @@ mod tests {
             ),
             None
         );
+    }
+
+    /// `jsonb` orders by kind before value, and the kind order is
+    /// `JsonbValue`'s own type codes: an object above an array, an array
+    /// above every scalar, and a boolean above a number above a string above
+    /// JSON `null` (I41). The first three pairs are cells of
+    /// `fixtures/16/oracle/comparisons.tsv`; the rest are the probe I41
+    /// records, since no oracle case carries a boolean or a string leaf.
+    ///
+    /// `holds` reads `field <op> literal`, the direction a filter asks in.
+    #[test]
+    fn jsonb_orders_by_kind_before_value() {
+        let holds =
+            |field, op, literal| ordered("jsonb", DataType::Utf8View, op, literal, field).unwrap();
+        assert!(holds("1", PredicateOp::Gt, "null"));
+        assert!(holds("[1, 2]", PredicateOp::Gt, "1"));
+        assert!(holds(r#"{"a": 1}"#, PredicateOp::Gt, "[1, 2]"));
+        assert!(holds("true", PredicateOp::Gt, "1"));
+        assert!(holds("1", PredicateOp::Gt, r#""a""#));
+        assert!(holds("false", PredicateOp::Lt, "true"));
+        // A bytewise comparison of the same text gets that third one
+        // backwards: `{` is below `n`.
+        assert!(holds(r#"{"a": 1}"#, PredicateOp::Gt, "null"));
+    }
+
+    /// A container is ordered by its **size** before any member of it, and
+    /// only then member-wise — which is what makes a one-pair object sort
+    /// below a two-pair one whatever the keys say.
+    #[test]
+    fn a_jsonb_container_is_ordered_by_size_first() {
+        let holds =
+            |field, op, literal| ordered("jsonb", DataType::Utf8View, op, literal, field).unwrap();
+        assert!(holds("[1, 2]", PredicateOp::Gt, "[3]"));
+        assert!(holds(r#"{"z": 1}"#, PredicateOp::Lt, r#"{"a": 1, "b": 2}"#));
+        assert!(holds("[]", PredicateOp::Lt, "[[]]"));
+        // Same size: the members decide, keys before values.
+        assert!(holds(r#"{"z": 1}"#, PredicateOp::Gt, r#"{"a": 2}"#));
+        assert!(holds(r#"{"a": 2}"#, PredicateOp::Gt, r#"{"a": 1}"#));
+        // A container element outranks a scalar one at the same position.
+        assert!(holds("[[1], 2]", PredicateOp::Gt, "[3, [4]]"));
+    }
+
+    /// The pairs of an object are walked in **storage** order — key length
+    /// first, then bytes — while the keys themselves are compared as strings.
+    /// The two orders disagree here: stored, this is `z` against `y`, and
+    /// sorted alphabetically it would be `aa` against `y`, which answers the
+    /// other way (I41).
+    #[test]
+    fn jsonb_object_pairs_are_walked_in_storage_order() {
+        assert!(
+            ordered(
+                "jsonb",
+                DataType::Utf8View,
+                PredicateOp::Gt,
+                r#"{"y": 3, "zz": 4}"#,
+                r#"{"z": 1, "aa": 2}"#,
+            )
+            .unwrap()
+        );
+    }
+
+    /// A top-level scalar is stored in a one-element pseudo-array, and
+    /// `compareJsonbContainers` lets the element count *overwrite* the
+    /// `rawScalar` answer — so a scalar sorts below a one- or many-element
+    /// array and **above an empty one** (I41). It is the one place a "scalars
+    /// sort below arrays" rule is wrong, and nothing but modelling the
+    /// wrapper produces it.
+    #[test]
+    fn a_top_level_scalar_outranks_an_empty_array() {
+        let holds =
+            |field, op, literal| ordered("jsonb", DataType::Utf8View, op, literal, field).unwrap();
+        assert!(holds("1", PredicateOp::Gt, "[]"));
+        assert!(holds("null", PredicateOp::Gt, "[]"));
+        assert!(holds("1", PredicateOp::Lt, "[1]"));
+        assert!(holds("1", PredicateOp::Lt, "[1, 2]"));
+        // An object is above a scalar whatever its size, because the two
+        // opening tokens differ and the type order decides before any count.
+        assert!(holds("1", PredicateOp::Lt, "{}"));
+        assert!(holds("[]", PredicateOp::Lt, "{}"));
+    }
+
+    /// A `jsonb` number is a `numeric`, so `1`, `1.0` and `1e0` are one value
+    /// and `9` is below `10` — none of which a bytewise comparison of the
+    /// text gives. Whitespace, key order and a duplicate key are normalized
+    /// on the way in, the last of them to the **last** value written, which
+    /// is what the server stores.
+    #[test]
+    fn a_jsonb_literal_is_canonicalized_the_way_the_server_stores_it() {
+        fn holds(field: &str, op: PredicateOp, literal: &str) -> bool {
+            ordered("jsonb", DataType::Utf8View, op, literal, field).unwrap()
+        }
+        fn equal(field: &str, literal: &str) {
+            assert!(holds(field, PredicateOp::Ge, literal), "{field} >= {literal}");
+            assert!(holds(field, PredicateOp::Le, literal), "{field} <= {literal}");
+        }
+        for spelling in ["1", "1.0", "1e0", "1.00", "0.1e1", "100e-2"] {
+            equal("1", spelling);
+        }
+        assert!(holds("10", PredicateOp::Gt, "9"));
+        equal("-0", "0");
+        equal(r#"{"a": 1}"#, r#"{  "a" : 1  }"#);
+        equal(r#"{"a": 1}"#, r#"{"a":1}"#);
+        equal(r#"{"a": 2}"#, r#"{"a":1,"a":2}"#);
+        equal(r#"{"a": 1, "b": 2}"#, r#"{"b":2,"a":1}"#);
+        // `escape_json` writes a tab as `\t`, and the `COPY` row then doubles
+        // that backslash — so the field below is four characters of escaping
+        // deep and the literal, which is COPY-decoded already, is two. Both
+        // spellings a JSON escape has for the character are one value;
+        // *unescaped* it is not a JSON string at all, which the refusal test
+        // below pins.
+        equal("\"a\\\\tb\"", "\"a\\u0009b\"");
+        // A character above the BMP, which `escape_json` writes as itself and
+        // a literal may write as a surrogate pair.
+        equal("\"\u{1f600}\"", "\"\\ud83d\\ude00\"");
+    }
+
+    /// The literal grammar is `jsonb_in`'s and nothing wider: every one of
+    /// these is text the server itself refuses (I41), so it is
+    /// `Error::PredicateValueDecode` naming the value rather than a
+    /// comparison that means something else.
+    #[test]
+    fn a_jsonb_literal_outside_the_input_grammar_is_refused() {
+        for literal in [
+            "01",
+            "+1",
+            ".5",
+            "1.",
+            "NaN",
+            "1 2",
+            "[1,]",
+            "{a:1}",
+            "{",
+            "{\"a\":1",
+            "'a'",
+            "",
+            "\"\\x41\"",
+            "\"\\ud83d\"",
+            "\"\\u0000\"",
+            "\"a\nb\"",
+            "1e999999",
+        ] {
+            let err =
+                ordered("jsonb", DataType::Utf8View, PredicateOp::Gt, literal, "1").unwrap_err();
+            assert!(matches!(err, Error::PredicateValueDecode { .. }), "{literal:?}: {err:?}");
+        }
+        // A field the parser refuses is the other fault, worded as the build
+        // path words it.
+        let err = ordered("jsonb", DataType::Utf8View, PredicateOp::Gt, "1", "{oops}").unwrap_err();
+        assert!(matches!(err, Error::FieldDecode { .. }), "{err:?}");
+    }
+
+    /// A `jsonb` column announces one thing and it is not the text-held
+    /// sentence: the structure is compared exactly and only a string leaf is
+    /// left, on the database's collation (I32, I41). `json` keeps the
+    /// text-held sentence, because the server defines no order for it at all.
+    #[test]
+    fn jsonb_announces_its_string_leaves_and_json_stays_text_held() {
+        let note = |declared, literal| {
+            let p = order_predicate(PredicateOp::Gt, literal);
+            resolve_term(&p, 0, &one_column(declared, DataType::Utf8View), 0)
+                .unwrap()
+                .ordering_note()
+        };
+        let jsonb = note("jsonb", "1").unwrap();
+        assert_eq!(jsonb.divergence, OrderingDivergence::JsonbStringCollation);
+        assert!(jsonb.message().contains("structurally"), "{}", jsonb.message());
+        assert!(jsonb.message().contains("object key"), "{}", jsonb.message());
+
+        let json = note("json", "anything").unwrap();
+        assert_eq!(json.divergence, OrderingDivergence::AsText);
+        assert!(json.message().contains("its own operator"), "{}", json.message());
     }
 
     /// A bare `numeric` orders as a decimal, which is the row's whole
