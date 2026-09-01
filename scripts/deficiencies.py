@@ -13,10 +13,33 @@ directions and with no discipline in the loop:
   file the index names;
 * every detail paragraph resolves back to an index entry;
 * every source-code marker resolves to an index entry, so one outliving its
-  entry is an error rather than a slow lie.
+  entry is an error rather than a slow lie;
+* every `(b)` entry whose owning phase has been sliced names a slice of it, and
+  that slice's checklist line names the entry back.
 
 Failing on *either* half is the point. A one-directional check leaves the other
 direction free to rot, which is exactly how a register stops being one.
+
+**The fourth relation is the one whose failure is the feature.** A slice list is
+rewritten as a phase is grilled, split and re-sliced, and an entry that named a
+slice number quietly starts pointing at work that no longer exists. Nothing in
+the pairing detects that on its own -- the entry still reads well, and the slice
+that took over the work says nothing. So the re-slice is made to *fail* here
+rather than to owe a re-target on discipline: a renumbered slice leaves the
+entry naming an id the checklist does not list, and a split that moves the
+closure leaves the named slice's line no longer naming the entry.
+
+Two boundaries keep it from firing where there is no obligation:
+
+* **A phase with no `## P<N> progress` checklist is not sliced yet**, so an
+  entry owned by it names no slice and is not asked to. The obligation lands
+  when the phase is sliced, and it lands automatically -- writing the checklist
+  is what turns the check on.
+* **A ticked line is a record, not a promise.** A landed slice's line still says
+  which entry it closed, and the entry has already been rewritten to what is
+  still true (or struck outright), so requiring it to name a landed slice back
+  would force one of the two to lie. The reverse direction therefore reads
+  unticked lines only.
 
 This is `measure.py --check`'s idiom -- the doc addresses an entry by a marker
 comment, never by a heading, because a heading is rewritten whenever the thing
@@ -69,6 +92,18 @@ MARKER_RE = re.compile(r"deficiency:\s*(KD\d+)")
 ENTRY_HEAD_RE = re.compile(r"^-\s+\*\*(KD\d+)\*\*\s+—\s*(.*)$")
 BULLET_RE = re.compile(r"^-\s")
 
+#: A phase's slice checklist. `process.md` fixes both the heading and the item
+#: shape: `## P<N> progress`, then one `- [ ] **<N>.<M>**` per slice.
+CHECKLIST_HEAD_RE = re.compile(r"^##\s+P(\d+)\s+progress\s*$")
+CHECKLIST_ITEM_RE = re.compile(r"^-\s+\[([ xX])\]\s+\*\*(\d+(?:\.\d+)+)\*\*\s*(.*)$")
+
+#: A reference to an entry, anywhere in prose. Bare, not the marker token: a
+#: checklist line names an entry the way it names anything else.
+REFERENCE_RE = re.compile(r"\bKD\d+\b")
+
+#: The phase in a `(b)` entry's destination -- "P11, struck at 11.6" is P11.
+DESTINATION_PHASE_RE = re.compile(r"\bP(\d+)\b")
+
 
 def _index(ident: str) -> int:
     """The numeric half of an identifier, whatever the sigil's length."""
@@ -107,6 +142,46 @@ class Marker:
     #: Repo-relative.
     path: str
     line: int
+
+
+@dataclass(frozen=True)
+class Slice:
+    """One line of a phase's slice checklist, parsed."""
+
+    #: `11.6`, `11.11.2` -- the identifier, not a position.
+    id: str
+    #: The phase it belongs to, from the heading above it.
+    phase: int
+    #: Ticked. A ticked line is a record of what the slice did; an unticked one
+    #: is a promise, and only promises are held to the pairing.
+    done: bool
+    #: The whole item, joined, for reference-hunting and error messages.
+    text: str
+
+
+def slice_refs(text: str, phase: int) -> list[str]:
+    """The slices of `phase` that `text` names, in order, deduplicated.
+
+    Scoped to one phase's number on purpose: an unscoped "looks like `<n>.<m>`"
+    would read a version, a section number or a figure as a slice. The lookbehind
+    keeps `P11.3` and `roadmap-P11.3-…-notes.md` out, which name a doc rather
+    than making a claim about the slice list.
+    """
+    pattern = re.compile(rf"(?<![\w.]){phase}\.\d+(?:\.\d+)?(?!\d)")
+    out: list[str] = []
+    for m in pattern.finditer(text):
+        if m.group(0) not in out:
+            out.append(m.group(0))
+    return out
+
+
+def entry_refs(text: str) -> list[str]:
+    """The entries `text` names, in order, deduplicated."""
+    out: list[str] = []
+    for m in REFERENCE_RE.finditer(text):
+        if m.group(0) not in out:
+            out.append(m.group(0))
+    return out
 
 
 def repo_rel(path: Path, repo: Path) -> str:
@@ -230,6 +305,54 @@ def parse_index(text: str) -> tuple[list[Entry], list[str]]:
     return entries, problems
 
 
+def parse_checklists(text: str) -> dict[int, list[Slice]]:
+    """Every `## P<N> progress` checklist in the index, by phase.
+
+    A phase absent from the result has not been sliced -- which is the fact the
+    fourth relation turns on, so it is read rather than configured. Two phases
+    can be in flight at once (`process.md`, "Two phases in flight"), each with
+    its own checklist, so this is a mapping and not a single list.
+    """
+    out: dict[int, list[Slice]] = {}
+    phase: int | None = None
+    current: list[str] | None = None
+
+    def close() -> None:
+        nonlocal current
+        if phase is not None and current:
+            item = CHECKLIST_ITEM_RE.match(current[0])
+            assert item is not None
+            out.setdefault(phase, []).append(
+                Slice(
+                    id=item.group(2),
+                    phase=phase,
+                    done=item.group(1).strip().lower() == "x",
+                    text=" ".join(part.strip() for part in current),
+                )
+            )
+        current = None
+
+    for line in text.splitlines():
+        if line.startswith("## "):
+            close()
+            head = CHECKLIST_HEAD_RE.match(line.strip())
+            phase = int(head.group(1)) if head else None
+            if phase is not None:
+                out.setdefault(phase, [])
+            continue
+        if phase is None:
+            continue
+        if CHECKLIST_ITEM_RE.match(line):
+            close()
+            current = [line]
+        elif BULLET_RE.match(line) or not line.strip():
+            close()
+        elif current is not None:
+            current.append(line)
+    close()
+    return out
+
+
 def markers_in(path: Path, repo: Path) -> list[Marker]:
     rel = repo_rel(path, repo)
     out: list[Marker] = []
@@ -316,13 +439,91 @@ def reconcile(
     return problems
 
 
+def reconcile_slices(
+    entries: Sequence[Entry], checklists: dict[int, list[Slice]]
+) -> list[str]:
+    """The pairing between a `(b)` entry and the slice that will close it.
+
+    Both ways, and neither half is redundant. Entry to slice catches the
+    renumbering: the entry names an id the checklist no longer lists, or one
+    whose line has stopped claiming it. Slice to entry catches the other
+    half of a split -- a new slice that takes over the closure without the
+    entry being re-aimed at it.
+    """
+    problems: list[str] = []
+    indexed = {e.id: e for e in entries}
+
+    for entry in entries:
+        if entry.stance != "b":
+            continue
+        phase = DESTINATION_PHASE_RE.search(entry.destination)
+        if not phase:
+            # A destination that is not a phase -- there is no slice list to
+            # reconcile against, and inventing one is not this check's job.
+            continue
+        n = int(phase.group(1))
+        named = slice_refs(entry.text, n)
+        listed = checklists.get(n)
+        if listed is None:
+            for ref in named:
+                problems.append(
+                    f"{entry.id} names slice {ref}, but STATUS carries no "
+                    f'"## P{n} progress" checklist to resolve it against'
+                )
+            continue
+        if not named:
+            problems.append(
+                f"{entry.id} is (b) owned by P{n}, which is sliced, and names no "
+                f"slice of it — the entry and the slice that will close it name "
+                f"each other"
+            )
+            continue
+        by_id = {s.id: s for s in listed}
+        for ref in named:
+            found = by_id.get(ref)
+            if found is None:
+                problems.append(
+                    f"{entry.id} names slice {ref}, which the P{n} checklist does "
+                    f"not list — a re-slice re-targets every entry pointing at it"
+                )
+                continue
+            if entry.id not in entry_refs(found.text):
+                problems.append(
+                    f"{entry.id} names slice {ref}, whose checklist line does not "
+                    f"name {entry.id} back"
+                )
+
+    for n, slices in sorted(checklists.items()):
+        for item in slices:
+            if item.done:
+                # A landed slice's line records what it closed; the entry it
+                # named has since been rewritten or struck.
+                continue
+            for ref in entry_refs(item.text):
+                entry = indexed.get(ref)
+                if entry is None:
+                    problems.append(
+                        f"P{n} checklist line {item.id} names {ref}, which the "
+                        "index does not list"
+                    )
+                    continue
+                if item.id not in slice_refs(entry.text, n):
+                    problems.append(
+                        f"P{n} checklist line {item.id} names {ref}, which does "
+                        f"not name {item.id} back"
+                    )
+    return problems
+
+
 def report(
     entries: Sequence[Entry],
     details: Sequence[Marker],
     code: Sequence[Marker],
     problems: Sequence[str],
+    checklists: dict[int, list[Slice]] | None = None,
     out=sys.stdout,
 ) -> None:
+    checklists = checklists or {}
     by_code: dict[str, list[Marker]] = {}
     for m in code:
         by_code.setdefault(m.id, []).append(m)
@@ -330,20 +531,36 @@ def report(
     for m in details:
         by_detail.setdefault(m.id, []).append(m)
 
+    paired: dict[str, list[str]] = {}
+    for n, slices in sorted(checklists.items()):
+        for item in slices:
+            for ref in entry_refs(item.text):
+                paired.setdefault(ref, []).append(item.id)
+
     stances = {"a": "deliberate tradeoff", "b": "owned", "c": "unowned"}
+    sliced = ", ".join(f"P{n}" for n in sorted(checklists)) or "none"
+
+    def stance_of(entry: Entry) -> str:
+        text = f"({entry.stance}) {stances[entry.stance]}"
+        return text + (f" by {entry.destination}" if entry.destination else "")
+
+    # A (b) destination that names its slice is long, so the column is measured
+    # rather than guessed -- a run-together line reads as a missing field.
+    width = max((len(stance_of(e)) for e in entries), default=0) + 2
+
     print(
         f"{len(entries)} deficiencies indexed, {len(details)} detail entries, "
-        f"{len(code)} code markers.\n",
+        f"{len(code)} code markers. Sliced phases: {sliced}.\n",
         file=out,
     )
     for entry in sorted(entries, key=lambda e: _index(e.id)):
-        stance = f"({entry.stance}) {stances[entry.stance]}"
-        if entry.destination:
-            stance += f" by {entry.destination}"
         where = ", ".join(f"{m.path}:{m.line}" for m in by_detail.get(entry.id, []))
-        print(f"  {entry.id:<4}{stance:<28}{where or '(no detail entry)'}", file=out)
+        stance = stance_of(entry)
+        print(f"  {entry.id:<4}{stance:<{width}}{where or '(no detail entry)'}", file=out)
         for m in by_code.get(entry.id, []):
             print(f"        marked at {m.path}:{m.line}", file=out)
+        if entry.id in paired:
+            print(f"        paired with {', '.join(paired[entry.id])}", file=out)
     print(file=out)
 
     if problems:
@@ -351,7 +568,10 @@ def report(
         for p in problems:
             print(f"  {p}", file=out)
     else:
-        print("Index, detail entries and code markers all resolve.", file=out)
+        print(
+            "Index, detail entries, code markers and slice pairings all resolve.",
+            file=out,
+        )
 
 
 def check(repo: Path = REPO, out=sys.stdout) -> int:
@@ -359,14 +579,18 @@ def check(repo: Path = REPO, out=sys.stdout) -> int:
     doc_root = repo / "docs"
     code_roots = tuple(repo / p for p in ("pgdump_query/src", "pgdump_query-cli/src"))
 
-    entries, problems = parse_index(status.read_text())
+    text = status.read_text()
+    entries, problems = parse_index(text)
+    checklists = parse_checklists(text)
     details = markers_under((doc_root,), ".md", repo, skip=status)
     code = markers_under(code_roots, ".rs", repo)
     status_markers = markers_in(status, repo)
-    problems = list(problems) + reconcile(
-        entries, details, code, status_markers, repo, status
+    problems = (
+        list(problems)
+        + reconcile(entries, details, code, status_markers, repo, status)
+        + reconcile_slices(entries, checklists)
     )
-    report(entries, details, code, problems, out=out)
+    report(entries, details, code, problems, checklists, out=out)
     return 1 if problems else 0
 
 

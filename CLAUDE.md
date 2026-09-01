@@ -34,7 +34,7 @@ cd scripts && uv run measure.py --figure <id>     # re-take one figure — one w
 cd scripts && uv run measure.py --all             # the whole sweep: ~1 h, detach it
 cd scripts && uv run python -m unittest test_measure   # the harness's own tests
 
-cd scripts && uv run deficiencies.py              # deficiency register: index vs. detail entries vs. code markers
+cd scripts && uv run deficiencies.py              # deficiency register: index vs. detail entries vs. code markers vs. the slice pairing
 cd scripts && uv run python -m unittest test_deficiencies  # that check's own tests
 ```
 
@@ -318,7 +318,9 @@ number stays spent. **Where a `(b)` entry's owning phase has been sliced, the
 entry and the slice name each other**, so landing one re-reads the other and a
 re-slice must re-target; slicing a phase means checking the register for the
 entries it owns. `cd scripts && uv run deficiencies.py` reconciles the index,
-the detail entries and the markers, and fails on any of the three. Full rules:
+the detail entries, the markers and that pairing, and fails on any of the four —
+so a re-slice that leaves an entry aimed at a number whose meaning changed fails
+the check rather than owing a re-target on discipline. Full rules:
 `docs/process.md`, "Known deficiencies".
 
 **When the maintainer answers an entry under `STATUS.md`'s "Decisions worth

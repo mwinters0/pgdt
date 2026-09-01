@@ -62,8 +62,9 @@ Two obligations that fire at spec time, not at landing, and both are about
   moment anyone will think to; the entry may have been written by a session
   months earlier.
 - **A slice that splits re-targets every entry pointing at it.** The pointer
-  going stale is the failure the pairing exists to catch — see
-  `docs/process.md`, "Known deficiencies".
+  going stale is the failure the pairing exists to catch, and
+  `deficiencies.py` fails until the re-target lands — see `docs/process.md`,
+  "Known deficiencies".
 
 ## What to do when a slice cannot be finished as specified
 

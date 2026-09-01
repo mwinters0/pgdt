@@ -41,6 +41,40 @@ ENTRY_D2 = """- **KD2** — another thing. **(b) owned by P7**, whose plans rewo
 
 """
 
+ENTRY_D3 = """- **KD3** — a thing P11 is going to fix. **(b) owned by P11, struck at
+  11.6** — 11.5 closes the first row and 11.6 the last. Detail:
+  [`../design/architecture.md`](../design/architecture.md), "A mechanism".
+
+"""
+
+#: A phase that has been sliced, with the pairing intact: the entry names 11.5
+#: and 11.6, and both lines name the entry back.
+CHECKLIST = """## P11 progress
+
+Prose above the boxes, which the parser must skip.
+
+- [x] **11.1** A slice that landed. Notes:
+      [`../design/roadmap-P11.1-x-notes.md`](../design/roadmap-P11.1-x-notes.md)
+- [ ] **11.5** The first row. Closes `KD3`'s first row.
+- [ ] **11.6** The last row, and **strikes `KD3`**.
+
+"""
+
+ARCH_D3 = """<!-- deficiency: KD3 -->
+Why KD3 costs what it costs.
+"""
+
+ARCH_D1_D3 = """## A mechanism
+
+<!-- deficiency: KD1 -->
+Why KD1 costs what it costs.
+
+## Another mechanism
+
+<!-- deficiency: KD3 -->
+Why KD3 costs what it costs.
+"""
+
 TAIL = """## Decisions worth another look
 
 *Nothing is open.*
@@ -233,6 +267,211 @@ class Reconciliation(unittest.TestCase):
             self.assertIn("names a detail file that does not exist", text)
 
 
+class ChecklistParsing(unittest.TestCase):
+    def test_a_checklist_yields_its_slices_with_their_state(self):
+        checklists = deficiencies.parse_checklists(INDEX_HEAD + CHECKLIST + TAIL)
+        self.assertEqual(sorted(checklists), [11])
+        self.assertEqual([s.id for s in checklists[11]], ["11.1", "11.5", "11.6"])
+        self.assertEqual([s.done for s in checklists[11]], [True, False, False])
+        self.assertIn("KD3", checklists[11][1].text)
+
+    def test_a_wrapped_line_stays_with_its_slice(self):
+        checklists = deficiencies.parse_checklists(CHECKLIST)
+        self.assertIn("roadmap-P11.1-x-notes.md", checklists[11][0].text)
+
+    def test_prose_under_the_heading_is_not_a_slice(self):
+        checklists = deficiencies.parse_checklists(CHECKLIST)
+        self.assertEqual(len(checklists[11]), 3)
+
+    def test_a_phase_with_no_checklist_is_absent(self):
+        checklists = deficiencies.parse_checklists(INDEX_HEAD + ENTRY_D3 + TAIL)
+        self.assertEqual(checklists, {})
+
+    def test_two_phases_in_flight_each_keep_their_own(self):
+        text = CHECKLIST + "## P12 progress\n\n- [ ] **12.1** Something else.\n\n"
+        checklists = deficiencies.parse_checklists(text)
+        self.assertEqual(sorted(checklists), [11, 12])
+        self.assertEqual([s.id for s in checklists[12]], ["12.1"])
+
+    def test_a_sliced_phase_with_no_slices_yet_is_present_and_empty(self):
+        """The heading is what says the phase has been sliced, so an
+        as-yet-unfilled checklist still turns the obligation on."""
+        checklists = deficiencies.parse_checklists("## P11 progress\n\nComing.\n")
+        self.assertEqual(checklists, {11: []})
+
+    def test_a_slice_reference_is_scoped_to_its_own_phase(self):
+        text = "owned by P11, struck at 11.6 — 11.5 first, see roadmap-P11.3-x.md"
+        self.assertEqual(deficiencies.slice_refs(text, 11), ["11.6", "11.5"])
+        self.assertEqual(deficiencies.slice_refs(text, 7), [])
+
+    def test_a_third_level_slice_is_one_reference(self):
+        self.assertEqual(
+            deficiencies.slice_refs("11.11.2 and 11.11", 11), ["11.11.2", "11.11"]
+        )
+
+
+class SlicePairing(unittest.TestCase):
+    def test_a_paired_entry_and_slice_resolve(self):
+        with tempfile.TemporaryDirectory() as d:
+            build(
+                Path(d),
+                status=INDEX_HEAD + ENTRY_D1 + ENTRY_D3 + CHECKLIST + TAIL,
+                arch=ARCH_D1_D3,
+            )
+            code, text = run(Path(d))
+            self.assertEqual(code, 0, text)
+            self.assertIn("paired with 11.5, 11.6", text)
+
+    def test_an_entry_owned_by_an_unsliced_phase_owes_no_slice(self):
+        """`KD2` is owned by P7, which has no checklist. The obligation lands
+        when that phase is sliced, not before."""
+        with tempfile.TemporaryDirectory() as d:
+            build(
+                Path(d),
+                status=INDEX_HEAD
+                + ENTRY_D2
+                + CHECKLIST.replace("Closes `KD3`'s first row.", "").replace(
+                    ", and **strikes `KD3`**", ""
+                )
+                + TAIL,
+                arch="<!-- deficiency: KD2 -->\nAnother.\n",
+            )
+            code, text = run(Path(d))
+            self.assertEqual(code, 0, text)
+
+    def test_an_entry_owned_by_a_sliced_phase_must_name_a_slice(self):
+        with tempfile.TemporaryDirectory() as d:
+            build(
+                Path(d),
+                status=INDEX_HEAD
+                + ENTRY_D3.replace(", struck at\n  11.6", "").replace(
+                    "— 11.5 closes the first row and 11.6 the last.", "It will."
+                )
+                + CHECKLIST.replace("Closes `KD3`'s first row.", "").replace(
+                    ", and **strikes `KD3`**", ""
+                )
+                + TAIL,
+                arch=ARCH_D3,
+            )
+            code, text = run(Path(d))
+            self.assertEqual(code, 1)
+            self.assertIn("which is sliced, and names no slice of it", text)
+
+    def test_an_entry_naming_a_slice_that_no_longer_exists_fails(self):
+        """The re-slice failure this relation exists for: 11.6 is renumbered
+        and the entry keeps pointing at a number that has changed meaning."""
+        with tempfile.TemporaryDirectory() as d:
+            build(
+                Path(d),
+                status=INDEX_HEAD
+                + ENTRY_D3
+                + CHECKLIST.replace("**11.6**", "**11.6.1**")
+                + TAIL,
+                arch=ARCH_D3,
+            )
+            code, text = run(Path(d))
+            self.assertEqual(code, 1)
+            self.assertIn(
+                "KD3 names slice 11.6, which the P11 checklist does not list", text
+            )
+
+    def test_an_entry_whose_slice_stopped_naming_it_fails(self):
+        """The other half of a split: the slice still exists, but the closure
+        moved off it and nothing re-aimed the entry."""
+        with tempfile.TemporaryDirectory() as d:
+            build(
+                Path(d),
+                status=INDEX_HEAD
+                + ENTRY_D3
+                + CHECKLIST.replace(", and **strikes `KD3`**", "")
+                + TAIL,
+                arch=ARCH_D3,
+            )
+            code, text = run(Path(d))
+            self.assertEqual(code, 1)
+            self.assertIn(
+                "KD3 names slice 11.6, whose checklist line does not name KD3 back",
+                text,
+            )
+
+    def test_a_slice_naming_an_entry_that_does_not_name_it_back_fails(self):
+        with tempfile.TemporaryDirectory() as d:
+            build(
+                Path(d),
+                status=INDEX_HEAD
+                + ENTRY_D1
+                + ENTRY_D3
+                + CHECKLIST.replace(
+                    "- [ ] **11.5** The first row. Closes `KD3`'s first row.",
+                    "- [ ] **11.5** The first row. Closes `KD1` too.",
+                ).replace(
+                    "— 11.5 closes the first row and 11.6 the last.", "11.6 closes it."
+                )
+                + TAIL,
+                arch=ARCH_D1_D3,
+            )
+            code, text = run(Path(d))
+            self.assertEqual(code, 1)
+            self.assertIn(
+                "P11 checklist line 11.5 names KD1, which does not name 11.5 back",
+                text,
+            )
+
+    def test_a_slice_naming_an_unindexed_entry_fails(self):
+        with tempfile.TemporaryDirectory() as d:
+            build(
+                Path(d),
+                status=INDEX_HEAD
+                + ENTRY_D1
+                + ENTRY_D3
+                + CHECKLIST.replace("`KD3`'s first row", "`KD9`'s first row")
+                + TAIL,
+                arch=ARCH_D1_D3,
+            )
+            code, text = run(Path(d))
+            self.assertEqual(code, 1)
+            self.assertIn(
+                "P11 checklist line 11.5 names KD9, which the index does not list",
+                text,
+            )
+
+    def test_a_ticked_line_is_a_record_and_owes_no_pairing(self):
+        """A landed slice's line still says which entry it closed; the entry
+        has since been rewritten to what is still true, or struck outright.
+        Holding a ticked line to the pairing would force one of the two to
+        lie."""
+        with tempfile.TemporaryDirectory() as d:
+            build(
+                Path(d),
+                status=INDEX_HEAD
+                + ENTRY_D1
+                + CHECKLIST.replace(
+                    "- [x] **11.1** A slice that landed.",
+                    "- [x] **11.1** A slice that landed, closing `KD8` and `KD1`.",
+                )
+                .replace("- [ ] **11.5** The first row. Closes `KD3`'s first row.\n", "")
+                .replace("- [ ] **11.6** The last row, and **strikes `KD3`**.\n", "")
+                + TAIL,
+                arch="<!-- deficiency: KD1 -->\nWhy KD1 costs what it costs.\n",
+            )
+            code, text = run(Path(d))
+            self.assertEqual(code, 0, text)
+
+    def test_an_entry_naming_a_slice_of_an_unsliced_phase_fails(self):
+        """A checklist that was removed — the phase re-grilled, the entry left
+        pointing into a slice list that is gone."""
+        with tempfile.TemporaryDirectory() as d:
+            build(
+                Path(d), status=INDEX_HEAD + ENTRY_D3 + TAIL, arch=ARCH_D3
+            )
+            code, text = run(Path(d))
+            self.assertEqual(code, 1)
+            self.assertIn(
+                'names slice 11.6, but STATUS carries no "## P11 progress" checklist',
+                text,
+            )
+
+
 class ThisRepo(unittest.TestCase):
     """The register in the tree, held to its own rules."""
 
@@ -248,6 +487,27 @@ class ThisRepo(unittest.TestCase):
         for entry in entries:
             self.assertTrue(entry.id.startswith("KD"))
             self.assertTrue(entry.id[2:].isdigit())
+
+    def test_every_sliced_owner_is_paired_both_ways(self):
+        """Not a restatement of the check: this asserts the tree actually
+        exercises the fourth relation, so a repo where every `(b)` entry
+        happens to be owned by an unsliced phase cannot pass it vacuously."""
+        text = (deficiencies.STATUS).read_text()
+        entries, problems = deficiencies.parse_index(text)
+        self.assertEqual(problems, [])
+        checklists = deficiencies.parse_checklists(text)
+        self.assertTrue(checklists, "no phase is sliced")
+        paired = [
+            e
+            for e in entries
+            if e.stance == "b"
+            and (m := deficiencies.DESTINATION_PHASE_RE.search(e.destination))
+            and int(m.group(1)) in checklists
+        ]
+        self.assertTrue(paired, "no (b) entry is owned by a sliced phase")
+        for entry in paired:
+            phase = int(deficiencies.DESTINATION_PHASE_RE.search(entry.destination).group(1))
+            self.assertTrue(deficiencies.slice_refs(entry.text, phase), entry.id)
 
     def test_the_index_carries_no_paragraph(self):
         """One line per entry, wrapped — an entry that has grown into a

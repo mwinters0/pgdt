@@ -287,7 +287,12 @@ slice and the slice names the entry, so landing one re-reads the other and a
 re-slice is obliged to re-target.
 
 `cd scripts && uv run deficiencies.py` reconciles this index against those
-paragraphs and against the source-code markers, and fails on either half.
+paragraphs, against the source-code markers and against the slice checklist
+above, and fails on any of them. The pairing is checked both ways, so a
+re-slice that leaves an entry aimed at a number whose meaning changed fails
+rather than owing a re-target on discipline; an entry owned by a phase with no
+checklist yet names no slice and is not asked to, and a ticked line is a record
+rather than a promise.
 
 - **KD1** — a `--disable-triggers` dump loses TOC attribution on every data
   span, `COPY` and `INSERT` alike (I31), costing the coverage diagnostic and
@@ -360,4 +365,15 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-Nothing is open.
+- **A ticked checklist line is exempt from the slice pairing.**
+  `deficiencies.py`'s fourth relation reads unticked lines only, so a landed
+  slice may go on naming a `KD<k>` that no longer names it back — or that has
+  been struck entirely. The call was made because the alternative forces a lie:
+  11.5's line will still say it closed `KD7`'s text-held row long after `KD7`
+  has been rewritten to what is still true, and `KD7` will be gone while both
+  11.5 and 11.6 still name it. The other side is a strictly stronger check —
+  hold ticked lines too, and require the identifier to be dropped from the
+  checklist line as part of striking the entry. That buys "no `KD<k>` is cited
+  anywhere without an entry behind it" and costs the record of which slice
+  closed what, which is exactly what the ticked line is for. Reversing it is a
+  few lines in `reconcile_slices` plus a rule in `process.md`.

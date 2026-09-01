@@ -263,7 +263,9 @@ Three sections earn their keep beyond the checklist:
     has drifted from its detail is worse than either alone, and "someone will
     remember" is the assumption every other register in this process was built
     to avoid. A check resolves every `KD<k>` in the index to its entry and every
-    entry back to the index, and fails on either half. Where the *code* would
+    entry back to the index, and fails on either half — and it covers the
+    slice pairing below by the same argument, since a pointer nobody resolves
+    is exactly a half of the index nobody checks. Where the *code* would
     otherwise mislead — a line that reads as a complete, deliberate choice and
     gives no sign that a limitation hangs off it — mark it with the identifier
     and let the same check cover markers too, so one outliving its entry is an
@@ -294,6 +296,17 @@ Three sections earn their keep beyond the checklist:
     changed meaning. It also answers, at spec time rather than at wrap, the
     question a `(b)` stance raises and cannot itself answer: *which* piece of
     the owning phase actually discharges this.
+
+    **The reconciliation carries this half too**, so a re-slice fails the check
+    instead of owing a re-target on discipline — which is what a self-checking
+    pair means, since nothing else notices that a slice number has quietly
+    changed meaning. Two boundaries keep it from firing where there is no
+    obligation, and both are read from the checklist rather than configured: a
+    phase with **no slice list** is not sliced yet, so an entry owned by it
+    names no slice and is not asked to — writing the list is what turns the
+    obligation on; and a **ticked** line is a record of what a slice closed, not
+    a promise, so it is not held to a pairing the entry beside it has already
+    been rewritten out of.
 - **Decisions worth another look** — calls made without the maintainer
   present that a person should still weigh in on: cautionary and
   informational, never blocking. Each entry states the call, why it was made
