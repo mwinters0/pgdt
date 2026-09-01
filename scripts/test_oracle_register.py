@@ -398,8 +398,10 @@ class Reconciling(unittest.TestCase):
         self.assertNotIn("collation/non-deterministic", [a.key for a in found.uncovered])
         out = io.StringIO()
         orr.report(found, out=out)
-        self.assertIn("Arms no oracle case can cover:", out.getvalue())
+        self.assertIn("Arms no oracle case can cover", out.getvalue())
         self.assertIn("ICU-only", out.getvalue())
+        # And the report prints where the evidence is, not the reason alone.
+        self.assertIn("pgdump_query/src/pgtype.rs", out.getvalue())
 
     def test_an_exemption_that_acquired_a_case_is_a_problem(self):
         # The other direction, and the one that decays: if the oracle ever
@@ -439,6 +441,81 @@ class Reconciling(unittest.TestCase):
         )
         self.assertEqual(code, 1)
         self.assertIn("resolve to no arm", out.getvalue())
+
+
+class ExemptionEvidence(unittest.TestCase):
+    """An exemption says where the arm's coverage is, and the check resolves
+    it. A reason alone is a claim nothing checks — which is the failure the
+    reconciliation exists to catch, arriving inside the reconciliation."""
+
+    def setUp(self):
+        self.dir = TemporaryDirectory()
+        self.tmp = Path(self.dir.name)
+        self.addCleanup(self.dir.cleanup)
+        (self.tmp / "src").mkdir()
+        (self.tmp / "src" / "covered.rs").write_text("fn covers_the_arm() {}\n")
+
+    def arm(self, *evidence: orr.Evidence, unoracled: str | None = "because") -> orr.Arm:
+        return orr.Arm("an/arm", "somewhere", "collation", unoracled, evidence)
+
+    def test_evidence_that_resolves_is_no_problem(self):
+        arm = self.arm(orr.Evidence("src/covered.rs", "fn covers_the_arm("))
+        self.assertEqual(orr.exemption_problems([arm], self.tmp), [])
+
+    def test_an_exemption_naming_no_evidence_is_a_problem(self):
+        problems = orr.exemption_problems([self.arm()], self.tmp)
+        self.assertTrue(any("names no evidence" in p for p in problems), problems)
+
+    def test_evidence_in_a_file_that_is_gone_is_a_problem(self):
+        arm = self.arm(orr.Evidence("src/deleted.rs", "fn covers_the_arm("))
+        problems = orr.exemption_problems([arm], self.tmp)
+        self.assertTrue(any("does not exist" in p for p in problems), problems)
+
+    def test_a_renamed_test_no_longer_resolves(self):
+        # The state an exemption asserting its own sufficiency cannot reach:
+        # the file is still there and the evidence in it is not.
+        arm = self.arm(orr.Evidence("src/covered.rs", "fn covers_the_arm_now("))
+        problems = orr.exemption_problems([arm], self.tmp)
+        self.assertTrue(any("no longer contains" in p for p in problems), problems)
+
+    def test_evidence_on_an_arm_that_is_not_exempt_is_a_problem(self):
+        # Evidence stands in for an oracle case. An arm owed a case is not
+        # answered by pointing at a unit test.
+        arm = self.arm(
+            orr.Evidence("src/covered.rs", "fn covers_the_arm("), unoracled=None
+        )
+        problems = orr.exemption_problems([arm], self.tmp)
+        self.assertTrue(any("not exempt" in p for p in problems), problems)
+
+    def test_the_committed_exemptions_resolve(self):
+        found = orr.reconcile()
+        self.assertTrue(found.exempt)
+        for arm in found.exempt:
+            self.assertTrue(arm.evidence, arm.key)
+        self.assertEqual(orr.exemption_problems(found.arms), [])
+
+    def test_the_check_fails_when_an_exemption_stands_on_nothing(self):
+        # End to end, through the arm list the register parse actually builds.
+        stale = tuple(
+            orr.Arm(arm.key, arm.where, arm.group, arm.unoracled, ())
+            for arm in orr.COLLATION_ARMS
+        )
+        register_path, schema_path = write(self.tmp)
+        fixtures = self.tmp / "fixtures"
+        rows = [
+            [case[0], case[1], case[2], case[3]] + ["t"] * len(co.OPERATORS)
+            for case in co.comparison_cases()
+        ]
+        for version in ("13", "14"):
+            oracle = fixtures / version / co.ORACLE_DIRNAME
+            oracle.mkdir(parents=True)
+            (oracle / "comparisons.tsv").write_text(co.format_tsv(rows))
+            (oracle / "meta.tsv").write_text(co.format_tsv([["datcollate", "en_US.utf8"]]))
+        out = io.StringIO()
+        with unittest.mock.patch.object(orr, "COLLATION_ARMS", stale):
+            code = orr.check(register_path, schema_path, fixtures, out=out)
+        self.assertEqual(code, 1)
+        self.assertIn("names no evidence", out.getvalue())
 
 
 class CommittedTree(unittest.TestCase):

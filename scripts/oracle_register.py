@@ -52,15 +52,21 @@ reads its markers in. Three functions are read:
   counting the moment its arm starts consulting a clause, and starts counting
   the moment it does.
 
-**One of those four carries an exemption, and it is printed rather than
-hidden.** No oracle case can reach `collation/non-deterministic`: a
+**One of those four carries an exemption, and an exemption names where the
+evidence is.** No oracle case can reach `collation/non-deterministic`: a
 non-deterministic collation is ICU-only (I42) and an ICU case would import a
 `collversion` that moves with the base image, which is the drift this oracle
-excludes ICU to avoid. That is the same shape as `TypeKind::Shell`, whose arm
-no dump can ask about -- an arm whose evidence cannot exist -- and it is
-handled the same way: named, with its reason, and checked in the other
-direction, since an exempt arm that *acquires* a case is a stale exemption and
-is reported.
+excludes ICU to avoid. That reason is why the *oracle* cannot cover the arm; it
+says nothing about whether anything else does, and an exemption that stops
+there is a claim nothing checks -- which is the failure this whole module
+exists to make loud, arriving inside the module itself. So an exemption carries
+[`Evidence`] pointers as well: `(file, needle)` pairs the check resolves, in
+the idiom [`ANCHORS`] already uses for the arms. An exemption then goes stale
+from both sides -- it acquires an oracle case, which is reported, or the
+evidence it points at disappears, which is reported too.
+
+The pointers name **sufficient** evidence, not exhaustive: a later fixture
+covering the same arm adds evidence and owes no edit here.
 
 **Three arms, two case groups.** The oracle asks each text pair under `COLLATE
 "C"` and under `COLLATE "default"` only, so the non-`C`-clause arm has no group
@@ -122,6 +128,25 @@ UNDEFINED_OBJECT = "E42704"
 
 
 @dataclass(frozen=True)
+class Evidence:
+    """Where an exempt arm's coverage actually is: a repo-relative file, and a
+    string in it this check resolves.
+
+    Same idiom as [`ANCHORS`], for the same reason. An exemption's *reason*
+    says why the oracle cannot reach the arm; only a pointer says what does
+    reach it, and only a pointer the check resolves can notice that the
+    evidence has been renamed or deleted. It names **sufficient** evidence
+    rather than exhaustive, so covering the arm a second way owes no edit here.
+    """
+
+    #: Relative to the repository root.
+    path: str
+    #: A string that must appear in that file -- a test's `fn` line, where the
+    #: evidence is a test.
+    needle: str
+
+
+@dataclass(frozen=True)
 class Arm:
     """One answer the register can give, and where it is written."""
 
@@ -136,6 +161,9 @@ class Arm:
     #: that *does* land on it is reported, because the exemption has then gone
     #: stale and the arm is owed a case after all.
     unoracled: str | None = None
+    #: Where the arm's evidence is instead. Required of an exempt arm and
+    #: meaningless on any other, both of which [`exemption_problems`] reports.
+    evidence: tuple[Evidence, ...] = ()
 
 
 #: The three branches of the walk that are not match arms. They are named here
@@ -163,8 +191,21 @@ COLLATION_ARMS = (
         unoracled=(
             "a non-deterministic collation is ICU-only (I42), and an ICU case "
             "would carry a collversion that moves with the base image -- the "
-            "drift this oracle excludes ICU to avoid. The shape lives in the "
-            "fixture dumps instead, where it carries no version"
+            "drift this oracle excludes ICU to avoid"
+        ),
+        evidence=(
+            Evidence(
+                "pgdump_query/src/pgtype.rs",
+                "fn a_collation_the_dump_declares_non_deterministic_diverges_under_equality_too(",
+            ),
+            Evidence(
+                "pgdump_query/src/pgtype.rs",
+                "fn only_the_non_deterministic_collation_reaches_equality(",
+            ),
+            Evidence(
+                "pgdump_query/src/predicate.rs",
+                "fn a_non_deterministic_collation_announces_under_equality_and_ordering(",
+            ),
         ),
     ),
 )
@@ -517,6 +558,49 @@ def database_collation_problems(fixtures: Path = FIXTURES) -> list[str]:
     return problems
 
 
+def exemption_problems(arms: Sequence[Arm], root: Path = REPO) -> list[str]:
+    """Whatever stops an exemption meaning what it says.
+
+    Three things, and the first is the one this check was rewritten for: an
+    exempt arm that names no evidence is a reason nobody can falsify, so the
+    arm is uncovered in every sense that matters and nothing says so. The
+    second is the pointer going stale -- a renamed test resolves nowhere, which
+    is the state an exemption asserting its own sufficiency cannot reach. The
+    third is the reverse, an arm carrying evidence with no exemption to
+    justify it, which is a pointer nothing reads.
+    """
+    problems: list[str] = []
+    for arm in arms:
+        if arm.unoracled is None:
+            if arm.evidence:
+                problems.append(
+                    f"{arm.key} names evidence but is not exempt — evidence stands "
+                    "in for an oracle case, and this arm is owed one"
+                )
+            continue
+        if not arm.evidence:
+            problems.append(
+                f"{arm.key} is exempt from needing an oracle case and names no "
+                "evidence — an exemption says where the arm's coverage is, not "
+                "only why the oracle cannot be it"
+            )
+            continue
+        for pointer in arm.evidence:
+            path = root / pointer.path
+            if not path.is_file():
+                problems.append(
+                    f"{arm.key}: {pointer.path} does not exist — the evidence this "
+                    "exemption stands on has moved"
+                )
+            elif pointer.needle not in path.read_text():
+                problems.append(
+                    f"{arm.key}: {pointer.path} no longer contains "
+                    f"{pointer.needle!r} — the evidence this exemption stands on "
+                    "has gone"
+                )
+    return problems
+
+
 def types_the_servers_have(fixtures: Path = FIXTURES) -> tuple[set[str], list[str]]:
     """Every case type at least one major answered something other than
     "no such type" for.
@@ -584,6 +668,7 @@ def reconcile(
     register_path: Path = REGISTER,
     schema_path: Path = SCHEMA,
     fixtures: Path = FIXTURES,
+    evidence_root: Path = REPO,
 ) -> Reconciliation:
     out = Reconciliation()
     register = parse_register(register_path)
@@ -594,9 +679,10 @@ def reconcile(
     if out.problems:
         return out
 
-    have, evidence_problems = types_the_servers_have(fixtures)
-    out.problems += evidence_problems
+    have, oracle_problems = types_the_servers_have(fixtures)
+    out.problems += oracle_problems
     out.problems += database_collation_problems(fixtures)
+    out.problems += exemption_problems(out.arms, evidence_root)
 
     # The key is `(type, collation)`, not the type alone: a text pair asked
     # under two collations is two cases about two different arms, which is the
@@ -681,9 +767,11 @@ def report(found: Reconciliation, out=sys.stdout) -> None:
         print(file=out)
 
     if found.exempt:
-        print("Arms no oracle case can cover:", file=out)
+        print("Arms no oracle case can cover, and where their evidence is:", file=out)
         for arm in found.exempt:
             print(f"  {arm.key} ({arm.where}): {arm.unoracled}", file=out)
+            for pointer in arm.evidence:
+                print(f"      {pointer.path}: {pointer.needle}", file=out)
         print(file=out)
 
     if found.unplaced:
@@ -717,8 +805,9 @@ def check(
     schema_path: Path = SCHEMA,
     fixtures: Path = FIXTURES,
     out=sys.stdout,
+    evidence_root: Path = REPO,
 ) -> int:
-    found = reconcile(register_path, schema_path, fixtures)
+    found = reconcile(register_path, schema_path, fixtures, evidence_root)
     report(found, out=out)
     return 1 if found.problems or found.uncovered or found.unplaced else 0
 

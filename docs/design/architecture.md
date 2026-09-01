@@ -3917,18 +3917,49 @@ branch is read from the source too** — an arm whose body calls `collated_text`
 is one — so `character` started counting on the day its arm began consulting a
 clause, rather than being listed here and going stale.
 
-**One of the four can have no case, and the exemption is named rather than
-silent.** No oracle case can reach `collation/non-deterministic`: a
+**One of the four can have no case, and the exemption names where the evidence
+is.** No oracle case can reach `collation/non-deterministic`: a
 non-deterministic collation is ICU-only (I42), and an ICU case would carry a
 `collversion` that moves with the base image — the drift the oracle excludes
-ICU to avoid. That is the same shape as `TypeKind::Shell` below, an arm whose
-evidence cannot exist, so it is handled the same way: the arm carries its
-reason, the report prints it under its own heading, and it is not counted
-uncovered. **The exemption is checked in the other direction too** — an exempt
-arm that *acquires* a case is reported, because an exemption nothing can
-falsify is how the next arm gets hung off the same reason. The shape's evidence
-is a fixture dump instead, where the same text carries no version; that is
-P11's slice 11.12.
+ICU to avoid. That reason says why the *oracle* cannot cover the arm and
+nothing about whether anything else does, so an exemption stopping there is a
+claim nothing checks — the failure this whole join exists to make loud,
+arriving inside the join. An exemption therefore carries `Evidence` pointers as
+well: `(file, needle)` pairs the check resolves, in the idiom the arm anchors
+already use. Today that is three unit tests —
+`pgtype.rs`'s `a_collation_the_dump_declares_non_deterministic_diverges_under_equality_too`
+and `only_the_non_deterministic_collation_reaches_equality`, and `predicate.rs`'s
+`a_non_deterministic_collation_announces_under_equality_and_ordering`. The arm
+carries its reason, the report prints reason and pointers under their own
+heading, and it is not counted uncovered.
+
+**An exemption goes stale from both sides, and both are reported.** It acquires
+an oracle case — an exempt arm that gains one is no longer an arm no evidence
+can exist for, and leaving it exempt is how the next arm gets hung off the same
+reason. Or the evidence it stands on disappears: a renamed or deleted test
+resolves nowhere, which is the state a reason asserting its own sufficiency
+cannot reach. The pointers name **sufficient** evidence rather than exhaustive,
+so covering the arm a second way — P11's slice 11.12 puts the shape in the
+fixture dumps, where the same text carries no version — adds evidence and owes
+no edit here.
+
+*Rejected: an exemption that is a reason and nothing more.* Its first use went
+false on the day it was written, citing fixture bytes that do not exist, and
+the check could not see it — the same decay as an arm added with no case, in
+the one place the check does not look. This is `measure.ACKNOWLEDGED`'s rule
+([`measurements.md`](measurements.md), "A commit can be acknowledged") applied
+to the register that grew the same shape without the evidence half: an excuse
+carries mechanical evidence and goes inert on its own.
+
+*Rejected: moving the arm out of the check's population entirely,* so the
+arms-to-cases relation stays total. Something must still say which arms the
+oracle can reach, and that rule is the exemption under another name — the same
+mechanism with its report suppressed.
+
+`TypeKind::Shell` is the neighbouring shape and not this one: it needs no
+exemption at all, being answered by *granularity* — it shares `Base`'s arm,
+which `public.mybase` covers (below). This arm cannot be, the other three
+collation branches all having cases of their own.
 
 Each branch is also **anchored on a string the parse must find** — for this one
 the `states_non_deterministic(` call that implements it — so a branch named in
