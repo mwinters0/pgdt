@@ -365,15 +365,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **A ticked checklist line is exempt from the slice pairing.**
-  `deficiencies.py`'s fourth relation reads unticked lines only, so a landed
-  slice may go on naming a `KD<k>` that no longer names it back — or that has
-  been struck entirely. The call was made because the alternative forces a lie:
-  11.5's line will still say it closed `KD7`'s text-held row long after `KD7`
-  has been rewritten to what is still true, and `KD7` will be gone while both
-  11.5 and 11.6 still name it. The other side is a strictly stronger check —
-  hold ticked lines too, and require the identifier to be dropped from the
-  checklist line as part of striking the entry. That buys "no `KD<k>` is cited
-  anywhere without an entry behind it" and costs the record of which slice
-  closed what, which is exactly what the ticked line is for. Reversing it is a
-  few lines in `reconcile_slices` plus a rule in `process.md`.
+Nothing is open.
