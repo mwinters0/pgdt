@@ -438,17 +438,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`M39` lists an enum's labels only where the *column's own* comparison plan
-  is an enum's** — a scalar enum column and a domain over one. An enum nested
-  inside an array or a composite has a `Refused` plan and gets nothing, in
-  `--verbose` and in `--json` alike, so a dump whose only enum-valued column is
-  `mood[]` still shows its labels nowhere and sends the reader back to grepping
-  the `CREATE TYPE` — the failure `M39` was admitted to end. It was decided
-  that way because the plan is the source the admission named, and because the
-  set it yields is exactly the set a label-valued `--filter` term can reach, so
-  the line answers the question that motivated it. Reconsidering means deciding
-  what a nested rendering says: a composite with two enum fields needs the line
-  to name the *position*, not just the labels, and that is a format question
-  `M39` does not answer. Detail:
-  [`../design/architecture.md`](../design/architecture.md), "CLI surface".
