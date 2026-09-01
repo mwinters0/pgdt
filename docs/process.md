@@ -426,6 +426,16 @@ last part is only sound because out-of-band work is by definition not
 something a later phase inherits — and where it turns out one does, the fact
 goes in that phase's *inbox*, the mechanism that already exists for it.
 
+**The number is allocated when the item is admitted, not when it lands.** An
+item discovered mid-phase and queued for later gets its `M<k>` and its row at
+the moment it is admitted, with the Date column empty until it lands. Deferring
+allocation to landing costs two things: a queued item has no handle, so every
+doc that wants to point at it points at a history entry's heading instead; and
+the ledger stops being the allocation authority, so the next session reads the
+last row and reissues a number already spoken for. The row is what records the
+allocation, which is why it goes in early rather than the number being held
+somewhere else.
+
 **The admission rule is the load-bearing half.** An item is out-of-band only
 if it changes no decision any spec records *and* fits one session. Anything
 that changes a decision goes back through grilling → spec amendment → a

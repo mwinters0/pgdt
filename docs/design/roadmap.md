@@ -677,6 +677,12 @@ Nothing else: no spec (there was no intent doc to write), and no notes doc,
 because the history entry *is* the notes. If out-of-band work turns up a fact
 an unspecified phase needs, that fact goes in that phase's inbox, as always.
 
+**A number is allocated on admission, not on landing.** An item queued for
+later takes its `M<k>` and its row when it is admitted, with the Date column
+empty until it lands — so a queued item can be cited by number, and so this
+table stays the authority on which numbers are spent. Row order is allocation
+order, which is why a queued row may sit above one that landed before it.
+
 **Admission rule.** An item is out-of-band only if it changes no decision any
 spec records **and** fits one session. Anything that changes a decision goes
 back through grilling → spec amendment → a numbered slice; that rule is what
