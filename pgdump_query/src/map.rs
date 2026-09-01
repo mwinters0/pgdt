@@ -149,7 +149,7 @@ use crate::copy::split_fields;
 use crate::index::{ArrayShape, CopyBlock};
 use crate::io::ByteRangeSource;
 use crate::preamble::{
-    ColumnDef, Extension, StatementShape, TypeDef, TypeKind, classify_statement,
+    CollationDef, ColumnDef, Extension, StatementShape, TypeDef, TypeKind, classify_statement,
     extract_statement_cross_refs, in_open_quote, insert_role, insert_tablespace,
     parse_alter_type_add_value_body, parse_connect, parse_qualified_name, push_stmt_line,
     statement_complete, strip_kw,
@@ -431,6 +431,15 @@ pub enum SpanBody {
     Extension {
         name: String,
         schema: Option<String>,
+    },
+    /// A `CREATE COLLATION` — kept distinct from [`Unparsed`](SpanBody::Unparsed)
+    /// because a column's `COLLATE` clause names a collation and the
+    /// comparison register needs to know whether the dump declared that one
+    /// non-deterministic (I42): `texteq` on a column of a non-deterministic
+    /// collation is not a byte comparison, and this statement is the only
+    /// place a plain dump says so.
+    Collation {
+        collation: CollationDef,
     },
     /// A bulk region — a `COPY` block, an `INSERT` run, or the large-object
     /// data region; see `docs/design/architecture.md`,
@@ -1540,6 +1549,7 @@ fn classify(stmt: &str) -> SpanBody {
         Some(StatementShape::Extension(Extension { name, schema })) => {
             SpanBody::Extension { name, schema }
         }
+        Some(StatementShape::Collation(collation)) => SpanBody::Collation { collation },
         None => SpanBody::Unparsed,
     }
 }

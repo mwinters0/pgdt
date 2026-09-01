@@ -201,11 +201,31 @@ pgdq query --source dump.sql --table public.people --filter 'name<B'
 # record — this matches the server only if that collation is C or POSIX
 ```
 
-**`=` and `!=` on that same column say nothing, and are exact.** Every libc
-collation calls two different strings different, so equality is a byte
-comparison on the server whatever the collation is. The warning is about the
+**`=` and `!=` on that same column say nothing, and are exact.** A collation
+that calls two different strings different — which is every libc collation, and
+every ICU one unless it was created otherwise — makes equality a byte
+comparison on the server whatever else it orders. The warning is about the
 *order*, and it is raised per filter term, not per column — so a query that
 asks `name<B` and `name=alpha` warns once.
+
+**The exception is a collation created `deterministic = false`**, which is an
+ICU one and which the dump states outright. Such a collation can call two
+differently spelled strings *equal* — that is what people create one for, a
+case- or accent-insensitive column — so `=` on a column of it returns fewer
+rows here than on the server. pgdq reads the `CREATE COLLATION` and says so,
+under `=` and `!=` as well as under the ordering operators:
+
+```sh
+pgdq query --source dump.sql --table public.people --filter 'name=alpha'
+# warning: `name` (text) is compared bytewise: the column declares a collation
+# this dump declares non-deterministic, so PostgreSQL neither orders nor
+# compares it byte for byte — two values spelled differently can be equal to
+# the server
+```
+
+The rows come back as an exact-text match, which is a *narrower* answer than
+the server's rather than an unrelated one. There is no way to ask for the
+server's here.
 
 **A `char(n)` column's blank padding is not part of its value.** A dump writes
 every value of such a column padded with spaces to the declared length, and

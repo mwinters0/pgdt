@@ -21,14 +21,16 @@ from __future__ import annotations
 
 import io
 import unittest
+import unittest.mock
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import comparison_oracle as co
 import oracle_register as orr
 
-#: The three arms the collation dimension adds, for the tests that assert on
-#: them as a set.
+#: The arms the collation dimension adds, for the tests that assert on them as
+#: a set. One of them is exempt from needing a case, so nothing here may assume
+#: every key has an entry in `cases_by_arm`.
 COLLATION_KEYS = [arm.key for arm in orr.COLLATION_ARMS]
 
 #: A register with one of everything: two names sharing a built-in arm, the
@@ -36,7 +38,16 @@ COLLATION_KEYS = [arm.key for arm in orr.COLLATION_ARMS]
 #: that are not match arms at all, and one built-in arm that branches on the
 #: column's collation where the other does not.
 REGISTER_RS = """
-fn collated_text(collation: Option<&str>, type_default: TypeCollation) -> ComparisonPlan {
+fn collated_text(
+    collation: Option<&str>,
+    type_default: TypeCollation,
+    collations: &[CollationDef],
+) -> ComparisonPlan {
+    if collation.is_some_and(|reference| states_non_deterministic(reference, collations)) {
+        return ComparisonPlan::text_diverging(
+            ComparisonDivergence::NonDeterministicCollation,
+        );
+    }
     let bytewise = match collation {
         Some(reference) => collation_is_bytewise(reference),
         None => type_default == TypeCollation::Bytewise,
@@ -366,7 +377,7 @@ class Reconciling(unittest.TestCase):
         # nothing here.
         found = orr.reconcile(self.register_path, self.schema_path, self.fixtures("t"))
         for key in COLLATION_KEYS:
-            for label in found.cases_by_arm[key]:
+            for label in found.cases_by_arm.get(key, []):
                 self.assertNotIn("character(10)", label)
 
     def test_a_bytewise_database_collation_is_a_problem(self):
@@ -376,6 +387,49 @@ class Reconciling(unittest.TestCase):
             self.register_path, self.schema_path, self.fixtures("t", datcollate="C")
         )
         self.assertTrue(any("datcollate" in p for p in found.problems))
+
+    def test_an_exempt_arm_is_not_counted_uncovered_and_says_why(self):
+        # `collation/non-deterministic` can have no oracle case: an ICU case
+        # would import the `collversion` drift the oracle excludes ICU to
+        # avoid. So it is named with its reason and does not fail the check.
+        found = orr.reconcile(self.register_path, self.schema_path, self.fixtures("t"))
+        exempt = [arm.key for arm in found.exempt]
+        self.assertEqual(exempt, ["collation/non-deterministic"])
+        self.assertNotIn("collation/non-deterministic", [a.key for a in found.uncovered])
+        out = io.StringIO()
+        orr.report(found, out=out)
+        self.assertIn("Arms no oracle case can cover:", out.getvalue())
+        self.assertIn("ICU-only", out.getvalue())
+
+    def test_an_exemption_that_acquired_a_case_is_a_problem(self):
+        # The other direction, and the one that decays: if the oracle ever
+        # does reach the arm, the exemption is stale and must go, or it will
+        # excuse the next arm hung off the same reason.
+        fixtures = self.fixtures("t")
+        found = orr.reconcile(self.register_path, self.schema_path, fixtures)
+        self.assertEqual(found.problems, [])
+        patched = dict(orr.COLLATION_GROUPS)
+        patched["C"] = tuple(patched["C"]) + ("collation/non-deterministic",)
+        with unittest.mock.patch.object(orr, "COLLATION_GROUPS", patched):
+            found = orr.reconcile(self.register_path, self.schema_path, fixtures)
+        self.assertTrue(
+            any("drop the exemption" in p for p in found.problems), found.problems
+        )
+
+    def test_a_collation_branch_deleted_from_the_source_is_a_problem(self):
+        # The arm list names four branches of `collated_text`; three of them
+        # were already anchored, and the fourth is anchored on the call that
+        # implements it, so deleting the branch is reported rather than
+        # leaving an arm nothing can reach.
+        register_path, _ = write(
+            self.tmp,
+            register=REGISTER_RS.replace("states_non_deterministic(", "never("),
+        )
+        parsed = orr.parse_register(register_path)
+        self.assertTrue(
+            any("states_non_deterministic" in p for p in parsed.problems),
+            parsed.problems,
+        )
 
     def test_the_check_fails_on_either_direction(self):
         out = io.StringIO()

@@ -151,6 +151,15 @@ impl ComparisonNote {
                 "the column declares a collation other than C/POSIX, and PostgreSQL orders it by \
                  that collation",
             ),
+            // The only sentence here that reports what the dump *said* rather
+            // than what it left out, which is why it names equality outright:
+            // under a non-deterministic collation two values that differ byte
+            // for byte can be equal to the server.
+            ComparisonDivergence::NonDeterministicCollation => bytewise(
+                "the column declares a collation this dump declares non-deterministic, so \
+                 PostgreSQL neither orders nor compares it byte for byte — two values spelled \
+                 differently can be equal to the server",
+            ),
             ComparisonDivergence::UnmodelledType => bytewise(
                 "this build models no comparison for the column's declared type — the four \
                  ordering operators are refused on it, and PostgreSQL's own equality for such a \
@@ -1720,7 +1729,7 @@ mod tests {
 
     use super::*;
     use crate::pgtype::comparison_for;
-    use crate::preamble::{TypeDef, TypeKind};
+    use crate::preamble::{CollationDef, TypeDef, TypeKind};
     use crate::resolve::ColumnNote;
 
     /// A term resolved against a column the register has no plan for — what
@@ -1766,7 +1775,7 @@ mod tests {
                 resolution: ColumnResolution::Mapped,
             }],
             plans: vec![NestedPlan::Scalar],
-            comparisons: vec![comparison_for(declared, None, &test_types())],
+            comparisons: vec![comparison_for(declared, None, &test_types(), &[])],
         }
     }
 
@@ -2860,6 +2869,48 @@ mod tests {
         assert_eq!(resolve_term(&p, 0, &undeclared, 0).unwrap().comparison_note(), None);
     }
 
+    /// A column stating a collation the dump declares `deterministic = false`
+    /// announces under **both** operator families (I42) — the only collation
+    /// divergence that reaches `=`.
+    ///
+    /// The rows still come back bytewise, which is the defect the note is
+    /// there to name: under a non-deterministic collation two values spelled
+    /// differently can be equal to the server, so `=` is a weaker filter than
+    /// the server's and `<` is a different order.
+    #[test]
+    fn a_non_deterministic_collation_announces_under_equality_and_ordering() {
+        let collations = [CollationDef { name: "public.icu_ci".to_string(), deterministic: false }];
+        let schema = |collation: Option<&str>, declared: &[CollationDef]| {
+            let mut resolved = one_column("text", DataType::Utf8View);
+            resolved.comparisons = vec![comparison_for("text", collation, &[], declared)];
+            resolved
+        };
+
+        for op in [PredicateOp::Gt, PredicateOp::Eq, PredicateOp::Ne] {
+            let p = order_predicate(op, "a");
+            let resolved = schema(Some("public.icu_ci"), &collations);
+            let note = resolve_term(&p, 0, &resolved, 0)
+                .unwrap()
+                .comparison_note()
+                .unwrap_or_else(|| panic!("{op:?} announces"));
+            assert_eq!(note.divergence, ComparisonDivergence::NonDeterministicCollation);
+            assert!(note.message().contains("non-deterministic"), "{}", note.message());
+        }
+
+        // The same clause with nothing declared about it is the ordinary
+        // named-collation divergence, which `=` does not see.
+        let eq = order_predicate(PredicateOp::Eq, "a");
+        let plain = schema(Some("public.icu_ci"), &[]);
+        assert_eq!(resolve_term(&eq, 0, &plain, 0).unwrap().comparison_note(), None);
+
+        // And the comparison itself has not moved: it is still `Text`, so the
+        // term evaluates bytewise.
+        let term = resolve_term(&eq, 0, &schema(Some("public.icu_ci"), &collations), 0).unwrap();
+        assert!(term.comparison_note().is_some());
+        assert!(eq.matches(b"a", &term, "public.t", 0).unwrap());
+        assert!(!eq.matches(b"A", &term, "public.t", 0).unwrap());
+    }
+
     /// The comparison register against the committed comparison oracle:
     /// every cell of `fixtures/<13-18>/oracle/comparisons.tsv`, answered by
     /// the same `resolve_term`/`matches` path a `--filter` takes, and
@@ -3102,6 +3153,7 @@ mod tests {
                     pg_dump_version: None,
                     extensions: Vec::new(),
                     types: types.to_vec(),
+                    collations: Vec::new(),
                     tables: [("public.t".to_string(), vec![column])].into_iter().collect(),
                 }],
             };
@@ -3189,7 +3241,7 @@ mod tests {
                 for row in rows(&fixture(major, "oracle/comparisons.tsv")) {
                     let declared = row[0].clone().expect("a case names a type");
                     let collation = clause(row[3].as_ref());
-                    let plan = comparison_for(&declared, collation, &types);
+                    let plan = comparison_for(&declared, collation, &types, &[]);
                     // A column the register has no comparison for is skipped
                     // for the four ordering operators, which it refuses, and
                     // still asserted for `=`/`<>`, which fall back to text.

@@ -40,16 +40,27 @@ reads its markers in. Three functions are read:
   `CREATE TYPE` list (I10's multirange companion arrives there). Those three
   are named here rather than parsed, and the parse asserts the anchors they
   hang off so a rewrite is a reported problem rather than a silent pass.
-* `collated_text` -- **three more arms, on a second dimension.** A collatable
+* `collated_text` -- **four more arms, on a second dimension.** A collatable
   built-in's answer depends on the column's `COLLATE` clause as well as its
-  declared type, so one match arm carries three answers: an explicit
+  declared type, so one match arm carries four answers: a clause the dump
+  declares non-deterministic diverges under equality too, an explicit
   `C`/`POSIX` clause agrees, an explicit clause that is not bytewise diverges,
   and no clause at all falls back to the type's own default. Joining on the
-  declared type alone collapses those to one, and a fourth could be added with
+  declared type alone collapses those to one, and a fifth could be added with
   nothing behind it. Which built-in arms branch is read from the source too --
   an arm whose body calls `collated_text` is one -- so `character` stops
   counting the moment its arm starts consulting a clause, and starts counting
   the moment it does.
+
+**One of those four carries an exemption, and it is printed rather than
+hidden.** No oracle case can reach `collation/non-deterministic`: a
+non-deterministic collation is ICU-only (I42) and an ICU case would import a
+`collversion` that moves with the base image, which is the drift this oracle
+excludes ICU to avoid. That is the same shape as `TypeKind::Shell`, whose arm
+no dump can ask about -- an arm whose evidence cannot exist -- and it is
+handled the same way: named, with its reason, and checked in the other
+direction, since an exempt arm that *acquires* a case is a stale exemption and
+is reported.
 
 **Three arms, two case groups.** The oracle asks each text pair under `COLLATE
 "C"` and under `COLLATE "default"` only, so the non-`C`-clause arm has no group
@@ -120,6 +131,11 @@ class Arm:
     where: str
     #: What kind of arm this is, for grouping a report.
     group: str
+    #: Why no oracle case can exist for this arm, or `None` where one is
+    #: owed. An arm carrying a reason is not counted uncovered -- and a case
+    #: that *does* land on it is reported, because the exemption has then gone
+    #: stale and the arm is owed a case after all.
+    unoracled: str | None = None
 
 
 #: The three branches of the walk that are not match arms. They are named here
@@ -140,6 +156,17 @@ COLLATION_ARMS = (
     Arm("collation/bytewise", "collated_text", "collation"),
     Arm("collation/other", "collated_text", "collation"),
     Arm("collation/absent", "collated_text", "collation"),
+    Arm(
+        "collation/non-deterministic",
+        "collated_text",
+        "collation",
+        unoracled=(
+            "a non-deterministic collation is ICU-only (I42), and an ICU case "
+            "would carry a collversion that moves with the base image -- the "
+            "drift this oracle excludes ICU to avoid. The shape lives in the "
+            "fixture dumps instead, where it carries no version"
+        ),
+    ),
 )
 
 #: Which collation arms a case labelled with each collation exercises. `C` is
@@ -162,12 +189,21 @@ COLLATED_CALL = "collated_text("
 #: group mean the opposite of what [`COLLATION_GROUPS`] says.
 BYTEWISE_COLLATIONS = {"C", "POSIX", "C.UTF-8", "C.utf8"}
 
-#: What `parse_register` must find, or the source has moved under it.
+#: What `parse_register` must find, or the source has moved under it. Each
+#: value is the signature plus **every** string the arm list read out of that
+#: function hangs off, so a branch named in [`COLLATION_ARMS`] and deleted from
+#: the source is a reported problem rather than an arm nothing can reach.
 ANCHORS = {
-    "builtin_scalar": ("fn builtin_scalar(", "_ => return None,"),
-    "comparison_user_type": ("fn comparison_user_type(", "let Some(def) ="),
-    "comparison_for": ("pub fn comparison_for(", "array_element(declared).is_some()"),
-    "collated_text": ("fn collated_text(", "type_default == TypeCollation::Bytewise"),
+    "builtin_scalar": ("fn builtin_scalar(", ("_ => return None,",)),
+    "comparison_user_type": ("fn comparison_user_type(", ("let Some(def) =",)),
+    "comparison_for": (
+        "pub fn comparison_for(",
+        ("array_element(declared).is_some()",),
+    ),
+    "collated_text": (
+        "fn collated_text(",
+        ("type_default == TypeCollation::Bytewise", "states_non_deterministic("),
+    ),
 }
 
 #: The one match guard this check understands. An arm carrying any other guard
@@ -235,18 +271,19 @@ def parse_register(path: Path = REGISTER) -> Register:
     text = path.read_text()
 
     bodies: dict[str, str] = {}
-    for name, (signature, anchor) in ANCHORS.items():
+    for name, (signature, anchors) in ANCHORS.items():
         body = _function_body(text, name)
         if body is None or signature not in text:
             out.problems.append(
                 f"{path}: no `{name}` to read arms from — the register has moved"
             )
             continue
-        if anchor not in body:
-            out.problems.append(
-                f"{path}: `{name}` no longer contains {anchor!r} — this check's "
-                "reading of it is out of date"
-            )
+        for anchor in anchors:
+            if anchor not in body:
+                out.problems.append(
+                    f"{path}: `{name}` no longer contains {anchor!r} — this check's "
+                    "reading of it is out of date"
+                )
         bodies[name] = body
     if len(bodies) != len(ANCHORS):
         return out
@@ -523,7 +560,18 @@ class Reconciliation:
 
     @property
     def uncovered(self) -> list[Arm]:
-        return [arm for arm in self.arms if not self.cases_by_arm.get(arm.key)]
+        return [
+            arm
+            for arm in self.arms
+            if arm.unoracled is None and not self.cases_by_arm.get(arm.key)
+        ]
+
+    @property
+    def exempt(self) -> list[Arm]:
+        """Arms for which no oracle case can exist, with the reason. Reported
+        rather than hidden: an exemption nobody reads is the same silence as an
+        arm nobody covers."""
+        return [arm for arm in self.arms if arm.unoracled is not None]
 
 
 def case_label(type_name: str, collation: str | None) -> str:
@@ -585,6 +633,17 @@ def reconcile(
             continue
         for arm_key in groups:
             out.cases_by_arm.setdefault(arm_key, []).append(label)
+
+    # An exemption that acquired a case has gone stale: the arm is no longer
+    # one no evidence can exist for, and leaving it exempt would excuse the
+    # *next* arm someone hangs off the same reason.
+    for arm in out.exempt:
+        covering = out.cases_by_arm.get(arm.key)
+        if covering:
+            out.problems.append(
+                f"{arm.key} is marked as needing no oracle case and now has one "
+                f"({', '.join(covering)}) — drop the exemption"
+            )
     return out
 
 
@@ -612,9 +671,19 @@ def report(found: Reconciliation, out=sys.stdout) -> None:
         print(f"{label}:", file=out)
         for arm in arms:
             covering = found.cases_by_arm.get(arm.key, [])
-            mark = "  " if covering else "!!"
-            shown = ", ".join(covering) if covering else "no case"
+            if covering:
+                mark, shown = "  ", ", ".join(covering)
+            elif arm.unoracled is not None:
+                mark, shown = "  ", "no case can exist (see below)"
+            else:
+                mark, shown = "!!", "no case"
             print(f" {mark} {arm.key:<38} {shown}", file=out)
+        print(file=out)
+
+    if found.exempt:
+        print("Arms no oracle case can cover:", file=out)
+        for arm in found.exempt:
+            print(f"  {arm.key} ({arm.where}): {arm.unoracled}", file=out)
         print(file=out)
 
     if found.unplaced:
@@ -635,9 +704,10 @@ def report(found: Reconciliation, out=sys.stdout) -> None:
         for problem in found.problems:
             print(f"  {problem}", file=out)
     elif not uncovered and not found.unplaced:
+        exempt = f" (bar {len(found.exempt)} no case can cover)" if found.exempt else ""
         print(
-            "Every arm of the comparison register has an oracle case, and every "
-            "oracle case exercises an arm.",
+            f"Every arm of the comparison register has an oracle case{exempt}, and "
+            "every oracle case exercises an arm.",
             file=out,
         )
 

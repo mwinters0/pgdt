@@ -14,7 +14,7 @@ use arrow::datatypes::{DataType, Field, Fields};
 use arrow_schema::extension::{Json, Uuid};
 
 use crate::copy::Cursor;
-use crate::preamble::{TypeDef, TypeKind};
+use crate::preamble::{CollationDef, TypeDef, TypeKind};
 
 /// The outcome of mapping one declared type string, mirroring
 /// [`crate::resolve::ColumnResolution`] but at single-type granularity.
@@ -266,15 +266,30 @@ pub enum ComparisonDivergence {
     /// A collatable column that states a collation other than `C`/`POSIX`,
     /// whose order this build does not implement.
     ///
-    /// Deficiency register: `deficiency: KD7` — this is the one register row
-    /// whose divergence the file gives enough information to close and this
-    /// build does not, and the detail is `docs/design/architecture.md`'s
-    /// "Ordering operators compare typed". The two collation variants either
-    /// side of it are *not* that: [`Self::UnknownCollation`] names a fact no
-    /// plain dump carries (I32), and a stated collation that is bytewise in
-    /// fact but not named `C`/`POSIX` lands here with correct rows and a
-    /// spurious note.
+    /// Deficiency register: `deficiency: KD7` — this and
+    /// [`Self::NonDeterministicCollation`] are the two register rows whose
+    /// divergence the file gives enough information to close and this build
+    /// does not, and the detail is `docs/design/architecture.md`'s "Ordering
+    /// operators compare typed". The two collation variants either side of
+    /// them are *not* that: [`Self::UnknownCollation`] names a fact no plain
+    /// dump carries (I32), and a stated collation that is bytewise in fact but
+    /// not named `C`/`POSIX` lands here with correct rows and a spurious note.
     NonBytewiseCollation,
+    /// A collatable column stating a collation the *same dump* declares
+    /// `deterministic = false` (I42). It is [`Self::NonBytewiseCollation`]
+    /// plus one fact: under a non-deterministic collation `texteq`/`bpchareq`
+    /// are not byte comparisons either, so two values that differ byte for
+    /// byte can be equal to the server and this build calls them distinct.
+    ///
+    /// **It is the only divergence a plain dump states outright.** The
+    /// collation's *order* still needs a provider version the file does not
+    /// carry, but `pg_dump` writes `, deterministic = false` unconditionally
+    /// (I42) — so where the other three collation variants are announcements
+    /// about what the file leaves unsaid, this one repeats what it said.
+    ///
+    /// Deficiency register: `deficiency: KD7` — same defect, same fix (a
+    /// comparison per named collation), one operator further.
+    NonDeterministicCollation,
     /// A `jsonb` column, whose *structure* is compared exactly and whose
     /// string leaves and object keys are not: `compareJsonbScalarValue` orders
     /// every one of them by `varstr_cmp` under `DEFAULT_COLLATION_OID` (I41),
@@ -315,21 +330,21 @@ impl ComparisonDivergence {
     /// Whether this divergence reaches `=`/`!=` as well as the four ordering
     /// operators.
     ///
-    /// **Only [`Self::AsText`] does, and the reason the other three do not is
-    /// one fact about every collation this build can meet**: a libc collation
-    /// is always *deterministic*, so `varstr_cmp` returns zero exactly when
-    /// the bytes are equal, and `texteq`/`bpchareq` are byte comparisons
-    /// whatever the collation is. A collation the file does not name, one it
-    /// names and this build does not implement, and one reached through a
-    /// `jsonb` string leaf are therefore all divergences of *order* alone —
-    /// the row set an `=` returns is the server's either way.
+    /// **Determinism is what decides it for the collation variants**, and it
+    /// is why three of the four answer `false`: a *deterministic* collation
+    /// makes `varstr_cmp` return zero exactly when the bytes are equal, so
+    /// `texteq`/`bpchareq` are byte comparisons whatever that collation
+    /// otherwise orders. A collation the file does not name, one it names and
+    /// this build does not implement, and one reached through a `jsonb` string
+    /// leaf are therefore divergences of *order* alone — the row set an `=`
+    /// returns is the server's either way, because every libc collation is
+    /// deterministic and a non-deterministic one is stated outright.
     ///
-    /// A non-deterministic collation is the shape that breaks that, and the
-    /// dump states it outright (I42). Reading it is what
-    /// `docs/design/roadmap-P11-typed-predicates.md` gives to 11.6.2; until
-    /// then the two variants that answer `true` do so for a reason that is
-    /// not a collation at all — the server defines no comparison
-    /// ([`Self::AsText`]), or this register models none ([`Self::UnmodelledType`]).
+    /// [`Self::NonDeterministicCollation`] is that statement, and the one
+    /// collation variant that reaches `=` (I42). The other two `true` answers
+    /// are not about a collation at all: the server defines no comparison
+    /// ([`Self::AsText`]), or this register models none
+    /// ([`Self::UnmodelledType`]).
     ///
     /// There is no `affects_ordering` beside this: every variant does, which
     /// is what makes one method enough.
@@ -339,6 +354,8 @@ impl ComparisonDivergence {
             // an order, so bytewise equality is as much an answer the server
             // does not have as the ordering is.
             Self::AsText | Self::UnmodelledType => true,
+            // The dump itself says `texteq` is not a byte comparison here.
+            Self::NonDeterministicCollation => true,
             Self::UnknownCollation | Self::NonBytewiseCollation | Self::JsonbStringCollation => {
                 false
             }
@@ -456,7 +473,19 @@ fn collated_text(
     kind: CompareKind,
     collation: Option<&str>,
     type_default: TypeCollation,
+    collations: &[CollationDef],
 ) -> ComparisonPlan {
+    // First, because it is the strongest thing the file can say about a
+    // collation: the other three branches are all read off the *name*, where
+    // this one is read off a statement the dump wrote. The order costs nothing
+    // in practice — a non-deterministic collation is ICU-only and therefore
+    // user-defined (I42), and `collation_is_bytewise` answers `true` only for
+    // `pg_catalog."C"`/`"POSIX"`, which no user-defined collation can be — so
+    // the two can never both match. It is put first anyway, so that reading
+    // the branches top to bottom is reading them in order of evidence.
+    if collation.is_some_and(|reference| states_non_deterministic(reference, collations)) {
+        return ComparisonPlan::diverging(kind, ComparisonDivergence::NonDeterministicCollation);
+    }
     let bytewise = match collation {
         Some(reference) => collation_is_bytewise(reference),
         None => type_default == TypeCollation::Bytewise,
@@ -471,6 +500,33 @@ fn collated_text(
             None => ComparisonDivergence::UnknownCollation,
         },
     )
+}
+
+/// Whether `reference` — a column's `COLLATE` clause, verbatim — names a
+/// collation this dump declared `deterministic = false` (I42).
+///
+/// **Both sides are parsed rather than compared as text**, because the two
+/// spellings come from different `pg_dump` code paths and need not match byte
+/// for byte: a `CREATE COLLATION` names the object and a `COLLATE` clause
+/// references it, and either may quote an identifier the other leaves bare.
+/// [`collation_parts`] folds an unquoted identifier the way the server does,
+/// so the join is on the same names the server would resolve.
+///
+/// **A reference with no schema matches on the name alone.** `pg_dump` writes
+/// both sides schema-qualified for a user-defined collation, so the case is
+/// reachable only from a hand-written file, where the search path decides and
+/// the file does not carry it. Matching is the announcing direction — a
+/// spurious note over correct rows, never a silent wrong row set — which is
+/// the way this register errs everywhere else a name is ambiguous.
+fn states_non_deterministic(reference: &str, collations: &[CollationDef]) -> bool {
+    let Some((schema, name)) = collation_parts(reference) else { return false };
+    collations.iter().any(|declared| {
+        !declared.deterministic
+            && collation_parts(&declared.name).is_some_and(|(declared_schema, declared_name)| {
+                declared_name == name
+                    && schema.as_ref().is_none_or(|s| Some(s) == declared_schema.as_ref())
+            })
+    })
 }
 
 /// The field names of the range struct, in order. Reserved: a composite type
@@ -535,13 +591,15 @@ fn map_numeric(typmod: Option<&str>) -> (DataType, ComparisonPlan) {
 /// four unrelated declared types share (`docs/design/architecture.md`,
 /// "Ordering operators compare typed").
 ///
-/// `collation` is the column's own `COLLATE` clause, verbatim; only the three
-/// collatable arms read it, and [`map_builtin`] — which wants the Arrow type
-/// alone — passes `None`.
+/// `collation` is the column's own `COLLATE` clause, verbatim, and
+/// `collations` is what the dump's own `CREATE COLLATION` statements said
+/// about it; only the four collatable arms read either, and [`map_builtin`] —
+/// which wants the Arrow type alone — passes `None` and an empty list.
 fn builtin_scalar(
     base: &str,
     typmod: Option<&str>,
     collation: Option<&str>,
+    collations: &[CollationDef],
 ) -> Option<(DataType, ComparisonPlan)> {
     use CompareKind as K;
     use DataType::*;
@@ -578,9 +636,11 @@ fn builtin_scalar(
         // database's collation and `name` to `C` (I37), which is why a bare
         // `name` column agrees and a bare `text` column cannot be said to.
         "text" | "character varying" => {
-            (Utf8View, collated_text(K::Text, collation, TypeCollation::Database))
+            (Utf8View, collated_text(K::Text, collation, TypeCollation::Database, collations))
         }
-        "name" => (Utf8View, collated_text(K::Text, collation, TypeCollation::Bytewise)),
+        "name" => {
+            (Utf8View, collated_text(K::Text, collation, TypeCollation::Bytewise, collations))
+        }
         // The fourth collatable arm, and the one that needs a comparison of
         // its own: the dump writes every `character(n)` value blank-padded to
         // `n` and `bpcharcmp` calls `bcTruelen` on both sides before it
@@ -588,7 +648,9 @@ fn builtin_scalar(
         // `K::PaddedText` and what is left is exactly the `text` question —
         // an explicit `C`/`POSIX` agrees, anything else diverges, and a bare
         // column is on the database's collation (I32).
-        "character" => (Utf8View, collated_text(K::PaddedText, collation, TypeCollation::Database)),
+        "character" => {
+            (Utf8View, collated_text(K::PaddedText, collation, TypeCollation::Database, collations))
+        }
         // `infinity`/`-infinity` are ordered rather than refused, as
         // positions rather than numbers (`special_order_key`, I34).
         "date" => (Date32, agrees(K::Date)),
@@ -733,7 +795,7 @@ pub(crate) fn with_extension(field: Field, declared: &str, types: &[TypeDef]) ->
 fn map_builtin(base: &str, typmod: Option<&str>, types: &[TypeDef]) -> Option<TypeOutcome> {
     // No collation: an Arrow type never depends on one, and the plan half of
     // the pair is discarded here.
-    if let Some((mapped, _)) = builtin_scalar(base, typmod, None) {
+    if let Some((mapped, _)) = builtin_scalar(base, typmod, None, &[]) {
         return Some(TypeOutcome::Mapped(mapped, NestedPlan::Scalar));
     }
     // Built-in ranges, and their PG14+ multirange counterparts (I10): both
@@ -1112,6 +1174,7 @@ pub fn comparison_for(
     declared: &str,
     collation: Option<&str>,
     types: &[TypeDef],
+    collations: &[CollationDef],
 ) -> ComparisonPlan {
     let declared = declared.trim();
     if array_element(declared).is_some() {
@@ -1119,12 +1182,13 @@ pub fn comparison_for(
     }
     let (base, typmod) = split_typmod(declared);
     if base.contains('.') {
-        return comparison_user_type(base, collation, types);
+        return comparison_user_type(base, collation, types, collations);
     }
     // A built-in range name reaches neither arm of `builtin_scalar` and is
     // refused, which is the same answer the nested check above gives a
     // user-defined one.
-    builtin_scalar(base, typmod, collation).map_or(ComparisonPlan::Refused, |(_, plan)| plan)
+    builtin_scalar(base, typmod, collation, collations)
+        .map_or(ComparisonPlan::Refused, |(_, plan)| plan)
 }
 
 /// The user-defined half of [`comparison_for`], over the same `TypeKind` list
@@ -1132,7 +1196,12 @@ pub fn comparison_for(
 ///
 /// **Exhaustive over `TypeKind` with no wildcard arm**, so a kind added to the
 /// preamble grammar has to choose a comparison rather than inheriting one.
-fn comparison_user_type(name: &str, collation: Option<&str>, types: &[TypeDef]) -> ComparisonPlan {
+fn comparison_user_type(
+    name: &str,
+    collation: Option<&str>,
+    types: &[TypeDef],
+    collations: &[CollationDef],
+) -> ComparisonPlan {
     // Absent from the list: either an unknown type or a range's multirange
     // companion (I10). Neither has an order here.
     let Some(def) = types.iter().find(|t| t.name == name) else {
@@ -1159,7 +1228,7 @@ fn comparison_user_type(name: &str, collation: Option<&str>, types: &[TypeDef]) 
         // a domain's own `COLLATE` is its type default, which `pg_dump` writes
         // a column-level clause only to override (I37).
         TypeKind::Domain { base_type, collation: domain_collation } => {
-            comparison_for(base_type, collation.or(domain_collation.as_deref()), types)
+            comparison_for(base_type, collation.or(domain_collation.as_deref()), types, collations)
         }
         TypeKind::Composite { .. } | TypeKind::Range { .. } => ComparisonPlan::Refused,
         TypeKind::Base | TypeKind::Shell => ComparisonPlan::Refused,
@@ -1714,7 +1783,7 @@ mod tests {
         for (declared, extension, storage) in EXTENSIONS {
             assert_eq!(extension_for(declared, &[]), Some(extension), "{declared}");
             assert_eq!(
-                builtin_scalar(declared, None, None).map(|(dt, _)| dt),
+                builtin_scalar(declared, None, None, &[]).map(|(dt, _)| dt),
                 Some(storage.clone()),
                 "{declared}"
             );
@@ -1856,14 +1925,14 @@ mod tests {
             ("macaddr", agrees(K::MacAddr { octets: 6 })),
             ("macaddr8", agrees(K::MacAddr { octets: 8 })),
         ] {
-            assert_eq!(comparison_for(declared, None, &[]), expected, "{declared}");
+            assert_eq!(comparison_for(declared, None, &[], &[]), expected, "{declared}");
         }
         // A declared type this build maps to nothing has no comparison
         // either — the two answers are reached through one walk of the same
         // string, so they cannot disagree about which types exist.
-        assert_eq!(comparison_for("money", None, &[]), ComparisonPlan::Refused);
+        assert_eq!(comparison_for("money", None, &[], &[]), ComparisonPlan::Refused);
         // A keyword is a keyword on both walks (I5).
-        assert_eq!(comparison_for("INTEGER", None, &[]), agrees(K::Int));
+        assert_eq!(comparison_for("INTEGER", None, &[], &[]), agrees(K::Int));
     }
 
     /// Seven unrelated declared types reach `Utf8View`, which is why the
@@ -1878,26 +1947,26 @@ mod tests {
         let labels = ["sad".to_string(), "ok".to_string()];
         let types = [ty("public.mood", TypeKind::Enum { labels: labels.to_vec() })];
         assert_eq!(
-            comparison_for("public.mood", None, &types),
+            comparison_for("public.mood", None, &types, &[]),
             ComparisonPlan::agrees(CompareKind::Enum(labels.iter().cloned().collect())),
         );
         assert_eq!(
-            comparison_for("numeric", None, &[]),
+            comparison_for("numeric", None, &[], &[]),
             ComparisonPlan::agrees(CompareKind::Numeric { infinities: true }),
         );
         assert_eq!(
-            comparison_for("interval", None, &[]),
+            comparison_for("interval", None, &[], &[]),
             ComparisonPlan::agrees(CompareKind::Interval),
         );
         assert_eq!(
-            comparison_for("inet", None, &[]),
+            comparison_for("inet", None, &[], &[]),
             ComparisonPlan::agrees(CompareKind::Network { cidr: false }),
         );
-        assert_eq!(comparison_for("json", None, &[]), ComparisonPlan::AS_TEXT);
+        assert_eq!(comparison_for("json", None, &[], &[]), ComparisonPlan::AS_TEXT);
         // `jsonb` shares the Arrow type and neither the comparison nor the
         // verdict: it is a container walk that diverges only at a string.
         assert_eq!(
-            comparison_for("jsonb", None, &[]),
+            comparison_for("jsonb", None, &[], &[]),
             ComparisonPlan::diverging(
                 CompareKind::Jsonb,
                 ComparisonDivergence::JsonbStringCollation
@@ -1906,13 +1975,13 @@ mod tests {
         // `text` is the last, and it does not share `AS_TEXT` with them:
         // reading the collation is what tells them apart.
         assert_eq!(
-            comparison_for("text", None, &[]),
+            comparison_for("text", None, &[], &[]),
             ComparisonPlan::diverging(CompareKind::Text, ComparisonDivergence::UnknownCollation),
         );
         // An enum with no labels resolves to no Arrow type at all, so no
         // column of it is ever asked how it compares.
         let empty = [ty("public.empty", TypeKind::Enum { labels: vec![] })];
-        assert_eq!(comparison_for("public.empty", None, &empty), ComparisonPlan::Refused);
+        assert_eq!(comparison_for("public.empty", None, &empty, &[]), ComparisonPlan::Refused);
     }
 
     /// The collation rule, as a table: what a text column's `COLLATE` clause
@@ -1979,10 +2048,116 @@ mod tests {
             ("json", Some("pg_catalog.\"C\""), ComparisonPlan::AS_TEXT),
         ] {
             assert_eq!(
-                comparison_for(declared, collation, &[]),
+                comparison_for(declared, collation, &[], &[]),
                 expected,
                 "{declared} {collation:?}"
             );
+        }
+    }
+
+    /// The fourth collation branch: a column stating a collation the *same
+    /// dump* declared `deterministic = false` (I42).
+    ///
+    /// It is the only one of the four that reaches `=`, and the only one read
+    /// off a statement rather than off a name — which is why the same clause
+    /// answers differently depending on what the dump's `CREATE COLLATION`
+    /// list holds.
+    #[test]
+    fn a_collation_the_dump_declares_non_deterministic_diverges_under_equality_too() {
+        use CompareKind as K;
+        let coll = |name: &str, deterministic: bool| CollationDef {
+            name: name.to_string(),
+            deterministic,
+        };
+        let nd = ComparisonDivergence::NonDeterministicCollation;
+        let named = ComparisonDivergence::NonBytewiseCollation;
+
+        // Nothing declared: the clause is read off its name alone, exactly as
+        // before this branch existed.
+        assert_eq!(
+            comparison_for("text", Some("public.icu_ci"), &[], &[]),
+            ComparisonPlan::diverging(K::Text, named)
+        );
+        // Declared deterministic — which is what every `CREATE COLLATION` in
+        // the committed fixtures says — moves nothing either.
+        assert_eq!(
+            comparison_for("text", Some("public.icu_ci"), &[], &[coll("public.icu_ci", true)]),
+            ComparisonPlan::diverging(K::Text, named)
+        );
+        // Declared non-deterministic: same comparison, stronger verdict.
+        let declared = [coll("public.other", true), coll("public.icu_ci", false)];
+        assert_eq!(
+            comparison_for("text", Some("public.icu_ci"), &[], &declared),
+            ComparisonPlan::diverging(K::Text, nd)
+        );
+        // `character(n)` and `character varying` reach the same branch, and
+        // `character(n)` keeps its own trim (I38).
+        assert_eq!(
+            comparison_for("character(10)", Some("public.icu_ci"), &[], &declared),
+            ComparisonPlan::diverging(K::PaddedText, nd)
+        );
+        assert_eq!(
+            comparison_for("character varying(10)", Some("public.icu_ci"), &[], &declared),
+            ComparisonPlan::diverging(K::Text, nd)
+        );
+        // A domain's own clause is the column's default, so it reaches the
+        // branch the same way a column-level clause does.
+        let types = [ty(
+            "public.dom_nd",
+            TypeKind::Domain {
+                base_type: "text".to_string(),
+                collation: Some("public.icu_ci".to_string()),
+            },
+        )];
+        assert_eq!(
+            comparison_for("public.dom_nd", None, &types, &declared),
+            ComparisonPlan::diverging(K::Text, nd)
+        );
+        // A column of a *different* collation is untouched by the entry.
+        assert_eq!(
+            comparison_for("text", Some("public.other"), &[], &declared),
+            ComparisonPlan::diverging(K::Text, named)
+        );
+        // A non-collatable type carries no clause and so never reaches it.
+        assert_eq!(
+            comparison_for("integer", Some("public.icu_ci"), &[], &declared),
+            ComparisonPlan::agrees(K::Int)
+        );
+        // Quoting is not textual: `CREATE COLLATION` and a `COLLATE` clause
+        // come from different `pg_dump` paths and either may quote what the
+        // other leaves bare.
+        assert_eq!(
+            comparison_for(
+                "text",
+                Some("public.\"icu_ci\""),
+                &[],
+                &[coll("\"public\".icu_ci", false)]
+            ),
+            ComparisonPlan::diverging(K::Text, nd)
+        );
+        // An unqualified reference matches on the name alone — the
+        // announcing direction, since the file does not carry a search path.
+        assert_eq!(
+            comparison_for("text", Some("icu_ci"), &[], &declared),
+            ComparisonPlan::diverging(K::Text, nd)
+        );
+        // ... but a *qualified* reference must agree on the schema.
+        assert_eq!(
+            comparison_for("text", Some("elsewhere.icu_ci"), &[], &declared),
+            ComparisonPlan::diverging(K::Text, named)
+        );
+    }
+
+    /// The operator dimension, stated once: this is the only collation
+    /// divergence `=`/`!=` ever sees.
+    #[test]
+    fn only_the_non_deterministic_collation_reaches_equality() {
+        use ComparisonDivergence as D;
+        for divergence in [D::AsText, D::UnmodelledType, D::NonDeterministicCollation] {
+            assert!(divergence.affects_equality(), "{divergence:?}");
+        }
+        for divergence in [D::UnknownCollation, D::NonBytewiseCollation, D::JsonbStringCollation] {
+            assert!(!divergence.affects_equality(), "{divergence:?}");
         }
     }
 
@@ -2009,17 +2184,17 @@ mod tests {
             ComparisonPlan::diverging(CompareKind::Text, ComparisonDivergence::NonBytewiseCollation)
         };
 
-        assert_eq!(comparison_for("public.dom_c", None, &types), agrees_text());
-        assert_eq!(comparison_for("public.dom_plain", None, &types), unknown());
+        assert_eq!(comparison_for("public.dom_c", None, &types, &[]), agrees_text());
+        assert_eq!(comparison_for("public.dom_plain", None, &types, &[]), unknown());
         // Through a chain, like every other domain answer.
-        assert_eq!(comparison_for("public.dom_over_c", None, &types), agrees_text());
+        assert_eq!(comparison_for("public.dom_over_c", None, &types, &[]), agrees_text());
         // The column's clause wins over the domain's, both ways round.
         assert_eq!(
-            comparison_for("public.dom_c", Some("pg_catalog.\"en_US.utf8\""), &types),
+            comparison_for("public.dom_c", Some("pg_catalog.\"en_US.utf8\""), &types, &[]),
             named()
         );
         assert_eq!(
-            comparison_for("public.dom_plain", Some("pg_catalog.\"C\""), &types),
+            comparison_for("public.dom_plain", Some("pg_catalog.\"C\""), &types, &[]),
             agrees_text()
         );
     }
@@ -2036,15 +2211,15 @@ mod tests {
             ty("public.darr", TypeKind::domain("integer[]")),
             ty("public.dmoney", TypeKind::domain("money")),
         ];
-        assert_eq!(comparison_for("public.d1", None, &types), agrees(CompareKind::Int));
-        assert_eq!(comparison_for("public.d2", None, &types), agrees(CompareKind::Int));
+        assert_eq!(comparison_for("public.d1", None, &types, &[]), agrees(CompareKind::Int));
+        assert_eq!(comparison_for("public.d2", None, &types, &[]), agrees(CompareKind::Int));
         assert_eq!(
-            comparison_for("public.dtext", None, &types),
+            comparison_for("public.dtext", None, &types, &[]),
             ComparisonPlan::diverging(CompareKind::Text, ComparisonDivergence::UnknownCollation),
         );
         // A domain over something with no order here has none either.
-        assert_eq!(comparison_for("public.darr", None, &types), ComparisonPlan::Refused);
-        assert_eq!(comparison_for("public.dmoney", None, &types), ComparisonPlan::Refused);
+        assert_eq!(comparison_for("public.darr", None, &types, &[]), ComparisonPlan::Refused);
+        assert_eq!(comparison_for("public.dmoney", None, &types, &[]), ComparisonPlan::Refused);
     }
 
     /// A domain over an enum carries the enum's labels, through any chain —
@@ -2067,9 +2242,9 @@ mod tests {
             ty("public.nothingish", TypeKind::domain("public.empty_enum")),
         ];
         let by_declaration = agrees(CompareKind::Enum(labels.iter().cloned().collect()));
-        assert_eq!(comparison_for("public.moodish", None, &types), by_declaration);
-        assert_eq!(comparison_for("public.moodisher", None, &types), by_declaration);
-        assert_eq!(comparison_for("public.nothingish", None, &types), ComparisonPlan::Refused);
+        assert_eq!(comparison_for("public.moodish", None, &types, &[]), by_declaration);
+        assert_eq!(comparison_for("public.moodisher", None, &types, &[]), by_declaration);
+        assert_eq!(comparison_for("public.nothingish", None, &types, &[]), ComparisonPlan::Refused);
     }
 
     /// Everything nested is refused: an order over an
@@ -2108,7 +2283,7 @@ mod tests {
             "public.nosuchtype",
         ] {
             assert_eq!(
-                comparison_for(declared, None, &types),
+                comparison_for(declared, None, &types, &[]),
                 ComparisonPlan::Refused,
                 "{declared}"
             );

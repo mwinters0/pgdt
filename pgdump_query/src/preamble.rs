@@ -70,6 +70,11 @@ pub struct DatabaseMetadata {
     pub pg_dump_version: Option<String>,
     pub extensions: Vec<Extension>,
     pub types: Vec<TypeDef>,
+    /// The `CREATE COLLATION` statements this database's preamble declared,
+    /// in DDL order. Only *user-defined* collations appear: `pg_dump` emits no
+    /// definition for the ones `initdb` created in `pg_catalog`, so a
+    /// `COLLATE "en_US.utf8"` clause resolves to nothing here (I42).
+    pub collations: Vec<CollationDef>,
     /// Qualified table name (`schema.table`, folded the same way
     /// [`crate::copy::CopyHeader::qualified_name`] is) -> its columns in DDL
     /// order.
@@ -85,9 +90,35 @@ impl DatabaseMetadata {
             pg_dump_version: None,
             extensions: Vec::new(),
             types: Vec::new(),
+            collations: Vec::new(),
             tables: BTreeMap::new(),
         }
     }
+}
+
+/// A `CREATE COLLATION` statement, as the DDL wrote it.
+///
+/// **Two fields, because two are all a plain dump carries that anything here
+/// reads** (I42): the collation's name, and whether the statement said
+/// `deterministic = false`. The provider and locale are in the file too and
+/// are deliberately not kept — nothing resolves a collation's *order* from
+/// them, and a plain dump omits the `collversion` that would be needed to
+/// (I42), so keeping them would be storing a fact with no reader.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollationDef {
+    /// Schema-qualified name, verbatim as the DDL wrote it
+    /// (`public.c_collation`) — the same spelling a column's `COLLATE` clause
+    /// uses, which is how [`crate::pgtype::comparison_for`] joins the two.
+    pub name: String,
+    /// `false` only where the statement carried `deterministic = false`.
+    ///
+    /// **The absence of the clause is the server's own default, not a
+    /// conclusion of ours**: `CREATE COLLATION` defaults to deterministic, and
+    /// `pg_dump` writes `, deterministic = false` unconditionally wherever the
+    /// catalog says otherwise — it is not gated on any dump option (I42). So a
+    /// statement with no clause is a collation the file *states* is
+    /// deterministic, and `true` here is that statement rather than a guess.
+    pub deterministic: bool,
 }
 
 /// A `CREATE EXTENSION` line. Extension *versions* are never in a regular
@@ -530,6 +561,43 @@ fn parse_create_extension(rest: &str) -> Option<Extension> {
     Some(Extension { name, schema })
 }
 
+/// `CREATE COLLATION <name> (provider = …[, deterministic = false][, locale =
+/// …][, rules = …]);` — or the `CREATE COLLATION <name> FROM <other>;` copy
+/// form, which carries no option list at all.
+///
+/// **Only `deterministic` is read**, and only at the option list's top level.
+/// A `locale = 'x, deterministic = false'` literal is stepped over the way
+/// [`extract_collation`]'s scan steps over a `DEFAULT`, because
+/// [`split_top_level_commas`] already respects quoting — which matters here
+/// rather than being theoretical, since an ICU locale is an arbitrary string
+/// the server never re-quotes on the way out.
+///
+/// The copy form is `deterministic = true` by this parse and is *not* the same
+/// claim as reading the source collation's own determinism: `CREATE COLLATION
+/// x FROM y` copies `collisdeterministic` along with everything else, so a
+/// copy of a non-deterministic collation is non-deterministic and this parse
+/// would call it deterministic. `pg_dump` never writes the copy form — it
+/// emits the full option list for every collation it dumps (I42) — so the
+/// shape is reachable only from a hand-written file, where under-claiming
+/// costs a note that is not printed rather than a wrong row set.
+fn parse_create_collation(rest: &str) -> Option<CollationDef> {
+    let (name, consumed) = parse_qualified_name(rest)?;
+    let after = rest[consumed..].trim_start();
+    let mut deterministic = true;
+    if after.starts_with('(') {
+        let close = matching_paren(after.as_bytes(), 0)?;
+        for option in split_top_level_commas(&after[1..close]) {
+            let Some((key, value)) = option.split_once('=') else { continue };
+            if key.trim().eq_ignore_ascii_case("deterministic")
+                && value.trim().eq_ignore_ascii_case("false")
+            {
+                deterministic = false;
+            }
+        }
+    }
+    Some(CollationDef { name, deterministic })
+}
+
 /// `CREATE TYPE <name>` in any of its six shapes (see [`TypeKind`]).
 fn parse_create_type(rest: &str) -> Option<TypeDef> {
     let (name, consumed) = parse_qualified_name(rest)?;
@@ -737,7 +805,7 @@ pub(crate) fn extract_statement_cross_refs(
     }
 }
 
-/// The three statement shapes [`classify_statement`] recognizes directly.
+/// The four statement shapes [`classify_statement`] recognizes directly.
 /// `ALTER TYPE ADD VALUE` isn't among them: it doesn't introduce a new
 /// object, it mutates an already-declared one, which needs a different
 /// signature — [`parse_alter_type_add_value_body`] for
@@ -750,6 +818,7 @@ pub(crate) enum StatementShape {
     Table { name: String, columns: Vec<ColumnDef> },
     Type(TypeDef),
     Extension(Extension),
+    Collation(CollationDef),
 }
 
 /// Classify a complete statement (see [`statement_complete`]) as one of
@@ -771,6 +840,9 @@ pub(crate) fn classify_statement(stmt: &str) -> Option<StatementShape> {
     }
     if let Some(rest) = strip_kw(trimmed, "CREATE EXTENSION") {
         return parse_create_extension(rest).map(StatementShape::Extension);
+    }
+    if let Some(rest) = strip_kw(trimmed, "CREATE COLLATION") {
+        return parse_create_collation(rest).map(StatementShape::Collation);
     }
     None
 }
@@ -957,7 +1029,7 @@ pub fn dump_metadata_from_spans(spans: &[Span]) -> DumpMetadata {
             SpanBody::Data(_) => {
                 current.preamble_complete = true;
             }
-            // I1 guarantees none of these four can genuinely follow a `Data`
+            // I1 guarantees none of these five can genuinely follow a `Data`
             // span for the current database before its next `Connect` — the
             // guard is defensive, matching what a line-triggered scan would
             // have done, rather than assuming the invariant holds.
@@ -973,10 +1045,14 @@ pub fn dump_metadata_from_spans(spans: &[Span]) -> DumpMetadata {
             SpanBody::AlterTypeAddValue { type_name, label } if !current.preamble_complete => {
                 fold_alter_type_add_value(&mut current.types, type_name, label);
             }
+            SpanBody::Collation { collation } if !current.preamble_complete => {
+                current.collations.push(collation.clone());
+            }
             SpanBody::Table { .. }
             | SpanBody::TypeDef { .. }
             | SpanBody::Extension { .. }
             | SpanBody::AlterTypeAddValue { .. }
+            | SpanBody::Collation { .. }
             | SpanBody::Framing
             | SpanBody::Unparsed
             | SpanBody::Unscanned => {}
@@ -1483,7 +1559,7 @@ mod tests {
     }
 
     #[test]
-    fn classify_statement_recognizes_the_three_span_shapes() {
+    fn classify_statement_recognizes_the_four_span_shapes() {
         assert!(matches!(
             classify_statement("CREATE TABLE public.t (id integer);"),
             Some(StatementShape::Table { .. })
@@ -1496,8 +1572,103 @@ mod tests {
             classify_statement("CREATE EXTENSION pgcrypto;"),
             Some(StatementShape::Extension(_))
         ));
+        assert!(matches!(
+            classify_statement("CREATE COLLATION public.c (provider = libc, locale = 'C');"),
+            Some(StatementShape::Collation(_))
+        ));
         assert!(classify_statement("ALTER TABLE t OWNER TO postgres;").is_none());
         assert!(classify_statement("ALTER TYPE t ADD VALUE 'x';").is_none());
+        // `ALTER COLLATION ... OWNER TO` follows every `CREATE COLLATION` in
+        // a real dump and must not be mistaken for one.
+        assert!(classify_statement("ALTER COLLATION public.c OWNER TO postgres;").is_none());
+    }
+
+    /// The one option this parse reads, in the four shapes a file can put it
+    /// in — and the two that must not be mistaken for it.
+    #[test]
+    fn create_collation_reads_determinism_and_nothing_else() {
+        fn parse(stmt: &str) -> CollationDef {
+            match classify_statement(stmt) {
+                Some(StatementShape::Collation(def)) => def,
+                other => panic!("{stmt:?} classified as {other:?}"),
+            }
+        }
+
+        // The committed fixture shape: an option list with no determinism
+        // clause, which is the server's default and so a stated `true`.
+        assert_eq!(
+            parse("CREATE COLLATION public.c_collation (provider = libc, locale = 'C');"),
+            CollationDef { name: "public.c_collation".to_string(), deterministic: true }
+        );
+        // What `pg_dump` writes for a non-deterministic one (I42): the clause
+        // sits between the provider and the locale, so the scan cannot key on
+        // position.
+        assert_eq!(
+            parse(
+                "CREATE COLLATION public.nd (provider = icu, deterministic = false,                  locale = 'und-u-ks-level2');"
+            ),
+            CollationDef { name: "public.nd".to_string(), deterministic: false }
+        );
+        // Keyword and value are both case-insensitive, as every other
+        // keyword in this grammar is.
+        assert!(
+            !parse("CREATE COLLATION public.nd (PROVIDER = icu, DETERMINISTIC = FALSE);")
+                .deterministic
+        );
+        // The copy form carries no option list at all.
+        assert_eq!(
+            parse(r#"CREATE COLLATION public.c FROM "C";"#),
+            CollationDef { name: "public.c".to_string(), deterministic: true }
+        );
+
+        // An ICU locale is an arbitrary string the server does not re-quote,
+        // so the option split has to respect quoting or a locale could spell
+        // the clause. `split_top_level_commas` is what makes this hold.
+        assert!(
+            parse(
+                "CREATE COLLATION public.tricky (provider = icu,                  locale = 'und, deterministic = false');"
+            )
+            .deterministic
+        );
+        // `deterministic = true` is spellable by hand and is not the clause.
+        assert!(
+            parse("CREATE COLLATION public.plain (provider = icu, deterministic = true);")
+                .deterministic
+        );
+    }
+
+    /// A `CREATE COLLATION` reaches [`DumpMetadata`] through its own span, in
+    /// DDL order and per database — the same route a `CREATE TYPE` takes.
+    ///
+    /// The leading `\connect` is what makes this two databases rather than
+    /// one: the *first* one replaces the pre-`\connect` segment rather than
+    /// closing it, which is [`dump_metadata_from_spans`]'s `--create` rule.
+    #[test]
+    fn collations_are_collected_per_database_in_ddl_order() {
+        let meta = dump_metadata_from_spans(&[
+            span(SpanBody::Connect { database: "one".to_string() }),
+            span(SpanBody::Collation {
+                collation: CollationDef { name: "public.a".to_string(), deterministic: true },
+            }),
+            span(SpanBody::Collation {
+                collation: CollationDef { name: "public.b".to_string(), deterministic: false },
+            }),
+            span(SpanBody::Connect { database: "two".to_string() }),
+            span(SpanBody::Collation {
+                collation: CollationDef { name: "other.c".to_string(), deterministic: false },
+            }),
+        ]);
+        assert_eq!(
+            meta.databases[0].collations,
+            vec![
+                CollationDef { name: "public.a".to_string(), deterministic: true },
+                CollationDef { name: "public.b".to_string(), deterministic: false },
+            ]
+        );
+        assert_eq!(
+            meta.databases[1].collations,
+            vec![CollationDef { name: "other.c".to_string(), deterministic: false }]
+        );
     }
 
     /// [`extract_statement_cross_refs`]'s five recognized shapes — real

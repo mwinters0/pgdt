@@ -883,14 +883,14 @@ field ([The cache](#the-cache)).
 ## The preamble grammar and `DumpMetadata`
 
 `DumpMetadata` / `DatabaseMetadata` / `Extension` / `TypeDef` / `TypeKind` /
-`ColumnDef` recover server and `pg_dump` versions, extensions, user-defined
-types, and each column's declared type **as the literal string `pg_dump` wrote**
-— never a parsed pair — per the layering rule that L1 stores what the dump said,
-not what a later layer concludes.
+`CollationDef` / `ColumnDef` recover server and `pg_dump` versions, extensions,
+user-defined types and collations, and each column's declared type **as the
+literal string `pg_dump` wrote** — never a parsed pair — per the layering rule
+that L1 stores what the dump said, not what a later layer concludes.
 
-**Grammar approach: dispatch directly off five fixed line-start keywords**
-(`CREATE TABLE`, `CREATE TYPE`, `CREATE DOMAIN`, `CREATE EXTENSION`, `ALTER
-TYPE`).
+**Grammar approach: dispatch directly off six fixed line-start keywords**
+(`CREATE TABLE`, `CREATE TYPE`, `CREATE DOMAIN`, `CREATE EXTENSION`, `CREATE
+COLLATION`, `ALTER TYPE`).
 
 *Rejected:* modelling `pg_dump`'s `-- Name: …; Type: …` TOC-comment grammar as
 a separate segmentation pass. Keyword dispatch gives the same soundness
@@ -933,6 +933,37 @@ from being read as the column's own.
 *Rejected:* folding the collation into the declared type string. It is not part
 of the type — two columns of one type can carry different clauses — and every
 reader of that string would have to strip it back off.
+
+**`CREATE COLLATION` is read for one option, and it is the only one that
+changes an answer.** `CollationDef` is a name plus `deterministic`, collected
+per database in DDL order on `DatabaseMetadata::collations`. `pg_dump` writes
+`, deterministic = false` unconditionally wherever the catalog says so — it is
+not gated on any dump option (I42) — so the clause's *absence* is the server's
+own default and `deterministic: true` states what the file said rather than
+guessing. That is the one equality divergence a plain dump carries outright:
+under a non-deterministic collation `texteq`/`bpchareq` are not byte
+comparisons, and ["Equality is typed too"](#equality-is-typed-too) is where the
+register acts on it.
+
+Only the *option list's top level* is read, through the same
+`split_top_level_commas` the type grammar uses, because an ICU locale is an
+arbitrary string the server does not re-quote — `locale = 'und, deterministic =
+false'` is a locale and not a clause. The `CREATE COLLATION x FROM y` copy form
+carries no option list and reads as deterministic; `pg_dump` never writes it
+(it emits the full list for every collation it dumps, I42), so the shape is
+reachable only from a hand-written file, where under-claiming costs a note that
+is not printed rather than a wrong row set.
+
+*Rejected: keeping the provider and the locale beside them.* Both are in the
+file and nothing reads either: a collation's *order* is a function of the
+provider version, which a plain dump never carries (I42), so storing the
+provider would be storing a fact with no reader. The determinism is kept
+precisely because it is the half the file settles.
+
+*Rejected: recording only the non-deterministic ones.* The list is what the
+dump declared, not what the register found interesting — the same rule that
+keeps `ColumnDef::collation` verbatim — and a dump declares a handful of
+collations at most.
 
 **`types` is keyed on the type, not on the statement.** `pg_dump` writes a
 completed C-level base type twice under one name — the shell, then the
@@ -2132,16 +2163,34 @@ as a fourth positional vector in `ResolvedSchema` beside `columns`, `notes` and
 **It is asked per column, not per declared type**, and the collation is why:
 two `text` columns of one table can compare differently, because one of them
 declares `COLLATE "C"` and the other declares nothing. The comparison itself is
-bytewise in both cases — **reading the clause moves the verdict, never the
-answer**. Three cases, and `pg_dump` writing a clause only where the collation
-differs from the *type's* default (I37) is what makes the third one decidable:
+bytewise in every case — **reading the clause moves the verdict, never the
+answer**. Four verdicts, and `pg_dump` writing a clause only where the collation
+differs from the *type's* default (I37) is what makes the last one decidable:
 
 | The column says | Verdict |
 |---|---|
+| a collation this dump declares `deterministic = false` | **Diverges** (`NonDeterministicCollation`), and it is the only collation verdict that reaches `=` |
 | `COLLATE "C"` or `COLLATE "POSIX"`, qualified `pg_catalog` or bare | **Agrees**, on every server and under every libc |
 | any other collation — a libc locale, an ICU collation, a user's own | **Diverges** (`NonBytewiseCollation`) |
 | nothing, and the type's default collation is `C` — i.e. `name` | **Agrees** |
 | nothing, and the type's default collation is the database's — `text`, `varchar`, `char(n)` | **Diverges** (`UnknownCollation`), because a plain dump does not record it (I32) |
+
+**The determinism row is first because it is read off a statement, where the
+other three are read off a name.** A `COLLATE` clause is joined against the
+database's own `CREATE COLLATION` list (see "The preamble grammar and
+`DumpMetadata`"), so what the register answers for one clause depends on what
+the *rest of the file* said about it. The join parses both sides rather than
+comparing them as text — the two spellings come from different `pg_dump` code
+paths and either may quote what the other leaves bare — and an unqualified
+reference matches on the name alone, which is the announcing direction and is
+reachable only from a hand-written file, `pg_dump` writing both sides
+schema-qualified.
+
+The order of the four costs nothing: a non-deterministic collation is ICU-only
+and therefore user-defined (I42), and `collation_is_bytewise` answers yes only
+for `pg_catalog."C"`/`"POSIX"`, which no user-defined collation can be. It is
+put first so that reading the branches top to bottom reads them in order of
+evidence.
 
 The schema is checked and not only the name: a collation called `"C"` in some
 other schema is not `pg_catalog."C"`, and an *unquoted* `COLLATE C` names the
@@ -2280,6 +2329,7 @@ with the reason that names its nesting rather than with "no order defined".
 | `text`, `varchar` declaring `COLLATE "C"`/`"POSIX"`, and `name` with no clause | `Utf8View` | yes — bytewise *is* what those collations order by, on every server and under every libc (I37) | — |
 | `text`, `varchar` with no clause | `Utf8View` | **no** — their collation is the database's, which a plain dump does not record (I32); bytewise equals PostgreSQL only if that collation is `C`/`POSIX` | a collation the file does not carry |
 | any column declaring a collation that is not `C`/`POSIX` | `Utf8View` | **no** — PostgreSQL orders it by that collation, which this build does not implement | one comparison per collation, i.e. a collation library |
+| any column declaring a collation this dump declares `deterministic = false` | `Utf8View` | **no**, and under `=` as well as under `<` — a non-deterministic collation makes `texteq`/`bpchareq` something other than a byte comparison (I42), so two values spelled differently can be equal to the server | the same collation library, which supplies the equality with the order |
 | `char(n)` declaring `COLLATE "C"`/`"POSIX"` | `Utf8View` | yes — the dump's blank padding comes off both sides first, which is `bcTruelen` (I38), and bytewise is what those collations order the remainder by | — |
 | `char(n)` with no clause | `Utf8View` | **no** — the padding is handled, and what is left is the `text` row's residue: its collation is the database's, which a plain dump does not record (I32) | a collation the file does not carry |
 | **bare `numeric`**, and `numeric` beyond 76 digits | `Utf8View` | yes — compared as an arbitrary-precision decimal over the text the file holds, which is `cmp_var_common`'s own value order and so insensitive to display scale: `1.5` and `1.50` are one value (I33). The bare form carries all three of `Infinity`, `-Infinity` and `NaN`; the constrained one carries only `NaN` (I34) | — |
@@ -2406,7 +2456,7 @@ second of two agreeing ones.
 schema resolves, naming the column and the divergence — including for a query
 that selected no rows, which is the case a user most wants explained. It is
 announced per **term**, not per column, because a divergence is
-operator-conditional: three of the five are divergences of *order* alone, so a
+operator-conditional: three of the six are divergences of *order* alone, so a
 `text` column filtered with both `<` and `=` is warned about once. The
 library's side of it is `TableStream::comparison_notes`, a **third channel** and
 deliberately not a widening of either existing one: `DumpIndex.diagnostics` is
@@ -2437,21 +2487,26 @@ stated one rather than a silent one.
 <!-- deficiency: KD7 -->
 **The one that is a deficiency is `KD7`**: a column that *states* a collation
 this build does not implement — a libc locale, an ICU collation — and whose
-order therefore genuinely differs. There the file does carry the fact, so
-`<`/`>` return a row set the server would not and something could be written
-that closes it: a comparison per named collation, which is a collation library.
-It is announced per column, and equality is unaffected for every *deterministic*
-collation, which is every libc one — so what is wrong is the ordering, not the
-data and not `=`.
+comparison therefore genuinely differs. There the file does carry the fact, so
+the operators return a row set the server would not and something could be
+written that closes it: a comparison per named collation, which is a collation
+library.
 
-**Equality has one column shape it answers wrongly and silently**, and it is
-not this entry: a user-defined ICU collation declared `deterministic = false`,
-which a plain dump states outright (I42). Under one, `texteq` is not a byte
-comparison, so `=` here returns a row set the server would not, and nothing is
-announced. The channel to announce it on now exists — `=` routes through the
-comparison plan and `comparison_notes` carries an equality divergence — but
-nothing reads the `CREATE COLLATION` that states the fact, which is what P11's
-11.6.2 is for.
+**It reaches two operator families, and the file says which.** For a
+*deterministic* collation — every libc one, and every ICU one the dump does not
+say otherwise about — `varstr_cmp` returns zero exactly when the bytes are
+equal, so `texteq`/`bpchareq` are byte comparisons and what is wrong is the
+ordering alone: the data is right and `=` is right. A collation the dump
+declares `deterministic = false` is the other half: `texteq` is then not a byte
+comparison either, so `=` returns a row set the server would not. Both are
+announced per term, the second under `=` as well as under `<`, so the wrong
+answer is a stated one — but announcing is all this build does, and the row set
+is bytewise either way.
+
+That split is knowable because `pg_dump` writes `, deterministic = false`
+unconditionally (I42) and this build reads it. It is the one thing about a
+stated collation a plain dump settles: the *order* still needs a provider
+version the file never carries, which is the next paragraph.
 
 **The fix closes it up to a provider version, not absolutely**, and the entry
 says so rather than promising more. A plain dump carries a collation's *name*
@@ -2600,17 +2655,32 @@ question they meant. The refusal costs one edit; the match would cost a wrong
 answer that reads like a right one, which is the shape this section exists to
 remove.
 
-**The divergences become operator-conditional**, which is why the note channel
-is `TableStream::comparison_notes` and its notes are per *term*. Three of the
-five reach ordering alone — `UnknownCollation`, `NonBytewiseCollation`,
-`JsonbStringCollation` — and one fact settles all three: every libc collation
-is *deterministic*, so `varstr_cmp` returns zero exactly when the bytes are
-equal and `texteq`/`bpchareq` are byte comparisons whatever the collation is.
-A `text` column with no clause therefore warns under `<` and is silent under
-`=`, which is not a softening: it is the register saying the row set an `=`
-returns is the server's. `ComparisonDivergence::affects_equality` is the whole
-rule, and `AsText` is the one pre-existing variant that answers `true` —
-PostgreSQL defines no `=` for `json` any more than it defines an order.
+**The divergences are operator-conditional**, which is why the note channel is
+`TableStream::comparison_notes` and its notes are per *term*. Three of the six
+reach ordering alone — `UnknownCollation`, `NonBytewiseCollation`,
+`JsonbStringCollation` — and one fact settles all three: those collations are
+*deterministic*, so `varstr_cmp` returns zero exactly when the bytes are equal
+and `texteq`/`bpchareq` are byte comparisons whatever the collation is. A
+`text` column with no clause therefore warns under `<` and is silent under `=`,
+which is not a softening: it is the register saying the row set an `=` returns
+is the server's. `ComparisonDivergence::affects_equality` is the whole rule.
+
+**Determinism is what that rule turns on, and one variant is the exception the
+file states.** `NonDeterministicCollation` is a column whose `COLLATE` clause
+names a collation the same dump declared `deterministic = false` (I42) — an ICU
+collation, always, the server refusing the option for every other provider.
+Under one, `texteq` is not a byte comparison, so two values spelled differently
+can be equal to the server and `=` here returns a row set the server would not.
+It is the **only equality divergence a plain dump carries outright**: everything
+else the register cannot answer for a text column is a fact the file omits (the
+database's own collation, I32) or a version it never records (the provider's,
+I42), where this one is written into the file as a clause. The register reads
+it and announces under both operator families; the comparison itself does not
+move, and the deficiency is `KD7`.
+
+The other two `true` answers are not about a collation at all: `AsText`, where
+PostgreSQL defines no `=` for `json` any more than it defines an order, and
+`UnmodelledType`, below.
 
 <!-- deficiency: KD10 -->
 **A column the register has no comparison for still answers `=`, as text, and
@@ -3804,16 +3874,35 @@ a rewrite is a reported problem rather than a shorter list that passes:
 | `builtin_scalar` | one **declared base name** | Several names share `(Utf8View, text)` and each is separately closable, so `text` having a case does not answer for `character varying`. |
 | `comparison_user_type` | one **match arm** over `TypeKind`, a guarded arm counting as its own | `Composite \| Range` and `Base \| Shell` are each one decision, so neither is separately closable yet; when 11.10 splits the first, both halves already have cases. Exhaustiveness over the kinds is rustc's job; what this check adds is that each *answer* has evidence. |
 | `comparison_for` | one per branch that is not a match arm at all, its own two plus `comparison_user_type`'s early return | The array shape, the built-in name nothing recognises, and a type absent from the dump's `CREATE TYPE` list (I10's multirange companion lands there). |
-| `collated_text` | one per **collation branch**, three in all | A collatable built-in's answer depends on the column's clause as well as its declared type, so one match arm carries three separately closable answers. |
+| `collated_text` | one per **collation branch**, four in all | A collatable built-in's answer depends on the column's clause — and on what the dump's `CREATE COLLATION` list said about the collation that clause names — as well as on its declared type, so one match arm carries four separately closable answers. |
 
 **The collation is a second dimension, and joining on the declared type alone
-collapses it.** An explicit `C`/`POSIX` clause agrees, an explicit clause that
-is not bytewise diverges, and no clause at all falls back to the type's own
-default; without the dimension all three are answered by one `text` case and a
-fourth could be added with nothing behind it. **Which built-in arms branch is
-read from the source too** — an arm whose body calls `collated_text` is one —
-so `character` started counting on the day its arm began consulting a clause,
-rather than being listed here and going stale.
+collapses it.** A clause naming a collation the dump declares non-deterministic
+diverges under equality too, an explicit `C`/`POSIX` clause agrees, an explicit
+clause that is not bytewise diverges, and no clause at all falls back to the
+type's own default; without the dimension all four are answered by one `text`
+case and a fifth could be added with nothing behind it. **Which built-in arms
+branch is read from the source too** — an arm whose body calls `collated_text`
+is one — so `character` started counting on the day its arm began consulting a
+clause, rather than being listed here and going stale.
+
+**One of the four can have no case, and the exemption is named rather than
+silent.** No oracle case can reach `collation/non-deterministic`: a
+non-deterministic collation is ICU-only (I42), and an ICU case would carry a
+`collversion` that moves with the base image — the drift the oracle excludes
+ICU to avoid. That is the same shape as `TypeKind::Shell` below, an arm whose
+evidence cannot exist, so it is handled the same way: the arm carries its
+reason, the report prints it under its own heading, and it is not counted
+uncovered. **The exemption is checked in the other direction too** — an exempt
+arm that *acquires* a case is reported, because an exemption nothing can
+falsify is how the next arm gets hung off the same reason. The shape's evidence
+is a fixture dump instead, where the same text carries no version; that is
+P11's slice 11.12.
+
+Each branch is also **anchored on a string the parse must find** — for this one
+the `states_non_deterministic(` call that implements it — so a branch named in
+the arm list and deleted from the source is a reported problem rather than an
+arm nothing can reach.
 
 **Three arms, two case groups.** The oracle asks each text pair under `COLLATE
 "C"` and under `COLLATE "default"` only, so the non-`C`-clause arm has no group

@@ -1458,6 +1458,7 @@ mod tests {
             pg_dump_version: None,
             extensions: Vec::new(),
             types: Vec::new(),
+            collations: Vec::new(),
             tables: Default::default(),
         };
         let metadata = DumpMetadata { databases: vec![first] };

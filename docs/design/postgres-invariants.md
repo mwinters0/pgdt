@@ -2795,6 +2795,14 @@ is the register's strongest proof class — but the standing rule
 bytes, and the drift objection that excluded ICU does not reach them, precisely
 because `version =` is absent.
 
+**The ordinary half of the shape is in committed bytes**, which is what a
+statement about an *unconditional* emission can be pinned against short of the
+non-deterministic case: `fixtures/<13-18>/types/default.sql` carries `CREATE
+COLLATION public.c_collation (provider = libc, locale = 'C');` at every major,
+with no determinism clause, and `tests/preamble.rs` reads it back as
+`deterministic: true`. So what 11.12 adds is the other side of the guard, not
+the first evidence for the parse.
+
 **Consequence.** Equality's divergence is **knowable per column** wherever the
 collation is user-defined and the dump says `deterministic = false`, and
 unknowable only where the column carries no clause and the database default is
@@ -2803,10 +2811,14 @@ divergence is knowable, and the *order* is not, so a comparison per named
 collation would agree with a server rather than with the server — which is
 what keeps `KD7`'s fix conditional on a provider version rather than absolute.
 
-**Relied on by.** `KD7`'s claim about what its fix can close
-([`architecture.md`](architecture.md), "Ordering operators compare typed"), and
-`P11`'s typed-equality slice 11.6.1, which must answer for a column whose
-collation the file states as non-deterministic.
+**Relied on by.** The comparison register's `NonDeterministicCollation` verdict
+and `DatabaseMetadata::collations`, the `CREATE COLLATION` parse that feeds it
+([`architecture.md`](architecture.md), "The preamble grammar and
+`DumpMetadata`" and "Ordering operators compare typed") — the determinism half
+is what that verdict *is*, and the version half is why the verdict is a
+divergence rather than a comparison. Also `KD7`'s claim about what its fix can
+close, and `oracle_register.py`'s exemption for the arm, whose whole argument
+is that a non-deterministic collation is ICU-only.
 
 **Re-verify.**
 

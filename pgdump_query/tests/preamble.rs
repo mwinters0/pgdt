@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use pgdump_query::preamble::{ColumnDef, TypeDef, TypeKind};
+use pgdump_query::preamble::{CollationDef, ColumnDef, TypeDef, TypeKind};
 use pgdump_query::{DatabaseMetadata, LocalFileSource, ScanOptions, build_index};
 
 mod common;
@@ -332,6 +332,33 @@ async fn t_collate_carries_its_collate_clause_wherever_pg_dump_displaced_it() {
                 ColumnDef::new("v_src", "text"),
                 collated("v_gen_nn", "text", r#"pg_catalog."C""#),
             ],
+            "pg_dump {version}"
+        );
+    }
+}
+
+/// The `CREATE COLLATION` the `types` schema declares, read at every major.
+///
+/// **This is the parse against committed bytes, and the determinism it
+/// asserts is `true`.** `pg_dump` writes `, deterministic = false` only where
+/// the catalog says the collation is non-deterministic and never otherwise
+/// (I42), so `public.c_collation` — `libc`, and therefore deterministic by the
+/// server's own refusal to make a libc collation anything else — is what a
+/// dump's ordinary shape looks like. The non-deterministic shape needs an ICU
+/// collation and is `P11`'s slice 11.12; until it lands, that half is asserted
+/// on hand-written statement text in `preamble.rs`'s own unit tests and this
+/// is what pins the option-list scan to a real `pg_dump` line.
+///
+/// The name is kept verbatim and schema-qualified, exactly as `v_user`'s
+/// `COLLATE public.c_collation` above spells it — which is the join
+/// `crate::pgtype`'s register makes between the two.
+#[tokio::test]
+async fn the_types_schema_declares_one_deterministic_collation_at_every_major() {
+    for version in VERSIONS {
+        let db = single_database(&types_fixture(version, "default")).await;
+        assert_eq!(
+            db.collations,
+            vec![CollationDef { name: "public.c_collation".to_string(), deterministic: true }],
             "pg_dump {version}"
         );
     }

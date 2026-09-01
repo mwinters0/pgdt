@@ -363,8 +363,12 @@ pub fn resolve_columns(
                 let refused = ComparisonPlan::Refused;
                 // The register is asked per column rather than per declared
                 // type, because the column's own `COLLATE` clause is half the
-                // question for a text column.
-                let comparison = || comparison_for(ty, column.collation.as_deref(), types);
+                // question for a text column — and the dump's own `CREATE
+                // COLLATION` list is what says whether the collation that
+                // clause names is deterministic (I42).
+                let collations = &db.unwrap().collations;
+                let comparison =
+                    || comparison_for(ty, column.collation.as_deref(), types, collations);
                 match resolve_declared_type(ty, types) {
                     TypeOutcome::Mapped(dt, plan) => {
                         (ColumnResolution::Mapped, (dt, plan), comparison())
@@ -446,6 +450,7 @@ mod tests {
             pg_dump_version: None,
             extensions: Vec::new(),
             types,
+            collations: Vec::new(),
             tables: Default::default(),
         };
         for (name, cols) in tables {
@@ -879,6 +884,44 @@ mod tests {
         // Both are still the same Arrow type and the same comparison — only
         // the verdict moved.
         assert_eq!(resolved.schema.field(0).data_type(), resolved.schema.field(1).data_type());
+    }
+
+    /// The other half of the same join: the register also reads the
+    /// database's own `CREATE COLLATION` list, because a `COLLATE` clause
+    /// naming a collation the dump declares `deterministic = false` is the one
+    /// equality divergence a plain dump states outright (I42).
+    ///
+    /// Two columns declaring the *same* clause therefore still compare
+    /// identically — what moves is what the whole dump said about that name.
+    #[test]
+    fn the_dumps_own_collation_list_decides_whether_a_clause_is_deterministic() {
+        use crate::pgtype::{CompareKind, ComparisonDivergence};
+        use crate::preamble::CollationDef;
+
+        let build = |deterministic: bool| {
+            let mut meta = one_db(&[("public.t", &[("v", "text")])], vec![]);
+            meta.databases[0].tables.get_mut("public.t").unwrap()[0].collation =
+                Some("public.icu_ci".to_string());
+            meta.databases[0].collations =
+                vec![CollationDef { name: "public.icu_ci".to_string(), deterministic }];
+            let cols = vec!["v".to_string()];
+            resolve_columns("public.t", &cols, Some(&meta), None, SchemaMode::Typed, &[])
+        };
+
+        assert_eq!(
+            build(true).comparisons,
+            [ComparisonPlan::diverging(
+                CompareKind::Text,
+                ComparisonDivergence::NonBytewiseCollation
+            )]
+        );
+        assert_eq!(
+            build(false).comparisons,
+            [ComparisonPlan::diverging(
+                CompareKind::Text,
+                ComparisonDivergence::NonDeterministicCollation
+            )]
+        );
     }
 
     /// The census speaks after the declared type, and can take a column out

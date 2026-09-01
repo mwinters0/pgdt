@@ -33,7 +33,7 @@ pub use pgtype::{
     comparison_for, extension_for, resolve_declared_type,
 };
 pub use preamble::{
-    ColumnDef, DatabaseMetadata, DumpMetadata, Extension, TypeDef, TypeKind,
+    CollationDef, ColumnDef, DatabaseMetadata, DumpMetadata, Extension, TypeDef, TypeKind,
     dump_metadata_from_spans,
 };
 pub use predicate::{ComparisonNote, Predicate, PredicateOp};

@@ -1431,6 +1431,10 @@ fn span_summary(span: &Span) -> String {
         SpanBody::Table { name, .. } => format!("TABLE {name}"),
         SpanBody::TypeDef { name, kind } => format!("TYPE {name} ({})", type_kind_label(kind)),
         SpanBody::Extension { name, .. } => format!("EXTENSION {name}"),
+        SpanBody::Collation { collation } => {
+            let determinism = if collation.deterministic { "" } else { " (deterministic = false)" };
+            format!("COLLATION {}{determinism}", collation.name)
+        }
         SpanBody::Connect { database } => format!("\\connect {database}"),
         SpanBody::VersionHeader { .. } => "version header".to_string(),
         SpanBody::AlterTypeAddValue { type_name, label } => {
