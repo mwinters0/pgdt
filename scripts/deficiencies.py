@@ -17,6 +17,8 @@ directions and with no discipline in the loop:
 * every `(b)` entry is owned by a phase the roadmap's index lists as still
   running, and where that phase has been sliced the entry names a slice of it
   and that slice's checklist line names the entry back;
+* every phase carrying a `## P<N> progress` checklist is `Current` in that
+  index, and every `Current` phase carries one;
 * every `KD<k>` a *ticked* checklist line cites falls inside the allocated
   range, which an `<!-- deficiency-watermark: KD<k> -->` marker carries.
 
@@ -69,16 +71,36 @@ and go quiet at the moment its pointer became most wrong. `Complete` and
 a stranded entry drops to `(c) unowned` unless a phase actually absorbs it, and
 this says so rather than only reporting the contradiction.
 
-That read has one honest edge, and it is stated rather than implied: the check
-learns "finished" from a cell a person sets at the wrap. Half of that closes
-mechanically -- a phase carrying a checklist may not be `Complete`, and a
-`Complete` phase may not carry one, which catches the state moving without the
-checklist and the checklist going without the state. The other half, a checklist
-deleted with the state left at `Specified`, is indistinguishable from
-"specified, not yet sliced" and would close only by splitting that state into
-`Specified` and `Sliced` -- rejected as costing an index edit at slicing time,
-with nothing else pulling a session to that table, to cover a wrap that half
-happened.
+**That cell is set by a person, so it is pinned at both ends.** A wrap sets
+`Complete` and deletes the checklist; a slicing sets `Current` and writes one.
+The check holds the rule that follows -- a phase carrying a `## P<N> progress`
+checklist is `Current`, and a `Current` phase carries one -- so a transition
+that half happened fails from whichever side it is short: a wrap that dropped
+the checklist and left the state leaves `Current` with nothing under it, and a
+slicing that wrote the checklist and left the state leaves `Specified` with a
+checklist under it. Splitting `Specified` into `Specified` and `Sliced` is the
+same rule under a new word, since `Current` already means "sliced and in
+flight"; the cost either way is one cell edited at slicing time, which is what
+the wrap already pays.
+
+**An unreadable state cell fails the whole run, not just the entries that
+resolve against it.** Consulting the index lazily -- parsing it, holding the
+problems, and surfacing one only when a `(b)` entry actually lands on a bad row
+-- was rejected: a malformed row is a defect in the index whether or not an
+entry currently points at it, and a problem that appears only when something
+else happens to point at it goes quiet exactly when the register is healthiest.
+That is the failure `--stale`'s inert-entry rule was written against. The cost
+is accepted knowingly: a roadmap edit that touches no deficiency can fail this
+check, and the failure names the expected set so the fix is one word.
+
+**An unrecognised state word is an error, not a guess in either direction.**
+Reading it as "still running" fails open on the likeliest mistake, which is the
+silence `Complete` was added to end. Reading it as *finished* fails closed and
+keeps that property, but it invents a claim about a phase somebody deliberately
+marked something else -- worse than refusing to read a word this does not know.
+The vocabulary is duplicated in `process.md`'s prose and in `PHASE_STATES`, and
+they can drift; that is the same duplication the stance words already accept,
+where `(c)` must say "unowned" in that word.
 
 This is `measure.py --check`'s idiom -- the doc addresses an entry by a marker
 comment, never by a heading, because a heading is rewritten whenever the thing
@@ -167,6 +189,12 @@ PHASE_STATES = ("sketched", "specified", "current", "complete", "struck")
 #: The two that mean the phase will absorb no more work, so a `(b)` entry naming
 #: one names no destination.
 FINISHED_STATES = ("complete", "struck")
+
+#: The one that means the phase is sliced and in flight. It is set when the
+#: checklist is written, exactly as `Complete` is set when it is deleted, and
+#: the two artifacts pair with it: a phase carrying a checklist is this, and a
+#: phase that is this carries one.
+CURRENT_STATE = "current"
 
 
 def _index(ident: str) -> int:
@@ -607,9 +635,10 @@ def reconcile_slices(
     the other half of a split -- a new slice that takes over the closure without
     the entry being re-aimed at it.
 
-    Ahead of both sits the owner: a `(b)` entry whose phase the index calls
-    finished, or does not list, has no destination at all, and the slice pairing
-    beneath it would be noise.
+    Ahead of both sits the phase index: a checklist and a `Current` cell are the
+    two halves of a phase in flight, so each is held to the other, and a `(b)`
+    entry whose phase the index calls finished, or does not list, has no
+    destination at all -- the slice pairing beneath it would be noise.
     """
     problems: list[str] = []
     indexed = {e.id: e for e in entries}
@@ -623,12 +652,32 @@ def reconcile_slices(
                     "the marker is what records that a number is allocated"
                 )
 
-    for n, state in sorted(phases.items()):
-        if state in FINISHED_STATES and n in checklists:
+    for n in sorted(set(phases) | set(checklists)):
+        state = phases.get(n)
+        sliced = n in checklists
+        if state in FINISHED_STATES and sliced:
             problems.append(
                 f'P{n} is {state} in the roadmap\'s phase index and still carries '
                 f'a "## P{n} progress" checklist — the wrap deletes the checklist '
                 "and sets the state, in one change"
+            )
+        elif sliced and state is None:
+            problems.append(
+                f'P{n} carries a "## P{n} progress" checklist and the roadmap\'s '
+                "phase index does not list it — a phase carrying a checklist is "
+                "current"
+            )
+        elif sliced and state != CURRENT_STATE:
+            problems.append(
+                f'P{n} carries a "## P{n} progress" checklist and the roadmap\'s '
+                f"phase index calls it {state} — slicing a phase sets the state to "
+                "current, in the change that writes the checklist"
+            )
+        elif state == CURRENT_STATE and not sliced:
+            problems.append(
+                f"P{n} is current in the roadmap's phase index and carries no "
+                f'"## P{n} progress" checklist — slicing a phase writes the '
+                "checklist and sets the state, in one change"
             )
 
     for entry in entries:

@@ -73,7 +73,10 @@ the slice half-done.
 `STATUS.md` as an unchecked checklist** — every slice, with its title and a
 one-line description, before any of it exists. The checklist is where the
 phase's progress is tracked, and it is the *only* place; see "Progress lives
-in STATUS, never in the spec" below.
+in STATUS, never in the spec" below. **Set the phase's index row to `Current`
+in that same change**, since the checklist and the state are the two halves of
+"this phase is in flight" and either alone is a lie — the mirror of the wrap's
+`Complete`, in step 5.
 
 **4. Land a slice, write its notes.** Each slice gets
 `roadmap-P<N>.<M>-<slug>-notes.md`, written as it lands, while it is
@@ -352,16 +355,25 @@ Three sections earn their keep beyond the checklist:
     accumulate, putting chronology back into the document the keystone exists to
     take it out of.
 
-    **That read has one honest edge, and it is stated rather than implied.** The
-    check learns "finished" from a cell a person sets, so half of the discipline
-    it removes comes back one level up. Half of *that* closes mechanically — a
-    phase carrying a checklist may not be `Complete`, and a `Complete` phase may
-    not carry one, which catches the state moving without the checklist and the
-    checklist going without the state. The remaining half, a checklist deleted
-    with the state left at `Specified`, is indistinguishable from "specified, not
-    yet sliced" and closes only by splitting that state into `Specified` and
-    `Sliced` — rejected as costing an index edit at slicing time, with nothing
-    else pulling a session to that table, to cover a wrap that half happened.
+    **The cell a person sets is the whole discipline, so pin it at both ends.**
+    A wrap sets `Complete` and deletes the checklist; a *slicing* sets `Current`
+    and writes one. Stated as a rule the check can hold: **a phase carrying a
+    slice checklist is `Current`, and a `Current` phase carries one.** That is
+    what makes the index legible without reading it against `STATUS.md` — the
+    three states a phase passes through each have a distinguishing artifact, so
+    a transition that half happened is visible from either side. A wrap that
+    deletes the checklist and forgets the state leaves `Current` with nothing
+    under it; a slicing that writes the checklist and forgets the state leaves
+    `Specified` with a checklist under it. Both fail.
+
+    Without that rule the edge is real and one-sided: `Specified` would mean
+    both *not yet sliced* and *sliced, run, and wrapped by someone who forgot
+    the cell*, and only the second is a problem. Splitting `Specified` into
+    `Specified` and `Sliced` was the alternative considered, and it is the same
+    rule under a new word — `Current` was already in the vocabulary, meaning
+    exactly this, so the split bought nothing the index did not already have.
+    The cost is one cell edited when a phase is sliced, which is the same cost
+    the wrap already pays.
 - **Decisions worth another look** — calls made without the maintainer
   present that a person should still weigh in on: cautionary and
   informational, never blocking. Each entry states the call, why it was made
@@ -819,9 +831,13 @@ a keystone or abandoned before it was specified.
 true. Head that file with an index whose rows are the schedule, and give each
 row an explicit state — sketched, specified, current, complete, struck —
 rather than leaving maturity to be inferred from how large the number is.
-`Complete` is set at the wrap, in the change that deletes the phase's checklist;
-it is what lets a reader — and a check — tell a phase that ran and finished from
-one nobody has sliced yet.
+
+**Two of those states are set in the same change as a `STATUS.md` edit, and
+neither is optional.** `Current` is set when the phase is sliced, in the change
+that writes its checklist; `Complete` at the wrap, in the change that deletes
+it. Together they are what lets a reader — and a check — tell a phase that ran
+and finished from one nobody has sliced yet, which no other cell in the table
+can say once the checklist is gone.
 
 **The slug is informal.** `P<k>` alone resolves; the slug beside it in a
 filename or a heading is a caption, there because
@@ -1104,6 +1120,11 @@ Each of these means a specific rule has stopped being followed.
   whose box is ticked. Both are the same failure seen from two sides: the entry
   is present tense and its pointer is aimed at work that is over, so it is
   either owned by whoever picks it up next or it is `(c)` unowned.
+- **A phase's index state and its slice checklist disagree** — a `Current` row
+  with no checklist, or a checklist under a row that still says `Specified`.
+  Half a transition landed: either the wrap deleted the checklist and left the
+  state, or the slicing wrote the checklist and left it. The register reads that
+  cell, so the half that is missing is the half nobody will notice.
 - **An invariant has no re-verification step.** It will not be checked at the
   next upstream release, which is the only reason it was written down.
 - **`CLAUDE.md` explains a design.** It should be pointing at a doc instead.

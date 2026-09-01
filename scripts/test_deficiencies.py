@@ -48,6 +48,11 @@ Prose above the table, which the parser must skip.
 Prose below the table.
 """
 
+#: The same index with P11 sliced, which is what a status carrying the checklist
+#: below has to be read against: the checklist and the `Current` cell are the two
+#: halves of a phase in flight.
+ROADMAP_SLICED = ROADMAP.replace("**Specified**; open", "**Current**; in flight")
+
 ENTRY_D1 = """- **KD1** — a thing that costs something. **(c) unowned**; promoted by a
   dump in hand. Detail:
   [`../design/architecture.md`](../design/architecture.md), "A mechanism".
@@ -110,16 +115,28 @@ TAIL = """## Decisions worth another look
 """
 
 
+def roadmap_for(status: str) -> str:
+    """The fixture index that agrees with `status` about P11.
+
+    P11 is the phase the checklist fixture slices, and the index has to agree
+    with it or every test that carries a checklist also breaks the
+    checklist/state pairing and stops naming one thing. The tests for *that*
+    pairing pass their own roadmap.
+    """
+    return ROADMAP_SLICED if 11 in deficiencies.parse_checklists(status) else ROADMAP
+
+
 def build(
     tmp: Path,
     *,
     status: str,
     arch: str = "",
     code: str = "",
-    roadmap: str = ROADMAP,
+    roadmap: str | None = None,
     extra=None,
 ) -> Path:
     """A repo shaped like this one: an index, a doc tree, a crate source dir."""
+    roadmap = roadmap_for(status) if roadmap is None else roadmap
     (tmp / "docs" / "status").mkdir(parents=True)
     (tmp / "docs" / "design").mkdir(parents=True)
     (tmp / "pgdump_query" / "src").mkdir(parents=True)
@@ -447,6 +464,77 @@ class OwningPhaseState(unittest.TestCase):
             )
             code, text = run(Path(d))
             self.assertEqual(code, 0, text)
+
+
+class PhaseChecklistPairing(unittest.TestCase):
+    """A phase carrying a slice checklist is `Current`, and a `Current` phase
+    carries one. Either half alone is a transition that half happened."""
+
+    def test_a_current_phase_carrying_its_checklist_resolves(self):
+        with tempfile.TemporaryDirectory() as d:
+            build(
+                Path(d),
+                status=INDEX_HEAD + ENTRY_D1 + ENTRY_D3 + CHECKLIST + TAIL,
+                arch=ARCH_D1_D3,
+                roadmap=ROADMAP_SLICED,
+            )
+            code, text = run(Path(d))
+            self.assertEqual(code, 0, text)
+            self.assertIn("all resolve", text)
+
+    def test_a_checklist_under_a_specified_row_fails(self):
+        """The slicing wrote the checklist and left the state."""
+        with tempfile.TemporaryDirectory() as d:
+            build(
+                Path(d),
+                status=INDEX_HEAD + ENTRY_D1 + ENTRY_D3 + CHECKLIST + TAIL,
+                arch=ARCH_D1_D3,
+                roadmap=ROADMAP,
+            )
+            code, text = run(Path(d))
+            self.assertEqual(code, 1)
+            self.assertIn(
+                'P11 carries a "## P11 progress" checklist and the roadmap\'s '
+                "phase index calls it specified",
+                text,
+            )
+
+    def test_a_current_row_with_no_checklist_fails(self):
+        """The wrap deleted the checklist and left the state."""
+        with tempfile.TemporaryDirectory() as d:
+            build(
+                Path(d),
+                status=INDEX_HEAD + ENTRY_D1 + TAIL,
+                arch="<!-- deficiency: KD1 -->\nWhy KD1 costs what it costs.\n",
+                roadmap=ROADMAP_SLICED,
+            )
+            code, text = run(Path(d))
+            self.assertEqual(code, 1)
+            self.assertIn(
+                'P11 is current in the roadmap\'s phase index and carries no '
+                '"## P11 progress" checklist',
+                text,
+            )
+
+    def test_a_checklist_under_a_phase_the_index_does_not_list_fails(self):
+        """A phase carrying a checklist is `Current`, and one the index does not
+        list is nothing."""
+        with tempfile.TemporaryDirectory() as d:
+            build(
+                Path(d),
+                status=INDEX_HEAD
+                + ENTRY_D1
+                + "## P42 progress\n\n- [ ] **42.1** A slice.\n\n"
+                + TAIL,
+                arch="<!-- deficiency: KD1 -->\nWhy KD1 costs what it costs.\n",
+            )
+            code, text = run(Path(d))
+            self.assertEqual(code, 1)
+            self.assertIn(
+                'P42 carries a "## P42 progress" checklist and the roadmap\'s '
+                "phase index does not list it",
+                text,
+            )
 
 
 class ChecklistParsing(unittest.TestCase):
@@ -778,6 +866,19 @@ class ThisRepo(unittest.TestCase):
             n = int(deficiencies.DESTINATION_PHASE_RE.search(entry.destination).group(1))
             self.assertIn(n, phases, entry.id)
             self.assertNotIn(phases[n], deficiencies.FINISHED_STATES, entry.id)
+
+    def test_the_phase_in_flight_is_current_on_both_sides(self):
+        """Not a restatement of the check: this asserts the tree actually has a
+        phase in flight, so a repo with no checklist at all cannot pass the
+        checklist/state pairing vacuously."""
+        checklists = deficiencies.parse_checklists((deficiencies.STATUS).read_text())
+        phases, problems = deficiencies.parse_phase_index(
+            (deficiencies.ROADMAP).read_text()
+        )
+        self.assertEqual(problems, [])
+        self.assertTrue(checklists, "no phase is sliced")
+        for n in checklists:
+            self.assertEqual(phases.get(n), deficiencies.CURRENT_STATE, f"P{n}")
 
     def test_the_index_carries_no_paragraph(self):
         """One line per entry, wrapped — an entry that has grown into a

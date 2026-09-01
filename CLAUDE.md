@@ -326,7 +326,8 @@ entry in the change that ticks the box. A `(b)` entry's owner is read from
 `roadmap.md`'s phase index, so an entry owned by a `Complete`, `Struck` or
 unlisted phase fails and drops to `(c) unowned` unless a phase absorbs it —
 which is why **a phase wrap sets that row to `Complete` in the same change that
-deletes its checklist**. `cd scripts && uv run deficiencies.py` reconciles the
+deletes its checklist**, and **slicing a phase sets it to `Current` in the same
+change that writes one**. `cd scripts && uv run deficiencies.py` reconciles the
 index, the detail entries, the markers, that pairing and the phase index, and
 fails on any of them — so a re-slice that leaves an entry aimed at a number
 whose meaning changed fails the check rather than owing a re-target on

@@ -54,7 +54,12 @@ Every one of these belongs in the *same* change as the code, not a follow-up:
 
 ## When you write or re-slice a phase's slice list
 
-Two obligations that fire at spec time, not at landing, and both are about
+**Writing the checklist sets the phase's roadmap index row to `Current`**, in
+that same change — the mirror of the wrap below, and for the same reason: the
+checklist and the state are the two halves of "this phase is in flight", and a
+row left at `Specified` under a checklist is a transition that half happened.
+
+Two further obligations fire at spec time, not at landing, and both are about
 `STATUS.md`'s deficiency register:
 
 - **Check the register for `(b)` entries naming this phase**, and make the

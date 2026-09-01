@@ -301,9 +301,10 @@ actually absorbs it.
 paragraphs, against the source-code markers, against the slice checklist above
 and against the roadmap's phase index, and fails on any of them. An entry owned
 by a phase with no checklist yet names no slice and is not asked to. That last
-read has one honest edge: `Complete` is a cell a person sets at the wrap, and
-while a `Complete` phase carrying a checklist fails here, a checklist deleted
-with the state left at `Specified` reads as "not sliced yet" and goes quiet.
+read is pinned at both ends: a phase carrying a checklist is `Current` in the
+index and a `Current` phase carries one, so a wrap that dropped the checklist
+and left the state, or a slicing that wrote the checklist and left it, fails
+here rather than reading as a phase nobody has sliced.
 
 - **KD1** — a `--disable-triggers` dump loses TOC attribution on every data
   span, `COPY` and `INSERT` alike (I31), costing the coverage diagnostic and
@@ -376,15 +377,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **The phase index's state vocabulary is closed, and `deficiencies.py` fails
-  on a word it does not know.** It accepts `Sketched`, `Specified`, `Current`,
-  `Complete` and `Struck` — the set `process.md` names plus the one `M32` added
-  — and reports anything else, as it reports a roadmap with no `| Phase | State
-  |` table at all. `M32` settled what `Complete` and `Struck` mean for a `(b)`
-  entry and not what an unrecognised word means. Strict was chosen because the
-  lenient reading — an unknown state is still running — fails open on the
-  likeliest mistake, which is the silence `Complete` was added to end. What it
-  costs: giving the roadmap a new state (`Paused`, say) means editing
-  `PHASE_STATES` in the same change, and the register check can now fail on a
-  roadmap edit that touches no deficiency. Reversing it is one line — treat an
-  unknown state as live.
+Nothing is open.

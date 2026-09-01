@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P5, P9 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
-| P11 — typed predicates | **Specified**; open | [`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md) |
+| P11 — typed predicates | **Current**; sliced, in flight | [`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md) |
 | P7 — scan performance | Sketched; design doc ahead of its phase | [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md); [inbox](roadmap-P7-scan-performance-inbox.md) |
 | P12 — ADBC type floor | Sketched; not grilled | this file, below; [inbox](roadmap-P12-adbc-type-floor-inbox.md) |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
@@ -24,14 +24,19 @@ reused, including a struck phase's.
 | P8 — format coverage | Sketched; not grilled | this file, below; [inbox](roadmap-P8-format-coverage-inbox.md) |
 
 **A row's state is one of `Sketched`, `Specified`, `Current`, `Complete` or
-`Struck`**, and the prose after it is a caption. `Complete` is set at the phase
-wrap, in the same change that deletes the phase's `STATUS.md` checklist — the
-two are one edit, since this table is then the only thing that can say a phase
-ran and finished, and a keystone that would strike it may be years later. That
-matters beyond bookkeeping: `scripts/deficiencies.py` reads this column, and a
-known deficiency owned by a phase that is `Complete`, `Struck`, or absent from
-this table has no destination, so it drops to `(c) unowned` unless another phase
-absorbs it (`../status/STATUS.md`, "Known deficiencies").
+`Struck`**, and the prose after it is a caption. Two of them are set in the same
+change as a `STATUS.md` edit: **`Current` when the phase is sliced**, in the
+change that writes its checklist, and **`Complete` at the wrap**, in the change
+that deletes it. A phase carrying a checklist is `Current` and a `Current` phase
+carries one — so a transition that half happened is visible from either side,
+and this table can say a phase ran and finished long after the checklist is
+gone, with the keystone that would strike it years later. That matters beyond
+bookkeeping: `scripts/deficiencies.py` reads this column. It holds the
+checklist pairing both ways — a checklist under a row that is not `Current`
+fails, and so does a `Current` row with no checklist — and a known deficiency
+owned by a phase that is `Complete`, `Struck`, or absent from this table has no
+destination, so it drops to `(c) unowned` unless another phase absorbs it
+(`../status/STATUS.md`, "Known deficiencies").
 
 The struck phases' mechanisms are described by subject in
 [`architecture.md`](architecture.md), not by phase; their specs and notes went
@@ -720,6 +725,7 @@ the first item to land after this keystone.
 | `M30` | 2026-09-01 | an acknowledgement excuses a commit, so one unexamined commit on a path makes every earlier entry on it inert — `--stale` now names an inert entry and what holds the path red, `acknowledged.py` states the rule where an entry is written, and `c614c4b` is acknowledged for the four figures 11.4 re-reddened | [`../status/history/2026-09-01.md`](../status/history/2026-09-01.md) |
 | `M31` | 2026-09-01 | `deficiencies.py` carries a fourth relation — a `(b)` entry naming a slice and that slice's checklist line naming the entry, reconciled both ways over a new parser for `STATUS.md`'s slice checklists — so a re-slice fails the check rather than owing a re-target on discipline; an unsliced owning phase and a ticked line are the two boundaries where no obligation exists | [`../status/history/2026-09-01.md`](../status/history/2026-09-01.md) |
 | `M32` | 2026-09-01 | `deficiencies.py`'s pairing, reviewed: a ticked checklist line's `KD<k>` is a citation that resolves against an `<!-- deficiency-watermark: … -->` allocated range rather than the index, a `(b)` entry may not name a ticked slice, and the roadmap's phase index gains a `Complete` state so an entry owned by a finished phase fails instead of going quiet — a stranded entry drops to `(c)` unless a phase absorbs it | [`../status/history/2026-09-01.md`](../status/history/2026-09-01.md) |
+| `M33` | 2026-09-01 | `deficiencies.py` holds the phase index's other pairing: a phase carrying a `## P<N> progress` checklist is `Current` and a `Current` phase carries one, which closes the wrap-that-half-happened edge `M32` could only write down — the in-flight state was already in the vocabulary and unused, so the `Specified`/`Sliced` split `M32` costed and rejected was the same rule under a new word | [`../status/history/2026-09-01.md`](../status/history/2026-09-01.md) |
 
 **One live obligation outlived them.** An `INSERT`-run scan costs
 **mid-teens times** a `COPY` scan per byte, CPU-bound, which argues for a scanner-level `INSERT`
