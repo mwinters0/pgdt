@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict NbvLRlyktCywPcYu6O5HvNXECIxOqZbWp8fqLsALOIDKGsj4qfFgTCoOJn8VWMw
+\restrict h3EUdQkgZXgxp109chCzMNxfr2JAEqt6UVyQkoxTfS5pk0v4ronTTGOFvi8uhKt
 
 -- Dumped from database version 16.15 (Debian 16.15-1.pgdg13+2)
 -- Dumped by pg_dump version 16.15 (Debian 16.15-1.pgdg13+2)
@@ -26,6 +26,15 @@ CREATE COLLATION public.c_collation (provider = libc, locale = 'C');
 
 
 ALTER COLLATION public.c_collation OWNER TO postgres;
+
+--
+-- Name: nd_collation; Type: COLLATION; Schema: public; Owner: postgres
+--
+
+CREATE COLLATION public.nd_collation (provider = icu, deterministic = false, locale = 'und');
+
+
+ALTER COLLATION public.nd_collation OWNER TO postgres;
 
 --
 -- Name: intarr; Type: DOMAIN; Schema: public; Owner: postgres
@@ -352,6 +361,7 @@ CREATE TABLE public.t_collate (
     v_pair public.collated_pair,
     v_text_def text DEFAULT 'x'::text COLLATE pg_catalog."C",
     v_user text COLLATE public.c_collation,
+    v_nd text COLLATE public.nd_collation,
     v_src text,
     v_gen_nn text GENERATED ALWAYS AS (upper(COALESCE(v_src, ''::text))) STORED NOT NULL COLLATE pg_catalog."C"
 );
@@ -684,16 +694,16 @@ COPY public.t_bytea (id, v_bytea) FROM stdin;
 -- Data for Name: t_collate; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
-COPY public.t_collate (id, v_text_c, v_text_locale, v_text_ucs, v_name, v_domain_c, v_pair, v_text_def, v_user, v_src) FROM stdin;
-1	A	A	A	A	A	(A,A)	A	A	A
-2	a	a	a	a	a	(a,a)	a	a	a
-3	B	B	B	B	B	(B,B)	B	B	B
-4	é	é	é	é	é	(é,é)	é	é	é
-5	f	f	f	f	f	(f,f)	f	f	f
-6	_x	_x	_x	_x	_x	(_x,_x)	_x	_x	_x
-7	ax	ax	ax	ax	ax	(ax,ax)	ax	ax	ax
-8						("","")			
-9	\N	\N	\N	\N	\N	\N	\N	\N	\N
+COPY public.t_collate (id, v_text_c, v_text_locale, v_text_ucs, v_name, v_domain_c, v_pair, v_text_def, v_user, v_nd, v_src) FROM stdin;
+1	A	A	A	A	A	(A,A)	A	A	A	A
+2	a	a	a	a	a	(a,a)	a	a	a	a
+3	B	B	B	B	B	(B,B)	B	B	B	B
+4	é	é	é	é	é	(é,é)	é	é	é	é
+5	f	f	f	f	f	(f,f)	f	f	f	f
+6	_x	_x	_x	_x	_x	(_x,_x)	_x	_x	_x	_x
+7	ax	ax	ax	ax	ax	(ax,ax)	ax	ax	ax	ax
+8						("","")				
+9	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N
 \.
 
 
@@ -1155,5 +1165,5 @@ ALTER TABLE ONLY public.t_uuid
 -- PostgreSQL database dump complete
 --
 
-\unrestrict NbvLRlyktCywPcYu6O5HvNXECIxOqZbWp8fqLsALOIDKGsj4qfFgTCoOJn8VWMw
+\unrestrict h3EUdQkgZXgxp109chCzMNxfr2JAEqt6UVyQkoxTfS5pk0v4ronTTGOFvi8uhKt
 

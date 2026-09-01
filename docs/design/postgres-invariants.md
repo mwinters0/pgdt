@@ -2783,25 +2783,36 @@ v15+ takes `colliculocale`, earlier majors take `collcollate` — and both emit
 the same `, locale = '…'` text.
 
 **Scope limit.** This is about a **user-defined** collation, which is the only
-kind `pg_dump` emits a definition for. It says nothing about `--binary-upgrade`
-output, which does carry the version, and nothing about the database's own
-collation, which needs `--create` (I32).
+kind `pg_dump` emits a definition for. It claims nothing *for* the
+`--binary-upgrade` output beyond the version being there — that flag set is
+where the version append is observed, below — and nothing about the database's
+own collation, which needs `--create` (I32).
 
-**Not yet in committed bytes.** No fixture holds a non-deterministic collation:
-`scripts/fixture_schema_types.sql` keeps ICU out, and adding the shape is
-`P11`'s slice **11.12**. Until then this entry rests on upstream source, which
-is the register's strongest proof class — but the standing rule
-([`roadmap.md`](roadmap.md), "Expand the generated fixtures freely") wants the
-bytes, and the drift objection that excluded ICU does not reach them, precisely
-because `version =` is absent.
+**Observed, at all three claims.** `fixtures/<13-18>/types/` carries two
+user-defined collations, and between them they pin every part of the shape:
 
-**The ordinary half of the shape is in committed bytes**, which is what a
-statement about an *unconditional* emission can be pinned against short of the
-non-deterministic case: `fixtures/<13-18>/types/default.sql` carries `CREATE
-COLLATION public.c_collation (provider = libc, locale = 'C');` at every major,
-with no determinism clause, and `tests/preamble.rs` reads it back as
-`deterministic: true`. So what 11.12 adds is the other side of the guard, not
-the first evidence for the parse.
+```
+CREATE COLLATION public.c_collation (provider = libc, locale = 'C');
+CREATE COLLATION public.nd_collation (provider = icu, deterministic = false, locale = 'und');
+```
+
+Both lines are byte-identical at every major, option order included — provider,
+determinism, locale, which is `dumpCollation`'s own append order. The first has
+no determinism clause, which is the unconditional emission's other side: the
+absence is the catalog's `true`. The second is the emission itself, and it is
+`provider = icu` because the server refused `deterministic = false` under any
+other provider when the fixture was written. `tests/preamble.rs`'s
+`the_types_schema_declares_a_deterministic_and_a_non_deterministic_collation_at_every_major`
+reads both back.
+
+**`version =` is observed by its absence and by its one presence.** Neither
+line above carries one, in `default.sql` or in `data-only.sql`; the same
+`nd_collation` in `fixtures/<13-18>/types/binary-upgrade.sql` reads `…, locale
+= 'und', version = '153.128');`. That is the only ICU release number in the
+tree, it is asserted on by nothing, and it moves when the base images move —
+which is the drift that keeps ICU out of the comparison columns and out of the
+oracle, and is accepted here because a determinism clause is a statement rather
+than an answer ([`architecture.md`](architecture.md), "Fixtures").
 
 **Consequence.** Equality's divergence is **knowable per column** wherever the
 collation is user-defined and the dump says `deterministic = false`, and
@@ -2829,6 +2840,12 @@ grep -n -B4 -A6 'carry over the collation version' \
   /mnt/wd12t/upstream/postgres/release-v<N>/src/bin/pg_dump/pg_dump.c
 grep -n -B2 -A4 'nondeterministic collations not supported' \
   /mnt/wd12t/upstream/postgres/release-v<N>/src/backend/commands/collationcmds.c
+
+# And against the committed bytes: two lines per major with no version, one
+# with it, and the same option order everywhere.
+grep -h 'CREATE COLLATION' fixtures/*/types/default.sql | sort | uniq -c
+grep -h 'CREATE COLLATION public.nd_collation' fixtures/*/types/binary-upgrade.sql \
+  | sort | uniq -c
 ```
 
 ---

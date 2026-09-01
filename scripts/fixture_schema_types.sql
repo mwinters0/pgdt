@@ -185,9 +185,13 @@ INSERT INTO public.t_text VALUES
 -- explicitly still emits a clause, because pg_dump compares collation OIDs
 -- rather than semantics. ucs_basic earns its column for the opposite reason:
 -- it is collcollate = C, bytewise in fact, and not named C, so the register
--- must call it divergent. ICU stays out at both ends -- `unicode` and the
--- *-x-icu family carry a collversion that moves with the ICU release, which is
--- an apparatus key guaranteed to drift.
+-- must call it divergent.
+--
+-- ICU stays out of the *comparison* columns, and out of the oracle: `unicode`
+-- and the *-x-icu family carry a collversion that moves with the ICU release,
+-- which is an apparatus key guaranteed to drift. That exclusion is about
+-- answers, and it does not reach the one ICU shape below whose fact is a
+-- statement rather than an order -- see nd_collation.
 CREATE DOMAIN public.text_c AS text COLLATE "C";
 
 -- I37's third emission site, dumpCompositeType: a per-attribute COLLATE inside
@@ -206,6 +210,26 @@ CREATE TYPE public.collated_pair AS (plain text, c text COLLATE "C");
 -- is the one error it must not make. Do not "fix" that into agreement.
 CREATE COLLATION public.c_collation FROM "C";
 
+-- The one ICU collation in the tree, and the only one whose dump text states
+-- something pgdq acts on: `deterministic = false` is emitted unconditionally
+-- wherever the catalog says so (I42), so v_nd below is a column whose *equality*
+-- is knowably not a byte comparison. A non-deterministic collation is ICU-only
+-- -- the server refuses the option for every other provider -- so this shape
+-- cannot be written any other way.
+--
+-- The drift objection that keeps ICU out of the comparison columns does not
+-- reach it: `version =` is written only under --binary-upgrade, so the
+-- collversion the server computed (153.128 on every image in the family today)
+-- appears in no committed byte here. All six majors write this statement byte
+-- for byte alike, including the option order -- provider, determinism, locale
+-- -- which is dumpCollation's own append order and not this file's.
+--
+-- `und` is ICU's root locale, so it exists at every ICU version without a
+-- locale being generated, and it is deliberately *not* asked as an oracle case:
+-- the oracle builds its own temp tables per case, so a t_collate column obliges
+-- none, and adding one would import exactly the drift this exclusion avoids.
+CREATE COLLATION public.nd_collation (provider = icu, locale = 'und', deterministic = false);
+
 -- The COLLATE clause is written *after* DEFAULT/GENERATED and after NOT NULL
 -- in a table column (I37), wherever it was written in the input -- which is
 -- why extract_collation scans the whole fragment instead of looking at the
@@ -223,6 +247,12 @@ CREATE TABLE public.t_collate (
     v_pair public.collated_pair,
     v_text_def text COLLATE "C" DEFAULT 'x',
     v_user text COLLATE public.c_collation,
+    -- The non-deterministic column. It is the only one in the tree whose
+    -- divergence reaches `=`: every other collated column here is libc and so
+    -- deterministic, which makes texteq a byte comparison whatever the order
+    -- is. The alphabet it carries is the same one, so the row set is bytewise
+    -- like every sibling and only the note separates them.
+    v_nd text COLLATE public.nd_collation,
     v_src text,
     -- All three displacers in one fragment, at no cost to the alphabet: a
     -- STORED generated column is excluded from the COPY column list, so no row
@@ -253,17 +283,17 @@ CREATE TABLE public.t_collate (
 -- VALUES would try to supply it a value, which PostgreSQL refuses.
 INSERT INTO public.t_collate
     (id, v_text_c, v_text_locale, v_text_ucs, v_name, v_domain_c, v_pair,
-     v_text_def, v_user, v_src)
+     v_text_def, v_user, v_nd, v_src)
 VALUES
-    (1, 'A', 'A', 'A', 'A', 'A', ROW('A', 'A')::public.collated_pair, 'A', 'A', 'A'),
-    (2, 'a', 'a', 'a', 'a', 'a', ROW('a', 'a')::public.collated_pair, 'a', 'a', 'a'),
-    (3, 'B', 'B', 'B', 'B', 'B', ROW('B', 'B')::public.collated_pair, 'B', 'B', 'B'),
-    (4, 'é', 'é', 'é', 'é', 'é', ROW('é', 'é')::public.collated_pair, 'é', 'é', 'é'),
-    (5, 'f', 'f', 'f', 'f', 'f', ROW('f', 'f')::public.collated_pair, 'f', 'f', 'f'),
-    (6, '_x', '_x', '_x', '_x', '_x', ROW('_x', '_x')::public.collated_pair, '_x', '_x', '_x'),
-    (7, 'ax', 'ax', 'ax', 'ax', 'ax', ROW('ax', 'ax')::public.collated_pair, 'ax', 'ax', 'ax'),
-    (8, '', '', '', '', '', ROW('', '')::public.collated_pair, '', '', ''),
-    (9, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+    (1, 'A', 'A', 'A', 'A', 'A', ROW('A', 'A')::public.collated_pair, 'A', 'A', 'A', 'A'),
+    (2, 'a', 'a', 'a', 'a', 'a', ROW('a', 'a')::public.collated_pair, 'a', 'a', 'a', 'a'),
+    (3, 'B', 'B', 'B', 'B', 'B', ROW('B', 'B')::public.collated_pair, 'B', 'B', 'B', 'B'),
+    (4, 'é', 'é', 'é', 'é', 'é', ROW('é', 'é')::public.collated_pair, 'é', 'é', 'é', 'é'),
+    (5, 'f', 'f', 'f', 'f', 'f', ROW('f', 'f')::public.collated_pair, 'f', 'f', 'f', 'f'),
+    (6, '_x', '_x', '_x', '_x', '_x', ROW('_x', '_x')::public.collated_pair, '_x', '_x', '_x', '_x'),
+    (7, 'ax', 'ax', 'ax', 'ax', 'ax', ROW('ax', 'ax')::public.collated_pair, 'ax', 'ax', 'ax', 'ax'),
+    (8, '', '', '', '', '', ROW('', '')::public.collated_pair, '', '', '', ''),
+    (9, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
 
 CREATE TABLE public.t_json (
     id integer PRIMARY KEY,

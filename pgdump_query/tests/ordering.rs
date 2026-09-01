@@ -613,16 +613,25 @@ async fn a_divergent_comparison_is_reported_by_the_stream() {
 /// `public.c_collation` as `locale = 'C'`, and it is still reported divergent,
 /// because the collation is not in `pg_catalog` and nothing stops a user
 /// defining a non-bytewise one named `"C"` of their own.
+///
+/// `v_nd` is the one verdict read off a *statement* rather than off a name:
+/// its clause is spelled exactly as `v_user`'s is — schema-qualified,
+/// unquoted, outside `pg_catalog` — and the two answer differently only
+/// because the same dump declares `public.nd_collation` with
+/// `deterministic = false` (I42). It is also the only column here whose
+/// divergence reaches `=`; see
+/// [`a_collation_note_is_raised_for_ordering_and_not_for_equality`].
 #[tokio::test]
 async fn a_collated_column_is_judged_by_its_clause() {
-    for (column, divergence) in [
-        ("v_text_c", None),
-        ("v_name", None),
-        ("v_domain_c", None),
-        ("v_text_def", None),
-        ("v_text_locale", Some(ComparisonDivergence::NonBytewiseCollation)),
-        ("v_text_ucs", Some(ComparisonDivergence::NonBytewiseCollation)),
-        ("v_user", Some(ComparisonDivergence::NonBytewiseCollation)),
+    for (column, divergence, marker) in [
+        ("v_text_c", None, ""),
+        ("v_name", None, ""),
+        ("v_domain_c", None, ""),
+        ("v_text_def", None, ""),
+        ("v_text_locale", Some(ComparisonDivergence::NonBytewiseCollation), "other than C/POSIX"),
+        ("v_text_ucs", Some(ComparisonDivergence::NonBytewiseCollation), "other than C/POSIX"),
+        ("v_user", Some(ComparisonDivergence::NonBytewiseCollation), "other than C/POSIX"),
+        ("v_nd", Some(ComparisonDivergence::NonDeterministicCollation), "non-deterministic"),
     ] {
         let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
         let mut stream = table_stream(
@@ -645,28 +654,33 @@ async fn a_collated_column_is_judged_by_its_clause() {
                 assert_eq!(notes.len(), 1, "{column}: {notes:?}");
                 assert_eq!(notes[0].column, column);
                 assert_eq!(notes[0].divergence, expected);
-                assert!(
-                    notes[0].message().contains("other than C/POSIX"),
-                    "{}",
-                    notes[0].message()
-                );
+                assert!(notes[0].message().contains(marker), "{}", notes[0].message());
             }
         }
     }
 }
 
-/// The seven reachable columns hold one alphabet, so the note is the only
-/// thing that separates them: every one answers bytewise, including the three
+/// The eight reachable columns hold one alphabet, so the note is the only
+/// thing that separates them: every one answers bytewise, including the four
 /// the note says PostgreSQL would order differently. `_x` surviving `> B` is
 /// the divergence made concrete — underscore is above `B` in ASCII and is
-/// ignored at glibc's primary level, where the server ranks it below.
+/// ignored at glibc's primary level, where the server ranks it below. `v_nd`
+/// is bytewise here too, and its ICU collation would order it differently
+/// again; the register says so and does not act on it.
 #[tokio::test]
 async fn every_collation_answers_the_same_bytewise_row_set() {
     let expected: Vec<Option<String>> =
         ["a", "é", "f", "_x", "ax"].iter().map(|v| Some(v.to_string())).collect();
-    for column in
-        ["v_text_c", "v_text_locale", "v_text_ucs", "v_name", "v_domain_c", "v_text_def", "v_user"]
-    {
+    for column in [
+        "v_text_c",
+        "v_text_locale",
+        "v_text_ucs",
+        "v_name",
+        "v_domain_c",
+        "v_text_def",
+        "v_user",
+        "v_nd",
+    ] {
         assert_eq!(
             kept("public.t_collate", column, vec![term(column, PredicateOp::Gt, "B")]).await,
             expected,
@@ -799,6 +813,14 @@ async fn an_equality_literal_of_the_wrong_type_is_refused() {
 /// The collation divergences do not reach `=`: every libc collation is
 /// deterministic, so `texteq` is a byte comparison whatever the collation is
 /// and the same column that warns under `>=` is silent under `=`.
+///
+/// **`v_nd` is the exception, and it is why the operator dimension exists at
+/// all.** Its clause names a collation the same dump declares
+/// `deterministic = false` (I42), which is the one thing a plain dump states
+/// about equality, so it warns under both. Every column in the loop above it
+/// is `libc`, and the server refuses to make a `libc` collation
+/// non-deterministic — so this is not a stronger version of their divergence
+/// but a different one, read off a statement rather than off a name.
 #[tokio::test]
 async fn a_collation_note_is_raised_for_ordering_and_not_for_equality() {
     let equality_notes = |column: &'static str| async move {
@@ -822,6 +844,12 @@ async fn a_collation_note_is_raised_for_ordering_and_not_for_equality() {
         assert_eq!(notes_for("public.t_collate", column, "a").await.len(), 1, "{column} under >=");
         assert!(equality_notes(column).await.is_empty(), "{column} under =");
     }
+
+    assert_eq!(notes_for("public.t_collate", "v_nd", "a").await.len(), 1, "v_nd under >=");
+    let nd = equality_notes("v_nd").await;
+    assert_eq!(nd.len(), 1, "v_nd under =: {nd:?}");
+    assert_eq!(nd[0].divergence, ComparisonDivergence::NonDeterministicCollation);
+    assert!(nd[0].message().contains("non-deterministic"), "{}", nd[0].message());
 }
 
 /// A `box` column has no comparison in the register: the four ordering

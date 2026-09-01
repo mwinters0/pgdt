@@ -291,7 +291,7 @@ async fn data_only_dump_has_no_ddl_but_still_reports_versions() {
 /// `COLLATE` after `DEFAULT`/`GENERATED` and after `NOT NULL` (I37), whatever
 /// the input said, so a parser that read the token following the type words
 /// would find `DEFAULT` on `v_text_def` and `GENERATED` on `v_gen_nn`. All
-/// six majors write these eleven lines byte for byte alike.
+/// six majors write these twelve lines byte for byte alike.
 ///
 /// **`v_gen_nn` can be asserted nowhere else.** It is `STORED` generated, so
 /// its DDL is written and the `COPY` column list omits it — a declared column
@@ -301,10 +301,14 @@ async fn data_only_dump_has_no_ddl_but_still_reports_versions() {
 /// clause sits outside `upper(COALESCE(v_src, ''::text))`, past two nesting
 /// levels and a quoted literal.
 ///
-/// `v_user` is the user-collation reference form — schema-qualified,
-/// unquoted, outside `pg_catalog`. Kept verbatim, because that is L1's rule
-/// and because `pg_catalog."en_US.utf8"` above it has a dot *inside* the
-/// quoted name, so a pre-split `schema.name` pair would be ambiguous.
+/// `v_user` and `v_nd` are the user-collation reference form —
+/// schema-qualified, unquoted, outside `pg_catalog`. Kept verbatim, because
+/// that is L1's rule and because `pg_catalog."en_US.utf8"` above them has a
+/// dot *inside* the quoted name, so a pre-split `schema.name` pair would be
+/// ambiguous. The two are spelled alike here and answer differently only
+/// because of what the *statements* beside them say, which is the join
+/// [`the_types_schema_declares_one_deterministic_and_one_non_deterministic_collation`]
+/// pins the other half of.
 #[tokio::test]
 async fn t_collate_carries_its_collate_clause_wherever_pg_dump_displaced_it() {
     fn collated(name: &str, declared_type: &str, collation: &str) -> ColumnDef {
@@ -329,6 +333,7 @@ async fn t_collate_carries_its_collate_clause_wherever_pg_dump_displaced_it() {
                 ColumnDef::new("v_pair", "public.collated_pair"),
                 collated("v_text_def", "text", r#"pg_catalog."C""#),
                 collated("v_user", "text", "public.c_collation"),
+                collated("v_nd", "text", "public.nd_collation"),
                 ColumnDef::new("v_src", "text"),
                 collated("v_gen_nn", "text", r#"pg_catalog."C""#),
             ],
@@ -337,28 +342,36 @@ async fn t_collate_carries_its_collate_clause_wherever_pg_dump_displaced_it() {
     }
 }
 
-/// The `CREATE COLLATION` the `types` schema declares, read at every major.
+/// The two `CREATE COLLATION`s the `types` schema declares, read at every
+/// major — and **both determinism answers come off committed bytes**.
 ///
-/// **This is the parse against committed bytes, and the determinism it
-/// asserts is `true`.** `pg_dump` writes `, deterministic = false` only where
-/// the catalog says the collation is non-deterministic and never otherwise
-/// (I42), so `public.c_collation` — `libc`, and therefore deterministic by the
-/// server's own refusal to make a libc collation anything else — is what a
-/// dump's ordinary shape looks like. The non-deterministic shape needs an ICU
-/// collation and is `P11`'s slice 11.12; until it lands, that half is asserted
-/// on hand-written statement text in `preamble.rs`'s own unit tests and this
-/// is what pins the option-list scan to a real `pg_dump` line.
+/// `pg_dump` writes `, deterministic = false` only where the catalog says the
+/// collation is non-deterministic, and unconditionally where it does (I42).
+/// So the pair is the whole of what a dump can state: `public.c_collation` is
+/// `libc`, which the server refuses to make anything but deterministic, and
+/// `public.nd_collation` is `provider = icu, deterministic = false`, which no
+/// other provider can spell. All six majors write both statements byte for
+/// byte alike, option order included — provider, determinism, locale — which
+/// is `dumpCollation`'s own append order rather than the fixture's.
 ///
-/// The name is kept verbatim and schema-qualified, exactly as `v_user`'s
-/// `COLLATE public.c_collation` above spells it — which is the join
+/// **Neither line carries a `version =`.** That append is inside
+/// `if (dopt->binary_upgrade)` (I42), so the ICU version the server computed
+/// reaches `fixtures/<v>/types/binary-upgrade.sql` and no other flag set —
+/// which is why an ICU collation could enter the tree at all.
+///
+/// Each name is kept verbatim and schema-qualified, exactly as `v_user`'s and
+/// `v_nd`'s `COLLATE` clauses above spell them — which is the join
 /// `crate::pgtype`'s register makes between the two.
 #[tokio::test]
-async fn the_types_schema_declares_one_deterministic_collation_at_every_major() {
+async fn the_types_schema_declares_one_deterministic_and_one_non_deterministic_collation() {
     for version in VERSIONS {
         let db = single_database(&types_fixture(version, "default")).await;
         assert_eq!(
             db.collations,
-            vec![CollationDef { name: "public.c_collation".to_string(), deterministic: true }],
+            vec![
+                CollationDef { name: "public.c_collation".to_string(), deterministic: true },
+                CollationDef { name: "public.nd_collation".to_string(), deterministic: false },
+            ],
             "pg_dump {version}"
         );
     }

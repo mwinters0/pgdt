@@ -2709,6 +2709,14 @@ I42), where this one is written into the file as a clause. The register reads
 it and announces under both operator families; the comparison itself does not
 move, and the deficiency is `KD7`.
 
+**Both halves of that read are pinned by committed bytes**, not by a
+hand-written statement: `fixtures/<13-18>/types/` carries `CREATE COLLATION
+public.nd_collation (provider = icu, deterministic = false, locale = 'und')`
+beside a deterministic `libc` one, and `t_collate.v_nd` is a column of it whose
+clause is spelled exactly as `v_user`'s is. The two columns are
+indistinguishable by name and answer differently, which is what makes the
+verdict a read of the *statement* rather than of the reference.
+
 The other two `true` answers are not about a collation at all: `AsText`, where
 PostgreSQL defines no `=` for `json` any more than it defines an order, and
 `UnmodelledType`, below.
@@ -3485,6 +3493,21 @@ non-bytewise. It also carries the only column in
 the tree whose type is a composite with a collated attribute, which is I37's
 third emission site and had rested on a source grep until this table existed.
 
+**`v_nd` is the one column whose verdict is read off a statement**, and the
+`types` schema's second `CREATE COLLATION` is the statement: `public.nd_collation`
+is `provider = icu, deterministic = false`, which the server allows for no other
+provider (I42), so a column of it is the only equality divergence a plain dump
+states outright. Its clause is spelled exactly as `v_user`'s — schema-qualified,
+unquoted, outside `pg_catalog` — and the two answer differently, which is what
+makes the pair evidence rather than a single case. This is also the tree's only
+ICU collation, and the exception is deliberately narrow: ICU stays out of the
+*comparison* columns and out of the oracle because a `collversion` moves with
+the base image, and that objection is about answers, which a determinism clause
+is not. **The version does reach one flag set**, `types/binary-upgrade.sql`,
+where `pg_dump` appends `version = '153.128'` — the one place in the tree an ICU
+release number is a committed byte, asserted on by nothing, and itself the
+evidence for I42's claim about which flag set carries it.
+
 **Three of its columns exist for the clause's *placement* rather than its
 value.** `pg_dump` appends `COLLATE` after `DEFAULT`/`GENERATED` and after
 `NOT NULL` (I37) whatever the input said, so `v_text_def` (one displacer) and
@@ -3939,9 +3962,8 @@ can exist for, and leaving it exempt is how the next arm gets hung off the same
 reason. Or the evidence it stands on disappears: a renamed or deleted test
 resolves nowhere, which is the state a reason asserting its own sufficiency
 cannot reach. The pointers name **sufficient** evidence rather than exhaustive,
-so covering the arm a second way — P11's slice 11.12 puts the shape in the
-fixture dumps, where the same text carries no version — adds evidence and owes
-no edit here.
+so covering the arm a second way — the fixture dumps now carry the shape, where
+the same text carries no version — adds evidence and owes no edit here.
 
 *Rejected: an exemption that is a reason and nothing more.* Its first use went
 false on the day it was written, citing fixture bytes that do not exist, and
