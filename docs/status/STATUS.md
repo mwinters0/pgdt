@@ -386,34 +386,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-**The oracle's `name` cases were left unfixed, and the fix is a six-major
-regeneration.** `pgdq_cmp` asks every comparison as
-`EXECUTE format('SELECT ($1::%s) … ($2::%s)') USING lhs, rhs` with `lhs`/`rhs`
-of type `text`. A cast takes its collation from its input, so `$1::name` is
-compared under the parameter's `default` collation and not under `name`'s own
-`C` type default — the committed cells say `'A'::name < 'a'::name` is false,
-where the same server answers true for two `name` literals and for two `name`
-columns (`attcollation = C`). Verified both spellings side by side on
-PostgreSQL 16.15. Only `name` is affected: every other collatable case states a
-collation explicitly, which overrides the derived one. **11.5 recorded it
-beside the mechanism and did not fix it**, because re-asking the case
-regenerates all six majors and rewrites every file under `fixtures/` — the
-diff 11.11.1 was split out to avoid sharing with a library change. The register
-is unaffected and its `name` row is right; what is wrong is the evidence
-standing in front of it, and `oracle_register.py` currently joins the `name`
-arm to cells that argue against it. Reconsidering means deciding whether this
-earns its own slice now or waits for the next regeneration to carry it.
-
-**`interval` stays a `Utf8View`, on a rationale that turned out to be false.**
-The type-mapping table said `IntervalStyle` is never recorded, so the file does
-not determine the value. `pg_dump` runs `SET INTERVALSTYLE = POSTGRES` on its
-source connection at every supported major, exactly as it runs `SET DATESTYLE =
-ISO` — I4 is amended, and 11.5's comparison parses that one style. With the
-premise gone, Arrow's `Interval(MonthDayNano)` carries PostgreSQL's months,
-days and microseconds as three independent fields and would map cleanly. 11.5
-did not take it: the slice's subject is comparison, a mapping change moves the
-schema every consumer sees and every snapshot test asserts, and mixing the two
-is the review the unattended rule forbids. The table now says the mapping is
-open rather than blocked. Reconsidering means deciding whether an `interval`
-column should stop being text — which would also give it a decoder, and so a
-literal grammar wider than the output form.
+Nothing is open.

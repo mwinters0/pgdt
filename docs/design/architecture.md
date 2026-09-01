@@ -1057,7 +1057,7 @@ almost every column in a real 75-table schema.
 | `timestamp with time zone` | `Timestamp(Microsecond, Some("UTC"))` | Offset explicit in the data and normalized to UTC (I4) |
 | `time without time zone` | `Time64(Microsecond)` | |
 | `time with time zone` | `Utf8View` | Offset semantics map to no Arrow type |
-| `interval` | `Utf8View` | **The reason this row used to give is false.** It read "`IntervalStyle` is never recorded, so the file does not determine the value"; `pg_dump` pins `INTERVALSTYLE = POSTGRES` on its own connection and always has (I4), which is what lets the ordering register parse the text (I40). Arrow's `Interval(MonthDayNano)` carries the same three independent fields, so the mapping is open rather than blocked — it is a `Utf8View` today because nothing has revisited it, not because the format prevents it |
+| `interval` | `Utf8View` | Two values a dump can hold have no `Interval(MonthDayNano)`: v17's `infinity`/`-infinity` (I34), and any interval whose time part exceeds `2562047:47:16.854775807` — PostgreSQL's field is `int64` *microseconds* against Arrow's `int64` nanoseconds, and nothing normalizes hours into days (I40). Neither is a format limit: `pg_dump` pins `INTERVALSTYLE = POSTGRES` (I4), so the text is determined. See below |
 | `uuid` | `FixedSizeBinary(16)` | Canonical 36-char form |
 | `bytea` | `Binary` | `\x48656c6c6f` after COPY unescaping |
 | `json`, `jsonb` | `Utf8View` | Arrow has no JSON type |
@@ -1097,6 +1097,39 @@ is not a UUID. A column the census took back to `Utf8View` holds an
 `array_out` literal rather than the value its declared type names, so it
 claims nothing either. None of this is load-bearing for decoding — the name is
 a claim *about* the bytes, never an input to producing them.
+
+***`interval` is `Utf8View` because two of its values have no Arrow encoding,
+and the deciding evidence is per column rather than per type.*** Arrow's
+`Interval(MonthDayNano)` carries months, days and a time part as three
+independent fields, which is exactly PostgreSQL's `Interval`, so the shape
+matches. The value space does not: an infinite interval sets every field
+extremal, and the time part is microseconds against Arrow's nanoseconds, a
+thousandth of the range, reachable by an ordinary unnormalized value like
+`interval '100000000 hours'`. The ADBC driver takes the mapping anyway and
+pays with `EINVAL` on the whole batch — its reader guards the multiply against
+`kMaxSafeMicrosToNanos` and errors, and because an infinite interval's time
+field is `INT64_MAX` it errors there too, by a message about nanosecond
+overflow rather than about infinity.
+
+*Rejected: mapping it and making the two a `FieldDecode`, as `numeric(p,s)`
+does for `NaN`.* It would behave better than the reference implementation, one
+value lost rather than a batch. But a typmod is a promise the DDL makes about
+the range, which is what makes the `Decimal128` row's residue rare by
+construction; `interval` has no typmod, so nothing bounds how often the
+fallback fires, and that is the same argument that puts bare `numeric` in this
+column.
+
+**What would settle it is a census, and the statistics work is where one gets
+taken.** Whether a *given* column needs the escape hatch is answerable from its
+values — decode to `Interval(MonthDayNano)` where every value is finite and
+under the ceiling, and keep the column in text where one is not. That is the
+array-shape census's own shape, and it makes the Arrow type data-dependent in
+exactly the way that census already does, `List<T>` against `List<List<T>>`
+being no smaller a difference. It is filed at
+[`roadmap-P10-row-group-statistics-inbox.md`](roadmap-P10-row-group-statistics-inbox.md)
+rather than built here, because a pass that already reads every value to
+summarize it gets the answer for nothing, and one taken for this alone does
+not.
 
 *Rejected: hand-writing the two `ARROW:extension:*` keys, to avoid naming
 `arrow-schema` as a dependency of its own.* `arrow::datatypes` re-exports the
@@ -3130,10 +3163,32 @@ other collatable case states a collation explicitly, and an explicit `COLLATE`
 overrides the derived one. So the register's `name` row rests on I37 and
 `pg_type.dat`'s `typcollation => 'C'`, as it always did, and on
 `tests/ordering.rs`'s assertion over `t_collate.v_name` — not on these cells,
-which currently stand as evidence for the opposite claim. Fixing the case means
-re-asking it in a form that carries no input collation and regenerating six
-majors; until then this paragraph is what stops the cells being read as a
-contradiction.
+which stand as evidence for the opposite claim. Until `M34` re-asks them, this
+paragraph is what stops them being read as a contradiction.
+
+**The fix is `M34`, and its cost is an oracle pass, not a fixture rebuild.**
+`generate_fixtures.py --skip-dumps` re-takes `fixtures/<major>/oracle/` alone —
+eighteen TSVs, no dump touched — against images pinned to an exact patch and
+suite, so the run is reproducible and its diff is the answer's, not the
+environment's. `M34` asks each pair through two *columns* of the declared type
+rather than a cast of a `text` parameter: a column's `attcollation` is the
+type's own default, which is the thing a bare case is modelling, and a case
+that names a collation declares it on the column, where a dump writes it
+(I37). That predicts every cell but `name`'s stands, and
+`oracle_differences.py` is what tests the prediction rather than asserting it.
+*Rejected: inlining the literals* — an unknown-literal cast derives no
+collation either, but it swaps every case from a cast-from-`text` to an input
+function, so any cell may move and the confined blast radius is lost.
+*Rejected: emitting the type's `typcollation` as an explicit clause* — it
+asserts that a column inherits `typcollation` rather than observing that it
+does, which is the step under scrutiny.
+
+The defect is a property of how the pair is passed, not of `name`: it appears
+wherever a type's `typcollation` differs from `default`. `name` is the only
+*case* type where it does — `text`, `varchar`, `bpchar` and `text[]` are all
+`default` — but `public.text_c`, the domain declared `AS text COLLATE "C"`, is
+in the oracle's schema and is asked by nothing. `M34` adds it, on the existing
+`user/Domain` arm, so the general rule has a case standing under it.
 
 **`character(10)` is asked under both collations, ahead of the slice that
 closes it.** Today the register is clause-blind there — blank padding is what

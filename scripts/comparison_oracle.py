@@ -335,11 +335,13 @@ TYPE_CASES: list[TypeCases] = [
     # `pgdq_cmp` casts a `text` parameter, and a cast derives its collation
     # from its input -- so `$1::name` carries the parameter's `default`
     # collation rather than `name`'s own `C`, and the committed answer for
-    # `A`/`a` is the database locale's. Only `name` is affected: every other
-    # collatable case states a collation, which overrides the derived one.
-    # Fixing it means re-asking the case in a form that carries no input
-    # collation and regenerating six majors. See `docs/design/architecture.md`,
-    # "The comparison oracle".
+    # `A`/`a` is the database locale's. Only `name` is affected among the cases
+    # here: every other collatable one states a collation, which overrides the
+    # derived one. The bound is the case table's, not the defect's -- it
+    # reaches any type whose `typcollation` is not `default`, which
+    # `public.text_c` also is and nothing asks. `M34` re-asks the pair through
+    # two columns of the declared type and adds that case. See
+    # `docs/design/architecture.md`, "The comparison oracle".
     TypeCases("name", ("A", "a", "hello", None)),
     # Declaration order, not label text: `sad` < `ok` < `happy` on the server
     # and the reverse bytewise, which is the whole of the enum register row.

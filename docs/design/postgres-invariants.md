@@ -2462,7 +2462,10 @@ dump can hold, and the order PostgreSQL puts two such values in.
   is not exactly `1`, so `-1 days` is what a minus-one-day interval is written
   as; and a part that is positive and *follows* a negative one carries a `+`.
   The hour field is at least two digits and unbounded above; minutes and
-  seconds are exactly two. The order is `interval_cmp_value`: months collapse
+  seconds are exactly two. **Unbounded above is literal**: nothing normalizes
+  hours into days, so the tail of `interval '100000000 hours'` is written
+  `100000000:00:00`, and the field's true ceiling is the `Interval` struct's
+  own — `time` is `int64` *microseconds*, giving `2562047:47:16.854775807`. The order is `interval_cmp_value`: months collapse
   to 30 days, days to 86400 seconds, and the result is a **128-bit**
   microsecond span. So `1 mon`, `30 days` and `720:00:00` are one value, and
   the collapse is what a text comparison cannot approximate.
@@ -2536,7 +2539,10 @@ type can hold.
 **Relied on by.** `pgtype.rs`'s `CompareKind::Interval`, `TimeTz`, `Network`
 and `MacAddr` arms and `predicate.rs`'s parsers for them —
 [`architecture.md`](architecture.md), "Ordering operators compare typed",
-where these are four *Agrees* rows.
+where these are four *Agrees* rows. The hour field's ceiling is also what keeps
+`interval` a `Utf8View` — Arrow's `Interval(MonthDayNano)` holds nanoseconds in
+the same `int64`, a thousandth of the span — [`architecture.md`](architecture.md),
+"The bar: the dump alone determines the value".
 
 **Re-verify.**
 
