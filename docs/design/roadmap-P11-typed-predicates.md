@@ -219,9 +219,13 @@ evidence should show what deployments actually run, and that is `C` and the
 UTF-8 locale. ICU's identity also floats with the base image — `und-x-icu`'s
 `collversion` is `153.128` on `13.23-alpine` against `153.136` on
 `18.6-alpine` — so an ICU case would need a guard the libc case does not. That
-argument is about an *oracle case*, whose cells are the server's answers, and it
-does not carry to a fixture column whose committed bytes hold no version; 11.12
-is where that distinction is spent.
+argument is about an *oracle case*, whose cells are the server's answers, and a
+fixture column claims no answer. It carries to the committed bytes only in the
+two flag sets that hold no version: `--binary-upgrade` **does** append one
+(I42), so `types/binary-upgrade.sql` reads `…, locale = 'und', version =
+'153.128')`. That is accepted rather than avoided, and the reasoning is beside
+the mechanism ([`architecture.md`](architecture.md), "Ordering operators compare
+typed"); 11.12 is where the distinction is spent.
 
 ## The predicate model becomes an expression tree
 

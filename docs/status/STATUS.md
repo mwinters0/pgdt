@@ -454,20 +454,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **An ICU release number is now a committed byte, in one flag set.** 11.12's
-  spec admitted `provider = icu` on the argument that a `CREATE COLLATION`'s
-  dump text carries no `collversion` — true of `types/default.sql` and
-  `types/data-only.sql`, and **false of `types/binary-upgrade.sql`**, where
-  `pg_dump` appends `version = '153.128'`. The slice proceeded: nothing asserts
-  on that line, it moves only when the image pins move (which is a deliberate
-  regeneration either way), and it is itself the evidence for I42's claim about
-  *which* flag set carries the version. **What is being decided** is whether
-  that is an acceptable price for the fixture. The alternatives are to drop
-  `nd_collation` and leave I42 resting on `pg_dump.c` alone, or to build a
-  flag-set-conditional fixture schema — a capability
-  [`../design/pg-dump-compatibility.md`](../design/pg-dump-compatibility.md)
-  already records as owned by nobody. Detail:
-  [`../design/roadmap-P11.12-non-deterministic-collation-observed-notes.md`](../design/roadmap-P11.12-non-deterministic-collation-observed-notes.md),
-  "Calls worth knowing about".
-

@@ -3508,6 +3508,20 @@ where `pg_dump` appends `version = '153.128'` — the one place in the tree an I
 release number is a committed byte, asserted on by nothing, and itself the
 evidence for I42's claim about which flag set carries it.
 
+*Rejected: `und-u-ks-level2` as the locale.* It is the realistic thing a person
+creates — a case-insensitive collation is why anyone reaches for
+`deterministic = false` — and `preamble.rs`'s unit test spells it that way. The
+fixture takes ICU's root locale `und` instead, chosen for **existence** rather
+than behaviour: it is present at every ICU version with no locale generated, and
+nothing here reads it, since the register branches on the `deterministic = false`
+clause and never on the provider or the locale. A behavioural spelling would put
+a behavioural claim in the one file whose entire case for admitting ICU is that
+no behaviour is being claimed — the collation would then look like it were
+asserting an order, which is exactly what keeps ICU out of the comparison
+columns and out of the oracle. Realism is the cost, and it is paid knowingly:
+what the fixture exists to pin is the *shape* `dumpCollation` writes, and a
+locale nothing reads cannot drift into an ordering claim.
+
 **Three of its columns exist for the clause's *placement* rather than its
 value.** `pg_dump` appends `COLLATE` after `DEFAULT`/`GENERATED` and after
 `NOT NULL` (I37) whatever the input said, so `v_text_def` (one displacer) and
