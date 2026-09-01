@@ -456,29 +456,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-**The register-to-oracle reconciliation now admits an arm with no evidence.**
-11.6.2 added a fourth branch to `collated_text`, and no oracle case can ever
-reach it — the spec keeps ICU out of the oracle because a `collversion` drifts
-with the base image, and a non-deterministic collation is ICU-only (I42). So
-`oracle_register.py` grew `Arm.unoracled`: a reason string, printed under its
-own heading, excluded from `uncovered`, and checked in the other direction so an
-exempt arm that acquires a case is a problem. **The decision is whether that
-category should exist at all.** The alternatives were leaving `COLLATION_ARMS`
-at three — which passes while the list is silently short, the exact decay the
-check is for — or admitting one ICU oracle case and taking the drift, which
-reverses a spec decision made twice. What would change if it were reconsidered:
-the exemption is one dataclass field and one report section, so removing it
-costs little; what it risks is becoming the place a later arm is hung to avoid
-writing a case, which is why the stale-exemption check went in beside it.
-
-**`KD7` was widened rather than a new number allocated.** A column stating a
-collation the dump declares non-deterministic gets the row set wrong under `=`
-as well as under `<`, and that is filed as the same entry: same trigger (the
-file states a collation this build does not implement), same fix (a comparison
-per named collation, which supplies the equality with the order). **The decision
-is whether the equality half deserves its own `KD<k>`.** It has one property
-the ordering half does not — the file settles it outright, where the order needs
-a provider version no dump carries — so an argument exists for splitting it, and
-a separate entry would carry its own promotion trigger. What would change: a
-new number, `KD7`'s sentence narrowed back to ordering, and the second code
-marker in `pgtype.rs` re-aimed. Nothing else depends on the choice.

@@ -2508,6 +2508,18 @@ unconditionally (I42) and this build reads it. It is the one thing about a
 stated collation a plain dump settles: the *order* still needs a provider
 version the file never carries, which is the next paragraph.
 
+**The two families fail differently, and `=` fails in the safer direction.**
+Byte-identical values compare equal under any collation, so under a
+non-deterministic one this build's `=` returns **only** rows the server would
+return — it misses the pairs whose bytes differ and whose collation makes them
+equal, and admits none the server would reject. The filter is a subset: sound,
+incomplete, and usable as such. Bytewise ordering carries no comparable
+guarantee — it can place a pair in the opposite order the server would — so a
+user who can act on a partial `=` has nothing equivalent under `<`. This is not
+an invariant entry: it rests on a comparator returning zero for identical
+input, not on any behaviour a `pg_dump` or server release could change, and an
+invariant with no meaningful re-verification step is one nobody will check.
+
 **The fix closes it up to a provider version, not absolutely**, and the entry
 says so rather than promising more. A plain dump carries a collation's *name*
 and never its version (I42), and PostgreSQL applies whatever the platform
@@ -2535,6 +2547,25 @@ trigger reading "a dump whose text columns state a real locale".* Our own
 COLLATE pg_catalog."en_US.utf8"` — so the trigger was satisfied by the apparatus
 that tests the arm, while koji, 784 GB across 75 tables, carries no `COLLATE`
 clause at all. A trigger a fixture fires and no real input does is not a trigger.
+*That shape has now been proposed twice.* The second candidate — "a dump
+declaring a collation `deterministic = false`" — looks sharper, being an
+unambiguous fact the file states rather than a name that may or may not matter,
+and it fails identically: the fixture family acquires exactly such a collation
+to test this arm, so the apparatus fires it and no real input has yet.
+
+*Rejected: a separate `KD<k>` for the equality half.* The case for splitting was
+that the file settles equality outright where the order needs a provider version
+— but that conflates *detecting* the divergence with *closing* it. `texteq`
+takes its memcmp shortcut only `if (locale_is_c || pg_locale_deterministic(…))`
+and otherwise falls through to `varstr_cmp(…) == 0`, so answering which values
+are equal needs the ICU provider exactly as the order does; I42 says the file
+settles *that* `=` diverges and stops there. The two halves therefore share a
+trigger, a fix and a blocker, and two entries would carry the same sentence, the
+same `(c)` stance and the same owner. What genuinely differs is the *note* — the
+equality announcement cannot be spurious where the ordering one can — and that
+is a property of the announcement, not a second defect. Reasoning in
+[`../status/history/2026-09-01.md`](../status/history/2026-09-01.md), "`KD7`'s
+equality half is the same defect, not a second one".
 
 *Rejected: closing this as a property alongside the other three, to strike
 `KD7` as P11's spec bound.* The three that closed are properties because
