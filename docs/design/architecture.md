@@ -3094,7 +3094,24 @@ of the six comparisons. Each is a PL/pgSQL `EXCEPTION` block, so a malformed
 literal cannot abort the surrounding `COPY`, and the split is what decides how
 far a rejection reaches: a type the server does not have, or a literal it
 refuses, is a pair that cannot exist and answers all six cells, while a type
-with no `<` fails that cell alone. The session pins `standard_conforming_strings`,
+with no `<` fails that cell alone.
+
+**Materialising the pair is also what stops the planner answering for the
+server.** A comparison written as a cast of two parameters is an expression,
+and `eval_const_expressions` folds a strict operator holding a constant NULL
+without evaluating its other argument — so a refused literal asked against SQL
+`NULL` recorded `u` rather than its rejection, and whether it did depended on
+the type's input function being `stable` rather than `immutable`. The cells
+were reporting input-function volatility. Two consequences were live in the
+committed answers: `interval '-infinity'` on 13–16, where the literal is
+genuinely refused, read `u` and so agreed spuriously with 17's real answer,
+hiding an additive transition from the cross-major differ; and `numeric`'s
+immutable input function raised where the datetime family's stable one did
+not, for no reason a reader could see. A column cannot be folded away, so
+every such cell now agrees with `literals.tsv`, and the differ sees the
+transition — 24 rows of it at 16→17.
+
+The session pins `standard_conforming_strings`,
 `DateStyle`, `IntervalStyle`, `extra_float_digits`, `TimeZone`,
 `client_encoding`, `bytea_output` and `array_nulls`; the first four match
 `pg_dump`'s own `_doSetFixedOutputState`, so `output` is the form a dump

@@ -507,7 +507,18 @@ def literal_cases() -> list[tuple[str, str | None]]:
 def comparison_cases() -> list[tuple[str, str | None, str | None, str | None]]:
     """Every `(type, left, right, collation)` the comparison table asks about,
     in file order: all ordered pairs of `values`, then each `input` against
-    `values[0]` in both directions."""
+    `values[0]` in both directions.
+
+    **The `input` pairs look redundant and are the cross-check.** A literal the
+    server refuses cannot reach an operator -- building the pair is its own
+    subtransaction -- so all six of those cells are a mechanical function of
+    `literals.tsv`, which states the same rejection once. Around 6% of the
+    committed rows are of that kind. They are kept because they are the only
+    place two separately generated halves of the oracle are forced to agree,
+    which is what would catch a `pgdq_cmp` whose subtransaction split had
+    drifted; `test_comparison_oracle.py` asserts the agreement over the
+    committed tree. Do not drop the pairing to shrink the file.
+    """
     out: list[tuple[str, str | None, str | None, str | None]] = []
     for case in TYPE_CASES:
         for left in case.values:

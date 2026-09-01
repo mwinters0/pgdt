@@ -386,23 +386,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-**`M34` moved fifty-two cells it did not predict, and they were kept.** The
-design said every cell but `name`'s would stand. Asking the pair through two
-columns moved fifty-two more, all of one shape: a literal the server refuses
-cannot reach an operator any more, so it answers all six cells with its own
-rejection rather than with `u` — the planner folding a strict comparison
-against a constant NULL, which hid a bad literal wherever the type's input
-function is `stable`, so the datetime family and `enum_in` read `u` where
-`numeric`'s immutable one raised — or with the missing operator's `E42883`,
-which `json` and `xml` hit at analysis time ahead of their own malformed
-literals. They were kept rather than worked around: the new reading agrees with
-`literals.tsv` for every one of them, `test_comparison_oracle.py` now asserts
-that agreement, and the old cells recorded input-function volatility rather
-than anything about how PostgreSQL compares. The consequence downstream is 24
-additive rows added to `fixtures/oracle-differences.tsv` at 16→17 — the
-`interval` infinity-against-NULL pairs the fold used to hide — for 533
-differences, still every one additive. Reconsidering means deciding whether a
-change to what a *rejected* case records belonged inside an out-of-band item
-admitted for a collation fix; the whole diff is `pgdq_cmp` plus one
-regeneration, and the only way to keep the old cells is to stop materialising
-the pair, which is the cast form and brings the `name` defect back with it.
+Nothing is open.
