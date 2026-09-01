@@ -438,25 +438,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **The equality literal grammar was kept at `*_out` and no wider, so one of
-  the spec's three motivating cases lands as a refusal rather than as a
-  match.** `roadmap-P11-typed-predicates.md`, "`=` and `!=` become typed too",
-  names `--filter 'v=2020-01-01'` on a `timestamp` column written
-  `2020-01-01 00:00:00` as a case typed equality should close by rendering the
-  literal. It does not: `decode_timestamp_micros` requires a time part, so the
-  term is `Error::PredicateValueDecode` naming the value. The same holds for
-  `--filter 'flag=true'` on a `boolean` (`boolout` writes `t`). Both replace an
-  empty result that read like an answer with a named refusal, which is the
-  failure the spec objected to — but a match is what it asked for. **The call
-  was to keep the narrow grammar**, because widening it would contradict the
-  register's own stated property ("a literal is read in the type's own output
-  form and no wider", `architecture.md`), which 11.5 argued at length and
-  classified as a property rather than a deficiency, and because the widening
-  would have to go in `decode_*` — shared with the *field* path, where
-  accepting `2020-01-01` as a `timestamp` field would be a real loosening.
-  **What would change if reconsidered**: a literal-only widening layer per
-  kind, sitting between `equality_comparison` and `decode.rs`, and a decision
-  about how much of each `*_in` it implements — which is the "re-implementing
-  four input functions" cost the register already rejected once, now asked for
-  a different reason.

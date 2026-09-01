@@ -2326,6 +2326,30 @@ types have no Arrow representation at all, which is why their comparison is a
 key rather than a value, and building one to widen a literal grammar inverts
 the cost.
 
+*Rejected: an exception for `boolean`, on the grounds that `boolin` is cheap.*
+The cost argument above genuinely does not reach it. `boolin` is two sentences
+long — whitespace stripped, then a case-insensitive match against `t`/`true`/
+`y`/`yes`/`on`/`1` and their negatives, with unique-prefix matching on the
+words — so widening `boolean` would not be re-implementing an input function in
+the sense the paragraph above means. What stops it is the test `jsonb` passes
+and `boolean` fails. `jsonb` earns its exception because its canonical form is
+*unreachable by hand*: nobody types the space in `{"a": 1}`, so an output-only
+grammar would leave the type unfilterable. `boolean`'s canonical form is one
+keystroke, and every value in the file is already in it. A widening that
+stopped at `true`/`false` would be an arbitrary line through the same grammar,
+and one that went the whole way would inherit prefix matching — `--filter
+'flag=tr'` — a spelling nobody wants and this build would then owe forever.
+
+**What the refusal owes the user is the accepted form, and that is a diagnostic
+rather than a grammar.** `Error::PredicateValueDecode` names the value and the
+declared type, so a user who writes `true` is told it does not parse as
+`boolean` — a sentence that reads as a claim about the type rather than about
+this build's grammar, which is the one place the property is genuinely hard on
+someone. [`../manual/type-handling.md`](../manual/type-handling.md), "`=` and
+`!=` compare values, not spellings", carries the accepted forms today; naming
+the form each `CompareKind` accepts in the refusal itself is the ledger's
+`M37`, and it reaches `interval`, `inet` and `macaddr` by the same edit.
+
 **The refusals are the rest of the table, and they are stated rather than
 listed**: every nested shape — array, composite, range, multirange — and every
 declared type this build maps to nothing at all. The first group is refused
@@ -2505,13 +2529,30 @@ is two sentences long — lowercase hex pairs joined by colons — so it renders
 
 **A literal is read on the same output-form-only grammar the ordering operators
 use**, so `--filter 'flag=true'` on a `boolean` column is
-`Error::PredicateValueDecode` naming the value, where `boolout` writes `t`. The
-spec's third motivating case lands here rather than on a match:
+`Error::PredicateValueDecode` naming the value, where `boolout` writes `t`, and
 `--filter 'v=2020-01-01'` on a `timestamp` column is refused, because
 `timestamp_out` writes a time part and `decode_timestamp_micros` requires one.
 Both replace an empty result with a named refusal, which is the failure shape
-that motivated the change; widening the literal grammar past `*_out` would
-contradict the property the register states two sections up, and is not done.
+that motivated the change.
+
+**That second one is not the same class as the cases this mechanism closes**,
+and the spec filed it as though it were. `1.5` against a `numeric(10,2)`
+written `1.50`, and `a` against a padded `char(5)`, are cases where the literal
+*is* a well-formed value of the column's type and only the file's spelling of
+it differs — rendering the literal closes them, and does. `2020-01-01` against
+a `timestamp` is not a `timestamp_out` spelling at all, so no canonicalization
+of the literal reaches it; closing it means accepting more *input* grammar,
+which puts it in the `*_in`-wider-than-`*_out` property two sections up beside
+`1.5 hours` for an interval and an abbreviated `10` for an IPv4 address. A
+spelling problem and a grammar problem look alike from the command line and
+have nothing in common behind it.
+
+**A match there would also be a trap.** PostgreSQL reads
+`'2020-01-01'::timestamp` as midnight exactly, so what a user would get from
+`v=2020-01-01` is the instant and not the day — which is usually not the
+question they meant. The refusal costs one edit; the match would cost a wrong
+answer that reads like a right one, which is the shape this section exists to
+remove.
 
 **The divergences become operator-conditional**, which is why the note channel
 is `TableStream::comparison_notes` and its notes are per *term*. Three of the

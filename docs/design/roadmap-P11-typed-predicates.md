@@ -549,19 +549,28 @@ describe both.
 
 The justification the current text comparison rests on — every value in a dump
 is already in canonical `*_out` form — is true of the **field** and says
-nothing about the **literal the user typed**. Three consequences, none of them
+nothing about the **literal the user typed**. Two consequences, neither of them
 registered anywhere before this phase:
 
 - `--filter 'v=1.5'` matches no row of a `numeric(10,2)` column written `1.50`.
 - `--filter 'v=a'` matches no row of a `char(5)` column: the dump writes the
   value blank-padded, and `bpchareq` compares after `bcTruelen` strips the
   padding.
-- `--filter 'v=2020-01-01'` matches no row of a `timestamp` column written
-  `2020-01-01 00:00:00`.
 
 In each case PostgreSQL says equal and we say no, with no error — a plausible
 command line and an empty result that reads as an answer, which is the shape
 the `--filter` trimming rule was written to remove one level up.
+
+**A third case was listed here and belongs to a different mechanism.**
+`--filter 'v=2020-01-01'` on a `timestamp` column written `2020-01-01 00:00:00`
+is not a literal spelled differently from the file's value; it is not a
+`timestamp_out` spelling at all, so no canonicalization of the literal reaches
+it, and closing it means accepting more *input* grammar. It belongs to the
+`*_in`-wider-than-`*_out` property beside `1.5 hours` for an interval, and it
+stays a refusal — the more so because PostgreSQL reads a bare date as midnight
+exactly, so a match would answer for the instant and not the day. Reasoning:
+[`../status/history/2026-09-01.md`](../status/history/2026-09-01.md), "A
+grammar case was filed with two spelling cases".
 
 *Rejected: leaving equality as text and documenting the three cases as
 properties.* A phase named for typed predicates would ship an untyped `=`.
@@ -665,8 +674,9 @@ equality's decode-per-row list is seven, not two".
 The field is always in canonical `*_out` form, so the **literal** is decoded
 once when the block resolves and rendered back into that same form; the per-row
 comparison stays bytewise. `--filter 'v=1.5'` on a `numeric(10,2)` column
-becomes a bytewise compare against `1.50`, and a `timestamp` literal renders
-`2020-01-01 00:00:00`.
+becomes a bytewise compare against `1.50`, and a `timestamp` literal written
+`2020-01-01 00:00:00.000` renders back to the `2020-01-01 00:00:00` the file
+holds.
 
 **`char(n)` needs the field narrowed per row, and is a third category.** Padding
 the literal to `n` is sound for `=` and unsound for `<`: padding to a fixed
