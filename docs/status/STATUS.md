@@ -438,14 +438,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-**An `enum` refusal names "one of the type's own declared labels", not the
-labels.** `accepted_form` is `&'static str` per `CompareKind`, so the one kind
-whose accepted form is *data* — an enum's label list, which is exactly what a
-user who mistyped a label wants to read — gets a description of the form
-instead of the form. Making the field a `String` and interpolating the labels
-is a small change and would put the answer in the message; what it costs is an
-unbounded message, since nothing caps how many labels a type declares, and a
-`&'static str` that cannot be built wrong. Reconsidering means choosing a cap
-and a truncation ("…, and 40 more"), which is a judgement about output rather
-than about the grammar.
