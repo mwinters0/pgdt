@@ -6,7 +6,7 @@ use arrow::datatypes::i256;
 
 use crate::copy::{decode_field, split_fields};
 use crate::decode;
-use crate::pgtype::{CompareKind, ComparisonPlan, NestedPlan, OrderingDivergence, split_typmod};
+use crate::pgtype::{CompareKind, ComparisonPlan, NestedPlan, OrderingDivergence};
 use crate::resolve::{ColumnResolution, ResolvedSchema};
 use crate::{Error, Result};
 
@@ -110,31 +110,18 @@ pub struct OrderingNote {
 impl OrderingNote {
     /// One sentence naming the column and what its order is not.
     ///
-    /// The `AsText` wording is chosen from the *declared* type because two
-    /// unrelated situations share it: a bare `numeric` (no Arrow decimal
-    /// representation, so it orders lexicographically) and everything else
-    /// held as text, which has a server-side operator of its own that this
-    /// does not implement. The collatable text types are no longer among them
-    /// — they carry their own divergences, which say what the *column* stated
-    /// rather than what its type usually means.
+    /// Each sentence names the column and its declared type, and the
+    /// declared type is what sharpens it: the collatable text types say what
+    /// the *column* stated, where `AsText` says what the type means. Both
+    /// exist because several declared types reach one Arrow type for
+    /// different reasons.
     pub fn message(&self) -> String {
         let column = &self.column;
         let declared = &self.declared_type;
         let bytewise = |why: &str| format!("`{column}` ({declared}) is compared bytewise: {why}");
         match self.divergence {
-            OrderingDivergence::EnumLabels => format!(
-                "`{column}` ({declared}) is an enum compared by label text, but PostgreSQL orders \
-                 an enum by declaration order"
-            ),
             OrderingDivergence::AsText => {
-                let why = match split_typmod(declared).0.to_ascii_lowercase().as_str() {
-                    "numeric" => {
-                        "an unconstrained `numeric` has no decimal representation here, so `9` \
-                         sorts after `10`"
-                    }
-                    _ => "PostgreSQL orders this type by its own operator, not bytewise",
-                };
-                bytewise(why)
+                bytewise("PostgreSQL orders this type by its own operator, not bytewise")
             }
             OrderingDivergence::UnknownCollation => bytewise(
                 "the column declares no COLLATE clause, so its collation is the database's, which \
@@ -151,6 +138,80 @@ impl OrderingNote {
                  filter's own sorts after it here",
             ),
         }
+    }
+}
+
+/// One side of a bare-`numeric` comparison: the sign, and the digits either
+/// side of the point with the *insignificant* ones removed — leading zeros
+/// from the integer part, trailing zeros from the fraction.
+///
+/// **Normalizing is what makes this PostgreSQL's own order.** `cmp_numerics`
+/// compares by value and never by display scale (I33), so `1.5` and `1.50`
+/// are one value that a bare `numeric` column writes two ways; and a fixed
+/// scale, which is what [`CompareKind::Decimal`] carries both sides to, does
+/// not exist here to rescale against.
+///
+/// Digit *strings* rather than a big integer, because the column is
+/// arbitrary-precision by definition: the file may hold a thousand digits,
+/// which is past every fixed-width type including `i256`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NumericKey {
+    /// False for a zero of either written sign — PostgreSQL has one zero, and
+    /// a filter literal is free to spell it `-0`.
+    negative: bool,
+    /// Integer digits, leading zeros stripped; empty for a magnitude below 1.
+    int: String,
+    /// Fraction digits, trailing zeros stripped; empty for an integer.
+    frac: String,
+}
+
+impl NumericKey {
+    /// `[-]digits[.digits]`, the only shape `numeric_out` writes: no
+    /// exponent, no sign but `-`, and at least one digit somewhere — the same
+    /// *lexical* grammar [`decode::decimal_unscaled_digits`] accepts for a
+    /// typmod'd column, so a literal one `numeric` comparison rejects as
+    /// malformed the other does too. What the two differ on is the typmod: a
+    /// literal finer than the column's scale is refused there and has nothing
+    /// to be refused against here.
+    fn parse(text: &str) -> Option<Self> {
+        let (negative, rest) = match text.strip_prefix('-') {
+            Some(rest) => (true, rest),
+            None => (false, text),
+        };
+        let (int, frac) = rest.split_once('.').unwrap_or((rest, ""));
+        if int.is_empty() && frac.is_empty() {
+            return None;
+        }
+        if !int.bytes().all(|b| b.is_ascii_digit()) || !frac.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let int = int.trim_start_matches('0');
+        let frac = frac.trim_end_matches('0');
+        Some(Self {
+            negative: negative && !(int.is_empty() && frac.is_empty()),
+            int: int.to_string(),
+            frac: frac.to_string(),
+        })
+    }
+
+    /// Sign first, then magnitude: how many integer digits, then those digits,
+    /// then the fraction. Each stage is a plain byte comparison over ASCII
+    /// digits, which is why the normalization above has to have happened —
+    /// with trailing zeros stripped, a fraction that is a prefix of another is
+    /// the smaller of the two, so `"5"` beats `"45"` and loses to `"55"`.
+    fn cmp(&self, other: &Self) -> Ordering {
+        match (self.negative, other.negative) {
+            (false, true) => return Ordering::Greater,
+            (true, false) => return Ordering::Less,
+            _ => {}
+        }
+        let magnitude = self
+            .int
+            .len()
+            .cmp(&other.int.len())
+            .then_with(|| self.int.as_bytes().cmp(other.int.as_bytes()))
+            .then_with(|| self.frac.as_bytes().cmp(other.frac.as_bytes()));
+        if self.negative { magnitude.reverse() } else { magnitude }
     }
 }
 
@@ -176,6 +237,8 @@ enum OrderKey {
     Int(i64),
     Float(f64),
     Decimal(i256),
+    /// A bare `numeric`, whose digits do not fit any fixed-width integer.
+    Numeric(NumericKey),
     Bytes(Vec<u8>),
     Text(String),
     /// PostgreSQL's `infinity`, above every finite value of its type.
@@ -203,6 +266,7 @@ impl OrderKey {
             | Self::Int(_)
             | Self::Float(_)
             | Self::Decimal(_)
+            | Self::Numeric(_)
             | Self::Bytes(_)
             | Self::Text(_) => FINITE,
             Self::PositiveInfinity => 2,
@@ -218,13 +282,17 @@ impl OrderKey {
 /// literal reading `Infinity` is not what `date_out` writes, so it stays a
 /// decode failure, the same strictness the nested codec applies.
 ///
-/// **Two absences are deliberate.** `real`/`double precision` are absent
+/// **One absence is deliberate.** `real`/`double precision` are absent
 /// because IEEE represents all three and [`decode::decode_f64`] already
-/// returns them. A `numeric` **infinity** is absent for a sharper reason:
-/// `apply_typmod_special` rejects one under any typmod, and a `numeric`
-/// without a typmod is held as text, so no column that reaches
-/// [`CompareKind::Decimal`] can hold one (I34).
-fn special_order_key(kind: CompareKind, text: &str) -> Option<OrderKey> {
+/// returns them.
+///
+/// **The two `numeric` kinds differ, and only about the infinities.**
+/// `apply_typmod_special` rejects `±Infinity` under any typmod (I34), so a
+/// [`CompareKind::Decimal`] column — which always has one — can hold a `NaN`
+/// and never an infinity, and neither can a `numeric(p,s)` past 76 digits.
+/// A *bare* `numeric` has all three, in `numeric_out`'s own spellings, which
+/// capitalize where `date_out`'s do not.
+fn special_order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
     match kind {
         CompareKind::Date | CompareKind::Timestamp { .. } => match text {
             "infinity" => Some(OrderKey::PositiveInfinity),
@@ -232,6 +300,12 @@ fn special_order_key(kind: CompareKind, text: &str) -> Option<OrderKey> {
             _ => None,
         },
         CompareKind::Decimal(_) => (text == "NaN").then_some(OrderKey::NotANumber),
+        CompareKind::Numeric { infinities } => match text {
+            "NaN" => Some(OrderKey::NotANumber),
+            "Infinity" if *infinities => Some(OrderKey::PositiveInfinity),
+            "-Infinity" if *infinities => Some(OrderKey::NegativeInfinity),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -246,7 +320,7 @@ fn special_order_key(kind: CompareKind, text: &str) -> Option<OrderKey> {
 /// legal value of the declared type that the *Arrow* type cannot hold — a
 /// separate population from text that is genuinely malformed for the column,
 /// which is what a `None` from here now means.
-fn order_key(kind: CompareKind, text: &str) -> Option<OrderKey> {
+fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
     if let Some(special) = special_order_key(kind, text) {
         return Some(special);
     }
@@ -267,12 +341,19 @@ fn order_key(kind: CompareKind, text: &str) -> Option<OrderKey> {
         CompareKind::Float32 => OrderKey::Float(f64::from(decode::decode_f32(text)?)),
         CompareKind::Float64 => OrderKey::Float(decode::decode_f64(text)?),
         CompareKind::Decimal(scale) => {
-            OrderKey::Decimal(i256::from_string(&decode::decimal_unscaled_digits(text, scale)?)?)
+            OrderKey::Decimal(i256::from_string(&decode::decimal_unscaled_digits(text, *scale)?)?)
         }
+        CompareKind::Numeric { .. } => OrderKey::Numeric(NumericKey::parse(text)?),
+        // A label the type does not declare is not a value of the column, so
+        // it is the same fault an unparseable number is: `Error::FieldDecode`
+        // for a field, `Error::PredicateValueDecode` for a literal. The
+        // linear scan is over a label list, which is a handful of entries in
+        // every enum a dump has ever carried.
+        CompareKind::Enum(labels) => OrderKey::Int(labels.iter().position(|l| l == text)? as i64),
         CompareKind::Date => OrderKey::Int(decode::decode_date32(text)?.into()),
         CompareKind::Time => OrderKey::Int(decode::decode_time64_micros(text)?),
         CompareKind::Timestamp { with_tz } => {
-            OrderKey::Int(decode::decode_timestamp_micros(text, with_tz)?)
+            OrderKey::Int(decode::decode_timestamp_micros(text, *with_tz)?)
         }
         CompareKind::Uuid => OrderKey::Bytes(decode::decode_uuid(text)?.to_vec()),
         CompareKind::Bytea => OrderKey::Bytes(decode::decode_bytea(text)?),
@@ -310,6 +391,7 @@ fn compare_keys(a: &OrderKey, b: &OrderKey) -> Ordering {
         (OrderKey::Int(x), OrderKey::Int(y)) => x.cmp(y),
         (OrderKey::Float(x), OrderKey::Float(y)) => pg_float_cmp(*x, *y),
         (OrderKey::Decimal(x), OrderKey::Decimal(y)) => x.cmp(y),
+        (OrderKey::Numeric(x), OrderKey::Numeric(y)) => x.cmp(y),
         (OrderKey::Bytes(x), OrderKey::Bytes(y)) => x.cmp(y),
         (OrderKey::Text(x), OrderKey::Text(y)) => x.as_bytes().cmp(y.as_bytes()),
         _ if rank_a != FINITE => Ordering::Equal,
@@ -403,7 +485,7 @@ pub(crate) fn resolve_term(
     if resolved.plans[index] != NestedPlan::Scalar {
         return Err(refuse(NESTED));
     }
-    let ComparisonPlan::Compared { kind, divergence } = resolved.comparisons[index] else {
+    let ComparisonPlan::Compared { kind, divergence } = &resolved.comparisons[index] else {
         return Err(refuse(NO_ORDER));
     };
     let declared_type = resolved.notes[index].declared.clone().unwrap_or_default();
@@ -421,10 +503,10 @@ pub(crate) fn resolve_term(
         index,
         order: Some(OrderTerm {
             column: predicate.column.clone(),
-            kind,
+            kind: kind.clone(),
             bound,
             declared_type,
-            divergence,
+            divergence: *divergence,
         }),
     })
 }
@@ -464,7 +546,7 @@ impl Predicate {
                     None => false,
                     Some(text) => {
                         let key =
-                            order_key(order.kind, &text).ok_or_else(|| Error::FieldDecode {
+                            order_key(&order.kind, &text).ok_or_else(|| Error::FieldDecode {
                                 table: table.to_string(),
                                 column: order.column.clone(),
                                 row_offset,
@@ -884,8 +966,8 @@ mod tests {
         ));
     }
 
-    /// Only the two divergent classifications produce a note, and the
-    /// sentence is chosen from the declared type rather than the Arrow one.
+    /// Only a divergent classification produces a note, and the sentence is
+    /// chosen from the declared type rather than the Arrow one.
     #[test]
     fn a_divergent_comparison_produces_a_note_naming_why() {
         let note = |declared, data_type, literal| {
@@ -905,20 +987,94 @@ mod tests {
         assert_eq!(padded.divergence, OrderingDivergence::BlankPadded);
         assert!(padded.message().contains("blank-padded"), "{}", padded.message());
 
-        let numeric = note("numeric", DataType::Utf8View, "10").unwrap();
-        assert!(numeric.message().contains("unconstrained"), "{}", numeric.message());
-
         let other = note("interval", DataType::Utf8View, "1 day").unwrap();
+        assert_eq!(other.divergence, OrderingDivergence::AsText);
         assert!(other.message().contains("its own operator"), "{}", other.message());
 
-        let enumerated = note(
-            "public.mood",
-            DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8)),
-            "sad",
-        )
-        .unwrap();
-        assert_eq!(enumerated.divergence, OrderingDivergence::EnumLabels);
-        assert!(enumerated.message().contains("declaration order"), "{}", enumerated.message());
+        // The two rows this slice closed: both share `Utf8View` with the row
+        // above and neither says anything any more.
+        assert_eq!(note("numeric", DataType::Utf8View, "10"), None);
+        assert_eq!(
+            note(
+                "public.mood",
+                DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8)),
+                "sad",
+            ),
+            None
+        );
+    }
+
+    /// A bare `numeric` orders as a decimal, which is the row's whole
+    /// content: `9` is below `10` where the text it is held as puts it above,
+    /// and trailing zeros are not part of the value (I33).
+    #[test]
+    fn a_bare_numeric_orders_by_value_not_by_its_text() {
+        let n =
+            |op, value, field| ordered("numeric", DataType::Utf8View, op, value, field).unwrap();
+        assert!(n(PredicateOp::Gt, "9", "10"));
+        assert!(!n(PredicateOp::Lt, "9", "10"));
+        // Equal by value, written two ways — a bare `numeric` preserves the
+        // scale it was written with.
+        assert!(n(PredicateOp::Ge, "1.5", "1.50"));
+        assert!(n(PredicateOp::Le, "1.5", "1.50"));
+        assert!(!n(PredicateOp::Gt, "1.5", "1.50"));
+        // Sign, then magnitude, then the fraction.
+        assert!(n(PredicateOp::Lt, "0", "-0.001"));
+        assert!(n(PredicateOp::Gt, "-2", "-1.9"));
+        assert!(n(PredicateOp::Gt, "0.45", "0.5"));
+        assert!(n(PredicateOp::Lt, "0.55", "0.5"));
+        // One zero, however either side spells it.
+        assert!(n(PredicateOp::Ge, "-0", "0.000"));
+        assert!(n(PredicateOp::Le, "-0", "0.000"));
+        // Past every fixed-width integer, which is why the key is digits.
+        let big = "1".repeat(200);
+        assert!(n(PredicateOp::Gt, &big, &format!("{big}0")));
+    }
+
+    /// All three of `numeric`'s specials are ordered, and only a *bare*
+    /// column admits the two infinities: any typmod rejects them (I34), so
+    /// on a `numeric(77,0)` the literal is refused rather than compared.
+    #[test]
+    fn a_bare_numeric_carries_all_three_specials() {
+        let n =
+            |op, value, field| ordered("numeric", DataType::Utf8View, op, value, field).unwrap();
+        assert!(n(PredicateOp::Gt, "1.5", "Infinity"));
+        assert!(n(PredicateOp::Lt, "1.5", "-Infinity"));
+        assert!(n(PredicateOp::Gt, "Infinity", "NaN"));
+        assert!(n(PredicateOp::Ge, "NaN", "NaN"));
+        assert!(!n(PredicateOp::Gt, "NaN", "NaN"));
+        assert!(n(PredicateOp::Gt, "-Infinity", "Infinity"));
+        // `numeric_out`'s spelling and nothing else, the same strictness
+        // `date`'s lower-case `infinity` gets.
+        let err = ordered("numeric", DataType::Utf8View, PredicateOp::Gt, "inf", "0").unwrap_err();
+        assert!(matches!(err, Error::PredicateValueDecode { .. }), "{err:?}");
+
+        // Past `Decimal256`: a `NaN` is reachable, an infinity is not.
+        let wide =
+            |op, value, field| ordered("numeric(77,0)", DataType::Utf8View, op, value, field);
+        assert!(wide(PredicateOp::Gt, "0", "NaN").unwrap());
+        let err = wide(PredicateOp::Gt, "Infinity", "0").unwrap_err();
+        assert!(matches!(err, Error::PredicateValueDecode { .. }), "{err:?}");
+    }
+
+    /// An enum orders by declaration order, which is what the server does
+    /// (I33) and is the reverse of the label text here: `sad` is declared
+    /// first and sorts last alphabetically.
+    #[test]
+    fn an_enum_orders_by_declaration_order() {
+        let dict = || DataType::Dictionary(Box::new(DataType::Int32), Box::new(DataType::Utf8));
+        let e = |op, value, field| ordered("public.mood", dict(), op, value, field).unwrap();
+        assert!(e(PredicateOp::Gt, "sad", "ok"));
+        assert!(!e(PredicateOp::Lt, "sad", "ok"));
+        assert!(e(PredicateOp::Ge, "sad", "sad"));
+        assert!(!e(PredicateOp::Gt, "sad", "sad"));
+
+        // A label the type does not declare is not a value of the column, on
+        // either side — the same two faults every other type raises.
+        let err = ordered("public.mood", dict(), PredicateOp::Gt, "nope", "sad").unwrap_err();
+        assert!(matches!(err, Error::PredicateValueDecode { .. }), "{err:?}");
+        let err = ordered("public.mood", dict(), PredicateOp::Gt, "sad", "SAD").unwrap_err();
+        assert!(matches!(err, Error::FieldDecode { .. }), "{err:?}");
     }
 
     /// `uuid` and `bytea` compare as their bytes, which is what

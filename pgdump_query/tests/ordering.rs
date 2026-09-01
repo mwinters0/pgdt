@@ -122,6 +122,77 @@ async fn a_decimal_literal_is_decoded_at_the_columns_scale() {
     );
 }
 
+/// The notes a query over `table` raises for `column` under one `>` term —
+/// empty for a column whose comparison is PostgreSQL's own.
+async fn notes_for(table: &str, column: &str, literal: &str) -> Vec<String> {
+    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
+    let mut stream = table_stream(
+        &source,
+        table,
+        ScanOptions::default(),
+        QueryOptions {
+            filters: vec![term(column, PredicateOp::Ge, literal)],
+            projection: Some(vec![column.to_string()]),
+            ..Default::default()
+        },
+        None,
+        CacheMode::Disabled,
+    );
+    while stream.next().await.transpose().unwrap().is_some() {}
+    stream.ordering_notes().iter().map(|n| n.message()).collect()
+}
+
+/// A bare `numeric` orders by decimal value, against the fixture's own
+/// column. `t_numeric.v_untyped` holds `NaN`, `0`, `100.00` and `12345.6789`,
+/// and the three assertions below are each a case the bytewise comparison
+/// this row used to make would get wrong: `100.00` sorts *below* `9` as text,
+/// `100.00` and `100` are one value written two ways, and `NaN` is the
+/// largest value rather than a letter.
+#[tokio::test]
+async fn a_bare_numeric_orders_by_decimal_value() {
+    assert_eq!(
+        kept("public.t_numeric", "v_untyped", vec![term("v_untyped", PredicateOp::Gt, "9")]).await,
+        [Some("NaN".to_string()), Some("100.00".to_string()), Some("12345.6789".to_string()),],
+        "as text `100.00` would sort below `9` and be dropped"
+    );
+    assert_eq!(
+        kept("public.t_numeric", "v_untyped", vec![term("v_untyped", PredicateOp::Gt, "100")])
+            .await,
+        [Some("NaN".to_string()), Some("12345.6789".to_string())],
+        "`100.00` equals `100`: the trailing zeros are display scale, not value"
+    );
+    assert_eq!(
+        kept("public.t_numeric", "v_untyped", vec![term("v_untyped", PredicateOp::Lt, "0.5")])
+            .await,
+        [Some("0".to_string())],
+        "`NaN` is above every value, so `< 0.5` keeps only the zero"
+    );
+    assert!(notes_for("public.t_numeric", "v_untyped", "0").await.is_empty());
+}
+
+/// An enum orders by the declaration order the dump carries verbatim, which
+/// is the reverse of the label text for these values: `public.mood` declares
+/// `sad` first, and every other label in `t_enum_domain` sorts *below* it
+/// bytewise.
+#[tokio::test]
+async fn an_enum_orders_by_declaration_order() {
+    assert_eq!(
+        kept("public.t_enum_domain", "v_mood", vec![term("v_mood", PredicateOp::Gt, "sad")]).await,
+        [
+            Some("has space".to_string()),
+            Some("has,comma".to_string()),
+            Some("has'quote".to_string()),
+        ],
+        "bytewise every one of these is below `sad`, so a text comparison keeps none"
+    );
+    assert_eq!(
+        kept("public.t_enum_domain", "v_mood", vec![term("v_mood", PredicateOp::Lt, "has,comma")])
+            .await,
+        [Some("sad".to_string()), Some("has space".to_string())]
+    );
+    assert!(notes_for("public.t_enum_domain", "v_mood", "sad").await.is_empty());
+}
+
 /// A NULL is excluded by every ordering operator, exactly as it is by
 /// `Eq`/`Ne` — unknown collapses to false at each term, which is what bounds
 /// the conjunction to `AND`.
@@ -300,8 +371,9 @@ async fn a_divergent_comparison_is_reported_by_the_stream() {
         // `character(n)` diverges for a reason collation cannot fix: the
         // dump writes its values blank-padded and `bpcharcmp` trims (I38).
         ("public.t_text", "v_char", OrderingDivergence::BlankPadded, "blank-padded"),
-        ("public.t_numeric", "v_untyped", OrderingDivergence::AsText, "unconstrained"),
-        ("public.t_enum_domain", "v_mood", OrderingDivergence::EnumLabels, "declaration order"),
+        // The text-held types are the whole of what `AsText` covers now that
+        // the enum and the bare `numeric` order by their own values.
+        ("public.t_interval", "v_interval", OrderingDivergence::AsText, "its own operator"),
     ] {
         let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
         let mut stream = table_stream(

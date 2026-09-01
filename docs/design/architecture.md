@@ -2042,12 +2042,21 @@ lexicographic order over the variant list would happen to agree with that
 today and would stop agreeing the moment a variant is inserted.
 
 The set is closed and each spelling is the one that type's own `*_out` writes,
-so a `date` reading `Infinity` is still a decode failure, and a `text` column
-holding the word `infinity` still compares bytewise. Two absences are
-load-bearing: `real`/`double precision` are not here because IEEE represents
-all three and their decoder already returns them, and a `numeric` **infinity**
-is not here because no column that resolves to a decimal can hold one — any
-typmod rejects it, and a `numeric` without a typmod is held as text (I34).
+so a `date` reading `Infinity` is still a decode failure — `date_out` writes
+`infinity` and `numeric_out` writes `Infinity`, and each type is held to its
+own — while a `text` column holding either word still compares bytewise.
+`real`/`double precision` are the one absence, and it is load-bearing: IEEE
+represents all three and their decoder already returns them, so nothing about
+them is carried as a position.
+
+**Which `numeric` column can hold an infinity is decided by the typmod, not by
+the type.** `apply_typmod_special` rejects `±Infinity` under any typmod
+restriction (I34), so a `numeric(p,s)` — whether it reached a `Decimal128`, a
+`Decimal256` or, past 76 digits, `Utf8View` — can hold a `NaN` and never an
+infinity, and the register's plan for it refuses the two spellings in a
+*filter's literal* as well. Only a **bare** `numeric` admits all three. That is
+the same shape as `oid`'s `UnsignedInt`: a distinction that exists purely to
+refuse a literal, since no field could ever carry one.
 
 **A filter is therefore exact where the batch still cannot hold the value.**
 `--filter 'v_date < 2020-01-01'` selects `-infinity`'s row, and building the
@@ -2133,13 +2142,16 @@ with `text` and `varchar` would be claiming an agreement it does not have.
 
 **Keyed on the declared type, not on the Arrow one.** Four unrelated declared
 types reach `Utf8View` — a text type, a bare `numeric`, a text-held type such
-as `interval`, and `json`, which PostgreSQL does not order at all — so the
-Arrow type cannot say which comparison a column wants, and neither can it
-reach the enum's labels, which are the closure the divergent enum row needs.
-The rows below are therefore in declared-type order, with the Arrow type
-beside each as information rather than as the key. `text` and `varchar` are
-spread over three of the rows, split by what the column's own `COLLATE` clause
-says.
+as `interval`, and `json`, which PostgreSQL does not order at all — and the
+first two are now four *different* comparisons under one Arrow type, so the
+Arrow type cannot say which one a column wants. Neither can it reach the enum's
+labels, which are what closes the enum row: they live on `TypeKind::Enum`, in
+declaration order, and `CompareKind::Enum` carries them. That is why the plan
+is not `Copy` — an enum's labels and a `numeric`'s typmod flag are facts about
+the column, not about its Arrow type. The rows below are therefore in
+declared-type order, with the Arrow type beside each as information rather than
+as the key. `text` and `varchar` are spread over three of the rows, split by
+what the column's own `COLLATE` clause says.
 
 **The exhaustiveness check moved with it, and is stronger for the move.**
 `builtin_scalar` answers both questions in one arm — which Arrow type a
@@ -2170,12 +2182,12 @@ with the reason that names its nesting rather than with "no order defined".
 | `timestamp`, `timestamptz` | `Timestamp(µs[, tz])` | yes — compared as the stored instant, the two infinities included (I34) | — |
 | `uuid` | `FixedSizeBinary16` | yes — `uuid_internal_cmp` is `memcmp` over 16 bytes (I33) | — |
 | `bytea` | `Binary` | yes — `byteacmp` is `memcmp`, then length (I33) | — |
-| enum types | `Dictionary(Int32, Utf8)` | **no** — PostgreSQL orders an enum by *declaration* order (I33); we compare the label text, so an enum declared `('low','medium','high')` orders alphabetically instead | the declaration order, which the dump carries verbatim in `CREATE TYPE … AS ENUM (…)`. Purely additive |
+| enum types | `Dictionary(Int32, Utf8)` | yes — by *declaration* order, which is what `pg_enum.enumsortorder` records (I33) and what the dump carries verbatim in `CREATE TYPE … AS ENUM (…)`. A label the type does not declare is not a value of the column, so it is a decode fault on either side rather than a comparison | — |
 | `text`, `varchar` declaring `COLLATE "C"`/`"POSIX"`, and `name` with no clause | `Utf8View` | yes — bytewise *is* what those collations order by, on every server and under every libc (I37) | — |
 | `text`, `varchar` with no clause | `Utf8View` | **no** — their collation is the database's, which a plain dump does not record (I32); bytewise equals PostgreSQL only if that collation is `C`/`POSIX` | a collation the file does not carry |
 | any column declaring a collation that is not `C`/`POSIX` | `Utf8View` | **no** — PostgreSQL orders it by that collation, which this build does not implement | one comparison per collation, i.e. a collation library |
 | `char(n)` | `Utf8View` | **no**, whatever its collation — the dump writes values blank-padded to `n` and `bpcharcmp` strips trailing blanks first (I38), so a field equal to the literal sorts above it here | trimming both sides before comparing, which is 11.6's canonicalization question |
-| **bare `numeric`**, and `numeric` beyond 76 digits | `Utf8View` | **no, and this is the sharp one** — an unconstrained `numeric` column has no Arrow decimal representation, so it is `Mapped` to `Utf8View` and orders lexicographically: `"9" < "10"` is false | an arbitrary-precision decimal comparison |
+| **bare `numeric`**, and `numeric` beyond 76 digits | `Utf8View` | yes — compared as an arbitrary-precision decimal over the text the file holds, which is `cmp_var_common`'s own value order and so insensitive to display scale: `1.5` and `1.50` are one value (I33). The bare form carries all three of `Infinity`, `-Infinity` and `NaN`; the constrained one carries only `NaN` (I34) | — |
 | `interval`, `time with time zone`, `json`/`jsonb`, `inet`/`cidr`/`macaddr`/`macaddr8`, and any domain over them | `Utf8View` | **no** — each has a server-side operator of its own that a bytewise comparison does not implement | one decoder per type, each its own piece of work |
 
 A domain has no row of its own: it compares as the row its base type is on,
@@ -2209,10 +2221,12 @@ ordering, not the data — and each divergence announces itself, which is what
 keeps it a weaker answer rather than a silent one. The per-type worklist
 belongs to P11, which retires this entry
 ([`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md), "What
-this phase closes, and what it declares"). The collation half of the text row
-is already closed: what remains of it is a database default the file does not
-carry, plus `char(n)`'s blank padding, which was never a collation question at
-all.
+this phase closes, and what it declares"). Three of its rows are already
+closed: the enum, by reading the declaration order the dump carries; the bare
+`numeric`, by comparing arbitrary-precision decimal rather than text; and the
+collation half of the text row, by reading the clause. What remains of the
+text row is a database default the file does not carry, plus `char(n)`'s blank
+padding, which was never a collation question at all.
 
 **Adding an arm here obliges an oracle case**, and that is checked rather than
 remembered: `scripts/oracle_register.py` fails when a register arm has no case

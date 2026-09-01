@@ -1846,8 +1846,11 @@ value:
 - **`bytea`** — `memcmp` over the shorter length, then the shorter value
   first: `[u8]`'s own lexicographic order.
 - **`boolean`** — C's `>` on the two values, so `false < true`.
-- **`numeric`** — compared by value, which for two values already carried to
-  one scale is the order of their unscaled integers.
+- **`numeric`** — compared by value and never by display scale, so `1.5` and
+  `1.50` are one value written two ways. For two values already carried to one
+  scale that is the order of their unscaled integers; for a column that keeps
+  its own scale per value it is the order of sign, then magnitude, then
+  fraction, over the digits `numeric_out` wrote.
 - **enum** — ordered by `pg_enum.enumsortorder`, which `AddEnumLabel`
   assigns from **declaration order**, never by the label text.
 
@@ -1869,15 +1872,27 @@ length tiebreak. `boolgt` (`src/backend/utils/adt/bool.c`) is `arg1 > arg2`.
 path and `enumsortorder` otherwise, and `pg_enum.c` fills `enumsortorder` with
 `elemno + 1` in declaration order.
 
+`numeric`'s scale-independence is `cmp_numerics`' non-special branch, which
+delegates to `cmp_var_common` — a comparison of sign, then weight, then
+digits, with no reference to `dscale` at all. `numeric_out` is the other half:
+it returns the three special spellings and otherwise `get_str_from_var`, which
+writes an optional `-`, the integer digits and `dscale` fraction digits, in
+plain notation with no exponent — so the text in a dump is exactly the digit
+string that comparison reads.
+
 **Scope limit.** *Agreement of the operator*, not of the value: a type whose
-decoder loses information diverges regardless, which is why bare `numeric`
-(held as text) and `text` (I32, collation) are registered as divergent rather
-than covered here. Says nothing about the nested types, whose comparison stays
-a string comparison.
+decoder loses information diverges regardless, which is why `text` (I32,
+collation) is registered as divergent rather than covered here. A bare
+`numeric` **is** covered — it is held as text and compared as an
+arbitrary-precision decimal over that text, which loses nothing. Says nothing
+about the nested types, whose comparison stays a string comparison.
 
 **Verified against.** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 and
 master — all seven carry the `float8_gt` and `uuid_internal_cmp` bodies quoted
-above verbatim.
+above verbatim, and in all seven `cmp_numerics`' non-special branch is the one
+`cmp_var_common` call quoted above and `numeric_out` ends in
+`get_str_from_var`. v13's `numeric_out` handles `NaN` alone, which is I34's
+"`numeric` gained `±Infinity` in v14" seen from the output side.
 
 **Relied on by.** The comparison register's *Agrees* and enum rows —
 [`architecture.md`](architecture.md), "Ordering operators compare typed";
@@ -1891,6 +1906,8 @@ grep -n -A3 'float8_gt(const float8' src/include/utils/float.h
 grep -n 'memcmp(arg1->data, arg2->data, UUID_LEN)' src/backend/utils/adt/uuid.c
 awk '/^byteacmp/,/^}/' src/backend/utils/adt/varlena.c
 grep -n 'Anum_pg_enum_enumsortorder' src/backend/catalog/pg_enum.c
+grep -n -A8 'cmp_var_common(NUMERIC_DIGITS' src/backend/utils/adt/numeric.c
+awk '/^numeric_out\(PG_FUNCTION_ARGS\)/,/^}/' src/backend/utils/adt/numeric.c
 ```
 
 ---

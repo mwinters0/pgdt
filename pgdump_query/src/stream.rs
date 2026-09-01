@@ -201,7 +201,7 @@ fn project(
         columns: sources.iter().map(|&i| resolved.columns[i].clone()).collect(),
         notes: sources.iter().map(|&i| resolved.notes[i].clone()).collect(),
         plans: sources.iter().map(|&i| resolved.plans[i].clone()).collect(),
-        comparisons: sources.iter().map(|&i| resolved.comparisons[i]).collect(),
+        comparisons: sources.iter().map(|&i| resolved.comparisons[i].clone()).collect(),
     };
     Ok((projected, field_targets))
 }

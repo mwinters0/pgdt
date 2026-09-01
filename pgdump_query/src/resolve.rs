@@ -829,8 +829,8 @@ mod tests {
                 ComparisonPlan::Compared { kind: CompareKind::Int, divergence: None },
                 ComparisonPlan::text_diverging(crate::pgtype::OrderingDivergence::UnknownCollation),
                 ComparisonPlan::Compared {
-                    kind: CompareKind::Text,
-                    divergence: Some(crate::pgtype::OrderingDivergence::EnumLabels),
+                    kind: CompareKind::Enum(["sad".to_string()].into_iter().collect()),
+                    divergence: None,
                 },
                 // Nested, and a type this build never mapped: neither has an
                 // order here.

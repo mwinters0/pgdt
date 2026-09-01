@@ -78,7 +78,7 @@ determine the value from the dump alone, `interval` columns come back as
 strings. This is not a coverage gap we intend to close; it is a property of the
 format.
 
-### `numeric` with no precision is a string
+### `numeric` with no precision is a string, but it still filters as a number
 
 `numeric(10,2)` maps to `Decimal128(10,2)` — precision and scale are declared,
 so the mapping is exact. Bare `numeric` is arbitrary-precision and can also hold
@@ -87,6 +87,15 @@ comes back as a string. If you need it as a number, cast it downstream where you
 can choose what to do with the values that do not fit.
 
 Precision above 76 digits also falls back to a string (`Decimal256`'s limit).
+
+**The `<`, `<=`, `>` and `>=` operators are not fooled by that.** They compare
+such a column as a decimal, exactly as PostgreSQL does, over the digits the
+dump holds — so `--filter 'v>9'` keeps a row whose `v` is `100.00`, and `1.5`
+and `1.50` are one value however the file spelled them. Bare `numeric` also
+answers `Infinity`, `-Infinity` and `NaN` in those exact spellings. A
+`numeric(p,s)` column cannot hold an infinity at all — PostgreSQL rejects one
+under any precision — so a filter naming one there is refused rather than
+compared.
 
 ### `oid` is unsigned
 
@@ -108,7 +117,10 @@ those exact spellings and are parsed as such.
 ### `infinity` and `NaN` filter correctly even where the column cannot hold them
 
 `date`, `timestamp` and `timestamptz` accept `infinity` and `-infinity`;
-`numeric` accepts `NaN`. PostgreSQL gives all of these a place in the order —
+`numeric` accepts `NaN`, and a bare one accepts `Infinity` and `-Infinity` as
+well. Each type is held to its own spelling: `date` writes `infinity` and
+`numeric` writes `Infinity`, and neither answers to the other's.
+PostgreSQL gives all of these a place in the order —
 `-infinity` below every finite value, `infinity` above every one, `NaN` above
 `infinity` — and `<`, `<=`, `>` and `>=` answer them exactly, in the spelling
 each type writes.
@@ -375,6 +387,13 @@ An enum's labels are written into the dump, so an enum column maps to
 `Dictionary(Int32, Utf8)`. The exception is a dump taken with
 `--binary-upgrade`, which writes the labels differently — we read both forms, so
 this should be invisible to you. A genuinely empty enum falls back to a string.
+
+Because the labels come with their declaration order, `<`, `<=`, `>` and `>=`
+on an enum column order by that, which is what PostgreSQL does: on a type
+declared `('low','medium','high')`, `--filter 'level>low'` keeps the `medium`
+and `high` rows, not the alphabetical ones. A value that is not one of the
+declared labels is reported as a decode error rather than being compared, on
+either side of the operator.
 
 ### Domains resolve to their base type
 

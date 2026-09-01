@@ -121,7 +121,12 @@ pub enum NestedPlan {
 /// do not correspond: `text`, bare `numeric`, `interval` and `inet` all reach
 /// `Utf8View` and are four different comparisons, while `Decimal128` and
 /// `Decimal256` are one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// **Not `Copy`**, because two of its variants carry the column's own facts:
+/// an enum's labels, and whether a `numeric` column's typmod excludes the
+/// infinities. Nothing on the per-row path clones one — the kind is cloned
+/// once, into the `OrderTerm` the block's resolution builds.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompareKind {
     Bool,
     Int,
@@ -142,6 +147,27 @@ pub enum CompareKind {
     Uuid,
     Bytea,
     Text,
+    /// Arbitrary-precision decimal read straight out of the text the file
+    /// holds — a bare `numeric`, or one whose declared precision is past
+    /// `Decimal256`'s 76 digits. Held apart from [`Self::Decimal`] because
+    /// there is no scale to carry both sides to: `1.5` and `1.50` are one
+    /// value written two ways, and the comparison normalizes rather than
+    /// rescales.
+    ///
+    /// `infinities` says whether `Infinity`/`-Infinity` are values of the
+    /// column. Any typmod rejects an infinity (I34), so only the bare form
+    /// admits the spelling — the same shape as [`Self::UnsignedInt`], where a
+    /// variant exists to refuse a *literal* the values themselves could never
+    /// take.
+    Numeric {
+        infinities: bool,
+    },
+    /// An enum, compared by each label's position in the type's own
+    /// declaration order (I33) rather than by its text. The labels are
+    /// `TypeKind::Enum`'s, verbatim and in that order, which is what
+    /// `CREATE TYPE … AS ENUM (…)` writes and what a `--binary-upgrade`
+    /// dump's `ALTER TYPE … ADD VALUE` run is folded back into (I6).
+    Enum(Arc<[String]>),
 }
 
 /// How a comparison here differs from PostgreSQL's own for the same declared
@@ -154,9 +180,6 @@ pub enum OrderingDivergence {
     /// a server-side operator of its own. Never a *collatable* type: those
     /// get one of the two variants below, or no divergence at all.
     AsText,
-    /// An enum, compared by label text where PostgreSQL uses declaration
-    /// order.
-    EnumLabels,
     /// A collatable text column whose collation the file does not state: it
     /// carries no `COLLATE` clause and its type's default collation is the
     /// *database's*, which a plain dump never records (I32). Bytewise is
@@ -199,7 +222,7 @@ enum TypeCollation {
 /// Carried per column in [`crate::resolve::ResolvedSchema::comparisons`] and
 /// consumed by `crate::predicate`, which reads it instead of inspecting the
 /// Arrow type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum ComparisonPlan {
     /// Values decode through `kind` and compare by that order; `divergence`
     /// is `None` when the order is PostgreSQL's own.
@@ -211,13 +234,17 @@ pub enum ComparisonPlan {
 
 impl ComparisonPlan {
     /// The order PostgreSQL itself defines for this type.
-    const fn agrees(kind: CompareKind) -> Self {
+    fn agrees(kind: CompareKind) -> Self {
         Self::Compared { kind, divergence: None }
     }
 
     /// Bytewise over the text the file holds, which is not what PostgreSQL
     /// orders by — the answer for every *non-collatable* type this build maps
     /// to `Utf8View`. A collatable one goes through [`collated_text`].
+    ///
+    /// Deficiency register: `deficiency: KD7` — every remaining
+    /// text-held-type row of the register is this constant, and the detail is
+    /// `docs/design/architecture.md`'s "Ordering operators compare typed".
     pub(crate) const AS_TEXT: Self =
         Self::Compared { kind: CompareKind::Text, divergence: Some(OrderingDivergence::AsText) };
 
@@ -304,15 +331,20 @@ pub(crate) fn split_typmod(s: &str) -> (&str, Option<&str>) {
 /// same as arbitrary precision (I4: `NaN` is reachable through any numeric
 /// column regardless, and is a decode-time concern, not a mapping one).
 ///
-/// The `Utf8View` arms' comparison is the limitation that carries: such a
-/// column *orders* lexicographically under `<`/`>`, so `"9" < "10"` is false
-/// where PostgreSQL says true. The typed arms carry the column's own scale
-/// into the comparison, so both sides of one are unscaled integers.
+/// The `Utf8View` arms are still *ordered*, and that is the whole of what
+/// closes them: [`CompareKind::Numeric`] normalizes the text the file holds —
+/// sign, integer digits, fraction — and compares by value, which is
+/// `cmp_var_common`'s own order and is insensitive to trailing zeros (I33).
+/// The typed arms carry the column's own scale into the comparison instead,
+/// so both sides of one are unscaled integers.
 ///
-/// Deficiency register: `deficiency: KD7` — the detail is
-/// `docs/design/architecture.md`'s "Ordering operators compare typed".
+/// **Only the bare form admits an infinity.** `apply_typmod_special` rejects
+/// `±Infinity` under any typmod (I34), so the `p > 76` arm's column can hold
+/// a `NaN` and never an infinity — and accepting the spelling in a *filter's
+/// literal* there would accept a value the server refuses.
 fn map_numeric(typmod: Option<&str>) -> (DataType, ComparisonPlan) {
-    let Some(typmod) = typmod else { return (DataType::Utf8View, ComparisonPlan::AS_TEXT) };
+    let arbitrary = |infinities| ComparisonPlan::agrees(CompareKind::Numeric { infinities });
+    let Some(typmod) = typmod else { return (DataType::Utf8View, arbitrary(true)) };
     let mut parts = typmod.split(',').map(str::trim);
     let precision: Option<u8> = parts.next().and_then(|p| p.parse().ok());
     let scale: i8 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
@@ -320,7 +352,7 @@ fn map_numeric(typmod: Option<&str>) -> (DataType, ComparisonPlan) {
     match precision {
         Some(p) if p <= 38 => (DataType::Decimal128(p, scale), decimal),
         Some(p) if p <= 76 => (DataType::Decimal256(p, scale), decimal),
-        _ => (DataType::Utf8View, ComparisonPlan::AS_TEXT),
+        _ => (DataType::Utf8View, arbitrary(false)),
     }
 }
 
@@ -919,13 +951,15 @@ fn comparison_user_type(name: &str, collation: Option<&str>, types: &[TypeDef]) 
         // An enum with no labels resolves to no Arrow type at all, so no
         // column of it is ever asked how it compares.
         TypeKind::Enum { labels } if labels.is_empty() => ComparisonPlan::Refused,
-        // PostgreSQL orders an enum by *declaration* order and this compares
-        // the label text (I33). The labels are in hand here — `def.kind` holds
-        // them — and using them is the closure P11 owns.
-        TypeKind::Enum { .. } => ComparisonPlan::Compared {
-            kind: CompareKind::Text,
-            divergence: Some(OrderingDivergence::EnumLabels),
-        },
+        // PostgreSQL orders an enum by `pg_enum.enumsortorder`, which is
+        // assigned from *declaration* order (I33) — so the position of a
+        // label in this list is the order, and the label text is not. The
+        // labels are in hand here because the dump carries them verbatim,
+        // which is the whole reason the register is keyed on the declared
+        // type rather than on the Arrow one.
+        TypeKind::Enum { labels } => {
+            ComparisonPlan::agrees(CompareKind::Enum(labels.iter().cloned().collect()))
+        }
         // A domain compares as what it bottoms out at, through any chain,
         // which is the same recursion `resolve_declared_type` makes and is
         // finite for the same reason: PostgreSQL cannot create a cycle.
@@ -1571,10 +1605,10 @@ mod tests {
     #[test]
     fn the_register_answers_every_builtin_scalar() {
         use CompareKind as K;
-        let text = ComparisonPlan::AS_TEXT;
+        let text = || ComparisonPlan::AS_TEXT;
         let unknown_collation =
-            ComparisonPlan::text_diverging(OrderingDivergence::UnknownCollation);
-        let blank_padded = ComparisonPlan::text_diverging(OrderingDivergence::BlankPadded);
+            || ComparisonPlan::text_diverging(OrderingDivergence::UnknownCollation);
+        let blank_padded = || ComparisonPlan::text_diverging(OrderingDivergence::BlankPadded);
         for (declared, expected) in [
             ("smallint", agrees(K::Int)),
             ("integer", agrees(K::Int)),
@@ -1585,32 +1619,34 @@ mod tests {
             ("double precision", agrees(K::Float64)),
             ("numeric(10,2)", agrees(K::Decimal(2))),
             ("numeric(50,0)", agrees(K::Decimal(0))),
-            // The two `numeric` shapes with no Arrow decimal behind them.
-            ("numeric", text),
-            ("numeric(77,0)", text),
+            // The two `numeric` shapes with no Arrow decimal behind them, and
+            // the one place the register distinguishes them: a typmod rejects
+            // an infinity, so only the bare form admits the spelling (I34).
+            ("numeric", agrees(K::Numeric { infinities: true })),
+            ("numeric(77,0)", agrees(K::Numeric { infinities: false })),
             // The three collatable arms, each asked with no `COLLATE`
             // clause — which is the shape of every column in the tree today.
             // `name`'s type default is `C`, so it agrees where the other two
             // cannot; `character(n)` is blank-padded and diverges whatever
             // its collation.
-            ("text", unknown_collation),
-            ("character varying(10)", unknown_collation),
-            ("character(10)", blank_padded),
+            ("text", unknown_collation()),
+            ("character varying(10)", unknown_collation()),
+            ("character(10)", blank_padded()),
             ("name", agrees(K::Text)),
             ("date", agrees(K::Date)),
             ("timestamp without time zone", agrees(K::Timestamp { with_tz: false })),
             ("timestamp with time zone", agrees(K::Timestamp { with_tz: true })),
             ("time without time zone", agrees(K::Time)),
-            ("time with time zone", text),
-            ("interval", text),
+            ("time with time zone", text()),
+            ("interval", text()),
             ("uuid", agrees(K::Uuid)),
             ("bytea", agrees(K::Bytea)),
-            ("json", text),
-            ("jsonb", text),
-            ("inet", text),
-            ("cidr", text),
-            ("macaddr", text),
-            ("macaddr8", text),
+            ("json", text()),
+            ("jsonb", text()),
+            ("inet", text()),
+            ("cidr", text()),
+            ("macaddr", text()),
+            ("macaddr8", text()),
         ] {
             assert_eq!(comparison_for(declared, None, &[]), expected, "{declared}");
         }
@@ -1623,21 +1659,23 @@ mod tests {
     }
 
     /// Four unrelated declared types reach `Utf8View`, which is why the
-    /// register cannot be keyed on the Arrow type: the enum is a *different*
-    /// divergence from the text one, and `numeric` and `interval` are the
-    /// same divergence for reasons a user is told apart by the declared type
-    /// (`crate::predicate::OrderingNote::message`).
+    /// register cannot be keyed on the Arrow type: an enum compares by
+    /// declaration order, a bare `numeric` by decimal value, `interval`
+    /// bytewise for want of an implementation, and `text` bytewise with the
+    /// column's own collation deciding whether that is right.
     #[test]
     fn the_register_tells_apart_types_that_share_one_arrow_type() {
-        let types = [ty("public.mood", TypeKind::Enum { labels: vec!["sad".into(), "ok".into()] })];
+        let labels = ["sad".to_string(), "ok".to_string()];
+        let types = [ty("public.mood", TypeKind::Enum { labels: labels.to_vec() })];
         assert_eq!(
             comparison_for("public.mood", None, &types),
-            ComparisonPlan::Compared {
-                kind: CompareKind::Text,
-                divergence: Some(OrderingDivergence::EnumLabels),
-            }
+            ComparisonPlan::agrees(CompareKind::Enum(labels.iter().cloned().collect())),
         );
-        for declared in ["numeric", "interval", "json"] {
+        assert_eq!(
+            comparison_for("numeric", None, &[]),
+            ComparisonPlan::agrees(CompareKind::Numeric { infinities: true }),
+        );
+        for declared in ["interval", "json"] {
             assert_eq!(comparison_for(declared, None, &[]), ComparisonPlan::AS_TEXT, "{declared}");
         }
         // `text` is the fourth, and it no longer shares `AS_TEXT` with them:
@@ -1657,29 +1695,29 @@ mod tests {
     /// verdict. **The comparison never moves — only the verdict does.**
     #[test]
     fn a_text_column_is_judged_by_the_collation_it_states() {
-        let agrees_text = ComparisonPlan::agrees(CompareKind::Text);
-        let unknown = ComparisonPlan::text_diverging(OrderingDivergence::UnknownCollation);
-        let named = ComparisonPlan::text_diverging(OrderingDivergence::NonBytewiseCollation);
+        let agrees_text = || ComparisonPlan::agrees(CompareKind::Text);
+        let unknown = || ComparisonPlan::text_diverging(OrderingDivergence::UnknownCollation);
+        let named = || ComparisonPlan::text_diverging(OrderingDivergence::NonBytewiseCollation);
         for (declared, collation, expected) in [
             // No clause: the type's own default decides, and only `name`'s is
             // `C` (I37).
-            ("text", None, unknown),
-            ("character varying(10)", None, unknown),
-            ("name", None, agrees_text),
+            ("text", None, unknown()),
+            ("character varying(10)", None, unknown()),
+            ("name", None, agrees_text()),
             // An explicit clause overrides it in both directions.
-            ("text", Some("pg_catalog.\"C\""), agrees_text),
-            ("text", Some("pg_catalog.\"POSIX\""), agrees_text),
-            ("text", Some("pg_catalog.\"en_US.utf8\""), named),
-            ("text", Some("public.mycoll"), named),
-            ("name", Some("pg_catalog.\"en_US.utf8\""), named),
+            ("text", Some("pg_catalog.\"C\""), agrees_text()),
+            ("text", Some("pg_catalog.\"POSIX\""), agrees_text()),
+            ("text", Some("pg_catalog.\"en_US.utf8\""), named()),
+            ("text", Some("public.mycoll"), named()),
+            ("name", Some("pg_catalog.\"en_US.utf8\""), named()),
             // Unqualified, as a hand-written dump might spell it.
-            ("text", Some("\"C\""), agrees_text),
+            ("text", Some("\"C\""), agrees_text()),
             // An unquoted `C` is the collation `c`, which is not the built-in
             // one — the server folds it the same way, and answering "agrees"
             // here is the one direction of error this register must not make.
-            ("text", Some("C"), named),
+            ("text", Some("C"), named()),
             // Nor is a `"C"` some other schema happens to define.
-            ("text", Some("public.\"C\""), named),
+            ("text", Some("public.\"C\""), named()),
             // `character(n)` never consults the clause: it is blank-padded
             // (I38), which `COLLATE "C"` does not fix.
             (
@@ -1715,22 +1753,22 @@ mod tests {
             ty("public.dom_plain", TypeKind::domain("text")),
             ty("public.dom_over_c", TypeKind::domain("public.dom_c")),
         ];
-        let agrees_text = ComparisonPlan::agrees(CompareKind::Text);
-        let unknown = ComparisonPlan::text_diverging(OrderingDivergence::UnknownCollation);
-        let named = ComparisonPlan::text_diverging(OrderingDivergence::NonBytewiseCollation);
+        let agrees_text = || ComparisonPlan::agrees(CompareKind::Text);
+        let unknown = || ComparisonPlan::text_diverging(OrderingDivergence::UnknownCollation);
+        let named = || ComparisonPlan::text_diverging(OrderingDivergence::NonBytewiseCollation);
 
-        assert_eq!(comparison_for("public.dom_c", None, &types), agrees_text);
-        assert_eq!(comparison_for("public.dom_plain", None, &types), unknown);
+        assert_eq!(comparison_for("public.dom_c", None, &types), agrees_text());
+        assert_eq!(comparison_for("public.dom_plain", None, &types), unknown());
         // Through a chain, like every other domain answer.
-        assert_eq!(comparison_for("public.dom_over_c", None, &types), agrees_text);
+        assert_eq!(comparison_for("public.dom_over_c", None, &types), agrees_text());
         // The column's clause wins over the domain's, both ways round.
         assert_eq!(
             comparison_for("public.dom_c", Some("pg_catalog.\"en_US.utf8\""), &types),
-            named
+            named()
         );
         assert_eq!(
             comparison_for("public.dom_plain", Some("pg_catalog.\"C\""), &types),
-            agrees_text
+            agrees_text()
         );
     }
 

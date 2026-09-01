@@ -41,3 +41,38 @@ and a partial earlier pass leaves blocks that can never be back-filled.
 **Origin.** 2026-08-26. See
 [`architecture.md`](architecture.md), "The array shape census" and "What the
 census decides, and who may believe it".
+
+---
+
+## A column's order and its Arrow type have come apart, and `ResolvedSchema` carries the order separately
+
+**Fact.** `ResolvedSchema::comparisons` is a per-column `ComparisonPlan` whose
+`CompareKind` says how two of that column's *field texts* order, and it no
+longer follows the Arrow type. Two columns held as strings now have a real
+order: a bare `numeric` (`Utf8View`) compares as an arbitrary-precision
+decimal, and an enum (`Dictionary(Int32, Utf8)`) compares by the declaration
+order the dump carries. Both are exactly PostgreSQL's own order (I33, I34).
+Four rows of the register still order bytewise where the server does not — a
+`text` column whose collation the file does not state or states as something
+other than `C`/`POSIX`, `character(n)`, and the text-held types — and each of
+those says so through `TableStream::ordering_notes`.
+
+**Why P10 cares.** `roadmap.md`'s P12 section justifies its own position with
+"a per-row-group minimum over a `Utf8View` column is a lexicographic bound
+where a typed one is a real one", which reads as though the Arrow type decides
+whether a statistic is meaningful. It does not any more. A min/max over a bare
+`numeric` or an enum column can be a *real* bound taken with the column's own
+comparison before that column ever gains a narrower Arrow type — and, in the
+other direction, a `text` column's lexicographic bound is knowably wrong for
+the server's order on exactly the four rows the register marks divergent, which
+is the same question P10 has to answer for pruning soundness. `comparisons` is
+the vector that answers "is a bound over this column sound", and it is filled
+by `resolve_columns` at L2, one per column, cut by `stream::project` with the
+rest.
+
+**Origin.** 11.4, 2026-09-01. See
+[`architecture.md`](architecture.md), "Ordering operators compare typed", whose
+table is the register, and
+[`roadmap-P11.4-enum-and-bare-numeric-notes.md`](roadmap-P11.4-enum-and-bare-numeric-notes.md).
+**Contingent on** the register's remaining divergent rows: 11.5 and 11.6 close
+more of them, so re-read the table rather than trusting this list of four.
