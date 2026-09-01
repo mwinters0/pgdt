@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict KdebOpzE1q7o5VdBvanyz5SzlAbkcHbQsxNskmX9bt5cBvOAdSgJ1VnDkVnbEAf
+\restrict MewerNm1gcMojnlAwqyywKkjpnfJVUJWmFovYgEisJSNeplHuRAsgA1biQ1tQbZ
 
 -- Dumped from database version 17.11 (Debian 17.11-1.pgdg13+2)
 -- Dumped by pg_dump version 17.11 (Debian 17.11-1.pgdg13+2)
@@ -150,9 +150,9 @@ ALTER TABLE public.widgets OWNER TO postgres;
 --
 
 COPY logs.events (event_id, widget_id, message, logged_at) FROM stdin;
-100	1	created	2026-08-31 23:53:36.572326+00
-101	2	\N	2026-08-31 23:53:36.572326+00
-102	3	updated\twith a tab char	2026-08-31 23:53:36.572326+00
+100	1	created	2026-09-01 00:11:47.067454+00
+101	2	\N	2026-09-01 00:11:47.067454+00
+102	3	updated\twith a tab char	2026-09-01 00:11:47.067454+00
 \.
 
 
@@ -397,5 +397,5 @@ ALTER TABLE ONLY logs.events
 -- PostgreSQL database dump complete
 --
 
-\unrestrict KdebOpzE1q7o5VdBvanyz5SzlAbkcHbQsxNskmX9bt5cBvOAdSgJ1VnDkVnbEAf
+\unrestrict MewerNm1gcMojnlAwqyywKkjpnfJVUJWmFovYgEisJSNeplHuRAsgA1biQ1tQbZ
 

@@ -325,10 +325,13 @@ async fn a_divergent_comparison_is_reported_by_the_stream() {
     }
 }
 
-/// One assertion per column of `public.t_collate`, which is the whole of
-/// what a real dump can say about the collation rule.
+/// One assertion per reachable column of `public.t_collate`, which is the
+/// whole of what a real dump can say about the collation rule. `v_gen_nn` is
+/// the one column of that table absent from here: it is `STORED` generated,
+/// so the dump omits it from `COPY` and no stream can reach it — its
+/// assertion is in `tests/preamble.rs`, over `DatabaseMetadata`.
 ///
-/// Two of the five are *silences*, and they are the half no unit test can
+/// Two of the seven are *silences*, and they are the half no unit test can
 /// stand in for: `pg_dump` writes a `COLLATE` clause only where the column's
 /// collation differs from its type's default (I37), so `v_name` and
 /// `v_domain_c` carry none — the first because `name`'s type default is `C`,
@@ -341,14 +344,24 @@ async fn a_divergent_comparison_is_reported_by_the_stream() {
 /// the register must still call it divergent. `pg_dump` writes it unquoted —
 /// `pg_catalog.ucs_basic` — which is also the shape `collation_is_bytewise`
 /// must not fold to `"C"`.
+///
+/// `v_text_def` is the *placement* case: its clause is written after the
+/// `DEFAULT` rather than beside the type (I37), so a register that read only
+/// the token following the type words would call it unknown. `v_user` is the
+/// conservative answer made concrete — the same dump declares
+/// `public.c_collation` as `locale = 'C'`, and it is still reported divergent,
+/// because the collation is not in `pg_catalog` and nothing stops a user
+/// defining a non-bytewise one named `"C"` of their own.
 #[tokio::test]
 async fn a_collated_column_is_judged_by_its_clause() {
     for (column, divergence) in [
         ("v_text_c", None),
         ("v_name", None),
         ("v_domain_c", None),
+        ("v_text_def", None),
         ("v_text_locale", Some(OrderingDivergence::NonBytewiseCollation)),
         ("v_text_ucs", Some(OrderingDivergence::NonBytewiseCollation)),
+        ("v_user", Some(OrderingDivergence::NonBytewiseCollation)),
     ] {
         let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
         let mut stream = table_stream(
@@ -381,16 +394,18 @@ async fn a_collated_column_is_judged_by_its_clause() {
     }
 }
 
-/// The five columns hold one alphabet, so the note is the only thing that
-/// separates them: every one answers bytewise, including the two the note
-/// says PostgreSQL would order differently. `_x` surviving `> B` is the
-/// divergence made concrete — underscore is above `B` in ASCII and is ignored
-/// at glibc's primary level, where the server ranks it below.
+/// The seven reachable columns hold one alphabet, so the note is the only
+/// thing that separates them: every one answers bytewise, including the three
+/// the note says PostgreSQL would order differently. `_x` surviving `> B` is
+/// the divergence made concrete — underscore is above `B` in ASCII and is
+/// ignored at glibc's primary level, where the server ranks it below.
 #[tokio::test]
 async fn every_collation_answers_the_same_bytewise_row_set() {
     let expected: Vec<Option<String>> =
         ["a", "é", "f", "_x", "ax"].iter().map(|v| Some(v.to_string())).collect();
-    for column in ["v_text_c", "v_text_locale", "v_text_ucs", "v_name", "v_domain_c"] {
+    for column in
+        ["v_text_c", "v_text_locale", "v_text_ucs", "v_name", "v_domain_c", "v_text_def", "v_user"]
+    {
         assert_eq!(
             kept("public.t_collate", column, vec![term(column, PredicateOp::Gt, "B")]).await,
             expected,

@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict HFI8gr7MQ2Uxk3nDrXpA7yVaK0LXu2mVlFNf3cLivHF38C0x4VFQf8BsG7KbWsa
+\restrict jCahgeGeqUNGjyvY9KgLB7fJnLZORarrzpfWWktnZX3kpqPsc7nFOvvcJa2xKGT
 
 -- Dumped from database version 17.11 (Debian 17.11-1.pgdg13+2)
 -- Dumped by pg_dump version 17.11 (Debian 17.11-1.pgdg13+2)
@@ -18,6 +18,15 @@ SET check_function_bodies = false;
 SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
+
+--
+-- Name: c_collation; Type: COLLATION; Schema: public; Owner: postgres
+--
+
+CREATE COLLATION public.c_collation (provider = libc, locale = 'C');
+
+
+ALTER COLLATION public.c_collation OWNER TO postgres;
 
 --
 -- Name: intarr; Type: DOMAIN; Schema: public; Owner: postgres
@@ -341,7 +350,11 @@ CREATE TABLE public.t_collate (
     v_text_ucs text COLLATE pg_catalog.ucs_basic,
     v_name name,
     v_domain_c public.text_c,
-    v_pair public.collated_pair
+    v_pair public.collated_pair,
+    v_text_def text DEFAULT 'x'::text COLLATE pg_catalog."C",
+    v_user text COLLATE public.c_collation,
+    v_src text,
+    v_gen_nn text GENERATED ALWAYS AS (upper(COALESCE(v_src, ''::text))) STORED NOT NULL COLLATE pg_catalog."C"
 );
 
 
@@ -672,16 +685,16 @@ COPY public.t_bytea (id, v_bytea) FROM stdin;
 -- Data for Name: t_collate; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
-COPY public.t_collate (id, v_text_c, v_text_locale, v_text_ucs, v_name, v_domain_c, v_pair) FROM stdin;
-1	A	A	A	A	A	(A,A)
-2	a	a	a	a	a	(a,a)
-3	B	B	B	B	B	(B,B)
-4	é	é	é	é	é	(é,é)
-5	f	f	f	f	f	(f,f)
-6	_x	_x	_x	_x	_x	(_x,_x)
-7	ax	ax	ax	ax	ax	(ax,ax)
-8						("","")
-9	\N	\N	\N	\N	\N	\N
+COPY public.t_collate (id, v_text_c, v_text_locale, v_text_ucs, v_name, v_domain_c, v_pair, v_text_def, v_user, v_src) FROM stdin;
+1	A	A	A	A	A	(A,A)	A	A	A
+2	a	a	a	a	a	(a,a)	a	a	a
+3	B	B	B	B	B	(B,B)	B	B	B
+4	é	é	é	é	é	(é,é)	é	é	é
+5	f	f	f	f	f	(f,f)	f	f	f
+6	_x	_x	_x	_x	_x	(_x,_x)	_x	_x	_x
+7	ax	ax	ax	ax	ax	(ax,ax)	ax	ax	ax
+8						("","")			
+9	\N	\N	\N	\N	\N	\N	\N	\N	\N
 \.
 
 
@@ -1143,5 +1156,5 @@ ALTER TABLE ONLY public.t_uuid
 -- PostgreSQL database dump complete
 --
 
-\unrestrict HFI8gr7MQ2Uxk3nDrXpA7yVaK0LXu2mVlFNf3cLivHF38C0x4VFQf8BsG7KbWsa
+\unrestrict jCahgeGeqUNGjyvY9KgLB7fJnLZORarrzpfWWktnZX3kpqPsc7nFOvvcJa2xKGT
 

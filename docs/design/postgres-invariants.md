@@ -2089,12 +2089,20 @@ is always `fmtQualifiedDumpable`'s output: schema-qualified and quoted where
 quoting is needed, so `pg_catalog."C"`, `pg_catalog."en_US.utf8"`,
 `public.mycoll` — never a bare `C`.
 
-Three consequences a reader depends on:
+Four consequences a reader depends on:
 
 - **The clause is not adjacent to the type.** In a `CREATE TABLE` column it is
   appended *after* `DEFAULT`/`GENERATED` and after `NOT NULL`, so a parser that
   looks at the token following the type words finds nothing. In a `CREATE
   DOMAIN` and a composite attribute it does directly follow the type.
+- **What can sit between the type and the clause is version-dependent, and
+  v18 widened it.** Through v17 the column emission is
+  `[GENERATED ALWAYS AS (expr) STORED | DEFAULT expr]` then `[NOT NULL]`. v18
+  adds three shapes to that window: a *named* not-null constraint,
+  `CONSTRAINT <name> NOT NULL`; a following `NO INHERIT`; and a **virtual**
+  generated column, `GENERATED ALWAYS AS (expr)` with no `STORED`. A parser
+  built from the v13-v17 shapes alone meets a v18 dump it does not describe.
+  Two of the three have no fixture — see the scope limit below.
 - **Its absence is a fact about the type, not about the column.** The four
   collatable built-ins split two ways: `text`, `varchar` and `bpchar` have
   `typcollation = default`, so a bare column of one is on the database's
@@ -2114,7 +2122,12 @@ to zero where it matches the type's default:
   attcollations cheaply"*, and whose emission — `appendPQExpBuffer(q, " COLLATE
   %s", fmtQualifiedDumpable(coll))` — sits under the comment `/* Add collation
   if not default for the type */`, after the `DEFAULT`/`GENERATED` and
-  `NOT NULL` appends.
+  `NOT NULL` appends. Those two appends are where v18 differs: its
+  `print_default` branch has a third arm for `ATTRIBUTE_GENERATED_VIRTUAL`
+  (`" GENERATED ALWAYS AS (%s)"`, no `STORED`), and its `print_notnull` branch
+  writes `" CONSTRAINT %s NOT NULL"` when `notnull_constrs[j]` is non-empty
+  and appends `" NO INHERIT"` when `notnull_noinh[j]`. v17's is a bare
+  `appendPQExpBufferStr(q, " NOT NULL")` with no branch at all.
 - `dumpDomain`: `/* Print collation only if different from base type's
   collation */`, emitted directly after `CREATE DOMAIN %s AS %s`.
 - `dumpCompositeType`: `/* Add collation if not default for the column type */`,
@@ -2128,6 +2141,7 @@ to zero where it matches the type's default:
 `fixtures/<13–18>/types/default.sql` is what each of the six servers wrote:
 
 ```
+CREATE COLLATION public.c_collation (provider = libc, locale = 'C');
 CREATE TYPE public.collated_pair AS (
 	plain text,
 	c text COLLATE pg_catalog."C"
@@ -2140,25 +2154,31 @@ CREATE TABLE public.t_collate (
     v_text_ucs text COLLATE pg_catalog.ucs_basic,
     v_name name,
     v_domain_c public.text_c,
-    v_pair public.collated_pair
+    v_pair public.collated_pair,
+    v_text_def text DEFAULT 'x'::text COLLATE pg_catalog."C",
+    v_user text COLLATE public.c_collation,
+    v_src text,
+    v_gen_nn text GENERATED ALWAYS AS (upper(COALESCE(v_src, ''::text))) STORED NOT NULL COLLATE pg_catalog."C"
 );
 ```
 
-Three things are visible there and nowhere else in the tree. The reference is
+Four things are visible there and nowhere else in the tree. The reference is
 schema-qualified and quoted **only where quoting is needed** — `pg_catalog."C"`
-against `pg_catalog.ucs_basic`. The two bare columns are exactly the two whose
+against `pg_catalog.ucs_basic` — and `v_user` shows the same rule for a
+collation outside `pg_catalog`, unquoted because `c_collation` needs no
+quoting. The two bare columns are exactly the two whose
 collation is their type's own default: `name`'s is `C`, and `v_domain_c`'s is
 the domain's own clause, which the `CREATE DOMAIN` carries instead. And the
 composite's attribute clause sits directly after its type, as the domain's
 does.
 
-**One consequence is still a one-off probe**: the *placement* inside a table
-column, after `DEFAULT`/`GENERATED` and after `NOT NULL`, which no committed
-fixture carries because no collated fixture column has either. On
-`postgres:16.15-trixie` a column declared `v_char_c character(10) NOT NULL
-DEFAULT 'x' COLLATE "C"` dumped as `v_char_c character(10) DEFAULT 'x'::bpchar
-NOT NULL COLLATE pg_catalog."C"`; the container is gone, and the source greps
-below are what stands behind it at all six majors.
+**The displacement is in those bytes too, at all six majors.** Each of the
+three clauses above was written in canonical input position, directly after
+the type; `pg_dump` moved the two with a constraint behind them to the end of
+the fragment. `v_text_def` shows one displacer and `v_gen_nn` shows the whole
+v13-v17 stack — `GENERATED ALWAYS AS (expr) STORED`, then `NOT NULL`, then the
+clause, with a nested call and a quoted literal inside the expression. Both
+lines are byte-identical across 13.23 through 18.6.
 
 **Scope limit.** There is a **fourth** `COLLATE %s` emission,
 `createDummyViewAsClause`'s `NULL::<type> COLLATE <coll> AS <name>`, written
@@ -2167,15 +2187,26 @@ is inside a `CREATE VIEW`, which is not one of the five statement shapes the
 preamble grammar triggers on, so it never reaches a column definition — but a
 count of `COLLATE %s` in `pg_dump.c` finds four, not three.
 
+**Two of the three v18-only shapes have no fixture**, and that is a coverage
+statement rather than a defect: `CONSTRAINT <name> NOT NULL`/`NO INHERIT` and
+a virtual `GENERATED` rest on the source reading above alone. Neither can be
+fixtured until the generator can run version-conditional schema SQL — it
+conditions dump *flag sets* on version, but one schema `.sql` runs against
+every major, so an 18-only DDL shape fails on 13-17. The row is in
+[`pg-dump-compatibility.md`](pg-dump-compatibility.md).
+
 Beyond that, the entry says nothing about which collations *exist* on a server,
 nor about what a named collation orders like: `pg_collation.collversion` is the
-server's own notion of that, and no dump carries it (I32). Nor does it cover
-`CREATE COLLATION` itself, which `pg_dump` emits as an ordinary object.
+server's own notion of that, and no dump carries it (I32). `CREATE COLLATION`
+itself `pg_dump` emits as an ordinary object — `fixtures/<13-18>/types/*.sql`
+carry `public.c_collation`, and this entry says nothing about that statement's
+own grammar.
 
 **Verified against.** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 — all six
 carry the same three comments and four `COLLATE %s` emissions, and in all six
-the column emission follows the `GENERATED`/`DEFAULT`/`NOT NULL` appends.
-Observed on 16.15.
+the column emission follows the `GENERATED`/`DEFAULT`/`NOT NULL` appends. The
+placement and every form above are observed in the committed fixtures at all
+six; the two v18-only window shapes are read from v18.6's source only.
 
 **Relied on by.** `crate::preamble`'s `extract_collation` (the placement and the
 form) and `ColumnDef::collation`/`TypeKind::Domain::collation`; the comparison
@@ -2187,12 +2218,42 @@ the type's default.
 ```sh
 grep -n -B2 'COLLATE %s' \
   /mnt/wd12t/upstream/postgres/release-v<N>/src/bin/pg_dump/pg_dump.c
+grep -n -B32 'Add collation if not default for the type' \
+  /mnt/wd12t/upstream/postgres/release-v<N>/src/bin/pg_dump/pg_dump.c
 grep -n -A6 "typname => 'name'" \
   /mnt/wd12t/upstream/postgres/release-v<N>/src/include/catalog/pg_type.dat
 psql -c "select typname, typcollation::regtype from pg_type
          where typname in ('text','varchar','bpchar','name')"
-grep -n -A9 'CREATE TABLE public.t_collate' fixtures/*/types/default.sql
+grep -n -A13 'CREATE TABLE public.t_collate' fixtures/*/types/default.sql
 ```
+
+The last of those re-verifies the placement from committed bytes at the six
+majors we generate. **For a seventh — a newly released major, before any
+fixture for it exists, which is when this ritual actually fires — the probe
+below answers the same question in about twenty seconds** and needs nothing but
+the image:
+
+```sh
+sudo docker run -d --name i37 --memory 512m -e POSTGRES_HOST_AUTH_METHOD=trust \
+  postgres:<N>-trixie
+# pg_isready can answer from the image's transient init instance, so retry
+# the first DDL-capable command rather than trusting it.
+until sudo docker exec i37 createdb -U postgres probe; do sleep 1; done
+sudo docker exec -i i37 psql -U postgres -d probe -v ON_ERROR_STOP=1 <<'SQL'
+CREATE TABLE t (
+    v_def  text COLLATE "C" DEFAULT 'x',
+    v_nn   text COLLATE "C" NOT NULL,
+    v_both character(10) COLLATE "C" DEFAULT 'x' NOT NULL,
+    v_gen  text COLLATE "C" GENERATED ALWAYS AS (upper(v_nn)) STORED NOT NULL
+);
+SQL
+sudo docker exec i37 pg_dump -U postgres probe | grep -A6 'CREATE TABLE public.t'
+sudo docker rm -f i37
+```
+
+Every clause goes in directly after its type; each one that comes back at the
+end of its fragment is the placement claim holding for that major, and whatever
+sits between is the window this entry has to describe.
 
 ---
 

@@ -10,7 +10,7 @@ use pgdump_query::preamble::{ColumnDef, TypeDef, TypeKind};
 use pgdump_query::{DatabaseMetadata, LocalFileSource, ScanOptions, build_index};
 
 mod common;
-use common::{edge_cases_fixture, multidb_fixture, types_fixture};
+use common::{VERSIONS, edge_cases_fixture, multidb_fixture, types_fixture};
 
 async fn single_database(path: &Path) -> DatabaseMetadata {
     let source = LocalFileSource::open(path).unwrap();
@@ -281,6 +281,59 @@ async fn data_only_dump_has_no_ddl_but_still_reports_versions() {
         assert!(db.types.is_empty(), "pg_dump {version}");
         assert!(db.server_version.is_some(), "pg_dump {version}");
         assert!(db.pg_dump_version.is_some(), "pg_dump {version}");
+    }
+}
+
+/// `public.t_collate`'s whole column list, at every major, with each
+/// `COLLATE` clause exactly as the dump wrote it.
+///
+/// This is where the *displaced* clause is asserted. `pg_dump` appends
+/// `COLLATE` after `DEFAULT`/`GENERATED` and after `NOT NULL` (I37), whatever
+/// the input said, so a parser that read the token following the type words
+/// would find `DEFAULT` on `v_text_def` and `GENERATED` on `v_gen_nn`. All
+/// six majors write these eleven lines byte for byte alike.
+///
+/// **`v_gen_nn` can be asserted nowhere else.** It is `STORED` generated, so
+/// its DDL is written and the `COPY` column list omits it — a declared column
+/// with no data column, which no `TableStream` can filter or project. It is
+/// also the tree's only fragment stacking all three displacers, and the only
+/// real-dump stress on `extract_collation`'s paren- and quote-aware scan: the
+/// clause sits outside `upper(COALESCE(v_src, ''::text))`, past two nesting
+/// levels and a quoted literal.
+///
+/// `v_user` is the user-collation reference form — schema-qualified,
+/// unquoted, outside `pg_catalog`. Kept verbatim, because that is L1's rule
+/// and because `pg_catalog."en_US.utf8"` above it has a dot *inside* the
+/// quoted name, so a pre-split `schema.name` pair would be ambiguous.
+#[tokio::test]
+async fn t_collate_carries_its_collate_clause_wherever_pg_dump_displaced_it() {
+    fn collated(name: &str, declared_type: &str, collation: &str) -> ColumnDef {
+        ColumnDef {
+            name: name.to_string(),
+            declared_type: declared_type.to_string(),
+            collation: Some(collation.to_string()),
+        }
+    }
+
+    for version in VERSIONS {
+        let db = single_database(&types_fixture(version, "default")).await;
+        assert_eq!(
+            db.tables.get("public.t_collate").unwrap(),
+            &vec![
+                ColumnDef::new("id", "integer"),
+                collated("v_text_c", "text", r#"pg_catalog."C""#),
+                collated("v_text_locale", "text", r#"pg_catalog."en_US.utf8""#),
+                collated("v_text_ucs", "text", "pg_catalog.ucs_basic"),
+                ColumnDef::new("v_name", "name"),
+                ColumnDef::new("v_domain_c", "public.text_c"),
+                ColumnDef::new("v_pair", "public.collated_pair"),
+                collated("v_text_def", "text", r#"pg_catalog."C""#),
+                collated("v_user", "text", "public.c_collation"),
+                ColumnDef::new("v_src", "text"),
+                collated("v_gen_nn", "text", r#"pg_catalog."C""#),
+            ],
+            "pg_dump {version}"
+        );
     }
 }
 

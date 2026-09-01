@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict 4QXmodDsy96TIbmjUf1L1MBstd1x6rKhBcIqvvgZiU7ZYceZrkezFgSxZpG2HJg
+\restrict MgW59VqkF4fa9fpHLFIrZw3uTjmNVtWaF66eaGUMdRqSgEBXR3QEwZFLpUlbMDJ
 
 -- Dumped from database version 16.15 (Debian 16.15-1.pgdg13+2)
 -- Dumped by pg_dump version 16.15 (Debian 16.15-1.pgdg13+2)
@@ -295,5 +295,5 @@ COPY public.spread (id, m) FROM stdin;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict 4QXmodDsy96TIbmjUf1L1MBstd1x6rKhBcIqvvgZiU7ZYceZrkezFgSxZpG2HJg
+\unrestrict MgW59VqkF4fa9fpHLFIrZw3uTjmNVtWaF66eaGUMdRqSgEBXR3QEwZFLpUlbMDJ
 

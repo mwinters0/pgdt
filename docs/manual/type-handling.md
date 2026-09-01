@@ -156,6 +156,13 @@ its type's own default, so:
   `text`, `varchar` or `char` column with **no** clause, whose collation is the
   database's and is the one thing a plain dump never records.
 
+Only `C` and `POSIX` from `pg_catalog` are answered exactly, by name. A
+collation of your own that happens to be bytewise — `CREATE COLLATION mycoll
+FROM "C"` — is still warned about, even though the dump that declares it says
+`locale = 'C'`: the rows are right and the warning is one you can ignore. The
+alternative would be pgdq deciding what a collation *does* from something other
+than its name, and getting that wrong silently returns the wrong rows.
+
 A filter that orders such a column says so, once per query, on stderr:
 
 ```sh

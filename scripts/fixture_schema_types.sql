@@ -197,6 +197,22 @@ CREATE DOMAIN public.text_c AS text COLLATE "C";
 -- it.
 CREATE TYPE public.collated_pair AS (plain text, c text COLLATE "C");
 
+-- A user-defined collation, so that the reference form pg_dump writes for one
+-- -- schema-qualified, unquoted, outside pg_catalog -- exists in a real dump
+-- rather than in a unit test's guess. It is `FROM "C"`, and the dump says so
+-- (`locale = 'C'`), which is the point: the register still answers
+-- NonBytewiseCollation for v_user below, because nothing stops a user defining
+-- a non-bytewise collation called "C" in their own schema and a wrong "agrees"
+-- is the one error it must not make. Do not "fix" that into agreement.
+CREATE COLLATION public.c_collation FROM "C";
+
+-- The COLLATE clause is written *after* DEFAULT/GENERATED and after NOT NULL
+-- in a table column (I37), wherever it was written in the input -- which is
+-- why extract_collation scans the whole fragment instead of looking at the
+-- token after the type. Every clause below is written in canonical input
+-- position, directly after the type; the dump displaces the three that have a
+-- constraint behind them, and that displacement is what these columns exist to
+-- put in committed bytes.
 CREATE TABLE public.t_collate (
     id integer PRIMARY KEY,
     v_text_c text COLLATE "C",
@@ -204,27 +220,50 @@ CREATE TABLE public.t_collate (
     v_text_ucs text COLLATE "ucs_basic",
     v_name name,
     v_domain_c public.text_c,
-    v_pair public.collated_pair
+    v_pair public.collated_pair,
+    v_text_def text COLLATE "C" DEFAULT 'x',
+    v_user text COLLATE public.c_collation,
+    v_src text,
+    -- All three displacers in one fragment, at no cost to the alphabet: a
+    -- STORED generated column is excluded from the COPY column list, so no row
+    -- has to hold a value for it and NOT NULL costs nothing. It is also the
+    -- only fixture stress on extract_collation's paren- and quote-aware scan,
+    -- the other generated fixture column being an integer with nothing after
+    -- its expression. COALESCE is load-bearing, not decoration: v_src carries
+    -- the alphabet including its NULL row, and upper(NULL) would violate the
+    -- NOT NULL -- it also nests the parens one deeper and puts a quoted
+    -- literal inside them, which is exactly what the scan must step over.
+    v_gen_nn text COLLATE "C" GENERATED ALWAYS AS (upper(COALESCE(v_src, ''))) STORED NOT NULL
 );
 
--- One alphabet, replicated across every column, so a filter over two of them
--- differs only by the collation. These are the values the comparison oracle
+-- One alphabet, replicated across every column that carries data, so a filter
+-- over two of them differs only by the collation. v_gen_nn is the sole
+-- exception and carries none: it is generated, so the server writes it and the
+-- dump omits it from COPY entirely.
+--
+-- These are the values the comparison oracle
 -- already answers on: A/a and a/B diverge because case is a lower-weight
 -- difference than letter, é/f because an accent sorts with its base letter,
 -- and _x/ax because punctuation is ignored at the primary level -- all on
 -- glibc 2.41. Do not "fix" them into placeholders: a set that could not
 -- separate the two orders would pass every note-level assertion and support no
 -- stronger one.
-INSERT INTO public.t_collate VALUES
-    (1, 'A', 'A', 'A', 'A', 'A', ROW('A', 'A')::public.collated_pair),
-    (2, 'a', 'a', 'a', 'a', 'a', ROW('a', 'a')::public.collated_pair),
-    (3, 'B', 'B', 'B', 'B', 'B', ROW('B', 'B')::public.collated_pair),
-    (4, 'é', 'é', 'é', 'é', 'é', ROW('é', 'é')::public.collated_pair),
-    (5, 'f', 'f', 'f', 'f', 'f', ROW('f', 'f')::public.collated_pair),
-    (6, '_x', '_x', '_x', '_x', '_x', ROW('_x', '_x')::public.collated_pair),
-    (7, 'ax', 'ax', 'ax', 'ax', 'ax', ROW('ax', 'ax')::public.collated_pair),
-    (8, '', '', '', '', '', ROW('', '')::public.collated_pair),
-    (9, NULL, NULL, NULL, NULL, NULL, NULL);
+--
+-- The column list is explicit because v_gen_nn is generated: a positional
+-- VALUES would try to supply it a value, which PostgreSQL refuses.
+INSERT INTO public.t_collate
+    (id, v_text_c, v_text_locale, v_text_ucs, v_name, v_domain_c, v_pair,
+     v_text_def, v_user, v_src)
+VALUES
+    (1, 'A', 'A', 'A', 'A', 'A', ROW('A', 'A')::public.collated_pair, 'A', 'A', 'A'),
+    (2, 'a', 'a', 'a', 'a', 'a', ROW('a', 'a')::public.collated_pair, 'a', 'a', 'a'),
+    (3, 'B', 'B', 'B', 'B', 'B', ROW('B', 'B')::public.collated_pair, 'B', 'B', 'B'),
+    (4, 'é', 'é', 'é', 'é', 'é', ROW('é', 'é')::public.collated_pair, 'é', 'é', 'é'),
+    (5, 'f', 'f', 'f', 'f', 'f', ROW('f', 'f')::public.collated_pair, 'f', 'f', 'f'),
+    (6, '_x', '_x', '_x', '_x', '_x', ROW('_x', '_x')::public.collated_pair, '_x', '_x', '_x'),
+    (7, 'ax', 'ax', 'ax', 'ax', 'ax', ROW('ax', 'ax')::public.collated_pair, 'ax', 'ax', 'ax'),
+    (8, '', '', '', '', '', ROW('', '')::public.collated_pair, '', '', ''),
+    (9, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
 
 CREATE TABLE public.t_json (
     id integer PRIMARY KEY,

@@ -2098,16 +2098,31 @@ collation `c`, which the built-in is not. Answering "agrees" wrongly is the one
 direction of error this register must not make, so anything it cannot resolve
 to the two built-ins diverges.
 
-**Two collations are bytewise in fact and divergent by this rule**, and that is
-the asymmetry costing what it is supposed to cost rather than a defect.
+**Some collations are bytewise in fact and divergent by this rule**, and that
+is the asymmetry costing what it is supposed to cost rather than a defect.
 `pg_catalog."ucs_basic"` is defined with `collcollate = C`, and glibc's
 `C.utf8` sorts by code point; both answer `'B' < 'a'` exactly as `C` does, and
-both are reported divergent because neither is named `C` or `POSIX`. Closing
-either would mean the register deciding a collation's *behaviour* from
-somewhere other than its name — for `ucs_basic` a second hardcoded name, for
-`C.utf8` a claim about a libc this file cannot see. The user's remedy is the
-one the warning already offers: the answers are right, and the note says the
-comparison is bytewise.
+both are reported divergent because neither is named `C` or `POSIX`. A
+**user-defined** collation is the same case at its sharpest: a dump can carry
+`CREATE COLLATION public.c_collation (provider = libc, locale = 'C')` and a
+column of it, saying in the same file that the collation is bytewise, and the
+register still answers `NonBytewiseCollation` — because the name is not in
+`pg_catalog`, and nothing stops a different user defining a non-bytewise
+collation of their own with any name at all. Closing any of these would mean
+the register deciding a collation's *behaviour* from somewhere other than its
+name — for `ucs_basic` a second hardcoded name, for `C.utf8` a claim about a
+libc this file cannot see, for a user's collation a second parser over
+`CREATE COLLATION` whose answer would still not cover an ICU or a provider
+this build does not model.
+
+**That is a property, not a deficiency, and the distinction is the row set.**
+What a spurious divergence produces is *correct rows* with an advisory note the
+user did not need: there is nothing to remedy and nothing to fix. `KD7` is the
+list of places the order genuinely differs from the server's, and this is the
+opposite shape — which is why a user collation earns no register entry and no
+oracle case. `fixtures/<13-18>/types/default.sql`'s `t_collate.v_user` is what
+stands in front of the cell, since "conservative and knowably wrong" is exactly
+the answer a later session is most tempted to improve.
 
 **`character(n)` never consults the clause**, and that is the sharp case. Its
 values are written blank-padded to `n` while `bpcharcmp` strips trailing blanks
@@ -2845,12 +2860,32 @@ means.
 clause, so they are read as "what a column that says nothing about its
 collation does", which is the *divergent* half of the register's collation rule.
 `t_collate` is the agreeing half — `COLLATE "C"`, a bare `name`, and a column
-of a domain declared `AS text COLLATE "C"` — plus the two clauses that must
-still diverge, `en_US.utf8` and `ucs_basic`. It also carries the only column in
+of a domain declared `AS text COLLATE "C"` — plus the clauses that must still
+diverge: `en_US.utf8`, `ucs_basic`, and `public.c_collation`, a user-defined
+collation the same dump declares as `locale = 'C'` and the register still calls
+non-bytewise. It also carries the only column in
 the tree whose type is a composite with a collated attribute, which is I37's
 third emission site and had rested on a source grep until this table existed.
 
-Its nine rows are one alphabet replicated across every column, so a filter over
+**Three of its columns exist for the clause's *placement* rather than its
+value.** `pg_dump` appends `COLLATE` after `DEFAULT`/`GENERATED` and after
+`NOT NULL` (I37) whatever the input said, so `v_text_def` (one displacer) and
+`v_gen_nn` (all three, plus a nested call and a quoted literal inside the
+generated expression) are what make that a committed fact at six majors instead
+of a hand-transcribed string, and `v_gen_nn` is the only real-dump stress on
+`extract_collation`'s paren- and quote-aware scan. `v_src` is `v_gen_nn`'s
+source, and the `COALESCE` in the generated expression is load-bearing: the
+alphabet's ninth row is NULL and `v_gen_nn` is `NOT NULL`.
+
+**`v_gen_nn` is asserted in `tests/preamble.rs`, not `tests/ordering.rs`,
+and the split is by reachability.** A `STORED` generated column is excluded
+from the `COPY` column list, which is exactly why `NOT NULL` costs the table
+nothing — no row has to hold a value for it — and equally why no
+`TableStream` can filter or project it. `DatabaseMetadata` is the only place it
+appears.
+
+Its nine rows are one alphabet replicated across every column that carries
+data, so a filter over
 two of them differs by nothing but the collation: `A`, `a`, `B`, `é`, `f`, `_x`,
 `ax`, the empty string and a NULL — the pairs the comparison oracle already
 answers as divergent on glibc 2.41. **Do not replace them with placeholders.**
