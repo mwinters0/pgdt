@@ -202,18 +202,22 @@ assignment is still the direct-connection one in `RestoreArchive()`.
 
 ---
 
-## I4 — COPY TEXT data is written with `DATESTYLE = ISO` and `extra_float_digits = 3`, but no `TimeZone` or `IntervalStyle`
+## I4 — COPY TEXT data is written with `DATESTYLE = ISO`, `INTERVALSTYLE = POSTGRES` and `extra_float_digits = 3`, but no `TimeZone`
 
 **Claim.** Temporal values in COPY TEXT are ISO-formatted, and `timestamptz`
-carries an explicit UTC offset — so the *instant* is unambiguous. The
-dump-time session's `TimeZone` is **not** recorded anywhere in the file, so the
-offset is whatever that session had (koji's is `+00`). `IntervalStyle` is
-never set, so an `interval` value's text is in the server's default style and
-is **not** determined by the file.
+carries an explicit UTC offset — so the *instant* is unambiguous. An
+`interval` value is in the **`postgres`** style, which `pg_dump` pins on its
+own connection exactly as it pins `DATESTYLE`, so the text a dump holds is
+`EncodeInterval`'s `INTSTYLE_POSTGRES` form and nothing else (I40 is the
+grammar). The dump-time session's `TimeZone` is **not** recorded anywhere in
+the file, so the offset is whatever that session had (koji's is `+00`).
 
-**Proof.** `pg_dump.c` runs `ExecuteSqlStatement(AH, "SET DATESTYLE = ISO")`
-and `SET extra_float_digits TO 3` (or the `--extra-float-digits` override) on
-the *source connection*. Neither statement is written into the dump:
+**Proof.** `pg_dump.c` runs `ExecuteSqlStatement(AH, "SET DATESTYLE = ISO")`,
+`ExecuteSqlStatement(AH, "SET INTERVALSTYLE = POSTGRES")` — under the comment
+*"Likewise, avoid using sql_standard intervalstyle"*, guarded at v13 by
+`AH->remoteVersion >= 80400`, which every supported server exceeds — and
+`SET extra_float_digits TO 3` (or the `--extra-float-digits` override) on the
+*source connection*. None of the three is written into the dump:
 `_doSetFixedOutputState()` in `pg_backup_archiver.c` emits `statement_timeout`,
 `lock_timeout`, `idle_in_transaction_session_timeout`, `transaction_timeout`,
 `client_encoding`, `standard_conforming_strings`, the search_path, ROLE,
@@ -224,13 +228,20 @@ the *source connection*. Neither statement is written into the dump:
 seconds trailing-trimmed to between 0 and 6 digits (`…10.41925+00`,
 `…52.27108+00`). Booleans render as `t`/`f`.
 
-**Verified against:** v18.6 source; koji (`pg_dump 16.14`) data.
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11 and v18.6 source
+— all six carry the `SET INTERVALSTYLE = POSTGRES` statement; koji
+(`pg_dump 16.14`) data. The committed fixtures are the behavioural half:
+`fixtures/<13–18>/types/default.sql` writes `1 year 2 mons 3 days 04:05:06`
+for a value inserted as `1 year 2 months 3 days 04:05:06`, which is the
+`postgres` style at every major.
 **Relied on by:** `architecture.md` ("Type resolution" — temporal mapping;
-`interval` left as a string), `docs/manual/type-handling.md`.
-**Re-verify:** `grep -n 'DATESTYLE\|extra_float_digits' src/bin/pg_dump/pg_dump.c`
-and `awk '/_doSetFixedOutputState\(ArchiveHandle/,/^}$/'
-src/bin/pg_dump/pg_backup_archiver.c` — confirm no `SET TimeZone` /
-`SET IntervalStyle` appears in the emitted output.
+`interval` left as a `Utf8View`, and "Ordering operators compare typed", whose
+`interval` comparison parses that one style), `docs/manual/type-handling.md`.
+**Re-verify:** `grep -n 'DATESTYLE\|INTERVALSTYLE\|extra_float_digits'
+src/bin/pg_dump/pg_dump.c` and `awk '/_doSetFixedOutputState\(ArchiveHandle/,/^}$/'
+src/bin/pg_dump/pg_backup_archiver.c` — confirm no `SET TimeZone` appears in
+the emitted output, and that the three settings above are on the source
+connection only.
 
 ---
 
@@ -1912,7 +1923,7 @@ awk '/^numeric_out\(PG_FUNCTION_ARGS\)/,/^}/' src/backend/utils/adt/numeric.c
 
 ---
 
-## I34 — `date`/`timestamp` infinities and `numeric` `NaN` are ordered values with one fixed spelling, and a typmod'd `numeric` cannot hold an infinity
+## I34 — `date`/`timestamp`/`interval` infinities and `numeric` `NaN` are ordered values with one fixed spelling, and a typmod'd `numeric` cannot hold an infinity
 
 **Claim.** Four properties, each about a value a healthy database can hold and
 `pg_dump` therefore writes:
@@ -1921,6 +1932,12 @@ awk '/^numeric_out\(PG_FUNCTION_ARGS\)/,/^}/' src/backend/utils/adt/numeric.c
   written in exactly those two spellings, lower case and unsigned-positive.
   Each type's own `<`/`>` places `-infinity` below and `infinity` above every
   finite value of that type, and each equals itself.
+- **`interval` gained the same two in v17**, in the same two spellings and with
+  the same order. It is the one of the four whose ordering is not an integer
+  comparison over a reserved range: `interval_cmp_value` collapses an
+  `Interval` to a 128-bit span (I40), and an infinite one has every field at
+  its own extreme, so the extreme span falls out of the arithmetic rather than
+  being special-cased.
 - **`numeric` has `NaN`**, written `NaN`, which orders **above** every non-NaN
   value — `Infinity` included — and equals itself.
 - **A `numeric(p,s)` column can hold `NaN` but never `±Infinity`.** The typmod
@@ -1929,6 +1946,9 @@ awk '/^numeric_out\(PG_FUNCTION_ARGS\)/,/^}/' src/backend/utils/adt/numeric.c
   column that resolves to a `Decimal128`/`Decimal256` can hold an infinity.
 - **`numeric` gained `±Infinity` in v14.** v13 has neither the values nor the
   rejection, so the previous property is vacuous there rather than different.
+  `interval`'s two arrived at v17 the same way — v13–v16 reject the literal
+  outright, which the oracle records as `E22007` and the cross-major differ
+  reads as additive (I35).
 
 **Proof.** The spellings are `src/include/utils/datetime.h`:
 
@@ -1937,9 +1957,12 @@ awk '/^numeric_out\(PG_FUNCTION_ARGS\)/,/^}/' src/backend/utils/adt/numeric.c
 #define LATE			"infinity"
 ```
 
-which `EncodeSpecialDate`/`EncodeSpecialTimestamp` are the only writers of, and
+which `EncodeSpecialDate`/`EncodeSpecialTimestamp` — and, from v17,
+`EncodeSpecialInterval` — are the only writers of, and
 `src/backend/utils/adt/numeric.c`'s `numeric_out`, which returns a literal
-`"Infinity"` / `"-Infinity"` / `"NaN"` before it formats anything.
+`"Infinity"` / `"-Infinity"` / `"NaN"` before it formats anything. The two
+families capitalize differently, and each type answers only to its own
+spelling.
 
 The order is the representation. `src/include/utils/date.h` says *"Infinity and
 minus infinity must be the max and min values of DateADT"* and defines
@@ -1967,13 +1990,16 @@ hold an infinite value.")`.
 **Scope limit.** Says nothing about `real`/`double precision`, whose three
 special values are IEEE's and are covered by I33. Says nothing about
 *materializing* one: this is the order, and no Arrow type gains a
-representation from it. `interval` also has infinities (v17+), but `interval`
-is held as text (`docs/manual/type-handling.md`), so it never reaches a typed
-comparison.
+representation from it — `interval` included, which is held as a `Utf8View`
+and whose infinities therefore reach a comparison and never a batch.
 
 **Verified against.** The spellings, `DATEVAL_*`, `DT_*` and the `cmp_numerics`
 comment are byte-identical in v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 and
-master. `apply_typmod_special` exists in v14 onward only. Confirmed live
+master. `apply_typmod_special` exists in v14 onward only, and
+`INTERVAL_NOBEGIN`/`INTERVAL_NOEND` in v17 onward only.
+`fixtures/<13–18>/oracle/comparisons.tsv` is the behavioural record for
+`interval`: every cell naming an infinity is `E22007` at 13–16 and an ordinary
+answer at 17–18. Confirmed live
 against the koji replica (PostgreSQL 16.15) on 2026-08-30: every one of
 `'infinity'::date > '2020-01-01'`, `'2020-01-01'::date > '-infinity'`,
 `'infinity'::timestamp > '2020-01-01'`, `'NaN'::numeric > 5`,
@@ -1983,8 +2009,8 @@ against the koji replica (PostgreSQL 16.15) on 2026-08-30: every one of
 
 **Relied on by.** `predicate.rs`'s `special_order_key` and `OrderKey`'s three
 non-finite variants — [`architecture.md`](architecture.md), "Ordering
-operators compare typed", whose `Date32`, `Timestamp` and `Decimal` register
-rows are *Agrees* only because of this.
+operators compare typed", whose `Date32`, `Timestamp`, `Decimal` and
+`interval` register rows are *Agrees* only because of this.
 
 **Re-verify.**
 
@@ -1993,6 +2019,8 @@ cd /mnt/wd12t/upstream/postgres/release-v<N>
 grep -n 'define EARLY\|define LATE' src/include/utils/datetime.h
 grep -n 'define DATEVAL_NOBEGIN\|define DATEVAL_NOEND' src/include/utils/date.h
 grep -n 'define DT_NOBEGIN\|define DT_NOEND' src/include/datatype/timestamp.h
+grep -n 'define INTERVAL_NOBEGIN\|define INTERVAL_NOEND' src/include/datatype/timestamp.h
+awk '/^EncodeSpecialInterval/,/^}/' src/backend/utils/adt/timestamp.c
 awk '/^timestamp_cmp_internal/,/^}/' src/backend/utils/adt/timestamp.c
 grep -n -A8 '^cmp_numerics' src/backend/utils/adt/numeric.c
 grep -n -A15 '^apply_typmod_special' src/backend/utils/adt/numeric.c
@@ -2417,4 +2445,115 @@ and, from the repo root, the behaviour the source predicts:
 
 ```sh
 grep -P '^oid\t-1\t' fixtures/*/oracle/literals.tsv
+```
+
+---
+
+## I40 — `interval`, `timetz` and the network types each have one output form and a comparison that is not byte order
+
+**Claim.** Four properties, one per family, and each is two halves: the text a
+dump can hold, and the order PostgreSQL puts two such values in.
+
+- **`interval`.** Written by `EncodeInterval` under `INTSTYLE_POSTGRES`, which
+  `pg_dump` pins (I4): an optional `<n> year[s]`, then `<n> mon[s]`, then
+  `<n> day[s]`, then an optional `[+|-]HH:MM:SS[.ffffff]` tail, single-space
+  separated, with a wholly-zero interval written `00:00:00`. A part is
+  suppressed when its value is zero; the unit takes an `s` whenever the value
+  is not exactly `1`, so `-1 days` is what a minus-one-day interval is written
+  as; and a part that is positive and *follows* a negative one carries a `+`.
+  The hour field is at least two digits and unbounded above; minutes and
+  seconds are exactly two. The order is `interval_cmp_value`: months collapse
+  to 30 days, days to 86400 seconds, and the result is a **128-bit**
+  microsecond span. So `1 mon`, `30 days` and `720:00:00` are one value, and
+  the collapse is what a text comparison cannot approximate.
+- **`time with time zone`.** Written as `HH:MM:SS[.ffffff]` followed by
+  `EncodeTimezone`'s `±HH[:MM[:SS]]` — minutes appended only when nonzero,
+  seconds only when nonzero. The stored `zone` is seconds **west** of GMT,
+  which is the negation of the sign displayed. `timetz_cmp_internal` sorts by
+  `time + zone * 1e6` — the UTC-equivalent instant — and breaks a tie on
+  `zone`, so two spellings of one instant are ordered rather than equal.
+- **`inet` and `cidr`.** Written by `pg_inet_net_ntop`, with `cidr_out`
+  appending `/bits` when the address form omitted it and `inet_out` not; so an
+  `inet` at its family's full width has no `/bits` and a `cidr` always does.
+  `network_cmp_internal` is family first (`PGSQL_AF_INET6` is
+  `PGSQL_AF_INET + 1`, so every IPv4 address sorts below every IPv6 one), then
+  `bitncmp` over the **shorter** of the two netmasks, then the netmask lengths,
+  then `bitncmp` over the family's full width. The middle step is what makes
+  this not a byte order: `10.1.0.0/8` sorts *below* `10.0.0.0/16`, because
+  their first eight bits agree and `8 < 16`.
+- **`macaddr` and `macaddr8`.** Written as six (resp. eight) lowercase hex
+  pairs joined by `:`. `macaddr_cmp_internal` and `macaddr8_cmp_internal`
+  compare the high half then the low half of the octets, which is the plain
+  byte order of the address.
+
+**Proof.** `src/backend/utils/adt/datetime.c`'s `EncodeInterval`
+(`case INTSTYLE_POSTGRES:`) and its `AddPostgresIntPart` helper, whose
+`sprintf` format is `"%s%s%lld %s%s"` — the leading space, the `+` under
+`(*is_before && value > 0)`, the value, the unit, and the `s` under
+`(value != 1)`. `EncodeTimezone` in the same file is the offset form.
+`src/backend/utils/adt/timestamp.c`:
+
+```c
+	days = interval->month * INT64CONST(30);
+	days += interval->day;
+	span = int64_to_int128(interval->time);
+	int128_add_int64_mul_int64(&span, days, USECS_PER_DAY);
+```
+
+v13's `interval_cmp_value` splits the time field into whole days and a
+remainder before doing the same sum, which is the identical value. `date.c`'s
+`timetz_cmp_internal` is the `t1 = time1->time + (time1->zone * USECS_PER_SEC)`
+comparison with the zone tiebreak, under the comment *"we only want to say
+that two timetz's are equal if both the time and zone parts are equal"*.
+`network.c` carries `network_cmp_internal`, `bitncmp` and `network_out`;
+`mac.c`/`mac8.c` carry the two `*_cmp_internal`.
+
+The behavioural half is committed rather than argued:
+`fixtures/<13–18>/oracle/comparisons.tsv` holds the server's own answer for
+every pair of each family's case list — 492 ordered pairs across the six
+majors — and `fixtures/<13–18>/oracle/literals.tsv` holds each value's output
+spelling beside the input that produced it (`interval  1.5 hours  ok
+01:30:00`, `inet  192.168.1.1  ok  192.168.1.1`, `macaddr  08-00-2b-01-02-04
+ok  08:00:2b:01:02:04`).
+
+**Scope limit.** The *output* forms only. Each type's `*_in` accepts a far
+wider grammar — `1.5 hours` and `P1Y2M` for an interval, an abbreviated
+`10` for an IPv4 address, four separator conventions for a MAC — and this
+entry says nothing about those beyond that they exist; `pgtype.rs`'s register
+reads the output form alone, and refuses the rest. Says nothing about
+`interval`'s infinities, which are I34's.
+
+**Verified against.** v13.23, v14.24, v15.19, v16.15, v17.11 and v18.6 —
+`EncodeInterval`'s `INTSTYLE_POSTGRES` arm, `EncodeTimezone`,
+`timetz_cmp_internal`, `network_cmp_internal` and `bitncmp` are byte-identical
+across all six but for v13's `interval_cmp_value`, noted above, and v17's
+addition of the `INTERVAL_NOT_FINITE` branch ahead of `EncodeInterval`.
+`AddPostgresIntPart` differs only in the width of its `value` argument and the
+matching `printf` conversion — `int`/`%d` at v13–v14, `int64`/`%lld` at
+v15–v17, `int64`/`PRId64` at v18 — which changes no output for any value the
+type can hold.
+
+**Relied on by.** `pgtype.rs`'s `CompareKind::Interval`, `TimeTz`, `Network`
+and `MacAddr` arms and `predicate.rs`'s parsers for them —
+[`architecture.md`](architecture.md), "Ordering operators compare typed",
+where these are four *Agrees* rows.
+
+**Re-verify.**
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+awk '/^AddPostgresIntPart/,/^}/' src/backend/utils/adt/datetime.c
+awk '/^EncodeTimezone/,/^}/' src/backend/utils/adt/datetime.c
+awk '/^interval_cmp_value/,/^}/' src/backend/utils/adt/timestamp.c
+awk '/^timetz_cmp_internal/,/^}/' src/backend/utils/adt/date.c
+awk '/^network_cmp_internal/,/^}/' src/backend/utils/adt/network.c
+awk '/^bitncmp/,/^}/' src/backend/utils/adt/network.c
+awk '/^macaddr_cmp_internal/,/^}/' src/backend/utils/adt/mac.c
+```
+
+and, from the repo root, the answers the source predicts:
+
+```sh
+grep -P '^interval\t(1 mon|30 days|720:00:00)\t' fixtures/17/oracle/comparisons.tsv
+grep -P '^(inet|cidr|macaddr|macaddr8|time with time zone)\t' fixtures/16/oracle/literals.tsv
 ```

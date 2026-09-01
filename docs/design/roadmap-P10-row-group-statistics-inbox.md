@@ -74,5 +74,6 @@ rest.
 [`architecture.md`](architecture.md), "Ordering operators compare typed", whose
 table is the register, and
 [`roadmap-P11.4-enum-and-bare-numeric-notes.md`](roadmap-P11.4-enum-and-bare-numeric-notes.md).
-**Contingent on** the register's remaining divergent rows: 11.5 and 11.6 close
-more of them, so re-read the table rather than trusting this list of four.
+**Contingent on** the register's remaining divergent rows: 11.5 closed six of
+the eight text-held types and 11.5.1 and 11.6 close more, so re-read the table
+rather than trusting this list of four.

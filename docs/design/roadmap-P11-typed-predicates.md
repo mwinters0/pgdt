@@ -28,7 +28,8 @@ answer, in part — see the text row.
 |---|---|
 | `Dictionary(Int32, Utf8)` from an enum | **Closed by code.** The dump carries `CREATE TYPE … AS ENUM (…)` verbatim and `TypeKind::Enum { labels }` already holds the labels in declaration order. |
 | `Utf8View` from bare `numeric` | **Closed by code.** An arbitrary-precision decimal comparison, carrying all three of `Infinity`, `-Infinity` and `NaN`. |
-| `Utf8View` from `interval`, `time with time zone`, `inet`/`cidr`/`macaddr`/`macaddr8`, `jsonb`, and domains over them | **Closed by code**, one comparison per type. |
+| `Utf8View` from `interval`, `time with time zone`, `inet`/`cidr`/`macaddr`/`macaddr8`, and domains over them | **Closed by code**, one comparison per type. |
+| `Utf8View` from `jsonb` | **Closed by code, with a residue that closes by statement.** `compareJsonbContainers` is structural — type rank, then length, then member-wise — and its *scalar string* leaves, keys included, go through `varstr_cmp` under `DEFAULT_COLLATION_OID`. That is the database's collation, which a plain dump does not record (I32), so a `jsonb` column reaches exactly the residue the text row reaches, one level down. The structural half is worth closing and the collation half is the same statement made twice. |
 | `Utf8View` from `text`/`varchar`/`name` | **Closed by code *and* statement.** The file states more than the row assumed: `pg_dump` emits a `COLLATE` clause wherever a column's collation differs from **its type's** default, and `name`'s type default is `C` — so a bare `name` column, and any column carrying an explicit `COLLATE "C"`/`"POSIX"`, **agree exactly, on every server**. What stays closed by statement is the rest: a `default`-collation column with no clause is on the database default, which no plain dump records (I32). Bytewise remains the answer throughout; what changes is which columns are told they diverge. |
 | `Utf8View` from `char(n)` | **Closed by statement, and not by the collation rule.** A `character(n)` value is written blank-padded to `n` and `bpcharcmp` strips trailing blanks before it consults a collation at all (I38), so an explicit `COLLATE "C"` does *not* make it agree: a field whose significant text equals the literal sorts above it here and equal on the server. It stays a divergence with a reason of its own. Trimming both sides is the same canonicalization question 11.6 opens for equality, and it is 11.6's to answer, not 11.11's. |
 | `Utf8View` from `json` (and `xml`) | **Closed by statement.** PostgreSQL defines *no* comparison for these types at all — no `=`, no ordering, no default operator class — so "agrees with PostgreSQL" is not a question they can be asked. Our text comparison offers more than the server does, and that is what gets said. |
@@ -703,7 +704,8 @@ here.
 | **11.11.1** | The collated fixture columns | A `t_collate` table in the `types` schema — `COLLATE "C"`, `COLLATE "en_US.utf8"`, `COLLATE "ucs_basic"`, a bare `name` column and a domain `AS text COLLATE "C"` — regenerated across six majors, so the *agreeing* halves of 11.11's collation rule have a real dump behind them; plus `oracle_register.py` taught the collation dimension, so the three collated arms stop collapsing to one; `character(10)` asked under both collations and given a `"a\t"` value, putting I38's ordering corollary in the oracle and sparing 11.6 a regeneration; a composite with a collated attribute, closing I37's last unobserved emission site; one assertion per column in `tests/ordering.rs`; and `generate_fixtures.py` reporting its own elapsed time, with the recorded figure in `architecture.md` and a stale-past-30-minutes warning. No library code. **Earned, not planned** — see below. |
 | **11.11.2** | The displaced `COLLATE` clause, observed | Four more columns on `t_collate`, none costing the one-alphabet property: `v_text_def text DEFAULT 'x' COLLATE "C"`, which holds the alphabet, enters the stream and puts I37's *placement* claim — the clause written after `DEFAULT`/`GENERATED`/`NOT NULL` rather than beside the type — into committed bytes at six majors instead of one lost container; `v_gen_nn text GENERATED ALWAYS AS (upper(v_src)) STORED NOT NULL COLLATE "C"` with its `v_src`, which stacks all three displacers in one fragment at no cost to the alphabet, because a `STORED` generated column is absent from `COPY` — and which is the only real-dump stress on `extract_collation`'s paren-aware scan, the existing generated fixture column being `integer` with nothing after its expression; and `CREATE COLLATION public.c_collation FROM "C"` with a column of it, which observes the user-collation reference form (schema-qualified, unquoted, outside `pg_catalog`) and pins `collated_text`'s deliberately conservative `NonBytewiseCollation` answer for a collation the same dump shows to be `locale = 'C'`. Plus I37 amended for v18's two new displacers and given a re-runnable probe recipe, and a `pg-dump-compatibility.md` row marking those two shapes untested and naming the blocker. **Asserted in two files**: the reachable columns in `tests/ordering.rs` beside the existing five, and `v_gen_nn` in `tests/preamble.rs`, which walks `DatabaseMetadata` over all six majors — because a column with no data never enters a `TableStream`. **No oracle cases and no `KD<k>`**: the user collation is a pgdq verdict rather than a server answer, and a spurious note over correct rows is a property, not a deficiency — its paragraph is mirrored into `architecture.md`, "Ordering operators compare typed". No library code. **Earned, not planned** — see below. |
 | **11.4** | Enum and bare `numeric` | The two rows the re-key was for: declaration order, and arbitrary-precision decimal with all three specials. |
-| **11.5** | The text-held type queue | `interval` (with v17 infinities), `time with time zone`, `inet`/`cidr`/`macaddr`/`macaddr8`, `jsonb`. Repetitive and additive; the oracle checks each. |
+| **11.5** | The text-held type queue | `interval` (with v17 infinities), `time with time zone`, `inet`/`cidr`/`macaddr`/`macaddr8`. Repetitive and additive; the oracle checks each. |
+| **11.5.1** | `jsonb` | The one text-held type whose comparison is a container walk rather than a scalar decode, and the one whose leaves reopen the collation question `text` already has. **Earned, not planned** — see below. |
 | **11.6** | Typed `=` / `!=` | Routed through the now-complete plan, with the canonicalize-once fast path, its two decode-per-row exceptions and the `char(n)` trim — which retires `OrderingDivergence::BlankPadded` and gives `character` the same three collation arms `text` has. Renames the note channel. |
 | **11.7** | Three-valued evaluation | `Expr`, the `True`/`False`/`Unknown` domain, `IS DISTINCT FROM`. Library only. |
 | **11.8** | `--where` | The expression grammar, its own CLI module, leaf delegated to `parse_filter`. |
@@ -988,11 +990,35 @@ register the re-key produces, and outside 11.3 because that slice's review
 property is "no answer changes". It is not folded into 11.6 either: it touches
 the preamble parser, and the note channel is only its consumer.
 
-Four seams are deliberate. **11.3 stands alone** because a refactor whose
+**11.5.1 was earned on entry to 11.5, and the seam is a decision rather than a
+size.** 11.5's row named five type families as "repetitive and additive", and
+four of them are: an `interval` is a 128-bit span, a `timetz` is a pair, a
+network address is a family and a prefix, a MAC is its octets. `jsonb` is none
+of those. Its comparison is a recursive container walk with its own type
+ordering, its literal side needs a JSON parser that sorts and uniqueifies
+object keys where the *field* side arrives already sorted, and its numeric
+leaves are `numeric_cmp` over a spelling `jsonb_in` normalizes. That is a
+different confidence from "`inet` compares by family then bits", which is
+exactly the argument that already separated 11.4 from 11.5, and
+`../process.md`'s "Size a slice by its review" says the review is the unit.
+
+**And the row it was written under is wrong about it.** This doc promised
+`jsonb` "closed by code, one comparison per type"; `compareJsonbScalarValue`
+passes `DEFAULT_COLLATION_OID` to `varstr_cmp` for every string leaf and every
+object key, so a structurally correct `jsonb` comparison still diverges wherever
+a string decides it — the same database-collation residue the text row has, and
+one a plain dump cannot close (I32). The closure table above is amended to say
+so. Landing that under a row promising a full closure would have shipped a
+`KD7` strike the register cannot support, which is the failure the spec/notes
+split exists to make visible. The evidence is in
+[`../status/history/2026-09-01.md`](../status/history/2026-09-01.md).
+
+Five seams are deliberate. **11.3 stands alone** because a refactor whose
 review question is "did anything change?" cannot share a diff with one that
 changes answers. **11.4 is apart from 11.5** because arbitrary-precision
 decimal with three ordered specials is a different confidence from "`inet`
 compares by family then bits". **11.6 follows 11.5** so equality inherits every
-type's comparison at once rather than being revisited per type. And **11.9
+type's comparison at once rather than being revisited per type. **11.9
 precedes 11.10** because the input grammar is the part with an external oracle
-and the part most likely to be wrong.
+and the part most likely to be wrong. And **11.5.1 is apart from 11.5** for the
+reason above.

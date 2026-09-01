@@ -215,6 +215,65 @@ impl NumericKey {
     }
 }
 
+/// One side of an `inet`/`cidr` comparison: the family, the netmask length,
+/// and the address left-aligned in sixteen bytes.
+///
+/// **Not a byte key, and it cannot be made into one.** `network_cmp_internal`
+/// compares the *shorter* netmask's worth of address bits first, so how many
+/// bits are significant depends on the value it is being compared against —
+/// `10.1.0.0/8` sorts below `10.0.0.0/16` because their first eight bits
+/// agree and `8 < 16`, where a plain address-then-netmask key would put it
+/// above (I40). So the pair is compared, not two independently sortable keys.
+///
+/// `v6` is the family, as a bool because there are two and PostgreSQL's own
+/// `PGSQL_AF_INET6` is `PGSQL_AF_INET + 1` — an IPv4 address sorts below
+/// every IPv6 one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NetworkKey {
+    v6: bool,
+    bits: u8,
+    /// The address, left-aligned: an IPv4 address occupies the first four
+    /// bytes and the rest are zero, which is exactly what `bitncmp` reads
+    /// since it never looks past `maxbits`.
+    addr: [u8; 16],
+}
+
+impl NetworkKey {
+    /// `ip_maxbits` — the family's address width.
+    fn maxbits(&self) -> u8 {
+        if self.v6 { 128 } else { 32 }
+    }
+
+    /// `network_cmp_internal` (I40): family, then the shorter netmask's
+    /// worth of address bits, then the netmask length, then the whole
+    /// address.
+    fn cmp(&self, other: &Self) -> Ordering {
+        if self.v6 != other.v6 {
+            return self.v6.cmp(&other.v6);
+        }
+        let shared = self.bits.min(other.bits);
+        bitncmp(&self.addr, &other.addr, shared)
+            .then_with(|| self.bits.cmp(&other.bits))
+            .then_with(|| bitncmp(&self.addr, &other.addr, self.maxbits()))
+    }
+}
+
+/// PostgreSQL's `bitncmp`: the first `n` bits of two addresses, most
+/// significant first. Whole bytes by `memcmp`, then the remaining bits of the
+/// straddling byte under a high-bit mask — which is the same answer as
+/// `bitncmp`'s bit-at-a-time loop, since that loop stops at the first
+/// differing bit and a masked byte comparison finds exactly that bit.
+fn bitncmp(left: &[u8; 16], right: &[u8; 16], n: u8) -> Ordering {
+    let whole = usize::from(n / 8);
+    let full = left[..whole].cmp(&right[..whole]);
+    let spare = n % 8;
+    if full != Ordering::Equal || spare == 0 {
+        return full;
+    }
+    let mask = 0xffu8 << (8 - spare);
+    (left[whole] & mask).cmp(&(right[whole] & mask))
+}
+
 /// One side of an ordering comparison, decoded from text per the column's
 /// [`CompareKind`]. Both sides of any one comparison come from the same kind,
 /// so a *finite* variant mismatch is unreachable by construction.
@@ -239,6 +298,17 @@ enum OrderKey {
     Decimal(i256),
     /// A bare `numeric`, whose digits do not fit any fixed-width integer.
     Numeric(NumericKey),
+    /// An `interval`'s span in microseconds, which is 128 bits wide because
+    /// PostgreSQL's own `interval_cmp_value` is (I40).
+    Interval(i128),
+    /// A `time with time zone`: the UTC-equivalent instant, then the stored
+    /// zone as PostgreSQL stores it — seconds *west* of GMT, the negation of
+    /// the sign the value displays.
+    TimeTz {
+        utc: i64,
+        zone: i64,
+    },
+    Network(NetworkKey),
     Bytes(Vec<u8>),
     Text(String),
     /// PostgreSQL's `infinity`, above every finite value of its type.
@@ -267,6 +337,9 @@ impl OrderKey {
             | Self::Float(_)
             | Self::Decimal(_)
             | Self::Numeric(_)
+            | Self::Interval(_)
+            | Self::TimeTz { .. }
+            | Self::Network(_)
             | Self::Bytes(_)
             | Self::Text(_) => FINITE,
             Self::PositiveInfinity => 2,
@@ -277,10 +350,18 @@ impl OrderKey {
 
 /// PostgreSQL's special values, for the kinds whose columns can hold one and
 /// in the exact spelling that type's own `*_out` writes (I34): `date`,
-/// `timestamp` and `timestamptz` write `infinity`/`-infinity`, and a
-/// `numeric` writes `NaN`. Nothing else is accepted — a `date` field or
+/// `timestamp`, `timestamptz` and `interval` write `infinity`/`-infinity`,
+/// and a `numeric` writes `NaN`. Nothing else is accepted — a `date` field or
 /// literal reading `Infinity` is not what `date_out` writes, so it stays a
 /// decode failure, the same strictness the nested codec applies.
+///
+/// **`interval`'s two are read on every file, not only on a v17 one.** They
+/// are v17 values, and no older server could have written one, so accepting
+/// the spelling unconditionally is the union rule
+/// (`docs/design/roadmap-P11-typed-predicates.md`, "Version-varying
+/// semantics") rather than a claim about the file's own major. What it costs
+/// is a *literal* an older server would have refused, which is one word in an
+/// answer nobody's data can match.
 ///
 /// **One absence is deliberate.** `real`/`double precision` are absent
 /// because IEEE represents all three and [`decode::decode_f64`] already
@@ -294,7 +375,7 @@ impl OrderKey {
 /// capitalize where `date_out`'s do not.
 fn special_order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
     match kind {
-        CompareKind::Date | CompareKind::Timestamp { .. } => match text {
+        CompareKind::Date | CompareKind::Timestamp { .. } | CompareKind::Interval => match text {
             "infinity" => Some(OrderKey::PositiveInfinity),
             "-infinity" => Some(OrderKey::NegativeInfinity),
             _ => None,
@@ -308,6 +389,197 @@ fn special_order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
         },
         _ => None,
     }
+}
+
+/// A signed count of `year`/`mon`/`day` units out of an `interval`'s text.
+/// The leading `+` is `AddPostgresIntPart`'s, written on a positive part that
+/// follows a negative one (I40); everything else is digits.
+fn interval_count(text: &str) -> Option<i64> {
+    let digits = text.strip_prefix(['+', '-']).unwrap_or(text);
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let magnitude: i64 = digits.parse().ok()?;
+    Some(if text.starts_with('-') { -magnitude } else { magnitude })
+}
+
+/// The `[+|-]HH:MM:SS[.ffffff]` tail of an `interval`, in microseconds.
+/// `EncodeInterval` writes one sign for the whole time part — `minus` is set
+/// if any of hours, minutes, seconds or the fraction is negative, and the
+/// three fields are then printed as absolute values — so the sign is applied
+/// to the total rather than per field (I40).
+///
+/// The hour field is unbounded, so this is not `decode_time64_micros`:
+/// `720:00:00` is an ordinary `interval` and not a `time`. Every field is
+/// checked to be digits, which is what keeps `04:-5:06` — a string no
+/// `interval_out` writes and no `interval_in` accepts — from parsing as a
+/// negative minute count.
+fn interval_time_micros(text: &str) -> Option<i128> {
+    let (negative, rest) = match text.strip_prefix(['+', '-']) {
+        Some(rest) => (text.starts_with('-'), rest),
+        None => (false, text),
+    };
+    let (hms, frac) = rest.split_once('.').unwrap_or((rest, ""));
+    let mut parts = hms.split(':');
+    let mut field = |max_len: Option<usize>| -> Option<i128> {
+        let digits = parts.next()?;
+        if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        if max_len.is_some_and(|n| digits.len() != n) {
+            return None;
+        }
+        digits.parse::<i128>().ok()
+    };
+    let hours = field(None)?;
+    let minutes = field(Some(2))?;
+    let seconds = field(Some(2))?;
+    if parts.next().is_some() {
+        return None;
+    }
+    if frac.is_empty() && text.contains('.') {
+        return None;
+    }
+    if frac.len() > 6 || !frac.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let micros: i128 = if frac.is_empty() {
+        0
+    } else {
+        let mut padded = frac.to_string();
+        padded.push_str(&"0".repeat(6 - padded.len()));
+        padded.parse().ok()?
+    };
+    let total = hours
+        .checked_mul(3600)?
+        .checked_add(minutes * 60 + seconds)?
+        .checked_mul(1_000_000)?
+        .checked_add(micros)?;
+    Some(if negative { -total } else { total })
+}
+
+/// `interval_cmp_value`'s span, in microseconds: months collapse to 30 days,
+/// days to 86400 seconds, and the time field is added on (I40). The whole
+/// point of the collapse is that `1 mon`, `30 days` and `720:00:00` are one
+/// value written three ways, which is why an `interval` is one of the two
+/// kinds equality cannot canonicalize once and compare bytewise.
+///
+/// **The grammar is `interval_out`'s under `IntervalStyle = postgres`,
+/// exactly**, which `pg_dump` pins on its own connection (I4): an optional
+/// `<n> year[s]`, `<n> mon[s]` and `<n> day[s]`, then an optional signed time
+/// part, separated by single spaces, with a wholly-zero interval written
+/// `00:00:00`. Nothing broader is accepted — `1 hour`, `1.5 hours`, `P1Y2M`
+/// and `1 month` are all spellings `interval_in` takes and `interval_out`
+/// never writes, so a filter using one is `Error::PredicateValueDecode`
+/// rather than a comparison meaning something else. That is the refusal
+/// `CompareKind::UnsignedInt` makes for `oid`, on a wider grammar.
+fn interval_span(text: &str) -> Option<i128> {
+    let tokens: Vec<&str> = text.split(' ').collect();
+    let (mut months, mut days) = (0i64, 0i64);
+    let mut time = 0i128;
+    let mut at = 0;
+    while at < tokens.len() {
+        let count = || interval_count(tokens[at]);
+        match tokens.get(at + 1).copied() {
+            Some("year" | "years") => months = months.checked_add(count()?.checked_mul(12)?)?,
+            Some("mon" | "mons") => months = months.checked_add(count()?)?,
+            Some("day" | "days") => days = days.checked_add(count()?)?,
+            // Not a counted part, so this token is the time tail — which is
+            // last, and of which there is at most one.
+            _ => {
+                if at + 1 != tokens.len() {
+                    return None;
+                }
+                time = interval_time_micros(tokens[at])?;
+                at += 1;
+                break;
+            }
+        }
+        at += 2;
+    }
+    if at != tokens.len() {
+        return None;
+    }
+    let whole_days = i128::from(months.checked_mul(30)?.checked_add(days)?);
+    whole_days.checked_mul(86_400_000_000)?.checked_add(time)
+}
+
+/// A `time with time zone`, split into the UTC-equivalent instant and the
+/// zone PostgreSQL stores — seconds *west* of GMT, which is the negation of
+/// the offset the value displays (I40). `timetz_cmp_internal` sorts by the
+/// first and breaks ties with the second, so `00:00:00+00` and `01:00:00+01`
+/// are the same instant and still not equal.
+fn timetz_key(text: &str) -> Option<OrderKey> {
+    let (time_only, displayed) = decode::extract_offset(text)?;
+    let (seconds, micros) = decode::parse_time_of_day(time_only)?;
+    let zone = -displayed;
+    let utc = seconds.checked_mul(1_000_000)?.checked_add(micros)?.checked_add(zone * 1_000_000)?;
+    Some(OrderKey::TimeTz { utc, zone })
+}
+
+/// An `inet` or `cidr` value: `<address>[/<bits>]`, the form
+/// `pg_inet_net_ntop` writes, with `cidr_out` always appending the netmask
+/// and `inet_out` omitting it when it is the family's full width (I40).
+///
+/// **The address grammar is Rust's, which is narrower than `inet_in`'s.** An
+/// abbreviated IPv4 address — `10`, meaning `10.0.0.0/8` — is a spelling the
+/// server accepts and this refuses, the same weaker-never-wrong shape as the
+/// `interval` grammar above.
+///
+/// `cidr` additionally refuses a value with a bit set below its netmask,
+/// because `cidr_in` does: that is the *only* thing separating the two types,
+/// their comparison being identical.
+fn network_key(text: &str, cidr: bool) -> Option<OrderKey> {
+    let (address, netmask) = match text.split_once('/') {
+        Some((address, netmask)) => (address, Some(netmask)),
+        None => (text, None),
+    };
+    let mut addr = [0u8; 16];
+    let v6 = match address.parse::<std::net::IpAddr>().ok()? {
+        std::net::IpAddr::V4(v4) => {
+            addr[..4].copy_from_slice(&v4.octets());
+            false
+        }
+        std::net::IpAddr::V6(v6) => {
+            addr.copy_from_slice(&v6.octets());
+            true
+        }
+    };
+    let maxbits: u8 = if v6 { 128 } else { 32 };
+    let bits = match netmask {
+        None => maxbits,
+        Some(digits) => {
+            if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            digits.parse::<u8>().ok()?
+        }
+    };
+    if bits > maxbits {
+        return None;
+    }
+    if cidr && (bits..maxbits).any(|bit| addr[usize::from(bit / 8)] & (0x80 >> (bit % 8)) != 0) {
+        return None;
+    }
+    Some(OrderKey::Network(NetworkKey { v6, bits, addr }))
+}
+
+/// A `macaddr`/`macaddr8` value: `octets` lowercase hex pairs joined by
+/// colons, which is what `macaddr_out` and `macaddr8_out` write (I40). The
+/// server's input function takes several other separator conventions and this
+/// takes none of them, for the reason the `interval` grammar gives.
+fn macaddr_key(text: &str, octets: usize) -> Option<OrderKey> {
+    let mut bytes = Vec::with_capacity(octets);
+    for part in text.split(':') {
+        // The digit check is not what `from_str_radix` does: it accepts a
+        // leading sign, so `+f` would otherwise pass as a two-character pair.
+        if part.len() != 2 || bytes.len() == octets || !part.bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            return None;
+        }
+        bytes.push(u8::from_str_radix(part, 16).ok()?);
+    }
+    (bytes.len() == octets).then_some(OrderKey::Bytes(bytes))
 }
 
 /// Decode one already-COPY-unescaped value into a comparable key. `None`
@@ -355,6 +627,10 @@ fn order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
         CompareKind::Timestamp { with_tz } => {
             OrderKey::Int(decode::decode_timestamp_micros(text, *with_tz)?)
         }
+        CompareKind::Interval => OrderKey::Interval(interval_span(text)?),
+        CompareKind::TimeTz => timetz_key(text)?,
+        CompareKind::Network { cidr } => network_key(text, *cidr)?,
+        CompareKind::MacAddr { octets } => macaddr_key(text, *octets)?,
         CompareKind::Uuid => OrderKey::Bytes(decode::decode_uuid(text)?.to_vec()),
         CompareKind::Bytea => OrderKey::Bytes(decode::decode_bytea(text)?),
         CompareKind::Text => OrderKey::Text(text.to_string()),
@@ -392,6 +668,12 @@ fn compare_keys(a: &OrderKey, b: &OrderKey) -> Ordering {
         (OrderKey::Float(x), OrderKey::Float(y)) => pg_float_cmp(*x, *y),
         (OrderKey::Decimal(x), OrderKey::Decimal(y)) => x.cmp(y),
         (OrderKey::Numeric(x), OrderKey::Numeric(y)) => x.cmp(y),
+        (OrderKey::Interval(x), OrderKey::Interval(y)) => x.cmp(y),
+        (
+            OrderKey::TimeTz { utc: utc_x, zone: zone_x },
+            OrderKey::TimeTz { utc: utc_y, zone: zone_y },
+        ) => utc_x.cmp(utc_y).then_with(|| zone_x.cmp(zone_y)),
+        (OrderKey::Network(x), OrderKey::Network(y)) => x.cmp(y),
         (OrderKey::Bytes(x), OrderKey::Bytes(y)) => x.cmp(y),
         (OrderKey::Text(x), OrderKey::Text(y)) => x.as_bytes().cmp(y.as_bytes()),
         _ if rank_a != FINITE => Ordering::Equal,
@@ -987,13 +1269,21 @@ mod tests {
         assert_eq!(padded.divergence, OrderingDivergence::BlankPadded);
         assert!(padded.message().contains("blank-padded"), "{}", padded.message());
 
-        let other = note("interval", DataType::Utf8View, "1 day").unwrap();
+        let other = note("jsonb", DataType::Utf8View, "1").unwrap();
         assert_eq!(other.divergence, OrderingDivergence::AsText);
         assert!(other.message().contains("its own operator"), "{}", other.message());
 
-        // The two rows this slice closed: both share `Utf8View` with the row
-        // above and neither says anything any more.
+        // Types that share `Utf8View` with the rows above and say nothing:
+        // a bare `numeric`, an enum, and the four the text-held row lost.
         assert_eq!(note("numeric", DataType::Utf8View, "10"), None);
+        for (declared, literal) in [
+            ("interval", "1 day"),
+            ("time with time zone", "00:00:00+00"),
+            ("inet", "10.0.0.1"),
+            ("macaddr", "08:00:2b:01:02:03"),
+        ] {
+            assert_eq!(note(declared, DataType::Utf8View, literal), None, "{declared}");
+        }
         assert_eq!(
             note(
                 "public.mood",
@@ -1075,6 +1365,156 @@ mod tests {
         assert!(matches!(err, Error::PredicateValueDecode { .. }), "{err:?}");
         let err = ordered("public.mood", dict(), PredicateOp::Gt, "sad", "SAD").unwrap_err();
         assert!(matches!(err, Error::FieldDecode { .. }), "{err:?}");
+    }
+
+    /// An `interval`'s months collapse to 30 days and its days to 86400
+    /// seconds, so `1 mon`, `30 days` and `720:00:00` are one value written
+    /// three ways — every answer here read out of
+    /// `fixtures/17/oracle/comparisons.tsv`, where the server itself says so.
+    /// A bytewise comparison gets all three wrong.
+    ///
+    /// `holds` reads `field <op> literal`, which is the direction a filter
+    /// asks in: the row's own value on the left.
+    #[test]
+    fn an_interval_orders_by_its_collapsed_span() {
+        let holds = |field, op, literal| {
+            ordered("interval", DataType::Utf8View, op, literal, field).unwrap()
+        };
+        for spelling in ["30 days", "720:00:00"] {
+            assert!(holds(spelling, PredicateOp::Ge, "1 mon"), "{spelling}");
+            assert!(holds(spelling, PredicateOp::Le, "1 mon"), "{spelling}");
+        }
+        // `-1 days` is below `00:00:00`, which bytewise it is not.
+        assert!(holds("-1 days", PredicateOp::Lt, "00:00:00"));
+        // The full `interval_out` form, with a year part and a time tail:
+        // fourteen months and change, so above `1 mon` and below `2 years`.
+        let full = "1 year 2 mons 3 days 04:05:06";
+        assert!(holds(full, PredicateOp::Lt, "2 years"));
+        assert!(holds(full, PredicateOp::Gt, "1 mon"));
+        // The sign on a time tail belongs to the whole tail, and a `+` on a
+        // part that follows a negative one is `AddPostgresIntPart`'s.
+        assert!(holds("-1 days -04:00:00", PredicateOp::Lt, "-1 days"));
+        assert!(holds("-1 days +04:00:00", PredicateOp::Gt, "-1 days"));
+        // The two infinities are v17 values read on every file, and they are
+        // `date_out`'s spellings rather than `numeric_out`'s.
+        assert!(holds("infinity", PredicateOp::Gt, "1 mon"));
+        assert!(holds("-infinity", PredicateOp::Lt, "1 mon"));
+        assert!(holds("infinity", PredicateOp::Ge, "infinity"));
+        assert!(matches!(
+            ordered("interval", DataType::Utf8View, PredicateOp::Gt, "Infinity", "1 mon")
+                .unwrap_err(),
+            Error::PredicateValueDecode { .. }
+        ));
+    }
+
+    /// The `interval` grammar is `interval_out`'s under `IntervalStyle =
+    /// postgres` (I4) and nothing wider, so a spelling the server's *input*
+    /// function takes is refused rather than guessed at. The first three are
+    /// literals `fixtures/17/oracle/literals.tsv` records the server
+    /// accepting.
+    #[test]
+    fn an_interval_literal_outside_the_output_grammar_is_refused() {
+        for literal in ["1.5 hours", "P1Y2M", "1 century", "1 month", "@ 1 day", "", "1 day "] {
+            let err = ordered("interval", DataType::Utf8View, PredicateOp::Gt, literal, "1 mon")
+                .unwrap_err();
+            assert!(matches!(err, Error::PredicateValueDecode { .. }), "{literal:?}: {err:?}");
+        }
+    }
+
+    /// A `time with time zone` sorts by the UTC instant and breaks a tie on
+    /// the zone, so `00:00:00-05` is above `00:00:00+00` — five hours later,
+    /// though it reads earlier — and two spellings of one instant are still
+    /// unequal (`fixtures/16/oracle/comparisons.tsv`).
+    #[test]
+    fn a_timetz_orders_by_the_utc_instant_then_the_zone() {
+        let holds = |field, op, literal| {
+            ordered("time with time zone", DataType::Utf8View, op, literal, field).unwrap()
+        };
+        assert!(holds("00:00:00-05", PredicateOp::Gt, "00:00:00+00"));
+        // Same instant, different zone: ordered, and not equal. PostgreSQL
+        // sorts by the stored zone, which is seconds *west* of GMT, so the
+        // value displaying `-05` ranks above the one displaying `+00`.
+        assert!(holds("00:00:00-05", PredicateOp::Gt, "05:00:00+00"));
+        assert!(!holds("00:00:00-05", PredicateOp::Le, "05:00:00+00"));
+        // `24:00:00` is a real boundary value, above everything finite here.
+        assert!(holds("24:00:00+00", PredicateOp::Gt, "05:00:00+00"));
+        // A `timetz` always carries an offset; one without is not a value.
+        assert!(matches!(
+            ordered("time with time zone", DataType::Utf8View, PredicateOp::Gt, "00:00:00", "\\N")
+                .unwrap_err(),
+            Error::PredicateValueDecode { .. }
+        ));
+    }
+
+    /// `network_cmp_internal`: family first, then the shorter netmask's worth
+    /// of address bits, then the netmask, then the whole address. The last
+    /// pair is the one no address-then-netmask key can get right.
+    #[test]
+    fn inet_orders_by_family_then_prefix_then_netmask() {
+        let holds =
+            |field, op, literal| ordered("inet", DataType::Utf8View, op, literal, field).unwrap();
+        // IPv4 below every IPv6 address, whatever the bytes say.
+        assert!(holds("192.168.1.1", PredicateOp::Lt, "::1"));
+        assert!(holds("192.168.1.1", PredicateOp::Gt, "10.0.0.1"));
+        // Same first eight bits, different netmask: the netmask decides, and
+        // it decides *before* the host bits below it are looked at.
+        assert!(holds("10.1.0.0/8", PredicateOp::Lt, "10.0.0.0/16"));
+        assert!(holds("10.0.0.0/16", PredicateOp::Gt, "10.1.0.0/8"));
+    }
+
+    /// `cidr` compares exactly as `inet` does; the only difference is that
+    /// `cidr_in` refuses a value with a bit set below its netmask, and so
+    /// does this — the refusal `oid`'s signed literal earns, on a wider
+    /// grammar (`fixtures/16/oracle/literals.tsv`).
+    #[test]
+    fn a_cidr_refuses_a_literal_with_host_bits_set() {
+        let holds =
+            |field, op, literal| ordered("cidr", DataType::Utf8View, op, literal, field).unwrap();
+        assert!(holds("10.0.0.0/8", PredicateOp::Lt, "192.168.1.0/24"));
+        assert!(holds("192.168.1.0/24", PredicateOp::Lt, "::/0"));
+        assert!(matches!(
+            ordered("cidr", DataType::Utf8View, PredicateOp::Gt, "192.168.1.1/24", "10.0.0.0/8")
+                .unwrap_err(),
+            Error::PredicateValueDecode { .. }
+        ));
+        // The same value is an ordinary `inet`.
+        assert!(
+            ordered("inet", DataType::Utf8View, PredicateOp::Lt, "192.168.1.1/24", "10.0.0.0/8")
+                .unwrap()
+        );
+    }
+
+    /// The two MAC types compare as their bytes and differ only in width, so
+    /// a six-octet literal is not a `macaddr8` value and the reverse holds
+    /// too. The colon form is the only one read, which is what
+    /// `macaddr_out` writes.
+    #[test]
+    fn a_macaddr_compares_as_its_octets_at_its_own_width() {
+        let holds = |declared, field, op, literal| {
+            ordered(declared, DataType::Utf8View, op, literal, field).unwrap()
+        };
+        assert!(holds("macaddr", "08:00:2b:01:02:03", PredicateOp::Lt, "08:00:2b:01:02:04"));
+        assert!(holds(
+            "macaddr8",
+            "08:00:2b:01:02:03:04:05",
+            PredicateOp::Lt,
+            "08:00:2b:01:02:03:04:06"
+        ));
+        for (declared, literal) in [
+            ("macaddr", "08:00:2b:01:02:03:04:05"),
+            ("macaddr8", "08:00:2b:01:02:03"),
+            // A separator the server takes and `macaddr_out` never writes.
+            ("macaddr", "08-00-2b-01-02-03"),
+            // `from_str_radix` would take the sign; the digit check does not.
+            ("macaddr", "+8:00:2b:01:02:03"),
+        ] {
+            let err =
+                ordered(declared, DataType::Utf8View, PredicateOp::Gt, literal, "\\N").unwrap_err();
+            assert!(
+                matches!(err, Error::PredicateValueDecode { .. }),
+                "{declared} {literal}: {err:?}"
+            );
+        }
     }
 
     /// `uuid` and `bytea` compare as their bytes, which is what

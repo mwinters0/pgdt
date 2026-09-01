@@ -193,6 +193,98 @@ async fn an_enum_orders_by_declaration_order() {
     assert!(notes_for("public.t_enum_domain", "v_mood", "sad").await.is_empty());
 }
 
+/// An `interval` orders by the span PostgreSQL computes, so `1 mon`,
+/// `30 days` and `720:00:00` are one bound written three ways — the property
+/// that makes bytewise wrong here in *both* directions, since the three
+/// spellings keep three different row sets as text. `t_interval` holds
+/// `1 year 2 mons 3 days 04:05:06` (423 days and change), `-1 days`,
+/// `00:00:00` and `01:30:00`.
+#[tokio::test]
+async fn an_interval_orders_by_span_whatever_the_bound_is_spelled() {
+    for bound in ["1 mon", "30 days", "720:00:00"] {
+        assert_eq!(
+            kept(
+                "public.t_interval",
+                "v_interval",
+                vec![term("v_interval", PredicateOp::Ge, bound)]
+            )
+            .await,
+            [Some("1 year 2 mons 3 days 04:05:06".to_string())],
+            "bound spelled {bound}"
+        );
+    }
+    // `01:30:00` is the fixture's `1.5 hours` as the dump writes it, and it
+    // is below 60 days where its text is above.
+    assert_eq!(
+        kept(
+            "public.t_interval",
+            "v_interval",
+            vec![term("v_interval", PredicateOp::Lt, "60 days")]
+        )
+        .await,
+        [Some("-1 days".to_string()), Some("00:00:00".to_string()), Some("01:30:00".to_string())],
+        "bytewise the 423-day value sorts below `60 days` and would survive"
+    );
+    assert!(notes_for("public.t_interval", "v_interval", "00:00:00").await.is_empty());
+}
+
+/// A `time with time zone` compares as the UTC instant, so
+/// `00:00:00.000001-05` is five hours after midnight and survives a bound its
+/// text sorts below.
+#[tokio::test]
+async fn a_timetz_orders_by_its_utc_instant() {
+    assert_eq!(
+        kept("public.t_time", "v_timetz", vec![term("v_timetz", PredicateOp::Gt, "01:00:00+00")])
+            .await,
+        [Some("24:00:00+00".to_string()), Some("00:00:00.000001-05".to_string())],
+        "bytewise `00:00:00.000001-05` sorts below the bound and would be dropped"
+    );
+    assert!(notes_for("public.t_time", "v_timetz", "00:00:00+00").await.is_empty());
+}
+
+/// The four network types compare by their own orders: an IPv4 address sorts
+/// below every IPv6 one whatever the text says, and `192.168.1.1` is above
+/// `9.0.0.0` where its first character is below.
+#[tokio::test]
+async fn the_network_types_order_by_address_not_by_text() {
+    assert_eq!(
+        kept("public.t_net", "v_inet", vec![term("v_inet", PredicateOp::Ge, "9.0.0.0")]).await,
+        [Some("192.168.1.1".to_string()), Some("::1".to_string())],
+        "bytewise `192.168.1.1` sorts below `9.0.0.0` and would be dropped"
+    );
+    assert_eq!(
+        kept("public.t_net", "v_cidr", vec![term("v_cidr", PredicateOp::Ge, "9.0.0.0/8")]).await,
+        [Some("192.168.1.0/24".to_string()), Some("::/0".to_string())]
+    );
+    assert_eq!(
+        kept(
+            "public.t_net",
+            "v_macaddr",
+            vec![term("v_macaddr", PredicateOp::Gt, "08:00:2b:01:02:02")]
+        )
+        .await,
+        [Some("08:00:2b:01:02:03".to_string())]
+    );
+    for (column, literal) in [
+        ("v_inet", "9.0.0.0"),
+        ("v_cidr", "9.0.0.0/8"),
+        ("v_macaddr", "08:00:2b:01:02:02"),
+        ("v_macaddr8", "08:00:2b:01:02:03:04:04"),
+    ] {
+        assert!(notes_for("public.t_net", column, literal).await.is_empty(), "{column}");
+    }
+}
+
+/// `jsonb` is what the text-held row has left, so it is the column that still
+/// announces itself — the regression guard on the four rows above, since a
+/// note that stopped being raised at all would pass every assertion there.
+#[tokio::test]
+async fn jsonb_is_still_announced_as_compared_bytewise() {
+    let notes = notes_for("public.t_json", "v_jsonb", "1").await;
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains("its own operator"), "{}", notes[0]);
+}
+
 /// A NULL is excluded by every ordering operator, exactly as it is by
 /// `Eq`/`Ne` — unknown collapses to false at each term, which is what bounds
 /// the conjunction to `AND`.
@@ -371,9 +463,10 @@ async fn a_divergent_comparison_is_reported_by_the_stream() {
         // `character(n)` diverges for a reason collation cannot fix: the
         // dump writes its values blank-padded and `bpcharcmp` trims (I38).
         ("public.t_text", "v_char", OrderingDivergence::BlankPadded, "blank-padded"),
-        // The text-held types are the whole of what `AsText` covers now that
-        // the enum and the bare `numeric` order by their own values.
-        ("public.t_interval", "v_interval", OrderingDivergence::AsText, "its own operator"),
+        // `jsonb` is what `AsText` covers now: the enum and the bare
+        // `numeric` order by their own values, and so do the four types the
+        // text-held row lost.
+        ("public.t_json", "v_jsonb", OrderingDivergence::AsText, "its own operator"),
     ] {
         let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
         let mut stream = table_stream(

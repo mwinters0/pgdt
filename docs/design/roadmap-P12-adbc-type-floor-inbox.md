@@ -37,7 +37,7 @@ beat the floor everywhere except these:
 |---|---|---|---|
 | `regproc` | `Int32` | `Utf8View` | Not a floor row at all — see below |
 | `money` | `Int64` | `Utf8View` | Blocked by the bar — see below |
-| `interval` | `Interval(MonthDayNano)` | `Utf8View` | An invariant, and a collision with P11.5 |
+| `interval` | `Interval(MonthDayNano)` | `Utf8View` | Unblocked — see below; the invariant it was waiting for exists |
 | `int2vector` | `List<Int16>` | `Utf8View` | A space-delimited nested codec, for a catalog type |
 
 And we are already **narrower** than the floor for `numeric(p,s)` (decimal vs.
@@ -84,25 +84,31 @@ verdict. It likely earns a `KD<k>` under stance (a) — a consequence of a
 deliberate tradeoff, never to be worked — with its paragraph beside "The bar" in
 [`architecture.md`](architecture.md).
 
-## `interval` collides with P11.5, and needs an invariant before it can be mapped
+## `interval` is unblocked: the style is pinned, and P11.5 already parses it
 
-**Fact.** Two things stand between `interval` and `Interval(MonthDayNano)`.
-I4 records that `pg_dump` sets `DATESTYLE = ISO` and `extra_float_digits = 3`
-but **never** `IntervalStyle`, so the value's rendering depends on the dumping
-session's setting. The four styles' outputs *appear* mutually unambiguous —
-`P1Y2M` starts with `P`, `sql_standard` writes `1-2`, `postgres` and
-`postgres_verbose` use unit words — but that is an observation, not evidence.
-Separately, P11.5 closes the comparison register's `interval` row as an ordering
-over the *text*; mapping the type re-keys that arm and needs its own oracle case
-group.
+**Fact.** The blocker this entry originally recorded does not exist. It read I4
+as saying `pg_dump` never sets `IntervalStyle`, so a value's rendering would
+depend on the dumping session and an invariant would be needed proving the four
+styles mutually distinguishable. **`pg_dump` runs `SET INTERVALSTYLE =
+POSTGRES` on its source connection at every supported major**, immediately after
+`SET DATESTYLE = ISO`; I4 was wrong and is amended, and I40 now states the
+`postgres`-style output grammar in full — parts, units, signs, field widths —
+with `predicate.rs`'s `interval_span` as a working parser of exactly that
+grammar, checked against every committed oracle cell.
 
-**Why this phase cares.** It is the only below-floor type with real value in a
-user's schema, and it is the single largest piece of evidence work in the phase:
-a new `postgres-invariants.md` entry proving the four styles are mutually
-distinguishable, with a re-verification command, before a line of mapping is
-written. Getting that wrong misreads a `sql_standard` dump silently, which is
-the failure mode the bar exists to prevent. Sequencing note: this lands *after*
-P11.5, never beside it.
+**Why this phase cares.** `interval` was the phase's single largest piece of
+evidence work and now carries none: the invariant it was waiting for exists, and
+the text→(months, days, microseconds) split it needs is already written and
+tested. What remains is the mapping decision itself — `Interval(MonthDayNano)`
+is nanosecond-resolution and PostgreSQL's field is microseconds, so the
+conversion is exact in one direction and the render-back has to refuse a
+sub-microsecond value it could never have produced. Sequencing: P11.5 has
+landed, so there is no collision left; a mapping would re-key the register's
+`interval` arm from a text-held comparison to a decoded one, which is a change
+of mechanism and not of answer. **Origin:** P11.5, 2026-09-01
+([`../status/history/2026-09-01.md`](../status/history/2026-09-01.md),
+"`pg_dump` pins `IntervalStyle`"); the original entry was the ADBC survey of
+2026-08-31.
 
 ## The array census is where the floor and an existing design conflict
 

@@ -220,8 +220,10 @@ pub fn render_date32(days: i32) -> String {
 /// `HH:MM:SS[.ffffff]`, no offset. Returns whole seconds since midnight and
 /// the microsecond remainder separately, since callers need both a plain
 /// `Time64` value (`seconds*1_000_000 + micros`) and, for a timestamp, the
-/// same pair added onto a day count.
-fn parse_time_of_day(s: &str) -> Option<(i64, i64)> {
+/// same pair added onto a day count. `crate::predicate` reads it too, for the
+/// time half of a `time with time zone` comparison — that type has no Arrow
+/// mapping of its own, so its *ordering* is the only path that decodes it.
+pub(crate) fn parse_time_of_day(s: &str) -> Option<(i64, i64)> {
     let (hms, frac) = s.split_once('.').unwrap_or((s, ""));
     let mut parts = hms.splitn(3, ':');
     let h: i64 = parts.next()?.parse().ok()?;
@@ -275,7 +277,13 @@ pub fn render_time64_micros(v: i64) -> String {
 /// seconds (positive east of UTC, matching the sign convention `local - offset
 /// = UTC`). The offset is the only place a `+`/`-` can occur in this
 /// substring — the fractional-seconds part, if any, is digits and a `.` only.
-fn extract_offset(s: &str) -> Option<(&str, i64)> {
+///
+/// `timetz_out` writes the same `EncodeTimezone` form (I40), so
+/// `crate::predicate` splits a `time with time zone` with this. What it does
+/// with the two halves is not what a timestamp does: the offset is kept, not
+/// discarded, because two `timetz` values are equal only when the zone
+/// matches as well as the instant.
+pub(crate) fn extract_offset(s: &str) -> Option<(&str, i64)> {
     let idx = s.find(['+', '-'])?;
     let (time_only, off) = s.split_at(idx);
     let (sign, rest) = off.split_at(1);

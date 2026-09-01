@@ -329,6 +329,17 @@ TYPE_CASES: list[TypeCases] = [
     # than the oracle's observation -- a `name` pair asked under an explicit
     # `COLLATE "C"` is a different question from one asked bare, and only the
     # bare one shows what a bare column does.
+    #
+    # **These cells do not currently answer that question**, and it is the one
+    # place this file measures something other than what it names.
+    # `pgdq_cmp` casts a `text` parameter, and a cast derives its collation
+    # from its input -- so `$1::name` carries the parameter's `default`
+    # collation rather than `name`'s own `C`, and the committed answer for
+    # `A`/`a` is the database locale's. Only `name` is affected: every other
+    # collatable case states a collation, which overrides the derived one.
+    # Fixing it means re-asking the case in a form that carries no input
+    # collation and regenerating six majors. See `docs/design/architecture.md`,
+    # "The comparison oracle".
     TypeCases("name", ("A", "a", "hello", None)),
     # Declaration order, not label text: `sad` < `ok` < `happy` on the server
     # and the reverse bytewise, which is the whole of the enum register row.

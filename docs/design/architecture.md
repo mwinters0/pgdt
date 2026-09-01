@@ -1057,7 +1057,7 @@ almost every column in a real 75-table schema.
 | `timestamp with time zone` | `Timestamp(Microsecond, Some("UTC"))` | Offset explicit in the data and normalized to UTC (I4) |
 | `time without time zone` | `Time64(Microsecond)` | |
 | `time with time zone` | `Utf8View` | Offset semantics map to no Arrow type |
-| `interval` | `Utf8View` | `IntervalStyle` is never recorded (I4) — the file does not determine the value |
+| `interval` | `Utf8View` | **The reason this row used to give is false.** It read "`IntervalStyle` is never recorded, so the file does not determine the value"; `pg_dump` pins `INTERVALSTYLE = POSTGRES` on its own connection and always has (I4), which is what lets the ordering register parse the text (I40). Arrow's `Interval(MonthDayNano)` carries the same three independent fields, so the mapping is open rather than blocked — it is a `Utf8View` today because nothing has revisited it, not because the format prevents it |
 | `uuid` | `FixedSizeBinary(16)` | Canonical 36-char form |
 | `bytea` | `Binary` | `\x48656c6c6f` after COPY unescaping |
 | `json`, `jsonb` | `Utf8View` | Arrow has no JSON type |
@@ -2140,11 +2140,15 @@ equals the filter's literal sorts *after* it here and *equal* on the server.
 `COLLATE "C"` does not close that, and a register that promoted `char` along
 with `text` and `varchar` would be claiming an agreement it does not have.
 
-**Keyed on the declared type, not on the Arrow one.** Four unrelated declared
-types reach `Utf8View` — a text type, a bare `numeric`, a text-held type such
-as `interval`, and `json`, which PostgreSQL does not order at all — and the
-first two are now four *different* comparisons under one Arrow type, so the
-Arrow type cannot say which one a column wants. Neither can it reach the enum's
+**Keyed on the declared type, not on the Arrow one.** Six unrelated declared
+types reach `Utf8View` — a text type, a bare `numeric`, an `interval`, a
+`timetz`, an `inet`, and `json`, which PostgreSQL does not order at all — and
+they are six *different* comparisons under one Arrow type, so the Arrow type
+cannot say which one a column wants. Two pairs go further and are not even
+distinguishable by declared type alone once the plan is built: `cidr` differs
+from `inet` only in refusing a literal below its netmask, and `macaddr8` from
+`macaddr` only in its width, so the plan carries each fact rather than
+re-deriving it from a name that is gone by then. Neither can it reach the enum's
 labels, which are what closes the enum row: they live on `TypeKind::Enum`, in
 declaration order, and `CompareKind::Enum` carries them. That is why the plan
 is not `Copy` — an enum's labels and a `numeric`'s typmod flag are facts about
@@ -2188,11 +2192,34 @@ with the reason that names its nesting rather than with "no order defined".
 | any column declaring a collation that is not `C`/`POSIX` | `Utf8View` | **no** — PostgreSQL orders it by that collation, which this build does not implement | one comparison per collation, i.e. a collation library |
 | `char(n)` | `Utf8View` | **no**, whatever its collation — the dump writes values blank-padded to `n` and `bpcharcmp` strips trailing blanks first (I38), so a field equal to the literal sorts above it here | trimming both sides before comparing, which is 11.6's canonicalization question |
 | **bare `numeric`**, and `numeric` beyond 76 digits | `Utf8View` | yes — compared as an arbitrary-precision decimal over the text the file holds, which is `cmp_var_common`'s own value order and so insensitive to display scale: `1.5` and `1.50` are one value (I33). The bare form carries all three of `Infinity`, `-Infinity` and `NaN`; the constrained one carries only `NaN` (I34) | — |
-| `interval`, `time with time zone`, `json`/`jsonb`, `inet`/`cidr`/`macaddr`/`macaddr8`, and any domain over them | `Utf8View` | **no** — each has a server-side operator of its own that a bytewise comparison does not implement | one decoder per type, each its own piece of work |
+| `interval` | `Utf8View` | yes — compared as `interval_cmp_value`'s 128-bit span, so `1 mon`, `30 days` and `720:00:00` are one value (I40), with the v17 infinities read on every file (I34) | — |
+| `time with time zone` | `Utf8View` | yes — the UTC-equivalent instant, then the stored zone, so two spellings of one instant are ordered rather than equal (I40) | — |
+| `inet`, `cidr`, `macaddr`, `macaddr8` | `Utf8View` | yes — family, then the shorter netmask's worth of address bits, then the netmask, then the address (I40); the MAC types are their octets' own order | — |
+| `json`, `jsonb`, and any domain over them | `Utf8View` | **no**, for opposite reasons — PostgreSQL defines *no* comparison for `json` at all, so bytewise offers more than the server does; `jsonb` has a full order that a bytewise comparison does not implement | for `jsonb`, a decoder; for `json`, nothing, since there is no order to agree with |
 
 A domain has no row of its own: it compares as the row its base type is on,
 through any chain, which is how the last row already covers "any domain over
-them".
+them", and how a domain over `interval` picks up that row's comparison for
+free.
+
+**A literal is read in the type's own output form and no wider**, which is
+where these four rows cost something. Each type's `*_in` accepts far more than
+its `*_out` writes — `1.5 hours` and `P1Y2M` for an interval, an abbreviated
+`10` for an IPv4 address, `08-00-2b-01-02-03` for a MAC (I40) — and the
+register implements the output grammar alone, so a filter using one of the
+other spellings is `Error::PredicateValueDecode` naming the value rather than a
+comparison that means something else. That is `oid`'s refusal on a wider
+grammar, and it is a **property rather than a deficiency**: the remedy is in
+the user's hands, since every value the file holds is already in the accepted
+form and `pgdq query` names the literal it would not read. Implementing more of
+`*_in` would be re-implementing four input functions to accept spellings that
+no dump contains.
+
+*Rejected: normalizing an unknown literal by round-tripping it through the
+type's own decoder.* There is no decoder to round-trip through — these four
+types have no Arrow representation at all, which is why their comparison is a
+key rather than a value, and building one to widen a literal grammar inverts
+the cost.
 
 **The refusals are the rest of the table, and they are stated rather than
 listed**: every nested shape — array, composite, range, multirange — and every
@@ -2224,9 +2251,13 @@ belongs to P11, which retires this entry
 this phase closes, and what it declares"). Three of its rows are already
 closed: the enum, by reading the declaration order the dump carries; the bare
 `numeric`, by comparing arbitrary-precision decimal rather than text; and the
-collation half of the text row, by reading the clause. What remains of the
-text row is a database default the file does not carry, plus `char(n)`'s blank
-padding, which was never a collation question at all.
+collation half of the text row, by reading the clause. The text-held row is
+down to `json` and `jsonb`: `interval`, `time with time zone` and the four
+network types each carry a comparison of their own (I40), and `json` will close
+by *statement*, since a type the server defines no order for cannot be
+disagreed with. What remains beside those is a database default the file does
+not carry, plus `char(n)`'s blank padding, which was never a collation question
+at all.
 
 **Adding an arm here obliges an oracle case**, and that is checked rather than
 remembered: `scripts/oracle_register.py` fails when a register arm has no case
@@ -3081,6 +3112,28 @@ used.
 register's claim rather than the oracle's observation — a `name` pair asked
 under an explicit clause is a different question from one asked bare, and only
 the bare one shows what a bare column does.
+
+**`name`'s cells do not, in fact, answer that question, and they are the one
+place this oracle is measuring something other than what it names.** The SQL
+is `EXECUTE format('SELECT ($1::%s) %s ($2::%s)', …) USING lhs, rhs`, and
+`lhs`/`rhs` are `text`. A cast derives its collation from its *input*, so
+`$1::name` carries the `text` parameter's `default` collation rather than
+`name`'s own `C` type default — and `namelt` reads what it is given. The file
+therefore records `'A'::name < 'a'::name` as **false**, which is the database
+locale's answer; the same server answers **true** for `'A'::name < 'a'::name`
+written as literals, and for two `name` *columns*, whose `attcollation` is `C`.
+Confirmed on one session against PostgreSQL 16.15, both spellings side by
+side.
+
+Only `name` is affected, and the bound is structural rather than lucky: every
+other collatable case states a collation explicitly, and an explicit `COLLATE`
+overrides the derived one. So the register's `name` row rests on I37 and
+`pg_type.dat`'s `typcollation => 'C'`, as it always did, and on
+`tests/ordering.rs`'s assertion over `t_collate.v_name` — not on these cells,
+which currently stand as evidence for the opposite claim. Fixing the case means
+re-asking it in a form that carries no input collation and regenerating six
+majors; until then this paragraph is what stops the cells being read as a
+contradiction.
 
 **`character(10)` is asked under both collations, ahead of the slice that
 closes it.** Today the register is clause-blind there — blank padding is what

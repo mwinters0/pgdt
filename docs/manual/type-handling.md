@@ -69,14 +69,23 @@ and maps to `Timestamp(Microsecond, None)`.
 Fractional seconds are trailing-trimmed, so the same column can hold
 `…35.456696+00` and `…10.41925+00` and `…52+00`. That is normal.
 
-### `interval` is a string, and will stay one
+### `interval` comes back as a string, and still filters as a duration
 
-PostgreSQL renders an interval according to `IntervalStyle`, and `pg_dump` never
-sets or records it. The same interval is `1 day 02:03:04` under one setting and
-`P1DT2H3M4S` under another, and **the file does not say which**. Since we cannot
-determine the value from the dump alone, `interval` columns come back as
-strings. This is not a coverage gap we intend to close; it is a property of the
-format.
+Arrow has no type that carries PostgreSQL's months, days and microseconds as
+three independent fields the way pgdq would need, so an `interval` column
+arrives as the text the dump holds — `1 year 2 mons 3 days 04:05:06`. That text
+is always in PostgreSQL's `postgres` interval style, because `pg_dump` pins the
+setting when it reads the table.
+
+`<`, `<=`, `>` and `>=` on such a column compare **durations**, not text.
+PostgreSQL treats a month as 30 days and a day as 24 hours when it orders
+intervals, so `1 mon`, `30 days` and `720:00:00` are one value, and all three
+select the same rows:
+
+```sh
+pgdq query --source dump.sql --table public.jobs --filter 'ran_for>1 mon'
+pgdq query --source dump.sql --table public.jobs --filter 'ran_for>720:00:00'
+```
 
 ### `numeric` with no precision is a string, but it still filters as a number
 
@@ -191,6 +200,37 @@ selects a row whose `code` is exactly `ab`, where the server would not.
 
 **`=` and `!=` are unaffected by collation.** Every libc collation calls two
 different strings different, so equality is bytewise on the server too.
+
+### Six string-shaped types still order the way PostgreSQL orders them
+
+A column that comes back as text is not necessarily *compared* as text.
+`interval`, `time with time zone`, `inet`, `cidr`, `macaddr` and `macaddr8` all
+arrive as strings — no Arrow type fits them — and all six order exactly as the
+server does:
+
+- an `interval` by its duration, as above;
+- a `time with time zone` by the instant it names, so `00:00:00-05` is five
+  hours after `00:00:00+00` and sorts above it;
+- an `inet` or `cidr` by address family first (every IPv4 address below every
+  IPv6 one), then the network, then the netmask length, then the host part;
+- a `macaddr` or `macaddr8` by its octets.
+
+**Write the value the way the dump writes it.** The filter reads each of these
+in PostgreSQL's *output* spelling only, which is what every value in the file
+is already in. So `--filter 'ran_for>1 mon'` works and `--filter 'ran_for>1
+month'` does not, and `--filter 'host>08:00:2b:01:02:03'` works where
+`08-00-2b-01-02-03` does not — the server accepts both, pgdq accepts the one
+a dump can contain. A spelling it will not read is refused by name:
+
+```sh
+pgdq query --source dump.sql --table public.jobs --filter 'ran_for>1 month'
+# error: filter value `1 month` for `ran_for > ...` does not parse as the
+# column's declared type `interval`
+```
+
+**`json` and `jsonb` are still compared as text**, and are warned about the way
+a text column is. PostgreSQL orders `jsonb` structurally — an object above an
+array above a number — and does not order `json` at all.
 
 ### Writing a filter term
 

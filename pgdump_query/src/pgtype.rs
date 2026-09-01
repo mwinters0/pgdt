@@ -168,6 +168,42 @@ pub enum CompareKind {
     /// `CREATE TYPE … AS ENUM (…)` writes and what a `--binary-upgrade`
     /// dump's `ALTER TYPE … ADD VALUE` run is folded back into (I6).
     Enum(Arc<[String]>),
+    /// `interval`, compared by `interval_cmp_value`'s span: months collapse
+    /// to 30 days and days to 86400 seconds, so `1 mon`, `30 days` and
+    /// `720:00:00` are one value written three ways (I40). The span needs 128
+    /// bits, which is why PostgreSQL's own comparison uses them.
+    ///
+    /// Carries the two infinities unconditionally, in `date_out`'s spellings
+    /// rather than `numeric_out`'s (I34). They are v17 values, and reading
+    /// them on an older file is the union rule
+    /// (`docs/design/roadmap-P11-typed-predicates.md`, "Version-varying
+    /// semantics"): no v13 server could have written one, so nothing is
+    /// misread by a build that understands them.
+    Interval,
+    /// `time with time zone`, compared by the UTC-equivalent instant first
+    /// and by the stored zone second, so two values are equal only when both
+    /// halves are (I40) — `00:00:00+00` and `01:00:00+01` are the same
+    /// instant and are *not* equal.
+    TimeTz,
+    /// `inet` and `cidr`, compared by `network_cmp_internal`: family, then
+    /// the shorter netmask's worth of address bits, then the netmask length,
+    /// then the whole address (I40). Not a byte order — a `/8` and a `/16`
+    /// that agree on their first eight bits are ordered by the netmask, not
+    /// by the bytes below it.
+    ///
+    /// `cidr` says so, because that is the only difference between the two:
+    /// `cidr_in` refuses a value with a bit set below its netmask and
+    /// `inet_in` accepts one, and refusing that literal is the same shape as
+    /// [`Self::UnsignedInt`]'s.
+    Network {
+        cidr: bool,
+    },
+    /// `macaddr` (six octets) and `macaddr8` (eight), compared as their
+    /// bytes (I40). The width is carried because it is the whole of what
+    /// separates the two types.
+    MacAddr {
+        octets: usize,
+    },
 }
 
 /// How a comparison here differs from PostgreSQL's own for the same declared
@@ -239,11 +275,13 @@ impl ComparisonPlan {
     }
 
     /// Bytewise over the text the file holds, which is not what PostgreSQL
-    /// orders by — the answer for every *non-collatable* type this build maps
-    /// to `Utf8View`. A collatable one goes through [`collated_text`].
+    /// orders by. A collatable type goes through [`collated_text`] instead,
+    /// and every other `Utf8View` type now carries a comparison of its own,
+    /// so this constant has exactly two members left: `json`, which the
+    /// server does not order at all, and `jsonb`, which it does.
     ///
-    /// Deficiency register: `deficiency: KD7` — every remaining
-    /// text-held-type row of the register is this constant, and the detail is
+    /// Deficiency register: `deficiency: KD7` — the register's remaining
+    /// text-held row is this constant, and the detail is
     /// `docs/design/architecture.md`'s "Ordering operators compare typed".
     pub(crate) const AS_TEXT: Self =
         Self::Compared { kind: CompareKind::Text, divergence: Some(OrderingDivergence::AsText) };
@@ -431,14 +469,29 @@ fn builtin_scalar(
             (Timestamp(Microsecond, Some("UTC".into())), agrees(K::Timestamp { with_tz: true }))
         }
         "time without time zone" => (Time64(Microsecond), agrees(K::Time)),
-        "time with time zone" => (Utf8View, text),
-        "interval" => (Utf8View, text),
+        // Held as text in Arrow and *ordered* all the same, each by the
+        // comparison its own type defines (I40). `time with time zone` sorts
+        // by the UTC instant and breaks a tie on the zone; an `interval`'s
+        // months collapse to 30 days and its days to 86400 s.
+        "time with time zone" => (Utf8View, agrees(K::TimeTz)),
+        "interval" => (Utf8View, agrees(K::Interval)),
         // `uuid_internal_cmp` is `memcmp` over 16 bytes, and `byteacmp` is
         // `memcmp` then length — both are `[u8]`'s own order (I33).
         "uuid" => (FixedSizeBinary(16), agrees(K::Uuid)),
         "bytea" => (Binary, agrees(K::Bytea)),
+        // The two that are still text, and for opposite reasons. PostgreSQL
+        // defines *no* comparison for `json` — no `=`, no order, no operator
+        // class — so bytewise offers more than the server does rather than
+        // less. `jsonb` has a full order, and it is the one remaining member
+        // of the register's text-held row.
         "json" | "jsonb" => (Utf8View, text),
-        "inet" | "cidr" | "macaddr" | "macaddr8" => (Utf8View, text),
+        // `network_cmp_internal`'s order for the two address types, and the
+        // plain byte order for the two MAC types (I40). `cidr` differs from
+        // `inet` only in refusing a literal with a bit set below its netmask.
+        "inet" => (Utf8View, agrees(K::Network { cidr: false })),
+        "cidr" => (Utf8View, agrees(K::Network { cidr: true })),
+        "macaddr" => (Utf8View, agrees(K::MacAddr { octets: 6 })),
+        "macaddr8" => (Utf8View, agrees(K::MacAddr { octets: 8 })),
         _ => return None,
     })
 }
@@ -1637,16 +1690,23 @@ mod tests {
             ("timestamp without time zone", agrees(K::Timestamp { with_tz: false })),
             ("timestamp with time zone", agrees(K::Timestamp { with_tz: true })),
             ("time without time zone", agrees(K::Time)),
-            ("time with time zone", text()),
-            ("interval", text()),
+            ("time with time zone", agrees(K::TimeTz)),
+            ("interval", agrees(K::Interval)),
             ("uuid", agrees(K::Uuid)),
             ("bytea", agrees(K::Bytea)),
+            // The two the register still holds as text, for opposite
+            // reasons: PostgreSQL orders `jsonb` and does not order `json`
+            // at all.
             ("json", text()),
             ("jsonb", text()),
-            ("inet", text()),
-            ("cidr", text()),
-            ("macaddr", text()),
-            ("macaddr8", text()),
+            // `cidr` differs from `inet` only in refusing a literal with a
+            // bit set below its netmask, and `macaddr8` from `macaddr` only
+            // in its width — both distinctions the plan has to carry, since
+            // the declared name is gone by the time a value is read.
+            ("inet", agrees(K::Network { cidr: false })),
+            ("cidr", agrees(K::Network { cidr: true })),
+            ("macaddr", agrees(K::MacAddr { octets: 6 })),
+            ("macaddr8", agrees(K::MacAddr { octets: 8 })),
         ] {
             assert_eq!(comparison_for(declared, None, &[]), expected, "{declared}");
         }
@@ -1658,11 +1718,12 @@ mod tests {
         assert_eq!(comparison_for("INTEGER", None, &[]), agrees(K::Int));
     }
 
-    /// Four unrelated declared types reach `Utf8View`, which is why the
+    /// Six unrelated declared types reach `Utf8View`, which is why the
     /// register cannot be keyed on the Arrow type: an enum compares by
-    /// declaration order, a bare `numeric` by decimal value, `interval`
-    /// bytewise for want of an implementation, and `text` bytewise with the
-    /// column's own collation deciding whether that is right.
+    /// declaration order, a bare `numeric` by decimal value, an `interval` by
+    /// a 128-bit span, an `inet` by family-then-prefix, `text` bytewise with
+    /// the column's own collation deciding whether that is right, and `json`
+    /// bytewise because the server defines no order at all.
     #[test]
     fn the_register_tells_apart_types_that_share_one_arrow_type() {
         let labels = ["sad".to_string(), "ok".to_string()];
@@ -1675,11 +1736,19 @@ mod tests {
             comparison_for("numeric", None, &[]),
             ComparisonPlan::agrees(CompareKind::Numeric { infinities: true }),
         );
-        for declared in ["interval", "json"] {
+        assert_eq!(
+            comparison_for("interval", None, &[]),
+            ComparisonPlan::agrees(CompareKind::Interval),
+        );
+        assert_eq!(
+            comparison_for("inet", None, &[]),
+            ComparisonPlan::agrees(CompareKind::Network { cidr: false }),
+        );
+        for declared in ["json", "jsonb"] {
             assert_eq!(comparison_for(declared, None, &[]), ComparisonPlan::AS_TEXT, "{declared}");
         }
-        // `text` is the fourth, and it no longer shares `AS_TEXT` with them:
-        // reading the collation is what tells the two apart.
+        // `text` is the last, and it does not share `AS_TEXT` with them:
+        // reading the collation is what tells them apart.
         assert_eq!(
             comparison_for("text", None, &[]),
             ComparisonPlan::text_diverging(OrderingDivergence::UnknownCollation),
@@ -1727,7 +1796,10 @@ mod tests {
             ),
             // A non-collatable type ignores a clause it cannot carry.
             ("integer", Some("pg_catalog.\"C\""), ComparisonPlan::agrees(CompareKind::Int)),
-            ("interval", Some("pg_catalog.\"C\""), ComparisonPlan::AS_TEXT),
+            ("interval", Some("pg_catalog.\"C\""), ComparisonPlan::agrees(CompareKind::Interval)),
+            // Including one that is still held as text: `json` is not
+            // collatable either, so a clause on it moves nothing.
+            ("json", Some("pg_catalog.\"C\""), ComparisonPlan::AS_TEXT),
         ] {
             assert_eq!(
                 comparison_for(declared, collation, &[]),
