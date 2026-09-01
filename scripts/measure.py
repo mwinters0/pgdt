@@ -2304,6 +2304,35 @@ def excused_paths(
     return out
 
 
+def inert_excuses(
+    figure_id: str,
+    hits: Sequence[str],
+    commits_by_path: dict[str, Sequence[str]],
+    acks: Sequence[Acknowledged],
+) -> list[tuple[str, list[str], list[str]]]:
+    """Per still-red path: the entries that excuse it, and the commits that do not.
+
+    An entry excuses a commit, so a later unexamined commit on the same path
+    leaves the earlier entry correct and doing nothing. `excused_paths` drops
+    that path, and the entry then appears in no output at all — which reads
+    exactly like a missing entry, and has once been mistaken for one. So a
+    stale path that carries at least one excused commit says so, naming the
+    commits that are actually holding it red.
+
+    Returns `(path, excused shas, blocking shas)`, only for paths where the
+    first list is non-empty; a path nothing excuses is red for the ordinary
+    reason and needs no commentary.
+    """
+    out = []
+    for path in hits:
+        excused, blocking = [], []
+        for commit in commits_by_path.get(path) or ():
+            (excused if excuses(acks, commit, figure_id) else blocking).append(commit)
+        if excused:
+            out.append((path, excused, blocking))
+    return out
+
+
 def commits_touching(paths: Iterable[str], since: str) -> dict[str, list[str]]:
     """The commits in `since..HEAD` that changed each path."""
     out: dict[str, list[str]] = {}
@@ -3017,6 +3046,10 @@ def cmd_stale(since: str | None) -> int:
 
     for fig, hits in stale:
         print(f"  {fig.id:<24} stale — {', '.join(hits)}")
+        for path, excused, blocking in inert_excuses(fig.id, hits, by_path, acks):
+            names = ", ".join(c[:7] for c in excused)
+            held = ", ".join(c[:7] for c in blocking) or "an uncommitted change"
+            print(f"      {path}: {names} excused here but inert — held red by {held}")
     if all(f.stage == "derived" for f, _ in stale):
         # A derived figure is computed from two sweeps' `raw.json`, so it is
         # re-taken in seconds and forces no sweep on anything else.

@@ -18,13 +18,8 @@ reconciliation, the declared collation and the fixture columns that observe
 it — the displaced clause included — landed. Its checklist is below.
 
 [`../design/measurements.md`](../design/measurements.md) carries the `b70589f`
-stamp, and **`uv run measure.py --stale` names eleven of its thirteen figures**
-— the paragraphs below name each and what would settle it. Four of the eleven
-are red only because `a6e713f` has no `scripts/acknowledged.py` entry: the
-reachability argument that excuses it is written out in
-[`../design/roadmap-P11.3-comparison-plan-l2-notes.md`](../design/roadmap-P11.3-comparison-plan-l2-notes.md),
-"What was left out, and why", where it was deferred because an entry is keyed
-on a commit sha the change did not have yet, and nothing has filed it since. A stale figure no longer obliges a sweep and neither does a
+stamp, and **`uv run measure.py --stale` names seven of its thirteen figures**
+— the paragraphs below name each and what would settle it. A stale figure no longer obliges a sweep and neither does a
 wrap: a full sweep is an hour of a quiet machine and belongs to the phase that
 is about performance, which will re-take every table under its own apparatus
 ([`../design/measurements.md`](../design/measurements.md), "A stale figure does
@@ -126,13 +121,28 @@ arm, and every timed run of this figure is on `blocks4000`, which
 `generate_block_count_bench.py` builds out of `CREATE TABLE`s alone — no type
 DDL, so no `TypeDef` span, so `record_type` is never called. That is
 reachability, the same oracle `a6e713f`'s entry uses, and the entry carries the
-grep that re-checks it.
+grep that re-checks it. **The figure is red all the same**: `eca96be` touched
+`preamble.rs` after it and is deliberately not excused there, which makes
+`682819d`'s entry inert until a sweep retires both. `--stale` says so under the
+figure.
 
-**11.4 turned nothing new red.** It edits `pgtype.rs`, `predicate.rs` and
-`resolve.rs`, which no figure declares, plus one line of `stream.rs` —
-`project` cloning a comparison plan rather than copying it, once per projected
-column per block — and `stream.rs` has been a changed declared path since
-`a6e713f`. So the stale set is the same eleven, for the same reasons.
+**11.4 re-reddened the four `a6e713f` had cleared, and `c614c4b` is
+acknowledged for them.** It edits `pgtype.rs`, `predicate.rs` and `resolve.rs`,
+which no figure declares, plus one line of `stream.rs` — `project` cloning a
+comparison plan rather than copying it, once per projected column per block.
+`stream.rs` was already a changed declared path, and that is exactly why an
+entry was owed rather than excused: the register accounts for a **commit**, and
+a path is clean only when every commit that touched it is, so one unexamined
+commit makes every earlier entry on that path inert. The entry is the same
+reachability argument `a6e713f` carries, over a strictly smaller diff — one
+line inside `project`, which no `parse`-shaped run reaches.
+
+**M29 touched `batch.rs` and is deliberately not acknowledged.** The `oid` work
+added a `ColumnBuilder::UInt32` variant and its match arms, which is real code
+on the decode path — it runs in any figure whose input has an `oid` column, so
+"those figures were red already" would not be evidence. `nested-end-to-end` and
+`cross-file-floor` stay red, now for `7c018b3` as well as for the reason 11.3
+gave.
 
 **11.11 turned nothing new red, and `eca96be` is acknowledged for seven
 figures.** Its touches to declared paths carry no work: `map.rs` is a type
@@ -339,18 +349,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`a6e713f`'s acknowledgement was left unwritten, and four figures stay red
-  for it.** 11.3's notes worked out the reachability argument in full — `pgdq
-  parse` reaches `map_file`, which calls neither `resolve_block` nor `project`,
-  so a `parse`-shaped run executes none of the `stream.rs` change — and
-  deferred the `scripts/acknowledged.py` entry because one is keyed on a commit
-  sha the change did not have yet. It has had one since, and nothing filed it;
-  `census-brace-free`, `census-arrays`, `scan-throughput-cold` and
-  `scan-throughput-warm` read stale to the harness while `STATUS.md` says they
-  are excused. **What is being asked:** whether that entry should be written
-  now, or whether the four should stay red until a sweep. This slice corrected
-  the count in the figures paragraph rather than writing it, because an
-  acknowledgement that is wrong stops a figure being flagged at all, and
-  filing one for somebody else's commit is not the kind of claim an unattended
-  session should make on its own. If it is written, it also settles the
-  seven-versus-eleven mismatch the paragraph now has to explain in prose.
+Nothing is open.

@@ -125,13 +125,14 @@ have to borrow instead. It is a one-line change and it is flagged here because
 --json` still exports `plans` and not `comparisons`. The slice's contract is
 "no answer changes", and adding an output field is an answer.
 
-**No acknowledgement entry for the figures this made stale**, because an entry
-in `scripts/acknowledged.py` is keyed on a commit sha and this change has none
-yet. Eight figures read stale and the reason is in
-[`STATUS.md`](../status/STATUS.md); what is available, once the change is
-committed, is a **reachability** acknowledgement for the four `parse`-shaped
-figures — `census-brace-free`, `census-arrays`, `scan-throughput-cold`,
-`scan-throughput-warm`. `parse` never calls `resolve_columns` or
+**The acknowledgement entry for the figures this made stale is written**, in
+`scripts/acknowledged.py` against `a6e713f`. It could not go in this slice —
+an entry is keyed on a commit sha and the change had none yet — so it was
+filed by the next session, which is the only way an entry naming its own
+commit is ever written. What it carries is a **reachability** excuse for the
+four `parse`-shaped figures — `census-brace-free`, `census-arrays`,
+`scan-throughput-cold`, `scan-throughput-warm`. `parse` never calls
+`resolve_columns` or
 `stream::project`: `pgdq parse` reaches `map_file` → `map_forward`, and every
 production call of `resolve_block` and `project` is in `table_stream` or in
 `resume_state`, which only `table_stream` calls. So a `pgdq parse` run
@@ -139,6 +140,14 @@ executes none of the changed code. What re-checks the claim is
 `rg -n 'resolve_block\(|project\(' pgdump_query/src/stream.rs` against the
 function list, and `measure.py`'s `_script`, where every `parse`-shaped
 command is a `pgdq parse`.
+
+That argument covers `a6e713f`'s diff, not `stream.rs`. **A later slice
+touching `stream.rs` owes its own entry**, because the register excuses a
+commit and a path is accounted for only when every commit on it is — so one
+unexamined commit makes this excuse inert and the four figures red again. 11.4
+is the case that proved it: its one-line `clone` in `project` re-reddened all
+four, and the entry it needed is the same argument over a strictly smaller
+diff.
 
 The three query-shaped figures — `nested-end-to-end`, `cross-file-floor` and
 `projection-widths` — are **not** excusable. They execute one `comparison_for`

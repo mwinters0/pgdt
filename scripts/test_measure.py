@@ -508,6 +508,27 @@ class Acknowledgements(unittest.TestCase):
         )
         self.assertEqual(got, [])
 
+    def test_an_inert_entry_is_named_with_what_holds_the_path_red(self):
+        # The failure this exists against: an entry that excuses one commit on
+        # a path another commit also touched vanishes from every output, which
+        # reads as a missing entry and has been mistaken for one.
+        got = measure.inert_excuses(
+            "census-arrays",
+            ["scripts/generate_perf_data.py"],
+            {"scripts/generate_perf_data.py": ["aaa", "ccc"]},
+            self.ACKS,
+        )
+        self.assertEqual(got, [("scripts/generate_perf_data.py", ["aaa"], ["ccc"])])
+
+    def test_a_path_nothing_excuses_gets_no_commentary(self):
+        got = measure.inert_excuses(
+            "census-arrays",
+            ["scripts/generate_perf_data.py"],
+            {"scripts/generate_perf_data.py": ["ccc"]},
+            self.ACKS,
+        )
+        self.assertEqual(got, [])
+
     def test_the_live_register_names_only_real_figures(self):
         known = set(measure.ALL_BY_ID)
         for ack in measure.ACKNOWLEDGED:

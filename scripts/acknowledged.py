@@ -50,6 +50,17 @@ class Acknowledged:
     into a way to wave away real staleness. A commit is a fixed diff that
     someone — or `--verify-additive` — actually looked at.
 
+    **An entry excuses a commit, and a path is accounted for only when every
+    commit that touched it is excused.** So one unexamined commit on a path
+    makes every earlier entry on that path *inert* — the excuse is still
+    correct and still does nothing, and the figure reads red for the new
+    commit. Two consequences, and both have already cost a session. Writing an
+    entry does not mean the figure goes green: check `--stale`, which names an
+    inert entry under the figure it failed to clear. And a slice landing on an
+    already-red declared path still owes an entry or a stated reason not to
+    write one: "the path was red before I touched it" is not one, because the
+    figure's colour is not what the register is tracking.
+
     **An acknowledgement lives inside one stamp's range.** Once the doc is
     re-stamped past it, the commit is no longer in any `--stale` range and the
     entry is spent; `--check` names spent entries so they are deleted rather
@@ -140,6 +151,34 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
             "awk -F/ '$1~/^(census-brace-free|census-arrays|"
             "scan-throughput-cold|scan-throughput-warm)$/{print $4}' | "
             "sort -u  # dd, parse -- nothing query-shaped"
+        ),
+    ),
+    Acknowledged(
+        commit="c614c4b",
+        figures=(
+            "census-brace-free",
+            "census-arrays",
+            "scan-throughput-cold",
+            "scan-throughput-warm",
+        ),
+        why=(
+            "11.4 gave ComparisonPlan up its Copy, whose whole footprint on a "
+            "declared path is one line of stream.rs: `project` cloning "
+            "resolved.comparisons[i] rather than copying it. That is a strict "
+            "subset of a6e713f's diff over the same four figures and the same "
+            "reachability holds unchanged -- every timed run of theirs is "
+            "`parse` or `dd`, and `pgdq parse` enters map_file, which reaches "
+            "neither `resolve_block` nor `project` (their only non-test call "
+            "sites are inside table_stream, stream.rs:915/1204/1248 and "
+            "925/1223/1260). The three query-shaped figures over stream.rs are "
+            "NOT excused here, for the reason a6e713f's entry gives"
+        ),
+        verified=(
+            "jq -r '.readings|keys[]' runs/measure-20260830T191415/raw.json | "
+            "awk -F/ '$1~/^(census-brace-free|census-arrays|"
+            "scan-throughput-cold|scan-throughput-warm)$/{print $4}' | "
+            "sort -u  # dd, parse -- nothing query-shaped; the same shape "
+            "evidence a6e713f's entry carries, over the same four figures"
         ),
     ),
     Acknowledged(
