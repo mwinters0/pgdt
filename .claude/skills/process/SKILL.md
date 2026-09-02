@@ -30,7 +30,7 @@ Every one of these belongs in the *same* change as the code, not a follow-up:
    that lands no code. Written for the *next* slice: what it inherits, the
    non-obvious calls and why. Not a restatement of the spec, not a changelog.
 2. **The STATUS checklist ticked** for that slice, linking its notes doc, plus
-   any change to "Not started" / "Known gaps" the slice caused.
+   any change to "Not started" / "Known deficiencies" the slice caused.
 3. **The phase spec left untouched.** Progress never goes in the spec — no ✅,
    no "deferred" annotations, no rewritten slice rows. The spec changes only
    when a *decision* changes, and then the reasoning goes in a history entry.

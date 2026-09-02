@@ -12,7 +12,7 @@ question, review an approach, or unblock you. Work accordingly.
    `docs/process.md` and names what landing a slice obliges. Do this first,
    not after you have decided what to build.
 2. Read `docs/status/STATUS.md` — the phase checklist, "Not started", "Known
-   gaps", and "Decisions worth another look".
+   deficiencies", and "Decisions worth another look".
 3. Read the current phase spec and the notes docs of the slices already
    landed in this phase.
 4. Read `docs/design/roadmap.md`'s **"Out-of-band work"** ledger, for the rows
