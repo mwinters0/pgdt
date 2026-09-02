@@ -2170,9 +2170,9 @@ whose type did not resolve has no order of its own (which is also what makes
 `SchemaMode::Strings` refuse every ordering operator — it resolves nothing, so
 the rule needs no case for it), and a column whose declared type the register
 models no comparison for is refused too. A **nested** column is in the first
-group where its shape and every position beneath it compare — arrays and
-composites do, ranges and multiranges do not yet — and is refused otherwise,
-naming the position; see "Nested columns compare structurally" below. Every
+group where its shape and every position beneath it compare — an array, a
+composite, a range and a multirange all do — and is refused otherwise, naming
+the position; see "Nested columns compare structurally" below. Every
 refused column keeps `Eq`/`Ne`, for the reason the paragraph above gives.
 
 **Two faults are held apart, and both are named before the rows they would
@@ -2444,7 +2444,7 @@ with the reason that names its nesting rather than with "no order defined".
 | `json`, and any domain over it | `Utf8View` | **no** — PostgreSQL defines *no* comparison for `json` at all, so bytewise offers more than the server does rather than less | nothing, since there is no order to agree with |
 
 | an **array** or **composite**, and any domain over one | `List(…)` / `Struct(…)` | **inherited** — compared structurally (I45), and it agrees exactly when every element or field type beneath it does. A `text[]` column carries the `text` rows' collation residue at its element; a `json[]` column, or a composite with a `json` field, is *refused*, because the server has no comparison for one either | whatever would close the position that diverges |
-| a **range** or **multirange**, and any domain over one | `Struct(…)` / `List(Struct(…))` | **refused** — a discrete range canonicalizes its bounds on input (`int4range '[1,10]'` is `[1,11)`), which needs the subtype's successor function | the canonicalization, which is not implemented here yet |
+| a **range** or **multirange**, and any domain over one | `Struct(…)` / `List(Struct(…))` | **inherited**, on the same rule, once both sides are put into the form the server stores them in (I46): `empty` below everything, then the bounds, with a multirange's members sorted, coalesced and emptied out first. Both discrete canonicalizations are reproduced — the successor shift, and the collapse of `[1,1)` to `empty` — so `int4range '[1,10]'` is the `[1,11)` the file holds. **A user-defined range that declares a `canonical` function is the exception** and is `KD12` | that DDL parameter, which the preamble grammar does not keep |
 
 A domain has no row of its own: it compares as the row its base type is on,
 through any chain, which is how the last row already covers "any domain over
@@ -2554,10 +2554,10 @@ screen. The asymmetry with `info --verbose` is the same shape as
 existing where the user can reach it.
 
 **The refusals are the rest of the table, and they are stated rather than
-listed**: a range or multirange, a nested column with an uncomparable position
-beneath it, and every declared type this build maps to nothing at all. Arrays
-and composites are no longer among them — see "Nested columns compare
-structurally" below, which is where the nested rows of this register live.
+listed**: a nested column with an uncomparable position beneath it, and every
+declared type this build maps to nothing at all. No container kind is refused
+for being one — see "Nested columns compare structurally" below, which is where
+the nested rows of this register live.
 
 **A divergent comparison is announced by the CLI, once, on stderr**, after the
 schema resolves, naming the column and the divergence — including for a query
@@ -2567,7 +2567,8 @@ operator-conditional: three of the six are divergences of *order* alone, so a
 `text` column filtered with both `<` and `=` is warned about once. **A term can
 raise more than one**, because a nested column has a divergence per *position*:
 `ComparisonNote` carries a `path` — `[]` for an array's elements, `.label` for
-a composite's field, appended as the nesting descends — and the declared type
+a composite's field, `.bound` for a range's bounds and `[].bound` for a
+multirange's, appended as the nesting descends — and the declared type
 at that position rather than the column's, so `public.tagged`
 (`(label text, tags text[])`) says both of the things it has to say. The
 library's side of it is `TableStream::comparison_notes`, a **third channel** and
@@ -2882,30 +2883,112 @@ not. See "The register against the oracle's answers".
 
 ### Nested columns compare structurally
 
-An array or composite column gets the four ordering operators **and** `=`/`!=`,
-compared the way `array_cmp` and `record_cmp` compare them rather than as text
-(I45). A range or multirange does not yet: its bounds need the subtype's own
-canonicalization — `int4range '[1,10]'` is `[1,11)` on the server — so the
-register answers `ComparisonPlan::Refused` and `predicate.rs` refuses the
-ordering operators with the nesting named, exactly as it did for every nested
-shape before.
+Every container kind — array, composite, range and multirange — gets the four
+ordering operators **and** `=`/`!=`, compared the way `array_cmp`,
+`record_cmp`, `range_cmp` and `multirange_cmp` compare them rather than as text
+(I45, I46).
 
 **The plan is a tree, and it is built by the same walk the register already
 makes.** `pgtype.rs`'s `NestedCompare` has one node per nesting level —
-`Array(element)`, `Record([(name, field)])`, and a `Leaf` carrying the
-position's declared type, its `CompareKind` and its `ComparisonDivergence`.
-Each position is filled by asking `comparison_for` the question a *column* of
-that type would have been asked, so nesting composes with no special case and a
-domain beneath a container bottoms out where a domain always does.
-`ComparisonPlan` gains a `Nested` variant for it, and the question "does this
-column have an order" becomes `ComparisonPlan::orders()` rather than a match on
-the variant — because a nested plan is not by itself an order.
+`Array(element)`, `Record([(name, field)])`, `Range { bound, discrete }`,
+`Multirange { bound, discrete }`, and a `Leaf` carrying the position's declared
+type, its `CompareKind` and its `ComparisonDivergence`. Each position is filled
+by asking `comparison_for` the question a *column* of that type would have been
+asked, so nesting composes with no special case and a domain beneath a
+container bottoms out where a domain always does. `ComparisonPlan` gains a
+`Nested` variant for it, and the question "does this column have an order"
+becomes `ComparisonPlan::orders()` rather than a match on the variant — because
+a nested plan is not by itself an order.
 
 **One `Array` node whatever the dimensionality.** An `array_out` literal
 carries its own shape and `nested::ArrayLiteral` flattens it row-major, so
 `integer[]` is one node whether its values are vectors or matrices — which is
 also why the plan's depth may legitimately differ from the *Arrow* list depth
 the census settled on.
+
+**A range is compared in the form the server stores it in, not the form it was
+written in**, and that is the one container whose comparison has a rewriting
+step in front of it. `range_in` runs every literal through `make_range`, which
+is two things: `range_serialize`'s type-independent checks — a lower bound above
+its upper is `22000`, bounds that meet without both ends including the point are
+`empty`, an absent bound is never inclusive — and then, for a range type that
+has one, the *canonical function*, after which those same checks run again.
+`predicate.rs` reproduces both, over the decoded bound **keys** rather than over
+text, so `int4range '[1,10]'`, `'[1,9]'`, `'(0,10)'` and `'(0,9]'` are the one
+value the file holds as `[1,11)`, and `'(1,2)'` is `empty` (I46).
+
+**The successor is `OrderKey::Int` plus one, and that pattern *is*
+`daterange_canonical`'s infinity guard** rather than an approximation of it. All
+three built-in canonical functions differ only in the width they overflow at,
+and `daterange` additionally skips a bound that is `DATE_NOT_FINITE` — which
+here is a bound whose key is `PositiveInfinity` or `NegativeInfinity` (I34), so
+it matches no arm and is left exactly as written. That is what keeps
+`[2020-01-01,infinity]` inclusive at the top while `[-infinity,2020-01-01]`
+still becomes `[-infinity,2020-01-02)`. The overflow is refused where the key
+can see it (`int8range` at `i64::MAX`) and not where it cannot: a leaf literal
+is read as `i64` whatever the column's width, which is the property "a literal
+outside a `smallint`'s range still orders correctly" one level down, so
+`int4range '[1,2147483647]'` is accepted here and refused by the server. It is
+an over-acceptance whose only effect is a filter that matches nothing.
+
+**Canonicalization is keyed off the range *type*, never off its subtype.** Only
+`int4range`, `int8range` and `daterange` — and their three multirange
+companions — have a canonical function among the built-ins, so `numrange` does
+not canonicalize even though a fixed-scale decimal has a successor, and
+`public.myrange`, a user range over `double precision`, does not either. The
+flag comes from `builtin_range_subtype`'s hardcoded table for a built-in name
+(I10) and is `false` for every user-defined range.
+
+<!-- deficiency: KD12 -->
+*A user-defined range that declares a `canonical` function is compared without
+it, which is `KD12`.* `pg_dump` writes the parameter and
+`TypeKind::Range` keeps only `subtype` and `multirange_type_name`, so the
+register cannot see it; a column of such a type answers `[1,10]` ≠ `[1,11)`
+where the server calls them one value, silently. The fix is one more parameter
+in the preamble grammar **and** a decision the parameter alone does not settle
+— a user's canonical function is arbitrary SQL, so knowing it exists licenses a
+*refusal*, not a rewriting. It is `(c) unowned` because no dump in hand carries
+one: `fixtures/*`'s two user ranges declare none, and the shape is rare enough
+that the promoting event is a real dump that has one.
+
+**A multirange is normalized before it is a value at all.**
+`multirange_canonicalize` sorts its members, drops the empty ones, and merges
+any two that overlap or touch — so `{[5,10),[1,5)}`, `{[1,5),[5,10)}`,
+`{[1,1),[1,10)}` and `{empty,[1,10)}` are all `{[1,10)}`. After it, no member is
+empty and no two members meet, which is what lets the comparison itself be a
+plain sequence walk: member-wise, then the shorter multirange first. Whether two
+members *touch* is again the range type's question — `{[1,5),[6,10)}` stays two
+members in `int4multirange`, because `[5,6)` is a real range, while
+`{[1,5],[6,10)}` becomes one, the first member having already canonicalized to
+`[1,6)`.
+
+**Both sides go through the rewriting, not only the literal.** It is idempotent
+on a `range_out` field by construction — the server applied it before writing
+the file — so one code path serves both grammars, exactly as `nested_key`'s
+`input` flag does one level up. *Rejected: rewriting the literal alone.* It
+saves nothing measurable and adds a second path whose only coverage would be
+the assertion that the field side needed none.
+
+**A range's bound is asked with no `COLLATE` clause, and that is knowingly
+weaker than the file.** A range type carries its own `collation` parameter —
+`fixtures/*/types/default.sql`'s `public.textrange` declares
+`collation = pg_catalog."C"` — and the preamble grammar keeps `subtype` and
+`multirange_type_name` alone, so a `text`-bounded range reaches the no-clause
+arm and is told its collation is the database's. It is the same shape as the
+user-defined collation above: a range declaring `C` gets correct rows and an
+advisory note it does not need, and one declaring anything else gets exactly
+`KD7`'s statement. Reading the parameter would move the verdict and never the
+answer, which is what makes it a property here rather than a deficiency.
+
+The note it produces reads `` `v_textrange.bound` (text) is compared bytewise:
+the column declares no COLLATE clause `` — true of the column, and the sentence
+is `UnknownCollation`'s own rather than one written for this position. *Rejected:
+a divergence variant, or a message arm, saying "the range type's clause is not
+read".* It would be a second sentence to keep in step with the first for a case
+whose row set is correct, and it invites the reader to add a `COLLATE` clause to
+a column that cannot carry one — a range type is not collatable, so the clause
+lives on the `CREATE TYPE` or nowhere. The honest fix is to read the parameter,
+not to reword the note.
 
 **Comparability is inherited, and so is divergence.** A position whose declared
 type has no order here is a `NestedCompare::Uncomparable` leaf; one anywhere in

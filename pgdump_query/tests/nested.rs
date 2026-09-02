@@ -333,7 +333,14 @@ mod oracle {
     /// - **A discrete range canonicalizes its bounds.** `int4range`'s
     ///   `[1,10]` is `[1,11)` on the server, through the subtype's successor
     ///   function; `numrange` has none and is absent here for that reason.
-    ///   That is the piece a range column's comparison is still waiting on.
+    ///   That one **is** closed, one layer up rather than here: the
+    ///   comparison rewrites the decoded bounds (I46, and
+    ///   `predicate.rs`'s `a_range_literal_is_canonicalized_before_it_is_compared`
+    ///   asserts it over these same rows), where this parser deliberately
+    ///   hands back the bounds as written. `parse_range` may not tighten and
+    ///   `render_range` may not rewrite — the pair is the container grammar
+    ///   and nothing else — so the entry stays as the statement of what this
+    ///   layer does not do.
     const CANONICALIZED: &[(&str, &str)] = &[
         ("public.point2d", "( 1 , a )"),
         ("int4range", "[1,10]"),
@@ -345,6 +352,12 @@ mod oracle {
     /// parser accepts them: `[10,1)` is well-formed and its bounds are out of
     /// order, which needs the subtype's comparison. Asserted as an exact set
     /// for the same reason as the two above.
+    ///
+    /// **The refusal exists, one layer up**: `predicate.rs`'s `make_range`
+    /// raises `Error::PredicateValueDecode` for exactly this literal (I46).
+    /// This entry is not that refusal going missing — it is the statement
+    /// that the *grammar* cannot make it, which is why the comparison layer
+    /// has to.
     const SEMANTIC_REFUSALS: &[(&str, &str)] = &[("int4range", "[10,1)")];
 
     fn fixture(major: u32, rest: &str) -> PathBuf {

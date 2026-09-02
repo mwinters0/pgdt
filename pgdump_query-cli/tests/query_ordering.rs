@@ -115,15 +115,22 @@ fn an_agreeing_comparison_is_silent() {
     assert!(!stderr_of(&out).contains("warning"), "{}", stderr_of(&out));
 }
 
-/// A nested column keeps `=`/`!=` and refuses an ordering operator, and the
-/// refusal names the column and points at the operators that do work.
+/// A nested column whose *shape* compares here and one of whose positions
+/// does not keeps `=`/`!=` and refuses an ordering operator — and the refusal
+/// names the column, the position, and the operators that do work.
+///
+/// `public.arr_holder` is `(label text, arr public.intarr[])`, and
+/// `public.intarr` is a domain over `integer[]`, so its `arr` field is an
+/// array whose element is an array (I26) — a shape this build declines to
+/// order rather than mis-decode.
 #[test]
 fn an_ordering_operator_on_a_nested_column_is_refused() {
-    let out = query("public.t_range", "v_range", &["--filter", "v_range>1"]);
+    let out = query("public.t_nested_array", "v_arr_holder", &["--filter", "v_arr_holder>1"]);
     assert!(!out.status.success());
     let stderr = stderr_of(&out);
-    assert!(stderr.contains("`v_range`"), "{stderr}");
+    assert!(stderr.contains("`v_arr_holder`"), "{stderr}");
     assert!(stderr.contains("nested"), "{stderr}");
+    assert!(stderr.contains("`.arr[]`"), "{stderr}");
     assert!(stderr.contains("`=` or `!=`"), "{stderr}");
 }
 

@@ -498,9 +498,9 @@ flags, since `empty` and `(,)` are different ranges and neither has bounds.
 
 #### Filtering one of these columns
 
-**An array or composite column is filtered structurally**, the way PostgreSQL
-compares two of them — not the way their text sorts. All six operators work,
-and the rules are the server's:
+**A nested column is filtered structurally**, the way PostgreSQL compares two
+of them — not the way their text sorts. All six operators work on an array, a
+composite, a range and a multirange alike, and the rules are the server's:
 
 - **Elements and fields decide first**, left to right, each by its *own* type's
   comparison: an `integer[]` orders its elements numerically, a `mood[]` by the
@@ -514,6 +514,12 @@ and the rules are the server's:
   element count, then the dimension count, then the dimensions, then the lower
   bounds. So `{}` is below `{1,2}`, and `{1,2}` is *above* `[0:1]={1,2}` — the
   elements are equal and the lower bound settles it.
+- **A range sorts `empty` below everything**, then by lower bound and then by
+  upper. An absent bound is the extreme of its own end, so `(,5)` is below
+  `[1,10)` and `[1,)` is above it; and at the same value an exclusive *lower*
+  bound is above an inclusive one while an exclusive *upper* is below.
+- **A multirange compares member by member**, with a shorter multirange below a
+  longer one whose members agree.
 
 **Write the literal the way you would write it in SQL.** The container grammar
 is PostgreSQL's input grammar, not its output one, so whitespace around an
@@ -560,17 +566,44 @@ refuses the same comparison, since a container is ordered by its element type's
 own comparison and this type has none; use `=` or `!=` for a text comparison
 ```
 
-**Range and multirange columns are the exception, and it is temporary.** They
-still refuse `<`, `<=`, `>` and `>=`, and answer `=`/`!=` as an exact text
-match. PostgreSQL rewrites a discrete range's bounds on input — `int4range
-'[1,10]'` is stored and printed as `[1,11)` — and pgdq does not do that
-rewriting yet, so writing the bounds exactly as the dump prints them is what
-makes an equality match:
+**A range literal is rewritten before it is compared, the way the server
+rewrites it.** PostgreSQL does not store a range as you write it: for
+`int4range`, `int8range` and `daterange` it shifts a bound to the next value so
+that the range is half-open, and it collapses a range holding nothing to
+`empty`. pgdq does the same, so every spelling of one value matches:
 
 ```sh
---filter "span='[1,11)'"     # matches; the file holds the canonical form
---filter "span='[1,10]'"     # matches nothing, though the server calls them equal
+--filter "span='[1,11)'"   # all four match the same rows —
+--filter "span='[1,10]'"   #   the server stores every one of them
+--filter "span='(0,11)'"   #   as [1,11)
+--filter "span='(0,10]'"
+--filter "span='(1,2)'"    # matches rows holding `empty`: no integer is between
 ```
+
+`numrange`, `tsrange`, `tstzrange` and any range type you defined yourself do
+**not** get that shift — PostgreSQL only rewrites a range whose type declares a
+canonical function — so there `[1,10)` and `[1,10]` are two different values,
+and both are askable. A multirange is normalized in the same spirit: its
+members are sorted, empty ones dropped, and any two that overlap or touch
+merged, so `{[5,10),[1,5)}` and `{[1,10)}` are one value.
+
+A range whose lower bound is above its upper is not a value at all, and pgdq
+refuses the literal rather than matching nothing:
+
+```
+$ pgdq query --source dump.sql --table public.t --filter "span='[10,1)'"
+Error: `=` on column `span`: `[10,1)` is not a value of type `int4range` — it
+is read as a range literal — `[a,b)`, `empty`, a bound left empty for
+unbounded — whose lower bound is not above its upper …
+```
+
+**One range shape is knowably wrong, and it is rare.** A range type you defined
+with a `canonical` parameter is compared *without* it, because `pg_dump` writes
+that parameter and pgdq does not read it — so `[1,10]` and `[1,11)` come back
+as different values where your server calls them one. Every range type
+`pg_dump` has been observed to write in practice declares no canonical
+function, and every built-in one is handled above; if you have such a type,
+write the bounds exactly as `pgdq query` prints them.
 
 #### Four ways one of these columns is still a string
 

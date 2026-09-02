@@ -3021,7 +3021,9 @@ and no parser can reproduce them without the subtype's own order:
 `multirange_in` sorts, coalesces and empty-drops its members
 (`{[5,6),[1,2)}` → `{[1,2),[5,6)}`, `{[1,3),[2,5)}` → `{[1,5)}`, `{[1,1)}` →
 `{}`). A discrete range also canonicalizes its bounds — `int4range '[1,10]'` is
-`[1,11)` — through the subtype's successor function.
+`[1,11)` — through the subtype's successor function. All three are I46, and
+`predicate.rs` reproduces them over the decoded bound *keys* after this
+grammar has done what it can.
 
 **Proof.** `array_in`/`ArrayCount`/`ReadArrayStr` in
 `src/backend/utils/adt/arrayfuncs.c` through v16, and
@@ -3178,9 +3180,8 @@ tie-break as committed answers: `integer[]`'s `{1,2}` is **above**
 shape-first order would answer the first the other way round.
 
 **Scope limit.** Ordering and equality of *array* and *composite* values.
-Ranges and multiranges have their own comparisons (`range_cmp`, which sorts
-`empty` below everything and then compares lower bound then upper) and are not
-covered here. Nor is the *collation* an element comparison runs under: that is
+Ranges and multiranges have their own comparisons and their own canonical
+storage form, which are I46. Nor is the *collation* an element comparison runs under: that is
 the element's own question, one level down, and I32/I37/I43 are where it lives.
 
 **Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
@@ -3218,3 +3219,155 @@ docker rm -f pgdq-i45
 
 Every column of the first query is `t` at every supported major, and the second
 statement is an error at every one.
+
+---
+
+## I46 — A range is stored in a canonical form, and its order is bound-wise with `empty` below everything
+
+**Claim.** Four statements, all about `rangetypes.c` and `multirangetypes.c`:
+
+- **`range_in` never stores the literal it was given.** It hands the parsed
+  bounds to `make_range`, which is `range_serialize` — three
+  type-independent rules — followed, for a range type that has one, by the
+  *canonical function*, after which `range_serialize` runs again. The three
+  rules: a lower bound whose value is above its upper is
+  `ERRCODE_DATA_EXCEPTION` (`22000`); bounds whose values are equal without
+  *both* ends including the point make the range `empty`; and an absent
+  ("infinite") bound is never inclusive.
+- **Three built-in range types canonicalize and three do not.**
+  `int4range`, `int8range` and `daterange` carry `int4range_canonical` /
+  `int8range_canonical` / `daterange_canonical`; `numrange`, `tsrange` and
+  `tstzrange` carry none, and neither does a user-defined range unless its
+  `CREATE TYPE … AS RANGE` declares `canonical = …`. All three built-in
+  functions are the same rewriting — an exclusive lower bound becomes
+  inclusive at the successor, an inclusive upper becomes exclusive at the
+  successor — differing only in the width they raise "out of range" at.
+  **`daterange_canonical` additionally skips any bound that is
+  `DATE_NOT_FINITE`**, so `[2020-01-01,infinity]` keeps its inclusive upper
+  while `[-infinity,2020-01-01]` still becomes `[-infinity,2020-01-02)`.
+- **`range_cmp` sorts `empty` below every other value**, then compares lower
+  bound against lower and upper against upper. `range_cmp_bounds` settles an
+  infinite bound before it looks at a value — an infinite *lower* is the
+  minimum, an infinite *upper* the maximum — and settles inclusivity only
+  when the two values are equal, where an exclusive **lower** ranks above an
+  inclusive one and an exclusive **upper** below.
+- **`multirange_in` normalizes before it stores.**
+  `multirange_canonicalize` sorts the members by `range_cmp`, drops every
+  empty one, and merges any adjacent or overlapping pair, so no stored
+  multirange has an empty member or two members that meet. `multirange_cmp`
+  is then member-wise, with a shorter multirange below a longer one whose
+  members agree. Whether two members are *adjacent* is decided by
+  `bounds_adjacent`, which asks whether the range **between** them — the two
+  bounds relabelled and their inclusivity flipped — comes out empty, and
+  answers `false` outright for a range type with no canonical function.
+
+**Proof.** `src/backend/utils/adt/rangetypes.c` (v18.6, and unchanged in shape
+since v13). `make_range`:
+
+```c
+	range = range_serialize(typcache, lower, upper, empty, escontext);
+	...
+	/* no need to call canonical on empty ranges ... */
+	if (OidIsValid(typcache->rng_canonical_finfo.fn_oid) &&
+		!RangeIsEmpty(range))
+```
+
+`range_serialize`'s three rules:
+
+```c
+		/* error check: if lower bound value is above upper, it's wrong */
+		if (cmp > 0)
+			ereturn(escontext, NULL,
+					(errcode(ERRCODE_DATA_EXCEPTION), ...
+		/* if bounds are equal, and not both inclusive, range is empty */
+		if (cmp == 0 && !(lower->inclusive && upper->inclusive))
+			flags |= RANGE_EMPTY;
+		else
+		{
+			/* infinite boundaries are never inclusive */
+```
+
+`daterange_canonical`'s guard is the one place the three differ:
+
+```c
+	if (!lower.infinite && !DATE_NOT_FINITE(DatumGetDateADT(lower.val)) &&
+		!lower.inclusive)
+```
+
+`range_cmp` puts `empty` first (`/* For b-tree use, empty ranges sort before
+all else */`) and then calls `range_cmp_bounds` twice;
+`range_cmp_bounds` handles `b1->infinite`/`b2->infinite` before invoking the
+subtype's comparison proc, and falls through to the inclusivity block only
+when that proc returns zero. `multirange_canonicalize` and `multirange_cmp`
+are in `src/backend/utils/adt/multirangetypes.c`; `bounds_adjacent`,
+`range_before_internal` and `range_union_internal` are back in
+`rangetypes.c`.
+
+**Observed.** `fixtures/<13-18>/oracle/literals.tsv` carries the rewriting as
+committed answers — `int4range '[1,10]'` is written `[1,11)`, `'(0,10)'` is
+`[1,10)`, `daterange '[2020-01-01,2020-01-01]'` is `[2020-01-01,2020-01-02)`
+while `'[2020-01-01,infinity]'` is unchanged, `numrange '[1,10]'` is
+unchanged, and `'[10,1)'` is `E22000` — and `comparisons.tsv` carries the
+order, `empty` below every other `int4range` value at all six majors. The
+probe below was run against `postgres:16.15-trixie` and
+`postgres:18.6-trixie` before the comparator was written; both answer
+identically.
+
+**Scope limit.** Ranges and multiranges. Arrays and composites are I45. The
+*collation* a `text`-bounded range's comparison runs under is not covered here:
+a range type carries its own `collation` parameter, which this build does not
+read (see `architecture.md`, "Nested columns compare structurally").
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
+observed in the committed oracle at all six, and the probe below run against
+16.15 and 18.6.
+
+**Relied on by:** [`architecture.md`](architecture.md), "Nested columns compare
+structurally" — `predicate.rs`'s `make_range`, `compare_range`,
+`compare_bounds` and `canonical_multirange`, and `pgtype.rs`'s
+`NestedCompare::Range`/`Multirange` and the `discrete` flag
+`builtin_range_subtype` sets.
+
+**Re-verify.** Read the functions:
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n -A40 '^range_serialize(TypeCacheEntry' src/backend/utils/adt/rangetypes.c
+grep -n -A20 '^make_range(TypeCacheEntry'      src/backend/utils/adt/rangetypes.c
+grep -n -A45 '^daterange_canonical'            src/backend/utils/adt/rangetypes.c
+grep -n -A60 '^range_cmp_bounds(TypeCacheEntry' src/backend/utils/adt/rangetypes.c
+grep -n -A50 '^multirange_canonicalize'        src/backend/utils/adt/multirangetypes.c
+```
+
+And ask a server, which is a minute per major:
+
+```sh
+docker run -d --name pgdq-i46 -e POSTGRES_HOST_AUTH_METHOD=trust postgres:<N>-trixie
+docker exec -i pgdq-i46 psql -qtA -U postgres <<'SQL'
+SELECT 'empty'::int4range < '(,)'::int4range   AS empty_below_unbounded,
+       '(,5)'::int4range < '[1,10)'::int4range AS unbounded_lower_first,
+       '[1,10)'::int4range < '[1,)'::int4range AS unbounded_upper_last,
+       '(1,10)'::numrange > '[1,10)'::numrange AS excl_lower_above_incl,
+       '[1,10)'::numrange < '[1,10]'::numrange AS excl_upper_below_incl,
+       '{}'::int4multirange < '{[1,10)}'::int4multirange AS shorter_below;
+SELECT '[1,10]'::int4range::text, '(0,10)'::int4range::text, '(1,2)'::int4range::text,
+       '[1,1)'::numrange::text,   '[1,10]'::numrange::text,
+       '[2020-01-01,infinity]'::daterange::text,
+       '[-infinity,2020-01-01]'::daterange::text;
+SELECT '{[1,5),[5,10)}'::int4multirange::text, '{[5,10),[1,5)}'::int4multirange::text,
+       '{[1,1),[1,10)}'::int4multirange::text, '{[1,5),[6,10)}'::int4multirange::text,
+       '{[1,5],[6,10)}'::int4multirange::text, '{[1,5),[6,10)}'::nummultirange::text,
+       '{[1,3),[2,5)}'::int4multirange::text,  '{[1,5),(5,10)}'::nummultirange::text;
+SELECT '[1,9223372036854775807]'::int8range;   -- bigint out of range
+DO $$ BEGIN PERFORM '[10,1)'::int4range;
+      EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'out of order: %', SQLSTATE; END $$;
+SQL
+docker rm -f pgdq-i46
+```
+
+Every column of the first query is `t`. The second answers `[1,11)`,
+`[1,10)`, `empty`, `empty`, `[1,10]`, `[2020-01-01,infinity]`,
+`[-infinity,2020-01-02)`; the third `{[1,10)}`, `{[1,10)}`, `{[1,10)}`,
+`{[1,5),[6,10)}`, `{[1,10)}`, `{[1,5),[6,10)}`, `{[1,5)}`,
+`{[1,5),(5,10)}`. The last two statements are an error and a `22000` notice.
+The multirange lines need v14 or later (I10).

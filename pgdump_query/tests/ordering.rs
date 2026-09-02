@@ -389,35 +389,129 @@ async fn an_ordering_term_is_one_term_of_the_conjunction() {
     assert_eq!(rows, [Some("3".to_string())], "only the all-zero row satisfies both");
 }
 
-/// The refusal fires where `UnknownPredicateColumn` fires — when the block's
-/// schema resolves — so a column the register does not compare is refused
-/// before any row flows.
+/// A range orders `empty` below everything, then by lower bound and then by
+/// upper — and a bound settles infinity before value and value before
+/// inclusivity (I46).
 ///
-/// **The population is ranges and multiranges alone.** An array or composite
-/// column is compared structurally now; a range's bounds need the subtype's
-/// canonicalization first, so the register has no comparison for one.
+/// Each assertion is a case a bytewise comparison of the `range_out` text
+/// gets wrong. `t_range` holds `[1,10)` (id 1), `empty` (id 2) and `(,5)`
+/// (id 3): `empty` sorts *below* both where the text `empty` sorts above `[`
+/// and `(`, and `(,5)` sorts below `[1,10)` where the text `(` is `0x28` and
+/// `[` is `0x5B` — the same answer for the wrong reason, which is why the
+/// unbounded row is asked against a bound it must be below rather than only
+/// against its neighbour. `t_user_range` is a range over `double precision`
+/// with no canonical function, so `[1.5,10.5)` and `[1.5,10.5]` are two
+/// values and the exclusive upper is the lower of them.
 #[tokio::test]
-async fn a_range_column_refuses_an_ordering_operator() {
-    for (table, column) in [
-        ("public.t_range", "v_range"),
-        ("public.t_user_range", "v_myrange"),
-        ("public.t_multirange", "v_int4multirange"),
-    ] {
-        let err = drain(
-            table,
-            QueryOptions {
-                filter: Expr::all([term(column, PredicateOp::Gt, "1")]),
-                projection: Some(vec!["id".to_string()]),
-                ..Default::default()
-            },
-        )
-        .await
-        .unwrap_err();
-        assert!(
-            matches!(&err, Error::UnorderedPredicateColumn { column: c, .. } if c == column),
-            "{table}.{column}: {err:?}"
+async fn a_range_orders_bound_wise_with_empty_below_everything() {
+    assert_eq!(
+        kept_ids("public.t_range", vec![term("v_range", PredicateOp::Lt, "[1,10)")]).await,
+        [Some("2".to_string()), Some("3".to_string())],
+        "`empty` is below every other range, and an unbounded lower is below a finite one"
+    );
+    assert_eq!(
+        kept_ids("public.t_range", vec![term("v_range", PredicateOp::Gt, "empty")]).await,
+        [Some("1".to_string()), Some("3".to_string())],
+        "and `empty` is above nothing but itself"
+    );
+    assert_eq!(
+        kept_ids("public.t_user_range", vec![term("v_myrange", PredicateOp::Lt, "[1.5,10.5]")])
+            .await,
+        [Some("1".to_string()), Some("2".to_string())],
+        "an exclusive upper bound is below an inclusive one at the same value"
+    );
+}
+
+/// A **discrete** range canonicalizes its bounds on the way in, so two
+/// spellings of one value are equal and the register has to rewrite the
+/// literal before it compares (I46).
+///
+/// `int4range` has a canonical function and `public.myrange`, over `double
+/// precision`, has none — which is what makes this a property of the range
+/// type rather than of its subtype. A literal whose bounds are out of order
+/// is `22000` on the server, a fault the container grammar cannot see, and it
+/// is refused here rather than compared.
+#[tokio::test]
+async fn a_discrete_range_canonicalizes_its_literal_before_comparing() {
+    for literal in ["[1,10)", "[1,9]", "(0,10)", "(0,9]"] {
+        assert_eq!(
+            kept_ids("public.t_range", vec![term("v_range", PredicateOp::Eq, literal)]).await,
+            [Some("1".to_string())],
+            "{literal} is `[1,10)` once canonicalized"
         );
     }
+    // The collapse to `empty` is part of the same rewrite: `(1,2)` holds no
+    // integer, so the server stores it as the empty range.
+    assert_eq!(
+        kept_ids("public.t_range", vec![term("v_range", PredicateOp::Eq, "(1,2)")]).await,
+        [Some("2".to_string())],
+    );
+    // A continuous range canonicalizes nothing, so the same two spellings are
+    // two values there.
+    assert_eq!(
+        kept_ids("public.t_user_range", vec![term("v_myrange", PredicateOp::Eq, "[1.5,10.5)")])
+            .await,
+        [Some("1".to_string())],
+    );
+    assert!(
+        kept_ids("public.t_user_range", vec![term("v_myrange", PredicateOp::Eq, "(1.5,10.5]")])
+            .await
+            .is_empty(),
+    );
+    let refused = drain(
+        "public.t_range",
+        QueryOptions {
+            filter: Expr::all([term("v_range", PredicateOp::Gt, "[10,1)")]),
+            projection: Some(vec!["id".to_string()]),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(&refused, Error::PredicateValueDecode { column, .. } if column == "v_range"),
+        "{refused:?}"
+    );
+}
+
+/// A multirange is its members, sorted, coalesced and emptied out before
+/// anything is compared — so `{[1,5),[5,10)}` and `{[1,10)}` are one value,
+/// and a shorter multirange sorts below a longer one whose members agree
+/// (I46).
+///
+/// `t_multirange` holds `{[1,10)}` (id 1) and `{}` (id 2). The companion
+/// multirange of a *user* range is reached through the range's own DDL and
+/// nowhere else (I10), which is why it is asked here beside the built-in.
+#[tokio::test]
+async fn a_multirange_is_compared_after_its_members_are_normalized() {
+    for literal in ["{[1,10)}", "{[1,5),[5,10)}", "{[5,10),[1,5)}", "{[1,1),[1,10)}"] {
+        assert_eq!(
+            kept_ids(
+                "public.t_multirange",
+                vec![term("v_int4multirange", PredicateOp::Eq, literal)]
+            )
+            .await,
+            [Some("1".to_string())],
+            "{literal} normalizes to `{{[1,10)}}`"
+        );
+    }
+    assert_eq!(
+        kept_ids(
+            "public.t_multirange",
+            vec![term("v_int4multirange", PredicateOp::Lt, "{[1,10)}")]
+        )
+        .await,
+        [Some("2".to_string())],
+        "the empty multirange is below one with a member"
+    );
+    assert_eq!(
+        kept_ids(
+            "public.t_multirange",
+            vec![term("v_myrange_multi", PredicateOp::Ge, "{[1.5,10.5)}")]
+        )
+        .await,
+        [Some("1".to_string())],
+    );
 }
 
 /// An array orders **element-wise first, and by its shape only afterwards**

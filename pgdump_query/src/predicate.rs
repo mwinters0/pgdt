@@ -1303,6 +1303,61 @@ enum NestedKey {
     /// A `record_out` value: one entry per declared field, in declaration
     /// order.
     Record(Vec<Option<NestedKey>>),
+    /// A range value, already through [`make_range`] — so it is in the form
+    /// the server would have stored, not the form it was written in. Boxed
+    /// because a bound is itself a `NestedKey`, which makes the pair
+    /// mutually recursive; the vector the multirange holds is indirection
+    /// enough on its own.
+    Range(Box<RangeKey>),
+    /// A multirange value, already sorted, coalesced and emptied out
+    /// ([`canonical_multirange`]). Its members are never empty and never
+    /// touch, which is what makes the comparison a plain sequence walk.
+    Multirange(Vec<RangeKey>),
+}
+
+/// A range value in the form PostgreSQL itself stores, which is the only form
+/// two ranges may be compared in: `range_in` runs every literal through
+/// `make_range`, so `int4range '[1,10]'` and `int4range '(0,11)'` are one
+/// value and the file can only ever hold `[1,11)`.
+#[derive(Debug, Clone, PartialEq)]
+struct RangeKey {
+    /// The empty range, which `range_cmp` sorts below every other value and
+    /// which is *not* the same as a range with two absent bounds — `empty`
+    /// and `(,)` are different values (I46).
+    empty: bool,
+    lower: RangeBoundKey,
+    upper: RangeBoundKey,
+}
+
+/// One bound of a range: PostgreSQL's `RangeBound`, minus the type it is a
+/// bound of.
+#[derive(Debug, Clone, PartialEq)]
+struct RangeBoundKey {
+    /// `None` is an **unbounded** bound — the server's `infinite` flag, and
+    /// not a value at all. A bound holding `infinity` is a different thing
+    /// and lives in the [`OrderKey`] beneath: `daterange
+    /// '[2020-01-01,infinity]'` has a finite upper bound whose *value* is
+    /// `infinity`, which is why `daterange_canonical` leaves it alone (I34,
+    /// I46).
+    value: Option<NestedKey>,
+    inclusive: bool,
+    /// Which end this bound is. It decides the answer whenever two bounds
+    /// hold the same value, so it travels with the bound rather than being
+    /// inferred from the caller — `bounds_adjacent` deliberately relabels a
+    /// pair before comparing it, exactly as the server does.
+    lower: bool,
+}
+
+impl RangeKey {
+    /// The empty range. Its bounds are never read, and are the shape
+    /// `range_serialize` leaves behind: absent and exclusive.
+    fn empty() -> Self {
+        RangeKey {
+            empty: true,
+            lower: RangeBoundKey { value: None, inclusive: false, lower: true },
+            upper: RangeBoundKey { value: None, inclusive: false, lower: false },
+        }
+    }
 }
 
 /// Read one side of a nested comparison out of `text`.
@@ -1370,7 +1425,292 @@ fn nested_key(plan: &NestedCompare, text: &str, input: bool) -> Option<NestedKey
             }
             NestedKey::Record(out)
         }
+        NestedCompare::Range { bound, discrete } => {
+            let literal =
+                if input { nested::parse_range(text) } else { nested::decode_range(text) }?;
+            NestedKey::Range(Box::new(range_key(bound, &literal, *discrete, input)?))
+        }
+        NestedCompare::Multirange { bound, discrete } => {
+            let literals = if input {
+                nested::parse_multirange(text)
+            } else {
+                nested::decode_multirange(text)
+            }?;
+            let mut members = Vec::with_capacity(literals.len());
+            for literal in &literals {
+                members.push(range_key(bound, literal, *discrete, input)?);
+            }
+            NestedKey::Multirange(canonical_multirange(members, *discrete)?)
+        }
     })
+}
+
+/// One range value, read through its bound's plan and then put into the form
+/// the server stores it in.
+///
+/// **Both sides go through [`make_range`], not only the literal**, and that
+/// is deliberate rather than wasteful: it is idempotent on a `range_out`
+/// field by construction — the server already applied it — so one code path
+/// serves both grammars, exactly as [`nested_key`]'s `input` flag does one
+/// level up. A field it *did* reject would be a file contradicting its own
+/// type, which everywhere else here is an error too.
+fn range_key(
+    bound: &NestedCompare,
+    literal: &nested::RangeLiteral,
+    discrete: bool,
+    input: bool,
+) -> Option<RangeKey> {
+    let side = |text: &Option<String>, inclusive: bool, lower: bool| {
+        Some(RangeBoundKey {
+            value: match text {
+                Some(text) => Some(nested_key(bound, text, input)?),
+                None => None,
+            },
+            inclusive,
+            lower,
+        })
+    };
+    make_range(
+        side(&literal.lower, literal.lower_inclusive, true)?,
+        side(&literal.upper, literal.upper_inclusive, false)?,
+        literal.empty,
+        discrete,
+    )
+}
+
+/// `make_range`: `range_serialize`'s type-independent checks, then the range
+/// type's canonical function where it has one, then those checks again — the
+/// order the server applies them in, and the reason `int4range '(1,2)'` is
+/// `empty` rather than a range holding nothing.
+///
+/// `None` is the server's `22000`: a lower bound above its upper. That is a
+/// *semantic* refusal the container grammar cannot see — `[10,1)` is
+/// perfectly well-formed text — so it is raised here, where the bounds have
+/// been decoded and can be compared.
+fn make_range(
+    lower: RangeBoundKey,
+    upper: RangeBoundKey,
+    empty: bool,
+    discrete: bool,
+) -> Option<RangeKey> {
+    let serialized = serialize_range(lower, upper, empty)?;
+    if !discrete || serialized.empty {
+        return Some(serialized);
+    }
+    // `int4range_canonical` and its two siblings, which differ from each
+    // other only in the width they overflow at: an exclusive lower bound
+    // becomes inclusive at the successor, an inclusive upper becomes
+    // exclusive at the successor.
+    //
+    // **The `Int` pattern is `daterange_canonical`'s `DATE_NOT_FINITE`
+    // guard**, not an approximation of it. A date `infinity` decodes to
+    // `OrderKey::PositiveInfinity` rather than to a day count, so it matches
+    // no arm here and is left exactly as written — which is what makes
+    // `[2020-01-01,infinity]` keep its inclusive upper (I34, I46).
+    let successor = |bound: &RangeBoundKey| match &bound.value {
+        Some(NestedKey::Leaf(OrderKey::Int(n))) => n.checked_add(1).map(|n| {
+            Some(RangeBoundKey {
+                value: Some(NestedKey::Leaf(OrderKey::Int(n))),
+                inclusive: !bound.inclusive,
+                lower: bound.lower,
+            })
+        }),
+        // Not a finite integer bound, so the canonical function skips it.
+        _ => Some(None),
+    };
+    let mut lower = serialized.lower;
+    let mut upper = serialized.upper;
+    if !lower.inclusive
+        && let Some(shifted) = successor(&lower)?
+    {
+        lower = shifted;
+    }
+    if upper.inclusive
+        && let Some(shifted) = successor(&upper)?
+    {
+        upper = shifted;
+    }
+    serialize_range(lower, upper, false)
+}
+
+/// `range_serialize`'s type-independent half: the out-of-order refusal, the
+/// collapse to `empty`, and "an infinite boundary is never inclusive".
+fn serialize_range(
+    mut lower: RangeBoundKey,
+    mut upper: RangeBoundKey,
+    empty: bool,
+) -> Option<RangeKey> {
+    if empty {
+        return Some(RangeKey::empty());
+    }
+    match compare_bound_values(&lower, &upper) {
+        Ordering::Greater => return None,
+        // Equal bounds are a value only when both ends include it: `[1,1]` is
+        // one point and `[1,1)`, `(1,1]` and `(1,1)` are all `empty`. This
+        // runs before canonicalization *and* after it, which is what makes
+        // `int4range '(1,2)'` empty.
+        Ordering::Equal if !(lower.inclusive && upper.inclusive) => {
+            return Some(RangeKey::empty());
+        }
+        _ => {}
+    }
+    if lower.value.is_none() {
+        lower.inclusive = false;
+    }
+    if upper.value.is_none() {
+        upper.inclusive = false;
+    }
+    Some(RangeKey { empty: false, lower, upper })
+}
+
+/// `range_cmp_bound_values`: the bounds' held values alone, with an absent
+/// bound settled by which end it is. Inclusivity is not consulted, which is
+/// what separates this from [`compare_bounds`] — the emptiness test and the
+/// adjacency test both need the values without it.
+fn compare_bound_values(a: &RangeBoundKey, b: &RangeBoundKey) -> Ordering {
+    match (&a.value, &b.value) {
+        (None, None) if a.lower == b.lower => Ordering::Equal,
+        (None, None) | (None, Some(_)) => {
+            if a.lower {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            }
+        }
+        (Some(_), None) => {
+            if b.lower {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            }
+        }
+        (Some(a), Some(b)) => compare_nested(a, b),
+    }
+}
+
+/// `range_cmp_bounds`: infinity, then the held value, then inclusivity — and
+/// inclusivity is where which *end* a bound is starts to matter. An exclusive
+/// **lower** bound is above an inclusive one at the same value, because it
+/// means "just after"; an exclusive **upper** is below, because it means
+/// "just before" (I46).
+fn compare_bounds(a: &RangeBoundKey, b: &RangeBoundKey) -> Ordering {
+    let by_value = compare_bound_values(a, b);
+    if a.value.is_none() || b.value.is_none() || by_value.is_ne() {
+        return by_value;
+    }
+    match (a.inclusive, b.inclusive) {
+        (true, true) => Ordering::Equal,
+        (false, false) if a.lower == b.lower => Ordering::Equal,
+        (false, _) if a.lower => Ordering::Greater,
+        (false, _) => Ordering::Less,
+        (true, false) if b.lower => Ordering::Less,
+        (true, false) => Ordering::Greater,
+    }
+}
+
+/// `range_cmp`: `empty` below everything, then lower bound, then upper.
+fn compare_range(a: &RangeKey, b: &RangeKey) -> Ordering {
+    match (a.empty, b.empty) {
+        (true, true) => Ordering::Equal,
+        (true, false) => Ordering::Less,
+        (false, true) => Ordering::Greater,
+        (false, false) => {
+            compare_bounds(&a.lower, &b.lower).then_with(|| compare_bounds(&a.upper, &b.upper))
+        }
+    }
+}
+
+/// `multirange_canonicalize`: sort the members, drop the empty ones, and
+/// merge any two that overlap or touch. It is what makes a multirange
+/// comparison a plain sequence walk — after it, no member is empty and no two
+/// members meet, so the sequence is the value (I46).
+///
+/// `None` propagates a bound the union could not re-serialize, which the
+/// shapes reaching here cannot produce; it is carried rather than unwrapped
+/// because every other range fault on this path is a refusal the user reads.
+fn canonical_multirange(mut members: Vec<RangeKey>, discrete: bool) -> Option<Vec<RangeKey>> {
+    members.sort_by(compare_range);
+    let mut out: Vec<RangeKey> = Vec::with_capacity(members.len());
+    for current in members {
+        if current.empty {
+            continue;
+        }
+        let Some(last) = out.last() else {
+            out.push(current);
+            continue;
+        };
+        // The server's own order, and the middle test is the one that needs
+        // the sort: `range_adjacent_internal` answers true for "either meets
+        // the other", and only sorting rules out the second direction.
+        if ranges_adjacent(last, &current, discrete) {
+            *out.last_mut().expect("just read") = range_union(last, &current, discrete)?;
+        } else if range_before(last, &current) {
+            out.push(current);
+        } else {
+            *out.last_mut().expect("just read") = range_union(last, &current, discrete)?;
+        }
+    }
+    Some(out)
+}
+
+/// `range_before_internal`: every point of `a` is below every point of `b`,
+/// with an empty range neither before nor after anything.
+fn range_before(a: &RangeKey, b: &RangeKey) -> bool {
+    !a.empty && !b.empty && compare_bounds(&a.upper, &b.lower).is_lt()
+}
+
+/// `range_adjacent_internal`: the two ranges touch without overlapping,
+/// in either direction.
+fn ranges_adjacent(a: &RangeKey, b: &RangeKey, discrete: bool) -> bool {
+    !a.empty
+        && !b.empty
+        && (bounds_adjacent(&a.upper, &b.lower, discrete)
+            || bounds_adjacent(&b.upper, &a.lower, discrete))
+}
+
+/// `bounds_adjacent`: whether an upper bound and a lower bound meet with no
+/// point between them.
+///
+/// Equal values are adjacent exactly when one end includes the point and the
+/// other does not. **Values that differ are adjacent only in a discrete
+/// range**, and the server decides that by building the range *between* them
+/// with both inclusivities flipped and asking whether it came out empty —
+/// which is the canonical function answering "there is no value here" rather
+/// than a successor being computed twice.
+fn bounds_adjacent(upper: &RangeBoundKey, lower: &RangeBoundKey, discrete: bool) -> bool {
+    match compare_bound_values(upper, lower) {
+        Ordering::Equal => upper.inclusive != lower.inclusive,
+        Ordering::Greater => false,
+        Ordering::Less => {
+            discrete
+                && make_range(
+                    RangeBoundKey {
+                        value: upper.value.clone(),
+                        inclusive: !upper.inclusive,
+                        lower: true,
+                    },
+                    RangeBoundKey {
+                        value: lower.value.clone(),
+                        inclusive: !lower.inclusive,
+                        lower: false,
+                    },
+                    false,
+                    discrete,
+                )
+                .is_some_and(|between| between.empty)
+        }
+    }
+}
+
+/// `range_union_internal` for two ranges already known to overlap or touch:
+/// the lower of the two lower bounds, the upper of the two uppers, back
+/// through [`make_range`].
+fn range_union(a: &RangeKey, b: &RangeKey, discrete: bool) -> Option<RangeKey> {
+    let lower =
+        if compare_bounds(&a.lower, &b.lower).is_lt() { a.lower.clone() } else { b.lower.clone() };
+    let upper =
+        if compare_bounds(&a.upper, &b.upper).is_gt() { a.upper.clone() } else { b.upper.clone() };
+    make_range(lower, upper, false, discrete)
 }
 
 /// **One NULL rule, at every level: two NULLs are equal, and NULL sorts above
@@ -1417,6 +1757,17 @@ fn compare_nested(a: &NestedKey, b: &NestedKey) -> Ordering {
         ),
         (NestedKey::Record(a), NestedKey::Record(b)) => first_difference(
             a.iter().zip(b.iter()).map(|(a, b)| compare_slot(a.as_ref(), b.as_ref())),
+        ),
+        (NestedKey::Range(a), NestedKey::Range(b)) => compare_range(a, b),
+        // `multirange_cmp`: member-wise, and the shorter one first where the
+        // members it has all agree — which is how the server phrases it too,
+        // by treating a missing member as an empty range and `empty` as the
+        // lowest value there is.
+        (NestedKey::Multirange(a), NestedKey::Multirange(b)) => first_difference(
+            a.iter()
+                .zip(b.iter())
+                .map(|(a, b)| compare_range(a, b))
+                .chain(std::iter::once(a.len().cmp(&b.len()))),
         ),
         _ => unreachable!("both sides of a comparison are read through one column's plan"),
     }
@@ -1571,14 +1922,22 @@ fn nested_accepted_form(plan: &NestedCompare) -> String {
     let container = match plan {
         NestedCompare::Array(_) => "as an array literal — `{a,b}`, `{}`, a bare `NULL` element",
         NestedCompare::Record(_) => "as a composite literal — `(a,b)`, a field left empty for NULL",
+        NestedCompare::Range { .. } => {
+            "as a range literal — `[a,b)`, `empty`, a bound left empty for unbounded — whose \
+             lower bound is not above its upper"
+        }
+        NestedCompare::Multirange { .. } => {
+            "as a multirange literal — `{[a,b),[c,d)}`, `{}` — each member a range whose lower \
+             bound is not above its upper"
+        }
         // Neither is reachable: a leaf plan is never a column's whole
         // comparison, and an uncomparable one refuses before a literal is
         // read.
         NestedCompare::Leaf { .. } | NestedCompare::Uncomparable { .. } => "as a nested literal",
     };
     format!(
-        "{container} — with every element or field written in its own type's output form, which \
-         is the form the dump holds"
+        "{container} — with every element, field or bound written in its own type's output form, \
+         which is the form the dump holds"
     )
 }
 
@@ -1917,8 +2276,14 @@ pub(crate) fn resolve_term(
             plan = None;
         }
     } else if resolved.plans[index] != NestedPlan::Scalar {
-        // A range or multirange: nested, and with no comparison in the
-        // register at all.
+        // A column the *resolver* calls nested and the register does not.
+        // One shape reaches it — a range whose DDL stated no `subtype`, so
+        // the resolver keeps the struct with `Utf8View` bounds and the
+        // register has no bound type to name a refusal after — and it is
+        // also where the two walks would land if they ever came to disagree
+        // about a declared type, which matters because the alternative to
+        // refusing is ordering a container's literal with a *scalar*
+        // comparison, silently.
         if ordering {
             return Err(refuse(NESTED));
         }
@@ -2244,10 +2609,19 @@ mod tests {
     /// enum, so a column declared `public.mood` reaches the register's enum
     /// arm rather than its "no such type" one.
     fn test_types() -> Vec<TypeDef> {
-        vec![TypeDef {
-            name: "public.mood".into(),
-            kind: TypeKind::Enum { labels: vec!["sad".into(), "ok".into()] },
-        }]
+        vec![
+            TypeDef {
+                name: "public.mood".into(),
+                kind: TypeKind::Enum { labels: vec!["sad".into(), "ok".into()] },
+            },
+            // A range whose DDL stated no `subtype` — the one shape the
+            // resolver still calls nested and the register refuses outright,
+            // since there is no bound type to name the refusal after.
+            TypeDef {
+                name: "public.opaquerange".into(),
+                kind: TypeKind::Range { subtype: None, multirange_type_name: None },
+            },
+        ]
     }
 
     /// A one-column `ResolvedSchema` for `declared`/`data_type`, mapped and
@@ -2793,9 +3167,10 @@ mod tests {
             Error::UnorderedPredicateColumn { reason, header_offset: 7, .. } if reason == NOT_MAPPED
         ));
 
-        // A nested column the register compares not at all — a range, whose
-        // bounds need a canonicalization this build does not implement.
-        let mut nested = one_column("int4range", DataType::Utf8View);
+        // A nested column the register compares not at all — a range whose
+        // DDL stated no subtype, so there is no bound type to compare by and
+        // none to name in a refusal either.
+        let mut nested = one_column("public.opaquerange", DataType::Utf8View);
         nested.plans[0] = NestedPlan::Range(Box::new(NestedPlan::Scalar));
         assert!(matches!(
             resolve_term(&p, 0, &nested, 0).unwrap_err(),
@@ -3573,9 +3948,8 @@ mod tests {
         // A nested column the register does not compare is the other
         // plan-less population and is silent: its `range_out` text is a
         // faithful rendering of the value, so a byte comparison of two
-        // canonical spellings is the server's answer for everything but the
-        // canonicalization the register has not implemented.
-        let mut nested = one_column("int4range", DataType::Utf8View);
+        // canonical spellings is the server's answer.
+        let mut nested = one_column("public.opaquerange", DataType::Utf8View);
         nested.plans[0] = NestedPlan::Range(Box::new(NestedPlan::Scalar));
         assert_eq!(only_note(&resolve_term(&p, 0, &nested, 0).unwrap()), None);
 
@@ -3738,6 +4112,125 @@ mod tests {
         assert!(accepted.contains("its own type's output form"), "{accepted}");
     }
 
+    /// A range's bounds settle infinity, then the held value, then
+    /// inclusivity — and an exclusive bound's answer depends on *which end*
+    /// it is, because it means "just after" at the lower end and "just
+    /// before" at the upper (I46).
+    ///
+    /// `empty` below everything is the fourth rule, and it is not
+    /// recoverable from the bounds: `empty` and `(,)` both have two absent
+    /// bounds and sit at opposite ends of the order.
+    #[test]
+    fn a_range_bound_settles_infinity_then_value_then_inclusivity() {
+        let types = test_types();
+        let lt = |field: &str, literal: &str| {
+            nested_verdict("numrange", &types, PredicateOp::Lt, field, literal).unwrap()
+        };
+        assert_eq!(lt("empty", "(,)"), Truth::True);
+        assert_eq!(lt("(,)", "empty"), Truth::False);
+        assert_eq!(
+            nested_verdict("numrange", &types, PredicateOp::Eq, "empty", "empty").unwrap(),
+            Truth::True
+        );
+        // An absent bound is the extreme of its own end.
+        assert_eq!(lt("(,5)", "[1,10)"), Truth::True);
+        assert_eq!(lt("[1,10)", "[1,)"), Truth::True);
+        // Same value, different inclusivity, and the two ends disagree about
+        // which way it goes.
+        assert_eq!(lt("[1,10)", "(1,10)"), Truth::True);
+        assert_eq!(lt("[1,10)", "[1,10]"), Truth::True);
+    }
+
+    /// A discrete range is rewritten into canonical form on the way in and a
+    /// continuous one is not, so `[1,10]` and `[1,10)` are one value of
+    /// `int4range` and two of `numrange` (I46).
+    ///
+    /// **Two rewrites, and the second is not a successor at all**: bounds
+    /// that end up equal without both ends including the point collapse to
+    /// `empty`, which is why `int4range '(1,2)'` holds nothing. It runs
+    /// before the canonical function *and* after it, which is the only way
+    /// `(1,2)` reaches it.
+    #[test]
+    fn a_discrete_range_is_canonicalized_and_a_continuous_one_is_not() {
+        let types = test_types();
+        let eq = |declared: &str, field: &str, literal: &str| {
+            nested_verdict(declared, &types, PredicateOp::Eq, field, literal).unwrap()
+        };
+        for literal in ["[1,10)", "[1,9]", "(0,10)", "(0,9]"] {
+            assert_eq!(eq("int4range", "[1,10)", literal), Truth::True, "{literal}");
+        }
+        assert_eq!(eq("int4range", "empty", "(1,2)"), Truth::True);
+        assert_eq!(eq("int4range", "empty", "[1,1)"), Truth::True);
+        assert_eq!(eq("numrange", "empty", "[1,1)"), Truth::True, "the collapse is not discrete");
+        assert_eq!(eq("numrange", "[1,10)", "[1,10]"), Truth::False);
+        // `daterange_canonical` skips a bound that is not a finite date, so
+        // an infinity keeps the inclusivity it was written with (I34) — and
+        // the *other* bound is still rewritten.
+        assert_eq!(eq("daterange", "[2020-01-01,infinity]", "[2020-01-01,infinity]"), Truth::True);
+        assert_eq!(
+            eq("daterange", "[-infinity,2020-01-02)", "[-infinity,2020-01-01]"),
+            Truth::True
+        );
+        // The successor can leave the subtype's range, which the server
+        // raises on. `int8range` is where this build can see it; `int4range`
+        // cannot, because a leaf literal is read as `i64` whatever the
+        // column's width (see `order_key`) and the register never learns the
+        // narrower one.
+        assert!(matches!(
+            nested_verdict(
+                "int8range",
+                &types,
+                PredicateOp::Eq,
+                "[1,10)",
+                "[1,9223372036854775807]"
+            ),
+            Err(Error::PredicateValueDecode { .. })
+        ));
+        // A lower bound above its upper is `22000` on the server — a fault
+        // the container grammar cannot see, since the text is well formed.
+        assert!(matches!(
+            nested_verdict("int4range", &types, PredicateOp::Gt, "[1,10)", "[10,1)"),
+            Err(Error::PredicateValueDecode { .. })
+        ));
+        assert!(matches!(
+            nested_verdict("int4multirange", &types, PredicateOp::Gt, "{[1,10)}", "{[10,1)}"),
+            Err(Error::PredicateValueDecode { .. })
+        ));
+    }
+
+    /// A multirange's members are sorted, emptied out and merged before
+    /// anything is compared, so several spellings are one value and the
+    /// comparison itself is a plain sequence walk (I46).
+    ///
+    /// **Whether two members merge is the range type's question, not the
+    /// bounds'.** `{[1,5),[6,10)}` stays two members even in `int4range`,
+    /// where 5 is missing between them; `{[1,5],[6,10)}` becomes one, because
+    /// canonicalization has already made the first `[1,6)`. The same pair of
+    /// literals in `numrange` never merges, since a continuous range has
+    /// points between any two values.
+    #[test]
+    fn a_multirange_is_sorted_coalesced_and_emptied_before_it_is_compared() {
+        let types = test_types();
+        let eq = |declared: &str, field: &str, literal: &str| {
+            nested_verdict(declared, &types, PredicateOp::Eq, field, literal).unwrap()
+        };
+        for literal in ["{[1,10)}", "{[1,5),[5,10)}", "{[5,10),[1,5)}", "{[1,1),[1,10)}"] {
+            assert_eq!(eq("int4multirange", "{[1,10)}", literal), Truth::True, "{literal}");
+        }
+        assert_eq!(eq("int4multirange", "{[1,10)}", "{empty,[1,10)}"), Truth::True);
+        assert_eq!(eq("int4multirange", "{[1,5)}", "{[1,3),[2,5)}"), Truth::True, "overlapping");
+        assert_eq!(eq("int4multirange", "{[1,5),[6,10)}", "{[1,5),[6,10)}"), Truth::True);
+        assert_eq!(eq("int4multirange", "{[1,10)}", "{[1,5],[6,10)}"), Truth::True, "adjacent");
+        assert_eq!(eq("nummultirange", "{[1,5),[6,10)}", "{[1,5),[6,10)}"), Truth::True);
+        assert_eq!(eq("nummultirange", "{[1,5),(5,10)}", "{[1,5),(5,10)}"), Truth::True);
+        // Member-wise, then the shorter one first.
+        let lt = |field: &str, literal: &str| {
+            nested_verdict("int4multirange", &types, PredicateOp::Lt, field, literal).unwrap()
+        };
+        assert_eq!(lt("{}", "{[1,10)}"), Truth::True);
+        assert_eq!(lt("{[1,5),[6,10)}", "{[1,10)}"), Truth::True);
+    }
+
     /// The comparison register against the committed comparison oracle:
     /// every cell of `fixtures/<13-18>/oracle/comparisons.tsv`, answered by
     /// the same `resolve_term`/`matches` path a `--filter` takes, and
@@ -3793,9 +4286,9 @@ mod tests {
         ];
 
         /// The declared types whose columns the register refuses an ordering
-        /// operator on, so no cell of theirs is asserted: everything nested
-        /// (array, composite, range, multirange), `xml`, an enum with no
-        /// labels, and a user-defined base type with no operator class.
+        /// operator on, so no cell of theirs is asserted: `xml`, an enum with
+        /// no labels, a user-defined base type with no operator class, and the
+        /// two nested shapes that are refused for reasons of their own.
         /// PostgreSQL orders all of them and this build does not.
         ///
         /// **`json` is not here**, and the difference is the point: it *is*
@@ -3805,22 +4298,16 @@ mod tests {
         ///
         /// It is asserted as an exact set, so a type that quietly stops
         /// comparing fails here rather than passing as one more skip.
-        const REFUSED: [&str; 14] = [
+        const REFUSED: [&str; 6] = [
             // I26: an array whose element is itself an array. The column
             // resolves to text, and the register agrees rather than claiming
             // an order the resolver has already declined.
             "public.intarr[]",
-            // Every range and multirange: their bounds need the subtype's own
-            // canonicalization, which is not implemented here.
-            "public.myrange",
+            // A multirange companion **before v14**, where the type does not
+            // exist and the range's DDL carries no `multirange_type_name` to
+            // find it through (I10). Its v14+ cells are asserted; a case is
+            // recorded here if it was refused at *any* major.
             "public.myrange_multi",
-            "public.textrange",
-            "int4range",
-            "int4multirange",
-            "numrange",
-            "daterange",
-            "tsrange",
-            "tstzrange",
             // Scalars with no comparison in the register at all.
             "public.box_domain",
             "public.mybase",
@@ -4214,6 +4701,80 @@ mod tests {
             // reasons, and a bug in any of them would leave it asserting
             // almost nothing while passing. 47,746 today.
             assert!(asserted > 45_000, "only {asserted} cells asserted");
+        }
+
+        /// A range or multirange literal is put into the form the server
+        /// stores it in *before* it is compared, checked against the server's
+        /// own rewriting of every such literal in `literals.tsv`.
+        ///
+        /// **The cell walk above cannot reach this**, and that is why this
+        /// test exists rather than one more assertion inside it: it puts both
+        /// operands of every cell through `outputs` by construction, so both
+        /// sides arrive already canonical and a build that rewrote nothing
+        /// would pass. The input spellings are only in `literals.tsv` — and
+        /// they are exactly the interesting ones, `int4range '[1,10]'` being
+        /// the value the file holds as `[1,11)`.
+        ///
+        /// So each accepted row is asked `<output> = <input>`, which is
+        /// `True` only where the two are one value here as they are on the
+        /// server, and each refused row is asked for the refusal — which is
+        /// where `[10,1)` lands, a `22000` the container grammar cannot see
+        /// (I44) and [`make_range`] raises.
+        #[tokio::test]
+        async fn a_range_literal_is_canonicalized_before_it_is_compared() {
+            let mut asked = 0usize;
+            let mut rewritten = 0usize;
+            for major in MAJORS {
+                let types = types_of(major).await;
+                for row in rows(&fixture(major, "oracle/literals.tsv")) {
+                    let declared = row[0].clone().expect("a case names a type");
+                    if !matches!(
+                        comparison_for(&declared, None, &types, &[]),
+                        ComparisonPlan::Nested(
+                            NestedCompare::Range { .. } | NestedCompare::Multirange { .. }
+                        )
+                    ) {
+                        continue;
+                    }
+                    // A SQL NULL input is the `\N` field, not a literal.
+                    let Some(input) = row[1].clone() else { continue };
+                    let status = row[2].as_deref().expect("a case records its status");
+                    // The type does not exist at this major — a user range's
+                    // multirange companion before v14 (I10).
+                    if status == "E42704" {
+                        continue;
+                    }
+                    asked += 1;
+                    let ask = |field: &str| {
+                        answer(&declared, None, &types, PredicateOp::Eq, Some(field), &input).0
+                    };
+                    let Some(output) = row[3].as_deref().filter(|_| status == "ok") else {
+                        // The field is never read: the literal is refused
+                        // when the block's schema resolves, before a row.
+                        assert!(
+                            ask("empty").is_err(),
+                            "{major} {declared}: accepted {input:?}, which the server refused \
+                             with {status}"
+                        );
+                        continue;
+                    };
+                    assert_eq!(
+                        ask(output),
+                        Ok(Truth::True),
+                        "{major} {declared}: {input:?} is not the value the server stored it as \
+                         ({output:?})"
+                    );
+                    if input != output {
+                        rewritten += 1;
+                    }
+                }
+            }
+            // Floors, not counts, and the second is the one that matters: a
+            // build that canonicalized nothing would still satisfy the first,
+            // because most rows are already written the way the server stores
+            // them. 193 and 42 today.
+            assert!(asked > 150, "only {asked} range literals asserted");
+            assert!(rewritten > 30, "only {rewritten} of them needed rewriting");
         }
     }
 }

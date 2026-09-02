@@ -72,6 +72,16 @@ fn builtin_scalar(base: &str, typmod: Option<&str>) -> Option<(DataType, Compari
     })
 }
 
+fn builtin_range_subtype(name: &str) -> Option<BuiltinRange> {
+    let (subtype, multi, discrete) = match name {
+        "int4range" => ("integer", false, true),
+        "numrange" => ("numeric", false, false),
+        "int4multirange" => ("integer", true, true),
+        _ => return None,
+    };
+    Some(BuiltinRange { subtype, multi, discrete })
+}
+
 fn comparison_user_type(name: &str, types: &[TypeDef]) -> ComparisonPlan {
     let Some(def) = types.iter().find(|t| t.name == name) else {
         return ComparisonPlan::Refused;
@@ -94,7 +104,13 @@ pub fn comparison_for(declared: &str, types: &[TypeDef]) -> ComparisonPlan {
     if base.contains('.') {
         return comparison_user_type(base, types);
     }
-    builtin_scalar(base, typmod).map_or(ComparisonPlan::Refused, |(_, plan)| plan)
+    if let Some((_, plan)) = builtin_scalar(base, typmod) {
+        return plan;
+    }
+    match builtin_range_subtype(&base.to_ascii_lowercase()) {
+        Some(range) => range_comparison(Some(range.subtype), range.discrete, range.multi, types),
+        None => ComparisonPlan::Refused,
+    }
 }
 """
 
@@ -264,8 +280,15 @@ class PlacingACase(unittest.TestCase):
         self.assertEqual(self.place("character varying(10)"), "builtin/character varying")
 
     def test_a_builtin_the_table_does_not_name_is_the_fallthrough(self):
-        for declared in ("xml", "money", "int4range"):
+        for declared in ("xml", "money", "int8range"):
             self.assertEqual(self.place(declared), "builtin/unrecognised", declared)
+
+    def test_a_builtin_range_reaches_its_own_arm(self):
+        # Read out of `builtin_range_subtype`'s own table, and told apart by
+        # the `multi` flag there rather than by the name's shape.
+        self.assertEqual(self.place("int4range"), "builtin/range")
+        self.assertEqual(self.place("numrange"), "builtin/range")
+        self.assertEqual(self.place("int4multirange"), "builtin/multirange")
 
     def test_a_keyword_is_a_keyword_in_either_case(self):
         self.assertEqual(self.place("INTEGER"), "builtin/integer")

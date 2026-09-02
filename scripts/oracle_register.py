@@ -166,12 +166,21 @@ class Arm:
     evidence: tuple[Evidence, ...] = ()
 
 
-#: The three branches of the walk that are not match arms. They are named here
+#: The five branches of the walk that are not match arms. They are named here
 #: because there is nothing to enumerate: each is an `if`/`else` in
 #: `comparison_for` or `comparison_user_type`, and `parse_register` checks the
 #: anchor each hangs off rather than trusting this list to stay true.
+#:
+#: **The two range arms are one arm each, not one per name**, which is the
+#: `array` arm's precedent rather than `builtin_scalar`'s: a built-in range's
+#: answer is built by one branch out of `builtin_range_subtype`'s table, so
+#: `int8range` is not separately closable from `int4range` the way `character
+#: varying` is from `text`. Which names reach them *is* read out of that table,
+#: so a name added there without a case does not quietly join a covered arm.
 STRUCTURAL_ARMS = (
     Arm("array", "comparison_for", "structural"),
+    Arm("builtin/range", "comparison_for", "structural"),
+    Arm("builtin/multirange", "comparison_for", "structural"),
     Arm("builtin/unrecognised", "builtin_scalar", "structural"),
     Arm("user/absent", "comparison_user_type", "structural"),
 )
@@ -239,8 +248,9 @@ ANCHORS = {
     "comparison_user_type": ("fn comparison_user_type(", ("let Some(def) =",)),
     "comparison_for": (
         "pub fn comparison_for(",
-        ("array_element(declared).is_some()",),
+        ("array_element(declared).is_some()", "builtin_range_subtype("),
     ),
+    "builtin_range_subtype": ("fn builtin_range_subtype(", ("_ => return None,",)),
     "collated_text": (
         "fn collated_text(",
         ("type_default == TypeCollation::Bytewise", "states_non_deterministic("),
@@ -259,6 +269,7 @@ _KIND_ARM_RE = re.compile(
     r"TypeKind::\w+(?:\s*\{[^}]*\})?)\s*(?:if\s+(.+?)\s*)?=>"
 )
 _KIND_RE = re.compile(r"TypeKind::(\w+)")
+_RANGE_ARM_RE = re.compile(r'^\s*"(\w+)"\s*=>\s*\("[^"]*",\s*(true|false),', re.MULTILINE)
 
 
 def _function_body(text: str, name: str) -> str | None:
@@ -290,6 +301,9 @@ class Register:
     arms: list[Arm] = field(default_factory=list)
     #: Declared base name -> arm key, for the built-in table.
     builtin: dict[str, str] = field(default_factory=dict)
+    #: Built-in range/multirange name -> arm key, from
+    #: `builtin_range_subtype`'s hardcoded table (I10).
+    builtin_range: dict[str, str] = field(default_factory=dict)
     #: `TypeKind` name -> the arm keys that name it, in source order. An arm
     #: carrying the empty-enum guard is the first of two for `Enum`.
     kinds: dict[str, list[str]] = field(default_factory=dict)
@@ -350,6 +364,15 @@ def parse_register(path: Path = REGISTER) -> Register:
             f"{path}: no arm of `builtin_scalar` calls `collated_text` — the "
             "collation dimension has moved and this check can no longer place a "
             "collated case"
+        )
+
+    for match in _RANGE_ARM_RE.finditer(bodies["builtin_range_subtype"]):
+        multi = match.group(2) == "true"
+        out.builtin_range[match.group(1)] = "builtin/multirange" if multi else "builtin/range"
+    if not out.builtin_range:
+        out.problems.append(
+            f"{path}: `builtin_range_subtype` names no range types — the built-in "
+            "range table has moved and this check can no longer place a range case"
         )
 
     for line in bodies["comparison_user_type"].splitlines():
@@ -511,6 +534,9 @@ def arm_for(
     key = register.builtin.get(base.lower())
     if key:
         return key, "a built-in this register maps"
+    key = register.builtin_range.get(base.lower())
+    if key:
+        return key, "a built-in range type, named in no CREATE TYPE (I10)"
     return (
         "builtin/unrecognised",
         "no arm of the built-in table names it, so it has no order here",

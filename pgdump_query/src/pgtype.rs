@@ -418,13 +418,35 @@ pub enum NestedCompare {
     /// path alone — `record_out` is positional (I23) and no comparison reads
     /// it.
     Record(Vec<(String, NestedCompare)>),
+    /// `range_cmp`: `empty` below every other value, then lower bound, then
+    /// upper, with a bound settling infinity before value and value before
+    /// inclusivity (I46). `bound` is the subtype's own node, so a range over
+    /// a composite composes like any other position.
+    ///
+    /// **`discrete` is a property of the range type, never of its subtype.**
+    /// Only `int4range`, `int8range` and `daterange` carry a canonical
+    /// function among the built-ins — `numrange` is over a type with a
+    /// perfectly good successor at any fixed scale and has none — and a
+    /// user-defined range declares one in DDL this build does not read
+    /// (`KD12`). So the flag is set from the range's *name* and a subtype
+    /// that happens to be discrete does not set it.
+    Range { bound: Box<NestedCompare>, discrete: bool },
+    /// `multirange_cmp`: member-wise over members the server has already
+    /// sorted, coalesced and emptied out, the shorter multirange first
+    /// (I46). The fields are the *member range's*, since a multirange has no
+    /// comparison of its own beyond the sequence.
+    Multirange { bound: Box<NestedCompare>, discrete: bool },
 }
 
 impl NestedCompare {
     /// The first position beneath this one with no order, as
     /// `(path, declared type)` — `None` when every position is comparable.
-    /// The path is the accessor a user would write: `[]` for an element,
-    /// `.name` for a field, appended as the walk descends.
+    /// The path is the accessor a user would write where one exists: `[]` for
+    /// an element, `.name` for a field, appended as the walk descends. A
+    /// range's bounds have no subscript spelling, so `.bound` names the
+    /// position rather than spelling an expression, and a multirange's is
+    /// `[].bound` — its member and that member's bound in one step, because
+    /// the member is not a position with a comparison of its own.
     pub fn uncomparable(&self) -> Option<(String, String)> {
         let mut found = None;
         self.walk(&mut String::new(), &mut |path, declared, divergence| {
@@ -475,6 +497,18 @@ impl NestedCompare {
                     field.walk(path, visit);
                     path.truncate(len);
                 }
+            }
+            Self::Range { bound, .. } => {
+                let len = path.len();
+                path.push_str(".bound");
+                bound.walk(path, visit);
+                path.truncate(len);
+            }
+            Self::Multirange { bound, .. } => {
+                let len = path.len();
+                path.push_str("[].bound");
+                bound.walk(path, visit);
+                path.truncate(len);
             }
         }
     }
@@ -921,7 +955,7 @@ fn map_builtin(base: &str, typmod: Option<&str>, types: &[TypeDef]) -> Option<Ty
     // Built-in ranges, and their PG14+ multirange counterparts (I10): both
     // appear bare, never schema-qualified, so both need this table rather
     // than the user-defined lookup (I8).
-    let (subtype, multi) = builtin_range_subtype(&base.to_ascii_lowercase())?;
+    let BuiltinRange { subtype, multi, .. } = builtin_range_subtype(&base.to_ascii_lowercase())?;
     let (bound, bound_plan) = resolve_nested(subtype, types);
     Some(if multi {
         TypeOutcome::Mapped(
@@ -933,8 +967,23 @@ fn map_builtin(base: &str, typmod: Option<&str>, types: &[TypeDef]) -> Option<Ty
     })
 }
 
-/// The subtype of one of PostgreSQL's twelve built-in range/multirange types,
-/// plus whether the name was the multirange half. `None` for anything else.
+/// One of PostgreSQL's twelve built-in range/multirange types, as the two
+/// walks over it need it.
+struct BuiltinRange {
+    /// The bound type, spelled as DDL spells it.
+    subtype: &'static str,
+    /// Whether the name was the multirange half of the pair.
+    multi: bool,
+    /// Whether values of this type are rewritten into canonical form on the
+    /// way in — `int4range_canonical` and its two siblings, which is the
+    /// half of I46 the comparison has to reproduce. It is a fact about the
+    /// *range type*, not about the subtype: `numrange` is over a type with a
+    /// successor at any fixed scale and canonicalizes nothing.
+    discrete: bool,
+}
+
+/// The definition of one of PostgreSQL's twelve built-in range/multirange
+/// types. `None` for anything else.
 ///
 /// **Hardcoded because the catalog holds it and the DDL does not.**
 /// `TypeKind::Range::subtype` is populated only for a user-defined range;
@@ -942,23 +991,23 @@ fn map_builtin(base: &str, typmod: Option<&str>, types: &[TypeDef]) -> Option<Ty
 /// multirange names carry the *same* subtypes as their range counterparts
 /// and a different literal form, which is why they are told apart here
 /// rather than sharing one answer (I10).
-fn builtin_range_subtype(name: &str) -> Option<(&'static str, bool)> {
-    let (subtype, multi) = match name {
-        "int4range" => ("integer", false),
-        "int8range" => ("bigint", false),
-        "numrange" => ("numeric", false),
-        "tsrange" => ("timestamp without time zone", false),
-        "tstzrange" => ("timestamp with time zone", false),
-        "daterange" => ("date", false),
-        "int4multirange" => ("integer", true),
-        "int8multirange" => ("bigint", true),
-        "nummultirange" => ("numeric", true),
-        "tsmultirange" => ("timestamp without time zone", true),
-        "tstzmultirange" => ("timestamp with time zone", true),
-        "datemultirange" => ("date", true),
+fn builtin_range_subtype(name: &str) -> Option<BuiltinRange> {
+    let (subtype, multi, discrete) = match name {
+        "int4range" => ("integer", false, true),
+        "int8range" => ("bigint", false, true),
+        "numrange" => ("numeric", false, false),
+        "tsrange" => ("timestamp without time zone", false, false),
+        "tstzrange" => ("timestamp with time zone", false, false),
+        "daterange" => ("date", false, true),
+        "int4multirange" => ("integer", true, true),
+        "int8multirange" => ("bigint", true, true),
+        "nummultirange" => ("numeric", true, false),
+        "tsmultirange" => ("timestamp without time zone", true, false),
+        "tstzmultirange" => ("timestamp with time zone", true, false),
+        "datemultirange" => ("date", true, true),
         _ => return None,
     };
-    Some((subtype, multi))
+    Some(BuiltinRange { subtype, multi, discrete })
 }
 
 /// `List<child>`, with the element field named and nullable the way every
@@ -1298,6 +1347,40 @@ fn array_comparison(
     ComparisonPlan::Nested(NestedCompare::Array(Box::new(child)))
 }
 
+/// The comparison for a range or multirange column, from its bound type and
+/// whether the range type canonicalizes.
+///
+/// **The bound is asked with no `COLLATE` clause**, which is the one place
+/// this walk knowingly answers weaker than the file allows. A range type
+/// carries its *own* `collation` parameter — `fixtures/*/types/default.sql`'s
+/// `public.textrange` declares `collation = pg_catalog."C"` — and the
+/// preamble grammar keeps only `subtype` and `multirange_type_name` (I10),
+/// so a `text`-bounded range reaches [`collated_text`]'s no-clause arm and is
+/// told its collation is the database's. That is the conservative direction:
+/// a range declaring `C` gets correct rows and a note it does not need, and
+/// one declaring anything else gets exactly `KD7`'s statement. Reading the
+/// parameter would move the verdict and never the answer, which is why it is
+/// a property here rather than a deficiency.
+///
+/// A range whose DDL stated no subtype at all is [`ComparisonPlan::Refused`]
+/// outright rather than a tree with an unnameable position in it: there is no
+/// declared type to put in the refusal.
+fn range_comparison(
+    subtype: Option<&str>,
+    discrete: bool,
+    multi: bool,
+    types: &[TypeDef],
+    collations: &[CollationDef],
+) -> ComparisonPlan {
+    let Some(subtype) = subtype else { return ComparisonPlan::Refused };
+    let bound = Box::new(nested_position(subtype, None, types, collations));
+    ComparisonPlan::Nested(if multi {
+        NestedCompare::Multirange { bound, discrete }
+    } else {
+        NestedCompare::Range { bound, discrete }
+    })
+}
+
 /// One position *inside* a nested type — an array's element, a composite's
 /// field — asked the same question the column was, so nesting composes and a
 /// domain beneath a container bottoms out where a domain always does.
@@ -1340,12 +1423,10 @@ fn nested_position(
 /// wants, and the answers that will replace them are per declared type too.
 ///
 /// **A nested type answers [`ComparisonPlan::Nested`]**, one node per nesting
-/// level, built by the same walk: an array's element and a composite's fields
-/// are asked this same question in turn, so a position's comparison is
-/// whatever a *column* of that type would have had and nesting composes with
-/// no special case. A range or multirange is still
-/// [`ComparisonPlan::Refused`] — the canonicalization its bounds need is not
-/// implemented here yet.
+/// level, built by the same walk: an array's element, a composite's fields
+/// and a range's bound are asked this same question in turn, so a position's
+/// comparison is whatever a *column* of that type would have had and nesting
+/// composes with no special case.
 ///
 /// **`collation` is the column's own `COLLATE` clause**, verbatim as the DDL
 /// wrote it ([`crate::preamble::ColumnDef::collation`]), or `None` where the
@@ -1368,11 +1449,19 @@ pub fn comparison_for(
     if base.contains('.') {
         return comparison_user_type(base, collation, types, collations);
     }
-    // A built-in range name reaches neither arm of `builtin_scalar` and is
-    // refused, which is the same answer the nested check above gives a
-    // user-defined one.
-    builtin_scalar(base, typmod, collation, collations)
-        .map_or(ComparisonPlan::Refused, |(_, plan)| plan)
+    if let Some((_, plan)) = builtin_scalar(base, typmod, collation, collations) {
+        return plan;
+    }
+    // The twelve built-in range and multirange names, which reach neither arm
+    // of `builtin_scalar` and appear in no `CREATE TYPE` (I10) — the same
+    // fourth step `map_builtin` takes, so the two walks agree on which names
+    // are containers.
+    match builtin_range_subtype(&base.to_ascii_lowercase()) {
+        Some(range) => {
+            range_comparison(Some(range.subtype), range.discrete, range.multi, types, collations)
+        }
+        None => ComparisonPlan::Refused,
+    }
 }
 
 /// The user-defined half of [`comparison_for`], over the same `TypeKind` list
@@ -1387,9 +1476,23 @@ fn comparison_user_type(
     collations: &[CollationDef],
 ) -> ComparisonPlan {
     // Absent from the list: either an unknown type or a range's multirange
-    // companion (I10). Neither has an order here.
+    // companion, which `pg_dump` emits no `CREATE TYPE` for at all (I10). The
+    // companion is found the one way it can be — through the range whose DDL
+    // names it — exactly as `resolve_user_type` finds it, so the two walks
+    // agree about a type only one of them can see.
     let Some(def) = types.iter().find(|t| t.name == name) else {
-        return ComparisonPlan::Refused;
+        let companion_of = types.iter().find(|t| {
+            matches!(&t.kind, TypeKind::Range { multirange_type_name: Some(n), .. } if n == name)
+        });
+        return match companion_of.map(|t| &t.kind) {
+            // A user-defined range declares its canonical function in DDL
+            // this build does not read, so its companion does not
+            // canonicalize either (`KD12`).
+            Some(TypeKind::Range { subtype, .. }) => {
+                range_comparison(subtype.as_deref(), false, true, types, collations)
+            }
+            _ => ComparisonPlan::Refused,
+        };
     };
     match &def.kind {
         // An enum with no labels resolves to no Arrow type at all, so no
@@ -1442,10 +1545,20 @@ fn comparison_user_type(
             )),
             None => ComparisonPlan::Refused,
         },
-        // A range's bounds need the subtype's own canonicalization before
-        // they can be compared — `int4range '[1,10]'` is `[1,11)` — which is
-        // not implemented here yet.
-        TypeKind::Range { .. } => ComparisonPlan::Refused,
+        // Bound-wise, with **no** canonicalization: a user-defined range
+        // canonicalizes only where its DDL declares a `canonical` function,
+        // and the preamble grammar keeps `subtype` and
+        // `multirange_type_name` alone — so a range that declares one is
+        // compared as though it did not. `fixtures/*`'s `public.myrange` and
+        // `public.textrange` declare none, which is the ordinary shape and
+        // the one the oracle checks.
+        //
+        // Deficiency register: `deficiency: KD12` — the detail is
+        // `docs/design/architecture.md`, "Nested columns compare
+        // structurally".
+        TypeKind::Range { subtype, .. } => {
+            range_comparison(subtype.as_deref(), false, false, types, collations)
+        }
         TypeKind::Base | TypeKind::Shell => ComparisonPlan::Refused,
     }
 }
@@ -2472,15 +2585,14 @@ mod tests {
         assert_eq!(comparison_for("public.nothingish", None, &types, &[]), ComparisonPlan::Refused);
     }
 
-    /// Which nested shapes the register compares and which it still refuses,
-    /// as one statement: an array and a composite are compared structurally,
-    /// a range and its multirange companion are not — their bounds need the
-    /// subtype's canonicalization, which is not implemented here.
+    /// Every nested shape the register compares, as one statement: an array,
+    /// a composite, a range and a range's multirange companion, each built by
+    /// the same walk so that nesting composes with no special case.
     ///
     /// A base or shell type is refused for a reason of its own and is here to
     /// keep the two populations from being read as one.
     #[test]
-    fn arrays_and_composites_compare_where_ranges_are_still_refused() {
+    fn every_container_kind_compares_structurally() {
         let types = [
             ty(
                 "public.point2d",
@@ -2533,15 +2645,65 @@ mod tests {
             comparison_for("public.point2d[]", None, &types, &[]),
             ComparisonPlan::Nested(NestedCompare::Array(Box::new(record))),
         );
-        for declared in [
-            "int4range",
-            "int4multirange",
-            "public.myrange",
-            "public.myrange_multi",
-            "public.gtype",
-            "public.forward",
-            "public.nosuchtype",
-        ] {
+        // A user-defined range and the companion multirange `pg_dump` writes
+        // no `CREATE TYPE` for (I10) reach the same bound through two
+        // different lookups, and neither canonicalizes: the `canonical`
+        // parameter is not in `TypeKind::Range` (`KD12`).
+        assert_eq!(
+            comparison_for("public.myrange", None, &types, &[]),
+            ComparisonPlan::Nested(NestedCompare::Range {
+                bound: Box::new(int_leaf()),
+                discrete: false,
+            }),
+        );
+        assert_eq!(
+            comparison_for("public.myrange_multi", None, &types, &[]),
+            ComparisonPlan::Nested(NestedCompare::Multirange {
+                bound: Box::new(int_leaf()),
+                discrete: false,
+            }),
+        );
+        // A built-in range is named nowhere in the file (I10), so its bound
+        // and its canonicalization both come off the hardcoded table — and
+        // `discrete` is a fact about the range type, which is why two ranges
+        // over `integer` answer differently.
+        assert_eq!(
+            comparison_for("int4range", None, &types, &[]),
+            ComparisonPlan::Nested(NestedCompare::Range {
+                bound: Box::new(int_leaf()),
+                discrete: true,
+            }),
+        );
+        assert_eq!(
+            comparison_for("int4multirange", None, &types, &[]),
+            ComparisonPlan::Nested(NestedCompare::Multirange {
+                bound: Box::new(int_leaf()),
+                discrete: true,
+            }),
+        );
+        assert!(matches!(
+            comparison_for("numrange", None, &types, &[]),
+            ComparisonPlan::Nested(NestedCompare::Range { discrete: false, .. })
+        ));
+        // A domain over a range is the range's own answer, through the same
+        // recursion every domain takes.
+        let rangedom =
+            [types[1].clone(), ty("public.rangedom", TypeKind::domain("public.myrange"))];
+        assert_eq!(
+            comparison_for("public.rangedom", None, &rangedom, &[]),
+            comparison_for("public.myrange", None, &types, &[]),
+        );
+        // A range whose DDL stated no subtype has no bound type to name a
+        // refusal after, so the column is refused outright.
+        let subtypeless = [ty(
+            "public.opaquerange",
+            TypeKind::Range { subtype: None, multirange_type_name: None },
+        )];
+        assert_eq!(
+            comparison_for("public.opaquerange", None, &subtypeless, &[]),
+            ComparisonPlan::Refused,
+        );
+        for declared in ["public.gtype", "public.forward", "public.nosuchtype"] {
             assert_eq!(
                 comparison_for(declared, None, &types, &[]),
                 ComparisonPlan::Refused,
