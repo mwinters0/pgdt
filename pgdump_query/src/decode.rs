@@ -476,9 +476,18 @@ pub fn decode_interval(s: &str) -> Option<(i32, i32, i64)> {
 /// makes a wholly-zero interval `00:00:00` — with one sign for the whole
 /// tail, its hour field at least two digits and unbounded above.
 ///
-/// `nanos` is taken to be a whole number of microseconds, which is all
-/// [`decode_interval`] produces and all PostgreSQL can store.
-pub fn render_interval(months: i32, days: i32, nanos: i64) -> String {
+/// **`None` for a `nanos` that is not a whole number of microseconds.**
+/// PostgreSQL's time field counts microseconds, so no `interval` has such a
+/// value and there is no text to write: `EncodeInterval` has six fractional
+/// digits and a seventh has nowhere to go. Truncating would put a value in
+/// the output that is not the one the array holds, which is the one thing
+/// render-back may not do. [`decode_interval`] cannot produce one — it
+/// multiplies microseconds by a thousand — so this is reachable only from an
+/// `Interval(MonthDayNano)` array a caller built itself.
+pub fn render_interval(months: i32, days: i32, nanos: i64) -> Option<String> {
+    if nanos % 1_000 != 0 {
+        return None;
+    }
     let mut out = String::new();
     let mut is_zero = true;
     let mut is_before = false;
@@ -527,7 +536,7 @@ pub fn render_interval(months: i32, days: i32, nanos: i64) -> String {
             out.push_str(&digits);
         }
     }
-    out
+    Some(out)
 }
 
 /// Canonical `8-4-4-4-12` hex form, case-insensitive on input (PostgreSQL
@@ -784,7 +793,11 @@ mod tests {
         for (text, parts) in cases {
             assert_eq!(decode_interval(text), Some(*parts), "decode {text}");
             let (months, days, nanos) = *parts;
-            assert_eq!(render_interval(months, days, nanos), *text, "render {text}");
+            assert_eq!(
+                render_interval(months, days, nanos).as_deref(),
+                Some(*text),
+                "render {text}"
+            );
         }
     }
 
@@ -821,6 +834,22 @@ mod tests {
         for text in ["1 month", "1.5 hours", "P1Y2M", "1 hour", "04:-5:06", "1 year 2"] {
             assert_eq!(decode_interval(text), None, "{text}");
         }
+    }
+
+    /// The one value `render_interval` refuses, and the only refusal on the
+    /// way *out* rather than in: Arrow counts nanoseconds where PostgreSQL's
+    /// field counts microseconds, so a nanosecond count with a remainder is
+    /// not an `interval` at all. `decode_interval` cannot produce one, which
+    /// is why the whole-microsecond neighbours are asserted beside it —
+    /// truncating would have written `00:00:00.000001` for all three.
+    #[test]
+    fn render_refuses_a_sub_microsecond_nanosecond_count() {
+        assert_eq!(render_interval(0, 0, 1), None);
+        assert_eq!(render_interval(0, 0, -1), None);
+        assert_eq!(render_interval(0, 0, 1_001), None);
+        assert_eq!(render_interval(1, 1, 999), None);
+        assert_eq!(render_interval(0, 0, 1_000).as_deref(), Some("00:00:00.000001"));
+        assert_eq!(render_interval(0, 0, 2_000).as_deref(), Some("00:00:00.000002"));
     }
 
     #[test]

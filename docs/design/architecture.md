@@ -1677,17 +1677,45 @@ a future reader to re-derive:
   what makes `1 mon` and `30 days` one value and a decoder that did it would
   lose the fields Arrow carries apart.
 
+**Render-back has a third outcome, and it is not a NULL.**
+`render_field` returns `Result<Option<String>, Error>`: `Ok(None)` is SQL NULL
+and `Error::FieldRender` is an Arrow value no PostgreSQL text form spells. It
+is `Error::FieldDecode`'s mirror and names the Arrow value rather than a table,
+a column and a row offset, because **nothing this crate scans can reach it** —
+every typed column it fills comes from a `decode_*`, whose range is by
+construction what the matching `render_*` writes back — so the only array
+carrying one is an array a caller assembled, which has no dump position to
+name. `interval` is its one case: Arrow's `Interval(MonthDayNano)` counts
+nanoseconds where PostgreSQL's field counts microseconds, so a nanosecond count
+with a remainder is not an `interval` at all and `EncodeInterval` has six
+fractional digits with nowhere to put a seventh.
+
+*Rejected: truncating to the nearest microsecond, which is what the naïve
+inverse does.* It puts a value in the output that is not the one the array
+holds, and render-back's whole contract is that `pgdq query`'s output is
+byte-identical to what the dump held — a renderer allowed to round is a
+renderer that can no longer be an oracle for the decoder. *Rejected: a panic,
+which is what keeping the `Option<String>` signature would have forced.* The
+cost of the `Result` is a `?` at each call site — the four nested arms of the
+walk included, since it recurses — plus a fallible `print_batch` in the CLI,
+against a library that aborts a caller's process for a value it merely cannot
+spell.
+
 <!-- deficiency: KD8 -->
-**No typed column can hold `infinity`, `-infinity` or `NaN`** — deficiency
-`KD8`, and unowned. `Date32` has no infinity and `Decimal128` no NaN, so a field holding
-one is an `Error::FieldDecode` and there is no typed way to read the value.
-The file is not at fault: `pg_dump` emits these from any healthy database
-(I34). `--schema-mode strings` returns the literal verbatim. *Comparing* one is
-a separate question and is already answered — see "Ordering operators compare
-typed" below, which is why a filter may legitimately select a row the output
-column then cannot represent. What stays open is **materialization**, where the
-choices are a null, a sentinel indistinguishable from a real date, or the
-error; it belongs to whichever phase owns typed materialization.
+**A typed column cannot hold every value its declared type admits** —
+deficiency `KD8`, and unowned. Three classes, and the file is at fault for none
+of them: `Date32` has no infinity and `Decimal128` no `NaN`, both of which
+`pg_dump` emits from any healthy database (I34); and
+`Interval(MonthDayNano)` holds neither v17's infinite interval nor a time part
+past `2562047:47:16.854775807`, where PostgreSQL's `int64` microseconds run out
+of Arrow's `int64` nanoseconds. A field holding one is an
+`Error::FieldDecode` and there is no typed way to read the value.
+`--schema-mode strings` returns the literal verbatim in every case. *Comparing*
+one is a separate question and is already answered — see "Ordering operators
+compare typed" below, which is why a filter may legitimately select a row the
+output column then cannot represent. What stays open is **materialization**,
+where the choices are a null, a sentinel indistinguishable from a real value,
+or the error; it belongs to whichever phase owns typed materialization.
 
 ### The nested literal codec
 

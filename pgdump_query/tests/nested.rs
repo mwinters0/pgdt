@@ -81,7 +81,8 @@ async fn column_values(path: &Path, table: &str, column: &str) -> Vec<String> {
             // which is the point: what comes back is the codec's input,
             // not something the typed path has already parsed.
             let column = batch.column(index).as_ref();
-            if let Some(value) = render_field(column, row, &NestedPlan::Scalar) {
+            let rendered = render_field(column, row, &NestedPlan::Scalar).expect("renders back");
+            if let Some(value) = rendered {
                 out.push(value);
             }
         }

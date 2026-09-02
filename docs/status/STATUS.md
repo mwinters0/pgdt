@@ -38,7 +38,7 @@ not oblige a sweep").
 | Capability | State |
 |---|---|
 | Streaming row extraction from plain-format dumps, push and pull mode, resumable | working; a batch flushes on whichever of `max_rows`, `max_bytes` or `max_source_span` comes first, the last of which is what bounds the read chunks an in-flight batch pins ([`../design/architecture.md`](../design/architecture.md), "Three flush triggers") |
-| Typed Arrow columns from `CREATE TABLE` DDL, with per-column resolution diagnostics; `SchemaMode::Strings` for the untyped path | working. `interval` is `Interval(MonthDayNano)` — PostgreSQL's own three fields — with v17's infinities and a time part past `2562047:47:16.854775807` an `Error::FieldDecode` and `--schema-mode strings` the recourse. `oid` is `UInt32` — PostgreSQL's one unsigned integer type, mapped where the ADBC driver's `Int32` turns an OID at or above 2^31 negative. A `uuid` column's field carries the canonical `arrow.uuid` extension name and a `json`/`jsonb` column's `arrow.json`, top level only and written through arrow-rs's own extension types, so neither changes a byte ([`../design/architecture.md`](../design/architecture.md), "Type resolution") |
+| Typed Arrow columns from `CREATE TABLE` DDL, with per-column resolution diagnostics; `SchemaMode::Strings` for the untyped path | working. `interval` is `Interval(MonthDayNano)` — PostgreSQL's own three fields — with v17's infinities and a time part past `2562047:47:16.854775807` an `Error::FieldDecode` and `--schema-mode strings` the recourse. `oid` is `UInt32` — PostgreSQL's one unsigned integer type, mapped where the ADBC driver's `Int32` turns an OID at or above 2^31 negative. A `uuid` column's field carries the canonical `arrow.uuid` extension name and a `json`/`jsonb` column's `arrow.json`, top level only and written through arrow-rs's own extension types, so neither changes a byte. Render-back has a third outcome besides a value and SQL NULL: `render_field` returns `Result<Option<String>, Error>`, and `Error::FieldRender` is an Arrow value with no PostgreSQL text form — reachable only from an array a caller assembled, since every column this crate fills comes from a decoder whose range its renderer writes back, and carried by `interval` alone, whose nanoseconds are finer than PostgreSQL's microseconds ([`../design/architecture.md`](../design/architecture.md), "Type resolution" and "Decoders and render-back") |
 | Full byte-exact file map — every byte in exactly one span, verified over every fixture | working |
 | DDL object inventory: TOC enrichment, referenced roles and tablespaces, object census | working |
 | Best-effort structural cache with source-identity checking and cache-only inspection | working |
@@ -149,9 +149,10 @@ The ADBC type floor. Spec:
       `Interval(MonthDayNano)` resolution arm and its `ColumnBuilder`; the
       reconciliation's `waiting` disposition dropped. Notes:
       [`../design/roadmap-P12.3-interval-decoder-notes.md`](../design/roadmap-P12.3-interval-decoder-notes.md)
-- [ ] **12.4** `interval`: render-back's sub-microsecond refusal, the comparison
+- [x] **12.4** `interval`: render-back's sub-microsecond refusal, the comparison
       register's arm, and the interval decode failure folded into the existing
-      `infinity`/`NaN` register entry.
+      `infinity`/`NaN` register entry (`KD8`). Notes:
+      [`../design/roadmap-P12.4-interval-render-notes.md`](../design/roadmap-P12.4-interval-render-notes.md)
 - [ ] **12.5** `int2vector`: the fixture column, and the six-major regeneration.
 - [ ] **12.6** `int2vector`: the codec and the resolution arm.
 
@@ -266,7 +267,8 @@ here rather than reading as a phase nobody has sliced.
   [`../design/architecture.md`](../design/architecture.md), "Ordering operators
   compare typed".
 
-- **KD8** — a typed column cannot hold `infinity`, `-infinity` or `NaN`, so
+- **KD8** — a typed column cannot hold `infinity`, `-infinity` or `NaN`, nor —
+  on an `interval` — a time part past `2562047:47:16.854775807`, so
   materializing one raises `Error::FieldDecode` and there is no typed way to
   read the value. **(c) unowned**; promoted by whichever phase takes typed
   materialization, which is where the choice between a null, a sentinel and the

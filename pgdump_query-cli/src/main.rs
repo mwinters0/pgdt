@@ -618,7 +618,13 @@ fn install_interrupt_guard(cancel: Arc<AtomicBool>) -> Result<Arc<AtomicI32>> {
 /// is what says whether a `List<Struct{…}>` column is written as an array of
 /// ranges or as a multirange. A column with no entry falls back to
 /// `NestedPlan::Scalar`, which is right for every non-nested type.
-fn print_batch(batch: &RecordBatch, plans: &[NestedPlan]) {
+///
+/// The `Result` is `render_field`'s refusal of a value with no PostgreSQL
+/// text form, which **no batch this binary prints can hold**: every typed
+/// column here is filled by a decoder whose range its renderer can write back.
+/// It is propagated rather than unwrapped because an unreachable panic in the
+/// output path is a worse answer than an error message.
+fn print_batch(batch: &RecordBatch, plans: &[NestedPlan]) -> Result<()> {
     for row in 0..batch.num_rows() {
         let fields: Vec<String> = batch
             .columns()
@@ -626,11 +632,12 @@ fn print_batch(batch: &RecordBatch, plans: &[NestedPlan]) {
             .enumerate()
             .map(|(col, c)| {
                 let plan = plans.get(col).unwrap_or(&NestedPlan::Scalar);
-                render_field(c.as_ref(), row, plan).unwrap_or_else(|| "\\N".to_string())
+                Ok(render_field(c.as_ref(), row, plan)?.unwrap_or_else(|| "\\N".to_string()))
             })
-            .collect();
+            .collect::<Result<_>>()?;
         println!("{}", fields.join("\t"));
     }
+    Ok(())
 }
 
 #[tokio::main]
@@ -823,7 +830,7 @@ async fn main() -> Result<()> {
                 // schema (a header-less block names its columns from its
                 // first row), so the plans belong to the block the batch came
                 // from, not to the query.
-                print_batch(&batch, &stream.resolved_schema().plans);
+                print_batch(&batch, &stream.resolved_schema().plans)?;
                 rows += batch.num_rows() as u64;
             }
             // A query that matched a block but selected no rows still

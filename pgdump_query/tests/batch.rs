@@ -374,7 +374,10 @@ async fn a_nested_predicate_compares_structurally_when_the_column_is_typed() {
             for row in 0..batch.num_rows() {
                 // `id` is `integer` in both modes; only the array column's
                 // type changed underneath.
-                ids.push(render_field(batch.column(0).as_ref(), row, &NestedPlan::Scalar));
+                ids.push(
+                    render_field(batch.column(0).as_ref(), row, &NestedPlan::Scalar)
+                        .expect("renders back"),
+                );
             }
         }
         ids

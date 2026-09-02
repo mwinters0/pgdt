@@ -939,8 +939,15 @@ fn push_utf8view_field(
 /// `crate::copy::decode_field` would have produced for it — `pgdq query`'s
 /// job (`docs/design/architecture.md`, "CLI surface": output must be
 /// byte-identical whether typing is on or off) and the round-trip tests'
-/// oracle. `None` for SQL NULL. Covers exactly the [`DataType`]s
+/// oracle. `Ok(None)` for SQL NULL. Covers exactly the [`DataType`]s
 /// [`crate::resolve::resolve_columns`] can ever produce.
+///
+/// **The `Result` is for a value with no text form at all**, which is a third
+/// outcome and not a NULL: [`Error::FieldRender`] says which. Nothing this
+/// crate builds can reach it — every typed column it fills comes from a
+/// `decode_*` whose range its `render_*` can write back — so it is a
+/// statement about arrays a caller assembled itself, and the alternative was
+/// to truncate one silently.
 ///
 /// `plan` is needed for the same reason [`ColumnBuilder`] needs it: the Arrow
 /// type does not say which literal form a nested value is written in, and
@@ -952,24 +959,24 @@ fn push_utf8view_field(
 /// **There is deliberately no plan-less entry point.** One that panicked on a
 /// nested column would make "did every caller switch?" a review question
 /// rather than a compile error.
-pub fn render_field(column: &dyn Array, row: usize, plan: &NestedPlan) -> Option<String> {
+pub fn render_field(column: &dyn Array, row: usize, plan: &NestedPlan) -> Result<Option<String>> {
     if column.is_null(row) {
-        return None;
+        return Ok(None);
     }
     match plan {
         NestedPlan::Scalar => {}
-        NestedPlan::Array(child) => return Some(render_array(column, row, child)),
+        NestedPlan::Array(child) => return Ok(Some(render_array(column, row, child)?)),
         NestedPlan::Multirange(bound) => {
             let list = column.as_any().downcast_ref::<ListArray>().unwrap();
             let members = list.value(row);
             let range = NestedPlan::Range(bound.clone());
             let rendered: Vec<String> = (0..members.len())
                 .map(|i| {
-                    render_field(members.as_ref(), i, &range)
-                        .expect("a multirange's members are never SQL NULL")
+                    Ok(render_field(members.as_ref(), i, &range)?
+                        .expect("a multirange's members are never SQL NULL"))
                 })
-                .collect();
-            return Some(format!("{{{}}}", rendered.join(",")));
+                .collect::<Result<_>>()?;
+            return Ok(Some(format!("{{{}}}", rendered.join(","))));
         }
         NestedPlan::Record(field_plans) => {
             let s = column.as_any().downcast_ref::<StructArray>().unwrap();
@@ -978,23 +985,23 @@ pub fn render_field(column: &dyn Array, row: usize, plan: &NestedPlan) -> Option
                 .iter()
                 .zip(field_plans)
                 .map(|(child, p)| render_field(child.as_ref(), row, p))
-                .collect();
-            return Some(nested::render_record(&nested::RecordLiteral { fields }));
+                .collect::<Result<_>>()?;
+            return Ok(Some(nested::render_record(&nested::RecordLiteral { fields })));
         }
         NestedPlan::Range(bound) => {
             let s = column.as_any().downcast_ref::<StructArray>().unwrap();
             let flag =
                 |i: usize| s.column(i).as_any().downcast_ref::<BooleanArray>().unwrap().value(row);
-            return Some(nested::render_range(&RangeLiteral {
+            return Ok(Some(nested::render_range(&RangeLiteral {
                 empty: flag(4),
-                lower: render_field(s.column(0).as_ref(), row, bound),
-                upper: render_field(s.column(1).as_ref(), row, bound),
+                lower: render_field(s.column(0).as_ref(), row, bound)?,
+                upper: render_field(s.column(1).as_ref(), row, bound)?,
                 lower_inclusive: flag(2),
                 upper_inclusive: flag(3),
-            }));
+            })));
         }
     }
-    Some(match column.data_type() {
+    Ok(Some(match column.data_type() {
         DataType::Utf8View => {
             column.as_any().downcast_ref::<StringViewArray>().unwrap().value(row).to_string()
         }
@@ -1032,7 +1039,15 @@ pub fn render_field(column: &dyn Array, row: usize, plan: &NestedPlan) -> Option
         ),
         DataType::Interval(IntervalUnit::MonthDayNano) => {
             let v = column.as_any().downcast_ref::<IntervalMonthDayNanoArray>().unwrap().value(row);
-            decode::render_interval(v.months, v.days, v.nanoseconds)
+            decode::render_interval(v.months, v.days, v.nanoseconds).ok_or_else(|| {
+                Error::FieldRender {
+                    declared_type: "interval",
+                    reason: format!(
+                        "a time part of {} ns is not a whole number of microseconds, which is the unit PostgreSQL's own field counts in",
+                        v.nanoseconds
+                    ),
+                }
+            })?
         }
         DataType::Decimal128(_, scale) => {
             let v = column.as_any().downcast_ref::<Decimal128Array>().unwrap().value(row);
@@ -1057,7 +1072,7 @@ pub fn render_field(column: &dyn Array, row: usize, plan: &NestedPlan) -> Option
             values.value(dict.keys().value(row) as usize).to_string()
         }
         other => unreachable!("resolve_columns never resolves a column to {other:?}"),
-    })
+    }))
 }
 
 /// Walk one `List` level, appending its lengths to `dims` and its leaves to
@@ -1071,7 +1086,7 @@ fn collect_array(
     depth: usize,
     dims: &mut Vec<usize>,
     elements: &mut Vec<Option<String>>,
-) {
+) -> Result<()> {
     let values = column.as_any().downcast_ref::<ListArray>().unwrap().value(row);
     if dims.len() == depth {
         dims.push(values.len());
@@ -1079,25 +1094,26 @@ fn collect_array(
     for i in 0..values.len() {
         match child_plan {
             NestedPlan::Array(inner) => {
-                collect_array(values.as_ref(), i, inner, depth + 1, dims, elements);
+                collect_array(values.as_ref(), i, inner, depth + 1, dims, elements)?;
             }
-            _ => elements.push(render_field(values.as_ref(), i, child_plan)),
+            _ => elements.push(render_field(values.as_ref(), i, child_plan)?),
         }
     }
+    Ok(())
 }
 
 /// Rebuild an `array_out` literal from a `List` value. Lower bounds are
 /// always 1: a decorated value is refused at append time, so no column ever
 /// holds one to render back.
-fn render_array(column: &dyn Array, row: usize, child_plan: &NestedPlan) -> String {
+fn render_array(column: &dyn Array, row: usize, child_plan: &NestedPlan) -> Result<String> {
     let mut dims = Vec::new();
     let mut elements = Vec::new();
-    collect_array(column, row, child_plan, 0, &mut dims, &mut elements);
+    collect_array(column, row, child_plan, 0, &mut dims, &mut elements)?;
     if elements.is_empty() {
-        return "{}".to_string();
+        return Ok("{}".to_string());
     }
     let lower_bounds = vec![1; dims.len()];
-    nested::render_array(&nested::ArrayLiteral { elements, dims, lower_bounds })
+    Ok(nested::render_array(&nested::ArrayLiteral { elements, dims, lower_bounds }))
 }
 
 /// Scan `source` end to end, assembling typed `RecordBatch`es for every row
@@ -1201,11 +1217,51 @@ mod tests {
         let array = build(&data_type, &plan, values).expect("every value here is well-formed");
         assert_eq!(array.data_type(), &data_type, "built array's type must match the schema");
         assert_eq!(array.len(), values.len());
-        let rendered: Vec<Option<String>> =
-            (0..array.len()).map(|i| render_field(array.as_ref(), i, &plan)).collect();
+        let rendered: Vec<Option<String>> = (0..array.len())
+            .map(|i| render_field(array.as_ref(), i, &plan).expect("renders back"))
+            .collect();
         let expected: Vec<Option<String>> = values.iter().map(|v| v.map(str::to_string)).collect();
         assert_eq!(rendered, expected);
         array
+    }
+
+    /// An `Interval(MonthDayNano)` array holding a value no `interval` has.
+    /// Built here by hand because nothing in this crate can produce one —
+    /// `append_typed` fills the column from `decode_interval`, which
+    /// multiplies microseconds by a thousand — which is exactly why the
+    /// refusal is worth pinning: it is the contract for an array a caller
+    /// assembled, and the only thing standing between that caller and a
+    /// truncated value written out as if it were the real one. The refusal
+    /// travels out of a nested column too, since the nested walk is the same
+    /// function.
+    #[test]
+    fn render_refuses_an_interval_with_no_postgresql_text_form() {
+        let mut b = IntervalMonthDayNanoBuilder::new();
+        b.append_value(IntervalMonthDayNano { months: 0, days: 0, nanoseconds: 1_500 });
+        b.append_value(IntervalMonthDayNano { months: 0, days: 0, nanoseconds: 1_000 });
+        let array = Arc::new(b.finish()) as ArrayRef;
+
+        let err = render_field(array.as_ref(), 0, &NestedPlan::Scalar).unwrap_err();
+        assert!(
+            matches!(&err, Error::FieldRender { declared_type: "interval", reason } if reason.contains("1500 ns")),
+            "{err}"
+        );
+        assert_eq!(
+            render_field(array.as_ref(), 1, &NestedPlan::Scalar).unwrap().as_deref(),
+            Some("00:00:00.000001"),
+        );
+
+        let list = ListArray::new(
+            Arc::new(Field::new("item", DataType::Interval(IntervalUnit::MonthDayNano), true)),
+            OffsetBuffer::from_lengths([2usize]),
+            array,
+            None,
+        );
+        let plan = NestedPlan::Array(Box::new(NestedPlan::Scalar));
+        assert!(matches!(
+            render_field(&list, 0, &plan).unwrap_err(),
+            Error::FieldRender { declared_type: "interval", .. }
+        ));
     }
 
     #[test]
@@ -1500,7 +1556,10 @@ mod tests {
     /// Every row of a one-column batch, rendered back to text.
     fn rendered(batch: &RecordBatch) -> Vec<Option<String>> {
         (0..batch.num_rows())
-            .map(|row| render_field(batch.column(0).as_ref(), row, &NestedPlan::Scalar))
+            .map(|row| {
+                render_field(batch.column(0).as_ref(), row, &NestedPlan::Scalar)
+                    .expect("renders back")
+            })
             .collect()
     }
 

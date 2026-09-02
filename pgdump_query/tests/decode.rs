@@ -77,6 +77,7 @@ async fn try_rows(
                     .enumerate()
                     .map(|(col, c)| {
                         render_field(c.as_ref(), row, plans.get(col).unwrap_or(&NestedPlan::Scalar))
+                            .expect("every fixture value renders back")
                     })
                     .collect(),
             );

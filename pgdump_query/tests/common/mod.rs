@@ -168,7 +168,10 @@ pub fn rows_of(batch: &RecordBatch) -> Vec<Vec<Option<String>>> {
             batch
                 .columns()
                 .iter()
-                .map(|c| render_field(c.as_ref(), row, &NestedPlan::Scalar))
+                .map(|c| {
+                    render_field(c.as_ref(), row, &NestedPlan::Scalar)
+                        .expect("every fixture value renders back")
+                })
                 .collect()
         })
         .collect()

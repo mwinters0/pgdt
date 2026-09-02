@@ -112,4 +112,21 @@ pub enum Error {
         declared_type: String,
         value: String,
     },
+    /// [`Self::FieldDecode`]'s mirror, met on the way **out**: an Arrow array
+    /// holds a value no PostgreSQL text form spells, so `render_field`
+    /// refuses rather than writing something the file could not have held.
+    ///
+    /// It names the Arrow value rather than a table, a column and a row
+    /// offset because nothing this crate scans can reach it — every typed
+    /// column it fills comes from a `decode_*`, whose range is by
+    /// construction what its `render_*` can write back. Only an array a
+    /// caller built itself carries one, and such an array has no dump
+    /// position to name.
+    ///
+    /// `interval` is its one case today: Arrow's `Interval(MonthDayNano)`
+    /// counts nanoseconds where PostgreSQL's field counts microseconds, so a
+    /// nanosecond count with a nonzero remainder is a value `interval_out`
+    /// has no spelling for.
+    #[error("this Arrow value has no `{declared_type}` text form: {reason}")]
+    FieldRender { declared_type: &'static str, reason: String },
 }
