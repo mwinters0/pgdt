@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P5, P9 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
-| P11 — typed predicates | **Current**; sliced, in flight | [`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md) |
+| P11 — typed predicates | **Complete** | [`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md); [notes](roadmap-P11-typed-predicates-notes.md) |
 | P7 — scan performance | Sketched; design doc ahead of its phase | [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md); [inbox](roadmap-P7-scan-performance-inbox.md) |
 | P12 — ADBC type floor | Sketched; not grilled | this file, below; [inbox](roadmap-P12-adbc-type-floor-inbox.md) |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
@@ -333,12 +333,16 @@ item; see below.
 
 ## P11 — Typed predicates
 
-**Specified.** The binding statement is
+**Complete**, in twenty-three slices. The binding statement was
 [`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md): what a
 filter *means* — full boolean structure with a three-valued evaluator,
-type-aware comparison on nested columns, typed equality, and the retirement of
-`KD7`'s ordering-register divergences. Progress is the checklist in
-[`../status/STATUS.md`](../status/STATUS.md).
+type-aware comparison on nested columns, typed equality, and `KD7`'s
+ordering-register divergences. What it built is described by subject in
+[`architecture.md`](architecture.md); what it leaves for later phases is
+[`roadmap-P11-typed-predicates-notes.md`](roadmap-P11-typed-predicates-notes.md).
+`KD7` was narrowed rather than retired — three of its four statements closed as
+properties and the fourth is `(c) unowned`, promoted by the Future item
+"Collation-aware comparison" below.
 
 *The reason that used to defer it behind the engine story is withdrawn:* that
 "DataFusion hands a `TableProvider` an `Expr` tree and asks, per filter,

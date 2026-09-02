@@ -10,32 +10,29 @@ discoveries are in `history/`.
 
 P1–P5 and P9 are complete and were struck at keystone reviews; how each
 mechanism works is [`../design/architecture.md`](../design/architecture.md),
-filed by subject. **P11 — typed predicates — is open**: grilled and specified
-([`../design/roadmap-P11-typed-predicates.md`](../design/roadmap-P11-typed-predicates.md)),
-with the comparison oracle, its cross-major differ, the fixture family's move
-to glibc, the comparison plan's move to L2, the register-to-oracle
-reconciliation, the declared collation and the fixture columns that observe
-it — the displaced clause included — the enum and bare `numeric`, the
-whole text-held type queue, `jsonb` included, `character(n)`'s trim, typed
-`=`/`!=`, the non-deterministic collation the dump states — read, and now
-observed in committed bytes — the three-valued expression tree, the
-`--where` grammar that reaches it from the command line, the refusal that
-keeps the two filter flags meaning one thing, the four `*_in` supersets a
-nested literal is read with, and the structural comparison every container kind
-now gets — a range's canonical storage form included — the refusal a user
-range's `canonical` parameter now earns, and the announcement a nested
-uncomparable position makes under `=` landed. **Every slice is ticked and the
-phase is not wrapped**: the consolidation of the fourteen slice notes docs, the
-deletion of this checklist and the index row's move to `Complete` are one
-change nobody has made yet, and
-[`../design/roadmap-P11.15-nested-uncomparable-notes.md`](../design/roadmap-P11.15-nested-uncomparable-notes.md),
-"What the wrap inherits", says what it owes.
+filed by subject. **P11 — typed predicates — is complete**, in twenty-three
+slices: the comparison oracle, its cross-major differ and the reconciliation
+that keeps the register's arms and the oracle's cases in step; the fixture
+family's move to glibc; the comparison register at L2, keyed on the declared
+type; the declared collation — the displaced clause and the non-deterministic
+one included — observed in committed bytes; the enum, bare `numeric` and the
+whole text-held type queue, `jsonb` included; `character(n)`'s trim; typed
+`=`/`!=`; the three-valued expression tree and the `--where` grammar that
+reaches it from the command line, with the refusal that keeps the two filter
+flags meaning one thing; the four `*_in` supersets a nested literal is read
+with; and structural comparison for every container kind, a range's canonical
+storage form and a user range's `canonical` refusal included. Its consolidated
+notes are
+[`../design/roadmap-P11-typed-predicates-notes.md`](../design/roadmap-P11-typed-predicates-notes.md);
+the mechanisms are in
+[`../design/architecture.md`](../design/architecture.md), filed by subject.
 
 [`../design/measurements.md`](../design/measurements.md) carries the `b70589f`
-stamp, and **`uv run measure.py --stale` names twelve of its thirteen figures**
-— the paragraphs below name each and what would settle it. A stale figure no longer obliges a sweep and neither does a
-wrap: a full sweep is an hour of a quiet machine and belongs to the phase that
-is about performance, which will re-take every table under its own apparatus
+stamp, and **`uv run measure.py --stale` names all thirteen of its figures** —
+the paragraphs below the table say what is a decision and what is an omission.
+A stale figure obliges no sweep and neither does a wrap: a full sweep is an
+hour of a quiet machine and belongs to the phase that is about performance,
+which will re-take every table under its own apparatus
 ([`../design/measurements.md`](../design/measurements.md), "A stale figure does
 not oblige a sweep").
 
@@ -77,7 +74,7 @@ apparatus line. `--check` reconciles thirteen markers against thirteen figures.
 `session-drift` is derived across that sweep and a second one taken three
 minutes later on the same commit, which is the pair `--drift` reads.
 `measure.ACKNOWLEDGED` carries five entries, each with mechanical evidence
-attached — see the staleness paragraphs below.
+attached.
 
 **Nothing is built and unrun.** `measure.UNTAKEN` is empty: `projection-widths`
 was taken and moved into `FIGURES`, and `composite-isolated` was deleted
@@ -86,353 +83,50 @@ flag, the `composite_text` input and the fidelity case pairing them — because
 the projection table makes the same isolation a subtraction between two adjacent
 rows of one file.
 
-**Five commits since the stamp touched a declared path, and all five are
-acknowledged with mechanical evidence.** `8b97956` deleted
-`composite-isolated`'s generator apparatus — the `--weak-composite` flag and
-the `composite_text` input — and `--verify-additive` regenerates all five
-surviving inputs at both revisions and finds them byte-identical, which covers
-nine figures. `9ed21d4` landed the `--filter` term grammar in the CLI's
-`main.rs`, which five figures declare, and **no registered command shape passes
-`--filter`**, so none of it runs in a timed command; the one added function a
-shape reaches is `quoted_name_note`, called once on `query-nomatch`'s
-not-found path. Each entry carries the command that re-checks it.
+**All thirteen figures are stale, and the per-commit account lives in the
+harness rather than here.** `uv run measure.py --stale` names, per figure and
+per declared path, which acknowledgement entries have gone inert and which
+commits hold the path red. What that output cannot say is why a commit was
+*deliberately* not acknowledged, and five such reasons stand:
 
-**`session-drift` stays stale, and that is the honest state.** It declares
-`scripts/measure.py`, which `8b97956` also edited to move `projection-widths`
-into `FIGURES`, and the harness *is* the apparatus that figure measures — so
-neither oracle applies and nothing but taking it settles it. It is derived
-rather than measured, so `uv run measure.py --drift <sweep> <sweep>` re-derives
-it from two sweeps' `raw.json` without measuring anything; what it lacks is a
-pair taken past this commit. The scan-performance phase will supply one.
+- **A query-shaped figure executes the comparison register and the filter
+  tree.** `projection-widths`, `nested-end-to-end` and `cross-file-floor` run
+  one `comparison_for` per column per block and evaluate an expression tree
+  once per row where a flat term loop ran before, so neither the
+  byte-identity nor the reachability oracle reaches them. "Small" is not
+  evidence; only a sweep settles them.
+- **`nested-end-to-end` and `cross-file-floor` are the pair to be careful
+  with.** Their *declared*-path change is `#[cfg(test)]`-only, so an entry
+  excusing it would read as "no reading moved" while the change that could
+  move them sits in `resolve.rs`, which no figure declares — the register's
+  known false negative, arriving from the side that tempts an over-broad
+  entry.
+- **`preamble-prepass` is the measurement of the prepass the work was added
+  to.** The `COLLATE` extraction and the `CREATE COLLATION` parse are on its
+  measured path by construction, so no argument about reachability excuses
+  them there.
+- **`map-only` and `per-block-quadratic` are taken on `blocks4000`** — 4000
+  tables of four columns each — so a per-column addition runs 16000 times in
+  them, where every other figure's input is one `CREATE TABLE` per file and a
+  couple of dozen calls against legs measured in seconds.
+- **The `oid` work added a real decode-path variant.** `ColumnBuilder::UInt32`
+  and its match arms run in any figure whose input has an `oid` column, so
+  "those figures were red already" would not be evidence.
 
-**11.3 turned seven more red; four are acknowledged and three stay red on
-their merits.** Moving the comparison register to L2 (`a6e713f`) edited
-`stream.rs` — one more `Copy` vector cut per block in `project` — and
-`batch.rs` inside `#[cfg(test)]` only, which are declared paths of
-`census-brace-free`, `census-arrays`, `scan-throughput-cold`,
-`scan-throughput-warm`, `nested-end-to-end`, `cross-file-floor` and
-`projection-widths`. The four `parse`-shaped figures are excused by the
-reachability oracle, exactly as `9ed21d4`'s entry uses it: every timed run of
-theirs is `parse` or `dd`, and `pgdq parse` enters `map_file`, which reaches
-neither `resolve_block` nor `project` — their only non-test call sites are
-inside `table_stream`. The entry's evidence is the stamped sweep's own
-`raw.json`, which records the command shape of every reading it took.
+**Where a commit's touch to a declared path is a rename, a doc comment, a
+format-version constant or flag plumbing that no registered command shape
+executes, the entry was owed at the commit and was not written.** That is the
+failure the register exists to make visible rather than one to reconstruct
+from memory afterwards; the figures are held red by those commits either way,
+and `--stale` names them.
 
-**The three query-shaped figures are not excusable.** `projection-widths` runs
-one `comparison_for` per column per block *and* the extra cut in `project`.
-**`nested-end-to-end` and `cross-file-floor` are the case to be careful with**:
-their *declared*-path change is the `#[cfg(test)]`-only one in `batch.rs`, so
-an entry excusing it would read as "no reading moved" while the change that
-could move them sits in `resolve.rs`, which no figure declares — the register's
-known false negative, arriving from the side that tempts an over-broad entry.
-The reasoning is in
-[`../design/roadmap-P11.3-comparison-plan-l2-notes.md`](../design/roadmap-P11.3-comparison-plan-l2-notes.md),
-"What was left out, and why".
-
-**`M28` turned `preamble-prepass` red, and it is acknowledged.** Keying
-`DumpMetadata::types` on the type name puts a `find` over the types so far in
-front of every `CREATE TYPE`, in `preamble.rs` — a declared path of that
-figure. The command shape argues it executes, since the figure *is* `pgdq parse
---preamble-only`; the input settles that it does not. `M28`'s only executable
-change is `record_type` and its one call site inside the `SpanBody::TypeDef`
-arm, and every timed run of this figure is on `blocks4000`, which
-`generate_block_count_bench.py` builds out of `CREATE TABLE`s alone — no type
-DDL, so no `TypeDef` span, so `record_type` is never called. That is
-reachability, the same oracle `a6e713f`'s entry uses, and the entry carries the
-grep that re-checks it. **The figure is red all the same**: `eca96be` touched
-`preamble.rs` after it and is deliberately not excused there, which makes
-`682819d`'s entry inert until a sweep retires both. `--stale` says so under the
-figure.
-
-**11.4 re-reddened the four `a6e713f` had cleared, and `c614c4b` is
-acknowledged for them.** It edits `pgtype.rs`, `predicate.rs` and `resolve.rs`,
-which no figure declares, plus one line of `stream.rs` — `project` cloning a
-comparison plan rather than copying it, once per projected column per block.
-`stream.rs` was already a changed declared path, and that is exactly why an
-entry was owed rather than excused: the register accounts for a **commit**, and
-a path is clean only when every commit that touched it is, so one unexamined
-commit makes every earlier entry on that path inert. The entry is the same
-reachability argument `a6e713f` carries, over a strictly smaller diff — one
-line inside `project`, which no `parse`-shaped run reaches.
-
-**M29 touched `batch.rs` and is deliberately not acknowledged.** The `oid` work
-added a `ColumnBuilder::UInt32` variant and its match arms, which is real code
-on the decode path — it runs in any figure whose input has an `oid` column, so
-"those figures were red already" would not be evidence. `nested-end-to-end` and
-`cross-file-floor` stay red, now for `7c018b3` as well as for the reason 11.3
-gave.
-
-**11.11 turned nothing new red, and `eca96be` is acknowledged for seven
-figures.** Its touches to declared paths carry no work: `map.rs` is a type
-change — `Vec<(String, String)>` becomes `Vec<ColumnDef>`, with no new call —
-`batch.rs` is one line inside `#[cfg(test)]`, and `cache.rs` is
-`FORMAT_VERSION` 12 → 13, a constant compared once per cache open. The
-commit's one executable addition on a scan path is `extract_collation` in
-`preamble.rs`, once per column of DDL, and every input those seven figures are
-taken on comes from `generate_perf_data.py`, which writes **exactly one**
-`CREATE TABLE` per file — a couple of dozen calls against timed legs measured
-in seconds. The entry carries the grep that re-checks it.
-
-**Three commits since 11.6.1 owe an `ACKNOWLEDGED` entry nobody has written**,
-and the seven figures declaring `stream.rs` or the CLI's `main.rs` are held red
-by them: `7430325` (11.6.1), `faf59cb` (`M39`) and `14d2593` (`M40`). 11.6.1's
-own touch to those two paths is renames plus doc comments — `ordering_notes` →
-`comparison_notes` in `stream.rs`, `announce_ordering` → `announce_comparisons`
-in `main.rs` — adding no work anywhere, since the notes function already ran
-once per resolved block and still iterates a term list that is empty for every
-registered command shape, none passing `--filter`. The reason to file is
-reachability, the same oracle `a6e713f`'s entry uses; the entry was owed at the
-commit and the commit went in without it, which is the failure the register
-exists to make visible rather than one to fix retroactively from memory.
-
-**Three figures are deliberately left out of that entry**, because their input
-is `blocks4000` — 4000 tables of four columns each — so the same addition runs
-16000 times in them. `map-only` and `per-block-quadratic` stay red for that
-reason, and `preamble-prepass` stays red because it *is* the measurement of the
-prepass the work was added to. Unlike `M28`, reachability does not excuse it
-here: `blocks4000` has no type DDL but every one of its tables has columns.
-
-**11.7 touched three declared paths and is deliberately not acknowledged.**
-Replacing the filter list with an expression tree puts `ResolvedExpr::matches`
-on the row path in place of `matches_all`, in `stream.rs`; `batch.rs` sees only
-the `QueryOptions` field's type and `main.rs` only the one call that builds
-`Expr::all`. Reachability does not excuse the first: a query-shaped figure
-*does* evaluate the filter once per row, so the ten figures declaring
-`stream.rs`, `batch.rs` or the CLI's `main.rs` stay red — now on their merits
-rather than only on the commits above. The empty conjunction the registered
-shapes all carry is a `match` plus an empty loop either way, which is an
-argument about size, not an oracle.
-
-**11.6.2 landed as `8cd397b` and owes an `ACKNOWLEDGED` entry nobody has
-written**, so it now holds ten figures red beside the three commits above. Its
-touches to declared paths are one `SpanBody` variant plus one `classify` arm in
-`map.rs`, one `span_summary` arm in the CLI's `main.rs`, `FORMAT_VERSION` 13 →
-14 in `cache.rs`, one `#[cfg(test)]` struct field in `stream.rs`, and
-`parse_create_collation` in `preamble.rs`. The argument to file is reachability
-for the first four — a `CREATE COLLATION` arm runs once per such statement and
-every measured input is generated DDL with none, and a format-version constant
-is compared once per cache open — and **not** for `preamble.rs`:
-`preamble-prepass` *is* the prepass measurement, so it stays red on its merits
-exactly as `M28`'s and `eca96be`'s additions left it.
-
-**11.8 and 11.13 touched one declared path and owe a reachability entry they
-cannot yet name.** The `--where` grammar is a new file,
-`pgdump_query-cli/src/where_expr.rs`, which no figure declares; what lands in
-the CLI's `main.rs` is the flag, one more candidate in `split_filter_op`'s
-positional scan, the two-flag filter construction, and 11.13's
-`parse_filter_flag` — all of it once per invocation at most, none of it on a
-row path. The excuse is reachability, the same one `9ed21d4` carries for the
-term grammar it extends: **no registered command shape passes `--filter` or
-`--where`**, so nothing added here executes in a figure, and the tree a shape
-with neither flag hands the library is the same `Expr::all([])` it was. The
-entry is owed against these changes' own shas, which they do not have while the
-work is uncommitted; the six figures declaring `main.rs` are held red by the
-five commits above either way.
-
-**11.10 and 11.10.1 touched no declared path at all.** The nested comparison
-lives in `pgtype.rs` and `predicate.rs`, which no figure declares, and the rest
-of both slices is test crates, `scripts/oracle_register.py` and documents. They
-turned nothing red and owe no `ACKNOWLEDGED` entry; the figures below are held
-red by the commits above.
-
-**11.14 touched two declared paths and 11.15 touches none.** 11.14's are
-`cache.rs` — `FORMAT_VERSION` 14 → 15, a constant compared once per cache open
-— and the CLI's `main.rs`, where the change is one `type_kind_summary` arm that
-names a range type's `canonical` function. `type_kind_summary` is reached only
-from `info --verbose`'s text output, and the one `info` the harness runs is the
-`--json` profiling call, which is explicitly untimed — so no timed run executes
-it. That is the reachability oracle `9ed21d4`'s entry uses, owed against
-`199e403` and not yet written; the figures declaring those two paths are held
-red by the commits above either way. 11.15 lives entirely in `pgtype.rs` and
-`predicate.rs`, which no figure declares, so it turns nothing red and owes no
-entry.
-
-**11.9 touched one declared path and owes the same reachability entry.** The
-four `parse_*` functions are new code in `pgdump_query/src/nested.rs`, which
-`nested-end-to-end`, `cross-file-floor`, `projection-widths` and
-`nested-decode-micro` declare — and **nothing calls one**, in the library or
-the CLI, which is the slice's own contract. So the excuse is reachability at
-its strongest: not "no registered command shape reaches it" but "no code path
-reaches it at all", and the `decode_*` half every one of those figures actually
-runs is byte-identical. Those four figures are held red by the commits above
-either way.
-
-## P11 progress
-
-The spec is
-[`../design/roadmap-P11-typed-predicates.md`](../design/roadmap-P11-typed-predicates.md);
-the slice order is fixed there and the boxes below are the only record of
-progress.
-
-- [x] **11.1** The comparison oracle — per-major answer tables, generated by
-      `scripts/generate_fixtures.py` and committed, recording whether the
-      server accepted each input. No library code. Notes:
-      [`../design/roadmap-P11.1-comparison-oracle-notes.md`](../design/roadmap-P11.1-comparison-oracle-notes.md)
-- [x] **11.2** The cross-major differ — the differ, the committed differences
-      file, and the suite assertion that keeps it from going stale. Notes:
-      [`../design/roadmap-P11.2-cross-major-differ-notes.md`](../design/roadmap-P11.2-cross-major-differ-notes.md)
-- [x] **11.2.2** The fixture family moves to glibc — every image Debian rather
-      than Alpine and every fixture regenerated, text cases asked under
-      `COLLATE "C"` and the database collation for `<` and `=`, and the
-      platform triple and `collversion` guarded as apparatus keys. No library
-      code. Earned from the grilling of 11.1's musl finding. Notes:
-      [`../design/roadmap-P11.2.2-glibc-fixtures-notes.md`](../design/roadmap-P11.2.2-glibc-fixtures-notes.md)
-- [x] **11.3** The comparison plan moves to L2 — the register out of
-      `predicate.rs` into `pgtype.rs`, keyed on the declared type, carried in
-      `ResolvedSchema` as a fourth positional vector. No answer changes.
-      Notes:
-      [`../design/roadmap-P11.3-comparison-plan-l2-notes.md`](../design/roadmap-P11.3-comparison-plan-l2-notes.md)
-- [x] **11.2.1** The register-to-oracle reconciliation — every register arm
-      resolves to at least one oracle case and every case back to an arm,
-      failing on either direction. Earned from 11.2, whose row asked for a
-      check against a register that 11.3 creates. Notes:
-      [`../design/roadmap-P11.2.1-register-oracle-reconciliation-notes.md`](../design/roadmap-P11.2.1-register-oracle-reconciliation-notes.md)
-- [x] **11.11** The declared collation is read — `COLLATE` captured in the
-      preamble parser rather than stopped at, and carried to the register:
-      explicit `C`/`POSIX` and a bare `name` agree, an explicit non-`C` clause
-      diverges, no clause on a `default`-collation type is unknown. `char(n)`
-      is not promoted with them, for a reason that is not collation (I38).
-      Notes:
-      [`../design/roadmap-P11.11-declared-collation-notes.md`](../design/roadmap-P11.11-declared-collation-notes.md)
-- [x] **11.11.1** The collated fixture columns — `public.t_collate` in the
-      `types` schema, a collated domain and a collated composite attribute, all
-      six majors regenerated, `oracle_register.py` taught the collation
-      dimension, `character(10)` asked under both collations with a tab-bearing
-      value, one assertion per column in `tests/ordering.rs`, and
-      `generate_fixtures.py` reporting its own elapsed time. No library code.
-      Earned on entry to 11.11. Notes:
-      [`../design/roadmap-P11.11.1-collated-fixture-columns-notes.md`](../design/roadmap-P11.11.1-collated-fixture-columns-notes.md)
-- [x] **11.11.2** The displaced `COLLATE` clause, observed — four more
-      columns on `t_collate` and a `CREATE COLLATION public.c_collation FROM
-      "C"` beside it, all six majors regenerated; I37 amended for v18's
-      `CONSTRAINT <name> NOT NULL`, `NO INHERIT` and virtual `GENERATED`, its
-      placement claim moved from a lost container to committed bytes, and a
-      twenty-second probe recipe added inline for a major with no fixture yet;
-      a `pg-dump-compatibility.md` row marking those two v18 shapes untested
-      and naming the blocker; assertions in two files, split by reachability.
-      No oracle cases, no `KD<k>` and no library code. Earned from grilling
-      11.11.1's leftover. Notes:
-      [`../design/roadmap-P11.11.2-displaced-collate-notes.md`](../design/roadmap-P11.11.2-displaced-collate-notes.md)
-- [x] **11.4** Enum and bare `numeric` — declaration order for the enum;
-      arbitrary-precision decimal carrying `Infinity`, `-Infinity` and `NaN`,
-      the last two only where a typmod does not exclude them.
-      `ComparisonDivergence::EnumLabels` is retired and `ComparisonPlan` gives up
-      `Copy`. Notes:
-      [`../design/roadmap-P11.4-enum-and-bare-numeric-notes.md`](../design/roadmap-P11.4-enum-and-bare-numeric-notes.md)
-- [x] **11.5** The text-held type queue — `interval` (with v17 infinities),
-      `time with time zone` and `inet`/`cidr`/`macaddr`/`macaddr8`, each
-      ordered by its own comparison (I40) against the literal grammar its
-      `*_out` writes; I4 corrected for `INTERVALSTYLE`, I34 widened to
-      `interval`'s infinities. Six of `KD7`'s eight text-held types. Notes:
-      [`../design/roadmap-P11.5-text-held-types-notes.md`](../design/roadmap-P11.5-text-held-types-notes.md)
-- [x] **11.5.1** `jsonb` — the structural container comparison keyed off
-      `JsonbValue`'s own type codes, a `jsonb_in` literal parser, and the
-      string-leaf residue that closes by statement rather than by code; I41
-      added, and `KD7`'s text-held row is down to `json`. Earned on entry to
-      11.5, whose row promised a closure the register cannot support. Notes:
-      [`../design/roadmap-P11.5.1-jsonb-notes.md`](../design/roadmap-P11.5.1-jsonb-notes.md)
-- [x] **11.6** The `character(n)` trim — `CompareKind::PaddedText` takes the
-      dump's blank padding off both sides before the collation is consulted
-      (I38), so `character` becomes the fourth collatable arm and reaches the
-      same three verdicts `text` does; `ComparisonDivergence::BlankPadded` is
-      retired and the oracle's eight tab-bearing `character(10)` exceptions go
-      with it. `KD7` is **rewritten, not struck**: its `char(n)`, `json` and
-      unknown-collation statements close and the one that survives — a column
-      stating a collation this build does not implement — drops to
-      `(c) unowned`. Typed `=`/`!=` was split out; see 11.6.1. Notes:
-      [`../design/roadmap-P11.6-char-trim-notes.md`](../design/roadmap-P11.6-char-trim-notes.md)
-- [x] **11.6.1** Typed `=` / `!=` — routed through the comparison plan, with
-      the canonicalize-the-literal-once fast path and its seven decode-per-row
-      exceptions; `ordering_notes` becomes `comparison_notes` and its
-      divergences become operator-conditional; the oracle's `=`/`<>` cells
-      asserted, which found `box`'s area equality (`KD10`). Earned from
-      11.6, whose row paired a self-contained register correction with a new
-      mechanism over every `CompareKind`; **split in turn**, the collation
-      half becoming 11.6.2. Notes:
-      [`../design/roadmap-P11.6.1-typed-equality-notes.md`](../design/roadmap-P11.6.1-typed-equality-notes.md)
-- [x] **11.6.2** The non-deterministic collation is read — `CREATE COLLATION …
-      deterministic = false` out of the preamble and carried to the register,
-      so a column of one announces that `=` is not a byte comparison (I42);
-      `SpanBody::Collation`, `DatabaseMetadata::collations`, cache
-      `FORMAT_VERSION` 14, a fourth argument to `comparison_for`, and an
-      exemption in `oracle_register.py` for the one register arm no oracle
-      case can cover. Earned from 11.6.1, whose row paired it with a mechanism
-      it shares no code with. Notes:
-      [`../design/roadmap-P11.6.2-non-deterministic-collation-notes.md`](../design/roadmap-P11.6.2-non-deterministic-collation-notes.md)
-- [x] **11.12** The non-deterministic collation, observed — `CREATE COLLATION
-      public.nd_collation (provider = icu, deterministic = false, locale =
-      'und')` and `t_collate.v_nd`, a column of it, at all six majors, so I42
-      rests on committed bytes and not on `pg_dump.c` alone; I42's Observed
-      paragraph and two `Re-verify` greps, and the `pg-dump-compatibility.md`
-      row. No oracle case — `fixtures/*/oracle/` is byte-unchanged — which is
-      what keeps the ICU exclusion intact. No library code. Notes:
-      [`../design/roadmap-P11.12-non-deterministic-collation-observed-notes.md`](../design/roadmap-P11.12-non-deterministic-collation-observed-notes.md)
-- [x] **11.7** Three-valued evaluation — `QueryOptions::filters` replaced by
-      one `Expr` (`Term`/`And`/`Or`/`Not`, `And` and `Or` n-ary), Kleene
-      evaluation with the row kept only where the root is `True`, and
-      `IS DISTINCT FROM`/`IS NOT DISTINCT FROM`; short-circuiting defined
-      against the root rather than the node, and the oracle's `u` cells
-      asserted as `Truth::Unknown`. Library only — the CLI still builds one
-      conjunction. Notes:
-      [`../design/roadmap-P11.7-three-valued-evaluation-notes.md`](../design/roadmap-P11.7-three-valued-evaluation-notes.md)
-- [x] **11.8** `--where` — the expression grammar in its own CLI module, leaf
-      delegated to `parse_filter`; `--filter` unchanged. The term grammar
-      gained the two `IS DISTINCT FROM` spellings with it, which no slice row
-      named and which the phase's operator surface commits to. Notes:
-      [`../design/roadmap-P11.8-where-notes.md`](../design/roadmap-P11.8-where-notes.md)
-- [x] **11.13** The two flags may not disagree — `--filter` runs its term
-      through `where_expr`'s tokenizer and refuses anything that is not a
-      single `Leaf`, so no string means one thing under `--filter` and another
-      under `--where`. `KD11` is **struck**. Notes:
-      [`../design/roadmap-P11.13-two-flags-notes.md`](../design/roadmap-P11.13-two-flags-notes.md)
-- [x] **11.9** The nested literal input grammar — `parse_array`,
-      `parse_record`, `parse_range` and `parse_multirange` beside the four
-      `decode_*` they mirror, each transcribed from the **newest** major's
-      function; I44 added, with the one place two supported majors disagree
-      (v17's `array_in` rewrite takes `{{},{}}`); and the acceptance walk in
-      `tests/nested.rs` over every nested row of each major's
-      `oracle/literals.tsv`, with the canonicalizations 11.10 owes asserted as
-      exact sets. No comparison — nothing calls a `parse_*` yet. Notes:
-      [`../design/roadmap-P11.9-nested-literal-grammar-notes.md`](../design/roadmap-P11.9-nested-literal-grammar-notes.md)
-- [x] **11.10** Nested structural comparison: array and composite —
-      `ComparisonPlan::Nested` carrying a `NestedCompare` tree, element-wise
-      and field-wise comparison with `array_cmp`'s shape tie-break and the one
-      NULL rule (I45), comparability and divergence both inherited (a `json`
-      position refuses the column and names itself), and a `path` on
-      `ComparisonNote` so a composite announces once per diverging position.
-      `UnorderedPredicateColumn::reason` becomes a `String`. Split from the
-      four-container row; ranges and multiranges are 11.10.1. Notes:
-      [`../design/roadmap-P11.10-nested-comparison-notes.md`](../design/roadmap-P11.10-nested-comparison-notes.md)
-- [x] **11.10.1** Nested structural comparison: range and multirange —
-      `NestedCompare::Range`/`Multirange` and the whole of `make_range` over
-      decoded bound keys: `range_serialize`'s out-of-order refusal and
-      empty-collapse, the three discrete built-ins' canonical function with
-      `daterange_canonical`'s infinity exception falling out of the key
-      pattern, `range_cmp_bounds`, and a multirange's sort-coalesce-drop.
-      `KD12` is allocated for the user range whose `canonical` parameter the
-      preamble grammar does not capture. The register-against-oracle test's
-      `REFUSED` list drops from 14 to 6. Earned from 11.10 — see the spec's
-      slice table. Notes:
-      [`../design/roadmap-P11.10.1-range-comparison-notes.md`](../design/roadmap-P11.10.1-range-comparison-notes.md)
-- [x] **11.14** A user range's `canonical` parameter — the `AS RANGE` arm keeps
-      `canonical` beside `subtype` and `multirange_type_name` (I10 amended),
-      cache `FORMAT_VERSION` 15, and `ComparisonPlan::Unanswerable` refuses a
-      column whose range type declares one under *every* operator, equality
-      included, through `Error::UncomparablePredicateColumn` — which
-      unanswerability *propagates* to reach: an array of such a range, a
-      composite holding one and its multirange companion are refused with it.
-      `KD12` is **struck**. Amended in, not planned — see the spec's slice
-      table. Notes:
-      [`../design/roadmap-P11.14-range-canonical-notes.md`](../design/roadmap-P11.14-range-canonical-notes.md)
-- [x] **11.15** A nested uncomparable position announces itself — a nested
-      column holding one (`json[]`) reaches `ComparisonDivergence::AsText` from
-      the `_ =>` arm instead of answering `=` bytewise in silence, naming the
-      position the way the ordering refusal already does. The divergence is
-      carried on `NestedCompare::Uncomparable` rather than assumed at the term,
-      so the positions only *this build* declines (I22, I26) stay silent and
-      `KD10`'s index line is corrected to say where its announcement does not
-      reach. Amended in, not planned — see the spec's slice table. Notes:
-      [`../design/roadmap-P11.15-nested-uncomparable-notes.md`](../design/roadmap-P11.15-nested-uncomparable-notes.md)
+**`session-drift` stays stale for a reason no oracle reaches, and that is the
+honest state.** It declares `scripts/measure.py`, and the harness *is* the
+apparatus that figure measures — so neither byte-identity nor reachability
+applies and nothing but taking it settles it. It is derived rather than
+measured, so `uv run measure.py --drift <sweep> <sweep>` re-derives it from two
+sweeps' `raw.json` without measuring anything; what it lacks is a pair taken
+past this commit. The scan-performance phase will supply one.
 
 ## Not started
 

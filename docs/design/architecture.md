@@ -2085,6 +2085,12 @@ short-circuit a bare conjunction had. `ResolvedExpr::eval` carries that as one
 asserted rather than argued: every tree of height three over the three truth
 values gets the same root verdict either way.
 
+*Rejected: exact Kleene everywhere, with no flag.* It is four lines shorter,
+and it makes a conjunction whose leading column is often NULL walk every
+remaining term of every such row — a regression in exactly the cost model this
+section states, bought for nothing, since no caller can observe the difference
+the flag hides.
+
 **A decode failure therefore surfaces only where evaluation reaches it**, so
 which rows error depends on where the term sits in the tree and on whether a
 `Not` sits above it. That is a property, not a defect: when `a=1 OR b<2`
@@ -3093,6 +3099,15 @@ says the opposite and is false of `json`. Carrying the divergence on the
 position is what lets each arm say only what it knows, and it costs one
 `Option` field on a variant that already carries the declared type.
 
+**That announcement is the one place the nested comparison's evidence is
+thinner than its code**, and it cannot be thickened from either side that
+usually thickens it: no fixture carries a `json[]` column, and no oracle case
+could carry one either, since `json[] = json[]` is an error on the server
+rather than an answer. So it is asserted by unit test where every other nested
+rule is asserted against committed bytes at six majors. Adding the fixture
+column is the whole cost of a six-major regeneration for a case no server can
+be asked about.
+
 **The two sides read two grammars, and the leaf grammar does not widen with the
 container.** `predicate.rs`'s `nested_key` walks the plan against one text
 value and takes a flag saying which: a *field* comes out of the dump in
@@ -3964,6 +3979,18 @@ moved Debian suites once, which is the drift the suffix exists against.
 `meta.tsv` records the platform triple and the default collation's version, and
 the cross-major differ guards both, so a major generated on a different base is
 a reported fault rather than five hundred silent differences.
+
+*Rejected: keeping the musl family and taking the glibc answers from a separate
+one-major witness file.* It is much the smaller diff — no regeneration, no
+correctness test re-run — and it was the plan until the question was put the
+other way round: what should this project's evidence *be* taken under? A witness
+bolted onto a musl apparatus answers "musl, plus a footnote", and every later
+reader of the oracle has to remember the footnote before reading a text cell.
+Moving the family answers "glibc" once, in the place the answers come from. The
+cost was paid in full and bought an apparatus that needs no footnote; what it
+did **not** cost is the agreeing half, which musl gave by accident — asking each
+text pair under `COLLATE "C"` as well recovers it deliberately, so neither half
+now depends on which image was used.
 
 **One consequence of the family reaches the `.sql` tree**, and it is the only
 one that did: a Debian build sets `--with-extra-version`, so every fixture's

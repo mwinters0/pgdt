@@ -70,13 +70,11 @@ the vector that answers "is a bound over this column sound", and it is filled
 by `resolve_columns` at L2, one per column, cut by `stream::project` with the
 rest.
 
-**Origin.** 11.4, 2026-09-01. See
+**Origin.** P11, 2026-09-01. See
 [`architecture.md`](architecture.md), "Ordering operators compare typed", whose
-table is the register, and
-[`roadmap-P11.4-enum-and-bare-numeric-notes.md`](roadmap-P11.4-enum-and-bare-numeric-notes.md).
-**Contingent on** the register's remaining divergent rows: 11.5 closed six of
-the eight text-held types and 11.5.1 and 11.6 close more, so re-read the table
-rather than trusting this list of four.
+table is the register. **Contingent on** the register's divergent rows, which
+P11 went on to close one type at a time after this was filed — read the table
+rather than trusting any list of them written here.
 
 ---
 
@@ -102,7 +100,7 @@ so the precedent for the mechanism and the precedent for the objection are the
 same one. P10's grilling should decide whether column typing is in its scope at
 all, or whether it only publishes the statistic and something else reads it.
 
-**Origin.** The 11.5 review, 2026-09-01. See
+**Origin.** The P11 text-held-type review, 2026-09-01. See
 [`architecture.md`](architecture.md), "The bar: the dump alone determines the
 value", whose rejected-alternative paragraphs carry the reasoning, and
 [`../status/history/2026-09-01.md`](../status/history/2026-09-01.md).

@@ -826,15 +826,17 @@ class ThisRepo(unittest.TestCase):
         **Whether the tree holds such an entry at all is not a rule**, and this
         does not pretend it is: an entry owned by a sliced phase is struck or
         rewritten the moment its phase closes it, so the population is
-        legitimately empty between one being allocated and the next. The rule
-        itself is carried in both directions by the fixture tests above; what
-        this adds is that the real files satisfy it while there is anything to
-        satisfy."""
+        legitimately empty between one being allocated and the next. Nor is
+        *any* phase being sliced a rule — between a wrap and the next slicing
+        there is no checklist in the tree at all. The rule itself is carried in
+        both directions by the fixture tests above; what this adds is that the
+        real files satisfy it while there is anything to satisfy."""
         text = (deficiencies.STATUS).read_text()
         entries, problems = deficiencies.parse_index(text)
         self.assertEqual(problems, [])
         checklists = deficiencies.parse_checklists(text)
-        self.assertTrue(checklists, "no phase is sliced")
+        if not checklists:
+            self.skipTest("no phase is sliced right now")
         paired = [
             e
             for e in entries
@@ -875,15 +877,22 @@ class ThisRepo(unittest.TestCase):
             self.assertNotIn(phases[n], deficiencies.FINISHED_STATES, entry.id)
 
     def test_the_phase_in_flight_is_current_on_both_sides(self):
-        """Not a restatement of the check: this asserts the tree actually has a
-        phase in flight, so a repo with no checklist at all cannot pass the
-        checklist/state pairing vacuously."""
+        """Not a restatement of the check: where the tree has a phase in
+        flight, this asserts the index agrees, so a checklist and a `Current`
+        cell cannot come apart unnoticed.
+
+        **No phase being in flight is a legitimate state**, and it is the one a
+        wrap leaves behind: the checklist is deleted, the row goes `Complete`,
+        and nothing is sliced again until the next phase is. Skipping there is
+        not vacuity — the pairing's two failure directions are asserted over
+        fixtures above, and this is only the tree's instance of them."""
         checklists = deficiencies.parse_checklists((deficiencies.STATUS).read_text())
         phases, problems = deficiencies.parse_phase_index(
             (deficiencies.ROADMAP).read_text()
         )
         self.assertEqual(problems, [])
-        self.assertTrue(checklists, "no phase is sliced")
+        if not checklists:
+            self.skipTest("no phase is sliced right now")
         for n in checklists:
             self.assertEqual(phases.get(n), deficiencies.CURRENT_STATE, f"P{n}")
 
