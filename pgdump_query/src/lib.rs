@@ -29,8 +29,8 @@ pub use map::{
     TocHeader, attach_text, build_map, check_tiling,
 };
 pub use pgtype::{
-    CanonicalExtension, CompareKind, ComparisonDivergence, ComparisonPlan, NestedPlan, TypeOutcome,
-    comparison_for, extension_for, resolve_declared_type,
+    CanonicalExtension, CompareKind, ComparisonDivergence, ComparisonPlan, NestedCompare,
+    NestedPlan, TypeOutcome, comparison_for, extension_for, resolve_declared_type,
 };
 pub use preamble::{
     CollationDef, ColumnDef, DatabaseMetadata, DumpMetadata, Extension, TypeDef, TypeKind,

@@ -37,7 +37,10 @@ pub enum Error {
         header_offset: u64,
         column: String,
         op: &'static str,
-        reason: &'static str,
+        /// Why the column has no order — one of `crate::predicate`'s three
+        /// static sentences, or, for a nested column whose *shape* compares
+        /// here, one naming the position beneath it that does not.
+        reason: String,
     },
     #[error(
         "filter value `{value}` for `{column} {op} ...` does not parse as the column's declared type `{declared_type}`, which is written {accepted}"

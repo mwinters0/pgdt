@@ -3091,3 +3091,130 @@ docker rm -f pgdq-i44
 
 Confirm `{{},{}}` is the only cell that moves between 16 and 18, and that
 `( 1 , a )` still keeps its blanks where `{ a , b }` drops them.
+
+---
+
+## I45 — A container's order is its parts' order, with one NULL rule; an array reaches its shape only after its elements
+
+**Claim.** Three statements, all of them about `array_cmp` and `record_cmp`:
+
+- **The NULL rule is one rule, at every position and in both functions.** Two
+  NULLs are equal; a NULL is **greater** than a not-NULL. So a container
+  comparison is two-valued throughout — it never yields SQL `UNKNOWN`, and only
+  the whole field being NULL makes a term unknown.
+- **An array compares its elements before anything about its shape**, up to the
+  *shorter* array's element count, and falls back — only when those agree — to
+  element count, then dimension count, then the dimensions, then the lower
+  bounds, in that order. `array_eq` goes the other way round, `memcmp`ing
+  dimensions and lower bounds before it looks at an element; the two agree on
+  *equality* and only `array_cmp` defines an order, so the ordering rule is
+  `array_cmp`'s.
+- **A composite compares field-wise in declaration order**, which is also the
+  order `record_out` writes them in (I23), so a positional walk over the
+  literal is the server's comparison and no field name is consulted.
+
+**A container inherits comparability from its parts, and a missing part is an
+error rather than a fallback.** Both functions look up the element or field
+type's `cmp_proc_finfo` and `ereport(ERROR, ERRCODE_UNDEFINED_FUNCTION)` when
+there is none — so a `json[]` column, and a composite with a `json` field, have
+no `<` and no `=` on the server either.
+
+**Proof.** `array_cmp` in `src/backend/utils/adt/arrayfuncs.c` (v18.6, and
+unchanged in shape since v13):
+
+```c
+    /* We consider two NULLs equal; NULL > not-NULL. */
+    if (isnull1 && isnull2)
+        continue;
+    if (isnull1) { result = 1; break; }
+    if (isnull2) { result = -1; break; }
+```
+
+and, after the element loop over `min_nitems`:
+
+```c
+    if (result == 0)
+    {
+        if (nitems1 != nitems2)
+            result = (nitems1 < nitems2) ? -1 : 1;
+        else if (ndims1 != ndims2)
+            result = (ndims1 < ndims2) ? -1 : 1;
+        else
+        {
+            for (i = 0; i < ndims1; i++) { ... dims1[i] vs dims2[i] ... }
+            if (result == 0)
+            {
+                for (i = 0; i < ndims1; i++) { ... lbound1[i] vs lbound2[i] ... }
+            }
+        }
+    }
+```
+
+The comment above it is the server's own account of why the order of those
+four is what it is: *"The relative significance of the different bits of
+information is historical; mainly we just care that we don't say 'equal' for
+arrays of different dimensionality."*
+
+`array_eq`, in the same file, is the contrast:
+
+```c
+    /* fast path if the arrays do not have the same dimensionality */
+    if (ndims1 != ndims2 ||
+        memcmp(dims1, dims2, ndims1 * sizeof(int)) != 0 ||
+        memcmp(lbs1, lbs2, ndims1 * sizeof(int)) != 0)
+        result = false;
+```
+
+`record_cmp` in `src/backend/utils/adt/rowtypes.c` carries the NULL sentence
+verbatim — `/* We consider two NULLs equal; NULL > not-NULL. */` — and walks
+the two tuples' columns in logical order, raising
+`could not identify a comparison function for type %s` where a column type has
+no `cmp` proc.
+
+**Observed.** `fixtures/<13-18>/oracle/comparisons.tsv` carries the shape
+tie-break as committed answers: `integer[]`'s `{1,2}` is **above**
+`[0:1]={1,2}` (equal elements, equal counts, lower bound 1 above 0) and
+**below** `{{1,2},{3,4}}` (the two elements it has agree, and it has fewer). A
+shape-first order would answer the first the other way round.
+
+**Scope limit.** Ordering and equality of *array* and *composite* values.
+Ranges and multiranges have their own comparisons (`range_cmp`, which sorts
+`empty` below everything and then compares lower bound then upper) and are not
+covered here. Nor is the *collation* an element comparison runs under: that is
+the element's own question, one level down, and I32/I37/I43 are where it lives.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
+observed in the committed oracle at all six, and the probe below run against
+16.15 and 18.6.
+
+**Relied on by:** [`architecture.md`](architecture.md), "Nested columns compare
+structurally" — `predicate.rs`'s `compare_nested`, and `pgtype.rs`'s
+`NestedCompare`, whose `Uncomparable` position is the inheritance rule.
+
+**Re-verify.** Read the functions:
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n -A150 '^array_cmp(FunctionCallInfo' src/backend/utils/adt/arrayfuncs.c
+grep -n -A40  '^array_eq' src/backend/utils/adt/arrayfuncs.c
+grep -n -B5 -A40 'We consider two NULLs equal' src/backend/utils/adt/rowtypes.c
+```
+
+And ask a server, which is a minute per major:
+
+```sh
+docker run -d --rm --name pgdq-i45 -e POSTGRES_HOST_AUTH_METHOD=trust postgres:<N>-trixie
+docker exec -i pgdq-i45 psql -qtA -U postgres <<'SQL'
+CREATE TYPE point2d AS (x integer, y text);
+SELECT '{1,2}'::int[]        > '[0:1]={1,2}'::int[]   AS lower_bound_last,
+       '{1,2}'::int[]        < '{{1,2},{3,4}}'::int[] AS fewer_elements_below,
+       '{{1,2,3,4}}'::int[]  < '{{1,2},{3,4}}'::int[] AS dims_before_lbs,
+       '{NULL}'::int[]       > '{2147483647}'::int[]  AS null_element_above,
+       ROW(NULL,'a')::point2d > ROW(1,'a')::point2d   AS null_field_above;
+SELECT '{}'::json[] < '{}'::json[];   -- 42883: no operator, no cmp proc
+SQL
+docker rm -f pgdq-i45
+```
+
+Every column of the first query is `t` at every supported major, and the second
+statement is an error at every one.

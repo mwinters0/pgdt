@@ -1588,10 +1588,12 @@ here permits.
 **What comes back is the parts as the user spelled them**, not as the element
 type's `*_out` would write them. `parse_record("( 1 , a )", 2)` yields
 `" 1 "` and `" a "`, where the server stores `1` and `" a "` — `int4in` threw
-the first field's blanks away, not `record_in`. Putting the two sides of a
-comparison into one spelling is per element and needs the element type, which
-this module does not have; a discrete range's `[1,10]` → `[1,11)` and a
-multirange's sort-coalesce-drop are the same missing piece one level up.
+the first field's blanks away, not `record_in`. What the layer above does with
+that is "Nested columns compare structurally": each leaf goes through
+`order_key`, which reads that type's *output* form and no wider, so `" 1 "` is
+refused rather than trimmed. A discrete range's `[1,10]` → `[1,11)` and a
+multirange's sort-coalesce-drop are the piece still missing there, and they are
+why a range column has no comparison yet.
 
 `tests/nested.rs`'s `oracle` module is where the supersets are checked: every
 nested row of `fixtures/<13-18>/oracle/literals.tsv` — 397 literals over six
@@ -2162,14 +2164,16 @@ whole reason they exist: `9 > 10` is false as text and true as an `integer`,
 and a text comparison would be actively misleading on every numeric and
 temporal column.
 
-**They are available on a column that resolved `Mapped` with a
-`NestedPlan::Scalar` plan, and refused on any other**, with the reason named:
-a column whose type did not resolve has no order of its own (which is also
-what makes `SchemaMode::Strings` refuse every ordering operator — it resolves
-nothing, so the rule needs no case for it), and a nested column is refused
-because an order over an `array_out`/`record_out` literal is not a thing this
-layer defines. A nested column keeps `Eq`/`Ne`, for the reason the paragraph
-above gives.
+**They are available on a column that resolved `Mapped` and that the register
+gives an order to, and refused on any other**, with the reason named: a column
+whose type did not resolve has no order of its own (which is also what makes
+`SchemaMode::Strings` refuse every ordering operator — it resolves nothing, so
+the rule needs no case for it), and a column whose declared type the register
+models no comparison for is refused too. A **nested** column is in the first
+group where its shape and every position beneath it compare — arrays and
+composites do, ranges and multiranges do not yet — and is refused otherwise,
+naming the position; see "Nested columns compare structurally" below. Every
+refused column keeps `Eq`/`Ne`, for the reason the paragraph above gives.
 
 **Two faults are held apart, and both are named before the rows they would
 otherwise corrupt.** A *literal* that is not a value of the column's type is
@@ -2439,6 +2443,9 @@ with the reason that names its nesting rather than with "no order defined".
 | `jsonb`, and any domain over it | `Utf8View` | **no**, and only because of its strings — the structure is compared exactly as `compareJsonbContainers` compares it (kind, then a container's size, then member-wise, with a top-level scalar inside the pseudo-array that makes it outrank `[]`), while every string leaf and object key goes through `varstr_cmp` under the *database's* collation (I41), which a plain dump does not record (I32) | the same collation the text row wants, one level down |
 | `json`, and any domain over it | `Utf8View` | **no** — PostgreSQL defines *no* comparison for `json` at all, so bytewise offers more than the server does rather than less | nothing, since there is no order to agree with |
 
+| an **array** or **composite**, and any domain over one | `List(…)` / `Struct(…)` | **inherited** — compared structurally (I45), and it agrees exactly when every element or field type beneath it does. A `text[]` column carries the `text` rows' collation residue at its element; a `json[]` column, or a composite with a `json` field, is *refused*, because the server has no comparison for one either | whatever would close the position that diverges |
+| a **range** or **multirange**, and any domain over one | `Struct(…)` / `List(Struct(…))` | **refused** — a discrete range canonicalizes its bounds on input (`int4range '[1,10]'` is `[1,11)`), which needs the subtype's successor function | the canonicalization, which is not implemented here yet |
+
 A domain has no row of its own: it compares as the row its base type is on,
 through any chain, which is how the last row already covers "any domain over
 them", and how a domain over `interval` picks up that row's comparison for
@@ -2547,17 +2554,22 @@ screen. The asymmetry with `info --verbose` is the same shape as
 existing where the user can reach it.
 
 **The refusals are the rest of the table, and they are stated rather than
-listed**: every nested shape — array, composite, range, multirange — and every
-declared type this build maps to nothing at all. The first group is refused
-one step earlier, on the `NestedPlan`, so the register's answer for it is the
-second of two agreeing ones.
+listed**: a range or multirange, a nested column with an uncomparable position
+beneath it, and every declared type this build maps to nothing at all. Arrays
+and composites are no longer among them — see "Nested columns compare
+structurally" below, which is where the nested rows of this register live.
 
 **A divergent comparison is announced by the CLI, once, on stderr**, after the
 schema resolves, naming the column and the divergence — including for a query
 that selected no rows, which is the case a user most wants explained. It is
 announced per **term**, not per column, because a divergence is
 operator-conditional: three of the six are divergences of *order* alone, so a
-`text` column filtered with both `<` and `=` is warned about once. The
+`text` column filtered with both `<` and `=` is warned about once. **A term can
+raise more than one**, because a nested column has a divergence per *position*:
+`ComparisonNote` carries a `path` — `[]` for an array's elements, `.label` for
+a composite's field, appended as the nesting descends — and the declared type
+at that position rather than the column's, so `public.tagged`
+(`(label text, tags text[])`) says both of the things it has to say. The
 library's side of it is `TableStream::comparison_notes`, a **third channel** and
 deliberately not a widening of either existing one: `DumpIndex.diagnostics` is
 the L1 file-level channel and `ResolvedSchema.notes` is the L2 per-column one,
@@ -2591,6 +2603,13 @@ comparison therefore genuinely differs. There the file does carry the fact, so
 the operators return a row set the server would not and something could be
 written that closes it: a comparison per named collation, which is a collation
 library.
+
+**It reaches a nested column through its positions**, since divergence is
+inherited: a `text[]` column, and a composite with a collatable field, land on
+whichever of these four rows their element or field lands on, and announce it
+with the position named ("Nested columns compare structurally"). Nothing about
+the statement changes one level down — the same clause, the same four verdicts,
+the same remedy.
 
 **It reaches two operator families, and the file says which.** For a
 *deterministic* collation — every libc one, and every ICU one the dump does not
@@ -2860,6 +2879,99 @@ the content is in the kinds where it cannot. Every one of those has a case:
 `real`'s `-0` against `0`, a bare `numeric`'s `1.5` against `1.50`, a `jsonb`
 number written two ways, and a `character(10)` value padded against one that is
 not. See "The register against the oracle's answers".
+
+### Nested columns compare structurally
+
+An array or composite column gets the four ordering operators **and** `=`/`!=`,
+compared the way `array_cmp` and `record_cmp` compare them rather than as text
+(I45). A range or multirange does not yet: its bounds need the subtype's own
+canonicalization — `int4range '[1,10]'` is `[1,11)` on the server — so the
+register answers `ComparisonPlan::Refused` and `predicate.rs` refuses the
+ordering operators with the nesting named, exactly as it did for every nested
+shape before.
+
+**The plan is a tree, and it is built by the same walk the register already
+makes.** `pgtype.rs`'s `NestedCompare` has one node per nesting level —
+`Array(element)`, `Record([(name, field)])`, and a `Leaf` carrying the
+position's declared type, its `CompareKind` and its `ComparisonDivergence`.
+Each position is filled by asking `comparison_for` the question a *column* of
+that type would have been asked, so nesting composes with no special case and a
+domain beneath a container bottoms out where a domain always does.
+`ComparisonPlan` gains a `Nested` variant for it, and the question "does this
+column have an order" becomes `ComparisonPlan::orders()` rather than a match on
+the variant — because a nested plan is not by itself an order.
+
+**One `Array` node whatever the dimensionality.** An `array_out` literal
+carries its own shape and `nested::ArrayLiteral` flattens it row-major, so
+`integer[]` is one node whether its values are vectors or matrices — which is
+also why the plan's depth may legitimately differ from the *Arrow* list depth
+the census settled on.
+
+**Comparability is inherited, and so is divergence.** A position whose declared
+type has no order here is a `NestedCompare::Uncomparable` leaf; one anywhere in
+the tree makes `orders()` false, refuses the ordering operators, and lets the
+refusal name the position and its type — `` `[]` inside it is `json` ``. A
+position that *is* ordered but not the server's way carries its own divergence,
+so a `text[]` column diverges for the reason its element does, one level down,
+and the note's `path` says where.
+
+**`json` beneath a container is a refusal, not a divergence**, and that is the
+one inheritance rule that is not simply "recurse". At top level
+`ComparisonDivergence::AsText` means bytewise where the server orders not at
+all, which is *more* than the server offers. Inside a container it is not
+available: `array_cmp` looks up the element type's comparison proc and raises
+when there is none (I45), so a `json[]` column and a composite with a `json`
+field have no `=` and no `<` on the server either.
+
+**The two sides read two grammars, and the leaf grammar does not widen with the
+container.** `predicate.rs`'s `nested_key` walks the plan against one text
+value and takes a flag saying which: a *field* comes out of the dump in
+canonical `*_out` form and is read with `nested.rs`'s strict `decode_*`, while
+a *literal* is what the user typed and is read with the `array_in`/`record_in`
+supersets (`parse_*`, I44) — so `--filter 'tags={a, b}'` means what it looks
+like. A **leaf** is read by `order_key` either way, which implements that
+type's output form and no wider, so `--filter 'p=( 1 , a )'` is refused where
+`record_in` would have kept the blanks and had `int4in` throw them away. That
+is the property "A literal is read in the type's own output form and no wider"
+asked one level down, and it keeps one rule at every depth.
+
+*Rejected: trimming a record field's or a range bound's whitespace before
+applying the leaf grammar.* It is what the server does — but only for the types
+whose `*_in` skips whitespace, which is most of them and not `uuid`, `bytea` or
+an enum label. A blanket trim over-accepts for those three, and over-acceptance
+is the divergence direction nothing else here permits; a per-type rule is
+re-implementing three input functions to buy a spelling `array_in` already
+accepts one level up.
+
+**One comparison path, not the scalar's three.** `Comparison::Nested` serves
+both operator families: the key walk decides the order, and `=` is that walk
+answering `Equal`, which is `array_eq`'s and `record_eq`'s answer too because
+`array_cmp` returns zero on exactly the condition `array_eq` returns true.
+*Rejected: canonicalizing the literal back into the file's spelling and
+comparing bytes, as a scalar `=` does.* A nested value is byte-comparable only
+when every leaf beneath it canonicalizes — one `numeric` or `character(n)`
+element makes the rendered literal the wrong answer — so the fast path is a
+second literal-side walk whose *fallback* half is the one that must be right,
+and the comparison oracle carries no nested case that exercises it. One path,
+covered by every nested cell of the oracle, beats two of which the oracle
+exercises one.
+
+**The NULL rule is one rule at every level: two NULLs are equal, and NULL sorts
+above not-NULL** (I45). It covers ordering and equality alike, which is what
+makes a nested comparison **two-valued throughout** — it never yields
+`Truth::Unknown`. Only the whole field being NULL (`\N`) makes a nested term
+unknown, exactly as for a scalar.
+
+**A census-refused array column compares as the column resolved.** The two
+shapes that resolve to text while still holding array literals —
+`NestedArrayElement` and `VaryingArrayShape` ("Joining a header against the
+metadata") — keep comparing as text, because `resolve_columns` zeroes the
+comparison plan for any column the census took out of `Mapped`. The register
+agrees rather than merely being overridden: `comparison_for` mirrors
+`resolve_array`'s two refusals, so an array whose element is opaque (I22) or is
+itself an array (I26) answers `Uncomparable` at that position. One rule —
+compare as the column resolved — and no column whose meaning depends on which
+rows a query happened to scan.
 
 ### A filter term is parsed for two audiences
 

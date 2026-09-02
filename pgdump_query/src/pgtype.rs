@@ -378,6 +378,108 @@ enum TypeCollation {
     Database,
 }
 
+/// How one **nested** column compares, one node per nesting level — the
+/// structural comparison `array_cmp`/`record_cmp` make, keyed on the
+/// declared type exactly as a scalar's [`CompareKind`] is.
+///
+/// **Comparability is inherited, and so is divergence.** A nested column is
+/// ordered exactly when every type beneath it is; a position whose declared
+/// type this build has no order for is an [`Self::Uncomparable`] leaf, which
+/// makes [`ComparisonPlan::orders`] answer `false` for the whole column and
+/// names the position that did it. A position that *is* ordered but not the
+/// server's way — a `text` element with no `COLLATE` clause — carries its own
+/// [`ComparisonDivergence`], so a `text[]` column diverges for the reason its
+/// element does, one level down.
+///
+/// **`json` beneath a nested type is a refusal, not a divergence.** At top
+/// level [`ComparisonDivergence::AsText`] means "bytewise, where the server
+/// orders not at all", which is more than the server offers rather than less.
+/// Inside a container it is not available at all: `array_cmp` looks up the
+/// element type's comparison proc and raises when there is none, so a
+/// `json[]` column and a composite with a `json` field have no `=` and no `<`
+/// on the server either.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NestedCompare {
+    /// A scalar position: the declared type as the DDL spelled it, and the
+    /// comparison a column of it would have had.
+    Leaf { declared: String, kind: CompareKind, divergence: Option<ComparisonDivergence> },
+    /// A position whose declared type has no order here — what refuses the
+    /// column, and what lets the refusal name the type that caused it.
+    Uncomparable { declared: String },
+    /// `array_cmp`: elements first, up to the shorter array's length, then
+    /// element count, dimension count, dimensions and lower bounds (I45).
+    /// **One node whatever the dimensionality** — an `array_out` literal
+    /// carries its own shape and [`crate::nested::ArrayLiteral`] flattens it,
+    /// so `integer[]` is one `Array` node whether its values are vectors or
+    /// matrices.
+    Array(Box<NestedCompare>),
+    /// `record_cmp`: field-wise in declaration order, which is also the order
+    /// `record_out` writes them in. The name is carried for the diagnostic
+    /// path alone — `record_out` is positional (I23) and no comparison reads
+    /// it.
+    Record(Vec<(String, NestedCompare)>),
+}
+
+impl NestedCompare {
+    /// The first position beneath this one with no order, as
+    /// `(path, declared type)` — `None` when every position is comparable.
+    /// The path is the accessor a user would write: `[]` for an element,
+    /// `.name` for a field, appended as the walk descends.
+    pub fn uncomparable(&self) -> Option<(String, String)> {
+        let mut found = None;
+        self.walk(&mut String::new(), &mut |path, declared, divergence| {
+            if divergence.is_none() && found.is_none() {
+                found = Some((path.to_string(), declared.to_string()));
+            }
+        });
+        found
+    }
+
+    /// Every position beneath this one that compares but not the server's
+    /// way, as `(path, declared type, divergence)`, in walk order. A column
+    /// carrying two of them — a composite with a bare `text` field and a
+    /// `text[]` one — announces both.
+    pub fn divergences(&self) -> Vec<(String, String, ComparisonDivergence)> {
+        let mut out = Vec::new();
+        self.walk(&mut String::new(), &mut |path, declared, divergence| {
+            if let Some(Some(divergence)) = divergence {
+                out.push((path.to_string(), declared.to_string(), divergence));
+            }
+        });
+        out
+    }
+
+    /// Depth-first over every leaf, handing each its path, its declared type
+    /// and its divergence — `None` for an [`Self::Uncomparable`] one, which
+    /// is how the two callers above tell "no order" from "an order that
+    /// differs".
+    fn walk(
+        &self,
+        path: &mut String,
+        visit: &mut impl FnMut(&str, &str, Option<Option<ComparisonDivergence>>),
+    ) {
+        match self {
+            Self::Leaf { declared, divergence, .. } => visit(path, declared, Some(*divergence)),
+            Self::Uncomparable { declared } => visit(path, declared, None),
+            Self::Array(element) => {
+                let len = path.len();
+                path.push_str("[]");
+                element.walk(path, visit);
+                path.truncate(len);
+            }
+            Self::Record(fields) => {
+                for (name, field) in fields {
+                    let len = path.len();
+                    path.push('.');
+                    path.push_str(name);
+                    field.walk(path, visit);
+                    path.truncate(len);
+                }
+            }
+        }
+    }
+}
+
 /// **The comparison register's answer for one declared type**: how a column
 /// of it compares, and whether that is the order PostgreSQL itself defines.
 /// Rendered as a table in `docs/design/architecture.md`, "Ordering operators
@@ -395,12 +497,30 @@ pub enum ComparisonPlan {
     /// Values decode through `kind` and compare by that order; `divergence`
     /// is `None` when the order is PostgreSQL's own.
     Compared { kind: CompareKind, divergence: Option<ComparisonDivergence> },
+    /// A nested column — array, composite, range or multirange — compared
+    /// structurally, one node per nesting level. **A `Nested` plan is not by
+    /// itself an order**: a tree holding a [`NestedCompare::Uncomparable`]
+    /// position is the register saying the column has none, which is what
+    /// [`Self::orders`] answers and what lets the refusal name the position.
+    Nested(NestedCompare),
     /// No order is defined here for this declared type.
     #[default]
     Refused,
 }
 
 impl ComparisonPlan {
+    /// Whether the register gives a column of this plan an order at all —
+    /// the question the four ordering operators ask, and the one a caller
+    /// must not answer by matching on the variant: a nested plan whose tree
+    /// holds an uncomparable position is `Refused` in every way that matters.
+    pub fn orders(&self) -> bool {
+        match self {
+            Self::Compared { .. } => true,
+            Self::Nested(tree) => tree.uncomparable().is_none(),
+            Self::Refused => false,
+        }
+    }
+
     /// The order PostgreSQL itself defines for this type.
     fn agrees(kind: CompareKind) -> Self {
         Self::Compared { kind, divergence: None }
@@ -1143,6 +1263,67 @@ pub fn resolve_declared_type(declared: &str, types: &[TypeDef]) -> TypeOutcome {
     map_builtin(base, typmod, types).unwrap_or(TypeOutcome::Unknown)
 }
 
+/// The comparison for an array column, from the same walk
+/// [`resolve_array`] makes and with the same two refusals: an element type
+/// that is opaque by construction (I22), and an element type that is itself
+/// an array (I26). Both resolve the *column* to `Utf8View`, so a column of
+/// either compares as text and never reaches this plan — but the register is
+/// asked directly too, and answering "ordered" for a column the resolver
+/// declines would be the register disagreeing with itself.
+///
+/// The column's own `COLLATE` clause is passed **down to the element**, which
+/// is where it belongs: an array type is not collatable, and `pg_dump` writes
+/// the clause on a `text[]` column to state the collation its *elements* are
+/// compared under (I37).
+fn array_comparison(
+    declared: &str,
+    collation: Option<&str>,
+    types: &[TypeDef],
+    collations: &[CollationDef],
+) -> ComparisonPlan {
+    let Some(element) = array_element(declared) else {
+        return ComparisonPlan::Refused;
+    };
+    let terminal = domain_terminal(element, types);
+    let opaque = terminal.eq_ignore_ascii_case("box")
+        || matches!(
+            types.iter().find(|t| t.name == terminal).map(|t| &t.kind),
+            Some(TypeKind::Base | TypeKind::Shell)
+        );
+    let child = if opaque || array_element(terminal).is_some() {
+        NestedCompare::Uncomparable { declared: element.to_string() }
+    } else {
+        nested_position(element, collation, types, collations)
+    };
+    ComparisonPlan::Nested(NestedCompare::Array(Box::new(child)))
+}
+
+/// One position *inside* a nested type — an array's element, a composite's
+/// field — asked the same question the column was, so nesting composes and a
+/// domain beneath a container bottoms out where a domain always does.
+///
+/// The two answers that are not a comparison collapse to
+/// [`NestedCompare::Uncomparable`], and the second of them is the one worth
+/// stating: `json` is [`ComparisonDivergence::AsText`] at top level, where
+/// bytewise offers more than the server does, and has no comparison *at all*
+/// inside a container, where `array_cmp` would have to find a proc that does
+/// not exist.
+fn nested_position(
+    declared: &str,
+    collation: Option<&str>,
+    types: &[TypeDef],
+    collations: &[CollationDef],
+) -> NestedCompare {
+    match comparison_for(declared, collation, types, collations) {
+        ComparisonPlan::Compared { divergence: Some(ComparisonDivergence::AsText), .. }
+        | ComparisonPlan::Refused => NestedCompare::Uncomparable { declared: declared.to_string() },
+        ComparisonPlan::Compared { kind, divergence } => {
+            NestedCompare::Leaf { declared: declared.to_string(), kind, divergence }
+        }
+        ComparisonPlan::Nested(inner) => inner,
+    }
+}
+
 /// **The comparison register**: how a column declared `declared` compares, and
 /// whether that is PostgreSQL's own order.
 ///
@@ -1158,10 +1339,13 @@ pub fn resolve_declared_type(declared: &str, types: &[TypeDef]) -> TypeOutcome {
 /// order at all — so the Arrow type cannot say which comparison a column
 /// wants, and the answers that will replace them are per declared type too.
 ///
-/// Everything nested is [`ComparisonPlan::Refused`] here: an order over an
-/// `array_out`/`record_out`/`range_out` literal is not a thing this build
-/// defines. Its consumer refuses such a column earlier anyway, on the
-/// [`NestedPlan`], and with a sharper reason.
+/// **A nested type answers [`ComparisonPlan::Nested`]**, one node per nesting
+/// level, built by the same walk: an array's element and a composite's fields
+/// are asked this same question in turn, so a position's comparison is
+/// whatever a *column* of that type would have had and nesting composes with
+/// no special case. A range or multirange is still
+/// [`ComparisonPlan::Refused`] — the canonicalization its bounds need is not
+/// implemented here yet.
 ///
 /// **`collation` is the column's own `COLLATE` clause**, verbatim as the DDL
 /// wrote it ([`crate::preamble::ColumnDef::collation`]), or `None` where the
@@ -1178,7 +1362,7 @@ pub fn comparison_for(
 ) -> ComparisonPlan {
     let declared = declared.trim();
     if array_element(declared).is_some() {
-        return ComparisonPlan::Refused;
+        return array_comparison(declared, collation, types, collations);
     }
     let (base, typmod) = split_typmod(declared);
     if base.contains('.') {
@@ -1230,7 +1414,38 @@ fn comparison_user_type(
         TypeKind::Domain { base_type, collation: domain_collation } => {
             comparison_for(base_type, collation.or(domain_collation.as_deref()), types, collations)
         }
-        TypeKind::Composite { .. } | TypeKind::Range { .. } => ComparisonPlan::Refused,
+        // Field-wise in declaration order, which is `record_cmp`'s rule and
+        // also the order `record_out` writes them in, so the positional
+        // comparison costs nothing here (I23). A field list the grammar could
+        // not read is all-or-nothing exactly as it is for the Arrow type: a
+        // composite parsed short would compare field 3's text as field 2's
+        // type, so there is no partial answer to give.
+        TypeKind::Composite { fields } => match fields {
+            Some(fields) => ComparisonPlan::Nested(NestedCompare::Record(
+                fields
+                    .iter()
+                    .map(|f| {
+                        (
+                            f.name.clone(),
+                            // A composite is not collatable, so the *column's*
+                            // clause cannot reach a field; each attribute
+                            // carries its own (I37).
+                            nested_position(
+                                &f.declared_type,
+                                f.collation.as_deref(),
+                                types,
+                                collations,
+                            ),
+                        )
+                    })
+                    .collect(),
+            )),
+            None => ComparisonPlan::Refused,
+        },
+        // A range's bounds need the subtype's own canonicalization before
+        // they can be compared — `int4range '[1,10]'` is `[1,11)` — which is
+        // not implemented here yet.
+        TypeKind::Range { .. } => ComparisonPlan::Refused,
         TypeKind::Base | TypeKind::Shell => ComparisonPlan::Refused,
     }
 }
@@ -2217,8 +2432,18 @@ mod tests {
             comparison_for("public.dtext", None, &types, &[]),
             ComparisonPlan::diverging(CompareKind::Text, ComparisonDivergence::UnknownCollation),
         );
+        // A domain over a nested type is that type's nested comparison,
+        // through the same recursion — the walk bottoms out where a domain
+        // always does.
+        assert_eq!(
+            comparison_for("public.darr", None, &types, &[]),
+            ComparisonPlan::Nested(NestedCompare::Array(Box::new(NestedCompare::Leaf {
+                declared: "integer".to_string(),
+                kind: CompareKind::Int,
+                divergence: None,
+            }))),
+        );
         // A domain over something with no order here has none either.
-        assert_eq!(comparison_for("public.darr", None, &types, &[]), ComparisonPlan::Refused);
         assert_eq!(comparison_for("public.dmoney", None, &types, &[]), ComparisonPlan::Refused);
     }
 
@@ -2247,12 +2472,15 @@ mod tests {
         assert_eq!(comparison_for("public.nothingish", None, &types, &[]), ComparisonPlan::Refused);
     }
 
-    /// Everything nested is refused: an order over an
-    /// `array_out`/`record_out`/`range_out` literal is not defined here.
-    /// Its consumer refuses such a column earlier, on the `NestedPlan`, so
-    /// this is the second of two agreeing answers rather than the only one.
+    /// Which nested shapes the register compares and which it still refuses,
+    /// as one statement: an array and a composite are compared structurally,
+    /// a range and its multirange companion are not — their bounds need the
+    /// subtype's canonicalization, which is not implemented here.
+    ///
+    /// A base or shell type is refused for a reason of its own and is here to
+    /// keep the two populations from being read as one.
     #[test]
-    fn every_nested_shape_is_refused() {
+    fn arrays_and_composites_compare_where_ranges_are_still_refused() {
         let types = [
             ty(
                 "public.point2d",
@@ -2268,12 +2496,44 @@ mod tests {
             ty("public.gtype", TypeKind::Base),
             ty("public.forward", TypeKind::Shell),
         ];
+        let int_leaf = || NestedCompare::Leaf {
+            declared: "integer".to_string(),
+            kind: CompareKind::Int,
+            divergence: None,
+        };
+        let array_of_int = || ComparisonPlan::Nested(NestedCompare::Array(Box::new(int_leaf())));
+        for declared in ["integer[]", "integer ARRAY"] {
+            assert_eq!(comparison_for(declared, None, &types, &[]), array_of_int(), "{declared}");
+        }
+        // The element carries the column's own clause, because an array type
+        // is not collatable and the clause is about its elements (I37).
+        assert_eq!(
+            comparison_for("text[]", None, &types, &[]),
+            ComparisonPlan::Nested(NestedCompare::Array(Box::new(NestedCompare::Leaf {
+                declared: "text".to_string(),
+                kind: CompareKind::Text,
+                divergence: Some(ComparisonDivergence::UnknownCollation),
+            }))),
+        );
+        assert_eq!(
+            comparison_for("text[]", Some("pg_catalog.\"C\""), &types, &[]),
+            ComparisonPlan::Nested(NestedCompare::Array(Box::new(NestedCompare::Leaf {
+                declared: "text".to_string(),
+                kind: CompareKind::Text,
+                divergence: None,
+            }))),
+        );
+        let point2d =
+            || ComparisonPlan::Nested(NestedCompare::Record(vec![("x".to_string(), int_leaf())]));
+        assert_eq!(comparison_for("public.point2d", None, &types, &[]), point2d());
+        // Nesting composes with no special case: an array of composites is
+        // the composite's own answer one level down.
+        let ComparisonPlan::Nested(record) = point2d() else { unreachable!() };
+        assert_eq!(
+            comparison_for("public.point2d[]", None, &types, &[]),
+            ComparisonPlan::Nested(NestedCompare::Array(Box::new(record))),
+        );
         for declared in [
-            "integer[]",
-            "integer ARRAY",
-            "text[]",
-            "public.point2d",
-            "public.point2d[]",
             "int4range",
             "int4multirange",
             "public.myrange",
@@ -2288,5 +2548,99 @@ mod tests {
                 "{declared}"
             );
         }
+    }
+
+    /// Comparability is inherited: a position whose declared type has no
+    /// order refuses the whole column, and the tree says which position and
+    /// which type so the refusal can name them.
+    ///
+    /// **`json` is the case that is not obvious.** At top level it is
+    /// compared bytewise and announces that PostgreSQL orders it not at all;
+    /// inside a container there is nothing to compare with, because
+    /// `array_cmp` looks up the element type's comparison proc and there is
+    /// none.
+    #[test]
+    fn a_position_with_no_order_refuses_the_whole_column() {
+        let types = [
+            ty(
+                "public.jsonpair",
+                TypeKind::Composite {
+                    fields: Some(vec![
+                        ColumnDef::new("ok", "integer"),
+                        ColumnDef::new("doc", "json"),
+                    ]),
+                },
+            ),
+            ty("public.gtype", TypeKind::Base),
+        ];
+        for (declared, path, at) in [
+            ("json[]", "[]", "json"),
+            ("public.jsonpair", ".doc", "json"),
+            ("public.jsonpair[]", "[].doc", "json"),
+            // I22: an opaque element type, refused for the delimiter as much
+            // as for the order.
+            ("box[]", "[]", "box"),
+            ("public.gtype[]", "[]", "public.gtype"),
+            // I26: an array whose element is itself an array, which resolves
+            // the column to text as well.
+            ("public.intarr[]", "[]", "public.intarr"),
+        ] {
+            let plan = comparison_for(declared, None, &types, &[]);
+            assert!(!plan.orders(), "{declared}");
+            let ComparisonPlan::Nested(tree) = plan else { panic!("{declared}: not nested") };
+            assert_eq!(tree.uncomparable(), Some((path.to_string(), at.to_string())), "{declared}");
+        }
+    }
+
+    /// Every diverging position, in walk order, each with the path and the
+    /// declared type its sentence needs — the composite that is on the
+    /// database's collation twice, once directly and once through an
+    /// element.
+    #[test]
+    fn a_nested_column_announces_every_diverging_position() {
+        let types = [ty(
+            "public.tagged",
+            TypeKind::Composite {
+                fields: Some(vec![
+                    ColumnDef::new("label", "text"),
+                    ColumnDef::new("n", "integer"),
+                    ColumnDef::new("tags", "text[]"),
+                ]),
+            },
+        )];
+        let ComparisonPlan::Nested(tree) = comparison_for("public.tagged", None, &types, &[])
+        else {
+            panic!("a composite compares structurally")
+        };
+        assert_eq!(
+            tree.divergences(),
+            [
+                (".label".to_string(), "text".to_string(), ComparisonDivergence::UnknownCollation),
+                (".tags[]".to_string(), "text".to_string(), ComparisonDivergence::UnknownCollation),
+            ],
+        );
+        // A field's own clause is what the register reads, not the column's:
+        // a composite is not collatable, so there is no column clause to
+        // inherit.
+        let types = [ty(
+            "public.pair",
+            TypeKind::Composite {
+                fields: Some(vec![
+                    ColumnDef::new("plain", "text"),
+                    ColumnDef {
+                        name: "c".to_string(),
+                        declared_type: "text".to_string(),
+                        collation: Some("pg_catalog.\"C\"".to_string()),
+                    },
+                ]),
+            },
+        )];
+        let ComparisonPlan::Nested(tree) = comparison_for("public.pair", None, &types, &[]) else {
+            panic!("a composite compares structurally")
+        };
+        assert_eq!(
+            tree.divergences(),
+            [(".plain".to_string(), "text".to_string(), ComparisonDivergence::UnknownCollation)],
+        );
     }
 }

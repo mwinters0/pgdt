@@ -334,14 +334,17 @@ async fn a_resume_token_covers_the_whole_conjunction() {
     assert!(resumed.next().await.unwrap().is_ok(), "the same conjunction resumes");
 }
 
-/// A predicate on a column typed `List<Utf8View>` rather than `Utf8View`
-/// matches the same rows either way, because it compares the COPY-unescaped
-/// *field text* — the `array_out` literal — and never the decoded value. That
-/// is the one place typing a nested column could change behaviour invisibly,
-/// so it is asserted against the untyped path, which by construction cannot
-/// have changed.
+/// A predicate on a nested column is where the two schema modes part
+/// company, and deliberately: a column typed `List<Utf8View>` is compared
+/// **structurally**, through the register's nested plan, while
+/// `SchemaMode::Strings` resolves no column at all and so falls back to the
+/// byte comparison every column made before types existed.
+///
+/// They agree on the canonical spelling the file holds — which is the case
+/// that must not move — and disagree on `{NULL, plain}`, which the typed path
+/// reads through the `array_in` superset and the untyped path reads as bytes.
 #[tokio::test]
-async fn a_predicate_on_a_nested_column_matches_the_literal_text_in_either_schema_mode() {
+async fn a_nested_predicate_compares_structurally_when_the_column_is_typed() {
     use futures::StreamExt;
     use pgdump_query::table_stream;
 
@@ -388,13 +391,18 @@ async fn a_predicate_on_a_nested_column_matches_the_literal_text_in_either_schem
         assert_eq!(
             ids(&path, pgdump_query::SchemaMode::Typed, matched).await,
             ids(&path, pgdump_query::SchemaMode::Strings, matched).await,
-            "pg_dump {version}: typing a column must not change what a predicate matched"
+            "pg_dump {version}: the canonical spelling matches the same rows either way"
         );
-        // And a non-canonical spelling matches nothing in either mode, which
-        // is the documented divergence from PostgreSQL rather than a
-        // consequence of the flip.
+        // A spelling `array_in` accepts and `array_out` never writes: the
+        // typed path takes it, the untyped one cannot, because it has no
+        // declared type to read a container grammar out of.
+        assert_eq!(
+            ids(&path, pgdump_query::SchemaMode::Typed, "{NULL, plain}").await,
+            vec![Some("2".to_string())],
+            "pg_dump {version}"
+        );
         assert!(
-            ids(&path, pgdump_query::SchemaMode::Typed, "{NULL, plain}").await.is_empty(),
+            ids(&path, pgdump_query::SchemaMode::Strings, "{NULL, plain}").await.is_empty(),
             "pg_dump {version}"
         );
     }

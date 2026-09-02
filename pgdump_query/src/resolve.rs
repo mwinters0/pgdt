@@ -840,9 +840,15 @@ mod tests {
                     kind: CompareKind::Enum(["sad".to_string()].into_iter().collect()),
                     divergence: None,
                 },
-                // Nested, and a type this build never mapped: neither has an
-                // order here.
-                ComparisonPlan::Refused,
+                // Nested: compared structurally, one node per level.
+                ComparisonPlan::Nested(crate::pgtype::NestedCompare::Array(Box::new(
+                    crate::pgtype::NestedCompare::Leaf {
+                        declared: "integer".to_string(),
+                        kind: CompareKind::Int,
+                        divergence: None,
+                    },
+                ))),
+                // A type this build never mapped has no order here.
                 ComparisonPlan::Refused,
             ]
         );

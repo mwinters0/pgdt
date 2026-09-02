@@ -6,7 +6,8 @@ use arrow::datatypes::i256;
 
 use crate::copy::{decode_field, split_fields};
 use crate::decode;
-use crate::pgtype::{CompareKind, ComparisonDivergence, ComparisonPlan, NestedPlan};
+use crate::nested;
+use crate::pgtype::{CompareKind, ComparisonDivergence, ComparisonPlan, NestedCompare, NestedPlan};
 use crate::resolve::{ColumnResolution, ResolvedSchema};
 use crate::{Error, Result};
 
@@ -206,7 +207,21 @@ impl Default for Expr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComparisonNote {
     pub column: String,
-    /// The declared PostgreSQL type, as the DDL spelled it.
+    /// The position *inside* the column the divergence is about, as the
+    /// accessor a user would write — `[]` for an array's elements, `.label`
+    /// for a composite's field, appended as the nesting descends. `None` is
+    /// the column itself, which is every scalar column and is what the
+    /// sentence reads as when there is no nesting to name.
+    ///
+    /// **A nested column can carry more than one**, which is why a term
+    /// yields a list of notes rather than one: `public.tagged` is
+    /// `(label text, tags text[])` and both positions are on the database's
+    /// own collation, one directly and one through an element.
+    pub path: Option<String>,
+    /// The declared PostgreSQL type **at that position**, as the DDL spelled
+    /// it — the element's or the field's for a nested note, and the column's
+    /// own where `path` is `None`. It is what sharpens the sentence, so it
+    /// has to name the type the divergence is actually about.
     pub declared_type: String,
     pub divergence: ComparisonDivergence,
 }
@@ -220,7 +235,8 @@ impl ComparisonNote {
     /// exist because several declared types reach one Arrow type for
     /// different reasons.
     pub fn message(&self) -> String {
-        let column = &self.column;
+        let column = format!("{}{}", self.column, self.path.as_deref().unwrap_or(""));
+        let column = &column;
         let declared = &self.declared_type;
         let bytewise = |why: &str| format!("`{column}` ({declared}) is compared bytewise: {why}");
         match self.divergence {
@@ -1266,6 +1282,146 @@ fn compare_keys(a: &OrderKey, b: &OrderKey) -> Ordering {
     }
 }
 
+/// One side of a **nested** comparison, decoded from a container literal per
+/// the column's [`NestedCompare`]. Both sides of any one comparison come from
+/// the same plan, so a variant mismatch is unreachable by construction, the
+/// same way it is for [`OrderKey`].
+///
+/// `None` in an element or field position is SQL NULL, which is a value of
+/// the container rather than the absence of one: `{1,NULL}` is a two-element
+/// array. **The whole field being NULL is a different fact** — that is the
+/// `\N` the row carries, and it is [`Truth::Unknown`] exactly as it is for a
+/// scalar column.
+#[derive(Debug, Clone, PartialEq)]
+enum NestedKey {
+    /// A scalar position, through the leaf type's own [`OrderKey`].
+    Leaf(OrderKey),
+    /// An `array_out` value: its elements flattened row-major, plus the shape
+    /// they were written in, because `array_cmp` decides on the shape once
+    /// the elements agree (I45).
+    Array { elements: Vec<Option<NestedKey>>, dims: Vec<usize>, lower_bounds: Vec<i32> },
+    /// A `record_out` value: one entry per declared field, in declaration
+    /// order.
+    Record(Vec<Option<NestedKey>>),
+}
+
+/// Read one side of a nested comparison out of `text`.
+///
+/// **`input` is which grammar to read it in**, and it is the whole of what
+/// separates the two sides. A *field* comes out of the dump in canonical
+/// `*_out` form, so it is read with [`crate::nested`]'s strict `decode_*` —
+/// the same strictness that makes decode and render inverses. A *literal* is
+/// what the user typed, so it is read with the `array_in`/`record_in`
+/// supersets (`parse_*`), which take `{a, b}` and `{ 1 , 2 }`.
+///
+/// **The leaf grammar does not widen with it.** A leaf is read by
+/// [`order_key`], which implements that type's `*_out` form and no more
+/// (`docs/design/architecture.md`, "A literal is read in the type's own output
+/// form and no wider"), so `--filter 'p=( 1 , a )'` is refused where
+/// `record_in` would have handed `" 1 "` to `int4in` and had the blanks
+/// thrown away there. One rule at every depth, and it is the rule a scalar
+/// column already has.
+///
+/// `None` is "not a value of this type", which is
+/// `Error::PredicateValueDecode` for a literal and `Error::FieldDecode` for a
+/// field.
+fn nested_key(plan: &NestedCompare, text: &str, input: bool) -> Option<NestedKey> {
+    Some(match plan {
+        NestedCompare::Leaf { kind, .. } => NestedKey::Leaf(order_key(kind, text)?),
+        // Refused before any value is read: `resolve_term` never builds a
+        // comparison over a tree holding one.
+        NestedCompare::Uncomparable { .. } => return None,
+        NestedCompare::Array(element) => {
+            let literal =
+                if input { nested::parse_array(text) } else { nested::decode_array(text) }?;
+            let mut elements = Vec::with_capacity(literal.elements.len());
+            for value in &literal.elements {
+                elements.push(match value {
+                    Some(value) => Some(nested_key(element, value, input)?),
+                    None => None,
+                });
+            }
+            NestedKey::Array { elements, dims: literal.dims, lower_bounds: literal.lower_bounds }
+        }
+        NestedCompare::Record(plans) => {
+            let mut fields = if input {
+                nested::parse_record(text, plans.len())?.fields
+            } else {
+                let mut fields = nested::decode_record(text)?.fields;
+                // A zero-field composite is written `()`, and so is a
+                // one-field composite holding NULL — the literal cannot tell
+                // them apart, so the declared field list decides (I23).
+                // `parse_record` asks the same question with the arity in
+                // hand; `decode_record` cannot, so it is asked here.
+                if plans.is_empty() && fields == [None] {
+                    fields.clear();
+                }
+                fields
+            };
+            if fields.len() != plans.len() {
+                return None;
+            }
+            let mut out = Vec::with_capacity(plans.len());
+            for ((_, plan), value) in plans.iter().zip(fields.drain(..)) {
+                out.push(match value {
+                    Some(value) => Some(nested_key(plan, &value, input)?),
+                    None => None,
+                });
+            }
+            NestedKey::Record(out)
+        }
+    })
+}
+
+/// **One NULL rule, at every level: two NULLs are equal, and NULL sorts above
+/// not-NULL.** `array_cmp` and `record_cmp` carry that sentence verbatim, and
+/// it covers equality and ordering alike — which is what makes a nested
+/// comparison two-valued throughout, never [`Truth::Unknown`].
+fn compare_slot(a: Option<&NestedKey>, b: Option<&NestedKey>) -> Ordering {
+    match (a, b) {
+        (None, None) => Ordering::Equal,
+        (None, Some(_)) => Ordering::Greater,
+        (Some(_), None) => Ordering::Less,
+        (Some(a), Some(b)) => compare_nested(a, b),
+    }
+}
+
+/// `array_cmp`/`record_cmp`, structurally.
+///
+/// **An array compares its elements first, and its shape only afterwards**
+/// (I45) — up to the shorter array's length, then element count, then
+/// dimension count, then the dimensions, then the lower bounds. That order is
+/// not the one `array_eq` uses, which memcmps the shape before it looks at an
+/// element; the two agree on *equality* and only `array_cmp` decides an
+/// order, so this is the one to reproduce. It is why `{1,2}` is above
+/// `[0:1]={1,2}` — the elements are equal and the lower bound settles it —
+/// and why `{1,2}` is below `{{1,2},{3,4}}`, whose extra elements are never
+/// reached.
+///
+/// A record's two sides always have the same arity: [`nested_key`] checks it
+/// against the composite's own declared field list before building either.
+fn compare_nested(a: &NestedKey, b: &NestedKey) -> Ordering {
+    match (a, b) {
+        (NestedKey::Leaf(a), NestedKey::Leaf(b)) => compare_keys(a, b),
+        (
+            NestedKey::Array { elements: ae, dims: ad, lower_bounds: al },
+            NestedKey::Array { elements: be, dims: bd, lower_bounds: bl },
+        ) => first_difference(
+            ae.iter()
+                .zip(be.iter())
+                .map(|(a, b)| compare_slot(a.as_ref(), b.as_ref()))
+                .chain(std::iter::once(ae.len().cmp(&be.len())))
+                .chain(std::iter::once(ad.len().cmp(&bd.len())))
+                .chain(ad.iter().zip(bd.iter()).map(|(a, b)| a.cmp(b)))
+                .chain(al.iter().zip(bl.iter()).map(|(a, b)| a.cmp(b))),
+        ),
+        (NestedKey::Record(a), NestedKey::Record(b)) => first_difference(
+            a.iter().zip(b.iter()).map(|(a, b)| compare_slot(a.as_ref(), b.as_ref())),
+        ),
+        _ => unreachable!("both sides of a comparison are read through one column's plan"),
+    }
+}
+
 /// A `macaddr`/`macaddr8` literal in `macaddr_out`'s own spelling: `octets`
 /// lowercase hex pairs joined by colons (I40). The whole of that output
 /// function is those two rules, which is why this type canonicalizes where
@@ -1402,6 +1558,30 @@ fn equality_comparison(kind: &CompareKind, text: &str) -> Option<Comparison> {
 /// diagnostic path. An enum with no labels is unreachable for a second
 /// reason — `pgtype::comparison_for` refuses such a column outright — and is
 /// written out the same way.
+/// The form a **nested** literal has to be written in, as one clause of
+/// `Error::PredicateValueDecode`'s sentence.
+///
+/// It names the container's own grammar and then the rule that actually
+/// refuses most literals: every leaf is read in its own type's output form,
+/// so the container's leniency about whitespace and quoting stops at the
+/// element. There is no per-leaf clause list here — the leaf that failed is
+/// not reported by [`nested_key`], which answers only "not a value of this
+/// type" — so the sentence points at the property rather than at a position.
+fn nested_accepted_form(plan: &NestedCompare) -> String {
+    let container = match plan {
+        NestedCompare::Array(_) => "as an array literal — `{a,b}`, `{}`, a bare `NULL` element",
+        NestedCompare::Record(_) => "as a composite literal — `(a,b)`, a field left empty for NULL",
+        // Neither is reachable: a leaf plan is never a column's whole
+        // comparison, and an uncomparable one refuses before a literal is
+        // read.
+        NestedCompare::Leaf { .. } | NestedCompare::Uncomparable { .. } => "as a nested literal",
+    };
+    format!(
+        "{container} — with every element or field written in its own type's output form, which \
+         is the form the dump holds"
+    )
+}
+
 fn accepted_form(kind: &CompareKind) -> String {
     use CompareKind as K;
     match kind {
@@ -1548,6 +1728,36 @@ enum Comparison {
     /// `=`/`!=` where the field has to be decoded per row too, because the
     /// file's spelling of a value is not unique.
     Decoded { kind: CompareKind, bound: OrderKey },
+    /// A nested column, under **any** comparing operator: both sides read
+    /// into a [`NestedKey`] and compared structurally.
+    ///
+    /// **One variant for both operator families**, where a scalar has three,
+    /// and the reason is that the equality fast path a scalar gets is not
+    /// available here for free. A nested value's `=` is byte-comparable only
+    /// when *every* leaf beneath it canonicalizes — one `numeric` or
+    /// `character(n)` element anywhere makes the rendered literal the wrong
+    /// answer — so the fast path would be a second literal-side walk that
+    /// exists to be right about a shape the oracle carries no case for. The
+    /// structural walk is one path, and it is the path the four ordering
+    /// operators already needed.
+    ///
+    /// *Rejected: rendering the literal back and comparing bytes where every
+    /// leaf allows it.* It buys a per-row byte comparison on a filter over an
+    /// array or composite column, and costs a second code path whose only
+    /// coverage would be unit tests: every nested case in the comparison
+    /// oracle canonicalizes, so the *decoded* half — the half that has to be
+    /// right when it does not — would be the untested one.
+    /// Boxed: a `NestedKey` carries three vectors, and this variant is the
+    /// only large one in an enum that sits inside every resolved leaf.
+    Nested(Box<NestedComparison>),
+}
+
+/// What a nested term compares: the column's plan, and the literal already
+/// read through it.
+#[derive(Debug, Clone)]
+struct NestedComparison {
+    plan: NestedCompare,
+    bound: NestedKey,
 }
 
 /// Everything a comparing term needs, settled once when the block's schema
@@ -1559,10 +1769,17 @@ struct ComparedTerm {
     /// The declared PostgreSQL type, for `Error::FieldDecode`'s context and
     /// for [`ComparisonNote::message`].
     declared_type: String,
-    /// The register's divergence for this column, already filtered to the
+    /// The register's divergences for this column, already filtered to the
     /// ones that reach *this* term's operator
     /// ([`ComparisonDivergence::affects_equality`]).
-    divergence: Option<ComparisonDivergence>,
+    ///
+    /// **A list, because a nested column has a position per divergence.** A
+    /// scalar column has at most one and it is about the column itself; a
+    /// composite can be on the database's collation twice, through two
+    /// different fields, and a user who is told about one of them has been
+    /// told half of it. Each entry carries the position's own path and
+    /// declared type, which is what makes the sentence name the right type.
+    divergences: Vec<(Option<String>, String, ComparisonDivergence)>,
 }
 
 /// One filter term resolved against one `COPY` block: the operator, the
@@ -1588,16 +1805,22 @@ pub(crate) struct ResolvedTerm {
 }
 
 impl ResolvedTerm {
-    /// This term's divergence from PostgreSQL's own comparison, if it has
-    /// one. `None` for the two NULL tests, and for every term whose column
-    /// answers this operator the way the server does.
-    pub(crate) fn comparison_note(&self) -> Option<ComparisonNote> {
-        let compared = self.compared.as_ref()?;
-        Some(ComparisonNote {
-            column: compared.column.clone(),
-            declared_type: compared.declared_type.clone(),
-            divergence: compared.divergence?,
-        })
+    /// This term's divergences from PostgreSQL's own comparison. Empty for
+    /// the two NULL tests, and for every term whose column answers this
+    /// operator the way the server does; more than one only for a nested
+    /// column with more than one diverging position.
+    pub(crate) fn comparison_notes(&self) -> Vec<ComparisonNote> {
+        let Some(compared) = self.compared.as_ref() else { return Vec::new() };
+        compared
+            .divergences
+            .iter()
+            .map(|(path, declared_type, divergence)| ComparisonNote {
+                column: compared.column.clone(),
+                path: path.clone(),
+                declared_type: declared_type.clone(),
+                divergence: *divergence,
+            })
+            .collect()
     }
 }
 
@@ -1607,6 +1830,19 @@ const NOT_MAPPED: &str = "the column's declared type did not resolve to an Arrow
      (`--schema-mode strings` resolves no column, by design)";
 const NESTED: &str = "the column is nested (array, composite, range or multirange), and an order over such a \
      literal is not defined here";
+
+/// The refusal a nested column earns when its *shape* is compared here and
+/// one position beneath it is not — an element, a field or a bound whose own
+/// declared type has no order (`json`, `box`, an unrecognised name). It names
+/// the position and its type, because that is the whole of what the user has
+/// to change.
+fn nested_refusal(path: &str, declared: &str) -> String {
+    format!(
+        "the column is nested and `{path}` inside it is `{declared}`, which has no order here — \
+         PostgreSQL refuses the same comparison, since a container is ordered by its element \
+         type's own comparison and this type has none"
+    )
+}
 const NO_ORDER: &str = "this build defines no ordering for the column's declared type";
 
 /// Resolve one filter term against the block's **unprojected**
@@ -1641,11 +1877,11 @@ pub(crate) fn resolve_term(
         return Ok(ResolvedTerm { op: predicate.op, index, compared: None });
     }
     let ordering = predicate.op.is_ordering();
-    let refuse = |reason: &'static str| Error::UnorderedPredicateColumn {
+    let refuse = |reason: &str| Error::UnorderedPredicateColumn {
         header_offset,
         column: predicate.column.clone(),
         op: predicate.op.symbol(),
-        reason,
+        reason: reason.to_string(),
     };
     let declared_type = resolved.notes[index].declared.clone().unwrap_or_default();
     // `value` is `Some` for every operator but the two NULL tests; an
@@ -1669,13 +1905,26 @@ pub(crate) fn resolve_term(
             return Err(refuse(NOT_MAPPED));
         }
         plan = None;
+    } else if let Some(ComparisonPlan::Nested(tree)) = plan {
+        // A nested column whose shape is compared here but one of whose
+        // positions is not: the ordering operators are refused naming that
+        // position, and `=`/`!=` fall back to the text comparison every
+        // nested column made before this one.
+        if let Some((path, declared)) = tree.uncomparable() {
+            if ordering {
+                return Err(refuse(&nested_refusal(&path, &declared)));
+            }
+            plan = None;
+        }
     } else if resolved.plans[index] != NestedPlan::Scalar {
+        // A range or multirange: nested, and with no comparison in the
+        // register at all.
         if ordering {
             return Err(refuse(NESTED));
         }
         plan = None;
     }
-    let (comparison, divergence) = match plan {
+    let (comparison, divergences) = match plan {
         Some(ComparisonPlan::Compared { kind, divergence }) => {
             let comparison = if ordering {
                 Comparison::Ordered {
@@ -1685,8 +1934,35 @@ pub(crate) fn resolve_term(
             } else {
                 equality_comparison(kind, text).ok_or_else(|| refuse_literal(kind))?
             };
-            (comparison, divergence.filter(|d| ordering || d.affects_equality()))
+            (
+                comparison,
+                divergence
+                    .filter(|d| ordering || d.affects_equality())
+                    .map(|d| (None, declared_type.clone(), d))
+                    .into_iter()
+                    .collect(),
+            )
         }
+        // A nested column, compared structurally: the literal is read once,
+        // in the `array_in`/`record_in` superset, and the field per row in
+        // the strict `*_out` grammar the dump holds.
+        Some(ComparisonPlan::Nested(tree)) => (
+            Comparison::Nested(Box::new(NestedComparison {
+                plan: tree.clone(),
+                bound: nested_key(tree, text, true).ok_or_else(|| Error::PredicateValueDecode {
+                    column: predicate.column.clone(),
+                    op: predicate.op.symbol(),
+                    value: text.to_string(),
+                    declared_type: declared_type.clone(),
+                    accepted: nested_accepted_form(tree),
+                })?,
+            })),
+            tree.divergences()
+                .into_iter()
+                .filter(|(_, _, d)| ordering || d.affects_equality())
+                .map(|(path, declared, d)| (Some(path), declared, d))
+                .collect(),
+        ),
         // No plan at all: an ordering operator has already been refused, so
         // this is `Eq`/`Ne` on a column the register does not compare — the
         // string comparison every column made before this one, which the
@@ -1712,7 +1988,9 @@ pub(crate) fn resolve_term(
                 resolved.columns[index],
                 ColumnResolution::UnknownType | ColumnResolution::OpaqueBaseType
             )
-            .then_some(ComparisonDivergence::UnmodelledType),
+            .then(|| (None, declared_type.clone(), ComparisonDivergence::UnmodelledType))
+            .into_iter()
+            .collect(),
         ),
     };
     Ok(ResolvedTerm {
@@ -1722,7 +2000,7 @@ pub(crate) fn resolve_term(
             column: predicate.column.clone(),
             comparison,
             declared_type,
-            divergence,
+            divergences,
         }),
     })
 }
@@ -1784,6 +2062,27 @@ impl ResolvedTerm {
             }
             Comparison::Decoded { kind, bound } => {
                 compare_keys(&key(kind)?, bound).is_eq() == self.wants_equal()
+            }
+            // Two-valued throughout: a NULL *inside* the container is a value
+            // of it, and only the whole field being NULL is unknown — which
+            // was decided above, before any of this runs.
+            Comparison::Nested(nested) => {
+                let field =
+                    nested_key(&nested.plan, &text, false).ok_or_else(|| Error::FieldDecode {
+                        table: table.to_string(),
+                        column: compared.column.clone(),
+                        row_offset,
+                        declared_type: compared.declared_type.clone(),
+                        value: text.to_string(),
+                    })?;
+                let ord = compare_nested(&field, &nested.bound);
+                match self.op {
+                    PredicateOp::Lt => ord.is_lt(),
+                    PredicateOp::Le => ord.is_le(),
+                    PredicateOp::Gt => ord.is_gt(),
+                    PredicateOp::Ge => ord.is_ge(),
+                    _ => ord.is_eq() == self.wants_equal(),
+                }
             }
         }))
     }
@@ -1878,7 +2177,7 @@ impl ResolvedExpr {
 
     fn collect_notes(&self, out: &mut Vec<ComparisonNote>) {
         match self {
-            Self::Term(term) => out.extend(term.comparison_note()),
+            Self::Term(term) => out.extend(term.comparison_notes()),
             Self::And(children) | Self::Or(children) => {
                 for child in children {
                     child.collect_notes(out);
@@ -1897,7 +2196,7 @@ mod tests {
 
     use super::*;
     use crate::pgtype::comparison_for;
-    use crate::preamble::{CollationDef, TypeDef, TypeKind};
+    use crate::preamble::{CollationDef, ColumnDef, TypeDef, TypeKind};
     use crate::resolve::ColumnNote;
 
     /// A term resolved against a column the register has no plan for — what
@@ -1908,9 +2207,19 @@ mod tests {
             column: p.column.clone(),
             comparison: Comparison::Canonical(value.clone()),
             declared_type: String::new(),
-            divergence: None,
+            divergences: Vec::new(),
         });
         ResolvedTerm { op: p.op, index, compared: if p.op.is_ordering() { None } else { compared } }
+    }
+
+    /// The one note a term announces, or `None` — the shape every test here
+    /// but the nested ones wants, since a scalar column has at most one
+    /// diverging position.
+    #[track_caller]
+    fn only_note(term: &ResolvedTerm) -> Option<ComparisonNote> {
+        let notes = term.comparison_notes();
+        assert!(notes.len() <= 1, "a scalar column announces at most one note: {notes:?}");
+        notes.into_iter().next()
     }
 
     /// One text term's own truth value over `raw_row`.
@@ -1959,6 +2268,46 @@ mod tests {
             plans: vec![NestedPlan::Scalar],
             comparisons: vec![comparison_for(declared, None, &test_types(), &[])],
         }
+    }
+
+    /// A one-column schema for a **nested** declared type, resolved against
+    /// `types` so the Arrow type, the nested plan and the comparison plan
+    /// agree the way they do in a real query — which is what decides whether
+    /// a term is refused, compared structurally, or compared as text.
+    fn nested_column(declared: &str, types: &[TypeDef]) -> ResolvedSchema {
+        let crate::pgtype::TypeOutcome::Mapped(data_type, plan) =
+            crate::pgtype::resolve_declared_type(declared, types)
+        else {
+            panic!("{declared} does not resolve")
+        };
+        ResolvedSchema {
+            schema: Arc::new(Schema::new(vec![Field::new("v", data_type, true)])),
+            columns: vec![ColumnResolution::Mapped],
+            notes: vec![ColumnNote {
+                column: "v".into(),
+                declared: Some(declared.into()),
+                resolution: ColumnResolution::Mapped,
+            }],
+            plans: vec![plan],
+            comparisons: vec![comparison_for(declared, None, types, &[])],
+        }
+    }
+
+    /// One nested term's verdict over a single-field row holding `field`.
+    #[track_caller]
+    fn nested_verdict(
+        declared: &str,
+        types: &[TypeDef],
+        op: PredicateOp,
+        field: &str,
+        literal: &str,
+    ) -> Result<Truth> {
+        let p = Predicate { column: "v".into(), op, value: Some(literal.into()) };
+        resolve_term(&p, 0, &nested_column(declared, types), 0)?.eval(
+            field.as_bytes(),
+            "public.t",
+            0,
+        )
     }
 
     fn order_predicate(op: PredicateOp, value: &str) -> Predicate {
@@ -2444,12 +2793,23 @@ mod tests {
             Error::UnorderedPredicateColumn { reason, header_offset: 7, .. } if reason == NOT_MAPPED
         ));
 
-        let mut nested = one_column("integer[]", DataType::Utf8View);
-        nested.plans[0] = NestedPlan::Array(Box::new(NestedPlan::Scalar));
+        // A nested column the register compares not at all — a range, whose
+        // bounds need a canonicalization this build does not implement.
+        let mut nested = one_column("int4range", DataType::Utf8View);
+        nested.plans[0] = NestedPlan::Range(Box::new(NestedPlan::Scalar));
         assert!(matches!(
             resolve_term(&p, 0, &nested, 0).unwrap_err(),
             Error::UnorderedPredicateColumn { reason, .. } if reason == NESTED
         ));
+
+        // A nested column whose *shape* compares here and one of whose
+        // positions does not: refused too, and the sentence names the
+        // position and the type rather than the nesting.
+        let mut inherited = one_column("json[]", DataType::Utf8View);
+        inherited.plans[0] = NestedPlan::Array(Box::new(NestedPlan::Scalar));
+        let err = resolve_term(&p, 0, &inherited, 0).unwrap_err();
+        let Error::UnorderedPredicateColumn { reason, .. } = &err else { panic!("{err:?}") };
+        assert!(reason.contains("`[]` inside it is `json`"), "{reason}");
 
         // A `Mapped` scalar column whose *declared* type the register
         // refuses: unreachable from the mapping table today — everything it
@@ -2467,7 +2827,7 @@ mod tests {
     fn a_divergent_comparison_produces_a_note_naming_why() {
         let note = |declared, data_type, literal| {
             let p = order_predicate(PredicateOp::Gt, literal);
-            resolve_term(&p, 0, &one_column(declared, data_type), 0).unwrap().comparison_note()
+            only_note(&resolve_term(&p, 0, &one_column(declared, data_type), 0).unwrap())
         };
 
         assert_eq!(note("integer", DataType::Int32, "1"), None, "an agreeing type says nothing");
@@ -2667,9 +3027,7 @@ mod tests {
     fn jsonb_announces_its_string_leaves_and_json_stays_text_held() {
         let note = |declared, literal| {
             let p = order_predicate(PredicateOp::Gt, literal);
-            resolve_term(&p, 0, &one_column(declared, DataType::Utf8View), 0)
-                .unwrap()
-                .comparison_note()
+            only_note(&resolve_term(&p, 0, &one_column(declared, DataType::Utf8View), 0).unwrap())
         };
         let jsonb = note("jsonb", "1").unwrap();
         assert_eq!(jsonb.divergence, ComparisonDivergence::JsonbStringCollation);
@@ -3168,9 +3526,7 @@ mod tests {
     fn a_collation_divergence_does_not_reach_equality() {
         let note = |declared, op, literal| {
             let p = order_predicate(op, literal);
-            resolve_term(&p, 0, &one_column(declared, DataType::Utf8View), 0)
-                .unwrap()
-                .comparison_note()
+            only_note(&resolve_term(&p, 0, &one_column(declared, DataType::Utf8View), 0).unwrap())
         };
         for declared in ["text", "character varying(10)", "character(10)"] {
             assert_eq!(
@@ -3208,19 +3564,25 @@ mod tests {
         let mut scalar = one_column("box", DataType::Utf8View);
         scalar.columns[0] = ColumnResolution::UnknownType;
         let term = resolve_term(&p, 0, &scalar, 0).unwrap();
-        let note = term.comparison_note().expect("an unmodelled scalar announces");
+        let note = only_note(&term).expect("an unmodelled scalar announces");
         assert_eq!(note.divergence, ComparisonDivergence::UnmodelledType);
         assert!(note.message().contains("`box` compares areas"), "{}", note.message());
         assert!(term.eval(b"(1,1),(0,0)", "public.t", 0).unwrap().is_true());
         assert!(!term.eval(b"(3,3),(2,2)", "public.t", 0).unwrap().is_true());
 
-        // A nested column is the other plan-less population and is silent:
-        // its `array_out` text is a faithful rendering of the value, and
-        // whether its elements are comparable is the inherited-comparability
-        // question P11's nested slice owns.
-        let mut nested = one_column("integer[]", DataType::Utf8View);
-        nested.plans[0] = NestedPlan::Array(Box::new(NestedPlan::Scalar));
-        assert_eq!(resolve_term(&p, 0, &nested, 0).unwrap().comparison_note(), None);
+        // A nested column the register does not compare is the other
+        // plan-less population and is silent: its `range_out` text is a
+        // faithful rendering of the value, so a byte comparison of two
+        // canonical spellings is the server's answer for everything but the
+        // canonicalization the register has not implemented.
+        let mut nested = one_column("int4range", DataType::Utf8View);
+        nested.plans[0] = NestedPlan::Range(Box::new(NestedPlan::Scalar));
+        assert_eq!(only_note(&resolve_term(&p, 0, &nested, 0).unwrap()), None);
+
+        // So is one whose shape compares here and whose element does not.
+        let mut inherited = one_column("json[]", DataType::Utf8View);
+        inherited.plans[0] = NestedPlan::Array(Box::new(NestedPlan::Scalar));
+        assert_eq!(only_note(&resolve_term(&p, 0, &inherited, 0).unwrap()), None);
 
         // So is a column no DDL explained — `--data-only`, or
         // `--schema-mode strings`, which resolves nothing by design. There is
@@ -3228,7 +3590,7 @@ mod tests {
         // already said so on L2.
         let mut undeclared = one_column("mystery", DataType::Utf8View);
         undeclared.columns[0] = ColumnResolution::NotDeclared;
-        assert_eq!(resolve_term(&p, 0, &undeclared, 0).unwrap().comparison_note(), None);
+        assert_eq!(only_note(&resolve_term(&p, 0, &undeclared, 0).unwrap()), None);
     }
 
     /// A column stating a collation the dump declares `deterministic = false`
@@ -3251,9 +3613,7 @@ mod tests {
         for op in [PredicateOp::Gt, PredicateOp::Eq, PredicateOp::Ne] {
             let p = order_predicate(op, "a");
             let resolved = schema(Some("public.icu_ci"), &collations);
-            let note = resolve_term(&p, 0, &resolved, 0)
-                .unwrap()
-                .comparison_note()
+            let note = only_note(&resolve_term(&p, 0, &resolved, 0).unwrap())
                 .unwrap_or_else(|| panic!("{op:?} announces"));
             assert_eq!(note.divergence, ComparisonDivergence::NonDeterministicCollation);
             assert!(note.message().contains("non-deterministic"), "{}", note.message());
@@ -3263,14 +3623,119 @@ mod tests {
         // named-collation divergence, which `=` does not see.
         let eq = order_predicate(PredicateOp::Eq, "a");
         let plain = schema(Some("public.icu_ci"), &[]);
-        assert_eq!(resolve_term(&eq, 0, &plain, 0).unwrap().comparison_note(), None);
+        assert_eq!(only_note(&resolve_term(&eq, 0, &plain, 0).unwrap()), None);
 
         // And the comparison itself has not moved: it is still `Text`, so the
         // term evaluates bytewise.
         let term = resolve_term(&eq, 0, &schema(Some("public.icu_ci"), &collations), 0).unwrap();
-        assert!(term.comparison_note().is_some());
+        assert!(only_note(&term).is_some());
         assert!(term.eval(b"a", "public.t", 0).unwrap().is_true());
         assert!(!term.eval(b"A", "public.t", 0).unwrap().is_true());
+    }
+
+    /// The three tie-breaks `array_cmp` reaches only when the elements
+    /// agree, in the order it reaches them: element count, then dimension
+    /// count, then the dimensions themselves, then the lower bounds (I45).
+    ///
+    /// **The dimension pair is the one no oracle case carries.**
+    /// `{{1,2,3,4}}` and `{{1,2},{3,4}}` hold the same four elements in the
+    /// same order, are both two-dimensional, and differ only in `dims` —
+    /// `[1,4]` against `[2,2]` — which is three steps into the tie-break.
+    #[test]
+    fn an_array_falls_back_to_its_shape_only_when_the_elements_agree() {
+        let types = test_types();
+        let lt = |field: &str, literal: &str| {
+            nested_verdict("integer[]", &types, PredicateOp::Lt, field, literal).unwrap()
+        };
+        // Elements first: `{1,9}` is above `{2,0}` nowhere, because element 0
+        // settles it before any count is looked at.
+        assert_eq!(lt("{1,9}", "{2,0}"), Truth::True);
+        // Element count, once the shorter array's elements agree.
+        assert_eq!(lt("{1,2}", "{1,2,3}"), Truth::True);
+        // Dimension count, at equal element counts.
+        assert_eq!(lt("{{1},{2}}", "{1,2}"), Truth::False);
+        // The dimensions, at equal element and dimension counts.
+        assert_eq!(lt("{{1,2,3,4}}", "{{1,2},{3,4}}"), Truth::True);
+        // The lower bounds, last of all.
+        assert_eq!(lt("[0:1]={1,2}", "{1,2}"), Truth::True);
+        // Two NULLs are equal and a NULL is above every value, at every
+        // level and under every operator.
+        assert_eq!(
+            nested_verdict("integer[]", &types, PredicateOp::Eq, "{NULL}", "{NULL}").unwrap(),
+            Truth::True
+        );
+        assert_eq!(lt("{NULL}", "{2147483647}"), Truth::False);
+    }
+
+    /// A zero-field composite is written `()`, and so is a one-field
+    /// composite holding NULL — the literal cannot tell them apart and the
+    /// declared field list decides (I23). The strict field decoder cannot ask
+    /// that question for itself, so the comparison asks it.
+    #[test]
+    fn a_zero_field_composite_compares_equal_to_itself() {
+        let types = [
+            TypeDef {
+                name: "public.empty_comp".into(),
+                kind: TypeKind::Composite { fields: Some(Vec::new()) },
+            },
+            TypeDef {
+                name: "public.one".into(),
+                kind: TypeKind::Composite { fields: Some(vec![ColumnDef::new("x", "integer")]) },
+            },
+        ];
+        assert_eq!(
+            nested_verdict("public.empty_comp", &types, PredicateOp::Eq, "()", "()").unwrap(),
+            Truth::True
+        );
+        assert_eq!(
+            nested_verdict("public.one", &types, PredicateOp::Eq, "()", "()").unwrap(),
+            Truth::True,
+            "one field, holding NULL, on both sides"
+        );
+        // A field count the composite does not declare is not a value of the
+        // type: `Error::FieldDecode` for a field, and the literal is refused
+        // at resolution.
+        assert!(matches!(
+            nested_verdict("public.one", &types, PredicateOp::Eq, "(1,2)", "(1)"),
+            Err(Error::FieldDecode { .. })
+        ));
+        assert!(matches!(
+            nested_verdict("public.one", &types, PredicateOp::Eq, "(1)", "(1,2)"),
+            Err(Error::PredicateValueDecode { .. })
+        ));
+    }
+
+    /// The literal side reads the container's `*_in` superset and each leaf
+    /// its own `*_out` form — one rule at every depth, and it is the rule a
+    /// scalar column already has.
+    ///
+    /// So `{ 1 , 2 }` is `{1,2}` (that is `array_in` dropping whitespace
+    /// around an element) while `( 1 ,a)` is refused (that is `record_in`
+    /// keeping it, and `1 ` not being what `int4out` writes).
+    #[test]
+    fn a_nested_literal_is_lenient_about_the_container_and_strict_about_the_leaf() {
+        let types = [TypeDef {
+            name: "public.point2d".into(),
+            kind: TypeKind::Composite {
+                fields: Some(vec![ColumnDef::new("x", "integer"), ColumnDef::new("y", "text")]),
+            },
+        }];
+        let ints = test_types();
+        for literal in ["{ 1 , 2 }", "{1,2}", "[1:2]={1,2}", "{1,\"2\"}"] {
+            assert_eq!(
+                nested_verdict("integer[]", &ints, PredicateOp::Eq, "{1,2}", literal).unwrap(),
+                Truth::True,
+                "{literal}"
+            );
+        }
+        assert_eq!(
+            nested_verdict("public.point2d", &types, PredicateOp::Eq, "(1,a)", "(1,a)").unwrap(),
+            Truth::True
+        );
+        let err = nested_verdict("public.point2d", &types, PredicateOp::Eq, "(1,a)", "( 1 ,a)")
+            .unwrap_err();
+        let Error::PredicateValueDecode { accepted, .. } = &err else { panic!("{err:?}") };
+        assert!(accepted.contains("its own type's output form"), "{accepted}");
     }
 
     /// The comparison register against the committed comparison oracle:
@@ -3340,27 +3805,27 @@ mod tests {
         ///
         /// It is asserted as an exact set, so a type that quietly stops
         /// comparing fails here rather than passing as one more skip.
-        const REFUSED: [&str; 20] = [
-            "integer[]",
-            "text[]",
-            "public.mood[]",
+        const REFUSED: [&str; 14] = [
+            // I26: an array whose element is itself an array. The column
+            // resolves to text, and the register agrees rather than claiming
+            // an order the resolver has already declined.
             "public.intarr[]",
-            "public.point2d",
-            "public.tagged",
-            "public.empty_comp",
+            // Every range and multirange: their bounds need the subtype's own
+            // canonicalization, which is not implemented here.
             "public.myrange",
             "public.myrange_multi",
             "public.textrange",
-            "public.box_domain",
-            "public.mybase",
-            "public.empty_enum",
-            "xml",
             "int4range",
             "int4multirange",
             "numrange",
             "daterange",
             "tsrange",
             "tstzrange",
+            // Scalars with no comparison in the register at all.
+            "public.box_domain",
+            "public.mybase",
+            "public.empty_enum",
+            "xml",
         ];
 
         /// The cases where this build's answer is knowingly not
@@ -3420,6 +3885,19 @@ mod tests {
         ///   and `_x` reaches every letter in the alphabet rather than only
         ///   `ax`.
         const EXCEPTIONS: &[(&str, &str, &str, &str)] = &[
+            // A `text[]` column inherits its element's collation boundary:
+            // the elements are ordered by `varstr_cmp` under the database's
+            // collation exactly as a `text` column's values are, one level
+            // down. `b` is below `B` under `en_US.utf8` and above it
+            // bytewise, and `NULL` is below `a` bytewise and above it under
+            // the locale — the same two disagreements the `text` rows below
+            // carry, reached through an element.
+            ("text[]", "\\N", "{a,b}", "{a,B}"),
+            ("text[]", "\\N", "{a,B}", "{a,b}"),
+            ("text[]", "\\N", "{\"NULL\"}", "{a,b}"),
+            ("text[]", "\\N", "{a,b}", "{\"NULL\"}"),
+            ("text[]", "\\N", "{\"NULL\"}", "{a,B}"),
+            ("text[]", "\\N", "{a,B}", "{\"NULL\"}"),
             // `box_eq` is an area comparison, not a value one.
             ("public.box_domain", "\\N", "(1,1),(0,0)", "(3,3),(2,2)"),
             ("public.box_domain", "\\N", "(3,3),(2,2)", "(1,1),(0,0)"),
@@ -3555,7 +4033,7 @@ mod tests {
                 Ok(term) => term,
                 Err(e) => return (Err(e.to_string()), false),
             };
-            let announced = term.comparison_note().is_some();
+            let announced = !term.comparison_notes().is_empty();
             let got = term.eval(&encode_field(field), "public.t", 0).map_err(|e| e.to_string());
             (got, announced)
         }
@@ -3607,7 +4085,7 @@ mod tests {
                     // A column the register has no comparison for is skipped
                     // for the four ordering operators, which it refuses, and
                     // still asserted for `=`/`<>`, which fall back to text.
-                    let ordered = matches!(plan, ComparisonPlan::Compared { .. });
+                    let ordered = plan.orders();
                     if !ordered {
                         refused.insert(declared.clone());
                     }
@@ -3734,8 +4212,8 @@ mod tests {
             );
             // A floor, not a count: the walk skips a cell for four good
             // reasons, and a bug in any of them would leave it asserting
-            // almost nothing while passing. 45,394 today.
-            assert!(asserted > 40_000, "only {asserted} cells asserted");
+            // almost nothing while passing. 47,746 today.
+            assert!(asserted > 45_000, "only {asserted} cells asserted");
         }
     }
 }

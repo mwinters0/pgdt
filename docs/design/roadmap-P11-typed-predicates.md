@@ -399,10 +399,15 @@ means nothing to the tool's actual users.
 A nested column gets `=`/`!=` **and** the four ordering operators, compared
 structurally rather than as text:
 
-- **Array** — dimension count, dimensions and **lower bounds** first, then
-  element-wise. `array_eq` memcmps `dims` and `lbs` before it looks at an
-  element, so `'[0:1]={1,2}'` and `'{1,2}'` are unequal and the `[lb:ub]=`
-  decoration is semantically load-bearing.
+- **Array** — **element-wise first**, up to the shorter array's length, and by
+  shape only when those agree: element count, then dimension count, then the
+  dimensions, then the **lower bounds**. That is `array_cmp`, which is the
+  function that defines the *order*; `array_eq` goes the other way round,
+  memcmping `dims` and `lbs` before it looks at an element, and the two agree
+  on equality. Either way `'[0:1]={1,2}'` and `'{1,2}'` are unequal and the
+  `[lb:ub]=` decoration is semantically load-bearing. Corrected from
+  shape-first after reading `array_cmp` (I45); reasoning in
+  [`../status/history/2026-09-02.md`](../status/history/2026-09-02.md).
 - **Composite** — field-wise in declaration order, which is also the order the
   dump writes them in, so `record_eq`'s positional rule costs nothing here.
 - **Range** — lower bound then upper, after canonicalizing the three discrete
@@ -830,7 +835,8 @@ here.
 | **11.13** | The two flags may not disagree | `--filter` runs its term through `where_expr`'s tokenizer and refuses anything that is not a single `Leaf`, so no string means one thing under `--filter` and another under `--where` — the refusal set defined by the tokenizer rather than restated beside it. Closes `KD11`. **Amended in, not planned** — see below. |
 | **11.9** | The nested literal input grammar | Parser for the `array_in`/`record_in`/`range_in` supersets — **three grammars, not one** — checked against the oracle's malformed cases. No comparison yet. |
 | **11.12** | The non-deterministic collation, observed | A `CREATE COLLATION` with `provider = icu` and `deterministic = false`, and one `t_collate` column of it, regenerated across six majors — so I42's claim that a plain dump *states* non-determinism rests on committed bytes rather than on `pg_dump.c` alone. **No oracle case**, which is what keeps the ICU exclusion above intact: the oracle builds its own temp tables per case, so the column obliges none, and the dump text holds no `collversion` to drift. Asserted in `tests/ordering.rs` beside the other collated columns, and the `fixture_schema_types.sql` comment rewritten to say which end ICU is now out of. No library code. **Earned, not planned** — see below. |
-| **11.10** | Nested structural comparison | Element-wise/field-wise/bound-wise, the NULL rule, inherited comparability, range canonicalization, paths in the notes. |
+| **11.10** | Nested structural comparison: array and composite | Element-wise and field-wise, the NULL rule, inherited comparability, paths in the notes. **Rewritten to the scope that landed** — see below. |
+| **11.10.1** | Nested structural comparison: range and multirange | Bound-wise, range canonicalization for the three discrete built-ins, and a multirange's sort-coalesce-drop. **Earned, not planned** — see below. |
 
 **11.13 was amended in, not planned.** The spec asserted that two flags over
 one leaf grammar avoided the widening hazard, and it was wrong about the half
@@ -1205,12 +1211,28 @@ note channel's rename is *for*: until `=` routes through the plan there is no
 equality divergence to report, and 11.6.2 then has a channel to report on
 rather than one to build.
 
-Five seams are deliberate. **11.3 stands alone** because a refactor whose
+**11.10 was mis-sized, and 11.10.1 was earned from it.** Its row named four
+container kinds as one increment, and two of them are a different piece of
+work: an array and a composite are a structural walk over parts whose
+comparisons the register already has, while a range and a multirange need
+machinery none of that shares — the subtype's successor function for the three
+discrete built-ins, `daterange_canonical`'s infinity exception, the
+out-of-order-bounds refusal that is `22000` rather than a grammar fault, and a
+multirange's sort-coalesce-drop. Landing the four together would have put a
+walk with an oracle case for every type beside a canonicalization with none, at
+one confidence. The seam is by container kind because each kind shipped is
+shipped whole: a range compared *without* its canonicalization would answer
+`[1,10]` ≠ `[1,11)` where the server calls them one value, which is the
+wrong-rows direction this phase exists to close. Reasoning:
+[`../status/history/2026-09-02.md`](../status/history/2026-09-02.md), "11.10
+splits by container kind".
+
+Six seams are deliberate. **11.3 stands alone** because a refactor whose
 review question is "did anything change?" cannot share a diff with one that
 changes answers. **11.4 is apart from 11.5** because arbitrary-precision
 decimal with three ordered specials is a different confidence from "`inet`
 compares by family then bits". **11.6.1 follows 11.5** so equality inherits every
 type's comparison at once rather than being revisited per type. **11.9
 precedes 11.10** because the input grammar is the part with an external oracle
-and the part most likely to be wrong. And **11.5.1 is apart from 11.5** for the
-reason above.
+and the part most likely to be wrong. **11.5.1 is apart from 11.5** for the
+reason above. And **11.10 is apart from 11.10.1** for the reason just given.

@@ -496,6 +496,78 @@ A range bound is never SQL NULL, which is what lets a null `lower` mean
 "unbounded" without ambiguity — and `empty` is not redundant with the two
 flags, since `empty` and `(,)` are different ranges and neither has bounds.
 
+#### Filtering one of these columns
+
+**An array or composite column is filtered structurally**, the way PostgreSQL
+compares two of them — not the way their text sorts. All six operators work,
+and the rules are the server's:
+
+- **Elements and fields decide first**, left to right, each by its *own* type's
+  comparison: an `integer[]` orders its elements numerically, a `mood[]` by the
+  enum's declaration order, a composite's `integer` field numerically and its
+  `text` field as text.
+- **A NULL element or field is above every value**, and two NULLs are equal.
+  This holds under `=` as well as `<`, so `--filter 'tags={NULL}'` matches a
+  row whose array is a single SQL NULL — there is no three-valued surprise
+  inside a container. Only the whole column being NULL makes a row unknown.
+- **An array falls back to its shape only when the elements agree**: first the
+  element count, then the dimension count, then the dimensions, then the lower
+  bounds. So `{}` is below `{1,2}`, and `{1,2}` is *above* `[0:1]={1,2}` — the
+  elements are equal and the lower bound settles it.
+
+**Write the literal the way you would write it in SQL.** The container grammar
+is PostgreSQL's input grammar, not its output one, so whitespace around an
+element and optional quoting are both fine:
+
+```sh
+--filter 'tags={a, b}'          # matches a column written {a,b}
+--filter 'tags={ a , "b" }'     # the same
+--where  "p='(1,a)'"            # a composite; the parens need quoting
+```
+
+**Each part is still written the way the dump writes it.** The leniency stops
+at the element: a composite keeps every byte between its parens — that is
+PostgreSQL's rule, not ours — so `( 1 , a )` is refused, where `{ 1 , 2 }` is
+not, because an array drops that whitespace and a composite does not.
+
+**A column diverges where its parts diverge, and the warning says where.** A
+`text[]` column is on the database's collation exactly as a `text` column is,
+one level down:
+
+```sh
+pgdq query --source dump.sql --table public.t --filter 'tags<{b}'
+# warning: `tags[]` (text) is compared bytewise: the column declares no COLLATE
+# clause, so its collation is the database's, which a plain dump does not
+# record — this matches the server only if that collation is C or POSIX
+```
+
+A composite with two such parts warns twice, once per position — `label` and
+`tags[]` in a `(label text, tags text[])`.
+
+**A part with no order at all refuses the whole column**, naming it, because
+the server refuses it too — `json` has no comparison in PostgreSQL, so a
+`json[]` column has none either:
+
+```
+$ pgdq query --source dump.sql --table public.t --filter 'docs<{}'
+Error: `<` on column `docs` in the COPY block at offset 1234: the column is
+nested and `[]` inside it is `json`, which has no order here — PostgreSQL
+refuses the same comparison, since a container is ordered by its element type's
+own comparison and this type has none; use `=` or `!=` for a text comparison
+```
+
+**Range and multirange columns are the exception, and it is temporary.** They
+still refuse `<`, `<=`, `>` and `>=`, and answer `=`/`!=` as an exact text
+match. PostgreSQL rewrites a discrete range's bounds on input — `int4range
+'[1,10]'` is stored and printed as `[1,11)` — and pgdq does not do that
+rewriting yet, so writing the bounds exactly as the dump prints them is what
+makes an equality match:
+
+```sh
+--filter "span='[1,11)'"     # matches; the file holds the canonical form
+--filter "span='[1,10]'"     # matches nothing, though the server calls them equal
+```
+
 #### Four ways one of these columns is still a string
 
 - **The array's element type is opaque.** `box[]`, an array of a C-level base

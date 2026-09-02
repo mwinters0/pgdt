@@ -49,6 +49,14 @@ async fn kept(table: &str, column: &str, filters: Vec<Predicate>) -> Vec<Option<
     drain(table, options).await.unwrap().into_iter().map(|r| r[0].clone()).collect()
 }
 
+/// The surviving rows' `id`s, for a filter over a column `render_field`
+/// cannot print at `NestedPlan::Scalar` — every nested one. What the
+/// assertion is about is which rows survived, so the projected column is the
+/// key rather than the compared value.
+async fn kept_ids(table: &str, filters: Vec<Predicate>) -> Vec<Option<String>> {
+    kept(table, "id", filters).await
+}
+
 /// A spread of the register's agreeing rows, each through its own decoder
 /// against the fixture's own values, and each a case a *text* comparison
 /// would get wrong: the negative integer and the negative decimal both sort
@@ -382,13 +390,17 @@ async fn an_ordering_term_is_one_term_of_the_conjunction() {
 }
 
 /// The refusal fires where `UnknownPredicateColumn` fires — when the block's
-/// schema resolves — so a nested column is refused before any row flows.
+/// schema resolves — so a column the register does not compare is refused
+/// before any row flows.
+///
+/// **The population is ranges and multiranges alone.** An array or composite
+/// column is compared structurally now; a range's bounds need the subtype's
+/// canonicalization first, so the register has no comparison for one.
 #[tokio::test]
-async fn a_nested_column_refuses_an_ordering_operator() {
+async fn a_range_column_refuses_an_ordering_operator() {
     for (table, column) in [
         ("public.t_range", "v_range"),
-        ("public.t_composite", "v_point"),
-        ("public.t_array", "v_with_null"),
+        ("public.t_user_range", "v_myrange"),
         ("public.t_multirange", "v_int4multirange"),
     ] {
         let err = drain(
@@ -406,6 +418,158 @@ async fn a_nested_column_refuses_an_ordering_operator() {
             "{table}.{column}: {err:?}"
         );
     }
+}
+
+/// An array orders **element-wise first, and by its shape only afterwards**
+/// (I45): the elements up to the shorter array's length, then the element
+/// count, then the dimension count, then the dimensions and lower bounds.
+///
+/// Each assertion is a case a bytewise comparison of the `array_out` text
+/// gets wrong. `t_array` row 1 holds `{}` and row 2 `{1,2,3}`: `{}` sorts
+/// below on element count where the *text* `{}` sorts above it (`}` is
+/// `0x7D`). Row 1's `{NULL}` outranks row 2's `{1,NULL,3}` because a NULL
+/// element is above every value, where the word `NULL` sorts among the
+/// letters. And an enum element is ordered by its declaration position, so
+/// row 1's leading `sad` is below `ok`.
+#[tokio::test]
+async fn an_array_orders_element_wise_then_by_shape() {
+    assert_eq!(
+        kept_ids("public.t_array", vec![term("v_empty", PredicateOp::Lt, "{1,2,3}")]).await,
+        [Some("1".to_string())],
+        "the shorter array is below when the elements it has agree"
+    );
+    assert_eq!(
+        kept_ids("public.t_array", vec![term("v_with_null", PredicateOp::Gt, "{1,NULL,3}")]).await,
+        [Some("1".to_string())],
+        "a NULL element sorts above every value"
+    );
+    assert_eq!(
+        kept_ids("public.t_array", vec![term("v_enum_array", PredicateOp::Lt, "{ok,ok}")]).await,
+        [Some("1".to_string())],
+        "an element is ordered by its own type's comparison — the enum's declaration order"
+    );
+    // A multi-dimensional array is one `Array` node whatever its
+    // dimensionality: `array_out` writes the shape into the literal and the
+    // elements are flattened row-major.
+    assert_eq!(
+        kept_ids(
+            "public.t_array_shape",
+            vec![term("v_multidim", PredicateOp::Lt, "{{5,6},{7,8}}")]
+        )
+        .await,
+        [Some("1".to_string())]
+    );
+}
+
+/// A composite orders field-wise in declaration order, with the same NULL
+/// rule one level down: `record_cmp` calls two NULLs equal and ranks a NULL
+/// above every value.
+///
+/// `t_composite.v_point` is `(x integer, y text)`, and its two non-NULL rows
+/// are `(1,"a,b""c")` (id 1) and `(,"")` (id 3). A text comparison puts `(,`
+/// *below* `(1,` because `,` is `0x2C`; the server puts it above, because the
+/// first field is NULL.
+#[tokio::test]
+async fn a_composite_orders_field_wise_with_null_above_every_value() {
+    assert_eq!(
+        kept_ids("public.t_composite", vec![term("v_point", PredicateOp::Gt, "(1,a)")]).await,
+        [Some("1".to_string()), Some("3".to_string())],
+    );
+    // The same walk one level further: an array of composites, where the
+    // element literal carries `record_out`'s quoting inside `array_out`'s.
+    // Row 1 leads with `(1,…)` and row 3 with a NULL element.
+    assert_eq!(
+        kept_ids("public.t_composite", vec![term("v_points", PredicateOp::Lt, "{NULL}")]).await,
+        [Some("1".to_string())],
+        "a leading non-NULL element is below a leading NULL one"
+    );
+}
+
+/// Equality on a nested column reads the **input** grammar for the literal
+/// and the strict output grammar for the field, so a spelling `array_in`
+/// accepts and `array_out` never writes still matches the row the server
+/// would match — where the byte comparison this column made before did not.
+#[tokio::test]
+async fn a_nested_equality_reads_the_input_grammar() {
+    for literal in ["{NULL,ok}", "{ null , ok }", "{NULL,\"ok\"}"] {
+        assert_eq!(
+            kept_ids("public.t_array", vec![term("v_enum_array", PredicateOp::Eq, literal)]).await,
+            [Some("2".to_string())],
+            "{literal}"
+        );
+    }
+    // A composite literal keeps every byte its fields were written with,
+    // which is `record_in`'s rule and not `array_in`'s — so the whitespace an
+    // array drops is part of the field here, and a leaf is read in its own
+    // type's output form and no wider.
+    let refused = drain(
+        "public.t_composite",
+        QueryOptions {
+            filter: Expr::all([term("v_point", PredicateOp::Eq, "( 1 , a )")]),
+            projection: Some(vec!["id".to_string()]),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        matches!(&refused, Error::PredicateValueDecode { column, .. } if column == "v_point"),
+        "{refused:?}"
+    );
+}
+
+/// A nested column inherits its positions' divergences, and announces **one
+/// note per position** — which is what makes the note carry a path at all.
+///
+/// `public.tagged` is `(label text, tags text[])` and both positions are on
+/// the database's own collation, one directly and one through an element; a
+/// note naming only the column would have said half of it.
+#[tokio::test]
+async fn a_nested_column_announces_each_diverging_position() {
+    let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
+    let mut stream = table_stream(
+        &source,
+        "public.t_composite",
+        ScanOptions::default(),
+        QueryOptions {
+            filter: Expr::all([term("v_tagged", PredicateOp::Ge, "(a,{})")]),
+            projection: Some(vec!["id".to_string()]),
+            ..Default::default()
+        },
+        None,
+        CacheMode::Disabled,
+    );
+    while stream.next().await.transpose().unwrap().is_some() {}
+    let notes = stream.comparison_notes();
+    assert_eq!(
+        notes
+            .iter()
+            .map(|n| (n.path.clone(), n.declared_type.clone(), n.divergence))
+            .collect::<Vec<_>>(),
+        [
+            (
+                Some(".label".to_string()),
+                "text".to_string(),
+                ComparisonDivergence::UnknownCollation
+            ),
+            (
+                Some(".tags[]".to_string()),
+                "text".to_string(),
+                ComparisonDivergence::UnknownCollation
+            ),
+        ],
+    );
+    assert!(notes[1].message().starts_with("`v_tagged.tags[]` (text)"), "{}", notes[1].message());
+
+    // An `integer[]` column agrees with the server outright: the element has
+    // no collation to be unsure about.
+    assert!(notes_for("public.t_array", "v_empty", "{}").await.is_empty());
+    // A `text[]` one diverges at its element, and the path says so.
+    assert_eq!(
+        notes_for("public.t_array", "v_text_special", "{}").await.len(),
+        1,
+        "one position, one note"
+    );
 }
 
 /// `SchemaMode::Strings` resolves no column, so every ordering operator is

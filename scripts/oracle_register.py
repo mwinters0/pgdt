@@ -484,7 +484,7 @@ def arm_for(
     the second direction's failure."""
     declared = declared.strip()
     if is_array(declared):
-        return "array", "an array shape, refused before anything else is asked"
+        return "array", "an array shape, answered before anything else is asked"
     base = split_typmod(declared)
     if "." in base:
         found = schema.get(base)

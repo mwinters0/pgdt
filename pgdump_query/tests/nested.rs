@@ -316,20 +316,24 @@ mod oracle {
     ];
 
     /// Accepted rows where this build's re-rendering is *not* the server's
-    /// output, as `(type, input)` — the canonicalization 11.10 owns, and
-    /// **met**: every entry differs in every major that carries the case, and
-    /// every difference is an entry.
+    /// output, as `(type, input)`, asserted as an exact set and **met**: every
+    /// entry differs in every major that carries the case, and every
+    /// difference is an entry.
     ///
     /// Two mechanisms, and neither is the container grammar:
     ///
     /// - **The element's own type canonicalizes.** `( 1 , a )` keeps both
     ///   fields' blanks (that is `record_in`), and then `int4in` throws the
-    ///   first field's away while `textin` keeps the second's. Putting the two
-    ///   sides of a comparison into one spelling is per element and needs the
-    ///   element type, which this module does not have.
+    ///   first field's away while `textin` keeps the second's. The comparison
+    ///   layer does not close this one and will not: a *leaf* is read in its
+    ///   own type's output form and no wider, so `" 1 "` is refused rather
+    ///   than trimmed (`docs/design/architecture.md`, "Nested columns compare
+    ///   structurally"). The round trip below is therefore the whole of what
+    ///   this entry describes.
     /// - **A discrete range canonicalizes its bounds.** `int4range`'s
     ///   `[1,10]` is `[1,11)` on the server, through the subtype's successor
     ///   function; `numrange` has none and is absent here for that reason.
+    ///   That is the piece a range column's comparison is still waiting on.
     const CANONICALIZED: &[(&str, &str)] = &[
         ("public.point2d", "( 1 , a )"),
         ("int4range", "[1,10]"),
