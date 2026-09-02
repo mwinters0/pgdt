@@ -786,7 +786,8 @@ under "Four decisions that keep later phases additive" above.
 
 Small work that belongs to no phase: a CLI ergonomics change, a defect fix
 that changes no decision. It gets a number `M<k>` and **one terse ledger line**
-— date, what changed, and the history entry that says why — in a table below
+— date, what changed, whether it blocks the open phase, and the history entry
+that says why — in a table below
 the watermark, started again the first time an item lands after a keystone.
 Nothing else: no spec (there was no intent doc to write), and no notes doc,
 because the history entry *is* the notes. If out-of-band work turns up a fact
@@ -797,6 +798,16 @@ later takes its `M<k>` and its row when it is admitted, with the Date column
 empty until it lands — so a queued item can be cited by number, and so this
 table stays the authority on which numbers are spent. Row order is allocation
 order, which is why a queued row may sit above one that landed before it.
+
+**The admitting session sets the Blocks column, because only it knows.** An
+item admitted while a phase is open is either in the way of that phase's
+remaining slices or it is not, and the session that just finished grilling the
+decision can say which; a session picking the row up weeks later cannot, and
+guesses. `Blocks` names the phase (`P12`) when the phase's remaining slices
+should not be landed around it, and is empty otherwise. It is read by the
+unattended loop — [`.claude/skills/go/SKILL.md`](../../.claude/skills/go/SKILL.md)
+takes a blocking row ahead of the next unticked slice — and cleared when the
+item lands, at the same time the Date is filled in.
 
 **Admission rule.** An item is out-of-band only if it changes no decision any
 spec records **and** fits one session. Anything that changes a decision goes
@@ -826,6 +837,10 @@ amendment → a numbered slice rather than through this section. It is filed in
 the scan-performance phase's inbox
 ([`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md))
 until then.
+
+| # | Date | Blocks | What changed | Why |
+|---|---|---|---|---|
+| `M43` | 2026-09-02 | | the unattended loop can carry a whole phase: `/gogm` runs `gosub` with a new entry under "Decisions worth another look" as a transition rather than a stop, `/gm` stands in for the maintainer by adjudicating each `/dwal` recommendation against the written record — agreeing only on a citation, escalating anything that binds beyond the open phase — and records the exchange verbatim outside the repo; `/go` reads this ledger as a work queue, taking a row whose `Blocks` names the open phase ahead of the next unticked slice | [`../status/history/2026-09-02.md`](../status/history/2026-09-02.md) |
 
 ## Future — wanted, unscheduled
 

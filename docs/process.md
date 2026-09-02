@@ -533,7 +533,8 @@ unrelated work is appended to it, and between phases there is nothing to
 append to at all.
 
 So the roadmap carries a standing **out-of-band ledger**: an item gets a
-number (`M1`, `M2`, …) and **one terse line** — date, what changed, and a
+number (`M1`, `M2`, …) and **one terse line** — date, what changed, whether it
+blocks the open phase, and a
 pointer to the dated history entry that says why. No spec, because there was
 no intent doc; **no notes doc, because the history entry is the notes.** That
 last part is only sound because out-of-band work is by definition not
@@ -549,6 +550,17 @@ the ledger stops being the allocation authority, so the next session reads the
 last row and reissues a number already spoken for. The row is what records the
 allocation, which is why it goes in early rather than the number being held
 somewhere else.
+
+**Whether an item blocks is the admitting session's to say.** An item admitted
+mid-phase either stands in the way of that phase's remaining slices or it does
+not, and the session that just decided to admit it is the only one that knows;
+a session picking the row up later has the description and nothing else, and
+guesses. So the row carries a `Blocks` column naming the phase, empty when the
+phase can be built around it, cleared when the item lands. It exists because
+work admitted this way is often *found by* grilling a decision the phase
+depends on — the ledger is not only a place to defer things to, it is where the
+phase's own blockers arrive — and an unattended session picking up the next
+piece of work has to read it as a work queue rather than as an archive.
 
 **The admission rule is the load-bearing half.** An item is out-of-band only
 if it changes no decision any spec records *and* fits one session. Anything
@@ -948,6 +960,27 @@ the maintainer's answer files the reasoning and deletes the entry, per
 backlog there has found a filing failure, not a housekeeping chore — every
 entry in it was answered months earlier and kept because answering left no
 trace.
+
+**An answer may come from a stand-in rather than the maintainer.** Where the
+loop runs a whole phase unattended, the entries are still grilled by a fresh
+session and still closed by the session that hears the answer — what changes is
+who answers, and on what authority. A stand-in may agree only where the
+recommendation **follows from something already written**: a standing rule, a
+rejected-alternative paragraph, an invariant, this document, or a precedent an
+earlier slice set. It escalates whenever the call would bind beyond the open
+phase — a standing rule, an invariant, a `KD<k>` re-targeted onto a phase
+nobody has grilled, a spec rationale reversed — because inside the phase the
+work sits under a spec the maintainer approved and will read at its keystone,
+and outside it there is no such approval to sit under.
+
+Two things make that acceptable rather than a hole. The exchange is **recorded
+verbatim** for the maintainer to read afterwards, so the review is deferred
+rather than skipped. And the recording is redundant: every closure still files
+its reasoning beside the mechanism before the entry is deleted, so the record
+of *the decision* is in the tree exactly as it always was, and the transcript
+carries only the account of who settled it and why they were entitled to. A
+rationale that exists only in a transcript is an incomplete closure, not a new
+kind of doc.
 
 ## CLAUDE.md vs. CLAUDE.local.md vs. docs
 

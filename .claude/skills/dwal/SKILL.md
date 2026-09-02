@@ -7,6 +7,13 @@ The maintainer is here, and is answering the calls that unattended sessions
 made without them — which is what `docs/status/STATUS.md`'s **"Decisions worth
 another look"** exists to collect. This skill spends it.
 
+**Sometimes the maintainer is a stand-in.** Under `/gm` the answers come from
+an agent adjudicating each recommendation against the project's written record,
+and the whole exchange is recorded for the maintainer to read afterwards.
+Nothing below changes for that — the procedure, the depth and the format are
+the same either way, and the one paragraph that differs is "Driven by `/gm`" at
+the end. Write every round as if a person will read it, because one will.
+
 **The rules for that section are `docs/process.md`'s, and this skill does not
 restate them.** They govern what an entry is, what closing one means, and the
 cap — and step 4 puts them in context in full, before the first edit. What
@@ -83,6 +90,13 @@ states both sides of it, and `CLAUDE.md` restates the test. Where it comes out
 out-of-band, the number goes after the ledger's watermark, the Date column
 stays empty until it lands, and the row points at today's history entry.
 
+**Set the Blocks column as you file the row.** A row admitted while a phase is
+open either stands in the way of that phase's remaining slices or it does not,
+and you have just grilled the thing — you are the only session that will know.
+Naming the phase there is what puts the item ahead of the next unticked slice
+when an unattended session picks the work up; leaving it empty says the phase
+can be built around it.
+
 Do not implement it here. This skill settles decisions and files them; a fresh
 session with a clean context builds. Say plainly what was admitted and what
 should pick it up.
@@ -111,6 +125,28 @@ changes, commit only the closure's files and say what you left. And a round
 that ends **without** an empty frontier commits nothing: leave it in the tree,
 say which entries are still open and what they are waiting on, so the next
 session sees what you saw.
+
+## Driven by `/gm`
+
+When `/gm` dispatched you, three things differ and nothing else does.
+
+**End your turn after each round, and report the round verbatim** — the
+context you established, the numbered questions, and your recommended answers,
+in the format the `grilling` skill sets out. The answers come back as a
+message. Do not compress a round because its reader is an agent: the context
+before the questions is the most-read part of the whole exchange, and it is
+being recorded.
+
+**Do not commit.** `/gm` verifies the tree independently and commits the round,
+for the reason `gosub` gives — a report is a claim, not evidence. Step 6's
+frontier condition still governs *whether* there is anything to commit; you
+simply are not the one who does it.
+
+**An answer may come back as an escalation**, meaning the stand-in will not
+settle that question and the maintainer must. Stop there. Leave the tree
+exactly as it is, including the closures you have already written, and report
+what is open — step 6's rule that a round with a non-empty frontier commits
+nothing is what makes that state readable rather than half-filed.
 
 ## What this skill is not
 

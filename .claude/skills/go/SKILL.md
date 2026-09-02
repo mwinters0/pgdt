@@ -15,13 +15,38 @@ question, review an approach, or unblock you. Work accordingly.
    gaps", and "Decisions worth another look".
 3. Read the current phase spec and the notes docs of the slices already
    landed in this phase.
+4. Read `docs/design/roadmap.md`'s **"Out-of-band work"** ledger, for the rows
+   whose Date is empty.
 
 ## Pick the work
 
-**The next unticked slice in the STATUS checklist, in order.** Not the most
-interesting one, not a refactor you noticed on the way, not several at once.
-If the next slice is already partly landed, its checklist entry says what
+**A blocking out-of-band row comes first; otherwise the next unticked slice.**
+
+An out-of-band row blocks when its Date is empty and its Blocks column names
+the open phase. Those exist because grilling a decision turns up a defect or a
+clarification that changes no decision — so it lands out-of-band — and the
+phase's remaining slices should not be built around it. Take the lowest such
+`M<k>`. If several block, they are all in the way; take them in ledger order,
+one to a round.
+
+Otherwise: **the next unticked slice in the STATUS checklist, in order.** Not
+the most interesting one, not a refactor you noticed on the way, not several at
+once. If the next slice is already partly landed, its checklist entry says what
 remains — finish that, not something else.
+
+**Re-test an out-of-band row before building it, and stop if it fails.** The
+ledger's admission rule is that an item changes no decision any spec records
+*and* fits one session. The admitting session applied that test to a
+description; you are the first to see the work itself. If it turns out to
+change a decision, or not to fit, it was misfiled: leave the row alone, write
+what you found under "Decisions worth another look", and stop. Do not widen it
+into a slice on your own — that is the review the admission rule exists to
+force.
+
+An out-of-band round finishes differently from a slice: no notes doc and no
+spec row, because the ledger line points at a history entry and that entry *is*
+the notes. Fill the row's Date in, clear its Blocks column, and write the
+history entry that says why.
 
 If the next slice looks mis-sized once you are inside it — a self-contained
 piece plus a rework of something already tested — that is the seam. Split it
@@ -40,7 +65,8 @@ because they were written on one line of a table.
   another look"** — not into silence, and not into a question nobody is here
   to answer. Proceeding and flagging is the intended third option.
 - **Tick a box only when the whole spec row is delivered.** Anything else
-  leaves the box empty with an honest entry beside it.
+  leaves the box empty with an honest entry beside it. An out-of-band round
+  ticks nothing: its ledger row's Date is the equivalent.
 - **No `git commit`.** Leave the work in the tree for review.
 - **Long-running jobs follow `CLAUDE.md`'s protocol**: detached, logging to
   `runs/`, never waited on, with the log path recorded for a later session.

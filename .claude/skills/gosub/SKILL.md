@@ -39,6 +39,10 @@ you spend reading code is context the loop cannot spend on rounds.
   finish — stop.
 - The current text of STATUS's **"Decisions worth another look"** section.
 - The unticked slice boxes in the active phase's checklist, in order.
+- The rows in `docs/design/roadmap.md`'s **"Out-of-band work"** ledger whose
+  Date is empty, and which of them name the open phase in `Blocks`. A blocking
+  row is what the round will pick up ahead of the next slice, so it is part of
+  knowing what the round was supposed to do.
 
 **2. Dispatch a fresh subagent.** The prompt is short, because the `go` skill
 carries the real instructions:
@@ -50,7 +54,8 @@ carries the real instructions:
 > minutes, read `.claude/skills/gosub/handoff.md` before you launch it and
 > follow it instead of finishing the slice.
 >
-> When you are done, report: the slice number and title; whether you ticked
+> When you are done, report: the slice number and title, or the `M<k>` if you
+> took a blocking out-of-band row instead; whether you ticked
 > its box, and if not, what remains; whether you added any entries to STATUS's
 > "Decisions worth another look", quoted in full; whether you split the slice
 > and earned a new `<N>.<M>.<K>`; the verbatim result lines from `cargo test
@@ -75,6 +80,19 @@ slice:
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ```
 
+**An out-of-band round is clean on a different signal and commits in a
+different shape.** It ticks no box — its ledger row's Date is what fills in —
+so read the row rather than the checklist, and check the Blocks column was
+cleared and the history entry it points at exists:
+
+```
+<M<k>> <what changed>
+
+<one or two sentences: what changed, and the history entry that says why>
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+```
+
 Commit even when a stop condition has fired for some *other* reason — verified
 work belongs in history, and one commit per slice is what makes it reviewable.
 The one exception: **never commit a round that failed verification or left its
@@ -92,7 +110,8 @@ Any one of these ends the loop. Report it plainly; do not work around it.
   entry is the subagent asking for review — continuing past it would stack
   more work on an unreviewed judgement.
 - **The slice's box is still unticked**, including when the subagent split it
-  and left an earned `<N>.<M>.<K>` behind. A split is a re-plan, and the next
+  and left an earned `<N>.<M>.<K>` behind — or, for an out-of-band round, the
+  ledger row's Date is still empty. A split is a re-plan, and the next
   slice may no longer be the right one. The one exception is a round that
   handed off a long job: its box is unticked *by design*, and the follow-up
   subagent in step 5 is what ticks it.
@@ -105,6 +124,15 @@ Any one of these ends the loop. Report it plainly; do not work around it.
 - **The round cap is reached.**
 - **The subagent reports it stopped at a boundary** or says it needs the
   maintainer, however it phrases it.
+
+## What `/gogm` overrides
+
+`/gogm` runs this skill unchanged and overrides exactly two of the stop
+conditions above, so that the loop can carry a whole phase without the
+maintainer. The overrides are stated in `.claude/skills/gogm/SKILL.md` and
+nowhere else; everything on this page — the round, the independent
+verification, the commit, the long-job protocol and every other stop — is what
+both loops run. Nothing here needs to know which one invoked it.
 
 ## A round that launches a long job
 
