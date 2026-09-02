@@ -75,35 +75,3 @@ rest.
 table is the register. **Contingent on** the register's divergent rows, which
 P11 went on to close one type at a time after this was filed — read the table
 rather than trusting any list of them written here.
-
----
-
-## A per-column census would decide `interval`'s Arrow type, and a statistics pass gets that answer for nothing
-
-**Fact.** `interval` is a `Utf8View` because two values a dump can legally hold
-have no `Interval(MonthDayNano)`: v17's `infinity`/`-infinity` (I34), and any
-interval whose time part exceeds `2562047:47:16.854775807`, PostgreSQL storing
-microseconds in the `int64` where Arrow stores nanoseconds (I40). Neither is a
-format limit — `pg_dump` pins `INTERVALSTYLE = POSTGRES` (I4), so the text is
-fully determined and parses. Whether a *given* column contains either is a
-question about its values, not its declaration, and for most columns the answer
-is no. The ADBC driver maps the type unconditionally and fails the batch with
-`EINVAL` when it meets one, infinity included.
-
-**Why P10 cares.** A pass that reads every value of a column to summarize it
-already computes what this needs: "is every value finite and under the
-ceiling". Taken there it is free; taken on its own it costs a scan that buys
-one type. It also makes the Arrow type data-dependent, which this project
-already accepts for the array-shape census — `List<T>` against `List<List<T>>`
-is no smaller a difference than `Utf8View` against `Interval(MonthDayNano)` —
-so the precedent for the mechanism and the precedent for the objection are the
-same one. P10's grilling should decide whether column typing is in its scope at
-all, or whether it only publishes the statistic and something else reads it.
-
-**Origin.** The P11 text-held-type review, 2026-09-01. See
-[`architecture.md`](architecture.md), "The bar: the dump alone determines the
-value", whose rejected-alternative paragraphs carry the reasoning, and
-[`../status/history/2026-09-01.md`](../status/history/2026-09-01.md).
-**Contingent on** nothing changing about `Interval(MonthDayNano)`: if Arrow
-gains a wider interval or an infinity encoding, the deficiency this works
-around is gone and the census is unnecessary.

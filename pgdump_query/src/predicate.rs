@@ -987,115 +987,20 @@ fn special_order_key(kind: &CompareKind, text: &str) -> Option<OrderKey> {
     }
 }
 
-/// A signed count of `year`/`mon`/`day` units out of an `interval`'s text.
-/// The leading `+` is `AddPostgresIntPart`'s, written on a positive part that
-/// follows a negative one (I40); everything else is digits.
-fn interval_count(text: &str) -> Option<i64> {
-    let digits = text.strip_prefix(['+', '-']).unwrap_or(text);
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    let magnitude: i64 = digits.parse().ok()?;
-    Some(if text.starts_with('-') { -magnitude } else { magnitude })
-}
-
-/// The `[+|-]HH:MM:SS[.ffffff]` tail of an `interval`, in microseconds.
-/// `EncodeInterval` writes one sign for the whole time part — `minus` is set
-/// if any of hours, minutes, seconds or the fraction is negative, and the
-/// three fields are then printed as absolute values — so the sign is applied
-/// to the total rather than per field (I40).
-///
-/// The hour field is unbounded, so this is not `decode_time64_micros`:
-/// `720:00:00` is an ordinary `interval` and not a `time`. Every field is
-/// checked to be digits, which is what keeps `04:-5:06` — a string no
-/// `interval_out` writes and no `interval_in` accepts — from parsing as a
-/// negative minute count.
-fn interval_time_micros(text: &str) -> Option<i128> {
-    let (negative, rest) = match text.strip_prefix(['+', '-']) {
-        Some(rest) => (text.starts_with('-'), rest),
-        None => (false, text),
-    };
-    let (hms, frac) = rest.split_once('.').unwrap_or((rest, ""));
-    let mut parts = hms.split(':');
-    let mut field = |max_len: Option<usize>| -> Option<i128> {
-        let digits = parts.next()?;
-        if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-            return None;
-        }
-        if max_len.is_some_and(|n| digits.len() != n) {
-            return None;
-        }
-        digits.parse::<i128>().ok()
-    };
-    let hours = field(None)?;
-    let minutes = field(Some(2))?;
-    let seconds = field(Some(2))?;
-    if parts.next().is_some() {
-        return None;
-    }
-    if frac.is_empty() && text.contains('.') {
-        return None;
-    }
-    if frac.len() > 6 || !frac.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    let micros: i128 = if frac.is_empty() {
-        0
-    } else {
-        let mut padded = frac.to_string();
-        padded.push_str(&"0".repeat(6 - padded.len()));
-        padded.parse().ok()?
-    };
-    let total = hours
-        .checked_mul(3600)?
-        .checked_add(minutes * 60 + seconds)?
-        .checked_mul(1_000_000)?
-        .checked_add(micros)?;
-    Some(if negative { -total } else { total })
-}
-
 /// `interval_cmp_value`'s span, in microseconds: months collapse to 30 days,
 /// days to 86400 seconds, and the time field is added on (I40). The whole
 /// point of the collapse is that `1 mon`, `30 days` and `720:00:00` are one
 /// value written three ways, which is why an `interval` is one of the two
 /// kinds equality cannot canonicalize once and compare bytewise.
 ///
-/// **The grammar is `interval_out`'s under `IntervalStyle = postgres`,
-/// exactly**, which `pg_dump` pins on its own connection (I4): an optional
-/// `<n> year[s]`, `<n> mon[s]` and `<n> day[s]`, then an optional signed time
-/// part, separated by single spaces, with a wholly-zero interval written
-/// `00:00:00`. Nothing broader is accepted — `1 hour`, `1.5 hours`, `P1Y2M`
-/// and `1 month` are all spellings `interval_in` takes and `interval_out`
-/// never writes, so a filter using one is `Error::PredicateValueDecode`
-/// rather than a comparison meaning something else. That is the refusal
-/// `CompareKind::UnsignedInt` makes for `oid`, on a wider grammar.
+/// The walk over the text is [`decode::interval_parts`], shared with the
+/// decoder — one reading of `interval_out`'s grammar (I40), which is what
+/// keeps a literal this refuses and a field the decoder refuses the same set.
+/// **The fusing is this function's alone**: it is what makes three unequal
+/// triples one value, so a decoder that did it would lose the fields Arrow
+/// carries separately.
 fn interval_span(text: &str) -> Option<i128> {
-    let tokens: Vec<&str> = text.split(' ').collect();
-    let (mut months, mut days) = (0i64, 0i64);
-    let mut time = 0i128;
-    let mut at = 0;
-    while at < tokens.len() {
-        let count = || interval_count(tokens[at]);
-        match tokens.get(at + 1).copied() {
-            Some("year" | "years") => months = months.checked_add(count()?.checked_mul(12)?)?,
-            Some("mon" | "mons") => months = months.checked_add(count()?)?,
-            Some("day" | "days") => days = days.checked_add(count()?)?,
-            // Not a counted part, so this token is the time tail — which is
-            // last, and of which there is at most one.
-            _ => {
-                if at + 1 != tokens.len() {
-                    return None;
-                }
-                time = interval_time_micros(tokens[at])?;
-                at += 1;
-                break;
-            }
-        }
-        at += 2;
-    }
-    if at != tokens.len() {
-        return None;
-    }
+    let (months, days, time) = decode::interval_parts(text)?;
     let whole_days = i128::from(months.checked_mul(30)?.checked_add(days)?);
     whole_days.checked_mul(86_400_000_000)?.checked_add(time)
 }
@@ -2610,7 +2515,7 @@ impl ResolvedExpr {
 mod tests {
     use std::sync::Arc;
 
-    use arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+    use arrow::datatypes::{DataType, Field, IntervalUnit, Schema, TimeUnit};
 
     use super::*;
     use crate::pgtype::comparison_for;
@@ -3328,10 +3233,9 @@ mod tests {
         assert!(other.message().contains("no comparison"), "{}", other.message());
 
         // Types that share `Utf8View` with the rows above and say nothing:
-        // a bare `numeric`, an enum, and the four the text-held row lost.
+        // a bare `numeric`, an enum, and the three the text-held row lost.
         assert_eq!(note("numeric", DataType::Utf8View, "10"), None);
         for (declared, literal) in [
-            ("interval", "1 day"),
             ("time with time zone", "00:00:00+00"),
             ("inet", "10.0.0.1"),
             ("macaddr", "08:00:2b:01:02:03"),
@@ -3601,7 +3505,8 @@ mod tests {
     #[test]
     fn an_interval_orders_by_its_collapsed_span() {
         let holds = |field, op, literal| {
-            ordered("interval", DataType::Utf8View, op, literal, field).unwrap()
+            ordered("interval", DataType::Interval(IntervalUnit::MonthDayNano), op, literal, field)
+                .unwrap()
         };
         for spelling in ["30 days", "720:00:00"] {
             assert!(holds(spelling, PredicateOp::Ge, "1 mon"), "{spelling}");
@@ -3624,8 +3529,14 @@ mod tests {
         assert!(holds("-infinity", PredicateOp::Lt, "1 mon"));
         assert!(holds("infinity", PredicateOp::Ge, "infinity"));
         assert!(matches!(
-            ordered("interval", DataType::Utf8View, PredicateOp::Gt, "Infinity", "1 mon")
-                .unwrap_err(),
+            ordered(
+                "interval",
+                DataType::Interval(IntervalUnit::MonthDayNano),
+                PredicateOp::Gt,
+                "Infinity",
+                "1 mon"
+            )
+            .unwrap_err(),
             Error::PredicateValueDecode { .. }
         ));
     }
@@ -3638,8 +3549,14 @@ mod tests {
     #[test]
     fn an_interval_literal_outside_the_output_grammar_is_refused() {
         for literal in ["1.5 hours", "P1Y2M", "1 century", "1 month", "@ 1 day", "", "1 day "] {
-            let err = ordered("interval", DataType::Utf8View, PredicateOp::Gt, literal, "1 mon")
-                .unwrap_err();
+            let err = ordered(
+                "interval",
+                DataType::Interval(IntervalUnit::MonthDayNano),
+                PredicateOp::Gt,
+                literal,
+                "1 mon",
+            )
+            .unwrap_err();
             assert!(matches!(err, Error::PredicateValueDecode { .. }), "{literal:?}: {err:?}");
         }
     }
@@ -3909,7 +3826,7 @@ mod tests {
             ("bytea", DataType::Binary, "abc"),
             ("public.mood", DataType::Utf8View, "furious"),
             ("numeric(10,2)", DataType::Decimal128(10, 2), "1.005"),
-            ("interval", DataType::Utf8View, "1 month"),
+            ("interval", DataType::Interval(IntervalUnit::MonthDayNano), "1 month"),
         ] {
             let p = order_predicate(PredicateOp::Eq, literal);
             assert!(
@@ -3930,7 +3847,12 @@ mod tests {
     fn a_refused_literal_names_the_form_the_column_accepts() {
         for (declared, data_type, literal, accepted) in [
             ("boolean", DataType::Boolean, "true", "`t` or `f`"),
-            ("interval", DataType::Utf8View, "1 month", "the way `interval` prints it"),
+            (
+                "interval",
+                DataType::Interval(IntervalUnit::MonthDayNano),
+                "1 month",
+                "the way `interval` prints it",
+            ),
             ("inet", DataType::Utf8View, "10", "a full IPv4 or IPv6 address"),
             ("macaddr", DataType::Utf8View, "08-00-2b-01-02-03", "six colon-separated hex pairs"),
             // The two arms where the kind's own payload is the answer: the

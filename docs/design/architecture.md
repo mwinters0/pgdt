@@ -1056,7 +1056,7 @@ for).
 **The four container families resolve through this same function,
 recursively**, so nesting composes with no special case: `public.comp[]` is
 `List<Struct<…>>`, a composite with a `text[]` field is
-`Struct<…, List<Utf8View>>`. A leaf whose own type does not map — `interval`,
+`Struct<…, List<Utf8View>>`. A leaf whose own type does not map — `inet`,
 an opaque base type, an unknown — is `Utf8View` **in that position**, exactly
 as it would be at top level, so the recursion introduces no failure mode of
 its own. The walk needs no cycle guard and no depth limit for the same reason
@@ -1094,7 +1094,7 @@ almost every column in a real 75-table schema.
 | `timestamp with time zone` | `Timestamp(Microsecond, Some("UTC"))` | Offset explicit in the data and normalized to UTC (I4) |
 | `time without time zone` | `Time64(Microsecond)` | |
 | `time with time zone` | `Utf8View` | Offset semantics map to no Arrow type |
-| `interval` | `Utf8View` | Two values a dump can hold have no `Interval(MonthDayNano)`: v17's `infinity`/`-infinity` (I34), and any interval whose time part exceeds `2562047:47:16.854775807` — PostgreSQL's field is `int64` *microseconds* against Arrow's `int64` nanoseconds, and nothing normalizes hours into days (I40). Neither is a format limit: `pg_dump` pins `INTERVALSTYLE = POSTGRES` (I4), so the text is determined. See below |
+| `interval` | `Interval(MonthDayNano)` | Months, days and a time part, independent, which is PostgreSQL's own `Interval` struct. Two value classes have no encoding and are a `FieldDecode`: v17's `infinity`/`-infinity` (I34), and any interval whose time part exceeds `2562047:47:16.854775807` — PostgreSQL's field is `int64` *microseconds* against Arrow's `int64` nanoseconds, and nothing normalizes hours into days (I40). See below |
 | `uuid` | `FixedSizeBinary(16)` | Canonical 36-char form |
 | `bytea` | `Binary` | `\x48656c6c6f` after COPY unescaping |
 | `json`, `jsonb` | `Utf8View` | Arrow has no JSON type |
@@ -1135,38 +1135,48 @@ is not a UUID. A column the census took back to `Utf8View` holds an
 claims nothing either. None of this is load-bearing for decoding — the name is
 a claim *about* the bytes, never an input to producing them.
 
-***`interval` is `Utf8View` because two of its values have no Arrow encoding,
-and the deciding evidence is per column rather than per type.*** Arrow's
-`Interval(MonthDayNano)` carries months, days and a time part as three
-independent fields, which is exactly PostgreSQL's `Interval`, so the shape
-matches. The value space does not: an infinite interval sets every field
-extremal, and the time part is microseconds against Arrow's nanoseconds, a
-thousandth of the range, reachable by an ordinary unnormalized value like
-`interval '100000000 hours'`. The ADBC driver takes the mapping anyway and
-pays with `EINVAL` on the whole batch — its reader guards the multiply against
-`kMaxSafeMicrosToNanos` and errors, and because an infinite interval's time
-field is `INT64_MAX` it errors there too, by a message about nanosecond
-overflow rather than about infinity.
+***`interval` maps to the struct, and the two values that do not fit are a
+`FieldDecode`.*** Arrow's `Interval(MonthDayNano)` carries months, days and a
+time part as three independent fields, which is exactly PostgreSQL's
+`Interval`, so the mapping is the struct rather than a reading of it. Two value
+classes have no encoding in it and decode as failures, the way `Date32`'s
+missing infinity and `Decimal128`'s missing `NaN` already do: an infinite
+interval (v17, I34), which sets every field of PostgreSQL's struct extremal;
+and a time part past `2562047:47:16.854775807`, where PostgreSQL's `int64`
+*microseconds* run out of Arrow's `int64` nanoseconds — a thousandth of the
+range, and reachable by an ordinary unnormalized value like `interval
+'100000000 hours'`, since nothing normalizes hours into days (I40).
+`--schema-mode strings` is the recourse, as it is for the other two.
 
-*Rejected: mapping it and making the two a `FieldDecode`, as `numeric(p,s)`
-does for `NaN`.* It would behave better than the reference implementation, one
-value lost rather than a batch. But a typmod is a promise the DDL makes about
-the range, which is what makes the `Decimal128` row's residue rare by
-construction; `interval` has no typmod, so nothing bounds how often the
-fallback fires, and that is the same argument that puts bare `numeric` in this
-column.
+Nothing about the *text* is in question: `pg_dump` pins
+`INTERVALSTYLE = POSTGRES` on its own connection (I4), so `interval_out`'s
+grammar is determined, and `decode.rs`'s `interval_parts` is one reading of it
+shared by the decoder and by the ordering's fused span — which is what keeps a
+field the decoder refuses and a literal the filter refuses the same set.
+`render_interval` is `EncodeInterval`'s inverse, sign rules included.
 
-**What would settle it is a census, and the statistics work is where one gets
-taken.** Whether a *given* column needs the escape hatch is answerable from its
-values — decode to `Interval(MonthDayNano)` where every value is finite and
-under the ceiling, and keep the column in text where one is not. That is the
-array-shape census's own shape, and it makes the Arrow type data-dependent in
-exactly the way that census already does, `List<T>` against `List<List<T>>`
-being no smaller a difference. It is filed at
-[`roadmap-P10-row-group-statistics-inbox.md`](roadmap-P10-row-group-statistics-inbox.md)
-rather than built here, because a pass that already reads every value to
-summarize it gets the answer for nothing, and one taken for this alone does
-not.
+*Rejected: keeping it `Utf8View`, on the grounds that the two value classes are
+unbounded where `numeric(p,s)`'s `NaN` is rare by construction.* A typmod is a
+promise the DDL makes about the range and `interval` has no typmod, so nothing
+bounds how often the fallback would fire — which is a real asymmetry and is not
+what decides it. What decides it is that the floor is a claim about what a user
+could otherwise get: the ADBC driver returns `month_day_nano_interval` for this
+type, so text is below the floor with no stance available for it, and the two
+lost classes are the shape the register already carries for `date`,
+`timestamp` and `numeric(p,s)` rather than a new kind of cost. The driver pays
+for the same mapping more dearly — its reader guards the multiply against
+`kMaxSafeMicrosToNanos` and fails the whole batch with `EINVAL`, an infinite
+interval included, by a message about nanosecond overflow rather than about
+infinity — where one field is lost here.
+
+*Rejected: a per-column census deciding the Arrow type, so that a column with
+no such value is typed and one with them stays text.* It is answerable from the
+values and a statistics pass would compute it for nothing, which is why it was
+filed at the statistics phase while the type was text. Mapping unconditionally
+makes the question moot: a data-dependent Arrow type would buy back the two
+classes at the cost of a column whose type cannot be known before the scan,
+which is a price the array-shape census pays because a wrong `List` depth is a
+wrong *answer*, and here the alternative is a named failure on one field.
 
 *Rejected: hand-writing the two `ARROW:extension:*` keys, to avoid naming
 `arrow-schema` as a dependency of its own.* `arrow::datatypes` re-exports the
@@ -1290,7 +1300,7 @@ the DDL, [the census's](#the-array-shape-census) transform has no such shape to
 guard against.
 
 *Rejected:* refusing any array whose element does not resolve to a mapped Arrow
-type. It closes the same hole and pays by degrading `interval[]`, `money[]` and
+type. It closes the same hole and pays by degrading `inet[]`, `money[]` and
 every unknown-element array to a whole-column string, where `List<Utf8View>`
 recovers the element boundaries and splits on the right character.
 *Rejected:* parsing `DELIMITER` out of `CREATE TYPE` into `TypeKind::Base` — it
@@ -1401,8 +1411,8 @@ what keeps this coverage unbounded while the work stays bounded:
   server has no binary output function and binary is the only encoding the
   driver reads — so the floor for them is *nothing*.
 
-The remainder is 24 rows a major, and 19 of them our mapping simply meets. The
-five that do not each carry a stance, in the reconciliation's own table, because
+The remainder is 24 rows a major, and 20 of them our mapping simply meets. The
+four that do not each carry a stance, in the reconciliation's own table, because
 they are not one kind of thing and a flat exception list could not say that
 `regproc` is unanswerable while `money` is refused:
 
@@ -1410,7 +1420,6 @@ they are not one kind of thing and a flat exception list could not say that
 |---|---|---|---|
 | `money` | `int64` | `string` | **below by decision** — `KD13`, below |
 | `regproc` | `int32` | `string` | **different encodings**: `regprocout` writes the function's *name*, schema-qualified where the bare name would not resolve and `-` for `InvalidOid`, where the binary encoding ADBC reads is the OID. So "narrower than `Int32`" is not a question the text can be asked — stated over the `reg*` family, of which this is the one member the driver gives a real Arrow type to |
-| `interval` | `month_day_nano_interval` | `string` | **waiting** on the slice that maps it |
 | `int2vector` | `list<item: int16>` | `string` | **waiting** on the slice that maps it |
 | `oid` | `int32` | `uint32` | **narrower**, which the rule permits: `oidout` is `snprintf("%u")` (I39), so the driver's `Int32` turns every OID at or above 2^31 negative. Only a *wider* answer is a violation |
 
@@ -1651,6 +1660,22 @@ a future reader to re-derive:
   `json` preserves source text verbatim. Affects neither the mapping (both stay
   `Utf8View`) nor round-trip testing, which compares against what the dump
   emits rather than the original `INSERT`.
+- **`interval`'s three formatting rules are all sign-conditional**, so a
+  fixture whose values are all positive exercises none of them: a part is
+  suppressed when its count is zero, its unit takes an `s` whenever the count
+  is not exactly `1` (`-1 mons`, and `1 mon` without), and a part that is
+  positive and *follows a negative one* carries a `+` — the time tail
+  included, which is what makes `-1 days +01:00:00`. The tail otherwise takes
+  one sign for the whole of it, its hour field at least two digits and
+  unbounded above (I40). `render_interval`'s test table is a live server's own
+  answers for each rule rather than a reading of `EncodeInterval`.
+- **The `interval` grammar is read once, by `interval_parts`, for two
+  consumers.** The decoder narrows the three parts to Arrow's widths; the
+  ordering fuses them into `interval_cmp_value`'s 128-bit span. Sharing the
+  walk is what keeps a field the decoder refuses and a literal the filter
+  refuses the same set; the fusing is deliberately *not* shared, since it is
+  what makes `1 mon` and `30 days` one value and a decoder that did it would
+  lose the fields Arrow carries apart.
 
 <!-- deficiency: KD8 -->
 **No typed column can hold `infinity`, `-infinity` or `NaN`** — deficiency
@@ -2547,11 +2572,11 @@ instead.* It is sound for equality and unsound for ordering — a byte below
 ranks the longer string above (I38's corollary), which is the disagreement the
 oracle's tab-bearing `character(10)` cases are built out of.
 
-**Keyed on the declared type, not on the Arrow one.** Seven unrelated declared
-types reach `Utf8View` — a text type, a bare `numeric`, an `interval`, a
-`timetz`, an `inet`, a `jsonb`, and `json`, which PostgreSQL does not order at
-all — and they are seven *different* comparisons under one Arrow type, so the
-Arrow type cannot say which one a column wants. Two pairs go further and are not even
+**Keyed on the declared type, not on the Arrow one.** Six unrelated declared
+types reach `Utf8View` — a text type, a bare `numeric`, a `timetz`, an `inet`,
+a `jsonb`, and `json`, which PostgreSQL does not order at all — and they are
+six *different* comparisons under one Arrow type, so the Arrow type cannot say
+which one a column wants. Two pairs go further and are not even
 distinguishable by declared type alone once the plan is built: `cidr` differs
 from `inet` only in refusing a literal below its netmask, and `macaddr8` from
 `macaddr` only in its width, so the plan carries each fact rather than
@@ -2627,7 +2652,7 @@ over the file's own canonical text.
 | `char(n)` declaring `COLLATE "C"`/`"POSIX"` | `Utf8View` | yes — the dump's blank padding comes off both sides first, which is `bcTruelen` (I38), and bytewise is what those collations order the remainder by | — |
 | `char(n)` with no clause | `Utf8View` | **no** — the padding is handled, and what is left is the `text` row's residue: its collation is the database's, which a plain dump does not record (I32) | a collation the file does not carry |
 | **bare `numeric`**, and `numeric` beyond 76 digits | `Utf8View` | yes — compared as an arbitrary-precision decimal over the text the file holds, which is `cmp_var_common`'s own value order and so insensitive to display scale: `1.5` and `1.50` are one value (I33). The bare form carries all three of `Infinity`, `-Infinity` and `NaN`; the constrained one carries only `NaN` (I34) | — |
-| `interval` | `Utf8View` | yes — compared as `interval_cmp_value`'s 128-bit span, so `1 mon`, `30 days` and `720:00:00` are one value (I40), with the v17 infinities read on every file (I34) | — |
+| `interval` | `Interval(MonthDayNano)` | yes — compared as `interval_cmp_value`'s 128-bit span, so `1 mon`, `30 days` and `720:00:00` are one value (I40), with the v17 infinities read on every file (I34) | — |
 | `time with time zone` | `Utf8View` | yes — the UTC-equivalent instant, then the stored zone, so two spellings of one instant are ordered rather than equal (I40) | — |
 | `inet`, `cidr`, `macaddr`, `macaddr8` | `Utf8View` | yes — family, then the shorter netmask's worth of address bits, then the netmask, then the address (I40); the MAC types are their octets' own order | — |
 | `jsonb`, and any domain over it | `Utf8View` | **no**, and only because of its strings — the structure is compared exactly as `compareJsonbContainers` compares it (kind, then a container's size, then member-wise, with a top-level scalar inside the pseudo-array that makes it outrank `[]`), while every string leaf and object key goes through `varstr_cmp` under the *database's* collation (I41), which a plain dump does not record (I32) | the same collation the text row wants, one level down |
@@ -2668,10 +2693,14 @@ literal, since `jsonb_out` prints through `numeric_out` and that writes no
 exponent at all.
 
 *Rejected: normalizing an unknown literal by round-tripping it through the
-type's own decoder.* There is no decoder to round-trip through — these four
-types have no Arrow representation at all, which is why their comparison is a
-key rather than a value, and building one to widen a literal grammar inverts
-the cost.
+type's own decoder.* For three of the four there is no decoder to round-trip
+through — `time with time zone`, the network types and the MAC types have no
+Arrow representation at all, which is why their comparison is a key rather
+than a value, and building one to widen a literal grammar inverts the cost.
+`interval` has one and it buys nothing: `decode_interval` and the ordering's
+span read the *same* walk over `interval_out`'s grammar, so a literal that
+fails the filter fails the decoder too, and round-tripping through it would
+turn a refusal into the same refusal one step later.
 
 *Rejected: an exception for `boolean`, on the grounds that `boolin` is cheap.*
 The cost argument above genuinely does not reach it. `boolin` is two sentences

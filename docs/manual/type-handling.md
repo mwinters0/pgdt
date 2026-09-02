@@ -19,7 +19,7 @@ on any query — see "Arrays, composites, ranges, and multiranges" below.
 You can see exactly what happened to each column: `pgdq info --verbose` prints
 one line per column, giving the Arrow type it resolved to — or, for a column
 that came back as a string, the reason. A column that is a string because
-that is simply what it is (`text`, `json`, `interval`) gets no line, since
+that is simply what it is (`text`, `json`, `inet`) gets no line, since
 `Utf8View` is the answer that carries no information. `pgdq info --json`
 carries the same per-column outcomes in machine-readable form (see
 [dump inspection](dump-inspection.md), "Scripting against the output"), and the
@@ -69,16 +69,32 @@ and maps to `Timestamp(Microsecond, None)`.
 Fractional seconds are trailing-trimmed, so the same column can hold
 `…35.456696+00` and `…10.41925+00` and `…52+00`. That is normal.
 
-### `interval` comes back as a string, and still filters as a duration
+### `interval` keeps its three fields, and two kinds of value do not fit
 
-Arrow has no type that carries PostgreSQL's months, days and microseconds as
-three independent fields the way pgdq would need, so an `interval` column
-arrives as the text the dump holds — `1 year 2 mons 3 days 04:05:06`. That text
-is always in PostgreSQL's `postgres` interval style, because `pg_dump` pins the
-setting when it reads the table.
+An `interval` column maps to Arrow's `Interval(MonthDayNano)`, which carries
+months, days and a time part as three independent fields — exactly what
+PostgreSQL stores, so nothing is flattened into a single duration. The text it
+is read from is always in PostgreSQL's `postgres` interval style
+(`1 year 2 mons 3 days 04:05:06`), because `pg_dump` pins the setting when it
+reads the table, and `pgdq query` writes that same text back.
 
-`<`, `<=`, `>` and `>=` on such a column compare **durations**, not text.
-PostgreSQL treats a month as 30 days and a day as 24 hours when it orders
+Two kinds of value have no place in the Arrow type, and a column holding one
+fails to build the same way a `date` holding `infinity` does:
+
+- `infinity` and `-infinity`, which PostgreSQL 17 added for this type;
+- a time part longer than `2562047:47:16.854775807`. PostgreSQL counts
+  *microseconds* where Arrow counts nanoseconds, a thousandth of the range,
+  and nothing folds hours into days — so `interval '100000000 hours'` is
+  written `100000000:00:00` and is well past it.
+
+Neither is common, and the recourse is the one every such value has: project
+the column away, or read it with `--schema-mode strings`, and the text comes
+back verbatim. Filtering is unaffected either way — see "`infinity` and `NaN`
+filter correctly even where the column cannot hold them" below, which is the
+same shape.
+
+`<`, `<=`, `>` and `>=` on an `interval` column compare **durations**, not the
+three fields separately. PostgreSQL treats a month as 30 days and a day as 24 hours when it orders
 intervals, so `1 mon`, `30 days` and `720:00:00` are one value, and all three
 select the same rows:
 
@@ -239,14 +255,13 @@ out, since neither side keeps it.
 `code` is `ab` followed by padding, exactly as the server does — with or
 without the padding written into the literal.
 
-### Seven string-shaped types still order the way PostgreSQL orders them
+### Six string-shaped types still order the way PostgreSQL orders them
 
 A column that comes back as text is not necessarily *compared* as text.
-`interval`, `time with time zone`, `inet`, `cidr`, `macaddr`, `macaddr8` and
-`jsonb` all arrive as strings — no Arrow type fits them — and all seven order
-the way the server orders them:
+`time with time zone`, `inet`, `cidr`, `macaddr`, `macaddr8` and `jsonb` all
+arrive as strings — no Arrow type fits them — and all six order the way the
+server orders them:
 
-- an `interval` by its duration, as above;
 - a `time with time zone` by the instant it names, so `00:00:00-05` is five
   hours after `00:00:00+00` and sorts above it;
 - an `inet` or `cidr` by address family first (every IPv4 address below every
@@ -255,6 +270,7 @@ the way the server orders them:
 - a `jsonb` by its structure — see below, since it is the one with a caveat.
 
 **Write the value the way the dump writes it.** The filter reads each of these
+— and an `interval`, whose Arrow type does not widen what its literal may say —
 in PostgreSQL's *output* spelling only, which is what every value in the file
 is already in. So `--filter 'ran_for>1 mon'` works and `--filter 'ran_for>1
 month'` does not, and `--filter 'host>08:00:2b:01:02:03'` works where
@@ -479,9 +495,8 @@ shape the *values* have is a separate question, answered under "Its arrays do
 not all have the same shape" below.
 
 A part that has no mapping of its own becomes a string **in that position**
-only: a composite field of type `interval` is a `Utf8View` field inside an
-otherwise typed `Struct`, exactly as an `interval` column would be at top
-level.
+only: a composite field of type `inet` is a `Utf8View` field inside an
+otherwise typed `Struct`, exactly as an `inet` column would be at top level.
 
 **A range is five fields**, and `pgdq info` prints them as `Range<T>` because
 they are the same five for every range column in every dump:

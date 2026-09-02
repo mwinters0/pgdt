@@ -330,9 +330,9 @@ class DispositionsAgainstVerdicts(unittest.TestCase):
         ).problems
 
     def test_a_row_that_started_meeting_the_floor_drops_its_disposition(self) -> None:
-        """This is what closes a waiting row: when the slice maps `interval`,
-        its stance is reported as stale rather than sitting there excusing a
-        type that no longer needs it."""
+        """This is what closes a waiting row: when the slice maps
+        `int2vector`, its stance is reported as stale rather than sitting
+        there excusing a type that no longer needs it."""
         problems = self.problems([floor_row("money", "string")])
         self.assertTrue(any("drop it" in p for p in problems))
 
@@ -381,10 +381,10 @@ class CommittedTree(unittest.TestCase):
         unreadable = sorted(n for n, a in mapping.arms.items() if a is None)
         self.assertEqual(unreadable, ["numeric"])
 
-    def test_the_stances_are_the_five_the_doc_states(self) -> None:
+    def test_the_stances_are_the_four_the_doc_states(self) -> None:
         self.assertEqual(
             sorted(d.declared for d in fm.DISPOSITIONS),
-            ["int2vector", "interval", "money", "oid", "regproc"],
+            ["int2vector", "money", "oid", "regproc"],
         )
 
     def test_the_opaque_tail_carries_no_hand_written_line(self) -> None:

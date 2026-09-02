@@ -21,7 +21,7 @@ fail.
 * **every `builtin_scalar` arm resolves to a floor row** -- an arm naming a
   type no supported major has is a mapping decision with nothing behind it;
 * **every disposition is about a row that still needs one** -- the direction
-  that makes a waiting row close itself. When 12.3 maps `interval`, its row
+  that makes a waiting row close itself. When 12.6 maps `int2vector`, its row
   starts meeting the floor and the exemption standing over it is reported as
   stale rather than sitting there excusing a type that no longer needs it.
 
@@ -34,8 +34,8 @@ comparable with and is more useful than. That is the whole long tail --
 `oidvector` -- carried with no per-type line, which is what keeps the phase's
 coverage unbounded while its work stays bounded.
 
-**A disposition covers what the columns cannot say**, and there are five. Four
-are D2's stances proper; the fifth is `oid`, which satisfies the rule by
+**A disposition covers what the columns cannot say**, and there are four.
+Three are D2's stances proper; the fourth is `oid`, which satisfies the rule by
 answering a *different* type rather than a wider one, and says so because "not
 equal" is all this check can compute on its own.
 
@@ -136,6 +136,7 @@ ARROW_RENDERING = {
     "Time64(Microsecond)": "time64[us]",
     "Timestamp(Microsecond, None)": "timestamp[us]",
     'Timestamp(Microsecond, Some("UTC".into()))': "timestamp[us, tz=UTC]",
+    "Interval(MonthDayNano)": "month_day_nano_interval",
 }
 
 
@@ -191,7 +192,7 @@ class Disposition:
     deficiency: str | None = None
 
 
-#: Every row the floor reaches that our mapping does not meet. Five, and the
+#: Every row the floor reaches that our mapping does not meet. Four, and the
 #: file's own columns place everything else.
 DISPOSITIONS = (
     Disposition(
@@ -211,12 +212,6 @@ DISPOSITIONS = (
         "the bare name would not resolve, `-` for InvalidOid -- where the "
         "binary encoding ADBC reads is the OID. The one member of the `reg*` "
         "family the driver gives a real Arrow type to",
-    ),
-    Disposition(
-        "interval",
-        "waiting",
-        "`Interval(MonthDayNano)` is the phase's one real mapping win",
-        closes="12.3",
     ),
     Disposition(
         "int2vector",

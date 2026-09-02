@@ -21,7 +21,7 @@ use crate::preamble::{CollationDef, TypeDef, TypeKind};
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeOutcome {
     /// The dump alone determines the value; this is the Arrow type it maps
-    /// to (`Utf8View` included — e.g. `text`, `interval`, are deliberately
+    /// to (`Utf8View` included — e.g. `text`, `json`, are deliberately
     /// mapped there, not merely defaulted), paired with the [`NestedPlan`]
     /// that says which literal form fills it.
     ///
@@ -118,7 +118,7 @@ pub enum NestedPlan {
 /// thing `crate::predicate` needs in order to read a side.
 ///
 /// It is a small closed vocabulary rather than the Arrow type because the two
-/// do not correspond: `text`, bare `numeric`, `interval` and `inet` all reach
+/// do not correspond: `text`, bare `numeric`, `json` and `inet` all reach
 /// `Utf8View` and are four different comparisons, while `Decimal128` and
 /// `Decimal256` are one.
 ///
@@ -817,6 +817,7 @@ fn builtin_scalar(
 ) -> Option<(DataType, ComparisonPlan)> {
     use CompareKind as K;
     use DataType::*;
+    use arrow::datatypes::IntervalUnit::MonthDayNano;
     use arrow::datatypes::TimeUnit::Microsecond;
     let agrees = ComparisonPlan::agrees;
     let text = ComparisonPlan::AS_TEXT;
@@ -875,12 +876,17 @@ fn builtin_scalar(
             (Timestamp(Microsecond, Some("UTC".into())), agrees(K::Timestamp { with_tz: true }))
         }
         "time without time zone" => (Time64(Microsecond), agrees(K::Time)),
-        // Held as text in Arrow and *ordered* all the same, each by the
-        // comparison its own type defines (I40). `time with time zone` sorts
-        // by the UTC instant and breaks a tie on the zone; an `interval`'s
-        // months collapse to 30 days and its days to 86400 s.
+        // Held as text in Arrow and *ordered* all the same, by the comparison
+        // its own type defines (I40): the UTC instant, then a tie broken on
+        // the stored zone.
         "time with time zone" => (Utf8View, agrees(K::TimeTz)),
-        "interval" => (Utf8View, agrees(K::Interval)),
+        // Arrow's `Interval(MonthDayNano)` carries months, days and a time
+        // part as three independent fields, which is exactly PostgreSQL's
+        // `Interval` — so the mapping is the struct, not a reading of it. The
+        // *comparison* is still `interval_cmp_value`'s fused span, months at
+        // 30 days and days at 86400 s, which is why the two halves of this
+        // arm say different things about the same type.
+        "interval" => (Interval(MonthDayNano), agrees(K::Interval)),
         // `uuid_internal_cmp` is `memcmp` over 16 bytes, and `byteacmp` is
         // `memcmp` then length — both are `[u8]`'s own order (I33).
         "uuid" => (FixedSizeBinary(16), agrees(K::Uuid)),
@@ -1538,9 +1544,10 @@ fn nested_position(
 ///
 /// **Keyed on the declared type, not on the Arrow one.** Four unrelated
 /// declared types reach `Utf8View` — a text type, a bare `numeric`, a
-/// text-held type such as `interval`, and `json`, which PostgreSQL does not
-/// order at all — so the Arrow type cannot say which comparison a column
-/// wants, and the answers that will replace them are per declared type too.
+/// text-held type such as `time with time zone`, and `json`, which PostgreSQL
+/// does not order at all — so the Arrow type cannot say which comparison a
+/// column wants, and the answers that will replace them are per declared type
+/// too.
 ///
 /// **A nested type answers [`ComparisonPlan::Nested`]**, one node per nesting
 /// level, built by the same walk: an array's element, a composite's fields
@@ -1769,6 +1776,20 @@ mod tests {
         );
     }
 
+    /// `interval` is the one type whose Arrow mapping is a *struct* of
+    /// PostgreSQL's own three fields rather than a reading of them: months,
+    /// days and a time part, independent, exactly as `Interval` stores them.
+    #[test]
+    fn interval_maps_to_arrows_three_field_calendar_interval() {
+        assert_eq!(
+            resolve_declared_type("interval", &[]),
+            TypeOutcome::Mapped(
+                DataType::Interval(arrow::datatypes::IntervalUnit::MonthDayNano),
+                NestedPlan::Scalar
+            )
+        );
+    }
+
     #[test]
     fn numeric_picks_decimal_width_by_precision() {
         assert_eq!(
@@ -1874,11 +1895,12 @@ mod tests {
                 NestedPlan::Array(Box::new(NestedPlan::Scalar))
             )
         );
-        // An element type with no mapping is `Utf8View` *in that position*,
-        // exactly as it would be at top level — the element boundaries are
-        // still recovered, which is what a whole-column string would lose.
+        // A type Arrow has no representation for is `Utf8View` *in that
+        // position*, exactly as it would be at top level — the element
+        // boundaries are still recovered, which is what a whole-column string
+        // would lose.
         assert_eq!(
-            resolve_declared_type("interval[]", &[]),
+            resolve_declared_type("inet[]", &[]),
             TypeOutcome::Mapped(
                 list_of(DataType::Utf8View),
                 NestedPlan::Array(Box::new(NestedPlan::Scalar))
@@ -2388,13 +2410,12 @@ mod tests {
         assert_eq!(comparison_for("INTEGER", None, &[], &[]), agrees(K::Int));
     }
 
-    /// Seven unrelated declared types reach `Utf8View`, which is why the
+    /// Six unrelated declared types reach `Utf8View`, which is why the
     /// register cannot be keyed on the Arrow type: an enum compares by
-    /// declaration order, a bare `numeric` by decimal value, an `interval` by
-    /// a 128-bit span, an `inet` by family-then-prefix, a `jsonb` by a walk
-    /// down two containers, `text` bytewise with the column's own collation
-    /// deciding whether that is right, and `json` bytewise because the server
-    /// defines no order at all.
+    /// declaration order, a bare `numeric` by decimal value, an `inet` by
+    /// family-then-prefix, a `jsonb` by a walk down two containers, `text`
+    /// bytewise with the column's own collation deciding whether that is
+    /// right, and `json` bytewise because the server defines no order at all.
     #[test]
     fn the_register_tells_apart_types_that_share_one_arrow_type() {
         let labels = ["sad".to_string(), "ok".to_string()];
@@ -2406,10 +2427,6 @@ mod tests {
         assert_eq!(
             comparison_for("numeric", None, &[], &[]),
             ComparisonPlan::agrees(CompareKind::Numeric { infinities: true }),
-        );
-        assert_eq!(
-            comparison_for("interval", None, &[], &[]),
-            ComparisonPlan::agrees(CompareKind::Interval),
         );
         assert_eq!(
             comparison_for("inet", None, &[], &[]),

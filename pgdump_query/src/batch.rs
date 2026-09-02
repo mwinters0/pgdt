@@ -19,17 +19,19 @@ use std::sync::Arc;
 use arrow::array::builder::{
     BinaryBuilder, BooleanBuilder, Date32Builder, Decimal128Builder, Decimal256Builder,
     FixedSizeBinaryBuilder, Float32Builder, Float64Builder, Int16Builder, Int32Builder,
-    Int64Builder, StringDictionaryBuilder, StringViewBuilder, Time64MicrosecondBuilder,
-    TimestampMicrosecondBuilder, UInt32Builder,
+    Int64Builder, IntervalMonthDayNanoBuilder, StringDictionaryBuilder, StringViewBuilder,
+    Time64MicrosecondBuilder, TimestampMicrosecondBuilder, UInt32Builder,
 };
 use arrow::array::{
     Array, ArrayRef, BinaryArray, BooleanArray, Date32Array, Decimal128Array, Decimal256Array,
     DictionaryArray, FixedSizeBinaryArray, Float32Array, Float64Array, Int16Array, Int32Array,
-    Int64Array, ListArray, RecordBatch, RecordBatchOptions, StringArray, StringViewArray,
-    StructArray, Time64MicrosecondArray, TimestampMicrosecondArray, UInt32Array,
+    Int64Array, IntervalMonthDayNanoArray, ListArray, RecordBatch, RecordBatchOptions, StringArray,
+    StringViewArray, StructArray, Time64MicrosecondArray, TimestampMicrosecondArray, UInt32Array,
 };
 use arrow::buffer::{Buffer, NullBuffer, OffsetBuffer, ScalarBuffer};
-use arrow::datatypes::{DataType, FieldRef, Fields, Int32Type, SchemaRef, TimeUnit};
+use arrow::datatypes::{
+    DataType, FieldRef, Fields, Int32Type, IntervalMonthDayNano, IntervalUnit, SchemaRef, TimeUnit,
+};
 
 use crate::cache::CacheMode;
 use crate::copy::{CopyHeader, DELIMITER, decode_field};
@@ -232,6 +234,9 @@ enum ColumnBuilder {
         has_tz: bool,
     },
     Time64Micro(Time64MicrosecondBuilder),
+    /// `interval`: PostgreSQL's three independent fields, narrowed from its
+    /// `int64` microseconds to Arrow's `int64` nanoseconds.
+    IntervalMonthDayNano(IntervalMonthDayNanoBuilder),
     Decimal128 {
         builder: Decimal128Builder,
         scale: i8,
@@ -295,6 +300,7 @@ fn builder_len(builder: &ColumnBuilder) -> usize {
         ColumnBuilder::Date32(b) => b.len(),
         ColumnBuilder::TimestampMicro { builder, .. } => builder.len(),
         ColumnBuilder::Time64Micro(b) => b.len(),
+        ColumnBuilder::IntervalMonthDayNano(b) => b.len(),
         ColumnBuilder::Decimal128 { builder, .. } => builder.len(),
         ColumnBuilder::Decimal256 { builder, .. } => builder.len(),
         ColumnBuilder::FixedSizeBinary16(b) => b.len(),
@@ -378,6 +384,9 @@ fn new_column_builder(data_type: &DataType, plan: &NestedPlan) -> ColumnBuilder 
         DataType::Time64(TimeUnit::Microsecond) => {
             ColumnBuilder::Time64Micro(Time64MicrosecondBuilder::new())
         }
+        DataType::Interval(IntervalUnit::MonthDayNano) => {
+            ColumnBuilder::IntervalMonthDayNano(IntervalMonthDayNanoBuilder::new())
+        }
         DataType::Decimal128(p, s) => ColumnBuilder::Decimal128 {
             builder: Decimal128Builder::new().with_precision_and_scale(*p, *s).expect(
                 "pgtype::map_numeric only ever produces a valid Decimal128 precision/scale",
@@ -414,6 +423,7 @@ fn append_null(builder: &mut ColumnBuilder) {
         ColumnBuilder::Date32(b) => b.append_null(),
         ColumnBuilder::TimestampMicro { builder, .. } => builder.append_null(),
         ColumnBuilder::Time64Micro(b) => b.append_null(),
+        ColumnBuilder::IntervalMonthDayNano(b) => b.append_null(),
         ColumnBuilder::Decimal128 { builder, .. } => builder.append_null(),
         ColumnBuilder::Decimal256 { builder, .. } => builder.append_null(),
         ColumnBuilder::FixedSizeBinary16(b) => b.append_null(),
@@ -596,6 +606,14 @@ fn append_typed(builder: &mut ColumnBuilder, text: &str) -> std::result::Result<
         ColumnBuilder::Time64Micro(b) => {
             b.append_value(decode::decode_time64_micros(text).ok_or_else(fail)?);
         }
+        // The two value classes with no `MonthDayNano` encoding — v17's
+        // infinities and a time part past `2562047:47:16.854775807` — fail
+        // here, the same way `date`'s infinities and `numeric(p,s)`'s `NaN`
+        // do.
+        ColumnBuilder::IntervalMonthDayNano(b) => {
+            let (months, days, nanoseconds) = decode::decode_interval(text).ok_or_else(fail)?;
+            b.append_value(IntervalMonthDayNano { months, days, nanoseconds });
+        }
         ColumnBuilder::Decimal128 { builder, scale } => {
             let unscaled = decode::decimal_unscaled_digits(text, *scale).ok_or_else(fail)?;
             builder.append_value(unscaled.parse::<i128>().map_err(|_| fail())?);
@@ -629,6 +647,7 @@ fn finish_column(builder: &mut ColumnBuilder) -> ArrayRef {
         ColumnBuilder::Date32(b) => Arc::new(b.finish()) as ArrayRef,
         ColumnBuilder::TimestampMicro { builder, .. } => Arc::new(builder.finish()) as ArrayRef,
         ColumnBuilder::Time64Micro(b) => Arc::new(b.finish()) as ArrayRef,
+        ColumnBuilder::IntervalMonthDayNano(b) => Arc::new(b.finish()) as ArrayRef,
         ColumnBuilder::Decimal128 { builder, .. } => Arc::new(builder.finish()) as ArrayRef,
         ColumnBuilder::Decimal256 { builder, .. } => Arc::new(builder.finish()) as ArrayRef,
         ColumnBuilder::FixedSizeBinary16(b) => Arc::new(b.finish()) as ArrayRef,
@@ -1011,6 +1030,10 @@ pub fn render_field(column: &dyn Array, row: usize, plan: &NestedPlan) -> Option
         DataType::Time64(TimeUnit::Microsecond) => decode::render_time64_micros(
             column.as_any().downcast_ref::<Time64MicrosecondArray>().unwrap().value(row),
         ),
+        DataType::Interval(IntervalUnit::MonthDayNano) => {
+            let v = column.as_any().downcast_ref::<IntervalMonthDayNanoArray>().unwrap().value(row);
+            decode::render_interval(v.months, v.days, v.nanoseconds)
+        }
         DataType::Decimal128(_, scale) => {
             let v = column.as_any().downcast_ref::<Decimal128Array>().unwrap().value(row);
             decode::render_decimal(&v.to_string(), *scale)
