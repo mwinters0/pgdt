@@ -88,14 +88,16 @@ nanosecond ceilings at all, since no `pg_dump` can write a value past them.
   decide. `architecture.md`'s "Type resolution" now carries the census as a
   rejected alternative instead, which is where the reasoning belongs once the
   question is closed rather than deferred.
-- **`docs/manual/type-handling.md` is corrected here rather than in 12.4**,
-  which D11 assigns it to. The manual is user-facing and stated the Arrow type
-  outright — "an `interval` column arrives as the text the dump holds" — so it
-  was false the moment the arm changed, and a slice boundary is about review
-  confidence rather than a licence to publish a falsehood for a round. What is
-  corrected is the *type* and its two lost value classes; the register's own
-  prose (`interval` is still one of the types whose ordering is a fused span)
-  needed no change, and 12.4 will find that half of its row already true.
+- **`docs/manual/type-handling.md` is corrected here, which is where D9 puts
+  it.** D9 makes the correction an obligation of the slice whose arm falsifies
+  the claim, and that is this one: the manual stated the Arrow type outright —
+  "an `interval` column arrives as the text the dump holds" — so it went false
+  the moment the arm changed. What is corrected is the *type* and its two lost
+  value classes; the register's own prose (`interval` is still one of the types
+  whose ordering is a fused span) needed no change. D11's table said 12.4 and
+  has since been amended to drop the clause, D9 owning it; the general rule is
+  `process.md`'s "A falsified claim is corrected by the change that falsifies
+  it".
 
 ## Measurement
 

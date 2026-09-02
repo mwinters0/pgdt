@@ -150,8 +150,8 @@ The ADBC type floor. Spec:
       reconciliation's `waiting` disposition dropped. Notes:
       [`../design/roadmap-P12.3-interval-decoder-notes.md`](../design/roadmap-P12.3-interval-decoder-notes.md)
 - [ ] **12.4** `interval`: render-back's sub-microsecond refusal, the comparison
-      register's arm, the interval decode failure folded into the existing
-      `infinity`/`NaN` register entry, `type-handling.md` corrected.
+      register's arm, and the interval decode failure folded into the existing
+      `infinity`/`NaN` register entry.
 - [ ] **12.5** `int2vector`: the fixture column, and the six-major regeneration.
 - [ ] **12.6** `int2vector`: the codec and the resolution arm.
 
@@ -307,17 +307,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`docs/manual/type-handling.md`'s `interval` correction landed in 12.3, not
-  in 12.4, which the spec's D11 assigns it to.** The manual stated the Arrow
-  type outright — *"an `interval` column arrives as the text the dump holds"* —
-  so it was false the moment 12.3 changed the resolution arm, and a slice
-  boundary is about which changes share a review cycle rather than a licence to
-  publish a falsehood for a round. Only the *type* and its two lost value
-  classes were corrected; the register's own prose was already true and is
-  untouched, so 12.4 will find that part of its row already delivered and the
-  rest of the row — the render-back refusal, the register arm, `KD8` — whole.
-  **Reconsidering it** would mean the opposite rule: a phase's docs may lag its
-  code between slices of that phase, and a session must leave a known-false
-  user-facing sentence standing until the slice that owns the file comes up.
-  Worth a ruling either way, because it will recur — every phase that splits a
-  mapping change from its consequences hits it.
+Nothing is open.

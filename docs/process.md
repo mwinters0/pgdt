@@ -805,6 +805,27 @@ because no run stands behind them and none is contradicted. Re-basing an
 example on a real run is a trade, not an upgrade — it buys a number someone
 could re-take and costs the sections the illustration was built to show.
 
+**A falsified claim is corrected by the change that falsifies it**, not by a
+later slice that happens to own the file. A slice boundary orders review; it is
+not licence to publish a sentence known to be false. The manual is where this
+binds hardest and it is the only doc where it binds absolutely — every other
+document in the set is read by someone who can check it against the code, and
+the manual is written for the reader who cannot. So a spec that schedules the
+correction to a later slice is wrong at that row, and the row yields to the
+rule.
+
+**Nothing checks this, and the obvious check was costed and refused.** A
+mechanical one would reconcile the type names the manual states in prose
+against the type register the code builds. Measured against the worked instance
+— one mapping change that falsified five sentences at once — it would have
+caught one: the other four said *comes back as a string*, *arrives as the text
+the dump holds*, named the type in a list of types the output says nothing
+about, and counted how many types were in that list. A claim about a type is
+usually spelled in words rather than in the type's name, so a check keyed on
+the name misses the sentences a user reads first. Any second attempt has to key
+on the claim. Until one does, this rule is discipline, which is the honest
+report and the reason it is written here rather than left to be re-derived.
+
 ---
 
 ## Naming and lifecycle

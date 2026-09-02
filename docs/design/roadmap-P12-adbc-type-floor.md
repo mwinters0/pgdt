@@ -300,7 +300,7 @@ be able to catch a mis-mapping it did not produce.
 | **12.1** | The floor oracle: the catalog sweep of D7, `fixtures/<13–18>/adbc/floor.tsv`, and D8's driver pin. No library code. |
 | **12.2** | The reconciliation: joins the oracle against `builtin_scalar` and fails both ways, with D2's stances as declared exemptions and D10's two waiting rows naming their slices. The rule is filed beside "The bar"; `money` earns `KD13` under stance (a). |
 | **12.3** | `interval`: the triple-producing decoder and the resolution arm. |
-| **12.4** | `interval`: render-back's sub-microsecond refusal, the comparison register's `interval` arm, `KD8` rewritten to name it, and `type-handling.md` corrected. |
+| **12.4** | `interval`: render-back's sub-microsecond refusal, the comparison register's `interval` arm, and `KD8` rewritten to name it. |
 | **12.5** | `int2vector`: the fixture column, and the six-major regeneration. |
 | **12.6** | `int2vector`: the codec and the resolution arm. |
 
@@ -309,6 +309,16 @@ be able to catch a mis-mapping it did not produce.
 already tested — the comparison register's arm and render-back — because
 bundling them forces one review to accept both at one confidence. 12.5/12.6 is
 the evidence-first seam again, small but real.
+
+**12.4's row said "and `type-handling.md` corrected", and that clause is
+struck: D9 owns it.** D9 makes correcting a falsified manual claim an
+obligation of the slice that falsifies it, and the resolution arm is what
+falsifies `type-handling.md`'s `interval` prose — so scheduling the correction
+a slice later contradicted this spec's own decision, and the schedule yields to
+the decision. The split argued above is the *code* split; it never bore on the
+manual. Reasoning:
+[`../status/history/2026-09-02.md`](../status/history/2026-09-02.md), "A
+falsified manual claim is corrected by the change that falsifies it".
 
 **`interval` needs no evidence slice and `int2vector` does**, because
 `fixture_schema_types.sql` already carries `t_interval` and has no
