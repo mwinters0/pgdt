@@ -48,18 +48,21 @@ rather than a defensive one. The `colliculocale`/`collcollate` split at v15
 committed bytes now show.
 
 **The `--binary-upgrade` flag set does carry a `collversion`, and that is the
-one place the spec's rationale is narrower than it reads.** The argument for
+one place the spec's rationale was narrower than it read.** The argument for
 admitting ICU was that a `CREATE COLLATION`'s dump text holds no version, which
 is true of `default.sql` and `data-only.sql` and false of
 `binary-upgrade.sql` — the `types` schema's third flag set — where `pg_dump`
-appends `version = '153.128'`. Nothing asserts on that line and it moves only
-when the images move, which is a regeneration either way; it is also the
-evidence for I42's claim about *which* flag set carries the version, so the
-fixture family gained a fact rather than only a liability. There is no way to
-have one without the other short of a flag-set-conditional schema, which is the
-capability [`pg-dump-compatibility.md`](pg-dump-compatibility.md) already
-records as owned by nobody. Filed under STATUS's "Decisions worth another
-look".
+appends the version the server computed. The spec's clause now says so, and the
+line is **guarded** rather than tolerated: `M42` turned it into
+`tests/preamble.rs`'s
+`the_icu_collversion_reaches_binary_upgrade_alone_and_agrees_across_majors`,
+which requires the six majors to agree on the value without naming it
+([`architecture.md`](architecture.md), "Fixtures"). It is also the evidence for
+I42's claim about *which* flag set carries the version, so the fixture family
+gained a fact rather than only a liability. There is no way to have one without
+the other short of a flag-set-conditional schema, which is the capability
+[`pg-dump-compatibility.md`](pg-dump-compatibility.md) already records as owned
+by nobody.
 
 **The oracle is byte-unchanged, which is the check that this is
 oracle-neutral.** `fixtures/*/oracle/` was regenerated in the same run and diffs

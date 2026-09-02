@@ -2802,17 +2802,23 @@ no determinism clause, which is the unconditional emission's other side: the
 absence is the catalog's `true`. The second is the emission itself, and it is
 `provider = icu` because the server refused `deterministic = false` under any
 other provider when the fixture was written. `tests/preamble.rs`'s
-`the_types_schema_declares_a_deterministic_and_a_non_deterministic_collation_at_every_major`
+`the_types_schema_declares_one_deterministic_and_one_non_deterministic_collation`
 reads both back.
 
 **`version =` is observed by its absence and by its one presence.** Neither
 line above carries one, in `default.sql` or in `data-only.sql`; the same
 `nd_collation` in `fixtures/<13-18>/types/binary-upgrade.sql` reads `…, locale
 = 'und', version = '153.128');`. That is the only ICU release number in the
-tree, it is asserted on by nothing, and it moves when the base images move —
-which is the drift that keeps ICU out of the comparison columns and out of the
-oracle, and is accepted here because a determinism clause is a statement rather
-than an answer ([`architecture.md`](architecture.md), "Fixtures").
+tree and it moves when the base images move — which is the drift that keeps ICU
+out of the comparison columns and out of the oracle, and is accepted here
+because a determinism clause is a statement rather than an answer. Both halves
+of this paragraph are **asserted** rather than read once, by
+`tests/preamble.rs`'s
+`the_icu_collversion_reaches_binary_upgrade_alone_and_agrees_across_majors`:
+the flag-set claim exactly as written, and the version itself by six-way
+agreement without naming the value, so an image bump is a regeneration and a
+*split* between majors is a fault ([`architecture.md`](architecture.md),
+"Fixtures").
 
 **Consequence.** Equality's divergence is **knowable per column** wherever the
 collation is user-defined and the dump says `deterministic = false`, and
@@ -2846,6 +2852,7 @@ grep -n -B2 -A4 'nondeterministic collations not supported' \
 grep -h 'CREATE COLLATION' fixtures/*/types/default.sql | sort | uniq -c
 grep -h 'CREATE COLLATION public.nd_collation' fixtures/*/types/binary-upgrade.sql \
   | sort | uniq -c
+cargo test -p pgdump_query --test preamble the_icu_collversion
 ```
 
 ---

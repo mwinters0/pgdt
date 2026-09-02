@@ -3504,9 +3504,33 @@ ICU collation, and the exception is deliberately narrow: ICU stays out of the
 *comparison* columns and out of the oracle because a `collversion` moves with
 the base image, and that objection is about answers, which a determinism clause
 is not. **The version does reach one flag set**, `types/binary-upgrade.sql`,
-where `pg_dump` appends `version = '153.128'` — the one place in the tree an ICU
-release number is a committed byte, asserted on by nothing, and itself the
-evidence for I42's claim about which flag set carries it.
+where `pg_dump` appends `version = '<collversion>'` — the one place in the tree
+an ICU release number is a committed byte, and itself the evidence for I42's
+claim about which flag set carries it.
+
+**That byte is guarded rather than merely tolerated**, by
+`tests/preamble.rs`'s
+`the_icu_collversion_reaches_binary_upgrade_alone_and_agrees_across_majors`,
+which reads it out of the fixture text — the parser drops the field, so no
+`CollationDef` carries it. The guard asserts **agreement, never the literal**,
+which is the shape `oracle_differences.py` already uses for `meta.tsv`'s
+`default_collversion`: all six majors read one version because all six pins are
+`-trixie` and resolve to one libicu, and the documented drift is *across* base
+images (`und-x-icu` is `153.128` on `13.23-alpine` against `153.136` on
+`18.6-alpine`), so a split means the pins have drifted apart — the fault the
+across-majors identity check exists to report. The other half is the shape
+claim the doc comment used to make in prose: the option is absent from
+`default`, absent from `data-only` (which emits no `CREATE COLLATION` at all),
+and absent from `c_collation` under every flag set, a `C` libc collation having
+no `collversion` to record. *Rejected: asserting the literal `153.128`.* It
+fires on every routine image bump, which is a deliberate regeneration whose
+diff already shows the change, and a check that fires on the expected event is
+a signal that is always on. *Rejected: leaving it unwatched.* An environment
+release number in a committed fixture byte is established practice here —
+every fixture header carries a Debian package revision, and
+`fixtures/<v>/oracle/meta.tsv` commits glibc's `default_collversion` on purpose
+— so what was new about this one was only that nothing demanded of it what the
+differ already demands of its sibling.
 
 *Rejected: `und-u-ks-level2` as the locale.* It is the realistic thing a person
 creates — a case-insensitive collation is why anyone reaches for

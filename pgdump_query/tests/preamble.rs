@@ -354,10 +354,12 @@ async fn t_collate_carries_its_collate_clause_wherever_pg_dump_displaced_it() {
 /// byte alike, option order included — provider, determinism, locale — which
 /// is `dumpCollation`'s own append order rather than the fixture's.
 ///
-/// **Neither line carries a `version =`.** That append is inside
-/// `if (dopt->binary_upgrade)` (I42), so the ICU version the server computed
-/// reaches `fixtures/<v>/types/binary-upgrade.sql` and no other flag set —
-/// which is why an ICU collation could enter the tree at all.
+/// **Neither line carries a `version =`** — the append is inside
+/// `if (dopt->binary_upgrade)` (I42), which is why an ICU collation could
+/// enter the tree at all. Which flag set does carry it, and that the six
+/// majors agree on the value, is
+/// [`the_icu_collversion_reaches_binary_upgrade_alone_and_agrees_across_majors`]
+/// rather than a claim made here.
 ///
 /// Each name is kept verbatim and schema-qualified, exactly as `v_user`'s and
 /// `v_nd`'s `COLLATE` clauses above spell them — which is the join
@@ -373,6 +375,106 @@ async fn the_types_schema_declares_one_deterministic_and_one_non_deterministic_c
                 CollationDef { name: "public.nd_collation".to_string(), deterministic: false },
             ],
             "pg_dump {version}"
+        );
+    }
+}
+
+/// The ICU `collversion` in the fixture tree, **guarded rather than merely
+/// tolerated** — read off the fixture text, since the parser deliberately
+/// drops the field (`CollationDef` keeps a name and a determinism answer and
+/// nothing else).
+///
+/// `dumpCollation` appends `version = '<collversion>'` inside
+/// `if (dopt->binary_upgrade)` (I42), so one committed fixture byte per major
+/// is an environment release number that moves when an image pin moves. That
+/// much is established practice here — every fixture header already carries a
+/// Debian package revision, and `fixtures/<v>/oracle/meta.tsv` commits glibc's
+/// `default_collversion` on purpose — but this was the one such byte nothing
+/// watched.
+///
+/// **The assertion is agreement, never the literal**, which is what
+/// `scripts/oracle_differences.py` already demands of `default_collversion`.
+/// All six majors read one version because all six image pins are `-trixie`
+/// and so resolve to one libicu; the documented drift is *across* base images
+/// (`und-x-icu` is `153.128` on `13.23-alpine` against `153.136` on
+/// `18.6-alpine`), so a split here means the pins have drifted apart, which is
+/// the fault worth reporting. Naming the value would instead fire on every
+/// routine image bump — a deliberate regeneration whose diff already shows the
+/// change, and a check that fires on the expected event is a signal that is
+/// always on.
+///
+/// The shape claim is the other half, and it is the one
+/// [`the_types_schema_declares_one_deterministic_and_one_non_deterministic_collation`]
+/// used to make in prose: the version is absent from `default`, absent from
+/// `data-only` — which emits no `CREATE COLLATION` at all — and absent from
+/// `public.c_collation` under every flag set, a `C` libc collation having no
+/// `collversion` to record.
+#[test]
+fn the_icu_collversion_reaches_binary_upgrade_alone_and_agrees_across_majors() {
+    /// Each `CREATE COLLATION` in one fixture, as (name, everything after it).
+    fn create_collations(version: u32, flag_set: &str) -> Vec<(String, String)> {
+        let path = types_fixture(version, flag_set);
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path:?}: {e}"));
+        text.lines()
+            .filter_map(|line| line.strip_prefix("CREATE COLLATION "))
+            .map(|rest| {
+                let (name, options) = rest.split_once(' ').unwrap_or((rest, ""));
+                (name.to_string(), options.to_string())
+            })
+            .collect()
+    }
+
+    /// The `version = '…'` option's value, wherever the option is present.
+    fn collversion(options: &str) -> Option<&str> {
+        let after = options.split_once("version = '")?.1;
+        Some(after.split_once('\'').expect("pg_dump closes the quote it opened").0)
+    }
+
+    let mut found: Vec<(u32, String)> = Vec::new();
+    for version in VERSIONS {
+        for flag_set in ["default", "data-only", "binary-upgrade"] {
+            let statements = create_collations(version, flag_set);
+            if flag_set == "data-only" {
+                assert!(
+                    statements.is_empty(),
+                    "pg_dump {version} data-only: a data-only dump emits no DDL, so there is \
+                     no statement for a collversion to reach"
+                );
+                continue;
+            }
+
+            let names: Vec<&str> = statements.iter().map(|(name, _)| name.as_str()).collect();
+            assert_eq!(
+                names,
+                ["public.c_collation", "public.nd_collation"],
+                "pg_dump {version} {flag_set}"
+            );
+            assert_eq!(
+                collversion(&statements[0].1),
+                None,
+                "pg_dump {version} {flag_set}: a `C` libc collation has no collversion"
+            );
+
+            match (flag_set, collversion(&statements[1].1)) {
+                ("default", None) => {}
+                ("binary-upgrade", Some(version_option)) => {
+                    found.push((version, version_option.to_string()));
+                }
+                (_, got) => panic!(
+                    "pg_dump {version} {flag_set}: nd_collation's collversion is {got:?} — \
+                     the append is gated on --binary-upgrade (I42)"
+                ),
+            }
+        }
+    }
+
+    assert_eq!(found.len(), VERSIONS.len(), "one binary-upgrade fixture per major");
+    let (first_major, first) = &found[0];
+    for (major, other) in &found[1..] {
+        assert_eq!(
+            other, first,
+            "the ICU collversion is {first} on pg_dump {first_major} and {other} on {major} — \
+             the base-image pins have drifted apart"
         );
     }
 }

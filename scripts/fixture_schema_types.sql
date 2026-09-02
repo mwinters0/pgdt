@@ -218,11 +218,15 @@ CREATE COLLATION public.c_collation FROM "C";
 -- cannot be written any other way.
 --
 -- The drift objection that keeps ICU out of the comparison columns does not
--- reach it: `version =` is written only under --binary-upgrade, so the
--- collversion the server computed (153.128 on every image in the family today)
--- appears in no committed byte here. All six majors write this statement byte
--- for byte alike, including the option order -- provider, determinism, locale
--- -- which is dumpCollation's own append order and not this file's.
+-- reach it, because the drift is guarded rather than avoided: `version =` is
+-- written only under --binary-upgrade, so the collversion the server computed
+-- reaches exactly one flag set, and tests/preamble.rs's
+-- the_icu_collversion_reaches_binary_upgrade_alone_and_agrees_across_majors
+-- asserts that shape plus six-way agreement on the value without naming it --
+-- so an image bump is a regeneration and a split between majors is a fault.
+-- All six majors write this statement byte for byte alike, including the
+-- option order -- provider, determinism, locale -- which is dumpCollation's
+-- own append order and not this file's.
 --
 -- `und` is ICU's root locale, so it exists at every ICU version without a
 -- locale being generated, and it is deliberately *not* asked as an oracle case:
