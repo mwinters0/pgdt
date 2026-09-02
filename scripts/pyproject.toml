@@ -3,4 +3,21 @@ name = "pgdq-fixtures"
 version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.13"
-dependencies = []
+
+# Both pins are exact, and both decide committed bytes.
+#
+# `adbc-driver-postgresql` *is* the ADBC floor: what it returns for a type is
+# what `fixtures/<major>/adbc/floor.tsv` records, so the pin is the release the
+# floor is a claim about (roadmap-P12-adbc-type-floor.md, D1 and D8) and moving
+# it obliges re-taking the oracle. Every row carries the version it was taken
+# with, so the two cannot drift silently.
+#
+# `pyarrow` is pinned for the same reason one step removed: the sweep writes
+# `str(field.type)` into the `arrow` column, so pyarrow's rendering decides
+# those bytes. A floating version would let a wheel nobody chose rewrite the
+# oracle — the drift the `-trixie` image pins exist against, arriving through
+# a second upstream.
+dependencies = [
+    "adbc-driver-postgresql==1.12.0",
+    "pyarrow==25.0.1",
+]

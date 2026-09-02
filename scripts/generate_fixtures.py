@@ -25,6 +25,15 @@ reconciliation (scripts/oracle_register.py), which is where a case added for a
 type fixture_schema_types.sql does not declare surfaces -- the moment it is
 generated, rather than as a column of `E42704` nobody reads.
 
+A third pass takes the **ADBC floor oracle** -- what the Arrow ADBC PostgreSQL
+driver returns for every declarable `pg_catalog` type, written under
+fixtures/<major-version>/adbc/ (docs/design/architecture.md, "The ADBC floor
+oracle"). Its sweep and file format are scripts/adbc_floor.py. Unlike the
+comparison oracle it needs no fixture DDL -- it is a pg_catalog question -- but
+it does need the container reachable *from the host*, because the driver is a
+pip wheel in this script's own `uv` environment rather than something installed
+into a `postgres:` image. That is what HOST_PORT is for.
+
 Requires `docker` (aliased to `nerdctl` in this environment) runnable via
 passwordless `sudo`.
 """
@@ -37,6 +46,7 @@ import sys
 import time
 from pathlib import Path
 
+import adbc_floor
 import comparison_oracle
 import oracle_differences
 import oracle_register
@@ -46,6 +56,14 @@ REPO_ROOT = SCRIPT_DIR.parent
 FIXTURES_DIR = REPO_ROOT / "fixtures"
 
 DOCKER = ["sudo", "-n", "docker"]
+
+# The fixture container's port, published on the loopback interface so the ADBC
+# floor sweep can reach it from the host (adbc_floor.py: the driver is a wheel,
+# not something to install into a `postgres:` image). Versions run one at a
+# time, so one port serves all of them. 5432 and 5433 are taken by unrelated
+# long-lived containers on this machine (CLAUDE.local.md), which is why this is
+# neither.
+HOST_PORT = 55432
 
 # Routine version set: the latest minor release of every PostgreSQL major
 # from 13 onward (13 being the oldest still-supported major) -- see
@@ -184,6 +202,8 @@ def start_container(version: str, image: str) -> str:
             "MALLOC_ARENA_MAX=2",
             "-e",
             "POSTGRES_HOST_AUTH_METHOD=trust",
+            "-p",
+            f"127.0.0.1:{HOST_PORT}:5432",
             image,
         ],
         stdout=subprocess.DEVNULL,
@@ -350,13 +370,35 @@ def write_oracle(name: str, version: str) -> None:
         print(f"  oracle/{filename}: {out_path.relative_to(REPO_ROOT)} ({rows} rows)")
 
 
+def take_floor(version: str) -> None:
+    """Take the ADBC floor oracle for one server and write `adbc/floor.tsv`.
+
+    Against the `postgres` database rather than a fixture one: the sweep is a
+    `pg_catalog` question and sees nothing any fixture schema loads, so it owes
+    no `create_fixture_db`. From the host over the published port, because the
+    driver is a wheel in this script's own `uv` environment (adbc_floor.py).
+    """
+    conn = adbc_floor.connect(f"postgresql://{DB_USER}@127.0.0.1:{HOST_PORT}/postgres")
+    try:
+        rows = adbc_floor.sweep(conn, version)
+    finally:
+        conn.close()
+    out_path = adbc_floor.write_floor(FIXTURES_DIR, version, rows)
+    print(
+        f"  adbc/{adbc_floor.FLOOR_FILENAME}: {out_path.relative_to(REPO_ROOT)} "
+        f"({len(rows)} rows, driver {adbc_floor.driver_version()})"
+    )
+
+
 def generate_for_version(
-    version: str, image: str, schemas: list[str], dumps: bool, oracle: bool
+    version: str, image: str, schemas: list[str], dumps: bool, oracle: bool, floor: bool
 ) -> None:
     print(f"== {version} ({image}) ==")
     name = start_container(version, image)
     try:
         wait_ready(name)
+        if floor:
+            take_floor(version)
         if dumps:
             for schema in schemas:
                 create_fixture_db(name, schema)
@@ -444,11 +486,17 @@ def _run() -> int:
         action="store_true",
         help="don't regenerate fixtures/<version>/oracle/",
     )
+    parser.add_argument(
+        "--skip-floor",
+        action="store_true",
+        help="don't regenerate fixtures/<version>/adbc/floor.tsv, the ADBC "
+        "floor oracle; it is a third pass over the same containers",
+    )
     args = parser.parse_args()
     versions = args.versions or sorted(ROUTINE_VERSIONS)
     schemas = args.schemas or sorted(SCHEMAS)
-    if args.skip_dumps and args.skip_oracle:
-        parser.error("--skip-dumps and --skip-oracle together leave nothing to do")
+    if args.skip_dumps and args.skip_oracle and args.skip_floor:
+        parser.error("--skip-dumps, --skip-oracle and --skip-floor together leave nothing to do")
 
     for version in versions:
         generate_for_version(
@@ -457,6 +505,7 @@ def _run() -> int:
             schemas,
             dumps=not args.skip_dumps,
             oracle=not args.skip_oracle,
+            floor=not args.skip_floor,
         )
 
     if not args.skip_oracle:

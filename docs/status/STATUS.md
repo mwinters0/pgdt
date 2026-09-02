@@ -61,6 +61,7 @@ not oblige a sweep").
 | Register against the oracle's answers | working: `the_register_answers_every_committed_oracle_cell`, a unit test in `predicate.rs`, puts every committed cell to the register through the same `resolve_term`/`ResolvedTerm::eval` path a `--filter` takes — **47,746 cells over six majors, all six operators**. Its one-column schema is built by `resolve_columns` from a synthetic `DumpMetadata`, so resolution, nested plan and comparison plan agree the way they do in a real query. It skips an `E`-cell (what the server refused), a NULL right operand (which the filter grammar cannot spell), and — *for the four ordering operators only* — a column the register refuses an ordering operator on, whose set is asserted exactly; `=`/`<>` are still asked of those columns, because equality is never refused. A NULL **left** operand is not skipped: the server's `u` cell is asserted against `Truth::Unknown` itself, rather than against the exclusion it collapses to at the root. **Forty cases are permitted to disagree and every one of them does, in every cell its divergence reaches**: a `jsonb` string leaf (2), `text` under glibc's `en_US.utf8` (30) and a `text[]` element under the same collation (6) — one statement at three depths — over 24 ordering cells each; and `box`'s area equality (2) over 6 `=` cells, PostgreSQL defining no `box <> box`. A disagreeing term must announce a `ComparisonNote` **under that operator** ([`../design/architecture.md`](../design/architecture.md), "The register against the oracle's answers") |
 | Cross-major differ | working: `scripts/oracle_differences.py` walks the majors as a chain of adjacent pairs and files every cell that moved in `fixtures/oracle-differences.tsv` — **533 differences across 13–18, every one of them additive** (I35), so the union rule is checked rather than asserted. `test_oracle_differences.py` asserts the committed file against a fresh computation and, separately, that no difference is non-additive; an oracle pass of `generate_fixtures.py` ends by running the same check ([`../design/architecture.md`](../design/architecture.md), "The cross-major differ") |
 | Register-to-oracle reconciliation | working: `scripts/oracle_register.py` reads the register's arms out of `pgtype.rs` — one per declared base name in `builtin_scalar`, one per `TypeKind` match arm in `comparison_user_type`, the three branches of the walk that are not match arms, and the four branches of `collated_text` — and joins them against the case table both ways, failing on either. **38 arms, 54 cases, nothing uncovered and nothing unplaced.** One arm carries an exemption instead of a case and is reported under its own heading: no oracle case can reach `collation/non-deterministic`, a non-deterministic collation being ICU-only (I42) and an ICU case carrying the `collversion` drift the oracle excludes ICU to avoid. **An exemption names where the arm's evidence is** — `(file, needle)` pointers the check resolves, three unit tests today — because the reason alone says why the oracle cannot cover the arm and nothing about what does; it goes stale from both sides, an exempt arm that acquires a case being a problem and evidence that stops resolving being one too. The pointers name sufficient evidence rather than exhaustive, so the fixture bytes that now carry the shape owe no edit there. Each collation branch is anchored on a string the parse must find, so deleting one is reported rather than shortening the list. The collation is a second dimension: a case's label picks the arm, `C` reaching the bytewise branch and `default` the other two, and the `datcollate` that makes that mapping sound is read out of `meta.tsv` rather than assumed. An oracle pass of `generate_fixtures.py` ends by running it beside the differ ([`../design/architecture.md`](../design/architecture.md), "The register-to-oracle reconciliation") |
+| ADBC floor oracle | `fixtures/<13–18>/adbc/floor.tsv` holds what the Arrow ADBC PostgreSQL driver (`adbc_driver_postgresql` 1.12.0, pinned in `scripts/pyproject.toml`) returns for every declarable `pg_catalog` type — 74 rows at 13, 82 at 14–18, taken from the host over a published port by `scripts/generate_fixtures.py` and committed ([`../design/architecture.md`](../design/architecture.md), "The ADBC floor oracle"). Evidence only: nothing joins it against `builtin_scalar` yet, and the floor rule itself is not stated anywhere |
 | Compressed input (`--source foo.dump.xz`) | not started — P13 for xz, P15 for gzip/zstd. Input is assumed already-decompressed plain SQL text; `pg_dump -Fp --compress=…` output is therefore unreadable today ([`../design/pg-dump-compatibility.md`](../design/pg-dump-compatibility.md)). **P13 is grilled, partly specified and blocked**: no crate answers a positioned read over an `.xz` file, so the seekable-xz layer is being carved out into its own repository ([`../design/roadmap-P13-compressed-input.md`](../design/roadmap-P13-compressed-input.md), "Blocked") |
 | Remote input (`--source https://…`), over `object_store` | not started — P14, carved out of P6. `ByteRangeSource` is already shaped against `get_range`/`head`, and there is exactly one implementation: `LocalFileSource` |
 | Python bindings, DataFusion `TableProvider` | not started — P6 |
@@ -134,8 +135,9 @@ past this commit. The scan-performance phase will supply one.
 The ADBC type floor. Spec:
 [`../design/roadmap-P12-adbc-type-floor.md`](../design/roadmap-P12-adbc-type-floor.md).
 
-- [ ] **12.1** The floor oracle — the catalog sweep, `fixtures/<13–18>/adbc/floor.tsv`,
+- [x] **12.1** The floor oracle — the catalog sweep, `fixtures/<13–18>/adbc/floor.tsv`,
       and the `adbc_driver_postgresql` pin in `scripts/pyproject.toml`. No library code.
+      Notes: [`../design/roadmap-P12.1-floor-oracle-notes.md`](../design/roadmap-P12.1-floor-oracle-notes.md)
 - [ ] **12.2** The reconciliation — joins the oracle against `builtin_scalar` and fails
       both ways; D2's stances as declared exemptions, `interval` and `int2vector` naming
       12.3 and 12.6; the rule filed beside "The bar"; `money` earns a register entry
@@ -291,4 +293,19 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-Nothing is open.
+- **The floor sweep excludes array types by back-reference, not by the spec's
+  shape test.** P12's D7 spells the exclusion `typelem <> 0 AND typlen = -1`;
+  that predicate also matches `int2vector` and `oidvector`, so taken literally
+  it excludes the very type D5 commits the phase to closing. The sweep instead
+  excludes exactly *"some other type names this as its `typarray`"*, which
+  implements D7's stated reason (our resolution reaches array types by
+  recursing from the element type) and leaves D5 satisfiable. **The decision to
+  weigh:** whether D7's parenthetical should be amended to that predicate, or
+  whether the two clauses were meant to be reconciled the other way and
+  `int2vector` should come into the oracle by some other route. Reconsidering
+  it changes which rows `fixtures/<13–18>/adbc/floor.tsv` carries — today it is
+  `int2vector` (`list<item: int16>`) and `oidvector` (`arrow.opaque`), the
+  second of which the spec's delta table never mentions and 12.2 must place.
+  The spec is untouched either way. Detail:
+  [`../design/roadmap-P12.1-floor-oracle-notes.md`](../design/roadmap-P12.1-floor-oracle-notes.md),
+  "The sweep's array exclusion is a back-reference".

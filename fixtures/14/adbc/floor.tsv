@@ -1,0 +1,82 @@
+1.12.0	14	"char"	char	18	b	ok	\N	string
+1.12.0	14	aclitem	aclitem	1033	b	E42883	\N	\N
+1.12.0	14	bigint	int8	20	b	ok	\N	int64
+1.12.0	14	bit	bit	1560	b	ok	arrow.opaque	binary
+1.12.0	14	bit varying	varbit	1562	b	ok	arrow.opaque	binary
+1.12.0	14	boolean	bool	16	b	ok	\N	bool
+1.12.0	14	box	box	603	b	ok	arrow.opaque	binary
+1.12.0	14	bytea	bytea	17	b	ok	\N	binary
+1.12.0	14	character	bpchar	1042	b	ok	\N	string
+1.12.0	14	character varying	varchar	1043	b	ok	\N	string
+1.12.0	14	cid	cid	29	b	ok	arrow.opaque	binary
+1.12.0	14	cidr	cidr	650	b	ok	arrow.opaque	binary
+1.12.0	14	circle	circle	718	b	ok	arrow.opaque	binary
+1.12.0	14	date	date	1082	b	ok	\N	date32[day]
+1.12.0	14	datemultirange	datemultirange	4535	m	ok	arrow.opaque	binary
+1.12.0	14	daterange	daterange	3912	r	ok	arrow.opaque	binary
+1.12.0	14	double precision	float8	701	b	ok	\N	double
+1.12.0	14	gtsvector	gtsvector	3642	b	E42883	\N	\N
+1.12.0	14	inet	inet	869	b	ok	arrow.opaque	binary
+1.12.0	14	int2vector	int2vector	22	b	ok	\N	list<item: int16>
+1.12.0	14	int4multirange	int4multirange	4451	m	ok	arrow.opaque	binary
+1.12.0	14	int4range	int4range	3904	r	ok	arrow.opaque	binary
+1.12.0	14	int8multirange	int8multirange	4536	m	ok	arrow.opaque	binary
+1.12.0	14	int8range	int8range	3926	r	ok	arrow.opaque	binary
+1.12.0	14	integer	int4	23	b	ok	\N	int32
+1.12.0	14	interval	interval	1186	b	ok	\N	month_day_nano_interval
+1.12.0	14	json	json	114	b	ok	arrow.json	string
+1.12.0	14	jsonb	jsonb	3802	b	ok	arrow.json	string
+1.12.0	14	jsonpath	jsonpath	4072	b	ok	arrow.opaque	binary
+1.12.0	14	line	line	628	b	ok	arrow.opaque	binary
+1.12.0	14	lseg	lseg	601	b	ok	arrow.opaque	binary
+1.12.0	14	macaddr	macaddr	829	b	ok	arrow.opaque	binary
+1.12.0	14	macaddr8	macaddr8	774	b	ok	arrow.opaque	binary
+1.12.0	14	money	money	790	b	ok	\N	int64
+1.12.0	14	name	name	19	b	ok	\N	string
+1.12.0	14	numeric	numeric	1700	b	ok	arrow.opaque	string
+1.12.0	14	nummultirange	nummultirange	4532	m	ok	arrow.opaque	binary
+1.12.0	14	numrange	numrange	3906	r	ok	arrow.opaque	binary
+1.12.0	14	oid	oid	26	b	ok	\N	int32
+1.12.0	14	oidvector	oidvector	30	b	ok	arrow.opaque	binary
+1.12.0	14	path	path	602	b	ok	arrow.opaque	binary
+1.12.0	14	pg_brin_bloom_summary	pg_brin_bloom_summary	4600	b	ok	arrow.opaque	binary
+1.12.0	14	pg_brin_minmax_multi_summary	pg_brin_minmax_multi_summary	4601	b	ok	arrow.opaque	binary
+1.12.0	14	pg_dependencies	pg_dependencies	3402	b	ok	arrow.opaque	binary
+1.12.0	14	pg_lsn	pg_lsn	3220	b	ok	arrow.opaque	binary
+1.12.0	14	pg_mcv_list	pg_mcv_list	5017	b	ok	arrow.opaque	binary
+1.12.0	14	pg_ndistinct	pg_ndistinct	3361	b	ok	arrow.opaque	binary
+1.12.0	14	pg_node_tree	pg_node_tree	194	b	ok	arrow.opaque	binary
+1.12.0	14	pg_snapshot	pg_snapshot	5038	b	ok	arrow.opaque	binary
+1.12.0	14	point	point	600	b	ok	arrow.opaque	binary
+1.12.0	14	polygon	polygon	604	b	ok	arrow.opaque	binary
+1.12.0	14	real	float4	700	b	ok	\N	float
+1.12.0	14	refcursor	refcursor	1790	b	ok	\N	string
+1.12.0	14	regclass	regclass	2205	b	ok	arrow.opaque	binary
+1.12.0	14	regcollation	regcollation	4191	b	ok	arrow.opaque	binary
+1.12.0	14	regconfig	regconfig	3734	b	ok	arrow.opaque	binary
+1.12.0	14	regdictionary	regdictionary	3769	b	ok	arrow.opaque	binary
+1.12.0	14	regnamespace	regnamespace	4089	b	ok	arrow.opaque	binary
+1.12.0	14	regoper	regoper	2203	b	ok	arrow.opaque	binary
+1.12.0	14	regoperator	regoperator	2204	b	ok	arrow.opaque	binary
+1.12.0	14	regproc	regproc	24	b	ok	\N	int32
+1.12.0	14	regprocedure	regprocedure	2202	b	ok	arrow.opaque	binary
+1.12.0	14	regrole	regrole	4096	b	ok	arrow.opaque	binary
+1.12.0	14	regtype	regtype	2206	b	ok	arrow.opaque	binary
+1.12.0	14	smallint	int2	21	b	ok	\N	int16
+1.12.0	14	text	text	25	b	ok	\N	string
+1.12.0	14	tid	tid	27	b	ok	arrow.opaque	binary
+1.12.0	14	time with time zone	timetz	1266	b	ok	arrow.opaque	binary
+1.12.0	14	time without time zone	time	1083	b	ok	\N	time64[us]
+1.12.0	14	timestamp with time zone	timestamptz	1184	b	ok	\N	timestamp[us, tz=UTC]
+1.12.0	14	timestamp without time zone	timestamp	1114	b	ok	\N	timestamp[us]
+1.12.0	14	tsmultirange	tsmultirange	4533	m	ok	arrow.opaque	binary
+1.12.0	14	tsquery	tsquery	3615	b	ok	arrow.opaque	binary
+1.12.0	14	tsrange	tsrange	3908	r	ok	arrow.opaque	binary
+1.12.0	14	tstzmultirange	tstzmultirange	4534	m	ok	arrow.opaque	binary
+1.12.0	14	tstzrange	tstzrange	3910	r	ok	arrow.opaque	binary
+1.12.0	14	tsvector	tsvector	3614	b	ok	arrow.opaque	binary
+1.12.0	14	txid_snapshot	txid_snapshot	2970	b	ok	arrow.opaque	binary
+1.12.0	14	uuid	uuid	2950	b	ok	arrow.opaque	binary
+1.12.0	14	xid	xid	28	b	ok	arrow.opaque	binary
+1.12.0	14	xid8	xid8	5069	b	ok	arrow.opaque	binary
+1.12.0	14	xml	xml	142	b	ok	arrow.opaque	binary

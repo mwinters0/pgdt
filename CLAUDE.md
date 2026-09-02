@@ -19,6 +19,8 @@ cargo run -p pgdump_query-cli -- info --dqcache <path>       # cache-only, no du
 
 cd scripts && uv run generate_fixtures.py [--version 13|16|18]  # regenerate fixtures/
 cd scripts && uv run generate_fixtures.py --skip-dumps          # re-take the comparison oracle only
+cd scripts && uv run generate_fixtures.py --skip-dumps --skip-oracle  # re-take the ADBC floor oracle only
+cd scripts && uv run python -m unittest test_adbc_floor  # the committed ADBC floor files
 cd scripts && uv run python -m unittest test_comparison_oracle  # case table vs. the committed answers
 cd scripts && uv run oracle_differences.py        # where two adjacent majors disagree, vs. the committed file
 cd scripts && uv run oracle_differences.py --write  # re-file it after regenerating an oracle
