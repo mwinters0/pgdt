@@ -22,9 +22,11 @@ observed in committed bytes — the three-valued expression tree, the
 `--where` grammar that reaches it from the command line, the refusal that
 keeps the two filter flags meaning one thing, the four `*_in` supersets a
 nested literal is read with, and the structural comparison every container kind
-now gets — a range's canonical storage form included — landed. **Its checklist
-is fully ticked and the phase has not been wrapped**: that is the next
-session's work, and
+now gets — a range's canonical storage form included — landed. **Two slices are
+still unticked**, 11.14 and 11.15, both amended into the spec after the `KD12`
+review: a user-defined range's `canonical` parameter is captured and the column
+refused under every operator, and a nested uncomparable position stops
+answering `=` bytewise in silence. The wrap follows them, and
 [`../design/roadmap-P11.10.1-range-comparison-notes.md`](../design/roadmap-P11.10.1-range-comparison-notes.md)
 says what it owes.
 
@@ -399,6 +401,18 @@ progress.
       `REFUSED` list drops from 14 to 6. Earned from 11.10 — see the spec's
       slice table. Notes:
       [`../design/roadmap-P11.10.1-range-comparison-notes.md`](../design/roadmap-P11.10.1-range-comparison-notes.md)
+- [ ] **11.14** A user range's `canonical` parameter — the `AS RANGE` arm keeps
+      `canonical` beside `subtype` and `multirange_type_name`, the cache
+      `FORMAT_VERSION` bumps, and a fourth `ComparisonPlan` outcome refuses a
+      column whose range type declares one under *every* operator, equality
+      included, rather than letting `=` fall through to a bytewise comparison.
+      Closes `KD12`. Amended in, not planned — see the spec's slice table.
+- [ ] **11.15** A nested uncomparable position announces itself — a nested
+      column holding one (`json[]`) reaches `ComparisonDivergence::AsText` from
+      the `_ =>` arm instead of answering `=` bytewise in silence, naming the
+      position the way the ordering refusal already does. Changes an
+      already-tested path: the oracle asserts today's silence. Amended in, not
+      planned — see the spec's slice table.
 
 ## Not started
 
@@ -535,9 +549,10 @@ here rather than reading as a phase nobody has sliced.
 
 - **KD12** — a user-defined range type declaring a `canonical` function is
   compared without it (I46), so `[1,10]` and `[1,11)` are two values where the
-  server calls them one, under every operator and silently. **(c) unowned**;
-  promoted by a dump carrying such a type, which no fixture and no sample in
-  hand does. Detail:
+  server calls them one, under every operator and silently. **(b) owned by
+  P11**, slice 11.14, which captures the parameter and refuses such a column
+  outright — a refusal `ComparisonPlan::Refused` cannot express, its equality
+  falling through to a bytewise comparison. Detail:
   [`../design/architecture.md`](../design/architecture.md), "Nested columns
   compare structurally".
 
@@ -550,29 +565,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-**`KD12` is a silent wrong answer where a refusal was available.** 11.10.1
-reproduces the canonicalization the three discrete built-in range types apply,
-keyed off the range type's name. A **user-defined** range declares its own
-`canonical` function in DDL `pg_dump` writes and `TypeKind::Range` does not
-keep, so a column of one is compared as though it had none: `[1,10]` and
-`[1,11)` come back as two values where the server calls them one, under every
-operator and with no note. That is the wrong-rows-in-silence failure this phase
-exists to close, and it was left open.
-
-*Why it was made this way.* Capturing the parameter is enough to **refuse** the
-column — knowing the function exists licenses declining, where reproducing it
-does not, a user's canonical function being arbitrary SQL — but capturing it is
-a preamble grammar change plus a cache `FORMAT_VERSION` bump, sharing no code
-with the comparison and asking a different review question. That is the seam
-11.6.1 and 11.6.2 were split on, so it was filed rather than folded in.
-
-*What would change if it were reconsidered.* A slice that adds
-`TypeKind::Range::canonical`, bumps the cache format, and answers
-`ComparisonPlan::Refused` for a range declaring one — after which `KD12` is
-struck and the column joins `json[]` in the refused population instead of
-answering wrongly. The counter-argument is that no dump in hand carries such a
-type (both fixture user ranges declare none), so the entry may be worth exactly
-what it costs to leave alone. Detail:
-[`../design/architecture.md`](../design/architecture.md), "Nested columns
-compare structurally"; reasoning:
-[`history/2026-09-02.md`](history/2026-09-02.md).
+Nothing is open.

@@ -837,6 +837,52 @@ here.
 | **11.12** | The non-deterministic collation, observed | A `CREATE COLLATION` with `provider = icu` and `deterministic = false`, and one `t_collate` column of it, regenerated across six majors — so I42's claim that a plain dump *states* non-determinism rests on committed bytes rather than on `pg_dump.c` alone. **No oracle case**, which is what keeps the ICU exclusion above intact: the oracle builds its own temp tables per case, so the column obliges none, and the dump text holds no `collversion` to drift. Asserted in `tests/ordering.rs` beside the other collated columns, and the `fixture_schema_types.sql` comment rewritten to say which end ICU is now out of. No library code. **Earned, not planned** — see below. |
 | **11.10** | Nested structural comparison: array and composite | Element-wise and field-wise, the NULL rule, inherited comparability, paths in the notes. **Rewritten to the scope that landed** — see below. |
 | **11.10.1** | Nested structural comparison: range and multirange | Bound-wise, range canonicalization for the three discrete built-ins, and a multirange's sort-coalesce-drop. **Earned, not planned** — see below. |
+| **11.14** | A user range's `canonical` parameter | `parse_create_type`'s `AS RANGE` arm keeps `canonical` beside `subtype` and `multirange_type_name`, the cache format bumps, and the comparison register gains a **fourth `ComparisonPlan` outcome**: a column whose range type declares a canonical function this build does not reproduce is refused under *every* operator, equality included, rather than falling through to a bytewise `=`. Closes `KD12`. **Amended in, not planned** — see below. |
+| **11.15** | A nested uncomparable position announces itself | A nested column holding an uncomparable position — `json[]` — answers `=` bytewise today and reports nothing; it reaches `ComparisonDivergence::AsText` from the `_ =>` arm's divergence list instead, naming the position the way the ordering refusal already does. Not a wrong answer, a silent one: `array_cmp` raises for a `json` element, so the server has no `=` to disagree with. **Amended in, not planned** — see below. |
+
+**11.14 and 11.15 were amended in, not planned**, as the result of the `KD12`
+review — reasoning:
+[`../status/history/2026-09-02.md`](../status/history/2026-09-02.md), "A user
+range's `canonical` parameter: the review of `KD12`". The phase exists to close
+wrong-rows-in-silence, and `KD12` is a known instance of exactly that: a
+user-defined range's `canonical` function is written by `pg_dump`, discarded by
+the grammar, and the column then answers `[1,10]` ≠ `[1,11)` where the server
+calls them one value. It is a slice rather than an out-of-band item because
+adding an outcome to the comparison register is a decision *this spec* records,
+and the out-of-band rule admits only work that changes none.
+
+**The filed remedy would not have closed it**, which is why the work is a slice
+at all rather than a two-line edit: `ComparisonPlan::Refused` on a *mapped*
+column refuses the four ordering operators and lets `=`/`!=` fall through to
+`Comparison::Canonical` — bytewise text — announcing nothing, since that arm
+reports a divergence only for `UnknownType` and `OpaqueBaseType`. The register
+has no outcome meaning "refuse every operator, equality included", and that is
+what `KD12` needs. Capturing the parameter itself is cheap: the `AS RANGE` arm
+already splits every `key = value` in the body and discards what it does not
+keep, so it is one `else if` and one field, and pre-1.0 a `FORMAT_VERSION` bump
+is one character with nothing to migrate.
+
+**The outcome is a fourth `ComparisonPlan` variant, not a reason field on
+`Refused`.** `Refused` means "no ordering, equality as text" at every site that
+returns it — the empty enum, `Base`/`Shell`, an undeclared column — and that
+fallback is correct there, announced as `UnmodelledType` where the type is
+opaque. A fourth variant leaves those sites alone and makes `resolve_term`'s
+match force each one to choose, which is the property that surfaced this gap in
+the first place.
+
+**11.15 announces rather than refuses**, because the adjacent hole it closes is
+a different defect sharing one code site. `ComparisonDivergence::AsText`
+already means "the server defines no comparison here" and already reports on
+equality (`affects_equality` is `true`), which is how top-level `json` is
+handled; the nested case differs from it only in being silent. Refusing there
+would take away an answer the user has today for no gain.
+
+**They are two slices, split by review confidence.** 11.14 is additive and
+disturbs nothing that works: a new field, a new variant, a new refusal. 11.15
+changes an already-tested path — every nested column's `=` reports no
+divergence today and the oracle asserts it — so bundling them would force one
+review to accept both at one confidence, which `../process.md`'s "Size a slice
+by its review" forbids.
 
 **11.13 was amended in, not planned.** The spec asserted that two flags over
 one leaf grammar avoided the widening hazard, and it was wrong about the half
