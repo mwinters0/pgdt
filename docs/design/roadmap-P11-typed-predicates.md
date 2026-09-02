@@ -325,13 +325,51 @@ more fact, and it leaves L4 asking L2-shaped questions.
 nothing type-checks it in, to preserve a key that is being replaced for good
 reasons.
 
-## `--where` is a new flag; `--filter` does not change meaning
+## `--where` is a new flag, and the two flags may not disagree
 
 The expression grammar is **opt-in**: `pgdq query --where '<expr>'`, with
 parens, `AND`/`OR`/`NOT`, and the existing term grammar
 ([`architecture.md`](architecture.md), "A filter term is parsed for two
-audiences") as its **leaf**. `--filter` keeps its current meaning exactly —
-one term, repeatable, ANDed — and a query using both ANDs the two.
+audiences") as its **leaf**. A query using both ANDs the two.
+
+**`--filter` refuses any term that `--where` would read as structure**, naming
+both remedies: quote the value, or use `--where`. It does not silently keep its
+own reading.
+
+**The refusal set is defined by the tokenizer, not restated beside it.** A
+`--filter` term is run through `where_expr`'s `tokenize` and refused unless the
+result is a single `Leaf`. That makes the refusal set *exactly* the
+disagreement set by construction, where a second scan looking for the reserved
+spellings would be a copy of a rule — free to drift the moment either grammar
+moves, and drift here is silent again. It also gets the boundary conditions
+right for free: `keyword_at` recognises a keyword only against whitespace or a
+paren, so `--filter 'v_text=not a'` is one leaf under both flags and stays
+accepted, as do `IS NULL` and `IS NOT DISTINCT FROM`, whose `NOT` the term
+grammar claims. The narrow set is what survives: `--filter 'note=a b'` still
+works unquoted.
+
+The check lives on the `--filter` path alone — a `--where` leaf has by
+construction already survived tokenization — which puts a `main.rs` →
+`where_expr` dependency where none was before. Both are L4, so
+[`layering.md`](layering.md) permits it.
+
+**A term with no operator is refused on the same rule**, and this is the one
+place the refusal reaches a string that was never returning wrong rows:
+`--filter 'and is null'` names a column `and` today, while `--where` of the
+same string is a hard parse error rather than a different row set. It is
+refused anyway, because the property being bought is that a string means the
+same thing under both flags, and a string one flag accepts and the other
+rejects breaks that too. Carving the exception would mean the refusal set stops
+being "whatever tokenizes to more than one token", which is the whole of its
+value. The remedy is the one the grammar already teaches:
+`--filter '"and" is null'` works today and keeps working.
+
+That is what makes the two flags one grammar rather than two: **a string both
+flags accept means the same thing under both.** Without it, `--filter` and
+`--where` disagree silently on any term whose right-hand fragment parses on its
+own, and disagreeing is worse here than either reading alone — the user has no
+way to see which one they got. The reasoning and the evidence are in
+[`../status/history/2026-09-02.md`](../status/history/2026-09-02.md).
 
 *Rejected: widening `--filter` itself to accept an expression.* It is the
 `IS NULL` hazard one level up and worse. `--filter 'note=a or b'` is an
@@ -339,7 +377,18 @@ equality against the string `a or b` today; under an expression grammar the
 same unchanged command line would silently become a disjunction. A wrong row
 set from a command that did not change is this phase's worst failure class, and
 the simple audience the two-audience grammar was built for is exactly the
-audience that would hit it.
+audience that would hit it. Refusing the string is what that audience gets
+instead: loud, with the remedy in the message.
+
+*Rejected: dropping `--filter`, leaving `--where` as the only flag.*
+`--where` is a capability superset — every `Predicate` reachable through
+`--filter` is reachable through it, since quoting is always available and
+round-trips — but it is not a spelling superset, and the difference falls
+entirely on the simple audience. `--filter 'note=a b'` needs no internal
+quoting and one shell array element is one term; under `--where` a value
+carrying a reserved spelling must be quoted, and a script composing terms must
+concatenate and quote rather than append. Refusing the overlap buys what
+dropping the flag buys, and keeps the cheap spelling.
 
 *Rejected: landing the tree library-only and leaving the CLI for later.* The
 phase's point is what a filter means; reachable only through an embedder, it
@@ -474,6 +523,12 @@ counting NULL as a value". The cost is in the term grammar — an infix keyword
 means a third parse path beside the operator split and the `IS NULL` fallback,
 in the file whose ordering hazards are already documented at length.
 
+**The CLI spelling belongs to 11.8**, and no row named it because the slice
+table splits by *mechanism* — library, CLI grammar, literals, nested — while
+the operator surface cuts across all four. The two forms reach `parse_filter`,
+which is the term grammar both flags read, rather than a spelling `--where`
+alone would have.
+
 *Rejected: adding `IN` for the ergonomics of a long list.* A phase about what a
 filter means should not also be inventing list syntax. If repeated `OR` proves
 painful in use, `IN` is an out-of-band ergonomics item with no decision behind
@@ -514,11 +569,14 @@ keywords are case-insensitive and recognised **only outside quotes**. Anything
 that is not a paren or a keyword is a leaf, handed to today's `parse_filter`
 unchanged.
 
-Delegating the leaf is what makes the hazard tractable rather than merely
-avoided: `--where 'note=a and b'` tokenizes to `note=a` AND `b`, and `b` is a
-term with no operator and no `IS` suffix, so it is **refused loudly**. The same
-string under `--filter` is still the equality it reads as, which is what the
-flag split buys.
+Delegating the leaf keeps one term grammar rather than two, but it does not on
+its own make the hazard tractable — that was this spec's original claim and it
+held only for half the cases. `--where 'note=a and b'` is refused loudly
+because `b` alone is not a term; `--where 'note=a and b=c'` is a disjunction
+where `--filter` of the same string is an equality, with no error either way.
+The refusal above — a `--filter` term that does not tokenize to a single leaf —
+is what closes that, and it is the same tokenizer, so the two flags cannot
+drift back apart.
 
 `&&`, `||` and `!` are **not** accepted as alternate spellings: one spelling,
 and those symbols collide with values.
@@ -769,9 +827,19 @@ here.
 | **11.6.2** | The non-deterministic collation is read | `CREATE COLLATION … deterministic = false` parsed out of the preamble and carried to the register, so a column of such a collation announces that `=` is not a byte comparison (I42) — the one equality divergence a plain dump *states* and nothing raises today. **Earned, not planned** — see below. |
 | **11.7** | Three-valued evaluation | `Expr`, the `True`/`False`/`Unknown` domain, `IS DISTINCT FROM`. Library only. |
 | **11.8** | `--where` | The expression grammar, its own CLI module, leaf delegated to `parse_filter`. |
+| **11.13** | The two flags may not disagree | `--filter` runs its term through `where_expr`'s tokenizer and refuses anything that is not a single `Leaf`, so no string means one thing under `--filter` and another under `--where` — the refusal set defined by the tokenizer rather than restated beside it. Closes `KD11`. **Amended in, not planned** — see below. |
 | **11.9** | The nested literal input grammar | Parser for the `array_in`/`record_in`/`range_in` supersets — **three grammars, not one** — checked against the oracle's malformed cases. No comparison yet. |
 | **11.12** | The non-deterministic collation, observed | A `CREATE COLLATION` with `provider = icu` and `deterministic = false`, and one `t_collate` column of it, regenerated across six majors — so I42's claim that a plain dump *states* non-determinism rests on committed bytes rather than on `pg_dump.c` alone. **No oracle case**, which is what keeps the ICU exclusion above intact: the oracle builds its own temp tables per case, so the column obliges none, and the dump text holds no `collversion` to drift. Asserted in `tests/ordering.rs` beside the other collated columns, and the `fixture_schema_types.sql` comment rewritten to say which end ICU is now out of. No library code. **Earned, not planned** — see below. |
 | **11.10** | Nested structural comparison | Element-wise/field-wise/bound-wise, the NULL rule, inherited comparability, range canonicalization, paths in the notes. |
+
+**11.13 was amended in, not planned.** The spec asserted that two flags over
+one leaf grammar avoided the widening hazard, and it was wrong about the half
+it did not test: `--where 'note=a or b'` is refused loudly only because `b` is
+not a term, and `--where 'note=a or b=c'` is a disjunction where `--filter` of
+the same string is an equality — both exit 0. Two flags do not avoid a hazard
+by having it between them instead of inside one. It runs **before 11.9**
+because 11.9's composite and range literals are exactly the values the refusal
+governs.
 
 **11.2.1 was earned, not planned.** The reconciliation was written into 11.2's
 row and is not buildable there: two of its three directions join against the L2

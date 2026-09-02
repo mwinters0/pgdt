@@ -2856,8 +2856,17 @@ addition from re-reading a term that parsed before it existed: a column named
 `is distinct from` is still askable unquoted as `is distinct from=x`, since
 what follows the phrase there is `=` and not a space. The one string whose
 meaning does change is a term whose *column* is spelled with the phrase in it
-between spaces, and that is loud rather than silent — the column it now names
-is the text to the phrase's left.
+between spaces: `a is distinct from b=c` named the column `a is distinct from b`
+and now names `a`.
+
+That is loud wherever `a` is not itself a column, which is the ordinary case —
+the term fails to resolve. It is silent only against a schema carrying **both**
+a column named `a is distinct from b` and one named `a`, and the grammar does
+not distort itself for that: reserving the phrase outright would make a column
+named with it unaskable, and requiring the left side to be quoted would put a
+quoting rule on a term that has no ambiguity in it. Quoting is the remedy, and
+it is the one the grammar already teaches — `"a is distinct from b"=c` names
+the long column.
 
 **Whitespace outside quotes is not data**, on both sides of the operator, using
 Rust's `str::trim` — one definition of whitespace for the whole parser,
@@ -2942,12 +2951,19 @@ quotes. Everything that is not a paren or a keyword is a **leaf**, handed to
 
 **It is a second flag rather than a widening of `--filter`, and that is the
 decision the rest of the grammar rests on.** `--filter 'note=a or b'` is an
-equality against the string `a or b` today; under a widened `--filter` the
-same unchanged command line would silently become a disjunction, and a wrong
-row set from a command that did not change is this grammar's worst failure.
-Under `--where` the same string tokenizes to `note=a` AND the leaf `b`, which
-has no operator and no `IS` suffix, so it is refused loudly — the hazard made
-tractable rather than merely avoided.
+equality against the string `a or b`; under a widened `--filter` the same
+unchanged command line would silently become a disjunction, and a wrong row set
+from a command that did not change is this grammar's worst failure.
+
+<!-- deficiency: KD11 -->
+**The two flags disagree about a string that parses under both, and today the
+disagreement is silent.** `--where 'note=a or b'` is refused loudly,
+but only because `b` alone is not a term; `--where 'v_text=hello and v_char=hi'`
+is a conjunction where `--filter` of the same string is an equality against the
+literal `hello and v_char=hi`, and both exit 0 with different row sets. A
+keyword, a `NOT` or a paren outside quotes is the whole of the disagreement,
+and quoting is the remedy the user already has — but nothing tells them they
+need it.
 
 **A keyword is recognised only against whitespace or a paren**, which is
 stricter than a word boundary and has to be: `=` is not a word byte, so a bare

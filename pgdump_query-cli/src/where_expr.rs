@@ -7,12 +7,19 @@
 //! `--filter` uses, unchanged (`docs/design/architecture.md`, "A filter term
 //! is parsed for two audiences").
 //!
-//! The delegation is what makes the widening hazard tractable rather than
-//! merely avoided. `--where 'note=a and b'` tokenizes to `note=a` AND `b`,
-//! and `b` is a term with no operator and no `IS` suffix, so it is refused
-//! loudly; the same string under `--filter` is still the equality it reads
-//! as, which is what the two flags buy. Nothing here changes what any
-//! `--filter` string means.
+//! The delegation keeps one term grammar rather than two. It does not on its
+//! own keep the two flags agreeing: `--where 'note=a and b'` is refused
+//! loudly only because `b` alone is not a term, while
+//! `--where 'note=a and b=c'` is a conjunction where `--filter` of the same
+//! string is an equality against the literal, with no error either way.
+//! Nothing here changes what any `--filter` string means, which is why the
+//! disagreement lives between the flags rather than inside one.
+//!
+//! deficiency: KD11 — `--filter` will refuse a term that does not tokenize to
+//! a single [`Token::Leaf`], which makes this module's tokenizer the
+//! definition of what the two flags may disagree about
+//! (`docs/design/roadmap-P11-typed-predicates.md`, "`--where` is a new flag,
+//! and the two flags may not disagree").
 //!
 //! This module is the CLI's alone. `Expr` is a plain public enum an embedder
 //! fills in variant by variant, so nothing below L4 parses an expression any
