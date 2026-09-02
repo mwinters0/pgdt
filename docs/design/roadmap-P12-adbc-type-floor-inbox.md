@@ -46,7 +46,7 @@ their string), enums (dictionary vs. their string), and ranges and multiranges
 
 `oid` was the fifth row and is gone: it maps to `UInt32` under the existing
 bar, which is narrower than ADBC's `Int32` rather than wider, and it landed as
-`M29` during P11's run.
+out-of-band work during P11's run.
 
 **Why this phase cares.** It sizes the phase honestly: the mapping table barely
 moves, so the work is the rule, the oracle that checks it, and two types with
@@ -84,7 +84,7 @@ verdict. It likely earns a `KD<k>` under stance (a) — a consequence of a
 deliberate tradeoff, never to be worked — with its paragraph beside "The bar" in
 [`architecture.md`](architecture.md).
 
-## `interval` is unblocked: the style is pinned, and P11.5 already parses it
+## `interval` is unblocked: the style is pinned, and P11 already parses it
 
 **Fact.** The blocker this entry originally recorded does not exist. It read I4
 as saying `pg_dump` never sets `IntervalStyle`, so a value's rendering would
@@ -102,10 +102,10 @@ the text→(months, days, microseconds) split it needs is already written and
 tested. What remains is the mapping decision itself — `Interval(MonthDayNano)`
 is nanosecond-resolution and PostgreSQL's field is microseconds, so the
 conversion is exact in one direction and the render-back has to refuse a
-sub-microsecond value it could never have produced. Sequencing: P11.5 has
+sub-microsecond value it could never have produced. Sequencing: P11 has
 landed, so there is no collision left; a mapping would re-key the register's
 `interval` arm from a text-held comparison to a decoded one, which is a change
-of mechanism and not of answer. **Origin:** P11.5, 2026-09-01
+of mechanism and not of answer. **Origin:** P11, 2026-09-01
 ([`../status/history/2026-09-01.md`](../status/history/2026-09-01.md),
 "`pg_dump` pins `IntervalStyle`"); the original entry was the ADBC survey of
 2026-08-31.
@@ -136,7 +136,7 @@ grilled: **it does**. What that obliges is wider than the three columns that
 prompted it:
 
 - `arrow.uuid` and `arrow.json` were the cheap half and are **already landed**
-  (`M29`), on a column's own field only: neither changes a type, since
+  on a column's own field only: neither changes a type, since
   `arrow.uuid`'s storage type is `FixedSizeBinary(16)` and `arrow.json`'s is
   `Utf8`, `LargeUtf8` or **`Utf8View`**, which is what we already emit for
   both. arrow-rs's `supports_data_type` is what checks that, and the

@@ -1586,8 +1586,17 @@ and `decode_record` does not; `array_in`'s bare `NULL` is disqualified by any
 quote or escape in the element; and a `multirange_in` member spelled `empty` is
 accepted and dropped.
 
+*Rejected: reading a literal with the strict `decode_*` instead, so no second
+grammar exists.* A space after a comma is what a person types, and refusing
+`{a, b}` would make a typed nested comparison worse to use than the text
+comparison it replaced. *Rejected: normalizing the literal with a cheap
+pre-pass and feeding the strict decoder.* Stripping whitespace is wrong inside
+a quoted element, so the pre-pass has to parse the literal to know where it may
+strip — at which point it is the parser, written informally and with no oracle
+behind it.
+
 Each parser is a transcription of the **newest** major's function, with no
-branch on the dump's version — the phase's union rule, and the one place two
+branch on the dump's version — the union rule (I35), and the one place two
 supported majors disagree is v17's `array_in` rewrite accepting `{{},{}}` where
 13–16 refuse it (I44). Under-accepting relative to `strtol` in a dimension item
 is deliberate: refusing what the server takes costs the user an error message,
@@ -2075,6 +2084,17 @@ same equality comparison `=`/`!=` do (see "Equality is typed too"); all that
 differs is the NULL rule, which is two-valued: `True` and `False` respectively
 on a NULL field.
 
+**Two more exclusions are closed decisions rather than gaps.** `LIKE` is a
+matching engine of its own — pattern syntax, escapes, and case folding that is
+collation-dependent, which is precisely the boundary the register spends its
+length declaring — so adding it would reopen every collation question against
+an operator that cannot answer them. And **column-to-column comparison** is
+not a `Predicate`: every one of them is one column against one literal, and
+changing that is a different feature, not a wider operator set. *Rejected:
+adding `IN` for the ergonomics of a long list.* `Or` already expresses it, and
+if repeated `OR` proves painful in use it is an out-of-band ergonomics item
+with no decision behind it rather than list syntax invented here.
+
 **Short-circuiting is defined against the *root*, not against each node.**
 `And` stops at the first `False`, `Or` at the first `True`. Under a `Not` that
 is all it may do, since `Not` has to tell `False` from `Unknown`; everywhere
@@ -2154,16 +2174,11 @@ the file is the one `*_out` would write. That is what still carries `=`/`!=`
 on a **nested** column, and on any column the register has no comparison for:
 the field's own bytes are the value, so comparing them is right. What the
 argument never covered is the *literal the user typed*, which is what typed
-equality closes — see "Equality is typed too" below.
-
-*Rejected:* type-aware comparison of a **nested** column. It needs the
-*input*-side grammar, which I20's scope limit flags as considerably more
-permissive than the `*_out` inverse the decoders commit to, plus
-canonicalization for the three discrete built-in ranges. That is one-time work
-belonging with typed predicates, and it is specified — with the measured
-PostgreSQL semantics — in
-[`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md), "Nested
-comparison is structural, two-valued, and inherits comparability".
+equality closes — see "Equality is typed too" below. It is also what a nested
+column's own comparison had to be built around, since the input-side grammar
+I20's scope limit flags as considerably more permissive than the `*_out`
+inverse is exactly what a nested literal needs — see "Nested columns compare
+structurally".
 
 ### Ordering operators compare typed, and the register says where that differs
 
@@ -2414,6 +2429,20 @@ as the key. `text`, `varchar` and `char(n)` are spread over four of the rows,
 split by what the column's own `COLLATE` clause says — and `char(n)` is on a
 different *comparison* from the other two, which is the second reason the
 declared type has to be the key.
+
+*Rejected: carrying the enum's labels in the Arrow field's metadata, so the
+`DataType` still suffices as the key.* It smuggles a PostgreSQL fact into a
+structure nothing type-checks it in — that metadata is *Arrow's* vocabulary,
+which is why the two canonical extension names there are validated against
+Arrow's own storage types — and it does it to preserve a key that is being
+replaced for the reasons above.
+
+*Rejected: leaving the register in L4 and threading its extra inputs through
+`resolve_term`.* That signature grows by one argument per type that needs one
+more fact, and it leaves L4 asking L2-shaped questions. `comparison_for` takes
+four inputs today — the declared type, the column's own clause, the database's
+types and its collations — all in hand at one call site in `resolve.rs`, where
+resolution already reads them.
 
 **The exhaustiveness check moved with it, and is stronger for the move.**
 `builtin_scalar` answers both questions in one arm — which Arrow type a
@@ -4236,6 +4265,20 @@ directory per routine major, generated by `scripts/generate_fixtures.py` and
 committed. `scripts/comparison_oracle.py` is the case table and the SQL; the
 generator owns only the container.
 
+*Rejected: continuing to argue every claim from PostgreSQL's source alone.*
+That is the method that left two traps to be found by accident —
+`array[1,null] = array[1,null]` is **true** and `row(1,null) = row(1,null)` is
+**true**, both NULL-*aware* rather than NULL-propagating — and the comparison
+work multiplied that surface by an order of magnitude. Reading the source is
+still how a claim is *understood*; what it stopped being is how a claim is
+*checked*.
+
+*Rejected: checking against the local koji replica behind a `PGDQ_KOJI_PG_URL`
+env var.* `CLAUDE.local.md` scopes that replica to ad-hoc local validation and
+forbids anything committed from assuming it exists. A generated, committed
+answer table has neither problem and covers six majors where the replica is
+one — and it is evidence a checkout with no containers can still read.
+
 It runs **against the `types` schema's own database**, in the same container,
 from the same DDL as `fixtures/<version>/types/*.sql`. That is what lets a case
 name `public.mood`, `public.point2d`, `public.myrange` or `public.intarr[]` — a
@@ -4549,7 +4592,7 @@ a rewrite is a reported problem rather than a shorter list that passes:
 | Read from | An arm is | Why that granularity |
 |---|---|---|
 | `builtin_scalar` | one **declared base name** | Several names share `(Utf8View, text)` and each is separately closable, so `text` having a case does not answer for `character varying`. |
-| `comparison_user_type` | one **match arm** over `TypeKind`, a guarded arm counting as its own | `Composite \| Range` and `Base \| Shell` are each one decision, so neither is separately closable yet; when 11.10 splits the first, both halves already have cases. Exhaustiveness over the kinds is rustc's job; what this check adds is that each *answer* has evidence. |
+| `comparison_user_type` | one **match arm** over `TypeKind`, a guarded arm counting as its own | `Composite \| Range` and `Base \| Shell` are each one decision, so neither is separately closable yet; both halves of the first already have cases against the day it splits. Exhaustiveness over the kinds is rustc's job; what this check adds is that each *answer* has evidence. |
 | `comparison_for` | one per branch that is not a match arm at all, its own two plus `comparison_user_type`'s early return | The array shape, the built-in name nothing recognises, and a type absent from the dump's `CREATE TYPE` list (I10's multirange companion lands there). |
 | `collated_text` | one per **collation branch**, four in all | A collatable built-in's answer depends on the column's clause — and on what the dump's `CREATE COLLATION` list said about the collation that clause names — as well as on its declared type, so one match arm carries four separately closable answers. |
 

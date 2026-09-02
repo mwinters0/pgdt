@@ -8,9 +8,9 @@ discoveries are in `history/`.
 
 ## What exists
 
-P1–P5 and P9 are complete and were struck at keystone reviews; how each
+P1–P5, P9 and P11 are complete and were struck at keystone reviews; how each
 mechanism works is [`../design/architecture.md`](../design/architecture.md),
-filed by subject. **P11 — typed predicates — is complete**, in twenty-three
+filed by subject. What P11 — typed predicates — built, in twenty-three
 slices: the comparison oracle, its cross-major differ and the reconciliation
 that keeps the register's arms and the oracle's cases in step; the fixture
 family's move to glibc; the comparison register at L2, keyed on the declared
@@ -21,11 +21,10 @@ whole text-held type queue, `jsonb` included; `character(n)`'s trim; typed
 reaches it from the command line, with the refusal that keeps the two filter
 flags meaning one thing; the four `*_in` supersets a nested literal is read
 with; and structural comparison for every container kind, a range's canonical
-storage form and a user range's `canonical` refusal included. Its consolidated
-notes are
-[`../design/roadmap-P11-typed-predicates-notes.md`](../design/roadmap-P11-typed-predicates-notes.md);
-the mechanisms are in
-[`../design/architecture.md`](../design/architecture.md), filed by subject.
+storage form and a user range's `canonical` refusal included. Every one of
+those mechanisms is described by subject in
+[`../design/architecture.md`](../design/architecture.md), which is where a
+session touching one meets its rejected alternatives and its limitations.
 
 [`../design/measurements.md`](../design/measurements.md) carries the `b70589f`
 stamp, and **`uv run measure.py --stale` names all thirteen of its figures** —
@@ -165,10 +164,11 @@ only by naming one.
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
 rather than being deleted. <!-- deficiency-watermark: KD12 -->
-**`KD1`–`KD12` are allocated; `KD11` and `KD12` are struck.** That watermark is what keeps a
-`KD<k>` in an old commit message resolvable, and the marker beside it is what a
-citation resolves against — the sentence is rewritten at every strike, and again
-at the keystone that deletes the named struck entries.
+**`KD1`–`KD12` are allocated, and nothing at or below `KD12` is reused** — a
+number the index below does not carry is a struck entry, not a typo. That
+watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
+marker beside it is what a citation resolves against; the names of the struck
+entries went at the keystone, `git log` being what answers *when*.
 
 Where a `(b)` entry's owning phase has been sliced, the entry names the slice
 and the slice names the entry, so landing one re-reads the other and a re-slice

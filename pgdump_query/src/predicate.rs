@@ -954,9 +954,8 @@ impl OrderKey {
 ///
 /// **`interval`'s two are read on every file, not only on a v17 one.** They
 /// are v17 values, and no older server could have written one, so accepting
-/// the spelling unconditionally is the union rule
-/// (`docs/design/roadmap-P11-typed-predicates.md`, "Version-varying
-/// semantics") rather than a claim about the file's own major. What it costs
+/// the spelling unconditionally is the union rule (I35) rather than a claim
+/// about the file's own major. What it costs
 /// is a *literal* an older server would have refused, which is one word in an
 /// answer nobody's data can match.
 ///

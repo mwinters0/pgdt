@@ -69,6 +69,14 @@ usually visible there — because the alternative is discovering it mid-slice,
 when the only options left are landing the risky half unreviewed or shipping
 the slice half-done.
 
+**One seam recurs often enough to look for by name: a row that commits to a
+mechanism *and* to the evidence or the parse that mechanism needs.** The two
+ask different review questions — "does this answer what the reference answers"
+against "is this the input a real producer writes" — and the evidence half
+must land first, so that the mechanism is checked against something it did not
+produce. A phase run this way earned a third-level increment eight times, and
+every one of those splits was at that seam.
+
 **In the same change that writes the spec, write the whole slice list into
 `STATUS.md` as an unchecked checklist** — every slice, with its title and a
 one-line description, before any of it exists. The checklist is where the

@@ -534,7 +534,7 @@ mod tests {
         refuse_where_structure(spec).err().map(|e| format!("{e:#}"))
     }
 
-    /// **What 11.13 buys**: a term holding a reserved spelling is refused
+    /// **What the refusal buys**: a term holding a reserved spelling is refused
     /// rather than read one way here and another under `--where`, and the
     /// message names both remedies.
     #[test]

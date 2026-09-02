@@ -194,10 +194,9 @@ pub enum CompareKind {
     ///
     /// Carries the two infinities unconditionally, in `date_out`'s spellings
     /// rather than `numeric_out`'s (I34). They are v17 values, and reading
-    /// them on an older file is the union rule
-    /// (`docs/design/roadmap-P11-typed-predicates.md`, "Version-varying
-    /// semantics"): no v13 server could have written one, so nothing is
-    /// misread by a build that understands them.
+    /// them on an older file is the union rule (I35): no v13 server could
+    /// have written one, so nothing is misread by a build that understands
+    /// them.
     Interval,
     /// `time with time zone`, compared by the UTC-equivalent instant first
     /// and by the stored zone second, so two values are equal only when both

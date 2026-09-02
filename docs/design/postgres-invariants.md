@@ -28,6 +28,13 @@ break in the union rule I35 records, and it has to be understood before
 anything is re-verified by hand. Re-file the differences with `--write` once it
 is. The prose half — re-running each entry's `Re-verify` grep — is unchanged.
 
+*Rejected: a separate "things to check when a new major lands" document.*
+Nothing fails when nobody follows a checklist, and this project has twice
+chosen a script over one (`measure.py --stale`, `deficiencies.py`). The ritual
+keeps the home it already has — this file, whose every entry carries its own
+re-verification step — and a second document would compete with it for the same
+trigger.
+
 Source checkouts live at `/mnt/wd12t/upstream/postgres/` (worktrees per
 release tag). All line numbers below are from `release-v18.6` and are a
 starting point, not an anchor — grep for the quoted code instead.
@@ -2094,9 +2101,10 @@ multirange types in v14, and `interval`'s infinities in v17.
 `meta.tsv` records per major, on 2026-09-01.
 
 **Relied on by.** [`architecture.md`](architecture.md), "The cross-major
-differ", and every comparison in
-[`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md) that
-implements one semantics for all majors.
+differ", and every comparison there that implements one semantics for all
+majors — "Ordering operators compare typed" for `interval`'s and `numeric`'s
+infinities, "The nested literal codec" for the four `*_in` transcriptions, and
+"Nested columns compare structurally" for the multirange types.
 
 **Re-verify.**
 

@@ -645,6 +645,7 @@ gathering just those in one walk.
 touches this same field splitting, so a field-offset buffer built here serves
 both — and building it in either place separately means building it twice.
 
-**Origin.** P11 grilling, 2026-08-31. Decision and rationale:
-[`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md), "The
-per-row field walk is left alone".
+**Origin.** P11 grilling, 2026-08-31. The walk itself, and the cost model that
+makes this the phase's own statement of what it did not do, is
+[`architecture.md`](architecture.md), "Predicates" — "each term walks the row
+itself, so a five-way disjunction is up to five walks per row".

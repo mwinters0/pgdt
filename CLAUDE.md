@@ -179,11 +179,9 @@ A phase that has been specified gets its own doc,
 phase's plan is written. `docs/design/roadmap-P7-scan-performance.md` is
 the performance design for the local-file read path — read it before touching
 the batch layer or the cache format, which it constrains ahead of its own
-phase. `docs/design/roadmap-P11-typed-predicates.md` is the **open** phase —
-what a filter means — and it reworks `predicate.rs`, `resolve.rs`'s
-`ResolvedSchema`, the `--filter` grammar and the comparison register: **read it
-before changing any of those**, since several of them are mid-rework and the
-spec, not the code, says where they are going.
+phase. **No phase is open right now**: the next one is grilled and specified
+before any of its code is written, and step 6 of `docs/process.md`'s loop
+re-grills the roadmap first.
 
 `docs/design/roadmap-P<N>-<slug>-inbox.md` holds facts an *earlier* phase found
 that phase N will need — filed by destination, because a notes doc filed by

@@ -15,8 +15,7 @@ reused, including a struck phase's.
 
 | Phase | State | Where it is |
 |---|---|---|
-| P1–P5, P9 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
-| P11 — typed predicates | **Complete** | [`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md); [notes](roadmap-P11-typed-predicates-notes.md) |
+| P1–P5, P9, P11 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
 | P7 — scan performance | Sketched; design doc ahead of its phase | [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md); [inbox](roadmap-P7-scan-performance-inbox.md) |
 | P12 — ADBC type floor | Sketched; not grilled | this file, below; [inbox](roadmap-P12-adbc-type-floor-inbox.md) |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
@@ -331,27 +330,6 @@ out of it. See
 Note that CSV-format `COPY` blocks are **not** on this list. They are a Future
 item; see below.
 
-## P11 — Typed predicates
-
-**Complete**, in twenty-three slices. The binding statement was
-[`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md): what a
-filter *means* — full boolean structure with a three-valued evaluator,
-type-aware comparison on nested columns, typed equality, and `KD7`'s
-ordering-register divergences. What it built is described by subject in
-[`architecture.md`](architecture.md); what it leaves for later phases is
-[`roadmap-P11-typed-predicates-notes.md`](roadmap-P11-typed-predicates-notes.md).
-`KD7` was narrowed rather than retired — three of its four statements closed as
-properties and the fourth is `(c) unowned`, promoted by the Future item
-"Collation-aware comparison" below.
-
-*The reason that used to defer it behind the engine story is withdrawn:* that
-"DataFusion hands a `TableProvider` an `Expr` tree and asks, per filter,
-whether the pushdown is exact, inexact or unsupported", so designing a boolean
-expression language before seeing that would be inventing a second one to
-reconcile. That shape is documented, stable, and readable from the DataFusion
-source without building anything. The withdrawn reason is recorded so it is not
-re-derived.
-
 ## P7 — Scan performance
 
 **Inbox:** [`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md) — facts earlier
@@ -440,7 +418,7 @@ What that obliges is larger than it first looks — ADBC writes a
 declared PostgreSQL type name on every column is this phase's, and the question
 of whether a column holding readable text may honestly claim `arrow.opaque`,
 whose meaning is *cannot interpret*, comes with it. The two canonical extension
-names that need no such decision are already out, as `M29`.
+names that need no such decision are already out, as out-of-band work.
 
 **Scheduled after P11, ahead of P10 and P6; its position relative to P7 is
 free.** After P11 because `builtin_scalar` answers "which Arrow type" and "how
@@ -457,7 +435,9 @@ mechanisms that have stopped moving.
 out-of-band work during P11's run rather than waiting: `oid`, which maps to an
 unsigned integer under the existing bar, and the `arrow.json` and `arrow.uuid`
 extension names, which attach to types we already emit and are validated
-against exactly those storage types. That is `M29` in the ledger below; see
+against exactly those storage types. What they map to is
+[`architecture.md`](architecture.md), "Type resolution"; why they landed
+outside this phase is
 [`../status/history/2026-08-31.md`](../status/history/2026-08-31.md), "`oid`,
 and the two canonical extension names". Everything else the survey turned up
 needs a decision this phase has not made yet.
@@ -713,32 +693,15 @@ until a keystone, which strikes it along with the phase docs and leaves a
 watermark saying which numbers are spent (`../process.md`, "The out-of-band
 ledger is struck too").
 
-**M1–M27 are struck**, and nothing at or below `M27` is reused. That is a
-high-water mark rather than a claim that every one of them landed: `M14` was
-absorbed into `M17` and `M1`/`M2` were folded into a phase slice, and their
-numbers are spent all the same. What each struck item did is filed by
-subject — `architecture.md` for a mechanism, `measurements.md` for an apparatus
-change, `layering.md` and `../process.md` for a rule — and why it was done is
-in the dated history entry it was filed under. The table opens again at `M28`,
-the first item to land after this keystone.
-
-| # | Date | What changed | Why |
-|---|---|---|---|
-| `M28` | 2026-08-31 | `DumpMetadata::types` holds one entry per type, not one per `CREATE TYPE`: a definition replaces an entry of the same name and a shell never replaces a completion (I11), so `TypeKind::Base` is reachable, the reconciliation's restated walk and the library's agree on where `public.mybase` lands, and `pgdq info`'s `user-defined types` counts a completed base type once | [`../status/history/2026-08-31.md`](../status/history/2026-08-31.md) |
-| `M29` | 2026-08-31 | `oid` maps to `UInt32` and compares unsigned, with a `public.t_oid` fixture column and an oracle case behind it, and a `uuid`/`json`/`jsonb` column's field carries its canonical Arrow extension name — the three rows of the ADBC floor that need no decision `P12` has not made | [`../status/history/2026-08-31.md`](../status/history/2026-08-31.md) |
-| `M30` | 2026-09-01 | an acknowledgement excuses a commit, so one unexamined commit on a path makes every earlier entry on it inert — `--stale` now names an inert entry and what holds the path red, `acknowledged.py` states the rule where an entry is written, and `c614c4b` is acknowledged for the four figures 11.4 re-reddened | [`../status/history/2026-09-01.md`](../status/history/2026-09-01.md) |
-| `M31` | 2026-09-01 | `deficiencies.py` carries a fourth relation — a `(b)` entry naming a slice and that slice's checklist line naming the entry, reconciled both ways over a new parser for `STATUS.md`'s slice checklists — so a re-slice fails the check rather than owing a re-target on discipline; an unsliced owning phase and a ticked line are the two boundaries where no obligation exists | [`../status/history/2026-09-01.md`](../status/history/2026-09-01.md) |
-| `M32` | 2026-09-01 | `deficiencies.py`'s pairing, reviewed: a ticked checklist line's `KD<k>` is a citation that resolves against an `<!-- deficiency-watermark: … -->` allocated range rather than the index, a `(b)` entry may not name a ticked slice, and the roadmap's phase index gains a `Complete` state so an entry owned by a finished phase fails instead of going quiet — a stranded entry drops to `(c)` unless a phase absorbs it | [`../status/history/2026-09-01.md`](../status/history/2026-09-01.md) |
-| `M33` | 2026-09-01 | `deficiencies.py` holds the phase index's other pairing: a phase carrying a `## P<N> progress` checklist is `Current` and a `Current` phase carries one, which closes the wrap-that-half-happened edge `M32` could only write down — the in-flight state was already in the vocabulary and unused, so the `Specified`/`Sliced` split `M32` costed and rejected was the same rule under a new word | [`../status/history/2026-09-01.md`](../status/history/2026-09-01.md) |
-| `M34` | 2026-09-01 | The comparison oracle asks each pair through two typed *columns* rather than a cast of a `text` parameter, so a case carries the collation its type gives a column instead of the one its input derives — `name` is asked bare and answered under `C`, and `public.text_c` joins the cases as the domain whose collation comes from neither a clause nor `default` | [`../status/history/2026-09-01.md`](../status/history/2026-09-01.md) |
-| `M35` | 2026-09-01 | The comparison register is asserted against every committed oracle cell over six majors — 28,536 of them, through the same `resolve_term`/`Predicate::matches` path a `--filter` takes — skipping `E`-cells, which record what the server refused rather than how it compares; the `jsonb` cases first grew to one value per branch of `compareJsonbContainers`, so the exception set is met rather than empty and its `{"a": "a"}`/`{"a": "A"}` entry is the string leaf the register knowingly gets wrong | [`../status/history/2026-09-01.md`](../status/history/2026-09-01.md) |
-| `M36` | 2026-09-01 | An exception in the oracle-answer test's pair list must disagree in **every** major that carries the case and under **all four** asserted operators, rather than somewhere in the walk — the key is the case, so a collation that moves for one major, or a comparator that stops being antisymmetric, leaves the block passing today | [`../status/history/2026-09-01.md`](../status/history/2026-09-01.md) |
-| `M37` | 2026-09-01 | `Error::PredicateValueDecode` names the form the column's `CompareKind` accepts, not only the value it refused — so `--filter 'flag=true'` is told a `boolean` is written `t` or `f` instead of being told `true` does not parse as a `boolean`, and `interval`, `inet` and `macaddr` are answered by the same edit | [`../status/history/2026-09-01.md`](../status/history/2026-09-01.md) |
-| `M38` | 2026-09-01 | `accepted_form` renders its `CompareKind`'s payload where the payload is the answer — an enum's declared labels rather than "one of the type's own declared labels", and the scale in `numeric(p,s)`, whose clause reads "as a number, or `NaN`" and so is false for the literal-finer-than-the-scale refusal that arm actually raises | [`../status/history/2026-09-01.md`](../status/history/2026-09-01.md) |
-| `M39` | 2026-09-01 | `info --verbose` prints an enum column's declared labels on a continuation line beneath it, uncapped and single-quoted, and `--json` carries them as a `labels` field — the build resolved them and showed them to nobody, leaving a user who mistyped a label to learn the type name from `info` and grep the dump for its `CREATE TYPE` | [`../status/history/2026-09-01.md`](../status/history/2026-09-01.md) |
-| `M40` | 2026-09-01 | `info --verbose` lists the user-defined types beneath the count that had been their only trace — one line per type, every `TypeKind` arm rendered and the enum arm carrying its labels — and `M39`'s per-column `labels` field leaves `--json`, which had been exporting `metadata.databases[].types[]` in full all along | [`../status/history/2026-09-01.md`](../status/history/2026-09-01.md) |
-| `M41` | 2026-09-01 | an exemption in the register-to-oracle reconciliation names where the arm's evidence *is* and the check resolves it, rather than asserting in prose that none can exist — the free-text form went false in two places on its first use, naming fixture bytes that `11.12` has not landed and a `TypeKind::Shell` exemption that does not exist | [`../status/history/2026-09-01.md`](../status/history/2026-09-01.md) |
-| `M42` | 2026-09-02 | the ICU `collversion` in `fixtures/<13-18>/types/binary-upgrade.sql` is guarded rather than merely tolerated — the six majors must carry the same `version = …` as each other (the value unnamed, as `oracle_differences.py` already guards `default_collversion`), present under `--binary-upgrade` and absent in `default`, `data-only` and for `c_collation` everywhere; it converts `preamble.rs`'s prose claim about which flag set carries the version into the check that claim describes | [`../status/history/2026-09-02.md`](../status/history/2026-09-02.md) |
+**M1–M42 are struck**, and nothing at or below `M42` is reused. That is a
+high-water mark rather than a claim that every one of them landed: some were
+absorbed into a neighbour or folded into a phase slice, and their numbers are
+spent all the same. What each struck item did is filed by subject —
+[`architecture.md`](architecture.md) for a mechanism,
+[`measurements.md`](measurements.md) for an apparatus change,
+[`layering.md`](layering.md) and [`../process.md`](../process.md) for a rule —
+and why it was done is in the dated history entry it was filed under. The table
+opens again at `M43`, the first item to land after this keystone.
 
 **One live obligation outlived them.** An `INSERT`-run scan costs
 **mid-teens times** a `COPY` scan per byte, CPU-bound, which argues for a scanner-level `INSERT`

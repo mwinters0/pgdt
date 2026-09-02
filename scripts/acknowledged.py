@@ -185,7 +185,7 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         commit="682819d",
         figures=("preamble-prepass",),
         why=(
-            "M28 keyed DumpMetadata::types on the type name, which puts a "
+            "keying DumpMetadata::types on the type name puts a "
             "find over the types so far in front of every CREATE TYPE in "
             "preamble.rs -- a declared path of this figure. The new code is "
             "`record_type` and its one call site, inside the SpanBody::TypeDef "
