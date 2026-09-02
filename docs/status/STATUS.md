@@ -528,32 +528,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **A nested literal's *leaf* is read in that type's output form and no wider,
-  so `--filter 'p=( 1 , a )'` is refused.** 11.10 had to choose what a
-  container's leniency means one level down. The container grammar is
-  PostgreSQL's input grammar (`{ a , b }` works), but each element or field
-  then goes through `order_key`, which implements that type's `*_out` form —
-  where the server hands `" 1 "` to `int4in`, which skips the blanks. So
-  `record_in`'s kept whitespace is a refusal here rather than a value. The
-  alternative is trimming ASCII whitespace around a non-text leaf, and it
-  over-accepts: `uuid_in`, `byteain` and `enum_in` do *not* skip whitespace, so
-  a blanket trim takes literals the server refuses — the one divergence
-  direction this register does not permit — and a per-type rule is
-  re-implementing three input functions. **What changes if reconsidered:**
-  11.9's `CANONICALIZED` entry for `("public.point2d", "( 1 , a )")` was filed
-  as something 11.10 would close, and this declines it; the entry's comment now
-  says so. 11.10.1 meets the identical question at a range bound (`[ 1 , 10 )`),
-  so an answer either way should settle both.
-
-- **An ordering refusal on a nested column names the position and its type in a
-  sentence, not in structured data.** The spec asked for a refusal "naming the
-  element type that has no order". `Error::UnorderedPredicateColumn::reason`
-  became a `String` and the sentence reads ``the column is nested and `[]`
-  inside it is `json`, which has no order here``. What it is *not* is a
-  `ComparisonPlan::Refused` carrying the path and the type as fields: that
-  variant is `Default` and unit, matched in a dozen places, and giving it a
-  payload — or adding a fourth variant beside it — costs every one of those
-  sites to buy a machine-readable form nothing currently reads. **What changes
-  if reconsidered:** an embedder that wants to branch on *which* position
-  refused has to parse a sentence, and `pgdq info` cannot list a nested
-  column's uncomparable positions without re-deriving them.
+**Nothing open.**

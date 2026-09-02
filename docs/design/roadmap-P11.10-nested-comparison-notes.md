@@ -52,16 +52,17 @@ picks `parse_*` over `decode_*`. Two grammars, one traversal, so a nesting
 level cannot read leniently on one side and strictly on the other by accident.
 
 **A leaf is read in its own type's output form on both sides**, through
-`order_key`. This is the call 11.10.1 inherits and may want to revisit: it
+`order_key`, and that call is **settled — 11.10.1 does not reopen it**. It
 means `--filter 'p=( 1 , a )'` is refused, where `record_in` keeps the blanks
-and `int4in` throws them away — so 11.9's `CANONICALIZED` entry for
-`("public.point2d", "( 1 , a )")` is **declined rather than closed**, and its
-comment now says so. The alternative — trimming a record field or a range bound
-before applying the leaf grammar — over-accepts for `uuid`, `bytea` and an enum
-label, whose input functions do not skip whitespace, and doing it per type is
-re-implementing three input functions. **11.10.1 hits the same question at a
-range bound**, where `[ 1 , 10 )` is `[1,11)` on the server: whatever it decides
-should decide both, not one.
+and `int4in` throws them away, so 11.9's `CANONICALIZED` entry for
+`("public.point2d", "( 1 , a )")` is **declined rather than closed** and its
+comment says so. **11.10.1 meets the identical question at a range bound**
+(`[ 1 , 10 )`) and answers it the same way: read the bound as the subtype's
+`*_out` writes it, and refuse the padding. Reasoning and the corrected fact set
+are in `architecture.md`, "Nested columns compare structurally" (the two
+`Rejected:` paragraphs) and
+[`../status/history/2026-09-02.md`](../status/history/2026-09-02.md), "The leaf
+grammar and the refusal's shape are both affirmed".
 
 **A zero-field composite needs the arity question asked twice.** `record_out`
 writes `()` for a zero-field composite *and* for a one-field composite holding

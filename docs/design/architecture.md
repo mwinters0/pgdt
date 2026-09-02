@@ -1596,7 +1596,7 @@ multirange's sort-coalesce-drop are the piece still missing there, and they are
 why a range column has no comparison yet.
 
 `tests/nested.rs`'s `oracle` module is where the supersets are checked: every
-nested row of `fixtures/<13-18>/oracle/literals.tsv` — 397 literals over six
+nested row of `fixtures/<13–18>/oracle/literals.tsv` — 397 literals over six
 majors — parsed and compared against whether the server itself accepted it,
 with the four canonicalization exceptions and the one semantic refusal
 (`int4range '[10,1)'`, which is well-formed and out of order) asserted as exact
@@ -2935,13 +2935,47 @@ type's output form and no wider, so `--filter 'p=( 1 , a )'` is refused where
 is the property "A literal is read in the type's own output form and no wider"
 asked one level down, and it keeps one rule at every depth.
 
+**The rule is not a nested one, and it already bites at top level.**
+`order_key` is `str::parse` for a number, so `--filter 'v_integer=" 42 "'` —
+quoted, where the term grammar's outside-quotes trim does not reach — is
+refused today, while `fixtures/<13–18>/oracle/literals.tsv` records the server
+accepting `integer ' 42 '` and writing `42` at all six majors. The container
+walk did not make that call; it made it visible one level down, where no trim
+stands in front of it.
+
 *Rejected: trimming a record field's or a range bound's whitespace before
 applying the leaf grammar.* It is what the server does — but only for the types
-whose `*_in` skips whitespace, which is most of them and not `uuid`, `bytea` or
-an enum label. A blanket trim over-accepts for those three, and over-acceptance
-is the divergence direction nothing else here permits; a per-type rule is
-re-implementing three input functions to buy a spelling `array_in` already
-accepts one level up.
+whose `*_in` skips whitespace, and which those are has to be read rather than
+guessed: `uuid_in`, `byteain`, `enum_in` and `network_in` do not skip, while
+`macaddr_in` — a chain of `sscanf("%x:%x:…%1s")`, where `%x` eats leading
+blanks and the trailing guard matches only non-whitespace — does. For two of
+the four a trim is worse than lenient, because it **silently changes the
+value**: `byteain`'s escape format takes a leading blank as a data byte, and an
+enum label may legitimately be `' a '`, so the trim would compare against a
+different value rather than accept a wider spelling of the same one. A per-type
+rule is cheap in code — one predicate over `CompareKind` — and expensive in
+**evidence**, which is what actually stops it: every value in the
+register-to-oracle test is put through the server's `*_out` form by
+construction, so no oracle cell can check an input-grammar arm, and twenty
+hand-asserted claims about twenty input functions is the kind of unbacked
+agreement this register exists to refuse. And the one spelling it would buy is
+one `array_in` already accepts a level up.
+
+*Rejected: carrying the refusing position as structured data on the refusal
+itself* — a payload on `ComparisonPlan::Refused`, or a fourth variant beside
+it. **The plan already is the structured channel.** `ComparisonPlan` and
+`NestedCompare` are public, `ResolvedSchema::comparisons` is public, and
+`NestedCompare::uncomparable()` answers `(path, declared type)` — so an
+embedder branches on *which* position refused without reading a sentence, and
+`pgdq info` reaches it exactly where it already reads an enum's labels off the
+same plan. `Error::UnorderedPredicateColumn::reason` is a rendering of that
+answer for a person, which is why it is a `String` and why nothing is lost by
+its being one; a payload would be a second copy of `NestedCompare`'s own
+result, kept in step by hand. What is genuinely absent is an enumeration —
+`uncomparable()` answers the *first* such position, and a composite with a
+`json` field and a `box` field names one. That is deliberate: fixing the first
+position is what the user must do next, and a second name does not help until
+the first is gone.
 
 **One comparison path, not the scalar's three.** `Comparison::Nested` serves
 both operator families: the key walk decides the order, and `=` is that walk

@@ -526,9 +526,13 @@ element and optional quoting are both fine:
 ```
 
 **Each part is still written the way the dump writes it.** The leniency stops
-at the element: a composite keeps every byte between its parens — that is
-PostgreSQL's rule, not ours — so `( 1 , a )` is refused, where `{ 1 , 2 }` is
-not, because an array drops that whitespace and a composite does not.
+at the element: every element or field is read in its own type's output form,
+which is the form the file holds. So `{ 1 , 2 }` is accepted and `( 1 , a )` is
+refused — an array drops the blanks around an element before the element is
+read (that half is PostgreSQL's rule), a composite keeps every byte between its
+parens, and the blanks are then not part of how an `integer` is written. The
+same rule refuses a padded scalar: `--filter 'n=1'` is fine and
+`--filter 'n=" 1 "'` is not.
 
 **A column diverges where its parts diverge, and the warning says where.** A
 `text[]` column is on the database's collation exactly as a `text` column is,
