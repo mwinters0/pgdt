@@ -397,7 +397,11 @@ enum TypeCollation {
 /// Inside a container it is not available at all: `array_cmp` looks up the
 /// element type's comparison proc and raises when there is none, so a
 /// `json[]` column and a composite with a `json` field have no `=` and no `<`
-/// on the server either.
+/// on the server either. Such a position still carries a
+/// [`ComparisonDivergence`] of its own, because the *column* does not stop
+/// answering `=` when its order is refused — it falls back to a byte
+/// comparison of the container's whole text, and the position is what makes
+/// that an answer PostgreSQL does not have.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NestedCompare {
     /// A scalar position: the declared type as the DDL spelled it, and the
@@ -405,7 +409,20 @@ pub enum NestedCompare {
     Leaf { declared: String, kind: CompareKind, divergence: Option<ComparisonDivergence> },
     /// A position whose declared type has no order here — what refuses the
     /// column, and what lets the refusal name the type that caused it.
-    Uncomparable { declared: String },
+    ///
+    /// **`divergence` is about the column's `=`, not about this position's
+    /// order.** The ordering operators are refused outright, but `=`/`!=`
+    /// are not: the column falls back to a byte comparison of the
+    /// container's whole `*_out` text, and this says what that fallback
+    /// costs *here*. [`ComparisonDivergence::AsText`] is the one value it
+    /// takes today — `json`, where the server has no equality either, so
+    /// bytewise is an answer it does not have. `None` is the position whose
+    /// order only *this build* declines: an element that is itself an array
+    /// (I26), an opaque element (I22), an empty enum. The server compares
+    /// those, its `=` over them is value equality, and the file's canonical
+    /// text renders the value faithfully — so bytewise is the server's
+    /// answer and there is nothing to announce.
+    Uncomparable { declared: String, divergence: Option<ComparisonDivergence> },
     /// `array_cmp`: elements first, up to the shorter array's length, then
     /// element count, dimension count, dimensions and lower bounds (I45).
     /// **One node whatever the dimensionality** — an `array_out` literal
@@ -451,40 +468,52 @@ impl NestedCompare {
     /// the member is not a position with a comparison of its own.
     pub fn uncomparable(&self) -> Option<(String, String)> {
         let mut found = None;
-        self.walk(&mut String::new(), &mut |path, declared, divergence| {
-            if divergence.is_none() && found.is_none() {
+        self.walk(&mut String::new(), &mut |path, declared, ordered, _| {
+            if !ordered && found.is_none() {
                 found = Some((path.to_string(), declared.to_string()));
             }
         });
         found
     }
 
-    /// Every position beneath this one that compares but not the server's
-    /// way, as `(path, declared type, divergence)`, in walk order. A column
-    /// carrying two of them — a composite with a bare `text` field and a
-    /// `text[]` one — announces both.
+    /// Every position beneath this one with something to announce, as
+    /// `(path, declared type, divergence)`, in walk order. A column carrying
+    /// two of them — a composite with a bare `text` field and a `text[]` one
+    /// — announces both.
+    ///
+    /// **An [`Self::Uncomparable`] position can be one of them**, and its
+    /// entry is about a different comparison from the rest: the others say
+    /// the order here is not the server's, where it says the *bytewise `=`*
+    /// the whole column falls back to is not
+    /// ([`Self::Uncomparable`]'s `divergence`). Both are read by the same
+    /// caller, which asks each entry whether it reaches the operator in hand
+    /// ([`ComparisonDivergence::affects_equality`]), so nothing here has to
+    /// know which kind it is holding.
     pub fn divergences(&self) -> Vec<(String, String, ComparisonDivergence)> {
         let mut out = Vec::new();
-        self.walk(&mut String::new(), &mut |path, declared, divergence| {
-            if let Some(Some(divergence)) = divergence {
+        self.walk(&mut String::new(), &mut |path, declared, _, divergence| {
+            if let Some(divergence) = divergence {
                 out.push((path.to_string(), declared.to_string(), divergence));
             }
         });
         out
     }
 
-    /// Depth-first over every leaf, handing each its path, its declared type
-    /// and its divergence — `None` for an [`Self::Uncomparable`] one, which
-    /// is how the two callers above tell "no order" from "an order that
-    /// differs".
+    /// Depth-first over every leaf, handing each its path, its declared type,
+    /// whether it has an order at all, and its divergence. The two are
+    /// independent: an [`Self::Uncomparable`] position has no order and may
+    /// still carry a divergence, which is what the column's `=` fallback
+    /// costs there.
     fn walk(
         &self,
         path: &mut String,
-        visit: &mut impl FnMut(&str, &str, Option<Option<ComparisonDivergence>>),
+        visit: &mut impl FnMut(&str, &str, bool, Option<ComparisonDivergence>),
     ) {
         match self {
-            Self::Leaf { declared, divergence, .. } => visit(path, declared, Some(*divergence)),
-            Self::Uncomparable { declared } => visit(path, declared, None),
+            Self::Leaf { declared, divergence, .. } => visit(path, declared, true, *divergence),
+            Self::Uncomparable { declared, divergence } => {
+                visit(path, declared, false, *divergence)
+            }
             Self::Array(element) => {
                 let len = path.len();
                 path.push_str("[]");
@@ -1372,7 +1401,12 @@ fn array_comparison(
             Some(TypeKind::Base | TypeKind::Shell)
         );
     let child = if opaque || array_element(terminal).is_some() {
-        NestedCompare::Uncomparable { declared: element.to_string() }
+        // No divergence, because nothing would ever read one: both shapes
+        // resolve the *column* to text as well (I22, I26), so
+        // `crate::predicate::resolve_term` takes the plan away on the
+        // resolution before it reaches this tree, and what such a column
+        // announces under `=` is keyed on that resolution instead.
+        NestedCompare::Uncomparable { declared: element.to_string(), divergence: None }
     } else {
         match nested_position(element, collation, types, collations) {
             Ok(child) => child,
@@ -1450,6 +1484,18 @@ fn unanswerable_range(range_type: &str, function: &str) -> ComparisonPlan {
 /// inside a container, where `array_cmp` would have to find a proc that does
 /// not exist.
 ///
+/// **They collapse to one variant and not to one answer**, which is why the
+/// divergence is carried rather than dropped. A column whose order is
+/// refused still answers `=` bytewise over the container's whole text, and
+/// only one of the two arms says anything about *that*: `json` has no
+/// server-side equality either, so the fallback is an answer PostgreSQL does
+/// not have. [`ComparisonPlan::Refused`] says only that **this build** has
+/// no order for the position — an empty enum, a C-level base type, a range
+/// with no declared subtype — which is not a claim about the server's
+/// equality in either direction, so it carries none. Where such a position
+/// makes the fallback wrong it is `KD10` one level down, announced (or not)
+/// off the column's own resolution exactly as a scalar of that type is.
+///
 /// **[`ComparisonPlan::Unanswerable`] is the one answer a position cannot
 /// hold**, and it is why this returns a `Result`. A tree can say "this
 /// position has no order" and let the column still answer `=` as text, which
@@ -1465,8 +1511,15 @@ fn nested_position(
     collations: &[CollationDef],
 ) -> Result<NestedCompare, UnanswerableReason> {
     Ok(match comparison_for(declared, collation, types, collations) {
-        ComparisonPlan::Compared { divergence: Some(ComparisonDivergence::AsText), .. }
-        | ComparisonPlan::Refused => NestedCompare::Uncomparable { declared: declared.to_string() },
+        ComparisonPlan::Compared { divergence: Some(ComparisonDivergence::AsText), .. } => {
+            NestedCompare::Uncomparable {
+                declared: declared.to_string(),
+                divergence: Some(ComparisonDivergence::AsText),
+            }
+        }
+        ComparisonPlan::Refused => {
+            NestedCompare::Uncomparable { declared: declared.to_string(), divergence: None }
+        }
         ComparisonPlan::Compared { kind, divergence } => {
             NestedCompare::Leaf { declared: declared.to_string(), kind, divergence }
         }
@@ -2887,22 +2940,34 @@ mod tests {
             ),
             ty("public.gtype", TypeKind::Base),
         ];
-        for (declared, path, at) in [
-            ("json[]", "[]", "json"),
-            ("public.jsonpair", ".doc", "json"),
-            ("public.jsonpair[]", "[].doc", "json"),
+        for (declared, path, at, announces) in [
+            // `json` takes the server's `=` away with its order, so the
+            // bytewise fallback the column keeps is an answer PostgreSQL
+            // does not have — which the position says.
+            ("json[]", "[]", "json", true),
+            ("public.jsonpair", ".doc", "json", true),
+            ("public.jsonpair[]", "[].doc", "json", true),
             // I22: an opaque element type, refused for the delimiter as much
             // as for the order.
-            ("box[]", "[]", "box"),
-            ("public.gtype[]", "[]", "public.gtype"),
+            ("box[]", "[]", "box", false),
+            ("public.gtype[]", "[]", "public.gtype", false),
             // I26: an array whose element is itself an array, which resolves
             // the column to text as well.
-            ("public.intarr[]", "[]", "public.intarr"),
+            ("public.intarr[]", "[]", "public.intarr", false),
         ] {
             let plan = comparison_for(declared, None, &types, &[]);
             assert!(!plan.orders(), "{declared}");
             let ComparisonPlan::Nested(tree) = plan else { panic!("{declared}: not nested") };
             assert_eq!(tree.uncomparable(), Some((path.to_string(), at.to_string())), "{declared}");
+            // The three refused for a reason of *this build's* announce
+            // nothing: PostgreSQL orders `public.intarr[]` through
+            // `array_ops` and compares `box[]` element-wise, so a byte
+            // comparison of two canonical spellings is its answer too.
+            let expected: Vec<_> = announces
+                .then(|| (path.to_string(), at.to_string(), ComparisonDivergence::AsText))
+                .into_iter()
+                .collect();
+            assert_eq!(tree.divergences(), expected, "{declared}");
         }
     }
 

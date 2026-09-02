@@ -2277,6 +2277,10 @@ pub(crate) fn resolve_term(
         accepted: accepted_form(kind),
     };
     let mut plan = Some(&resolved.comparisons[index]);
+    // The nested tree a column fell out of, kept so the bytewise `=` below
+    // can say what that fallback costs — which is a fact about the position
+    // that refused the order, not about the column's own declared type.
+    let mut fell_back: Option<&NestedCompare> = None;
     if resolved.columns[index] != ColumnResolution::Mapped {
         if ordering {
             return Err(refuse(NOT_MAPPED));
@@ -2297,12 +2301,16 @@ pub(crate) fn resolve_term(
     } else if let Some(ComparisonPlan::Nested(tree)) = plan {
         // A nested column whose shape is compared here but one of whose
         // positions is not: the ordering operators are refused naming that
-        // position, and `=`/`!=` fall back to the text comparison every
-        // nested column made before this one.
+        // position, and `=`/`!=` fall back to a byte comparison of the
+        // container's whole text — **announced**, not silent, because the
+        // position that took the order away is also what makes the fallback
+        // an answer the server does not have (`array_cmp` raises for a
+        // `json` element rather than returning a comparison).
         if let Some((path, declared)) = tree.uncomparable() {
             if ordering {
                 return Err(refuse(&nested_refusal(&path, &declared)));
             }
+            fell_back = Some(tree);
             plan = None;
         }
     } else if resolved.plans[index] != NestedPlan::Scalar {
@@ -2364,28 +2372,44 @@ pub(crate) fn resolve_term(
         // file's own canonical form is what makes right.
         _ if ordering => return Err(refuse(NO_ORDER)),
         //
-        // **What it announces is read off the column's own resolution**, and
-        // only two of those outcomes are claims this build cannot stand
-        // behind: `UnknownType` and `OpaqueBaseType` say the file *named* a
-        // type and this build models nothing for it — `box`, `money`, a
-        // C-level base type — and `box_eq` compares areas, so bytewise is a
-        // guess there ([`ComparisonDivergence::UnmodelledType`]). Every other
-        // outcome is silent. A **nested** column's `array_out`/`record_out`
-        // text is a faithful rendering of the value, so bytewise equality is
-        // the server's, subject to an inherited comparability that
-        // `docs/design/roadmap-P11-typed-predicates.md` gives to 11.10; and a
-        // column with no DDL behind it at all — `--data-only`,
+        // **What it announces comes from one of two places**, and which one
+        // is whether a nested tree sent the column here.
+        //
+        // A column that *fell out of a tree* announces per position, exactly
+        // as the structural arm above does: the position that refused the
+        // order carries what the bytewise fallback costs there — `AsText`
+        // for a `json` element, since `array_cmp` raises rather than
+        // comparing and the server has no `=` for the container either — and
+        // any other position whose divergence reaches equality is announced
+        // beside it. A position the *resolver* declined instead (I22, I26)
+        // never reaches here; its column is not `Mapped`.
+        //
+        // Every other column announces off its own **resolution**, and only
+        // two of those outcomes are claims this build cannot stand behind:
+        // `UnknownType` and `OpaqueBaseType` say the file *named* a type and
+        // this build models nothing for it — `box`, `money`, a C-level base
+        // type — and `box_eq` compares areas, so bytewise is a guess there
+        // ([`ComparisonDivergence::UnmodelledType`]). Every other outcome is
+        // silent: a column with no DDL behind it at all — `--data-only`,
         // `--schema-mode strings` — has nothing said about its type to
         // qualify, which `ResolvedSchema::notes` reports on L2 anyway.
         _ => (
             Comparison::Canonical(text.to_string()),
-            matches!(
-                resolved.columns[index],
-                ColumnResolution::UnknownType | ColumnResolution::OpaqueBaseType
-            )
-            .then(|| (None, declared_type.clone(), ComparisonDivergence::UnmodelledType))
-            .into_iter()
-            .collect(),
+            match fell_back {
+                Some(tree) => tree
+                    .divergences()
+                    .into_iter()
+                    .filter(|(_, _, d)| d.affects_equality())
+                    .map(|(path, declared, d)| (Some(path), declared, d))
+                    .collect(),
+                None => matches!(
+                    resolved.columns[index],
+                    ColumnResolution::UnknownType | ColumnResolution::OpaqueBaseType
+                )
+                .then(|| (None, declared_type.clone(), ComparisonDivergence::UnmodelledType))
+                .into_iter()
+                .collect(),
+            },
         ),
     };
     Ok(ResolvedTerm {
@@ -4033,11 +4057,6 @@ mod tests {
         nested.plans[0] = NestedPlan::Range(Box::new(NestedPlan::Scalar));
         assert_eq!(only_note(&resolve_term(&p, 0, &nested, 0).unwrap()), None);
 
-        // So is one whose shape compares here and whose element does not.
-        let mut inherited = one_column("json[]", DataType::Utf8View);
-        inherited.plans[0] = NestedPlan::Array(Box::new(NestedPlan::Scalar));
-        assert_eq!(only_note(&resolve_term(&p, 0, &inherited, 0).unwrap()), None);
-
         // So is a column no DDL explained — `--data-only`, or
         // `--schema-mode strings`, which resolves nothing by design. There is
         // no declared type to qualify, and `ResolvedSchema::notes` has
@@ -4045,6 +4064,89 @@ mod tests {
         let mut undeclared = one_column("mystery", DataType::Utf8View);
         undeclared.columns[0] = ColumnResolution::NotDeclared;
         assert_eq!(only_note(&resolve_term(&p, 0, &undeclared, 0).unwrap()), None);
+    }
+
+    /// A nested column one of whose positions has no order here still
+    /// answers `=` — over the container's whole text — and **says what that
+    /// costs**, where it used to say nothing.
+    ///
+    /// The position is what makes it worth saying: `array_cmp` and
+    /// `record_cmp` look up the position type's comparison proc and raise
+    /// when there is none, so a `json` element takes the server's `=` away
+    /// as surely as it takes its order, and a byte comparison of two
+    /// `array_out` strings is an answer PostgreSQL does not have rather than
+    /// a weaker one. That is
+    /// [`ComparisonDivergence::AsText`]'s own sentence, one level down, and
+    /// the note names the position exactly as the ordering refusal does.
+    #[test]
+    fn a_nested_uncomparable_position_announces_under_equality() {
+        let types = vec![TypeDef {
+            name: "public.jsonpair".into(),
+            kind: TypeKind::Composite {
+                fields: Some(vec![ColumnDef::new("ok", "integer"), ColumnDef::new("doc", "json")]),
+            },
+        }];
+        for (declared, path) in
+            [("json[]", "[]"), ("public.jsonpair", ".doc"), ("public.jsonpair[]", "[].doc")]
+        {
+            let resolved = nested_column(declared, &types);
+            for op in [PredicateOp::Eq, PredicateOp::Ne] {
+                let term = resolve_term(&order_predicate(op, "{}"), 0, &resolved, 0).unwrap();
+                let note =
+                    only_note(&term).unwrap_or_else(|| panic!("{declared} under {}", op.symbol()));
+                assert_eq!(note.column, "v", "{declared}");
+                assert_eq!(note.path.as_deref(), Some(path), "{declared}");
+                assert_eq!(note.declared_type, "json", "{declared}");
+                assert_eq!(note.divergence, ComparisonDivergence::AsText, "{declared}");
+                assert!(note.message().contains("no equality"), "{}", note.message());
+            }
+            // The rows themselves have not moved: `=` is still the byte
+            // comparison of the container's own canonical text it was.
+            let term =
+                resolve_term(&order_predicate(PredicateOp::Eq, "{1,2}"), 0, &resolved, 0).unwrap();
+            assert!(term.eval(b"{1,2}", "public.t", 0).unwrap().is_true(), "{declared}");
+            assert!(!term.eval(b"{1,3}", "public.t", 0).unwrap().is_true(), "{declared}");
+            // And the announcement replaces a silence under `=`, not the
+            // refusal under `<`, which still names the same position.
+            let Err(err) = resolve_term(&order_predicate(PredicateOp::Lt, "{}"), 0, &resolved, 0)
+            else {
+                panic!("{declared} is ordered");
+            };
+            assert!(err.to_string().contains(&format!("`{path}`")), "{err}");
+        }
+    }
+
+    /// A column the **resolver** declined announces off its resolution and
+    /// never off its tree — which is the boundary worth pinning, because
+    /// the tree such a column carries does hold an `Uncomparable` position
+    /// and the announcement above must not reach it. Both shapes resolve
+    /// the column itself to text (I22, I26), so `resolve_term` drops the
+    /// plan one branch earlier than the nested one.
+    ///
+    /// Silence is the right answer for `public.intarr[]` — PostgreSQL
+    /// orders it through `array_ops` and its `array_out` text renders the
+    /// value, so bytewise is the server's answer. For `box[]` it is `KD10`
+    /// one level down, `box_eq` comparing areas; closing that is a question
+    /// about which *resolutions* announce, not about this tree.
+    #[test]
+    fn a_position_the_resolver_declined_announces_nothing() {
+        let types =
+            vec![TypeDef { name: "public.intarr".into(), kind: TypeKind::domain("integer[]") }];
+        for (declared, resolution) in [
+            ("box[]", ColumnResolution::OpaqueElementType),
+            ("public.intarr[]", ColumnResolution::NestedArrayElement),
+        ] {
+            let mut resolved = one_column(declared, DataType::Utf8View);
+            resolved.comparisons = vec![comparison_for(declared, None, &types, &[])];
+            assert!(
+                matches!(resolved.comparisons[0], ComparisonPlan::Nested(NestedCompare::Array(_))),
+                "{declared} carries a tree with an uncomparable position"
+            );
+            resolved.columns[0] = resolution;
+            let term =
+                resolve_term(&order_predicate(PredicateOp::Eq, "{}"), 0, &resolved, 0).unwrap();
+            assert_eq!(only_note(&term), None, "{declared}");
+        }
     }
 
     /// A column stating a collation the dump declares `deterministic = false`

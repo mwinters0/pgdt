@@ -2462,7 +2462,7 @@ over the file's own canonical text.
 | `jsonb`, and any domain over it | `Utf8View` | **no**, and only because of its strings — the structure is compared exactly as `compareJsonbContainers` compares it (kind, then a container's size, then member-wise, with a top-level scalar inside the pseudo-array that makes it outrank `[]`), while every string leaf and object key goes through `varstr_cmp` under the *database's* collation (I41), which a plain dump does not record (I32) | the same collation the text row wants, one level down |
 | `json`, and any domain over it | `Utf8View` | **no** — PostgreSQL defines *no* comparison for `json` at all, so bytewise offers more than the server does rather than less | nothing, since there is no order to agree with |
 
-| an **array** or **composite**, and any domain over one | `List(…)` / `Struct(…)` | **inherited** — compared structurally (I45), and it agrees exactly when every element or field type beneath it does. A `text[]` column carries the `text` rows' collation residue at its element; a `json[]` column, or a composite with a `json` field, is *refused*, because the server has no comparison for one either | whatever would close the position that diverges |
+| an **array** or **composite**, and any domain over one | `List(…)` / `Struct(…)` | **inherited** — compared structurally (I45), and it agrees exactly when every element or field type beneath it does. A `text[]` column carries the `text` rows' collation residue at its element; a `json[]` column, or a composite with a `json` field, has its *ordering* refused, because the server has no comparison for one either, and its `=` falls back to bytewise carrying that position's `json` row above | whatever would close the position that diverges |
 | a **range** or **multirange**, and any domain over one | `Struct(…)` / `List(Struct(…))` | **inherited**, on the same rule, once both sides are put into the form the server stores them in (I46): `empty` below everything, then the bounds, with a multirange's members sorted, coalesced and emptied out first. Both discrete canonicalizations are reproduced — the successor shift, and the collapse of `[1,1)` to `empty` — so `int4range '[1,10]'` is the `[1,11)` the file holds. **A user-defined range that declares a `canonical` function is refused outright**, under every operator | — |
 
 A domain has no row of its own: it compares as the row its base type is on,
@@ -2881,15 +2881,21 @@ working capability away from every type in the group to protect the geometric
 handful, and for `xml`, whose `=` PostgreSQL does not define at all, filtering
 by exact text is a thing a user legitimately wants.
 
-**Everything else stays silent, and the two populations are different
-arguments.** A **nested** column's `array_out`/`record_out` text is a faithful
-rendering of the value, so bytewise equality is the server's — subject to an
-*inherited comparability* (a `box[]` column would have the same problem one
-level down) that
-[`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md) gives to
-its nested slice. A column with no DDL behind it at all — `--data-only`,
-`--schema-mode strings` — has nothing said about its type to qualify, and
-`ResolvedSchema::notes` already reports that on L2.
+**The other two populations reaching this fallback are a nested column that
+fell out of its tree, and a column with no DDL behind it at all.** The second
+is silent and has nothing to say: `--data-only` and `--schema-mode strings`
+leave nothing said about the type to qualify, and `ResolvedSchema::notes`
+already reports that on L2. The first **announces per position** — see
+"Nested columns compare structurally", which is where the rule lives.
+
+**`box` beneath a container is `KD10` one level down, and it is not
+announced.** `box_eq` compares areas, so a `box[]` column's bytewise `=` is
+wrong exactly as a `box` column's is — but it is not the nested-tree
+population: I22 resolves the *column* to text, so the announcement is keyed on
+`ColumnResolution::OpaqueElementType`, which is not one of the two outcomes
+above. Widening the keyed set is the fix and it belongs with whatever closes
+`KD10`, not beside the nested rule: the position is not what makes the answer
+wrong there, the element type's own `=` is.
 
 **The oracle asserts all six operators now.** `=` and `<>` are asked over a
 wider population than the other four, since equality is never refused, and both
@@ -3049,13 +3055,43 @@ position that *is* ordered but not the server's way carries its own divergence,
 so a `text[]` column diverges for the reason its element does, one level down,
 and the note's `path` says where.
 
-**`json` beneath a container is a refusal, not a divergence**, and that is the
-one inheritance rule that is not simply "recurse". At top level
+**`json` beneath a container refuses the order and announces the equality**,
+and that is the one inheritance rule that is not simply "recurse". At top level
 `ComparisonDivergence::AsText` means bytewise where the server orders not at
-all, which is *more* than the server offers. Inside a container it is not
-available: `array_cmp` looks up the element type's comparison proc and raises
-when there is none (I45), so a `json[]` column and a composite with a `json`
-field have no `=` and no `<` on the server either.
+all, which is *more* than the server offers. Inside a container the order is
+not available: `array_cmp` looks up the element type's comparison proc and
+raises when there is none (I45), so a `json[]` column and a composite with a
+`json` field have no `=` and no `<` on the server either.
+
+The column does not stop answering `=` for that, though: it falls back to a
+byte comparison of the container's whole `array_out`/`record_out` text. So the
+position carries a `ComparisonDivergence::AsText` of its own, and the note names
+it the way the ordering refusal does — `` `v[]` (json) is compared bytewise:
+PostgreSQL defines no comparison for this type at all ``. It is the same
+sentence a top-level `json` column earns, one level down, and it answers the
+question the refusal otherwise leaves hanging: *the ordering operators told me
+why they stopped; what did `=` just do?*
+
+**Only the `json` arm carries it.** `NestedCompare::Uncomparable` also holds
+positions that `ComparisonPlan::Refused` produced — an empty enum, a C-level
+base type, a range with no declared subtype — and that answer says this
+*build* has no order for the position, which is not a claim about the server's
+equality in either direction. Those carry no divergence and announce nothing.
+Neither do the two positions `array_comparison` refuses ahead of the walk (I22,
+I26): the same refusals resolve the column itself to text, so `resolve_term`
+drops the plan on the resolution one branch before it reaches the tree, and
+what such a column announces is keyed on that resolution instead — which is
+where `box[]` sits, and why it stays silent ("Equality is typed too").
+
+*Rejected: announcing `ComparisonDivergence::UnmodelledType` for every
+uncomparable position, or `AsText` for every one.* Each is one sentence over a
+population that does not share a fact. `AsText` says the server has no
+comparison here, which is true of `json` and false of `public.intarr[]` —
+PostgreSQL orders it through `array_ops` and the bytewise answer agrees with
+it, so announcing would be a warning about a correct row set. `UnmodelledType`
+says the opposite and is false of `json`. Carrying the divergence on the
+position is what lets each arm say only what it knows, and it costs one
+`Option` field on a variant that already carries the declared type.
 
 **The two sides read two grammars, and the leaf grammar does not widen with the
 container.** `predicate.rs`'s `nested_key` walks the plan against one text

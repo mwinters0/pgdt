@@ -566,6 +566,18 @@ refuses the same comparison, since a container is ordered by its element type's
 own comparison and this type has none; use `=` or `!=` for a text comparison
 ```
 
+`=` and `!=` do still work there — they compare the whole value's text — and
+they warn for the same reason, naming the same part. PostgreSQL has no equality
+for a `json[]` either, so a text comparison is an answer the server does not
+have rather than a weaker one:
+
+```sh
+pgdq query --source dump.sql --table public.t --filter 'docs={}'
+# warning: `docs[]` (json) is compared bytewise: PostgreSQL defines no
+# comparison for this type at all — no equality, no ordering, no operator class
+# — so this comparison is one the server does not have
+```
+
 **A range literal is rewritten before it is compared, the way the server
 rewrites it.** PostgreSQL does not store a range as you write it: for
 `int4range`, `int8range` and `daterange` it shifts a bound to the next value so
