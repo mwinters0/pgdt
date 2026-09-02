@@ -36,6 +36,18 @@ pub enum PredicateOp {
     Le,
     Gt,
     Ge,
+    /// `col IS DISTINCT FROM <value>` — [`Self::Ne`] with NULL counted as a
+    /// value rather than as unknown, so a NULL field answers [`Truth::True`]
+    /// where `!=` answers [`Truth::Unknown`].
+    ///
+    /// **The one operator three-valued logic makes necessary rather than
+    /// redundant**: `NOT UNKNOWN` is `UNKNOWN`, so `Not(Term(a = 1))` drops a
+    /// row whose `a` is NULL and nothing else can express "different,
+    /// counting NULL as a value".
+    IsDistinctFrom,
+    /// `col IS NOT DISTINCT FROM <value>` — [`Self::Eq`] with the same NULL
+    /// rule, answering [`Truth::False`] on a NULL field.
+    IsNotDistinctFrom,
 }
 
 impl PredicateOp {
@@ -58,13 +70,15 @@ impl PredicateOp {
             Self::Le => "<=",
             Self::Gt => ">",
             Self::Ge => ">=",
+            Self::IsDistinctFrom => "IS DISTINCT FROM",
+            Self::IsNotDistinctFrom => "IS NOT DISTINCT FROM",
         }
     }
 }
 
-/// A single-column post-parse filter: `column <op> value`, and one **term**
-/// of a conjunction — a query carries a list of these and keeps a row only
-/// if every one of them matches (`QueryOptions::filters`). `column` is
+/// A single-column post-parse filter: `column <op> value`, and the **leaf**
+/// of an [`Expr`] — a query carries one expression and keeps a row only if
+/// its root evaluates [`Truth::True`] (`QueryOptions::filter`). `column` is
 /// matched against the queried table's column names (the `COPY` header list,
 /// or the `column1`, `column2`, ... placeholders used when the header has
 /// none). `value` is `None` for `IsNull`/`IsNotNull`, which need no
@@ -80,19 +94,96 @@ impl PredicateOp {
 /// `*_out` spelling the file holds and compare bytes
 /// ([`equality_comparison`]).
 ///
-/// A NULL field matches nothing at all — not `Eq`, not `Ne`, and not an
-/// ordering operator — because SQL's own three-valued logic collapses
-/// unknown to "excluded", which is exactly why `IsNull`/`IsNotNull` exist:
-/// without them there is no way to ask for a NULL explicitly
-/// (`docs/status/history/2026-08-22.md`). That collapse is what bounds the
-/// conjunction to `AND`: it is sound under `AND` and unsound under `NOT`,
-/// which is why `OR`/`NOT` are deferred rather than added alongside
+/// A NULL field is [`Truth::Unknown`] under every comparing operator — not
+/// `Eq`, not `Ne`, and not an ordering operator — because SQL's own
+/// three-valued logic says so, and a row survives only where the root is
+/// `True`. Four operators are two-valued on a NULL field by definition, and
+/// they exist because unknown swallows everything else:
+/// `IsNull`/`IsNotNull` ask about the NULL directly
+/// (`docs/status/history/2026-08-22.md`), and
+/// `IsDistinctFrom`/`IsNotDistinctFrom` count it as a value
 /// (`docs/design/architecture.md`, "Predicates").
 #[derive(Debug, Clone)]
 pub struct Predicate {
     pub column: String,
     pub op: PredicateOp,
     pub value: Option<String>,
+}
+
+/// SQL's three-valued truth domain, which is what a filter evaluates in.
+///
+/// **A row survives only if the expression's root is [`Truth::True`]**, so
+/// `Unknown` and `False` are indistinguishable at the top — which is why
+/// collapsing unknown to "excluded" was sound while a filter was a bare
+/// conjunction, and stops being sound the moment [`Expr::Not`] can sit above
+/// a term: `NOT UNKNOWN` is `UNKNOWN`, not `TRUE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Truth {
+    True,
+    False,
+    Unknown,
+}
+
+impl Truth {
+    /// `True` for `True` and nothing else — the question the row path asks.
+    pub fn is_true(self) -> bool {
+        matches!(self, Self::True)
+    }
+
+    /// `True`/`False`, for the comparisons that cannot be unknown once the
+    /// field is known not to be NULL.
+    fn of(b: bool) -> Self {
+        if b { Self::True } else { Self::False }
+    }
+
+    /// SQL's `NOT`: `Unknown` is its own negation.
+    fn not(self) -> Self {
+        match self {
+            Self::True => Self::False,
+            Self::False => Self::True,
+            Self::Unknown => Self::Unknown,
+        }
+    }
+}
+
+/// A row filter as a boolean expression tree over single-column
+/// [`Predicate`] terms — what `QueryOptions::filter` carries
+/// (`docs/design/architecture.md`, "Predicates").
+///
+/// `And` and `Or` are **n-ary**, because the shape a repeated `--filter`
+/// builds is n-ary by construction and binary nesting would make the
+/// ordinary case a right-leaning chain every reader has to flatten
+/// mentally. The default — and the filter every query had before this — is
+/// the empty conjunction, [`Expr::all`] over nothing, which every row
+/// satisfies; so "no filter" is a degenerate tree rather than a case of its
+/// own, and nothing on the row path branches on whether a filter exists.
+///
+/// **Nothing here is parsed.** `Expr` is a struct an embedder fills in field
+/// by field, exactly as [`Predicate`] is; the `--where` grammar that builds
+/// one from text lives in the CLI
+/// (`docs/design/architecture.md`, "A filter term is parsed for two
+/// audiences").
+#[derive(Debug, Clone)]
+pub enum Expr {
+    Term(Predicate),
+    And(Vec<Expr>),
+    Or(Vec<Expr>),
+    Not(Box<Expr>),
+}
+
+impl Expr {
+    /// The conjunction of `terms` — the shape a repeated `--filter` builds,
+    /// and the shape every filter had before expressions existed. Over an
+    /// empty iterator it is the filter that keeps every row.
+    pub fn all(terms: impl IntoIterator<Item = Predicate>) -> Self {
+        Self::And(terms.into_iter().map(Self::Term).collect())
+    }
+}
+
+impl Default for Expr {
+    fn default() -> Self {
+        Self::all([])
+    }
 }
 
 /// One term of one query whose comparison does not answer what PostgreSQL's
@@ -1474,14 +1565,22 @@ struct ComparedTerm {
     divergence: Option<ComparisonDivergence>,
 }
 
-/// One filter term resolved against one `COPY` block: the field index it
-/// reads, plus the comparison it will make.
+/// One filter term resolved against one `COPY` block: the operator, the
+/// field index it reads, and the comparison it will make.
 ///
 /// The index is into the block's **unprojected** column list, because that is
 /// what the raw row's fields are numbered by: a term may name a column the
 /// projection dropped.
+///
+/// **It carries its own operator** rather than being read back against the
+/// [`Predicate`] it came from. A resolved filter is a tree
+/// ([`ResolvedExpr`]) whose shape mirrors the caller's [`Expr`], and walking
+/// two trees in lockstep to pair a leaf with its operator is an invariant
+/// nothing checks; carrying the operator makes the resolved tree evaluable
+/// on its own.
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedTerm {
+    op: PredicateOp,
     index: usize,
     /// `None` for `IS NULL`/`IS NOT NULL`, the two operators that compare
     /// nothing.
@@ -1539,7 +1638,7 @@ pub(crate) fn resolve_term(
     header_offset: u64,
 ) -> Result<ResolvedTerm> {
     if matches!(predicate.op, PredicateOp::IsNull | PredicateOp::IsNotNull) {
-        return Ok(ResolvedTerm { index, compared: None });
+        return Ok(ResolvedTerm { op: predicate.op, index, compared: None });
     }
     let ordering = predicate.op.is_ordering();
     let refuse = |reason: &'static str| Error::UnorderedPredicateColumn {
@@ -1617,6 +1716,7 @@ pub(crate) fn resolve_term(
         ),
     };
     Ok(ResolvedTerm {
+        op: predicate.op,
         index,
         compared: Some(ComparedTerm {
             column: predicate.column.clone(),
@@ -1627,36 +1727,38 @@ pub(crate) fn resolve_term(
     })
 }
 
-impl Predicate {
-    /// Evaluate this predicate against `raw_row`'s field, per `term` — the
-    /// resolution of *this* predicate against the block being replayed.
+impl ResolvedTerm {
+    /// Evaluate this term against `raw_row`, in SQL's three-valued domain.
     /// `table` and `row_offset` are context for the one error this can
     /// raise: a field that does not decode as its mapped type under a
     /// comparison that reads it, which is `Error::FieldDecode`, worded
     /// exactly as the typed build path words it.
     ///
-    /// **A NULL field matches nothing**, whatever the operator — unknown
-    /// collapses to "excluded", which is what `IsNull`/`IsNotNull` exist to
-    /// let a filter get past.
-    pub(crate) fn matches(
-        &self,
-        raw_row: &[u8],
-        term: &ResolvedTerm,
-        table: &str,
-        row_offset: u64,
-    ) -> Result<bool> {
-        let field = split_fields(raw_row).nth(term.index);
+    /// **A NULL field is [`Truth::Unknown`]** under every comparing
+    /// operator. Four operators answer two-valued instead, and they are
+    /// exactly the ones that exist because unknown swallows everything else:
+    /// `IsNull`/`IsNotNull`, which compare nothing, and the two `IS DISTINCT
+    /// FROM` forms, which count NULL as a value — so `IsDistinctFrom` on a
+    /// NULL field is `True` where `Ne` is `Unknown`.
+    fn eval(&self, raw_row: &[u8], table: &str, row_offset: u64) -> Result<Truth> {
+        let field = split_fields(raw_row).nth(self.index);
         let decoded = match field {
             Some(f) => decode_field(f)?,
             None => None,
         };
-        let Some(compared) = term.compared.as_ref() else {
-            return Ok(match self.op {
+        let Some(compared) = self.compared.as_ref() else {
+            return Ok(Truth::of(match self.op {
                 PredicateOp::IsNull => decoded.is_none(),
                 _ => decoded.is_some(),
+            }));
+        };
+        let Some(text) = decoded else {
+            return Ok(match self.op {
+                PredicateOp::IsDistinctFrom => Truth::True,
+                PredicateOp::IsNotDistinctFrom => Truth::False,
+                _ => Truth::Unknown,
             });
         };
-        let Some(text) = decoded else { return Ok(false) };
         let key = |kind: &CompareKind| {
             order_key(kind, &text).ok_or_else(|| Error::FieldDecode {
                 table: table.to_string(),
@@ -1666,7 +1768,7 @@ impl Predicate {
                 value: text.to_string(),
             })
         };
-        Ok(match &compared.comparison {
+        Ok(Truth::of(match &compared.comparison {
             Comparison::Ordered { kind, bound } => {
                 let ord = compare_keys(&key(kind)?, bound);
                 match self.op {
@@ -1683,42 +1785,108 @@ impl Predicate {
             Comparison::Decoded { kind, bound } => {
                 compare_keys(&key(kind)?, bound).is_eq() == self.wants_equal()
             }
-        })
+        }))
     }
 
-    /// Whether this predicate keeps the rows its comparison called equal —
-    /// `Eq` does, `Ne` does not, and no other operator reaches it.
+    /// Whether this term keeps the rows its comparison called equal — `Eq`
+    /// and `IsNotDistinctFrom` do, `Ne` and `IsDistinctFrom` do not, and no
+    /// other operator reaches it.
     fn wants_equal(&self) -> bool {
-        self.op == PredicateOp::Eq
+        matches!(self.op, PredicateOp::Eq | PredicateOp::IsNotDistinctFrom)
     }
 }
 
-/// Evaluate a conjunction against `raw_row`: every term must match.
-/// `terms[i]` is term `i` resolved against the block's **unprojected**
-/// schema, so the two slices are parallel by construction
-/// (`docs/design/architecture.md`, "Predicates").
-///
-/// An empty conjunction matches every row, which is what makes "no filter"
-/// need no separate case anywhere above this.
-///
-/// Terms are tested in the order they were given and the walk stops at the
-/// first that fails, so the ordinary case costs one pass over the row. Each
-/// term does walk the row itself — there is no shared pass — which is a real
-/// cost only for a conjunction whose leading terms nearly always pass, and
-/// which buys the short-circuit for the common shape.
-pub(crate) fn matches_all(
-    filters: &[Predicate],
-    terms: &[ResolvedTerm],
-    raw_row: &[u8],
-    table: &str,
-    row_offset: u64,
-) -> Result<bool> {
-    for (filter, term) in filters.iter().zip(terms) {
-        if !filter.matches(raw_row, term, table, row_offset)? {
-            return Ok(false);
+/// One [`Expr`] resolved against one `COPY` block: the same tree, with each
+/// leaf replaced by the [`ResolvedTerm`] that block's schema produced. It is
+/// what a block's `Active` state carries, and it is evaluable on its own —
+/// nothing walks it beside the caller's `Expr`.
+#[derive(Debug, Clone)]
+pub(crate) enum ResolvedExpr {
+    Term(ResolvedTerm),
+    And(Vec<ResolvedExpr>),
+    Or(Vec<ResolvedExpr>),
+    Not(Box<ResolvedExpr>),
+}
+
+impl ResolvedExpr {
+    /// Whether `raw_row` survives this filter: its root evaluates
+    /// [`Truth::True`]. `Unknown` and `False` both drop the row, which is
+    /// what makes the collapse at the root sound even though it is not sound
+    /// under a `Not` (`docs/design/architecture.md`, "Predicates").
+    pub(crate) fn matches(&self, raw_row: &[u8], table: &str, row_offset: u64) -> Result<bool> {
+        Ok(self.eval(false, raw_row, table, row_offset)?.is_true())
+    }
+
+    /// Kleene evaluation, left to right, stopping as soon as **the root's**
+    /// value is determined.
+    ///
+    /// `exact` is what makes that "the root's" rather than "this node's". A
+    /// caller that cannot tell `False` from `Unknown` — [`Self::matches`],
+    /// and any `And`/`Or` whose own caller cannot — lets this node return
+    /// `False` for an unknown and stop at the first non-`True` conjunct,
+    /// which is precisely the short-circuit a bare conjunction had before
+    /// expressions existed. Only [`Self::Not`] distinguishes them, so it is
+    /// the one node that evaluates its child exactly, and everything beneath
+    /// a `Not` is exact too.
+    ///
+    /// A decode failure is therefore raised only where evaluation reaches
+    /// it: which rows error depends on where the term sits in the tree, and
+    /// on whether a `Not` sits above it. That is the same asymmetry
+    /// projection already has — deciding needs strictly less than
+    /// materializing — and a row whose answer was settled by a field that
+    /// did decode returns nothing wrong.
+    fn eval(&self, exact: bool, raw_row: &[u8], table: &str, row_offset: u64) -> Result<Truth> {
+        Ok(match self {
+            Self::Term(term) => term.eval(raw_row, table, row_offset)?,
+            Self::And(children) => {
+                let mut unknown = false;
+                for child in children {
+                    match child.eval(exact, raw_row, table, row_offset)? {
+                        Truth::True => {}
+                        Truth::False => return Ok(Truth::False),
+                        Truth::Unknown if exact => unknown = true,
+                        Truth::Unknown => return Ok(Truth::False),
+                    }
+                }
+                if unknown { Truth::Unknown } else { Truth::True }
+            }
+            Self::Or(children) => {
+                let mut unknown = false;
+                for child in children {
+                    match child.eval(exact, raw_row, table, row_offset)? {
+                        Truth::True => return Ok(Truth::True),
+                        Truth::Unknown if exact => unknown = true,
+                        Truth::False | Truth::Unknown => {}
+                    }
+                }
+                if unknown { Truth::Unknown } else { Truth::False }
+            }
+            Self::Not(inner) => inner.eval(true, raw_row, table, row_offset)?.not(),
+        })
+    }
+
+    /// The divergence notes for every term in this tree, in the order the
+    /// caller wrote them — what `TableStream::comparison_notes` hands back.
+    /// Derived from the resolved tree rather than stored beside it, so the
+    /// two cannot disagree, and per *term* rather than per column because
+    /// which divergences reach an operator depends on the operator.
+    pub(crate) fn comparison_notes(&self) -> Vec<ComparisonNote> {
+        let mut out = Vec::new();
+        self.collect_notes(&mut out);
+        out
+    }
+
+    fn collect_notes(&self, out: &mut Vec<ComparisonNote>) {
+        match self {
+            Self::Term(term) => out.extend(term.comparison_note()),
+            Self::And(children) | Self::Or(children) => {
+                for child in children {
+                    child.collect_notes(out);
+                }
+            }
+            Self::Not(inner) => inner.collect_notes(out),
         }
     }
-    Ok(true)
 }
 
 #[cfg(test)]
@@ -1742,11 +1910,25 @@ mod tests {
             declared_type: String::new(),
             divergence: None,
         });
-        ResolvedTerm { index, compared: if p.op.is_ordering() { None } else { compared } }
+        ResolvedTerm { op: p.op, index, compared: if p.op.is_ordering() { None } else { compared } }
     }
 
-    fn matches(p: &Predicate, raw_row: &[u8], index: usize) -> bool {
-        p.matches(raw_row, &text_term(p, index), "public.t", 0).unwrap()
+    /// One text term's own truth value over `raw_row`.
+    fn truth(p: &Predicate, raw_row: &[u8], index: usize) -> Truth {
+        text_term(p, index).eval(raw_row, "public.t", 0).unwrap()
+    }
+
+    /// Whether a row survives a conjunction of text terms — the shape every
+    /// filter had before expressions existed.
+    fn matches_all(filters: &[Predicate], indices: &[usize], raw_row: &[u8]) -> bool {
+        let expr = ResolvedExpr::And(
+            filters
+                .iter()
+                .zip(indices)
+                .map(|(p, &i)| ResolvedExpr::Term(text_term(p, i)))
+                .collect(),
+        );
+        expr.matches(raw_row, "public.t", 0).unwrap()
     }
 
     /// The type list every one-column schema below resolves against: one
@@ -1794,44 +1976,81 @@ mod tests {
     ) -> Result<bool> {
         let p = order_predicate(op, value);
         let term = resolve_term(&p, 0, &one_column(declared, data_type), 0)?;
-        p.matches(field.as_bytes(), &term, "public.t", 0)
+        Ok(term.eval(field.as_bytes(), "public.t", 0)?.is_true())
     }
 
     #[test]
     fn eq_matches_the_decoded_value() {
         let p = Predicate { column: "x".into(), op: PredicateOp::Eq, value: Some("a\tb".into()) };
-        assert!(matches(&p, b"other\ta\\tb", 1));
-        assert!(!matches(&p, b"other\tc", 1));
+        assert_eq!(truth(&p, b"other\ta\\tb", 1), Truth::True);
+        assert_eq!(truth(&p, b"other\tc", 1), Truth::False);
     }
 
     #[test]
     fn ne_matches_everything_but_the_decoded_value() {
         let p = Predicate { column: "x".into(), op: PredicateOp::Ne, value: Some("a".into()) };
-        assert!(matches(&p, b"other\tb", 1));
-        assert!(!matches(&p, b"other\ta", 1));
+        assert_eq!(truth(&p, b"other\tb", 1), Truth::True);
+        assert_eq!(truth(&p, b"other\ta", 1), Truth::False);
     }
 
+    /// A NULL field is *unknown* under `=` and `!=`, not false — and a row
+    /// is kept only where the root is true, so the observable answer is the
+    /// one it always was.
     #[test]
-    fn null_matches_neither_eq_nor_ne() {
+    fn null_is_unknown_under_eq_and_ne() {
         let eq = Predicate { column: "x".into(), op: PredicateOp::Eq, value: Some("a".into()) };
         let ne = Predicate { column: "x".into(), op: PredicateOp::Ne, value: Some("a".into()) };
-        assert!(!matches(&eq, b"other\t\\N", 1));
-        assert!(!matches(&ne, b"other\t\\N", 1));
+        assert_eq!(truth(&eq, b"other\t\\N", 1), Truth::Unknown);
+        assert_eq!(truth(&ne, b"other\t\\N", 1), Truth::Unknown);
+        assert!(!matches_all(&[eq, ne], &[1, 1], b"other\t\\N"));
+    }
+
+    /// `IS DISTINCT FROM` is `!=` with NULL counted as a value, which is the
+    /// one thing `NOT` cannot express: `NOT (x = a)` drops a NULL row.
+    #[test]
+    fn is_distinct_from_counts_null_as_a_value() {
+        let idf = Predicate {
+            column: "x".into(),
+            op: PredicateOp::IsDistinctFrom,
+            value: Some("a".into()),
+        };
+        let indf = Predicate {
+            column: "x".into(),
+            op: PredicateOp::IsNotDistinctFrom,
+            value: Some("a".into()),
+        };
+        assert_eq!(truth(&idf, b"other\t\\N", 1), Truth::True);
+        assert_eq!(truth(&idf, b"other\tb", 1), Truth::True);
+        assert_eq!(truth(&idf, b"other\ta", 1), Truth::False);
+        assert_eq!(truth(&indf, b"other\t\\N", 1), Truth::False);
+        assert_eq!(truth(&indf, b"other\tb", 1), Truth::False);
+        assert_eq!(truth(&indf, b"other\ta", 1), Truth::True);
+
+        // The half `NOT` gets wrong, stated as the pair it is.
+        let eq = Predicate { column: "x".into(), op: PredicateOp::Eq, value: Some("a".into()) };
+        let negated = ResolvedExpr::Not(Box::new(ResolvedExpr::Term(text_term(&eq, 1))));
+        assert!(!negated.matches(b"other\t\\N", "public.t", 0).unwrap());
+        assert!(
+            ResolvedExpr::Term(text_term(&idf, 1)).matches(b"other\t\\N", "public.t", 0).unwrap()
+        );
     }
 
     #[test]
     fn is_null_and_is_not_null() {
         let is_null = Predicate { column: "x".into(), op: PredicateOp::IsNull, value: None };
         let is_not_null = Predicate { column: "x".into(), op: PredicateOp::IsNotNull, value: None };
-        assert!(matches(&is_null, b"other\t\\N", 1));
-        assert!(!matches(&is_null, b"other\ta", 1));
-        assert!(!matches(&is_not_null, b"other\t\\N", 1));
-        assert!(matches(&is_not_null, b"other\ta", 1));
+        assert_eq!(truth(&is_null, b"other\t\\N", 1), Truth::True);
+        assert_eq!(truth(&is_null, b"other\ta", 1), Truth::False);
+        assert_eq!(truth(&is_not_null, b"other\t\\N", 1), Truth::False);
+        assert_eq!(truth(&is_not_null, b"other\ta", 1), Truth::True);
     }
 
     #[test]
     fn an_empty_conjunction_matches_every_row() {
-        assert!(matches_all(&[], &[], b"a\tb", "public.t", 0).unwrap());
+        assert!(matches_all(&[], &[], b"a\tb"));
+        // And the default filter *is* that conjunction, which is what makes
+        // "no filter" need no case of its own on the row path.
+        assert!(matches!(Expr::default(), Expr::And(ref children) if children.is_empty()));
     }
 
     #[test]
@@ -1840,10 +2059,9 @@ mod tests {
             Predicate { column: "a".into(), op: PredicateOp::Eq, value: Some("1".into()) },
             Predicate { column: "b".into(), op: PredicateOp::Eq, value: Some("2".into()) },
         ];
-        let terms = [text_term(&filters[0], 0), text_term(&filters[1], 1)];
-        assert!(matches_all(&filters, &terms, b"1\t2", "public.t", 0).unwrap());
-        assert!(!matches_all(&filters, &terms, b"1\t3", "public.t", 0).unwrap());
-        assert!(!matches_all(&filters, &terms, b"9\t2", "public.t", 0).unwrap());
+        assert!(matches_all(&filters, &[0, 1], b"1\t2"));
+        assert!(!matches_all(&filters, &[0, 1], b"1\t3"));
+        assert!(!matches_all(&filters, &[0, 1], b"9\t2"));
     }
 
     /// Two terms on one column are an ordinary conjunction, and a
@@ -1854,9 +2072,153 @@ mod tests {
             Predicate { column: "a".into(), op: PredicateOp::Ne, value: Some("1".into()) },
             Predicate { column: "a".into(), op: PredicateOp::Ne, value: Some("2".into()) },
         ];
-        let terms = [text_term(&filters[0], 0), text_term(&filters[1], 0)];
-        assert!(matches_all(&filters, &terms, b"3", "public.t", 0).unwrap());
-        assert!(!matches_all(&filters, &terms, b"2", "public.t", 0).unwrap());
+        assert!(matches_all(&filters, &[0, 0], b"3"));
+        assert!(!matches_all(&filters, &[0, 0], b"2"));
+    }
+
+    /// The row every tree test below is evaluated over: field 0 holds `1`
+    /// and field 1 is NULL, which is how a leaf of each truth value is
+    /// built out of real terms rather than out of a constant.
+    const THREE_VALUED_ROW: &[u8] = b"1\t\\N";
+
+    /// A leaf that evaluates to `want` over [`THREE_VALUED_ROW`]: `f0 = 1`,
+    /// `f0 = 2`, and `f1 = 1` against the NULL field.
+    fn leaf(want: Truth) -> ResolvedExpr {
+        let (index, value) = match want {
+            Truth::True => (0, "1"),
+            Truth::False => (0, "2"),
+            Truth::Unknown => (1, "1"),
+        };
+        let p = Predicate { column: "v".into(), op: PredicateOp::Eq, value: Some(value.into()) };
+        ResolvedExpr::Term(text_term(&p, index))
+    }
+
+    fn exact(expr: &ResolvedExpr) -> Truth {
+        expr.eval(true, THREE_VALUED_ROW, "public.t", 0).unwrap()
+    }
+
+    const VALUES: [Truth; 3] = [Truth::True, Truth::False, Truth::Unknown];
+
+    /// Kleene's tables, written out rather than derived, over trees whose
+    /// leaves are real terms.
+    #[test]
+    fn and_or_and_not_are_three_valued() {
+        use Truth::{False, True, Unknown};
+
+        assert_eq!(exact(&ResolvedExpr::And(vec![])), True, "an empty conjunction is true");
+        assert_eq!(exact(&ResolvedExpr::Or(vec![])), False, "an empty disjunction is false");
+
+        for a in VALUES {
+            assert_eq!(exact(&ResolvedExpr::Not(Box::new(leaf(a)))), a.not());
+            for b in VALUES {
+                let pair = || vec![leaf(a), leaf(b)];
+                let and = match (a, b) {
+                    (False, _) | (_, False) => False,
+                    (Unknown, _) | (_, Unknown) => Unknown,
+                    _ => True,
+                };
+                let or = match (a, b) {
+                    (True, _) | (_, True) => True,
+                    (Unknown, _) | (_, Unknown) => Unknown,
+                    _ => False,
+                };
+                assert_eq!(exact(&ResolvedExpr::And(pair())), and, "{a:?} AND {b:?}");
+                assert_eq!(exact(&ResolvedExpr::Or(pair())), or, "{a:?} OR {b:?}");
+            }
+        }
+    }
+
+    /// Every tree of height at most three over the three truth values, with
+    /// `And`/`Or` arity two.
+    fn trees(height: usize) -> Vec<ResolvedExpr> {
+        let mut out: Vec<ResolvedExpr> = VALUES.iter().copied().map(leaf).collect();
+        if height == 0 {
+            return out;
+        }
+        let sub = trees(height - 1);
+        for a in &sub {
+            out.push(ResolvedExpr::Not(Box::new(a.clone())));
+            for b in &sub {
+                out.push(ResolvedExpr::And(vec![a.clone(), b.clone()]));
+                out.push(ResolvedExpr::Or(vec![a.clone(), b.clone()]));
+            }
+        }
+        out
+    }
+
+    /// **The short-circuit is verdict-preserving.** `matches` evaluates the
+    /// root inexactly — an `And` may report `False` for an `Unknown` and
+    /// stop, which is the short-circuit a bare conjunction always had — and
+    /// that is sound only because nothing above the root tells the two
+    /// apart. Asserted over every tree of height three rather than argued.
+    #[test]
+    fn the_root_verdict_survives_the_short_circuit() {
+        let all = trees(2);
+        assert!(all.len() > 1000, "only {} trees", all.len());
+        for expr in &all {
+            assert_eq!(
+                expr.matches(THREE_VALUED_ROW, "public.t", 0).unwrap(),
+                exact(expr).is_true(),
+                "{expr:?}"
+            );
+        }
+    }
+
+    /// A two-column schema, both `integer`, for the tests about *where* a
+    /// decode failure surfaces.
+    fn two_integers() -> ResolvedSchema {
+        let note = |name: &str| ColumnNote {
+            column: name.into(),
+            declared: Some("integer".into()),
+            resolution: ColumnResolution::Mapped,
+        };
+        ResolvedSchema {
+            schema: Arc::new(Schema::new(vec![
+                Field::new("a", DataType::Int32, true),
+                Field::new("b", DataType::Int32, true),
+            ])),
+            columns: vec![ColumnResolution::Mapped; 2],
+            notes: vec![note("a"), note("b")],
+            plans: vec![NestedPlan::Scalar; 2],
+            comparisons: vec![comparison_for("integer", None, &[], &[]); 2],
+        }
+    }
+
+    /// **A decode failure surfaces only where evaluation reaches it**, so
+    /// which rows error depends on where the term sits in the tree — and on
+    /// whether a `Not` sits above it, since a `Not` is the one node that has
+    /// to tell `False` from `Unknown` and therefore cannot short-circuit an
+    /// unknown away.
+    #[test]
+    fn a_decode_failure_surfaces_only_where_it_is_reached() {
+        let schema = two_integers();
+        let term = |column: &str, op, value: &str, index| {
+            let p = Predicate { column: column.into(), op, value: Some(value.into()) };
+            ResolvedExpr::Term(resolve_term(&p, index, &schema, 0).unwrap())
+        };
+        // `b` holds text no `integer` decoder will read, so any term over it
+        // is `Error::FieldDecode` the moment it is evaluated.
+        let row: &[u8] = b"1\tnope";
+        let corrupt = || term("b", PredicateOp::Gt, "0", 1);
+        let ok = |value| term("a", PredicateOp::Eq, value, 0);
+
+        assert!(corrupt().matches(row, "public.t", 0).is_err());
+        // Settled by a field that did decode, in both directions.
+        assert!(ResolvedExpr::Or(vec![ok("1"), corrupt()]).matches(row, "public.t", 0).unwrap());
+        assert!(!ResolvedExpr::And(vec![ok("2"), corrupt()]).matches(row, "public.t", 0).unwrap());
+        // Not settled: the walk reaches the corrupt field.
+        assert!(ResolvedExpr::And(vec![ok("1"), corrupt()]).matches(row, "public.t", 0).is_err());
+
+        // An unknown conjunct settles the *root*, so the walk stops there —
+        // until a `Not` above it makes `Unknown` and `False` different
+        // answers and the conjunction has to finish. Field 2 does not exist
+        // in this row, so the leading term reads NULL and is unknown.
+        let unknown = || {
+            let p = Predicate { column: "c".into(), op: PredicateOp::Eq, value: Some("x".into()) };
+            ResolvedExpr::And(vec![ResolvedExpr::Term(text_term(&p, 2)), corrupt()])
+        };
+        assert!(!unknown().matches(row, "public.t", 0).unwrap());
+        assert!(ResolvedExpr::Not(Box::new(unknown())).matches(row, "public.t", 0).is_err());
     }
 
     #[test]
@@ -1864,7 +2226,7 @@ mod tests {
         // Can't happen once a caller resolves the index from the block's own
         // schema, but the fallback is still exercised here.
         let p = Predicate { column: "x".into(), op: PredicateOp::Ne, value: Some("a".into()) };
-        assert!(!matches(&p, b"onlyone", 5));
+        assert_eq!(truth(&p, b"onlyone", 5), Truth::Unknown);
     }
 
     /// The four operators over the boundary itself — the case a `<` / `<=`
@@ -2849,8 +3211,8 @@ mod tests {
         let note = term.comparison_note().expect("an unmodelled scalar announces");
         assert_eq!(note.divergence, ComparisonDivergence::UnmodelledType);
         assert!(note.message().contains("`box` compares areas"), "{}", note.message());
-        assert!(p.matches(b"(1,1),(0,0)", &term, "public.t", 0).unwrap());
-        assert!(!p.matches(b"(3,3),(2,2)", &term, "public.t", 0).unwrap());
+        assert!(term.eval(b"(1,1),(0,0)", "public.t", 0).unwrap().is_true());
+        assert!(!term.eval(b"(3,3),(2,2)", "public.t", 0).unwrap().is_true());
 
         // A nested column is the other plan-less population and is silent:
         // its `array_out` text is a faithful rendering of the value, and
@@ -2907,8 +3269,8 @@ mod tests {
         // term evaluates bytewise.
         let term = resolve_term(&eq, 0, &schema(Some("public.icu_ci"), &collations), 0).unwrap();
         assert!(term.comparison_note().is_some());
-        assert!(eq.matches(b"a", &term, "public.t", 0).unwrap());
-        assert!(!eq.matches(b"A", &term, "public.t", 0).unwrap());
+        assert!(term.eval(b"a", "public.t", 0).unwrap().is_true());
+        assert!(!term.eval(b"A", "public.t", 0).unwrap().is_true());
     }
 
     /// The comparison register against the committed comparison oracle:
@@ -3167,10 +3529,11 @@ mod tests {
             )
         }
 
-        /// `t`/`f` for a cell this build answers, or the fault it raised
-        /// instead — a literal it will not decode, or a field it will not.
-        /// `field` is `None` for a SQL NULL one, which reaches the row as
-        /// `\N` like any other.
+        /// The [`Truth`] this build answers a cell with, or the fault it
+        /// raised instead — a literal it will not decode, or a field it will
+        /// not. `field` is `None` for a SQL NULL one, which reaches the row
+        /// as `\N` like any other, and answers `Unknown` exactly where the
+        /// server's cell reads `u`.
         ///
         /// The second half of the pair is whether the resolved term
         /// **announces** a divergence, read off `ComparisonNote` — the channel
@@ -3185,7 +3548,7 @@ mod tests {
             op: PredicateOp,
             field: Option<&str>,
             bound: &str,
-        ) -> (std::result::Result<bool, String>, bool) {
+        ) -> (std::result::Result<Truth, String>, bool) {
             let resolved = schema(declared, collation, types);
             let p = Predicate { column: "v".into(), op, value: Some(bound.into()) };
             let term = match resolve_term(&p, 0, &resolved, 0) {
@@ -3193,8 +3556,7 @@ mod tests {
                 Err(e) => return (Err(e.to_string()), false),
             };
             let announced = term.comparison_note().is_some();
-            let got =
-                p.matches(&encode_field(field), &term, "public.t", 0).map_err(|e| e.to_string());
+            let got = term.eval(&encode_field(field), "public.t", 0).map_err(|e| e.to_string());
             (got, announced)
         }
 
@@ -3279,16 +3641,17 @@ mod tests {
                         // the register.
                         let Some(right) = row[2].as_deref() else { continue };
                         let bound = output(right).expect("an accepted literal has an output");
-                        // A NULL *left* operand is the field, and this build
-                        // collapses unknown to "excluded" for every operator
-                        // — which is what the server's `u` means to a
-                        // `WHERE` clause.
+                        // A NULL *left* operand is the field, and this
+                        // build answers `Unknown` for every comparing
+                        // operator — the same value the server's `u` records,
+                        // asserted as itself rather than as the "excluded"
+                        // it collapses to at the root.
                         let Some(left) = row[1].as_deref() else {
                             assert_eq!(cell, "u", "{major} {declared}: a NULL operand");
                             assert_eq!(
                                 answer(&declared, collation, &types, op, None, &bound).0,
-                                Ok(false),
-                                "{major} {declared}: a NULL field matches nothing"
+                                Ok(Truth::Unknown),
+                                "{major} {declared}: a NULL field is unknown"
                             );
                             continue;
                         };
@@ -3306,8 +3669,8 @@ mod tests {
                             *walked.entry(case(left, right)).or_default() += 1;
                         }
                         let expected = match cell {
-                            "t" => true,
-                            "f" => false,
+                            "t" => Truth::True,
+                            "f" => Truth::False,
                             other => panic!("{major} {declared}: unexpected cell {other:?}"),
                         };
                         if got != Ok(expected) {

@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
-    LocalFileSource, NestedPlan, Predicate, PredicateOp, QueryOptions, ScanOptions, read_table,
-    render_field,
+    Expr, LocalFileSource, NestedPlan, Predicate, PredicateOp, QueryOptions, ScanOptions,
+    read_table, render_field,
 };
 
 mod common;
@@ -52,13 +52,23 @@ async fn collect_with_filters(
     table: &str,
     filters: Vec<Predicate>,
 ) -> pgdump_query::Result<Vec<Vec<Option<String>>>> {
+    collect_with_expr(path, table, Expr::all(filters)).await
+}
+
+/// The same, for an arbitrary filter expression: a row survives where the
+/// root evaluates true.
+async fn collect_with_expr(
+    path: &Path,
+    table: &str,
+    filter: Expr,
+) -> pgdump_query::Result<Vec<Vec<Option<String>>>> {
     let source = LocalFileSource::open(path).unwrap();
     let mut rows = Vec::new();
     read_table(
         &source,
         table,
         &ScanOptions::default(),
-        &QueryOptions { filters, ..Default::default() },
+        &QueryOptions { filter, ..Default::default() },
         CacheMode::Disabled,
         |batch| {
             rows.extend(rows_of(&batch));
@@ -164,6 +174,66 @@ async fn every_term_of_a_conjunction_must_match() {
     assert_eq!(rows, expected);
 }
 
+/// A disjunction keeps a row that satisfies either arm, and it is the whole
+/// filter rather than a term inside one.
+#[tokio::test]
+async fn a_disjunction_keeps_either_arm() {
+    let name = |v: &str| {
+        Expr::Term(Predicate { column: "name".into(), op: PredicateOp::Eq, value: Some(v.into()) })
+    };
+    let rows = collect_with_expr(
+        &edge_cases(),
+        "public.widgets",
+        Expr::Or(vec![name("alpha"), name("gamma")]),
+    )
+    .await
+    .unwrap();
+    let expected: Vec<_> = widgets_expected()
+        .into_iter()
+        .filter(|r| matches!(r[1].as_deref(), Some("alpha") | Some("gamma")))
+        .collect();
+    assert_eq!(rows, expected);
+}
+
+/// **`NOT` is why the evaluator had to become three-valued.** Row 2's
+/// `description` is NULL, so `description = 'a simple widget'` is *unknown*
+/// there rather than false, and `NOT unknown` is unknown — so negating an
+/// equality drops the NULL row, exactly as PostgreSQL does. `IS DISTINCT
+/// FROM` is the spelling that keeps it, and the two are asserted as the pair
+/// they are.
+#[tokio::test]
+async fn not_drops_a_null_row_and_is_distinct_from_keeps_it() {
+    let term =
+        |op| Predicate { column: "description".into(), op, value: Some("a simple widget".into()) };
+    let negated = collect_with_expr(
+        &edge_cases(),
+        "public.widgets",
+        Expr::Not(Box::new(Expr::Term(term(PredicateOp::Eq)))),
+    )
+    .await
+    .unwrap();
+    let expected: Vec<_> = widgets_expected()
+        .into_iter()
+        .filter(|r| r[2].is_some() && r[2].as_deref() != Some("a simple widget"))
+        .collect();
+    assert_eq!(negated, expected);
+    assert!(expected.iter().all(|r| r[1].as_deref() != Some("beta")), "the NULL row is dropped");
+
+    let distinct = collect_with_expr(
+        &edge_cases(),
+        "public.widgets",
+        Expr::Term(term(PredicateOp::IsDistinctFrom)),
+    )
+    .await
+    .unwrap();
+    let with_null: Vec<_> = widgets_expected()
+        .into_iter()
+        .filter(|r| r[2].as_deref() != Some("a simple widget"))
+        .collect();
+    assert_eq!(distinct, with_null);
+    assert_eq!(with_null.len(), negated.len() + 1);
+}
+
 /// Nothing dedupes or contradicts terms: two terms on one column are
 /// evaluated independently, so a pair no row can satisfy yields no rows
 /// rather than an error.
@@ -214,7 +284,7 @@ async fn a_resume_token_covers_the_whole_conjunction() {
     let one = Predicate { column: "id".into(), op: PredicateOp::IsNotNull, value: None };
     let two = Predicate { column: "name".into(), op: PredicateOp::IsNotNull, value: None };
     let options =
-        QueryOptions { max_rows: 1, filters: vec![one.clone()], ..QueryOptions::default() };
+        QueryOptions { max_rows: 1, filter: Expr::all([one.clone()]), ..QueryOptions::default() };
     let mut stream = table_stream(
         &source,
         "public.widgets",
@@ -231,11 +301,27 @@ async fn a_resume_token_covers_the_whole_conjunction() {
         &source,
         "public.widgets",
         ScanOptions::default(),
-        QueryOptions { filters: vec![one, two], ..options.clone() },
+        QueryOptions { filter: Expr::all([one.clone(), two]), ..options.clone() },
         Some(token.clone()),
         CacheMode::Disabled,
     );
     assert!(matches!(wrong.next().await, Some(Err(pgdump_query::Error::ResumeQueryMismatch))));
+
+    // The stamp covers the tree's *shape*, not just its terms: one term
+    // under `Or` is a different query from the same term under `And`, even
+    // though the two select the same rows.
+    let mut reshaped = table_stream(
+        &source,
+        "public.widgets",
+        ScanOptions::default(),
+        QueryOptions {
+            filter: pgdump_query::Expr::Or(vec![pgdump_query::Expr::Term(one)]),
+            ..options.clone()
+        },
+        Some(token.clone()),
+        CacheMode::Disabled,
+    );
+    assert!(matches!(reshaped.next().await, Some(Err(pgdump_query::Error::ResumeQueryMismatch))));
 
     let mut resumed = table_stream(
         &source,
@@ -266,8 +352,11 @@ async fn a_predicate_on_a_nested_column_matches_the_literal_text_in_either_schem
             op: PredicateOp::Eq,
             value: Some(value.to_string()),
         };
-        let options =
-            QueryOptions { schema_mode: mode, filters: vec![predicate], ..Default::default() };
+        let options = QueryOptions {
+            schema_mode: mode,
+            filter: Expr::all([predicate]),
+            ..Default::default()
+        };
         let mut stream = table_stream(
             &source,
             "public.t_array",

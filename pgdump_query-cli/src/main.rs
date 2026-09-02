@@ -649,8 +649,9 @@ async fn main() -> Result<()> {
             // Every term is parsed before the file is opened, so a
             // malformed one is reported without a scan; the library then
             // resolves each against the block's own schema.
-            let filters =
-                filter.iter().map(String::as_str).map(parse_filter).collect::<Result<Vec<_>>>()?;
+            let filter = pgdump_query::Expr::all(
+                filter.iter().map(String::as_str).map(parse_filter).collect::<Result<Vec<_>>>()?,
+            );
             let source = LocalFileSource::open(&file)?;
             let mut header_printed = false;
             let mut any_batch = false;
@@ -658,7 +659,7 @@ async fn main() -> Result<()> {
             let query_options = QueryOptions {
                 database,
                 schema_mode: schema_mode.into(),
-                filters,
+                filter,
                 projection: projection(column, no_columns),
                 ..QueryOptions::default()
             };

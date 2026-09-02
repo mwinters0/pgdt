@@ -37,7 +37,7 @@ use crate::decode;
 use crate::io::ByteRangeSource;
 use crate::nested::{self, RangeLiteral};
 use crate::pgtype::NestedPlan;
-use crate::predicate::Predicate;
+use crate::predicate::Expr;
 use crate::resolve::{ResolvedSchema, SchemaMode};
 use crate::scan::ScanOptions;
 // L4, imported by L3: `read_table` is a push-mode entry point that belongs in
@@ -65,14 +65,14 @@ pub struct QueryOptions {
     /// (`docs/design/architecture.md`, "Projection").
     pub projection: Option<Vec<String>>,
     /// Post-parse row filter (`docs/design/architecture.md`, "Predicates"),
-    /// as a **conjunction**: a row is kept only if every term matches, and
-    /// the empty list — the default — yields every row, so "no filter" needs
-    /// no separate spelling. Terms are independent single-column
-    /// comparisons; `OR` and `NOT` are not expressible here.
+    /// as a boolean **expression** over single-column terms: a row is kept
+    /// only if the root evaluates `Truth::True`. The default is the empty
+    /// conjunction, which yields every row, so "no filter" needs no separate
+    /// spelling.
     ///
     /// A term may name a column the projection does not: the projection
     /// decides what is *built*, never what may be tested.
-    pub filters: Vec<Predicate>,
+    pub filter: Expr,
     /// Rows per batch. A batch is flushed once it reaches this many rows.
     pub max_rows: usize,
     /// Optional cap on a batch's total field-byte count — counting only the
@@ -113,7 +113,7 @@ impl Default for QueryOptions {
     fn default() -> Self {
         Self {
             projection: None,
-            filters: Vec::new(),
+            filter: Expr::default(),
             max_rows: 8192,
             max_bytes: None,
             max_source_span: Some(64 << 20),

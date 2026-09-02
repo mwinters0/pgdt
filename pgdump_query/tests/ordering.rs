@@ -12,7 +12,7 @@
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
-    ComparisonDivergence, Error, LocalFileSource, Predicate, PredicateOp, QueryOptions,
+    ComparisonDivergence, Error, Expr, LocalFileSource, Predicate, PredicateOp, QueryOptions,
     ScanOptions, SchemaMode, table_stream,
 };
 
@@ -41,8 +41,11 @@ async fn drain(
 
 /// The surviving values of the single projected column, in file order.
 async fn kept(table: &str, column: &str, filters: Vec<Predicate>) -> Vec<Option<String>> {
-    let options =
-        QueryOptions { filters, projection: Some(vec![column.to_string()]), ..Default::default() };
+    let options = QueryOptions {
+        filter: Expr::all(filters),
+        projection: Some(vec![column.to_string()]),
+        ..Default::default()
+    };
     drain(table, options).await.unwrap().into_iter().map(|r| r[0].clone()).collect()
 }
 
@@ -97,7 +100,10 @@ async fn an_oid_orders_unsigned_and_refuses_a_signed_literal() {
     );
     let err = drain(
         "public.t_oid",
-        QueryOptions { filters: vec![term("v_oid", PredicateOp::Lt, "-1")], ..Default::default() },
+        QueryOptions {
+            filter: Expr::all([term("v_oid", PredicateOp::Lt, "-1")]),
+            ..Default::default()
+        },
     )
     .await
     .unwrap_err();
@@ -131,7 +137,7 @@ async fn notes_for(table: &str, column: &str, literal: &str) -> Vec<String> {
         table,
         ScanOptions::default(),
         QueryOptions {
-            filters: vec![term(column, PredicateOp::Ge, literal)],
+            filter: Expr::all([term(column, PredicateOp::Ge, literal)]),
             projection: Some(vec![column.to_string()]),
             ..Default::default()
         },
@@ -388,7 +394,7 @@ async fn a_nested_column_refuses_an_ordering_operator() {
         let err = drain(
             table,
             QueryOptions {
-                filters: vec![term(column, PredicateOp::Gt, "1")],
+                filter: Expr::all([term(column, PredicateOp::Gt, "1")]),
                 projection: Some(vec!["id".to_string()]),
                 ..Default::default()
             },
@@ -410,7 +416,7 @@ async fn strings_mode_refuses_every_ordering_operator() {
     let err = drain(
         "public.t_int",
         QueryOptions {
-            filters: vec![term("v_integer", PredicateOp::Gt, "0")],
+            filter: Expr::all([term("v_integer", PredicateOp::Gt, "0")]),
             schema_mode: SchemaMode::Strings,
             ..Default::default()
         },
@@ -452,7 +458,7 @@ async fn a_selected_special_value_still_cannot_be_materialized() {
     let err = drain(
         "public.t_date",
         QueryOptions {
-            filters: vec![term("v_date", PredicateOp::Gt, "9999-12-31")],
+            filter: Expr::all([term("v_date", PredicateOp::Gt, "9999-12-31")]),
             projection: Some(vec!["v_date".to_string()]),
             ..Default::default()
         },
@@ -477,7 +483,7 @@ async fn a_field_that_does_not_decode_is_a_field_decode_error() {
     let err = drain(
         "public.t_timestamp",
         QueryOptions {
-            filters: vec![term("v_ts", PredicateOp::Gt, "2000-01-01 00:00:00")],
+            filter: Expr::all([term("v_ts", PredicateOp::Gt, "2000-01-01 00:00:00")]),
             projection: Some(vec!["id".to_string()]),
             ..Default::default()
         },
@@ -499,7 +505,7 @@ async fn a_literal_of_the_wrong_type_is_refused_before_any_row() {
     let err = drain(
         "public.t_int",
         QueryOptions {
-            filters: vec![term("v_integer", PredicateOp::Gt, "twelve")],
+            filter: Expr::all([term("v_integer", PredicateOp::Gt, "twelve")]),
             ..Default::default()
         },
     )
@@ -570,7 +576,7 @@ async fn a_divergent_comparison_is_reported_by_the_stream() {
             table,
             ScanOptions::default(),
             QueryOptions {
-                filters: vec![term(column, PredicateOp::Ge, literal)],
+                filter: Expr::all([term(column, PredicateOp::Ge, literal)]),
                 projection: Some(vec![column.to_string()]),
                 ..Default::default()
             },
@@ -639,7 +645,7 @@ async fn a_collated_column_is_judged_by_its_clause() {
             "public.t_collate",
             ScanOptions::default(),
             QueryOptions {
-                filters: vec![term(column, PredicateOp::Ge, "a")],
+                filter: Expr::all([term(column, PredicateOp::Ge, "a")]),
                 projection: Some(vec![column.to_string()]),
                 ..Default::default()
             },
@@ -700,7 +706,7 @@ async fn an_agreeing_comparison_reports_nothing() {
         "public.t_int",
         ScanOptions::default(),
         QueryOptions {
-            filters: vec![term("v_integer", PredicateOp::Gt, "0")],
+            filter: Expr::all([term("v_integer", PredicateOp::Gt, "0")]),
             ..Default::default()
         },
         None,
@@ -717,7 +723,7 @@ async fn an_agreeing_comparison_reports_nothing() {
 async fn a_resume_token_does_not_cross_two_ordering_operators() {
     let source = LocalFileSource::open(types_fixture(16, "default")).unwrap();
     let options = |op| QueryOptions {
-        filters: vec![term("v_integer", op, "0")],
+        filter: Expr::all([term("v_integer", op, "0")]),
         max_rows: 1,
         ..Default::default()
     };
@@ -797,7 +803,7 @@ async fn an_equality_literal_of_the_wrong_type_is_refused() {
     let err = drain(
         "public.t_numeric",
         QueryOptions {
-            filters: vec![term("v_small", PredicateOp::Eq, "not-a-number")],
+            filter: Expr::all([term("v_small", PredicateOp::Eq, "not-a-number")]),
             ..Default::default()
         },
     )
@@ -830,7 +836,7 @@ async fn a_collation_note_is_raised_for_ordering_and_not_for_equality() {
             "public.t_collate",
             ScanOptions::default(),
             QueryOptions {
-                filters: vec![term(column, PredicateOp::Eq, "a")],
+                filter: Expr::all([term(column, PredicateOp::Eq, "a")]),
                 projection: Some(vec![column.to_string()]),
                 ..Default::default()
             },
@@ -863,7 +869,7 @@ async fn a_column_with_no_registered_comparison_announces_its_equality() {
         "public.t_delimiter",
         ScanOptions::default(),
         QueryOptions {
-            filters: vec![term("v_box_domain", PredicateOp::Eq, "(1,1),(0,0)")],
+            filter: Expr::all([term("v_box_domain", PredicateOp::Eq, "(1,1),(0,0)")]),
             projection: Some(vec!["v_box_domain".to_string()]),
             ..Default::default()
         },

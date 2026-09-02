@@ -79,26 +79,23 @@ use crate::index::{
 use crate::io::ByteRangeSource;
 use crate::map::{Builder, Span, SpanBody, attach_text};
 use crate::preamble::{DumpMetadata, dump_metadata_from_spans};
-use crate::predicate::{
-    ComparisonNote, Predicate, PredicateOp, ResolvedTerm, matches_all, resolve_term,
-};
+use crate::predicate::{ComparisonNote, Expr, PredicateOp, ResolvedExpr, resolve_term};
 use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
 use crate::scan::{CopyScanner, Event, ScanOptions};
 use crate::{Error, Result};
 
 /// State for a `COPY` block whose table matches the query: the batcher
-/// accumulating its rows, one [`ResolvedTerm`] per [`Predicate`] term
-/// resolved against this block's own schema (schemas can differ
-/// block-to-block, e.g. a headerless block's placeholder names), and the
-/// database this block is attributed to
+/// accumulating its rows, `QueryOptions::filter` resolved against this
+/// block's own schema (schemas can differ block-to-block, e.g. a headerless
+/// block's placeholder names), and the database this block is attributed to
 /// (`docs/design/architecture.md`, "One target per query").
 ///
-/// The terms are parallel to `QueryOptions::filters`. Each carries the field
-/// index it reads — into the block's **unprojected** column list, because
-/// that is what the raw row's fields are numbered by, and a term may name a
-/// column the projection does not — plus, for an ordering operator, the
-/// typed comparison it makes.
-type Active = (u64, CopyHeader, RowBatcher, Vec<ResolvedTerm>, Option<String>);
+/// The [`ResolvedExpr`] mirrors the caller's [`Expr`] and each of its leaves
+/// carries the field index it reads — into the block's **unprojected**
+/// column list, because that is what the raw row's fields are numbered by,
+/// and a term may name a column the projection does not — plus the typed
+/// comparison it makes.
+type Active = (u64, CopyHeader, RowBatcher, ResolvedExpr, Option<String>);
 
 /// `database`, rendered as `database.schema.table`, or just `schema.table`
 /// when the file had no `\connect` at all — the form `Error::AmbiguousTable`
@@ -110,10 +107,10 @@ fn render_candidate((database, qualified_name): &(Option<String>, String)) -> St
     }
 }
 
-/// Resolve every filter term against `resolved` — the block's own
-/// **unprojected** schema — once per block, returning one [`ResolvedTerm`]
-/// per term in term order. An empty conjunction resolves to an empty vector,
-/// which is what makes "no filter" need no case of its own on the row path.
+/// Resolve `filter` against `resolved` — the block's own **unprojected**
+/// schema — once per block, returning the same tree with every leaf
+/// resolved. The empty conjunction resolves to an empty conjunction, which
+/// is what makes "no filter" need no case of its own on the row path.
 ///
 /// **This is where a predicate is validated against a block**, and the only
 /// place: a term naming a column this block does not carry is
@@ -122,23 +119,30 @@ fn render_candidate((database, qualified_name): &(Option<String>, String)) -> St
 /// `Error::UnorderedPredicateColumn`, and a literal that is not a value of
 /// the column's type — under any comparing operator, `=` included — is
 /// `Error::PredicateValueDecode`. All are raised for the first offending
-/// term in the order the caller gave them, before a row of this block flows.
-/// A table whose blocks carry different schemas can therefore refuse at the
-/// third block after rows from the first two were emitted; that is already
-/// true of `UnknownPredicateColumn` and adds no new shape of failure.
+/// term in a left-to-right walk of the tree, before a row of this block
+/// flows — so every leaf is validated whatever the evaluator would
+/// short-circuit past. A table whose blocks carry different schemas can
+/// therefore refuse at the third block after rows from the first two were
+/// emitted; that is already true of `UnknownPredicateColumn` and adds no new
+/// shape of failure.
 ///
 /// It takes the whole [`ResolvedSchema`] rather than its `schema` because the
 /// ordering refusal reads `columns` and `plans` as well — the three are
 /// positional and parallel, and splitting them across two lookups is how they
 /// would come to disagree.
-fn resolve_terms(
-    filters: &[Predicate],
+fn resolve_expr(
+    filter: &Expr,
     resolved: &ResolvedSchema,
     header_offset: u64,
-) -> Result<Vec<ResolvedTerm>> {
-    filters
-        .iter()
-        .map(|predicate| {
+) -> Result<ResolvedExpr> {
+    let branch = |children: &[Expr]| {
+        children
+            .iter()
+            .map(|child| resolve_expr(child, resolved, header_offset))
+            .collect::<Result<Vec<_>>>()
+    };
+    Ok(match filter {
+        Expr::Term(predicate) => {
             let index = resolved
                 .schema
                 .fields()
@@ -148,18 +152,14 @@ fn resolve_terms(
                     header_offset,
                     column: predicate.column.clone(),
                 })?;
-            resolve_term(predicate, index, resolved, header_offset)
-        })
-        .collect()
-}
-
-/// The divergence notes for one block's resolved terms, in term order — what
-/// `TableStream::comparison_notes` hands a caller. Derived rather than stored
-/// beside the terms, so the two cannot disagree, and per *term* rather than
-/// per column because which divergences reach an operator depends on the
-/// operator.
-fn comparison_notes(terms: &[ResolvedTerm]) -> Vec<ComparisonNote> {
-    terms.iter().filter_map(ResolvedTerm::comparison_note).collect()
+            ResolvedExpr::Term(resolve_term(predicate, index, resolved, header_offset)?)
+        }
+        Expr::And(children) => ResolvedExpr::And(branch(children)?),
+        Expr::Or(children) => ResolvedExpr::Or(branch(children)?),
+        Expr::Not(inner) => {
+            ResolvedExpr::Not(Box::new(resolve_expr(inner, resolved, header_offset)?))
+        }
+    })
 }
 
 /// Cut `resolved` down to `projection`, and say which of the block's fields
@@ -236,28 +236,68 @@ fn query_fingerprint(table: &str, options: &QueryOptions) -> u64 {
             columns.hash(&mut hasher);
         }
     }
-    // Arity first, then each term in order. Two conjunctions that differ
-    // only in the order of their terms are semantically the same query and
-    // fingerprint differently; that costs a `ResumeQueryMismatch` on a
-    // resume nobody would write, and the alternative — canonicalizing the
-    // list — would make the stamp depend on an ordering rule of its own.
-    options.filters.len().hash(&mut hasher);
-    for filter in &options.filters {
-        filter.column.hash(&mut hasher);
-        match filter.op {
-            PredicateOp::Eq => 0u8,
-            PredicateOp::Ne => 1u8,
-            PredicateOp::IsNull => 2u8,
-            PredicateOp::IsNotNull => 3u8,
-            PredicateOp::Lt => 4u8,
-            PredicateOp::Le => 5u8,
-            PredicateOp::Gt => 6u8,
-            PredicateOp::Ge => 7u8,
-        }
-        .hash(&mut hasher);
-        filter.value.hash(&mut hasher);
-    }
+    hash_expr(&options.filter, &mut hasher);
     hasher.finish()
+}
+
+/// Fold one filter expression into `hasher`, node kind first, then arity,
+/// then each child in order — so two trees of different shape cannot collide
+/// by carrying the same terms.
+///
+/// Two conjunctions that differ only in the order of their terms are
+/// semantically the same query and fingerprint differently; that costs a
+/// `ResumeQueryMismatch` on a resume nobody would write, and the alternative
+/// — canonicalizing the tree — would make the stamp depend on an ordering
+/// rule of its own.
+///
+/// Every variant and every operator is written out rather than derived, so
+/// adding one is a compile error here rather than a fingerprint that quietly
+/// stops covering it.
+fn hash_expr<H: std::hash::Hasher>(expr: &Expr, hasher: &mut H) {
+    use std::hash::Hash;
+
+    match expr {
+        Expr::Term(term) => {
+            0u8.hash(hasher);
+            term.column.hash(hasher);
+            match term.op {
+                PredicateOp::Eq => 0u8,
+                PredicateOp::Ne => 1u8,
+                PredicateOp::IsNull => 2u8,
+                PredicateOp::IsNotNull => 3u8,
+                PredicateOp::Lt => 4u8,
+                PredicateOp::Le => 5u8,
+                PredicateOp::Gt => 6u8,
+                PredicateOp::Ge => 7u8,
+                PredicateOp::IsDistinctFrom => 8u8,
+                PredicateOp::IsNotDistinctFrom => 9u8,
+            }
+            .hash(hasher);
+            term.value.hash(hasher);
+        }
+        Expr::And(children) => {
+            1u8.hash(hasher);
+            hash_children(children, hasher);
+        }
+        Expr::Or(children) => {
+            2u8.hash(hasher);
+            hash_children(children, hasher);
+        }
+        Expr::Not(inner) => {
+            3u8.hash(hasher);
+            hash_expr(inner, hasher);
+        }
+    }
+}
+
+/// Arity, then each child in order.
+fn hash_children<H: std::hash::Hasher>(children: &[Expr], hasher: &mut H) {
+    use std::hash::Hash;
+
+    children.len().hash(hasher);
+    for child in children {
+        hash_expr(child, hasher);
+    }
 }
 
 /// Replace everything a mapping scan covered with what it built: `prefix`
@@ -930,7 +970,7 @@ fn resume_state(
                 query_options.schema_mode,
                 census,
             )?;
-            let terms = resolve_terms(&query_options.filters, &full, ic.header_offset)?;
+            let filter = resolve_expr(&query_options.filter, &full, ic.header_offset)?;
             let (r, field_targets) =
                 project(&full, query_options.projection.as_deref(), ic.header_offset)?;
             let batcher = RowBatcher::new(
@@ -944,7 +984,7 @@ fn resume_state(
                 ic.header_offset,
                 ic.header.clone(),
                 batcher,
-                terms,
+                filter,
                 ic.database.clone(),
             ))
         })
@@ -1166,8 +1206,8 @@ where
                 if let Some(r) = resolved {
                     *resolved_schema_for_stream.lock().unwrap() = r;
                 }
-                if let Some((_, _, _, terms, _)) = &active {
-                    *comparison_notes_for_stream.lock().unwrap() = comparison_notes(terms);
+                if let Some((_, _, _, filter, _)) = &active {
+                    *comparison_notes_for_stream.lock().unwrap() = filter.comparison_notes();
                 }
                 (active, Some(scanner))
             }
@@ -1223,13 +1263,13 @@ where
                                 // term's index numbers the raw row's
                                 // fields, and a term may name a column the
                                 // projection dropped.
-                                let terms = resolve_terms(
-                                    &query_options.filters,
+                                let filter = resolve_expr(
+                                    &query_options.filter,
                                     &full,
                                     start.header_offset,
                                 )?;
                                 *comparison_notes_for_stream.lock().unwrap() =
-                                    comparison_notes(&terms);
+                                    filter.comparison_notes();
                                 let (resolved, field_targets) = project(
                                     &full,
                                     query_options.projection.as_deref(),
@@ -1246,7 +1286,7 @@ where
                                     start.header_offset,
                                     start.header,
                                     batcher,
-                                    terms,
+                                    filter,
                                     block_database.clone(),
                                 ));
                             }
@@ -1263,10 +1303,10 @@ where
                                     query_options.schema_mode,
                                     &census,
                                 )?;
-                                let terms =
-                                    resolve_terms(&query_options.filters, &full, header_offset)?;
+                                let filter =
+                                    resolve_expr(&query_options.filter, &full, header_offset)?;
                                 *comparison_notes_for_stream.lock().unwrap() =
-                                    comparison_notes(&terms);
+                                    filter.comparison_notes();
                                 let (resolved, field_targets) = project(
                                     &full,
                                     query_options.projection.as_deref(),
@@ -1279,16 +1319,10 @@ where
                                     field_targets,
                                 );
                                 *resolved_schema_for_stream.lock().unwrap() = resolved;
-                                active = Some((header_offset, header, batcher, terms, block_database));
+                                active = Some((header_offset, header, batcher, filter, block_database));
                             }
-                            if let Some((header_offset, _, batcher, terms, _)) = active.as_mut() {
-                                let keep = matches_all(
-                                    &query_options.filters,
-                                    terms,
-                                    row.raw,
-                                    batcher.table(),
-                                    row.offset,
-                                )?;
+                            if let Some((header_offset, _, batcher, filter, _)) = active.as_mut() {
+                                let keep = filter.matches(row.raw, batcher.table(), row.offset)?;
                                 if keep {
                                     batcher.push_row(
                                         *header_offset,

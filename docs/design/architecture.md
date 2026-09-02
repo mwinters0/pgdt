@@ -1834,7 +1834,7 @@ columns than the original did.
 A reserved `generation` field is always 0.
 
 **It also carries a fingerprint of the query that produced it** — the table,
-the projection, the filter terms and the schema mode, hashed — and resuming a stream
+the projection, the filter expression and the schema mode, hashed — and resuming a stream
 whose options hash differently is `Error::ResumeQueryMismatch`. That defends
 "one schema per stream, resolved up front", which nothing else defends: the
 token never named even the table, so resuming against a different one was
@@ -1842,10 +1842,11 @@ silently accepted, and a projection makes changing the schema without changing
 the table an ordinary thing to do rather than an exotic one. The hash is over
 an explicit `match` per field rather than a derived `Hash`, so a new operator
 or option is a compile error instead of a stamp that quietly stops covering it.
-The filter list is hashed arity-first and in order, so two conjunctions
-differing only in term order fingerprint differently — a `ResumeQueryMismatch`
-on a resume nobody would write, against a canonicalization rule the stamp
-would otherwise have to own. `database` and `scan_extent` are deliberately
+The filter tree is hashed node-kind first, then arity, then each child in
+order, so `And`/`Or`/`Not` cannot collide by carrying the same terms and two
+conjunctions differing only in term order fingerprint differently — a
+`ResumeQueryMismatch` on a resume nobody would write, against a
+canonicalization rule the stamp would otherwise have to own. `database` and `scan_extent` are deliberately
 outside it: they change which
 blocks are replayed, not the shape of what comes back.
 
@@ -1893,8 +1894,8 @@ depend on which block matched, which is what every other lookup avoids by going
 through the `COPY` header.
 
 **A filter term may name a column the projection does not.** The projection
-decides what is *built*, never what may be *tested*: `Predicate::matches` walks
-the raw row itself, so every term's column index is resolved against the
+decides what is *built*, never what may be *tested*: `ResolvedTerm::eval`
+walks the raw row itself, so every term's column index is resolved against the
 block's **unprojected** schema. That is also what makes a filtered row count —
 zero columns plus a filter — expressible.
 
@@ -1980,28 +1981,71 @@ Post-parse row filtering: a row is fully parsed, then dropped if it fails.
 `IsNull`/`IsNotNull` are the two operators that exist because before typed
 columns there was no way to ask for a NULL at all, and they compare nothing.
 Every other operator is **typed**, through the column's own comparison plan —
-the four ordering ones and `=`/`!=` alike — and they have their own subsection
-below. Evaluating predicates *during* the scan is future work; it inverts
-control, not dependency (see `layering.md`).
+the four ordering ones, `=`/`!=`, and the two `IS DISTINCT FROM` forms alike —
+and they have their own subsection below. Evaluating predicates *during* the
+scan is future work; it inverts control, not dependency (see `layering.md`).
 
-**A filter is a conjunction**: `QueryOptions::filters` is a list of
-single-column terms, and a row survives only if every one of them matches.
-The empty list is the default and yields every row, so "no filter" is the
-degenerate conjunction rather than a case of its own — nothing on the row
-path branches on whether a filter exists. Terms are resolved to column
-indices once per block, in term order, and a `ResolvedTerm` vector parallel to
-the term list travels in the block's `Active` state; a term naming a column the
-block does not carry is `Error::UnknownPredicateColumn`, raised for the first
-such term. Evaluation short-circuits at the first term that fails, so the
-ordinary case costs one walk of the row; each term does walk it separately,
-which is only a real cost for a conjunction whose leading terms almost always
-pass.
+**A filter is an expression tree.** `QueryOptions::filter` is one `Expr`:
+`Term(Predicate)`, `And(Vec<Expr>)`, `Or(Vec<Expr>)` or `Not(Box<Expr>)`, with
+`And` and `Or` n-ary because the shape a repeated `--filter` builds is n-ary
+by construction and binary nesting would make the ordinary case a
+right-leaning chain every reader has to flatten. The default is the empty
+conjunction, `Expr::all([])`, which every row satisfies — so "no filter" is a
+degenerate tree rather than a case of its own, and nothing on the row path
+branches on whether a filter exists. The tree is resolved to a parallel
+`ResolvedExpr` once per block, and that travels in the block's `Active` state;
+a leaf naming a column the block does not carry is
+`Error::UnknownPredicateColumn`, raised for the first such leaf in a
+left-to-right walk.
 
-**`stream::resolve_terms` is the single site where a predicate meets a block.**
+**Evaluation is three-valued, and a row survives only where the root is
+`True`.** A NULL field is `Truth::Unknown` under every comparing operator, and
+`And`/`Or`/`Not` are Kleene's. That is a *restatement* of what a conjunction
+always did rather than a change to it: unknown was collapsed to "excluded" at
+each term before, which gives the same row set for every filter a conjunction
+can express, because a conjunction carrying an unknown is not `True` either
+way. What the restatement buys is that `Not` is now expressible at all —
+`NOT UNKNOWN` is `UNKNOWN`, not `TRUE`, so the old collapse would have turned
+a NULL row into a *kept* row under a negation.
+
+**`IS DISTINCT FROM` / `IS NOT DISTINCT FROM` are the addition three-valued
+logic makes necessary** rather than redundant, and they are the only operators
+added with it: `IN` is a disjunction of `=` and `BETWEEN` is two ordering
+terms ANDed, so `Or` retires both before they are proposed. Without
+`IS DISTINCT FROM` there is no spelling at all for "different, counting NULL
+as a value" — `Not(Term(a = 1))` drops the NULL row. They route through the
+same equality comparison `=`/`!=` do (see "Equality is typed too"); all that
+differs is the NULL rule, which is two-valued: `True` and `False` respectively
+on a NULL field.
+
+**Short-circuiting is defined against the *root*, not against each node.**
+`And` stops at the first `False`, `Or` at the first `True`. Under a `Not` that
+is all it may do, since `Not` has to tell `False` from `Unknown`; everywhere
+else the caller cannot tell them apart — `Unknown` and `False` both drop the
+row — so an `And` may also stop at the first `Unknown`, which is exactly the
+short-circuit a bare conjunction had. `ResolvedExpr::eval` carries that as one
+`exact` flag, set only by `Not` and inherited downward. The property is
+asserted rather than argued: every tree of height three over the three truth
+values gets the same root verdict either way.
+
+**A decode failure therefore surfaces only where evaluation reaches it**, so
+which rows error depends on where the term sits in the tree and on whether a
+`Not` sits above it. That is a property, not a defect: when `a=1 OR b<2`
+short-circuits past a corrupt `b`, the row's answer was already settled by a
+field that did decode, so nothing wrong is returned. It is the asymmetry
+projection already has, where deciding needs strictly less than materializing.
+*Rejected: evaluating every leaf of every row so that a corrupt field errors
+regardless of expression shape.* It gives up the one-walk hot path to buy
+determinism about which error message appears, on a file that is already
+contradicting its own DDL.
+
+**`stream::resolve_expr` is the single site where a predicate meets a block.**
 Every refusal a term can earn — the unknown column, the ordering refusals
 below, and a literal that is not a value of the column's type under *any*
 comparing operator — is raised there, against that block's own **unprojected**
-`ResolvedSchema`, before a row of the block flows. It takes the whole
+`ResolvedSchema`, before a row of the block flows. **Resolution walks the
+whole tree**, so a leaf the evaluator would short-circuit past is still
+validated: a filter's refusals must not depend on the data. It takes the whole
 `ResolvedSchema` rather than its `schema` because the ordering refusal reads
 `columns`, `plans` and `comparisons` too, and those are positional and
 parallel: splitting them across two lookups is how they would come to
@@ -2009,25 +2053,36 @@ disagree. A table whose blocks carry different schemas can therefore refuse at
 the third block after rows from the first two were emitted; that is true of
 `UnknownPredicateColumn` as well and adds no new shape of failure.
 
+**A `ResolvedTerm` carries its own operator**, so a resolved tree is
+evaluable without the `Expr` it came from. The alternative — walking the two
+trees in lockstep to pair each leaf with its predicate — is an invariant
+nothing checks, and it is the invariant the flat parallel-vector form used to
+rest on.
+
 **Nothing folds two terms together.** Two terms on one column are evaluated
 independently, so a contradictory pair is a query with no rows rather than an
-error, and a redundant pair costs a second walk. There is no simplifier and
-no plan.
+error, and a redundant pair costs a second walk. There is no simplifier and no
+plan; each term walks the row itself, so a five-way disjunction is up to five
+walks per row.
 
-*Rejected: `OR` and `NOT` alongside the conjunction.* Not for code volume —
-for NULL. A NULL field matches neither `Eq` nor `Ne`: unknown is collapsed to
-false at each term, which is sound under `AND` and unsound under `NOT`, since
-SQL's `NOT UNKNOWN` is `UNKNOWN` rather than `TRUE`. Admitting `NOT` does not
-add an operator, it obliges a real three-valued evaluator and re-opens the
-semantics of every operator that already exists. It is specified in
-[`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md), "The
-predicate model becomes an expression tree".
+*Rejected: keeping `filters` and adding an expression field beside it.* Two
+ways to say one thing, with a rule needed for how they combine.
+
+*Rejected: normalizing to disjunctive normal form and evaluating a flat list
+of conjunctions.* That is a planner, and there is deliberately none; DNF also
+multiplies term count, and each term walks the row separately.
 
 **On the command line a filter repeats rather than splits**, exactly as a
-projection does: `pgdq query --filter <term>`, once per term, ANDed. Each
-repetition is parsed on its own — a malformed one is refused before the dump
-is opened — and the CLI decides nothing else about them; the column lookup and
-its refusal are the library's, identical for an embedder.
+projection does: `pgdq query --filter <term>`, once per term, ANDed into
+`Expr::all`. Each repetition is parsed on its own — a malformed one is refused
+before the dump is opened — and the CLI decides nothing else about them; the
+column lookup and its refusal are the library's, identical for an embedder.
+**Nothing below L4 parses an expression** any more than it parses a term:
+`Expr` is a struct an embedder fills in, and the grammar that builds one from
+text is specified as `--where` in
+[`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md),
+"`--where` is a new flag". Until it lands, `Or`, `Not` and the two
+`IS DISTINCT FROM` forms are reachable from the library only.
 
 **A string comparison agrees with PostgreSQL more often than it deserves to**,
 and the reason is a property of the input rather than of the comparison: every
@@ -4086,7 +4141,7 @@ majors against each other. `the_register_answers_every_committed_oracle_cell`,
 in `predicate.rs`'s unit tests, is the one that compares an answer to an
 answer: it walks every cell of `fixtures/<13–18>/oracle/comparisons.tsv` and
 puts the same question to the register through `resolve_term` and
-`Predicate::matches`, the path a `--filter` takes. 45,394 cells today.
+`ResolvedTerm::eval`, the path a `--filter` takes. 45,394 cells today.
 
 **It is the check the oracle was built for**, and until it existed the oracle's
 answers had only ever been compared by hand. Two register defects had reached
