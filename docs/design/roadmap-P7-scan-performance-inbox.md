@@ -649,3 +649,39 @@ both — and building it in either place separately means building it twice.
 makes this the phase's own statement of what it did not do, is
 [`architecture.md`](architecture.md), "Predicates" — "each term walks the row
 itself, so a five-way disjunction is up to five walks per row".
+
+---
+
+## A seekable compressed source hands this phase parallel discovery for free
+
+**Fact.** This phase's "Parallelism" section splits the problem in two:
+row extraction parallelizes trivially once boundaries are known, while
+*discovery* is hard, because from a cold start you cannot tell whether a random
+offset is inside a `COPY` block — which is why the speculative scheme is
+prototype-and-measure work rather than a plan.
+
+A seekable compressed source removes exactly that half. An `.xz` stream's index
+gives every block's uncompressed offset before a byte is decoded, so workers can
+be handed real, self-contained ranges rather than speculative ones. Measured on
+the koji `.xz` (31,150 self-contained streams, ~24 MiB uncompressed each): one
+core decodes ~446 MB/s of plaintext, four concurrent per-stream decodes reach
+~1.48 GB/s at 397% CPU, and `xz`'s own `-T8` on that file gains nothing, its
+threaded decoder parallelising blocks within a stream where each stream holds
+one. Numbers and method: `roadmap-P13-compressed-input-inbox.md`, "xz decodes at
+~446 MB/s of plaintext per core" — probes, not figures.
+
+**Why this phase cares.** P13 lands the decompressing source and deliberately
+does *not* take parallel decode, leaving it here rather than duplicating this
+phase's machinery. So this phase inherits a second parallelism case with a
+different bottleneck — CPU-bound at ~450 MB/s a core where the plain path is
+device-bound at ~240 MB/s on the same HDD — and a different unit of work: a
+compressed block rather than a byte range resynced to the next LF. Its
+"be device-aware" rule needs a second axis, since the right worker count for a
+compressed source is set by cores and decode rate, not by
+`/sys/block/<dev>/queue/rotational`.
+
+**Origin.** 2026-09-02, sketching P13.
+
+**Contingent on** P13 landing first, which is this table's order. If it slips
+behind this phase, the entry becomes a constraint on defaults rather than a
+case to implement.

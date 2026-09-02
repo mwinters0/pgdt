@@ -180,10 +180,12 @@ behaviour.**
   load-bearing in koji, whose long text fields contain embedded literal `\n`
   sequences.
 - Input is assumed to be **already-decompressed plain SQL text**. The library
-  does not handle `.gz`/`.xz`/etc. itself; that is caller-side preprocessing.
-  This is a rule about *plain-format input specifically*, not a global policy —
-  archive formats compress per entry, internally, and will need streaming
-  decompression inside their container layer.
+  does not handle `.gz`/`.xz`/etc. itself; that is caller-side preprocessing
+  today. This is what the scanner assumes, not a scope decision: compressed
+  plain input is planned as a decompressing `ByteRangeSource` beneath it
+  (`roadmap.md`, P13 and P15), which changes nothing about this state machine.
+  Archive formats are different again — they compress per entry, internally,
+  and will need streaming decompression inside their container layer.
 
 ### `Event` is the scanner's contract
 

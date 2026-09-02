@@ -127,10 +127,16 @@ was computed as, not an Arrow `DataType`, for the same reason `DumpMetadata`
 stores declared type strings. Rule 6 settles the compute question — the parse
 function is injected downward, not imported upward.
 
-**Archive containers (P8) and `object_store` (P6) are L1-only.** Both
-are additions *inside* L1: `object_store` as a second `ByteRangeSource`, the
-container layer between `io.rs` and `scan.rs`. Neither belongs above L1, and
-neither may introduce an Arrow dependency into it.
+**Archive containers (P8), `object_store` (P14) and the decompressing source
+(P13, P15) are L1-only.** All three are additions *inside* L1: `object_store`
+and the decompressing source as further `ByteRangeSource` implementations, the
+container layer between `io.rs` and `scan.rs`. None belongs above L1, and none
+may introduce an Arrow dependency into it.
+
+The two byte sources compose in one direction only — a decompressing source
+wraps whatever supplies its compressed bytes, local or remote — so neither
+knows about the other, and a seek table is L1 data like the rest of the cache
+(rule 5).
 
 ## Known deviations
 

@@ -16,10 +16,13 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P5, P9, P11 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
+| P13 — compressed input | Sketched; not grilled | this file, below; [inbox](roadmap-P13-compressed-input-inbox.md) |
 | P7 — scan performance | Sketched; design doc ahead of its phase | [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md); [inbox](roadmap-P7-scan-performance-inbox.md) |
 | P12 — ADBC type floor | Sketched; not grilled | this file, below; [inbox](roadmap-P12-adbc-type-floor-inbox.md) |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
+| P14 — remote input | Sketched; not grilled | this file, below |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
+| P15 — gzip and zstd input | Sketched; not grilled | this file, below |
 | P8 — format coverage | Sketched; not grilled | this file, below; [inbox](roadmap-P8-format-coverage-inbox.md) |
 
 **A row's state is one of `Sketched`, `Specified`, `Current`, `Complete` or
@@ -40,7 +43,7 @@ destination, so it drops to `(c) unowned` unless another phase absorbs it
 The struck phases' mechanisms are described by subject in
 [`architecture.md`](architecture.md), not by phase; their specs and notes went
 at a keystone review (`../process.md`, "The keystone: striking the
-centering"). **Phase numbering continues from `P12`** — nothing at or below it
+centering"). **Phase numbering continues from `P15`** — nothing at or below it
 is reused, whether it was struck, sketched, or never specified.
 
 Two standing-constraint docs cut across everything below.
@@ -330,6 +333,57 @@ out of it. See
 Note that CSV-format `COPY` blocks are **not** on this list. They are a Future
 item; see below.
 
+## P13 — Compressed input
+
+**Inbox:** [`roadmap-P13-compressed-input-inbox.md`](roadmap-P13-compressed-input-inbox.md) — the
+evidence found while sketching this phase, including what the koji sample's own
+`.xz` turns out to be. Drain it when grilling this phase.
+
+Read an `.xz`-compressed plain dump directly — `pgdq --source koji.dump.xz` —
+in every shape xz has: multi-stream, multi-block, and the single-block file
+that is not seekable at all. Other codecs are P15's; an archive container's
+*internal* per-entry compression is P8 Track B's and shares nothing with this
+phase but a decoder.
+
+**The trait already fits and the cost model does not.** A decompressing
+`ByteRangeSource` satisfies `read_range`/`size`/`modified` exactly; what it
+cannot satisfy is the assumption every caller above it makes without stating —
+that a read at an arbitrary offset costs what a read at the next offset costs.
+Three consequences shape the phase:
+
+- **`size()` is answered before any scan starts** — `scan::scan`,
+  `stream::map_forward` and `index::build_index` each take it first and clamp
+  every read against it. An xz stream carries its exact uncompressed size in
+  its own index, which is the real reason this phase is xz and P15 is the rest.
+- **Two callers seek backwards.** `stream.rs`'s replay returns to the target
+  block's `header_offset` after the mapping pass has walked past it, and
+  `map.rs`'s `attach_text` re-reads the gaps behind a finished scan. Over a
+  seekable stream each costs a decode from the enclosing block; over a
+  single-block one, a decode from zero. Whether pgdq refuses, degrades, or
+  restructures those two callers is this phase's central decision — and the
+  Future item *"let a live scan emit rows again, by carrying the map in the
+  resume token"* is one of the available answers, promoted from an optimization
+  to an enabler by a source that cannot cheaply go back.
+- **The seek table belongs in the cache.** Mapping an uncompressed offset to a
+  compressed one is derivable from the file's own footers and expensive enough
+  to re-derive that it should be persisted once. `ContainerKind` is the slot
+  that exists for saying what produced an index's offsets, and
+  `SourceIdentity` records the *compressed* file's size while every offset
+  beside it is an uncompressed one — two facts that must never be silently
+  conflated. A cache-format change is what makes this a phase rather than
+  out-of-band work.
+
+**Scheduled ahead of P7.** It is the maintainer's priority, and it changes what
+that phase is measuring: a compressed source inverts the arithmetic behind
+"device-bound", because it reads an order of magnitude fewer bytes and pays for
+them in CPU. P7 sets readahead, chunk-size and parallelism defaults, and it
+should set them knowing both source shapes exist.
+
+**Parallel decode is not this phase's.** A seekable stream's block boundaries
+are known up front, which makes decoding them concurrently P7's "Parallelism"
+section with its hard half — discovery — already solved. It is filed in that
+phase's inbox rather than duplicated here.
+
 ## P7 — Scan performance
 
 **Inbox:** [`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md) — facts earlier
@@ -358,7 +412,7 @@ projection skips `decode_field` and the builder append for a column nobody
 asked for and changes nothing about what the scanner does
 ([`architecture.md`](architecture.md), "Projection").
 
-The second was that the engine story's `object_store` backend "settles the I/O
+The second was that an `object_store` backend (now P14) "settles the I/O
 layer that any readahead or parallelism scheme has to live behind". That
 question is already settled *here* rather than there:
 [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md) rejects mmap
@@ -580,6 +634,40 @@ will never benefit from paying. Reasoning:
 [`../status/history/2026-08-29.md`](../status/history/2026-08-29.md), "Pushdown
 cannot touch the mapping pass".
 
+## P14 — Remote input
+
+Read a dump over the network: `pgdq --source https://example.com/foo.dump`
+and, with P13, the `.xz` beside it. Carved out of P6, which sketched it as one
+bullet — an `object_store`-backed `ByteRangeSource` is an L1 addition, not a
+presented surface, and it is the only part of that phase with a user-facing CLI
+feature attached.
+
+**What it inherits is most of the design.** `read_range`/`size` were shaped
+against `object_store`'s `get_range`/`head` deliberately
+([`architecture.md`](architecture.md), "Execution model and API surface"), and
+the read pattern a ranged backend wants is already the one the code has: with a
+complete cache, a query touches the cache, the source's identity, and the target
+block's byte range, and nothing else — the preamble prepass is skipped when the
+cached preamble is complete, and the mapping pass walks nothing when
+`scanned_through` is the whole file.
+
+What it must decide is what a local file never asked: **identity for a source
+with no mtime** — `modified()` already answers `Option`, but an ETag is not a
+`SystemTime` and the cache's staleness check is what makes a remote cache
+trustworthy; **cancellation and timeouts**, since a ranged GET can hang where a
+`pread` cannot and the preamble prepass is an uncancellable region today
+([`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md));
+**where a remote compressed file's seek table comes from**, which is P13's
+answer or else one ranged GET per stream footer; and the **second set of
+measured defaults** a high-latency backend needs, which P7 names as the part of
+its tuning that does not transfer.
+
+**Scheduled after P10 and ahead of P6.** Backburnered relative to P13 and P7,
+which is the maintainer's call; ahead of P6 because that phase's own reason for
+going last is that it presents surfaces over mechanisms that have stopped
+moving, and a `TableProvider` commits to the I/O layer beneath it. That layer is
+this phase.
+
 ## P6 — Embeddable engine story
 
 **Inbox:** [`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md) — facts earlier
@@ -591,9 +679,6 @@ research (prior art from `object_store`/DataFusion/similar embedded-source
 crates), not just architectural taste. Rough shape, informed by the decisions
 under "Standing rules" above, made to keep this open:
 
-- Feature-gated `object_store`-backed I/O implementation of the MVP's
-  internal byte-range trait, alongside the lightweight local-only default —
-  unlocks S3/GCS/Azure and any other `object_store`-supported backend.
 - Python bindings (likely `pyo3`), as a new workspace member.
 - Apache DataFusion `TableProvider` integration, as a new workspace member —
   the async core and the `Utf8View` column choice were made with this
@@ -601,16 +686,46 @@ under "Standing rules" above, made to keep this open:
 - Apache Spark / Trino integration — order and approach TBD; likely follows
   whatever pattern the DataFusion integration establishes, if applicable.
 
-**Scheduled after the three above**, because it is the phase that *presents* a
+The `object_store`-backed byte source that used to head that list is **P14**,
+carved out because it is an L1 addition rather than a surface this phase
+presents.
+
+**Scheduled after the phases above**, because it is the phase that *presents* a
 surface over mechanisms they are still changing. A `TableProvider` commits to
 what the predicate can express and to the I/O layer beneath it; built while
 either is in motion, it is built twice. Each phase ahead of it hands it a
-settled input instead — the predicate surface from typed predicates, and the
-byte-range abstraction with its measured defaults from scan performance — and
-this is also the least-specified phase, whose grilling needs real research
-rather than architectural taste, so it gains most from going last. Its inbox is
+settled input instead — the predicate surface from typed predicates, the
+byte-range abstraction with its measured defaults from scan performance, and
+the remote backend from P14 — and this is also the least-specified phase, whose
+grilling needs real research rather than architectural taste, so it gains most
+from going last. Its inbox is
 the largest of the five and none of it decays by waiting: the entries are
 questions this phase must answer, not evidence that ages.
+
+## P15 — gzip and zstd input
+
+The codecs P13 leaves behind: `.gz` and `.zst`, in the single-stream shape and
+in the seekable ones (`bgzip`'s BGZF, `t2sz`'s zstd seekable format). Two things
+separate them from xz, and they are why this is a phase rather than two more
+arms of P13's:
+
+- **Neither answers `size()` from its own footer.** gzip's `ISIZE` is the
+  uncompressed length mod 2³², useless above 4 GiB; zstd's frame content size
+  is optional and a streaming writer omits it. So this phase either relaxes
+  what `ByteRangeSource::size` promises or computes the size in a first pass —
+  a decision P13 never has to make, and one that reaches every caller that
+  clamps a read against `size()`.
+- **These are `pg_dump`'s own plain-format output.** For plain text a nonzero
+  `--compress` level compresses the entire output file, as gzip, lz4 or zstd;
+  gzip long predates the method selector and lz4/zstd arrive with PG 16. So
+  this phase closes a **compatibility gap**, not a convenience — and the files
+  it has to read are the non-seekable single-stream shape, since `pg_dump`
+  writes them streaming. lz4 belongs with them for the same reason or stays out
+  for none.
+
+**Scheduled ahead of P8**, whose Track B needs per-entry gzip and zstd
+streaming decode inside the archive container. Landing the decoders here means
+that track reuses them rather than acquiring them alongside a TOC parser.
 
 ## P8 — Format coverage beyond plain COPY TEXT
 
@@ -656,9 +771,10 @@ in it are genuinely new and should be scoped as such when this phase becomes
 current:
 
 - **Per-entry streaming decompression** (gzip, and lz4/zstd for PG 16+
-  archives). This is why the MVP's "input is already decompressed" rule is
-  scoped to plain format rather than stated globally — archives compress
-  *internally*, so that rule cannot hold here.
+  archives) — the decoders P15 lands for whole-file input, applied per entry.
+  What is new here is the *placement*: an archive compresses **internally**, so
+  the container layer decompresses an entry rather than a file, and there is no
+  whole-file byte stream for a source below it to present.
 - **Non-seekable positions within an entry.** A raw file offset is not a
   resumable position inside a compressed stream, so `ResumeToken` stays
   opaque and the cache gains an entry-relative addressing mode.
