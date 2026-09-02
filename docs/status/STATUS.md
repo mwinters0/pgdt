@@ -129,18 +129,36 @@ measured, so `uv run measure.py --drift <sweep> <sweep>` re-derives it from two
 sweeps' `raw.json` without measuring anything; what it lacks is a pair taken
 past this commit. The scan-performance phase will supply one.
 
+## P12 progress
+
+The ADBC type floor. Spec:
+[`../design/roadmap-P12-adbc-type-floor.md`](../design/roadmap-P12-adbc-type-floor.md).
+
+- [ ] **12.1** The floor oracle — the catalog sweep, `fixtures/<13–18>/adbc/floor.tsv`,
+      and the `adbc_driver_postgresql` pin in `scripts/pyproject.toml`. No library code.
+- [ ] **12.2** The reconciliation — joins the oracle against `builtin_scalar` and fails
+      both ways; D2's stances as declared exemptions, `interval` and `int2vector` naming
+      12.3 and 12.6; the rule filed beside "The bar"; `money` earns a register entry
+      under stance (a), allocating the next free number in that same change.
+- [ ] **12.3** `interval`: the triple-producing decoder and the resolution arm.
+- [ ] **12.4** `interval`: render-back's sub-microsecond refusal, the comparison
+      register's arm, the interval decode failure folded into the existing
+      `infinity`/`NaN` register entry, `type-handling.md` corrected.
+- [ ] **12.5** `int2vector`: the fixture column, and the six-major regeneration.
+- [ ] **12.6** `int2vector`: the codec and the resolution arm.
+
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **Seven phases are sketched and one is partly specified** — P13, P7, P12,
-  P10, P14, P6, P15, P8, in the roadmap table's schedule order; a `P<k>` is an
-  identifier, so the numbers say nothing about the order they run in. P13 alone
-  has been grilled: D1–D6 are settled and the phase is blocked on an external
-  crate, so the next phase to be specified is the next unblocked row.
-  `process.md` step 6 re-grills the roadmap before that happens, and every one
-  of them that carries an inbox must have it drained as part of that grilling.
+- **Six phases are sketched and two are specified** — P13, P7, P12, P10, P14,
+  P6, P15, P8, in the roadmap table's schedule order; a `P<k>` is an identifier,
+  so the numbers say nothing about the order they run in. P13 is grilled and
+  **blocked** on an external seekable-xz crate; P12 is grilled, specified and
+  **current**. Every remaining phase that carries an inbox must have it drained
+  as part of its own grilling, which `process.md` step 6 re-grills the roadmap
+  before.
 
 ## Known deficiencies
 

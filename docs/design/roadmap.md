@@ -18,7 +18,7 @@ reused, including a struck phase's.
 | P1–P5, P9, P11 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
 | P13 — compressed input | Specified; **blocked**, and its remaining decisions ungrilled | [`roadmap-P13-compressed-input.md`](roadmap-P13-compressed-input.md) — waits on an external seekable-xz crate; inbox drained |
 | P7 — scan performance | Sketched; design doc ahead of its phase | [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md); [inbox](roadmap-P7-scan-performance-inbox.md) |
-| P12 — ADBC type floor | Sketched; not grilled | this file, below; [inbox](roadmap-P12-adbc-type-floor-inbox.md) |
+| P12 — ADBC type floor | **Current** | [`roadmap-P12-adbc-type-floor.md`](roadmap-P12-adbc-type-floor.md) — eleven decisions settled; inbox drained |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
@@ -392,54 +392,16 @@ measured defaults the engine story adds, not a rework of this phase.
 
 ## P12 — The ADBC type floor
 
-**Inbox:** [`roadmap-P12-adbc-type-floor-inbox.md`](roadmap-P12-adbc-type-floor-inbox.md) — the survey
-that discovered this phase, filed as facts its grilling must not miss. Drain it
-when grilling this phase.
+**Specified**:
+[`roadmap-P12-adbc-type-floor.md`](roadmap-P12-adbc-type-floor.md) holds the
+eleven decisions this phase settled — which revision of the driver is the floor,
+the rule and the three stances that put a row outside it, what the rule is
+scoped to, the two types it closes, how the floor is taken and kept from
+decaying, and the six slices. Its inbox has been drained.
 
-Declare the Arrow type the **Arrow ADBC PostgreSQL driver** returns for a given
-PostgreSQL type to be our **floor**: wherever that driver yields a real Arrow
-type, ours is never a widening of it. Doing better is expected and already
-happens — `numeric(p,s)` is a decimal where ADBC returns a string, an enum is a
-dictionary, a range is a struct where ADBC returns opaque bytes — but doing
-worse becomes a defect with a name rather than an unbounded backlog item.
-
-This absorbs the Future item *"Exhaustive built-in type coverage, with tests to
-match"*, which is what it replaces: an open-ended "every built-in type,
-eventually" becomes a bounded target set by somebody else's shipped driver,
-against which the answer "are we there" is a check rather than a judgement.
-
-Three things make it a phase rather than a mapping change, and the second is
-the one that decides what the phase actually produces:
-
-- **The floor has to be taken, not transcribed.** It is one C++ `switch` in an
-  actively developed upstream, so a table copied into a doc decays silently.
-  `generate_fixtures.py` already stands a Postgres container per major and
-  takes the comparison oracle; an ADBC schema oracle is the same apparatus
-  pointed at a different question.
-- **Their bar is not our bar.** ADBC reads the *binary* wire format with the
-  catalog in hand, so every value is session-independent and its bottom is raw
-  bytes plus a type name. We read text, under
-  [`architecture.md`](architecture.md)'s "the dump alone determines the value",
-  and our bottom is the file's own text. Some rows are therefore below the
-  floor **by decision**, and stating which, with the reason, is part of the
-  deliverable — not an omission from it.
-- **Where the floor and an existing design conflict, one of them gives.** The
-  array census is the live case: ADBC names `List<T>` from the type alone and
-  flattens what does not fit, where we demote to a string and say so. Resolving
-  that either scopes the rule to fidelity or pulls in the Future item *"the
-  shape-general array representation"*, and that is a decision this phase
-  makes.
-
-**The floor covers a field's metadata, not only its Arrow type.** Decided ahead
-of the grilling, because it changes what the phase is for: a `FixedSizeBinary(16)`
-that does not say it is a UUID is below the floor even though its type matches.
-What that obliges is larger than it first looks — ADBC writes a
-`POSTGRESQL:type` key on **every** non-root field, and `arrow.opaque` (with a
-`type_name` and `vendor_name`) on every field it cannot model — so carrying the
-declared PostgreSQL type name on every column is this phase's, and the question
-of whether a column holding readable text may honestly claim `arrow.opaque`,
-whose meaning is *cannot interpret*, comes with it. The two canonical extension
-names that need no such decision are already out, as out-of-band work.
+The phase replaces the Future item *"exhaustive built-in type coverage, with
+tests to match"*: an open-ended "every built-in type, eventually" becomes a
+bounded target set by somebody else's shipped driver.
 
 **Scheduled after P11, ahead of P10 and P6; its position relative to P7 is
 free.** After P11 because `builtin_scalar` answers "which Arrow type" and "how
@@ -460,8 +422,7 @@ against exactly those storage types. What they map to is
 [`architecture.md`](architecture.md), "Type resolution"; why they landed
 outside this phase is
 [`../status/history/2026-08-31.md`](../status/history/2026-08-31.md), "`oid`,
-and the two canonical extension names". Everything else the survey turned up
-needs a decision this phase has not made yet.
+and the two canonical extension names".
 
 ## P10 — Per-row-group column statistics
 
