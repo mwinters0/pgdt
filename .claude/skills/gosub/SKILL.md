@@ -125,11 +125,11 @@ Any one of these ends the loop. Report it plainly; do not work around it.
 - **The subagent reports it stopped at a boundary** or says it needs the
   maintainer, however it phrases it.
 
-## What `/gogm` overrides
+## What `/gosolo` overrides
 
-`/gogm` runs this skill unchanged and overrides exactly two of the stop
+`/gosolo` runs this skill unchanged and overrides exactly two of the stop
 conditions above, so that the loop can carry a whole phase without the
-maintainer. The overrides are stated in `.claude/skills/gogm/SKILL.md` and
+maintainer. The overrides are stated in `.claude/skills/gosolo/SKILL.md` and
 nowhere else; everything on this page — the round, the independent
 verification, the commit, the long-job protocol and every other stop — is what
 both loops run. Nothing here needs to know which one invoked it.

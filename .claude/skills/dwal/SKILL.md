@@ -101,6 +101,29 @@ Do not implement it here. This skill settles decisions and files them; a fresh
 session with a clean context builds. Say plainly what was admitted and what
 should pick it up.
 
+## Hand over rather than grill on a spent context
+
+A long grilling degrades as it lengthens, and the first thing to go is the
+judgement the whole exercise is for: questions get shallower and the record
+gets read less carefully, neither of which is visible from inside. Past roughly
+a dozen questions — fewer where they took heavy reading — **say so and hand
+over** rather than pushing to the end of a long frontier.
+
+Handing over is cheap by construction. Every closure is filed as it is settled,
+a closed entry is a *deleted* one, and the frontier is in `STATUS.md` — so a
+fresh session reads a shorter agenda and docs that are already current, and
+needs nothing from this conversation. What it re-derives is the design tree,
+which is the price, and step 2's cold re-reading of the mechanism is the part
+that makes paying it worthwhile.
+
+**Never hand over mid-entry.** Step 4 requires every entry you grilled to be
+closed in this session, so the boundary lands after a closure or not at all.
+
+The tree you leave behind is dirty and uncommitted, per step 6. That is the
+hand-over, not a mess: read those files before your first round if you are the
+session picking one up, so a closure you file does not contradict one already
+there.
+
 ## 6. Commit, once the frontier is empty
 
 **The frontier being empty is the commit condition, and nothing earlier is.**
@@ -141,6 +164,12 @@ being recorded.
 for the reason `gosub` gives — a report is a claim, not evidence. Step 6's
 frontier condition still governs *whether* there is anything to commit; you
 simply are not the one who does it.
+
+**You may be retired before the frontier is empty.** `/gm` rotates at a
+boundary rather than adjudicating on a degraded context, and retires you with
+it. When it says so, do what "Hand over rather than grill on a spent context"
+says — close what you have grilled, report, and stop. A fresh pair picks up
+from the repo, and it is not given this conversation.
 
 **An answer may come back as an escalation**, meaning the stand-in will not
 settle that question and the maintainer must. Stop there. Leave the tree

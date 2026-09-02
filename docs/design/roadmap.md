@@ -840,7 +840,7 @@ until then.
 
 | # | Date | Blocks | What changed | Why |
 |---|---|---|---|---|
-| `M43` | 2026-09-02 | | the unattended loop can carry a whole phase: `/gogm` runs `gosub` with a new entry under "Decisions worth another look" as a transition rather than a stop, `/gm` stands in for the maintainer by adjudicating each `/dwal` recommendation against the written record — agreeing only on a citation, escalating anything that binds beyond the open phase — and records the exchange verbatim outside the repo; `/go` reads this ledger as a work queue, taking a row whose `Blocks` names the open phase ahead of the next unticked slice | [`../status/history/2026-09-02.md`](../status/history/2026-09-02.md) |
+| `M43` | 2026-09-02 | | the unattended loop can carry a whole phase: `/gosolo` runs `gosub` with a new entry under "Decisions worth another look" as a transition rather than a stop, `/gm` stands in for the maintainer by adjudicating each `/dwal` recommendation against the written record — agreeing only on a citation, escalating anything that binds beyond the open phase — and records the exchange verbatim outside the repo; every agent in the stack is disposable, `/gm` retiring itself and its griller at a rotation boundary and `/gosolo` starting a fresh pair from the repo; `/go` reads this ledger as a work queue, taking a row whose `Blocks` names the open phase ahead of the next unticked slice | [`../status/history/2026-09-02.md`](../status/history/2026-09-02.md) |
 
 ## Future — wanted, unscheduled
 

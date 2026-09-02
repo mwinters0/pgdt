@@ -1,6 +1,6 @@
 ---
 name: gm
-description: Grillmaster — stand in for the maintainer on STATUS's "Decisions worth another look", adjudicating each recommendation against the project's written record rather than agreeing with it, and recording the whole exchange for later review. Use when the user invokes /gm, or when /gogm needs the open decisions settled without the maintainer.
+description: Grillmaster — stand in for the maintainer on STATUS's "Decisions worth another look", adjudicating each recommendation against the project's written record rather than agreeing with it, and recording the whole exchange for later review. Use when the user invokes /gm, or when /gosolo needs the open decisions settled without the maintainer.
 ---
 
 The maintainer is not here, and the frontier under `docs/status/STATUS.md`'s
@@ -8,7 +8,13 @@ The maintainer is not here, and the frontier under `docs/status/STATUS.md`'s
 it dispatches a subagent to run `/dwal`, answers its rounds, records both
 sides, and commits the closures.
 
-`/gm` — no arguments. It settles the whole frontier or it stops.
+`/gm` — no arguments. It settles the whole frontier, retires itself partway, or
+stops.
+
+**You are normally a subagent that `/gosolo` dispatched and will replace**, not
+the loop itself. That is deliberate: the transcript of a grilling is large, and
+it has to accumulate somewhere that gets thrown away. Retiring means returning
+your report; something else decides what happens next.
 
 ## You are not a rubber stamp
 
@@ -98,6 +104,11 @@ the whole value of the review.
 > `grilling` skill's format. Do not shorten the context that precedes the
 > questions; it is recorded and read.
 >
+> I may retire you before the frontier is empty, to keep either of us from
+> grilling on a degraded context. If I do, close every entry you have already
+> grilled — `dwal`'s step 4 — report, and stop. A fresh pair picks up from the
+> repo.
+>
 > Do not commit. When the frontier is empty, report every entry you closed,
 > where each one's reasoning was filed, and every out-of-band row you admitted
 > with its number and its Blocks column.
@@ -110,6 +121,9 @@ interrupted session leaves everything settled so far already written.
 
 An `escalate` on any question ends the loop: tell the agent to stop, leave the
 tree exactly as it is, and go to step 7.
+
+A round that reaches a rotation boundary ends **this pair**, not the loop —
+"Rotate before the context degrades" below says when and what to do.
 
 **5. Verify independently.** The report is a claim, not evidence — `gosub`'s
 rule, and it holds here for the same reason. Re-read STATUS's section and
@@ -143,7 +157,58 @@ them and say so.
 counts (`record` / `judgement` / `misfiled`); the out-of-band rows admitted,
 with numbers and Blocks; the commit hash; the transcript path. If you
 escalated: the question in full, what you read, and why the record did not
-settle it.
+settle it. If you rotated: say **the frontier is not empty**, how many entries
+remain, and that nothing was committed — that is `/gosolo`'s signal to start a
+fresh `/gm` rather than to move on.
+
+## Rotate before the context degrades
+
+A long grilling degrades as it lengthens — questions get shallower, the record
+gets read less carefully, and the judgement the loop depends on is the first
+thing to go. You cannot notice that from inside it, so it is bounded by a rule
+rather than by attention.
+
+**Retire yourself and the griller together, at a round boundary, on the first
+of: 12 questions answered, or 5 rounds.** Rotate earlier when a segment has
+taken heavy reading — several `architecture.md` sections, a spec, source files
+— because the count is a proxy for context consumed and reading is what
+actually consumes it.
+
+**Never rotate mid-entry.** `dwal`'s step 4 requires every entry a session
+grilled to be closed in that session, so the boundary lands after a closure or
+not at all. Tell the griller to close what it has grilled, report, and stop.
+
+Then: write the segment's verdict counts into the transcript, and **return** —
+report per step 7 with the frontier named as not empty. Do not start another
+griller yourself. `/gosolo` starts the fresh `/gm`, which starts the fresh
+`/dwal`, and both contexts reset in one move; a `/gm` that rotates its griller
+while persisting itself has fixed half the problem and kept the worse half,
+since you are the one holding the veto.
+
+### The repo is the handoff, not the transcript
+
+The fresh pair reads STATUS's frontier — shorter now, because a closed entry is
+a deleted one — and the docs the closures have already updated. **It must not
+read the transcript.** That is the context being shed, and feeding it forward
+is the rotation undone. The transcript is written for the maintainer, and
+nothing in the loop consumes it.
+
+What that costs is the griller's design tree, which the next one re-derives.
+That is the price of the rotation and it is worth paying: `dwal`'s step 2 makes
+a fresh session re-establish the facts from the filesystem, and a second cold
+reading of a mechanism is where "the entry is already wrong" gets caught.
+
+### The tree is dirty across a rotation, and that is correct
+
+`dwal`'s step 6 commits nothing while the frontier is non-empty, so a rotation
+hands over closures that are written and uncommitted. The fresh `/gm` should
+expect that and must not treat it as a failed hand-over: those files *are* the
+previous segment's work. Read them, so a citation you give does not contradict
+one already filed.
+
+`gosub`'s "a dirty tree at the start of a round means the previous round did not
+finish" is about an **implementation** round and stands unchanged; `/gosolo`
+does not dispatch one until the frontier is empty and committed.
 
 ## The transcript is the maintainer's review queue
 
@@ -174,14 +239,15 @@ it:
 | Entry | Question | Verdict | Cited / reason | Filed to | Commit |
 ```
 
-Then, per session, a dated section holding the rounds **verbatim** — the
+Then, per segment — one per `/gm`, so a rotation opens a new one — a dated
+section holding the rounds **verbatim**: the
 griller's context and numbered questions and recommendations exactly as it
 wrote them, each followed by your verdict, its citation, and your reply as
 sent. Nothing summarised, nothing trimmed. The context ahead of the questions
 is the part the maintainer reads most, and it is the first thing a
 well-meaning compression would take.
 
-Close each session's section with the verdict counts. Those counts are the
+Close each segment's section with the verdict counts, before returning. Those counts are the
 signal the maintainer is watching: a phase whose answers are almost all
 `record` is a loop running safely on precedent, and a rising share of
 `judgement` — or of `misfiled`, which means the loop has started manufacturing
