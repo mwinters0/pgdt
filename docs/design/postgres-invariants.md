@@ -449,6 +449,15 @@ Secondarily: the `AS RANGE` parameter list is always emitted **multi-line**,
 one parameter per line, `subtype` first, and the subtype may be a multi-word
 type name (`subtype = double precision`).
 
+Thirdly: **a range type's `canonical` function is written into that same body**,
+as `canonical = <function>`, whenever `pg_range.rngcanonical` is set. The
+parameter is emitted after `multirange_type_name`, `subtype_opclass` and
+`collation` and before `subtype_diff`, so it is never the first parameter and
+never the last. It is the file's only evidence that such a function exists —
+which matters because PostgreSQL rewrites every value of that range through it
+before storing or comparing one (I46), and the function is arbitrary
+server-side code no reader of the dump can apply.
+
 **Proof.** `selectDumpableType()` (`pg_dump.c`) reclassifies any type with
 `typtype = TYPTYPE_MULTIRANGE` as `DO_DUMMY_TYPE` under the comment "skip
 auto-generated array and multirange types", exactly as it does for
@@ -460,13 +469,29 @@ strings themselves, not a wrapper, and is identical back to v13 (which has
 the `\n    subtype` line but no multirange parameter — multiranges postdate
 it).
 
+The `canonical` parameter is the same function, six statements further on and
+unconditional in every major:
+
+```c
+	procname = PQgetvalue(res, 0, PQfnumber(res, "rngcanonical"));
+	if (strcmp(procname, "-") != 0)
+		appendPQExpBuffer(q, ",\n    canonical = %s", procname);
+```
+
+`rngcanonical` is a `regproc`, and a dump runs with `search_path` set to `''`,
+so the name it renders to is schema-qualified.
+
 **Observed.** Probed against `postgres:16-alpine` (16.15): `CREATE TYPE
 public.myrange AS RANGE (subtype = float8);` dumps as `CREATE TYPE
 public.myrange AS RANGE (\n    subtype = double precision,\n
 multirange_type_name = public.mymultirange\n);` — note `float8` came back
 canonicalised to the two-word `double precision`. A table with a
 `public.mymultirange` column dumps that column with no accompanying type
-definition anywhere in the file.
+definition anywhere in the file. The `canonical` parameter was confirmed
+against a 16.15 dump of a range type declaring one; the fixture family carries
+no such type, because a canonical function must be declared against the shell
+type and a SQL function cannot take one (I11's `LANGUAGE internal` recipe is
+what it takes), so the observation is a probe rather than a committed file.
 
 **Consequence for `crate::pgtype`.** `TypeKind::Range` carries the companion
 name so a column declared with it resolves to `DeferredKind::Range` instead
@@ -477,20 +502,26 @@ appear bare and never reach the user-defined lookup (I8). The range grammar
 must tolerate a multi-line body and a multi-word subtype value.
 
 **Verified against:** v18.6 source (`selectDumpableType()`,
-`dumpRangeType()`), v13.23 source (`dumpRangeType()`, no multirange);
-probed `pg_dump` 16.15; `fixtures/{13..18}/types/default.sql`'s
+`dumpRangeType()`), v13.23 source (`dumpRangeType()`, no multirange, and the
+same `canonical = %s` append); probed `pg_dump` 16.15;
+`fixtures/{13..18}/types/default.sql`'s
 `public.myrange`/`public.myrange_multi` (2.3.2) — all six routine versions,
 not just one probed container, and confirms the PG13/PG14+ split in the
-`multirange_type_name` parameter's presence exactly.
+`multirange_type_name` parameter's presence exactly. No fixture carries a
+`canonical` parameter, so that third claim rests on the source at both ends of
+the supported range plus the 16.15 probe.
 **Relied on by:** `architecture.md` ("Type resolution" — the mapping table and
-"Ranges and multiranges")
-— `pgtype.rs`'s companion lookup and `TypeKind::Range::multirange_type_name`
-are built directly on this invariant, not just tested against it.
+"Ranges and multiranges", and "Nested columns compare structurally" for the
+`canonical` parameter)
+— `pgtype.rs`'s companion lookup and `TypeKind::Range`'s
+`multirange_type_name` and `canonical` fields are built directly on this
+invariant, not just tested against it.
 **Re-verify:** `grep -n 'skip auto-generated array and multirange types' -A 4
 src/bin/pg_dump/pg_dump.c` — confirm multiranges are still `DO_DUMMY_TYPE`;
-`grep -n 'AS RANGE' -A 8 src/bin/pg_dump/pg_dump.c` — confirm the parameter
-list is still emitted one-per-line and that `multirange_type_name` is still
-the only trace of the companion.
+`grep -n 'AS RANGE' -A 40 src/bin/pg_dump/pg_dump.c` — confirm the parameter
+list is still emitted one-per-line, that `multirange_type_name` is still the
+only trace of the companion, and that `rngcanonical` still reaches the body as
+`canonical = %s`.
 
 ---
 
@@ -3326,7 +3357,10 @@ observed in the committed oracle at all six, and the probe below run against
 structurally" — `predicate.rs`'s `make_range`, `compare_range`,
 `compare_bounds` and `canonical_multirange`, and `pgtype.rs`'s
 `NestedCompare::Range`/`Multirange` and the `discrete` flag
-`builtin_range_subtype` sets.
+`builtin_range_subtype` sets. The first claim is also what makes a
+user-declared `canonical` function (I10) a refusal rather than a divergence:
+the rewriting happens before the value is stored *or* compared, so it is not
+an operator this build could route around.
 
 **Re-verify.** Read the functions:
 

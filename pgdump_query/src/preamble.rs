@@ -209,7 +209,18 @@ pub enum TypeKind {
     /// parameter is its only trace in the file, which is why `crate::pgtype`
     /// needs it to resolve a column declared with that name instead of
     /// falling through to `Unknown`.
-    Range { subtype: Option<String>, multirange_type_name: Option<String> },
+    ///
+    /// `canonical` is the `canonical = <function>` parameter, verbatim as the
+    /// DDL spelled it, which `pg_dump` writes whenever `pg_range.rngcanonical`
+    /// is set (I46). It is kept because its *presence* is the fact
+    /// `crate::pgtype` needs: a user's canonical function is arbitrary
+    /// server-side code, so knowing it exists licenses declining the column
+    /// rather than reproducing the rewriting it performs.
+    Range {
+        subtype: Option<String>,
+        multirange_type_name: Option<String>,
+        canonical: Option<String>,
+    },
     /// A C-level base type (`CREATE TYPE x (INPUT = ..., OUTPUT = ...)`) —
     /// information-free; the dump says how the *server* parses it.
     Base,
@@ -620,6 +631,7 @@ fn parse_create_type(rest: &str) -> Option<TypeDef> {
         let close = matching_paren(body.as_bytes(), open)?;
         let mut subtype = None;
         let mut multirange_type_name = None;
+        let mut canonical = None;
         for kv in split_top_level_commas(&body[open + 1..close]) {
             let Some((k, v)) = kv.split_once('=') else { continue };
             let k = k.trim();
@@ -628,9 +640,14 @@ fn parse_create_type(rest: &str) -> Option<TypeDef> {
                 subtype = Some(v);
             } else if k.eq_ignore_ascii_case("multirange_type_name") {
                 multirange_type_name = Some(v);
+            } else if k.eq_ignore_ascii_case("canonical") {
+                canonical = Some(v);
             }
         }
-        return Some(TypeDef { name, kind: TypeKind::Range { subtype, multirange_type_name } });
+        return Some(TypeDef {
+            name,
+            kind: TypeKind::Range { subtype, multirange_type_name, canonical },
+        });
     }
     if let Some(body) = strip_kw(after, "AS") {
         let body = body.trim_start();
@@ -1346,7 +1363,11 @@ mod tests {
         ]);
         assert_eq!(
             def.kind,
-            TypeKind::Range { subtype: Some("int4".to_string()), multirange_type_name: None }
+            TypeKind::Range {
+                subtype: Some("int4".to_string()),
+                multirange_type_name: None,
+                canonical: None,
+            }
         );
     }
 
@@ -1367,6 +1388,38 @@ mod tests {
             TypeKind::Range {
                 subtype: Some("double precision".to_string()),
                 multirange_type_name: Some("public.myrange_multi".to_string()),
+                canonical: None,
+            }
+        );
+    }
+
+    /// `pg_dump` writes `canonical = <function>` for any range type whose
+    /// `pg_range.rngcanonical` is set (I10), in the same `key = value` body
+    /// every other parameter is in — so capturing it is one more branch of
+    /// the split that was already discarding it. The value is kept verbatim,
+    /// like `subtype`: nothing reads it beyond its presence.
+    ///
+    /// The body here is every parameter `dumpRangeType` can append, in the
+    /// order it appends them, so the two the grammar keeps are found past the
+    /// three it still steps over — `collation` in particular, whose value
+    /// carries a quoted identifier and a `.`.
+    #[test]
+    fn parses_a_range_type_declaring_a_canonical_function() {
+        let def = parse_type(&[
+            "CREATE TYPE public.canonrange AS RANGE (",
+            "    subtype = integer,",
+            "    multirange_type_name = public.canonrange_multi,",
+            "    collation = pg_catalog.\"C\",",
+            "    canonical = public.canonrange_canonical,",
+            "    subtype_diff = public.canonrange_diff",
+            ");",
+        ]);
+        assert_eq!(
+            def.kind,
+            TypeKind::Range {
+                subtype: Some("integer".to_string()),
+                multirange_type_name: Some("public.canonrange_multi".to_string()),
+                canonical: Some("public.canonrange_canonical".to_string()),
             }
         );
     }

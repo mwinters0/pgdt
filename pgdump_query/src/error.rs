@@ -42,6 +42,24 @@ pub enum Error {
         /// here, one naming the position beneath it that does not.
         reason: String,
     },
+    /// **Every** operator refused, `=` and `!=` included — the stronger
+    /// refusal, and a different fault from the one above rather than a
+    /// variation on it: `UnorderedPredicateColumn` ends by offering the text
+    /// comparison, which is exactly what is unavailable here. Raised where the
+    /// file *states* that the server's equality is not a comparison of the
+    /// text it holds (`crate::pgtype::UnanswerableReason`), so answering
+    /// bytewise would be a wrong answer rather than a weaker one.
+    #[error(
+        "`{op}` on column `{column}` in the COPY block at offset {header_offset}: {reason}; no operator can be answered for this column, `=` and `!=` included"
+    )]
+    UncomparablePredicateColumn {
+        header_offset: u64,
+        column: String,
+        op: &'static str,
+        /// Which of `crate::pgtype::UnanswerableReason`'s cases it is, worded
+        /// beside the comparison it is about.
+        reason: String,
+    },
     #[error(
         "filter value `{value}` for `{column} {op} ...` does not parse as the column's declared type `{declared_type}`, which is written {accepted}"
     )]

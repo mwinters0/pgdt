@@ -666,6 +666,110 @@ async fn a_nested_column_announces_each_diverging_position() {
     );
 }
 
+/// A range type declaring a `canonical` function, end to end from the DDL
+/// `pg_dump` writes to the refusal a filter gets — **the one path no fixture
+/// can carry**. A canonical function must be declared against the shell type
+/// and a SQL function cannot take one (`ERROR: SQL function cannot accept
+/// shell type`), so the fixture schema would need a C or internal-language
+/// function to hold this case; the dump text is written by hand instead, in
+/// the shape `pg_dump` emits it (I10) — the shell declaration first (I11),
+/// then the real one with `canonical` after `multirange_type_name`, which is
+/// the order `dumpRangeType` appends the parameters in.
+///
+/// Every operator is refused, `=` and `!=` included, which is the whole point
+/// of the slice: the server rewrites both operands through that function
+/// before comparing them, so answering bytewise would be a wrong answer
+/// rather than a weaker one.
+#[tokio::test]
+async fn a_range_declaring_a_canonical_function_refuses_every_operator() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("canonical-range.sql");
+    std::fs::write(
+        &path,
+        [
+            "SET client_encoding = 'UTF8';",
+            "",
+            "CREATE TYPE public.canonrange;",
+            "",
+            "CREATE TYPE public.canonrange AS RANGE (",
+            "    subtype = integer,",
+            "    multirange_type_name = public.canonrange_multi,",
+            "    canonical = public.canonrange_canonical",
+            ");",
+            "",
+            "CREATE TABLE public.t_canon (",
+            "    id integer,",
+            "    v_span public.canonrange",
+            ");",
+            "",
+            "COPY public.t_canon (id, v_span) FROM stdin;",
+            "1\t[1,11)",
+            "\\.",
+            "",
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+    let source = LocalFileSource::open(&path).unwrap();
+    let refusal = |op, value: &str| {
+        let options =
+            QueryOptions { filter: Expr::all([term("v_span", op, value)]), ..Default::default() };
+        table_stream(
+            &source,
+            "public.t_canon",
+            ScanOptions::default(),
+            options,
+            None,
+            CacheMode::Disabled,
+        )
+    };
+    for op in [PredicateOp::Lt, PredicateOp::Ge, PredicateOp::Eq, PredicateOp::Ne] {
+        let err = refusal(op, "[1,10]").next().await.unwrap().unwrap_err();
+        let Error::UncomparablePredicateColumn { reason, .. } = &err else {
+            panic!("{op:?}: {err:?}")
+        };
+        assert!(reason.contains("public.canonrange_canonical"), "{op:?}: {reason}");
+        // The whole message, word for word — `docs/manual/type-handling.md`
+        // prints it for a user to recognise, so the wording is a contract
+        // and not an implementation detail. Only the offset differs there,
+        // which is illustration rather than a captured run.
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "`{}` on column `v_span` in the COPY block at offset 306: the range type \
+                 `public.canonrange` declares a canonical function \
+                 (`public.canonrange_canonical`), which PostgreSQL applies to every value \
+                 of it before storing or comparing one — arbitrary server-side code this \
+                 build cannot run, so two spellings the server calls one value would be two \
+                 values here; no operator can be answered for this column, `=` and `!=` \
+                 included",
+                op.symbol()
+            )
+        );
+    }
+    // `IS NOT NULL` reads no value and consults no plan, so the row still
+    // comes back — the refusal is of comparisons, not of the column.
+    let options = QueryOptions {
+        filter: Expr::all([Predicate {
+            column: "v_span".into(),
+            op: PredicateOp::IsNotNull,
+            value: None,
+        }]),
+        projection: Some(vec!["id".to_string()]),
+        ..Default::default()
+    };
+    let mut stream = table_stream(
+        &source,
+        "public.t_canon",
+        ScanOptions::default(),
+        options,
+        None,
+        CacheMode::Disabled,
+    );
+    let batch = stream.next().await.unwrap().unwrap();
+    assert_eq!(rows_of(&batch), [[Some("1".to_string())]]);
+}
+
 /// `SchemaMode::Strings` resolves no column, so every ordering operator is
 /// refused there. It falls out of the `Mapped` rule rather than needing a
 /// case of its own — which is what this pins.

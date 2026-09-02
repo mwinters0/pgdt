@@ -580,10 +580,11 @@ that the range is half-open, and it collapses a range holding nothing to
 --filter "span='(1,2)'"    # matches rows holding `empty`: no integer is between
 ```
 
-`numrange`, `tsrange`, `tstzrange` and any range type you defined yourself do
-**not** get that shift — PostgreSQL only rewrites a range whose type declares a
-canonical function — so there `[1,10)` and `[1,10]` are two different values,
-and both are askable. A multirange is normalized in the same spirit: its
+`numrange`, `tsrange`, `tstzrange` and any range type you defined yourself
+without a `canonical` parameter do **not** get that shift — PostgreSQL only
+rewrites a range whose type declares a canonical function — so there `[1,10)`
+and `[1,10]` are two different values, and both are askable. A multirange is
+normalized in the same spirit: its
 members are sorted, empty ones dropped, and any two that overlap or touch
 merged, so `{[5,10),[1,5)}` and `{[1,10)}` are one value.
 
@@ -597,13 +598,31 @@ is read as a range literal — `[a,b)`, `empty`, a bound left empty for
 unbounded — whose lower bound is not above its upper …
 ```
 
-**One range shape is knowably wrong, and it is rare.** A range type you defined
-with a `canonical` parameter is compared *without* it, because `pg_dump` writes
-that parameter and pgdq does not read it — so `[1,10]` and `[1,11)` come back
-as different values where your server calls them one. Every range type
-`pg_dump` has been observed to write in practice declares no canonical
-function, and every built-in one is handled above; if you have such a type,
-write the bounds exactly as `pgdq query` prints them.
+**A range type of your own with a `canonical` parameter is refused, not
+guessed at.** That parameter names a function on your server that rewrites
+every value of the type before storing or comparing it, and no reader of a dump
+can run it — so `[1,10]` and `[1,11)` might be one value there or two, and pgdq
+will not pretend to know which. A filter on such a column is refused under
+**every** operator, `=` and `!=` included, naming the type and the function:
+
+```
+$ pgdq query --source dump.sql --table public.t --filter "span='[1,10]'"
+Error: `=` on column `span` in the COPY block at offset 1234: the range type
+`public.canonrange` declares a canonical function
+(`public.canonrange_canonical`), which PostgreSQL applies to every value of it
+before storing or comparing one — arbitrary server-side code this build cannot
+run, so two spellings the server calls one value would be two values here; no
+operator can be answered for this column, `=` and `!=` included
+```
+
+The refusal reaches anything holding such a range — an array of one, a
+composite with one as a field, its multirange companion, a domain over it —
+and `IS NULL`/`IS NOT NULL` still work, since they read no value. The column
+itself still comes back: only comparing it is refused. This is rare: a
+canonical function has to be written in C or in one of the server's internal
+languages, so in practice it comes from an extension or a hand-loaded module.
+`pgdq info --verbose` names the parameter under the type, so you can see
+whether a dump has one before you write a filter.
 
 #### Four ways one of these columns is still a string
 

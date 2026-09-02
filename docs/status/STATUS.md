@@ -22,11 +22,11 @@ observed in committed bytes — the three-valued expression tree, the
 `--where` grammar that reaches it from the command line, the refusal that
 keeps the two filter flags meaning one thing, the four `*_in` supersets a
 nested literal is read with, and the structural comparison every container kind
-now gets — a range's canonical storage form included — landed. **Two slices are
-still unticked**, 11.14 and 11.15, both amended into the spec after the `KD12`
-review: a user-defined range's `canonical` parameter is captured and the column
-refused under every operator, and a nested uncomparable position stops
-answering `=` bytewise in silence. The wrap follows them, and
+now gets — a range's canonical storage form included — and the refusal a user
+range's `canonical` parameter now earns landed. **One slice is still
+unticked**, 11.15, amended into the spec after the `KD12` review alongside the
+one that closed it: a nested uncomparable position stops answering `=`
+bytewise in silence. The wrap follows it, and
 [`../design/roadmap-P11.10.1-range-comparison-notes.md`](../design/roadmap-P11.10.1-range-comparison-notes.md)
 says what it owes.
 
@@ -45,7 +45,7 @@ not oblige a sweep").
 | Full byte-exact file map — every byte in exactly one span, verified over every fixture | working |
 | DDL object inventory: TOC enrichment, referenced roles and tablespaces, object census | working |
 | Best-effort structural cache with source-identity checking and cache-only inspection | working |
-| Arrays, composites, ranges, multiranges | typed and decoded end to end: `List<T>`, `Struct<…>`, the five-field range struct, `List<`range struct`>`, `List<List<T>>`. Three shapes stay strings, each with its own resolution outcome — an opaque element type, an element type that is itself an array (I26), and values that disagree on shape. **Every container kind now compares structurally** — element-wise, field-wise and bound-wise through a `ComparisonPlan::Nested` tree, `array_cmp`'s shape tie-break, and one NULL rule at every level (I45) — with the literal read through the `*_in` supersets (I44) and each leaf in its own type's output form. Comparability and divergence are both inherited: a `json` position refuses the column and names itself, a `text[]` announces its element's collation. **A range is put into the form the server stores it in before it is compared** (I46): `range_serialize`'s out-of-order refusal and empty-collapse, then the canonical function the three discrete built-ins have, so `int4range '[1,10]'`, `'(0,10)'` and `'[1,11)'` are one value and `'(1,2)'` is `empty`; a multirange's members are sorted, coalesced and emptied out before the sequence is walked. A user-defined range declaring a `canonical` function is compared without it (`KD12`) |
+| Arrays, composites, ranges, multiranges | typed and decoded end to end: `List<T>`, `Struct<…>`, the five-field range struct, `List<`range struct`>`, `List<List<T>>`. Three shapes stay strings, each with its own resolution outcome — an opaque element type, an element type that is itself an array (I26), and values that disagree on shape. **Every container kind now compares structurally** — element-wise, field-wise and bound-wise through a `ComparisonPlan::Nested` tree, `array_cmp`'s shape tie-break, and one NULL rule at every level (I45) — with the literal read through the `*_in` supersets (I44) and each leaf in its own type's output form. Comparability and divergence are both inherited: a `json` position refuses the column and names itself, a `text[]` announces its element's collation. **A range is put into the form the server stores it in before it is compared** (I46): `range_serialize`'s out-of-order refusal and empty-collapse, then the canonical function the three discrete built-ins have, so `int4range '[1,10]'`, `'(0,10)'` and `'[1,11)'` are one value and `'(1,2)'` is `empty`; a multirange's members are sorted, coalesced and emptied out before the sequence is walked. A user-defined range declaring a `canonical` function is refused under **every** operator, `=` included, since the server rewrites both operands through arbitrary server-side code before comparing them |
 | Array shape census | recorded by every mapping pass and consumed: a query retypes its top-level array columns from the union over the blocks it will replay, before the first batch |
 | CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, cache-only `info` | working; **`parse` is the only scanner** — it resumes from a matching cache, banks at `COPY` block boundaries under a self-tuning throttle, and saves unconditionally on Ctrl-C (exit 130/143). `info` reports from the cache and never scans. `--verbose` adds each block's byte offsets, a per-column resolution line, an enum column's declared labels beneath it, and — under the `user-defined types` count that heads it — one line per user-defined type, every `TypeKind` arm rendered with its payload. Text output shape is provisional; `--json` carries no shape promise at all, and states the labels once per type in `metadata.databases[].types[]` rather than per column |
 | Partial reporting | `info` reports an unfinished scan's cache for as far as it got, with `Scan completion: N%` stated once at the top and nothing below it qualified. An interrupted cache is **typed** for every database segment the scan finished (I1) |
@@ -401,12 +401,16 @@ progress.
       `REFUSED` list drops from 14 to 6. Earned from 11.10 — see the spec's
       slice table. Notes:
       [`../design/roadmap-P11.10.1-range-comparison-notes.md`](../design/roadmap-P11.10.1-range-comparison-notes.md)
-- [ ] **11.14** A user range's `canonical` parameter — the `AS RANGE` arm keeps
-      `canonical` beside `subtype` and `multirange_type_name`, the cache
-      `FORMAT_VERSION` bumps, and a fourth `ComparisonPlan` outcome refuses a
+- [x] **11.14** A user range's `canonical` parameter — the `AS RANGE` arm keeps
+      `canonical` beside `subtype` and `multirange_type_name` (I10 amended),
+      cache `FORMAT_VERSION` 15, and `ComparisonPlan::Unanswerable` refuses a
       column whose range type declares one under *every* operator, equality
-      included, rather than letting `=` fall through to a bytewise comparison.
-      Closes `KD12`. Amended in, not planned — see the spec's slice table.
+      included, through `Error::UncomparablePredicateColumn` — which
+      unanswerability *propagates* to reach: an array of such a range, a
+      composite holding one and its multirange companion are refused with it.
+      `KD12` is **struck**. Amended in, not planned — see the spec's slice
+      table. Notes:
+      [`../design/roadmap-P11.14-range-canonical-notes.md`](../design/roadmap-P11.14-range-canonical-notes.md)
 - [ ] **11.15** A nested uncomparable position announces itself — a nested
       column holding one (`json[]`) reaches `ComparisonDivergence::AsText` from
       the `_ =>` arm instead of answering `=` bytewise in silence, naming the
@@ -451,7 +455,7 @@ only by naming one.
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
 rather than being deleted. <!-- deficiency-watermark: KD12 -->
-**`KD1`–`KD12` are allocated; `KD11` is struck.** That watermark is what keeps a
+**`KD1`–`KD12` are allocated; `KD11` and `KD12` are struck.** That watermark is what keeps a
 `KD<k>` in an old commit message resolvable, and the marker beside it is what a
 citation resolves against — the sentence is rewritten at every strike, and again
 at the keystone that deletes the named struck entries.
@@ -546,15 +550,6 @@ here rather than reading as a phase nobody has sliced.
   `money`-shaped extension type. Detail:
   [`../design/architecture.md`](../design/architecture.md), "Equality is typed
   too".
-
-- **KD12** — a user-defined range type declaring a `canonical` function is
-  compared without it (I46), so `[1,10]` and `[1,11)` are two values where the
-  server calls them one, under every operator and silently. **(b) owned by
-  P11**, slice 11.14, which captures the parameter and refuses such a column
-  outright — a refusal `ComparisonPlan::Refused` cannot express, its equality
-  falling through to a bytewise comparison. Detail:
-  [`../design/architecture.md`](../design/architecture.md), "Nested columns
-  compare structurally".
 
 ## Decisions worth another look
 

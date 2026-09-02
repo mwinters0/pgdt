@@ -1196,6 +1196,15 @@ range's own DDL, so `TypeKind::Range` carries the companion name and the lookup
 honours it. Discarding that parameter would make the information unrecoverable
 without re-scanning.
 
+`TypeKind::Range` keeps a third parameter for the same reason: `canonical`,
+which `pg_dump` writes for a range type whose `rngcanonical` is set (I10) and
+which the arm's `key = value` split otherwise discards. Nothing reads its
+*value* — a user's canonical function is arbitrary server-side code — but its
+presence is what makes a column of that type refuse every comparison, in
+"Nested columns compare structurally" below. The three other parameters
+`dumpRangeType` can write (`subtype_opclass`, `collation`, `subtype_diff`) are
+still stepped over.
+
 **Twelve built-in names carry hardcoded subtypes, not six.**
 `TypeDef::Range::subtype` is populated only for a user-defined range;
 PostgreSQL keeps a built-in's subtype in the catalog rather than in DDL text,
@@ -2417,6 +2426,16 @@ three refusals an ordering operator can earn are still raised in
 are still decided before the plan is consulted, so a nested column is refused
 with the reason that names its nesting rather than with "no order defined".
 
+**One refusal is not an ordering refusal at all.** `ComparisonPlan` has a
+fourth outcome, `Unanswerable`, for a column the file *states* the server does
+not compare the way any reading of the file could — today exactly one producer,
+a range type declaring a `canonical` function (see "Nested columns compare
+structurally"). It is the one answer `Error::UnorderedPredicateColumn` cannot
+carry, because that message ends by offering `=`/`!=` and here they are refused
+too; it raises `Error::UncomparablePredicateColumn` instead. Everything else in
+this table that is refused is refused for *order*, and answers `=` bytewise
+over the file's own canonical text.
+
 | Declared type | Arrow type | Agrees with PostgreSQL | What would close the gap |
 |---|---|---|---|
 | `boolean` | `Boolean` | yes — `false < true` (I33) | — |
@@ -2444,7 +2463,7 @@ with the reason that names its nesting rather than with "no order defined".
 | `json`, and any domain over it | `Utf8View` | **no** — PostgreSQL defines *no* comparison for `json` at all, so bytewise offers more than the server does rather than less | nothing, since there is no order to agree with |
 
 | an **array** or **composite**, and any domain over one | `List(…)` / `Struct(…)` | **inherited** — compared structurally (I45), and it agrees exactly when every element or field type beneath it does. A `text[]` column carries the `text` rows' collation residue at its element; a `json[]` column, or a composite with a `json` field, is *refused*, because the server has no comparison for one either | whatever would close the position that diverges |
-| a **range** or **multirange**, and any domain over one | `Struct(…)` / `List(Struct(…))` | **inherited**, on the same rule, once both sides are put into the form the server stores them in (I46): `empty` below everything, then the bounds, with a multirange's members sorted, coalesced and emptied out first. Both discrete canonicalizations are reproduced — the successor shift, and the collapse of `[1,1)` to `empty` — so `int4range '[1,10]'` is the `[1,11)` the file holds. **A user-defined range that declares a `canonical` function is the exception** and is `KD12` | capturing that DDL parameter, which the grammar splits out and discards, and refusing the column under equality too — which `ComparisonPlan::Refused` does not do |
+| a **range** or **multirange**, and any domain over one | `Struct(…)` / `List(Struct(…))` | **inherited**, on the same rule, once both sides are put into the form the server stores them in (I46): `empty` below everything, then the bounds, with a multirange's members sorted, coalesced and emptied out first. Both discrete canonicalizations are reproduced — the successor shift, and the collapse of `[1,1)` to `empty` — so `int4range '[1,10]'` is the `[1,11)` the file holds. **A user-defined range that declares a `canonical` function is refused outright**, under every operator | — |
 
 A domain has no row of its own: it compares as the row its base type is on,
 through any chain, which is how the last row already covers "any domain over
@@ -2939,41 +2958,49 @@ not canonicalize even though a fixed-scale decimal has a successor, and
 flag comes from `builtin_range_subtype`'s hardcoded table for a built-in name
 (I10) and is `false` for every user-defined range.
 
-<!-- deficiency: KD12 -->
-*A user-defined range that declares a `canonical` function is compared without
-it, which is `KD12`.* `pg_dump` writes the parameter — `,\n    canonical = %s`
-whenever `rngcanonical` is set — and `parse_create_type`'s `AS RANGE` arm,
-which splits every `key = value` in the body, keeps `subtype` and
-`multirange_type_name` and discards the rest, so the register never sees it. A
-column of such a type answers `[1,10]` ≠ `[1,11)` where the server calls them
-one value, silently. The shell declaration does not save it either: `pg_dump`
-emits `CREATE TYPE x;` ahead of a range whose canonical function it dumps, and
-`record_type`'s I11 rule makes the shell lose, so the column resolves on its
-subtype and the wrong comparison is reached.
+**A user-defined range that declares a `canonical` function is refused under
+every operator, `=` and `!=` included.** `pg_dump` writes the parameter —
+`,\n    canonical = %s` whenever `rngcanonical` is set, after
+`multirange_type_name` and before `subtype_diff` (I10) —
+`parse_create_type`'s `AS RANGE` arm keeps it beside `subtype`, and
+`comparison_user_type` answers `ComparisonPlan::Unanswerable` for any column
+whose type is or contains such a range: the range itself, its multirange
+companion, an array of it, a composite holding one, a domain over it. A filter
+term on such a column raises `Error::UncomparablePredicateColumn`, naming the
+range type and the function; `IS NULL`/`IS NOT NULL` still answer, since they
+read no value.
 
-**The blast radius is a user-supplied literal, never two stored values.** The
-canonicalization is idempotent on a `range_out` field because the server
-already applied it, so the file side is canonical by construction; there is no
-`--order-by`, and `ResolvedSchema::comparisons` is consumed only by the
-predicate path. A wrong answer therefore needs a `--filter`/`--where` literal
-spelled in a non-canonical form.
+*Rejected: comparing it without the canonicalization.* A user's canonical
+function is arbitrary server-side code, so knowing it exists licenses declining
+the column and nothing more — and the server applies the rewriting **before the
+value is stored or compared** (I46), so a column of such a type answers
+`[1,10]` ≠ `[1,11)` where the server calls them one value. The shell
+declaration does not save it: `pg_dump` emits `CREATE TYPE x;` ahead of a range
+whose canonical function it dumps, and `record_type`'s I11 rule makes the shell
+lose, so the column resolves on its subtype and the ordinary bound-wise
+comparison is reached. Refusing costs almost nobody an answer — a canonical
+function must be declared against the shell type, and a SQL function cannot
+take one (`ERROR: SQL function cannot accept shell type`), so it takes a C or
+internal-language function, in practice an extension or a hand-loaded module.
+`fixtures/*`'s two user ranges declare none, which is why the end-to-end
+evidence is a hand-written dump in `tests/ordering.rs` rather than a fixture
+column.
 
-**The fix is a refusal, and it is more than `ComparisonPlan::Refused` can
-express.** A user's canonical function is arbitrary SQL, so knowing it exists
-licenses declining the column rather than reproducing it — but `Refused` on a
-*mapped* column refuses the four ordering operators and lets `=`/`!=` fall
-through to `Comparison::Canonical`, a bytewise text comparison announcing
-nothing, which leaves the half the defect is made of. Closing it needs a fourth
-register outcome meaning "refuse every operator, equality included". Capturing
-the parameter itself is cheap: one `else if` in the arm that already splits it
-out, one field, and a `FORMAT_VERSION` bump that pre-1.0 migrates nothing.
+*Rejected: `ComparisonPlan::Refused`.* `Refused` on a *mapped* column refuses
+the four ordering operators and lets `=`/`!=` fall through to
+`Comparison::Canonical`, a bytewise text comparison announcing nothing — which
+is right at every site that answers it (an empty enum, a C-level base type, a
+column with no DDL behind it) and leaves exactly the half this defect is made
+of. Hence a fourth outcome rather than a reason field on the third: a new
+variant leaves those sites alone and makes every match on a `ComparisonPlan`
+choose, which is the property that surfaced the gap in the first place.
 
-**Refusing costs almost nobody an answer**, which is what settles it against
-leaving the column comparing wrongly. A canonical function must be declared
-against the shell type, and a SQL function cannot take one (`ERROR: SQL
-function cannot accept shell type`), so it is a C or internal-language
-function — in practice an extension or a hand-loaded module. `fixtures/*`'s two
-user ranges declare none.
+*Rejected: an `Uncomparable` position in the tree.* A `NestedCompare` tree can
+say "this position has no order" and let the column still answer `=` as text;
+it has no way to say "and no equality either", which is a fact about the whole
+column rather than about one position. So `nested_position` returns a `Result`
+and an unanswerable position short-circuits out of every walk that reaches it —
+comparability is inherited by the walk, unanswerability by propagation.
 
 **A multirange is normalized before it is a value at all.**
 `multirange_canonicalize` sorts its members, drops the empty ones, and merges
@@ -3069,8 +3096,9 @@ agreement this register exists to refuse. And the one spelling it would buy is
 one `array_in` already accepts a level up.
 
 *Rejected: carrying the refusing position as structured data on the refusal
-itself* — a payload on `ComparisonPlan::Refused`, or a fourth variant beside
-it. **The plan already is the structured channel.** `ComparisonPlan` and
+itself* — a payload on `ComparisonPlan::Refused`, or a variant of its own for
+"refused because a position inside it has no order". **The plan already is the
+structured channel.** `ComparisonPlan` and
 `NestedCompare` are public, `ResolvedSchema::comparisons` is public, and
 `NestedCompare::uncomparable()` answers `(path, declared type)` — so an
 embedder branches on *which* position refused without reading a sentence, and

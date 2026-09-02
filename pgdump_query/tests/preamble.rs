@@ -154,6 +154,11 @@ async fn default_dump_declares_every_mapped_column_type() {
             TypeKind::Range {
                 subtype: Some("text".to_string()),
                 multirange_type_name: (version >= 14).then(|| "public.textmultirange".to_string()),
+                // No fixture range declares a `canonical` function: one must
+                // be written against the shell type, which a SQL function
+                // cannot take, so it would need a C or internal-language
+                // function in the fixture schema (I46).
+                canonical: None,
             },
             "pg_dump {version}"
         );

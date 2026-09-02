@@ -30,7 +30,8 @@ pub use map::{
 };
 pub use pgtype::{
     CanonicalExtension, CompareKind, ComparisonDivergence, ComparisonPlan, NestedCompare,
-    NestedPlan, TypeOutcome, comparison_for, extension_for, resolve_declared_type,
+    NestedPlan, TypeOutcome, UnanswerableReason, comparison_for, extension_for,
+    resolve_declared_type,
 };
 pub use preamble::{
     CollationDef, ColumnDef, DatabaseMetadata, DumpMetadata, Extension, TypeDef, TypeKind,

@@ -426,10 +426,12 @@ pub enum NestedCompare {
     /// **`discrete` is a property of the range type, never of its subtype.**
     /// Only `int4range`, `int8range` and `daterange` carry a canonical
     /// function among the built-ins — `numrange` is over a type with a
-    /// perfectly good successor at any fixed scale and has none — and a
-    /// user-defined range declares one in DDL this build does not read
-    /// (`KD12`). So the flag is set from the range's *name* and a subtype
-    /// that happens to be discrete does not set it.
+    /// perfectly good successor at any fixed scale and has none — so the flag
+    /// is set from the range's *name* and a subtype that happens to be
+    /// discrete does not set it. A **user-defined** range never reaches this
+    /// node with the flag set either way: one that declares a `canonical`
+    /// function is [`ComparisonPlan::Unanswerable`] rather than a tree, since
+    /// the function is arbitrary server-side code this build cannot apply.
     Range { bound: Box<NestedCompare>, discrete: bool },
     /// `multirange_cmp`: member-wise over members the server has already
     /// sorted, coalesced and emptied out, the shorter multirange first
@@ -537,9 +539,39 @@ pub enum ComparisonPlan {
     /// position is the register saying the column has none, which is what
     /// [`Self::orders`] answers and what lets the refusal name the position.
     Nested(NestedCompare),
+    /// **No comparison at all** — every operator is refused, `=` and `!=`
+    /// included, and the payload says why.
+    ///
+    /// It is the stronger of the two refusals and the rarer one.
+    /// [`Self::Refused`] means "no *order*", and every site that answers it
+    /// is right to let `=`/`!=` fall through to a bytewise comparison of the
+    /// file's own canonical text — an empty enum, a C-level base type, a
+    /// column with no DDL behind it. This variant is for the case where the
+    /// file *states* that the server's equality is not that comparison, so
+    /// falling through would answer a question wrongly rather than answer a
+    /// weaker one.
+    Unanswerable(UnanswerableReason),
     /// No order is defined here for this declared type.
     #[default]
     Refused,
+}
+
+/// Why the register can answer no operator at all for a column — the payload
+/// of [`ComparisonPlan::Unanswerable`].
+///
+/// **A named reason rather than a message**, for the same reason
+/// [`ComparisonDivergence`] is one: the sentence a user reads is `L3`'s to
+/// write, beside the grammar it is about, and a new producer has to say which
+/// kind of unanswerable it is rather than inventing prose here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UnanswerableReason {
+    /// The column's type is, or contains, a range type whose DDL declares a
+    /// `canonical` function (I46). PostgreSQL rewrites every value of such a
+    /// range through that function before storing or comparing it, so two
+    /// spellings it maps together are one value on the server — and the
+    /// function is arbitrary server-side code this build cannot run. Both
+    /// names are carried so the refusal can say which type did it.
+    RangeCanonical { range_type: String, function: String },
 }
 
 impl ComparisonPlan {
@@ -551,7 +583,7 @@ impl ComparisonPlan {
         match self {
             Self::Compared { .. } => true,
             Self::Nested(tree) => tree.uncomparable().is_none(),
-            Self::Refused => false,
+            Self::Unanswerable(_) | Self::Refused => false,
         }
     }
 
@@ -1342,7 +1374,10 @@ fn array_comparison(
     let child = if opaque || array_element(terminal).is_some() {
         NestedCompare::Uncomparable { declared: element.to_string() }
     } else {
-        nested_position(element, collation, types, collations)
+        match nested_position(element, collation, types, collations) {
+            Ok(child) => child,
+            Err(reason) => return ComparisonPlan::Unanswerable(reason),
+        }
     };
     ComparisonPlan::Nested(NestedCompare::Array(Box::new(child)))
 }
@@ -1373,11 +1408,34 @@ fn range_comparison(
     collations: &[CollationDef],
 ) -> ComparisonPlan {
     let Some(subtype) = subtype else { return ComparisonPlan::Refused };
-    let bound = Box::new(nested_position(subtype, None, types, collations));
+    let bound = match nested_position(subtype, None, types, collations) {
+        Ok(bound) => Box::new(bound),
+        Err(reason) => return ComparisonPlan::Unanswerable(reason),
+    };
     ComparisonPlan::Nested(if multi {
         NestedCompare::Multirange { bound, discrete }
     } else {
         NestedCompare::Range { bound, discrete }
+    })
+}
+
+/// The register's answer for a column whose type is, or contains, the range
+/// type `range_type`, whose DDL declares the canonical function `function`.
+///
+/// **Knowing the function exists licenses declining the column, never
+/// reproducing it** (I46). PostgreSQL rewrites every value of such a range
+/// through that function before storing or comparing it, so two spellings it
+/// maps together are one value on the server; the function is arbitrary
+/// server-side code, so no amount of parsing lets this build apply it. Both
+/// operator families are then wrong rather than weak — `[1,10] = [1,11)` is
+/// true on a server whose canonical function is the successor shift and false
+/// under a bytewise comparison of the two `range_out` strings — which is why
+/// the answer is [`ComparisonPlan::Unanswerable`] and not
+/// [`ComparisonPlan::Refused`].
+fn unanswerable_range(range_type: &str, function: &str) -> ComparisonPlan {
+    ComparisonPlan::Unanswerable(UnanswerableReason::RangeCanonical {
+        range_type: range_type.to_string(),
+        function: function.to_string(),
     })
 }
 
@@ -1391,20 +1449,30 @@ fn range_comparison(
 /// bytewise offers more than the server does, and has no comparison *at all*
 /// inside a container, where `array_cmp` would have to find a proc that does
 /// not exist.
+///
+/// **[`ComparisonPlan::Unanswerable`] is the one answer a position cannot
+/// hold**, and it is why this returns a `Result`. A tree can say "this
+/// position has no order" and let the column still answer `=` as text, which
+/// is what [`NestedCompare::Uncomparable`] means; it cannot say "this
+/// position has no equality either", because that is a fact about the whole
+/// column and not about the walk. So an unanswerable position short-circuits
+/// out of the tree and becomes the column's own answer — comparability is
+/// inherited by a walk, unanswerability by propagation.
 fn nested_position(
     declared: &str,
     collation: Option<&str>,
     types: &[TypeDef],
     collations: &[CollationDef],
-) -> NestedCompare {
-    match comparison_for(declared, collation, types, collations) {
+) -> Result<NestedCompare, UnanswerableReason> {
+    Ok(match comparison_for(declared, collation, types, collations) {
         ComparisonPlan::Compared { divergence: Some(ComparisonDivergence::AsText), .. }
         | ComparisonPlan::Refused => NestedCompare::Uncomparable { declared: declared.to_string() },
         ComparisonPlan::Compared { kind, divergence } => {
             NestedCompare::Leaf { declared: declared.to_string(), kind, divergence }
         }
         ComparisonPlan::Nested(inner) => inner,
-    }
+        ComparisonPlan::Unanswerable(reason) => return Err(reason),
+    })
 }
 
 /// **The comparison register**: how a column declared `declared` compares, and
@@ -1484,12 +1552,17 @@ fn comparison_user_type(
         let companion_of = types.iter().find(|t| {
             matches!(&t.kind, TypeKind::Range { multirange_type_name: Some(n), .. } if n == name)
         });
-        return match companion_of.map(|t| &t.kind) {
-            // A user-defined range declares its canonical function in DDL
-            // this build does not read, so its companion does not
-            // canonicalize either (`KD12`).
-            Some(TypeKind::Range { subtype, .. }) => {
-                range_comparison(subtype.as_deref(), false, true, types, collations)
+        return match companion_of {
+            // A multirange over a range that canonicalizes is unanswerable
+            // for the same reason the range itself is, and names the *range*
+            // type — the type the parameter is declared on, which is the one
+            // a reader can go and look at. `pg_dump` writes no `CREATE TYPE`
+            // for the companion, so it has no DDL of its own to name.
+            Some(TypeDef { name, kind: TypeKind::Range { subtype, canonical, .. } }) => {
+                match canonical {
+                    Some(function) => unanswerable_range(name, function),
+                    None => range_comparison(subtype.as_deref(), false, true, types, collations),
+                }
             }
             _ => ComparisonPlan::Refused,
         };
@@ -1524,41 +1597,36 @@ fn comparison_user_type(
         // composite parsed short would compare field 3's text as field 2's
         // type, so there is no partial answer to give.
         TypeKind::Composite { fields } => match fields {
-            Some(fields) => ComparisonPlan::Nested(NestedCompare::Record(
-                fields
+            Some(fields) => {
+                let positions: Result<Vec<_>, _> = fields
                     .iter()
                     .map(|f| {
-                        (
-                            f.name.clone(),
-                            // A composite is not collatable, so the *column's*
-                            // clause cannot reach a field; each attribute
-                            // carries its own (I37).
-                            nested_position(
-                                &f.declared_type,
-                                f.collation.as_deref(),
-                                types,
-                                collations,
-                            ),
-                        )
+                        // A composite is not collatable, so the *column's*
+                        // clause cannot reach a field; each attribute
+                        // carries its own (I37).
+                        nested_position(&f.declared_type, f.collation.as_deref(), types, collations)
+                            .map(|position| (f.name.clone(), position))
                     })
-                    .collect(),
-            )),
+                    .collect();
+                match positions {
+                    Ok(positions) => ComparisonPlan::Nested(NestedCompare::Record(positions)),
+                    Err(reason) => ComparisonPlan::Unanswerable(reason),
+                }
+            }
             None => ComparisonPlan::Refused,
         },
-        // Bound-wise, with **no** canonicalization: a user-defined range
-        // canonicalizes only where its DDL declares a `canonical` function,
-        // and the preamble grammar keeps `subtype` and
-        // `multirange_type_name` alone — so a range that declares one is
-        // compared as though it did not. `fixtures/*`'s `public.myrange` and
-        // `public.textrange` declare none, which is the ordinary shape and
-        // the one the oracle checks.
-        //
-        // Deficiency register: `deficiency: KD12` — the detail is
-        // `docs/design/architecture.md`, "Nested columns compare
-        // structurally".
-        TypeKind::Range { subtype, .. } => {
-            range_comparison(subtype.as_deref(), false, false, types, collations)
-        }
+        // Bound-wise, with no canonicalization — which is the whole answer
+        // only because the range declares no `canonical` function. Where it
+        // declares one the column is unanswerable instead: the server
+        // rewrites every value through arbitrary server-side code before
+        // comparing it, so this build can reproduce neither the order nor the
+        // equality. `fixtures/*`'s `public.myrange` and `public.textrange`
+        // declare none, which is the ordinary shape and the one the oracle
+        // checks.
+        TypeKind::Range { subtype, canonical, .. } => match canonical {
+            Some(function) => unanswerable_range(&def.name, function),
+            None => range_comparison(subtype.as_deref(), false, false, types, collations),
+        },
         TypeKind::Base | TypeKind::Shell => ComparisonPlan::Refused,
     }
 }
@@ -2030,9 +2098,13 @@ mod tests {
                 TypeKind::Range {
                     subtype: Some("double precision".to_string()),
                     multirange_type_name: None,
+                    canonical: None,
                 },
             ),
-            ty("public.bare", TypeKind::Range { subtype: None, multirange_type_name: None }),
+            ty(
+                "public.bare",
+                TypeKind::Range { subtype: None, multirange_type_name: None, canonical: None },
+            ),
         ];
         assert_eq!(
             resolve_declared_type("public.myrange", &types),
@@ -2062,6 +2134,7 @@ mod tests {
             TypeKind::Range {
                 subtype: Some("double precision".to_string()),
                 multirange_type_name: Some("public.myrange_multi".to_string()),
+                canonical: None,
             },
         )];
         assert_eq!(
@@ -2603,6 +2676,7 @@ mod tests {
                 TypeKind::Range {
                     subtype: Some("integer".to_string()),
                     multirange_type_name: Some("public.myrange_multi".to_string()),
+                    canonical: None,
                 },
             ),
             ty("public.gtype", TypeKind::Base),
@@ -2647,8 +2721,8 @@ mod tests {
         );
         // A user-defined range and the companion multirange `pg_dump` writes
         // no `CREATE TYPE` for (I10) reach the same bound through two
-        // different lookups, and neither canonicalizes: the `canonical`
-        // parameter is not in `TypeKind::Range` (`KD12`).
+        // different lookups, and neither canonicalizes: this range's DDL
+        // declares no `canonical` function, which is the ordinary shape.
         assert_eq!(
             comparison_for("public.myrange", None, &types, &[]),
             ComparisonPlan::Nested(NestedCompare::Range {
@@ -2697,7 +2771,7 @@ mod tests {
         // refusal after, so the column is refused outright.
         let subtypeless = [ty(
             "public.opaquerange",
-            TypeKind::Range { subtype: None, multirange_type_name: None },
+            TypeKind::Range { subtype: None, multirange_type_name: None, canonical: None },
         )];
         assert_eq!(
             comparison_for("public.opaquerange", None, &subtypeless, &[]),
@@ -2710,6 +2784,84 @@ mod tests {
                 "{declared}"
             );
         }
+    }
+
+    /// A range type declaring a `canonical` function is the one answer that
+    /// is neither a comparison nor a bytewise fallback: PostgreSQL rewrites
+    /// every value of it through arbitrary server-side code before storing or
+    /// comparing one (I46), so both operator families would be *wrong* here
+    /// rather than weak.
+    ///
+    /// **Unanswerability propagates where comparability is inherited.** A
+    /// tree can carry an [`NestedCompare::Uncomparable`] position and still
+    /// let the column answer `=` as text; it has no way to say "and no
+    /// equality either", which is a fact about the whole column. So a range
+    /// like this one short-circuits out of every walk that reaches it — an
+    /// array of it, a composite holding one, its multirange companion, a
+    /// domain over it — and each answers for the column instead.
+    #[test]
+    fn a_range_declaring_a_canonical_function_answers_no_operator() {
+        let types = [
+            ty(
+                "public.canonrange",
+                TypeKind::Range {
+                    subtype: Some("integer".to_string()),
+                    multirange_type_name: Some("public.canonrange_multi".to_string()),
+                    canonical: Some("public.canonrange_canonical".to_string()),
+                },
+            ),
+            ty(
+                "public.holder",
+                TypeKind::Composite {
+                    fields: Some(vec![
+                        ColumnDef::new("id", "integer"),
+                        ColumnDef::new("span", "public.canonrange"),
+                    ]),
+                },
+            ),
+            ty("public.canondom", TypeKind::domain("public.canonrange")),
+        ];
+        // The refusal names the *range* type and its function, whichever
+        // route reached it — the multirange companion has no DDL of its own
+        // to name (I10), and a position inside a container is not a type the
+        // parameter is declared on.
+        let unanswerable = || {
+            ComparisonPlan::Unanswerable(UnanswerableReason::RangeCanonical {
+                range_type: "public.canonrange".to_string(),
+                function: "public.canonrange_canonical".to_string(),
+            })
+        };
+        for declared in [
+            "public.canonrange",
+            "public.canonrange_multi",
+            "public.canonrange[]",
+            "public.holder",
+            "public.holder[]",
+            "public.canondom",
+            "public.canondom[]",
+        ] {
+            assert_eq!(comparison_for(declared, None, &types, &[]), unanswerable(), "{declared}");
+        }
+        // It is not an order, which is what the four ordering operators ask —
+        // and not a `Refused` either, which is what lets `=` be refused with
+        // it.
+        assert!(!unanswerable().orders());
+        assert_ne!(unanswerable(), ComparisonPlan::Refused);
+        // The same range without the parameter is an ordinary bound-wise
+        // comparison, so the answer turns on the DDL and on nothing else.
+        let TypeKind::Range { subtype, multirange_type_name, .. } = types[0].kind.clone() else {
+            unreachable!()
+        };
+        let plain = [
+            ty(
+                "public.canonrange",
+                TypeKind::Range { subtype, multirange_type_name, canonical: None },
+            ),
+            types[1].clone(),
+            types[2].clone(),
+        ];
+        assert!(comparison_for("public.canonrange", None, &plain, &[]).orders());
+        assert!(comparison_for("public.holder[]", None, &plain, &[]).orders());
     }
 
     /// Comparability is inherited: a position whose declared type has no

@@ -1177,8 +1177,20 @@ fn type_kind_summary(kind: &TypeKind) -> String {
                 .collect();
             format!("composite: {}", rendered.join(", "))
         }
-        TypeKind::Range { subtype: Some(subtype), .. } => format!("range over {subtype}"),
-        TypeKind::Range { subtype: None, .. } => "range (subtype not parsed)".to_string(),
+        // The `canonical` function is named where the DDL declares one,
+        // because it is the whole reason a column of this type refuses every
+        // filter operator — a user meeting that refusal comes here to see
+        // what the file said.
+        TypeKind::Range { subtype, canonical, .. } => {
+            let over = match subtype {
+                Some(subtype) => format!("range over {subtype}"),
+                None => "range (subtype not parsed)".to_string(),
+            };
+            match canonical {
+                Some(function) => format!("{over}, canonical {function}"),
+                None => over,
+            }
+        }
         TypeKind::Base => "base type".to_string(),
         TypeKind::Shell => "shell type".to_string(),
     }
@@ -1988,12 +2000,27 @@ mod tests {
             type_kind_summary(&TypeKind::Range {
                 subtype: Some("double precision".to_string()),
                 multirange_type_name: Some("public.myrange_multi".to_string()),
+                canonical: None,
             }),
             "range over double precision"
         );
         assert_eq!(
-            type_kind_summary(&TypeKind::Range { subtype: None, multirange_type_name: None }),
+            type_kind_summary(&TypeKind::Range {
+                subtype: None,
+                multirange_type_name: None,
+                canonical: None
+            }),
             "range (subtype not parsed)"
+        );
+        // A declared `canonical` function is named, because it is why every
+        // filter operator refuses a column of this type.
+        assert_eq!(
+            type_kind_summary(&TypeKind::Range {
+                subtype: Some("integer".to_string()),
+                multirange_type_name: None,
+                canonical: Some("public.canonrange_canonical".to_string()),
+            }),
+            "range over integer, canonical public.canonrange_canonical"
         );
         assert_eq!(type_kind_summary(&TypeKind::Base), "base type");
         assert_eq!(type_kind_summary(&TypeKind::Shell), "shell type");

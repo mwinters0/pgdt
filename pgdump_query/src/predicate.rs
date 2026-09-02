@@ -7,7 +7,10 @@ use arrow::datatypes::i256;
 use crate::copy::{decode_field, split_fields};
 use crate::decode;
 use crate::nested;
-use crate::pgtype::{CompareKind, ComparisonDivergence, ComparisonPlan, NestedCompare, NestedPlan};
+use crate::pgtype::{
+    CompareKind, ComparisonDivergence, ComparisonPlan, NestedCompare, NestedPlan,
+    UnanswerableReason,
+};
 use crate::resolve::{ColumnResolution, ResolvedSchema};
 use crate::{Error, Result};
 
@@ -2204,6 +2207,21 @@ fn nested_refusal(path: &str, declared: &str) -> String {
 }
 const NO_ORDER: &str = "this build defines no ordering for the column's declared type";
 
+/// The sentence for a column the register can answer **no** operator on,
+/// worded here rather than in `crate::pgtype` for the same reason
+/// [`accepted_form`] is: L2 carries the fact, L3 says it in a sentence about
+/// the comparison a filter was going to make.
+fn unanswerable_reason(reason: &UnanswerableReason) -> String {
+    match reason {
+        UnanswerableReason::RangeCanonical { range_type, function } => format!(
+            "the range type `{range_type}` declares a canonical function (`{function}`), \
+             which PostgreSQL applies to every value of it before storing or comparing \
+             one — arbitrary server-side code this build cannot run, so two spellings the \
+             server calls one value would be two values here"
+        ),
+    }
+}
+
 /// Resolve one filter term against the block's **unprojected**
 /// [`ResolvedSchema`], at `index` — the column's position, already looked up
 /// by the caller.
@@ -2264,6 +2282,18 @@ pub(crate) fn resolve_term(
             return Err(refuse(NOT_MAPPED));
         }
         plan = None;
+    } else if let Some(ComparisonPlan::Unanswerable(reason)) = plan {
+        // The one refusal that does not end by offering `=`/`!=`: the file
+        // says the server's equality is not a comparison of the text it
+        // holds, so the fall-through below would be a wrong answer rather
+        // than a weaker one. The two NULL tests have already returned — they
+        // read no value and need no comparison.
+        return Err(Error::UncomparablePredicateColumn {
+            header_offset,
+            column: predicate.column.clone(),
+            op: predicate.op.symbol(),
+            reason: unanswerable_reason(reason),
+        });
     } else if let Some(ComparisonPlan::Nested(tree)) = plan {
         // A nested column whose shape is compared here but one of whose
         // positions is not: the ordering operators are refused naming that
@@ -2619,7 +2649,11 @@ mod tests {
             // since there is no bound type to name the refusal after.
             TypeDef {
                 name: "public.opaquerange".into(),
-                kind: TypeKind::Range { subtype: None, multirange_type_name: None },
+                kind: TypeKind::Range {
+                    subtype: None,
+                    multirange_type_name: None,
+                    canonical: None,
+                },
             },
         ]
     }
@@ -3194,6 +3228,52 @@ mod tests {
             resolve_term(&p, 0, &one_column("mystery", DataType::UInt8), 0).unwrap_err(),
             Error::UnorderedPredicateColumn { reason, .. } if reason == NO_ORDER
         ));
+    }
+
+    /// A range type declaring a `canonical` function refuses **every**
+    /// comparing operator, `=` and `!=` included, and does it through an
+    /// error of its own — the one refusal that cannot end by offering the
+    /// text comparison, because that comparison is exactly what the file says
+    /// is not the server's.
+    ///
+    /// The two NULL tests still answer: they read no value and consult no
+    /// plan.
+    #[test]
+    fn a_range_declaring_a_canonical_function_refuses_every_operator() {
+        let types = vec![TypeDef {
+            name: "public.canonrange".into(),
+            kind: TypeKind::Range {
+                subtype: Some("integer".into()),
+                multirange_type_name: None,
+                canonical: Some("public.canonrange_canonical".into()),
+            },
+        }];
+        let schema = nested_column("public.canonrange", &types);
+        for op in [
+            PredicateOp::Lt,
+            PredicateOp::Le,
+            PredicateOp::Gt,
+            PredicateOp::Ge,
+            PredicateOp::Eq,
+            PredicateOp::Ne,
+            PredicateOp::IsDistinctFrom,
+            PredicateOp::IsNotDistinctFrom,
+        ] {
+            let p = Predicate { column: "v".into(), op, value: Some("[1,10]".into()) };
+            let err = resolve_term(&p, 0, &schema, 7).unwrap_err();
+            let Error::UncomparablePredicateColumn { reason, header_offset: 7, .. } = &err else {
+                panic!("{op:?}: {err:?}")
+            };
+            // The sentence names the range type and its function, which is
+            // what a user needs to go and look at the DDL.
+            assert!(reason.contains("`public.canonrange`"), "{op:?}: {reason}");
+            assert!(reason.contains("`public.canonrange_canonical`"), "{op:?}: {reason}");
+        }
+        for op in [PredicateOp::IsNull, PredicateOp::IsNotNull] {
+            let p = Predicate { column: "v".into(), op, value: None };
+            let term = resolve_term(&p, 0, &schema, 0).expect("a NULL test consults no plan");
+            assert!(term.compared.is_none(), "{op:?}");
+        }
     }
 
     /// Only a divergent classification produces a note, and the sentence is
