@@ -4294,6 +4294,26 @@ over — the delimiter trap (I22) in one table and the opaque-element case it is
 easily confused with in the other is what lets a test say which of the two it
 means.
 
+**`t_int2vector` is deliberately *not* among them**, even though the type's
+floor answer is `list<item: int16>`. The array recursion is a spelling test
+over the declared name (I28) and `int2vector` carries no array spelling, so no
+array mechanism reaches the column and its census entry does not exist —
+filing it beside `t_array_shape` would invite exactly the conclusion the
+division above exists to prevent. It sits with the scalar families instead,
+next to `t_oid`, the other `pg_catalog` type the floor pulled into the tree.
+
+Its five rows are the whole of `int2vectorout`'s grammar, which writes
+space-separated `int16` with no quoting, no escaping and no possible NULL
+element: a three-element value, an empty one, both `int16` bounds, a single
+element, and SQL NULL. **The second is the row that decides a mapping.** An
+empty vector is legal and `int2vectorout` writes it as the empty string, so
+COPY TEXT writes an empty *field* for it and `\N` for the NULL beside it —
+which is what leaves an empty list and a NULL still distinguishable in the
+file. The column also pins the declared spelling at six majors: `v_vec
+int2vector`, bare, because `pg_catalog` is on the search path implicitly
+whatever `search_path` is set to (I8) — a `pg_catalog` type with no standard
+SQL spelling is written bare all the same.
+
 **`t_collate` is the `types` schema's collation table, and it is separate from
 `t_text` for the same reason**: `t_text`'s three columns carry no `COLLATE`
 clause, so they are read as "what a column that says nothing about its

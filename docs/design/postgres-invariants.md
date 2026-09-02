@@ -343,6 +343,15 @@ user-defined) alongside `RETURNS integer` and
 through the same path. No koji *column* uses a user-defined type, so
 `fixture_schema_types.sql` needs to cover that case.
 
+**What makes a built-in bare is visibility, not standardness.** `pg_catalog` is
+on the search path implicitly whatever `search_path` is set to, so
+`format_type` qualifies nothing in it — including a type with no standard SQL
+spelling at all, which falls back to its bare `typname`.
+`fixtures/<13–18>/types/default.sql` writes `t_int2vector`'s column as `v_vec
+int2vector` at all six majors, which is the committed evidence for that half:
+a declared name with no `.` in it is a `pg_catalog` name, whether or not the
+SQL standard has a word for the type.
+
 **Verified against:** v18.6 source; koji and all three fixture versions emit
 the empty-`search_path` line.
 **Relied on by:** `architecture.md` ("Type resolution").

@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict eOQNhVvTT6yttd5eYJpHxcyzzobnXCeRyJxIC5Ablpglh0pDO6Uqf0h62hGOQUG
+\restrict cm0hAqdoBDk42pcsGqh34qd9EPA1K4cljcaAyGKmaA0gQrdltUVfvAiig8pzf2O
 
 -- Dumped from database version 18.6 (Debian 18.6-1.pgdg13+2)
 -- Dumped by pg_dump version 18.6 (Debian 18.6-1.pgdg13+2)
@@ -162,6 +162,19 @@ COPY public.t_int (id, v_smallint, v_integer, v_bigint) FROM stdin;
 2	32767	2147483647	9223372036854775807
 3	0	0	0
 4	\N	\N	\N
+\.
+
+
+--
+-- Data for Name: t_int2vector; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_int2vector (id, v_vec) FROM stdin;
+1	1 2 3
+2	
+3	-32768 32767
+4	0
+5	\N
 \.
 
 
@@ -340,5 +353,5 @@ COPY public.t_uuid (id, v_uuid) FROM stdin;
 -- PostgreSQL database dump complete
 --
 
-\unrestrict eOQNhVvTT6yttd5eYJpHxcyzzobnXCeRyJxIC5Ablpglh0pDO6Uqf0h62hGOQUG
+\unrestrict cm0hAqdoBDk42pcsGqh34qd9EPA1K4cljcaAyGKmaA0gQrdltUVfvAiig8pzf2O
 

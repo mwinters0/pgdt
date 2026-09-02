@@ -49,6 +49,33 @@ INSERT INTO public.t_oid VALUES
     (4, 4294967295),
     (5, NULL);
 
+-- `int2vector` is a pg_catalog type that is not an array type and is not
+-- reached by the array recursion: that recursion is a spelling test over the
+-- declared name (I28) and `int2vector` carries no array spelling, so this
+-- table sits with the other scalar families rather than with t_array* -- the
+-- census says nothing about it and never will. It is here because the ADBC
+-- floor answers `list<item: int16>` for it, which is a floor row we are below
+-- until the type is mapped.
+--
+-- `int2vectorout` writes the elements space-separated with no quoting, no
+-- escaping and no NULL element possible, so the four non-NULL values below are
+-- the whole of the grammar. Row 2 is the value that matters most: an empty
+-- vector is legal, `int2vectorout` writes it as the empty string, and COPY
+-- TEXT writes an empty field for it -- so `\N` and an empty list are still
+-- distinguishable in the file, which is what lets an empty vector decode to an
+-- empty list rather than to NULL. Rows 3 and 4 are the int16 bounds
+-- `int2vectorin` checks against SHRT_MIN/SHRT_MAX and a single element.
+CREATE TABLE public.t_int2vector (
+    id integer PRIMARY KEY,
+    v_vec int2vector
+);
+INSERT INTO public.t_int2vector VALUES
+    (1, '1 2 3'),
+    (2, ''),
+    (3, '-32768 32767'),
+    (4, '0'),
+    (5, NULL);
+
 -- v_typed is exactly the Decimal128 boundary (38 total digits); v_typed39
 -- crosses it into Decimal256. v_small carries a typmod but still accepts
 -- NaN -- PostgreSQL's precision/scale check does not apply to NaN, so NaN is

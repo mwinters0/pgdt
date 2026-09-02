@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict h3EUdQkgZXgxp109chCzMNxfr2JAEqt6UVyQkoxTfS5pk0v4ronTTGOFvi8uhKt
+\restrict 9m1WeUQerN2E5MqO4To6bHcQigvsVrOALsteAy2NIA78doN9N0SgUU8zAgNZjzN
 
 -- Dumped from database version 16.15 (Debian 16.15-1.pgdg13+2)
 -- Dumped by pg_dump version 16.15 (Debian 16.15-1.pgdg13+2)
@@ -451,6 +451,18 @@ CREATE TABLE public.t_int (
 ALTER TABLE public.t_int OWNER TO postgres;
 
 --
+-- Name: t_int2vector; Type: TABLE; Schema: public; Owner: postgres
+--
+
+CREATE TABLE public.t_int2vector (
+    id integer NOT NULL,
+    v_vec int2vector
+);
+
+
+ALTER TABLE public.t_int2vector OWNER TO postgres;
+
+--
 -- Name: t_interval; Type: TABLE; Schema: public; Owner: postgres
 --
 
@@ -783,6 +795,19 @@ COPY public.t_int (id, v_smallint, v_integer, v_bigint) FROM stdin;
 
 
 --
+-- Data for Name: t_int2vector; Type: TABLE DATA; Schema: public; Owner: postgres
+--
+
+COPY public.t_int2vector (id, v_vec) FROM stdin;
+1	1 2 3
+2	
+3	-32768 32767
+4	0
+5	\N
+\.
+
+
+--
 -- Data for Name: t_interval; Type: TABLE DATA; Schema: public; Owner: postgres
 --
 
@@ -1042,6 +1067,14 @@ ALTER TABLE ONLY public.t_float
 
 
 --
+-- Name: t_int2vector t_int2vector_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.t_int2vector
+    ADD CONSTRAINT t_int2vector_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: t_int t_int_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
 --
 
@@ -1165,5 +1198,5 @@ ALTER TABLE ONLY public.t_uuid
 -- PostgreSQL database dump complete
 --
 
-\unrestrict h3EUdQkgZXgxp109chCzMNxfr2JAEqt6UVyQkoxTfS5pk0v4ronTTGOFvi8uhKt
+\unrestrict 9m1WeUQerN2E5MqO4To6bHcQigvsVrOALsteAy2NIA78doN9N0SgUU8zAgNZjzN
 
