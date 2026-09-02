@@ -7,8 +7,9 @@
 //! grammar's own shape is unit-tested in `pgdump_query-cli/src/where_expr.rs`.
 //! What only the binary can say is that the flag reaches the evaluator, that
 //! `OR` and `NOT` change which rows come back, that `--where` and `--filter`
-//! compose, and that no `--filter` string means anything different now that
-//! the other flag exists.
+//! compose, and that no string means one thing under one flag and something
+//! else under the other — a string that reads as structure is refused by both,
+//! and quoting is the remedy under both.
 
 use std::process::Output;
 
@@ -90,21 +91,51 @@ fn where_and_filter_are_anded() {
     );
 }
 
-/// **The hazard the flag split exists for.** Under `--where` this is a
-/// conjunction whose second leaf has no operator, so it is refused before the
-/// dump is opened; under `--filter` the identical string is still the
-/// equality it reads as, and finds no row rather than being reinterpreted.
+/// **No string means one thing under one flag and something else under the
+/// other.** Both flags refuse this one — `--where` because `beta` is not a
+/// term, `--filter` because an unquoted `AND` is what `--where` reads as
+/// structure — and neither opens the dump to do it. This is the property the
+/// two flags exist to have between them, and it cannot be seen from either
+/// alone.
 #[test]
-fn the_same_string_means_different_things_under_the_two_flags() {
+fn a_string_that_reads_as_structure_is_refused_under_both_flags() {
     let refused = widgets(&["--where", "name=alpha and beta"]);
     assert!(!refused.status.success());
     let stderr = stderr_of(&refused);
     assert!(stderr.contains("--where"), "{stderr}");
     assert!(stderr.contains("`beta`"), "{stderr}");
 
-    let accepted = widgets(&["--filter", "name=alpha and beta"]);
-    assert!(accepted.status.success(), "{}", stderr_of(&accepted));
-    assert_eq!(stdout_of(&accepted).lines().skip(1).count(), 0, "an equality nothing matches");
+    let also_refused = widgets(&["--filter", "name=alpha and beta"]);
+    assert!(!also_refused.status.success(), "{}", stdout_of(&also_refused));
+    let stderr = stderr_of(&also_refused);
+    assert!(stderr.contains("`AND`"), "{stderr}");
+    assert!(stderr.contains("--where"), "{stderr}");
+}
+
+/// **The remedy is quoting, and it is one the grammar already taught.** Row
+/// 4's description holds both a paren and a bare `not`, so it is exactly the
+/// value the refusal reaches — and quoted it is the equality it always was.
+#[test]
+fn a_value_that_holds_structure_is_asked_for_quoted() {
+    let value = "contains a COPY-like phrase: COPY public.widgets (id, name) TO stdout; \
+                 -- not a real directive";
+    let quoted = format!("description='{value}'");
+    assert_eq!(kept(&["--filter", &quoted]), ["delta"]);
+
+    let bare = format!("description={value}");
+    let refused = widgets(&["--filter", &bare]);
+    assert!(!refused.status.success(), "{}", stdout_of(&refused));
+    assert!(stderr_of(&refused).contains("`(`"), "{}", stderr_of(&refused));
+}
+
+/// **The refusal is narrow**, which is the half a rule restated beside the
+/// tokenizer would have got wrong. Only whitespace or a paren can put a
+/// keyword next to structure, so an unquoted multi-word value still needs no
+/// quotes and the cheap `--filter` spelling survives.
+#[test]
+fn a_value_with_no_reserved_spelling_still_needs_no_quotes() {
+    assert_eq!(kept(&["--filter", "description=a simple widget"]), ["alpha"]);
+    assert_eq!(kept(&["--filter", "name=nota"]), Vec::<String>::new());
 }
 
 /// A structural fault is a usage fault: reported without a scan, naming the

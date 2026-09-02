@@ -18,9 +18,9 @@ reconciliation, the declared collation and the fixture columns that observe
 it — the displaced clause included — the enum and bare `numeric`, the
 whole text-held type queue, `jsonb` included, `character(n)`'s trim, typed
 `=`/`!=`, the non-deterministic collation the dump states — read, and now
-observed in committed bytes — the three-valued expression tree, and the
-`--where` grammar that reaches it from the command line landed. Its
-checklist is below.
+observed in committed bytes — the three-valued expression tree, the
+`--where` grammar that reaches it from the command line, and the refusal that
+keeps the two filter flags meaning one thing landed. Its checklist is below.
 
 [`../design/measurements.md`](../design/measurements.md) carries the `b70589f`
 stamp, and **`uv run measure.py --stale` names twelve of its thirteen figures**
@@ -206,18 +206,19 @@ is compared once per cache open — and **not** for `preamble.rs`:
 `preamble-prepass` *is* the prepass measurement, so it stays red on its merits
 exactly as `M28`'s and `eca96be`'s additions left it.
 
-**11.8 touched one declared path and owes a reachability entry it cannot yet
-name.** The `--where` grammar is a new file, `pgdump_query-cli/src/where_expr.rs`,
-which no figure declares; what lands in the CLI's `main.rs` is the flag, one
-more candidate in `split_filter_op`'s positional scan, and the two-flag filter
-construction — all of it once per invocation, none of it on a row path. The
-excuse is reachability, the same one `9ed21d4` carries for the term grammar it
-extends: **no registered command shape passes `--filter` or `--where`**, so
-nothing added here executes in a figure, and the tree a shape with neither flag
-hands the library is the same `Expr::all([])` it was. The entry is owed against
-this change's own sha, which it does not have while the work is uncommitted;
-the six figures declaring `main.rs` are held red by the five commits above
-either way.
+**11.8 and 11.13 touched one declared path and owe a reachability entry they
+cannot yet name.** The `--where` grammar is a new file,
+`pgdump_query-cli/src/where_expr.rs`, which no figure declares; what lands in
+the CLI's `main.rs` is the flag, one more candidate in `split_filter_op`'s
+positional scan, the two-flag filter construction, and 11.13's
+`parse_filter_flag` — all of it once per invocation at most, none of it on a
+row path. The excuse is reachability, the same one `9ed21d4` carries for the
+term grammar it extends: **no registered command shape passes `--filter` or
+`--where`**, so nothing added here executes in a figure, and the tree a shape
+with neither flag hands the library is the same `Expr::all([])` it was. The
+entry is owed against these changes' own shas, which they do not have while the
+work is uncommitted; the six figures declaring `main.rs` are held red by the
+five commits above either way.
 
 ## P11 progress
 
@@ -342,10 +343,11 @@ progress.
       gained the two `IS DISTINCT FROM` spellings with it, which no slice row
       named and which the phase's operator surface commits to. Notes:
       [`../design/roadmap-P11.8-where-notes.md`](../design/roadmap-P11.8-where-notes.md)
-- [ ] **11.13** The two flags may not disagree — `--filter` runs its term
+- [x] **11.13** The two flags may not disagree — `--filter` runs its term
       through `where_expr`'s tokenizer and refuses anything that is not a
       single `Leaf`, so no string means one thing under `--filter` and another
-      under `--where`. Closes `KD11`.
+      under `--where`. `KD11` is **struck**. Notes:
+      [`../design/roadmap-P11.13-two-flags-notes.md`](../design/roadmap-P11.13-two-flags-notes.md)
 - [ ] **11.9** The nested literal input grammar — the
       `array_in`/`record_in`/`range_in` superset, checked against the oracle's
       malformed cases. No comparison yet.
@@ -390,10 +392,10 @@ only by naming one.
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
 rather than being deleted. <!-- deficiency-watermark: KD11 -->
-**`KD1`–`KD11` are allocated; none is struck yet.** That watermark is what keeps
-a `KD<k>` in an old commit message resolvable once one is, and the marker beside
-it is what a citation resolves against — the sentence is rewritten at every
-strike, and again at the keystone that deletes the named struck entries.
+**`KD1`–`KD11` are allocated; `KD11` is struck.** That watermark is what keeps a
+`KD<k>` in an old commit message resolvable, and the marker beside it is what a
+citation resolves against — the sentence is rewritten at every strike, and again
+at the keystone that deletes the named struck entries.
 
 Where a `(b)` entry's owning phase has been sliced, the entry names the slice
 and the slice names the entry, so landing one re-reads the other and a re-slice
@@ -485,14 +487,6 @@ here rather than reading as a phase nobody has sliced.
   `money`-shaped extension type. Detail:
   [`../design/architecture.md`](../design/architecture.md), "Equality is typed
   too".
-
-- **KD11** — one string means different things under `--filter` and `--where`,
-  with no error either way: a term whose right-hand fragment parses on its own
-  (`v_text=hello and v_char=hi`) is an equality against the literal under one
-  flag and a conjunction under the other. **(b) owned by P11**, slice **11.13**,
-  which refuses the overlap rather than documenting it. Detail:
-  [`../design/architecture.md`](../design/architecture.md), "`--where` builds an
-  expression out of those terms".
 
 ## Decisions worth another look
 

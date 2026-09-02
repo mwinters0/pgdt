@@ -2821,7 +2821,11 @@ not. See "The register against the oracle's answers".
 `parse_filter` in `pgdump_query-cli/src/main.rs` is the grammar, and it is the
 CLI's alone: `Predicate` is a plain public struct an embedder fills in field by
 field, so nothing below L4 parses `column=value` and none of the trimming or
-unquoting below reaches an embedder's values.
+unquoting below reaches an embedder's values. It is reached two ways and they
+are not the same entry point: a `--where` leaf calls it directly, while a
+`--filter` argument goes through `parse_filter_flag`, which first refuses a
+term the expression grammar would read as structure — see "`--where` builds an
+expression out of those terms" below.
 
 Two kinds of user read `--filter` differently and the grammar serves both
 rather than choosing. Sysadmin-shaped users find the bare `column=value`
@@ -2950,20 +2954,66 @@ quotes. Everything that is not a paren or a keyword is a **leaf**, handed to
 `--filter` term are one conjunction.
 
 **It is a second flag rather than a widening of `--filter`, and that is the
-decision the rest of the grammar rests on.** `--filter 'note=a or b'` is an
-equality against the string `a or b`; under a widened `--filter` the same
-unchanged command line would silently become a disjunction, and a wrong row set
-from a command that did not change is this grammar's worst failure.
+decision the rest of the grammar rests on.** Under a widened `--filter`,
+`--filter 'note=a or b'` — an equality against the string `a or b` — would
+silently become a disjunction with the command line unchanged, and a wrong row
+set from a command that did not change is this grammar's worst failure. What
+that string gets instead is a refusal, loud and with the remedy in it.
 
-<!-- deficiency: KD11 -->
-**The two flags disagree about a string that parses under both, and today the
-disagreement is silent.** `--where 'note=a or b'` is refused loudly,
-but only because `b` alone is not a term; `--where 'v_text=hello and v_char=hi'`
-is a conjunction where `--filter` of the same string is an equality against the
-literal `hello and v_char=hi`, and both exit 0 with different row sets. A
-keyword, a `NOT` or a paren outside quotes is the whole of the disagreement,
-and quoting is the remedy the user already has — but nothing tells them they
-need it.
+**A string both flags accept means the same thing under both, and
+`refuse_where_structure` is what buys it.** Two flags do not avoid the widening
+hazard by having it between them instead of inside one: `--where 'v_text=hello
+and v_char=hi'` is a conjunction where `--filter` of the same string was an
+equality against the literal `hello and v_char=hi`, and both exited 0 with
+different row sets, so the user had no way to see which reading they got. So a
+`--filter` term is now run through `tokenize` and refused unless it comes back
+a single `Leaf`, naming what it found and both remedies — quote the part that
+holds it, or write the expression with `--where`.
+
+**The refusal set is defined by the tokenizer, not restated beside it.** That
+makes it *exactly* the disagreeing set by construction, where a second scan for
+the reserved spellings would be a copy of a rule, free to drift the moment
+either grammar moves — and drift here is silent again. It also gets the
+boundary conditions right for free: the keyword rule below leaves
+`--filter 'v_text=not a'` one leaf under both flags, and `IS NULL` and
+`IS NOT DISTINCT FROM` keep the `NOT` the term grammar claims. The narrow set
+is what survives, so `--filter 'note=a b'` still needs no quotes.
+
+**A term with no operator is refused on the same rule**, and it is the one
+string the refusal reaches that was never returning wrong rows: `--filter 'and
+is null'` named a column `and`, where `--where` of it is a hard parse error
+rather than a different row set. Refusing it anyway is what keeps the refusal
+set "whatever tokenizes to more than one token", which is the whole of its
+value; a string one flag accepts and the other rejects cannot be moved between
+them either. `--filter '"and" is null'` is the remedy, and it is the quoting the
+term grammar already teaches.
+
+**An empty term is left to the term grammar.** Nothing tokenizes to no tokens
+but whitespace, which holds no reserved spelling to disagree about, so the
+usage message is the accurate one — and neither flag accepts it, so the
+single-meaning property is untouched.
+
+**The check runs on the `--filter` path alone**, in `parse_filter_flag`, which
+puts a `main.rs` → `where_expr` dependency where none was before; both are L4,
+so [`layering.md`](layering.md) permits it. A `--where` leaf is what came *out*
+of the tokenizer, and text that is one leaf inside its expression need not be
+one on its own — `--where 'x=(and b)'` cuts a leaf `and b`, whose leading `and`
+had a paren before it there and nothing standing alone.
+
+*Rejected: a second scan beside the tokenizer looking for the reserved
+spellings.* It over-refuses today and is free to drift tomorrow, both silently.
+
+*Rejected: exempting a term with no operator, since it returned no wrong rows.*
+The refusal set stops being the tokenizer's the moment it carries an exception,
+and that is the only reason it cannot drift.
+
+*Rejected: dropping `--filter` and leaving `--where` as the only flag.*
+`--where` is a capability superset — every `Predicate` reachable through
+`--filter` is reachable through it, quoting being always available and
+round-tripping — but not a spelling superset, and the difference falls entirely
+on the simple audience: `--filter 'note=a b'` needs no internal quoting and one
+shell array element is one term. Refusing the overlap buys what dropping the
+flag buys and keeps the cheap spelling.
 
 **A keyword is recognised only against whitespace or a paren**, which is
 stricter than a word boundary and has to be: `=` is not a word byte, so a bare

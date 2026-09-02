@@ -147,6 +147,12 @@ enum Command {
         /// inside a quoted part is doubled (`name = 'it''s'`). Quotes work on
         /// the column side too, which is how a column named `a=b` is asked
         /// for: `"a=b"=x`.
+        ///
+        /// A term is never read as an expression — but nor may it hold what
+        /// `--where` would read as one. An unquoted `AND`, `OR`, `NOT` or
+        /// paren is refused rather than taken literally, so no string means
+        /// one thing here and another under `--where`; quote the part that
+        /// holds it, or use `--where`.
         #[arg(long)]
         filter: Vec<String>,
         /// Boolean expression over `--filter`'s terms: `AND`, `OR`, `NOT` and
@@ -158,9 +164,9 @@ enum Command {
         /// Anything that is not a paren or a keyword is a term, read by
         /// exactly the grammar `--filter` reads — so `--where 'note=a and b'`
         /// is `note=a` AND the term `b`, which has no operator and is
-        /// refused. The same string under `--filter` is the equality it
-        /// reads as; that is what the two flags are for, and no `--filter`
-        /// string changes meaning.
+        /// refused. `--filter` refuses that same string too, for holding a
+        /// reserved spelling: a string both flags take means the same thing
+        /// under both.
         ///
         /// A value that holds a paren or an unquoted keyword needs quoting —
         /// `--where "v='(1,a)'"` — since a bare `(` groups.
@@ -423,6 +429,19 @@ fn unbalanced_quote(what: &str, quote: char, spec: &str) -> anyhow::Error {
     anyhow::anyhow!(
         "--filter `{spec}`: unbalanced `{quote}` quote in the {what} — a quoted {what} closes with the matching `{quote}` at its very end, and any `{quote}` inside it is doubled"
     )
+}
+
+/// One `--filter` argument: the term grammar below, and before it the refusal
+/// that keeps a string from meaning one thing under each flag
+/// ([`where_expr::refuse_where_structure`], which is where that reasoning
+/// lives).
+///
+/// It runs first, so a term that is both structural and malformed earns the
+/// structural message: `--filter 'and is null'` is told that `AND` is a
+/// reserved spelling rather than that its column was not understood.
+fn parse_filter_flag(spec: &str) -> Result<Predicate> {
+    where_expr::refuse_where_structure(spec)?;
+    parse_filter(spec)
 }
 
 /// Parse one filter term into a [`Predicate`] — one term of the conjunction
@@ -739,8 +758,11 @@ async fn main() -> Result<()> {
             // Every term is parsed before the file is opened, so a
             // malformed one is reported without a scan; the library then
             // resolves each against the block's own schema.
-            let terms =
-                filter.iter().map(String::as_str).map(parse_filter).collect::<Result<Vec<_>>>()?;
+            let terms = filter
+                .iter()
+                .map(String::as_str)
+                .map(parse_filter_flag)
+                .collect::<Result<Vec<_>>>()?;
             let filter = match where_expr {
                 // Byte for byte the tree a repeated `--filter` always built,
                 // including the empty conjunction that keeps every row.
@@ -1790,6 +1812,33 @@ mod tests {
         let message = err("nonsense");
         assert!(message.contains("--filter must be"), "{message}");
         assert!(message.contains("nonsense"), "{message}");
+    }
+
+    /// **The structural refusal runs before the term grammar**, so a term
+    /// that is both structural and unparseable is told which of the two it
+    /// is. `and is null` names a column `and` under the old reading and is a
+    /// parse error under `--where`; it is refused here for the reserved
+    /// spelling, and the remedy is the quoting the grammar already teaches.
+    #[test]
+    fn the_flag_refuses_structure_before_it_parses_a_term() {
+        let structural = parse_filter_flag("and is null").expect_err("a reserved spelling");
+        let message = format!("{structural:#}");
+        assert!(message.contains("`AND`"), "{message}");
+        assert!(!message.contains("--filter must be"), "{message}");
+        assert_eq!(
+            parse_filter_flag(r#""and" is null"#).expect("the quoted column is askable").column,
+            "and"
+        );
+        // A term with no structure still reaches the term grammar, refusal
+        // and all.
+        assert!(
+            format!("{:#}", parse_filter_flag("nonsense").expect_err("no operator"))
+                .contains("--filter must be")
+        );
+        assert_eq!(
+            parse_filter_flag("name=alpha").expect("a plain term").value.as_deref(),
+            Some("alpha")
+        );
     }
 
     /// The note a name that was not found earns when it looks quoted —

@@ -57,7 +57,10 @@ expression is expected — was rejected as context-sensitive tokenization
 bought against a case the existing quoting rule already covers, but **11.9
 should re-read that call** once its literal grammar exists, because it is the
 slice that decides how a nested literal is typed on a command line.
-`--filter` is unaffected either way: it has no parens to recognise.
+`--filter` recognises no parens of its own, but 11.13 refuses a term holding
+one rather than reading it literally, so the quoting is required under both
+flags — see
+[`roadmap-P11.13-two-flags-notes.md`](roadmap-P11.13-two-flags-notes.md).
 
 **Juxtaposition is not an implicit `AND`.** Only a paren or a keyword ends a
 leaf, so `a=1 b=2` is one leaf and the term grammar's earliest-operator rule
@@ -111,9 +114,9 @@ grammar, including both earliest-wins directions.
 
 `pgdump_query-cli/tests/query_where.rs` is the part only the binary can say,
 and the load-bearing test there is
-`the_same_string_means_different_things_under_the_two_flags`: `name=alpha and
-beta` is refused under `--where` and is an equality under `--filter`. That is
-the whole reason there are two flags, and it cannot be seen from either alone.
+`a_string_that_reads_as_structure_is_refused_under_both_flags` — 11.13 replaced
+11.8's version of it, which asserted that `name=alpha and beta` was refused
+under `--where` and an equality under `--filter`. Both flags refuse it now.
 `negation_drops_the_null_row_and_is_distinct_from_keeps_it` is the other one —
 it is the row-level evidence that `NOT` and `IS DISTINCT FROM` are not the
 same operator.

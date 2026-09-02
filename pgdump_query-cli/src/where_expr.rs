@@ -7,19 +7,11 @@
 //! `--filter` uses, unchanged (`docs/design/architecture.md`, "A filter term
 //! is parsed for two audiences").
 //!
-//! The delegation keeps one term grammar rather than two. It does not on its
-//! own keep the two flags agreeing: `--where 'note=a and b'` is refused
-//! loudly only because `b` alone is not a term, while
-//! `--where 'note=a and b=c'` is a conjunction where `--filter` of the same
-//! string is an equality against the literal, with no error either way.
-//! Nothing here changes what any `--filter` string means, which is why the
-//! disagreement lives between the flags rather than inside one.
-//!
-//! deficiency: KD11 — `--filter` will refuse a term that does not tokenize to
-//! a single [`Token::Leaf`], which makes this module's tokenizer the
-//! definition of what the two flags may disagree about
-//! (`docs/design/roadmap-P11-typed-predicates.md`, "`--where` is a new flag,
-//! and the two flags may not disagree").
+//! The delegation keeps one term grammar rather than two, and
+//! [`refuse_where_structure`] keeps the two flags meaning one thing: a
+//! `--filter` term that does not tokenize to a single [`Token::Leaf`] is
+//! refused, so this module's tokenizer *is* the definition of what the two
+//! flags may disagree about rather than a rule restated beside one.
 //!
 //! This module is the CLI's alone. `Expr` is a plain public enum an embedder
 //! fills in variant by variant, so nothing below L4 parses an expression any
@@ -53,6 +45,52 @@ pub fn parse_where(spec: &str) -> Result<Expr> {
             )))
         }
     }
+}
+
+/// Refuse a `--filter` term that this grammar would read as structure, so
+/// that no string means one thing under `--filter` and another under
+/// `--where`.
+///
+/// **The refusal set is the tokenizer's, not a copy of it.** A term is
+/// accepted only where [`tokenize`] gives back a single [`Token::Leaf`], which
+/// makes the refused set *exactly* the disagreeing set by construction. A
+/// second scan looking for the reserved spellings would be a duplicate of a
+/// rule — free to drift the moment either grammar moves, and drift here is
+/// silent again — and it would over-refuse today, since [`keyword_at`] wants
+/// whitespace or a paren before a keyword and `--filter 'v_text=not a'` is
+/// therefore one leaf under both flags.
+///
+/// **The check is on the `--filter` path alone.** A `--where` leaf is what
+/// came *out* of this tokenizer, and text that is one leaf inside its
+/// expression need not be one on its own — `--where 'x=(and b)'` cuts a leaf
+/// `and b`, whose leading `and` had a paren before it there and nothing here.
+///
+/// The one string it reaches that was never returning wrong rows is a term
+/// with no operator, such as `and is null`, which named a column `and` and is
+/// a hard parse error under `--where`. It is refused anyway: a string
+/// one flag accepts and the other rejects cannot be moved between them either,
+/// and carving the exception would cost the property that makes the tokenizer
+/// definition worth having. The remedy is the one the term grammar already
+/// teaches — `--filter '"and" is null'`.
+pub(crate) fn refuse_where_structure(spec: &str) -> Result<()> {
+    let tokens = tokenize(spec);
+    // Nothing at all is not structure: an empty or all-whitespace term holds
+    // no reserved spelling to disagree about, and `parse_filter`'s usage
+    // message is the accurate one. Neither flag accepts it, so the
+    // single-meaning property is untouched by letting it through to there.
+    if tokens.is_empty() || matches!(tokens.as_slice(), [Token::Leaf(_)]) {
+        return Ok(());
+    }
+    // Leaves are only ever separated by structure, so more than one token
+    // means at least one of them is not a leaf.
+    let found = tokens
+        .iter()
+        .find(|token| !matches!(token, Token::Leaf(_)))
+        .expect("a term of more than one token carries structure")
+        .describe();
+    anyhow::bail!(
+        "--filter `{spec}`: {found} reads as structure under `--where`, so this term cannot mean the same thing under both flags — quote the part that holds it, or write the expression with `--where`"
+    )
 }
 
 /// What the tokenizer produces. A `Leaf` is the raw text between structure,
@@ -488,6 +526,70 @@ mod tests {
     fn an_unclosed_quote_is_refused_by_the_leaf_grammar() {
         let message = err("name='alpha and b=2");
         assert!(message.contains("unbalanced"), "{message}");
+    }
+
+    /// The message a `--filter` term is refused with, or `None` where the
+    /// term holds no structure.
+    fn refused(spec: &str) -> Option<String> {
+        refuse_where_structure(spec).err().map(|e| format!("{e:#}"))
+    }
+
+    /// **What 11.13 buys**: a term holding a reserved spelling is refused
+    /// rather than read one way here and another under `--where`, and the
+    /// message names both remedies.
+    #[test]
+    fn a_term_that_reads_as_structure_is_refused() {
+        let message = refused("note=a and b").expect("a keyword is structure");
+        assert!(message.contains("--filter `note=a and b`"), "{message}");
+        assert!(message.contains("`AND`"), "{message}");
+        assert!(message.contains("quote the part that holds it"), "{message}");
+        assert!(message.contains("--where"), "{message}");
+        for spec in ["a=1 or b=2", "not a=1", "v=(1,a)", "a=1)"] {
+            assert!(refused(spec).is_some(), "`{spec}` should be refused");
+        }
+    }
+
+    /// The first structural token is the one named, even where a leaf comes
+    /// before it.
+    #[test]
+    fn the_refusal_names_what_it_found() {
+        for (spec, wanted) in
+            [("v=(1,a)", "`(`"), ("a=1 or b=2", "`OR`"), ("not a=1", "`NOT`"), ("a=1)", "`)`")]
+        {
+            let message = refused(spec).expect("structure");
+            assert!(message.contains(wanted), "`{spec}`: {message}");
+        }
+    }
+
+    /// **The refusal is exactly the tokenizer's boundary rule**, so every
+    /// spelling that was one leaf stays one: a keyword needs whitespace or a
+    /// paren before it, and a term-level `NOT` is claimed by its `is`.
+    #[test]
+    fn a_term_that_is_one_leaf_is_untouched() {
+        for spec in [
+            "note=a b",
+            "v_text=not a",
+            "tag=and",
+            "v_and=1",
+            "nota=1",
+            "name=android",
+            "created_at is not null",
+            "v is not distinct from 1",
+            "name='a and b'",
+            "\"a and b\"=x",
+            "name='alpha and b=2",
+        ] {
+            assert_eq!(refused(spec), None, "`{spec}` should be accepted");
+        }
+    }
+
+    /// A term with nothing in it holds no structure to disagree about, so it
+    /// falls through to the term grammar's own usage message. Neither flag
+    /// accepts it either way.
+    #[test]
+    fn an_empty_term_is_left_to_the_term_grammar() {
+        assert_eq!(refused(""), None);
+        assert_eq!(refused("   "), None);
     }
 
     /// The two `IS DISTINCT FROM` forms come through the leaf grammar like

@@ -431,10 +431,25 @@ so is `--where 'tag="and"'`.
 
 Given both flags, the expression and every `--filter` term must all hold.
 
-`--filter` is untouched by any of this. A term is never read as an
-expression, so `--filter 'note=a or b'` is the equality against `a or b` it
-always was; the same string under `--where` is `note=a` and then a leaf `b`,
-which is not a term at all and is refused before the dump is opened.
+**A `--filter` term is never read as an expression — and may not hold one
+either.** A term carrying an unquoted `AND`, `OR`, `NOT` or paren is refused
+rather than taken literally, so no string can mean one thing under `--filter`
+and something else under `--where`:
+
+```sh
+--filter 'note=a or b'      # refused: OR is a reserved spelling
+--filter "note='a or b'"    # the equality against `a or b`
+--where  'note=a or b'      # `note=a` and then a leaf `b`, which is not a term
+--filter "span='[1,10)'"    # a range literal: its `)` is a paren, so quote it
+--filter "v='(1,a)'"        # and so is a composite literal's
+```
+
+The refusal is exactly as narrow as the expression grammar's own reading of a
+string, so everything that was one term stays one: a keyword needs whitespace
+or a paren beside it, which leaves `--filter 'tag=and'`, `--filter
+'note=a b'`, `--filter 'v=not a'` and both `IS` forms untouched. A column whose
+name really is a keyword is asked for the way the grammar already teaches —
+`--filter '"and" is null'`.
 
 ### Arrays, composites, ranges, and multiranges
 
