@@ -812,7 +812,11 @@ binds hardest and it is the only doc where it binds absolutely — every other
 document in the set is read by someone who can check it against the code, and
 the manual is written for the reader who cannot. So a spec that schedules the
 correction to a later slice is wrong at that row, and the row yields to the
-rule.
+rule. An escape clause for the non-manual case was considered and refused: the
+softness is what the asymmetry buys. Where the reader can check a sentence
+against the code, a deferral a slice can defend costs little, and a written
+criterion for when deferral is allowed would be read as a licence rather than
+as a bound.
 
 **Nothing checks this, and the obvious check was costed and refused.** A
 mechanical one would reconcile the type names the manual states in prose
@@ -990,9 +994,19 @@ recommendation **follows from something already written**: a standing rule, a
 rejected-alternative paragraph, an invariant, this document, or a precedent an
 earlier slice set. It escalates whenever the call would bind beyond the open
 phase — a standing rule, an invariant, a `KD<k>` re-targeted onto a phase
-nobody has grilled, a spec rationale reversed — because inside the phase the
-work sits under a spec the maintainer approved and will read at its keystone,
-and outside it there is no such approval to sit under.
+nobody has grilled, a spec rationale reversed, a rule added to a
+standing-constraint doc, to `CLAUDE.md`, or to this one — because inside the
+phase the work sits under a spec the maintainer approved and will read at its
+keystone, and outside it there is no such approval to sit under.
+
+**The list is illustration; the criterion is the rule**, and an implementation
+of this paragraph must say so. One that enumerates instead closes the list
+against the criterion it just stated, and then reads as complete while omitting
+whatever was not on its author's mind — this document most easily of all, since
+a stand-in meets it as the record it cites rather than as an artifact it can
+move. Granularity follows the roadmap's: what escalates is a **rule** being
+added or changed, not an edit that re-describes something the project already
+has.
 
 Two things make that acceptable rather than a hole. The exchange is **recorded
 verbatim** for the maintainer to read afterwards, so the review is deferred

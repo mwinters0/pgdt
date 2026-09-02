@@ -313,21 +313,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **A stand-in amended `docs/process.md`, which is outside `/gm`'s escalation
-  list.** Round 3's grilling filed a new rule there — *a falsified claim is
-  corrected by the change that falsifies it, not by a later slice that happens
-  to own the file* — together with a paragraph recording that nothing checks it
-  and why the obvious check was costed and refused (`892106e`). The grillmaster
-  flagged the reach and declined to escalate, on three grounds: the skill's
-  escalation list is closed and names `roadmap.md`'s standing rules and
-  `postgres-invariants.md` rather than `process.md`; the rule sharpens an
-  obligation `process.md` already carried; and it reverses nothing D11's
-  recorded rationale argued for. **The decision to weigh is not mainly the
-  rule.** It is that `process.md` is the doc every phase inherits and that the
-  `collate` and `xz-seek` repos run on copies of — so as the list stands, a
-  stand-in can bind all three without the maintainer, and this is the first
-  time one did. Either the escalation list should name `process.md`, or the
-  omission is deliberate and should be written down as such. The rule itself is
-  the instance to judge it on: [`../process.md`](../process.md), beneath "The
-  manual's transcripts are illustrations, not captured runs". Transcript:
-  `/mnt/ssd/fedora/scratch/pgdump_query/grilling/P12.md`, segments 2-3.
+Nothing is open.

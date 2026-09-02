@@ -50,14 +50,30 @@ reading, and having two is the point.
 
 ## What escalates
 
-Four things, and nothing else. The line is not how far the process moves — it
-is **whose future the call binds.** Inside the open phase, work sits under a
-spec the maintainer approved and will read at its keystone, and the repo's own
-checks hold it together. Outside it, agreeing spends authority nobody granted.
+**The criterion is the rule, and the list below is illustration.** A call
+escalates whenever it would **bind beyond the open phase** — `process.md`'s
+wording under "Working unattended", which governs. The line is not how far the
+process moves; it is whose future the call binds. Inside the open phase, work
+sits under a spec the maintainer approved and will read at its keystone, and
+the repo's own checks hold it together. Outside it, agreeing spends authority
+nobody granted. So the cases below are the ones that recur, not a closed set,
+and a call that meets the criterion escalates whether or not it is named here.
 
 - **A standing rule in `roadmap.md`, or an entry in
   `postgres-invariants.md`.** Later phases inherit both, and a keystone strikes
   the trail that would show where the change came from.
+- **A rule in a standing-constraint doc, in `CLAUDE.md`, or in
+  `.claude/skills/`.** `process.md`, `layering.md`, `measurements.md`'s
+  standing rules and `architecture.md`'s two hard-constraint sections bind
+  every phase after this one, `CLAUDE.md` is how every session in the repo
+  behaves, and the skills are the process itself — a stand-in amending
+  `gm/SKILL.md` is editing its own review. `process.md`'s "Where does this fact
+  go?" names the whole class in one row: *a rule that will still apply three
+  phases from now*. **Granularity matches `roadmap.md`'s**: a new or changed
+  rule escalates, an edit that only re-describes something the repo already has
+  does not. Where you cannot tell which you are holding, the last item below
+  already answers it — and "this is only bookkeeping" is the sentence to
+  distrust.
 - **A `KD<k>` re-targeted outside the open phase**, or to no owner. A `(b)`
   entry's owner is read from the phase index, so an outward re-target parks a
   defect on a phase nobody has grilled, or silently manufactures a
