@@ -27,6 +27,8 @@ cd scripts && uv run oracle_differences.py --write  # re-file it after regenerat
 cd scripts && uv run python -m unittest test_oracle_differences  # the differ's own tests
 cd scripts && uv run oracle_register.py           # register arms vs. oracle cases, both ways
 cd scripts && uv run python -m unittest test_oracle_register  # that check's own tests
+cd scripts && uv run floor_mapping.py             # ADBC floor rows vs. `builtin_scalar`, both ways
+cd scripts && uv run python -m unittest test_floor_mapping  # that check's own tests
 
 cd scripts && uv run measure.py --list            # every figure, and what invalidates each
 cd scripts && uv run measure.py --stale           # which figures a diff has made stale

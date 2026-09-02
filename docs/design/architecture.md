@@ -37,6 +37,7 @@ through.
 | array dimensionality, `ArrayShape`, what a scan records per row and what retypes a column from it | [The array shape census](#the-array-shape-census) |
 | `preamble.rs`, the DDL grammar, `\connect` handling | [The preamble grammar and `DumpMetadata`](#the-preamble-grammar-and-dumpmetadata) |
 | `pgtype.rs`, `resolve.rs`, the type mapping table | [Type resolution](#type-resolution) |
+| whether a mapping is at or above the ADBC driver's, a floor stance | [The floor: the ADBC driver's answer bounds ours](#the-floor-the-adbc-drivers-answer-bounds-ours) |
 | `decode.rs`, a new type's decode/render pair | [Decoders and render-back](#decoders-and-render-back) |
 | `batch.rs`, the zero-copy `Utf8View` path, a batch's flush triggers | [Arrow assembly and the zero-copy path](#arrow-assembly-and-the-zero-copy-path) |
 | `stream.rs`, `map_forward`/`map_file`, replay, resume, projection, predicates, the `--filter` term grammar, the `--where` expression grammar | [Query: mapping and streaming are separate passes](#query-mapping-and-streaming-are-separate-passes) |
@@ -1352,6 +1353,138 @@ value still decodes as the text the file holds, so what is lost is strength,
 not correctness; it is unreachable from any dump whose type names are ordinary
 identifiers, which is every fixture and the koji sample. Fixing it means a real
 type-name tokenizer, a roadmap "Future" item and strictly additive.
+
+### The floor: the ADBC driver's answer bounds ours
+
+**The Arrow type the Arrow ADBC PostgreSQL driver returns for a declared type
+is a *floor*: wherever it yields a real Arrow type, ours is never a widening of
+it.** The table above is better than the floor almost everywhere, and doing
+better is expected; what the floor buys is that doing *worse* becomes a defect
+with a name, rather than an unbounded "every built-in type, eventually" that
+nothing can ever report progress against. `scripts/floor_mapping.py` is the
+join, and [the floor oracle](#the-adbc-floor-oracle) is the evidence it joins
+against.
+
+**The floor is a shipped release, not upstream main** — `apache-arrow-adbc-24`,
+Python `adbc_driver_postgresql` 1.12.0. A floor is a promise about what a user
+could otherwise get, and users get releases; measuring against code nobody can
+install would declare us below a floor that does not exist in the world.
+`scripts/pyproject.toml` pins the version, every row of
+`fixtures/<major>/adbc/floor.tsv` records the version it was taken with, and
+the reconciliation asserts the two are equal — so bumping the pin is the
+deliberate act that obliges re-taking the sweep, and the two cannot drift
+silently. Upstream main is a watch item: two unreleased commits there give
+`uuid` a `FixedSizeBinary(16)` and stamp `POSTGRESQL:type` on every non-root
+field, which is what release 25 will likely ask for and is not what this floor
+says.
+
+*Rejected: measuring against main, so the mapping is ahead of the curve.* It
+inverts what a floor is for — the point is that no user can do better
+elsewhere, not that we match the newest unreleased commit — and it makes the
+evidence unreproducible, since main has no artifact to pin.
+
+**The rule holds where the driver yields a *non-opaque* Arrow type and the two
+encodings denote the same value. Everywhere else the floor is *undefined*, not
+violated — and every row outside it declares why.** Two of those classes are
+placed by a column of the oracle file itself, with no per-type line, which is
+what keeps this coverage unbounded while the work stays bounded:
+
+- **`arrow.opaque`.** The driver's bottom is raw *binary* wire bytes plus a
+  type name; ours is the file's own text. The two are incomparable and ours is
+  the more useful — nobody can read ADBC's `inet`, and anybody can read
+  `192.168.1.0/24`. It is a long tail: `bit`, `varbit`, `inet`, `cidr`,
+  `macaddr`, `macaddr8`, `uuid`, `xml`, `tsvector`, `pg_lsn`, `time with time
+  zone`, the geometric family, every range and multirange, `oidvector`, and
+  **`numeric`**, whose `string` answer is tagged opaque and so is not a floor
+  row at all.
+- **A refusal.** `aclitem` and `gtsvector` answer `E42883` at every major — the
+  server has no binary output function and binary is the only encoding the
+  driver reads — so the floor for them is *nothing*.
+
+The remainder is 24 rows a major, and 19 of them our mapping simply meets. The
+five that do not each carry a stance, in the reconciliation's own table, because
+they are not one kind of thing and a flat exception list could not say that
+`regproc` is unanswerable while `money` is refused:
+
+| Type | Theirs | Ours | Stance |
+|---|---|---|---|
+| `money` | `int64` | `string` | **below by decision** — `KD13`, below |
+| `regproc` | `int32` | `string` | **different encodings**: `regprocout` writes the function's *name*, schema-qualified where the bare name would not resolve and `-` for `InvalidOid`, where the binary encoding ADBC reads is the OID. So "narrower than `Int32`" is not a question the text can be asked — stated over the `reg*` family, of which this is the one member the driver gives a real Arrow type to |
+| `interval` | `month_day_nano_interval` | `string` | **waiting** on the slice that maps it |
+| `int2vector` | `list<item: int16>` | `string` | **waiting** on the slice that maps it |
+| `oid` | `int32` | `uint32` | **narrower**, which the rule permits: `oidout` is `snprintf("%u")` (I39), so the driver's `Int32` turns every OID at or above 2^31 negative. Only a *wider* answer is a violation |
+
+**A waiting row is a disposition, not a register entry.** `KD<k>` means known
+and *not being fixed now*; a row a slice of the open phase closes is being fixed
+now, and allocating a number only to strike it inside the same phase would turn
+the register into a progress tracker. The disposition names the slice instead,
+the reconciliation resolves that name against `STATUS.md`'s checklist so a
+re-slice is reported rather than owed on discipline, and the row closing is what
+deletes the disposition — the check reports a row that has started meeting the
+floor while a stance still stands over it. `money` is the contrast that draws
+the line: it earns an entry precisely because no slice will ever close it.
+
+**The rule is over declared *types*, and it is scoped to fidelity.** Two places
+where we are strictly wider than ADBC are outside it for that reason, and
+neither acquires a stance:
+
+- **The array census.** ADBC names `List<T>` from the type alone and *flattens*
+  a multi-dimensional array into a one-dimensional list; we resolve `List<T>`
+  optimistically and let [the census](#the-array-shape-census) demote a column
+  of mixed dimensionality or `[lb:ub]` decoration to `Utf8View`. Strictly read
+  we are wider; their narrower type is a wrong answer, so scoped to fidelity we
+  are not. `KD3` keeps its own stance and this rule adds nothing to it.
+- **Name resolution.** A type name that needs quoting (`KD4`), or a composite
+  whose body the grammar could not read, resolves `Utf8View` where ADBC —
+  resolving by OID against a live catalog — always gets a real type. Those are
+  per-*dump* facts rather than per-type mapping choices, and a floor stated over
+  columns would report them on every run, which is a signal that is always on.
+
+**The reconciliation fails in both directions**, which is the shape [the
+register-to-oracle reconciliation](#the-register-to-oracle-reconciliation)
+already runs on and for the same reason: a type mapped with no evidence and
+evidence for a type nothing maps decay in opposite directions, and a
+one-directional check leaves whichever half it does not read free to rot. So
+every floor row the rule reaches is either met or dispositioned; every
+`builtin_scalar` arm resolves to a floor row, an arm naming a type no supported
+major declares being a mapping decision with nothing behind it; and every
+disposition is about a row that still needs one. The arms are parsed out of
+`pgtype.rs` — a `match` is not data — and each arm's `DataType` is rendered into
+the file's own pyarrow vocabulary by a table that reports an expression it does
+not carry rather than guessing, so a new arm arrives loudly. `Utf8View` renders
+as `string`: a floor is a claim about which values a column can hold, and the
+three Arrow string layouts hold the same ones.
+
+**What the check computes is equality, not a subtype lattice**, and the
+difference is deliberately conservative. A pair that is not equal is either
+*below* — ours is the text fallback, which is the widest answer there is — or
+*differs*, and both demand a written stance. So no widening can pass silently;
+what it costs is that a difference which is obviously fine, as `oid`'s is, has
+to be said out loud once. Teaching it which Arrow types contain which would let
+a genuine widening through the first time somebody got an ordering wrong, over a
+lattice with one member in it.
+
+**Nothing about this is in the manual.** *"The schema you get is at least as
+good as ADBC's"* is an embedder-facing promise, and the surface an embedder
+would read it against is the embeddable-engine work, which does not exist —
+publishing it now would state a guarantee about an API that has not been
+presented. What exists here is the mechanism that makes the promise checkable
+whenever that work chooses to make it.
+
+<!-- deficiency: KD13 -->
+**That is deficiency `KD13`: `money` is below the floor by decision, and it will
+not be worked.** `cash_out` renders a value through the monetary locale —
+`frac_digits`, `mon_decimal_point`, `mon_thousands_sep`, `currency_symbol` and
+`mon_grouping` — and `pg_dump` sets `lc_monetary` nowhere in its preamble, so
+`1.234,56` and `1,234.56` are the same stored value written under two locales
+and the file cannot say which. That is exactly the bar this section opens with,
+failed: the dump alone does not determine the value. ADBC escapes it only
+because the binary encoding hands it the raw `int64` and it never renders
+anything, and its own documentation calls the answer lossy. The stance is
+**(a)**, a consequence of a deliberate tradeoff: closing it means either
+guessing a locale or asking the user for one, and both are things this project
+declines to do for every other type. The column still resolves `Utf8View` and
+still filters as text, so what is lost is the typed integer, not the data.
 
 ### Joining a header against the metadata
 
@@ -4862,8 +4995,10 @@ sweep and the file format; the generator owns only the container, exactly as it
 does for the comparison oracle.
 
 What the floor *is* — the rule, which rows sit outside it and with what stance
-— is stated beside "The bar", where the mapping decisions live. This section is
-the apparatus.
+— is ["The floor: the ADBC driver's answer bounds
+ours"](#the-floor-the-adbc-drivers-answer-bounds-ours), beside the mapping
+decisions it constrains; `scripts/floor_mapping.py` is the join that reads this
+file against them. This section is the apparatus.
 
 **One row per declarable type, chosen by catalog sweep rather than by a
 list.** `typtype` in `b`, `e`, `r`, `m`, `d`, in `pg_catalog`, `typisdefined`,
@@ -4946,6 +5081,13 @@ both, and that the type set is **additive** across 13→18 — the six multirang
 types and the two BRIN summary types arrive at 14 and nothing goes. A major
 that removed a declarable type is a thing to read rather than to re-baseline,
 since every stance resting on that row has just stopped being about anything.
+
+**A floor pass ends by running the reconciliation**, the way an oracle pass ends
+by running the differ and the register join, and for the same reason: a driver
+release that answers a type differently has to be met with a mapping or a stance
+at the moment it is taken. `scripts/test_floor_mapping.py` is that check's own
+suite — the Rust parse against synthetic sources, the verdict against synthetic
+rows, and the whole join against the committed tree.
 
 ## Testing philosophy
 

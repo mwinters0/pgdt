@@ -28,7 +28,11 @@ generated, rather than as a column of `E42704` nobody reads.
 A third pass takes the **ADBC floor oracle** -- what the Arrow ADBC PostgreSQL
 driver returns for every declarable `pg_catalog` type, written under
 fixtures/<major-version>/adbc/ (docs/design/architecture.md, "The ADBC floor
-oracle"). Its sweep and file format are scripts/adbc_floor.py. Unlike the
+oracle"). Its sweep and file format are scripts/adbc_floor.py, and the pass
+ends by running the floor-to-mapping reconciliation (scripts/floor_mapping.py)
+for the same reason an oracle pass runs the other two: a driver release that
+answers a type differently has to be met with a stance or a mapping at the
+moment it is taken, not found later. Unlike the
 comparison oracle it needs no fixture DDL -- it is a pg_catalog question -- but
 it does need the container reachable *from the host*, because the driver is a
 pip wheel in this script's own `uv` environment rather than something installed
@@ -47,6 +51,7 @@ import time
 from pathlib import Path
 
 import adbc_floor
+import floor_mapping
 import comparison_oracle
 import oracle_differences
 import oracle_register
@@ -525,6 +530,17 @@ def _run() -> int:
                 "the comparison register and the case table no longer cover each "
                 "other — read what `uv run oracle_register.py` names before "
                 "committing.",
+                file=sys.stderr,
+            )
+            return 1
+
+    if not args.skip_floor:
+        print("\nfloor-to-mapping reconciliation:")
+        if floor_mapping.check() != 0:
+            print(
+                "the ADBC floor and our own mapping no longer cover each other — "
+                "read what `uv run floor_mapping.py` names before committing; a "
+                "row the driver newly answers needs a mapping or a stance.",
                 file=sys.stderr,
             )
             return 1

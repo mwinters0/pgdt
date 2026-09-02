@@ -61,7 +61,8 @@ not oblige a sweep").
 | Register against the oracle's answers | working: `the_register_answers_every_committed_oracle_cell`, a unit test in `predicate.rs`, puts every committed cell to the register through the same `resolve_term`/`ResolvedTerm::eval` path a `--filter` takes — **47,746 cells over six majors, all six operators**. Its one-column schema is built by `resolve_columns` from a synthetic `DumpMetadata`, so resolution, nested plan and comparison plan agree the way they do in a real query. It skips an `E`-cell (what the server refused), a NULL right operand (which the filter grammar cannot spell), and — *for the four ordering operators only* — a column the register refuses an ordering operator on, whose set is asserted exactly; `=`/`<>` are still asked of those columns, because equality is never refused. A NULL **left** operand is not skipped: the server's `u` cell is asserted against `Truth::Unknown` itself, rather than against the exclusion it collapses to at the root. **Forty cases are permitted to disagree and every one of them does, in every cell its divergence reaches**: a `jsonb` string leaf (2), `text` under glibc's `en_US.utf8` (30) and a `text[]` element under the same collation (6) — one statement at three depths — over 24 ordering cells each; and `box`'s area equality (2) over 6 `=` cells, PostgreSQL defining no `box <> box`. A disagreeing term must announce a `ComparisonNote` **under that operator** ([`../design/architecture.md`](../design/architecture.md), "The register against the oracle's answers") |
 | Cross-major differ | working: `scripts/oracle_differences.py` walks the majors as a chain of adjacent pairs and files every cell that moved in `fixtures/oracle-differences.tsv` — **533 differences across 13–18, every one of them additive** (I35), so the union rule is checked rather than asserted. `test_oracle_differences.py` asserts the committed file against a fresh computation and, separately, that no difference is non-additive; an oracle pass of `generate_fixtures.py` ends by running the same check ([`../design/architecture.md`](../design/architecture.md), "The cross-major differ") |
 | Register-to-oracle reconciliation | working: `scripts/oracle_register.py` reads the register's arms out of `pgtype.rs` — one per declared base name in `builtin_scalar`, one per `TypeKind` match arm in `comparison_user_type`, the three branches of the walk that are not match arms, and the four branches of `collated_text` — and joins them against the case table both ways, failing on either. **38 arms, 54 cases, nothing uncovered and nothing unplaced.** One arm carries an exemption instead of a case and is reported under its own heading: no oracle case can reach `collation/non-deterministic`, a non-deterministic collation being ICU-only (I42) and an ICU case carrying the `collversion` drift the oracle excludes ICU to avoid. **An exemption names where the arm's evidence is** — `(file, needle)` pointers the check resolves, three unit tests today — because the reason alone says why the oracle cannot cover the arm and nothing about what does; it goes stale from both sides, an exempt arm that acquires a case being a problem and evidence that stops resolving being one too. The pointers name sufficient evidence rather than exhaustive, so the fixture bytes that now carry the shape owe no edit there. Each collation branch is anchored on a string the parse must find, so deleting one is reported rather than shortening the list. The collation is a second dimension: a case's label picks the arm, `C` reaching the bytewise branch and `default` the other two, and the `datcollate` that makes that mapping sound is read out of `meta.tsv` rather than assumed. An oracle pass of `generate_fixtures.py` ends by running it beside the differ ([`../design/architecture.md`](../design/architecture.md), "The register-to-oracle reconciliation") |
-| ADBC floor oracle | `fixtures/<13–18>/adbc/floor.tsv` holds what the Arrow ADBC PostgreSQL driver (`adbc_driver_postgresql` 1.12.0, pinned in `scripts/pyproject.toml`) returns for every declarable `pg_catalog` type — 74 rows at 13, 82 at 14–18, taken from the host over a published port by `scripts/generate_fixtures.py` and committed ([`../design/architecture.md`](../design/architecture.md), "The ADBC floor oracle"). Evidence only: nothing joins it against `builtin_scalar` yet, and the floor rule itself is not stated anywhere |
+| ADBC floor oracle | `fixtures/<13–18>/adbc/floor.tsv` holds what the Arrow ADBC PostgreSQL driver (`adbc_driver_postgresql` 1.12.0, pinned in `scripts/pyproject.toml`) returns for every declarable `pg_catalog` type — 74 rows at 13, 82 at 14–18, taken from the host over a published port by `scripts/generate_fixtures.py` and committed ([`../design/architecture.md`](../design/architecture.md), "The ADBC floor oracle") |
+| The floor rule, reconciled | working: `scripts/floor_mapping.py` joins the oracle against `builtin_scalar` and fails both ways — every floor row the rule reaches is met or carries a stance, every arm resolves to a floor row, and every stance is about a row that still needs one. **58 of the 82 rows a major are placed by the file's own columns** (`arrow.opaque`, or a driver refusal), 19 of the remaining 24 are simply met, and five carry a stance: `money` below by decision (`KD13`), `regproc` unanswerable because the two encodings denote different values, `interval` and `int2vector` waiting on the slices that map them, and `oid` answering `UInt32` where the driver answers `Int32`, which the rule permits. D8's pin is asserted here — the driver version every row records must equal `scripts/pyproject.toml`'s ([`../design/architecture.md`](../design/architecture.md), "The floor: the ADBC driver's answer bounds ours") |
 | Compressed input (`--source foo.dump.xz`) | not started — P13 for xz, P15 for gzip/zstd. Input is assumed already-decompressed plain SQL text; `pg_dump -Fp --compress=…` output is therefore unreadable today ([`../design/pg-dump-compatibility.md`](../design/pg-dump-compatibility.md)). **P13 is grilled, partly specified and blocked**: no crate answers a positioned read over an `.xz` file, so the seekable-xz layer is being carved out into its own repository ([`../design/roadmap-P13-compressed-input.md`](../design/roadmap-P13-compressed-input.md), "Blocked") |
 | Remote input (`--source https://…`), over `object_store` | not started — P14, carved out of P6. `ByteRangeSource` is already shaped against `get_range`/`head`, and there is exactly one implementation: `LocalFileSource` |
 | Python bindings, DataFusion `TableProvider` | not started — P6 |
@@ -138,10 +139,11 @@ The ADBC type floor. Spec:
 - [x] **12.1** The floor oracle — the catalog sweep, `fixtures/<13–18>/adbc/floor.tsv`,
       and the `adbc_driver_postgresql` pin in `scripts/pyproject.toml`. No library code.
       Notes: [`../design/roadmap-P12.1-floor-oracle-notes.md`](../design/roadmap-P12.1-floor-oracle-notes.md)
-- [ ] **12.2** The reconciliation — joins the oracle against `builtin_scalar` and fails
-      both ways; D2's stances as declared exemptions, `interval` and `int2vector` naming
-      12.3 and 12.6; the rule filed beside "The bar"; `money` earns a register entry
-      under stance (a), allocating the next free number in that same change.
+- [x] **12.2** The reconciliation — `scripts/floor_mapping.py`, joining the oracle
+      against `builtin_scalar` and failing both ways; D2's stances as declared
+      dispositions, `interval` and `int2vector` naming 12.3 and 12.6; the rule filed
+      beside "The bar"; `money` earns `KD13` under stance (a). Notes:
+      [`../design/roadmap-P12.2-reconciliation-notes.md`](../design/roadmap-P12.2-reconciliation-notes.md)
 - [ ] **12.3** `interval`: the triple-producing decoder and the resolution arm.
 - [ ] **12.4** `interval`: render-back's sub-microsecond refusal, the comparison
       register's arm, the interval decode failure folded into the existing
@@ -186,8 +188,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD12 -->
-**`KD1`–`KD12` are allocated, and nothing at or below `KD12` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD13 -->
+**`KD1`–`KD13` are allocated, and nothing at or below `KD13` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -283,6 +285,14 @@ here rather than reading as a phase nobody has sliced.
   geometric or hold a `money`-shaped extension type. Detail:
   [`../design/architecture.md`](../design/architecture.md), "Equality is typed
   too".
+
+- **KD13** — `money` is below the ADBC floor: the driver answers `int64` and we
+  answer `Utf8View`, because `cash_out` renders through the monetary locale and
+  `pg_dump` sets `lc_monetary` nowhere, so the file cannot say which locale
+  wrote a value. **(a) deliberate tradeoff** — closing it means guessing a
+  locale or asking for one, which the bar refuses for every other type. Detail:
+  [`../design/architecture.md`](../design/architecture.md), "The floor: the ADBC
+  driver's answer bounds ours".
 
 ## Decisions worth another look
 
