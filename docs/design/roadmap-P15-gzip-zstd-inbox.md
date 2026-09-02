@@ -33,7 +33,7 @@ than a rewrite of every caller.
 ## The seekable-xz crate is xz-only on purpose, and generalizing it was rejected
 
 **Fact.** The external crate P13 is blocked on
-(`/mnt/wd12t/fedora/experiments/xz-seek/requirements-pgdump-query.md`) puts
+(`/mnt/wd12t/fedora/experiments/xz-seek/docs/design/historical/initial.md`) puts
 gzip and zstd explicitly out of scope. The reason is the entry above: the exact
 uncompressed size from the container's own footer is load-bearing in that
 crate's interface (its R3), and a crate that treats three codecs as one shape

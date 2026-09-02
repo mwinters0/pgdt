@@ -54,7 +54,7 @@ countable, and that is the number this phase should be designed against.
 
 ## The seekable-xz crate reads its compressed bytes through a trait, on purpose
 
-**Fact.** `/mnt/wd12t/fedora/experiments/xz-seek/requirements-pgdump-query.md`
+**Fact.** `/mnt/wd12t/fedora/experiments/xz-seek/docs/design/historical/initial.md`
 requires (R2) that the crate never open files, taking its compressed input
 through a caller-supplied positioned-read trait instead — explicitly so that the
 same crate serves a local file, an `mmap`, an in-memory buffer, and this phase's

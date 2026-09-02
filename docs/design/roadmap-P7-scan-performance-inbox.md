@@ -709,5 +709,5 @@ decoders stay independent of one another and of any shared cursor, behind the
 same positioned-read interface.
 
 **Origin.** 2026-09-02, grilling P13. Re-check
-`/mnt/wd12t/fedora/experiments/xz-seek/requirements-pgdump-query.md` for what
+`/mnt/wd12t/fedora/experiments/xz-seek/docs/design/historical/initial.md` for what
 the crate actually committed to.

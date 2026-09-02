@@ -288,11 +288,19 @@ uncompressed stream — as a library primitive.** The substrates are all there a
 two of them are permissively licensed; the addressing layer is what is missing.
 
 That layer is its own piece of software, with its own test corpus and its own
-fuzzing story, and it is not `pgdump_query`'s subject matter. **It goes in a
-separate crate and a separate repository**, on the pattern already set by the
-collation spike (`CLAUDE.local.md`, "Collation spike"): the requirements are
-written from here and kept there, and nothing in this repo builds against it
-until it exists.
+fuzzing story, and it is not `pgdump_query`'s subject matter. **It lives in a
+separate crate and a separate repository** — provisionally `xz-seek`, running on
+a copy of this project's process and skills — on the pattern already set by the
+collation spike (`CLAUDE.local.md`): the requirements are written from here and
+kept there, as that repo's frozen `docs/design/historical/initial.md`, and
+nothing here builds against it or is scheduled to.
+
+**The requirements are stated there, not here**, and the two that bind this
+phase hardest are worth naming: the seek table must be an extractable,
+re-injectable value, since D5 persists it and nobody may re-walk 31,150 footers;
+and the crate takes its compressed bytes through a caller-supplied trait rather
+than opening files, which is what makes D3's composition — and P14's remote
+case — work at all.
 
 **P13 is therefore blocked on that crate.** D1–D6 above stand — they are
 decisions about `pgdump_query`, not about the decoder — and the phase resumes
