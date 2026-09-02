@@ -685,3 +685,29 @@ compressed source is set by cores and decode rate, not by
 **Contingent on** P13 landing first, which is this table's order. If it slips
 behind this phase, the entry becomes a constraint on defaults rather than a
 case to implement.
+
+---
+
+## Parallel xz decode is worth ~3.3x, and the seekable-xz crate is being shaped to allow it
+
+**Fact.** On a 300 MiB stream-aligned slice of the koji `.xz`: one `xz -dc -T1`
+process reaches ~446 MB/s of plaintext at 108% CPU; `xz -dc -T8` on the same
+slice reaches **the same 446 MB/s**, because xz's threaded decoder parallelises
+blocks *within* a stream and every stream in that file holds one block; four
+`xz -dc -T1` processes on four stream-aligned pieces reach **~1.48 GB/s** at
+397% CPU, near-linear. Probes, not figures — no harness, no `drop_caches`.
+
+**Why P7 cares.** A compressed source inverts the arithmetic behind
+"device-bound": it reads 19x fewer bytes and pays for them in CPU, so the
+readahead, chunk-size and parallelism defaults this phase sets have two source
+shapes to satisfy rather than one. The discovery half of parallelism is already
+solved for a seekable stream — block boundaries are known up front from the
+index — so this is the case where P7's "Parallelism" section has only the easy
+half left. The external `xz-seek` crate P13 is blocked on is being specified to
+*defer* parallel decode but not design it out: its requirements say the block
+decoders stay independent of one another and of any shared cursor, behind the
+same positioned-read interface.
+
+**Origin.** 2026-09-02, grilling P13. Re-check
+`/mnt/wd12t/fedora/experiments/xz-seek/requirements-pgdump-query.md` for what
+the crate actually committed to.

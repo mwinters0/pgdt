@@ -16,13 +16,13 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P5, P9, P11 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
-| P13 — compressed input | Sketched; not grilled | this file, below; [inbox](roadmap-P13-compressed-input-inbox.md) |
+| P13 — compressed input | Specified; **blocked**, and its remaining decisions ungrilled | [`roadmap-P13-compressed-input.md`](roadmap-P13-compressed-input.md) — waits on an external seekable-xz crate; inbox drained |
 | P7 — scan performance | Sketched; design doc ahead of its phase | [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md); [inbox](roadmap-P7-scan-performance-inbox.md) |
 | P12 — ADBC type floor | Sketched; not grilled | this file, below; [inbox](roadmap-P12-adbc-type-floor-inbox.md) |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
-| P14 — remote input | Sketched; not grilled | this file, below |
+| P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
-| P15 — gzip and zstd input | Sketched; not grilled | this file, below |
+| P15 — gzip and zstd input | Sketched; not grilled | this file, below; [inbox](roadmap-P15-gzip-zstd-inbox.md) |
 | P8 — format coverage | Sketched; not grilled | this file, below; [inbox](roadmap-P8-format-coverage-inbox.md) |
 
 **A row's state is one of `Sketched`, `Specified`, `Current`, `Complete` or
@@ -335,54 +335,21 @@ item; see below.
 
 ## P13 — Compressed input
 
-**Inbox:** [`roadmap-P13-compressed-input-inbox.md`](roadmap-P13-compressed-input-inbox.md) — the
-evidence found while sketching this phase, including what the koji sample's own
-`.xz` turns out to be. Drain it when grilling this phase.
+**Specified, and blocked**:
+[`roadmap-P13-compressed-input.md`](roadmap-P13-compressed-input.md) holds the
+six decisions this phase has settled — what `size()` promises, which xz shapes
+are read, `ByteRangeSource` becoming dyn-compatible, `stored_size()`, where the
+seek table lives, and the decoder's read policy — together with the evidence
+they rest on.
 
-Read an `.xz`-compressed plain dump directly — `pgdq --source koji.dump.xz` —
-in every shape xz has: multi-stream, multi-block, and the single-block file
-that is not seekable at all. Other codecs are P15's; an archive container's
-*internal* per-entry compression is P8 Track B's and shares nothing with this
-phase but a decoder.
+It is blocked because **no crate answers a positioned read over an `.xz` file**.
+That addressing layer is being carved out into its own crate and repository, on
+the collation spike's pattern: the requirements are written from here and kept
+there (`CLAUDE.local.md`). The phase's remaining decisions — how a source is
+recognised as xz, the diagnostic that announces a non-seekable file, the
+fixtures, the figures owed, and the slice list — are grilled when it unblocks.
 
-**The trait already fits and the cost model does not.** A decompressing
-`ByteRangeSource` satisfies `read_range`/`size`/`modified` exactly; what it
-cannot satisfy is the assumption every caller above it makes without stating —
-that a read at an arbitrary offset costs what a read at the next offset costs.
-Three consequences shape the phase:
-
-- **`size()` is answered before any scan starts** — `scan::scan`,
-  `stream::map_forward` and `index::build_index` each take it first and clamp
-  every read against it. An xz stream carries its exact uncompressed size in
-  its own index, which is the real reason this phase is xz and P15 is the rest.
-- **Two callers seek backwards.** `stream.rs`'s replay returns to the target
-  block's `header_offset` after the mapping pass has walked past it, and
-  `map.rs`'s `attach_text` re-reads the gaps behind a finished scan. Over a
-  seekable stream each costs a decode from the enclosing block; over a
-  single-block one, a decode from zero. Whether pgdq refuses, degrades, or
-  restructures those two callers is this phase's central decision — and the
-  Future item *"let a live scan emit rows again, by carrying the map in the
-  resume token"* is one of the available answers, promoted from an optimization
-  to an enabler by a source that cannot cheaply go back.
-- **The seek table belongs in the cache.** Mapping an uncompressed offset to a
-  compressed one is derivable from the file's own footers and expensive enough
-  to re-derive that it should be persisted once. `ContainerKind` is the slot
-  that exists for saying what produced an index's offsets, and
-  `SourceIdentity` records the *compressed* file's size while every offset
-  beside it is an uncompressed one — two facts that must never be silently
-  conflated. A cache-format change is what makes this a phase rather than
-  out-of-band work.
-
-**Scheduled ahead of P7.** It is the maintainer's priority, and it changes what
-that phase is measuring: a compressed source inverts the arithmetic behind
-"device-bound", because it reads an order of magnitude fewer bytes and pays for
-them in CPU. P7 sets readahead, chunk-size and parallelism defaults, and it
-should set them knowing both source shapes exist.
-
-**Parallel decode is not this phase's.** A seekable stream's block boundaries
-are known up front, which makes decoding them concurrently P7's "Parallelism"
-section with its hard half — discovery — already solved. It is filed in that
-phase's inbox rather than duplicated here.
+Its inbox has been drained.
 
 ## P7 — Scan performance
 
@@ -636,6 +603,8 @@ cannot touch the mapping pass".
 
 ## P14 — Remote input
 
+**Inbox:** [`roadmap-P14-remote-input-inbox.md`](roadmap-P14-remote-input-inbox.md) — facts P13's grilling filed for this one. Drain it when grilling this phase.
+
 Read a dump over the network: `pgdq --source https://example.com/foo.dump`
 and, with P13, the `.xz` beside it. Carved out of P6, which sketched it as one
 bullet — an `object_store`-backed `ByteRangeSource` is an L1 addition, not a
@@ -703,6 +672,8 @@ the largest of the five and none of it decays by waiting: the entries are
 questions this phase must answer, not evidence that ages.
 
 ## P15 — gzip and zstd input
+
+**Inbox:** [`roadmap-P15-gzip-zstd-inbox.md`](roadmap-P15-gzip-zstd-inbox.md) — facts P13's grilling filed for this one. Drain it when grilling this phase.
 
 The codecs P13 leaves behind: `.gz` and `.zst`, in the single-stream shape and
 in the seekable ones (`bgzip`'s BGZF, `t2sz`'s zstd seekable format). Two things
