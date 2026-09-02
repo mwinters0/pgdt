@@ -288,6 +288,13 @@ One message when the loop ends:
 - Why the loop stopped, quoting the trigger — the new "Decisions worth another
   look" entry in full, or the failing test's output, or "no slices remain in
   Phase N".
+- **Every live entry under "Decisions worth another look", quoted in full — not
+  only the ones this loop added.** A standing entry is a stop condition nobody
+  re-triggers: the rule that closes one fires when the maintainer *answers*, so
+  an entry nobody surfaced is never answered and never closed, and `STATUS.md`
+  cannot tell it apart from one that was read and kept. The handback is the only
+  moment that reliably fires, so it is where the whole section gets read out. If
+  the section is empty, say so — that is information too.
 - Any long job still running: its handoff doc's path, what `check` last said,
   and how to stop it. The maintainer inherits it. If one failed instead: the
   `FAILURE.md` path, the one-line diagnosis, and what is left behind to clean
@@ -297,3 +304,27 @@ One message when the loop ends:
 
 Never soften a failure into progress, and never report a round you did not
 verify yourself.
+
+## A review does not re-arm the loop
+
+When the loop stopped on a "Decisions worth another look" entry and the
+maintainer then reviews it — with `/dwal` or otherwise — **the loop is over.**
+Closing the entries does not resume it, and neither does closing every entry. Do
+not start another round, do not offer to "pick up where the loop left off", and
+do not treat the review as the answer that unblocks the next slice. `/gosub`
+restarts only when the maintainer invokes it again.
+
+The reason is that a review is a re-plan. Reviewing entries reverses deferrals,
+admits out-of-band rows, and adds slices that did not exist — so the "next
+unticked box" the loop would have resumed on is no longer the next piece of
+work, and a blocking ledger row may now sit ahead of it. A loop that re-arms
+itself after a review runs against a roadmap that changed while the maintainer's
+attention was being spent, which is the one moment it is least safe to be
+unattended.
+
+**`/gosolo` is the exception, and it is one by construction.** There the
+grilling happens *inside* the loop: `/gm` settles the frontier, commits the
+closures, and the loop resumes at a fresh baseline precisely because it knows the
+plan may have moved. That is `/gosolo`'s Override 1, stated in its own skill. A
+review the *maintainer* ran is not that, whichever loop was running when it
+stopped.

@@ -773,6 +773,7 @@ until then.
 | # | Date | Blocks | What changed | Why |
 |---|---|---|---|---|
 | `M43` | 2026-09-02 | | the unattended loop can carry a whole phase: `/gosolo` runs `gosub` with a new entry under "Decisions worth another look" as a transition rather than a stop, `/gm` stands in for the maintainer by adjudicating each `/dwal` recommendation against the written record — agreeing only on a citation, escalating anything that binds beyond the open phase — and records the exchange verbatim outside the repo; every agent in the stack is disposable, `/gm` retiring itself and its griller at a rotation boundary and `/gosolo` starting a fresh pair from the repo; `/go` reads this ledger as a work queue, taking a row whose `Blocks` names the open phase ahead of the next unticked slice | [`../status/history/2026-09-02.md`](../status/history/2026-09-02.md) |
+| `M44` | 2026-09-02 | | two loop rules imported back from `schemadetection`: a handback reads out **every** live "Decisions worth another look" entry rather than only the ones the loop added, and a maintainer's review does **not** re-arm `/gosub` — a review is a re-plan, and `/gosolo`'s Override 1 is the one exception. `grilling` gains that project's sub-agent fact-finding, unblocked, and its record-every-specific-in-the-same-turn rule; the three-questions-per-round format stays | [`../status/history/2026-09-02.md`](../status/history/2026-09-02.md) |
 
 ## Future — wanted, unscheduled
 
