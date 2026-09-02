@@ -19,8 +19,9 @@ it — the displaced clause included — the enum and bare `numeric`, the
 whole text-held type queue, `jsonb` included, `character(n)`'s trim, typed
 `=`/`!=`, the non-deterministic collation the dump states — read, and now
 observed in committed bytes — the three-valued expression tree, the
-`--where` grammar that reaches it from the command line, and the refusal that
-keeps the two filter flags meaning one thing landed. Its checklist is below.
+`--where` grammar that reaches it from the command line, the refusal that
+keeps the two filter flags meaning one thing, and the four `*_in` supersets a
+nested literal is read with landed. Its checklist is below.
 
 [`../design/measurements.md`](../design/measurements.md) carries the `b70589f`
 stamp, and **`uv run measure.py --stale` names twelve of its thirteen figures**
@@ -37,7 +38,7 @@ not oblige a sweep").
 | Full byte-exact file map — every byte in exactly one span, verified over every fixture | working |
 | DDL object inventory: TOC enrichment, referenced roles and tablespaces, object census | working |
 | Best-effort structural cache with source-identity checking and cache-only inspection | working |
-| Arrays, composites, ranges, multiranges | typed and decoded end to end: `List<T>`, `Struct<…>`, the five-field range struct, `List<`range struct`>`, `List<List<T>>`. Three shapes stay strings, each with its own resolution outcome — an opaque element type, an element type that is itself an array (I26), and values that disagree on shape |
+| Arrays, composites, ranges, multiranges | typed and decoded end to end: `List<T>`, `Struct<…>`, the five-field range struct, `List<`range struct`>`, `List<List<T>>`. Three shapes stay strings, each with its own resolution outcome — an opaque element type, an element type that is itself an array (I26), and values that disagree on shape. **Comparison is still text**: the `*_in` supersets a nested filter literal will be read with are implemented and checked against the oracle at six majors (`nested::parse_array`/`parse_record`/`parse_range`/`parse_multirange`, I44), and nothing calls one yet |
 | Array shape census | recorded by every mapping pass and consumed: a query retypes its top-level array columns from the union over the blocks it will replay, before the first batch |
 | CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, cache-only `info` | working; **`parse` is the only scanner** — it resumes from a matching cache, banks at `COPY` block boundaries under a self-tuning throttle, and saves unconditionally on Ctrl-C (exit 130/143). `info` reports from the cache and never scans. `--verbose` adds each block's byte offsets, a per-column resolution line, an enum column's declared labels beneath it, and — under the `user-defined types` count that heads it — one line per user-defined type, every `TypeKind` arm rendered with its payload. Text output shape is provisional; `--json` carries no shape promise at all, and states the labels once per type in `metadata.databases[].types[]` rather than per column |
 | Partial reporting | `info` reports an unfinished scan's cache for as far as it got, with `Scan completion: N%` stated once at the top and nothing below it qualified. An interrupted cache is **typed** for every database segment the scan finished (I1) |
@@ -220,6 +221,16 @@ entry is owed against these changes' own shas, which they do not have while the
 work is uncommitted; the six figures declaring `main.rs` are held red by the
 five commits above either way.
 
+**11.9 touched one declared path and owes the same reachability entry.** The
+four `parse_*` functions are new code in `pgdump_query/src/nested.rs`, which
+`nested-end-to-end`, `cross-file-floor`, `projection-widths` and
+`nested-decode-micro` declare — and **nothing calls one**, in the library or
+the CLI, which is the slice's own contract. So the excuse is reachability at
+its strongest: not "no registered command shape reaches it" but "no code path
+reaches it at all", and the `decode_*` half every one of those figures actually
+runs is byte-identical. Those four figures are held red by the commits above
+either way.
+
 ## P11 progress
 
 The spec is
@@ -348,9 +359,15 @@ progress.
       single `Leaf`, so no string means one thing under `--filter` and another
       under `--where`. `KD11` is **struck**. Notes:
       [`../design/roadmap-P11.13-two-flags-notes.md`](../design/roadmap-P11.13-two-flags-notes.md)
-- [ ] **11.9** The nested literal input grammar — the
-      `array_in`/`record_in`/`range_in` superset, checked against the oracle's
-      malformed cases. No comparison yet.
+- [x] **11.9** The nested literal input grammar — `parse_array`,
+      `parse_record`, `parse_range` and `parse_multirange` beside the four
+      `decode_*` they mirror, each transcribed from the **newest** major's
+      function; I44 added, with the one place two supported majors disagree
+      (v17's `array_in` rewrite takes `{{},{}}`); and the acceptance walk in
+      `tests/nested.rs` over every nested row of each major's
+      `oracle/literals.tsv`, with the canonicalizations 11.10 owes asserted as
+      exact sets. No comparison — nothing calls a `parse_*` yet. Notes:
+      [`../design/roadmap-P11.9-nested-literal-grammar-notes.md`](../design/roadmap-P11.9-nested-literal-grammar-notes.md)
 - [ ] **11.10** Nested structural comparison — element-wise, field-wise and
       bound-wise, the NULL rule, inherited comparability, range
       canonicalization, and paths in the comparison notes.

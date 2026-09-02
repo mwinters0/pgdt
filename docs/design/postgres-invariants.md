@@ -1088,11 +1088,12 @@ same doubling emit loop, over a scan that adds `[` and `]`.
 with no escaping step between them.
 
 **Scope limit.** These are the *output* functions, so the invariant is about
-what a dump contains, not about what the corresponding `*_in` functions accept
-(they are considerably more permissive — `array_in` accepts unquoted whitespace
-padding, for instance). A reader must handle what is emitted; a *renderer* that
-claims to reproduce a dump byte-for-byte must reproduce the `needquote`
-predicates exactly, including the `NULL` case-fold and the whitespace test.
+what a dump contains, not about what the corresponding `*_in` functions accept.
+Those are considerably more permissive, and disagree with each other where
+these three merely differ — **I44** is that half. A reader must handle what is
+emitted; a *renderer* that claims to reproduce a dump byte-for-byte must
+reproduce the `needquote` predicates exactly, including the `NULL` case-fold
+and the whitespace test.
 
 **Verified against:** v13.23, v16.15, v18.6 — the `needquote`/`nq` predicates
 and both emit loops are character-for-character identical across all three.
@@ -2966,3 +2967,127 @@ grep -rn -A2 'ucs_basic' \
   /mnt/wd12t/upstream/postgres/release-v<N>/src/include/catalog/pg_collation.dat \
   /mnt/wd12t/upstream/postgres/release-v<N>/src/bin/initdb/initdb.c
 ```
+
+---
+
+## I44 — The four container `*_in` grammars are supersets of their `*_out` forms, and they disagree with each other
+
+**Claim.** For each container form, the input function accepts strictly more
+than the matching output function writes (I20's scope limit), and the four
+supersets are **not one grammar wearing four hats**. They disagree on
+whitespace, on where quoting and escapes may appear, on how SQL NULL is
+spelled, and on whether arity is checked at all:
+
+| Form | Whitespace around a part | Escapes / quotes outside where `*_out` puts them | SQL NULL | Arity |
+|---|---|---|---|---|
+| `array_in` | **dropped** — leading and trailing, per element | `\` anywhere, `"` around all of an element or none of it | bare `NULL`, matched case-insensitively, only where the element carries no quote and no escape | not checked; dimensionality is deduced from the braces or declared |
+| `record_in` | **kept, byte for byte** | `\` anywhere, `"` may open and close mid-field | nothing at all between separators; `""` is the empty string | **checked** — exactly the composite's declared field count |
+| `range_in` | **kept, byte for byte** inside a bound; skipped outside the brackets | the same as `record_in` | not applicable — a bound is never NULL, and nothing at all is *unbounded* | fixed at two bounds |
+| `multirange_in` | dropped between members; a member is a substring, so its own blanks survive | delegated — the member text goes to `range_in` unchanged | not applicable | any number of members |
+
+Four consequences worth stating on their own:
+
+- **`( 1 , a )` and `{ 1 , a }` do not mean the same thing.** The composite
+  keeps both fields' blanks and force-quotes them back on output as
+  `(1," a ")` — the `1` loses its blanks to `int4in`, not to `record_in` — while
+  the array canonicalizes to `{1,2}`. A parser written once against the array
+  rules and reused for the other two eats a composite field's blanks and
+  matches nothing.
+- **Whitespace is the same six characters in all four**: space, `\t`, `\n`,
+  `\r`, `\v`, `\f`. `array_isspace` (through v16), `scanner_isspace` (v17+) and
+  the C locale's `isspace` (record, range, multirange) agree exactly, so one
+  predicate serves the family.
+- **An array's dimension decoration takes forms `array_out` never writes**:
+  `[n]` as well as `[m:n]`, a sign on either bound, whitespace between items
+  and after the `=`, and an all-1 decoration that the output function drops
+  (`[1:2]={1,2}` is `{1,2}`). A dimension with `ub < lb` is `2202E`
+  (`array_subscript_error`), not `22P02`.
+- **`empty` is case-insensitive**, may carry whitespace on either side, and is
+  accepted as a `multirange_in` member — where it is silently dropped, though
+  `multirange_out` never writes one.
+
+**The one place two supported majors disagree is `array_in`, and it is
+additive.** v17 replaced `ArrayCount` + `ReadArrayStr` with a single-pass
+`ReadArrayStr` + `ReadArrayToken`, and the rewrite accepts a right brace
+terminating an **empty sub-array**: `{{},{}}` is `22P02` on 13–16 and the empty
+array `{}` on 17–18. Every other difference found is presentational (which
+`errdetail` is produced). `record_in`, `range_parse`/`range_parse_bound` and
+`multirange_in` are character-for-character unchanged across the range, apart
+from the soft-error (`escontext`) plumbing.
+
+**What the grammar cannot see.** Two server refusals are not grammar refusals
+and no parser can reproduce them without the subtype's own order:
+`int4range '[10,1)'` is `22000` from `range_serialize`'s bound comparison, and
+`multirange_in` sorts, coalesces and empty-drops its members
+(`{[5,6),[1,2)}` → `{[1,2),[5,6)}`, `{[1,3),[2,5)}` → `{[1,5)}`, `{[1,1)}` →
+`{}`). A discrete range also canonicalizes its bounds — `int4range '[1,10]'` is
+`[1,11)` — through the subtype's successor function.
+
+**Proof.** `array_in`/`ArrayCount`/`ReadArrayStr` in
+`src/backend/utils/adt/arrayfuncs.c` through v16, and
+`array_in`/`ReadArrayDimensions`/`ReadDimensionInt`/`ReadArrayStr`/`ReadArrayToken`
+in the same file from v17; `record_in` in `rowtypes.c`; `range_parse` and
+`range_parse_bound` in `rangetypes.c`; `multirange_in` in
+`multirangetypes.c`. The whitespace claim is `array_isspace` in `arrayfuncs.c`,
+`scanner_isspace` in `src/backend/parser/scansup.c`, and the C-locale `isspace`
+the other three call.
+
+**Observed.** Every row above was put to a live server before it was written
+down, on `postgres:16.15-trixie` and `postgres:18.6-trixie`, through the probe
+below. The committed evidence is the acceptance walk in
+`pgdump_query/tests/nested.rs` (`oracle::the_input_grammars_accept_exactly_what_the_server_accepted`),
+which asserts every nested row of `fixtures/<13-18>/oracle/literals.tsv`
+against the parsers — 397 literals over six majors.
+
+**Scope limit.** The *container* grammar only. What each element, field or
+bound means is the element type's own `*_in`, which is wider than its `*_out`
+in its own ways and is not covered here — so a literal this invariant says is
+well-formed can still be refused by the type underneath it, and an element's
+spelling can still differ from what `*_out` would write for the same value.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
+observed on 16.15 and 18.6.
+
+**Relied on by:** [`architecture.md`](architecture.md), "The nested literal
+codec" — `parse_array`/`parse_record`/`parse_range`/`parse_multirange`, which
+implement the **newest** grammar unconditionally, per the union rule.
+
+**Re-verify.** Read the functions:
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+grep -n -A40 '^ReadArrayToken' src/backend/utils/adt/arrayfuncs.c   # v17+
+grep -n -A60 '^ArrayCount' src/backend/utils/adt/arrayfuncs.c       # through v16
+grep -n -A30 'Check for null: completely empty input' src/backend/utils/adt/rowtypes.c
+grep -n -A40 '^range_parse_bound' src/backend/utils/adt/rangetypes.c
+grep -n -A40 'MULTIRANGE_BEFORE_RANGE' src/backend/utils/adt/multirangetypes.c
+```
+
+And ask a server, which is a minute per major:
+
+```sh
+docker run -d --rm --name pgdq-i44 -e POSTGRES_HOST_AUTH_METHOD=trust postgres:<N>-trixie
+docker exec -i pgdq-i44 psql -qtA -U postgres <<'SQL'
+CREATE TYPE point2d AS (x integer, y text);
+CREATE FUNCTION probe(typ text, lit text) RETURNS text LANGUAGE plpgsql AS $$
+DECLARE out text;
+BEGIN
+  EXECUTE format('SELECT textin(%s($1::%s))',
+                 (SELECT typoutput::text FROM pg_type WHERE oid = typ::regtype), typ)
+    INTO out USING lit;
+  RETURN coalesce(out, '<null>');
+EXCEPTION WHEN others THEN RETURN 'E' || SQLSTATE;
+END $$;
+SELECT t.typ, t.lit, probe(t.typ, t.lit) FROM (VALUES
+  ('integer[]', '{{},{}}'), ('integer[]', '[2]={1,2}'), ('integer[]', '[1:2] = {1,2}'),
+  ('text[]', '{ a , b }'), ('text[]', '{"a"b}'), ('text[]', '{N\ULL}'),
+  ('point2d', '( 1 , a )'), ('point2d', '()'), ('point2d', '(1,a,b)'),
+  ('int4range', '[ 1 , 10 )'), ('int4range', 'EMPTY'), ('int4range', '[10,1)'),
+  ('int4multirange', '{empty}'), ('int4multirange', '{[5,6),[1,2)}')
+) AS t(typ, lit);
+SQL
+docker rm -f pgdq-i44
+```
+
+Confirm `{{},{}}` is the only cell that moves between 16 and 18, and that
+`( 1 , a )` still keeps its blanks where `{ a , b }` drops them.

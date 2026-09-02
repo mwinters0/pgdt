@@ -256,3 +256,220 @@ async fn the_fixture_carries_the_array_shapes_the_census_will_have_to_report() {
         );
     }
 }
+
+/// The input grammars against the committed comparison oracle: every literal
+/// row of `fixtures/<13-18>/oracle/literals.tsv` whose declared type resolves
+/// to a nested one, put to `parse_*` and compared with whether the server
+/// itself accepted it (`docs/design/architecture.md`, "The comparison
+/// oracle").
+///
+/// **This is what the `*_in` supersets are checked against.** The spec's
+/// stated risk runs toward over-acceptance — a literal we take that the server
+/// refuses is a divergence in the direction nothing else here permits — and
+/// the oracle's malformed rows are the only evidence of where that line is
+/// that was not written by the same hand as the parser.
+mod oracle {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::path::{Path, PathBuf};
+
+    use pgdump_query::cache::CacheMode;
+    use pgdump_query::copy::{decode_field, split_fields};
+    use pgdump_query::nested::{
+        parse_array, parse_multirange, parse_range, parse_record, render_array, render_multirange,
+        render_range, render_record,
+    };
+    use pgdump_query::{
+        LocalFileSource, NestedPlan, ScanOptions, TypeDef, TypeOutcome, preamble_only,
+        resolve_declared_type,
+    };
+
+    /// The majors `scripts/generate_fixtures.py` generates.
+    const MAJORS: [u32; 6] = [13, 14, 15, 16, 17, 18];
+
+    /// The oracle's declared types that resolve to a nested plan, asserted as
+    /// an exact set so a type that quietly stops being nested — or a new
+    /// nested case nobody wired up — fails here rather than passing as one
+    /// more skip.
+    ///
+    /// **`public.intarr[]` is deliberately absent** even though its literals
+    /// are array literals: an array whose element is an array (I26) resolves
+    /// to `TypeOutcome::NestedArrayElement`, so the column is text and
+    /// compares as text (`KD3`). The parser reads its literals perfectly well
+    /// — `nested.rs`'s unit tests carry the shape — but nothing will ever ask
+    /// it to.
+    const NESTED: &[&str] = &[
+        "integer[]",
+        "text[]",
+        "public.mood[]",
+        "public.point2d",
+        "public.tagged",
+        "public.empty_comp",
+        "int4range",
+        "numrange",
+        "daterange",
+        "tsrange",
+        "tstzrange",
+        "public.myrange",
+        "public.textrange",
+        "int4multirange",
+        "public.myrange_multi",
+    ];
+
+    /// Accepted rows where this build's re-rendering is *not* the server's
+    /// output, as `(type, input)` — the canonicalization 11.10 owns, and
+    /// **met**: every entry differs in every major that carries the case, and
+    /// every difference is an entry.
+    ///
+    /// Two mechanisms, and neither is the container grammar:
+    ///
+    /// - **The element's own type canonicalizes.** `( 1 , a )` keeps both
+    ///   fields' blanks (that is `record_in`), and then `int4in` throws the
+    ///   first field's away while `textin` keeps the second's. Putting the two
+    ///   sides of a comparison into one spelling is per element and needs the
+    ///   element type, which this module does not have.
+    /// - **A discrete range canonicalizes its bounds.** `int4range`'s
+    ///   `[1,10]` is `[1,11)` on the server, through the subtype's successor
+    ///   function; `numrange` has none and is absent here for that reason.
+    const CANONICALIZED: &[(&str, &str)] = &[
+        ("public.point2d", "( 1 , a )"),
+        ("int4range", "[1,10]"),
+        ("int4range", "(0,10)"),
+        ("daterange", "[2020-01-01,2020-01-01]"),
+    ];
+
+    /// Rows the server refuses for a reason the *grammar* cannot see, so the
+    /// parser accepts them: `[10,1)` is well-formed and its bounds are out of
+    /// order, which needs the subtype's comparison. Asserted as an exact set
+    /// for the same reason as the two above.
+    const SEMANTIC_REFUSALS: &[(&str, &str)] = &[("int4range", "[10,1)")];
+
+    fn fixture(major: u32, rest: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../fixtures/{major}/{rest}"))
+    }
+
+    /// Split one COPY TEXT line of a committed oracle file into its decoded
+    /// fields — the same L1 decoder that reads a dump, because the server
+    /// wrote these files with `COPY ... TO STDOUT`.
+    fn rows(path: &Path) -> Vec<Vec<Option<String>>> {
+        let bytes = std::fs::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        bytes
+            .split(|&b| b == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| {
+                split_fields(line)
+                    .map(|f| decode_field(f).unwrap().map(|v| v.into_owned()))
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Every major's `CREATE TYPE`/`CREATE DOMAIN` list, read from the `types`
+    /// fixture that major's oracle database was loaded from.
+    async fn types_of(major: u32) -> Vec<TypeDef> {
+        let source = LocalFileSource::open(fixture(major, "types/default.sql")).unwrap();
+        let (metadata, _) =
+            preamble_only(&source, &ScanOptions::default(), &CacheMode::Disabled).await.unwrap();
+        metadata.databases.into_iter().next().expect("a dump names a database").types
+    }
+
+    /// Which parser a declared type's literals belong to, **read off
+    /// resolution** rather than off a hand-kept list — so a case whose type
+    /// changes shape is re-classified rather than silently mis-parsed.
+    fn parser(declared: &str, types: &[TypeDef]) -> Option<fn(&str) -> Option<String>> {
+        let TypeOutcome::Mapped(_, plan) = resolve_declared_type(declared, types) else {
+            return None;
+        };
+        match plan {
+            NestedPlan::Scalar => None,
+            NestedPlan::Array(_) => Some(|s| parse_array(s).as_ref().map(render_array)),
+            NestedPlan::Record(fields) => match fields.len() {
+                0 => Some(|s| parse_record(s, 0).as_ref().map(render_record)),
+                1 => Some(|s| parse_record(s, 1).as_ref().map(render_record)),
+                2 => Some(|s| parse_record(s, 2).as_ref().map(render_record)),
+                n => panic!("no oracle composite has {n} fields"),
+            },
+            NestedPlan::Range(_) => Some(|s| parse_range(s).as_ref().map(render_range)),
+            NestedPlan::Multirange(_) => {
+                Some(|s| parse_multirange(s).map(|m| render_multirange(&m)))
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn the_input_grammars_accept_exactly_what_the_server_accepted() {
+        let mut seen_types: BTreeSet<String> = BTreeSet::new();
+        // Keyed by case, valued by the majors it showed up in, so "met" can
+        // mean met everywhere rather than met somewhere.
+        let mut canonicalized: BTreeMap<(String, String), usize> = BTreeMap::new();
+        let mut semantic: BTreeMap<(String, String), usize> = BTreeMap::new();
+        let mut carried: BTreeMap<(String, String), usize> = BTreeMap::new();
+        let mut asserted = 0usize;
+
+        for major in MAJORS {
+            let types = types_of(major).await;
+            for row in rows(&fixture(major, "oracle/literals.tsv")) {
+                let declared = row[0].clone().expect("a case names a type");
+                let Some(parse) = parser(&declared, &types) else { continue };
+                seen_types.insert(declared.clone());
+                // A SQL NULL input is the `\N` field, not a literal.
+                let Some(input) = row[1].clone() else { continue };
+                let status = row[2].as_deref().expect("a case records its status");
+                // The type itself does not exist at this major — `int4range`'s
+                // multirange companion before v14 — which says nothing about
+                // the grammar.
+                if status == "E42704" {
+                    continue;
+                }
+                let case = (declared.clone(), input.clone());
+                *carried.entry(case.clone()).or_default() += 1;
+                asserted += 1;
+                let got = parse(&input);
+                if status == "ok" {
+                    let output = row[3].as_deref().expect("an accepted literal has an output");
+                    let got = got.unwrap_or_else(|| {
+                        panic!("{major} {declared}: refused {input:?}, which the server took")
+                    });
+                    if got != output {
+                        assert!(
+                            CANONICALIZED.contains(&(declared.as_str(), input.as_str())),
+                            "{major} {declared}: {input:?} re-renders as {got:?}, not the \
+                             server's {output:?}"
+                        );
+                        *canonicalized.entry(case).or_default() += 1;
+                    }
+                } else if got.is_some() {
+                    assert!(
+                        SEMANTIC_REFUSALS.contains(&(declared.as_str(), input.as_str())),
+                        "{major} {declared}: accepted {input:?}, which the server refused with \
+                         {status}"
+                    );
+                    *semantic.entry(case).or_default() += 1;
+                }
+            }
+        }
+
+        assert_eq!(
+            seen_types,
+            NESTED.iter().map(|s| s.to_string()).collect::<BTreeSet<_>>(),
+            "the oracle's declared types that resolve to a nested plan"
+        );
+        for (name, found, expected) in [
+            ("canonicalized", &canonicalized, CANONICALIZED),
+            ("semantic refusals", &semantic, SEMANTIC_REFUSALS),
+        ] {
+            let expected: BTreeSet<_> =
+                expected.iter().map(|(t, l)| (t.to_string(), l.to_string())).collect();
+            let got: BTreeSet<_> = found.keys().cloned().collect();
+            assert_eq!(got, expected, "the {name} set");
+            // An entry is keyed by the case, so a difference that stopped
+            // happening for one major must not leave it satisfied by the rest.
+            let partial: Vec<_> =
+                expected.iter().filter(|case| found[*case] != carried[*case]).collect();
+            assert!(partial.is_empty(), "{name} met in only part of the walk: {partial:?}");
+        }
+        // A floor, not a count: the walk skips a row for three good reasons,
+        // and a bug in any of them would leave it asserting almost nothing
+        // while passing. 397 today.
+        assert!(asserted > 350, "only {asserted} literals asserted");
+    }
+}

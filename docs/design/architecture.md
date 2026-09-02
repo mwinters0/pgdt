@@ -64,7 +64,7 @@ through.
 | Declared-type string → Arrow `DataType`; domain/enum/range/multirange resolution; `NestedPlan`; the comparison register (`comparison_for`, `ComparisonPlan`) | `pgdump_query/src/pgtype.rs` | L2 |
 | `ResolvedSchema`/`ColumnResolution`/`ColumnNote` — joins a `COPY` header against `DumpMetadata`, and carries each column's comparison plan | `pgdump_query/src/resolve.rs` | L2 |
 | Per-type field decode + render-back | `pgdump_query/src/decode.rs` | L2 |
-| Array / record / range / multirange literal decode + render-back | `pgdump_query/src/nested.rs` | L2 |
+| Array / record / range / multirange literal decode + render-back, and the `*_in` supersets a filter literal is read with | `pgdump_query/src/nested.rs` | L2 |
 | Arrow batch assembly (`ColumnBuilder`, `RowBatcher`), push-mode `read_table` | `pgdump_query/src/batch.rs` | L3 |
 | Pull-mode `table_stream`, `map_forward`, `map_file` (`pgdq parse`'s scan), replay, `ResumeToken`, `ScanExtent` | `pgdump_query/src/stream.rs` | L4 |
 | Post-parse predicate | `pgdump_query/src/predicate.rs` | L4 |
@@ -1555,6 +1555,51 @@ Three properties are load-bearing and easy to lose:
 to round-trip. A force-quote predicate transcribed even slightly wrong from
 `arrayfuncs.c`/`rowtypes.c`/`rangetypes.c` fails there against values
 PostgreSQL itself wrote.
+
+**The literal side is a second, separate scanner.** `decode_*` reads what a dump *holds*; `parse_array`/`parse_record`/
+`parse_range`/`parse_multirange` read what a user *typed* — a filter's
+right-hand side, which the `*_in` functions accept a good deal more of than
+`*_out` ever writes (I44). The two directions may not be one scanner with a
+leniency flag: `decode_*`'s strictness is exactly what makes it and `render_*`
+inverses, and loosening it turns a value that decodes and re-renders
+differently into a silent wrong answer, while tightening `parse_*` makes
+`--filter 'tags={a, b}'` fail on a space and a typed nested filter worse to use
+than the text comparison it replaces.
+
+**They are four grammars, not one, and whitespace is where they first
+disagree.** `array_in` drops unquoted whitespace around an element; `record_in`
+and `range_in` keep every byte of it, so `( 1 , a )` is a two-field value whose
+second field is `" a "`. One predicate still serves all four, because
+`array_isspace`, `scanner_isspace` and the C locale's `isspace` are the same six
+characters. Three more asymmetries carry their weight in the code: `record_in`
+**checks arity**, which is why `parse_record` takes the declared field count
+and `decode_record` does not; `array_in`'s bare `NULL` is disqualified by any
+quote or escape in the element; and a `multirange_in` member spelled `empty` is
+accepted and dropped.
+
+Each parser is a transcription of the **newest** major's function, with no
+branch on the dump's version — the phase's union rule, and the one place two
+supported majors disagree is v17's `array_in` rewrite accepting `{{},{}}` where
+13–16 refuse it (I44). Under-accepting relative to `strtol` in a dimension item
+is deliberate: refusing what the server takes costs the user an error message,
+where taking what the server refuses is the divergence direction nothing else
+here permits.
+
+**What comes back is the parts as the user spelled them**, not as the element
+type's `*_out` would write them. `parse_record("( 1 , a )", 2)` yields
+`" 1 "` and `" a "`, where the server stores `1` and `" a "` — `int4in` threw
+the first field's blanks away, not `record_in`. Putting the two sides of a
+comparison into one spelling is per element and needs the element type, which
+this module does not have; a discrete range's `[1,10]` → `[1,11)` and a
+multirange's sort-coalesce-drop are the same missing piece one level up.
+
+`tests/nested.rs`'s `oracle` module is where the supersets are checked: every
+nested row of `fixtures/<13-18>/oracle/literals.tsv` — 397 literals over six
+majors — parsed and compared against whether the server itself accepted it,
+with the four canonicalization exceptions and the one semantic refusal
+(`int4range '[10,1)'`, which is well-formed and out of order) asserted as exact
+sets. That file is the only evidence of where the line sits that was not
+written by the same hand as the parser.
 
 `docs/manual/type-handling.md` is the user-facing statement of what recovers
 exactly and what stays a string; this section covers only what an implementer
