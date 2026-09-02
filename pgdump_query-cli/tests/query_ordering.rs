@@ -162,14 +162,18 @@ fn a_literal_that_is_not_of_the_columns_type_is_refused() {
     assert!(stderr.contains("integer"), "{stderr}");
 }
 
-/// The help text and the parser agree that `<`/`<=`/`>`/`>=` exist, so a
-/// term the parser cannot split still lists them.
+/// The message and the parser agree on the operator set, so a term the parser
+/// cannot split lists every operator that would have worked — the worded ones
+/// included, since a user who reaches this message has already been refused
+/// once.
 #[test]
 fn the_usage_message_names_every_operator() {
     let out = query("public.t_int", "v_integer", &["--filter", "nonsense"]);
     assert!(!out.status.success());
     let stderr = stderr_of(&out);
-    for op in ["!=", "<", "<=", ">", ">="] {
+    for op in
+        ["!=", "<", "<=", ">", ">=", "IS DISTINCT FROM", "IS NOT DISTINCT FROM", "IS NOT NULL"]
+    {
         assert!(stderr.contains(op), "usage does not name `{op}`: {stderr}");
     }
 }

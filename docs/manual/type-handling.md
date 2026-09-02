@@ -386,10 +386,55 @@ space or an operator character is named:
 operator in it, so `--filter 'note=this is null'` is an equality against the
 value `this is null`.
 
+`column IS DISTINCT FROM value` and `column IS NOT DISTINCT FROM value` are
+`!=` and `=` with NULL counted as a value rather than as unknown, which is the
+one thing plain negation cannot say:
+
+```sh
+--filter 'is_active IS DISTINCT FROM t'      # also keeps the rows where it is NULL
+--filter 'is_active != t'                    # drops them, as SQL does
+```
+
+Any run of whitespace separates the words and the case is free. Whichever
+operator comes first in the term wins, so `--filter 'note=a is distinct from
+b'` is the equality it reads as, and a column whose name really is
+`is distinct from` is still asked for as `--filter 'is distinct from=x'`.
+
 **`--column` and `--table` take their names exactly as given** — there is no
 quoting to strip there, because the shell has already delimited the argument.
 `--column '"name"'` looks for a column whose name really does begin and end
 with a quote mark, and says so when it does not find one.
+
+### Combining terms: `--where`
+
+A repeated `--filter` is an `AND`. For anything else — `OR`, negation,
+grouping — there is `--where`, which takes one expression over exactly the
+terms above:
+
+```sh
+pgdq query --source dump.sql --table public.widgets \
+  --where 'name=alpha or (name=beta and is_active=t)'
+pgdq query --source dump.sql --table public.widgets --where 'not name=alpha'
+```
+
+`NOT` binds tighter than `AND`, which binds tighter than `OR`; parens
+override that. The keywords are case-insensitive, and they are only keywords
+outside quotes — `--where 'tag=and'` is still an equality against `and`, and
+so is `--where 'tag="and"'`.
+
+**A value that holds a paren must be quoted**, because a bare `(` groups:
+
+```sh
+--where "v='(1,a)'"     # a composite literal, quoted
+--where 'v=(1,a)'       # refused: the ( opens a group
+```
+
+Given both flags, the expression and every `--filter` term must all hold.
+
+`--filter` is untouched by any of this. A term is never read as an
+expression, so `--filter 'note=a or b'` is the equality against `a or b` it
+always was; the same string under `--where` is `note=a` and then a leaf `b`,
+which is not a term at all and is refused before the dump is opened.
 
 ### Arrays, composites, ranges, and multiranges
 

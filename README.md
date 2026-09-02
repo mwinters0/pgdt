@@ -15,7 +15,8 @@ What works today: streaming row extraction from plain-format dumps into typed
 Arrow batches — arrays, composites, ranges and multiranges included — a full
 byte-exact file map and DDL object inventory, a resumable scan that reports
 what it has, a best-effort structural cache, and pushdown: column projection
-and a filter that is a conjunction of typed single-column comparisons. What is
+and a filter that is a boolean expression — `AND`, `OR`, `NOT` and parens —
+over typed single-column comparisons. What is
 next — engine bindings, richer predicates, the performance campaign,
 row-group statistics, archive formats — is in
 [`docs/design/roadmap.md`](docs/design/roadmap.md). See

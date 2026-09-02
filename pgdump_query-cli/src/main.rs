@@ -17,6 +17,8 @@ use pgdump_query::{
     QueryOptions, ScanOptions, Severity, Span, SpanBody, TypeKind, preamble_only, render_field,
 };
 
+mod where_expr;
+
 #[derive(Parser)]
 #[command(
     name = "pgdq",
@@ -109,7 +111,7 @@ enum Command {
         json: bool,
     },
     /// Stream a table's rows, optionally projected to named columns and
-    /// filtered by a conjunction of single-column predicates.
+    /// filtered by a boolean expression over single-column predicates.
     Query {
         /// The dump file to scan. `query` can never answer from a cache
         /// alone — row data is never cached — so this is always required.
@@ -125,10 +127,12 @@ enum Command {
         dqcache: Option<PathBuf>,
         /// Single-column filter: `column=value`, `column!=value`,
         /// `column<value`, `column<=value`, `column>value`,
-        /// `column>=value`, `column IS NULL`, or `column IS NOT NULL`.
-        /// Repeatable — every term must match, so the terms are ANDed. There
-        /// is no `OR` and no negation of a whole term
-        /// (`docs/design/architecture.md`, "Predicates").
+        /// `column>=value`, `column IS DISTINCT FROM value`,
+        /// `column IS NOT DISTINCT FROM value`, `column IS NULL`, or
+        /// `column IS NOT NULL`. Repeatable — every term must match, so the
+        /// terms are ANDed. `OR`, negation and grouping are `--where`, which
+        /// takes an expression over these same terms; giving both flags ANDs
+        /// them (`docs/design/architecture.md`, "Predicates").
         ///
         /// Every operator but the two NULL tests compares **typed**: the
         /// filter's value is read with the column's own decoder, so a value
@@ -145,6 +149,25 @@ enum Command {
         /// for: `"a=b"=x`.
         #[arg(long)]
         filter: Vec<String>,
+        /// Boolean expression over `--filter`'s terms: `AND`, `OR`, `NOT` and
+        /// parens, with `NOT` binding tighter than `AND` and `AND` tighter
+        /// than `OR`. The keywords are case-insensitive and are recognised
+        /// only outside quotes, so `--where 'tag=and'` is still an equality
+        /// against `and`.
+        ///
+        /// Anything that is not a paren or a keyword is a term, read by
+        /// exactly the grammar `--filter` reads — so `--where 'note=a and b'`
+        /// is `note=a` AND the term `b`, which has no operator and is
+        /// refused. The same string under `--filter` is the equality it
+        /// reads as; that is what the two flags are for, and no `--filter`
+        /// string changes meaning.
+        ///
+        /// A value that holds a paren or an unquoted keyword needs quoting —
+        /// `--where "v='(1,a)'"` — since a bare `(` groups.
+        ///
+        /// Given with `--filter`, the expression and every term are ANDed.
+        #[arg(long = "where", value_name = "EXPR")]
+        where_expr: Option<String>,
         /// Materialize only this column, repeatable — the output carries the
         /// columns in the order the flags give them, which need not be the
         /// file's. A name the table does not carry is an error, and so is a
@@ -217,6 +240,62 @@ const FILTER_OPS: [(&str, PredicateOp); 6] = [
     ("<", PredicateOp::Lt),
 ];
 
+/// `word` at `i`, case-insensitively, and where it ends.
+fn word_at(bytes: &[u8], i: usize, word: &str) -> Option<usize> {
+    let end = i + word.len();
+    (bytes.len() >= end && bytes[i..end].eq_ignore_ascii_case(word.as_bytes())).then_some(end)
+}
+
+/// Past the run of ASCII whitespace starting at `i` — `None` where there is
+/// none, since every gap in the worded operators below must be a real one.
+fn skip_spaces(bytes: &[u8], i: usize) -> Option<usize> {
+    let mut j = i;
+    while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+        j += 1;
+    }
+    (j > i).then_some(j)
+}
+
+/// `IS DISTINCT FROM` / `IS NOT DISTINCT FROM` starting at `i`, and how many
+/// bytes it runs for — the two worded infix operators, offered to the same
+/// positional scan the punctuation spellings go through so that **the
+/// earliest operator still wins**. `note=a is distinct from b` is therefore
+/// the equality it was before this existed, and `a is distinct from b=c` is
+/// the distinctness test, exactly as `name=a>b` and `a>b=c` already split.
+///
+/// **Whitespace is required on both sides of the phrase**, which is what
+/// keeps the addition from re-reading any term that parsed before: a column
+/// named `is distinct from` is still askable as `is distinct from=x`, since
+/// the phrase there is followed by `=` rather than by a space. What does
+/// change meaning is a term whose *column* is spelled with the phrase in it
+/// surrounded by spaces — `a is distinct from b=c` — and that is loud, not
+/// silent: the column it now names is `a`.
+///
+/// Any run of whitespace separates the words, as in SQL, and the case is
+/// free.
+fn distinct_from_at(bytes: &[u8], i: usize) -> Option<(usize, PredicateOp)> {
+    if i == 0 || !bytes[i - 1].is_ascii_whitespace() {
+        return None;
+    }
+    let mut j = skip_spaces(bytes, word_at(bytes, i, "is")?)?;
+    let op = match word_at(bytes, j, "not") {
+        Some(after) => {
+            j = skip_spaces(bytes, after)?;
+            PredicateOp::IsNotDistinctFrom
+        }
+        None => PredicateOp::IsDistinctFrom,
+    };
+    j = skip_spaces(bytes, word_at(bytes, j, "distinct")?)?;
+    let end = word_at(bytes, j, "from")?;
+    // A value has to follow, and be separated from `FROM`: without this,
+    // `v is distinct from` alone would split into an empty value rather than
+    // falling through to the usage message it deserves.
+    if !bytes.get(end).is_some_and(u8::is_ascii_whitespace) {
+        return None;
+    }
+    Some((end - i, op))
+}
+
 /// Split `spec` at its operator.
 ///
 /// **The earliest position wins, and the longest spelling at that position.**
@@ -228,6 +307,11 @@ const FILTER_OPS: [(&str, PredicateOp); 6] = [
 /// `"a=b"=x`. A quote that never closes is its own outcome rather than "no
 /// operator": the operator it swallowed is real, and reinterpreting the term
 /// without it is the silent-wrong-answer shape this grammar exists to remove.
+///
+/// The two worded operators ([`distinct_from_at`]) are candidates at the same
+/// positions, so they obey the same earliest-wins rule rather than being a
+/// pass of their own — a pass would make `note=a is distinct from b` a
+/// distinctness test on a column called `note=a`.
 fn split_filter_op(spec: &str) -> FilterSplit<'_> {
     let bytes = spec.as_bytes();
     // The scan walks *bytes*, and compares bytes: every character it looks
@@ -262,6 +346,9 @@ fn split_filter_op(spec: &str) -> FilterSplit<'_> {
                     .find(|(symbol, _)| bytes[i..].starts_with(symbol.as_bytes()))
                 {
                     return FilterSplit::Op(&spec[..i], op, &spec[i + symbol.len()..]);
+                }
+                if let Some((len, op)) = distinct_from_at(bytes, i) {
+                    return FilterSplit::Op(&spec[..i], op, &spec[i + len..]);
                 }
                 i += 1;
             }
@@ -338,10 +425,12 @@ fn unbalanced_quote(what: &str, quote: char, spec: &str) -> anyhow::Error {
     )
 }
 
-/// Parse one `--filter` argument into a [`Predicate`] — one term of the
-/// conjunction the flag's repetitions build: `column<op>value` for any of the
-/// six comparison spellings, or `column IS NULL` / `column IS NOT NULL` (the
-/// `IS` forms matched case-insensitively after the column name — see
+/// Parse one filter term into a [`Predicate`] — one term of the conjunction
+/// a repeated `--filter` builds, and equally the **leaf** of a `--where`
+/// expression ([`where_expr`]), which is one grammar rather than two:
+/// `column<op>value` for any of the six comparison spellings,
+/// `column IS [NOT] DISTINCT FROM value`, or `column IS NULL` /
+/// `column IS NOT NULL` (the worded forms matched case-insensitively — see
 /// `docs/design/architecture.md`, "A filter term is parsed for two
 /// audiences").
 ///
@@ -372,7 +461,7 @@ fn parse_filter(spec: &str) -> Result<Predicate> {
                 }
             }
             anyhow::bail!(
-                "--filter must be `column=value` (or `!=`, `<`, `<=`, `>`, `>=`), `column IS NULL`, or `column IS NOT NULL`, got `{spec}`"
+                "--filter must be `column=value` (or `!=`, `<`, `<=`, `>`, `>=`), `column IS DISTINCT FROM value`, `column IS NOT DISTINCT FROM value`, `column IS NULL`, or `column IS NOT NULL`, got `{spec}`"
             )
         }
     }
@@ -640,6 +729,7 @@ async fn main() -> Result<()> {
             table,
             dqcache,
             filter,
+            where_expr,
             column,
             no_columns,
             database,
@@ -649,9 +739,22 @@ async fn main() -> Result<()> {
             // Every term is parsed before the file is opened, so a
             // malformed one is reported without a scan; the library then
             // resolves each against the block's own schema.
-            let filter = pgdump_query::Expr::all(
-                filter.iter().map(String::as_str).map(parse_filter).collect::<Result<Vec<_>>>()?,
-            );
+            let terms =
+                filter.iter().map(String::as_str).map(parse_filter).collect::<Result<Vec<_>>>()?;
+            let filter = match where_expr {
+                // Byte for byte the tree a repeated `--filter` always built,
+                // including the empty conjunction that keeps every row.
+                None => pgdump_query::Expr::all(terms),
+                Some(spec) if terms.is_empty() => where_expr::parse_where(&spec)?,
+                // Both flags: one conjunction of the expression and the
+                // terms, flattened rather than nested, since nothing in the
+                // library prefers either shape.
+                Some(spec) => pgdump_query::Expr::And(
+                    std::iter::once(where_expr::parse_where(&spec)?)
+                        .chain(terms.into_iter().map(pgdump_query::Expr::Term))
+                        .collect(),
+                ),
+            };
             let source = LocalFileSource::open(&file)?;
             let mut header_printed = false;
             let mut any_batch = false;
@@ -1585,6 +1688,60 @@ mod tests {
     #[test]
     fn the_earliest_operator_outside_quotes_still_wins() {
         assert_eq!(ok("name=alpha>x"), ("name".into(), PredicateOp::Eq, Some("alpha>x".into())));
+    }
+
+    /// The two worded infix operators, in every case and with any run of
+    /// whitespace between their words — the spelling
+    /// `PredicateOp::symbol` already names them by, so the grammar and every
+    /// refusal message agree without a second table.
+    #[test]
+    fn the_distinct_from_forms_parse() {
+        assert_eq!(
+            ok("v is distinct from 1"),
+            ("v".into(), PredicateOp::IsDistinctFrom, Some("1".into()))
+        );
+        assert_eq!(
+            ok("v IS NOT DISTINCT FROM 1"),
+            ("v".into(), PredicateOp::IsNotDistinctFrom, Some("1".into()))
+        );
+        assert_eq!(
+            ok("v Is  Not   Distinct\tFrom  ' x'"),
+            ("v".into(), PredicateOp::IsNotDistinctFrom, Some(" x".into()))
+        );
+    }
+
+    /// **A worded operator is a candidate at a position, not a pass of its
+    /// own**, so the earliest operator still wins in both directions: the
+    /// punctuation one when it is to the left, the phrase when it is.
+    #[test]
+    fn the_earliest_operator_wins_against_a_worded_one_too() {
+        assert_eq!(
+            ok("note=a is distinct from b"),
+            ("note".into(), PredicateOp::Eq, Some("a is distinct from b".into()))
+        );
+        assert_eq!(
+            ok("a is distinct from b=c"),
+            ("a".into(), PredicateOp::IsDistinctFrom, Some("b=c".into()))
+        );
+    }
+
+    /// The phrase needs whitespace on both sides, which is what keeps every
+    /// term that parsed before parsing the same way: a column named
+    /// `is distinct from` is still askable unquoted, because what follows the
+    /// phrase there is `=` rather than a space.
+    #[test]
+    fn a_worded_operator_needs_whitespace_around_it() {
+        assert_eq!(
+            ok("is distinct from=x"),
+            ("is distinct from".into(), PredicateOp::Eq, Some("x".into()))
+        );
+        // Only the exact words, and only with a value after them: a prefix
+        // match on `distinctly`, or a `FROM` with nothing behind it, falls
+        // through to the usage message rather than splitting.
+        for spec in ["v is distinctly from x", "v is distinct from"] {
+            let message = err(spec);
+            assert!(message.contains("--filter must be"), "`{spec}`: {message}");
+        }
     }
 
     /// **The `IS` forms are the fallback.** Stripping the suffix from the

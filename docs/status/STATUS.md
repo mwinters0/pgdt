@@ -18,7 +18,8 @@ reconciliation, the declared collation and the fixture columns that observe
 it — the displaced clause included — the enum and bare `numeric`, the
 whole text-held type queue, `jsonb` included, `character(n)`'s trim, typed
 `=`/`!=`, the non-deterministic collation the dump states — read, and now
-observed in committed bytes — and the three-valued expression tree landed. Its
+observed in committed bytes — the three-valued expression tree, and the
+`--where` grammar that reaches it from the command line landed. Its
 checklist is below.
 
 [`../design/measurements.md`](../design/measurements.md) carries the `b70589f`
@@ -42,8 +43,9 @@ not oblige a sweep").
 | Partial reporting | `info` reports an unfinished scan's cache for as far as it got, with `Scan completion: N%` stated once at the top and nothing below it qualified. An interrupted cache is **typed** for every database segment the scan finished (I1) |
 | Measurement harness | `scripts/measure.py` takes every figure in [`../design/measurements.md`](../design/measurements.md) and emits that doc's tables — thirteen figures, twelve taken by a sweep and one derived across two, each declaring what invalidates it and which documents repeat it. `measure.UNTAKEN` is empty: nothing is built and unrun |
 | Column projection | working, library and CLI: `QueryOptions::projection` names columns, cuts the reported `ResolvedSchema` with the batches, may reorder, and may be empty (`COUNT(*)`); `pgdq query` spells it `--column <name>` repeated, or `--no-columns`, which prints no header so `\| wc -l` is a row count. A filter may name a column the projection does not, and an unprojected column is never decoded, so projecting a column away escapes its `Error::FieldDecode` — including `KD2`'s, which the error message does not name ([`../design/architecture.md`](../design/architecture.md), "Projection"; [`../manual/type-handling.md`](../manual/type-handling.md)). Measured on one 3.00 GiB file at five widths: `--no-columns` is 3.28 µs a row against 27.50 for all 19, the two array columns alone are +12.98 and the composite +0.77 ([`../design/measurements.md`](../design/measurements.md), "What a column costs") |
-| The filter expression, evaluated three-valued | working: `QueryOptions::filter` is one `Expr` — `Term`/`And`/`Or`/`Not`, `And` and `Or` n-ary — evaluated in SQL's `True`/`False`/`Unknown` domain, a row surviving only where the root is `True`. A NULL field is `Unknown` under every comparing operator, which is the row set the old collapse gave for every conjunction and is what makes `Not` expressible at all. `IS DISTINCT FROM`/`IS NOT DISTINCT FROM` come with it, being the one thing `Not` cannot spell. Short-circuiting is defined against the *root*: `And` stops at the first non-`True` unless a `Not` is above it, which is where a decode failure surfaces or does not. Nothing folds two terms, so a contradictory pair is a query with no rows. **`Or`, `Not` and the two `IS DISTINCT FROM` forms are library-only** — `pgdq query --filter <term>` repeated is still one conjunction, and the `--where` grammar is 11.8 ([`../design/architecture.md`](../design/architecture.md), "Predicates") |
-| The `--filter` term grammar | working, CLI only — `Predicate` is a struct an embedder fills in, so nothing below L4 parses a term. Whitespace outside quotes is trimmed on both sides of the operator; `'` and `"` both quote either side, matching pairs only, with an interior quote doubled; the operator split skips quoted regions, so a column named `a=b` is askable; and the `IS NULL` forms are the fallback, tried only on a term with no operator, which is what makes `note=this is null` the equality it reads as. A malformed quote is refused, never reinterpreted. `--column` and `--table` take their names verbatim and say so when a quoted-looking name is not found ([`../design/architecture.md`](../design/architecture.md), "A filter term is parsed for two audiences"; [`../manual/type-handling.md`](../manual/type-handling.md), "Writing a filter term") |
+| The filter expression, evaluated three-valued | working: `QueryOptions::filter` is one `Expr` — `Term`/`And`/`Or`/`Not`, `And` and `Or` n-ary — evaluated in SQL's `True`/`False`/`Unknown` domain, a row surviving only where the root is `True`. A NULL field is `Unknown` under every comparing operator, which is the row set the old collapse gave for every conjunction and is what makes `Not` expressible at all. `IS DISTINCT FROM`/`IS NOT DISTINCT FROM` come with it, being the one thing `Not` cannot spell. Short-circuiting is defined against the *root*: `And` stops at the first non-`True` unless a `Not` is above it, which is where a decode failure surfaces or does not. Nothing folds two terms, so a contradictory pair is a query with no rows. Reachable from the CLI as well as the library: `pgdq query --where <expr>` builds the tree and a repeated `--filter` still builds the conjunction ([`../design/architecture.md`](../design/architecture.md), "Predicates") |
+| The `--where` expression grammar | working, CLI only — `Expr` is an enum an embedder fills in, so nothing below L4 parses an expression. Parens group, `NOT` binds tighter than `AND` and `AND` tighter than `OR`, the keywords are case-insensitive and are keywords only outside quotes, and everything that is not a paren or a keyword is a term handed to the `--filter` grammar unchanged. A keyword is recognised only against whitespace or a paren, so `tag=and` stays an equality; a `NOT` after the word `is` belongs to the term, so `IS NOT NULL` and `IS NOT DISTINCT FROM` survive whole; juxtaposition is not an implicit `AND`; and a value holding a paren must be quoted. Both flags together are one conjunction. **No `--filter` string changes meaning** — that is what the separate flag buys ([`../design/architecture.md`](../design/architecture.md), "`--where` builds an expression out of those terms"; [`../manual/type-handling.md`](../manual/type-handling.md), "Combining terms: `--where`") |
+| The `--filter` term grammar | working, CLI only — `Predicate` is a struct an embedder fills in, so nothing below L4 parses a term. Whitespace outside quotes is trimmed on both sides of the operator; `'` and `"` both quote either side, matching pairs only, with an interior quote doubled; the operator split skips quoted regions, so a column named `a=b` is askable; and the `IS NULL` forms are the fallback, tried only on a term with no operator, which is what makes `note=this is null` the equality it reads as. `IS DISTINCT FROM`/`IS NOT DISTINCT FROM` are candidates at the same positions the punctuation spellings are, so the earliest operator still wins in both directions, and the phrase needs whitespace on both sides — which is what leaves a column named `is distinct from` askable as `is distinct from=x`. A malformed quote is refused, never reinterpreted. `--column` and `--table` take their names verbatim and say so when a quoted-looking name is not found ([`../design/architecture.md`](../design/architecture.md), "A filter term is parsed for two audiences"; [`../manual/type-handling.md`](../manual/type-handling.md), "Writing a filter term") |
 | Typed ordering operators (`<`, `<=`, `>`, `>=`) | working, library and CLI: each side is decoded with the column's own decoder — the field per row, the literal once when the block's schema resolves — and the decoded values compared, so `9 > 10` is true on an `integer`. Available on a column that resolved `Mapped` with a `Scalar` plan and refused on any other, which is also why `--schema-mode strings` refuses every one of them. An undecodable literal is `Error::PredicateValueDecode` before any row; a field that is genuinely undecodable is `Error::FieldDecode`, worded as the build path words it ([`../design/architecture.md`](../design/architecture.md), "Ordering operators compare typed") |
 | Typed `=` / `!=` | working, library and CLI: they route through the same per-column `ComparisonPlan`, so `--filter 'price=1.5'` matches a `numeric(10,2)` written `1.50` and `--filter 'code=ab'` matches a padded `char(10)`. **Three canonicalizations**: the literal rendered once into the file's `*_out` form (everything not below — `=` on a `text` column is the byte comparison it always was), the field narrowed per row (`character(n)`), and both sides decoded per row for the seven kinds where the file's spelling is not unique or where reproducing `*_out` would mean re-implementing an output function — bare `numeric`, `interval`, `jsonb`, `real`/`double precision`, `time with time zone`, `inet`/`cidr`. Equality is never *refused* on a column the register does not compare; it falls back to text, which is right for a nested column and a guess for an unmodelled scalar (`KD10`). A literal that is not a value of the column's type is `Error::PredicateValueDecode` before any row, on the same output-form-only grammar, and the refusal names the form that column's comparison reads rather than only the value it turned down — a `boolean` is written `t` or `f`, an enum's clause lists its declared labels (the first twelve, then a count) and a `numeric(p,s)`'s names the scale it refuses a finer literal against ([`../design/architecture.md`](../design/architecture.md), "Equality is typed too"; [`../manual/type-handling.md`](../manual/type-handling.md), "`=` and `!=` compare values, not spellings") |
 | Seven string-shaped types that still order typed | working: `interval` by `interval_cmp_value`'s 128-bit span, so `1 mon`, `30 days` and `720:00:00` are one bound; `time with time zone` by the UTC instant then the stored zone; `inet`/`cidr` by family, shorter prefix, netmask, address; `macaddr`/`macaddr8` by their octets (I40); and `jsonb` by `compareJsonbContainers`' walk down two documents — kind before value, a container's size before its members, and a top-level scalar inside the pseudo-array that makes it outrank `[]` (I41). None has an Arrow type, so the *ordering* is the only path that decodes them. The first six read a literal in the type's own `*_out` spelling and no wider — `1 month` and `08-00-2b-01-02-03` are refused by name, which is a property rather than a deficiency since every value a dump holds is already in the accepted form. `jsonb` is the exception and takes the whole of `jsonb_in`, because `{"a":1}` is what a person types and `{"a": 1}` is what the file holds ([`../manual/type-handling.md`](../manual/type-handling.md), "Seven string-shaped types still order the way PostgreSQL orders them") |
@@ -204,6 +206,19 @@ is compared once per cache open — and **not** for `preamble.rs`:
 `preamble-prepass` *is* the prepass measurement, so it stays red on its merits
 exactly as `M28`'s and `eca96be`'s additions left it.
 
+**11.8 touched one declared path and owes a reachability entry it cannot yet
+name.** The `--where` grammar is a new file, `pgdump_query-cli/src/where_expr.rs`,
+which no figure declares; what lands in the CLI's `main.rs` is the flag, one
+more candidate in `split_filter_op`'s positional scan, and the two-flag filter
+construction — all of it once per invocation, none of it on a row path. The
+excuse is reachability, the same one `9ed21d4` carries for the term grammar it
+extends: **no registered command shape passes `--filter` or `--where`**, so
+nothing added here executes in a figure, and the tree a shape with neither flag
+hands the library is the same `Expr::all([])` it was. The entry is owed against
+this change's own sha, which it does not have while the work is uncommitted;
+the six figures declaring `main.rs` are held red by the five commits above
+either way.
+
 ## P11 progress
 
 The spec is
@@ -322,8 +337,11 @@ progress.
       asserted as `Truth::Unknown`. Library only — the CLI still builds one
       conjunction. Notes:
       [`../design/roadmap-P11.7-three-valued-evaluation-notes.md`](../design/roadmap-P11.7-three-valued-evaluation-notes.md)
-- [ ] **11.8** `--where` — the expression grammar in its own CLI module, leaf
-      delegated to `parse_filter`; `--filter` unchanged.
+- [x] **11.8** `--where` — the expression grammar in its own CLI module, leaf
+      delegated to `parse_filter`; `--filter` unchanged. The term grammar
+      gained the two `IS DISTINCT FROM` spellings with it, which no slice row
+      named and which the phase's operator surface commits to. Notes:
+      [`../design/roadmap-P11.8-where-notes.md`](../design/roadmap-P11.8-where-notes.md)
 - [ ] **11.9** The nested literal input grammar — the
       `array_in`/`record_in`/`range_in` superset, checked against the oracle's
       malformed cases. No comparison yet.
@@ -472,3 +490,20 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **`IS DISTINCT FROM` reaches `--filter`, not just `--where`, and 11.8 was
+  where it landed.** The phase's operator surface commits to the two forms and
+  says "the cost is in the term grammar", but no slice row names them: 11.7 is
+  library-only and 11.8's row says only "the expression grammar, leaf delegated
+  to `parse_filter`". Left out, they would have reached the wrap unspellable
+  from the tool, which is what the spec rejects for `Or` and `Not`. They went
+  into `parse_filter` rather than into the `--where` module, so one term
+  grammar serves both flags and `PredicateOp::symbol`'s spelling stays the only
+  table. **What that changes about `--filter`:** it accepts two operators it
+  refused before, and one string that parsed before now parses differently — a
+  term whose *column* is spelled with ` is distinct from ` in it between
+  spaces, which now names the text left of the phrase. That is loud rather
+  than silent, and the quoting remedy is the one the grammar already teaches
+  for a column named `is null`. Reconsidering it would mean either a
+  `--where`-only spelling (a second term grammar) or no CLI spelling at all
+  (the operators stay library-only past the phase).

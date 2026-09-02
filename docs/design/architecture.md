@@ -39,7 +39,7 @@ through.
 | `pgtype.rs`, `resolve.rs`, the type mapping table | [Type resolution](#type-resolution) |
 | `decode.rs`, a new type's decode/render pair | [Decoders and render-back](#decoders-and-render-back) |
 | `batch.rs`, the zero-copy `Utf8View` path, a batch's flush triggers | [Arrow assembly and the zero-copy path](#arrow-assembly-and-the-zero-copy-path) |
-| `stream.rs`, `map_forward`/`map_file`, replay, resume, projection, predicates, the `--filter` term grammar | [Query: mapping and streaming are separate passes](#query-mapping-and-streaming-are-separate-passes) |
+| `stream.rs`, `map_forward`/`map_file`, replay, resume, projection, predicates, the `--filter` term grammar, the `--where` expression grammar | [Query: mapping and streaming are separate passes](#query-mapping-and-streaming-are-separate-passes) |
 | `cache.rs`, the format version, cache modes | [The cache](#the-cache) |
 | the CLI's flags or output, the save throttle, the interrupt guard | [CLI surface](#cli-surface) |
 | `scripts/`, a new fixture schema | [Fixtures](#fixtures) |
@@ -68,7 +68,8 @@ through.
 | Arrow batch assembly (`ColumnBuilder`, `RowBatcher`), push-mode `read_table` | `pgdump_query/src/batch.rs` | L3 |
 | Pull-mode `table_stream`, `map_forward`, `map_file` (`pgdq parse`'s scan), replay, `ResumeToken`, `ScanExtent` | `pgdump_query/src/stream.rs` | L4 |
 | Post-parse predicate | `pgdump_query/src/predicate.rs` | L4 |
-| CLI (`pgdq parse` / `info` / `query`) | `pgdump_query-cli/src/main.rs` | above L4 |
+| CLI (`pgdq parse` / `info` / `query`), the `--filter` term grammar | `pgdump_query-cli/src/main.rs` | above L4 |
+| The `--where` expression grammar | `pgdump_query-cli/src/where_expr.rs` | above L4 |
 
 `error.rs` and `lib.rs` are cross-cutting and belong to no layer. Which layer a
 module is in constrains what it may depend on and what it may know:
@@ -2077,12 +2078,11 @@ projection does: `pgdq query --filter <term>`, once per term, ANDed into
 `Expr::all`. Each repetition is parsed on its own — a malformed one is refused
 before the dump is opened — and the CLI decides nothing else about them; the
 column lookup and its refusal are the library's, identical for an embedder.
-**Nothing below L4 parses an expression** any more than it parses a term:
-`Expr` is a struct an embedder fills in, and the grammar that builds one from
-text is specified as `--where` in
-[`roadmap-P11-typed-predicates.md`](roadmap-P11-typed-predicates.md),
-"`--where` is a new flag". Until it lands, `Or`, `Not` and the two
-`IS DISTINCT FROM` forms are reachable from the library only.
+The tree's other shapes are `pgdq query --where <expr>`, a separate flag over
+the same terms — see "`--where` builds an expression out of those terms"
+below. **Nothing below L4 parses an expression** any more than it parses a
+term: `Expr` is a struct an embedder fills in, and both grammars are the
+CLI's.
 
 **A string comparison agrees with PostgreSQL more often than it deserves to**,
 and the reason is a property of the input rather than of the comparison: every
@@ -2841,6 +2841,24 @@ where matching through `str` would panic on the interior byte of one. That is
 not hypothetical: trimming is Unicode's, so a non-breaking space is a character
 a term legitimately carries.
 
+**`IS DISTINCT FROM` and `IS NOT DISTINCT FROM` are candidates at the same
+positions, not a pass of their own.** They are the two operators three-valued
+evaluation makes necessary, so the term grammar has to spell them, and putting
+them through the one positional scan is what keeps the earliest-operator rule
+true of the whole operator set: `note=a is distinct from b` is the equality it
+reads as, because `=` sits further left, and `a is distinct from b=c` is the
+distinctness test, because the phrase does. A separate pass in either
+direction would have reinterpreted one of those. Any run of whitespace
+separates the words and the case is free, as in SQL.
+
+**The phrase needs whitespace on both sides**, and that is what keeps the
+addition from re-reading a term that parsed before it existed: a column named
+`is distinct from` is still askable unquoted as `is distinct from=x`, since
+what follows the phrase there is `=` and not a space. The one string whose
+meaning does change is a term whose *column* is spelled with the phrase in it
+between spaces, and that is loud rather than silent — the column it now names
+is the text to the phrase's left.
+
 **Whitespace outside quotes is not data**, on both sides of the operator, using
 Rust's `str::trim` — one definition of whitespace for the whole parser,
 matching the `trim_end` the column side always did, and the reason a
@@ -2910,6 +2928,63 @@ where `--filter` already has one. The failure stays loud, and `quoted_name_note`
 adds the missing sentence to it: a name that was not found and that opens and
 closes with a matching quote says it was matched literally, quote marks
 included.
+
+### `--where` builds an expression out of those terms
+
+`where_expr.rs` in `pgdump_query-cli` is the boolean grammar, and it is the
+CLI's alone for the same reason the term grammar is: `Expr` is a plain public
+enum an embedder fills in variant by variant, so nothing below L4 parses an
+expression. Parens group; `NOT` binds tighter than `AND`, which binds tighter
+than `OR`; the three keywords are case-insensitive and recognised only outside
+quotes. Everything that is not a paren or a keyword is a **leaf**, handed to
+`parse_filter` unchanged. Given both flags, the expression and every
+`--filter` term are one conjunction.
+
+**It is a second flag rather than a widening of `--filter`, and that is the
+decision the rest of the grammar rests on.** `--filter 'note=a or b'` is an
+equality against the string `a or b` today; under a widened `--filter` the
+same unchanged command line would silently become a disjunction, and a wrong
+row set from a command that did not change is this grammar's worst failure.
+Under `--where` the same string tokenizes to `note=a` AND the leaf `b`, which
+has no operator and no `IS` suffix, so it is refused loudly — the hazard made
+tractable rather than merely avoided.
+
+**A keyword is recognised only against whitespace or a paren**, which is
+stricter than a word boundary and has to be: `=` is not a word byte, so a bare
+boundary rule would read `--where 'tag=and'` as the term `tag=` followed by
+`AND`. With this rule that string is one leaf, which is the equality it reads
+as. `v_and=1`, `nota=1` and `name=android` fall out of the same rule, and a
+byte above ASCII counts as a word byte so that a keyword can never start
+inside a multi-byte character.
+
+**A `NOT` preceded by the word `is` belongs to the term.** `IS NOT NULL` and
+`IS NOT DISTINCT FROM` both carry one, and reading either as the expression's
+negation is the one way this grammar could silently mean something other than
+it says — `v IS NOT NULL` would become a negation of a leaf called `NULL`,
+which is a fault only because `NULL` happens not to parse as a term.
+
+**Juxtaposition is not an implicit `AND`.** Only a paren or a keyword ends a
+leaf, so `a=1 b=2` is one leaf and the term grammar's earliest-operator rule
+makes it `a` equal to `1 b=2` — the same thing the same string means under
+`--filter`. Inventing an implicit conjunction here would be a second grammar
+laid over the first.
+
+**A value holding a paren must be quoted**: a bare `(` groups, so a composite
+literal is written `--where "v='(1,a)'"`. Unquoted it is a loud structural
+fault, never a reinterpretation. `--filter` is unaffected, having no parens to
+recognise.
+
+*Rejected: recognising `&&`, `||` and `!` as alternate spellings.* One
+spelling, and those symbols collide with values.
+
+*Rejected: treating `(` as grouping only where an expression is expected, so
+that a composite literal needs no quotes.* It makes tokenization
+context-sensitive to buy back a case the quoting rule already covers, and the
+quoting rule is one the term grammar already teaches.
+
+*Rejected: a `--where` of its own that re-implements the term grammar with
+SQL-shaped literals.* Two grammars for one thing, and the second would
+immediately disagree with the first about quoting.
 
 ## The cache
 
@@ -4370,7 +4445,11 @@ a figure, with the figure lost. `query_filter.rs` does the same
 for the conjunction: what a repeated flag *accumulates* is a property of the
 parser, so the test that says a second `--filter` neither replaces nor is
 ignored has to count rows out of the real binary, with each term asserted
-alone in the same test as the pair.
+alone in the same test as the pair. `query_where.rs` is its sibling for the
+expression grammar, and the assertion only the binary can make is the one
+about the *pair* of flags: that the identical string means a refused
+conjunction under `--where` and an equality under `--filter`, which is the
+whole reason there are two flags and cannot be seen from either alone.
 `pgdump_query/tests/map_file.rs` separately covers that a real interruption
 leaves that same shape.
 
