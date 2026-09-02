@@ -4875,10 +4875,21 @@ signal, because nothing prompts anyone to extend it.
 excluded because our own resolution reaches them by recursing from the element
 type, so a row for `integer[]` would be evidence about a mechanism this file
 does not measure. The exclusion is therefore *"some other type names this as
-its `typarray`"*. Testing the shape instead (`typelem <> 0 AND typlen = -1`)
-also catches `int2vector` and `oidvector`, which are declarable types in their
-own right that no array recursion covers — and `int2vector` is one of the rows
-the floor is meant to close.
+its `typarray`"*.
+
+*Rejected: testing the shape instead* (`typelem <> 0 AND typlen = -1`). Over
+this sweep's own row set the two predicates differ on exactly two types —
+`int2vector` and `oidvector`, both varlena with a non-zero `typelem` and
+neither named as any type's `typarray` — and both are declarable in their own
+right, with no array recursion reaching them. `int2vector` is one of the rows
+the floor is meant to close, so the shape test deletes it.
+
+*Rejected: testing the declared spelling* (`format_type(oid, NULL)` ending in
+`[]`), which is what the exclusion's reason literally names, the resolution's
+array recursion being a spelling test over the declared name (I28) rather than
+a catalog lookup. It is coextensive with the back-reference over this row set,
+so it buys nothing; and it would make `format_type` both the filter and the
+join key, coupling which rows exist to how the join key is spelled.
 
 **Taken from the host, over a published port.** The driver is a pip wheel
 pinned in `scripts/pyproject.toml`; installing it into a `postgres:` image

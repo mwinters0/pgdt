@@ -23,23 +23,27 @@ installed version; **12.2 owns the assertion that it equals the pyproject
 pin** (D8) — 12.1 records it and asserts nothing about it, so the pin check
 lands with the reconciliation that D8 puts it in.
 
-## The sweep's array exclusion is a back-reference, and that is a departure
+## The sweep's array exclusion is a back-reference
 
-D7 spells the array exclusion `typelem <> 0 AND typlen = -1`. That predicate
-also matches **`int2vector` and `oidvector`**, which are declarable types no
-array recursion covers — and `int2vector` is the row D5 commits this phase to
-closing. Taken literally, D7 excludes the type D5 is about.
+An array type is excluded by *back-reference* — `NOT EXISTS (SELECT 1 FROM
+pg_type e WHERE e.typarray = t.oid)`, which is D7's spelling. That is exactly
+"the array types", and it is what D7's reason names: our resolution reaches
+them by recursing from the element type, so a row for `integer[]` would be
+evidence about a mechanism this file does not measure.
 
-The sweep therefore excludes an array type by *back-reference* — `NOT EXISTS
-(SELECT 1 FROM pg_type e WHERE e.typarray = t.oid)` — which is exactly "the
-array types", implements D7's stated reason (our resolution reaches those by
-recursion from the element type) and leaves D5 satisfiable. It is filed under
-STATUS's "Decisions worth another look"; the spec is untouched.
+**`int2vector` and `oidvector` are therefore in the file**, and neither is an
+array type: no type names either as its `typarray`, and no array recursion
+reaches them, since that recursion is a spelling test over the declared name
+(I28) and neither name carries an array spelling. `int2vector` is the row D5
+commits this phase to closing.
 
-Consequence for 12.2: **`oidvector` is in the file too**, and the spec's
-delta table never mentions it. It comes back `arrow.opaque` over `binary` on
-every major, so it is a D2 first-bullet stance row and costs one line, not
-code — but it is a row somebody has to place.
+Consequence for 12.2: **`oidvector` costs nothing.** It comes back
+`arrow.opaque` over `binary` on every major, and D2's rule holds only where
+ADBC yields a *non-opaque* type — so the `extension` column places it, along
+with the whole opaque tail, with no per-type line. What the columns cannot say
+is what stays a hand-written exemption: `money` (D2's third bullet), the `reg*`
+family (D2's second), and D10's two waiting rows naming 12.3 and 12.6. The two
+`E42883` refusals are a second column-placed class.
 
 ## What the driver actually answers
 

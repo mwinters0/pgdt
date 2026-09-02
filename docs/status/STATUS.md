@@ -293,19 +293,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **The floor sweep excludes array types by back-reference, not by the spec's
-  shape test.** P12's D7 spells the exclusion `typelem <> 0 AND typlen = -1`;
-  that predicate also matches `int2vector` and `oidvector`, so taken literally
-  it excludes the very type D5 commits the phase to closing. The sweep instead
-  excludes exactly *"some other type names this as its `typarray`"*, which
-  implements D7's stated reason (our resolution reaches array types by
-  recursing from the element type) and leaves D5 satisfiable. **The decision to
-  weigh:** whether D7's parenthetical should be amended to that predicate, or
-  whether the two clauses were meant to be reconciled the other way and
-  `int2vector` should come into the oracle by some other route. Reconsidering
-  it changes which rows `fixtures/<13–18>/adbc/floor.tsv` carries — today it is
-  `int2vector` (`list<item: int16>`) and `oidvector` (`arrow.opaque`), the
-  second of which the spec's delta table never mentions and 12.2 must place.
-  The spec is untouched either way. Detail:
-  [`../design/roadmap-P12.1-floor-oracle-notes.md`](../design/roadmap-P12.1-floor-oracle-notes.md),
-  "The sweep's array exclusion is a back-reference".
+Nothing open.

@@ -210,8 +210,19 @@ and a row absent at 13 is not a row we are below.
 
 **Every `pg_type` row a user could declare a column of**, not a curated list:
 `typtype` in `b`, `e`, `r`, `m`, `d`, restricted to `pg_catalog`, `typisdefined`
-true, and the array types excluded (`typelem <> 0 AND typlen = -1`) since the
-recursion covers those separately.
+true, and the array types excluded (`NOT EXISTS (SELECT 1 FROM pg_type e WHERE
+e.typarray = t.oid)`) since the recursion covers those separately.
+
+*Rejected:* spelling that exclusion as a shape test, `typelem <> 0 AND typlen =
+-1`. It also matches `int2vector` and `oidvector`, which are declarable types in
+their own right that no array recursion reaches — and the first of those is the
+row D5 commits this phase to closing, so the shape test deletes the type this
+phase is about and leaves D6's both-ways check demanding an exemption for the
+arm D5 mandates. An array type is exactly one that some other type names as its
+`typarray`, which is what the back-reference asks.
+
+Evidence: [`../status/history/2026-09-02.md`](../status/history/2026-09-02.md),
+"The floor sweep's array exclusion".
 
 The committed TSV is what keeps a sweep auditable. The sweep proposes and the
 reviewed file disposes, so a regeneration diff *is* the "a new major added a
