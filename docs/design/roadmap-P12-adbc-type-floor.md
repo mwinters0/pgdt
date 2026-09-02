@@ -302,7 +302,7 @@ be able to catch a mis-mapping it did not produce.
 | **12.3** | `interval`: the triple-producing decoder and the resolution arm. |
 | **12.4** | `interval`: render-back's sub-microsecond refusal, the comparison register's `interval` arm, and `KD8` rewritten to name it. |
 | **12.5** | `int2vector`: the fixture column, and the six-major regeneration. |
-| **12.6** | `int2vector`: the codec and the resolution arm. |
+| **12.6** | `int2vector`: the codec, the resolution arm, and the type's comparison-oracle case. |
 
 **Two splits are deliberate, and both are the seam `../process.md` names.**
 12.3/12.4 separates a self-contained new decoder from a rework of paths P11
