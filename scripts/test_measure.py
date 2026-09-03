@@ -952,10 +952,10 @@ class ProfileRecipe(unittest.TestCase):
                     self.assertTrue(line.startswith("cp "), line)
 
     def test_the_libc_frames_are_named_before_anything_is_recorded(self):
-        # Without the fetch, a quarter of a warm `parse` profile is bare
-        # addresses in libc.so.6 — and they are memmove and memset, which is
-        # the half of a zero-copy phase's answer. The fetch must precede the
-        # first `perf record`, or the first profile is the unreadable one.
+        # Without symbols, ~48% of a warm `parse` profile is bare addresses in
+        # libc.so.6 — and they are memmove and memset, which is the half of a
+        # zero-copy phase's answer. The fetch must precede the first `perf
+        # record`, or the first profile is the unreadable one.
         recipe = self._recipe()
         self.assertIn(measure.DEBUGINFOD, recipe)
         self.assertIn(".debug/", recipe)

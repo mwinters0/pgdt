@@ -272,7 +272,11 @@ than `release`, `-C force-frame-pointers=yes` on the build line, `--call-graph
 fp` matching it, a warm input, and libc's own symbols, without which half of a
 `parse` profile is bare addresses — and each fails by returning a
 plausible-looking profile of something else, which is why they are asserted
-rather than remembered.
+rather than remembered. **The symbols are the one of the five that is a
+property of the machine rather than of the command**: a distribution's
+detached-symbol package supplies them once and for all, and a `debuginfod`
+fetch is what covers a machine or a DSO without one. `CLAUDE.local.md` names
+this machine's route for both.
 
 `docs/design/pg-dump-compatibility.md` tracks which `pg_dump` options/variants
 are tested/untested/unsupported.

@@ -48,20 +48,28 @@ one that was actually costing us the answer.
 
 ## The libc frames were the apparatus's real defect
 
-This machine's `/usr/lib/libc.so.6` is stripped and its distribution ships no
-debug package, so `perf` reported the hottest part of a warm `parse` as a column
-of bare addresses. Named, they are `__memmove_avx_unaligned_erms` and
-`__memset_avx2_unaligned_erms` — **together ~48% of that profile**, and the
-exact pair a phase about zero-copy exists to see. An apparatus that hides them
-would have sent 7.2 to write a decomposition out of the third-largest bucket.
+This machine's `/usr/lib/libc.so.6` is stripped, so `perf` reported the hottest
+part of a warm `parse` as a column of bare addresses. Named, they are
+`__memmove_avx_unaligned_erms` and `__memset_avx2_unaligned_erms` — **together
+~48% of that profile**, and the exact pair a phase about zero-copy exists to
+see. An apparatus that hides them would have sent 7.2 to write a decomposition
+out of the third-largest bucket.
 
-This `perf` links `libdebuginfod` and exposes no flag for it (`perf
---debuginfod=…` is rejected by its option parser, and `DEBUGINFOD_URLS` in the
-environment is ignored), so the recipe fetches the debuginfo itself into
-`~/.debug/<dso>/<build-id>/debug`, which is `perf`'s own build-id cache: no
-root, no package, and undone by `rm -r ~/.debug`. `PGDQ_PROFILE_DEBUGINFOD` set
-empty skips the step, which is right on a machine whose libc already carries
-symbols.
+The recipe fetches the debuginfo into `~/.debug/<dso>/<build-id>/debug`, which
+is `perf`'s own build-id cache — a cache `perf record` populates on every run
+regardless, holding the profiled binaries themselves, so it is not a location
+the recipe introduces. `PGDQ_PROFILE_DEBUGINFOD` set empty skips the step,
+which is right on a machine whose libc already carries symbols.
+
+**Two things 7.2 should not inherit from how that fetch is written.** `perf`
+*does* expose a debuginfod flag — `perf buildid-cache --debuginfod[=URLs] -a
+<dso>`, verified working — and only `perf` top-level and `perf report` reject
+it, which is what the first version generalised from. And a distribution's
+detached-symbol package is the better source than any fetch: Arch ships
+`glibc-debug` in `core-debug`, matching the installed `glibc` exactly, and
+symbols installed under `/usr/lib/debug` are found through the
+`.gnu_debuglink` with no network, no cache and no environment. `M47` moves the
+recipe onto both; see the 2026-09-03 history entry.
 
 ## The instrument's own floor, measured
 

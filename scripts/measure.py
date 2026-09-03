@@ -2817,16 +2817,24 @@ def cmd_koji(wrap: bool) -> int:
 #: alternative if a richer reader is wanted, and costs a sysctl.
 PERF = _env("PGDQ_PROFILE_PERF", "perf")
 
-#: Where libc's detached debug symbols come from. **This is not a nicety.**
-#: This machine's libc is stripped and its distribution ships no debug package,
-#: so ~48% of a warm `parse` profile arrives as bare addresses in `libc.so.6`
-#: -- and those addresses are `__memmove_avx_unaligned_erms` and
-#: `__memset_avx2_unaligned_erms`, which are the two functions a phase about
-#: zero-copy most needs to see. This `perf` links `libdebuginfod` and exposes
-#: no flag for it, so the fetch is explicit and lands in `perf`'s own build-id
-#: cache under `$HOME`: no root, no package, and nothing outside the user.
-#: Empty disables the step, which is right on a machine whose libc already
-#: carries symbols and wrong on one that silently does not.
+#: Where libc's detached debug symbols come from when the machine has none.
+#: **This is not a nicety.** A stripped libc puts ~48% of a warm `parse` profile
+#: into bare addresses in `libc.so.6` -- and those addresses are
+#: `__memmove_avx_unaligned_erms` and `__memset_avx2_unaligned_erms`, which are
+#: the two functions a phase about zero-copy most needs to see.
+#:
+#: **A distribution's detached-symbol package is the better source and this is
+#: the fallback**: installed under `/usr/lib/debug`, symbols are found through
+#: the `.gnu_debuglink` with no network, no environment and no cache, and the
+#: package manager keeps them in lockstep with libc. The fetch covers the
+#: machine that has not installed one and the DSO no package offers. Empty
+#: disables the step, which is right on a machine whose libc already carries
+#: symbols and wrong on one that silently does not.
+#:
+#: `perf buildid-cache --debuginfod[=URLs] -a <dso>` is `perf`'s own interface
+#: to the same thing, and `M47` is what moves the recipe onto it; the flag lives
+#: on `buildid-cache` alone, with `perf` top-level and `perf report` rejecting
+#: it, which is what sent the first version down the explicit route below.
 DEBUGINFOD = _env("PGDQ_PROFILE_DEBUGINFOD", "https://debuginfod.archlinux.org")
 
 #: Sampling frequency, in Hz. Prime, so it cannot fall into lockstep with a
@@ -2948,11 +2956,13 @@ def profile_recipe(cfg: Config) -> str:
 
     if DEBUGINFOD:
         head(
-            "Name the libc frames. Without this a quarter of a `parse` profile",
+            "Name the libc frames. Without them ~48% of a warm `parse` profile",
             "is bare addresses in libc.so.6 -- and they are the memmove and",
-            "memset a zero-copy phase exists to see. perf links libdebuginfod",
-            "and exposes no flag for it, so the fetch is explicit; it lands in",
-            "perf's own build-id cache, which needs no root and no package.",
+            "memset a zero-copy phase exists to see. Skip this if your libc's",
+            "detached symbols are installed under /usr/lib/debug (on Arch:",
+            "glibc-debug, from the core-debug repo) -- that is the better",
+            "source, needing no network and staying in lockstep with libc.",
+            "This fetch is the fallback, into perf's own build-id cache.",
         )
         lines += [
             f"LIBC=$(ldd {binary} | awk '/libc\\.so/{{print $3}}')",

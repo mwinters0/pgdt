@@ -750,9 +750,12 @@ spent all the same. What each struck item did is filed by subject —
 [`measurements.md`](measurements.md) for an apparatus change,
 [`layering.md`](layering.md), [`../process.md`](../process.md) and
 [`.claude/skills/`](../../.claude/skills/) for a rule — and why it was done is
-in the dated history entry it was filed under. **There is no table below**: it
-is written again by the first item to land after this keystone, which takes
-`M47`.
+in the dated history entry it was filed under. The table below was started
+again by the first item admitted after this keystone.
+
+| Item | Date | What changed | Blocks | Why |
+|---|---|---|---|---|
+| `M47` | | The profile recipe takes its libc symbols from an installed detached-symbol package when there is one, reports which source it used, and falls back through `perf buildid-cache --debuginfod` rather than a hand-rolled `curl` | | [2026-09-03](../status/history/2026-09-03.md), "Two premises under the profiler's symbol fetch were wrong" |
 
 **One live obligation outlived them.** An `INSERT`-run scan costs
 **mid-teens times** a `COPY` scan per byte, CPU-bound, which argues for an

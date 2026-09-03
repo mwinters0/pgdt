@@ -21,10 +21,12 @@ folded in whole, so all thirteen tables come from one sitting.
 staging retargeted one doc comment and one `quoted_by` list at the drained
 inbox, and neither reaches a timed path. **One figure is stale and owes an
 acknowledgement, not a sweep**: 7.1 added `--profile-recipe` to
-`scripts/measure.py`, which `session-drift` declares, and the reachability
-oracle settles it — a new subcommand no sweep command shape executes, with
-nothing on a timed path changed. An entry cannot name its own sha, so it lands
-as a follow-up exactly as `175f83e` did. A stale figure obliges no sweep
+`scripts/measure.py`, which `session-drift` declares, and the `M47` closure
+edited that subcommand's prose again. The reachability oracle settles both — a
+subcommand no sweep command shape executes, and thereafter only its docstrings
+and printed text, with nothing on a timed path changed. An entry cannot name
+its own sha, so it lands as a follow-up exactly as `175f83e` did, and must
+excuse both commits. A stale figure obliges no sweep
 and neither does a wrap: a full sweep is an hour of a quiet machine and belongs
 to the phase that is about performance, which will re-take every table under its
 own apparatus
@@ -308,22 +310,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **The profiling recipe fetches libc's debug symbols into `~/.debug`, which is
-  a fourth place outside the repo.** Without them ~48% of a warm `parse`
-  profile is bare addresses in `libc.so.6`, and those addresses are
-  `__memmove_avx_unaligned_erms` and `__memset_avx2_unaligned_erms` — the pair
-  a phase about zero-copy most needs named, so the alternative was writing the
-  decomposition out of the third-largest bucket. This machine's libc is
-  stripped and its distribution ships no debug package, and this `perf` links
-  `libdebuginfod` while exposing no flag for it, so the recipe fetches the
-  debuginfo itself into `perf`'s own build-id cache: user-local, no root, no
-  package, undone by `rm -r ~/.debug`, and skipped by setting
-  `PGDQ_PROFILE_DEBUGINFOD` empty. **What it costs is a written rule.**
-  [`../../CLAUDE.local.md`](../../CLAUDE.local.md) says this project's
-  out-of-repo data lives in exactly the two scratch volumes plus the NVMe
-  staging area; `~/.debug` is argued as not ours — it is `perf`'s cache of a
-  distribution artifact, shared by anything that profiles on this machine —
-  rather than as an exception to that rule, and someone else may read it the
-  other way. Reconsidering it means either installing debug symbols
-  system-wide, which needs root, or reading every `parse` profile with half its
-  cost unattributed.
+Nothing is open.
