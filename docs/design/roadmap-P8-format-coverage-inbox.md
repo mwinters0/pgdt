@@ -106,3 +106,38 @@ attributes an `--inserts` dump's rows" and "Grilling M7", I31 in
 (`../status/STATUS.md`, "Known deficiencies"). If the unscheduled fix for it
 (`roadmap.md`, "Future") lands first, both shapes collapse back to one and only
 the `data_offset` question remains.
+
+---
+
+## The statement-end scan Track A needs already exists, and it is chunk-safe
+
+**Fact.** `preamble::StatementScan` is an incremental, byte-level, quote-aware
+scan of SQL statement text — paren depth, in-string (`''` doubling),
+in-quoted-identifier (`""`), in-`--`-comment, and the last non-whitespace byte
+— fed by `feed(&[u8])` and queried by `complete()`/`in_quote()`. It carries a
+`Pending` across calls, so a `''`, `""` or `--` pair split between two `feed`s
+is read correctly: a caller may hand it a file's chunks rather than its lines
+and get the same answer. `map::Builder`'s `INSERT` run drives it with no
+`String` per line and no statement buffer at all, and
+`statement_complete`/`in_open_quote` are wrappers over it, so there is one
+implementation of the rule.
+
+**Why P8 cares.** Track A's row reader has to find where each
+`INSERT INTO … VALUES (…);` statement ends before it can split the value list,
+and that is exactly this scan. It should be extended rather than re-written —
+a second quote tracker beside this one is two places for
+`standard_conforming_strings` to be assumed. What the reader will want that the
+map does not is a *position*: the scan updates state and reports whether the
+run so far is complete, but does not return the offset of the terminating `;`.
+Adding that is a method on an existing type, and shaping it is a spec-time
+question because it decides whether a reader walks lines (as the map does) or
+chunks.
+
+**Also worth knowing at spec time.** The trailing-`;` test uses ASCII
+whitespace where `str::trim_end` used Unicode, and the map's own `feed_line`
+joins lines with `\n` *between* them and never before the first — both are
+documented on the type and both are load-bearing for a caller that reuses it.
+
+**Origin.** P7.5, 2026-09-03. See
+[`roadmap-P7.5-insert-fast-path-notes.md`](roadmap-P7.5-insert-fast-path-notes.md)
+and `architecture.md`'s "Bulk regions: one span kind, three payloads".

@@ -10,14 +10,14 @@ kept**.
 lets these tables be differenced against each other, and what "are these
 figures from before or after my change" is answered by. `uv run measure.py
 --stale` reads that commit back and names the figures a diff has invalidated
-since. **Five tables stand outside that sweep and each says so in its own
+since. **Eight tables stand outside that sweep and each says so in its own
 apparatus line**, so a reading taken from one of them and differenced against a
 sweep table is a cross-sitting difference and must clear the drift figure
 below: `session-drift` itself, which no sweep can take — it is derived across
 the published sweep and a second one taken two minutes later on the same commit
-— and `allocator`, `per-block-quadratic`, `map-only` and `preamble-prepass`,
-each re-taken after a change that moved it, the last three together because
-they share readings.
+— and `allocator`, `per-block-quadratic`, `map-only`, `preamble-prepass`,
+`census-brace-free`, `scan-throughput-cold` and `scan-throughput-warm`, each
+re-taken after a change that moved it, in two groups that each share readings.
 
 All figures are on the hardware `CLAUDE.local.md` describes. Synthetic inputs
 are regenerable with `--seed 42` and are **never committed** — they measure
@@ -68,7 +68,7 @@ Twelve standing rules for reading anything below:
   not carry the harness that produced it. `sudo nerdctl run` costs **0.74–0.76
   s** before the binary starts — three runs of a trivial command, opening the
   warm-set sweep below — against which a 3.00 GiB warm `parse` of the
-  brace-free control is **0.558 s** timed by the container's own shell. The
+  brace-free control is **0.532 s** timed by the container's own shell. The
   wrapper is *larger than the figure*, and more than twice the smallest row of
   the quadratic table. So the timed command is `bash -c 'time /pgdq …'`, whose
   timer resolves to 1 ms. This does not license running a figure outside the
@@ -533,7 +533,8 @@ allocator`, five minutes — after that slice rather than treated as settled.
 
 *Rejected:* adopting `mimalloc` now on its `typed` win. It is a real,
 reproducible 3–4% on that one shape and inside the apparatus on the other two,
-against a lever table whose other rows are 16.5×, the 184× the map's own
+against a lever table whose other rows are the 3.9× P7's slice 7.5 took off an
+`INSERT` scan, the 184× the map's own
 per-block rebuild turned out to be worth, and 54.6%
 of a warm `parse`'s user time — and the cost is not the one-line default flip.
 Adopting makes every other table here a figure of a binary that is no longer
@@ -566,12 +567,12 @@ the device hides becomes visible.
 
 | Input | Wall | Rate | Against the floor |
 |---|---|---|---|
-| `COPY` block | **5.78 s** (5.78–5.82) | ~557 MB/s | 1.01× the floor's time |
-| Large-object region | **5.79 s** (5.77–5.79) | ~557 MB/s | 1.01× the floor's time |
-| `INSERT` run | **10.87 s** (10.85–11.05) | ~296 MB/s | **1.89× the floor's time** |
+| `COPY` block | **5.78 s** (5.75–5.83) | ~557 MB/s | 1.01× the floor's time |
+| Large-object region | **5.77 s** (5.76–5.77) | ~558 MB/s | 1.00× the floor's time |
+| `INSERT` run | **5.87 s** (5.87–5.88) | ~548 MB/s | 1.02× the floor's time |
 | `dd` → `/dev/null` | **5.75 s** (5.75–5.75) | ~560 MB/s | — |
 
-Apparatus over every run in this table: CPU stall ≤1.22%, I/O stall ≤20.32%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.79 GHz, ≤60°C.
+Apparatus over every run in this table: CPU stall ≤1.03%, I/O stall ≤17.77%, machine ≤3% busy, steal ≤0.00%, busiest core ≥4.02 GHz, ≤60°C. **Taken in its own sitting**, with the warm table below and the census table they share their `COPY` row with, not in the `ba2fc12` sweep the stamp above records.
 
 <!-- figure: scan-throughput-warm — reproduce with `cd scripts && uv run measure.py --figure scan-throughput-warm` -->
 
@@ -579,12 +580,12 @@ Apparatus over every run in this table: CPU stall ≤1.22%, I/O stall ≤20.32%,
 
 | Input | Wall | Rate | Against the floor |
 |---|---|---|---|
-| `COPY` block | **0.558 s** (0.548–0.583) | ~5778 MB/s | 1.68× the floor's time |
-| Large-object region | **0.442 s** (0.438–0.446) | ~7288 MB/s | 1.33× the floor's time |
-| `INSERT` run | **9.19 s** (9.16–9.19) | ~351 MB/s | **27.67× the floor's time** |
-| `dd` → `/dev/null` | **0.332 s** (0.331–0.339) | ~9702 MB/s | — |
+| `COPY` block | **0.532 s** (0.519–0.588) | ~6049 MB/s | 1.76× the floor's time |
+| Large-object region | **0.449 s** (0.448–0.464) | ~7174 MB/s | 1.49× the floor's time |
+| `INSERT` run | **2.27 s** (2.26–2.27) | ~1422 MB/s | **7.50× the floor's time** |
+| `dd` → `/dev/null` | **0.302 s** (0.300–0.305) | ~10666 MB/s | — |
 
-Apparatus over every run in this table: CPU stall ≤0.21%, I/O stall ≤5.88%, machine ≤4% busy, steal ≤0.00%, busiest core ≥3.91 GHz, ≤62°C.
+Apparatus over every run in this table: CPU stall ≤0.24%, I/O stall ≤7.00%, machine ≤5% busy, steal ≤0.00%, busiest core ≥4.04 GHz, ≤66°C. **Taken in the same sitting as the cold table above.**
 
 Each table's `COPY` row is the census figure's census-on column for that
 regime — the same binary, the same command, the same input, not a second
@@ -597,55 +598,52 @@ it read the same ~40–45 MB for a 2 MB input as for a 3.00 GiB one, four times
 what koji's row below records for a 784 GB scan. pgdq's own resident set is the
 koji figure, ~9 MiB.
 
-**What this says.** The `COPY` and large-object paths are device-bound to the
-point of disappearing into the device: cold, they each spend **1.01×** the
-wall-clock of reading the same bytes and doing nothing. Warm, the same scans
-cost 0.558 s and 0.442 s against a 0.332 s `dd` floor — so the CPU is there,
-and at 557 MB/s the disk simply covers it.
+**What this says.** All three paths are device-bound to the point of
+disappearing into the device: cold, each spends **1.00–1.02×** the wall-clock
+of reading the same bytes and doing nothing. Warm, the same scans cost 0.532 s,
+0.449 s and 2.27 s against a 0.302 s `dd` floor — so the CPU is there, and at
+557 MB/s the disk covers all of it.
 
-**The `INSERT` path is a different algorithm, and the warm table is what says
-so.** Warm, an `INSERT` run costs **9.19 s against the `COPY` path's 0.558 s on
-the same 3.00 GiB — 16.5× the per-byte CPU**, and **28× the `dd` floor** where
-the `COPY` path is 1.7×. Every line is decoded into `Event::Line` and pushed
-through the statement accumulator ([`architecture.md`](architecture.md), "Bulk
-regions") where a `COPY` block's data is walked and skipped. Cold, the same
-difference is compressed to 1.89× the floor, because the device hides most of
-it — which is exactly why the two tables are here together rather than one
-being differenced against the other's regime.
+**The `INSERT` path is still a different algorithm, and the warm table is the
+only place that shows it.** Warm, an `INSERT` run costs **2.27 s against the
+`COPY` path's 0.532 s on the same 3.00 GiB — 4.3× the per-byte CPU**, and
+**7.5× the `dd` floor** where the `COPY` path is 1.8×. A `COPY` block's data is
+walked and skipped; an `INSERT` run's bytes have to be read quote-aware to
+find where each statement ends, because that is the only thing that says where
+one row stops ([`architecture.md`](architecture.md), "Bulk regions"). Cold, the
+difference is gone entirely — 1.02× against 1.01× — which is exactly why the
+two tables are here together rather than one being differenced against the
+other's regime.
 
-**This replaces the "~5× per-byte cost" claim, which was never a CPU ratio.**
-That number divided a *cold* `INSERT` rate, device included, by the `COPY`
-path's *warm* CPU. The honest figure is the one above, from a single regime:
-**16.5×**, below the 16–26× the previous cold table was used to bound it at.
-**Quote it as mid-teens, not to three figures**: sweeps of the same binaries
-and inputs have read it anywhere between 14.4× and 16.7×, so a single sweep's
-third figure is not the number. The ratio is the durable half of this table and
-neither of its legs is: both moved under this stamp and it did not — the `COPY`
-leg 0.500 → 0.558 s and the `INSERT` leg 8.37 → 9.19, for 16.7× against 16.5×.
-Correctness, tiling
-and row counts are unaffected; the fix is `KD9`, and P7's slice 7.5 holds it —
-which layer it lands in is that phase's to settle
-([`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md)). The
-number is corrected wherever it is repeated —
+**Quote it as a small multiple, not to three figures.** The ratio is the
+durable half of this table and neither of its legs is: across sweeps the legs
+move several percent while the ratio does not, and the same caution that
+applied at mid-teens applies here.
+
+**This table is what `KD9`'s discharge is read off, and the entry is struck by
+it.** Under the `ba2fc12` stamp the same two rows read **9.19 s warm against
+0.558 s — 16.5×** — and **10.87 s cold, 1.89× the floor**. P7's slice 7.5 put
+the `INSERT` run's statement scan on raw bytes: no `String` per line, no
+statement buffer to re-walk, and a `memchr` pass across the string values that
+are most of what an `INSERT` statement is
+([`architecture.md`](architecture.md), "Bulk regions"). What is left is a
+property of the two algorithms rather than a defect, and the numbers above are
+where it is quoted from. The claim is corrected wherever it is repeated —
 [`pg-dump-compatibility.md`](pg-dump-compatibility.md),
-[`roadmap.md`](roadmap.md), [`architecture.md`](architecture.md) and
-[`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md),
-all four of which `--check` names as this table's consumers.
+[`roadmap.md`](roadmap.md) and [`architecture.md`](architecture.md), which
+`--check` names as this table's consumers along with
+[`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md), whose lever
+table records the stake the phase *committed* to and is left alone
+([`../process.md`](../process.md), "Progress lives in STATUS, never in the
+spec").
 
-**The `INSERT` scan has moved again, in both regimes and by about the same
-absolute.** Cold it read 9.85 s under the previous stamp and 10.87 s here;
-warm, 8.37 s and 9.19 s — **+1.0 s and +0.8 s per 3.00 GiB**, against an input
-whose bytes have not been regenerated since 2026-08-28. The cold leg is what
-makes it a finding rather than staging luck: every other cold reading in this
-sweep is within 0.6% of the previous stamp's, which is that regime's
-resolution, and the second sweep of the pair reproduces both legs inside 1%.
-Nothing here attributes it — `scan.rs` and `copy.rs` are unchanged between the
-two stamps while `preamble.rs`, `stream.rs` and `map.rs` are not, and an
-`INSERT` run is the one input that walks the statement accumulator on every
-line — so what settles it is a differential profile across that range, which
-belongs to the phase that owns scan performance
-([`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md)).
-The row's earlier move is the same story one stamp back: it read 15.13–15.42 s
+**Both legs of the earlier ratio drifted between stamps and the ratio did
+not**, which is the reading that says to quote the multiple rather than the
+seconds. The `COPY` leg went 0.500 → 0.558 s across two stamps and the
+`INSERT` leg 8.37 → 9.19, for 16.7× against 16.5×; ~10% of the `INSERT` move
+was attributed to code layout rather than to code, and the rule that came out
+of it is "Two builds of one source can differ by layout" below. The row's
+earliest reading is the same story one stamp further back: it read 15.13–15.42 s
 cold when first taken on 2026-08-25, and `2eb51f4` changed how an `--inserts`
 dump's runs are scanned in between, absorbing the `Data for` comment into the
 run.
@@ -667,7 +665,8 @@ no `{` or `[` in any data row — see "The census on brace-free rows" below for
 why that is a contract rather than an accident. The `INSERT` generator writes
 one `INSERT INTO public.bench_inserts VALUES (…);` per line under an ordinary
 `TABLE DATA` TOC comment, with an apostrophe doubled the way `pg_dump` writes
-one in ~15% of them, so the accumulator's quote tracker is genuinely exercised.
+one in ~15% of them, so the statement scan's quote tracker is genuinely
+exercised.
 The large-object generator is `LOBBUFSIZE`-chunked to match real `pg_dump`.
 
 Both tables come from one command:
@@ -683,7 +682,7 @@ read.
 
 **The large-object skip is the measurement that justifies it.** Completing a
 3 GiB region inside a 512 MB limit, at the same rate the `COPY` path walks the
-same kind of bytes and a twentieth of what the `INSERT` path costs, is the
+same kind of bytes and a fifth of what the `INSERT` path costs, is the
 "skipped, not walked" evidence: walking it statement by statement would mean
 one span *and one stored text string* per `lowrite` call, hundreds of
 thousands of them.
@@ -711,50 +710,51 @@ beside them.
 
 | | Census off | Census on | Δ |
 |---|---|---|---|
-| cold, on the SSD | **5.77 s** (5.75–5.80) | **5.78 s** (5.78–5.82) | **+0.011 s, +0%** |
-| warm, on tmpfs | **0.528 s** (0.504–0.592) | **0.558 s** (0.548–0.583) | **+0.030 s, +6%** |
+| cold, on the SSD | **5.78 s** (5.77–5.84) | **5.78 s** (5.75–5.83) | **+0.002 s, +0%** |
+| warm, on tmpfs | **0.484 s** (0.475–0.509) | **0.532 s** (0.519–0.588) | **+0.048 s, +10%** |
 
-Apparatus over every run in this table: CPU stall ≤1.15%, I/O stall ≤21.90%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.95 GHz, ≤58°C.
+Apparatus over every run in this table: CPU stall ≤1.01%, I/O stall ≤19.44%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.77 GHz, ≤59°C. **Taken in its own sitting**, with the two scan-throughput tables whose `COPY` row is this table's census-on column, not in the `ba2fc12` sweep the stamp above records — it was re-taken because those two were, and its census-on column *is* their `COPY` row.
 
 Both binaries complete inside the 512 MB cgroup; no max-RSS figure is quoted,
 for the reason under the scan-throughput table. `dd` → `/dev/null` on the same
-file in the same container: **0.333 s** warm and **5.75 s** cold, so the
+file in the same container: **0.304 s** warm and **5.75 s** cold, so the
 census-off scan is already within 1.6× of what the kernel charges to hand over
 the bytes.
 
 **What this says.** The pre-filter is very nearly free on the shape a real
-dump mostly has: **0.030 s per 3.00 GiB of brace-free rows**, 36 ns per
-16-column row of 3,956 bytes. That implies ~107 GB/s, which is well above what
+dump mostly has: **0.048 s per 3.00 GiB of brace-free rows**, 60 ns per
+16-column row of 3,956 bytes. That implies tens of GB/s, which is above what
 this machine's DRAM will give one core — so the reading is not a
 memory-bandwidth figure at all: the pre-filter re-walks bytes the scanner has
 just walked, out of cache, and `memchr2` is fast enough that what is left is
 the loop, not the bytes.
 
-**Cold, the census is invisible**: +0.011 s on a 5.78 s scan, one part in
-500, well inside the run-to-run spread of the two legs it is the difference of
-(5.75–5.80 against 5.78–5.82). Earlier stamps read the same row at +0.004 s and
-at −0.008 s — a *negative* census cost, which is the plainest possible
-statement that the effect is smaller than the noise it sits in. That row is not a separate finding —
+**Cold, the census is invisible**: +0.002 s on a 5.78 s scan, one part in
+2,900, well inside the run-to-run spread of the two legs it is the difference of
+(5.77–5.84 against 5.75–5.83). Earlier stamps read the same row at +0.011 s, at
++0.004 s and at −0.008 s — a *negative* census cost, which is the plainest
+possible statement that the effect is smaller than the noise it sits in. That row is not a separate finding —
 it is the same CPU cost, hidden behind a device delivering 557 MB/s. Which one
 a user sees is decided by whether the bytes are already resident.
 
 **Read the warm Δ against the instrument, not to three figures.** "What a
 session's own drift costs" below puts warm sub-second readings several percent
 apart between two sweeps of identical binaries and inputs — and both legs of
-this Δ are such readings, moving independently — so +6% is "a few percent to a
-tenth", and the +7%, +8%, +9%, +10% and +11% other sweeps read are the same
+this Δ are such readings, moving independently — so +10% is "a few percent to a
+tenth", and the +6%, +7%, +8%, +9% and +11% other sweeps read are the same
 measurement rather than a change. Six sweeps have read it and every one is
 positive, which is the finding; **the heading names no number** because that
 number is the half the instrument does not hold still, and `measure.py`'s
-own heading string for this figure still carries the 8% one sweep read.
+own heading string for this figure still carries the 8% one sweep read; this stamp's own reading is
++10%, which is inside that band and not a change.
 
 **It was not always.** The scalar `raw.iter().any(…)` loop that preceded
 `memchr2` ran at ~3.8 GB/s and cost 1.03 µs per row — +39% as recorded and
 **+63% reconstructed**, once the 0.77 s container wrapper that sat in both legs
 is taken out ([`../status/history/2026-08-27.md`](../status/history/2026-08-27.md)).
 That figure is what argued for the swap, and it is why the deferred question
-of a *skippable* census is now closed rather than open: 36 ns per row is not a
-cost worth a knob.
+of a *skippable* census is now closed rather than open: tens of nanoseconds per
+row is not a cost worth a knob.
 
 So the census's cost is effectively **one tier, not two**: it is paid by the
 rows that pass the pre-filter (next section), and the pre-filter itself is
@@ -833,12 +833,15 @@ does on this shape. Cold it is **+1%**, hidden behind the device
 exactly as the brace-free case is. Both rows are the same CPU; which one a user
 sees is decided by whether the bytes are already resident.
 
-**The pre-filter is 36 ns of that 1.49 µs** (previous section, same apparatus
-and the same census-off binary — the pre-filter runs on every row of both
-files, which is what licenses the subtraction). So splitting the
-row into fields and running `observe` over all 19 of them — the work the
-pre-filter exists to avoid — is **98% of the census's whole cost**, and the
-pre-filter is what keeps the brace-free case off that path. The census is
+**The pre-filter is a few tens of nanoseconds of that 1.49 µs** — 36 ns as the
+previous section read it under the `ba2fc12` stamp and 60 ns as it reads it
+now, the same census-off binary running the pre-filter on every row of both
+files, which is what licenses the subtraction. That is a **cross-sitting**
+subtraction since this table was not re-taken beside that one, and it survives
+being one because the conclusion does not turn on which value is used:
+splitting the row into fields and running `observe` over all 19 of them — the
+work the pre-filter exists to avoid — is **96–98% of the census's whole
+cost**, and the pre-filter is what keeps the brace-free case off that path. The census is
 unconditional either way (`architecture.md`, "The array shape census") — the
 alternative is a query that cannot retype its array columns without a second
 pass.
@@ -867,7 +870,7 @@ first one a project adds sets the precedent for what features are for — here,
 a build in which `architecture.md`'s "the census is unconditional" is untrue,
 serving a comparison taken about once a phase. The escape if the patch-and-
 revert ever bites is to drop the comparison, not to gate it: the absolute
-figures (36 ns/row rejected, 1.49 µs/row inspected) are what
+figures (tens of ns/row rejected, 1.49 µs/row inspected) are what
 [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md) actually consumes, and
 the census-off column exists to establish it once.
 
@@ -1011,8 +1014,10 @@ becomes **−0.127 s** on a file carrying 14% *fewer* rows than the control, so
 the census accounts for the whole of it and what is left is a residue with the
 sign a residue is free to have. Measured this way the census reproduces the
 `parse` figures two sections above closely on both files: +1.031 s on the
-arrays file against +1.045, and +0.030 s on the control against +0.030 — a
-cross-check on a different command, off a different pair of legs. The census-off
+arrays file against +1.045, and +0.030 s on the control against the +0.030 the
+brace-free table read under the `ba2fc12` stamp this figure was taken in (it
+reads +0.048 in its own later sitting) — a cross-check on a different command,
+off a different pair of legs. The census-off
 gap has read +0.036 s and −0.058 s under earlier stamps; all three are inside
 what the drift figure below says this instrument can resolve, and all three say
 the same thing.

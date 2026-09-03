@@ -288,9 +288,12 @@ is swallowed into the span before it. `scan_preamble` uses the same idiom.
 Anything adding a fourth should check `on_dollar_quote_end`'s
 `Mode::Statement`-only guard.
 
-1. `preamble::statement_complete` — the accumulator, which tracks
+1. `preamble::statement_complete` — the accumulator's rule, which tracks
    double-quoted identifiers (`""` doubling) and `--` line comments. Without
-   that, an apostrophe inside either opens a string that never closes.
+   that, an apostrophe inside either opens a string that never closes. It is a
+   wrapper over `preamble::StatementScan`, which an `INSERT` run drives
+   incrementally instead (see "Bulk regions" below), so there is one
+   implementation of the rule and two ways of feeding it.
 2. A `--`-prefixed line reasserting a boundary, *unless* `preamble::in_open_quote`
    says the buffer is mid-string (a value spanning physical lines legitimately
    starts a line with `--`).
@@ -352,9 +355,11 @@ why it is safe: on v17+ the region can run to hundreds of gigabytes, and a bare
 line between **unread** — no `Event::Line`. An unterminated region is
 `Error::UnterminatedLargeObjectRegion`, mirroring `UnterminatedCopyBlock`.
 
-An `INSERT` run instead reuses the statement accumulator and simply stops
-pushing a span per statement: `Mode::InsertRun`, entered from `Mode::Statement`'s
-first line via `parse_insert_target`, folding completed statements into one
+An `INSERT` run instead reuses the statement *scan* — `preamble::StatementScan`,
+the same rule the accumulator applies, without the accumulator — and simply
+stops pushing a span per statement: `Mode::InsertRun`, entered from
+`Mode::Statement`'s first line via `parse_insert_target`, folding completed
+statements into one
 span until a different table's `INSERT INTO` arrives or the next TOC comment
 reasserts a boundary. `Mode::Comment`'s close arm opens it too, at the
 comment's own offset, when the line that closes the block is an `INSERT INTO` —
@@ -376,58 +381,73 @@ producer class that *can*: a hand-written or `pg_dump`-compatible dump, where
 coarser-and-cheaper trade the `COPY` path already makes. The symmetry between
 the two paths is a consequence of that call, not the argument for it.
 
-<!-- deficiency: KD9 -->
-**Every line is still decoded into `Event::Line`**, and that costs
-**mid-teens times** a `COPY` scan per byte, warm — 16.5× in the sweep this doc
-is stamped against, 14.4–16.7× over the sweeps taken under a witnessed-quiet
-apparatus; see [`measurements.md`](measurements.md), "Scan
-throughput by input shape". Carry it as a magnitude rather than a value:
-neither leg is durable — between two stamps the `COPY` leg went 0.500 → 0.558 s
-and the `INSERT` leg 8.37 → 9.19 — and the ratio moved 16.7× to 16.5×.
-Correctness, tiling and row counts are unaffected; what it costs is throughput
-on `--inserts` input, **~48 minutes of CPU for a 1 TB dump against the `COPY`
-path's ~3**. That is deficiency `KD9` (`../status/STATUS.md`, "Known
-deficiencies"), and P7 owns it.
+**An `INSERT` run costs a few times a `COPY` scan per byte, and that is a
+property of the two algorithms rather than a defect.** Warm it is **4.3×** —
+2.27 s against 0.532 s over 3.00 GiB — and **7.5× the `dd` floor** where a
+`COPY` scan is 1.8×; cold on the SSD the difference is gone, 1.02× the floor
+against 1.01× ([`measurements.md`](measurements.md), "Scan throughput by input
+shape"). Carry it as a magnitude rather than a value: the legs are warm
+sub-second and sub-three-second readings that move several percent between
+sittings, and the ratio is the durable half. The reason it cannot be 1× is that
+a `COPY` block's data is *skipped* — the terminator is a line-anchored needle —
+while an `INSERT` run's boundaries rest on no line-anchored invariant at all,
+so every byte has to be crossed quote-aware to find where a statement ends.
+Correctness, tiling and row counts are unaffected.
 
-**The fix belongs in `map.rs`, and the profile is what says so.** The natural
-reading was a second scanner-level fast path, the mechanism
-`State::InLargeObjectRegion` already is. The profile refuses it: over the
-3.00 GiB `INSERT`-run file a warm `parse` spends **58.2%** in
-`preamble::scan_buf` and **17.3%** in the `String::from_utf8_lossy(raw)
-.into_owned()` that opens `Builder::feed_line`, against **0.6%** in
-`CopyScanner::next_event` (see "Where a scan's time goes"). Three-quarters of
-the cost is two L2 functions and the scanner is a rounding error, so a third
-region state in `scan.rs` would buy almost nothing — and it was the larger
-claim anyway, since the scanner cannot know a run has begun without
-`parse_insert_target`, which is statement classification, and unlike
-`BEGIN;`/`COMMIT;` (I12) an `INSERT` run's boundaries rest on no line-anchored
-invariant. What the fix removes is the accumulation: `push_stmt_line` copying
-every line into a `String` for `statement_complete` to re-walk with
-`chars().peekable()`, and `feed_line`'s per-line validate-and-allocate ahead of
-it. The supporting reading is the large-object region, which skips lines
-*unread* at 0.442 s per 3.00 GiB against `COPY`'s 0.558.
+**What made it mid-teens was the accumulation, and P7's slice 7.5 removed
+that.** Under the `ba2fc12` stamp the same scan read 9.19 s warm, 16.5×, and
+1.89× the floor cold, because `feed_line` turned every line into a `String`
+(`String::from_utf8_lossy(raw).into_owned()`) and `push_stmt_line` copied it
+into a buffer that `statement_complete` then re-walked with
+`chars().peekable()` — 58.2% and 17.3% of a warm `parse`'s user time against
+**0.6%** in `CopyScanner::next_event` (see "Where a scan's time goes"). What
+replaced it is `preamble::StatementScan`: one incremental, byte-level,
+quote-aware scan carried across a run's lines, with no `String` and no buffer
+behind it, crossing string values and comments with `memchr` and the run
+between them with one `memchr3` for the next mode-changing byte plus a
+`memchr2` count for the parens. `Mode::InsertRun` holds that scan in place of
+the `String` it used to hold, which it can because a run's span carries a table
+name and a row count and nothing reads its text.
 
-**Both legs moved ~10% under the `ba2fc12` stamp, and it is code layout rather
-than code** — cold 9.85 → 10.87 s, warm 8.37 → 9.19, against an input whose
-bytes were unchanged. `release` builds at `b70589f` and at the stamp retire
-**114.62 G and 114.66 G instructions** for the same scan, 0.03% apart, and
-spend **35.8 G and 40.0 G cycles** doing it, with branch misses, cache misses,
-icache misses and frontend stalls all flat or lower on the slower one. The
-whole 4.2 G-cycle difference is inside `scan_buf`, whose 293 instructions are
-byte-identical between the two binaries and differ only in address. Building
-both with `-C llvm-args=-align-all-functions=6` collapses the gap to −1.5% and
-takes both below the faster one, and the same flag moves the control's `parse`,
-`strings` and `typed` shapes not at all — so this is one tight character loop's
-placement, not a general win. There is nothing to bisect to and nothing to fix:
-what it changes is how a figure is read
+**The fast path declines every line it cannot decide, and `Builder::step`
+decides those exactly as it did before.** `Builder::insert_run_line` hands back
+a line whose first non-ASCII-whitespace byte is not ASCII, one starting `-`
+(every boundary signal begins `--`), a blank one, and — at a statement
+boundary — any line that does not restate the run's own `INSERT INTO <table>`
+opening byte for byte. That last test is deliberately a *conservative* stand-in
+for `parse_insert_target`: matching proves the line parses to the same table,
+and not matching costs only the ordinary path. Both paths feed the same
+`StatementScan`, and each line reaches exactly one of them, so which path saw a
+line never changes how the run folds.
+
+*Rejected:* a second scanner-level fast path in `scan.rs`, the mechanism
+`State::InLargeObjectRegion` already is — which is what `KD9` was originally
+filed against. The profile refused it before it was written: the scanner was
+0.6% of the scan, so a third region state would have bought under a percent.
+It was also the larger claim, since the scanner cannot know a run has begun
+without `parse_insert_target`, which is statement classification and therefore
+L2's, and unlike `BEGIN;`/`COMMIT;` (I12) an `INSERT` run's boundaries rest on
+no line-anchored invariant. The supporting reading for the layer that was
+chosen instead is the large-object region, which skips lines *unread* at
+0.449 s per 3.00 GiB against `COPY`'s 0.532 — an `INSERT` run that touched no
+bytes could not beat that, and it is now within a factor of five of it.
+
+**Two builds of one source read ~10% apart on this input, and it was code
+layout rather than code** — the finding that closed an earlier 9.85 → 10.87 s
+cold and 8.37 → 9.19 warm move against unchanged bytes. `release` builds at
+`b70589f` and at `ba2fc12` retired **114.62 G and 114.66 G instructions** for
+the same scan, 0.03% apart, and spent **35.8 G and 40.0 G cycles** doing it,
+with branch misses, cache misses, icache misses and frontend stalls all flat or
+lower on the slower one. The whole 4.2 G-cycle difference sat inside the
+`scan_buf` of the day, whose 293 instructions were byte-identical between the
+two binaries and differed only in address. Building both with
+`-C llvm-args=-align-all-functions=6` collapsed the gap to −1.5% and took both
+below the faster one, while the same flag moved the control's `parse`,
+`strings` and `typed` shapes not at all — so it was one tight character loop's
+placement, not a general win. There was nothing to bisect to and nothing to
+fix: what it changed is how a figure is read
 ([`measurements.md`](measurements.md), "Two builds of one source can differ by
 layout").
-
-*Rejected:* re-prioritising that fix on the strength of the ratio alone. The
-number is three times what the entry was filed under, which is exactly the kind
-of change that argues for moving work forward — and where it sits belongs to
-the scan-performance phase's grilling, against that phase's other candidates,
-not to whichever fold-in happened to correct the figure.
 
 **An `INSERT` run's end needs a string-aware scan, not a line-anchored check.**
 A `pg_dump --inserts` value is a single-quoted SQL literal, and a value carrying
@@ -791,8 +811,9 @@ as much. `on_row`'s doc comment names the two measurements a reader regenerates
 by patching that function.
 
 **The cost is one tier in practice: the rows that pass the pre-filter.** On
-brace-free data — the koji shape — a row pays the pre-filter alone, 36 ns per
-16-column row, a few percent of a scan reading from memory; a row that passes
+brace-free data — the koji shape — a row pays the pre-filter alone, tens of
+nanoseconds per 16-column row (60 ns at the current reading, 36 ns at the
+`ba2fc12` stamp), a few percent of a scan reading from memory; a row that passes
 pays field splitting and `observe` on top, 1.49 µs over 19 columns, +219% warm. Both
 collapse to +0% and +1% cold on this SSD, where the device floor hides them
 ([`measurements.md`](measurements.md), "The census on brace-free rows" and
@@ -810,8 +831,9 @@ unconstrained `ArrayShape`s gives, so it needs no separate representation.
 
 *Rejected:* censusing only under `ScanExtent::Full`, so a cold query declines
 the per-row work. The saving is the pre-filter alone — a cold query already
-receives every row of every block it maps — which is 36 ns a row with the bytes
-in memory and vanishes behind the device a cold query reads from. What it cost
+receives every row of every block it maps — which is tens of nanoseconds a row
+with the bytes in memory and vanishes behind the device a cold query reads
+from. What it cost
 was a state no user could observe or repair: a dump mapped by a cold query and
 *then* by a full one came out `is_complete` with its early blocks permanently
 uncensused, because `map_forward` splices onto a prefix it does not re-read.
@@ -3924,7 +3946,8 @@ work the problem requires.
 copying.** Two SIMD passes over the same bytes: `memchr` for the row terminator
 and `memchr2` for the census's brace pre-filter. The census share reconciles
 with the subtraction that measures it — 0.050 s here against the +0.030 s the
-census-on/census-off pair reads
+census-on/census-off pair read in the sweep this profile sits beside, and
++0.048 s where that pair reads today
 ([`measurements.md`](measurements.md), "The census on brace-free rows") — which
 is the check that the user-time correction above is being applied correctly.
 
@@ -4008,9 +4031,12 @@ copies field bytes.
 30.8% and `nested::needs_quote` 8.8% under `render_field` — the write-back
 re-quoting each element.
 
-### The `INSERT` path is two functions in L2
+### The `INSERT` path is one `memchr`-bound scan in L1
 
-Over the 3.00 GiB `INSERT`-run file, warm, a `release` `parse`:
+Over the 3.00 GiB `INSERT`-run file, warm, a `parse` — the profile that chose
+the fast path's layer, and the profile of the path that replaced it:
+
+Flat shares under the `ba2fc12` stamp, before P7's slice 7.5:
 
 | Share | Symbol | Reached from |
 |---|---|---|
@@ -4020,13 +4046,31 @@ Over the 3.00 GiB `INSERT`-run file, warm, a `release` `parse`:
 | 3.1% | `__memmove_avx_unaligned_erms` | `push_stmt_line`'s copy into the accumulator |
 | 0.6% | `CopyScanner::next_event` | the scanner |
 
-**Three-quarters of an `INSERT` scan is two functions, both L2, and the
-scanner is under 1% of it** — which is what settles where the fast path goes;
-see "Bulk regions" above. `scan_buf` walks the *accumulated statement* with
-`chars().peekable()` on every line, so a one-line `INSERT` statement is one
+**Three-quarters of an `INSERT` scan used to be two L1 functions with the
+scanner under 1% of it** — which is what settled where the fast path went; see
+"Bulk regions" above. `scan_buf` walked the *accumulated statement* with
+`chars().peekable()` on every line, so a one-line `INSERT` statement was one
 char-by-char pass over its own bytes, and `feed_line`'s
-`from_utf8_lossy(...).into_owned()` is a validation plus an allocation per line
-before the mode machine sees it.
+`from_utf8_lossy(...).into_owned()` was a validation plus an allocation per
+line before the mode machine saw it.
+
+After it, the same scan — a third as long in wall time — is a call graph
+rather than a list of symbols, because `StatementScan::feed` inlines into its
+caller and spends itself in `memchr`:
+
+| Share | Path |
+|---|---|
+| 74.3% | `Builder::feed_line` → `insert_run_line` → `StatementScan::feed_line` |
+| 14.1% | `CopyScanner::next_event` (5.2% of it `scan_dollar_quotes`) |
+| 2.5% | `__memmove_avx_unaligned_erms` — the read path's own chunk copy |
+
+**Nearly 80% of the flat profile is now `memchr`**, split across the four
+needle widths `feed` uses: `memchr` for a string's closing quote and for a
+comment's newline, `memchr3` for the next mode-changing byte outside them, and
+`memchr2` for the parens in between. `feed`'s own non-SIMD code is **6.9%**.
+There is no allocation, no UTF-8 validation and no second walk left in the
+path; what remains is the bytes themselves, which an `INSERT` statement's end
+cannot be found without crossing.
 
 ### What a query reads twice, and when
 

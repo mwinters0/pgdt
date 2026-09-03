@@ -757,12 +757,14 @@ again by the first item admitted after this keystone.
 |---|---|---|---|---|
 | `M47` | 2026-09-03 | The profile recipe takes its libc symbols from an installed detached-symbol package when there is one, reports which source it used, and falls back through `perf buildid-cache --debuginfod` rather than a hand-rolled `curl` | | [2026-09-03](../status/history/2026-09-03.md), "Two premises under the profiler's symbol fetch were wrong" |
 
-**One live obligation outlived them.** An `INSERT`-run scan costs
-**mid-teens times** a `COPY` scan per byte, CPU-bound, which argues for an
-`INSERT` fast path — and *that* changes a decision, so it went through grilling
-→ spec amendment → a numbered slice rather than through this section. It is
-`KD9`, discharged by P7's slice 7.5
-([`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md)).
+**One obligation outlived them and has since been discharged.** An
+`INSERT`-run scan cost **mid-teens times** a `COPY` scan per byte, CPU-bound,
+which argued for an `INSERT` fast path — and *that* changes a decision, so it
+went through grilling → spec amendment → a numbered slice rather than through
+this section. It was `KD9`, and P7's slice 7.5 took it to **4.3× warm and
+invisible cold**, which is a property of the two algorithms rather than a
+defect ([`architecture.md`](architecture.md), "Bulk regions: one span kind,
+three payloads").
 
 ## Future — wanted, unscheduled
 

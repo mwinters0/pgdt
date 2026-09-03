@@ -82,10 +82,12 @@
 //!   bare `BEGIN;`/`COMMIT;` pair at the scanner level, the same way it
 //!   recognizes a `COPY` header/`\.` pair, and skips everything between
 //!   **unread**. `INSERT` runs stay a `feed_line`-level concern with no new
-//!   scanner state, reusing [`statement_complete`]'s quote/paren tracking —
-//!   which costs about 5× a `COPY` scan per byte
-//!   (`docs/design/measurements.md`). Neither carries the inner offsets
-//!   [`DataBlock::Copy`] does, because nothing reads their rows yet.
+//!   scanner state, driving a [`StatementScan`] over the raw line bytes —
+//!   which costs about 4× a `COPY` scan per byte warm and nothing at all cold
+//!   (`docs/design/measurements.md`, "Scan throughput by input shape"; the
+//!   fast path and what it declines are `docs/design/architecture.md`'s "Bulk
+//!   regions"). Neither carries the inner offsets [`DataBlock::Copy`] does,
+//!   because nothing reads their rows yet.
 //!
 //! - **TOC enrichment.** [`Span::toc`] is filled by [`parse_toc_header_line`]
 //!   whenever a comment block's TOC-Name line parses: `-- Name: ...` or its
@@ -149,10 +151,10 @@ use crate::copy::split_fields;
 use crate::index::{ArrayShape, CopyBlock};
 use crate::io::ByteRangeSource;
 use crate::preamble::{
-    CollationDef, ColumnDef, Extension, StatementShape, TypeDef, TypeKind, classify_statement,
-    extract_statement_cross_refs, in_open_quote, insert_role, insert_tablespace,
-    parse_alter_type_add_value_body, parse_connect, parse_qualified_name, push_stmt_line,
-    statement_complete, strip_kw,
+    CollationDef, ColumnDef, Extension, StatementScan, StatementShape, TypeDef, TypeKind,
+    classify_statement, extract_statement_cross_refs, in_open_quote, insert_role,
+    insert_tablespace, parse_alter_type_add_value_body, parse_connect, parse_qualified_name,
+    push_stmt_line, statement_complete, strip_kw,
 };
 use crate::scan::{CopyEnd, CopyStart, Event, ScanOptions, scan};
 
@@ -590,16 +592,27 @@ enum Mode {
     /// convention as `Statement`. `table` is fixed at the run's first line; a
     /// later statement targeting a different table ends the run (real
     /// `pg_dump` output never does this — a TOC comment always separates two
-    /// tables' data — but a header-less input isn't guaranteed to). `buf`
-    /// accumulates the *current*, not-yet-complete statement only, empty
-    /// between statements — that's the signal a fresh line either continues
-    /// the run or ends it. `row_count` is complete statements folded in so
-    /// far.
+    /// tables' data — but a header-less input isn't guaranteed to). `scan`
+    /// tracks the *current*, not-yet-complete statement only, empty between
+    /// statements — that's the signal a fresh line either continues the run
+    /// or ends it. `row_count` is complete statements folded in so far.
+    ///
+    /// Unlike [`Mode::Statement`] this holds no statement *text*: a run's
+    /// span carries a row count and a table name and nothing reads its bytes
+    /// (`push_insert_run` goes straight to `push_span`, and
+    /// `extract_statement_cross_refs` is deliberately not run over an
+    /// `INSERT` body). So the accumulation is a [`StatementScan`] over raw
+    /// bytes rather than a `String` per line — `docs/design/architecture.md`,
+    /// "Bulk regions: one span kind, three payloads". `prefix` is the
+    /// `INSERT INTO <table>` byte prefix the run's first line spelled, kept
+    /// so [`Builder::insert_run_line`] can recognize a continuing statement
+    /// without re-parsing the identifier.
     InsertRun {
         start: u64,
         table: String,
         database: Option<String>,
-        buf: String,
+        scan: StatementScan,
+        prefix: Box<[u8]>,
         row_count: u64,
         toc: Option<TocHeader>,
         toc_owned: bool,
@@ -731,8 +744,24 @@ fn partition_root_marker(line: &str) -> Option<String> {
 /// and `Mode::Comment`'s close arm — where no statement is in flight at all,
 /// since that mode holds no buffer).
 fn parse_insert_target(line: &str) -> Option<String> {
-    let rest = line.strip_prefix("INSERT INTO ")?;
-    parse_qualified_name(rest).map(|(name, _consumed)| name)
+    parse_insert_target_span(line).map(|(name, _prefix_len)| name)
+}
+
+const INSERT_INTO: &str = "INSERT INTO ";
+
+/// [`parse_insert_target`], plus the byte length of the `INSERT INTO
+/// <table>` opening it read — the exact prefix a *continuing* statement of
+/// the same run restates.
+///
+/// [`Builder::insert_run_line`] keeps that prefix and compares raw bytes
+/// against it, which is what lets a run's ordinary lines be classified
+/// without parsing an identifier (and allocating a `String` for it) per row.
+/// The comparison is deliberately conservative rather than equivalent: a
+/// line that matches the prefix provably parses to the same name, and a line
+/// that does not is handed to [`Builder::step`], which parses it properly.
+fn parse_insert_target_span(line: &str) -> Option<(String, usize)> {
+    let rest = line.strip_prefix(INSERT_INTO)?;
+    parse_qualified_name(rest).map(|(name, consumed)| (name, INSERT_INTO.len() + consumed))
 }
 
 /// Whether `line` is one of the version-header block's two lines (I9), and
@@ -964,7 +993,10 @@ impl Builder {
     /// comment-block-close or statement-complete transition re-dispatch the
     /// *same* line under the new mode without the caller needing to know.
     pub(crate) fn feed_line(&mut self, offset: u64, raw: &[u8]) {
-        let text = String::from_utf8_lossy(raw).into_owned();
+        if self.insert_run_line(raw) {
+            return;
+        }
+        let text = String::from_utf8_lossy(raw);
         // Tracked here rather than inside `step`'s mode machine because the
         // marker is separated from the `COPY` header it describes by a blank
         // line, which closes whatever comment block held it — so by the time
@@ -976,33 +1008,82 @@ impl Builder {
         } else if let Some(root) = partition_root_marker(trimmed) {
             self.pending_partition_root = Some(root);
         }
-        let mut current = Some((offset, text));
-        while let Some((offset, line)) = current.take() {
-            current = self.step(offset, &line);
-        }
+        while self.step(offset, &text) {}
     }
 
-    /// Process one line under the current mode. Returns `Some` when the
+    /// The `INSERT`-run fast path: one line of a run in flight, decided on
+    /// raw bytes with neither a UTF-8 conversion nor a statement buffer
+    /// behind it. `true` when this line is fully accounted for; `false`
+    /// leaves it to [`feed_line`](Self::feed_line)'s ordinary path, which
+    /// classifies it exactly as it always did.
+    ///
+    /// This is `KD9`'s discharge, and the layer 7.2's profile chose — three
+    /// quarters of an `INSERT` scan was `feed_line`'s per-line
+    /// validate-and-allocate plus `statement_complete` re-walking an
+    /// accumulated `String`, against 0.6% in the scanner
+    /// (`docs/design/architecture.md`, "Bulk regions: one span kind, three
+    /// payloads").
+    ///
+    /// **What it declines is what keeps it honest.** Anything the ordinary
+    /// path might classify differently is handed back: a line whose first
+    /// non-ASCII-whitespace byte is not ASCII (so `feed_line`'s
+    /// Unicode-trimmed prologue could still have something to say about it),
+    /// a line starting `-` (every boundary signal — a TOC header, a
+    /// partition-root marker, the dangling-close check — begins `--`), a
+    /// blank line, and, at a statement boundary, any line that does not
+    /// restate this run's own `INSERT INTO <table>` prefix byte for byte.
+    /// So the prologue's two markers and `step`'s own arm keep seeing every
+    /// line either of them could act on.
+    ///
+    /// Feeding raw bytes where `step` would feed the lossy conversion of
+    /// them is not a difference: a lossy conversion neither creates nor
+    /// destroys an ASCII byte, and every byte [`StatementScan`] acts on is
+    /// ASCII.
+    fn insert_run_line(&mut self, raw: &[u8]) -> bool {
+        let Mode::InsertRun { scan, prefix, row_count, .. } = &mut self.mode else {
+            return false;
+        };
+        if !matches!(raw.trim_ascii_start().first(), Some(b) if b.is_ascii() && *b != b'-') {
+            return false;
+        }
+        if scan.is_empty()
+            && !(raw.starts_with(prefix)
+                // The byte after the prefix must end the identifier, or
+                // `INSERT INTO t` would match a line targeting `t2`.
+                && raw.get(prefix.len()).is_some_and(|b| b.is_ascii_whitespace() || *b == b'('))
+        {
+            return false;
+        }
+        scan.feed_line(raw);
+        if scan.complete() {
+            *row_count += 1;
+            scan.reset();
+        }
+        true
+    }
+
+    /// Process one line under the current mode. Returns `true` when the
     /// same line must be reprocessed under a mode this call just switched
-    /// into.
-    fn step(&mut self, offset: u64, line: &str) -> Option<(u64, String)> {
+    /// into — always the same `offset` and the same `line`, which is why the
+    /// caller re-supplies both rather than this returning them.
+    fn step(&mut self, offset: u64, line: &str) -> bool {
         let trimmed = line.trim();
         match &mut self.mode {
             Mode::Idle => {
                 if trimmed.is_empty() {
-                    return None;
+                    return false;
                 }
                 if let Some(name) = parse_connect(line) {
                     self.database = Some(name.clone());
                     self.push_span(offset, SpanBody::Connect { database: name }, None, false);
-                    return None;
+                    return false;
                 }
                 if trimmed.starts_with('\\') {
                     // Any other psql meta-command (`\restrict`,
                     // `\unrestrict`, ...): a single complete line, never
                     // continued, never real SQL.
                     self.push_span(offset, SpanBody::Framing, None, false);
-                    return None;
+                    return false;
                 }
                 if trimmed.starts_with("--") {
                     let (server_version, pg_dump_version) = match version_header_field(trimmed) {
@@ -1017,7 +1098,7 @@ impl Builder {
                         pg_dump_version,
                         toc: parse_toc_header_line(trimmed),
                     };
-                    return None;
+                    return false;
                 }
                 // No comment precedes this statement: it inherits whatever
                 // entry is currently governing (`None` if none is), per
@@ -1030,7 +1111,7 @@ impl Builder {
                     toc: self.governing_toc.clone(),
                     toc_owned: false,
                 };
-                Some((offset, line.to_string()))
+                true
             }
             Mode::Comment { start, saw_name, server_version, pg_dump_version, toc } => {
                 if trimmed.starts_with("--") {
@@ -1043,7 +1124,7 @@ impl Builder {
                     if let Some(header) = parse_toc_header_line(trimmed) {
                         *toc = Some(header);
                     }
-                    return None;
+                    return false;
                 }
                 if trimmed.is_empty() {
                     // A blank line right after a comment block's closing
@@ -1059,7 +1140,7 @@ impl Builder {
                     // for the block-closing case; only a genuinely
                     // non-blank, non-`--` line (a DDL statement) ever reaches
                     // the close/transition logic below.
-                    return None;
+                    return false;
                 }
                 let start = *start;
                 let saw_name = *saw_name;
@@ -1070,7 +1151,7 @@ impl Builder {
                     // the comment's own offset. `toc_owned: true` — this
                     // comment is where `toc` came from.
                     self.mode = Mode::Statement { start, buf: String::new(), toc, toc_owned: true };
-                } else if let Some(table) = parse_insert_target(line) {
+                } else if let Some((table, prefix_len)) = parse_insert_target_span(line) {
                     // An `INSERT` run follows, so this comment block is a
                     // `-- Data for Name: ...` entry — the one prefix
                     // [`looks_like_toc_name_line`] refuses, which is what
@@ -1092,7 +1173,8 @@ impl Builder {
                         start,
                         table,
                         database: self.database.clone(),
-                        buf: String::new(),
+                        scan: StatementScan::new(),
+                        prefix: line.as_bytes()[..prefix_len].into(),
                         row_count: 0,
                         toc,
                         toc_owned: owned,
@@ -1103,7 +1185,7 @@ impl Builder {
                     self.push_span(start, body, toc, owned);
                     self.mode = Mode::Idle;
                 }
-                Some((offset, line.to_string()))
+                true
             }
             Mode::Statement { start, buf, toc, toc_owned } => {
                 // A `--`-prefixed line reasserts a fresh boundary even
@@ -1126,7 +1208,7 @@ impl Builder {
                     let toc_owned = *toc_owned;
                     self.mode = Mode::Idle;
                     self.push_statement_span(start, &buf, toc, toc_owned);
-                    return Some((offset, line.to_string()));
+                    return true;
                 }
                 // The run's first line, recognized before it ever becomes a
                 // one-statement `Unparsed` span — `docs/design/architecture.md`,
@@ -1134,7 +1216,7 @@ impl Builder {
                 // is what keeps a koji-scale `--inserts` dump from allocating
                 // (and, pre-3.6, text-storing) one span per row.
                 if buf.is_empty()
-                    && let Some(table) = parse_insert_target(line)
+                    && let Some((table, prefix_len)) = parse_insert_target_span(line)
                 {
                     let start = *start;
                     let toc = toc.take();
@@ -1143,12 +1225,13 @@ impl Builder {
                         start,
                         table,
                         database: self.database.clone(),
-                        buf: String::new(),
+                        scan: StatementScan::new(),
+                        prefix: line.as_bytes()[..prefix_len].into(),
                         row_count: 0,
                         toc,
                         toc_owned,
                     };
-                    return Some((offset, line.to_string()));
+                    return true;
                 }
                 push_stmt_line(buf, line);
                 if statement_complete(buf) {
@@ -1159,9 +1242,15 @@ impl Builder {
                     self.mode = Mode::Idle;
                     self.push_statement_span(start, &buf, toc, toc_owned);
                 }
-                None
+                false
             }
-            Mode::InsertRun { start, table, database, buf, row_count, toc, toc_owned } => {
+            // Only the lines [`insert_run_line`](Self::insert_run_line)
+            // declines reach this arm — a boundary signal, a blank line, or
+            // a fresh statement that may not continue the run. It decides
+            // them exactly as it did before that fast path existed, and
+            // feeds the *same* `scan`, so a run's classification does not
+            // depend on which of the two saw a given line.
+            Mode::InsertRun { start, table, database, scan, row_count, toc, toc_owned, .. } => {
                 // Closes the run in place — takes owned copies of everything
                 // first (mirroring `Mode::Statement`'s dangling-close arm
                 // above) so `self.mode = Mode::Idle` and the `self.push_span`
@@ -1179,16 +1268,16 @@ impl Builder {
                         );
                         self.mode = Mode::Idle;
                         self.push_insert_run(start, table, database, row_count, toc, toc_owned);
-                        return Some((offset, line.to_string()));
+                        return true;
                     }};
                 }
-                if buf.is_empty() {
+                if scan.is_empty() {
                     if trimmed.is_empty() {
                         // Absorbed the same way `Mode::Comment` absorbs a
                         // blank line between two entries — waiting to see
                         // whether the run continues or the next TOC comment
                         // (or EOF) closes it.
-                        return None;
+                        return false;
                     }
                     let continues = parse_insert_target(line).as_deref() == Some(table.as_str());
                     if !continues {
@@ -1199,17 +1288,17 @@ impl Builder {
                 }
                 // Defensive dangling-close, mirroring `Mode::Statement`'s —
                 // not expected in real `pg_dump` output (a `--` line always
-                // arrives with `buf` empty, handled above), kept for the same
-                // graceful-degradation reason.
-                if trimmed.starts_with("--") && !in_open_quote(buf) {
+                // arrives between statements, handled above), kept for the
+                // same graceful-degradation reason.
+                if trimmed.starts_with("--") && !scan.in_quote() {
                     close_and_reprocess!();
                 }
-                push_stmt_line(buf, line);
-                if statement_complete(buf) {
+                scan.feed_line(line.as_bytes());
+                if scan.complete() {
                     *row_count += 1;
-                    buf.clear();
+                    scan.reset();
                 }
-                None
+                false
             }
         }
     }
@@ -1795,6 +1884,63 @@ mod tests {
             }
             other => panic!("expected an INSERT run, got {other:?}"),
         }
+    }
+
+    /// Every line-shape [`Builder::insert_run_line`] declines, in one run,
+    /// counted correctly — because the two paths share a
+    /// [`StatementScan`] and each line reaches exactly one of them, so a
+    /// run whose lines alternate between them must fold the same way a run
+    /// of plain one-line statements does.
+    ///
+    /// The shapes, in order: a value carrying a raw newline, whose
+    /// continuation lines are not `INSERT INTO` lines at all; a
+    /// continuation that *looks* like a comment and is really string content
+    /// (the `in_quote` guard); a blank line between statements; and a
+    /// statement spelled with an extra space, which the byte-prefix check
+    /// refuses on purpose and `parse_insert_target` then accepts.
+    #[test]
+    fn an_insert_run_folds_the_same_way_when_its_lines_take_the_slow_path() {
+        let spans = spans_of(&[
+            "--",
+            "-- Data for Name: widgets; Type: TABLE DATA; Schema: public; Owner: postgres",
+            "--",
+            "",
+            "INSERT INTO public.widgets VALUES (1, 'alpha');",
+            "INSERT INTO public.widgets VALUES (2, 'two",
+            "-- lines, and this is not a comment');",
+            "",
+            "INSERT INTO  public.widgets VALUES (3, 'gamma');",
+            "INSERT INTO public.widgets VALUES (4, 'it''s ok');",
+        ]);
+        assert_eq!(spans.len(), 1);
+        match &spans[0].body {
+            SpanBody::Data(DataBlock::InsertRun(run)) => {
+                assert_eq!(run.table, "public.widgets");
+                assert_eq!(run.row_count, 4);
+            }
+            other => panic!("expected an INSERT run, got {other:?}"),
+        }
+    }
+
+    /// The byte-prefix check must not let `public.widgets2` continue
+    /// `public.widgets`'s run: it is a prefix of the longer name, so the
+    /// byte after it has to end the identifier.
+    #[test]
+    fn a_table_whose_name_extends_the_runs_own_starts_a_new_run() {
+        let spans = spans_of(&[
+            "INSERT INTO public.widgets VALUES (1);",
+            "INSERT INTO public.widgets2 VALUES (2);",
+        ]);
+        let runs: Vec<_> = spans
+            .iter()
+            .filter_map(|s| match &s.body {
+                SpanBody::Data(DataBlock::InsertRun(run)) => {
+                    Some((run.table.as_str(), run.row_count))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(runs, vec![("public.widgets", 1), ("public.widgets2", 1)]);
     }
 
     /// `-- Name: EXTENSION postgres_fdw; Type: COMMENT; Schema: -; Owner: `
