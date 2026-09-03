@@ -41,6 +41,7 @@ through.
 | `decode.rs`, a new type's decode/render pair | [Decoders and render-back](#decoders-and-render-back) |
 | `batch.rs`, the zero-copy `Utf8View` path, a batch's flush triggers | [Arrow assembly and the zero-copy path](#arrow-assembly-and-the-zero-copy-path) |
 | `stream.rs`, `map_forward`/`map_file`, replay, resume, projection, predicates, the `--filter` term grammar, the `--where` expression grammar | [Query: mapping and streaming are separate passes](#query-mapping-and-streaming-are-separate-passes) |
+| where a scan's time actually goes, before proposing to make one faster | [Where a scan's time goes](#where-a-scans-time-goes) |
 | `cache.rs`, the format version, cache modes | [The cache](#the-cache) |
 | the CLI's flags or output, the save throttle, the interrupt guard | [CLI surface](#cli-surface) |
 | `scripts/`, a new fixture schema | [Fixtures](#fixtures) |
@@ -386,26 +387,39 @@ on `--inserts` input, **~48 minutes of CPU for a 1 TB dump against the `COPY`
 path's ~3**. That is deficiency `KD9` (`../status/STATUS.md`, "Known
 deficiencies"), and P7 owns it.
 
-**Which layer takes the fix is P7's to settle, and the obvious answer may be
-wrong.** The natural reading is a second scanner-level fast path, the mechanism
-`State::InLargeObjectRegion` already is. But the scanner cannot know a run has
-begun without `parse_insert_target`, which is statement classification and so
-L2's, and unlike `BEGIN;`/`COMMIT;` (I12) an `INSERT` run's boundaries rest on
-no line-anchored invariant. The competing candidate is a map-level fix that
-keeps `Event::Line` and stops `push_stmt_line` copying every line into a
-`String` for `statement_complete` to re-walk. The reading that makes it
-plausible: skipping lines *unread* in the scanner costs 0.442 s per 3.00 GiB
-against `COPY`'s 0.558, so a path that still emits lines but stops accumulating
-them would land in that band — nearly the whole gap, for a diff contained to
-one layer.
+**The fix belongs in `map.rs`, and the profile is what says so.** The natural
+reading was a second scanner-level fast path, the mechanism
+`State::InLargeObjectRegion` already is. The profile refuses it: over the
+3.00 GiB `INSERT`-run file a warm `parse` spends **58.2%** in
+`preamble::scan_buf` and **17.3%** in the `String::from_utf8_lossy(raw)
+.into_owned()` that opens `Builder::feed_line`, against **0.6%** in
+`CopyScanner::next_event` (see "Where a scan's time goes"). Three-quarters of
+the cost is two L2 functions and the scanner is a rounding error, so a third
+region state in `scan.rs` would buy almost nothing — and it was the larger
+claim anyway, since the scanner cannot know a run has begun without
+`parse_insert_target`, which is statement classification, and unlike
+`BEGIN;`/`COMMIT;` (I12) an `INSERT` run's boundaries rest on no line-anchored
+invariant. What the fix removes is the accumulation: `push_stmt_line` copying
+every line into a `String` for `statement_complete` to re-walk with
+`chars().peekable()`, and `feed_line`'s per-line validate-and-allocate ahead of
+it. The supporting reading is the large-object region, which skips lines
+*unread* at 0.442 s per 3.00 GiB against `COPY`'s 0.558.
 
-**Both legs moved ~10% under the `ba2fc12` stamp with no attribution** — cold
-9.85 → 10.87 s, warm 8.37 → 9.19, against an input whose bytes were unchanged.
-`scan.rs` and `copy.rs` are unchanged across `b70589f..ba2fc12`; `preamble.rs`,
-`stream.rs` and `map.rs` are not, and an `INSERT` run is the one measured input
-walking the statement accumulator on every line. P7 settles that with a
-differential profile before it prices a fast path against a baseline it cannot
-explain.
+**Both legs moved ~10% under the `ba2fc12` stamp, and it is code layout rather
+than code** — cold 9.85 → 10.87 s, warm 8.37 → 9.19, against an input whose
+bytes were unchanged. `release` builds at `b70589f` and at the stamp retire
+**114.62 G and 114.66 G instructions** for the same scan, 0.03% apart, and
+spend **35.8 G and 40.0 G cycles** doing it, with branch misses, cache misses,
+icache misses and frontend stalls all flat or lower on the slower one. The
+whole 4.2 G-cycle difference is inside `scan_buf`, whose 293 instructions are
+byte-identical between the two binaries and differ only in address. Building
+both with `-C llvm-args=-align-all-functions=6` collapses the gap to −1.5% and
+takes both below the faster one, and the same flag moves the control's `parse`,
+`strings` and `typed` shapes not at all — so this is one tight character loop's
+placement, not a general win. There is nothing to bisect to and nothing to fix:
+what it changes is how a figure is read
+([`measurements.md`](measurements.md), "Two builds of one source can differ by
+layout").
 
 *Rejected:* re-prioritising that fix on the strength of the ratio alone. The
 number is three times what the entry was filed under, which is exactly the kind
@@ -3855,6 +3869,153 @@ quoting rule is one the term grammar already teaches.
 SQL-shaped literals.* Two grammars for one thing, and the second would
 immediately disagree with the first about quoting.
 
+## Where a scan's time goes
+
+The cost decomposition of the three shapes a user runs — `parse`, `query
+--schema-mode strings` and `query --schema-mode typed` — read off sampling
+profiles rather than off subtractions. It is written here because it is the
+durable half of the scan-performance work: a lever may turn out to be worth
+little, and knowing which function spends the time is worth having either way.
+
+**How to read the percentages, and it is the one thing that invalidates every
+number below if it is forgotten.** `perf_event_paranoid = 2` permits user-space
+sampling only, so a profile's event is `cpu/cycles/Pu` and **its 100% is the
+process's user time, not its wall time**. On this workload that distinction is
+not a detail: a warm 3.00 GiB `parse` is 0.60 s of wall made of 0.30 s system
+and 0.29 s user, and `dd` over the same file is 0.29 s of wall that is *all*
+system. So a `parse` profile describes the half of the scan that is not the
+kernel handing the bytes over, and a share of it must be multiplied by the user
+time before it can be compared with anything in
+[`measurements.md`](measurements.md).
+
+The apparatus is `runs/profile-*.{data,txt}`, taken with the sequence `cd
+scripts && uv run measure.py --profile-recipe` prints. Every figure quoted as
+seconds is a `measurements.md` table; every percentage is a profile, which is a
+proportion and never a median.
+
+### `parse`: half the wall is the kernel, and half of what is left is copying
+
+Warm, on tmpfs, over the 3.00 GiB brace-free control (16 scalar columns,
+814,362 rows). Shares are of user time; the last column converts them at
+0.29 s.
+
+| Share | ≈ | Symbol | What it is |
+|---|---|---|---|
+| 31.4% | 0.091 s | `__memmove_avx_unaligned_erms` | `buf.extend_from_slice(&bytes)` in `scan::scan`, copying each chunk into the scanner's own buffer, plus `buf.drain(..used)` shifting the remainder down |
+| 23.2% | 0.067 s | `__memset_avx2_unaligned_erms` | `vec![0u8; len]` in `io::LocalFileSource::read_range` — a fresh, zeroed 1 MiB allocation per chunk, on the `spawn_blocking` thread |
+| 17.5% | 0.051 s | `memchr::One::find_raw_avx2` | the LF search inside `CopyScanner::next_event` — the `COPY` grammar itself |
+| 17.2% | 0.050 s | `memchr::Two::find_raw_avx2` | `memchr2(b'{', b'[', raw)`, the array-shape census's pre-filter |
+| 4.2% | 0.012 s | `pgdq::main::{closure#0}` | the event callback into `map::Builder` |
+
+**More than half of a warm `parse`'s user time is spent zeroing and copying
+bytes that are already in memory** — 54.6% between the two, 0.158 s of the 0.60 s
+scan this profile was taken beside, which is about half of the 0.31 s
+separating it from the `dd` floor in the same session.
+The read path allocates a fresh `Vec<u8>` per chunk (which the kernel zeroes,
+then `read_exact_at` overwrites), hands it back as `Bytes`, and the scanner
+copies it into a second buffer it owns. Neither the zeroing nor the copy is
+work the problem requires.
+
+**The grammar and the census cost the same as each other and less than the
+copying.** Two SIMD passes over the same bytes: `memchr` for the row terminator
+and `memchr2` for the census's brace pre-filter. The census share reconciles
+with the subtraction that measures it — 0.050 s here against the +0.030 s the
+census-on/census-off pair reads
+([`measurements.md`](measurements.md), "The census on brace-free rows") — which
+is the check that the user-time correction above is being applied correctly.
+
+**On a brace-bearing file the picture inverts.** Over the `--arrays
+--composite` file `map::Builder::on_row` is **81.4%** of the `parse` profile,
+and the copying falls to 5.6% + 3.8%. Both readings are true and they are about
+different inputs: the pre-filter is what a brace-free scan pays, and the field
+split behind it is what a brace-bearing one pays.
+
+### `query`: the CLI's render-back is the largest bucket, not the decode
+
+Same file, same regime, `--dqcache none` (which is what every published `query`
+figure times, so the mapping pass is inside these numbers). Structure is read
+off the call graph; the flat shares agree with a `release` build's.
+
+| | `strings` | `typed` |
+|---|---|---|
+| wall / user / system | 4.48 / 3.56 / 0.88 s | 10.72 / 9.81 / 0.86 s |
+| `poll_next` — the library's whole batch stream | 56.8% | 33.7% |
+|  ↳ `RowBatcher::push_row` | 45.2% | 29.8% |
+|  ↳ `copy::decode_field` | 22.6% | 7.9% |
+|  ↳ `batch::append_typed` | — | 13.8% |
+| `pgdq::print_batch` — the CLI turning the batch back into TSV | **34.0%** | **62.8%** |
+|  ↳ `batch::render_field` | 9.9% | 52.6% |
+| the `read_range` thread | 7.2% | 2.6% |
+
+**Two-thirds of a typed query is the CLI writing the values back out as
+text**, and 79% of the gap between the two modes is that one function: typed
+costs 6.24 s more than `strings`, of which 4.95 s is `print_batch` and 1.29 s
+is the library. In a `release` profile the same thing shows up as
+`core::fmt` — `format_inner`, `fmt::write`, `Formatter::pad_integral`,
+`<u8 as LowerHex>::fmt` and `String::write_str` together are about a fifth of
+the typed profile, with the allocator traffic they generate on top.
+
+**What that means for reading the headline table.** The baseline puts a typed
+query at 31× the warm `dd` floor and a `strings` query at 13.3×
+([`measurements.md`](measurements.md), "Scan throughput by input shape"), and
+those are `pgdq query` figures: an embedder that consumes `RecordBatch`es pays
+`poll_next` and nothing under `print_batch`. The library's own typed extraction
+is 4.06 µs a row against `strings`'s 2.48 — a factor of 1.6, not the factor of
+2.4 the wall times show.
+
+**`decode_field` is the largest single library bucket in `strings` mode** and
+stays largest when arrays are added (14.6% on the `--arrays --composite` file),
+so it is the shared row machinery rather than the nested path. The zero-copy
+premise holds up in the same profile: `GenericByteViewArray::value` and the
+`StringViewBuilder` appends together are under 8%, and no `Utf8View` column
+copies field bytes.
+
+**Nested columns move the weight into the codec, not out of the CLI.** On the
+`--arrays --composite` file the typed profile reads `print_batch` 51.4% and
+`poll_next` 46.8%, with `nested::decode_array` 17.0% under `append_typed`'s
+30.8% and `nested::needs_quote` 8.8% under `render_field` — the write-back
+re-quoting each element.
+
+### The `INSERT` path is two functions in L2
+
+Over the 3.00 GiB `INSERT`-run file, warm, a `release` `parse`:
+
+| Share | Symbol | Reached from |
+|---|---|---|
+| 58.2% | `preamble::scan_buf` | `statement_complete` ← `Builder::step` ← `Builder::feed_line` |
+| 17.3% | `Utf8Chunks::next` | `String::from_utf8_lossy(raw).into_owned()`, the first line of `Builder::feed_line` |
+| 3.6% | `Cursor::parse_ident` | `parse_insert_target` |
+| 3.1% | `__memmove_avx_unaligned_erms` | `push_stmt_line`'s copy into the accumulator |
+| 0.6% | `CopyScanner::next_event` | the scanner |
+
+**Three-quarters of an `INSERT` scan is two functions, both L2, and the
+scanner is under 1% of it** — which is what settles where the fast path goes;
+see "Bulk regions" above. `scan_buf` walks the *accumulated statement* with
+`chars().peekable()` on every line, so a one-line `INSERT` statement is one
+char-by-char pass over its own bytes, and `feed_line`'s
+`from_utf8_lossy(...).into_owned()` is a validation plus an allocation per line
+before the mode machine sees it.
+
+### What a query reads twice, and when
+
+A `--dqcache none` query reads the file **exactly twice**: 6,443,503,731 bytes
+of `pread64` against a 3,221,227,790-byte file, counted with `strace`. Pass 1
+is the mapping pass and pass 2 is the extraction replay
+("Query: mapping and streaming are separate passes"). With a cache the same
+query reads **1.0000×** and a `parse` reads 1.0003×, so the second pass is the
+cost of not having run `parse` — a property of the two-pass design, with the
+remedy already in the user's hands, rather than a defect.
+
+### `attach_text` does not appear in a profile
+
+The concern was that filling `Span::text` re-slices the schema regions once per
+block, so a block-rich dump would pay for it repeatedly. It does not: it runs
+at most twice per map (once after the preamble prepass, once at the end), and
+in a 100,000-sample profile of a 4000-block `parse` — the input built to make
+per-block costs visible — it takes **zero samples**. That same profile is
+43% `stream::splice` and 57% allocator traffic underneath it, which is `KD5`
+and nothing else.
+
 ## The cache
 
 A **best-effort accelerator, never required for correctness**: a stale
@@ -4062,7 +4223,12 @@ the cost tracks block count rather than bytes read.
 cache disabled entirely — 19.0 s for 4000 blocks under `query --dqcache none`,
 which is most of the 20.8 s a throttled `parse` of the same file costs. koji
 cannot show it: 74 blocks over 784 GB. That is deficiency `KD5`
-(`../status/STATUS.md`, "Known deficiencies"), owned by P7.
+(`../status/STATUS.md`, "Known deficiencies"), owned by P7. A profile of the
+4000-block `parse` puts `stream::splice`'s subtree at **43%** of it, over an
+allocator that is **57%** of the whole — `_int_malloc`, `_int_free_chunk`,
+`memmove` and `__libc_malloc2` alone are 12% each — which is what cloning a
+span list per block looks like from underneath (see "Where a scan's time
+goes").
 
 **The fix is the gate the throttle already owns**, and it costs the interrupt's
 promise. Nothing reads `index.spans` between saves during a `parse` — `target`

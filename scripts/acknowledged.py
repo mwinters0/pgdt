@@ -107,4 +107,37 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         ),
         verified="git show 7545dc6 -- scripts/measure.py",
     ),
+    Acknowledged(
+        commit="fbaaa49",
+        figures=("session-drift",),
+        why=(
+            "7.1 added `--profile-recipe` to `measure.py`: three new functions "
+            "(`profile_argv`, `profile_recipe`, `cmd_profile`) and one "
+            "subcommand. Reachability -- no sweep command shape reaches any of "
+            "them, and no existing figure's input, invocation or timing "
+            "changed."
+        ),
+        verified="git show fbaaa49 -- scripts/measure.py",
+    ),
+    Acknowledged(
+        commit="a6bf6cd",
+        figures=("session-drift",),
+        why=(
+            "The symbol-fetch entry's closure rewrote `PGDQ_PROFILE_DEBUGINFOD`'s "
+            "comment and the recipe's printed prose inside `profile_recipe`. "
+            "Comment and string-literal only, on the same unreachable "
+            "subcommand."
+        ),
+        verified="git show a6bf6cd -- scripts/measure.py",
+    ),
+    Acknowledged(
+        commit="305af4b",
+        figures=("session-drift",),
+        why=(
+            "`M47`'s first half re-pointed four printed lines of "
+            "`profile_recipe` at CONTRIBUTING.md. String literals inside the "
+            "same unreachable subcommand."
+        ),
+        verified="git show 305af4b -- scripts/measure.py",
+    ),
 )

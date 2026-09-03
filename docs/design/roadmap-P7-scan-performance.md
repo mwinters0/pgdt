@@ -174,18 +174,38 @@ profile is read against.
 | **Bulk `simdutf8`** in place of per-field `std::str::from_utf8` | 16 validation calls per row of the control today, one per borrowed field |
 | **One field split per row**, shared by the predicate's terms, `push_row` and the decoders | a five-way disjunction walks the row five times; the census re-splits every brace-bearing row |
 | **Readahead, `fadvise`, chunk-size defaults** | ≤38% of `parse` wall — NVMe only, zero elsewhere |
+| **The read path's per-chunk zero and copy** | 54.6% of a warm `parse`'s *user* time on the control, 0.158 s of a 0.60 s scan; ~9% of a warm `strings` query |
 | **`decode_array`'s `Vec<Option<String>>` intermediate** | 6.2 µs/row of the arrays file's 13.5, paid before the Arrow build is reached |
-| **Scalar decode and the typed column build** | 7.3 µs of a 12.7 µs typed row on the control — 57% of a typed read, over sixteen ordinary columns with no nesting |
-| **A viewing builder for `List<Utf8View>`** | ~7.3 µs/row — the Arrow build share, the largest single prize on the list |
-| **The mapping pass's double read** | a cold query reads the target block twice, the first read far cheaper per byte |
-| **`attach_text`'s O(blocks × DDL) re-slice** | nothing on koji (~200 × 154 KB against an hour); unbounded in principle on a block-rich dump |
+| **Scalar decode and the typed column build** | 3.31 s of a 10.72 s typed read on the control — `append_typed` 13.8% of user time and `decode_field` 7.9%, the rest of the library's `poll_next` around them |
+| **A viewing builder for `List<Utf8View>`** | to be re-derived: the profile puts the whole library batch stream at 33.7% of a typed read, so the Arrow build's share is bounded well below the 7.3 µs/row this row once claimed |
+| **The mapping pass's double read** | exactly one extra pass — 2.0000× the file's bytes with `--dqcache none`, 1.0000× with a cache |
+| **`attach_text`'s O(blocks × DDL) re-slice** | nothing: zero samples in a 100,000-sample profile of a 4000-block `parse` |
 
-**The scalar row is the largest bucket and the newest to the list.** Every
-other lever targets the shared row machinery or the nested path; this one is
-where the time goes for the shape most dumps actually have. The profile splits
-it in two, because the halves have different remedies: a per-type cost in
-`decode.rs` is a parser problem, and a builder-append cost is the same family
-of fix as the viewing builder.
+**The scalar row is the largest library bucket and the newest to the list.**
+Every other lever targets the shared row machinery or the nested path; this one
+is where the time goes for the shape most dumps actually have. The profile
+splits it in two, because the halves have different remedies: a per-type cost
+in `decode.rs` is a parser problem, and a builder-append cost is the same
+family of fix as the viewing builder.
+
+**Two of those stakes are the decomposition's corrections, not fresh
+estimates.** The scalar and viewing-builder rows were both derived from the
+`typed` − `strings` subtraction, which attributed 7.3 µs of a 12.7 µs typed row
+to decode plus the Arrow build. The profile says **79% of that gap is
+`pgdq::print_batch`** — the CLI turning the batch back into TSV, which no
+embedder pays and no library change removes — leaving the library's whole typed
+extraction at 4.06 µs a row against `strings`'s 2.48
+([`architecture.md`](architecture.md), "Where a scan's time goes"). Both rows
+are re-stated above against the profile; the reasoning is
+[`../status/history/2026-09-03.md`](../status/history/2026-09-03.md).
+
+**One row is admitted that this table did not name**, on the terms the
+paragraph below sets: `io::LocalFileSource::read_range` allocates a fresh
+`vec![0u8; len]` per chunk — which the kernel zeroes and `read_exact_at` then
+overwrites — and `scan::scan` copies it into a second buffer it
+owns. Between them that is more than half of a warm `parse`'s user time, and it
+is neither zeroing nor copying the problem requires. It belongs to whichever
+pass reads bytes, which is the same slice as the I/O defaults.
 
 **A lever the profile finds and this table does not name is admitted**, if it
 is obvious and cheap — by amending this table, with the reasoning in a history

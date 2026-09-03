@@ -338,3 +338,34 @@ exception" rather than an unqualified claim.
 [`architecture.md`](architecture.md), "The floor: the ADBC driver's answer
 bounds ours"; contingent on the pin, since a driver release that answers a type
 differently changes what the promise would say.
+
+---
+
+## Two-thirds of a typed `pgdq query` is the CLI, so no published figure describes what an embedder pays
+
+**Fact.** Every `query` figure in [`measurements.md`](measurements.md) times
+`pgdq query … >/dev/null`, and a sampling profile of that command puts
+`pgdq::print_batch` — the CLI turning each `RecordBatch` back into TSV — at
+**34.0%** of a `strings` query's user time and **62.8%** of a typed one's, with
+`batch::render_field` alone at 52.6% of the latter. An embedder consuming
+`RecordBatch`es pays none of it. Measured on the 3.00 GiB control: the library's
+own typed extraction is 4.06 µs a row against `strings`'s 2.48 — a factor of
+1.6, where the wall times a reader would quote show 2.4. The same figures also
+all run `--dqcache none`, so each one contains a full mapping pass and reads the
+file exactly twice (2.0000× its bytes, counted with `strace`); an embedder with
+a cache reads it once. Both are in
+[`architecture.md`](architecture.md), "Where a scan's time goes".
+
+**Why P6 cares.** P6 is the first surface with an audience that consumes
+batches rather than text, so it is the first place anyone will ask "how fast is
+it" and mean the library. Quoting `measurements.md` at that audience overstates
+the typed cost by roughly 2.5× and understates how much a warm cache buys. The
+decision P6 has to make is whether it states a performance claim at all and, if
+so, against what instrument — the honest one is a figure that stops at the
+batch, which does not exist and which nothing in the harness's current command
+shapes produces.
+
+**Origin.** P7.2, 2026-09-03
+([`roadmap-P7.2-decomposition-notes.md`](roadmap-P7.2-decomposition-notes.md)).
+Contingent on the CLI's output path: a cheaper `print_batch` moves the
+proportion without moving what the library costs.

@@ -18,7 +18,7 @@ All figures are on the hardware `CLAUDE.local.md` describes. Synthetic inputs
 are regenerable with `--seed 42` and are **never committed** — they measure
 throughput, not correctness, which stays entirely fixture-based.
 
-Eleven standing rules for reading anything below:
+Twelve standing rules for reading anything below:
 
 - **Every figure is a ratio, never a disk throughput.** Page-cache state
   dominates. A number taken warm on a freshly generated file can be twice what
@@ -123,6 +123,31 @@ Eleven standing rules for reading anything below:
   subtraction bottoms out"; a re-derivation of either re-reads this rule, which
   is a cross-reference rather than a `quoted_by` edge because a figure never
   declares the doc it lives in.
+- **Two builds of one source can differ by layout, so a stamp-to-stamp move is
+  not necessarily a code change.** The `INSERT`-run row moved ~10% in both
+  regimes between two stamps against byte-identical input, and the attribution
+  is that and nothing else: `release` builds at `b70589f` and at `ba2fc12`
+  retire **114.62 G against 114.66 G instructions** for that scan — 0.03% apart
+  — and spend **35.8 G against 40.0 G cycles**, with branch misses, cache
+  misses, L1-icache misses and frontend stalls flat or *lower* on the slower
+  one. The whole difference is inside `preamble::scan_buf`, whose 293
+  instructions are byte-identical between the two binaries and differ only in
+  address; building both with `-C llvm-args=-align-all-functions=6` collapses
+  it to −1.5% and takes both below the faster one. What follows for reading a
+  figure: **a move of this size in a hot, tight, branchy loop is not evidence
+  of a code change**, a bisect over it lands on whatever commit shifted the
+  binary and explains nothing, and the same flag moved the control's `parse`,
+  `strings` and `typed` shapes not at all — so this is not a lever, it is the
+  instrument's own floor for a *code* comparison across two builds. Two
+  consequences the phase pays: the honest way to compare two commits is
+  `instructions:u` alongside the wall time, since that number holds still when
+  layout moves; and a profile taken with `--profile-recipe`'s frame-pointer
+  build reverses the sign of this particular difference, so **a profile is
+  read for proportions and never for a wall-time comparison between two
+  builds**. The working is beside the mechanism in
+  [`architecture.md`](architecture.md), "Bulk regions: one span kind, three
+  payloads"; the evidence is
+  [`../status/history/2026-09-03.md`](../status/history/2026-09-03.md).
 - **Long runs are detached.** A koji-scale scan is roughly an hour; see
   `CLAUDE.md`, "Long-running processes", for why waiting on one is expensive
   and what to do instead.

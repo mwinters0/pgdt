@@ -17,19 +17,15 @@ each is in.
 [`../design/measurements.md`](../design/measurements.md) carries the `ba2fc12`
 stamp of 2026-09-03: the scan-performance baseline sweep pair was taken and
 folded in whole, so all thirteen tables come from one sitting.
-`measure.ACKNOWLEDGED` carries two entries, both excusing `7545dc6` — P7's
-staging retargeted one doc comment and one `quoted_by` list at the drained
-inbox, and neither reaches a timed path. **One figure is stale and owes an
-acknowledgement, not a sweep**: 7.1 added `--profile-recipe` to
-`scripts/measure.py`, which `session-drift` declares, and the `M47` closure
-edited that subcommand's prose again. The reachability oracle settles both — a
-subcommand no sweep command shape executes, and thereafter only its docstrings
-and printed text, with nothing on a timed path changed. An entry cannot name
-its own sha, so it lands as a follow-up exactly as `175f83e` did, and must
-excuse both commits. A stale figure obliges no sweep
-and neither does a wrap: a full sweep is an hour of a quiet machine and belongs
-to the phase that is about performance, which will re-take every table under its
-own apparatus
+`measure.ACKNOWLEDGED` carries five entries and **no figure is stale**: two
+excuse `7545dc6`, where P7's staging retargeted one doc comment and one
+`quoted_by` list at the drained inbox, and three excuse `fbaaa49`, `a6bf6cd`
+and `305af4b`, which between them added `--profile-recipe` to
+`scripts/measure.py` and then rewrote its prose. All five are the reachability
+oracle: a subcommand no sweep command shape executes, with nothing on a timed
+path changed. A stale figure obliges no sweep and neither does a wrap: a full
+sweep is an hour of a quiet machine and belongs to the phase that is about
+performance, which will re-take every table under its own apparatus
 ([`../design/measurements.md`](../design/measurements.md), "A stale figure does
 not oblige a sweep").
 
@@ -71,10 +67,17 @@ not oblige a sweep").
 **Profiles are not figures.** `cd scripts && uv run measure.py
 --profile-recipe` prints the sampling-profile sequence and runs none of it; a
 profile is a `runs/` artifact with no median, no apparatus gate and no marker.
-Six of them exist — `parse`, `strings` and `typed` over the control and the
-`--arrays --composite` file — and the instrument's own floor is measured beside
-them
-([`../design/roadmap-P7.1-profiling-apparatus-notes.md`](../design/roadmap-P7.1-profiling-apparatus-notes.md)).
+Six were taken from that recipe — `parse`, `strings` and `typed` over the
+control and the `--arrays --composite` file — with the instrument's own floor
+beside them
+([`../design/roadmap-P7.1-profiling-apparatus-notes.md`](../design/roadmap-P7.1-profiling-apparatus-notes.md)),
+and seven more sit beside them from the decomposition: the `INSERT`-run pair at
+two commits in both build configurations, a 4000-block `parse`, and `release`
+profiles of the three control shapes
+([`../design/roadmap-P7.2-decomposition-notes.md`](../design/roadmap-P7.2-decomposition-notes.md)).
+**What a scan spends its time on is
+[`../design/architecture.md`](../design/architecture.md), "Where a scan's time
+goes"** — the decomposition, which is the durable half of the phase.
 
 **Figures.** Every figure in
 [`../design/measurements.md`](../design/measurements.md) comes from the
@@ -82,7 +85,7 @@ them
 apparatus line. `--check` reconciles thirteen markers against thirteen figures.
 `session-drift` is derived across that sweep and a second one taken three
 minutes later on the same commit, which is the pair `--drift` reads.
-`measure.ACKNOWLEDGED` carries the two entries above: a fresh stamp spends
+`measure.ACKNOWLEDGED` carries the five entries above: a fresh stamp spends
 every entry, and `--check` named the previous six so they were deleted rather
 than kept as sediment.
 
@@ -93,15 +96,15 @@ flag, the `composite_text` input and the fidelity case pairing them — because
 the projection table makes the same isolation a subtraction between two adjacent
 rows of one file.
 
-**One reading moved beyond its regime's resolution and is not attributed.**
-An `INSERT`-run scan costs ~10% more at `ba2fc12` than at `b70589f` in *both*
-regimes — cold 9.85 → 10.87 s, warm 8.37 → 9.19 — on a byte-identical input,
-reproduced by the second sweep of the pair, where every other cold reading held
-within 0.6%. What settles it is a bisect over that range, which belongs to the
-phase that owns scan performance, which takes it as a differential profile
-rather than a bisect
-([`../design/roadmap-P7-scan-performance.md`](../design/roadmap-P7-scan-performance.md),
-"How this phase measures"). The ratio the design quotes is unmoved:
+**The `INSERT`-run reading that moved ~10% between two stamps is code layout,
+not code.** Cold 9.85 → 10.87 s and warm 8.37 → 9.19 on a byte-identical input;
+`release` builds at the two commits retire the same instructions to 0.03% and
+differ only in cycles, the whole difference sits inside `preamble::scan_buf`
+whose 293 instructions are byte-identical between the binaries, and forcing
+64-byte function alignment collapses the gap. There is nothing to bisect to.
+What it changes is how a figure is read, which is now a standing rule
+([`../design/measurements.md`](../design/measurements.md), "Two builds of one
+source can differ by layout"). The ratio the design quotes was never in doubt:
 16.5× against 16.7×, still mid-teens.
 
 **The sweep's `control` warm floor sits 22.4% above the previous stamp's**,
@@ -128,10 +131,11 @@ taken invalidates that figure.
       `--koji-recipe` precedent. Six first profiles, and the instrument's own
       floor. No library code. Notes:
       [`../design/roadmap-P7.1-profiling-apparatus-notes.md`](../design/roadmap-P7.1-profiling-apparatus-notes.md)
-- [ ] **7.2** The decomposition, published — `architecture.md`'s "where a
-      scan's time goes", the `INSERT` +10% differential profile, the layer the
-      `INSERT` fast path takes, and readings for the three measure-only levers.
-      No library code.
+- [x] **7.2** The decomposition, published — `architecture.md`'s "Where a
+      scan's time goes", the `INSERT` +10% attribution, the `INSERT` fast
+      path's layer (`map.rs`), and readings for the three measure-only levers.
+      No library code. Notes:
+      [`../design/roadmap-P7.2-decomposition-notes.md`](../design/roadmap-P7.2-decomposition-notes.md)
 - [ ] **7.3** The allocator — glibc against `jemalloc` and `mimalloc`, adopted
       in the CLI if it wins, never in the library; the apparatus line names it.
 - [ ] **7.4** `KD5` — `stream::splice` moves inside the throttle's gate, the
@@ -162,7 +166,8 @@ taken invalidates that figure.
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 - **P7 is open**, grilled and sliced; the checklist above is its progress, and
-  only its apparatus slice has landed — no library code has changed for it. Six
+  only its two evidence slices have landed — no library code has changed for
+  it. Six
   other phases are sketched and one more is
   specified — P13, P16, P10, P14, P6, P15, P8, in the roadmap table's schedule
   order; a `P<k>` is an identifier, so the numbers say nothing about the order
@@ -280,7 +285,9 @@ here rather than reading as a phase nobody has sliced.
 
 - **KD9** — an `INSERT` run is folded into one span but every line is still
   decoded, at mid-teens times a `COPY` scan's per-byte CPU. **(b) owned by P7**,
-  slice **7.5**, whose layer the decomposition slice settles first. Detail:
+  slice **7.5**, now placed in `map.rs` by the profile: three-quarters of an
+  `INSERT` scan is `statement_complete`'s re-walk and `feed_line`'s per-line
+  lossy conversion, and the scanner is 0.6% of it. Detail:
   [`../design/architecture.md`](../design/architecture.md), "Bulk regions: one
   span kind, three payloads".
 
@@ -310,4 +317,25 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-Nothing is open.
+- **The decomposition re-priced three lever rows and admitted a fourth, and the
+  slice list was left alone.** The call: amend
+  [`../design/roadmap-P7-scan-performance.md`](../design/roadmap-P7-scan-performance.md)'s
+  lever table — which that document authorises in as many words — but do not
+  add, re-scope or re-order a slice unattended. What the maintainer is being
+  asked to decide is whether the slice list still matches the evidence. Three
+  things pull on it. **7.10** ("scalar decode and the typed column build") was
+  sized at 7.3 µs of a 12.7 µs typed row by subtracting `strings` from `typed`;
+  the profile says 79% of that gap is `pgdq::print_batch`, the CLI's own
+  render-back, which no library change touches — so the slice's real prize is
+  the library's 4.06 µs against `strings`'s 2.48. **7.11** (the viewing builder)
+  was admitted as "the largest single prize on the list" on that same
+  subtraction, and its stake is now unknown rather than large; it is
+  conditional on 7.2 confirming the prize, and 7.2 did not. And the **read
+  path's per-chunk zero and copy** — `vec![0u8; len]` per 1 MiB chunk plus a
+  copy into the scanner's buffer, more than half of a warm `parse`'s user time
+  — is a new lever row with no slice: 7.8 owns the pass that reads bytes, but
+  its row names the I/O defaults and nothing else. Reversing any of this costs
+  a paragraph in the spec and a slice row; nothing is built on it yet. The
+  fourth pull is quieter: if `print_batch` is two-thirds of a typed `pgdq
+  query`, the phase may want a figure that measures the library rather than the
+  CLI, which is an apparatus change and belongs to whoever decides it.
