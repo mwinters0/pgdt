@@ -725,9 +725,12 @@ spent all the same. What each struck item did is filed by subject —
 [`measurements.md`](measurements.md) for an apparatus change,
 [`layering.md`](layering.md), [`../process.md`](../process.md) and
 [`.claude/skills/`](../../.claude/skills/) for a rule — and why it was done is
-in the dated history entry it was filed under. **There is no table below**: it
-is written again by the first item to land after this keystone, which takes
-`M46`.
+in the dated history entry it was filed under. The table below was written
+again by the first item to land after that keystone.
+
+| # | Date | Blocks | What changed | Why |
+|---|---|---|---|---|
+| `M46` | 2026-09-03 | | five backward references to `P11` that were not provenance are gone: `STATUS.md`'s two per-phase enumerations of what `P11` and `P12` built (the capability table below them already carries every one), a `Rejected:` paragraph citing the deleted spec's `KD7` binding, "the queue `P11` closes one at a time", the P6 inbox's "`P11` still owes each note a *path*" — which the phase went on to deliver — and the Future item sequencing collation-aware comparison "after `P11` wraps" | [`../status/history/2026-09-03.md`](../status/history/2026-09-03.md) |
 
 **One live obligation outlived them.** An `INSERT`-run scan costs
 **mid-teens times** a `COPY` scan per byte, CPU-bound, which argues for a scanner-level `INSERT`
@@ -815,14 +818,15 @@ this section when it acquires a phase number, not when it acquires a design.
   tie-break is load-bearing; and `=` is not `cmp() == 0`, since `texteq` never
   consults the collation for a deterministic collation.
 
-  **Unscheduled, and deliberately after P11 rather than before it.** Nothing in
-  the current register is shaped against this — new arms split
+  **Unscheduled, and additive to what exists.** Nothing in the current register
+  is shaped against this — new arms split
   `ComparisonDivergence::NonBytewiseCollation` additively, and a collator would
   ride in `ComparisonPlan`, which is already per-column and already carries two
-  per-column facts. P11's own collation slices are a **prerequisite** and not a
-  duplicate: nothing can defer to a collation it has not read out of the
-  preamble. It acquires a phase number when it acquires a design, which is a
-  grilling to run after P11 wraps. Reasoning and evidence:
+  per-column facts. Its **prerequisite is already met**: nothing can defer to a
+  collation it has not read out of the preamble, and the declared collation is
+  read ([`architecture.md`](architecture.md), "Ordering operators compare
+  typed"). It acquires a phase number when it acquires a design, and that
+  grilling is unblocked. Reasoning and evidence:
   [`../status/history/2026-09-01.md`](../status/history/2026-09-01.md),
   "Collation splits by whether the answer depends on the source server".
 

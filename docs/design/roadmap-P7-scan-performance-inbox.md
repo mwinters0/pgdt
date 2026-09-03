@@ -632,7 +632,7 @@ the first failure.
 A filter is now a boolean expression tree carrying `OR` and `NOT`, and a
 disjunction short-circuits on the first term that *succeeds* — so the shape
 that costs *n* walks is the ordinary one, not the pathological one. The
-typed-predicates phase deliberately does not fix it: the fix is a rework of an
+typed-predicates phase deliberately did not fix it: the fix is a rework of an
 already-tested core path, and it must not share a review cycle with a change
 whose worst bug is a silently wrong row set.
 
@@ -646,7 +646,7 @@ touches this same field splitting, so a field-offset buffer built here serves
 both — and building it in either place separately means building it twice.
 
 **Origin.** P11 grilling, 2026-08-31. The walk itself, and the cost model that
-makes this the phase's own statement of what it did not do, is
+makes it that phase's own statement of what it did not do, is
 [`architecture.md`](architecture.md), "Predicates" — "each term walks the row
 itself, so a five-way disjunction is up to five walks per row".
 

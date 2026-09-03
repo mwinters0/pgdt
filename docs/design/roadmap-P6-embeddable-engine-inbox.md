@@ -245,10 +245,9 @@ orders by declaration order).
 query` prints each of them once on stderr. It is per **term**, not per column:
 `=` routes through the same comparison plan the ordering operators do, and most
 divergences reach ordering alone, so one column filtered with `<` and `=` can
-carry one note. P11 still owes each note a *path*, so a divergence inside an
-array element or a composite field names its position.
- It is a **third channel** rather
-than a widening of either existing one, and deliberately: the signal is
+carry one note. Each note carries a *path*, so a divergence inside an array
+element or a composite field names its position. It is a **third channel**
+rather than a widening of either existing one, and deliberately: the signal is
 per-column *and* conditional on a predicate, which makes it L4, while
 `DumpIndex.diagnostics` is L1 and `ResolvedSchema.notes` is L2 — so writing it
 into either inverts the layering.

@@ -2679,8 +2679,8 @@ boundary of what any amount of work here could close: the `S`-irrelevant set
 can be widened by reading the file more carefully, and the `S`-relevant
 remainder cannot be closed from the file at all, only by binding to an
 environment a user asserts matches `S`. The roadmap's Future item
-"Collation-aware comparison" is that second half, and it is deliberately not
-scheduled inside P11 — see [`roadmap.md`](roadmap.md).
+"Collation-aware comparison" is that second half, and it is unscheduled by
+decision rather than by oversight — see [`roadmap.md`](roadmap.md).
 
 **Some collations are bytewise in fact and divergent by this rule**, and that
 is the asymmetry costing what it is supposed to cost rather than a defect. The
@@ -3097,16 +3097,17 @@ is a property of the announcement, not a second defect. Reasoning in
 [`../status/history/2026-09-01.md`](../status/history/2026-09-01.md), "`KD7`'s
 equality half is the same defect, not a second one".
 
-*Rejected: closing this as a property alongside the other three, to strike
-`KD7` as P11's spec bound.* The three that closed are properties because
-nothing anybody could write would change the answer — the database default is
-not in the file, and `json` has no server order at all. This one is the
+*Rejected: closing this as a property alongside the other three, so that `KD7`
+could be struck as the typed-predicates work had undertaken to.* The three that
+closed are properties because nothing anybody could write would change the
+answer — the database default is not in the file, and `json` has no server order
+at all. This one is the
 opposite: the file states the collation, the row set is wrong, and the code that
 would fix it is nameable. Calling it a property to complete a strike is the
 "property filed as a deficiency" rule running backwards, and it is the one
 direction the register cannot recover from — a struck number reinstated is a
 state it has no way to express, where an entry kept and struck later costs one
-edit. The spec's binding was amended instead; reasoning in
+edit. The undertaking was amended instead; reasoning in
 [`../status/history/2026-09-01.md`](../status/history/2026-09-01.md), "`KD7`
 survives at one statement rather than being struck".
 
@@ -3198,7 +3199,7 @@ Both replace an empty result with a named refusal, which is the failure shape
 that motivated the change.
 
 **That second one is not the same class as the cases this mechanism closes**,
-and the spec filed it as though it were. `1.5` against a `numeric(10,2)`
+though it was first filed as though it were. `1.5` against a `numeric(10,2)`
 written `1.50`, and `a` against a padded `char(5)`, are cases where the literal
 *is* a well-formed value of the column's type and only the file's spelling of
 it differs — rendering the literal closes them, and does. `2020-01-01` against
@@ -4983,10 +4984,10 @@ granularity for which evidence can exist.** That is one rule, and the table
 below is it applied to three shapes of source rather than three policies —
 which is what makes a declared *name* the key on one side and a *match arm* on
 the other. A built-in name is separately closable: the eleven names answering
-`(Utf8View, text)` are exactly the queue P11 closes one at a time, so one case
-must not excuse the rest. A `TypeKind` sharing an arm with another shares one
-decision and is not separately closable until that arm splits — and for one of
-them, `Shell`, no oracle case can exist at all. The empty-enum arm is the same
+`(Utf8View, text)` are a queue closed one name at a time, so one case must not
+excuse the rest. A `TypeKind` sharing an arm with another shares one decision
+and is not separately closable until that arm splits — and for one of them,
+`Shell`, no oracle case can exist at all. The empty-enum arm is the same
 rule a third time: its guard is separately closable and `public.empty_enum` is
 its case.
 
