@@ -4037,12 +4037,43 @@ heading is rewritten whenever the thing under it moves. The heading is then free
 to be vivid and free to change at the same time, and neither freedom costs a
 retarget.
 
+**The rule is the test, and the four are only what it selects today.** A slice
+that writes a heading stating a proportion owes that heading a marker in the
+same change; the set is not a closed list to be re-derived. Marking happens at
+that moment rather than pre-emptively, which is why two of the four are marked
+with no citation yet — the first citation of one then costs nothing.
+
 The rest of this file is cited by heading, which is right where the heading
 names a mechanism rather than a finding — a marker on every section would be
-ceremony around strings that do not move. What that leaves is a citation whose
-target has to be *found* rather than resolved, and the check that resolves both
-forms — strictly for a marker id, leniently for a heading — is
-[`roadmap.md`](roadmap.md), `M50`.
+ceremony around strings that do not move. *Rejected: marking every cited
+section.* The tree holds 238 citations of this file across 46 distinct target
+strings, of which 38 resolve to a heading exactly and 5 to a truncated leading
+clause of one, so the cost is 46 judgements and 238 mechanical substitutions
+rather than the two hundred deliberations it looks like. It was refused on the
+reading rather than the arithmetic: at 238 sites, a citation reading *the map is
+built once, from the preamble* tells a reader what they will find and one
+reading *file-map-build* does not, and a heading naming a mechanism
+does not move, so a marker over it buys nothing back. The strictness given up is
+bounded — 38 of the 46 already resolve exactly — and adding a marker later is
+purely additive.
+
+**A citation names the id in the position the heading occupied**, in one of two
+shapes: `` (`docs/design/architecture.md`, "parse-profile") `` where the doc is
+named, and a bare `"parse-profile"` where the surrounding sentence already named
+it — which is the idiom the notes docs use when one doc is named and several of
+its sections are then quoted in a list. The second is resolvable without a
+second grammar because an id is matched by *set membership*, not by parsing: a
+quoted string that exactly equals a declared marker id is a citation, and ids
+are kebab-case, so no sentence of English collides with one.
+
+**Citing a marked section by its heading is an error**, not a lenient match. The
+marker is worth nothing otherwise: the heading is still there, a lenient matcher
+resolves it happily, and the citation breaks silently at the next re-measure —
+the failure the marker exists to prevent, arrived at by the route that leaves no
+trace. What that leaves is a citation whose target has to be *found* rather than
+resolved, and the check that resolves every form — a marker id strictly, a
+heading leniently, and a marked section's heading as a failure naming the id to
+use instead — is [`roadmap.md`](roadmap.md), `M50`.
 
 <!-- section: parse-profile -->
 
