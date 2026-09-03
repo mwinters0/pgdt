@@ -4018,6 +4018,25 @@ scripts && uv run measure.py --profile-recipe` prints. Every figure quoted as
 seconds is a `measurements.md` table; every percentage is a profile, which is a
 proportion and never a median.
 
+**These headings state a proportion, and that is deliberate.** A heading here is
+the section's one-line finding, met for free by a reader skimming the contents,
+so it is written to say what the profile found and rewritten whenever the finding
+moves: `parse`'s has read "half the wall is the kernel, and half of what is left
+is copying", then "…and the rest is two SIMD passes", then its present form,
+each rewrite following a slice that removed the term the previous one named.
+*Rejected: naming the mechanism instead* — "`parse`: where the user time
+goes" never goes stale because it never says anything, and buys the saving of an
+edit with the finding itself.
+
+What made that cost look worse than it is was citing these sections **by
+heading**, so every rewrite retargeted each citation and the retarget was
+enforced by nothing. The citation moves to a stable marker instead
+([`roadmap.md`](roadmap.md), `M49`), which is the idiom
+[`measurements.md`](measurements.md)'s figures and the deficiency register
+already use, for the reason `scripts/deficiencies.py` gives in those words: a
+heading is rewritten whenever the thing under it moves. The heading is then free
+to be vivid and free to change at the same time.
+
 ### `parse`: three-quarters of the wall is the kernel, and the rest is two SIMD passes
 
 Warm, on tmpfs, over the 3.00 GiB brace-free control (16 scalar columns,

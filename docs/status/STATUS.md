@@ -424,34 +424,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`architecture.md`'s profile headings state a measured proportion, and this
-  slice had to rewrite one twice.** "`parse`: half the wall is the kernel, and
-  half of what is left is copying" became "…and the rest is two SIMD passes"
-  when the copy went, and then "three-quarters of the wall is the kernel, …"
-  when removing it moved the kernel's share of the wall from a half to three
-  quarters. Each rename retargets four citations — two code comments, two notes
-  docs — because a heading is how this project cites a section. **The call:
-  keep the vivid, proportion-bearing headings and pay the retarget whenever a
-  slice moves the number.** The reasoning is that the heading is the section's
-  one-line finding and a reader skimming the contents gets the finding for
-  free; a mechanism-named heading ("`parse`: where the user time goes") would
-  never go stale and would also never say anything. What would change if
-  reconsidered: the phase has four more slices aimed at exactly these numbers,
-  so each is one more rename plus its citations, and the alternative costs one
-  edit now.
-
-- **`M48`'s sharing closure counts republication, not every use of another
-  figure's readings.** `cross-file-floor`'s first row is `_per_row_diffs` over
-  `nested-end-to-end`'s own reps: it consumes those readings and publishes a
-  per-row *difference*, so its `Shared` entry declares no republished run and it
-  is not an edge of the closure — which is what keeps `allocator`'s closure at
-  the four figures the review named rather than five. **The call: the edge is
-  "this table carries that reading's number too", not "this table read it".**
-  The reasoning is that the defect the closure exists to prevent is two numbers
-  in the doc for one measurement, and a difference is not that number. What
-  would change if reconsidered: re-taking `nested-end-to-end` alone today leaves
-  `cross-file-floor`'s published row 1 derived from reps that no longer exist
-  anywhere, which the wider edge would catch — at the cost of dragging a fifth
-  figure into every allocator sitting and falsifying the "four figures" that
-  [`../design/measurements.md`](../design/measurements.md) and today's history
-  entry both state.
+Nothing is open.

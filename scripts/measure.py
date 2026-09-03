@@ -1591,6 +1591,17 @@ class Shared:
     `nested-end-to-end`'s reps into a per-row cost, which is a derived quantity
     and not that figure's number a second time -- and such an entry still
     orders the run and still pulls its source into a selection.
+
+    *Rejected: making derivation an edge too.* It would close the one hazard
+    this line leaves -- re-taking `nested-end-to-end` alone leaves
+    `cross-file-floor`'s row 1 a difference over reps that no longer exist
+    anywhere -- but at the cost of dragging a fifth figure into every
+    `allocator` sitting and falsifying the four-figure closure
+    `measurements.md` publishes. The hazard is closed by *naming* the reverse
+    direction rather than taking it (`roadmap.md`, `M52`), which is the
+    distinction `--figure` already draws. Selection is directional and reads
+    every share, so the forward direction -- `--figure cross-file-floor`
+    pulling its source in -- was never at risk.
     """
 
     source: str
