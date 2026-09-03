@@ -373,15 +373,39 @@ producer class that *can*: a hand-written or `pg_dump`-compatible dump, where
 coarser-and-cheaper trade the `COPY` path already makes. The symmetry between
 the two paths is a consequence of that call, not the argument for it.
 
+<!-- deficiency: KD9 -->
 **Every line is still decoded into `Event::Line`**, and that costs
 **mid-teens times** a `COPY` scan per byte, warm — 16.5× in the sweep this doc
 is stamped against, 14.4–16.7× over the sweeps taken under a witnessed-quiet
 apparatus; see [`measurements.md`](measurements.md), "Scan
-throughput by input shape". Correctness, tiling and row counts are unaffected;
-what it costs is throughput on `--inserts` input, ~48 minutes of CPU for a 1 TB
-dump against the `COPY` path's ~3. A scanner-level `INSERT` path is the fix and
-is filed in
-[`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md).
+throughput by input shape". Carry it as a magnitude rather than a value:
+neither leg is durable — between two stamps the `COPY` leg went 0.500 → 0.558 s
+and the `INSERT` leg 8.37 → 9.19 — and the ratio moved 16.7× to 16.5×.
+Correctness, tiling and row counts are unaffected; what it costs is throughput
+on `--inserts` input, **~48 minutes of CPU for a 1 TB dump against the `COPY`
+path's ~3**. That is deficiency `KD9` (`../status/STATUS.md`, "Known
+deficiencies"), and P7 owns it.
+
+**Which layer takes the fix is P7's to settle, and the obvious answer may be
+wrong.** The natural reading is a second scanner-level fast path, the mechanism
+`State::InLargeObjectRegion` already is. But the scanner cannot know a run has
+begun without `parse_insert_target`, which is statement classification and so
+L2's, and unlike `BEGIN;`/`COMMIT;` (I12) an `INSERT` run's boundaries rest on
+no line-anchored invariant. The competing candidate is a map-level fix that
+keeps `Event::Line` and stops `push_stmt_line` copying every line into a
+`String` for `statement_complete` to re-walk. The reading that makes it
+plausible: skipping lines *unread* in the scanner costs 0.442 s per 3.00 GiB
+against `COPY`'s 0.558, so a path that still emits lines but stops accumulating
+them would land in that band — nearly the whole gap, for a diff contained to
+one layer.
+
+**Both legs moved ~10% under the `ba2fc12` stamp with no attribution** — cold
+9.85 → 10.87 s, warm 8.37 → 9.19, against an input whose bytes were unchanged.
+`scan.rs` and `copy.rs` are unchanged across `b70589f..ba2fc12`; `preamble.rs`,
+`stream.rs` and `map.rs` are not, and an `INSERT` run is the one measured input
+walking the statement accumulator on every line. P7 settles that with a
+differential profile before it prices a fast path against a baseline it cannot
+explain.
 
 *Rejected:* re-prioritising that fix on the strength of the ratio alone. The
 number is three times what the entry was filed under, which is exactly the kind
@@ -2094,7 +2118,7 @@ field**, not the fragment that tripped it, because that is what
 **Nested values always copy, `Utf8View` elements included.** Widening the
 zero-copy view path into a recursive builder means honouring its three sharp
 edges at every level of nesting; that is a scan-performance change P7 owns
-and should measure first (`roadmap-P7-scan-performance-inbox.md`).
+and measures before it takes (`roadmap-P7-scan-performance.md`, slice 7.11).
 
 A `COPY` header with no explicit column list gets placeholder names
 (`column1`, `column2`, …) sized to the **first row's** field count, so **a
@@ -4031,13 +4055,41 @@ saves rarely, koji is untouched. Measured at 4000 blocks: 4003 saves become
 seconds" and "every N bytes"; both choose a number against one dump shape, and
 the cost tracks block count rather than bytes read.
 
+<!-- deficiency: KD5 -->
 **What the throttle does not fix**: the *rest* of the same quadratic. Every
 `CopyEnd` also clones the whole span list (`map::Builder::snapshot`, then
 `stream::splice` over the prefix), so the map itself is O(blocks²) with the
 cache disabled entirely — 19.0 s for 4000 blocks under `query --dqcache none`,
-which is most of the 20.8 s a throttled `parse` of the same file costs.
-That is a separate cost with a separate fix, filed for the scan-performance
-phase (`roadmap-P7-scan-performance-inbox.md`).
+which is most of the 20.8 s a throttled `parse` of the same file costs. koji
+cannot show it: 74 blocks over 784 GB. That is deficiency `KD5`
+(`../status/STATUS.md`, "Known deficiencies"), owned by P7.
+
+**The fix is the gate the throttle already owns**, and it costs the interrupt's
+promise. Nothing reads `index.spans` between saves during a `parse` — `target`
+is `None`, so `target_settled` never runs — so moving the splice inside
+`if settled || cancelled || throttle.due()` fires it a few dozen times instead
+of once per block: roughly 19.0 s to 1 s at 4000 blocks, with no redesign. What
+it trades is the guarantee below that a graceful interrupt loses only the block
+in flight; it would lose everything since the last spliced watermark, which the
+throttle bounds in *time* rather than in blocks — ~0.2 s of scanning at 4000
+blocks, and nothing at all on koji, where the gate clears at every `CopyEnd`.
+P7 takes it on those terms; the arithmetic is in
+[`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md),
+"Discharging `KD5`".
+
+*Rejected:* keeping the frontier's spans appendable rather than rebuilt. It is
+the structurally right fix and it is a rework of an already-tested core path
+for a series the gate has already flattened by 20×; it is also what a parallel
+splitter wants, so it belongs to the phase that reworks `splice` anyway.
+`map::Builder::snapshot` `debug_assert!`s `Mode::Idle`, so the chunk-top check
+cannot re-derive the spans mid-block — which is why the coupling cannot be
+worked around locally and the promise has to move with the fix.
+
+**A save count is a property of the apparatus, not only of `K`.** The throttle
+is a ratio against the last save's own duration, so a faster machine, libc or
+allocator saves *fewer* times rather than the same number more cheaply: the
+4000-block count reads 105 on glibc against 110 on musl and 195 on the
+SSD-warm session that first recorded it.
 
 **Every exit saves unconditionally** — EOF, a settled target, and an interrupt.
 The throttle's whole risk is the window between saves, and those three are

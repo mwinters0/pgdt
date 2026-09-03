@@ -56,8 +56,8 @@ not oblige a sweep").
 | Compressed input (`--source foo.dump.xz`) | not started — P13 for xz, P15 for gzip/zstd. Input is assumed already-decompressed plain SQL text; `pg_dump -Fp --compress=…` output is therefore unreadable today ([`../design/pg-dump-compatibility.md`](../design/pg-dump-compatibility.md)). **P13 is grilled, partly specified and blocked**: no crate answers a positioned read over an `.xz` file, so the seekable-xz layer is being carved out into its own repository ([`../design/roadmap-P13-compressed-input.md`](../design/roadmap-P13-compressed-input.md), "Blocked") |
 | Remote input (`--source https://…`), over `object_store` | not started — P14, carved out of P6. `ByteRangeSource` is already shaped against `get_range`/`head`, and there is exactly one implementation: `LocalFileSource` |
 | Python bindings, DataFusion `TableProvider` | not started — P6 |
-| Device-bound scan performance campaign, sparse row index | not started — P7 |
-| Per-row-group column statistics | not started — P10, which needs P7's sparse row index. `CopyBlock::column_stats` stays a reserved `None` |
+| Device-bound scan performance campaign | not started — P7, which is single-threaded and aimed at the row-extraction path; parallelism is P16 |
+| Per-row-group column statistics, sparse row index | not started — the index is built by whichever of P16 (parallel splits) or P10 (row groups) runs first; `CopyBlock::sparse_index` and `CopyBlock::column_stats` stay reserved `None`s |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — P8 (the map already locates and attributes `INSERT` runs) |
 
 **Figures.** Every figure in
@@ -81,9 +81,10 @@ An `INSERT`-run scan costs ~10% more at `ba2fc12` than at `b70589f` in *both*
 regimes — cold 9.85 → 10.87 s, warm 8.37 → 9.19 — on a byte-identical input,
 reproduced by the second sweep of the pair, where every other cold reading held
 within 0.6%. What settles it is a bisect over that range, which belongs to the
-phase that owns scan performance and is filed in its inbox
-([`../design/roadmap-P7-scan-performance-inbox.md`](../design/roadmap-P7-scan-performance-inbox.md),
-"An `INSERT`-run scan is CPU-bound"). The ratio the design quotes is unmoved:
+phase that owns scan performance, which takes it as a differential profile
+rather than a bisect
+([`../design/roadmap-P7-scan-performance.md`](../design/roadmap-P7-scan-performance.md),
+"How this phase measures"). The ratio the design quotes is unmoved:
 16.5× against 16.7×, still mid-teens.
 
 **The sweep's `control` warm floor sits 22.4% above the previous stamp's**,
@@ -96,19 +97,59 @@ are beside the rule
 ([`../design/measurements.md`](../design/measurements.md), "The floor is read
 directionally").
 
+## P7 progress
+
+The phase's spec, its measured baseline and the lever table each row measures:
+[`../design/roadmap-P7-scan-performance.md`](../design/roadmap-P7-scan-performance.md).
+**7.1 and 7.2 are ordered; the rest is allocation order, not schedule** — the
+phase follows the profile, so a slice landing out of numeric order is the plan
+working. `7.3` is the one exception: an allocator adopted after a figure is
+taken invalidates that figure.
+
+- [ ] **7.1** The profiling apparatus — `[profile.profiling]`, the tool, and a
+      `measure.py --profile-recipe` that prints the invocation on the
+      `--koji-recipe` precedent. First profiles of `parse`, `strings` and
+      `typed`. No library code.
+- [ ] **7.2** The decomposition, published — `architecture.md`'s "where a
+      scan's time goes", the `INSERT` +10% differential profile, the layer the
+      `INSERT` fast path takes, and readings for the three measure-only levers.
+      No library code.
+- [ ] **7.3** The allocator — glibc against `jemalloc` and `mimalloc`, adopted
+      in the CLI if it wins, never in the library; the apparatus line names it.
+- [ ] **7.4** `KD5` — `stream::splice` moves inside the throttle's gate, the
+      interrupt's promise is restated, and the entry is rewritten to whatever
+      residual the measurement leaves.
+- [ ] **7.5** `KD9` — the `INSERT` fast path at 7.2's layer, with a reusable
+      quote-aware statement-end primitive.
+- [ ] **7.6** Bulk `simdutf8` over the chunk's whole-row prefix, with
+      `decode_field` gaining the unchecked borrow path.
+- [ ] **7.7** One field split per row, shared by the predicate's terms,
+      `push_row`, the census and the decoders. Reviewed alone.
+- [ ] **7.8** The I/O defaults — the cold-NVMe figure, then readahead,
+      `posix_fadvise` and the chunk-size constant, each landed or rejected
+      against it.
+- [ ] **7.9** `decode_array`'s `Vec<Option<String>>` intermediate, replaced by
+      borrowed slices where the literal carries no escapes.
+- [ ] **7.10** Scalar decode and the typed column build, split by the profile
+      into a `decode.rs` half and a builder-append half.
+- [ ] **7.11** The viewing builder for `List<Utf8View>` — conditional on 7.2,
+      last, reviewed alone.
+- [ ] **7.12** The sweep pair and the koji regression run, folded in, plus the
+      written statement of what a parallel splitter needs from coverage and
+      from the census, filed to P16.
+
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **Six phases are sketched and one is specified** — P13, P7, P10, P14, P6,
-  P15, P8, in the roadmap table's schedule order; a `P<k>` is an identifier, so
-  the numbers say nothing about the order they run in. P13 is grilled,
-  specified and **blocked** on an external seekable-xz crate. **No phase is
-  open**: the next one is grilled and specified before any of its code is
-  written, and `process.md` step 6 re-grills the roadmap first. Every remaining
-  phase that carries an inbox must have it drained as part of its own
-  grilling.
+- **P7 is open**, grilled and sliced; the checklist above is its progress and
+  nothing of it is built yet. Six other phases are sketched and one more is
+  specified — P13, P16, P10, P14, P6, P15, P8, in the roadmap table's schedule
+  order; a `P<k>` is an identifier, so the numbers say nothing about the order
+  they run in. P13 is grilled, specified and **blocked** on an external
+  seekable-xz crate. Every remaining phase that carries an inbox must have it
+  drained as part of its own grilling.
 
 ## Known deficiencies
 
@@ -188,9 +229,10 @@ here rather than reading as a phase nobody has sliced.
 
 - **KD5** — mapping is O(blocks²): every `CopyEnd` rebuilds `DumpIndex::spans`
   whole, and the save throttle only halved the series. **(b) owned by P7**,
-  whose parallel-scan plans rework the same code. Detail:
-  [`../design/roadmap-P7-scan-performance-inbox.md`](../design/roadmap-P7-scan-performance-inbox.md),
-  "Mapping is O(blocks²) after the save throttle".
+  slice **7.4**, which moves the splice inside the throttle's gate and pays for
+  it in what an interrupt banks. Detail:
+  [`../design/architecture.md`](../design/architecture.md), "`parse` resumes,
+  and saves as it goes".
 
 - **KD6** — a conflicting table past a query's stopping point is never seen, so
   `Error::AmbiguousTable` is not raised for it and the query returns the
@@ -218,11 +260,10 @@ here rather than reading as a phase nobody has sliced.
   render-back".
 
 - **KD9** — an `INSERT` run is folded into one span but every line is still
-  decoded, at mid-teens times a `COPY` scan's per-byte CPU. **(b) owned by P7**, since
-  the fix is a second scanner-level fast path. Detail:
-  [`../design/roadmap-P7-scan-performance-inbox.md`](../design/roadmap-P7-scan-performance-inbox.md),
-  "An `INSERT`-run scan is CPU-bound at mid-teens times a `COPY` scan's
-  per-byte cost".
+  decoded, at mid-teens times a `COPY` scan's per-byte CPU. **(b) owned by P7**,
+  slice **7.5**, whose layer the decomposition slice settles first. Detail:
+  [`../design/architecture.md`](../design/architecture.md), "Bulk regions: one
+  span kind, three payloads".
 
 - **KD10** — a column whose declared type this build models no comparison for
   answers `=`/`!=` bytewise, which is not the server's answer for the geometric

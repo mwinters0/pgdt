@@ -83,9 +83,10 @@ Eleven standing rules for reading anything below:
   and is no longer in any recipe** — the comparison above is why glibc is
   named, not an invitation to take a second leg. Debian's `/bin/sh` is
   dash, with no `time`, so the in-container timer is `bash -c 'time …'`.
-  Whether a different allocator should be the shipped default is a P7
-  question, filed in
-  [`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md).
+  Whether a different allocator should be the shipped default is P7's slice
+  7.3 ([`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md)),
+  which also settles that a figure here is a **CLI** figure: the choice is the
+  binary's, never the library's.
 - **Never quote a standard error or a *t* from one sweep — give the median and
   the observed spread.** Within-sweep dispersion measures the *reps*, not the
   measurement: the allocator, the stage's position in the session and the
@@ -476,17 +477,14 @@ third figure is not the number. The ratio is the durable half of this table and
 neither of its legs is: both moved under this stamp and it did not — the `COPY`
 leg 0.500 → 0.558 s and the `INSERT` leg 8.37 → 9.19, for 16.7× against 16.5×.
 Correctness, tiling
-and row counts are unaffected; the fix is a scanner-level `INSERT` path, and
-[`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md)
-holds it. The number is corrected wherever it is repeated —
+and row counts are unaffected; the fix is `KD9`, and P7's slice 7.5 holds it —
+which layer it lands in is that phase's to settle
+([`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md)). The
+number is corrected wherever it is repeated —
 [`pg-dump-compatibility.md`](pg-dump-compatibility.md),
 [`roadmap.md`](roadmap.md), [`architecture.md`](architecture.md) and
-[`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md),
+[`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md),
 all four of which `--check` names as this table's consumers.
-**What a ratio this size changes about P7's priorities is not**: that is a
-decision rather than a value, and it belongs to that phase's grilling — the
-`INSERT` fast path is filed in its inbox, and how far up the list it sits is
-decided there.
 
 **The `INSERT` scan has moved again, in both regimes and by about the same
 absolute.** Cold it read 9.85 s under the previous stamp and 10.87 s here;
@@ -498,9 +496,9 @@ resolution, and the second sweep of the pair reproduces both legs inside 1%.
 Nothing here attributes it — `scan.rs` and `copy.rs` are unchanged between the
 two stamps while `preamble.rs`, `stream.rs` and `map.rs` are not, and an
 `INSERT` run is the one input that walks the statement accumulator on every
-line — so what settles it is a bisect over that range, which belongs to the
-phase that owns scan performance
-([`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md)).
+line — so what settles it is a differential profile across that range, which
+belongs to the phase that owns scan performance
+([`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md)).
 The row's earlier move is the same story one stamp back: it read 15.13–15.42 s
 cold when first taken on 2026-08-25, and `2eb51f4` changed how an `--inserts`
 dump's runs are scanned in between, absorbing the `Data for` comment into the
@@ -724,7 +722,7 @@ a build in which `architecture.md`'s "the census is unconditional" is untrue,
 serving a comparison taken about once a phase. The escape if the patch-and-
 revert ever bites is to drop the comparison, not to gate it: the absolute
 figures (36 ns/row rejected, 1.49 µs/row inspected) are what
-[`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md) actually consumes, and
+[`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md) actually consumes, and
 the census-off column exists to establish it once.
 
 ## Nested decode costs what it copies, and an element is an allocation
@@ -1426,9 +1424,11 @@ resolved more finely: it is the difference of two ~20 s readings taken in
 different figures, which the drift figure puts several percent apart, and
 several percent of 20 s is the whole of it. Against the *unthrottled* build the
 split is 28 s of saving against 19 s of mapping.
-Closing the second half means not rebuilding the span list per block;
-it is filed in [`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md), because it
-is a change to how the map is assembled rather than to when it is written.
+Closing the second half means not rebuilding the span list per block; it is
+`KD5`, discharged by P7's slice 7.4
+([`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md)), which
+moves the splice inside the throttle's own gate and pays for it in what an
+interrupt banks.
 
 Save counts come from `strace -f -e trace=open,openat` filtered to the cache
 path (`std::fs::write` opens once per save; the first is the load's miss).

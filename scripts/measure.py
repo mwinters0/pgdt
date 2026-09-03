@@ -2029,7 +2029,7 @@ FIGURES: list[Figure] = [
         id="census-brace-free",
         quoted_by=(
             "docs/design/architecture.md",
-            "docs/design/roadmap-P7-scan-performance-inbox.md",
+            "docs/design/roadmap-P7-scan-performance.md",
             "docs/status/STATUS.md",
         ),
         section="The census on brace-free rows costs 8% of a warm scan",
@@ -2043,7 +2043,7 @@ FIGURES: list[Figure] = [
         id="census-arrays",
         quoted_by=(
             "docs/design/architecture.md",
-            "docs/design/roadmap-P7-scan-performance-inbox.md",
+            "docs/design/roadmap-P7-scan-performance.md",
             "docs/status/STATUS.md",
         ),
         section="The census on array-bearing rows more than triples a warm scan",
@@ -2056,7 +2056,7 @@ FIGURES: list[Figure] = [
     Figure(
         id="scan-throughput-cold",
         quoted_by=(
-            "docs/design/roadmap-P7-scan-performance-inbox.md",
+            "docs/design/roadmap-P7-scan-performance.md",
             "docs/design/pg-dump-compatibility.md",
             "docs/design/roadmap.md",
             "docs/design/architecture.md",
@@ -2073,7 +2073,7 @@ FIGURES: list[Figure] = [
     Figure(
         id="scan-throughput-warm",
         quoted_by=(
-            "docs/design/roadmap-P7-scan-performance-inbox.md",
+            "docs/design/roadmap-P7-scan-performance.md",
             "docs/design/pg-dump-compatibility.md",
             "docs/design/roadmap.md",
             "docs/design/architecture.md",
@@ -2090,7 +2090,7 @@ FIGURES: list[Figure] = [
     Figure(
         id="nested-end-to-end",
         quoted_by=(
-            "docs/design/roadmap-P7-scan-performance-inbox.md",
+            "docs/design/roadmap-P7-scan-performance.md",
             "docs/status/STATUS.md",
         ),
         section="A typed query over nested columns costs 13.2 µs a row more than a string one",
@@ -2102,7 +2102,7 @@ FIGURES: list[Figure] = [
     Figure(
         id="census-attribution",
         quoted_by=(
-            "docs/design/roadmap-P7-scan-performance-inbox.md",
+            "docs/design/roadmap-P7-scan-performance.md",
             "docs/status/STATUS.md",
         ),
         section="The untyped baseline is not file-independent (census attribution)",
@@ -2114,7 +2114,7 @@ FIGURES: list[Figure] = [
     Figure(
         id="cross-file-floor",
         quoted_by=(
-            "docs/design/roadmap-P7-scan-performance-inbox.md",
+            "docs/design/roadmap-P7-scan-performance.md",
             "docs/design/architecture.md",
             "docs/status/STATUS.md",
         ),
@@ -2129,7 +2129,7 @@ FIGURES: list[Figure] = [
         id="per-block-quadratic",
         quoted_by=(
             "docs/design/architecture.md",
-            "docs/design/roadmap-P7-scan-performance-inbox.md",
+            "docs/design/roadmap-P7-scan-performance.md",
             "docs/status/STATUS.md",
         ),
         section="Per-block cache saving is quadratic in block count, and so is the map",
@@ -2142,7 +2142,7 @@ FIGURES: list[Figure] = [
         id="map-only",
         quoted_by=(
             "docs/design/architecture.md",
-            "docs/design/roadmap-P7-scan-performance-inbox.md",
+            "docs/design/roadmap-P7-scan-performance.md",
             "docs/status/STATUS.md",
         ),
         section="Per-block cache saving is quadratic in block count, and so is the map (map alone)",
@@ -2154,7 +2154,7 @@ FIGURES: list[Figure] = [
     Figure(
         id="preamble-prepass",
         quoted_by=(
-            "docs/design/roadmap-P7-scan-performance-inbox.md",
+            "docs/design/roadmap-P7-scan-performance.md",
             "docs/status/STATUS.md",
         ),
         section="The preamble prepass is bounded by the schema, not by the dump",
@@ -2167,7 +2167,7 @@ FIGURES: list[Figure] = [
     Figure(
         id="nested-decode-micro",
         quoted_by=(
-            "docs/design/roadmap-P7-scan-performance-inbox.md",
+            "docs/design/roadmap-P7-scan-performance.md",
         ),
         section="Nested decode costs what it copies, and an element is an allocation",
         stage="criterion",
@@ -2182,7 +2182,7 @@ FIGURES: list[Figure] = [
         id="projection-widths",
         quoted_by=(
             "docs/design/architecture.md",
-            "docs/design/roadmap-P7-scan-performance-inbox.md",
+            "docs/design/roadmap-P7-scan-performance.md",
             "docs/status/STATUS.md",
         ),
         section="What a column costs: five projection widths over one file",
@@ -2231,7 +2231,7 @@ DERIVED: list[Figure] = [
         # path.
         depends=("scripts/measure.py",),
         quoted_by=(
-            "docs/design/roadmap-P7-scan-performance-inbox.md",
+            "docs/design/roadmap-P7-scan-performance.md",
             "docs/status/STATUS.md",
         ),
     )

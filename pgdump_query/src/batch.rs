@@ -463,7 +463,7 @@ fn append_null(builder: &mut ColumnBuilder) {
 /// copies: widening the zero-copy view path into a recursive builder means
 /// honouring its chunk-retention and block-invalidation edges at every level,
 /// which is a scan-performance change P7 owns
-/// (`docs/design/roadmap-P7-scan-performance-inbox.md`).
+/// (`docs/design/roadmap-P7-scan-performance.md`, slice 7.11).
 ///
 /// The error is unit rather than the offending text: `Error::FieldDecode`
 /// reports the *field*'s value, so a failure deep inside a nested literal is

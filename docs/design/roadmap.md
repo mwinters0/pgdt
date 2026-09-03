@@ -17,7 +17,8 @@ reused, including a struck phase's.
 |---|---|---|
 | P1–P5, P9, P11, P12 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
 | P13 — compressed input | Specified; **blocked**, and its remaining decisions ungrilled | [`roadmap-P13-compressed-input.md`](roadmap-P13-compressed-input.md) — waits on an external seekable-xz crate; inbox drained |
-| P7 — scan performance | Sketched; design doc ahead of its phase | [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md); [inbox](roadmap-P7-scan-performance-inbox.md) |
+| P7 — scan performance | **Current**; sliced | [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md) — inbox drained |
+| P16 — parallel scan and extraction | Sketched; not grilled | this file, below; [inbox](roadmap-P16-parallel-scan-inbox.md) — carved out of P7 |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
@@ -42,7 +43,7 @@ destination, so it drops to `(c) unowned` unless another phase absorbs it
 The struck phases' mechanisms are described by subject in
 [`architecture.md`](architecture.md), not by phase; their specs and notes went
 at a keystone review (`../process.md`, "The keystone: striking the
-centering"). **Phase numbering continues from `P15`** — nothing at or below it
+centering"). **Phase numbering continues from `P16`** — nothing at or below it
 is reused, whether it was struck, sketched, or never specified.
 
 Two standing-constraint docs cut across everything below.
@@ -352,23 +353,21 @@ Its inbox has been drained.
 
 ## P7 — Scan performance
 
-**Inbox:** [`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md) — facts earlier
-phases filed for this one. Drain it when grilling this phase.
+Its inbox has been drained.
 
-Concentrated optimization of the local-file read path: SIMD-accelerated
-structure discovery, zero-copy row extraction into Arrow buffers, bulk UTF-8
-validation, and device-aware parallelism (sequential on rotational media,
-parallel on NVMe). Full sketch, including the measurements that should gate
-each piece and the decisions it constrains, in this phase and before it:
-`docs/design/roadmap-P7-scan-performance.md`.
+Concentrated optimization of the local-file read path, **single-threaded
+throughout**: the row-extraction path first, since that is where the
+device-bound goal is an order of magnitude from being met, plus the two
+deficiencies discovery owes (`KD5`, `KD9`) and the I/O defaults. Parallelism
+is P16. The spec, its measured baseline and the measurements gating each piece:
+[`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md).
 
 Scheduled ahead of the engine story, and ahead of P8 and P10, for three
 independent reasons. Local-file performance is a project goal rather than a
 later optimization, and two deficiencies wait on this phase (`KD5`, `KD9`). The
 format work multiplies the surface area any later optimization has to be
 correct against, so the fast path should exist first and archive containers
-should be built to fit it. And statistics need the sparse row index this phase
-builds.
+should be built to fit it.
 
 **Two reasons for a later placement have been withdrawn, and both are recorded
 so they are not re-derived.** The first was that pushdown "changes which bytes
@@ -389,6 +388,32 @@ readahead depth and chunk-size defaults measured against local devices say
 nothing about a high-latency ranged backend — and that is a second set of
 measured defaults the engine story adds, not a rework of this phase.
 
+## P16 — Parallel scan and extraction
+
+Carved out of P7, which stays single-threaded. Everything parallel lives here:
+splitting a block's byte range across workers and reassembling batches in range
+order, the speculative scheme for discovering structure without a cold-start
+guess, and worker counts set by device class rather than by core count.
+
+Two things make it a phase of its own rather than P7's last slice. Its blast
+radius is three already-tested mechanisms — `stream::splice`'s assumption that
+coverage is a contiguous prefix, the array-shape census's per-block
+accumulation and finalization at `CopyEnd`, and the interrupt guard's promise
+to bank the last *completed block* — and reworking those cannot share a review
+cycle with self-contained per-byte work. And it has two source shapes to serve,
+not one: a plain byte range resynced to the next LF, and a compressed block
+whose boundaries P13's seek table hands over for free, CPU-bound at ~450 MB/s a
+core where the plain path is device-bound at ~240 on the same HDD.
+
+**It also builds the sparse row index** — the byte offset of every Nth row,
+~19 MB for koji against ~157 GB for a dense one — because this is the first
+phase that reads one: it turns a speculative split into a real one, at known
+row boundaries with no resync scan. P7 leaves it the reserved
+`CopyBlock::sparse_index` field and nothing else. P10 needs the same
+structure, and needs its checkpoint interval to coincide with the row group its
+statistics attach to, so whichever of the two runs first builds it and the
+other inherits the interval as a decision already made.
+
 ## P10 — Per-row-group column statistics
 
 **Inbox:** [`roadmap-P10-row-group-statistics-inbox.md`](roadmap-P10-row-group-statistics-inbox.md) — facts earlier
@@ -404,13 +429,13 @@ where it sits in the table above:
   one — see "The correctness asymmetry" below — so it cannot share a review
   cycle with a self-contained query-API change (`../process.md`, "Size a slice
   by its review, not by its scope").
-- **It needs an addressing scheme P7 owns.** Statistics attach to row groups,
-  the row group is the sparse row index's checkpoint interval, and
-  `CopyBlock::sparse_index` is a reserved `None` that
-  [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md) fills. So
-  this phase is scheduled after that one; running it earlier means inventing a
-  second addressing scheme that P7 then has to reconcile with the one it
-  wanted. It is not only an addressing question: this phase's best outcome —
+- **It needs an addressing scheme it does not own alone.** Statistics attach to
+  row groups, the row group is the sparse row index's checkpoint interval, and
+  `CopyBlock::sparse_index` is a reserved `None` that P16 fills for the sake of
+  parallel splits. Whichever of the two runs first builds the index and settles
+  the interval; the other inherits it. Running this phase first means building
+  it here, against statistics' needs, and P16 inheriting it — not inventing a
+  second addressing scheme. It is not only an addressing question: this phase's best outcome —
   sortedness plus the sparse index turning a range predicate into a binary
   search for a byte range, below — is *unreachable* without that index, so
   running it first would deliver row-group pruning and leave the payoff that
@@ -730,12 +755,11 @@ is written again by the first item to land after this keystone, which takes
 `M47`.
 
 **One live obligation outlived them.** An `INSERT`-run scan costs
-**mid-teens times** a `COPY` scan per byte, CPU-bound, which argues for a scanner-level `INSERT`
-path — and *that* changes a decision, so it goes through grilling → spec
-amendment → a numbered slice rather than through this section. It is filed in
-the scan-performance phase's inbox
-([`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md))
-until then.
+**mid-teens times** a `COPY` scan per byte, CPU-bound, which argues for an
+`INSERT` fast path — and *that* changes a decision, so it went through grilling
+→ spec amendment → a numbered slice rather than through this section. It is
+`KD9`, discharged by P7's slice 7.5
+([`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md)).
 
 ## Future — wanted, unscheduled
 
