@@ -711,18 +711,17 @@ Deletion is last, and it is not where the saving comes from.
    50KB spec before touching the cache format" is the expense, and it is paid
    on every visit.
 3. **Sweep the tree.** Strip provenance, repoint or inline citations, de-number
-   forward references — through the code *and* through every document that is
-   not history. **The scope is the live doc set, not the struck phase's own
-   citations.** Following those reaches the documents that already name the
-   phase and misses the ones that describe it in other words: a status doc's
-   per-phase account of what it built, a rejected-alternative paragraph citing
-   the spec by decision letter, a sentence in the present tense about a queue
-   that phase was working through — and, above all, the **inbox of a phase the
-   struck one never mentioned**, since a fact filed *for* a distant phase is
-   exactly the one nothing else will re-read. Swept the narrow way, a keystone
-   leaves a live inbox entry asserting something the struck phase went on to
-   deliver, which is the failure the Origin field's "a reader re-checks the
-   origin" exists to catch and cannot.
+   forward references — through the code and through the live doc set, bounded
+   by the carve-outs below. **Scope the sweep by that doc set, never by the
+   struck phase's own citations.** Following those reaches the documents that
+   already name the phase and misses the ones describing it in other words: a
+   status doc's per-phase account of what it built, a rejected-alternative
+   paragraph citing the spec by decision letter, a present-tense sentence about
+   a queue that phase was working through — and, above all, the **inbox of a
+   phase the struck one never mentioned**, since a fact filed *for* a distant
+   phase is the one nothing else will re-read. Swept the narrow way, a keystone
+   leaves an inbox entry asserting something the struck phase went on to
+   deliver.
 4. **Delete.** Now. Deletion's job is to remove the *second authority* — so
    that nobody, human or agent, has to decide whether the spec or the
    distillate wins, and so that no future edit lands in the copy nothing reads.
@@ -739,10 +738,16 @@ from.
   especially — and erases the record that anything happened. History holds the
   numbers and may not be rewritten, so a renumbering makes every dated entry a
   lie. Phases keep their identifiers; the sequence just starts further in.
-- **Touch the assumptions register or the compatibility matrix.** Neither was
-  ever phase-filed, and the register is precisely what makes discarding the
+- **Distil into the assumptions register or the compatibility matrix.** Neither
+  was ever phase-filed, and the register is precisely what makes discarding the
   rest affordable: it is the external evidence that would otherwise have to be
-  re-established from upstream source.
+  re-established from upstream source. **Their citations are still swept**, and
+  the two are not one act: nothing in either is rewritten, moved or deleted, but
+  a pointer *out* of one into a struck doc is repaired like any other, because
+  the exemption is for their content and a dangling citation is what the
+  category table calls worse than no pointer. The case that recurs is an
+  invariant whose "Relied on by" named a phase spec and must be made to name the
+  subject-filed sections that implement it instead.
 - **Rewrite or delete history.** Dated entries have no read-trigger, so they
   cost nothing to keep, and they are the raw evidence beneath the distillate —
   including the evidence for the review itself.
