@@ -193,11 +193,35 @@ Twelve standing rules for reading anything below:
 
 ## The apparatus
 
-**Every figure below comes from one sweep of `scripts/measure.py`**, which is
-what the session stamp above records. Figures that share a reading share it
-rather than measuring it twice: each throughput table's `COPY` row *is* the
-census table's census-on column for that regime, and the preamble table's
-full-`parse` row *is* the quadratic table's 4000-block "after" column.
+**Every figure below is taken by `scripts/measure.py`, and the session stamp
+above records the sweep that took the doc as a whole.** Figures that share a
+reading share it rather than measuring it twice: each throughput table's `COPY`
+row *is* the census table's census-on column for that regime, the preamble
+table's full-`parse` row *is* the quadratic table's 4000-block "after" column,
+and the allocator table's reference column *is* the census and nested tables'
+readings of the same three shapes.
+
+**A figure may be re-taken on its own, and its apparatus line is what says so.**
+Selection is per figure, so a table can be replaced between sweeps; what a
+reader then cannot do is set one sitting's **absolute** beside another's, which
+costs the ~8% a warm absolute resolves to across sessions. Three rules keep
+that legible, and the third is the one a single-figure re-take is most likely
+to skip:
+
+- **An apparatus line names the figures its table was taken with**, so a reader
+  can tell at a glance which absolutes may be read together. A table taken
+  entirely alone says that, in those words.
+- **A table whose *shared* reading was measured alone carries the harness's
+  partial-sweep note into the doc**, verbatim in substance. `measure.py` emits
+  that note precisely when a borrow could not be satisfied, and dropping it
+  publishes a reference column that looks shared and is not.
+- **The harness's advice names its direct sources, not the closure.** Re-taking
+  a figure that others borrow from drags them too: `census-brace-free` is
+  borrowed by both throughput tables, so the honest set behind the allocator
+  table is four figures where the note names two. The graph is not declared
+  anywhere the harness can read (out-of-band `M48`), so until it is, a session
+  weighing a partial sitting computes the closure by hand from the
+  `session.borrow` call sites.
 
 **One line, in two regimes: 3.00 GiB inputs read by a `glibc` binary in a
 512 MB `postgres:16` container, timed by that container's own `bash`.** Warm
@@ -491,12 +515,24 @@ cannot be published as a comparison of two identical binaries.
 **Partial sweep**: the reference column was measured here rather than shared
 with `census-brace-free` and `nested-end-to-end`, which this sitting did not
 emit. Those are the same measurements and the harness says to emit them
-together. They were not, deliberately: `census-brace-free`'s readings are in
-turn shared with both throughput tables, so emitting the set honestly is five
-figures rather than three, which is most of a sweep and belongs to the wrap.
-What that costs is what the paragraph below already says of *any* sitting of
-this table — its absolutes may not be set beside another table's — and it costs
-nothing at all to the ratios, which are what the table is for.
+together. They were not, deliberately, and the reason is **shelf life** rather
+than cost.
+
+*Rejected:* running the honest sitting before folding this table in. The
+closure is four figures — `census-brace-free`, `nested-end-to-end` and both
+throughput tables, which borrow the census reading in turn — and it costs
+**13–27 minutes**, not the hour a first reading assumes; every input it needs
+is already staged, and `--figure` takes the whole set in one invocation. So
+cost is not what decides it. What decides it is that all four are *already*
+stale on `pgdump_query/src/io.rs`, along with every other figure that times a
+`pgdq` run: a sitting run today would produce a self-consistent set that the
+wrap sweep overwrites inside this phase, buying a reference column with a shelf
+life of weeks and buying the **ratios** — the only thing this table is read for
+— nothing whatever, since those are within-sitting however the reference was
+obtained. What the shortcut costs is what the paragraph below says of *any*
+sitting of this table: its absolutes may not be set beside another table's.
+That is disclosed here rather than inferred, which is the condition under which
+a partial sitting is publishable at all.
 
 Per-rep readings (s):
 - `pgdq parse` (system): 0.484, 0.481, 0.493, 0.471, 0.473
@@ -512,7 +548,9 @@ Per-rep readings (s):
 
 Apparatus over every run in this table: CPU stall ≤0.27%, I/O stall ≤10.32%,
 machine ≤5% busy, steal ≤0.00%, busiest core ≥3.59 GHz, ≤65°C. **Taken in its
-own sitting**, not in the `ba2fc12` sweep the stamp above records — so setting
+own sitting, alone** — no other figure was taken with it, which is why its
+reference column is measured rather than shared — not in the `ba2fc12` sweep
+the stamp above records, so setting
 one of its absolutes beside that sweep's costs the ~8% a warm absolute resolves
 to across sessions, while its **ratios** are within-sitting, which is what the
 table is for.

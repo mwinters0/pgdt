@@ -416,21 +416,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **The `allocator` table was folded in from a partial sitting, against the
-  harness's own printed advice.** `measure.py --figure allocator` run alone
-  measures its own reference column and emits a "Partial sweep" note saying to
-  emit `census-brace-free` and `nested-end-to-end` with it "before folding any
-  of them in". It was folded in anyway. The reason: `census-brace-free`'s
-  readings are themselves shared with both throughput tables, so emitting the
-  set honestly is **five** figures rather than three — most of a sweep, an hour
-  of a quiet machine this one does not reliably offer, and work the wrap already
-  owns. Against that, the table it replaced stated `jemalloc` at 1.87× on
-  `parse`, a number 7.13 had just made false, and the adoption decision the
-  slice owed had no published evidence without it. What the shortcut costs is
-  exactly what the section already said of every sitting of that table — its
-  absolutes may not be read beside another table's — and nothing to its ratios,
-  which is what it is for. **If reconsidered**: the fix is to re-take
-  `census-brace-free`, `census-arrays`, `scan-throughput-cold`,
-  `scan-throughput-warm`, `nested-end-to-end` and `allocator` in one sitting, or
-  to let the wrap's sweep pair do it and read the current table's ratios only
-  until then.
+Nothing is open.
