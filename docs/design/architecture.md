@@ -374,11 +374,11 @@ coarser-and-cheaper trade the `COPY` path already makes. The symmetry between
 the two paths is a consequence of that call, not the argument for it.
 
 **Every line is still decoded into `Event::Line`**, and that costs
-**mid-teens times** a `COPY` scan per byte, warm — 16.7× in the sweep this doc
+**mid-teens times** a `COPY` scan per byte, warm — 16.5× in the sweep this doc
 is stamped against, 14.4–16.7× over the sweeps taken under a witnessed-quiet
 apparatus; see [`measurements.md`](measurements.md), "Scan
 throughput by input shape". Correctness, tiling and row counts are unaffected;
-what it costs is throughput on `--inserts` input, ~45 minutes of CPU for a 1 TB
+what it costs is throughput on `--inserts` input, ~48 minutes of CPU for a 1 TB
 dump against the `COPY` path's ~3. A scanner-level `INSERT` path is the fix and
 is filed in
 [`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md).
@@ -751,9 +751,9 @@ as much. `on_row`'s doc comment names the two measurements a reader regenerates
 by patching that function.
 
 **The cost is one tier in practice: the rows that pass the pre-filter.** On
-brace-free data — the koji shape — a row pays the pre-filter alone, 48 ns per
-16-column row, +8% of a scan reading from memory; a row that passes pays field
-splitting and `observe` on top, 1.61 µs over 19 columns, +225% warm. Both
+brace-free data — the koji shape — a row pays the pre-filter alone, 36 ns per
+16-column row, a few percent of a scan reading from memory; a row that passes
+pays field splitting and `observe` on top, 1.49 µs over 19 columns, +219% warm. Both
 collapse to +0% and +1% cold on this SSD, where the device floor hides them
 ([`measurements.md`](measurements.md), "The census on brace-free rows" and
 "…on array-bearing rows"). It runs unconditionally anyway: the alternative is a
@@ -770,7 +770,7 @@ unconstrained `ArrayShape`s gives, so it needs no separate representation.
 
 *Rejected:* censusing only under `ScanExtent::Full`, so a cold query declines
 the per-row work. The saving is the pre-filter alone — a cold query already
-receives every row of every block it maps — which is 48 ns a row with the bytes
+receives every row of every block it maps — which is 36 ns a row with the bytes
 in memory and vanishes behind the device a cold query reads from. What it cost
 was a state no user could observe or repair: a dump mapped by a cold query and
 *then* by a full one came out `is_complete` with its early blocks permanently
@@ -2316,12 +2316,12 @@ still does not show it costing anything.
 **What a projection saves is measured, and it is the columns' whole build
 cost.** One 3.00 GiB file read at five widths, warm and typed
 ([`measurements.md`](measurements.md), "What a column costs: five projection
-widths over one file"): `--no-columns` costs **3.28 µs a row** where all 19
-columns cost **27.50**, so the replay a projection cannot avoid — the block
-read, every row walked and field-counted, the predicate evaluated — is an
-eighth of a complete typed read. Between those, one `smallint` is +0.13 µs, the
-other fifteen scalars +10.30 between them, the composite +0.77, and the two
-array columns **+12.98** — 95% of what all three nested columns cost, and more
+widths over one file"): `--no-columns` costs **3.18 µs a row** where all 19
+columns cost **28.56**, so the replay a projection cannot avoid — the block
+read, every row walked and field-counted, the predicate evaluated — is a ninth
+of a complete typed read. Between those, one `smallint` is +0.13 µs, the
+other fifteen scalars +11.03 between them, the composite +0.98, and the two
+array columns **+13.21** — 93% of what all three nested columns cost, and more
 than every scalar column in the table. So the saving is real, it is
 concentrated in the nested columns, and it is what makes projecting one array
 column away worth more than projecting every scalar away.
@@ -4021,21 +4021,21 @@ splice-onto-a-prefix logic with a different set of bugs.
 **The save throttle is self-tuning, not an interval.** Every save serializes
 the *whole* index and the index grows with the block count, so saving at every
 watermark is O(blocks²): koji's 74 blocks cost +1.5% wall, while 4000 small
-blocks cost 46 s against a file of 1.9 MB (`measurements.md`, "Per-block cache
+blocks cost 47 s against a file of 1.9 MB (`measurements.md`, "Per-block cache
 saving"). `SaveThrottle` skips a block's save unless at least `K = 20` times
 the last save's own *measured duration* has elapsed since it, which bounds save
 overhead at roughly `1/K` of scan time in every regime with no constant that
 has to be right in two of them — a cheap cache saves often, an expensive one
 saves rarely, koji is untouched. Measured at 4000 blocks: 4003 saves become
-108, and ~26 s of saving becomes ~1.5 s of a 20.3 s scan. *Rejected:* "every N
+105, and ~26 s of saving becomes ~1.7 s of a 20.8 s scan. *Rejected:* "every N
 seconds" and "every N bytes"; both choose a number against one dump shape, and
 the cost tracks block count rather than bytes read.
 
 **What the throttle does not fix**: the *rest* of the same quadratic. Every
 `CopyEnd` also clones the whole span list (`map::Builder::snapshot`, then
 `stream::splice` over the prefix), so the map itself is O(blocks²) with the
-cache disabled entirely — 18.8 s for 4000 blocks under `query --dqcache none`,
-which is most of the 20.3 s a throttled `parse` of the same file costs.
+cache disabled entirely — 19.0 s for 4000 blocks under `query --dqcache none`,
+which is most of the 20.8 s a throttled `parse` of the same file costs.
 That is a separate cost with a separate fix, filed for the scan-performance
 phase (`roadmap-P7-scan-performance-inbox.md`).
 

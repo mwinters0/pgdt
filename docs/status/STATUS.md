@@ -14,24 +14,16 @@ filed by subject, which is where a session touching one meets its rejected
 alternatives and its limitations. The capability table below says what state
 each is in.
 
-[`../design/measurements.md`](../design/measurements.md) carries the `b70589f`
-stamp, and **`uv run measure.py --stale` names all thirteen of its figures** —
-the paragraphs below the table say what is a decision and what is an omission.
-A stale figure obliges no sweep and neither does a wrap: a full sweep is an
-hour of a quiet machine and belongs to the phase that is about performance,
-which will re-take every table under its own apparatus
+[`../design/measurements.md`](../design/measurements.md) carries the `ba2fc12`
+stamp of 2026-09-03, **no figure is stale, and `measure.ACKNOWLEDGED` is
+empty**: the scan-performance baseline sweep pair was taken and folded in
+whole, so all thirteen tables come from one sitting and every excuse the
+previous stamp carried is spent and deleted. A stale figure obliges no sweep
+and neither does a wrap: a full sweep is an hour of a quiet machine and belongs
+to the phase that is about performance, which will re-take every table under its
+own apparatus
 ([`../design/measurements.md`](../design/measurements.md), "A stale figure does
 not oblige a sweep").
-
-**That sweep is in flight** — the scan-performance baseline, launched detached
-on 2026-09-03. It is a *pair*: two `--all` sweeps 120 s apart, because twelve
-figures are taken by a sweep and `session-drift` is derived across two. Until
-it is folded in, `measurements.md` still carries the `b70589f` tables and
-everything above stays true. **Nothing may build or test while it runs** — a
-`cargo` job across 24 cores moves the numbers it is taking. The log paths, the
-process group to stop it by, and what the next session does with the result:
-[`history/2026-09-03.md`](history/2026-09-03.md), "P7's baseline sweep pair is
-running detached".
 
 | Capability | State |
 |---|---|
@@ -45,7 +37,7 @@ running detached".
 | CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, cache-only `info` | working; **`parse` is the only scanner** — it resumes from a matching cache, banks at `COPY` block boundaries under a self-tuning throttle, and saves unconditionally on Ctrl-C (exit 130/143). `info` reports from the cache and never scans. `--verbose` adds each block's byte offsets, a per-column resolution line, an enum column's declared labels beneath it, and — under the `user-defined types` count that heads it — one line per user-defined type, every `TypeKind` arm rendered with its payload. Text output shape is provisional; `--json` carries no shape promise at all, and states the labels once per type in `metadata.databases[].types[]` rather than per column |
 | Partial reporting | `info` reports an unfinished scan's cache for as far as it got, with `Scan completion: N%` stated once at the top and nothing below it qualified. An interrupted cache is **typed** for every database segment the scan finished (I1) |
 | Measurement harness | `scripts/measure.py` takes every figure in [`../design/measurements.md`](../design/measurements.md) and emits that doc's tables — thirteen figures, twelve taken by a sweep and one derived across two, each declaring what invalidates it and which documents repeat it. `measure.UNTAKEN` is empty: nothing is built and unrun |
-| Column projection | working, library and CLI: `QueryOptions::projection` names columns, cuts the reported `ResolvedSchema` with the batches, may reorder, and may be empty (`COUNT(*)`); `pgdq query` spells it `--column <name>` repeated, or `--no-columns`, which prints no header so `\| wc -l` is a row count. A filter may name a column the projection does not, and an unprojected column is never decoded, so projecting a column away escapes its `Error::FieldDecode` — including `KD2`'s, which the error message does not name ([`../design/architecture.md`](../design/architecture.md), "Projection"; [`../manual/type-handling.md`](../manual/type-handling.md)). Measured on one 3.00 GiB file at five widths: `--no-columns` is 3.28 µs a row against 27.50 for all 19, the two array columns alone are +12.98 and the composite +0.77 ([`../design/measurements.md`](../design/measurements.md), "What a column costs") |
+| Column projection | working, library and CLI: `QueryOptions::projection` names columns, cuts the reported `ResolvedSchema` with the batches, may reorder, and may be empty (`COUNT(*)`); `pgdq query` spells it `--column <name>` repeated, or `--no-columns`, which prints no header so `\| wc -l` is a row count. A filter may name a column the projection does not, and an unprojected column is never decoded, so projecting a column away escapes its `Error::FieldDecode` — including `KD2`'s, which the error message does not name ([`../design/architecture.md`](../design/architecture.md), "Projection"; [`../manual/type-handling.md`](../manual/type-handling.md)). Measured on one 3.00 GiB file at five widths: `--no-columns` is 3.18 µs a row against 28.56 for all 19, the two array columns alone are +13.21 and the composite +0.98 ([`../design/measurements.md`](../design/measurements.md), "What a column costs") |
 | The filter expression, evaluated three-valued | working: `QueryOptions::filter` is one `Expr` — `Term`/`And`/`Or`/`Not`, `And` and `Or` n-ary — evaluated in SQL's `True`/`False`/`Unknown` domain, a row surviving only where the root is `True`. A NULL field is `Unknown` under every comparing operator, which is the row set the old collapse gave for every conjunction and is what makes `Not` expressible at all. `IS DISTINCT FROM`/`IS NOT DISTINCT FROM` come with it, being the one thing `Not` cannot spell. Short-circuiting is defined against the *root*: `And` stops at the first non-`True` unless a `Not` is above it, which is where a decode failure surfaces or does not. Nothing folds two terms, so a contradictory pair is a query with no rows. Reachable from the CLI as well as the library: `pgdq query --where <expr>` builds the tree and a repeated `--filter` still builds the conjunction ([`../design/architecture.md`](../design/architecture.md), "Predicates") |
 | The `--where` expression grammar | working, CLI only — `Expr` is an enum an embedder fills in, so nothing below L4 parses an expression. Parens group, `NOT` binds tighter than `AND` and `AND` tighter than `OR`, the keywords are case-insensitive and are keywords only outside quotes, and everything that is not a paren or a keyword is a term handed to the `--filter` grammar unchanged. A keyword is recognised only against whitespace or a paren, so `tag=and` stays an equality; a `NOT` after the word `is` belongs to the term, so `IS NOT NULL` and `IS NOT DISTINCT FROM` survive whole; juxtaposition is not an implicit `AND`; and a value holding a paren must be quoted. Both flags together are one conjunction. **No `--filter` string changes meaning** — that is what the separate flag buys ([`../design/architecture.md`](../design/architecture.md), "`--where` builds an expression out of those terms"; [`../manual/type-handling.md`](../manual/type-handling.md), "Combining terms: `--where`") |
 | The `--filter` term grammar | working, CLI only — `Predicate` is a struct an embedder fills in, so nothing below L4 parses a term. Whitespace outside quotes is trimmed on both sides of the operator; `'` and `"` both quote either side, matching pairs only, with an interior quote doubled; the operator split skips quoted regions, so a column named `a=b` is askable; and the `IS NULL` forms are the fallback, tried only on a term with no operator, which is what makes `note=this is null` the equality it reads as. `IS DISTINCT FROM`/`IS NOT DISTINCT FROM` are candidates at the same positions the punctuation spellings are, so the earliest operator still wins in both directions, and the phrase needs whitespace on both sides — which is what leaves a column named `is distinct from` askable as `is distinct from=x`. A malformed quote is refused, never reinterpreted. `--column` and `--table` take their names verbatim and say so when a quoted-looking name is not found ([`../design/architecture.md`](../design/architecture.md), "A filter term is parsed for two audiences"; [`../manual/type-handling.md`](../manual/type-handling.md), "Writing a filter term") |
@@ -70,12 +62,12 @@ running detached".
 
 **Figures.** Every figure in
 [`../design/measurements.md`](../design/measurements.md) comes from the
-`b70589f` sweep of 2026-08-30, folded in whole, each table carrying an
+`ba2fc12` sweep of 2026-09-03, folded in whole, each table carrying an
 apparatus line. `--check` reconciles thirteen markers against thirteen figures.
 `session-drift` is derived across that sweep and a second one taken three
 minutes later on the same commit, which is the pair `--drift` reads.
-`measure.ACKNOWLEDGED` carries five entries, each with mechanical evidence
-attached.
+`measure.ACKNOWLEDGED` is empty: a fresh stamp spends every entry, and
+`--check` named all six so they were deleted rather than kept as sediment.
 
 **Nothing is built and unrun.** `measure.UNTAKEN` is empty: `projection-widths`
 was taken and moved into `FIGURES`, and `composite-isolated` was deleted
@@ -84,51 +76,25 @@ flag, the `composite_text` input and the fidelity case pairing them — because
 the projection table makes the same isolation a subtraction between two adjacent
 rows of one file.
 
-**All thirteen figures are stale, and the per-commit account lives in the
-harness rather than here.** `uv run measure.py --stale` names, per figure and
-per declared path, which acknowledgement entries have gone inert and which
-commits hold the path red. What that output cannot say is why a commit was
-*deliberately* not acknowledged, and five such reasons stand:
+**One reading moved beyond its regime's resolution and is not attributed.**
+An `INSERT`-run scan costs ~10% more at `ba2fc12` than at `b70589f` in *both*
+regimes — cold 9.85 → 10.87 s, warm 8.37 → 9.19 — on a byte-identical input,
+reproduced by the second sweep of the pair, where every other cold reading held
+within 0.6%. What settles it is a bisect over that range, which belongs to the
+phase that owns scan performance and is filed in its inbox
+([`../design/roadmap-P7-scan-performance-inbox.md`](../design/roadmap-P7-scan-performance-inbox.md),
+"An `INSERT`-run scan is CPU-bound"). The ratio the design quotes is unmoved:
+16.5× against 16.7×, still mid-teens.
 
-- **A query-shaped figure executes the comparison register and the filter
-  tree.** `projection-widths`, `nested-end-to-end` and `cross-file-floor` run
-  one `comparison_for` per column per block and evaluate an expression tree
-  once per row where a flat term loop ran before, so neither the
-  byte-identity nor the reachability oracle reaches them. "Small" is not
-  evidence; only a sweep settles them.
-- **`nested-end-to-end` and `cross-file-floor` are the pair to be careful
-  with.** Their *declared*-path change is `#[cfg(test)]`-only, so an entry
-  excusing it would read as "no reading moved" while the change that could
-  move them sits in `resolve.rs`, which no figure declares — the register's
-  known false negative, arriving from the side that tempts an over-broad
-  entry.
-- **`preamble-prepass` is the measurement of the prepass the work was added
-  to.** The `COLLATE` extraction and the `CREATE COLLATION` parse are on its
-  measured path by construction, so no argument about reachability excuses
-  them there.
-- **`map-only` and `per-block-quadratic` are taken on `blocks4000`** — 4000
-  tables of four columns each — so a per-column addition runs 16000 times in
-  them, where every other figure's input is one `CREATE TABLE` per file and a
-  couple of dozen calls against legs measured in seconds.
-- **The `oid` work added a real decode-path variant.** `ColumnBuilder::UInt32`
-  and its match arms run in any figure whose input has an `oid` column, so
-  "those figures were red already" would not be evidence.
-
-**Where a commit's touch to a declared path is a rename, a doc comment, a
-format-version constant or flag plumbing that no registered command shape
-executes, the entry was owed at the commit and was not written.** That is the
-failure the register exists to make visible rather than one to reconstruct
-from memory afterwards; the figures are held red by those commits either way,
-and `--stale` names them.
-
-**`session-drift` stays stale for a reason no oracle reaches, and that is the
-honest state.** It declares `scripts/measure.py`, and the harness *is* the
-apparatus that figure measures — so neither byte-identity nor reachability
-applies and nothing but taking it settles it. It is derived rather than
-measured, so `uv run measure.py --drift <sweep> <sweep>` re-derives it from two
-sweeps' `raw.json` without measuring anything; what it lacks is a pair taken
-past this commit. The sweep pair in flight is that pair, which is why it is a
-pair and not one sweep.
+**The sweep's `control` warm floor sits 22.4% above the previous stamp's**,
+which is over the ~15% a co-measured floor is judged against — and the sweep
+stands, because the disqualifying signature is a slow move *shared* across the
+warm floors and the `arrays` file's sits 6.9% below. Drift alone now reaches
+that threshold, so the number no longer separates drift from contention on its
+own and the shared-move conjunct is what does; the evidence and what it costs
+are beside the rule
+([`../design/measurements.md`](../design/measurements.md), "The floor is read
+directionally").
 
 ## Not started
 
