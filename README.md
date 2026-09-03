@@ -39,6 +39,7 @@ cargo run -p pgdump_query-cli -- info --source <dump.sql> --verbose
 
 ## Documentation
 
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — setting a machine up to work on this: building, testing, and the debug-symbol setup a readable profile depends on.
 - [`docs/status/STATUS.md`](docs/status/STATUS.md) — current implementation status (what's built vs. not, plus known deficiencies). [`docs/status/history/`](docs/status/history/) holds dated notes for future-session pickup and plan-changing discoveries.
 - [`docs/manual/`](docs/manual/) — user manual: [type handling](docs/manual/type-handling.md), [dump inspection](docs/manual/dump-inspection.md).
 - [`docs/design/architecture.md`](docs/design/architecture.md) — how the built system works, filed by subject: the scanner, the file map, `DumpIndex`, the preamble grammar, type resolution, decoders, the zero-copy Arrow path, the query passes, the cache, fixtures, testing. The place to start.

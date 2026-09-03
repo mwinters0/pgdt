@@ -2959,10 +2959,10 @@ def profile_recipe(cfg: Config) -> str:
             "Name the libc frames. Without them ~48% of a warm `parse` profile",
             "is bare addresses in libc.so.6 -- and they are the memmove and",
             "memset a zero-copy phase exists to see. Skip this if your libc's",
-            "detached symbols are installed under /usr/lib/debug (on Arch:",
-            "glibc-debug, from the core-debug repo) -- that is the better",
-            "source, needing no network and staying in lockstep with libc.",
-            "This fetch is the fallback, into perf's own build-id cache.",
+            "detached symbols are installed under /usr/lib/debug, which is the",
+            "better source: no network, and kept in lockstep with libc. See",
+            "CONTRIBUTING.md, 'Profiling'. This fetch is the fallback, into",
+            "perf's own build-id cache.",
         )
         lines += [
             f"LIBC=$(ldd {binary} | awk '/libc\\.so/{{print $3}}')",
