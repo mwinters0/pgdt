@@ -717,7 +717,7 @@ until a keystone, which strikes it along with the phase docs and leaves a
 watermark saying which numbers are spent (`../process.md`, "The out-of-band
 ledger is struck too").
 
-**M1–M45 are struck**, and nothing at or below `M45` is reused. That is a
+**M1–M46 are struck**, and nothing at or below `M46` is reused. That is a
 high-water mark rather than a claim that every one of them landed: some were
 absorbed into a neighbour or folded into a phase slice, and their numbers are
 spent all the same. What each struck item did is filed by subject —
@@ -725,12 +725,9 @@ spent all the same. What each struck item did is filed by subject —
 [`measurements.md`](measurements.md) for an apparatus change,
 [`layering.md`](layering.md), [`../process.md`](../process.md) and
 [`.claude/skills/`](../../.claude/skills/) for a rule — and why it was done is
-in the dated history entry it was filed under. The table below was written
-again by the first item to land after that keystone.
-
-| # | Date | Blocks | What changed | Why |
-|---|---|---|---|---|
-| `M46` | 2026-09-03 | | five backward references to `P11` that were not provenance are gone: `STATUS.md`'s two per-phase enumerations of what `P11` and `P12` built (the capability table below them already carries every one), a `Rejected:` paragraph citing the deleted spec's `KD7` binding, "the queue `P11` closes one at a time", the P6 inbox's "`P11` still owes each note a *path*" — which the phase went on to deliver — and the Future item sequencing collation-aware comparison "after `P11` wraps" | [`../status/history/2026-09-03.md`](../status/history/2026-09-03.md) |
+in the dated history entry it was filed under. **There is no table below**: it
+is written again by the first item to land after this keystone, which takes
+`M47`.
 
 **One live obligation outlived them.** An `INSERT`-run scan costs
 **mid-teens times** a `COPY` scan per byte, CPU-bound, which argues for a scanner-level `INSERT`

@@ -273,4 +273,18 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-Nothing is open.
+- **The ledger keystone's one harvest was filed into `docs/process.md`
+  itself.** `M46`'s history entry closed with a finding about method — a
+  keystone's sweep is over the live doc set rather than over the struck phase's
+  own citations, which is how two inboxes kept stale claims — and striking the
+  row would have taken the rule with it. The only document that says how a
+  keystone is run is `process.md`, so its "Order of operations" step 3 went from
+  "sweep the code" to "sweep the tree", with the inbox case named. **The call
+  worth weighing is the destination, not the finding.** `process.md` is
+  project-agnostic and travels to other repos, so a rule added there binds work
+  this project will never see; it is also the document a session meets as the
+  record it cites rather than as an artifact it may move, which is why the
+  stand-in rules treat editing it as escalating. Reversing this means moving the
+  paragraph to a project-local home — and the two candidates are why it went
+  where it did: `CLAUDE.md` carries no trigger that fires at a keystone, and the
+  roadmap's ledger section is itself struck at every one.

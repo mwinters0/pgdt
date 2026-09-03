@@ -710,8 +710,19 @@ Deletion is last, and it is not where the saving comes from.
    disk; an untriggered file costs nothing. A trigger that says "read this
    50KB spec before touching the cache format" is the expense, and it is paid
    on every visit.
-3. **Sweep the code.** Strip provenance, repoint or inline citations, de-number
-   forward references.
+3. **Sweep the tree.** Strip provenance, repoint or inline citations, de-number
+   forward references — through the code *and* through every document that is
+   not history. **The scope is the live doc set, not the struck phase's own
+   citations.** Following those reaches the documents that already name the
+   phase and misses the ones that describe it in other words: a status doc's
+   per-phase account of what it built, a rejected-alternative paragraph citing
+   the spec by decision letter, a sentence in the present tense about a queue
+   that phase was working through — and, above all, the **inbox of a phase the
+   struck one never mentioned**, since a fact filed *for* a distant phase is
+   exactly the one nothing else will re-read. Swept the narrow way, a keystone
+   leaves a live inbox entry asserting something the struck phase went on to
+   deliver, which is the failure the Origin field's "a reader re-checks the
+   origin" exists to catch and cannot.
 4. **Delete.** Now. Deletion's job is to remove the *second authority* — so
    that nobody, human or agent, has to decide whether the spec or the
    distillate wins, and so that no future edit lands in the copy nothing reads.
