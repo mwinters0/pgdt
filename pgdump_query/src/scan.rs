@@ -366,8 +366,7 @@ pub enum ChunkPass {
 /// `drain`ed of the consumed prefix. It copies every byte of the file twice —
 /// once in, once when the remainder shifts down — and was **38.0% of a warm
 /// `parse`'s user time**, the largest single term left in it
-/// (`docs/design/architecture.md`, "`parse`: three-quarters of the wall is the
-/// kernel, and the rest is two SIMD passes").
+/// (`docs/design/architecture.md`, "parse-profile").
 ///
 /// **Handing the scanner two buffers within one chunk costs it nothing**:
 /// [`CopyScanner::base`] is an absolute file offset, and each pass is

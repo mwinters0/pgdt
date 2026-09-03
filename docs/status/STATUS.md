@@ -424,4 +424,19 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-Nothing is open.
+**`M49` marked four sections, not every cited one, and a marked citation is a
+bare id.** The ledger row reads "cited sections in `architecture.md`", and the
+file has dozens; what landed marks only the four whose heading states a finding
+a measurement can move — `parse-profile`, `query-profile`, `insert-profile`,
+`attach-text-profile` — leaving everything else cited by heading, on the
+argument that a marker over a heading that names a mechanism is ceremony around
+a string that does not move. A citation names the id in the position the
+heading occupied: `("parse-profile")` in prose, `` (`docs/design/architecture.md`,
+"parse-profile") `` in a doc comment, which is the shape `M50` can parse without
+a second grammar. What a wider reading would buy is that `M50` checks every
+citation strictly instead of most of them leniently, and what it would cost is
+roughly two hundred retargets plus prose that no longer tells a reader what
+they will find at the other end. Reversing it later is additive — a marker can
+be added to any section and its citations retargeted then — so nothing here is
+one-way. Reconsider before `M50` is specified, since the split between strict
+and lenient is exactly this call.

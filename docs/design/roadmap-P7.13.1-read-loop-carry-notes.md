@@ -6,11 +6,9 @@ that straddles its front edge, and `__memmove_avx_unaligned_erms` — 38.0% of a
 warm `parse`'s user time, the largest single term left after 7.13 — is out of
 the profile entirely. The mechanism and its rejected alternatives are filed by
 subject: [`architecture.md`](architecture.md), "The scanner never owns the bytes
-it scans" for the carry, and "`parse`: three-quarters of the wall is the kernel,
-and the rest is two SIMD passes" for what a `parse` profile is now made of. This
-doc holds
-the apparatus, the two invariants the safety argument rests on, and what 7.6 and
-7.7 walk a row inside.
+it scans" for the carry, and "parse-profile" for what a `parse` profile is now
+made of. This doc holds the apparatus, the two invariants the safety argument
+rests on, and what 7.6 and 7.7 walk a row inside.
 
 ## Module map
 

@@ -115,10 +115,8 @@ what keeps the addition additive; it arrives behind a default-off Cargo feature.
 implementation allocates one buffer per chunk — and `vec![0u8; len]` is
 `calloc`, which zeroes a megabyte that `read_exact_at` overwrites a microsecond
 later. That memset was **23.2% of a warm `parse`'s user time** on the 3.00 GiB
-control ("`parse`: three-quarters of the wall is the kernel, and the rest is
-two SIMD passes"), and freeing the region per chunk is separately what put
-`jemalloc`
-at 3,161 `madvise` calls against glibc's 50 over the same file. So
+control ("parse-profile"), and freeing the region per chunk is separately what
+put `jemalloc` at 3,161 `madvise` calls against glibc's 50 over the same file. So
 `LocalFileSource` keeps a small free list: a read takes the smallest buffer
 that fits, reads into it, and hands back `Bytes::from_owner(…)` sliced to the
 length read, whose owner returns the buffer when the last reference dies. A
@@ -217,10 +215,9 @@ loops — `scan::scan`, `stream::map_forward` and the replay loop in
 `drain`ed of its consumed prefix, which is what the loops did until the
 carry. It copies every byte of the file twice — once in, once when the
 remainder shifts down — and was **38.0% of a warm `parse`'s user time**, the
-largest single term in it ("`parse`: three-quarters of the wall is the kernel,
-and the rest is two SIMD passes"). Its one virtue was that a row always arrived
-contiguous
-in a buffer the loop owned, and the carry keeps that: the pass that produces a
+largest single term in it ("parse-profile"). Its one virtue was that a row
+always arrived contiguous in a buffer the loop owned, and the carry keeps that:
+the pass that produces a
 straddling row is precisely the pass that has just made it contiguous.
 
 Two properties are what make the carry safe rather than merely smaller. **The
@@ -480,8 +477,8 @@ scan-state delta is provably nothing — `parse_ident` guarantees a balanced
 quoted identifier — so those bytes are crossed twice. And `StatementScan::feed`
 spends a second `memchr2` pass per plain run counting parens, which the shared
 statement rule needs and no `INSERT` statement does. Nearly 80% of the flat
-profile is `memchr` across four needle widths ("The `INSERT` path is one
-`memchr`-bound scan in L1"), so both cuts land on the dominant term.
+profile is `memchr` across four needle widths ("insert-profile"), so both cuts
+land on the dominant term.
 
 **What decides whether the remainder costs anything is a device figure this
 phase has not taken.** "Cold, the difference is gone" is a claim about the SATA
@@ -4028,14 +4025,26 @@ each rewrite following a slice that removed the term the previous one named.
 goes" never goes stale because it never says anything, and buys the saving of an
 edit with the finding itself.
 
-What made that cost look worse than it is was citing these sections **by
-heading**, so every rewrite retargeted each citation and the retarget was
-enforced by nothing. The citation moves to a stable marker instead
-([`roadmap.md`](roadmap.md), `M49`), which is the idiom
-[`measurements.md`](measurements.md)'s figures and the deficiency register
+**So a section whose heading states a finding a measurement can move carries an
+`<!-- section: <id> -->` marker on the line above it, and that id — not the
+heading — is what a citation names.** Four sections do: `parse-profile`,
+`query-profile`, `insert-profile` and `attach-text-profile`. The id names the
+mechanism and holds still; the heading says what the profile found and moves
+with it. That is the idiom [`measurements.md`](measurements.md)'s figures and
+the deficiency register
 already use, for the reason `scripts/deficiencies.py` gives in those words: a
 heading is rewritten whenever the thing under it moves. The heading is then free
-to be vivid and free to change at the same time.
+to be vivid and free to change at the same time, and neither freedom costs a
+retarget.
+
+The rest of this file is cited by heading, which is right where the heading
+names a mechanism rather than a finding — a marker on every section would be
+ceremony around strings that do not move. What that leaves is a citation whose
+target has to be *found* rather than resolved, and the check that resolves both
+forms — strictly for a marker id, leniently for a heading — is
+[`roadmap.md`](roadmap.md), `M50`.
+
+<!-- section: parse-profile -->
 
 ### `parse`: three-quarters of the wall is the kernel, and the rest is two SIMD passes
 
@@ -4100,6 +4109,8 @@ evidence that the user-time correction above is being applied correctly.
 and the chunk copy was 5.7% before it went. Both readings are true and they are
 about different inputs: the pre-filter is what a brace-free scan pays, and the
 field split behind it is what a brace-bearing one pays.
+
+<!-- section: query-profile -->
 
 ### `query`: the CLI's render-back is the largest bucket, not the decode
 
@@ -4193,6 +4204,8 @@ copies field bytes.
 30.8% and `nested::needs_quote` 8.8% under `render_field` — the write-back
 re-quoting each element.
 
+<!-- section: insert-profile -->
+
 ### The `INSERT` path is one `memchr`-bound scan in L1
 
 Over the 3.00 GiB `INSERT`-run file, warm, a `parse` — the profile that chose
@@ -4248,6 +4261,8 @@ is the mapping pass and pass 2 is the extraction replay
 query reads **1.0000×** and a `parse` reads 1.0003×, so the second pass is the
 cost of not having run `parse` — a property of the two-pass design, with the
 remedy already in the user's hands, rather than a defect.
+
+<!-- section: attach-text-profile -->
 
 ### `attach_text` does not appear in a profile
 

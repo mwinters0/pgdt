@@ -3,9 +3,8 @@
 What the next slice inherits from `KD9`'s partial discharge — the
 accumulation is gone, the entry stays live at its 4.3× residual. The mechanism itself is
 filed by subject: [`architecture.md`](architecture.md), "Bulk regions: one span
-kind, three payloads" for the fast path and what it declines,
-"The `INSERT` path is one `memchr`-bound scan in L1" for the before-and-after
-profile.
+kind, three payloads" for the fast path and what it declines, "insert-profile"
+for the before-and-after profile.
 
 ## The primitive, and why it is shaped for a caller that does not exist yet
 
