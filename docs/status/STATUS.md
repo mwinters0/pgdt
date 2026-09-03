@@ -15,10 +15,11 @@ alternatives and its limitations. The capability table below says what state
 each is in.
 
 [`../design/measurements.md`](../design/measurements.md) carries the `ba2fc12`
-stamp of 2026-09-03, **no figure is stale, and `measure.ACKNOWLEDGED` is
-empty**: the scan-performance baseline sweep pair was taken and folded in
-whole, so all thirteen tables come from one sitting and every excuse the
-previous stamp carried is spent and deleted. A stale figure obliges no sweep
+stamp of 2026-09-03 and **no figure is stale**: the scan-performance baseline
+sweep pair was taken and folded in whole, so all thirteen tables come from one
+sitting. `measure.ACKNOWLEDGED` carries two entries, both excusing `7545dc6`
+— P7's staging retargeted one doc comment and one `quoted_by` list at the
+drained inbox, and neither reaches a timed path. A stale figure obliges no sweep
 and neither does a wrap: a full sweep is an hour of a quiet machine and belongs
 to the phase that is about performance, which will re-take every table under its
 own apparatus
@@ -66,8 +67,9 @@ not oblige a sweep").
 apparatus line. `--check` reconciles thirteen markers against thirteen figures.
 `session-drift` is derived across that sweep and a second one taken three
 minutes later on the same commit, which is the pair `--drift` reads.
-`measure.ACKNOWLEDGED` is empty: a fresh stamp spends every entry, and
-`--check` named all six so they were deleted rather than kept as sediment.
+`measure.ACKNOWLEDGED` carries the two entries above: a fresh stamp spends
+every entry, and `--check` named the previous six so they were deleted rather
+than kept as sediment.
 
 **Nothing is built and unrun.** `measure.UNTAKEN` is empty: `projection-widths`
 was taken and moved into `FIGURES`, and `composite-isolated` was deleted

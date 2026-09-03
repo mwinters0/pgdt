@@ -84,4 +84,27 @@ class Acknowledged:
 #: The excused commits, live for the current session stamp only. Empty is the
 #: state a fresh stamp leaves behind: every entry a sweep re-stamps past is
 #: spent, and `--check` names it so it is deleted rather than kept as sediment.
-ACKNOWLEDGED: tuple[Acknowledged, ...] = ()
+ACKNOWLEDGED: tuple[Acknowledged, ...] = (
+    Acknowledged(
+        commit="7545dc6",
+        figures=("nested-end-to-end", "cross-file-floor", "projection-widths"),
+        why=(
+            "P7's staging retargeted one doc comment in `batch.rs` at the phase "
+            "spec, the inbox it cited having been drained. Comment-only: no "
+            "item, signature or expression changed, so no code is generated "
+            "differently and no timed path is reached."
+        ),
+        verified="git show 7545dc6 -- pgdump_query/src/batch.rs",
+    ),
+    Acknowledged(
+        commit="7545dc6",
+        figures=("session-drift",),
+        why=(
+            "The same retarget in `measure.py`, inside `quoted_by` metadata "
+            "and a comment. `quoted_by` is read by `--check` alone and names "
+            "no command shape a sweep executes, so no figure's input, "
+            "invocation or timing changed."
+        ),
+        verified="git show 7545dc6 -- scripts/measure.py",
+    ),
+)
