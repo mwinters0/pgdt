@@ -1804,11 +1804,31 @@ and the byte *after* one must be a space or the end, so `\t1 2` is accepted and
 
 **It is also the one literal with no leaf rule**, and the layer above says so.
 Everywhere else a container's `*_in` superset stops at the element, which is
-read in its own type's output form; `int2vector` has no element input function
-for that rule to apply to — `int2vectorin` reads the elements itself — so the
-superset reaches all the way down and `--filter 'v=+1 01'` matches the value
-the file writes as `1 1`. `nested_accepted_form` answers this plan before the
-leaf clause it cannot carry.
+handed to `order_key`; `int2vector` has no element input function for that to
+apply to — `int2vectorin` reads the elements itself — so the superset reaches
+all the way down, and `nested_accepted_form` answers this plan before the leaf
+clause it cannot carry.
+
+**That buys less separation than it looks like, and the asymmetry runs the
+other way.** `--filter 'v=+1 01'` matching the value the file writes as `1 1`
+is not something only `int2vector` does: `order_key`'s integer arms are
+`str::parse`, which takes the same `+` and the same leading zeros, so
+`--filter 'a={+1,02}'` matches an `integer[]` holding `{1,2}` and
+`--filter 'v_smallint=+0'` matches a scalar column holding `0`. Where the two
+genuinely differ, `int2vector` is the **stricter** one: `parse_int2vector`
+range-checks each element to `int16` and refuses `32768`, while an Int leaf is
+parsed as `i64` whatever the column's width and takes `{99999999999}` without
+complaint.
+
+*Rejected: parsing the element as `i64` too, for consistency with that leaf.*
+The cases are not alike. A `smallint` column's width is erased before
+`order_key` sees it, and a literal outside the width still orders correctly
+against every value the column can hold — so refusing buys nothing, which is
+what `predicate.rs` says where it makes that call. An `int2vector`'s width is
+intrinsic to the container grammar instead: `int2vectorin` itself raises
+`22003`, the element type is fixed at `int2` by the type rather than by a
+column, and no value of the type can hold `32768` for an out-of-range literal
+to order against. Same reasoning, opposite outcome.
 
 `tests/nested.rs` is the conformance test: every nested column of every
 `types` fixture, on all six majors, read in `SchemaMode::Strings` and required
@@ -1859,8 +1879,8 @@ type's `*_out` would write them. `parse_record("( 1 , a )", 2)` yields
 `" 1 "` and `" a "`, where the server stores `1` and `" a "` — `int4in` threw
 the first field's blanks away, not `record_in`. What the layer above does with
 that is "Nested columns compare structurally": each leaf goes through
-`order_key`, which reads that type's *output* form and no wider, so `" 1 "` is
-refused rather than trimmed. A discrete range's `[1,10]` → `[1,11)` and a
+`order_key`, which for a number is `str::parse` — so `" 1 "` is refused rather
+than trimmed. A discrete range's `[1,10]` → `[1,11)` and a
 multirange's sort-coalesce-drop are the piece still missing there, and they are
 why a range column has no comparison yet.
 
@@ -2770,6 +2790,26 @@ form and `pgdq query` names the literal it would not read. Implementing more of
 `*_in` would be re-implementing four input functions to accept spellings that
 no dump contains.
 
+**The integer arms are the one place the grammar is *wider* than the output
+form, and the direction is harmless.** `order_key` reads them with
+`str::parse`, which takes a leading `+` and any number of leading zeros —
+spellings `int4out` never writes — so `--filter 'v_smallint=+0'` matches a
+column holding `0`, and `--filter 'a={+1,02}'` an `integer[]` holding `{1,2}`.
+Nothing is misread by it: every value the file holds is canonical, so the extra
+spellings are unreachable from real output and appear only in something a user
+typed. This is a property too, not a deficiency — but state it, because the
+sentence above reads as absolute and is not.
+
+The consequence worth naming is on the *other* side, and it is accepted rather
+than unnoticed. `order_key` takes no `input` flag, so the same leniency reads
+the dump: an `integer` field spelled `+1` is taken quietly instead of being
+flagged as a file contradicting its own type, which is a fault everywhere else
+here. Tightening it means a second scanner per `CompareKind` and an `input`
+flag threaded to the bottom of every nested tree, bought to refuse spellings
+`pg_dump` cannot emit — and the single shared function is what guarantees a
+field and a literal denoting one value compare equal, which is the property the
+split would put at risk.
+
 **`jsonb` is the exception, and it is the exception for a reason.** Its
 literal side implements the whole of `jsonb_in` — JSON with PostgreSQL's own
 refusals, keys sorted into storage order and duplicates resolved to the last
@@ -3413,11 +3453,13 @@ value and takes a flag saying which: a *field* comes out of the dump in
 canonical `*_out` form and is read with `nested.rs`'s strict `decode_*`, while
 a *literal* is what the user typed and is read with the `array_in`/`record_in`
 supersets (`parse_*`, I44) — so `--filter 'tags={a, b}'` means what it looks
-like. A **leaf** is read by `order_key` either way, which implements that
-type's output form and no wider, so `--filter 'p=( 1 , a )'` is refused where
-`record_in` would have kept the blanks and had `int4in` throw them away. That
-is the property "A literal is read in the type's own output form and no wider"
-asked one level down, and it keeps one rule at every depth.
+like. **The flag reaches the container arms and stops there.** A **leaf** is
+read by `order_key` with no flag at all, so a field and a literal go through
+the identical function — which is what makes the two sides comparable in the
+first place, and is why `--filter 'p=( 1 , a )'` is refused where `record_in`
+would have kept the blanks and had `int4in` throw them away. That is the
+property "A literal is read in the type's own output form and no wider" asked
+one level down, and it keeps one rule at every depth.
 
 **The rule is not a nested one, and it already bites at top level.**
 `order_key` is `str::parse` for a number, so `--filter 'v_integer=" 42 "'` —

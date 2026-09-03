@@ -316,22 +316,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **An `int2vector` literal is read with the whole of `int2vectorin`, so its
-  *elements* are read more loosely than any other container's.** Everywhere
-  else the container takes the `*_in` superset and each leaf its own type's
-  output form (I44), so `--filter 'a={ 1 , 2 }'` is accepted and
-  `--filter 'p=( 1 , a )'` is refused. `int2vector` has no element input
-  function for that rule to apply to — `int2vectorin` reads the elements
-  itself, taking a `+` and leading zeros from `strtol` — so
-  `--filter 'v=+1 01'` matches the value the file writes as `1 1`, where the
-  same spellings inside an `integer[]` are refused. It was decided this way
-  because refusing what the server accepts is the one direction the container
-  grammars deliberately avoid, and because there is no leaf here to hold to a
-  stricter rule. Reconsidering it would mean applying `smallint`'s output form
-  to each element, which costs the user nothing they can reach from a dump —
-  every value the file holds is canonical — and buys one rule instead of two.
-  The prose it would falsify is
-  [`../design/architecture.md`](../design/architecture.md), "The nested literal
-  codec" ("the one literal with no leaf rule"),
-  `predicate.rs`'s `nested_accepted_form` early return, and the `+1 01` case in
-  `fixtures/<13–18>/oracle/literals.tsv`.
+Nothing is open.
