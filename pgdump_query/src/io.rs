@@ -50,8 +50,9 @@ const POOL_MAX_BYTES: usize = 8 << 20;
 /// per chunk is `calloc`, so the kernel or the allocator zeroes a megabyte
 /// that `read_exact_at` immediately overwrites — 23.2% of a warm `parse`'s
 /// user time on the 3.00 GiB control
-/// (`docs/design/architecture.md`, "`parse`: half the wall is the kernel, and
-/// half of what is left is copying"). It also hands the region back to the
+/// (`docs/design/architecture.md`, "`parse`: three-quarters of the wall is the
+/// kernel, and the rest is two SIMD passes"). It also hands the region back to
+/// the
 /// allocator once per chunk, which is what put `jemalloc` at 3,161 `madvise`
 /// calls against glibc's 50 over the same file
 /// (`docs/design/measurements.md`, "Which allocator a figure was taken

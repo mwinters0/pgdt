@@ -40,8 +40,8 @@ pub use preamble::{
 pub use predicate::{ComparisonNote, Expr, Predicate, PredicateOp, Truth};
 pub use resolve::{ColumnNote, ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 pub use scan::{
-    CopyEnd, CopyScanner, CopyStart, Event, LargeObjectEnd, LargeObjectStart, Line, Row,
-    ScanOptions, scan,
+    ChunkCarry, ChunkPass, CopyEnd, CopyScanner, CopyStart, Event, LargeObjectEnd,
+    LargeObjectStart, Line, Row, ScanOptions, scan,
 };
 pub use stream::{BlockingTableIter, MapRun, ResumeToken, TableStream, map_file, table_stream};
 

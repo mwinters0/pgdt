@@ -23,6 +23,8 @@ use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use bytes::Bytes;
+
 use crate::copy::{CopyHeader, is_terminator, parse_copy_header, scan_dollar_quotes};
 use crate::io::ByteRangeSource;
 use crate::{Error, Result};
@@ -153,6 +155,8 @@ enum State {
 /// Usage: repeatedly fill a buffer, drain [`next_event`](Self::next_event)
 /// until it yields `None`, then call [`take_consumed`](Self::take_consumed)
 /// and drop that many bytes from the front of the buffer before refilling.
+/// [`ChunkCarry`] is that protocol done without copying the buffer, and is
+/// what every read loop in this crate drives the scanner through.
 #[derive(Debug)]
 pub struct CopyScanner {
     /// Absolute file offset that `buf[0]` corresponds to.
@@ -333,6 +337,129 @@ impl CopyScanner {
     }
 }
 
+/// Which of a chunk's two spans a read loop is scanning.
+///
+/// [`ChunkCarry::PASSES`] is the order, and it is the whole of the protocol:
+/// the straddling line first, then the rest of the chunk in place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChunkPass {
+    /// The line straddling the chunk's front edge — what was carried over
+    /// from the previous chunk, completed by this one's first line-terminated
+    /// prefix. The only bytes a read loop copies.
+    Carry,
+    /// The rest of the chunk, scanned where the reader left it.
+    InPlace,
+}
+
+/// The one line a chunked read loop has to carry across a chunk boundary.
+///
+/// [`CopyScanner`] consumes whole lines, so whatever a chunk leaves
+/// unconsumed is always a **single unterminated line** — never more, since
+/// [`next_event`](CopyScanner::next_event) stops only where it finds no
+/// newline. That is the entirety of what the next chunk needs joined to it,
+/// so a chunk is scanned in two passes: the carry with the chunk's first
+/// line-terminated prefix appended, then the chunk's remainder **where it
+/// lies**. Per chunk that is one row's worth of copying instead of the
+/// chunk's whole length.
+///
+/// *Rejected:* one growing buffer per read loop, appended to per chunk and
+/// `drain`ed of the consumed prefix. It copies every byte of the file twice —
+/// once in, once when the remainder shifts down — and was **38.0% of a warm
+/// `parse`'s user time**, the largest single term left in it
+/// (`docs/design/architecture.md`, "`parse`: three-quarters of the wall is the
+/// kernel, and the rest is two SIMD passes").
+///
+/// **Handing the scanner two buffers within one chunk costs it nothing**:
+/// [`CopyScanner::base`] is an absolute file offset, and each pass is
+/// bracketed by [`take_consumed`](CopyScanner::take_consumed) exactly as a
+/// single buffer's refill would be.
+///
+/// The degenerate case is a chunk containing no newline at all: the whole of
+/// it joins the carry and the in-place pass is empty, which is the growth
+/// [`ScanOptions::max_line_bytes`] bounds and is what the one-buffer shape
+/// did on every chunk.
+#[derive(Debug, Default)]
+pub struct ChunkCarry {
+    /// The unterminated line carried over, extended by [`absorb`](Self::absorb)
+    /// with the chunk bytes that complete it.
+    buf: Vec<u8>,
+    /// Where in the current chunk [`ChunkPass::InPlace`] begins — set by
+    /// [`absorb`](Self::absorb), meaningless before the first call.
+    split: usize,
+}
+
+impl ChunkCarry {
+    /// The passes of one chunk, in the order they must be scanned.
+    pub const PASSES: [ChunkPass; 2] = [ChunkPass::Carry, ChunkPass::InPlace];
+
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Bytes carried over from earlier chunks. This is what
+    /// [`ScanOptions::max_line_bytes`] bounds: it is a single line's prefix,
+    /// so a file whose lines fit stays flat here however large it is.
+    pub fn len(&self) -> usize {
+        self.buf.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.buf.is_empty()
+    }
+
+    /// Take onto the carry whatever prefix of `chunk` completes the line it
+    /// holds, and fix where the in-place pass begins.
+    ///
+    /// With nothing carried that is `0` — the chunk is scanned whole, where it
+    /// lies. With a carry and no newline anywhere in `chunk`, it is
+    /// `chunk.len()`.
+    pub fn absorb(&mut self, chunk: &[u8]) {
+        if self.buf.is_empty() {
+            self.split = 0;
+            return;
+        }
+        self.split = memchr::memchr(b'\n', chunk).map_or(chunk.len(), |nl| nl + 1);
+        self.buf.extend_from_slice(&chunk[..self.split]);
+    }
+
+    /// The bytes `pass` scans, and whether they run to the true end of the
+    /// file — which the carry pass does only when nothing of the chunk is
+    /// left over for the in-place pass to see.
+    pub fn span<'a>(&'a self, pass: ChunkPass, chunk: &'a [u8], eof: bool) -> (&'a [u8], bool) {
+        match pass {
+            ChunkPass::Carry => (&self.buf, eof && self.split == chunk.len()),
+            ChunkPass::InPlace => {
+                // **The carry is empty here whenever this span has anything in
+                // it**, and that is what keeps `CopyScanner::base` correct
+                // across the switch of buffers: a carry the scanner did not
+                // finish would leave `base` short of `chunk[self.split]`, and
+                // the in-place span would be mis-based by exactly the residue.
+                // It holds because a carry that gained a line-terminated prefix
+                // is entirely consumable, and the only carry that is not — a
+                // chunk with no newline in it — took the whole chunk, leaving
+                // this span empty.
+                debug_assert!(
+                    self.buf.is_empty() || self.split == chunk.len(),
+                    "an unfinished carry beside a non-empty in-place span mis-bases the scanner"
+                );
+                (&chunk[self.split..], eof)
+            }
+        }
+    }
+
+    /// Record that the scanner consumed `used` bytes of `pass`'s span. After
+    /// the in-place pass this is what makes the next chunk's carry: the tail
+    /// the scanner could not finish, which is at most one line.
+    pub fn consumed(&mut self, pass: ChunkPass, chunk: &[u8], used: usize) {
+        match pass {
+            ChunkPass::Carry => {
+                self.buf.drain(..used);
+            }
+            ChunkPass::InPlace => self.buf.extend_from_slice(&chunk[self.split + used..]),
+        }
+    }
+}
+
 /// Tuning knobs for a full-file scan.
 #[derive(Debug, Clone)]
 pub struct ScanOptions {
@@ -388,35 +515,226 @@ where
 {
     let size = source.size().await?;
     let mut scanner = CopyScanner::new();
-    let mut buf: Vec<u8> = Vec::with_capacity(options.chunk_size);
+    let mut carry = ChunkCarry::new();
     let mut read_pos = 0u64;
 
     loop {
         let want = options.chunk_size.min((size - read_pos) as usize);
-        if want > 0 {
+        let chunk = if want > 0 {
             let bytes = source.read_range(read_pos, want).await?;
-            buf.extend_from_slice(&bytes);
             read_pos += bytes.len() as u64;
-        }
+            bytes
+        } else {
+            Bytes::new()
+        };
         let eof = read_pos >= size;
 
-        while let Some(event) = scanner.next_event(&buf, eof)? {
-            if on_event(event).is_break() {
-                return Ok(());
+        carry.absorb(&chunk);
+        for pass in ChunkCarry::PASSES {
+            let (span, span_eof) = carry.span(pass, &chunk, eof);
+            while let Some(event) = scanner.next_event(span, span_eof)? {
+                if on_event(event).is_break() {
+                    return Ok(());
+                }
             }
+            carry.consumed(pass, &chunk, scanner.take_consumed());
         }
-
-        let used = scanner.take_consumed();
-        buf.drain(..used);
 
         if eof {
             return Ok(());
         }
-        if buf.len() > options.max_line_bytes {
+        if carry.len() > options.max_line_bytes {
             return Err(Error::LineTooLong {
                 offset: scanner.position(),
                 limit: options.max_line_bytes,
             });
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Drive [`CopyScanner`] over `file` in `chunk_size` pieces exactly as the
+    /// three read loops do, and report the events rendered as text alongside
+    /// the high-water mark of the carry — which is the number this whole
+    /// mechanism exists to hold down.
+    fn drive(file: &[u8], chunk_size: usize) -> (Vec<String>, usize) {
+        let mut scanner = CopyScanner::new();
+        let mut carry = ChunkCarry::new();
+        let mut events = Vec::new();
+        let mut read_pos = 0usize;
+        let mut high_water = 0usize;
+        loop {
+            let want = chunk_size.min(file.len() - read_pos);
+            let chunk = &file[read_pos..read_pos + want];
+            read_pos += want;
+            let eof = read_pos >= file.len();
+
+            carry.absorb(chunk);
+            for pass in ChunkCarry::PASSES {
+                let (span, span_eof) = carry.span(pass, chunk, eof);
+                while let Some(event) = scanner.next_event(span, span_eof).unwrap() {
+                    events.push(format!("{event:?}"));
+                }
+                carry.consumed(pass, chunk, scanner.take_consumed());
+            }
+            high_water = high_water.max(carry.len());
+
+            if eof {
+                return (events, high_water);
+            }
+        }
+    }
+
+    /// A carry holding `line`, reached the way a read loop reaches one: a chunk
+    /// the scanner could not finish, whose tail it kept.
+    fn carrying(line: &[u8]) -> ChunkCarry {
+        let mut carry = ChunkCarry::new();
+        carry.absorb(line);
+        carry.consumed(ChunkPass::InPlace, line, 0);
+        assert_eq!(carry.len(), line.len());
+        carry
+    }
+
+    fn control() -> Vec<u8> {
+        let mut file = b"--\n-- A comment\n--\nCOPY public.t (a, b) FROM stdin;\n".to_vec();
+        for i in 0..64u32 {
+            file.extend_from_slice(format!("{i}\tvalue-{i}\n").as_bytes());
+        }
+        file.extend_from_slice(b"\\.\n\nSELECT 1;\n");
+        file
+    }
+
+    /// The claim the whole mechanism rests on: what a chunk leaves unconsumed
+    /// is one unterminated line, so the bytes a read loop copies are bounded
+    /// by the longest line and not by the chunk size. A one-buffer loop's
+    /// high-water mark would be a chunk.
+    #[test]
+    fn the_carry_is_bounded_by_the_longest_line_not_by_the_chunk() {
+        let file = control();
+        let longest = file.split(|&b| b == b'\n').map(<[u8]>::len).max().unwrap();
+        for chunk_size in [1usize, 2, 3, 7, 13, 64, 511, 4096] {
+            let (_, high_water) = drive(&file, chunk_size);
+            assert!(
+                high_water <= longest,
+                "chunk_size {chunk_size} carried {high_water} bytes, longest line is {longest}"
+            );
+        }
+    }
+
+    /// Two buffers within one chunk are as good as one, because
+    /// `CopyScanner::base` is an absolute file offset — so every event,
+    /// offsets included, is the same wherever the boundaries fall.
+    #[test]
+    fn the_event_stream_does_not_depend_on_where_the_split_falls() {
+        let file = control();
+        let (reference, _) = drive(&file, 1 << 20);
+        for chunk_size in [1usize, 2, 3, 7, 13, 64, 511, 4096] {
+            let (got, _) = drive(&file, chunk_size);
+            assert_eq!(got, reference, "chunk_size {chunk_size}");
+        }
+    }
+
+    /// With nothing carried the chunk is scanned whole, where it lies: no
+    /// prefix is taken and the in-place span is the chunk itself.
+    #[test]
+    fn an_empty_carry_copies_nothing() {
+        let mut carry = ChunkCarry::new();
+        carry.absorb(b"one\ntwo\n");
+        assert!(carry.is_empty());
+        assert_eq!(carry.span(ChunkPass::Carry, b"one\ntwo\n", false).0, b"");
+        assert_eq!(carry.span(ChunkPass::InPlace, b"one\ntwo\n", false).0, b"one\ntwo\n");
+    }
+
+    /// The carry takes the chunk's first line-terminated prefix and no more —
+    /// one line's worth of copying, whatever the chunk's length.
+    #[test]
+    fn a_carry_takes_only_the_prefix_that_completes_its_line() {
+        let mut carry = carrying(b"abc");
+
+        let chunk = b"def\nghi\njkl";
+        carry.absorb(chunk);
+        let (span, _) = carry.span(ChunkPass::Carry, chunk, false);
+        assert_eq!(span, b"abcdef\n");
+        // The scanner would consume that whole line, which is the protocol's
+        // precondition for the in-place span below.
+        carry.consumed(ChunkPass::Carry, chunk, span.len());
+        assert_eq!(carry.span(ChunkPass::InPlace, chunk, false).0, b"ghi\njkl");
+    }
+
+    /// The degenerate case, and it is the one-buffer loop's behaviour: a chunk
+    /// with no newline in it joins the carry whole, which is the growth
+    /// `ScanOptions::max_line_bytes` bounds.
+    #[test]
+    fn a_chunk_with_no_newline_joins_the_carry_whole() {
+        let mut carry = carrying(b"abc");
+
+        let chunk = b"defghi";
+        carry.absorb(chunk);
+        assert_eq!(carry.span(ChunkPass::Carry, chunk, false).0, b"abcdefghi");
+        assert_eq!(carry.span(ChunkPass::InPlace, chunk, false).0, b"");
+    }
+
+    /// The carry pass runs to the end of the file only when the chunk has
+    /// nothing left for the in-place pass — otherwise it would treat a line
+    /// still being carried as the file's last.
+    #[test]
+    fn the_carry_pass_is_eof_only_when_the_chunk_is_exhausted() {
+        let mut carry = carrying(b"abc");
+
+        let split = b"def\nghi";
+        carry.absorb(split);
+        assert!(!carry.span(ChunkPass::Carry, split, true).1);
+        carry.consumed(ChunkPass::Carry, split, carry.len());
+        assert!(carry.span(ChunkPass::InPlace, split, true).1);
+
+        let whole = b"defghi";
+        let mut carry = carrying(b"abc");
+        carry.absorb(whole);
+        assert!(carry.span(ChunkPass::Carry, whole, true).1);
+    }
+
+    /// An unterminated `COPY` block is still an error when the file ends
+    /// inside it, wherever the last chunk boundary fell — the carry pass takes
+    /// `eof` for exactly the case where nothing follows it.
+    #[test]
+    fn a_file_ending_inside_a_copy_block_is_still_rejected() {
+        let file = b"COPY public.t (a) FROM stdin;\n1\n2\n3".to_vec();
+        for chunk_size in [1usize, 2, 3, 7, 4096] {
+            let mut scanner = CopyScanner::new();
+            let mut carry = ChunkCarry::new();
+            let mut read_pos = 0usize;
+            let mut err = None;
+            'file: loop {
+                let want = chunk_size.min(file.len() - read_pos);
+                let chunk = &file[read_pos..read_pos + want];
+                read_pos += want;
+                let eof = read_pos >= file.len();
+                carry.absorb(chunk);
+                for pass in ChunkCarry::PASSES {
+                    let (span, span_eof) = carry.span(pass, chunk, eof);
+                    loop {
+                        match scanner.next_event(span, span_eof) {
+                            Ok(Some(_)) => {}
+                            Ok(None) => break,
+                            Err(e) => {
+                                err = Some(e);
+                                break 'file;
+                            }
+                        }
+                    }
+                    carry.consumed(pass, chunk, scanner.take_consumed());
+                }
+                if eof {
+                    break;
+                }
+            }
+            assert!(
+                matches!(err, Some(Error::UnterminatedCopyBlock { header_offset: 0 })),
+                "chunk_size {chunk_size} gave {err:?}"
+            );
         }
     }
 }

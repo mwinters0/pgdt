@@ -31,7 +31,7 @@ through.
 | If you are touching… | Read |
 |---|---|
 | the async/IO trait, batch sizing, push vs. pull | [Execution model and API surface](#execution-model-and-api-surface) |
-| `scan.rs`, `copy.rs`, a new `Event` variant | [Bytes and structure](#bytes-and-structure) |
+| `scan.rs`, `copy.rs`, a new `Event` variant, a read loop's buffer | [Bytes and structure](#bytes-and-structure) |
 | `map.rs`, spans, tiling, TOC headers, `INSERT`/large-object regions | [The file map](#the-file-map) |
 | `index.rs`, what the index owns, diagnostics | [`DumpIndex`: one owner per fact](#dumpindex-one-owner-per-fact) |
 | array dimensionality, `ArrayShape`, what a scan records per row and what retypes a column from it | [The array shape census](#the-array-shape-census) |
@@ -58,7 +58,7 @@ through.
 | Concern | Where | Layer |
 |---|---|---|
 | Byte-range I/O trait + local-file impl | `pgdump_query/src/io.rs` | L1 |
-| `COPY` block and large-object structure discovery | `pgdump_query/src/scan.rs` | L1 |
+| `COPY` block and large-object structure discovery, and the read loops' chunk carry (`ChunkCarry`) | `pgdump_query/src/scan.rs` | L1 |
 | COPY TEXT field splitting / escaping / unescaping | `pgdump_query/src/copy.rs` | L1 |
 | `Span`/`SpanBody`/`DataBlock`/`TocHeader`, the boundary+classification state machine (`Builder`), `check_tiling`, `attach_text` | `pgdump_query/src/map.rs` | L1 |
 | DDL statement grammar: `classify_statement`, `statement_complete`, `in_open_quote`, `extract_statement_cross_refs`, `dump_metadata_from_spans`; `DumpMetadata` and friends | `pgdump_query/src/preamble.rs` | L1 |
@@ -115,8 +115,9 @@ what keeps the addition additive; it arrives behind a default-off Cargo feature.
 implementation allocates one buffer per chunk — and `vec![0u8; len]` is
 `calloc`, which zeroes a megabyte that `read_exact_at` overwrites a microsecond
 later. That memset was **23.2% of a warm `parse`'s user time** on the 3.00 GiB
-control ("`parse`: half the wall is the kernel, and half of what is left is
-copying"), and freeing the region per chunk is separately what put `jemalloc`
+control ("`parse`: three-quarters of the wall is the kernel, and the rest is
+two SIMD passes"), and freeing the region per chunk is separately what put
+`jemalloc`
 at 3,161 `madvise` calls against glibc's 50 over the same file. So
 `LocalFileSource` keeps a small free list: a read takes the smallest buffer
 that fits, reads into it, and hands back `Bytes::from_owner(…)` sliced to the
@@ -136,13 +137,15 @@ bounded at both ends** — four slots, nothing above 8 MiB kept — because
 happens once per map, and holding one of those for the life of the process
 would trade the flat ~9 MiB RSS for an allocation nothing asks for twice.
 
-*Rejected:* changing `read_range` to read into a caller-owned buffer, which is
-the shape that would delete the scanner's own chunk copy at the same time. It
+*Rejected:* changing `read_range` to read into a caller-owned buffer. It
 departs from `get_range` exactly where the trait exists to mirror it, and
 `spawn_blocking` needs `'static` ownership of whatever it writes into, so a
 borrowed-buffer signature cannot be implemented here anyway — the buffer would
 have to be moved in and back out, which is the pooling protocol above with the
-pool moved into every caller.
+pool moved into every caller. It was tempting because it looked like the only
+way to also delete the scanner's own chunk copy; that copy is gone without it
+("The scanner never owns the bytes it scans": the carry), which is what makes
+the refusal free.
 
 **Two entry points, deliberately different in kind:**
 
@@ -196,6 +199,44 @@ keeps events zero-copy and lets one state machine back both the async driver
 The consequence is that the caller's buffer is the only thing bounding memory,
 which is why `ScanOptions::max_line_bytes` exists and why exceeding it is a
 hard error rather than a truncation.
+
+**What a read loop carries is one line, not one chunk.** The scanner consumes
+whole lines, so what a chunk leaves unconsumed is always a *single*
+unterminated line — `next_event` stops only where it finds no newline. So a
+chunk is scanned in two passes, which `scan::ChunkCarry` holds the state for:
+the carried line with the chunk's first line-terminated prefix appended to it,
+and then the rest of the chunk **where the reader left it**. Handing the
+scanner two buffers within one chunk costs it nothing, because `CopyScanner`'s
+`base` is an absolute file offset and each pass is bracketed by
+`take_consumed` exactly as a single buffer's refill would be. All three read
+loops — `scan::scan`, `stream::map_forward` and the replay loop in
+`stream::table_stream` — drive it identically, through
+`ChunkCarry::PASSES`.
+
+*Rejected:* one growing buffer per read loop, appended to per chunk and
+`drain`ed of its consumed prefix, which is what the loops did until the
+carry. It copies every byte of the file twice — once in, once when the
+remainder shifts down — and was **38.0% of a warm `parse`'s user time**, the
+largest single term in it ("`parse`: three-quarters of the wall is the kernel,
+and the rest is two SIMD passes"). Its one virtue was that a row always arrived
+contiguous
+in a buffer the loop owned, and the carry keeps that: the pass that produces a
+straddling row is precisely the pass that has just made it contiguous.
+
+Two properties are what make the carry safe rather than merely smaller. **The
+`Bytes` a chunk arrives in outlives the pass that scans it**, because the
+buffer pool returns a buffer only when the last reference to it dies
+("Execution model and API surface"), so an in-place scan is not also a
+lifetime problem — and the query replay path was already retaining that same
+`Bytes` in `batch::SourceChunk`. And **the zero-copy `Utf8View` path never
+depended on which buffer a row was read out of**: `push_utf8view_field`
+locates a field's chunk by *absolute file offset* and falls back to a copy
+when it finds none, so a row scanned in place and a row reassembled on the
+carry resolve identically ("Arrow assembly and the zero-copy path").
+
+The degenerate case is a chunk with no newline in it at all: the whole of it
+joins the carry and the in-place pass is empty, which is what the one-buffer
+shape did on *every* chunk and is the growth `max_line_bytes` bounds.
 
 ### Parser robustness requirements (hardcoded)
 
@@ -3965,9 +4006,9 @@ little, and knowing which function spends the time is worth having either way.
 number below if it is forgotten.** `perf_event_paranoid = 2` permits user-space
 sampling only, so a profile's event is `cpu/cycles/Pu` and **its 100% is the
 process's user time, not its wall time**. On this workload that distinction is
-not a detail: a warm 3.00 GiB `parse` is 0.60 s of wall made of 0.30 s system
-and 0.29 s user, and `dd` over the same file is 0.29 s of wall that is *all*
-system. So a `parse` profile describes the half of the scan that is not the
+not a detail: a warm 3.00 GiB `parse` is 0.40 s of wall made of 0.30 s system
+and 0.11 s user, and `dd` over the same file is 0.29 s of wall that is *all*
+system. So a `parse` profile describes the quarter of the scan that is not the
 kernel handing the bytes over, and a share of it must be multiplied by the user
 time before it can be compared with anything in
 [`measurements.md`](measurements.md).
@@ -3977,53 +4018,69 @@ scripts && uv run measure.py --profile-recipe` prints. Every figure quoted as
 seconds is a `measurements.md` table; every percentage is a profile, which is a
 proportion and never a median.
 
-### `parse`: half the wall is the kernel, and half of what is left is copying
+### `parse`: three-quarters of the wall is the kernel, and the rest is two SIMD passes
 
 Warm, on tmpfs, over the 3.00 GiB brace-free control (16 scalar columns,
-814,362 rows). Shares are of user time; the last column converts them at this
-profile's own sitting, where a warm host `parse` is 0.54 s of wall made of
-0.18 s user and 0.35 s system.
+814,362 rows). Shares are of user time; the last column converts them at **this
+profile's own sitting**, where a warm host `parse` is 0.44 s of wall made of
+0.12 s user and 0.32 s system — a busier window than the 0.40 / 0.11 / 0.30 the
+preamble above quotes, which is why an absolute here may not be set beside one
+from another sitting.
 
 | Share | ≈ | Symbol | What it is |
 |---|---|---|---|
-| 38.0% | 0.068 s | `__memmove_avx_unaligned_erms` | `buf.extend_from_slice(&bytes)` in `scan::scan`, copying each chunk into the scanner's own buffer, plus `buf.drain(..used)` shifting the remainder down |
-| 23.5% | 0.042 s | `memchr::One::find_raw_avx2` | the LF search inside `CopyScanner::next_event` — the `COPY` grammar itself |
-| 23.9% | 0.043 s | `memchr::Two::find_raw_avx2` | `memchr2(b'{', b'[', raw)`, the array-shape census's pre-filter |
-| 5.3% | 0.010 s | `stream::map_file::{closure#0}` | the event callback into `map::Builder` |
+| 45.1% | 0.054 s | `memchr::One::find_raw_avx2` | the LF search inside `CopyScanner::next_event` — the `COPY` grammar itself |
+| 33.8% | 0.041 s | `memchr::Two::find_raw_avx2` | `memchr2(b'{', b'[', raw)`, the array-shape census's pre-filter |
+| 7.2% | 0.009 s | `stream::map_file::{closure#0}` | the event callback into `map::Builder` |
+| 3.6% | 0.004 s | `memchr::memchr_raw::find_avx2` | the same LF search, at its out-of-line entry point |
+| 2.6% | 0.003 s | `CopyScanner::next_event` | the state machine around both |
+| 1.2% | 0.001 s | `memchr::memchr2_raw::find_avx2` | the same brace pre-filter, out of line |
 
-Medians of three consecutive profiles, which agree with each other to within a
-point on every row — worth taking because this sitting's machine was not quiet,
-and a share is only insensitive to that when it reproduces.
+Medians of **eight** consecutive profiles, and the row count is why there are
+eight: the split between the two searchers does not reproduce — `One` spans
+39.8–51.8% and `Two` 28.8–37.8% across the set, anti-correlated, which is
+sample skid between two adjacent hot loops rather than a difference between
+runs. What reproduces is their **sum**, 78.7% ± 3. Read the two rows as one
+number split by an instrument that cannot quite split it.
 
-**Copying bytes that are already in memory is still the largest single term,
-and it is now the only one left.** The chunk copy is 38.0% of user time; the
-zeroing that used to sit beside it at 23.2% is **gone** — `__memset_avx2_…`
-takes no samples above the 0.5% floor at all, because the read path stopped
-allocating a fresh `Vec<u8>` per chunk ("Execution model and API surface": the
-buffer pool). Every other row is the same absolute cost it was, re-based on a
-smaller denominator: the three above are within a point of their old shares
-divided by 1 − 0.232, which is the arithmetic check that nothing *else* moved.
-The removal itself is exact rather than a reading — user instructions per warm
-`parse` fall **1,882,404,237 → 1,705,902,670**, −9.4%, each side at ±0.00% over
-five reps, and host user time falls 0.23 s → 0.18 s. What remains is the second
-half of the same sentence: the scanner copies each chunk into a buffer it owns,
-in three read loops, which is a rework of how a row is walked rather than an
-allocation change, and is where the next cut goes.
+**Nothing copies bytes any more, and that is the whole of what changed.**
+`__memmove_avx_unaligned_erms` was 38.0% of user time — the chunk copy into
+each read loop's own buffer, plus the `drain` that shifted the remainder down —
+and it takes no samples above the 0.5% floor in any of the eight profiles,
+because a read loop now carries one line rather than one chunk ("The scanner
+never owns the bytes it scans": the carry). `__memset_avx2_…` went the same way
+one slice earlier, at 23.2%, when the read path stopped allocating a fresh
+`Vec<u8>` per chunk ("Execution model and API surface": the buffer pool). What
+is left is the grammar and the census, and they are the two SIMD passes this
+scan was always going to have to make.
 
-**The grammar and the census cost the same as each other and less than the
-copying.** Two SIMD passes over the same bytes: `memchr` for the row terminator
-and `memchr2` for the census's brace pre-filter. The census share reconciles
-with the subtraction that measures it — 0.043 s here against the +0.030 s the
-census-on/census-off pair read in the `ba2fc12` sweep and +0.048 s where that
-pair reads today
-([`measurements.md`](measurements.md), "The census on brace-free rows") — which
-is the check that the user-time correction above is being applied correctly.
+**The removals are exact rather than readings.** User instructions per warm
+`parse` fall **1,882,404,237 → 1,705,902,670** with the allocation gone
+(−9.4%) and **1,703,555,926 → 1,403,769,503** with the copy gone (−17.6%),
+every one of those numbers a median of five reps whose spread is under 0.003%.
+The copy removal is the one that reaches wall time as well, on interleaved reps
+in one window: 0.48 s → 0.40 s, user 0.17 s → 0.11 s, system unchanged at
+0.30 s, and peak RSS 7.9 MB → 6.0 MB, the megabyte buffer per read loop being
+what leaves. It also holds on a brace-bearing file, where it is the same
+**absolute** 0.2996 G instructions over the same 3.00 GiB (18.080 G →
+17.781 G) — the copy is per byte of file, so the two shapes subtract the same
+amount and only the share differs.
+
+**The grammar now costs more than the census, and the census reconciles with
+the subtraction that measures it.** Grouping the out-of-line entry points with
+their inlined ones puts the LF search at 48.8% and the brace pre-filter at
+35.0%, or 0.059 s against 0.042 s — and that second figure is the check, since
+the census-on/census-off pair reads +0.030 s in the `ba2fc12` sweep and
++0.048 s where that pair reads today
+([`measurements.md`](measurements.md), "The census on brace-free rows"). A
+share that agrees with a subtraction taken by a different instrument is the
+evidence that the user-time correction above is being applied correctly.
 
 **On a brace-bearing file the picture inverts.** Over the `--arrays
 --composite` file `map::Builder::on_row` is **85.6%** of the `parse` profile
-and the chunk copy falls to 5.7%. Both readings are true and they are about
-different inputs: the pre-filter is what a brace-free scan pays, and the field
-split behind it is what a brace-bearing one pays.
+and the chunk copy was 5.7% before it went. Both readings are true and they are
+about different inputs: the pre-filter is what a brace-free scan pays, and the
+field split behind it is what a brace-bearing one pays.
 
 ### `query`: the CLI's render-back is the largest bucket, not the decode
 
@@ -4051,6 +4108,14 @@ than re-derived: removing that thread's samples re-bases every share upward by
 its own share and moves no absolute, so the per-row budget below — which is
 what an embedder actually pays — is unchanged, and re-taking the shares would
 have meant publishing a sitting this machine was too busy to give.
+
+**The carry moves them by the same small amount, in the same direction.** The
+replay loop stopped copying each chunk into a second buffer too, which the
+whole-query instruction count puts at **−2.1% for `strings`** (26.86 G →
+26.29 G) and **−1.4% for `typed`** (96.93 G → 95.59 G) — smaller than a
+`parse`'s −17.6% because the same absolute saving sits under a run that costs
+20× as much. That cost is inside the `poll_next` rows, which are therefore
+overstated by about their own share of it, and no other row moves.
 
 **Two-thirds of a typed query is the CLI writing the values back out as
 text**, and 79% of the gap between the two modes is that one function: typed
@@ -4140,7 +4205,12 @@ caller and spends itself in `memchr`:
 |---|---|
 | 74.3% | `Builder::feed_line` → `insert_run_line` → `StatementScan::feed_line` |
 | 14.1% | `CopyScanner::next_event` (5.2% of it `scan_dollar_quotes`) |
-| 2.5% | `__memmove_avx_unaligned_erms` — the read path's own chunk copy |
+
+A third row that sitting read — `__memmove_avx_unaligned_erms` at 2.5%, the
+read path's chunk copy into the scanner's own buffer — is gone with the carry
+("The scanner never owns the bytes it scans"). The two shares above are left as
+taken, of a denominator that still included it, so each is understated by about
+2.6% of itself.
 
 **Nearly 80% of the flat profile is now `memchr`**, split across the four
 needle widths `feed` uses: `memchr` for a string's closing quote and for a

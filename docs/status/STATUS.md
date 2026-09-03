@@ -27,25 +27,24 @@ the same sitting because they share its readings and its subject; and
 the three of them in one sitting because the two throughput tables' `COPY` row
 *is* the census table's census-on column.
 
-**All thirteen sweep figures read stale against the `ba2fc12` stamp, and only
-one of them is current in fact.** `allocator` was re-taken by 7.13 on the
-pooled read path and is the doc's newest table; `per-block-quadratic`,
-`map-only` and `preamble-prepass` (7.4) and the three 7.5 re-took were current
-until 7.13 and are not any more, because a `parse` reads its bytes through the
-buffer that slice replaced. `--stale` also reads staleness off the doc's stamp,
-which no per-figure re-take moves, so even `allocator` stays listed until the
-wrap sweep.
+**All thirteen sweep figures read stale against the `ba2fc12` stamp, and none
+of them is current in fact.** `allocator` is the doc's newest table, re-taken by
+7.13 on the pooled read path, and 7.13.1 has since moved it too;
+`per-block-quadratic`, `map-only` and `preamble-prepass` (7.4) and the three 7.5
+re-took were current until 7.13. Every one of them times a `pgdq` run, and the
+two slices that follow the stamp both changed what such a run costs per byte of
+input.
 
 **The genuinely stale ones and their reasons.** Every figure that times a
-`pgdq` run is red on `pgdump_query/src/io.rs` — 7.13's buffer pool, which took
-9.4% of a warm `parse`'s user instructions and cannot be argued away. On top of
-that: `census-arrays` and `projection-widths` are red on
-`pgdump_query/src/map.rs` and `pgdump_query/src/stream.rs`, which 7.4 and 7.5
-changed; both time a single-`COPY`-block input, where 7.4's gate is open at the
-one `CopyEnd` there is and 7.5's `INSERT` fast path is never entered, so the
-changed paths are reached and do the same work — an argument the harness's
-reachability oracle cannot make, since the code *is* executed, so they stay red
-rather than acknowledged. `nested-end-to-end`, `census-attribution` and
+`pgdq` run is red on `pgdump_query/src/io.rs` and on
+`pgdump_query/src/scan.rs`/`stream.rs` — 7.13's buffer pool and 7.13.1's read
+carry, which between them took **26%** of a warm `parse`'s user instructions and
+cannot be argued away. That subsumes the case `census-arrays` and
+`projection-widths` used to make on their own: both time a single-`COPY`-block
+input, where 7.4's gate is open at the one `CopyEnd` there is and 7.5's `INSERT`
+fast path is never entered, so those two slices left them doing the same work —
+but 7.13.1 changes how every chunk of every input is handed to the scanner, so
+there is no shape that escapes it. `nested-end-to-end`, `census-attribution` and
 `cross-file-floor` are additionally red on `pgdump_query-cli/src/`, from 7.3's
 `mod alloc;` and `--version` string. `session-drift` is red on
 `scripts/measure.py`: 7.3 added a real figure function there, 7.4 corrected
@@ -80,7 +79,8 @@ bytes through it — so 7.13, which removed the largest single term in a warm
 `parse`'s user time, would have read green against all twelve. It is now its
 own mechanism (`READ`) rather than part of `SCAN`, because `nested-end-to-end`
 and `census-attribution` declare no scanner path and are moved by it all the
-same.
+same. 7.13.1's carry needed no such fix: it lives in `scan.rs` and `stream.rs`,
+which `SCAN` and `MAP_BUILD` already declared.
 
 | Capability | State |
 |---|---|
@@ -180,10 +180,10 @@ The phase's spec, its measured baseline and the lever table each row measures:
 **7.1 and 7.2 are ordered; the rest is allocation order, not schedule** — the
 phase follows the profile, so a slice landing out of numeric order is the plan
 working ([`../process.md`](../process.md), "Slice numbering", which carries the
-exception an evidence-led phase runs under). One ordering still binds —
-`7.13.1` ahead of `7.6` and `7.7`, which rework how a row is walked inside the
-buffer it replaces. The other, the allocator decision before the wrap sweep,
-is discharged: 7.13 re-took the figure and settled it.
+exception an evidence-led phase runs under). **Both orderings that bound are
+discharged**: the allocator decision before the wrap sweep, which 7.13 re-took
+and settled, and `7.13.1` ahead of `7.6` and `7.7`, which rework how a row is
+walked inside the buffer it replaced. What remains is unordered.
 
 - [x] **7.1** The profiling apparatus — `[profile.profiling]`, `perf`, and a
       `measure.py --profile-recipe` that prints the invocation on the
@@ -250,11 +250,18 @@ is discharged: 7.13 re-took the figure and settled it.
       1.00×/0.99×/1.01×, both cells that had kept the question open having been
       this allocation rather than an allocator. Notes:
       [`../design/roadmap-P7.13-read-buffer-pool-notes.md`](../design/roadmap-P7.13-read-buffer-pool-notes.md)
-- [ ] **7.13.1** The copy into each read loop's own buffer, over all three
-      loops, with the query path's chunk retention settled explicitly.
-      **Earned**: 7.13's row paired one contained module with a rework of three
-      already-tested scan loops, which is two review cycles. Reviewed alone,
-      ahead of 7.6 and 7.7.
+- [x] **7.13.1** The copy into each read loop's own buffer, over all three
+      loops: `scan::ChunkCarry` carries the one line straddling a chunk's front
+      edge and every loop scans the rest of the chunk where it lies. A warm
+      3.00 GiB `parse` loses **17.6% of its user instructions** (1.704 G →
+      1.404 G, spreads under 0.003%), `__memmove_avx_…` leaves the profile
+      entirely, and this one **reaches wall time** — 0.48 s → 0.40 s with
+      system flat, peak RSS 7.9 → 6.0 MB. The query path's chunk retention
+      needed no change: eviction keys on the scanner's position and a
+      straddling row is carried, not scanned. **Earned**: 7.13's row paired one
+      contained module with a rework of three already-tested scan loops, which
+      is two review cycles. Notes:
+      [`../design/roadmap-P7.13.1-read-loop-carry-notes.md`](../design/roadmap-P7.13.1-read-loop-carry-notes.md)
 
 ## Not started
 
@@ -262,9 +269,10 @@ is discharged: 7.13 re-took the figure and settled it.
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 - **P7 is open**, grilled and sliced; the checklist above is its progress. Its
-  two evidence slices, the allocator reading and three library changes have
+  two evidence slices, the allocator reading and four library changes have
   landed — 7.4's gate in `stream.rs`, 7.5's `INSERT` statement scan in
-  `preamble.rs`/`map.rs`, and 7.13's read-buffer pool in `io.rs`, all edits to
+  `preamble.rs`/`map.rs`, 7.13's read-buffer pool in `io.rs` and 7.13.1's read
+  carry in `scan.rs`/`stream.rs`, all edits to
   timed paths. Six
   other phases are sketched and one more is
   specified — P13, P16, P10, P14, P6, P15, P8, in the roadmap table's schedule
@@ -416,4 +424,18 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-Nothing is open.
+- **`architecture.md`'s profile headings state a measured proportion, and this
+  slice had to rewrite one twice.** "`parse`: half the wall is the kernel, and
+  half of what is left is copying" became "…and the rest is two SIMD passes"
+  when the copy went, and then "three-quarters of the wall is the kernel, …"
+  when removing it moved the kernel's share of the wall from a half to three
+  quarters. Each rename retargets four citations — two code comments, two notes
+  docs — because a heading is how this project cites a section. **The call:
+  keep the vivid, proportion-bearing headings and pay the retarget whenever a
+  slice moves the number.** The reasoning is that the heading is the section's
+  one-line finding and a reader skimming the contents gets the finding for
+  free; a mechanism-named heading ("`parse`: where the user time goes") would
+  never go stale and would also never say anything. What would change if
+  reconsidered: the phase has four more slices aimed at exactly these numbers,
+  so each is one more rename plus its citations, and the alternative costs one
+  edit now.

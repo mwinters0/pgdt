@@ -65,6 +65,7 @@ use arrow::array::RecordBatch;
 use arrow::buffer::Buffer;
 use arrow::datatypes::Schema;
 use async_stream::try_stream;
+use bytes::Bytes;
 use futures::Stream;
 
 use crate::batch::{
@@ -82,7 +83,7 @@ use crate::map::{Builder, Span, SpanBody, attach_text};
 use crate::preamble::{DumpMetadata, dump_metadata_from_spans};
 use crate::predicate::{ComparisonNote, Expr, PredicateOp, ResolvedExpr, resolve_term};
 use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
-use crate::scan::{CopyScanner, Event, ScanOptions};
+use crate::scan::{ChunkCarry, CopyScanner, Event, ScanOptions};
 use crate::{Error, Result};
 
 /// State for a `COPY` block whose table matches the query: the batcher
@@ -477,7 +478,7 @@ async fn map_forward<S: ByteRangeSource>(
 
     let mut scanner = CopyScanner::resume(seg_start, None);
     let mut read_pos = seg_start;
-    let mut buf: Vec<u8> = Vec::with_capacity(scan_options.chunk_size);
+    let mut carry = ChunkCarry::new();
     let mut throttle = SaveThrottle::new();
     // Whether the `COPY` block currently open is one `target_settled` would
     // count — see the `CopyEnd` arm, which is the only reader.
@@ -498,137 +499,149 @@ async fn map_forward<S: ByteRangeSource>(
             return Ok(MapStop::Interrupted);
         }
         let want = scan_options.chunk_size.min((size - read_pos) as usize);
-        if want > 0 {
+        let chunk = if want > 0 {
             let bytes = source.read_range(read_pos, want).await?;
             read_pos += bytes.len() as u64;
-            buf.extend_from_slice(&bytes);
-        }
+            bytes
+        } else {
+            Bytes::new()
+        };
         let eof = read_pos >= size;
 
-        while let Some(event) = scanner.next_event(&buf, eof)? {
-            match event {
-                Event::CopyStart(start) => {
-                    // The start of the current database's first `COPY` block
-                    // is the second of the two boundaries
-                    // `dump_metadata_from_spans` may be called at (I1), and
-                    // the one that *recurs* — once per `\connect`ed database.
-                    // Stating the metadata here is what makes a `parse`
-                    // interrupted in database 3 typed for the two segments it
-                    // finished instead of for database 1 alone, and what makes
-                    // a cold query and a warm one type a `pg_dumpall` alike.
-                    //
-                    // Retreat to a pending TOC comment's own start the way
-                    // `crate::index::scan_preamble` does, so the span list
-                    // handed over ends where the `Data` span is about to
-                    // begin rather than swallowing the comment.
-                    let boundary = builder.pending_comment_start().unwrap_or(start.header_offset);
-                    // Whether this block can be the one that settles `target`,
-                    // read off the header before it moves into the builder —
-                    // the `CopyEnd` arm's reason to splice for a block the
-                    // throttle would have skipped. **Deliberately the header
-                    // alone**, which is a superset: a block whose database the
-                    // selector excludes cannot settle the target either, but
-                    // repeating that test here would tie the gate's width to
-                    // `target_settled`'s body, where a later narrowing there
-                    // would silently make the gate too narrow. Over-splicing
-                    // costs a clone on a block whose name is the queried one;
-                    // under-splicing loses the early stop.
-                    open_block_targets =
-                        target.is_some_and(|(table, _)| start.header.matches(table));
-                    builder.on_copy_start(start);
-                    // **Once per database, not once per block.** Recomputing
-                    // at every `CopyStart` and leaning on idempotence would
-                    // put a third whole-index-sized cost in this loop, beside
-                    // the two `docs/design/measurements.md` already prices.
-                    let db = builder.database().map(str::to_owned);
-                    if metadata_covers.as_ref() != Some(&db) {
-                        let spans =
-                            splice(&prefix, builder.snapshot(boundary), seg_start, boundary, size);
-                        index.metadata = Some(dump_metadata_from_spans(&spans));
-                        metadata_covers = Some(db);
+        carry.absorb(&chunk);
+        for pass in ChunkCarry::PASSES {
+            let (span, span_eof) = carry.span(pass, &chunk, eof);
+            while let Some(event) = scanner.next_event(span, span_eof)? {
+                match event {
+                    Event::CopyStart(start) => {
+                        // The start of the current database's first `COPY` block
+                        // is the second of the two boundaries
+                        // `dump_metadata_from_spans` may be called at (I1), and
+                        // the one that *recurs* — once per `\connect`ed database.
+                        // Stating the metadata here is what makes a `parse`
+                        // interrupted in database 3 typed for the two segments it
+                        // finished instead of for database 1 alone, and what makes
+                        // a cold query and a warm one type a `pg_dumpall` alike.
+                        //
+                        // Retreat to a pending TOC comment's own start the way
+                        // `crate::index::scan_preamble` does, so the span list
+                        // handed over ends where the `Data` span is about to
+                        // begin rather than swallowing the comment.
+                        let boundary =
+                            builder.pending_comment_start().unwrap_or(start.header_offset);
+                        // Whether this block can be the one that settles `target`,
+                        // read off the header before it moves into the builder —
+                        // the `CopyEnd` arm's reason to splice for a block the
+                        // throttle would have skipped. **Deliberately the header
+                        // alone**, which is a superset: a block whose database the
+                        // selector excludes cannot settle the target either, but
+                        // repeating that test here would tie the gate's width to
+                        // `target_settled`'s body, where a later narrowing there
+                        // would silently make the gate too narrow. Over-splicing
+                        // costs a clone on a block whose name is the queried one;
+                        // under-splicing loses the early stop.
+                        open_block_targets =
+                            target.is_some_and(|(table, _)| start.header.matches(table));
+                        builder.on_copy_start(start);
+                        // **Once per database, not once per block.** Recomputing
+                        // at every `CopyStart` and leaning on idempotence would
+                        // put a third whole-index-sized cost in this loop, beside
+                        // the two `docs/design/measurements.md` already prices.
+                        let db = builder.database().map(str::to_owned);
+                        if metadata_covers.as_ref() != Some(&db) {
+                            let spans = splice(
+                                &prefix,
+                                builder.snapshot(boundary),
+                                seg_start,
+                                boundary,
+                                size,
+                            );
+                            index.metadata = Some(dump_metadata_from_spans(&spans));
+                            metadata_covers = Some(db);
+                        }
                     }
+                    // This pass needs only the block's extent, which the
+                    // scanner finds from the `\.` terminator — row bytes become
+                    // batches in the replay phase. The one thing rows are read
+                    // for here is the array-shape census, which every mapping
+                    // pass records (`crate::index::CopyBlock::array_shapes`).
+                    Event::Row(row) => builder.on_row(row.raw),
+                    Event::CopyEnd(end) => {
+                        // `end_offset` is always a safe, resumable watermark —
+                        // the scanner is back in its `Outside` state there — and
+                        // `on_copy_end` leaves the builder `Idle`, which is
+                        // exactly where `snapshot` is sound.
+                        let watermark = end.end_offset;
+                        builder.on_copy_end(end);
+                        let targets = std::mem::take(&mut open_block_targets);
+                        // The second of the guard's two check points, and the one
+                        // that covers the opposite extreme from the chunk check
+                        // above: a block-rich file can spend tens of seconds
+                        // inside a *single* chunk, where the chunk check runs
+                        // twice in the whole scan. The two together bound the
+                        // response by the shorter of a chunk and a block.
+                        let cancelled = scan_options.cancelled();
+                        let due = throttle.due();
+                        // **The splice rides the throttle's gate.** Rebuilding
+                        // `index.spans` clones the whole list, so doing it per
+                        // block is O(blocks²) — the half of that quadratic the
+                        // throttle did not reach (`architecture.md`, "`parse`
+                        // resumes, and saves as it goes"). Nothing between gate
+                        // openings reads `index`: the metadata recompute above
+                        // splices its own copy, and `target_settled` is the one
+                        // reader that would — which is why a block whose header
+                        // could satisfy it opens the gate too. What this costs is
+                        // the interrupt's promise, bounded in *time* by the
+                        // throttle rather than in blocks.
+                        if targets || cancelled || due {
+                            index.spans = splice(
+                                &prefix,
+                                builder.snapshot(watermark),
+                                seg_start,
+                                watermark,
+                                size,
+                            );
+                            index.roles.extend(builder.roles().iter().cloned());
+                            index.tablespaces.extend(builder.tablespaces().iter().cloned());
+                            index.scanned_through = index.scanned_through.max(watermark);
+                        }
+                        // Only a block `target_settled` counts can turn it from
+                        // false to true, and `index` has just been spliced for
+                        // exactly those — so this reads a map that is current
+                        // through `watermark` every time it is consulted.
+                        let settled = targets
+                            && target.is_some_and(|(table, selector)| {
+                                target_settled(index, table, selector)
+                            });
+                        // The save at the *last* watermark before an early stop is
+                        // what persists the map for the next query, so a settled
+                        // target saves whether or not the throttle would have —
+                        // and so does an interrupt.
+                        if settled || cancelled || due {
+                            throttle.save(cache, source, index).await?;
+                        }
+                        if settled {
+                            return Ok(MapStop::Reached);
+                        }
+                        if cancelled {
+                            return Ok(MapStop::Interrupted);
+                        }
+                    }
+                    Event::Line(line) => builder.feed_line(line.offset, line.raw),
+                    Event::DollarQuoteEnd(end) => builder.on_dollar_quote_end(end.offset),
+                    Event::LargeObjectStart(start) => {
+                        builder.on_large_object_start(start.start_offset)
+                    }
+                    Event::LargeObjectEnd(end) => builder.on_large_object_end(end.end_offset),
                 }
-                // This pass needs only the block's extent, which the
-                // scanner finds from the `\.` terminator — row bytes become
-                // batches in the replay phase. The one thing rows are read
-                // for here is the array-shape census, which every mapping
-                // pass records (`crate::index::CopyBlock::array_shapes`).
-                Event::Row(row) => builder.on_row(row.raw),
-                Event::CopyEnd(end) => {
-                    // `end_offset` is always a safe, resumable watermark —
-                    // the scanner is back in its `Outside` state there — and
-                    // `on_copy_end` leaves the builder `Idle`, which is
-                    // exactly where `snapshot` is sound.
-                    let watermark = end.end_offset;
-                    builder.on_copy_end(end);
-                    let targets = std::mem::take(&mut open_block_targets);
-                    // The second of the guard's two check points, and the one
-                    // that covers the opposite extreme from the chunk check
-                    // above: a block-rich file can spend tens of seconds
-                    // inside a *single* chunk, where the chunk check runs
-                    // twice in the whole scan. The two together bound the
-                    // response by the shorter of a chunk and a block.
-                    let cancelled = scan_options.cancelled();
-                    let due = throttle.due();
-                    // **The splice rides the throttle's gate.** Rebuilding
-                    // `index.spans` clones the whole list, so doing it per
-                    // block is O(blocks²) — the half of that quadratic the
-                    // throttle did not reach (`architecture.md`, "`parse`
-                    // resumes, and saves as it goes"). Nothing between gate
-                    // openings reads `index`: the metadata recompute above
-                    // splices its own copy, and `target_settled` is the one
-                    // reader that would — which is why a block whose header
-                    // could satisfy it opens the gate too. What this costs is
-                    // the interrupt's promise, bounded in *time* by the
-                    // throttle rather than in blocks.
-                    if targets || cancelled || due {
-                        index.spans = splice(
-                            &prefix,
-                            builder.snapshot(watermark),
-                            seg_start,
-                            watermark,
-                            size,
-                        );
-                        index.roles.extend(builder.roles().iter().cloned());
-                        index.tablespaces.extend(builder.tablespaces().iter().cloned());
-                        index.scanned_through = index.scanned_through.max(watermark);
-                    }
-                    // Only a block `target_settled` counts can turn it from
-                    // false to true, and `index` has just been spliced for
-                    // exactly those — so this reads a map that is current
-                    // through `watermark` every time it is consulted.
-                    let settled = targets
-                        && target.is_some_and(|(table, selector)| {
-                            target_settled(index, table, selector)
-                        });
-                    // The save at the *last* watermark before an early stop is
-                    // what persists the map for the next query, so a settled
-                    // target saves whether or not the throttle would have —
-                    // and so does an interrupt.
-                    if settled || cancelled || due {
-                        throttle.save(cache, source, index).await?;
-                    }
-                    if settled {
-                        return Ok(MapStop::Reached);
-                    }
-                    if cancelled {
-                        return Ok(MapStop::Interrupted);
-                    }
-                }
-                Event::Line(line) => builder.feed_line(line.offset, line.raw),
-                Event::DollarQuoteEnd(end) => builder.on_dollar_quote_end(end.offset),
-                Event::LargeObjectStart(start) => builder.on_large_object_start(start.start_offset),
-                Event::LargeObjectEnd(end) => builder.on_large_object_end(end.end_offset),
             }
+            carry.consumed(pass, &chunk, scanner.take_consumed());
         }
-
-        let used = scanner.take_consumed();
-        buf.drain(..used);
 
         if eof {
             break;
         }
-        if buf.len() > scan_options.max_line_bytes {
+        if carry.len() > scan_options.max_line_bytes {
             Err(Error::LineTooLong {
                 offset: scanner.position(),
                 limit: scan_options.max_line_bytes,
@@ -1279,12 +1292,12 @@ where
             let mut scanner =
                 first_scanner.take().unwrap_or_else(|| CopyScanner::resume(seg_start, None));
             let mut read_pos = seg_start;
-            let mut buf: Vec<u8> = Vec::with_capacity(scan_options.chunk_size);
+            let mut carry = ChunkCarry::new();
             let mut chunks: VecDeque<SourceChunk> = VecDeque::new();
 
             loop {
                 let want = scan_options.chunk_size.min((seg_end - read_pos) as usize);
-                if want > 0 {
+                let chunk = if want > 0 {
                     let bytes = source.read_range(read_pos, want).await?;
                     chunks.push_back(SourceChunk {
                         start: read_pos,
@@ -1292,98 +1305,131 @@ where
                         column_blocks: Vec::new(),
                     });
                     read_pos += bytes.len() as u64;
-                    buf.extend_from_slice(&bytes);
-                }
+                    bytes
+                } else {
+                    Bytes::new()
+                };
                 let eof = read_pos >= seg_end;
 
-                while let Some(event) = scanner.next_event(&buf, eof)? {
-                    match event {
-                        Event::CopyStart(start) => {
-                            if start.header.columns.is_empty() {
-                                pending =
-                                    Some((start.header, start.header_offset, block_database.clone()));
-                            } else {
-                                let full = resolve_block(
-                                    &start.header,
-                                    start.header.columns.len(),
-                                    metadata.as_ref(),
-                                    block_database.as_deref(),
-                                    query_options.schema_mode,
-                                    &census,
-                                )?;
-                                // Against the *unprojected* schema: a
-                                // term's index numbers the raw row's
-                                // fields, and a term may name a column the
-                                // projection dropped.
-                                let filter = resolve_expr(
-                                    &query_options.filter,
-                                    &full,
-                                    start.header_offset,
-                                )?;
-                                *comparison_notes_for_stream.lock().unwrap() =
-                                    filter.comparison_notes();
-                                let (resolved, field_targets) = project(
-                                    &full,
-                                    query_options.projection.as_deref(),
-                                    start.header_offset,
-                                )?;
-                                let batcher = RowBatcher::new(
-                                    &resolved,
-                                    start.header.qualified_name(),
-                                    query_options.clone(),
-                                    field_targets,
-                                );
-                                *resolved_schema_for_stream.lock().unwrap() = resolved;
-                                active = Some((
-                                    start.header_offset,
-                                    start.header,
-                                    batcher,
-                                    filter,
-                                    block_database.clone(),
-                                ));
-                            }
-                        }
-                        Event::Row(row) => {
-                            if let Some((header, header_offset, block_database)) = pending.take() {
-                                let field_count =
-                                    memchr::memchr_iter(DELIMITER, row.raw).count() + 1;
-                                let full = resolve_block(
-                                    &header,
-                                    field_count,
-                                    metadata.as_ref(),
-                                    block_database.as_deref(),
-                                    query_options.schema_mode,
-                                    &census,
-                                )?;
-                                let filter =
-                                    resolve_expr(&query_options.filter, &full, header_offset)?;
-                                *comparison_notes_for_stream.lock().unwrap() =
-                                    filter.comparison_notes();
-                                let (resolved, field_targets) = project(
-                                    &full,
-                                    query_options.projection.as_deref(),
-                                    header_offset,
-                                )?;
-                                let batcher = RowBatcher::new(
-                                    &resolved,
-                                    header.qualified_name(),
-                                    query_options.clone(),
-                                    field_targets,
-                                );
-                                *resolved_schema_for_stream.lock().unwrap() = resolved;
-                                active = Some((header_offset, header, batcher, filter, block_database));
-                            }
-                            if let Some((header_offset, _, batcher, filter, _)) = active.as_mut() {
-                                let keep = filter.matches(row.raw, batcher.table(), row.offset)?;
-                                if keep {
-                                    batcher.push_row(
-                                        *header_offset,
-                                        row.offset,
-                                        row.raw,
-                                        &mut chunks,
+                carry.absorb(&chunk);
+                for pass in ChunkCarry::PASSES {
+                    let (span, span_eof) = carry.span(pass, &chunk, eof);
+                    while let Some(event) = scanner.next_event(span, span_eof)? {
+                        match event {
+                            Event::CopyStart(start) => {
+                                if start.header.columns.is_empty() {
+                                    pending = Some((
+                                        start.header,
+                                        start.header_offset,
+                                        block_database.clone(),
+                                    ));
+                                } else {
+                                    let full = resolve_block(
+                                        &start.header,
+                                        start.header.columns.len(),
+                                        metadata.as_ref(),
+                                        block_database.as_deref(),
+                                        query_options.schema_mode,
+                                        &census,
                                     )?;
+                                    // Against the *unprojected* schema: a
+                                    // term's index numbers the raw row's
+                                    // fields, and a term may name a column the
+                                    // projection dropped.
+                                    let filter = resolve_expr(
+                                        &query_options.filter,
+                                        &full,
+                                        start.header_offset,
+                                    )?;
+                                    *comparison_notes_for_stream.lock().unwrap() =
+                                        filter.comparison_notes();
+                                    let (resolved, field_targets) = project(
+                                        &full,
+                                        query_options.projection.as_deref(),
+                                        start.header_offset,
+                                    )?;
+                                    let batcher = RowBatcher::new(
+                                        &resolved,
+                                        start.header.qualified_name(),
+                                        query_options.clone(),
+                                        field_targets,
+                                    );
+                                    *resolved_schema_for_stream.lock().unwrap() = resolved;
+                                    active = Some((
+                                        start.header_offset,
+                                        start.header,
+                                        batcher,
+                                        filter,
+                                        block_database.clone(),
+                                    ));
                                 }
-                                if batcher.should_flush() {
+                            }
+                            Event::Row(row) => {
+                                if let Some((header, header_offset, block_database)) =
+                                    pending.take()
+                                {
+                                    let field_count =
+                                        memchr::memchr_iter(DELIMITER, row.raw).count() + 1;
+                                    let full = resolve_block(
+                                        &header,
+                                        field_count,
+                                        metadata.as_ref(),
+                                        block_database.as_deref(),
+                                        query_options.schema_mode,
+                                        &census,
+                                    )?;
+                                    let filter =
+                                        resolve_expr(&query_options.filter, &full, header_offset)?;
+                                    *comparison_notes_for_stream.lock().unwrap() =
+                                        filter.comparison_notes();
+                                    let (resolved, field_targets) = project(
+                                        &full,
+                                        query_options.projection.as_deref(),
+                                        header_offset,
+                                    )?;
+                                    let batcher = RowBatcher::new(
+                                        &resolved,
+                                        header.qualified_name(),
+                                        query_options.clone(),
+                                        field_targets,
+                                    );
+                                    *resolved_schema_for_stream.lock().unwrap() = resolved;
+                                    active = Some((
+                                        header_offset,
+                                        header,
+                                        batcher,
+                                        filter,
+                                        block_database,
+                                    ));
+                                }
+                                if let Some((header_offset, _, batcher, filter, _)) =
+                                    active.as_mut()
+                                {
+                                    let keep =
+                                        filter.matches(row.raw, batcher.table(), row.offset)?;
+                                    if keep {
+                                        batcher.push_row(
+                                            *header_offset,
+                                            row.offset,
+                                            row.raw,
+                                            &mut chunks,
+                                        )?;
+                                    }
+                                    if batcher.should_flush() {
+                                        let batch = batcher.flush()?;
+                                        invalidate_block_cache(&mut chunks);
+                                        rows_emitted += batch.num_rows() as u64;
+                                        *position_for_stream.lock().unwrap() =
+                                            snapshot(&scanner, &active, rows_emitted, fingerprint);
+                                        yield batch;
+                                    }
+                                }
+                            }
+                            Event::CopyEnd(_) => {
+                                pending = None;
+                                if let Some((_, _, mut batcher, _, _)) = active.take()
+                                    && !batcher.is_empty()
+                                {
                                     let batch = batcher.flush()?;
                                     invalidate_block_cache(&mut chunks);
                                     rows_emitted += batch.num_rows() as u64;
@@ -1392,36 +1438,27 @@ where
                                     yield batch;
                                 }
                             }
+                            // A replay segment covers exactly one block, so the
+                            // only non-row line in range is the `COPY` header
+                            // itself, which arrives as `CopyStart`. Nothing
+                            // outside a block — a dollar-quoted region or a
+                            // large-object region included — can fall inside one.
+                            Event::Line(_) | Event::DollarQuoteEnd(_) => {}
+                            Event::LargeObjectStart(_) | Event::LargeObjectEnd(_) => {}
                         }
-                        Event::CopyEnd(_) => {
-                            pending = None;
-                            if let Some((_, _, mut batcher, _, _)) = active.take()
-                                && !batcher.is_empty()
-                            {
-                                let batch = batcher.flush()?;
-                                invalidate_block_cache(&mut chunks);
-                                rows_emitted += batch.num_rows() as u64;
-                                *position_for_stream.lock().unwrap() =
-                                    snapshot(&scanner, &active, rows_emitted, fingerprint);
-                                yield batch;
-                            }
-                        }
-                        // A replay segment covers exactly one block, so the
-                        // only non-row line in range is the `COPY` header
-                        // itself, which arrives as `CopyStart`. Nothing
-                        // outside a block — a dollar-quoted region or a
-                        // large-object region included — can fall inside one.
-                        Event::Line(_) | Event::DollarQuoteEnd(_) => {}
-                        Event::LargeObjectStart(_) | Event::LargeObjectEnd(_) => {}
                     }
+                    carry.consumed(pass, &chunk, scanner.take_consumed());
                 }
-
-                let used = scanner.take_consumed();
-                buf.drain(..used);
 
                 // Everything before the scanner's new position has already had
                 // its chance to be referenced by a zero-copy view (that happens
                 // synchronously above, before we get here), so it's safe to drop.
+                //
+                // **The chunk the scanner just read is retained even so**, as
+                // it always was: `end() <= floor` holds only once the scanner
+                // has walked past a chunk's last byte, and the row that
+                // straddles the next boundary is carried, not scanned, so it
+                // cannot reach here needing a chunk that has gone.
                 let floor = scanner.position();
                 while chunks.front().is_some_and(|c| c.end() <= floor) {
                     chunks.pop_front();
@@ -1430,7 +1467,7 @@ where
                 if eof {
                     break;
                 }
-                if buf.len() > scan_options.max_line_bytes {
+                if carry.len() > scan_options.max_line_bytes {
                     Err(Error::LineTooLong {
                         offset: scanner.position(),
                         limit: scan_options.max_line_bytes,

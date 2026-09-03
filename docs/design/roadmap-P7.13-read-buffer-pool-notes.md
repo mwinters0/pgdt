@@ -1,12 +1,13 @@
 # P7.13 — The read path's per-chunk allocation
 
 What the rest of P7 inherits: the zeroing half of "who owns the bytes between
-the kernel and the scanner" is gone, the copy half is not and is now `7.13.1`,
+the kernel and the scanner" is gone, the copy half is `7.13.1`'s,
 and the `allocator` figure's ranking changed shape once the allocation it was
 really measuring was removed. The mechanism and its rejected alternatives are
 filed by subject — [`architecture.md`](architecture.md), "Execution model and
-API surface" for the pool, "`parse`: half the wall is the kernel, and half of
-what is left is copying" for what it was worth, and "The allocator is the
+API surface" for the pool, "`parse`: three-quarters of the wall is the kernel,
+and the rest is two SIMD passes" for what it was worth, and "The allocator is
+the
 binary's choice" for what the re-take says. This doc holds the apparatus, the
 split, and one harness defect that would have published the wrong table.
 
