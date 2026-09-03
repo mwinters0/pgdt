@@ -16,8 +16,8 @@ use std::path::Path;
 
 use pgdump_query::cache::CacheMode;
 use pgdump_query::nested::{
-    decode_array, decode_multirange, decode_range, decode_record, render_array, render_multirange,
-    render_range, render_record,
+    decode_array, decode_int2vector, decode_multirange, decode_range, decode_record, render_array,
+    render_int2vector, render_multirange, render_range, render_record,
 };
 use pgdump_query::resolve::SchemaMode;
 use pgdump_query::{
@@ -32,6 +32,7 @@ enum Kind {
     Record,
     Range,
     Multirange,
+    Int2Vector,
 }
 
 /// Every nested column in the `types` fixture, by table and column name.
@@ -62,6 +63,7 @@ const NESTED_COLUMNS: &[(&str, &str, Kind, u32)] = &[
     ("public.t_text_range", "v_textrange", Kind::Range, 13),
     ("public.t_multirange", "v_int4multirange", Kind::Multirange, 14),
     ("public.t_multirange", "v_myrange_multi", Kind::Multirange, 14),
+    ("public.t_int2vector", "v_vec", Kind::Int2Vector, 13),
 ];
 
 mod common;
@@ -107,6 +109,9 @@ fn assert_round_trips(kind: Kind, value: &str, context: &str) {
         }
         Kind::Multirange => render_multirange(
             &decode_multirange(value).unwrap_or_else(|| panic!("{context}: {value}")),
+        ),
+        Kind::Int2Vector => render_int2vector(
+            &decode_int2vector(value).unwrap_or_else(|| panic!("{context}: {value}")),
         ),
     };
     assert_eq!(rendered, value, "{context}");
@@ -276,8 +281,8 @@ mod oracle {
     use pgdump_query::cache::CacheMode;
     use pgdump_query::copy::{decode_field, split_fields};
     use pgdump_query::nested::{
-        parse_array, parse_multirange, parse_range, parse_record, render_array, render_multirange,
-        render_range, render_record,
+        parse_array, parse_int2vector, parse_multirange, parse_range, parse_record, render_array,
+        render_int2vector, render_multirange, render_range, render_record,
     };
     use pgdump_query::{
         LocalFileSource, NestedPlan, ScanOptions, TypeDef, TypeOutcome, preamble_only,
@@ -314,6 +319,7 @@ mod oracle {
         "public.textrange",
         "int4multirange",
         "public.myrange_multi",
+        "int2vector",
     ];
 
     /// Accepted rows where this build's re-rendering is *not* the server's
@@ -410,6 +416,7 @@ mod oracle {
             NestedPlan::Multirange(_) => {
                 Some(|s| parse_multirange(s).map(|m| render_multirange(&m)))
             }
+            NestedPlan::Int2Vector => Some(|s| parse_int2vector(s).map(|v| render_int2vector(&v))),
         }
     }
 
@@ -487,7 +494,7 @@ mod oracle {
         }
         // A floor, not a count: the walk skips a row for three good reasons,
         // and a bug in any of them would leave it asserting almost nothing
-        // while passing. 397 today.
+        // while passing. 475 today.
         assert!(asserted > 350, "only {asserted} literals asserted");
     }
 }

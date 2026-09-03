@@ -274,6 +274,18 @@ class Reconciling(unittest.TestCase):
 class Dispositions(unittest.TestCase):
     """The half that makes a waiting row close itself."""
 
+    #: A `waiting` row, which the committed table no longer carries: `interval`
+    #: and `int2vector` were the two, and both closed inside P12. The mechanism
+    #: stays because it is what the next below-floor row a slice intends to
+    #: close will be held to, so it is exercised against a synthetic row rather
+    #: than deleted along with the last real one.
+    WAITING = fm.Disposition(
+        "int2vector",
+        "waiting",
+        "`List<Int16>`; `int2vectorout` writes space-separated int16",
+        closes="12.6",
+    )
+
     def setUp(self) -> None:
         self.dir = TemporaryDirectory()
         self.addCleanup(self.dir.cleanup)
@@ -290,13 +302,11 @@ class Dispositions(unittest.TestCase):
         self.assertEqual(fm._citation_problems(fm.DISPOSITIONS, fm.STATUS), [])
 
     def test_a_slice_no_checklist_lists_is_a_problem(self) -> None:
-        problems = self.citations(
-            replace(fm.DISPOSITIONS[2], closes="12.9"),
-        )
+        problems = self.citations(replace(self.WAITING, closes="12.9"))
         self.assertTrue(any("re-sliced" in p for p in problems))
 
     def test_a_waiting_row_naming_no_slice_is_a_problem(self) -> None:
-        problems = self.citations(replace(fm.DISPOSITIONS[2], closes=None))
+        problems = self.citations(replace(self.WAITING, closes=None))
         self.assertTrue(any("names none" in p for p in problems))
 
     def test_a_deficiency_the_register_does_not_index_is_a_problem(self) -> None:
@@ -381,10 +391,13 @@ class CommittedTree(unittest.TestCase):
         unreadable = sorted(n for n, a in mapping.arms.items() if a is None)
         self.assertEqual(unreadable, ["numeric"])
 
-    def test_the_stances_are_the_four_the_doc_states(self) -> None:
+    def test_the_stances_are_the_three_the_doc_states(self) -> None:
+        """Three, since `interval` and `int2vector` were `waiting` rows and
+        both closed. The fourth stance the doc names — `waiting` — is exercised
+        in `Dispositions` against a synthetic row."""
         self.assertEqual(
             sorted(d.declared for d in fm.DISPOSITIONS),
-            ["int2vector", "money", "oid", "regproc"],
+            ["money", "oid", "regproc"],
         )
 
     def test_the_opaque_tail_carries_no_hand_written_line(self) -> None:

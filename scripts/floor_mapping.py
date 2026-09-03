@@ -137,6 +137,11 @@ ARROW_RENDERING = {
     "Timestamp(Microsecond, None)": "timestamp[us]",
     'Timestamp(Microsecond, Some("UTC".into()))': "timestamp[us, tz=UTC]",
     "Interval(MonthDayNano)": "month_day_nano_interval",
+    # The one container `builtin_scalar` yields. pyarrow spells the element
+    # field's *name* into the type, and `list_of` names it `item`, so this is
+    # keyed on the whole expression like every other entry rather than being
+    # composed out of the element's row.
+    "list_of(Int16)": "list<item: int16>",
 }
 
 
@@ -192,7 +197,7 @@ class Disposition:
     deficiency: str | None = None
 
 
-#: Every row the floor reaches that our mapping does not meet. Four, and the
+#: Every row the floor reaches that our mapping does not meet. Three, and the
 #: file's own columns place everything else.
 DISPOSITIONS = (
     Disposition(
@@ -212,13 +217,6 @@ DISPOSITIONS = (
         "the bare name would not resolve, `-` for InvalidOid -- where the "
         "binary encoding ADBC reads is the OID. The one member of the `reg*` "
         "family the driver gives a real Arrow type to",
-    ),
-    Disposition(
-        "int2vector",
-        "waiting",
-        "`List<Int16>`; `int2vectorout` writes space-separated int16 with no "
-        "quoting, nulls or escaping",
-        closes="12.6",
     ),
     Disposition(
         "oid",

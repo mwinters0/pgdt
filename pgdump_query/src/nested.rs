@@ -1,7 +1,7 @@
-//! The nested literal codec: array, composite (record), range and multirange
-//! literals, in both directions — as PostgreSQL's `*_out` functions write them
-//! inside a single `COPY` field, and as its `*_in` functions read what a user
-//! typed.
+//! The nested literal codec: array, composite (record), range, multirange and
+//! `int2vector` literals, in both directions — as PostgreSQL's `*_out`
+//! functions write them inside a single `COPY` field, and as its `*_in`
+//! functions read what a user typed.
 //!
 //! Pure, synchronous, no I/O and no Arrow — see `docs/design/layering.md`, L2.
 //! Like `crate::decode`, every function here works on the *already
@@ -39,6 +39,12 @@
 //! A multirange needs no fourth parameter set: `multirange_out` concatenates
 //! its members' `range_out` results with no escaping step at all, and the
 //! members' own brackets are what make the result re-parseable.
+//!
+//! Neither does `int2vector`, and for a stronger reason: `int2vectorout`
+//! writes `int16`s separated by one space, and an `int16`'s spelling can
+//! contain neither the separator nor a quote nor a NULL, so there is nothing
+//! for a quoting rule to decide. It is a container by shape and a scan by
+//! `split(' ')` in fact — see [`decode_int2vector`].
 //!
 //! # What `decode_*` accepts
 //!
@@ -634,6 +640,55 @@ pub fn render_multirange(members: &[RangeLiteral]) -> String {
     out
 }
 
+/// One element of an `int2vectorout` literal, in the spelling `pg_itoa`
+/// writes and no other: an optional `-`, then digits with no leading zero,
+/// and never `-0`.
+fn canonical_int2(token: &str) -> Option<i16> {
+    let digits = token.strip_prefix('-').unwrap_or(token);
+    if digits.is_empty() || !digits.bytes().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    if digits.len() > 1 && digits.starts_with('0') {
+        return None;
+    }
+    if digits == "0" && token.starts_with('-') {
+        return None;
+    }
+    token.parse().ok()
+}
+
+/// Decode an `int2vector` value as `int2vectorout` writes it: the elements'
+/// decimal spellings joined by **one** space, and the empty string for the
+/// empty vector (I47).
+///
+/// It is a fourth container form and it shares nothing with the other three —
+/// no wrapper, no separator an element could contain, no quoting, no escaping
+/// and no NULL element, `int2vector` having no way to hold one. So it needs
+/// neither a [`Syntax`] nor a token scanner, and gets neither.
+///
+/// Strict, as every `decode_*` here is: an element is read only in the
+/// spelling `pg_itoa` writes, so `+1`, `01`, `-0` and a doubled space are all
+/// refused rather than guessed at. [`parse_int2vector`] is the input side and
+/// takes all four.
+pub fn decode_int2vector(s: &str) -> Option<Vec<i16>> {
+    if s.is_empty() {
+        return Some(Vec::new());
+    }
+    s.split(' ').map(canonical_int2).collect()
+}
+
+/// `int2vectorout`, and the exact inverse of [`decode_int2vector`].
+pub fn render_int2vector(values: &[i16]) -> String {
+    let mut out = String::new();
+    for (k, value) in values.iter().enumerate() {
+        if k > 0 {
+            out.push(' ');
+        }
+        out.push_str(&value.to_string());
+    }
+    out
+}
+
 // ---------------------------------------------------------------------------
 // The literal side: the `*_in` supersets
 // ---------------------------------------------------------------------------
@@ -1176,6 +1231,49 @@ pub fn parse_multirange(s: &str) -> Option<Vec<RangeLiteral>> {
     (skip_space(b, i) == b.len()).then_some(members)
 }
 
+/// Parse an `int2vectorin` literal — everything the server accepts for an
+/// `int2vector` column, which is a strict superset of what
+/// [`decode_int2vector`] reads (I47).
+///
+/// `int2vectorin` skips any run of whitespace before an element, hands what
+/// follows to `strtol` — so a leading `+` and a leading zero are taken —
+/// range-checks the result against `int16`, and then requires the byte
+/// *after* the number to be a space or the end of the string. That last rule
+/// is the one worth reproducing rather than smoothing into "any whitespace
+/// separates": `\t1 2` is accepted and `1\t2` is not.
+pub fn parse_int2vector(s: &str) -> Option<Vec<i16>> {
+    let b = s.as_bytes();
+    let mut i = 0;
+    let mut out = Vec::new();
+    loop {
+        i = skip_space(b, i);
+        if i == b.len() {
+            return Some(out);
+        }
+        let start = i;
+        if matches!(b.get(i), Some(b'+' | b'-')) {
+            i += 1;
+        }
+        let digits = i;
+        while b.get(i).is_some_and(u8::is_ascii_digit) {
+            i += 1;
+        }
+        if i == digits {
+            return None;
+        }
+        let text = std::str::from_utf8(&b[start..i]).ok()?;
+        // `strtol`'s own `ERANGE`, then `int2vectorin`'s explicit
+        // `SHRT_MIN`/`SHRT_MAX` check — one refusal here, since both say the
+        // literal is not a value of this type.
+        let value: i64 = text.trim_start_matches('+').parse().ok()?;
+        out.push(i16::try_from(value).ok()?);
+        match b.get(i) {
+            None | Some(b' ') => {}
+            Some(_) => return None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1624,5 +1722,53 @@ mod tests {
         for literal in ["{}", "{[1,10)}", "{[1,2),[5,6)}"] {
             assert_eq!(parse_multirange(literal), decode_multirange(literal), "{literal}");
         }
+        for literal in ["", "0", "1 2 3", "-32768 32767"] {
+            assert_eq!(parse_int2vector(literal), decode_int2vector(literal), "{literal}");
+        }
+    }
+
+    /// `int2vectorout`'s whole grammar, which is four rules long: decimal
+    /// `int16`s, one space between them, nothing else, and the empty string
+    /// for the empty vector.
+    #[test]
+    fn an_int2vector_round_trips_byte_for_byte() {
+        for literal in ["", "0", "1 2 3", "-32768 32767", "42"] {
+            let decoded =
+                decode_int2vector(literal).unwrap_or_else(|| panic!("decode failed: {literal}"));
+            assert_eq!(render_int2vector(&decoded), literal, "{literal}");
+        }
+        assert_eq!(decode_int2vector(""), Some(vec![]));
+        assert_eq!(decode_int2vector("1 2 3"), Some(vec![1, 2, 3]));
+    }
+
+    /// The strict side refuses every spelling `pg_itoa` cannot write — which
+    /// is what makes it and [`render_int2vector`] inverses.
+    #[test]
+    fn a_non_canonical_int2vector_element_is_refused_by_the_decoder() {
+        for literal in ["+1", "01", "-0", "1  2", " 1", "1 ", "1\t2", "{1,2}", "1,2", "32768"] {
+            assert_eq!(decode_int2vector(literal), None, "{literal}");
+        }
+    }
+
+    /// The permissive side is `int2vectorin`, and the rule worth having is
+    /// the asymmetric one: whitespace *before* a number is skipped, and the
+    /// byte *after* one must be a space or the end.
+    #[test]
+    fn the_int2vector_input_grammar_is_int2vectorin() {
+        assert_eq!(parse_int2vector("  1   2  "), Some(vec![1, 2]));
+        assert_eq!(parse_int2vector("+1 01"), Some(vec![1, 1]));
+        assert_eq!(parse_int2vector("\t\n1 2"), Some(vec![1, 2]));
+        assert_eq!(parse_int2vector("   "), Some(vec![]));
+        // The byte after a number is neither a space nor the end.
+        assert_eq!(parse_int2vector("1\t2"), None);
+        assert_eq!(parse_int2vector("1,2"), None);
+        assert_eq!(parse_int2vector("1x"), None);
+        // `int2vectorin`'s own range check, and `strtol`'s `ERANGE` beyond it.
+        assert_eq!(parse_int2vector("32768"), None);
+        assert_eq!(parse_int2vector("-32769"), None);
+        assert_eq!(parse_int2vector("99999999999999999999999"), None);
+        // Not a number at all, and the array spelling this type does not take.
+        assert_eq!(parse_int2vector("{1,2}"), None);
+        assert_eq!(parse_int2vector("-"), None);
     }
 }

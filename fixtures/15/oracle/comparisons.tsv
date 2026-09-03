@@ -1609,6 +1609,82 @@ macaddr8	08:00:2b:01:02:03:04:06	\N	\N	u	u	u	u	u	u
 macaddr8	\N	08:00:2b:01:02:03:04:05	\N	u	u	u	u	u	u
 macaddr8	\N	08:00:2b:01:02:03:04:06	\N	u	u	u	u	u	u
 macaddr8	\N	\N	\N	u	u	u	u	u	u
+int2vector			\N	f	t	f	t	t	f
+int2vector		0	\N	t	t	f	f	f	t
+int2vector		1 2	\N	t	t	f	f	f	t
+int2vector		1 2 3	\N	t	t	f	f	f	t
+int2vector		2	\N	t	t	f	f	f	t
+int2vector		10	\N	t	t	f	f	f	t
+int2vector		-32768 32767	\N	t	t	f	f	f	t
+int2vector		\N	\N	u	u	u	u	u	u
+int2vector	0		\N	f	f	t	t	f	t
+int2vector	0	0	\N	f	t	f	t	t	f
+int2vector	0	1 2	\N	t	t	f	f	f	t
+int2vector	0	1 2 3	\N	t	t	f	f	f	t
+int2vector	0	2	\N	t	t	f	f	f	t
+int2vector	0	10	\N	t	t	f	f	f	t
+int2vector	0	-32768 32767	\N	f	f	t	t	f	t
+int2vector	0	\N	\N	u	u	u	u	u	u
+int2vector	1 2		\N	f	f	t	t	f	t
+int2vector	1 2	0	\N	f	f	t	t	f	t
+int2vector	1 2	1 2	\N	f	t	f	t	t	f
+int2vector	1 2	1 2 3	\N	t	t	f	f	f	t
+int2vector	1 2	2	\N	t	t	f	f	f	t
+int2vector	1 2	10	\N	t	t	f	f	f	t
+int2vector	1 2	-32768 32767	\N	f	f	t	t	f	t
+int2vector	1 2	\N	\N	u	u	u	u	u	u
+int2vector	1 2 3		\N	f	f	t	t	f	t
+int2vector	1 2 3	0	\N	f	f	t	t	f	t
+int2vector	1 2 3	1 2	\N	f	f	t	t	f	t
+int2vector	1 2 3	1 2 3	\N	f	t	f	t	t	f
+int2vector	1 2 3	2	\N	t	t	f	f	f	t
+int2vector	1 2 3	10	\N	t	t	f	f	f	t
+int2vector	1 2 3	-32768 32767	\N	f	f	t	t	f	t
+int2vector	1 2 3	\N	\N	u	u	u	u	u	u
+int2vector	2		\N	f	f	t	t	f	t
+int2vector	2	0	\N	f	f	t	t	f	t
+int2vector	2	1 2	\N	f	f	t	t	f	t
+int2vector	2	1 2 3	\N	f	f	t	t	f	t
+int2vector	2	2	\N	f	t	f	t	t	f
+int2vector	2	10	\N	t	t	f	f	f	t
+int2vector	2	-32768 32767	\N	f	f	t	t	f	t
+int2vector	2	\N	\N	u	u	u	u	u	u
+int2vector	10		\N	f	f	t	t	f	t
+int2vector	10	0	\N	f	f	t	t	f	t
+int2vector	10	1 2	\N	f	f	t	t	f	t
+int2vector	10	1 2 3	\N	f	f	t	t	f	t
+int2vector	10	2	\N	f	f	t	t	f	t
+int2vector	10	10	\N	f	t	f	t	t	f
+int2vector	10	-32768 32767	\N	f	f	t	t	f	t
+int2vector	10	\N	\N	u	u	u	u	u	u
+int2vector	-32768 32767		\N	f	f	t	t	f	t
+int2vector	-32768 32767	0	\N	t	t	f	f	f	t
+int2vector	-32768 32767	1 2	\N	t	t	f	f	f	t
+int2vector	-32768 32767	1 2 3	\N	t	t	f	f	f	t
+int2vector	-32768 32767	2	\N	t	t	f	f	f	t
+int2vector	-32768 32767	10	\N	t	t	f	f	f	t
+int2vector	-32768 32767	-32768 32767	\N	f	t	f	t	t	f
+int2vector	-32768 32767	\N	\N	u	u	u	u	u	u
+int2vector	\N		\N	u	u	u	u	u	u
+int2vector	\N	0	\N	u	u	u	u	u	u
+int2vector	\N	1 2	\N	u	u	u	u	u	u
+int2vector	\N	1 2 3	\N	u	u	u	u	u	u
+int2vector	\N	2	\N	u	u	u	u	u	u
+int2vector	\N	10	\N	u	u	u	u	u	u
+int2vector	\N	-32768 32767	\N	u	u	u	u	u	u
+int2vector	\N	\N	\N	u	u	u	u	u	u
+int2vector	  1   2  		\N	f	f	t	t	f	t
+int2vector		  1   2  	\N	t	t	f	f	f	t
+int2vector	+1 01		\N	f	f	t	t	f	t
+int2vector		+1 01	\N	t	t	f	f	f	t
+int2vector	32768		\N	E22003	E22003	E22003	E22003	E22003	E22003
+int2vector		32768	\N	E22003	E22003	E22003	E22003	E22003	E22003
+int2vector	1,2		\N	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+int2vector		1,2	\N	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+int2vector	1\t2		\N	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+int2vector		1\t2	\N	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+int2vector	{1,2}		\N	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
+int2vector		{1,2}	\N	E22P02	E22P02	E22P02	E22P02	E22P02	E22P02
 public.base_domain	-1	-1	\N	f	t	f	t	t	f
 public.base_domain	-1	0	\N	t	t	f	f	f	t
 public.base_domain	-1	1	\N	t	t	f	f	f	t

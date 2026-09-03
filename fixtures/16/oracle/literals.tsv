@@ -214,6 +214,20 @@ macaddr	zz:00:2b:01:02:03	E22P02	\N
 macaddr8	08:00:2b:01:02:03:04:05	ok	08:00:2b:01:02:03:04:05
 macaddr8	08:00:2b:01:02:03:04:06	ok	08:00:2b:01:02:03:04:06
 macaddr8	\N	ok	\N
+int2vector		ok	
+int2vector	0	ok	0
+int2vector	1 2	ok	1 2
+int2vector	1 2 3	ok	1 2 3
+int2vector	2	ok	2
+int2vector	10	ok	10
+int2vector	-32768 32767	ok	-32768 32767
+int2vector	\N	ok	\N
+int2vector	  1   2  	ok	1 2
+int2vector	+1 01	ok	1 1
+int2vector	32768	E22003	\N
+int2vector	1,2	E22P02	\N
+int2vector	1\t2	E22P02	\N
+int2vector	{1,2}	E22P02	\N
 public.base_domain	-1	ok	-1
 public.base_domain	0	ok	0
 public.base_domain	1	ok	1

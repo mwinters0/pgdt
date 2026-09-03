@@ -1305,6 +1305,32 @@ fn nested_key(plan: &NestedCompare, text: &str, input: bool) -> Option<NestedKey
             }
             NestedKey::Array { elements, dims: literal.dims, lower_bounds: literal.lower_bounds }
         }
+        // `int2vector`'s own grammar on both sides, and the elements are
+        // built here rather than through `order_key`: `int2vectorout` writes
+        // an `int16` and nothing else, so the codec has already produced the
+        // value that would be parsed back out of the text.
+        //
+        // **`dims` and `lower_bounds` are `[n]` and `[0]` for every value,
+        // the empty vector included.** `int2vectorin` sets `ndim = 1` and
+        // `lbound1 = 0` unconditionally, where `array_out`'s `{}` is
+        // zero-dimensional — so an empty `int2vector` is not the empty array,
+        // and `array_cmp`'s dimension tie-breaks are constant here rather
+        // than absent (I47).
+        NestedCompare::Int2Vector => {
+            let values = if input {
+                nested::parse_int2vector(text)
+            } else {
+                nested::decode_int2vector(text)
+            }?;
+            NestedKey::Array {
+                elements: values
+                    .iter()
+                    .map(|v| Some(NestedKey::Leaf(OrderKey::Int(i64::from(*v)))))
+                    .collect(),
+                dims: vec![values.len()],
+                lower_bounds: vec![0],
+            }
+        }
         NestedCompare::Record(plans) => {
             let mut fields = if input {
                 nested::parse_record(text, plans.len())?.fields
@@ -1826,6 +1852,15 @@ fn equality_comparison(kind: &CompareKind, text: &str) -> Option<Comparison> {
 /// not reported by [`nested_key`], which answers only "not a value of this
 /// type" — so the sentence points at the property rather than at a position.
 fn nested_accepted_form(plan: &NestedCompare) -> String {
+    // The one form with no leaf clause to add, because it has no leaf: an
+    // `int2vector`'s elements are read by `int2vectorin` itself, not handed
+    // to some element type's own input function, so the superset reaches all
+    // the way down and the sentence below would be false here.
+    if matches!(plan, NestedCompare::Int2Vector) {
+        return "as whole numbers from -32768 to 32767 separated by spaces, and as nothing at \
+                all for the empty vector"
+            .to_string();
+    }
     let container = match plan {
         NestedCompare::Array(_) => "as an array literal — `{a,b}`, `{}`, a bare `NULL` element",
         NestedCompare::Record(_) => "as a composite literal — `(a,b)`, a field left empty for NULL",
@@ -1837,6 +1872,8 @@ fn nested_accepted_form(plan: &NestedCompare) -> String {
             "as a multirange literal — `{[a,b),[c,d)}`, `{}` — each member a range whose lower \
              bound is not above its upper"
         }
+        // Answered above, before the leaf clause this arm cannot carry.
+        NestedCompare::Int2Vector => "as an int2vector literal",
         // Neither is reachable: a leaf plan is never a column's whole
         // comparison, and an uncomparable one refuses before a literal is
         // read.
@@ -4182,6 +4219,43 @@ mod tests {
         ));
     }
 
+    /// `int2vector` names no operator of its own, so the server compares it
+    /// through `anyarray` polymorphism — element-wise, not over the text.
+    /// `'2' < '10'` is where the two answers part company, which is the
+    /// property the committed oracle case is built around and the one a
+    /// text fallback would get wrong.
+    #[test]
+    fn an_int2vector_compares_element_wise_and_not_as_text() {
+        let lt = |field: &str, literal: &str| {
+            nested_verdict("int2vector", &[], PredicateOp::Lt, field, literal).unwrap()
+        };
+        assert_eq!(lt("2", "10"), Truth::True, "element-wise; bytewise would say false");
+        assert_eq!(lt("10", "2"), Truth::False);
+        // `array_cmp`: the elements first, then the shorter one.
+        assert_eq!(lt("1 2", "1 2 3"), Truth::True);
+        assert_eq!(lt("", "0"), Truth::True);
+        assert_eq!(lt("-32768 32767", "0"), Truth::True);
+        assert_eq!(
+            nested_verdict("int2vector", &[], PredicateOp::Eq, "1 2 3", "1 2 3").unwrap(),
+            Truth::True
+        );
+        // The literal takes `int2vectorin`'s superset, since the type has no
+        // element input function for the leaf rule to apply to.
+        assert_eq!(
+            nested_verdict("int2vector", &[], PredicateOp::Eq, "1 2", "  +1   02  ").unwrap(),
+            Truth::True
+        );
+        // And the array spelling is not this type's, on either side.
+        assert!(matches!(
+            nested_verdict("int2vector", &[], PredicateOp::Eq, "1 2", "{1,2}"),
+            Err(Error::PredicateValueDecode { .. })
+        ));
+        assert!(matches!(
+            nested_verdict("int2vector", &[], PredicateOp::Eq, "{1,2}", "1 2"),
+            Err(Error::FieldDecode { .. })
+        ));
+    }
+
     /// The literal side reads the container's `*_in` superset and each leaf
     /// its own `*_out` form — one rule at every depth, and it is the rule a
     /// scalar column already has.
@@ -4802,7 +4876,7 @@ mod tests {
             );
             // A floor, not a count: the walk skips a cell for four good
             // reasons, and a bug in any of them would leave it asserting
-            // almost nothing while passing. 47,746 today.
+            // almost nothing while passing. 52,338 today.
             assert!(asserted > 45_000, "only {asserted} cells asserted");
         }
 

@@ -498,6 +498,21 @@ A part that has no mapping of its own becomes a string **in that position**
 only: a composite field of type `inet` is a `Utf8View` field inside an
 otherwise typed `Struct`, exactly as an `inet` column would be at top level.
 
+**`int2vector` is a fifth shape, and it is written differently.** It is a
+`pg_catalog` type — you will only meet it in a dump of the system catalogs, or
+in a schema that borrowed it — and it maps to `List(Int16)`, the same Arrow
+type `smallint[]` gets. What differs is the text: PostgreSQL writes it as plain
+numbers separated by spaces, with no braces, no quoting and no NULL element,
+and an **empty** vector as an empty field. So a filter on such a column is
+written the same way:
+
+```sh
+pgdq query --source dump.sql --table pg_index --filter 'indkey=1 2 3'
+```
+
+It compares element by element, exactly as an array does — so `2` is *less
+than* `10`, where the two strings sort the other way round.
+
 **A range is five fields**, and `pgdq info` prints them as `Range<T>` because
 they are the same five for every range column in every dump:
 

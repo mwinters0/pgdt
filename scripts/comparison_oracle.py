@@ -443,6 +443,28 @@ TYPE_CASES: list[TypeCases] = [
         "macaddr8",
         ("08:00:2b:01:02:03:04:05", "08:00:2b:01:02:03:04:06", None),
     ),
+    # `int2vector` names no operator of its own -- `pg_operator` has no row
+    # for it and `pg_cast` none either -- so `<` and `=` resolve through
+    # `anyarray` polymorphism to `array_lt`/`array_eq`, and the order is
+    # element-wise rather than over the text. **`2` against `10` is the pair
+    # that says so**: element-wise it is true, read as text it is false, so a
+    # plan that fell back to a byte comparison would answer wrongly here and
+    # agree everywhere else in this case. `1 2` against `1 2 3` is the other
+    # half of `array_cmp` -- equal on the prefix, then the shorter first --
+    # and `''` is the empty vector, which is a *value* and not a NULL:
+    # `int2vectorout` writes it as the empty string.
+    #
+    # The inputs are `int2vectorin`'s superset and its edges: leading and
+    # repeated whitespace is skipped, `strtol` takes a `+` and a leading zero,
+    # `SHRT_MAX + 1` is out of range, and the byte after a number must be a
+    # space or the end -- which is why a tab *between* elements is refused
+    # while one in front would not be. `{1,2}` is the array spelling, which
+    # this type does not take at all.
+    TypeCases(
+        "int2vector",
+        ("", "0", "1 2", "1 2 3", "2", "10", "-32768 32767", None),
+        ("  1   2  ", "+1 01", "32768", "1,2", "1\t2", "{1,2}"),
+    ),
     TypeCases("public.base_domain", ("-1", "0", "1", None)),
     # The outer domain is NOT NULL, so SQL NULL is a *rejection* here and an
     # ordinary value one line up -- a domain constraint reached through a

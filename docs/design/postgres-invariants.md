@@ -3422,3 +3422,144 @@ Every column of the first query is `t`. The second answers `[1,11)`,
 `{[1,5),[6,10)}`, `{[1,10)}`, `{[1,5),[6,10)}`, `{[1,5)}`,
 `{[1,5),(5,10)}`. The last two statements are an error and a `22000` notice.
 The multirange lines need v14 or later (I10).
+
+---
+
+## I47 — `int2vector` writes space-separated `int16`s, takes a wider input, and compares as an array of `smallint`
+
+**Claim.** Four statements about the one `pg_catalog` type whose text form is a
+container and whose name is not spelled like one:
+
+- **`int2vectorout` writes each element's decimal spelling separated by a
+  single space, and nothing else.** No wrapper, no quoting, no escaping, and
+  the **empty string** for a zero-element vector. An element is `pg_itoa`'s
+  output, so it never carries a `+`, a leading zero or a `-0`.
+- **There is no NULL element.** The struct sets `dataoffset = 0` — the comment
+  in `int2vectorin` says *never any nulls* — so a value of this type cannot
+  hold one and the output form needs no spelling for one.
+- **`int2vectorin` accepts a strict superset of that.** Before each element it
+  skips any run of `isspace`; the element itself goes to `strtol` base 10, so a
+  leading `+` and leading zeros are taken; the result is refused with `22003`
+  outside `SHRT_MIN`…`SHRT_MAX`; and the byte *after* a number must be a space
+  or the terminator, so `1\t2` is `22P02` while `\t1 2` is accepted.
+- **The type names no operator or cast of its own, and its comparisons resolve
+  through `anyarray`.** `pg_operator` and `pg_cast` have zero rows mentioning
+  it; `typlen = -1` with `typelem = int2` is what makes `get_element_type`
+  answer, so `<` resolves to `array_lt` and `=` to `array_eq` — I45's
+  comparison, over `smallint` elements. `int2vectorin` sets `ndim = 1`,
+  `dim1 = n` and `lbound1 = 0` unconditionally, the empty vector included, so
+  `array_cmp`'s dimension and lower-bound tie-breaks are constant between two
+  values of this type and only the elements and the element *count* can decide.
+
+**Proof.** `src/backend/utils/adt/int.c` (v18.6, unchanged in shape since
+v13). `int2vectorout`:
+
+```c
+	/* assumes sign, 5 digits, ' ' */
+	rp = result = (char *) palloc(nnums * 7 + 1);
+	for (num = 0; num < nnums; num++)
+	{
+		if (num != 0)
+			*rp++ = ' ';
+		rp += pg_itoa(int2Array->values[num], rp);
+	}
+```
+
+`int2vectorin`'s loop is the input half, and its three refusals are the three
+`ereturn`s:
+
+```c
+		while (*intString && isspace((unsigned char) *intString))
+			intString++;
+		if (*intString == '\0')
+			break;
+		...
+		l = strtol(intString, &endp, 10);
+		if (intString == endp)
+			ereturn(... ERRCODE_INVALID_TEXT_REPRESENTATION ...
+		if (errno == ERANGE || l < SHRT_MIN || l > SHRT_MAX)
+			ereturn(... ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE ...
+		if (*endp && *endp != ' ')
+			ereturn(... ERRCODE_INVALID_TEXT_REPRESENTATION ...
+```
+
+and its tail is the shape claim:
+
+```c
+	result->ndim = 1;
+	result->dataoffset = 0;		/* never any nulls */
+	result->elemtype = INT2OID;
+	result->dim1 = n;
+	result->lbound1 = 0;
+```
+
+`src/include/catalog/pg_type.dat` carries the polymorphism's premise —
+`typname => 'int2vector', typlen => '-1', ..., typelem => 'int2'` — and
+`array_lt`/`array_eq` are declared over `anyarray` in `pg_operator.dat`.
+
+**Observed.** `fixtures/<13-18>/oracle/` carries all four claims as committed
+answers: `literals.tsv` has the empty vector's `output` as the empty string,
+`  1   2  ` canonicalizing to `1 2` and `+1 01` to `1 1`, and `32768`,
+`1,2`, `1\t2` and `{1,2}` as `E22003`/`E22P02`; `comparisons.tsv` has
+`'2' < '10'` true — element-wise, where a byte comparison of the same two
+strings is false — and `'1 2' < '1 2 3'` true, which is the element *count*
+deciding after an equal prefix. `fixtures/<13-18>/types/default.sql`'s
+`public.t_int2vector` carries the output form in real `pg_dump` bytes,
+including the empty field beside a `\N`.
+
+**Scope limit.** `int2vector` only. **`oidvector` shares every one of these
+properties** — same shape, same `anyarray` resolution, `oidvectorout` writing
+space-separated `Oid`s — and is not covered here because nothing maps it: the
+ADBC floor answers `arrow.opaque` for it, so it sits in the opaque tail
+(`architecture.md`, "The floor: the ADBC driver's answer bounds ours"). An
+entry naming both would claim evidence for a type no committed fixture or
+oracle case exercises.
+
+**Verified against:** v13.23, v14.24, v15.19, v16.15, v17.11, v18.6 (source);
+observed in the committed oracle and the `types` fixture at all six, and the
+probe below run against 16.15.
+
+**Relied on by:** [`architecture.md`](architecture.md), "Type resolution" (the
+`List<Int16>` mapping and `NestedPlan::Int2Vector`), "Decoders and render-back"
+(`nested.rs`'s `decode_int2vector`/`render_int2vector`/`parse_int2vector`) and
+"Ordering operators compare typed" (`NestedCompare::Int2Vector`, and the
+constant `dims`/`lower_bounds` `nested_key` builds).
+
+**Re-verify.** Read the two functions:
+
+```sh
+cd /mnt/wd12t/upstream/postgres/release-v<N>
+sed -n '/^int2vectorin/,/^}/p'  src/backend/utils/adt/int.c
+sed -n '/^int2vectorout/,/^}/p' src/backend/utils/adt/int.c
+grep -n -A6 "typname => 'int2vector'" src/include/catalog/pg_type.dat
+```
+
+And ask a server:
+
+```sh
+docker run -d --name pgdq-i47 -e POSTGRES_HOST_AUTH_METHOD=trust postgres:<N>-trixie
+docker exec -i pgdq-i47 psql -qtA -U postgres <<'SQL'
+SELECT 'ops', count(*) FROM pg_operator WHERE 'int2vector'::regtype IN (oprleft, oprright);
+SELECT 'casts', count(*) FROM pg_cast WHERE 'int2vector'::regtype IN (castsource, casttarget);
+SELECT 'type', typcategory, typelem::regtype::text, typlen FROM pg_type WHERE typname='int2vector';
+SELECT 'out', quote_literal(v::text)
+  FROM (VALUES ('1 2 3'::int2vector), (''), ('0'), ('-32768 32767')) t(v);
+SELECT 'in', quote_literal('  +1   02  '::int2vector::text);
+SELECT 'dims', array_dims('1 2 3'::int2vector::int2[]);
+CREATE TEMP TABLE v (a int2vector, b int2vector);
+INSERT INTO v VALUES ('2','10'), ('1 2','1 2 3'), ('','0');
+SELECT 'cmp', a::text, b::text, a<b, a=b FROM v;
+DO $$ BEGIN PERFORM E'1\t2'::int2vector;
+      EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'tab between: %', SQLSTATE; END $$;
+DO $$ BEGIN PERFORM '32768'::int2vector;
+      EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'range: %', SQLSTATE; END $$;
+DO $$ BEGIN PERFORM '{1,2}'::int2vector;
+      EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'braces: %', SQLSTATE; END $$;
+SQL
+docker rm -f pgdq-i47
+```
+
+`ops` and `casts` are both `0`; `type` is `A|smallint|-1`; the four `out` rows
+are `'1 2 3'`, `''`, `'0'` and `'-32768 32767'`; `in` is `'1 2'`; `dims` is
+`[0:2]`; all three `cmp` rows answer `t|f`; and the three notices are `22P02`,
+`22003` and `22P02`.

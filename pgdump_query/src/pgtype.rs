@@ -111,6 +111,13 @@ pub enum NestedPlan {
     /// `multirange_out` → `List<` the range struct `>`. The plan is again the
     /// bound type's.
     Multirange(Box<NestedPlan>),
+    /// `int2vectorout` → `List<Int16>`. It carries no child plan because it
+    /// can have none: `int2vector`'s element type is `smallint` in the
+    /// catalog and nothing about a column can vary it (I47). It is the
+    /// clearest case of what this enum is for — the Arrow type it accompanies
+    /// is the one a `smallint[]` column gets, and the literal is a different
+    /// grammar entirely.
+    Int2Vector,
 }
 
 /// How one column's field text becomes a value two sides of a comparison can
@@ -454,6 +461,17 @@ pub enum NestedCompare {
     /// (I46). The fields are the *member range's*, since a multirange has no
     /// comparison of its own beyond the sequence.
     Multirange { bound: Box<NestedCompare>, discrete: bool },
+    /// `int2vector`, compared by `array_cmp` over `smallint` elements: the
+    /// type names no operator of its own, and `anyarray` polymorphism is what
+    /// resolves `<` and `=` for it (I47). So it is [`Self::Array`]'s
+    /// comparison over a fixed element node, read in `int2vectorout`'s own
+    /// grammar rather than `array_out`'s — which is the whole of why it is a
+    /// variant and not an `Array` whose child is a `smallint` leaf.
+    ///
+    /// It carries nothing: the element is always `smallint`, which agrees
+    /// with PostgreSQL and collates not at all, so there is no position here
+    /// that could refuse an order or announce a divergence.
+    Int2Vector,
 }
 
 impl NestedCompare {
@@ -510,6 +528,10 @@ impl NestedCompare {
     ) {
         match self {
             Self::Leaf { declared, divergence, .. } => visit(path, declared, true, *divergence),
+            // One position, not two: the element node is fixed and its type
+            // has nothing to say, so the vector is visited as the leaf it
+            // effectively is.
+            Self::Int2Vector => visit(path, "int2vector", true, None),
             Self::Uncomparable { declared, divergence } => {
                 visit(path, declared, false, *divergence)
             }
@@ -912,6 +934,13 @@ fn builtin_scalar(
         "cidr" => (Utf8View, agrees(K::Network { cidr: true })),
         "macaddr" => (Utf8View, agrees(K::MacAddr { octets: 6 })),
         "macaddr8" => (Utf8View, agrees(K::MacAddr { octets: 8 })),
+        // The one built-in that maps to a container without being spelled
+        // like one. `int2vectorout` writes space-separated `int16` with no
+        // quoting, no escaping and no possible NULL element (I47), so the
+        // value space is exactly `List<Int16>`'s — and the comparison is
+        // `array_cmp`'s, which is what `anyarray` polymorphism resolves for a
+        // type that names no operator of its own.
+        "int2vector" => (list_of(Int16), ComparisonPlan::Nested(NestedCompare::Int2Vector)),
         _ => return None,
     })
 }
@@ -1013,10 +1042,28 @@ pub(crate) fn with_extension(field: Field, declared: &str, types: &[TypeDef]) ->
 /// through to `Unknown` (confirmed against `fixtures/*/types/default.sql`'s
 /// `t_range.v_range int4range`).
 fn map_builtin(base: &str, typmod: Option<&str>, types: &[TypeDef]) -> Option<TypeOutcome> {
-    // No collation: an Arrow type never depends on one, and the plan half of
-    // the pair is discarded here.
+    // No collation: an Arrow type never depends on one, and the comparison
+    // half of the pair is discarded here.
     if let Some((mapped, _)) = builtin_scalar(base, typmod, None, &[]) {
-        return Some(TypeOutcome::Mapped(mapped, NestedPlan::Scalar));
+        // **The literal form is this walk's to say**, because it is the one
+        // thing neither the Arrow type nor the comparison determines: a
+        // `smallint[]` column and an `int2vector` one are both `List<Int16>`
+        // and are written in different grammars. Exactly one built-in is a
+        // container, so the table is one line long.
+        let plan = match base.to_ascii_lowercase().as_str() {
+            "int2vector" => NestedPlan::Int2Vector,
+            _ => NestedPlan::Scalar,
+        };
+        // The pairing is checked rather than trusted: a built-in mapped to a
+        // container type without a plan named above would fill it with a
+        // scalar builder and decode every value as text.
+        debug_assert_eq!(
+            matches!(mapped, DataType::List(_) | DataType::Struct(_)),
+            plan != NestedPlan::Scalar,
+            "`builtin_scalar`'s `{base}` arm and `map_builtin`'s plan table disagree about \
+             whether it is a container",
+        );
+        return Some(TypeOutcome::Mapped(mapped, plan));
     }
     // Built-in ranges, and their PG14+ multirange counterparts (I10): both
     // appear bare, never schema-qualified, so both need this table rather
@@ -3037,5 +3084,41 @@ mod tests {
             tree.divergences(),
             [(".plain".to_string(), "text".to_string(), ComparisonDivergence::UnknownCollation)],
         );
+    }
+
+    /// `int2vector` is the one built-in whose Arrow type is a container and
+    /// whose declaration is not spelled like one, so the three answers it
+    /// carries are pinned together: the type, the literal form, and the
+    /// comparison.
+    #[test]
+    fn int2vector_is_a_list_with_a_literal_form_and_an_order_of_its_own() {
+        let TypeOutcome::Mapped(data_type, plan) = resolve_declared_type("int2vector", &[]) else {
+            panic!("int2vector maps")
+        };
+        assert_eq!(data_type, list_of(DataType::Int16));
+        assert_eq!(plan, NestedPlan::Int2Vector);
+        // The same Arrow type through the array spelling, and a different
+        // literal form — which is the whole reason the plan travels beside
+        // the type.
+        let TypeOutcome::Mapped(array_type, array_plan) = resolve_declared_type("smallint[]", &[])
+        else {
+            panic!("smallint[] maps")
+        };
+        assert_eq!(array_type, data_type);
+        assert_eq!(array_plan, NestedPlan::Array(Box::new(NestedPlan::Scalar)));
+
+        let comparison = comparison_for("int2vector", None, &[], &[]);
+        assert_eq!(comparison, ComparisonPlan::Nested(NestedCompare::Int2Vector));
+        assert!(comparison.orders());
+        let ComparisonPlan::Nested(tree) = &comparison else { panic!("nested") };
+        assert_eq!(tree.uncomparable(), None);
+        assert_eq!(tree.divergences(), []);
+
+        // An array *of* them composes like any other element type: the outer
+        // literal is `array_out`'s and each element is a vector.
+        let ComparisonPlan::Nested(outer) = comparison_for("int2vector[]", None, &[], &[]) else {
+            panic!("int2vector[] compares structurally")
+        };
+        assert_eq!(outer, NestedCompare::Array(Box::new(NestedCompare::Int2Vector)));
     }
 }

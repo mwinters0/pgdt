@@ -255,6 +255,11 @@ enum ColumnBuilder {
     /// structurally identical to an array of ranges and written differently,
     /// which is why [`NestedPlan`] exists.
     Multirange(ListParts),
+    /// `List<Int16>` filled from an `int2vectorout` literal — the same Arrow
+    /// type a `smallint[]` column gets, written in a grammar of its own, so
+    /// it is [`NestedPlan`]'s second collision and not a special case of the
+    /// first.
+    Int2Vector(ListParts),
     /// `Struct<…>` filled from a `record_out` literal, one child per declared
     /// field of the composite.
     Record(StructParts),
@@ -306,7 +311,9 @@ fn builder_len(builder: &ColumnBuilder) -> usize {
         ColumnBuilder::FixedSizeBinary16(b) => b.len(),
         ColumnBuilder::Binary(b) => b.len(),
         ColumnBuilder::Dictionary(b) => b.len(),
-        ColumnBuilder::Array(parts) | ColumnBuilder::Multirange(parts) => parts.validity.len(),
+        ColumnBuilder::Array(parts)
+        | ColumnBuilder::Multirange(parts)
+        | ColumnBuilder::Int2Vector(parts) => parts.validity.len(),
         ColumnBuilder::Record(parts) | ColumnBuilder::Range(parts) => parts.validity.len(),
     }
 }
@@ -352,6 +359,9 @@ fn new_column_builder(data_type: &DataType, plan: &NestedPlan) -> ColumnBuilder 
         NestedPlan::Multirange(bound) => {
             let range = NestedPlan::Range(bound.clone());
             return ColumnBuilder::Multirange(new_list_parts(data_type, &range));
+        }
+        NestedPlan::Int2Vector => {
+            return ColumnBuilder::Int2Vector(new_list_parts(data_type, &NestedPlan::Scalar));
         }
         NestedPlan::Record(field_plans) => {
             return ColumnBuilder::Record(new_struct_parts(data_type, field_plans));
@@ -429,7 +439,9 @@ fn append_null(builder: &mut ColumnBuilder) {
         ColumnBuilder::FixedSizeBinary16(b) => b.append_null(),
         ColumnBuilder::Binary(b) => b.append_null(),
         ColumnBuilder::Dictionary(b) => b.append_null(),
-        ColumnBuilder::Array(parts) | ColumnBuilder::Multirange(parts) => {
+        ColumnBuilder::Array(parts)
+        | ColumnBuilder::Multirange(parts)
+        | ColumnBuilder::Int2Vector(parts) => {
             // A null list still needs an offset entry; it spans zero children.
             parts.offsets.push(builder_len(&parts.child) as i32);
             parts.validity.push(false);
@@ -563,6 +575,21 @@ fn append_typed(builder: &mut ColumnBuilder, text: &str) -> std::result::Result<
             parts.offsets.push(builder_len(&parts.child) as i32);
             parts.validity.push(true);
         }
+        // An empty vector is the empty *field*, which is a value and not a
+        // NULL: `\N` is the only NULL in COPY TEXT, so the two stay
+        // distinguishable and `''` fills a zero-length list rather than
+        // collapsing into the null beside it.
+        ColumnBuilder::Int2Vector(parts) => {
+            let values = nested::decode_int2vector(text).ok_or_else(fail)?;
+            let ColumnBuilder::Int16(child) = &mut *parts.child else {
+                unreachable!("an int2vector's child is always Int16")
+            };
+            for value in values {
+                child.append_value(value);
+            }
+            parts.offsets.push(builder_len(&parts.child) as i32);
+            parts.validity.push(true);
+        }
         ColumnBuilder::Record(parts) => {
             let literal = nested::decode_record(text).ok_or_else(fail)?;
             if parts.children.is_empty() {
@@ -653,7 +680,9 @@ fn finish_column(builder: &mut ColumnBuilder) -> ArrayRef {
         ColumnBuilder::FixedSizeBinary16(b) => Arc::new(b.finish()) as ArrayRef,
         ColumnBuilder::Binary(b) => Arc::new(b.finish()) as ArrayRef,
         ColumnBuilder::Dictionary(b) => Arc::new(b.finish()) as ArrayRef,
-        ColumnBuilder::Array(parts) | ColumnBuilder::Multirange(parts) => {
+        ColumnBuilder::Array(parts)
+        | ColumnBuilder::Multirange(parts)
+        | ColumnBuilder::Int2Vector(parts) => {
             let values = finish_column(&mut parts.child);
             let offsets = std::mem::replace(&mut parts.offsets, vec![0]);
             let nulls = NullBuffer::from(std::mem::take(&mut parts.validity));
@@ -978,6 +1007,23 @@ pub fn render_field(column: &dyn Array, row: usize, plan: &NestedPlan) -> Result
                 .collect::<Result<_>>()?;
             return Ok(Some(format!("{{{}}}", rendered.join(","))));
         }
+        // The one nested form whose elements cannot be NULL: `int2vector`
+        // has no encoding for one, so a `List<Int16>` holding a null element
+        // is an Arrow value with no PostgreSQL text form — `Error::FieldRender`,
+        // exactly as a sub-microsecond `interval` is, and reachable only from
+        // an array a caller assembled.
+        NestedPlan::Int2Vector => {
+            let list = column.as_any().downcast_ref::<ListArray>().unwrap();
+            let values = list.value(row);
+            let values = values.as_any().downcast_ref::<Int16Array>().unwrap();
+            if values.null_count() != 0 {
+                return Err(Error::FieldRender {
+                    declared_type: "int2vector",
+                    reason: "an int2vector has no encoding for a NULL element".to_string(),
+                });
+            }
+            return Ok(Some(nested::render_int2vector(values.values())));
+        }
         NestedPlan::Record(field_plans) => {
             let s = column.as_any().downcast_ref::<StructArray>().unwrap();
             let fields: Vec<Option<String>> = s
@@ -1262,6 +1308,56 @@ mod tests {
             render_field(&list, 0, &plan).unwrap_err(),
             Error::FieldRender { declared_type: "interval", .. }
         ));
+    }
+
+    /// `int2vector` and `smallint[]` are one Arrow type and two literal
+    /// forms, which is the collision [`NestedPlan`] exists for — so the two
+    /// are built here side by side, from text neither could read as the
+    /// other.
+    #[test]
+    fn an_int2vector_column_round_trips_and_is_not_the_array_of_the_same_type() {
+        let array = round_trips(
+            list_of(DataType::Int16),
+            NestedPlan::Int2Vector,
+            &[Some("1 2 3"), Some(""), Some("-32768 32767"), Some("0"), None],
+        );
+        let list = array.as_any().downcast_ref::<ListArray>().unwrap();
+        // The empty vector is the empty *field*, and `\N` is the NULL beside
+        // it: an empty list, and no list.
+        assert_eq!(list.value(1).len(), 0);
+        assert!(!list.is_null(1));
+        assert!(list.is_null(4));
+        assert_eq!(list.value(0).len(), 3);
+
+        // Neither grammar reads the other's text.
+        let array_plan = NestedPlan::Array(Box::new(NestedPlan::Scalar));
+        assert!(build(&list_of(DataType::Int16), &array_plan, &[Some("1 2 3")]).is_err());
+        assert!(
+            build(&list_of(DataType::Int16), &NestedPlan::Int2Vector, &[Some("{1,2}")]).is_err()
+        );
+    }
+
+    /// The one value class an `int2vector` column cannot hold: PostgreSQL's
+    /// `int2vector` has no NULL element, so a `List<Int16>` carrying one has
+    /// no `int2vectorout` text at all. Built by hand for the reason the
+    /// `interval` refusal above is — `append_typed` can never produce one.
+    #[test]
+    fn render_refuses_an_int2vector_holding_a_null_element() {
+        let mut values = Int16Builder::new();
+        values.append_value(1);
+        values.append_null();
+        let list = ListArray::new(
+            Arc::new(Field::new("item", DataType::Int16, true)),
+            OffsetBuffer::from_lengths([2usize]),
+            Arc::new(values.finish()) as ArrayRef,
+            None,
+        );
+        let err = render_field(&list, 0, &NestedPlan::Int2Vector).unwrap_err();
+        assert!(
+            matches!(&err, Error::FieldRender { declared_type: "int2vector", reason }
+                if reason.contains("NULL element")),
+            "{err}"
+        );
     }
 
     #[test]

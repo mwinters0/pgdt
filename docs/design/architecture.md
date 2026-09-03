@@ -1105,6 +1105,7 @@ almost every column in a real 75-table schema.
 | composite (`CREATE TYPE … AS (…)`) | `Struct<` one field per declared field, in declaration order `>` | Zero fields included (I23) — `()` is a real value that round-trips |
 | range (built-in or `AS RANGE`) | `Struct{lower: S, upper: S, lower_inclusive, upper_inclusive, empty}` | The fifth field is not redundant: `empty` and `(,)` both have absent bounds |
 | multirange | `List<` the range struct `>` | Same Arrow type as `S[]`-of-range, different literal — see `NestedPlan` |
+| `int2vector` | `List<Int16>` | The one built-in whose Arrow type is a container and whose name is not spelled like one. Same Arrow type as `smallint[]`, different literal — space-separated `int16`s with no braces, no quoting and no NULL element (I47) — so it too travels with a `NestedPlan`. See below |
 | an array whose element is opaque | `Utf8View` | `box`, `TypeKind::Base`, `TypeKind::Shell`, through any chain of domains — `ColumnResolution::OpaqueElementType`, below |
 | an array whose element is itself an array | `Utf8View` | `CREATE DOMAIN d AS T[]` and a column of `d[]`, through any chain of domains — the literal is one brace deep (I26), so its depth and the column's would disagree; `ColumnResolution::NestedArrayElement`, below. **Not** `integer[][]`, which is a spelling of `integer[]` (I28) |
 | an array column whose values disagree on shape | `Utf8View` | Mixed dimensionality or an `[lb:ub]=` prefix, read off [the census](#the-array-shape-census) — `ColumnResolution::VaryingArrayShape` |
@@ -1177,6 +1178,40 @@ makes the question moot: a data-dependent Arrow type would buy back the two
 classes at the cost of a column whose type cannot be known before the scan,
 which is a price the array-shape census pays because a wrong `List` depth is a
 wrong *answer*, and here the alternative is a named failure on one field.
+
+***`int2vector` is a container the mapping table reaches through
+`builtin_scalar`.*** Its value space is exactly `List<Int16>`'s: I47 states
+that `int2vectorout` writes space-separated `int16`s with no quoting and no
+escaping, and that the type has no NULL element at all, so nothing about a
+value is lost and nothing about the text needs a wrapper. It is a floor row —
+the ADBC driver answers `list<item: int16>` — and closing it is what leaves the
+floor holding with no exception beyond the three stances.
+
+**Three things are decided per declared type and only two of them come out of
+that one arm.** `builtin_scalar` answers the Arrow type and the comparison in
+one tuple, which is what makes a mapping added without a comparison a compile
+error; the **literal form** is not in the tuple, because it is the one thing
+neither of the other two determines — a `smallint[]` column and an
+`int2vector` column are the same `List<Int16>` and are written in different
+grammars. So `map_builtin` carries a one-line table from the declared name to
+its `NestedPlan`, and a `debug_assert` pairs the two: a built-in mapped to a
+`List` or a `Struct` with no plan named there would be filled by a scalar
+builder and would read every value as text.
+
+*Rejected: deriving the plan from the `DataType` the arm yields, since exactly
+one built-in arm returns a `List` today.* It is true today and it is the
+inference `NestedPlan` exists to deny — the enum's whole premise is that one
+Arrow type can have several literal forms, so a second container arm would
+inherit the first's grammar silently. The assertion above checks the pairing
+without deriving it.
+
+*Rejected: carving `int2vector` out as a catalog type no real schema declares.*
+Neither koji nor any fixture had one before this work, which is true and is not
+a stance the floor rule admits: the three it does admit are "the driver
+answered opaque", "the two encodings denote different values" and "below by
+decision", and none of them fits. The codec is the cheapest in the type system
+— `split(' ')` and `i16::from_str` — so the honest reason to carve it out would
+have been effort, which is not one of the three.
 
 *Rejected: hand-writing the two `ARROW:extension:*` keys, to avoid naming
 `arrow-schema` as a dependency of its own.* `arrow::datatypes` re-exports the
@@ -1411,17 +1446,23 @@ what keeps this coverage unbounded while the work stays bounded:
   server has no binary output function and binary is the only encoding the
   driver reads — so the floor for them is *nothing*.
 
-The remainder is 24 rows a major, and 20 of them our mapping simply meets. The
-four that do not each carry a stance, in the reconciliation's own table, because
-they are not one kind of thing and a flat exception list could not say that
-`regproc` is unanswerable while `money` is refused:
+The remainder is 24 rows a major, and 21 of them our mapping simply meets. The
+three that do not each carry a stance, in the reconciliation's own table,
+because they are not one kind of thing and a flat exception list could not say
+that `regproc` is unanswerable while `money` is refused:
 
 | Type | Theirs | Ours | Stance |
 |---|---|---|---|
 | `money` | `int64` | `string` | **below by decision** — `KD13`, below |
 | `regproc` | `int32` | `string` | **different encodings**: `regprocout` writes the function's *name*, schema-qualified where the bare name would not resolve and `-` for `InvalidOid`, where the binary encoding ADBC reads is the OID. So "narrower than `Int32`" is not a question the text can be asked — stated over the `reg*` family, of which this is the one member the driver gives a real Arrow type to |
-| `int2vector` | `list<item: int16>` | `string` | **waiting** on the slice that maps it |
 | `oid` | `int32` | `uint32` | **narrower**, which the rule permits: `oidout` is `snprintf("%u")` (I39), so the driver's `Int32` turns every OID at or above 2^31 negative. Only a *wider* answer is a violation |
+
+**A fourth stance exists and no row carries one.** `waiting` is what a row a
+slice of the open phase is about to close declares, and the two that had it —
+`interval` and `int2vector` — both closed, so the table is three rows and the
+mechanism is exercised by `test_floor_mapping.py` against a synthetic row. It
+is kept rather than deleted with its last user because it is what the next
+such row will be held to.
 
 **A waiting row is a disposition, not a register entry.** `KD<k>` means known
 and *not being fixed now*; a row a slice of the open phase closes is being fixed
@@ -1748,6 +1789,27 @@ Three properties are load-bearing and easy to lose:
   SQL NULL, so `None` unambiguously means unbounded and `Some("")` is the
   empty-string bound.
 
+**`int2vector` is the fourth form and it shares none of that machinery** —
+which is the point rather than an omission. `int2vectorout` writes `int16`s
+separated by one space (I47), and an `int16`'s spelling can contain neither the
+separator, nor a quote, nor a NULL, so there is nothing for a quoting rule to
+decide: `decode_int2vector` is `split(' ')` and a canonical-spelling check per
+element, and `render_int2vector` is a join. The strictness rule is the same one
+every `decode_*` here obeys — `+1`, `01`, `-0` and a doubled space are refused,
+because `pg_itoa` writes none of them — and it is what makes the pair inverses.
+`parse_int2vector` is the matching superset and it is `int2vectorin`, whose one
+rule worth reproducing is asymmetric: whitespace *before* a number is skipped,
+and the byte *after* one must be a space or the end, so `\t1 2` is accepted and
+`1\t2` is not.
+
+**It is also the one literal with no leaf rule**, and the layer above says so.
+Everywhere else a container's `*_in` superset stops at the element, which is
+read in its own type's output form; `int2vector` has no element input function
+for that rule to apply to — `int2vectorin` reads the elements itself — so the
+superset reaches all the way down and `--filter 'v=+1 01'` matches the value
+the file writes as `1 1`. `nested_accepted_form` answers this plan before the
+leaf clause it cannot carry.
+
 `tests/nested.rs` is the conformance test: every nested column of every
 `types` fixture, on all six majors, read in `SchemaMode::Strings` and required
 to round-trip. A force-quote predicate transcribed even slightly wrong from
@@ -1755,7 +1817,7 @@ to round-trip. A force-quote predicate transcribed even slightly wrong from
 PostgreSQL itself wrote.
 
 **The literal side is a second, separate scanner.** `decode_*` reads what a dump *holds*; `parse_array`/`parse_record`/
-`parse_range`/`parse_multirange` read what a user *typed* — a filter's
+`parse_range`/`parse_multirange`/`parse_int2vector` read what a user *typed* — a filter's
 right-hand side, which the `*_in` functions accept a good deal more of than
 `*_out` ever writes (I44). The two directions may not be one scanner with a
 leniency flag: `decode_*`'s strictness is exactly what makes it and `render_*`
@@ -1803,7 +1865,7 @@ multirange's sort-coalesce-drop are the piece still missing there, and they are
 why a range column has no comparison yet.
 
 `tests/nested.rs`'s `oracle` module is where the supersets are checked: every
-nested row of `fixtures/<13–18>/oracle/literals.tsv` — 397 literals over six
+nested row of `fixtures/<13–18>/oracle/literals.tsv` — 475 literals over six
 majors — parsed and compared against whether the server itself accepted it,
 with the four canonicalization exceptions and the one semantic refusal
 (`int4range '[10,1)'`, which is well-formed and out of order) asserted as exact
@@ -2687,6 +2749,7 @@ over the file's own canonical text.
 | `json`, and any domain over it | `Utf8View` | **no** — PostgreSQL defines *no* comparison for `json` at all, so bytewise offers more than the server does rather than less | nothing, since there is no order to agree with |
 
 | an **array** or **composite**, and any domain over one | `List(…)` / `Struct(…)` | **inherited** — compared structurally (I45), and it agrees exactly when every element or field type beneath it does. A `text[]` column carries the `text` rows' collation residue at its element; a `json[]` column, or a composite with a `json` field, has its *ordering* refused, because the server has no comparison for one either, and its `=` falls back to bytewise carrying that position's `json` row above | whatever would close the position that diverges |
+| `int2vector` | `List<Int16>` | yes — the type names no operator of its own, so the server compares it through `anyarray` polymorphism: `array_lt`/`array_eq` over `smallint` elements (I47), which is I45's comparison with a fixed element and no position that could diverge. `'2' < '10'` is true, where a byte comparison of the same text says false | — |
 | a **range** or **multirange**, and any domain over one | `Struct(…)` / `List(Struct(…))` | **inherited**, on the same rule, once both sides are put into the form the server stores them in (I46): `empty` below everything, then the bounds, with a multirange's members sorted, coalesced and emptied out first. Both discrete canonicalizations are reproduced — the successor shift, and the collapse of `[1,1)` to `empty` — so `int4range '[1,10]'` is the `[1,11)` the file holds. **A user-defined range that declares a `canonical` function is refused outright**, under every operator | — |
 
 A domain has no row of its own: it compares as the row its base type is on,
@@ -3136,10 +3199,10 @@ not. See "The register against the oracle's answers".
 
 ### Nested columns compare structurally
 
-Every container kind — array, composite, range and multirange — gets the four
-ordering operators **and** `=`/`!=`, compared the way `array_cmp`,
-`record_cmp`, `range_cmp` and `multirange_cmp` compare them rather than as text
-(I45, I46).
+Every container kind — array, composite, range, multirange and `int2vector` —
+gets the four ordering operators **and** `=`/`!=`, compared the way
+`array_cmp`, `record_cmp`, `range_cmp` and `multirange_cmp` compare them rather
+than as text (I45, I46, I47).
 
 **The plan is a tree, and it is built by the same walk the register already
 makes.** `pgtype.rs`'s `NestedCompare` has one node per nesting level —
@@ -3158,6 +3221,20 @@ carries its own shape and `nested::ArrayLiteral` flattens it row-major, so
 `integer[]` is one node whether its values are vectors or matrices — which is
 also why the plan's depth may legitimately differ from the *Arrow* list depth
 the census settled on.
+
+**`Int2Vector` is a sixth node and it carries nothing.** The type's element is
+`smallint` in the catalog and nothing about a column can vary it (I47), so
+there is no position beneath it that could refuse an order or announce a
+divergence — the walk visits it as the leaf it effectively is, declaring
+`int2vector`. It is a node rather than an `Array` over a `smallint` leaf
+because the two sides are read in a *different grammar*, which is the same
+distinction `NestedPlan` draws one layer down; the comparison itself is
+`array_cmp`'s, reached through the `NestedKey::Array` the two grammars both
+build. Its `dims` and `lower_bounds` are `[n]` and `[0]` for every value, the
+empty vector included — `int2vectorin` sets `ndim = 1` and `lbound1 = 0`
+unconditionally, where `array_out`'s `{}` is zero-dimensional — so
+`array_cmp`'s dimension tie-breaks are constant between two values of this type
+and only the elements and their count decide.
 
 **A range is compared in the form the server stores it in, not the form it was
 written in**, and that is the one container whose comparison has a rewriting
@@ -4933,7 +5010,7 @@ majors against each other. `the_register_answers_every_committed_oracle_cell`,
 in `predicate.rs`'s unit tests, is the one that compares an answer to an
 answer: it walks every cell of `fixtures/<13–18>/oracle/comparisons.tsv` and
 puts the same question to the register through `resolve_term` and
-`ResolvedTerm::eval`, the path a `--filter` takes. 45,394 cells today.
+`ResolvedTerm::eval`, the path a `--filter` takes. 52,338 cells today.
 
 **It is the check the oracle was built for**, and until it existed the oracle's
 answers had only ever been compared by hand. Two register defects had reached
@@ -4974,22 +5051,23 @@ The oracle's non-canonical `inputs` are an input-grammar question, not a
 comparison one, and asking them here would report the filter grammar's
 deliberate strictness as an ordering disagreement.
 
-**The exception set is enumerated by pair, and it is met.** Thirty-four
+**The exception set is enumerated by pair, and it is met.** Forty
 `(type, collation, left, right)` cases are permitted to disagree; every one of
 them does disagree in the committed files, and every disagreement is one of
 them — so a case that starts agreeing fails as loudly as one that stops.
 Alongside it, a disagreeing term must *announce* its divergence through
 `ComparisonNote` — **under that operator**, read off the term rather than off
 the register's plan — so an exception cannot be claimed for a column the
-register tells the user it is confident about. Three populations, and the first
-two are **one statement asked at two depths** — a collation the file does not
-carry (I32), reached once through a column and once through a string inside a
-document:
+register tells the user it is confident about. Four populations, and the first
+three are **one statement asked at three depths** — a collation the file does
+not carry (I32), reached through a column, through an array's element, and
+through a string inside a document:
 
 | Population | Why | Cases |
 |---|---|---|
 | a `jsonb` string leaf | `compareJsonbScalarValue` passes `DEFAULT_COLLATION_OID` to `varstr_cmp`, so a leaf takes the database's collation (I32, I41) | 2 |
 | `text` under the database's own collation | glibc `en_US.utf8`: case is lower-weight than letter, an accent sorts with its base letter, and punctuation is ignored at the primary level, so `_x` sorts where `x` does | 30 |
+| a `text[]` element under the same collation | the element is ordered by `varstr_cmp` exactly as a `text` column's values are, one level down — the same two disagreements, reached through an element | 6 |
 | `box`'s area equality | `box_eq` compares the two rectangles' areas, so the server calls `(1,1),(0,0)` and `(3,3),(2,2)` equal and a byte comparison does not; the column announces `UnmodelledType` and the deficiency is `KD10` | 2 |
 
 The third is the only one this build could close by writing code, and it is the
