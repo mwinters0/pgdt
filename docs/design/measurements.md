@@ -83,10 +83,10 @@ Twelve standing rules for reading anything below:
   and is no longer in any recipe** — the comparison above is why glibc is
   named, not an invitation to take a second leg. Debian's `/bin/sh` is
   dash, with no `time`, so the in-container timer is `bash -c 'time …'`.
-  Whether a different allocator should be the shipped default is P7's slice
-  7.3 ([`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md)),
-  which also settles that a figure here is a **CLI** figure: the choice is the
-  binary's, never the library's.
+  Which allocator the shipped binary links against, and what the two
+  replacements are worth, is "Which allocator a figure was taken under" below;
+  it is also where a figure here being a **CLI** figure is stated, the choice
+  being the binary's and never the library's.
 - **Never quote a standard error or a *t* from one sweep — give the median and
   the observed spread.** Within-sweep dispersion measures the *reps*, not the
   measurement: the allocator, the stage's position in the session and the
@@ -234,12 +234,13 @@ construction rather than by anyone keeping them in step. Evidence:
 "`--stale`'s job is binary".
 
 **A declared path is matched by prefix, so moving code out of one silently
-un-declares it.** `QUERY_CLI` is the worked case: it names
-`pgdump_query-cli/src/main.rs`, one file rather than the crate, so a second
-module in that crate would sit outside every declaration that quotes it and be
-a staleness edge nobody declared. Splitting the CLI up is fine and the parser
-grammar was deliberately kept in `main.rs` rather than earning that — but
-whatever splits it moves `QUERY_CLI` to the directory in the same change.
+un-declares it.** `QUERY_CLI` is the worked case, and it is now the directory
+`pgdump_query-cli/src/` rather than `main.rs`: naming the one file left every
+other module in that crate outside every declaration quoting it, which is a
+staleness edge nobody declared — and the crate has three modules, `main.rs`,
+`where_expr.rs` and `alloc.rs`. Splitting a crate up is fine; whatever splits
+it widens the declaration to the directory in the same change, because the
+alternative is a `--stale` that is silent about the file the change is in.
 
 **A commit can be acknowledged, and then it stops marking a figure stale.**
 Coarse `depends` costs something in both directions. The paragraph above weighs
@@ -449,6 +450,80 @@ written for.
 them: the census-off **source patch**, which no harness should perform, and the
 generator invocations a reader may want on their own. koji's was a third until
 the harness took it — `uv run measure.py --koji-recipe` prints it now.
+
+## Which allocator a figure was taken under
+
+**The platform allocator — glibc's `malloc` on this apparatus.** The choice is
+`pgdump_query-cli`'s and never the library's, so every figure in this document
+is a **CLI** figure taken under whatever `pgdq` links against, and an embedder
+inherits whatever their own binary chose
+([`architecture.md`](architecture.md), "The allocator is the binary's choice").
+The harness reads the allocator out of the binary — `pgdq --version` names it —
+so the session stamp above cannot go on saying `glibc` after the day the
+default changes.
+
+The reference column is the shipped binary itself, and its three readings are
+shared with the figures that already take them rather than retaken, exactly as
+the census table's census-on column is shared with the warm throughput table.
+Two builds of one source can differ by ~10% from code layout alone ("Two builds
+of one source can differ by layout"), which is larger than the effect measured
+here, so a fourth build of the same source would have been the wrong reference.
+
+<!-- figure: allocator — reproduce with `cd scripts && uv run measure.py --figure allocator` -->
+
+| Warm, on tmpfs | `system` — the shipped binary | `jemalloc` | `mimalloc` |
+|---|---|---|---|
+| `pgdq parse` — structure discovery | **0.544 s** (0.532–0.554) | **1.016 s** (0.996–1.028) — 1.87× | **0.535 s** (0.530–0.574) — 0.98× |
+| `query --schema-mode strings` — zero-copy extraction | **4.39 s** (4.38–4.62) | **5.22 s** (5.19–5.34) — 1.19× | **4.20 s** (4.14–4.41) — 0.96× |
+| `query --schema-mode typed` | **10.21 s** (10.14–10.44) | **10.90 s** (10.85–10.95) — 1.07× | **9.77 s** (9.75–9.79) — 0.96× |
+| `dd` → `/dev/null` — the co-measured floor | **0.310 s** (0.308–0.313) | — | — |
+
+Every leg was asked what it links against before it was timed — `system`,
+`jemalloc`, `mimalloc` — so a leg whose build silently dropped its feature
+cannot be published as a comparison of two identical binaries.
+
+Per-rep readings (s):
+- `pgdq parse` (system): 0.544, 0.533, 0.544, 0.532, 0.554
+- `pgdq parse` (jemalloc): 0.996, 1.016, 1.027, 1.014, 1.028
+- `pgdq parse` (mimalloc): 0.574, 0.531, 0.540, 0.530, 0.535
+- `query --schema-mode strings` (system): 4.39, 4.39, 4.38, 4.39, 4.62
+- `query --schema-mode strings` (jemalloc): 5.22, 5.20, 5.19, 5.28, 5.34
+- `query --schema-mode strings` (mimalloc): 4.41, 4.20, 4.14, 4.20, 4.21
+- `query --schema-mode typed` (system): 10.44, 10.21, 10.14, 10.16, 10.27
+- `query --schema-mode typed` (jemalloc): 10.90, 10.91, 10.85, 10.85, 10.95
+- `query --schema-mode typed` (mimalloc): 9.77, 9.79, 9.75, 9.77, 9.79
+- `dd` → `/dev/null` (warm): 0.311, 0.308, 0.310, 0.308, 0.313
+
+Apparatus over every run in this table: CPU stall ≤0.24%, I/O stall ≤10.04%,
+machine ≤5% busy, steal ≤0.00%, busiest core ≥3.80 GHz, ≤66°C. **Taken in its
+own sitting**, not in the `ba2fc12` sweep the stamp above records — so setting
+one of its absolutes beside that sweep's costs the ~8% a warm absolute resolves
+to across sessions, while its **ratios** are within-sitting, which is what the
+table is for. A second, independent sitting the same day gave jemalloc at
+1.89×/1.18×/1.06× and mimalloc at 1.00×/0.99×/0.97×, so both signs reproduce.
+
+**`jemalloc`'s `parse` penalty is a syscall storm, and it belongs to a lever
+this phase has not pulled yet.** All of it is system time — 0.27 s → 0.80 s on
+the host with user time slightly *lower* (0.23 s → 0.19 s) and 8% fewer user
+instructions — and `strace -c` says why: 3,161 `madvise` calls against glibc's
+50 and mimalloc's 62, over a 3.00 GiB file read in 3,072 chunks. That is
+`LocalFileSource::read_range`'s per-chunk `vec![0u8; 1 MiB]` being returned to
+the kernel and re-faulted once per chunk, which is exactly the allocation
+[`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md)'s slice 7.13
+removes. So the ranking above is dominated on one of its three shapes by an
+allocation that is scheduled to disappear, and the table is re-taken — `--figure
+allocator`, five minutes — after that slice rather than treated as settled.
+
+*Rejected:* adopting `mimalloc` now on its 4% win. It is a real, reproducible
+4% on the two `query` shapes and nothing on `parse`, against a lever table
+whose other rows are 16.5×, 19.0 s of 20.8 s, and 54.6% of a warm `parse`'s
+user time — and the cost is not the one-line default flip. Adopting makes every
+other table here a figure of a binary that is no longer shipped, with no
+mechanical oracle to acknowledge it, so the whole document reads stale until
+the wrap's sweep pair. Paying that for 4%, on a ranking whose largest number is
+about to be invalidated by 7.13, is buying the decision at its least
+informative moment. The features stay in the manifest so the re-take costs
+nothing.
 
 ## Scan throughput by input shape
 

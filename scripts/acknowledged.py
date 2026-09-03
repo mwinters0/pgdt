@@ -87,7 +87,7 @@ class Acknowledged:
 ACKNOWLEDGED: tuple[Acknowledged, ...] = (
     Acknowledged(
         commit="7545dc6",
-        figures=("nested-end-to-end", "cross-file-floor", "projection-widths"),
+        figures=("nested-end-to-end", "cross-file-floor", "projection-widths", "allocator"),
         why=(
             "P7's staging retargeted one doc comment in `batch.rs` at the phase "
             "spec, the inbox it cited having been drained. Comment-only: no "

@@ -376,6 +376,18 @@ profile shares rather than medians — so a claim built on it is a ratio or a
 per-row cost, never a throughput with an apparatus line behind it. If P6 wants
 the latter, building the instrument is P6's work and not inherited.
 
+**And the allocator is the embedder's, not ours, which sharpens what a claim
+may say.** `pgdq` links the platform allocator by its own choice — a
+`#[global_allocator]` in `pgdump_query` would impose one on every embedder — so
+an embedder's numbers are under whatever their binary chose, and that is
+measurably not the same number. On the three headline shapes, `jemalloc` reads
+1.87×/1.19×/1.07× against the platform allocator and `mimalloc`
+0.98×/0.96×/0.96×
+([`measurements.md`](measurements.md), "Which allocator a figure was taken
+under"). So even the per-row cost P6 would quote is allocator-conditional, and
+a claim has to be a ratio *and* name the allocator it was taken under, or be
+stated as a range. Origin: P7.3, 2026-09-03.
+
 **Origin.** P7.2, 2026-09-03
 ([`roadmap-P7.2-decomposition-notes.md`](roadmap-P7.2-decomposition-notes.md)),
 narrowed the same day when the maintainer settled that library-only *figures*

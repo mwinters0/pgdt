@@ -42,6 +42,7 @@ through.
 | `batch.rs`, the zero-copy `Utf8View` path, a batch's flush triggers | [Arrow assembly and the zero-copy path](#arrow-assembly-and-the-zero-copy-path) |
 | `stream.rs`, `map_forward`/`map_file`, replay, resume, projection, predicates, the `--filter` term grammar, the `--where` expression grammar | [Query: mapping and streaming are separate passes](#query-mapping-and-streaming-are-separate-passes) |
 | where a scan's time actually goes, before proposing to make one faster | [Where a scan's time goes](#where-a-scans-time-goes) |
+| `alloc.rs`, a `#[global_allocator]`, what a figure's apparatus line names | [The allocator is the binary's choice](#the-allocator-is-the-binarys-choice) |
 | `cache.rs`, the format version, cache modes | [The cache](#the-cache) |
 | the CLI's flags or output, the save throttle, the interrupt guard | [CLI surface](#cli-surface) |
 | `scripts/`, a new fixture schema | [Fixtures](#fixtures) |
@@ -73,6 +74,7 @@ through.
 | Post-parse predicate | `pgdump_query/src/predicate.rs` | L4 |
 | CLI (`pgdq parse` / `info` / `query`), the `--filter` term grammar | `pgdump_query-cli/src/main.rs` | above L4 |
 | The `--where` expression grammar | `pgdump_query-cli/src/where_expr.rs` | above L4 |
+| Which allocator the binary links, and `--version`'s report of it | `pgdump_query-cli/src/alloc.rs` | above L4 |
 
 `error.rs` and `lib.rs` are cross-cutting and belong to no layer. Which layer a
 module is in constrains what it may depend on and what it may know:
@@ -4043,6 +4045,59 @@ in a 100,000-sample profile of a 4000-block `parse` — the input built to make
 per-block costs visible — it takes **zero samples**. That same profile is
 43% `stream::splice` and 57% allocator traffic underneath it, which is `KD5`
 and nothing else.
+
+### The allocator is the binary's choice
+
+`pgdq` links the **platform allocator** — glibc's `malloc` on the measured
+apparatus — and `pgdump_query-cli/src/alloc.rs` is the whole of the mechanism:
+two off-by-default Cargo features (`jemalloc`, `mimalloc`), one
+`#[global_allocator]` behind each, a `compile_error!` if both are asked for,
+and a `VERSION` string that `pgdq --version` prints.
+
+**The choice is the binary's and never the library's.** A `#[global_allocator]`
+in `pgdump_query` would impose one on every embedder, which is exactly the
+audience the embedding work is for. The consequence is stated rather than
+hidden: every figure in [`measurements.md`](measurements.md) is a **CLI**
+figure taken under whatever `pgdq` links against, and an embedder inherits
+whatever their own binary chose.
+
+**`--version` names the allocator so the harness can ask rather than assume.**
+`scripts/measure.py` reads it out of each binary before timing it — the
+reference leg included — and puts it in the session stamp. Without that, the
+day this default changes, `target/release/pgdq` becomes a different binary and
+every apparatus line still naming the old allocator is wrong with nothing to
+notice; with it, a leg whose build silently dropped its feature cannot be
+published as a comparison of two identical binaries.
+
+The reading is [`measurements.md`](measurements.md), "Which allocator a figure
+was taken under": `jemalloc` is **1.87×** on `parse`, 1.19× on a `strings`
+query and 1.07× on a typed one; `mimalloc` is 0.98×, 0.96× and 0.96×. So the
+lever's stake — a factor, on the evidence that two stock libcs differ by
+1.8–2.4× — did not survive contact with two allocators that are both tuned for
+this shape of work: what is on the table is 4%, in one direction, on two of the
+three shapes.
+
+**`jemalloc`'s `parse` penalty is not the allocator being slow, and it is the
+part that decides when this is re-asked.** All of it is system time (0.27 s →
+0.80 s, with user time slightly *lower*), and `strace -c` counts 3,161
+`madvise` calls against glibc's 50 over a file read in 3,072 chunks: it is
+`LocalFileSource::read_range`'s per-chunk `vec![0u8; 1 MiB]` handed back to the
+kernel and re-faulted once per chunk. That allocation is itself a lever
+("`parse`: half the wall is the kernel, and half of what is left is copying"),
+so the ranking is dominated on one shape by something scheduled to be removed,
+and the table is re-taken once it is.
+
+*Rejected:* adopting `mimalloc` on its 4%. The one-line default flip is not the
+cost — the cost is that every other table in `measurements.md` becomes a figure
+of a binary no longer shipped, with no mechanical oracle to acknowledge it, so
+the whole document reads stale until the next full sweep. Paying that for 4% on
+a ranking whose largest number is about to move is buying the decision at its
+least informative moment. The features stay so the re-take is five minutes.
+
+*Rejected:* a `--global-allocator` flag or an environment variable. A global
+allocator is chosen when the binary is linked, so a runtime switch would have
+to link all three and dispatch through a vtable on every allocation, which
+prices the mechanism above what it is measuring.
 
 ## The cache
 

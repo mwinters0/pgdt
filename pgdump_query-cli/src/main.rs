@@ -17,11 +17,13 @@ use pgdump_query::{
     QueryOptions, ScanOptions, Severity, Span, SpanBody, TypeKind, preamble_only, render_field,
 };
 
+mod alloc;
 mod where_expr;
 
 #[derive(Parser)]
 #[command(
     name = "pgdq",
+    version = alloc::VERSION,
     about = "Query pg_dump plain-format files without loading them into memory"
 )]
 struct Cli {

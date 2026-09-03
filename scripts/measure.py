@@ -159,6 +159,19 @@ class Config:
     bin_before: Path = Path(
         _env("PGDQ_MEASURE_BEFORE_BIN", str(REPO / "runs/pgdq-before-throttle"))
     )
+    # The `allocator` figure's three legs. Each is a full cargo target dir, so
+    # it goes on scratch rather than under `runs/`, which holds logs and small
+    # binaries; the binaries themselves are copied into `runs/`. A separate
+    # target dir per leg is not tidiness: a `--features` build writes
+    # `target/release/pgdq`, so building a leg in the default dir would
+    # silently replace `bin_pgdq` and every other figure in the same sweep
+    # would be timed under the wrong allocator.
+    alloc_build_root: Path = Path(
+        _env(
+            "PGDQ_MEASURE_ALLOC_BUILD_ROOT",
+            "/mnt/ssd/fedora/scratch/pgdump_query/alloc-builds",
+        )
+    )
 
     # The size of the seven large inputs. 3.00 GiB is the recorded apparatus;
     # anything else marks the run unpublishable.
@@ -1242,6 +1255,8 @@ class Session:
             return self.cfg.bin_nocensus
         if which == "before":
             return ensure_before_binary(self.cfg, self.log)
+        if which.startswith("alloc:"):
+            return ensure_allocator_binary(self.cfg, which.removeprefix("alloc:"), self.log)
         raise ValueError(f"unknown binary {which!r}")
 
     def input_path(self, name: str, regime: str) -> Path:
@@ -1405,6 +1420,95 @@ def ensure_before_binary(cfg: Config, log: Callable[[str], None]) -> Path:
     return cfg.bin_before
 
 
+#: The three legs of the `allocator` figure, in the order the table carries
+#: them. `system` is the feature-free build -- the platform allocator, glibc's
+#: `malloc` on the recorded apparatus -- and is spelled the way the binary
+#: spells it rather than as `glibc`, because the crate cannot know which libc
+#: it was linked against and the measurement records the image.
+ALLOCATOR_LEGS: tuple[str, ...] = ("system", "jemalloc", "mimalloc")
+
+#: What `pgdq --version` appends. The harness *asks the binary* rather than
+#: trusting the flags it passed: a leg mislabelled by one word gives a
+#: perfectly plausible table of the wrong comparison, which is the same family
+#: of failure as profiling the `release` binary and calling it `profiling`.
+ALLOCATOR_RE = re.compile(r"\(allocator: ([a-z]+)\)")
+
+
+def binary_allocator(binary: Path) -> str:
+    """Which allocator a built `pgdq` links against, read out of the binary.
+
+    Not an optional nicety: the day the CLI's default feature set changes,
+    `target/release/pgdq` becomes a different binary and every apparatus line
+    that still names the old allocator is wrong with nothing to notice. This is
+    what the session stamp reports."""
+    out = run([str(binary), "--version"], capture=True)
+    match = ALLOCATOR_RE.search(out)
+    if match is None:
+        raise RuntimeError(
+            f"{binary} --version does not name an allocator ({out.strip()!r}) — "
+            "it is too old to be an `allocator` figure leg"
+        )
+    return match.group(1)
+
+
+#: Legs whose (absent) build a dry run has already reported. Only a dry run
+#: needs it: a real build leaves the binary behind, which is the memo.
+_ALLOC_ANNOUNCED: set[str] = set()
+
+
+def ensure_allocator_binary(cfg: Config, leg: str, log: Callable[[str], None]) -> Path:
+    """One leg of the `allocator` figure, built and then interrogated.
+
+    Three details are load-bearing and each fails by producing a table of
+    something else:
+
+    * **`--no-default-features`**, so the `system` leg stays the platform
+      allocator whatever the CLI's default becomes. Without it this figure
+      stops being re-takeable the moment a leg is adopted -- which is the one
+      thing the figure exists to decide.
+    * **Its own target dir**, so `target/release/pgdq` -- every other figure's
+      binary -- is never overwritten by a `--features` build.
+    * **`--version` is read back** and must name this leg.
+    """
+    if leg not in ALLOCATOR_LEGS:
+        raise ValueError(f"unknown allocator leg {leg!r}")
+    out = cfg.out_dir / f"pgdq-alloc-{leg}"
+    if out.exists():
+        return out
+    features = [] if leg == "system" else ["--features", leg]
+    target = cfg.alloc_build_root / leg
+    if cfg.dry_run:
+        # Announced once per leg, not once per rep: a real run builds on the
+        # first call and the file answers every later one, and a dry run that
+        # repeated the line thirty times would read as thirty builds.
+        if leg not in _ALLOC_ANNOUNCED:
+            _ALLOC_ANNOUNCED.add(leg)
+            log(f"  [dry-run] would build the {leg} allocator leg into {target}")
+        return out
+    log(f"  building the {leg} allocator leg into {target}")
+    cfg.out_dir.mkdir(parents=True, exist_ok=True)
+    target.mkdir(parents=True, exist_ok=True)
+    run(
+        [
+            "cargo", "build", "--release", "-p", "pgdump_query-cli",
+            "--no-default-features", *features,
+            "--target-dir", str(target),
+        ],
+        cwd=REPO,
+    )
+    shutil.copyfile(target / "release/pgdq", out)
+    out.chmod(0o755)
+    got = binary_allocator(out)
+    if got != leg:
+        out.unlink()
+        raise RuntimeError(
+            f"the {leg} leg reports `{got}`: the build did not take the feature, and timing "
+            "it would publish a comparison of two identical binaries"
+        )
+    log(f"  {out.name}: {leg}")
+    return out
+
+
 def count_saves(
     cfg: Config, binary: Path, dump: Path, log: Callable[[str], None]
 ) -> tuple[int, int]:
@@ -1486,8 +1590,12 @@ MAP = ("pgdump_query/src/map.rs",)
 CACHE = ("pgdump_query/src/cache.rs",)
 NESTED = ("pgdump_query/src/nested.rs", "pgdump_query/src/batch.rs")
 PREAMBLE = ("pgdump_query/src/index.rs", "pgdump_query/src/preamble.rs")
-#: A query figure also reads through the CLI's own row rendering.
-QUERY_CLI = ("pgdump_query-cli/src/main.rs",)
+#: A query figure also reads through the CLI's own row rendering. The whole
+#: `src/` directory rather than `main.rs`: a declared path is matched by
+#: prefix, so naming the one file leaves every other module in that crate as a
+#: staleness edge nobody declared -- and the crate now has three
+#: (`main.rs`, `where_expr.rs`, `alloc.rs`).
+QUERY_CLI = ("pgdump_query-cli/src/",)
 
 GEN_PERF = ("scripts/generate_perf_data.py",)
 GEN_BLOCKS = ("scripts/generate_block_count_bench.py",)
@@ -1536,9 +1644,7 @@ def _throughput_figure(session: Session, figure: str, regime: str, reps: int) ->
     input. Measuring it twice would put two numbers in the doc for one
     measurement, which is the defect the whole sweep exists to remove."""
     specs = _throughput_specs(regime)
-    borrowed = session.borrow(
-        "census-brace-free", RunSpec("pgdq", "control", "parse", regime, "")
-    )
+    borrowed = session.borrow("census-brace-free", _census_specs("control", regime)[1])
     if borrowed:
         session.readings[specs[0].key(figure)] = list(borrowed)
         to_run = specs[1:]
@@ -1574,6 +1680,19 @@ def run_scan_throughput_warm(session: Session) -> str:
 # -- the census pair --------------------------------------------------------
 
 
+def _census_specs(input_name: str, regime: str) -> tuple[RunSpec, RunSpec]:
+    """The census table's two binaries, in one regime.
+
+    A named pair rather than two constructions inline, because the census-on
+    spec is **borrowed** by two other figures -- the warm throughput table's
+    `COPY` row and the allocator table's reference column -- and a borrow is a
+    dictionary lookup that silently returns nothing if the key drifts."""
+    return (
+        RunSpec("nocensus", input_name, "parse", regime, f"census off ({regime})"),
+        RunSpec("pgdq", input_name, "parse", regime, f"census on ({regime})"),
+    )
+
+
 def _census_figure(session: Session, figure: str, input_name: str) -> str:
     """The census table: two binaries, one input, both regimes.
 
@@ -1582,8 +1701,7 @@ def _census_figure(session: Session, figure: str, input_name: str) -> str:
     rows = []
     per_rep = []
     for regime in ("cold", "warm"):
-        off = RunSpec("nocensus", input_name, "parse", regime, f"census off ({regime})")
-        on = RunSpec("pgdq", input_name, "parse", regime, f"census on ({regime})")
+        off, on = _census_specs(input_name, regime)
         session.sweep(figure, [off, on], session.cfg.reps(6))
         off_v, on_v = session.get(figure, off), session.get(figure, on)
         label = "cold, on the SSD" if regime == "cold" else "warm, on tmpfs"
@@ -2014,6 +2132,152 @@ def run_nested_decode_micro(session: Session) -> str:
     return table + notes
 
 
+# -- the allocator ----------------------------------------------------------
+
+#: The three headline shapes, over the control file, warm, each paired with
+#: the figure whose reading of it is shared rather than retaken.
+#:
+#: These are the shapes the phase's baseline table quotes and the shapes the
+#: profile was taken on: `parse` is discovery, and the two `query` modes are
+#: row extraction with and without typing. Nothing narrower would answer the
+#: question, because the allocator's share of each is different -- the
+#: allocator is ~8% of a `typed` query's user time and does not appear in
+#: `parse`'s profile at all, and it is `parse` where the answer turned out to
+#: be decided.
+_ALLOCATOR_SHAPES: tuple[tuple[str, str, str], ...] = (
+    ("parse", "`pgdq parse` — structure discovery", "census-brace-free"),
+    (
+        "query-strings",
+        "`query --schema-mode strings` — zero-copy extraction",
+        "nested-end-to-end",
+    ),
+    ("query-typed", "`query --schema-mode typed`", "nested-end-to-end"),
+)
+
+
+def _allocator_reference(cfg: Config) -> str:
+    """The allocator the *shipped* binary links against, read out of it.
+
+    This figure's reference column is `target/release/pgdq` itself rather than
+    a fourth build of the same source, for two reasons. It is the binary every
+    other figure in the doc was taken with, so the ratios are ratios against
+    the published numbers instead of against a build nothing else uses -- and
+    two builds of one source can differ by ~10% from code layout alone
+    (`measurements.md`, "Two builds of one source can differ by layout"), which
+    is larger than the effect being measured. And it keeps the doc carrying
+    **one** number per measurement: the reference readings are borrowed from
+    the figures that already take them, exactly as the census table's
+    census-on column is shared with the warm throughput table.
+
+    Reading the name off the binary rather than assuming `system` is what makes
+    the figure survive its own answer: adopt a leg and this becomes the
+    reference, with the other two measured against it and no code change."""
+    if cfg.dry_run:
+        return ALLOCATOR_LEGS[0]
+    return binary_allocator(cfg.bin_pgdq)
+
+
+def allocator_columns(reference: str) -> list[str]:
+    """The table's columns: the shipped allocator first, then the rest in
+    register order. The reference is the column the ratios are against, so it
+    is the one a reader needs first."""
+    return [reference] + [leg for leg in ALLOCATOR_LEGS if leg != reference]
+
+
+def _allocator_specs(reference: str) -> list[RunSpec]:
+    """Every leg of every shape, plus the co-measured floor.
+
+    The reference leg runs as the plain `pgdq` binary; the others are built
+    per leg. The floor is one row rather than three: `dd` links no allocator,
+    so a per-leg floor would be three readings of one thing. It is here for
+    the same reason every other warm table co-measures one -- a session's own
+    drift is what a warm absolute is read against."""
+    if reference not in ALLOCATOR_LEGS:
+        raise ValueError(f"unknown allocator leg {reference!r}")
+    specs = []
+    for command, label, _ in _ALLOCATOR_SHAPES:
+        for leg in allocator_columns(reference):
+            binary = "pgdq" if leg == reference else f"alloc:{leg}"
+            specs.append(RunSpec(binary, "control", command, "warm", f"{label} ({leg})"))
+    specs.append(RunSpec("none", "control", "dd", "warm", "`dd` → `/dev/null` (warm)"))
+    return specs
+
+
+def run_allocator(session: Session) -> str:
+    figure = "allocator"
+    reference = _allocator_reference(session.cfg)
+    columns = allocator_columns(reference)
+    specs = _allocator_specs(reference)
+    # The reference column, shape by shape, from whichever figure already took
+    # it. Borrowed rather than retaken so the doc carries one number per
+    # measurement; measured here, with a note, when this figure runs alone.
+    borrowed = []
+    for command, _, source in _ALLOCATOR_SHAPES:
+        spec = RunSpec("pgdq", "control", command, "warm", "")
+        readings = session.borrow(source, spec)
+        if readings:
+            session.readings[spec.key(figure)] = list(readings)
+            borrowed.append(f"`{command}` from `{source}`")
+    to_run = [s for s in specs if s.key(figure) not in session.readings]
+    session.sweep(figure, to_run, session.cfg.reps(5))
+
+    rows = []
+    for command, label, _ in _ALLOCATOR_SHAPES:
+        cells = [label]
+        reference_median = median(
+            session.get(figure, RunSpec("pgdq", "control", command, "warm", ""))
+        )
+        for leg in columns:
+            binary = "pgdq" if leg == reference else f"alloc:{leg}"
+            values = session.get(figure, RunSpec(binary, "control", command, "warm", ""))
+            cell = fmt_median_spread(values)
+            if leg != reference:
+                cell += f" — {median(values) / reference_median:.2f}×"
+            cells.append(cell)
+        rows.append(cells)
+    rows.append(
+        [
+            "`dd` → `/dev/null` — the co-measured floor",
+            fmt_median_spread(session.get(figure, specs[-1])),
+            *(["—"] * (len(columns) - 1)),
+        ]
+    )
+    header = [
+        f"`{leg}`" + (" — the shipped binary" if leg == reference else "")
+        for leg in columns
+    ]
+    table = md_table(["Warm, on tmpfs", *header], rows)
+
+    if session.cfg.dry_run:
+        provenance = "Legs are not built or interrogated under `--dry-run`.\n"
+    else:
+        legs = ", ".join(
+            f"`{leg}`"
+            if leg == reference
+            else f"`{binary_allocator(ensure_allocator_binary(session.cfg, leg, session.log))}`"
+            for leg in columns
+        )
+        provenance = (
+            "Every leg was asked what it links against before it was timed — "
+            f"{legs} — so a leg whose build silently dropped its feature cannot be "
+            "published as a comparison of two identical binaries.\n"
+        )
+    if borrowed:
+        provenance += (
+            "\nThe reference column is shared, not retaken: "
+            + ", ".join(borrowed)
+            + " — the same binary, command and input.\n"
+        )
+    else:
+        provenance += (
+            "\n**Partial sweep**: the reference column was measured here rather than shared "
+            "with `census-brace-free` and `nested-end-to-end`, which this session did not "
+            "emit. Those are the same measurements and must agree, so emit them together "
+            "before folding any of them in.\n"
+        )
+    return table + "\n\n" + provenance + "\n" + _per_rep(figure, session, specs)
+
+
 def _fmt_ns(ns: float) -> str:
     return f"{ns / 1000:.2f} µs" if ns >= 1000 else f"{ns:.0f} ns"
 
@@ -2196,6 +2460,36 @@ FIGURES: list[Figure] = [
         depends=(*SCAN, *NESTED, *QUERY_CLI, *GEN_PERF),
         warm_inputs=("arrays",),
         run=run_projection_widths,
+    ),
+    # `depends` is the union of what moves the three shapes it times, because
+    # a table of *ratios* between allocators is invalidated by a change in
+    # what any of the three shapes allocates -- which is most of the row path.
+    # The CLI's own manifest is in there too: that is where the legs are
+    # declared and where the shipped default lives, so a change to it changes
+    # what this figure is a figure of.
+    Figure(
+        id="allocator",
+        quoted_by=(
+            "docs/design/architecture.md",
+            "docs/design/roadmap-P7-scan-performance.md",
+            "docs/status/STATUS.md",
+        ),
+        section="Which allocator a figure was taken under",
+        stage="warm",
+        depends=(
+            *SCAN,
+            *MAP,
+            *NESTED,
+            *QUERY_CLI,
+            *GEN_PERF,
+            # Where the legs are declared and where the shipped default lives,
+            # so a change to it changes what this figure is a figure of.
+            # `src/alloc.rs` needs no line of its own: `QUERY_CLI` is the
+            # directory.
+            "pgdump_query-cli/Cargo.toml",
+        ),
+        warm_inputs=("control",),
+        run=run_allocator,
     ),
 ]
 
@@ -2522,11 +2816,20 @@ def git_head() -> tuple[str, bool]:
     return head, bool(figures_touched(changed))
 
 
-def session_stamp(head: str, dirty: bool) -> str:
+def session_stamp(head: str, dirty: bool, allocator: str | None = None) -> str:
+    """The line the doc carries, and the line `stamped_commit` reads back.
+
+    The allocator is part of it because a figure here is a **CLI** figure,
+    taken under whatever `pgdq` links against -- see `measurements.md`, "Which
+    allocator a figure was taken under". It is read out of the binary rather
+    than assumed, so the day the CLI's default changes the stamp changes with
+    it; `None` where there is no binary to ask, which is `--dry-run` and the
+    unit tests."""
     suffix = " (with uncommitted changes under a measured path)" if dirty else ""
+    alloc = f", under the `{allocator}` allocator" if allocator else ""
     return (
         f"**Session stamp.** Every figure below was taken by `scripts/measure.py` on "
-        f"{date.today().isoformat()}, against commit `{head}`{suffix}."
+        f"{date.today().isoformat()}, against commit `{head}`{suffix}{alloc}."
     )
 
 
@@ -2542,7 +2845,11 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
         log_file.flush()
 
     head, dirty = git_head()
-    log(f"measure.py — {len(figures)} figure(s), commit {head}{' (dirty)' if dirty else ''}")
+    allocator = None if cfg.dry_run else binary_allocator(cfg.bin_pgdq)
+    log(
+        f"measure.py — {len(figures)} figure(s), commit {head}{' (dirty)' if dirty else ''}"
+        + (f", allocator {allocator}" if allocator else "")
+    )
     log(f"output: {out_root}")
     if not cfg.publishable:
         log(
@@ -2633,7 +2940,7 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
     header = [
         "# measure.py output",
         "",
-        session_stamp(head, dirty),
+        session_stamp(head, dirty, allocator),
         "",
         "Each section below is one figure, ready to paste under its heading in "
         "`docs/design/measurements.md`.",

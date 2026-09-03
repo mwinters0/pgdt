@@ -224,6 +224,202 @@ class Scripts(unittest.TestCase):
                     measure._script(command)
 
 
+class Allocator(unittest.TestCase):
+    """The allocator figure: three binaries, three shapes, one table.
+
+    Every assertion here is a way to get a plausible table of the wrong
+    comparison, which is the same family of failure as profiling the `release`
+    binary and labelling it `profiling`. Two are about the *reference* column
+    and are the ones the design turns on: it must be the binary every other
+    figure was taken with, and its readings must be shared rather than retaken,
+    or the doc carries two numbers for one measurement.
+    """
+
+    def test_the_reference_leg_is_the_shipped_binary(self):
+        # Not a fourth build of the same source: two builds of one source
+        # differ by ~10% from code layout alone, which is larger than the
+        # effect being measured.
+        specs = measure._allocator_specs("system")
+        reference = [s for s in specs if s.command == "parse" and s.binary == "pgdq"]
+        self.assertEqual(len(reference), 1)
+
+    def test_every_other_leg_is_its_own_build(self):
+        specs = measure._allocator_specs("system")
+        binaries = {s.binary for s in specs if s.command == "parse"}
+        self.assertEqual(binaries, {"pgdq", "alloc:jemalloc", "alloc:mimalloc"})
+
+    def test_the_reference_is_read_off_the_binary_not_assumed(self):
+        # Adopt a leg and it becomes the reference with no code change; assume
+        # `system` instead and the figure would compare a leg against itself.
+        for reference in measure.ALLOCATOR_LEGS:
+            with self.subTest(reference=reference):
+                columns = measure.allocator_columns(reference)
+                self.assertEqual(columns[0], reference)
+                self.assertEqual(sorted(columns), sorted(measure.ALLOCATOR_LEGS))
+                specs = measure._allocator_specs(reference)
+                shipped = {s.binary for s in specs if s.command == "parse"}
+                self.assertIn("pgdq", shipped)
+                self.assertNotIn(f"alloc:{reference}", shipped)
+
+    def test_an_unknown_reference_is_an_error(self):
+        with self.assertRaises(ValueError):
+            measure._allocator_specs("tcmalloc")
+
+    def test_every_shape_is_run_on_every_leg(self):
+        specs = measure._allocator_specs("system")
+        timed = collections.Counter(
+            (s.command, s.binary) for s in specs if s.command != "dd"
+        )
+        self.assertEqual(len(timed), len(measure._ALLOCATOR_SHAPES) * 3)
+        self.assertEqual(set(timed.values()), {1})
+
+    def test_the_floor_is_one_row_not_one_per_leg(self):
+        # `dd` links no allocator, so three floor readings would be three
+        # readings of one thing.
+        specs = measure._allocator_specs("system")
+        floors = [s for s in specs if s.command == "dd"]
+        self.assertEqual(len(floors), 1)
+        self.assertEqual(floors[0].binary, "none")
+        self.assertIs(floors[0], specs[-1])
+
+    def test_every_shape_is_warm_on_the_control(self):
+        for spec in measure._allocator_specs("system"):
+            with self.subTest(spec=spec.label):
+                self.assertEqual(spec.regime, "warm")
+                self.assertEqual(spec.input, "control")
+
+    def test_the_shapes_are_the_three_the_baseline_quotes(self):
+        commands = [c for c, _, _ in measure._ALLOCATOR_SHAPES]
+        self.assertEqual(commands, ["parse", "query-strings", "query-typed"])
+        for command in commands:
+            with self.subTest(command=command):
+                # A shape the sweep does not time is a shape no figure can be
+                # read against.
+                self.assertIn("time /pgdq", measure._script(command))
+
+    def test_each_shape_names_a_figure_that_takes_its_reference_reading(self):
+        # The borrow is what keeps one number in the doc per measurement, and
+        # it silently does nothing if the source figure never takes that spec.
+        order = [f.id for f in measure.FIGURES]
+        for command, _, source in measure._ALLOCATOR_SHAPES:
+            with self.subTest(command=command):
+                self.assertIn(source, measure.FIGURES_BY_ID)
+                self.assertLess(order.index(source), order.index("allocator"))
+        census = measure._census_specs("control", "warm")
+        self.assertIn(
+            measure.RunSpec("pgdq", "control", "parse", "warm", "").key("census-brace-free"),
+            {s.key("census-brace-free") for s in census},
+        )
+        nested = measure._nested_specs()
+        for command in ("query-strings", "query-typed"):
+            with self.subTest(command=command):
+                self.assertIn(
+                    measure.RunSpec("pgdq", "control", command, "warm", "").key(
+                        "nested-end-to-end"
+                    ),
+                    {s.key("nested-end-to-end") for s in nested},
+                )
+
+    def test_a_version_string_yields_its_allocator(self):
+        with unittest.mock.patch.object(
+            measure, "run", return_value="pgdq 0.1.0 (allocator: mimalloc)\n"
+        ):
+            self.assertEqual(measure.binary_allocator(Path("/pgdq")), "mimalloc")
+
+    def test_a_binary_that_names_no_allocator_is_an_error(self):
+        # Not a default: a binary too old to report it would otherwise be
+        # published as the reference leg under a name nothing checked.
+        with unittest.mock.patch.object(measure, "run", return_value="pgdq 0.1.0\n"):
+            with self.assertRaises(RuntimeError):
+                measure.binary_allocator(Path("/pgdq"))
+
+    def test_an_unknown_leg_is_never_built(self):
+        with self.assertRaises(ValueError):
+            measure.ensure_allocator_binary(measure.Config(), "tcmalloc", lambda _: None)
+
+    def test_a_leg_builds_with_no_default_features_and_its_own_target_dir(self):
+        # Both flags are load-bearing. Without `--no-default-features` the
+        # reference leg stops being the platform allocator the day one is
+        # adopted, so the figure stops being re-takeable at the moment it
+        # matters; without its own `--target-dir` a `--features` build
+        # overwrites `target/release/pgdq` and every other figure in the same
+        # sweep is timed under the wrong allocator.
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = measure.Config(
+                out_dir=Path(tmp) / "runs", alloc_build_root=Path(tmp) / "builds"
+            )
+            calls = []
+
+            def fake_run(argv, cwd=None, capture=False, quiet=False):
+                calls.append(list(argv))
+                built = cfg.alloc_build_root / "jemalloc" / "release"
+                built.mkdir(parents=True, exist_ok=True)
+                (built / "pgdq").write_text("#!/bin/true\n")
+                return ""
+
+            with unittest.mock.patch.object(measure, "run", fake_run), \
+                 unittest.mock.patch.object(
+                     measure, "binary_allocator", return_value="jemalloc"
+                 ):
+                out = measure.ensure_allocator_binary(cfg, "jemalloc", lambda _: None)
+            self.assertEqual(len(calls), 1)
+            argv = calls[0]
+            self.assertIn("--no-default-features", argv)
+            self.assertEqual(argv[argv.index("--features") + 1], "jemalloc")
+            self.assertEqual(
+                argv[argv.index("--target-dir") + 1],
+                str(cfg.alloc_build_root / "jemalloc"),
+            )
+            self.assertEqual(out, cfg.out_dir / "pgdq-alloc-jemalloc")
+
+    def test_a_leg_whose_build_dropped_its_feature_is_refused(self):
+        # The build succeeds and produces a working binary, so nothing else
+        # would notice: the table would compare two identical binaries.
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = measure.Config(
+                out_dir=Path(tmp) / "runs", alloc_build_root=Path(tmp) / "builds"
+            )
+
+            def fake_run(argv, cwd=None, capture=False, quiet=False):
+                built = cfg.alloc_build_root / "mimalloc" / "release"
+                built.mkdir(parents=True, exist_ok=True)
+                (built / "pgdq").write_text("#!/bin/true\n")
+                return ""
+
+            with unittest.mock.patch.object(measure, "run", fake_run), \
+                 unittest.mock.patch.object(
+                     measure, "binary_allocator", return_value="system"
+                 ):
+                with self.assertRaises(RuntimeError):
+                    measure.ensure_allocator_binary(cfg, "mimalloc", lambda _: None)
+            self.assertFalse((cfg.out_dir / "pgdq-alloc-mimalloc").exists())
+
+    def test_an_allocator_leg_resolves_to_a_binary(self):
+        session = measure.Session(measure.Config(dry_run=True), None, lambda _: None)
+        self.assertEqual(
+            session.binary_path("alloc:jemalloc"),
+            measure.Config().out_dir / "pgdq-alloc-jemalloc",
+        )
+
+    def test_an_unknown_binary_is_still_an_error(self):
+        session = measure.Session(measure.Config(dry_run=True), None, lambda _: None)
+        with self.assertRaises(ValueError):
+            session.binary_path("alloc")
+
+    def test_the_stamp_names_the_allocator_it_was_given(self):
+        stamp = measure.session_stamp("deadbee", dirty=False, allocator="mimalloc")
+        self.assertIn("mimalloc", stamp)
+        # And still reads back as a stamp: the commit is what `--stale`
+        # resolves, and the allocator sits after it.
+        with tempfile.TemporaryDirectory() as tmp:
+            doc = Path(tmp) / "measurements.md"
+            doc.write_text(stamp + "\n")
+            self.assertEqual(measure.stamped_commit(doc), "deadbee")
+
+    def test_a_stamp_with_no_binary_to_ask_names_no_allocator(self):
+        self.assertNotIn("allocator", measure.session_stamp("deadbee", dirty=False))
+
+
 class ProjectionWidths(unittest.TestCase):
     """One file read at five widths, which is the whole instrument.
 
