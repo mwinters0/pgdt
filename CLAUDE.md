@@ -36,6 +36,7 @@ cd scripts && uv run measure.py --check           # figure markers vs the doc, a
 cd scripts && uv run measure.py --verify-additive # inputs regenerated at two revisions, compared byte for byte
 cd scripts && uv run measure.py --figure <id>     # re-take one figure — one whole table
 cd scripts && uv run measure.py --all             # the whole sweep: ~1 h, detach it
+cd scripts && uv run measure.py --profile-recipe  # the sampling-profile sequence, printed; minutes, not detached
 cd scripts && uv run python -m unittest test_measure   # the harness's own tests
 
 cd scripts && uv run deficiencies.py              # deficiency register: index vs. detail entries vs. code markers vs. the slice pairing vs. the roadmap's phase index
@@ -255,6 +256,23 @@ a number and be rewritten when that number moves; `--check` reconciles the
 markers against the register and prints each figure's consumers. The paths and sizes it uses are environment
 variables (`PGDQ_MEASURE_*`) whose defaults suit this machine — see
 `CLAUDE.local.md`.
+
+**A profile is not a figure, and the harness prints its recipe too.** `cd
+scripts && uv run measure.py --profile-recipe` emits the whole sampling-profile
+sequence with every path filled in and runs none of it — the second invocation
+the harness owns without executing, for the opposite reason to koji's: a
+profile takes seconds, attributes cost per function rather than per
+subtraction, and needs no quiet machine, because what it reports is a
+proportion. So it produces a `runs/` artifact, never a median, an apparatus
+line or a `measurements.md` marker. **Read it against a figure, not instead of
+one**: the profiled invocations are the same command shapes the sweep times,
+and `scripts/test_measure.py` is what holds them so. Five of its details decide
+whether the profile describes what it claims to — the `profiling` binary rather
+than `release`, `-C force-frame-pointers=yes` on the build line, `--call-graph
+fp` matching it, a warm input, and libc's own symbols, without which half of a
+`parse` profile is bare addresses — and each fails by returning a
+plausible-looking profile of something else, which is why they are asserted
+rather than remembered.
 
 `docs/design/pg-dump-compatibility.md` tracks which `pg_dump` options/variants
 are tested/untested/unsupported.

@@ -15,11 +15,16 @@ alternatives and its limitations. The capability table below says what state
 each is in.
 
 [`../design/measurements.md`](../design/measurements.md) carries the `ba2fc12`
-stamp of 2026-09-03 and **no figure is stale**: the scan-performance baseline
-sweep pair was taken and folded in whole, so all thirteen tables come from one
-sitting. `measure.ACKNOWLEDGED` carries two entries, both excusing `7545dc6`
-— P7's staging retargeted one doc comment and one `quoted_by` list at the
-drained inbox, and neither reaches a timed path. A stale figure obliges no sweep
+stamp of 2026-09-03: the scan-performance baseline sweep pair was taken and
+folded in whole, so all thirteen tables come from one sitting.
+`measure.ACKNOWLEDGED` carries two entries, both excusing `7545dc6` — P7's
+staging retargeted one doc comment and one `quoted_by` list at the drained
+inbox, and neither reaches a timed path. **One figure is stale and owes an
+acknowledgement, not a sweep**: 7.1 added `--profile-recipe` to
+`scripts/measure.py`, which `session-drift` declares, and the reachability
+oracle settles it — a new subcommand no sweep command shape executes, with
+nothing on a timed path changed. An entry cannot name its own sha, so it lands
+as a follow-up exactly as `175f83e` did. A stale figure obliges no sweep
 and neither does a wrap: a full sweep is an hour of a quiet machine and belongs
 to the phase that is about performance, which will re-take every table under its
 own apparatus
@@ -60,6 +65,14 @@ not oblige a sweep").
 | Device-bound scan performance campaign | not started — P7, which is single-threaded and aimed at the row-extraction path; parallelism is P16 |
 | Per-row-group column statistics, sparse row index | not started — the index is built by whichever of P16 (parallel splits) or P10 (row groups) runs first; `CopyBlock::sparse_index` and `CopyBlock::column_stats` stay reserved `None`s |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — P8 (the map already locates and attributes `INSERT` runs) |
+
+**Profiles are not figures.** `cd scripts && uv run measure.py
+--profile-recipe` prints the sampling-profile sequence and runs none of it; a
+profile is a `runs/` artifact with no median, no apparatus gate and no marker.
+Six of them exist — `parse`, `strings` and `typed` over the control and the
+`--arrays --composite` file — and the instrument's own floor is measured beside
+them
+([`../design/roadmap-P7.1-profiling-apparatus-notes.md`](../design/roadmap-P7.1-profiling-apparatus-notes.md)).
 
 **Figures.** Every figure in
 [`../design/measurements.md`](../design/measurements.md) comes from the
@@ -108,10 +121,11 @@ phase follows the profile, so a slice landing out of numeric order is the plan
 working. `7.3` is the one exception: an allocator adopted after a figure is
 taken invalidates that figure.
 
-- [ ] **7.1** The profiling apparatus — `[profile.profiling]`, the tool, and a
+- [x] **7.1** The profiling apparatus — `[profile.profiling]`, `perf`, and a
       `measure.py --profile-recipe` that prints the invocation on the
-      `--koji-recipe` precedent. First profiles of `parse`, `strings` and
-      `typed`. No library code.
+      `--koji-recipe` precedent. Six first profiles, and the instrument's own
+      floor. No library code. Notes:
+      [`../design/roadmap-P7.1-profiling-apparatus-notes.md`](../design/roadmap-P7.1-profiling-apparatus-notes.md)
 - [ ] **7.2** The decomposition, published — `architecture.md`'s "where a
       scan's time goes", the `INSERT` +10% differential profile, the layer the
       `INSERT` fast path takes, and readings for the three measure-only levers.
@@ -145,8 +159,9 @@ taken invalidates that figure.
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **P7 is open**, grilled and sliced; the checklist above is its progress and
-  nothing of it is built yet. Six other phases are sketched and one more is
+- **P7 is open**, grilled and sliced; the checklist above is its progress, and
+  only its apparatus slice has landed — no library code has changed for it. Six
+  other phases are sketched and one more is
   specified — P13, P16, P10, P14, P6, P15, P8, in the roadmap table's schedule
   order; a `P<k>` is an identifier, so the numbers say nothing about the order
   they run in. P13 is grilled, specified and **blocked** on an external
@@ -293,4 +308,22 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-Nothing is open.
+- **The profiling recipe fetches libc's debug symbols into `~/.debug`, which is
+  a fourth place outside the repo.** Without them ~48% of a warm `parse`
+  profile is bare addresses in `libc.so.6`, and those addresses are
+  `__memmove_avx_unaligned_erms` and `__memset_avx2_unaligned_erms` — the pair
+  a phase about zero-copy most needs named, so the alternative was writing the
+  decomposition out of the third-largest bucket. This machine's libc is
+  stripped and its distribution ships no debug package, and this `perf` links
+  `libdebuginfod` while exposing no flag for it, so the recipe fetches the
+  debuginfo itself into `perf`'s own build-id cache: user-local, no root, no
+  package, undone by `rm -r ~/.debug`, and skipped by setting
+  `PGDQ_PROFILE_DEBUGINFOD` empty. **What it costs is a written rule.**
+  [`../../CLAUDE.local.md`](../../CLAUDE.local.md) says this project's
+  out-of-repo data lives in exactly the two scratch volumes plus the NVMe
+  staging area; `~/.debug` is argued as not ours — it is `perf`'s cache of a
+  distribution artifact, shared by anything that profiles on this machine —
+  rather than as an exception to that rule, and someone else may read it the
+  other way. Reconsidering it means either installing debug symbols
+  system-wide, which needs root, or reading every `parse` profile with half its
+  cost unattributed.

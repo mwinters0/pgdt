@@ -907,6 +907,111 @@ class KojiRecipe(unittest.TestCase):
                         self.assertTrue(line.rstrip().endswith("\\"), line)
 
 
+class ProfileRecipe(unittest.TestCase):
+    """The sampling profile is printed here for the same reason koji's scan is,
+    but its failure mode is the opposite one. koji's mistakes lose a run
+    loudly; every mistake below returns a profile that looks fine and describes
+    something else."""
+
+    def _recipe(self) -> str:
+        return measure.profile_recipe(measure.Config())
+
+    def test_the_profiling_binary_is_the_one_profiled(self):
+        # `release` carries no line tables and no frame pointers, so a profile
+        # of it is a flat list of unnameable addresses. The published figures
+        # stay on `release`, which is why this is a second binary.
+        recipe = self._recipe()
+        self.assertIn("target/profiling/pgdq", recipe)
+        self.assertNotIn("target/release/pgdq", recipe)
+
+    def test_frame_pointers_come_from_the_build_line(self):
+        # Cargo has no profile key for them, so `[profile.profiling]` alone
+        # gives line tables and a call graph that stops at the leaf.
+        recipe = self._recipe()
+        self.assertIn("-C force-frame-pointers=yes", recipe)
+        self.assertIn("--profile profiling", recipe)
+
+    def test_the_unwinder_matches_the_build(self):
+        # `dwarf` needs debug info this profile does not carry, and its 8 KiB
+        # stack copy per sample would change the thing being measured.
+        self.assertIn("--call-graph fp", self._recipe())
+        self.assertNotIn("--call-graph dwarf", self._recipe())
+
+    def test_the_input_is_warm(self):
+        # Off the SSD this profiles `pread` waiting for a device; the
+        # proportions the phase reads are CPU proportions. The cold cache dir
+        # may therefore appear only as the source of the staging copy.
+        cfg = measure.Config()
+        recipe = measure.profile_recipe(cfg)
+        for name in measure.PROFILE_INPUTS:
+            with self.subTest(input=name):
+                self.assertIn(f"--source {cfg.warm_dir / f'{name}.sql'}", recipe)
+        for line in recipe.splitlines():
+            if str(cfg.cache_dir) in line:
+                with self.subTest(line=line):
+                    self.assertTrue(line.startswith("cp "), line)
+
+    def test_the_libc_frames_are_named_before_anything_is_recorded(self):
+        # Without the fetch, a quarter of a warm `parse` profile is bare
+        # addresses in libc.so.6 — and they are memmove and memset, which is
+        # the half of a zero-copy phase's answer. The fetch must precede the
+        # first `perf record`, or the first profile is the unreadable one.
+        recipe = self._recipe()
+        self.assertIn(measure.DEBUGINFOD, recipe)
+        self.assertIn(".debug/", recipe)
+        self.assertLess(recipe.index("buildid"), recipe.index("perf record"))
+
+    def test_the_step_numbering_has_no_hole_without_debuginfod(self):
+        # The step is optional — right on a machine whose libc carries symbols.
+        with unittest.mock.patch.object(measure, "DEBUGINFOD", ""):
+            recipe = measure.profile_recipe(measure.Config())
+        self.assertNotIn("debuginfod", recipe)
+        numbered = [
+            int(ln.split(".")[0][2:]) for ln in recipe.splitlines()
+            if re.match(r"^# \d+\. ", ln)
+        ]
+        self.assertEqual(numbered, list(range(len(numbered))))
+
+    def test_no_container_is_involved(self):
+        # A profile is about proportions, and the 512 MB cgroup adds capability
+        # plumbing without changing them.
+        self.assertNotIn("nerdctl", self._recipe())
+        self.assertNotIn("--memory-swap", self._recipe())
+
+    def test_every_shape_is_profiled_over_every_input(self):
+        recipe = self._recipe()
+        for name in measure.PROFILE_INPUTS:
+            for shape in measure.PROFILE_SHAPES:
+                with self.subTest(input=name, shape=shape):
+                    self.assertIn(f"profile-{shape}-{name}.data", recipe)
+                    self.assertIn(f"profile-{shape}-{name}.txt", recipe)
+
+    def test_a_profiled_shape_is_the_shape_the_sweep_times(self):
+        """The reconciliation that keeps a profile readable against a figure.
+
+        `_script` builds a container command line and `profile_argv` a host
+        argv, so the two cannot be one function — but a flag that moves in one
+        and not the other gives a profile of something no figure measures, and
+        nothing else would notice."""
+        for shape in measure.PROFILE_SHAPES:
+            with self.subTest(shape=shape):
+                timed = measure._script(shape).split()
+                # Drop `time /pgdq`, the trailing redirect, and the container's
+                # own paths; what is left is the flags both must agree on.
+                self.assertEqual(timed[:2], ["time", "/pgdq"])
+                timed = [w for w in timed[2:] if w != ">/dev/null"]
+                profiled = measure.profile_argv(shape, "/dump.sql", "/tmp/x.dqcache")
+                self.assertEqual(profiled, timed)
+
+    def test_the_recipe_never_runs_anything(self):
+        # The same rule koji's recipe obeys: this prints, and a session runs it
+        # by hand. A harness that ran it would be taking a figure.
+        with unittest.mock.patch.object(measure, "run") as ran:
+            with unittest.mock.patch("sys.stdout"):
+                measure.cmd_profile()
+        ran.assert_not_called()
+
+
 class SharedSections(unittest.TestCase):
     def test_the_two_throughput_tables_share_one_section(self):
         # The INSERT path's per-byte CPU is then a division within one place,

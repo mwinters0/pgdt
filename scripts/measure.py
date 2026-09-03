@@ -58,7 +58,13 @@ Usage:
     uv run measure.py --stage warm
     uv run measure.py --all
     uv run measure.py --stale --since <rev>
+    uv run measure.py --profile-recipe
     uv run python -m unittest test_measure -v
+
+Two invocations are printed rather than run, for opposite reasons: koji's
+because it is an hour on another medium, and the sampling profile's because a
+profile is not a figure at all. Both live here because a command kept in prose
+is a command that stops running.
 """
 
 from __future__ import annotations
@@ -2791,6 +2797,212 @@ def cmd_koji(wrap: bool) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------
+# The profiling recipe: printed, never run.
+#
+# P7's primary instrument is a sampling profile rather than a figure
+# (`roadmap-P7-scan-performance.md`, "How this phase measures"): it runs in
+# seconds, it attributes cost per function rather than per subtraction, and it
+# needs no quiet machine, because the answer it gives is a proportion. So it is
+# **not** a `Figure`: no reps, no median, no apparatus gate, no
+# `measurements.md` marker. What it shares with koji is why the invocation
+# lives here at all -- a command kept in prose is a command that stops running,
+# and this one has five ways to produce a plausible-looking profile of the
+# wrong thing.
+# --------------------------------------------------------------------------
+
+#: The profiler. `perf` needs no change to this machine's
+#: `perf_event_paranoid = 2`, which permits user-space sampling of one's own
+#: processes -- and user space is what this phase is about. `samply` is the
+#: alternative if a richer reader is wanted, and costs a sysctl.
+PERF = _env("PGDQ_PROFILE_PERF", "perf")
+
+#: Where libc's detached debug symbols come from. **This is not a nicety.**
+#: This machine's libc is stripped and its distribution ships no debug package,
+#: so ~48% of a warm `parse` profile arrives as bare addresses in `libc.so.6`
+#: -- and those addresses are `__memmove_avx_unaligned_erms` and
+#: `__memset_avx2_unaligned_erms`, which are the two functions a phase about
+#: zero-copy most needs to see. This `perf` links `libdebuginfod` and exposes
+#: no flag for it, so the fetch is explicit and lands in `perf`'s own build-id
+#: cache under `$HOME`: no root, no package, and nothing outside the user.
+#: Empty disables the step, which is right on a machine whose libc already
+#: carries symbols and wrong on one that silently does not.
+DEBUGINFOD = _env("PGDQ_PROFILE_DEBUGINFOD", "https://debuginfod.archlinux.org")
+
+#: Sampling frequency, in Hz. Prime, so it cannot fall into lockstep with a
+#: periodic phase of the thing being sampled.
+#:
+#: **4999 rather than the customary 997, and that is measured rather than
+#: preferred.** `parse` is the thin shape -- ~0.85 s warm on the control, so
+#: 997 Hz yields ~850 samples -- and over three reps at 997 the `memmove`
+#: bucket read 25.8 / 33.6 / 30.9 % and the two `memchr` kernels swapped rank.
+#: At 4999 the same three reps read 30.9 / 30.6 / 30.2 and the ranks hold. What
+#: does *not* tighten is the worker thread's `memset`, 29.2 / 21.3 / 18.9, so
+#: that spread is the workload rather than the instrument -- which is worth
+#: knowing before a profile is read as though every bucket were equally solid.
+#: The cost is data-file size (~0.7 MB for `parse`, ~19 MB for the longest
+#: shape) on a gitignored directory, and the kernel's own ceiling here is
+#: `perf_event_max_sample_rate` = 49000.
+PERF_FREQ = 4999
+
+#: The three command shapes profiled, in the order the baseline table reads
+#: them, and the sweep figure each is read against. `parse` is discovery;
+#: `query-strings` is row extraction before a column is typed; `query-typed`
+#: is the whole path.
+PROFILE_SHAPES: tuple[str, ...] = ("parse", "query-strings", "query-typed")
+
+#: The two inputs. The brace-free control is the shape most dumps have; the
+#: `--arrays --composite` file is where the nested path is reached at all.
+PROFILE_INPUTS: tuple[str, ...] = ("control", "arrays")
+
+
+def profile_argv(command: str, source: Path | str, cache: Path | str) -> list[str]:
+    """The `pgdq` arguments one profiled shape runs.
+
+    Deliberately the same flags `_script` hands the sweep, because a profile is
+    only readable against the figure it explains -- and a profile of a shape no
+    figure times answers a question nobody asked. The two are separate
+    functions because `_script` builds a *container* command line with a `time`
+    builtin in front of it and this one builds a host argv;
+    `test_measure.py`'s `ProfileRecipe` reconciles them shape by shape, so a
+    change to a measured invocation that misses this one fails there rather
+    than being discovered in a profile that quietly measured something else."""
+    if command == "parse":
+        return ["parse", "--source", str(source), "--dqcache", str(cache)]
+    if command in ("query-strings", "query-typed"):
+        mode = command.split("-")[1]
+        return [
+            "query",
+            "--source", str(source),
+            "--table", "public.perf",
+            "--dqcache", "none",
+            "--schema-mode", mode,
+        ]
+    raise ValueError(f"unknown profile shape {command!r}")
+
+
+def profile_recipe(cfg: Config) -> str:
+    """The whole sequence, with every path filled in.
+
+    Five things here decide whether the profile is of the thing it claims to
+    be, and each fails *silently* -- a profile comes back, it just describes
+    something else. `test_measure.py` asserts all five:
+
+    * **the `profiling` binary, never `target/release/pgdq`.** `release`
+      carries no line tables and no frame pointers, so `perf` attributes every
+      sample to an address it cannot name and the report is a flat list of
+      `[unknown]`. The published figures stay on `release`, which is why this
+      is a second binary rather than a change to the one they use.
+    * **`-C force-frame-pointers=yes` on the build line.** Cargo has no profile
+      key for frame pointers, so `[profile.profiling]` alone gives line tables
+      and a call graph that stops at the leaf. `RUSTFLAGS` fingerprints
+      separately, so this build does not evict `target/release/`.
+    * **`--call-graph fp`, matching that build.** `dwarf` would need full debug
+      info this profile does not carry, and its 8 KiB stack copies per sample
+      would change the thing being measured.
+    * **warm input, on tmpfs.** A profile taken off the SSD is a profile of
+      `pread` waiting for a device; the proportions this phase reads are CPU
+      proportions. Staging is a host copy for the same reason the sweep's is --
+      writing 3 GiB of tmpfs from inside the 512 MB container charges those
+      pages to its cgroup.
+    * **libc's symbols, fetched before the first `perf record`.** Without them
+      ~48% of a warm `parse` profile is bare addresses, and they are the
+      `memmove` and `memset` a phase about zero-copy exists to see -- see
+      `DEBUGINFOD` above for why the fetch is explicit rather than `perf`'s.
+
+    And one thing that is not a mistake but reads like one: **no container.**
+    A profile is about proportions, and the cgroup adds capability plumbing
+    without changing them (`roadmap-P7-scan-performance.md`, "How this phase
+    measures")."""
+    warm = cfg.warm_dir
+    binary = REPO / "target/profiling/pgdq"
+    cache = warm / "profile.dqcache"
+    out = cfg.out_dir
+
+    lines: list[str] = []
+    step = 0
+
+    def head(*text: str) -> None:
+        """A numbered step. Numbered as emitted rather than by literal, so the
+        optional debuginfod step does not leave a hole in the sequence on a
+        machine whose libc already carries symbols."""
+        nonlocal step
+        lines.extend([f"# {step}. {text[0]}", *(f"#    {t}" for t in text[1:])])
+        step += 1
+
+    head(
+        "The tool. `perf_event_paranoid = 2` already permits user-space",
+        "sampling of one's own processes, so nothing here needs a sysctl.",
+    )
+    lines += [f"{PERF} --version", ""]
+
+    head(
+        "The profiling build. Frame pointers are not a Cargo profile key,",
+        "so they come from RUSTFLAGS; `release` is untouched either way.",
+    )
+    lines += [
+        'RUSTFLAGS="-C force-frame-pointers=yes" \\',
+        "  cargo build --profile profiling -p pgdump_query-cli",
+        "",
+    ]
+
+    if DEBUGINFOD:
+        head(
+            "Name the libc frames. Without this a quarter of a `parse` profile",
+            "is bare addresses in libc.so.6 -- and they are the memmove and",
+            "memset a zero-copy phase exists to see. perf links libdebuginfod",
+            "and exposes no flag for it, so the fetch is explicit; it lands in",
+            "perf's own build-id cache, which needs no root and no package.",
+        )
+        lines += [
+            f"LIBC=$(ldd {binary} | awk '/libc\\.so/{{print $3}}')",
+            'BID=$(readelf -n "$LIBC" | awk \'/Build ID/{print $NF}\')',
+            'DBG="$HOME/.debug/${LIBC#/}/$BID"',
+            'mkdir -p "$DBG"',
+            'test -f "$DBG/debug" || curl -sSf -o "$DBG/debug" \\',
+            f'  "{DEBUGINFOD}/buildid/$BID/debuginfo"',
+            "",
+        ]
+
+    head("Stage the inputs warm, on the host.")
+    lines.append(f"mkdir -p {warm} {out}")
+    for name in PROFILE_INPUTS:
+        lines.append(f"cp -n {cfg.cache_dir / f'{name}.sql'} {warm / f'{name}.sql'}")
+    lines.append("")
+    head("The profiles. Each is a runs/ artifact, not a figure.")
+    for name in PROFILE_INPUTS:
+        for shape in PROFILE_SHAPES:
+            stem = f"profile-{shape}-{name}"
+            argv = " ".join(profile_argv(shape, warm / f"{name}.sql", cache))
+            lines += [
+                "",
+                f"rm -f {cache}",
+                f"{PERF} record -F {PERF_FREQ} --call-graph fp "
+                f"-o {out / (stem + '.data')} \\",
+                f"  -- {binary} {argv} >/dev/null",
+                f"{PERF} report -i {out / (stem + '.data')} --stdio --no-children \\",
+                f"  --percent-limit 0.5 > {out / (stem + '.txt')}",
+            ]
+    lines.append("")
+    head("Tear down: tmpfs is 16 G and six inputs do not fit beside a sweep's.")
+    lines.append(
+        f"rm -f {' '.join(str(warm / f'{n}.sql') for n in PROFILE_INPUTS)} {cache}"
+    )
+    return "\n".join(lines)
+
+
+def cmd_profile() -> int:
+    cfg = Config()
+    print(
+        "# A profile is not a figure: no medians, no apparatus gate, no marker in\n"
+        "# measurements.md. It is a runs/ artifact, read for proportions\n"
+        "# (roadmap-P7-scan-performance.md, \"How this phase measures\"). The whole\n"
+        "# sequence is minutes, so it is not a detached job.\n"
+    )
+    print(profile_recipe(cfg))
+    return 0
+
+
 def cmd_check(doc: Path) -> int:
     """Reconcile the register against the doc: which figures have landed a
     marker, which markers name nothing, and which documents a fold-in must
@@ -3103,6 +3315,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="with --koji-recipe: the stop-report-resume-compare sequence instead",
     )
+    parser.add_argument(
+        "--profile-recipe",
+        action="store_true",
+        help="print the sampling-profile sequence — the harness owns it but never runs it",
+    )
     parser.add_argument("--reps", type=int, help="override every figure's rep count (smoke runs only)")
     parser.add_argument("--dry-run", action="store_true", help="print what would run, measure nothing")
     parser.add_argument("--keep-warm", action="store_true", help="leave staged inputs on tmpfs")
@@ -3121,6 +3338,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return cmd_drift(*args.drift)
     if args.koji_recipe:
         return cmd_koji(args.wrap)
+    if args.profile_recipe:
+        return cmd_profile()
     if args.check:
         return cmd_check(REPO / "docs/design/measurements.md")
     if args.stale:

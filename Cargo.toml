@@ -5,3 +5,19 @@ members = ["pgdump_query", "pgdump_query-cli"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+
+# The profiling build. P7's primary instrument is a sampling profile
+# (`docs/design/roadmap-P7-scan-performance.md`, "How this phase measures"), and
+# a profile of a stock `release` binary is unreadable: no line tables, and
+# `perf`'s frame-pointer unwinder walks into garbage the moment it leaves a
+# leaf. This profile inherits `release` and adds only what the unwinder needs,
+# so **`release` — what every published figure is taken with — is untouched**.
+#
+# Frame pointers are *not* here, because Cargo has no profile key for them:
+# they come from `-C force-frame-pointers=yes` on the build line, which
+# `cd scripts && uv run measure.py --profile-recipe` prints. A `RUSTFLAGS` build
+# fingerprints separately, so `target/release/` survives a profiling build.
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"
+strip = "none"
