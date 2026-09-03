@@ -17,13 +17,13 @@ each is in.
 [`../design/measurements.md`](../design/measurements.md) carries the `ba2fc12`
 stamp of 2026-09-03: the scan-performance baseline sweep pair was taken and
 folded in whole, so all thirteen tables come from one sitting.
-`measure.ACKNOWLEDGED` carries five entries and **no figure is stale**: two
+`measure.ACKNOWLEDGED` carries six entries and **no figure is stale**: two
 excuse `7545dc6`, where P7's staging retargeted one doc comment and one
-`quoted_by` list at the drained inbox, and three excuse `fbaaa49`, `a6bf6cd`
-and `305af4b`, which between them added `--profile-recipe` to
-`scripts/measure.py` and then rewrote its prose. All five are the reachability
-oracle: a subcommand no sweep command shape executes, with nothing on a timed
-path changed. A stale figure obliges no sweep and neither does a wrap: a full
+`quoted_by` list at the drained inbox, and four excuse `fbaaa49`, `a6bf6cd`,
+`305af4b` and `360e144`, which between them added `--profile-recipe` to
+`scripts/measure.py` and then rewrote its prose twice. All six are the
+reachability oracle: a subcommand no sweep command shape executes, with nothing
+on a timed path changed. A stale figure obliges no sweep and neither does a wrap: a full
 sweep is an hour of a quiet machine and belongs to the phase that is about
 performance, which will re-take every table under its own apparatus
 ([`../design/measurements.md`](../design/measurements.md), "A stale figure does
@@ -123,8 +123,10 @@ The phase's spec, its measured baseline and the lever table each row measures:
 [`../design/roadmap-P7-scan-performance.md`](../design/roadmap-P7-scan-performance.md).
 **7.1 and 7.2 are ordered; the rest is allocation order, not schedule** — the
 phase follows the profile, so a slice landing out of numeric order is the plan
-working. `7.3` is the one exception: an allocator adopted after a figure is
-taken invalidates that figure.
+working ([`../process.md`](../process.md), "Slice numbering", which carries the
+exception an evidence-led phase runs under). Two orderings bind: `7.3`, since
+an allocator adopted after a figure is taken invalidates that figure, and
+`7.13` ahead of `7.6` and `7.7`.
 
 - [x] **7.1** The profiling apparatus — `[profile.profiling]`, `perf`, and a
       `measure.py --profile-recipe` that prints the invocation on the
@@ -154,11 +156,16 @@ taken invalidates that figure.
       borrowed slices where the literal carries no escapes.
 - [ ] **7.10** Scalar decode and the typed column build, split by the profile
       into a `decode.rs` half and a builder-append half.
-- [ ] **7.11** The viewing builder for `List<Utf8View>` — conditional on 7.2,
-      last, reviewed alone.
+- [ ] **7.11** The viewing builder for `List<Utf8View>` — conditional on
+      7.10's builder-append half putting the `List<Utf8View>` build above
+      1 µs/row, last, reviewed alone.
 - [ ] **7.12** The sweep pair and the koji regression run, folded in, plus the
       written statement of what a parallel splitter needs from coverage and
       from the census, filed to P16.
+- [ ] **7.13** Who owns the bytes between the kernel and the scanner —
+      `read_range`'s per-chunk zeroed allocation and each read loop's copy into
+      its own buffer, over all three loops. Reviewed alone, ahead of 7.6 and
+      7.7.
 
 ## Not started
 
@@ -317,25 +324,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **The decomposition re-priced three lever rows and admitted a fourth, and the
-  slice list was left alone.** The call: amend
-  [`../design/roadmap-P7-scan-performance.md`](../design/roadmap-P7-scan-performance.md)'s
-  lever table — which that document authorises in as many words — but do not
-  add, re-scope or re-order a slice unattended. What the maintainer is being
-  asked to decide is whether the slice list still matches the evidence. Three
-  things pull on it. **7.10** ("scalar decode and the typed column build") was
-  sized at 7.3 µs of a 12.7 µs typed row by subtracting `strings` from `typed`;
-  the profile says 79% of that gap is `pgdq::print_batch`, the CLI's own
-  render-back, which no library change touches — so the slice's real prize is
-  the library's 4.06 µs against `strings`'s 2.48. **7.11** (the viewing builder)
-  was admitted as "the largest single prize on the list" on that same
-  subtraction, and its stake is now unknown rather than large; it is
-  conditional on 7.2 confirming the prize, and 7.2 did not. And the **read
-  path's per-chunk zero and copy** — `vec![0u8; len]` per 1 MiB chunk plus a
-  copy into the scanner's buffer, more than half of a warm `parse`'s user time
-  — is a new lever row with no slice: 7.8 owns the pass that reads bytes, but
-  its row names the I/O defaults and nothing else. Reversing any of this costs
-  a paragraph in the spec and a slice row; nothing is built on it yet. The
-  fourth pull is quieter: if `print_batch` is two-thirds of a typed `pgdq
-  query`, the phase may want a figure that measures the library rather than the
-  CLI, which is an apparatus change and belongs to whoever decides it.
+Nothing is open.

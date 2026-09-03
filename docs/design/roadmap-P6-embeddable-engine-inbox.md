@@ -361,11 +361,26 @@ batches rather than text, so it is the first place anyone will ask "how fast is
 it" and mean the library. Quoting `measurements.md` at that audience overstates
 the typed cost by roughly 2.5× and understates how much a warm cache buys. The
 decision P6 has to make is whether it states a performance claim at all and, if
-so, against what instrument — the honest one is a figure that stops at the
-batch, which does not exist and which nothing in the harness's current command
-shapes produces.
+so, against what instrument.
+
+**P7 will not build that instrument, which narrows the question rather than
+leaving it open.** A figure that stops at the batch would need either a
+published bench through push mode — whose only caller is tests, and whose fate
+is the entry above — or a measurement-only flag in the shipped binary, against
+a doc whose standing position is that a figure here is a CLI figure. So P7
+keeps the library's cost as *proportions* instead:
+[`architecture.md`](architecture.md), "The library's own per-row budget", splits
+a control row four ways in each mode, and P7's spec obliges a landing lever to
+re-read it. **That is what P6 has to read a claim off**, and it is a table of
+profile shares rather than medians — so a claim built on it is a ratio or a
+per-row cost, never a throughput with an apparatus line behind it. If P6 wants
+the latter, building the instrument is P6's work and not inherited.
 
 **Origin.** P7.2, 2026-09-03
-([`roadmap-P7.2-decomposition-notes.md`](roadmap-P7.2-decomposition-notes.md)).
+([`roadmap-P7.2-decomposition-notes.md`](roadmap-P7.2-decomposition-notes.md)),
+narrowed the same day when the maintainer settled that library-only *figures*
+are not required so long as library-only performance stays easy to understand —
+the expectation being that the library numbers are the more stable of the two
+and the ones this phase's audience actually needs.
 Contingent on the CLI's output path: a cheaper `print_batch` moves the
 proportion without moving what the library costs.

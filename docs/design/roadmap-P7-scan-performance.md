@@ -23,15 +23,29 @@ anything on rotational media**. It is a regression check, not a target.
 stops being the excuse. Every figure below is at the `ba2fc12` stamp,
 `measurements.md`, 512 MB container, glibc:
 
-| Warm, on tmpfs | Wall | × the `dd` floor |
-|---|---|---|
-| `dd` → `/dev/null` | 0.332 s | — |
-| `pgdq parse` — structure discovery | 0.558 s | **1.68×** |
-| `pgdq query --schema-mode strings` — row extraction, zero-copy | 4.42 s | **13.3×** |
-| `pgdq query --schema-mode typed` | 10.36 s | **31×** |
+| Warm, on tmpfs | Wall | × the `dd` floor | × the floor, library only |
+|---|---|---|---|
+| `dd` → `/dev/null` | 0.332 s | — | — |
+| `pgdq parse` — structure discovery | 0.558 s | **1.68×** | ~1.7× — essentially all of it |
+| `pgdq query --schema-mode strings` — row extraction, zero-copy | 4.42 s | **13.3×** | **~6.1×** |
+| `pgdq query --schema-mode typed` | 10.36 s | **31×** | **~10.0×** |
 
 Cold on the SATA SSD the floor is 5.75 s and `parse` is 5.78 s — **1.01×**, so
 the device hides the parse entirely, and it hides a `strings` query too.
+
+**The fourth column is what an embedder pays, and it is derived rather than
+measured.** The wall column is `pgdq`, and for a `query` two-thirds of a typed
+one is the CLI writing the batch back out as TSV
+([`architecture.md`](architecture.md), "The library's own per-row budget") — so
+the library's own cost is that budget's per-row total, 2.48 µs and 4.06 µs,
+over the control's 814,362 rows against this table's own floor. It is a profile
+share applied to a figure, not a figure, which is why it is approximate and
+carries the ~8% a warm absolute resolves to across sessions
+([`measurements.md`](measurements.md), "A move smaller than the apparatus
+resolves is not a finding"); both still include the mapping pass, since every
+`query` figure and every profile here is `--dqcache none`. `parse` needs no such
+correction — the CLI's event callback is 4.2% of its user time and nothing else
+of it is the CLI's.
 
 **What that leaves for a parser change to win on `parse`.** Of the 0.53 s a
 census-off whole-file `parse` takes warm, 0.19 s is user and 0.33 s is system —
@@ -47,12 +61,20 @@ single column is typed, and 31× with them. **An order of magnitude of the
 project's device-bound goal is in the row path, and a rounding error is in the
 discovery path.**
 
+**That conclusion is the same in both readings, and only the magnitudes
+change.** Strip the CLI and row extraction is ~6.1× the floor untyped and
+~10.0× typed against discovery's 1.7× — still an order of magnitude against a
+rounding error, and still the same phase. What moves is what may be *quoted*:
+the 31× belongs to a `pgdq query` and not to the library, so a claim about what
+this phase won is read off the library column or off the per-row budget behind
+it.
+
 ## What this phase targets
 
 **The row-extraction path**, on the two paths a user actually runs: `query`
 in `strings` mode and in `typed` mode.
 
-Discovery keeps exactly three items, and each is here on its own evidence
+Discovery keeps exactly four items, and each is here on its own evidence
 rather than because discovery is where the time goes:
 
 - **`KD9`** — an `INSERT` run costs mid-teens times a `COPY` block's per-byte
@@ -62,9 +84,17 @@ rather than because discovery is where the time goes:
   `COPY` dump of the same size spends ~3.
 - **`KD5`** — mapping is O(blocks²): every `CopyEnd` rebuilds
   `DumpIndex::spans` whole, 19.0 s of a 20.8 s 4000-block `parse`.
-- **The I/O defaults** — readahead, chunk size, `posix_fadvise` — which belong
-  to whichever pass reads bytes and are measured on their own device class
-  (below).
+- **The I/O defaults** — readahead, chunk size, `posix_fadvise` — three
+  tunable constants, measured on their own device class (below). Slice 7.8.
+- **The read path's per-chunk zero and copy** — 54.6% of a warm `parse`'s
+  *user* time, and the largest single lever on the discovery path. Slice 7.13.
+  **Its prize is inside the quarter-second above, not additional to it**: the
+  0.158 s it names is most of the 0.20 s that deleting the grammar, the map and
+  the census entirely would win, because zeroing and copying the chunk is part
+  of what that 36% of elapsed time *is*. So it does not reopen the priority
+  reading — a lever can be the biggest one on a path whose whole prize is a
+  rounding error, and this is that. It is here rather than under row extraction
+  because `parse` is where it dominates; a `strings` query pays ~9% of it.
 
 ## What ends this phase, and what it deliberately does not commit to
 
@@ -89,10 +119,13 @@ So the phase is done when both hold:
   decomposition is worth having either way.
 
 **No lever is excluded from measurement by its implementation cost** — only
-from landing. The distinction matters most for the viewing builder, which is
-the largest single prize on the list and also the most delicate change on it:
-it is measured like everything else, and it lands only if the profile confirms
-the prize and it can be done as its own final slice with its own review.
+from landing. The distinction matters most for the viewing builder, the most
+delicate change on the list: it is measured like everything else, and it lands
+only if the measurement 7.11's row names confirms the prize and it can be done
+as its own final slice with its own review. It was admitted as the largest
+single prize on the list, on a subtraction the decomposition then took apart;
+what it is worth is now an open reading rather than a large number, and 7.11's
+gate is what is owed on it.
 
 ## The phase follows the evidence, not this document's order
 
@@ -124,6 +157,20 @@ machine to be worth reading, because the answer it gives is a proportion.
   projection widths and the census-off binary remains available and is used
   where a profile cannot answer — the device-versus-CPU split most of all —
   but it is the fallback, not the method.
+- **No library-only figure is taken, and the per-row budget is what stands in
+  for one.** Every figure this doc quotes times `pgdq`, so none of them says
+  what an embedder pays; the honest instrument would be a figure that stops at
+  the batch, and this phase deliberately does not build one — it would need
+  either a published bench through push mode, whose only caller is tests, or a
+  measurement-only flag in the shipped binary. What it does instead is keep the
+  library's cost *legible*: [`architecture.md`](architecture.md), "The library's
+  own per-row budget", states it as profile shares, and **a lever that lands
+  re-reads that budget in the same change that re-takes its figure**. The
+  obligation is what makes the decision safe rather than convenient — a library
+  number is the more stable of the two and the one the embedding work will
+  actually be asked for
+  ([`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md)),
+  so it may not be left to be re-derived from a profile nobody re-took.
 - **Deterministic instruction counting is available and deliberately not the
   default.** `valgrind`/`callgrind` (or `iai-callgrind` as a dev-dependency)
   would give per-function counts immune to machine state, which is exactly what
@@ -175,8 +222,8 @@ profile is read against.
 | **One field split per row**, shared by the predicate's terms, `push_row` and the decoders | a five-way disjunction walks the row five times; the census re-splits every brace-bearing row |
 | **Readahead, `fadvise`, chunk-size defaults** | ≤38% of `parse` wall — NVMe only, zero elsewhere |
 | **The read path's per-chunk zero and copy** | 54.6% of a warm `parse`'s *user* time on the control, 0.158 s of a 0.60 s scan; ~9% of a warm `strings` query |
-| **`decode_array`'s `Vec<Option<String>>` intermediate** | 6.2 µs/row of the arrays file's 13.5, paid before the Arrow build is reached |
-| **Scalar decode and the typed column build** | 3.31 s of a 10.72 s typed read on the control — `append_typed` 13.8% of user time and `decode_field` 7.9%, the rest of the library's `poll_next` around them |
+| **`decode_array`'s `Vec<Option<String>>` intermediate** | 4.14 µs/row on the arrays file — the micro figure's *decode* column for both array literals (290 ns + 3.85 µs), library-only and paid before the Arrow build is reached |
+| **Scalar decode and the typed column build** | 2.61 µs/row of the library's 4.06 on a typed control read — `append_typed` 1.66 and `decode_field` 0.95, which is 2.13 s of the 9.81 s of user time; the builder half is the larger and exceeds the whole typed premium over `strings` |
 | **A viewing builder for `List<Utf8View>`** | to be re-derived: the profile puts the whole library batch stream at 33.7% of a typed read, so the Arrow build's share is bounded well below the 7.3 µs/row this row once claimed |
 | **The mapping pass's double read** | exactly one extra pass — 2.0000× the file's bytes with `--dqcache none`, 1.0000× with a cache |
 | **`attach_text`'s O(blocks × DDL) re-slice** | nothing: zero samples in a 100,000-sample profile of a 4000-block `parse` |
@@ -188,24 +235,66 @@ splits it in two, because the halves have different remedies: a per-type cost
 in `decode.rs` is a parser problem, and a builder-append cost is the same
 family of fix as the viewing builder.
 
-**Two of those stakes are the decomposition's corrections, not fresh
-estimates.** The scalar and viewing-builder rows were both derived from the
-`typed` − `strings` subtraction, which attributed 7.3 µs of a 12.7 µs typed row
-to decode plus the Arrow build. The profile says **79% of that gap is
-`pgdq::print_batch`** — the CLI turning the batch back into TSV, which no
-embedder pays and no library change removes — leaving the library's whole typed
-extraction at 4.06 µs a row against `strings`'s 2.48
-([`architecture.md`](architecture.md), "Where a scan's time goes"). Both rows
-are re-stated above against the profile; the reasoning is
+**Four rows aim inside `poll_next`, and the per-row budget says they do not
+overlap.** [`architecture.md`](architecture.md), "The library's own per-row
+budget", splits a typed control row's 4.06 µs four ways, and each part has
+exactly one owner: `append_typed` at 1.66 µs and `decode_field` at 0.95 are
+7.10's two halves; the field split and row walk inside `push_row`, 0.98 µs, is
+**7.7's** and not 7.10's; and the 0.47 µs of stream and scan machinery around
+them is nobody's row. Stating it matters in one direction in particular — 7.10
+was written claiming the whole 3.31 s of `poll_next`, which is 55% more than
+its own two halves are worth, and a session landing 7.7 afterwards would have
+found the split already gone with no record of which row had claimed it. Where
+two rows name one function, the order is stated: **7.6 acts on `decode_field`
+before 7.10 does**, since the unchecked borrow path for an escape-free field is
+a precondition for whatever per-type work is left, not a competitor for the
+same microseconds.
+
+**Only two of these rows move the `strings` path at all.** `decode_field` and
+the field split are each ~1 µs a row and neither changes when typing is
+switched on, so together they are 80% of the library's whole 2.48 µs `strings`
+row; `append_typed` and the viewing builder do not exist in that mode. So 7.6
+and 7.7 are the phase's only levers on the zero-copy path — the one the
+baseline puts at 13.3× the `dd` floor — and 7.10 and 7.11 cannot touch it.
+
+**Three of those stakes are corrections, not fresh estimates, and they all
+have one cause.** The scalar, viewing-builder and `decode_array` rows were
+sized off differences taken **through the CLI** — `typed` − `strings`, and the
+projection table's per-column deltas — every one of which carries
+`pgdq::print_batch` inside it. On the control that subtraction attributed
+7.3 µs of a 12.7 µs typed row to decode plus the Arrow build, and the profile
+says **79% of the gap is `print_batch`**: the CLI turning the batch back into
+TSV, which no embedder pays and no library change removes, leaving the
+library's whole typed extraction at 4.06 µs a row against `strings`'s 2.48
+([`architecture.md`](architecture.md), "Where a scan's time goes"). The
+`decode_array` row is the same error one level down — its 6.2 µs mixed the
+micro figure's `decode` and `render` columns, and `render_field` is the CLI's
+caller — so it is re-stated at the decode column alone. **A stake for this
+table is a library number**, and the rule that keeps the next one honest is
+[`measurements.md`](measurements.md), "A mode difference and a per-column delta
+are CLI numbers". Reasoning:
 [`../status/history/2026-09-03.md`](../status/history/2026-09-03.md).
 
 **One row is admitted that this table did not name**, on the terms the
 paragraph below sets: `io::LocalFileSource::read_range` allocates a fresh
 `vec![0u8; len]` per chunk — which the kernel zeroes and `read_exact_at` then
-overwrites — and `scan::scan` copies it into a second buffer it
-owns. Between them that is more than half of a warm `parse`'s user time, and it
-is neither zeroing nor copying the problem requires. It belongs to whichever
-pass reads bytes, which is the same slice as the I/O defaults.
+overwrites — and every read loop copies it into a second buffer it owns.
+Between them that is more than half of a warm `parse`'s user time, and it is
+neither zeroing nor copying the problem requires.
+
+**It is slice 7.13 and not 7.8's**, which is where this paragraph first put it.
+7.8 is three tunable constants measured against one figure; this is a rework of
+who owns the bytes between the kernel and the scanner, and it carries three
+decisions that an `fadvise` review would not ask: the copy appears in **three**
+read loops (`scan.rs`, and `stream.rs` twice), each with its own `drain(..used)`
+carry; `ByteRangeSource::read_range` is deliberately shaped to mirror
+`object_store::get_range` so that backend is additive, so removing the
+allocation either departs from that shape or pools behind it; and in query mode
+the chunk is *also retained* in `batch.rs`'s `VecDeque<SourceChunk>` for
+zero-copy views, so the query path holds every chunk twice and dropping the
+scanner's copy lands on `push_utf8view_field`'s straddling-field fallback and
+on `invalidate_block_cache`. Being the largest single `parse` lever on the list
+is why it gets a review of its own rather than why it gets a slice.
 
 **A lever the profile finds and this table does not name is admitted**, if it
 is obvious and cheap — by amending this table, with the reasoning in a history
@@ -285,8 +374,17 @@ that lands this.
 schedule.** The evidence slices go first because they de-risk every row of the
 lever table while it is still cheap to change, and after them the phase follows
 the profile — so a slice landing out of numeric order is the plan working, not
-the plan slipping. The one ordering that does bind is `7.3`: an allocator
-adopted after a figure is taken invalidates that figure.
+the plan slipping. This is the exception [`../process.md`](../process.md)'s
+"Slice numbering" names: the general rule fixes slice order at spec time, and
+an evidence-led phase cannot, because the evidence is what orders the work.
+
+**Two orderings bind, and they are the whole of it.** `7.3`, because an
+allocator adopted after a figure is taken invalidates that figure; and `7.13`
+ahead of `7.6` and `7.7`, because those two rework how a row is walked inside
+the buffer `7.13` replaces. `7.13` is also the worked example of a slice
+admitted *after* spec time — a row the profile found, on the terms "The levers"
+sets — which is why its number sits past the wrap slice and says nothing about
+when it runs.
 
 | Slice | What it delivers |
 |---|---|
@@ -300,8 +398,9 @@ adopted after a figure is taken invalidates that figure.
 | **7.8** | **The I/O defaults** — the cold-NVMe figure, then readahead, `posix_fadvise` and the chunk-size constant, each landed or rejected against it. |
 | **7.9** | **`decode_array`'s `Vec<Option<String>>`** intermediate, replaced by borrowed slices where the literal carries no escapes. |
 | **7.10** | **Scalar decode and the typed column build**, split by the profile into a `decode.rs` half and a builder-append half. |
-| **7.11** | **The viewing builder for `List<Utf8View>`** — conditional on 7.2 confirming the prize, last, and reviewed alone. |
+| **7.11** | **The viewing builder for `List<Utf8View>`** — conditional on **7.10's builder-append half** pricing the Arrow build, last, and reviewed alone. It lands only if that reading puts the `List<Utf8View>` build above **1 µs/row** on the arrays file, which is the phase's own cross-file apparatus floor and therefore the smallest prize this table can honestly claim. |
 | **7.12** | **The sweep pair and the koji regression run**, folded in: thirteen tables re-taken in one sitting, koji's byte-identity check on a glibc build, and the written statement of what a parallel splitter needs from coverage and from the census, filed to P16. |
+| **7.13** | **Who owns the bytes between the kernel and the scanner** — `read_range`'s per-chunk zeroed allocation and the copy into each read loop's own buffer, over all three loops, with the `object_store` shape and the query path's chunk retention settled explicitly. Reviewed alone, and ahead of 7.6 and 7.7, which both rework how a row is walked inside the buffer this replaces. |
 
 ## What this phase is not: parallelism is P16
 

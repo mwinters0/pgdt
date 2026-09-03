@@ -3963,6 +3963,34 @@ those are `pgdq query` figures: an embedder that consumes `RecordBatch`es pays
 is 4.06 µs a row against `strings`'s 2.48 — a factor of 1.6, not the factor of
 2.4 the wall times show.
 
+#### The library's own per-row budget
+
+The shares above, converted at each mode's user time over the control's
+814,362 rows. **This is the decomposition an embedder pays and the only one a
+library change can move**, so it is what a proposed optimization is sized
+against — and no figure in `measurements.md` states it, because every figure
+there times the CLI ("A mode difference and a per-column delta are CLI
+numbers"). It is a set of proportions, so it carries no marker and is not a
+figure itself; a lever that lands re-reads it the same way it re-takes a table.
+
+| Per row, library only | `strings` | `typed` |
+|---|---|---|
+| `batch::append_typed` — the builder | — | **1.66 µs** |
+| `copy::decode_field` | **0.99 µs** | **0.95 µs** |
+| the row split and walk inside `push_row` | **0.99 µs** | **0.98 µs** |
+| the stream and scan machinery around it | 0.50 µs | 0.47 µs |
+| **total (`poll_next`)** | **2.48 µs** | **4.06 µs** |
+
+Two things fall out of it that the percentages hide. **`decode_field` and the
+field split are each about 1 µs a row and neither depends on the mode** — they
+are what `strings` spends nearly all of its time on, and they are unchanged
+when typing is switched on, so they are the only part of the library that a
+`strings` consumer can be made faster by. And **the builder is the largest
+single library bucket in `typed` mode**, larger than the decode it feeds: the
+typed premium over `strings` is 1.58 µs a row, and `append_typed` alone is
+1.66, which is to say typing a row costs more in Arrow assembly than in
+parsing.
+
 **`decode_field` is the largest single library bucket in `strings` mode** and
 stays largest when arrays are added (14.6% on the `--arrays --composite` file),
 so it is the shared row machinery rather than the nested path. The zero-copy

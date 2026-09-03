@@ -140,4 +140,16 @@ ACKNOWLEDGED: tuple[Acknowledged, ...] = (
         ),
         verified="git show 305af4b -- scripts/measure.py",
     ),
+    Acknowledged(
+        commit="360e144",
+        figures=("session-drift",),
+        why=(
+            "`M47`'s second half rewrote the symbol step: `DEBUGINFOD`'s "
+            "docstring, `profile_recipe`'s docstring, and the shell lines it "
+            "prints. Docstrings and string literals inside the same "
+            "unreachable subcommand -- the register, the stage functions and "
+            "every command shape a sweep executes are untouched."
+        ),
+        verified="git show 360e144 -- scripts/measure.py",
+    ),
 )

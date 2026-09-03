@@ -148,6 +148,26 @@ Twelve standing rules for reading anything below:
   [`architecture.md`](architecture.md), "Bulk regions: one span kind, three
   payloads"; the evidence is
   [`../status/history/2026-09-03.md`](../status/history/2026-09-03.md).
+- **A mode difference and a per-column delta are CLI numbers, so neither sizes
+  a library change.** Every `query` figure here is a `pgdq query` figure, which
+  means `pgdq::print_batch` — the CLI turning each batch back into TSV — is
+  inside it, and it is not a rounding error: on the control **79% of the
+  `typed` − `strings` gap is that one function**, and a typed query spends
+  62.8% of its user time there
+  ([`architecture.md`](architecture.md), "Where a scan's time goes"). So the
+  two sharpest instruments in this document price decode **plus** the Arrow
+  build **plus** the render-back: "A typed query over nested columns…"'s
+  per-row differences, and "What a column costs…"'s per-column deltas, whose
+  own closing paragraph says `render_field` is included. Read either as what a
+  *user of the CLI* pays, which is what they are for. What an **embedder** pays,
+  and therefore what a library lever can remove, comes from a profile's shares
+  or from a criterion bench (`benches/decoders.rs`, whose `decode` and `render`
+  columns are separate for exactly this reason) — **never** from a difference
+  taken across two CLI runs. Two lever rows in
+  [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md) were sized
+  the wrong way before this was written down, and a third was still wrong after
+  the first two were corrected, which is why the rule is here rather than in
+  each figure's own prose.
 - **Long runs are detached.** A koji-scale scan is roughly an hour; see
   `CLAUDE.md`, "Long-running processes", for why waiting on one is expensive
   and what to do instead.
@@ -817,6 +837,10 @@ The end-to-end half of the figure above: what the per-element cost actually
 costs a user. The control is within a file — `--schema-mode strings` resolves
 every column to `Utf8View` and takes the zero-copy path, so the `typed` run
 differs from it by decode plus Arrow build plus typed render and nothing else.
+**That third term is the CLI's, and it is the largest of the three** — 79% of
+the control's gap — so a difference in this table sizes what a CLI user pays
+and not what a library lever can remove; see "A mode difference and a
+per-column delta are CLI numbers" above.
 
 **This table no longer attributes cost to a particular column.** That was the
 job of the further 3.00 GiB dumps holding fewer of the nested columns, and
@@ -1066,7 +1090,10 @@ figure reports.
 The projections are spelled on the CLI, which is what makes this an end-to-end
 figure — `render_field` included — rather than a library-internal one:
 `--no-columns` for the zero-column row and a repeated `--column <name>` for the
-rest ([`architecture.md`](architecture.md), "Projection").
+rest ([`architecture.md`](architecture.md), "Projection"). **So a per-column
+delta here does not size a library change**; see "A mode difference and a
+per-column delta are CLI numbers" above, which is the rule this paragraph is
+the reason for.
 
 ```sh
 cd scripts && uv run measure.py --figure projection-widths

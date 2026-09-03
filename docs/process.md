@@ -916,7 +916,25 @@ subject.
 here the integer *is* honest: `process`'s own rule orders slices so that each
 one makes the next one's mistakes visible, and that order is fixed at spec time
 inside a single phase. Numbering is kept exactly where it asserts something
-true and dropped one level up, where it does not. A third level
+true and dropped one level up, where it does not.
+
+**One kind of phase cannot fix that order at spec time, and says so in its
+spec.** Where the phase's own first slices exist to *produce the evidence* that
+decides what the later ones are worth — a measurement campaign is the type case
+— the evidence is what orders the work, and a list ordered in advance would be
+ordering it against the guesses the phase was convened to replace. Such a phase
+states in its slice section that its numbers after the evidence slices are
+allocation order rather than schedule, and names the orderings that do bind,
+which are usually few and always specific ("this one before that one, because
+that one rewrites what this one measures"). Two things do *not* change with it:
+a slice admitted after spec time takes the next free number rather than being
+inserted, since the numbers are still identifiers; and every other rule below
+applies unaltered. What this exception costs is that the checklist stops being
+readable as a plan of record — which is why it is confined to phases whose
+first slices are evidence, and why the binding orderings have to be written
+down rather than left to be re-derived from the lever table.
+
+A third level
 (`P<N>.<M>.<K>`) is **earned, not planned**, in one of two ways: a slice
 that already landed turns out to have shipped the wrong contract, and fixing
 it is its own increment; or a slice turns out to have been mis-sized, and the
@@ -1225,6 +1243,11 @@ Each of these means a specific rule has stopped being followed.
 - **The roadmap's later phases are as detailed as the current one.** You are
   planning against evidence you do not have yet; that detail will be wrong and
   expensive to unwind.
+- **A phase's checklist says its slice order is not a schedule and its spec
+  does not.** The exception under "Slice numbering" is a property of the phase,
+  so it is stated where the phase is specified; asserted only in `STATUS.md` it
+  reads as progress-tracking overriding a rule, and the two documents contradict
+  each other quietly for as long as nobody reads them together.
 - **Slice notes surviving past the phase wrap.** Consolidation was skipped.
 - **An inbox that survived its phase's grilling.** It was read and not
   drained, so it is now a permanent "future considerations" page — the exact
