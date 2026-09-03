@@ -1809,6 +1809,56 @@ fn equality_comparison(kind: &CompareKind, text: &str) -> Option<Comparison> {
     Some(Comparison::Canonical(rendered))
 }
 
+/// The form a **nested** literal has to be written in, as one clause of
+/// `Error::PredicateValueDecode`'s sentence.
+///
+/// It names the container's own grammar and then says how to spell what is
+/// inside it: as the dump does, which is each leaf type's own output form.
+/// **That second half is advice, not the boundary of what is accepted** — the
+/// leaf is read by [`order_key`], whose integer arms are `str::parse` and so
+/// take a leading `+` and leading zeros that no `*_out` writes
+/// (`docs/design/architecture.md`, "A literal is read in the type's own output
+/// form and no wider", whose exception this is). Stating the dump's form is
+/// still the useful sentence, because what the container's leniency about
+/// whitespace and quoting does *not* extend to is the element, and that is
+/// what refuses most literals. There is no per-leaf clause list here — the
+/// leaf that failed is not reported by [`nested_key`], which answers only "not
+/// a value of this type" — so the sentence points at the property rather than
+/// at a position.
+fn nested_accepted_form(plan: &NestedCompare) -> String {
+    // The one form with no leaf clause to add, because it has no leaf: an
+    // `int2vector`'s elements are read by `int2vectorin` itself, not handed
+    // to some element type's own input function, so the superset reaches all
+    // the way down and the sentence below would be false here.
+    if matches!(plan, NestedCompare::Int2Vector) {
+        return "as whole numbers from -32768 to 32767 separated by spaces, and as nothing at \
+                all for the empty vector"
+            .to_string();
+    }
+    let container = match plan {
+        NestedCompare::Array(_) => "as an array literal — `{a,b}`, `{}`, a bare `NULL` element",
+        NestedCompare::Record(_) => "as a composite literal — `(a,b)`, a field left empty for NULL",
+        NestedCompare::Range { .. } => {
+            "as a range literal — `[a,b)`, `empty`, a bound left empty for unbounded — whose \
+             lower bound is not above its upper"
+        }
+        NestedCompare::Multirange { .. } => {
+            "as a multirange literal — `{[a,b),[c,d)}`, `{}` — each member a range whose lower \
+             bound is not above its upper"
+        }
+        // Answered above, before the leaf clause this arm cannot carry.
+        NestedCompare::Int2Vector => "as an int2vector literal",
+        // Neither is reachable: a leaf plan is never a column's whole
+        // comparison, and an uncomparable one refuses before a literal is
+        // read.
+        NestedCompare::Leaf { .. } | NestedCompare::Uncomparable { .. } => "as a nested literal",
+    };
+    format!(
+        "{container} — with each element, field or bound spelled as the dump spells it, in that \
+         type's own output form"
+    )
+}
+
 /// The form a literal of `kind` has to be written in, as one clause of
 /// `Error::PredicateValueDecode`'s sentence — read after "which is written".
 ///
@@ -1842,49 +1892,6 @@ fn equality_comparison(kind: &CompareKind, text: &str) -> Option<Comparison> {
 /// diagnostic path. An enum with no labels is unreachable for a second
 /// reason — `pgtype::comparison_for` refuses such a column outright — and is
 /// written out the same way.
-/// The form a **nested** literal has to be written in, as one clause of
-/// `Error::PredicateValueDecode`'s sentence.
-///
-/// It names the container's own grammar and then the rule that actually
-/// refuses most literals: every leaf is read in its own type's output form,
-/// so the container's leniency about whitespace and quoting stops at the
-/// element. There is no per-leaf clause list here — the leaf that failed is
-/// not reported by [`nested_key`], which answers only "not a value of this
-/// type" — so the sentence points at the property rather than at a position.
-fn nested_accepted_form(plan: &NestedCompare) -> String {
-    // The one form with no leaf clause to add, because it has no leaf: an
-    // `int2vector`'s elements are read by `int2vectorin` itself, not handed
-    // to some element type's own input function, so the superset reaches all
-    // the way down and the sentence below would be false here.
-    if matches!(plan, NestedCompare::Int2Vector) {
-        return "as whole numbers from -32768 to 32767 separated by spaces, and as nothing at \
-                all for the empty vector"
-            .to_string();
-    }
-    let container = match plan {
-        NestedCompare::Array(_) => "as an array literal — `{a,b}`, `{}`, a bare `NULL` element",
-        NestedCompare::Record(_) => "as a composite literal — `(a,b)`, a field left empty for NULL",
-        NestedCompare::Range { .. } => {
-            "as a range literal — `[a,b)`, `empty`, a bound left empty for unbounded — whose \
-             lower bound is not above its upper"
-        }
-        NestedCompare::Multirange { .. } => {
-            "as a multirange literal — `{[a,b),[c,d)}`, `{}` — each member a range whose lower \
-             bound is not above its upper"
-        }
-        // Answered above, before the leaf clause this arm cannot carry.
-        NestedCompare::Int2Vector => "as an int2vector literal",
-        // Neither is reachable: a leaf plan is never a column's whole
-        // comparison, and an uncomparable one refuses before a literal is
-        // read.
-        NestedCompare::Leaf { .. } | NestedCompare::Uncomparable { .. } => "as a nested literal",
-    };
-    format!(
-        "{container} — with every element, field or bound written in its own type's output form, \
-         which is the form the dump holds"
-    )
-}
-
 fn accepted_form(kind: &CompareKind) -> String {
     use CompareKind as K;
     match kind {
@@ -4286,7 +4293,7 @@ mod tests {
         let err = nested_verdict("public.point2d", &types, PredicateOp::Eq, "(1,a)", "( 1 ,a)")
             .unwrap_err();
         let Error::PredicateValueDecode { accepted, .. } = &err else { panic!("{err:?}") };
-        assert!(accepted.contains("its own type's output form"), "{accepted}");
+        assert!(accepted.contains("spelled as the dump spells it"), "{accepted}");
     }
 
     /// A range's bounds settle infinity, then the held value, then

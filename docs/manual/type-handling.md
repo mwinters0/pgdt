@@ -561,13 +561,13 @@ element and optional quoting are both fine:
 --where  "p='(1,a)'"            # a composite; the parens need quoting
 ```
 
-**Each part is still written the way the dump writes it.** The leniency stops
-at the element: every element or field is read in its own type's output form,
-which is the form the file holds. So `{ 1 , 2 }` is accepted and `( 1 , a )` is
-refused — an array drops the blanks around an element before the element is
-read (that half is PostgreSQL's rule), a composite keeps every byte between its
-parens, and the blanks are then not part of how an `integer` is written. The
-same rule refuses a padded scalar: `--filter 'n=1'` is fine and
+**Write each part the way the dump writes it.** The leniency stops at the
+element: an element or a field is read in its own type's grammar, which
+accepts the form the file holds and little else. So `{ 1 , 2 }` is accepted and
+`( 1 , a )` is refused — an array drops the blanks around an element before the
+element is read (that half is PostgreSQL's rule), a composite keeps every byte
+between its parens, and the blanks are then not part of how an `integer` is
+written. The same rule refuses a padded scalar: `--filter 'n=1'` is fine and
 `--filter 'n=" 1 "'` is not.
 
 **A column diverges where its parts diverge, and the warning says where.** A

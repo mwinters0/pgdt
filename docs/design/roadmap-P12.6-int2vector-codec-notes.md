@@ -81,8 +81,9 @@ all the way down and `--filter 'v=+1 01'` matches the value the file writes as
 `1 1`.
 
 That is faithful to the server and it makes `nested_accepted_form`'s trailing
-clause ("with every element, field or bound written in its own type's output
-form") false for this plan, so the function answers `Int2Vector` with a
+clause ("with each element, field or bound spelled as the dump spells it, in
+that type's own output form") false for this plan — there is no element type
+whose output form it could be — so the function answers `Int2Vector` with a
 complete sentence before that clause is reached. A future container with the
 same shape has to do the same rather than inherit the clause.
 
