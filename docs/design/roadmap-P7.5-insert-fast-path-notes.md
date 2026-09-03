@@ -1,6 +1,7 @@
 # P7.5 — the `INSERT` run's statement scan
 
-What the next slice inherits from `KD9`'s discharge. The mechanism itself is
+What the next slice inherits from `KD9`'s partial discharge — the
+accumulation is gone, the entry stays live at its 4.3× residual. The mechanism itself is
 filed by subject: [`architecture.md`](architecture.md), "Bulk regions: one span
 kind, three payloads" for the fast path and what it declines,
 "The `INSERT` path is one `memchr`-bound scan in L1" for the before-and-after
@@ -95,7 +96,8 @@ On the host, outside the container, the same before/after pair reads 7.5 s →
 0.55 s — which is the check that the win is the `INSERT` path and not the
 apparatus.
 
-**The remainder is `memchr`, and there is no obvious next cut.** In the
+**The remainder is `memchr`, and the two cuts below are what `KD9` now names.**
+In the
 after-profile, `Builder::feed_line` → `insert_run_line` →
 `StatementScan::feed_line` is 74.3% of user time, `CopyScanner::next_event`
 14.1%, and nearly 80% of the flat profile is `memchr` across the four needle

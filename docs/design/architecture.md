@@ -381,18 +381,42 @@ producer class that *can*: a hand-written or `pg_dump`-compatible dump, where
 coarser-and-cheaper trade the `COPY` path already makes. The symmetry between
 the two paths is a consequence of that call, not the argument for it.
 
-**An `INSERT` run costs a few times a `COPY` scan per byte, and that is a
-property of the two algorithms rather than a defect.** Warm it is **4.3×** —
-2.27 s against 0.532 s over 3.00 GiB — and **7.5× the `dd` floor** where a
-`COPY` scan is 1.8×; cold on the SSD the difference is gone, 1.02× the floor
-against 1.01× ([`measurements.md`](measurements.md), "Scan throughput by input
-shape"). Carry it as a magnitude rather than a value: the legs are warm
+<!-- deficiency: KD9 -->
+**An `INSERT` run costs a few times a `COPY` scan per byte.** Warm it is
+**4.3×** — 2.27 s against 0.532 s over 3.00 GiB — and **7.5× the `dd` floor**
+where a `COPY` scan is 1.8×; cold on the SSD the difference is gone, 1.02× the
+floor against 1.01× ([`measurements.md`](measurements.md), "Scan throughput by
+input shape"). Carry it as a magnitude rather than a value: the legs are warm
 sub-second and sub-three-second readings that move several percent between
-sittings, and the ratio is the durable half. The reason it cannot be 1× is that
-a `COPY` block's data is *skipped* — the terminator is a line-anchored needle —
-while an `INSERT` run's boundaries rest on no line-anchored invariant at all,
-so every byte has to be crossed quote-aware to find where a statement ends.
-Correctness, tiling and row counts are unaffected.
+sittings, and the ratio is the durable half. Correctness, tiling and row counts
+are unaffected.
+
+**It cannot be 1×, and that is a property of the two algorithms.** A `COPY`
+block's data is *skipped* — the terminator is a line-anchored needle — while an
+`INSERT` run's boundaries rest on no line-anchored invariant at all, so every
+byte has to be crossed quote-aware to find where a statement ends. No
+implementation of this path reaches a `COPY` scan's cost.
+
+**What that argument does not establish is that 4.3× *is* that floor, which is
+why `KD9` is a live entry rather than a property.** Two cuts are known,
+specific, and untaken. `insert_run_line` feeds the whole line to the scan
+including the `INSERT INTO <table>` prefix it has just matched, whose
+scan-state delta is provably nothing — `parse_ident` guarantees a balanced
+quoted identifier — so those bytes are crossed twice. And `StatementScan::feed`
+spends a second `memchr2` pass per plain run counting parens, which the shared
+statement rule needs and no `INSERT` statement does. Nearly 80% of the flat
+profile is `memchr` across four needle widths ("The `INSERT` path is one
+`memchr`-bound scan in L1"), so both cuts land on the dominant term.
+
+**What decides whether the remainder costs anything is a device figure this
+phase has not taken.** "Cold, the difference is gone" is a claim about the SATA
+SSD, whose ~557 MB/s hides a path running at 1422 MB/s. It does not carry to
+the NVMe: at that rate the `INSERT` path would be several times a 970 EVO
+Plus's floor where the `COPY` path stays under it, and
+[`roadmap.md`](roadmap.md)'s goal is device-bound "on hardware from HDD through
+NVMe" for the bulk-row path, which an `INSERT` run is. P7's slice 7.8 takes the
+cold-NVMe figure; that reading is what promotes this entry to owned work or
+retires it to a property.
 
 **What made it mid-teens was the accumulation, and P7's slice 7.5 removed
 that.** Under the `ba2fc12` stamp the same scan read 9.19 s warm, 16.5×, and

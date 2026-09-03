@@ -120,3 +120,36 @@ other inherits it. Decide it against both, not against splitting alone.
 **Origin.** P7's grilling, 2026-09-03
 ([`../status/history/2026-09-03.md`](../status/history/2026-09-03.md), "P7's
 grilling").
+
+---
+
+## An `INSERT` run cannot be split speculatively, and it is the shape that most wants to be
+
+**Fact.** A splitter syncs by starting at an arbitrary offset and finding the
+next record boundary. A `COPY` block admits that: its rows and its `\.`
+terminator are line-anchored, so a worker landing mid-block resyncs at the next
+newline. An `INSERT` run admits nothing of the kind — where a statement ends is
+decided by quote, dollar-quote and comment state accumulated from the run's
+start, so an offset in the middle of one is uninterpretable on its own. A
+worker cannot tell a `);` inside a string literal from the one that ends the
+statement without having crossed every byte before it.
+
+**Why this phase cares.** It inverts the obvious priority. An `INSERT` run is
+the most CPU-hungry shape this scanner has — 4.3× a `COPY` scan's per-byte cost
+warm, the deficiency register's `KD9` — so it is where cores would pay best,
+and it is the one region kind speculative splitting cannot touch. Three ways
+out, and the choice belongs to this phase's grilling rather than here:
+serialize each run and parallelize *across* runs (trivial, and worth nothing on
+a dump whose data is one large table); make the sparse row index above cover
+`INSERT` runs too, which turns a split into a lookup and is the reason that
+entry and this one should be read together; or accept a resync scan from the
+run's start, which is O(run) per worker and self-defeating.
+
+Note the same fact bounds P13: a compressed-block boundary lands mid-statement
+just as a speculative split does.
+
+**Origin.** P7's slice 7.5 and the review of its `KD9` call, 2026-09-03
+([`../status/history/2026-09-03.md`](../status/history/2026-09-03.md), "`KD9`
+reviewed: struck, then restored to its residual"). Found by asking what the
+residual costs beyond scan time; contingent on nothing — it follows from the
+statement grammar, not from the implementation.

@@ -209,8 +209,9 @@ an allocator adopted after a figure is taken invalidates that figure, and
       statement buffer re-walked per line. A warm 3.00 GiB `INSERT` `parse`
       falls **9.19 s → 2.27 s**, 16.5× a `COPY` scan's per-byte CPU → **4.3×**,
       and cold on the SSD the difference is gone (1.02× the device floor
-      against 1.01×). `KD9` is **struck**, its residual migrated beside the
-      mechanism as a property. Notes:
+      against 1.01×). `KD9` is **rewritten to that residual**, not struck: the
+      accumulation is gone, two named cuts against the remainder are not.
+      Notes:
       [`../design/roadmap-P7.5-insert-fast-path-notes.md`](../design/roadmap-P7.5-insert-fast-path-notes.md)
 - [ ] **7.6** Bulk `simdutf8` over the chunk's whole-row prefix, with
       `decode_field` gaining the unchecked borrow path.
@@ -218,7 +219,8 @@ an allocator adopted after a figure is taken invalidates that figure, and
       `push_row`, the census and the decoders. Reviewed alone.
 - [ ] **7.8** The I/O defaults — the cold-NVMe figure, then readahead,
       `posix_fadvise` and the chunk-size constant, each landed or rejected
-      against it.
+      against it. That figure is also what `KD9` is read against: it is the
+      one device we own on which an `INSERT` run's CPU could outrun the read.
 - [ ] **7.9** `decode_array`'s `Vec<Option<String>>` intermediate, replaced by
       borrowed slices where the literal carries no escapes.
 - [ ] **7.10** Scalar decode and the typed column build, split by the profile
@@ -362,6 +364,16 @@ here rather than reading as a phase nobody has sliced.
   [`../design/architecture.md`](../design/architecture.md), "Decoders and
   render-back".
 
+- **KD9** — an `INSERT` run costs **4.3×** a `COPY` scan's per-byte CPU warm,
+  and two specific cuts against that remainder are known and untaken: the
+  already-matched `INSERT INTO <table>` prefix is fed to the scan a second
+  time, and a `memchr2` pass per plain run counts parens no `INSERT` statement
+  needs. **(c) unowned**; promoted by slice **7.8**'s cold-NVMe figure, which
+  is the only reading that says whether the remainder reaches a real device —
+  the SATA SSD hides it and the project's goal names NVMe. Detail:
+  [`../design/architecture.md`](../design/architecture.md), "Bulk regions: one
+  span kind, three payloads".
+
 - **KD10** — a column whose declared type this build models no comparison for
   answers `=`/`!=` bytewise, which is not the server's answer for the geometric
   types (`box_eq` compares areas), so the row set is wrong; ordering is refused
@@ -388,18 +400,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-**`KD9` was struck rather than rewritten to its residual.** An `INSERT` scan
-still costs **4.3×** a `COPY` scan's per-byte CPU warm, which is not 1×, so the
-alternative was to rewrite the entry to that residual as 7.4 did for `KD5`.
-Struck instead, with the residual migrated beside the mechanism as a
-*property*: what is left is not a defect with a known fix — the two paths are
-different algorithms, a `COPY` block's terminator is a line-anchored needle it
-can skip to and an `INSERT` run's is not, so every byte has to be crossed — and
-cold on the SSD the difference is gone entirely (1.02× the device floor against
-1.01×). Reconsidering it means restoring a `(c) unowned` entry saying the
-`INSERT` path could still be faster, which two named-but-untaken cuts do
-support: feeding only the bytes past the already-matched `INSERT INTO <table>`
-prefix, and dropping paren-depth tracking. Both are in
-[`../design/roadmap-P7.5-insert-fast-path-notes.md`](../design/roadmap-P7.5-insert-fast-path-notes.md),
-so the information survives either way; what the call decides is whether the
-register carries a line about it.
+Nothing is open.

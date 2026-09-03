@@ -1076,6 +1076,14 @@ impl StatementScan {
             // second. Both beat walking the run a byte at a time, and
             // outside a string is where the bytes of an `INSERT` statement
             // that are not values live.
+            //
+            // Deficiency register: `deficiency: KD9`. The paren pass is the
+            // shared statement rule's, not an `INSERT` run's — no `INSERT`
+            // statement's end depends on the depth — so a run-only scan
+            // would drop it. Left in because one implementation of the rule
+            // is worth more than the pass until a device figure says
+            // otherwise; the detail is in `architecture.md`, "Bulk regions:
+            // one span kind, three payloads".
             let rest = &bytes[i..];
             let stop = memchr::memchr3(b'\'', b'"', b'-', rest).unwrap_or(rest.len());
             let plain = &rest[..stop];

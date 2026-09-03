@@ -620,15 +620,19 @@ durable half of this table and neither of its legs is: across sweeps the legs
 move several percent while the ratio does not, and the same caution that
 applied at mid-teens applies here.
 
-**This table is what `KD9`'s discharge is read off, and the entry is struck by
-it.** Under the `ba2fc12` stamp the same two rows read **9.19 s warm against
+**This table is what `KD9` is read off, and the warm row is what keeps the
+entry live.** Under the `ba2fc12` stamp the same two rows read **9.19 s warm against
 0.558 s — 16.5×** — and **10.87 s cold, 1.89× the floor**. P7's slice 7.5 put
 the `INSERT` run's statement scan on raw bytes: no `String` per line, no
 statement buffer to re-walk, and a `memchr` pass across the string values that
 are most of what an `INSERT` statement is
-([`architecture.md`](architecture.md), "Bulk regions"). What is left is a
-property of the two algorithms rather than a defect, and the numbers above are
-where it is quoted from. The claim is corrected wherever it is repeated —
+([`architecture.md`](architecture.md), "Bulk regions"). What is left is partly
+a property of the two algorithms — an `INSERT` run's end can only be found by
+crossing every byte — and partly two named, untaken cuts, which is why `KD9`
+is rewritten to the residual rather than struck. **The cold row is not the
+evidence that the residual is free**: at 1422 MB/s warm, a device faster than
+this SATA SSD stops hiding it, and slice 7.8's cold-NVMe figure is what says
+whether it reaches one. The claim is corrected wherever it is repeated —
 [`pg-dump-compatibility.md`](pg-dump-compatibility.md),
 [`roadmap.md`](roadmap.md) and [`architecture.md`](architecture.md), which
 `--check` names as this table's consumers along with
