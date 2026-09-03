@@ -87,7 +87,8 @@ rather than because discovery is where the time goes:
 - **The I/O defaults** — readahead, chunk size, `posix_fadvise` — three
   tunable constants, measured on their own device class (below). Slice 7.8.
 - **The read path's per-chunk zero and copy** — 54.6% of a warm `parse`'s
-  *user* time, and the largest single lever on the discovery path. Slice 7.13.
+  *user* time, and the largest single lever on the discovery path. Slices 7.13
+  and 7.13.1.
   **Its prize is inside the quarter-second above, not additional to it**: the
   0.158 s it names is most of the 0.20 s that deleting the grammar, the map and
   the census entirely would win, because zeroing and copying the chunk is part
@@ -296,6 +297,11 @@ scanner's copy lands on `push_utf8view_field`'s straddling-field fallback and
 on `invalidate_block_cache`. Being the largest single `parse` lever on the list
 is why it gets a review of its own rather than why it gets a slice.
 
+**Those three decisions split two ways, and that is where 7.13 was cut.** The
+`object_store` one is about the allocation and nothing else, so it is 7.13's;
+the three read loops and the query path's chunk retention are both about the
+copy, so they are `7.13.1`'s.
+
 **A lever the profile finds and this table does not name is admitted**, if it
 is obvious and cheap — by amending this table, with the reasoning in a history
 entry, which is what "the spec changes when a decision changes" is for. Filing
@@ -380,8 +386,8 @@ an evidence-led phase cannot, because the evidence is what orders the work.
 
 **Two orderings bind, and they are the whole of it.** The **allocator decision
 before the wrap sweep**, because an allocator adopted after a figure is taken
-invalidates that figure; and `7.13` ahead of `7.6` and `7.7`, because those two
-rework how a row is walked inside the buffer `7.13` replaces.
+invalidates that figure; and `7.13.1` ahead of `7.6` and `7.7`, because those
+two rework how a row is walked inside the buffer `7.13.1` replaces.
 
 The first is stated against the sweep rather than against `7.3` because `7.3`
 has landed *without* adopting, and the hazard it names is still live. What the
@@ -409,7 +415,8 @@ when it runs.
 | **7.10** | **Scalar decode and the typed column build**, split by the profile into a `decode.rs` half and a builder-append half. |
 | **7.11** | **The viewing builder for `List<Utf8View>`** — conditional on **7.10's builder-append half** pricing the Arrow build, last, and reviewed alone. It lands only if that reading puts the `List<Utf8View>` build above **1 µs/row** on the arrays file, which is the phase's own cross-file apparatus floor and therefore the smallest prize this table can honestly claim. |
 | **7.12** | **The sweep pair and the koji regression run**, folded in: thirteen tables re-taken in one sitting, koji's byte-identity check on a glibc build, and the written statement of what a parallel splitter needs from coverage and from the census, filed to P16. |
-| **7.13** | **Who owns the bytes between the kernel and the scanner** — `read_range`'s per-chunk zeroed allocation and the copy into each read loop's own buffer, over all three loops, with the `object_store` shape and the query path's chunk retention settled explicitly. Reviewed alone, and ahead of 7.6 and 7.7, which both rework how a row is walked inside the buffer this replaces. **Also re-takes `--figure allocator` and settles adoption** — 7.3 measured but deferred, this slice removes the allocation that dominated the ranking, so it either adopts the winner or records the refusal beside the mechanism. |
+| **7.13** | **Who owns the bytes between the kernel and the scanner, the allocation half** — `read_range`'s per-chunk zeroed allocation, removed with the `object_store` shape settled explicitly. **Also re-takes `--figure allocator` and settles adoption** — 7.3 measured but deferred, this slice removes the allocation that dominated the ranking, so it either adopts the winner or records the refusal beside the mechanism. |
+| **7.13.1** | **The copy into each read loop's own buffer**, over all three loops, with the query path's chunk retention settled explicitly. **Earned, not planned**: the row above paired a contained change to one module with a rework of three already-tested scan loops, which is two review cycles and not one, and the seam was only visible from inside. Reviewed alone, and ahead of 7.6 and 7.7, which both rework how a row is walked inside the buffer this replaces. Reasoning: [`../status/history/2026-09-03.md`](../status/history/2026-09-03.md). |
 
 ## What this phase is not: parallelism is P16
 

@@ -110,6 +110,40 @@ today: a local-file backend (`std::fs::File::read_at` wrapped in
 dependency tree that buys nothing for "read one local file". The trait shape is
 what keeps the addition additive; it arrives behind a default-off Cargo feature.
 
+**The local backend pools its read buffers, and the trait shape is why.**
+`read_range` returns owned `Bytes` because `get_range` does, so the obvious
+implementation allocates one buffer per chunk — and `vec![0u8; len]` is
+`calloc`, which zeroes a megabyte that `read_exact_at` overwrites a microsecond
+later. That memset was **23.2% of a warm `parse`'s user time** on the 3.00 GiB
+control ("`parse`: half the wall is the kernel, and half of what is left is
+copying"), and freeing the region per chunk is separately what put `jemalloc`
+at 3,161 `madvise` calls against glibc's 50 over the same file. So
+`LocalFileSource` keeps a small free list: a read takes the smallest buffer
+that fits, reads into it, and hands back `Bytes::from_owner(…)` sliced to the
+length read, whose owner returns the buffer when the last reference dies. A
+pooled buffer is fully initialized once and thereafter only ever read into, so
+no reuse zeroes anything.
+
+Three properties are load-bearing rather than incidental. **The `Bytes` is
+sliced, not the buffer**, so a short final chunk does not shrink a pooled
+buffer and force the next full one to grow it back with a memset. **The owner
+is what returns it**, which is what makes this safe for the query replay path:
+that path retains a chunk in `batch::SourceChunk` for as long as a zero-copy
+`Utf8View` points into it ("Arrow assembly and the zero-copy path"), so the
+buffer must not be recycled on the read loop's schedule. And **the pool is
+bounded at both ends** — four slots, nothing above 8 MiB kept — because
+`map::attach_text`'s coalesced span read can be far larger than a chunk and
+happens once per map, and holding one of those for the life of the process
+would trade the flat ~9 MiB RSS for an allocation nothing asks for twice.
+
+*Rejected:* changing `read_range` to read into a caller-owned buffer, which is
+the shape that would delete the scanner's own chunk copy at the same time. It
+departs from `get_range` exactly where the trait exists to mirror it, and
+`spawn_blocking` needs `'static` ownership of whatever it writes into, so a
+borrowed-buffer signature cannot be implemented here anyway — the buffer would
+have to be moved in and back out, which is the pooling protocol above with the
+pool moved into every caller.
+
 **Two entry points, deliberately different in kind:**
 
 - **Pull mode** — an async `Stream<Item = Result<RecordBatch>>`, natural for
@@ -3946,38 +3980,48 @@ proportion and never a median.
 ### `parse`: half the wall is the kernel, and half of what is left is copying
 
 Warm, on tmpfs, over the 3.00 GiB brace-free control (16 scalar columns,
-814,362 rows). Shares are of user time; the last column converts them at
-0.29 s.
+814,362 rows). Shares are of user time; the last column converts them at this
+profile's own sitting, where a warm host `parse` is 0.54 s of wall made of
+0.18 s user and 0.35 s system.
 
 | Share | ≈ | Symbol | What it is |
 |---|---|---|---|
-| 31.4% | 0.091 s | `__memmove_avx_unaligned_erms` | `buf.extend_from_slice(&bytes)` in `scan::scan`, copying each chunk into the scanner's own buffer, plus `buf.drain(..used)` shifting the remainder down |
-| 23.2% | 0.067 s | `__memset_avx2_unaligned_erms` | `vec![0u8; len]` in `io::LocalFileSource::read_range` — a fresh, zeroed 1 MiB allocation per chunk, on the `spawn_blocking` thread |
-| 17.5% | 0.051 s | `memchr::One::find_raw_avx2` | the LF search inside `CopyScanner::next_event` — the `COPY` grammar itself |
-| 17.2% | 0.050 s | `memchr::Two::find_raw_avx2` | `memchr2(b'{', b'[', raw)`, the array-shape census's pre-filter |
-| 4.2% | 0.012 s | `pgdq::main::{closure#0}` | the event callback into `map::Builder` |
+| 38.0% | 0.068 s | `__memmove_avx_unaligned_erms` | `buf.extend_from_slice(&bytes)` in `scan::scan`, copying each chunk into the scanner's own buffer, plus `buf.drain(..used)` shifting the remainder down |
+| 23.5% | 0.042 s | `memchr::One::find_raw_avx2` | the LF search inside `CopyScanner::next_event` — the `COPY` grammar itself |
+| 23.9% | 0.043 s | `memchr::Two::find_raw_avx2` | `memchr2(b'{', b'[', raw)`, the array-shape census's pre-filter |
+| 5.3% | 0.010 s | `stream::map_file::{closure#0}` | the event callback into `map::Builder` |
 
-**More than half of a warm `parse`'s user time is spent zeroing and copying
-bytes that are already in memory** — 54.6% between the two, 0.158 s of the 0.60 s
-scan this profile was taken beside, which is about half of the 0.31 s
-separating it from the `dd` floor in the same session.
-The read path allocates a fresh `Vec<u8>` per chunk (which the kernel zeroes,
-then `read_exact_at` overwrites), hands it back as `Bytes`, and the scanner
-copies it into a second buffer it owns. Neither the zeroing nor the copy is
-work the problem requires.
+Medians of three consecutive profiles, which agree with each other to within a
+point on every row — worth taking because this sitting's machine was not quiet,
+and a share is only insensitive to that when it reproduces.
+
+**Copying bytes that are already in memory is still the largest single term,
+and it is now the only one left.** The chunk copy is 38.0% of user time; the
+zeroing that used to sit beside it at 23.2% is **gone** — `__memset_avx2_…`
+takes no samples above the 0.5% floor at all, because the read path stopped
+allocating a fresh `Vec<u8>` per chunk ("Execution model and API surface": the
+buffer pool). Every other row is the same absolute cost it was, re-based on a
+smaller denominator: the three above are within a point of their old shares
+divided by 1 − 0.232, which is the arithmetic check that nothing *else* moved.
+The removal itself is exact rather than a reading — user instructions per warm
+`parse` fall **1,882,404,237 → 1,705,902,670**, −9.4%, each side at ±0.00% over
+five reps, and host user time falls 0.23 s → 0.18 s. What remains is the second
+half of the same sentence: the scanner copies each chunk into a buffer it owns,
+in three read loops, which is a rework of how a row is walked rather than an
+allocation change, and is where the next cut goes.
 
 **The grammar and the census cost the same as each other and less than the
 copying.** Two SIMD passes over the same bytes: `memchr` for the row terminator
 and `memchr2` for the census's brace pre-filter. The census share reconciles
-with the subtraction that measures it — 0.050 s here against the +0.030 s the
-census-on/census-off pair read in the sweep this profile sits beside, and
-+0.048 s where that pair reads today
+with the subtraction that measures it — 0.043 s here against the +0.030 s the
+census-on/census-off pair read in the `ba2fc12` sweep and +0.048 s where that
+pair reads today
 ([`measurements.md`](measurements.md), "The census on brace-free rows") — which
 is the check that the user-time correction above is being applied correctly.
 
 **On a brace-bearing file the picture inverts.** Over the `--arrays
---composite` file `map::Builder::on_row` is **81.4%** of the `parse` profile,
-and the copying falls to 5.6% + 3.8%. Both readings are true and they are about
+--composite` file `map::Builder::on_row` is **85.6%** of the `parse` profile
+and the chunk copy falls to 5.7%. Both readings are true and they are about
 different inputs: the pre-filter is what a brace-free scan pays, and the field
 split behind it is what a brace-bearing one pays.
 
@@ -3996,7 +4040,17 @@ off the call graph; the flat shares agree with a `release` build's.
 |  ↳ `batch::append_typed` | — | 13.8% |
 | `pgdq::print_batch` — the CLI turning the batch back into TSV | **34.0%** | **62.8%** |
 |  ↳ `batch::render_field` | 9.9% | 52.6% |
-| the `read_range` thread | 7.2% | 2.6% |
+| the `read_range` thread | 7.2% → **—** | 2.6% → **—** |
+
+**The read thread's row is now empty, and it is the only row this section's
+own work has moved.** Everything that thread did in *user* space was the
+per-chunk memset; the `pread` itself is system time a `Pu` profile cannot see.
+With the buffer pool in place, neither profile has a single frame under
+`read_exact_at` above the 0.5% floor. The rows above are left as taken rather
+than re-derived: removing that thread's samples re-bases every share upward by
+its own share and moves no absolute, so the per-row budget below — which is
+what an embedder actually pays — is unchanged, and re-taking the shares would
+have meant publishing a sitting this machine was too busy to give.
 
 **Two-thirds of a typed query is the CLI writing the values back out as
 text**, and 79% of the gap between the two modes is that one function: typed
@@ -4153,48 +4207,38 @@ notice; with it, a leg whose build silently dropped its feature cannot be
 published as a comparison of two identical binaries.
 
 The reading is [`measurements.md`](measurements.md), "Which allocator a figure
-was taken under": `jemalloc` is **1.87×** on `parse`, 1.19× on a `strings`
-query and 1.07× on a typed one; `mimalloc` is 0.98×, 0.96× and 0.96×. So the
-lever's stake — a factor, on the evidence that two stock libcs differ by
-1.8–2.4× — did not survive contact with two allocators that are both tuned for
-this shape of work.
+was taken under", and it is **settled**: over the three headline shapes
+`jemalloc` is 1.02× / 1.11× / 1.06× and `mimalloc` 1.00× / 0.99× / 1.01×.
+Nothing beats the platform allocator anywhere, so the lever's stake — a factor,
+on the evidence that two stock libcs differ by 1.8–2.4× — did not survive
+contact with two allocators that are both tuned for this shape of work. The
+features stay in `pgdump_query-cli`'s manifest so a later re-take is five
+minutes.
 
-**What `mimalloc` actually wins is one shape.** The figure's confirming sitting
-reads it at 1.00×/0.99×/0.97×, so across the two sittings `parse` is 0.98× and
-1.00×, `strings` 0.96× and 0.99×, and `typed` 0.96× and 0.97×. Only `typed`
-reproduces its magnitude as well as its sign, and it does so on non-overlapping
-within-sitting spreads. `parse` is nothing and `strings` is two readings that
-disagree by more than the effect — which is `measurements.md`'s "a move smaller
-than the apparatus resolves is not a finding", demonstrated inside the table
-that states it. So what is on the table is **3–4% on `typed` alone**, and that
-is the number any adoption argument has to be worth.
+**Both readings that once argued otherwise were measuring the read path, not
+an allocator.** The figure was taken twice: once before the per-chunk read
+buffer was pooled, once after, and the two differ on exactly the two cells that
+had made adoption a live question.
 
-**`jemalloc`'s `parse` penalty is not the allocator being slow, and it is the
-part that decides when this is re-asked.** All of it is system time (0.27 s →
-0.80 s, with user time slightly *lower*), and `strace -c` counts 3,161
-`madvise` calls against glibc's 50 over a file read in 3,072 chunks: it is
-`LocalFileSource::read_range`'s per-chunk `vec![0u8; 1 MiB]` handed back to the
-kernel and re-faulted once per chunk. That allocation is itself a lever
-("`parse`: half the wall is the kernel, and half of what is left is copying"),
-so the ranking is dominated on one shape by something scheduled to be removed,
-and the table is re-taken once it is.
+- **`jemalloc`'s `parse` was 1.87×.** All of it was system time (0.27 s →
+  0.80 s, with user time slightly *lower*), and `strace -c` counted 3,161
+  `madvise` calls against glibc's 50 over a file read in 3,072 chunks: it was
+  `LocalFileSource::read_range`'s per-chunk `vec![0u8; 1 MiB]` handed back to
+  the kernel and re-faulted once per chunk. With the buffer pooled ("Execution
+  model and API surface") it is 1.02×, which is nothing.
+- **`mimalloc`'s `typed` was 0.96×**, twice, on non-overlapping within-sitting
+  spreads — the one cell of that table that reproduced its magnitude and the
+  whole of the case for adopting. It is now 1.01×, with its spread above the
+  reference's rather than below.
 
-*Rejected:* adopting `mimalloc` on its `typed` 3–4%. The one-line default flip
-is not the cost — the cost is that every other table in `measurements.md`
-becomes a figure of a binary no longer shipped, with no mechanical oracle to
-acknowledge it, so the whole document reads stale until the next full sweep.
-Paying that for one shape, on a ranking whose largest number is about to move,
-is buying the decision at its least informative moment. The features stay so
-the re-take is five minutes.
-
-**Deferred is not decided, and the deadline is the wrap sweep rather than any
-particular slice.** The adoption question is re-asked when 7.13 removes the
-per-chunk allocation, because that is what invalidates the current ranking — but
-what *binds* is that it be settled before the phase's sweep pair. Adopting
-before the sweep costs only figures the sweep re-takes; adopting after it would
-make thirteen freshly-taken tables describe a binary that is no longer shipped,
-with no sweep left to repair them. This is why the phase spec's ordering
-paragraph names the sweep and not just `7.3`.
+*Rejected:* adopting `mimalloc` on the 3–4% `typed` win it showed before the
+buffer pool. The one-line default flip was never the cost — the cost is that
+every other table in [`measurements.md`](measurements.md) becomes a figure of a
+binary no longer shipped, with no mechanical oracle to acknowledge it, so the
+whole document reads stale until the next full sweep. Paying that for one shape
+would have been buying the decision at its least informative moment, on a
+ranking whose largest number was measuring an allocation about to be deleted.
+The reading that replaced it says the win was not there to buy.
 
 *Rejected:* a `--global-allocator` flag or an environment variable. A global
 allocator is chosen when the binary is linked, so a runtime switch would have

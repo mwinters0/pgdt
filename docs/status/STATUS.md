@@ -18,8 +18,8 @@ each is in.
 stamp of 2026-09-03: the scan-performance baseline sweep pair was taken and
 folded in whole, so seven of its fourteen tables come from one sitting. Seven
 were taken on their own afterwards and each says so in its own section —
-`allocator` by 7.3, whose ratios are within-sitting and whose reference column
-reproduces the sweep's three headline absolutes to within 2.5%;
+`allocator` twice, by 7.3 and again by 7.13, whose ratios are within-sitting
+and whose second sitting reversed both cells the adoption argument rested on;
 `per-block-quadratic`, `map-only` and `preamble-prepass` by 7.4, which moved
 the first of the three by two orders of magnitude and re-took the other two in
 the same sitting because they share its readings and its subject; and
@@ -27,31 +27,32 @@ the same sitting because they share its readings and its subject; and
 the three of them in one sitting because the two throughput tables' `COPY` row
 *is* the census table's census-on column.
 
-**Ten figures read stale against the `ba2fc12` stamp, and six of them are
-not.** `per-block-quadratic`, `map-only` and `preamble-prepass` (7.4) and the
-three 7.5 re-took are current in fact; `--stale` reads staleness off the doc's
-stamp, which no per-figure re-take moves, so they stay listed until the wrap
-sweep — the same standing the `allocator` table has had since 7.3.
+**All thirteen sweep figures read stale against the `ba2fc12` stamp, and only
+one of them is current in fact.** `allocator` was re-taken by 7.13 on the
+pooled read path and is the doc's newest table; `per-block-quadratic`,
+`map-only` and `preamble-prepass` (7.4) and the three 7.5 re-took were current
+until 7.13 and are not any more, because a `parse` reads its bytes through the
+buffer that slice replaced. `--stale` also reads staleness off the doc's stamp,
+which no per-figure re-take moves, so even `allocator` stays listed until the
+wrap sweep.
 
-**Four are genuinely stale, and the reasons are written down.**
-`census-arrays` and `projection-widths` are red on `pgdump_query/src/map.rs`
-and `pgdump_query/src/stream.rs`, which 7.4 and 7.5 changed; both time a
-single-`COPY`-block input, where 7.4's gate is open at the one `CopyEnd` there
-is and 7.5's `INSERT` fast path is never entered, so the changed paths are
-reached and do the same work — an argument the harness's reachability oracle
-cannot make, since the code *is* executed, so they stay red rather than
-acknowledged. `nested-end-to-end`, `census-attribution` and `cross-file-floor`
-are red on `pgdump_query-cli/src/`, from 7.3's `mod alloc;` and `--version`
-string, which also holds `projection-widths` and `allocator`; `allocator` is
-owed a **measured** acknowledgement for that one, its reference column being a
-fresh reading of the three headline shapes on the changed binary that
-reproduces `ba2fc12` to 2.5%, 0.7% and 1.4%, and an `acknowledged.py` entry
-cannot name its own sha
-([`../design/roadmap-P7.3-allocator-notes.md`](../design/roadmap-P7.3-allocator-notes.md)).
-The last is `session-drift`, red on `scripts/measure.py`: 7.3 added a real
-figure function there and 7.4 corrected three figures' declared paths, so the
-reachability oracle that excused the five `--profile-recipe` commits stretches
-to neither, and the wrap sweep is what clears it.
+**The genuinely stale ones and their reasons.** Every figure that times a
+`pgdq` run is red on `pgdump_query/src/io.rs` — 7.13's buffer pool, which took
+9.4% of a warm `parse`'s user instructions and cannot be argued away. On top of
+that: `census-arrays` and `projection-widths` are red on
+`pgdump_query/src/map.rs` and `pgdump_query/src/stream.rs`, which 7.4 and 7.5
+changed; both time a single-`COPY`-block input, where 7.4's gate is open at the
+one `CopyEnd` there is and 7.5's `INSERT` fast path is never entered, so the
+changed paths are reached and do the same work — an argument the harness's
+reachability oracle cannot make, since the code *is* executed, so they stay red
+rather than acknowledged. `nested-end-to-end`, `census-attribution` and
+`cross-file-floor` are additionally red on `pgdump_query-cli/src/`, from 7.3's
+`mod alloc;` and `--version` string. `session-drift` is red on
+`scripts/measure.py`: 7.3 added a real figure function there, 7.4 corrected
+three figures' declared paths and 7.13 added a fourth mechanism and fixed the
+allocator legs' build cache, so the reachability oracle that excused the five
+`--profile-recipe` commits stretches to none of them, and the wrap sweep is what
+clears it.
 `measure.ACKNOWLEDGED` still carries six entries — two for
 `7545dc6`, four for `fbaaa49`, `a6bf6cd`, `305af4b` and `360e144` — every one
 of them now inert, held red by the uncommitted change; `7545dc6`'s `batch.rs`
@@ -73,6 +74,14 @@ moved by two orders of magnitude. `preamble-prepass` *borrows* the first's
 declare `MAP_BUILD`, and the third declares the edges of the reading it
 borrows.
 
+**And every figure was blind to the read path.** Nothing declared
+`pgdump_query/src/io.rs`, though every table that times a `pgdq` run reads its
+bytes through it — so 7.13, which removed the largest single term in a warm
+`parse`'s user time, would have read green against all twelve. It is now its
+own mechanism (`READ`) rather than part of `SCAN`, because `nested-end-to-end`
+and `census-attribution` declare no scanner path and are moved by it all the
+same.
+
 | Capability | State |
 |---|---|
 | Streaming row extraction from plain-format dumps, push and pull mode, resumable | working; a batch flushes on whichever of `max_rows`, `max_bytes` or `max_source_span` comes first, the last of which is what bounds the read chunks an in-flight batch pins ([`../design/architecture.md`](../design/architecture.md), "Three flush triggers") |
@@ -84,7 +93,7 @@ borrows.
 | Array shape census | recorded by every mapping pass and consumed: a query retypes its top-level array columns from the union over the blocks it will replay, before the first batch |
 | CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, cache-only `info` | working; **`parse` is the only scanner** — it resumes from a matching cache, banks at `COPY` block boundaries under a self-tuning throttle, and saves unconditionally on Ctrl-C (exit 130/143). `info` reports from the cache and never scans. `--verbose` adds each block's byte offsets, a per-column resolution line, an enum column's declared labels beneath it, and — under the `user-defined types` count that heads it — one line per user-defined type, every `TypeKind` arm rendered with its payload. Text output shape is provisional; `--json` carries no shape promise at all, and states the labels once per type in `metadata.databases[].types[]` rather than per column |
 | Partial reporting | `info` reports an unfinished scan's cache for as far as it got, with `Scan completion: N%` stated once at the top and nothing below it qualified. An interrupted cache is **typed** for every database segment the scan finished (I1) |
-| Measurement harness | `scripts/measure.py` takes every figure in [`../design/measurements.md`](../design/measurements.md) and emits that doc's tables — fourteen figures, thirteen taken by a sweep and one derived across two, each declaring what invalidates it and which documents repeat it. `measure.UNTAKEN` is empty: nothing is built and unrun. It also builds and interrogates the `allocator` figure's three legs, reading each binary's allocator out of `pgdq --version` rather than trusting the flags it passed, and names the shipped one in the session stamp |
+| Measurement harness | `scripts/measure.py` takes every figure in [`../design/measurements.md`](../design/measurements.md) and emits that doc's tables — fourteen figures, thirteen taken by a sweep and one derived across two, each declaring what invalidates it and which documents repeat it. `measure.UNTAKEN` is empty: nothing is built and unrun. It also builds and interrogates the `allocator` figure's three legs, reading each binary's allocator out of `pgdq --version` rather than trusting the flags it passed, and names the shipped one in the session stamp. A leg is rebuilt **once per harness process** rather than reused from `runs/`, which is what stops a fresh reference being timed against last session's legs, and all of them are built before the first reading rather than at the rep that wants one |
 | Column projection | working, library and CLI: `QueryOptions::projection` names columns, cuts the reported `ResolvedSchema` with the batches, may reorder, and may be empty (`COUNT(*)`); `pgdq query` spells it `--column <name>` repeated, or `--no-columns`, which prints no header so `\| wc -l` is a row count. A filter may name a column the projection does not, and an unprojected column is never decoded, so projecting a column away escapes its `Error::FieldDecode` — including `KD2`'s, which the error message does not name ([`../design/architecture.md`](../design/architecture.md), "Projection"; [`../manual/type-handling.md`](../manual/type-handling.md)). Measured on one 3.00 GiB file at five widths: `--no-columns` is 3.18 µs a row against 28.56 for all 19, the two array columns alone are +13.21 and the composite +0.98 ([`../design/measurements.md`](../design/measurements.md), "What a column costs") |
 | The filter expression, evaluated three-valued | working: `QueryOptions::filter` is one `Expr` — `Term`/`And`/`Or`/`Not`, `And` and `Or` n-ary — evaluated in SQL's `True`/`False`/`Unknown` domain, a row surviving only where the root is `True`. A NULL field is `Unknown` under every comparing operator, which is the row set the old collapse gave for every conjunction and is what makes `Not` expressible at all. `IS DISTINCT FROM`/`IS NOT DISTINCT FROM` come with it, being the one thing `Not` cannot spell. Short-circuiting is defined against the *root*: `And` stops at the first non-`True` unless a `Not` is above it, which is where a decode failure surfaces or does not. Nothing folds two terms, so a contradictory pair is a query with no rows. Reachable from the CLI as well as the library: `pgdq query --where <expr>` builds the tree and a repeated `--filter` still builds the conjunction ([`../design/architecture.md`](../design/architecture.md), "Predicates") |
 | The `--where` expression grammar | working, CLI only — `Expr` is an enum an embedder fills in, so nothing below L4 parses an expression. Parens group, `NOT` binds tighter than `AND` and `AND` tighter than `OR`, the keywords are case-insensitive and are keywords only outside quotes, and everything that is not a paren or a keyword is a term handed to the `--filter` grammar unchanged. A keyword is recognised only against whitespace or a paren, so `tag=and` stays an equality; a `NOT` after the word `is` belongs to the term, so `IS NOT NULL` and `IS NOT DISTINCT FROM` survive whole; juxtaposition is not an implicit `AND`; and a value holding a paren must be quoted. Both flags together are one conjunction. **No `--filter` string changes meaning** — that is what the separate flag buys ([`../design/architecture.md`](../design/architecture.md), "`--where` builds an expression out of those terms"; [`../manual/type-handling.md`](../manual/type-handling.md), "Combining terms: `--where`") |
@@ -171,9 +180,10 @@ The phase's spec, its measured baseline and the lever table each row measures:
 **7.1 and 7.2 are ordered; the rest is allocation order, not schedule** — the
 phase follows the profile, so a slice landing out of numeric order is the plan
 working ([`../process.md`](../process.md), "Slice numbering", which carries the
-exception an evidence-led phase runs under). Two orderings bind: `7.3`, since
-an allocator adopted after a figure is taken invalidates that figure, and
-`7.13` ahead of `7.6` and `7.7`.
+exception an evidence-led phase runs under). One ordering still binds —
+`7.13.1` ahead of `7.6` and `7.7`, which rework how a row is walked inside the
+buffer it replaces. The other, the allocator decision before the wrap sweep,
+is discharged: 7.13 re-took the figure and settled it.
 
 - [x] **7.1** The profiling apparatus — `[profile.profiling]`, `perf`, and a
       `measure.py --profile-recipe` that prints the invocation on the
@@ -189,10 +199,9 @@ an allocator adopted after a figure is taken invalidates that figure, and
       1.87×/1.19×/1.07× on the three headline shapes and `mimalloc`
       0.98×/0.96×/0.96×, so the lever's factor-sized stake is 3–4% on `typed`
       alone — the confirming sitting puts `parse` and `strings` inside the
-      apparatus. The features stay, the figure re-takes in five minutes, and
-      7.13 owes the re-take *and* the adoption decision — jemalloc's `parse`
-      penalty is 3,161 `madvise` calls from the per-chunk allocation that slice
-      removes. Notes:
+      apparatus. It named the re-take 7.13 owed, on the reading that jemalloc's
+      `parse` penalty was 3,161 `madvise` calls from that slice's allocation;
+      the re-take took the `typed` win away too. Notes:
       [`../design/roadmap-P7.3-allocator-notes.md`](../design/roadmap-P7.3-allocator-notes.md)
 - [x] **7.4** `KD5` — `stream::splice` rides the throttle's gate, with a third
       opener (a completed block whose header names the queried table) that
@@ -231,12 +240,21 @@ an allocator adopted after a figure is taken invalidates that figure, and
 - [ ] **7.12** The sweep pair and the koji regression run, folded in, plus the
       written statement of what a parallel splitter needs from coverage and
       from the census, filed to P16.
-- [ ] **7.13** Who owns the bytes between the kernel and the scanner —
-      `read_range`'s per-chunk zeroed allocation and each read loop's copy into
-      its own buffer, over all three loops. Reviewed alone, ahead of 7.6 and
-      7.7. Also owes `--figure allocator` **and the adoption decision 7.3
-      deferred** — this slice's allocation dominates that ranking, and the
-      decision must be settled before 7.12's sweep pair (7.3's notes).
+- [x] **7.13** The read path's per-chunk zeroed allocation, pooled behind the
+      `object_store` shape: a warm `parse` loses **9.4% of its user
+      instructions** (1.882 G → 1.706 G, ±0.00% either side) and
+      `__memset_avx2_…` leaves the profile entirely, wall being unchanged
+      because the prize was inside the quarter-second discovery already sat
+      within. `--figure allocator` re-taken, and **adoption settled: the
+      platform allocator stays** — `jemalloc` 1.02×/1.11×/1.06× and `mimalloc`
+      1.00×/0.99×/1.01×, both cells that had kept the question open having been
+      this allocation rather than an allocator. Notes:
+      [`../design/roadmap-P7.13-read-buffer-pool-notes.md`](../design/roadmap-P7.13-read-buffer-pool-notes.md)
+- [ ] **7.13.1** The copy into each read loop's own buffer, over all three
+      loops, with the query path's chunk retention settled explicitly.
+      **Earned**: 7.13's row paired one contained module with a rework of three
+      already-tested scan loops, which is two review cycles. Reviewed alone,
+      ahead of 7.6 and 7.7.
 
 ## Not started
 
@@ -244,10 +262,10 @@ an allocator adopted after a figure is taken invalidates that figure, and
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 - **P7 is open**, grilled and sliced; the checklist above is its progress. Its
-  two evidence slices, the allocator reading and two library changes have
-  landed — 7.4's gate in `stream.rs` and 7.5's `INSERT` statement scan in
-  `preamble.rs`/`map.rs`, both edits to timed paths, each with its figures
-  re-taken. Six
+  two evidence slices, the allocator reading and three library changes have
+  landed — 7.4's gate in `stream.rs`, 7.5's `INSERT` statement scan in
+  `preamble.rs`/`map.rs`, and 7.13's read-buffer pool in `io.rs`, all edits to
+  timed paths. Six
   other phases are sketched and one more is
   specified — P13, P16, P10, P14, P6, P15, P8, in the roadmap table's schedule
   order; a `P<k>` is an identifier, so the numbers say nothing about the order
@@ -365,12 +383,10 @@ here rather than reading as a phase nobody has sliced.
   render-back".
 
 - **KD9** — an `INSERT` run costs **4.3×** a `COPY` scan's per-byte CPU warm,
-  and two specific cuts against that remainder are known and untaken: the
-  already-matched `INSERT INTO <table>` prefix is fed to the scan a second
-  time, and a `memchr2` pass per plain run counts parens no `INSERT` statement
-  needs. **(c) unowned**; promoted by slice **7.8**'s cold-NVMe figure, which
-  is the only reading that says whether the remainder reaches a real device —
-  the SATA SSD hides it and the project's goal names NVMe. Detail:
+  and two specific cuts against that remainder are known and untaken. **(c)
+  unowned**; promoted by slice **7.8**'s cold-NVMe figure, the only reading
+  that says whether the remainder reaches a real device — the SATA SSD hides it
+  and the project's goal names NVMe. Detail:
   [`../design/architecture.md`](../design/architecture.md), "Bulk regions: one
   span kind, three payloads".
 
@@ -400,4 +416,21 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-Nothing is open.
+- **The `allocator` table was folded in from a partial sitting, against the
+  harness's own printed advice.** `measure.py --figure allocator` run alone
+  measures its own reference column and emits a "Partial sweep" note saying to
+  emit `census-brace-free` and `nested-end-to-end` with it "before folding any
+  of them in". It was folded in anyway. The reason: `census-brace-free`'s
+  readings are themselves shared with both throughput tables, so emitting the
+  set honestly is **five** figures rather than three — most of a sweep, an hour
+  of a quiet machine this one does not reliably offer, and work the wrap already
+  owns. Against that, the table it replaced stated `jemalloc` at 1.87× on
+  `parse`, a number 7.13 had just made false, and the adoption decision the
+  slice owed had no published evidence without it. What the shortcut costs is
+  exactly what the section already said of every sitting of that table — its
+  absolutes may not be read beside another table's — and nothing to its ratios,
+  which is what it is for. **If reconsidered**: the fix is to re-take
+  `census-brace-free`, `census-arrays`, `scan-throughput-cold`,
+  `scan-throughput-warm`, `nested-end-to-end` and `allocator` in one sitting, or
+  to let the wrap's sweep pair do it and read the current table's ratios only
+  until then.

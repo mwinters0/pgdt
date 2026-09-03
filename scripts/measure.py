@@ -1454,6 +1454,13 @@ def binary_allocator(binary: Path) -> str:
 #: Legs whose (absent) build a dry run has already reported. Only a dry run
 #: needs it: a real build leaves the binary behind, which is the memo.
 _ALLOC_ANNOUNCED: set[str] = set()
+#: Legs already built *by this process*. The cache is deliberately per-run and
+#: not the file on disk: `runs/pgdq-alloc-<leg>` from an earlier session was
+#: built from whatever the source said then, and reusing it compares a fresh
+#: reference binary against a stale leg -- which is exactly the "plausible table
+#: of the wrong comparison" this figure's assertions exist to stop, and it fails
+#: silently because a leg still answers `--version` with its own allocator name.
+_ALLOC_BUILT: set[str] = set()
 
 
 def ensure_allocator_binary(cfg: Config, leg: str, log: Callable[[str], None]) -> Path:
@@ -1469,11 +1476,18 @@ def ensure_allocator_binary(cfg: Config, leg: str, log: Callable[[str], None]) -
     * **Its own target dir**, so `target/release/pgdq` -- every other figure's
       binary -- is never overwritten by a `--features` build.
     * **`--version` is read back** and must name this leg.
+
+    A fourth is about *when*: the build runs once per leg per **process**, not
+    once per leg per machine. `cargo` is incremental, so a leg whose source has
+    not moved costs a second; a leg whose source *has* moved is the whole
+    reason this figure is being re-taken, and short-circuiting on the file's
+    existence would have silently timed the previous session's binary against
+    this one's reference.
     """
     if leg not in ALLOCATOR_LEGS:
         raise ValueError(f"unknown allocator leg {leg!r}")
     out = cfg.out_dir / f"pgdq-alloc-{leg}"
-    if out.exists():
+    if leg in _ALLOC_BUILT:
         return out
     features = [] if leg == "system" else ["--features", leg]
     target = cfg.alloc_build_root / leg
@@ -1498,6 +1512,7 @@ def ensure_allocator_binary(cfg: Config, leg: str, log: Callable[[str], None]) -
     )
     shutil.copyfile(target / "release/pgdq", out)
     out.chmod(0o755)
+    _ALLOC_BUILT.add(leg)
     got = binary_allocator(out)
     if got != leg:
         out.unlink()
@@ -1586,6 +1601,14 @@ class Figure:
 #: which is why the doc carries a session stamp as well, so "are these figures
 #: from before or after my change" has a second answer.
 SCAN = ("pgdump_query/src/scan.rs", "pgdump_query/src/copy.rs", "pgdump_query/src/stream.rs")
+#: Every figure that times a `pgdq` run over a file reads its bytes through
+#: this one module, whatever else the figure is about, so it is its own
+#: mechanism rather than part of `SCAN`: `nested-end-to-end` and
+#: `census-attribution` declare no scanner path and are still moved by it.
+#: The read path was undeclared until the buffer pool landed, which made a
+#: change to the largest single term in a warm `parse`'s user time read green
+#: against every table it moved.
+READ = ("pgdump_query/src/io.rs",)
 MAP = ("pgdump_query/src/map.rs",)
 #: The map's own per-block cost is two files, not one: `map::Builder::snapshot`
 #: clones the span list and `stream::splice` rebuilds the index from it, under
@@ -2213,6 +2236,13 @@ def run_allocator(session: Session) -> str:
     reference = _allocator_reference(session.cfg)
     columns = allocator_columns(reference)
     specs = _allocator_specs(reference)
+    # Every leg built before the first reading, not lazily at the rep that
+    # first wants one: a `cargo` build across this machine's cores moves the
+    # very number the next rep takes, which is the same rule that keeps a
+    # sweep off a busy machine.
+    for leg in columns:
+        if leg != reference:
+            ensure_allocator_binary(session.cfg, leg, session.log)
     # The reference column, shape by shape, from whichever figure already took
     # it. Borrowed rather than retaken so the doc carries one number per
     # measurement; measured here, with a note, when this figure runs alone.
@@ -2309,7 +2339,7 @@ FIGURES: list[Figure] = [
         ),
         section="The census on brace-free rows costs 8% of a warm scan",
         stage="cold+warm",
-        depends=(*MAP, *SCAN, *GEN_PERF),
+        depends=(*MAP, *SCAN, *READ, *GEN_PERF),
         cold_inputs=("control",),
         warm_inputs=("control",),
         run=run_census_brace_free,
@@ -2323,7 +2353,7 @@ FIGURES: list[Figure] = [
         ),
         section="The census on array-bearing rows more than triples a warm scan",
         stage="cold+warm",
-        depends=(*MAP, *SCAN, *GEN_PERF),
+        depends=(*MAP, *SCAN, *READ, *GEN_PERF),
         cold_inputs=("arrays",),
         warm_inputs=("arrays",),
         run=run_census_arrays,
@@ -2340,7 +2370,7 @@ FIGURES: list[Figure] = [
         section="Scan throughput by input shape",
         table_label="Every run cold, on the SSD",
         stage="cold",
-        depends=(*SCAN, *MAP, *GEN_SHAPES),
+        depends=(*SCAN, *MAP, *READ, *GEN_SHAPES),
         cold_inputs=("control", "large_object", "insert_run"),
         requires=("census-brace-free",),
         run=run_scan_throughput_cold,
@@ -2357,7 +2387,7 @@ FIGURES: list[Figure] = [
         section="Scan throughput by input shape",
         table_label="Every run warm, on tmpfs",
         stage="warm",
-        depends=(*SCAN, *MAP, *GEN_SHAPES),
+        depends=(*SCAN, *MAP, *READ, *GEN_SHAPES),
         warm_inputs=("control", "large_object", "insert_run"),
         requires=("census-brace-free",),
         run=run_scan_throughput_warm,
@@ -2370,7 +2400,7 @@ FIGURES: list[Figure] = [
         ),
         section="A typed query over nested columns costs 13.2 µs a row more than a string one",
         stage="warm",
-        depends=(*NESTED, *MAP, *QUERY_CLI, *GEN_PERF),
+        depends=(*NESTED, *MAP, *READ, *QUERY_CLI, *GEN_PERF),
         warm_inputs=("control", "composite", "arrays"),
         run=run_nested_end_to_end,
     ),
@@ -2382,7 +2412,7 @@ FIGURES: list[Figure] = [
         ),
         section="The untyped baseline is not file-independent (census attribution)",
         stage="warm",
-        depends=(*MAP, *QUERY_CLI, *GEN_PERF),
+        depends=(*MAP, *READ, *QUERY_CLI, *GEN_PERF),
         warm_inputs=("control", "arrays"),
         run=run_census_attribution,
     ),
@@ -2395,7 +2425,7 @@ FIGURES: list[Figure] = [
         ),
         section="The cross-file subtraction bottoms out at about half a microsecond a row",
         stage="warm",
-        depends=(*NESTED, *QUERY_CLI, *GEN_PERF),
+        depends=(*NESTED, *READ, *QUERY_CLI, *GEN_PERF),
         warm_inputs=("control", "control43"),
         requires=("nested-end-to-end",),
         run=run_cross_file_floor,
@@ -2409,7 +2439,7 @@ FIGURES: list[Figure] = [
         ),
         section="Per-block cache saving is quadratic in block count, and so is the map",
         stage="warm",
-        depends=(*MAP_BUILD, *CACHE, *GEN_BLOCKS, *GEN_PERF),
+        depends=(*MAP_BUILD, *READ, *CACHE, *GEN_BLOCKS, *GEN_PERF),
         warm_inputs=tuple(name for name, _ in _QUADRATIC_ROWS),
         run=run_per_block_quadratic,
     ),
@@ -2422,7 +2452,7 @@ FIGURES: list[Figure] = [
         ),
         section="Per-block cache saving is quadratic in block count, and so is the map (map alone)",
         stage="warm",
-        depends=(*MAP_BUILD, *QUERY_CLI, *GEN_BLOCKS),
+        depends=(*MAP_BUILD, *READ, *QUERY_CLI, *GEN_BLOCKS),
         warm_inputs=("blocks1000", "blocks2000", "blocks4000"),
         run=run_map_only,
     ),
@@ -2438,7 +2468,7 @@ FIGURES: list[Figure] = [
         #: borrowed rather than re-measured (`requires`, below) -- so this
         #: figure inherits that one's staleness edges as well as its own, or a
         #: change to the map moves a row here that reads green.
-        depends=(*PREAMBLE, *MAP_BUILD, *CACHE, *GEN_BLOCKS),
+        depends=(*PREAMBLE, *MAP_BUILD, *READ, *CACHE, *GEN_BLOCKS),
         warm_inputs=("blocks4000",),
         requires=("per-block-quadratic",),
         run=run_preamble_prepass,
@@ -2466,7 +2496,7 @@ FIGURES: list[Figure] = [
         ),
         section="What a column costs: five projection widths over one file",
         stage="warm",
-        depends=(*SCAN, *NESTED, *QUERY_CLI, *GEN_PERF),
+        depends=(*SCAN, *NESTED, *READ, *QUERY_CLI, *GEN_PERF),
         warm_inputs=("arrays",),
         run=run_projection_widths,
     ),
@@ -2489,6 +2519,7 @@ FIGURES: list[Figure] = [
             *SCAN,
             *MAP,
             *NESTED,
+            *READ,
             *QUERY_CLI,
             *GEN_PERF,
             # Where the legs are declared and where the shipped default lives,

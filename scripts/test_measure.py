@@ -235,6 +235,12 @@ class Allocator(unittest.TestCase):
     or the doc carries two numbers for one measurement.
     """
 
+    def setUp(self):
+        # The build memo is module state, so one test's build would otherwise
+        # satisfy the next test's.
+        measure._ALLOC_BUILT.clear()
+        measure._ALLOC_ANNOUNCED.clear()
+
     def test_the_reference_leg_is_the_shipped_binary(self):
         # Not a fourth build of the same source: two builds of one source
         # differ by ~10% from code layout alone, which is larger than the
@@ -393,6 +399,40 @@ class Allocator(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     measure.ensure_allocator_binary(cfg, "mimalloc", lambda _: None)
             self.assertFalse((cfg.out_dir / "pgdq-alloc-mimalloc").exists())
+
+    def test_a_leg_left_over_from_an_earlier_session_is_rebuilt(self):
+        # The failure this stops is silent and total: `runs/pgdq-alloc-<leg>`
+        # survives between sessions, so short-circuiting on its existence times
+        # a leg built from last week's source against a reference built from
+        # today's, and the leg still answers `--version` with its own allocator
+        # name, so nothing downstream notices.
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = measure.Config(
+                out_dir=Path(tmp) / "runs", alloc_build_root=Path(tmp) / "builds"
+            )
+            stale = cfg.out_dir / "pgdq-alloc-jemalloc"
+            stale.parent.mkdir(parents=True, exist_ok=True)
+            stale.write_text("last session's binary\n")
+            calls = []
+
+            def fake_run(argv, cwd=None, capture=False, quiet=False):
+                calls.append(list(argv))
+                built = cfg.alloc_build_root / "jemalloc" / "release"
+                built.mkdir(parents=True, exist_ok=True)
+                (built / "pgdq").write_text("#!/bin/true\n")
+                return ""
+
+            with unittest.mock.patch.object(measure, "run", fake_run), \
+                 unittest.mock.patch.object(
+                     measure, "binary_allocator", return_value="jemalloc"
+                 ):
+                measure.ensure_allocator_binary(cfg, "jemalloc", lambda _: None)
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(stale.read_text(), "#!/bin/true\n")
+                # Twice in one process is one build: `cargo` is incremental,
+                # but a build between two timed reps moves the second one.
+                measure.ensure_allocator_binary(cfg, "jemalloc", lambda _: None)
+                self.assertEqual(len(calls), 1)
 
     def test_an_allocator_leg_resolves_to_a_binary(self):
         session = measure.Session(measure.Config(dry_run=True), None, lambda _: None)

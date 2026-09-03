@@ -153,3 +153,29 @@ just as a speculative split does.
 reviewed: struck, then restored to its residual"). Found by asking what the
 residual costs beyond scan time; contingent on nothing — it follows from the
 statement grammar, not from the implementation.
+
+## The read path's buffers are now pooled behind one mutex, sized for one reader
+
+**Fact.** `io::LocalFileSource` no longer allocates a buffer per chunk. It
+keeps a four-slot free list behind a `std::sync::Mutex`, hands a buffer out per
+`read_range`, and gets it back when the last reference to that chunk's `Bytes`
+is dropped ([`architecture.md`](architecture.md), "Execution model and API
+surface"). Four slots is the single-reader steady state — one chunk in flight
+and one just released, with room for the query path's retained chunk — and the
+lock is taken twice per chunk read.
+
+**Why this phase cares.** N workers reading concurrently turn that free list
+into shared state on the hot path: at four slots most workers miss and fall
+back to allocating, which restores exactly the per-chunk `calloc` this pooling
+removed — and it is 9.4% of a warm `parse`'s user instructions. The two
+questions are the slot count (which wants to be a function of the worker count,
+not a constant) and whether the pool should be per-worker instead of per-source,
+which removes the lock and the miss at once but multiplies the resident buffers.
+Neither is decidable without knowing how this phase splits the work, which is
+why it is filed here rather than guessed at now.
+
+**Origin.** P7's slice 7.13, 2026-09-03
+([`../status/history/2026-09-03.md`](../status/history/2026-09-03.md), "7.13:
+the read path's allocation, and the seam that earned 7.13.1"). Contingent on
+the pool surviving `7.13.1`, which reworks who copies the chunk but not who
+allocates it.

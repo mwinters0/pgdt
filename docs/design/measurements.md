@@ -467,90 +467,95 @@ The harness reads the allocator out of the binary — `pgdq --version` names it 
 so the session stamp above cannot go on saying `glibc` after the day the
 default changes.
 
-The reference column is the shipped binary itself, and its three readings are
-shared with the figures that already take them rather than retaken, exactly as
-the census table's census-on column is shared with the warm throughput table.
-Two builds of one source can differ by ~10% from code layout alone ("Two builds
-of one source can differ by layout"), which is larger than the effect measured
-here, so a fourth build of the same source would have been the wrong reference.
+The reference column is the shipped binary itself — never a fourth build of the
+same source, since two builds of one source can differ by ~10% from code layout
+alone ("Two builds of one source can differ by layout"), which is larger than
+the effect measured here. Its three readings are shared with the figures that
+already take them where the sitting emits those too, exactly as the census
+table's census-on column is shared with the warm throughput table; where it does
+not, they are measured here and the table says so.
 
 <!-- figure: allocator — reproduce with `cd scripts && uv run measure.py --figure allocator` -->
 
 | Warm, on tmpfs | `system` — the shipped binary | `jemalloc` | `mimalloc` |
 |---|---|---|---|
-| `pgdq parse` — structure discovery | **0.544 s** (0.532–0.554) | **1.016 s** (0.996–1.028) — 1.87× | **0.535 s** (0.530–0.574) — 0.98× |
-| `query --schema-mode strings` — zero-copy extraction | **4.39 s** (4.38–4.62) | **5.22 s** (5.19–5.34) — 1.19× | **4.20 s** (4.14–4.41) — 0.96× |
-| `query --schema-mode typed` | **10.21 s** (10.14–10.44) | **10.90 s** (10.85–10.95) — 1.07× | **9.77 s** (9.75–9.79) — 0.96× |
-| `dd` → `/dev/null` — the co-measured floor | **0.310 s** (0.308–0.313) | — | — |
+| `pgdq parse` — structure discovery | **0.481 s** (0.471–0.493) | **0.489 s** (0.475–0.499) — 1.02× | **0.480 s** (0.465–0.511) — 1.00× |
+| `query --schema-mode strings` — zero-copy extraction | **4.14 s** (4.13–4.16) | **4.62 s** (4.61–4.69) — 1.11× | **4.12 s** (4.08–4.20) — 0.99× |
+| `query --schema-mode typed` | **9.84 s** (9.77–9.99) | **10.41 s** (10.37–10.49) — 1.06× | **9.95 s** (9.83–10.00) — 1.01× |
+| `dd` → `/dev/null` — the co-measured floor | **0.288 s** (0.286–0.289) | — | — |
 
 Every leg was asked what it links against before it was timed — `system`,
 `jemalloc`, `mimalloc` — so a leg whose build silently dropped its feature
 cannot be published as a comparison of two identical binaries.
 
-Per-rep readings (s):
-- `pgdq parse` (system): 0.544, 0.533, 0.544, 0.532, 0.554
-- `pgdq parse` (jemalloc): 0.996, 1.016, 1.027, 1.014, 1.028
-- `pgdq parse` (mimalloc): 0.574, 0.531, 0.540, 0.530, 0.535
-- `query --schema-mode strings` (system): 4.39, 4.39, 4.38, 4.39, 4.62
-- `query --schema-mode strings` (jemalloc): 5.22, 5.20, 5.19, 5.28, 5.34
-- `query --schema-mode strings` (mimalloc): 4.41, 4.20, 4.14, 4.20, 4.21
-- `query --schema-mode typed` (system): 10.44, 10.21, 10.14, 10.16, 10.27
-- `query --schema-mode typed` (jemalloc): 10.90, 10.91, 10.85, 10.85, 10.95
-- `query --schema-mode typed` (mimalloc): 9.77, 9.79, 9.75, 9.77, 9.79
-- `dd` → `/dev/null` (warm): 0.311, 0.308, 0.310, 0.308, 0.313
+**Partial sweep**: the reference column was measured here rather than shared
+with `census-brace-free` and `nested-end-to-end`, which this sitting did not
+emit. Those are the same measurements and the harness says to emit them
+together. They were not, deliberately: `census-brace-free`'s readings are in
+turn shared with both throughput tables, so emitting the set honestly is five
+figures rather than three, which is most of a sweep and belongs to the wrap.
+What that costs is what the paragraph below already says of *any* sitting of
+this table — its absolutes may not be set beside another table's — and it costs
+nothing at all to the ratios, which are what the table is for.
 
-Apparatus over every run in this table: CPU stall ≤0.24%, I/O stall ≤10.04%,
-machine ≤5% busy, steal ≤0.00%, busiest core ≥3.80 GHz, ≤66°C. **Taken in its
+Per-rep readings (s):
+- `pgdq parse` (system): 0.484, 0.481, 0.493, 0.471, 0.473
+- `pgdq parse` (jemalloc): 0.489, 0.475, 0.499, 0.479, 0.492
+- `pgdq parse` (mimalloc): 0.484, 0.465, 0.480, 0.511, 0.470
+- `query --schema-mode strings` (system): 4.16, 4.14, 4.15, 4.13, 4.14
+- `query --schema-mode strings` (jemalloc): 4.61, 4.66, 4.62, 4.69, 4.61
+- `query --schema-mode strings` (mimalloc): 4.08, 4.12, 4.17, 4.08, 4.20
+- `query --schema-mode typed` (system): 9.82, 9.99, 9.84, 9.86, 9.77
+- `query --schema-mode typed` (jemalloc): 10.37, 10.49, 10.40, 10.48, 10.41
+- `query --schema-mode typed` (mimalloc): 9.95, 10.00, 9.92, 10.00, 9.83
+- `dd` → `/dev/null` (warm): 0.288, 0.286, 0.287, 0.289, 0.288
+
+Apparatus over every run in this table: CPU stall ≤0.27%, I/O stall ≤10.32%,
+machine ≤5% busy, steal ≤0.00%, busiest core ≥3.59 GHz, ≤65°C. **Taken in its
 own sitting**, not in the `ba2fc12` sweep the stamp above records — so setting
 one of its absolutes beside that sweep's costs the ~8% a warm absolute resolves
 to across sessions, while its **ratios** are within-sitting, which is what the
-table is for. A second, independent sitting the same day gave jemalloc at
-1.89×/1.18×/1.06× and mimalloc at 1.00×/0.99×/0.97×.
+table is for.
 
-**Reproducing a sign is not reproducing a magnitude, and for `mimalloc` only
-one shape does both.** Read per shape across the two sittings: `parse` 0.98×
-and 1.00×, `strings` 0.96× and 0.99×, `typed` 0.96× and 0.97×. `jemalloc`'s
-three ratios are far enough from 1 that both sittings say the same thing. For
-`mimalloc` only **`typed`** does — a 3–4% win whose within-sitting spread
-(9.75–9.79 against the reference's 10.14–10.44) does not overlap, in both
-sittings. `parse` is nothing. `strings` reads 4% once and 1% once, and two
-sittings disagreeing by that much *is* this document's "a move smaller than the
-apparatus resolves is not a finding" being demonstrated inside one table. So
-the `mimalloc` result to carry forward is **one shape, not two**, and any
-argument for adopting it is an argument about `typed` alone.
+**Nothing beats the platform allocator on any of the three shapes, and the two
+readings that once said otherwise were both about something else.** This
+sitting is the read path's buffer pool
+([`architecture.md`](architecture.md), "Execution model and API surface"); the
+sitting before it was not, and the difference between them is the whole result:
 
-**`jemalloc`'s `parse` penalty is a syscall storm, and it belongs to a lever
-this phase has not pulled yet.** All of it is system time — 0.27 s → 0.80 s on
-the host with user time slightly *lower* (0.23 s → 0.19 s) and 8% fewer user
-instructions — and `strace -c` says why: 3,161 `madvise` calls against glibc's
-50 and mimalloc's 62, over a 3.00 GiB file read in 3,072 chunks. That is
-`LocalFileSource::read_range`'s per-chunk `vec![0u8; 1 MiB]` being returned to
-the kernel and re-faulted once per chunk, which is exactly the allocation
-[`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md)'s slice 7.13
-removes. So the ranking above is dominated on one of its three shapes by an
-allocation that is scheduled to disappear, and the table is re-taken — `--figure
-allocator`, five minutes — after that slice rather than treated as settled.
+- **`jemalloc`'s `parse` was 1.87× and is 1.02×.** It was never the allocator
+  being slow. All of it was system time — 0.27 s → 0.80 s on the host, with
+  user time slightly *lower* and 8% fewer user instructions — and `strace -c`
+  said why: 3,161 `madvise` calls against glibc's 50 and mimalloc's 62, over a
+  3.00 GiB file read in 3,072 chunks. That was
+  `LocalFileSource::read_range`'s per-chunk `vec![0u8; 1 MiB]` being returned to
+  the kernel and re-faulted once per chunk. Pool the buffer and the storm, and
+  the ranking's largest number with it, is gone.
+- **`mimalloc`'s `typed` was 0.96× and is 1.01×.** That 3–4% was the one cell
+  of the old table that reproduced its magnitude across two sittings, and it was
+  the whole of the case for adopting. It does not survive the buffer pool: the
+  spread here (9.83–10.00) sits above the reference's (9.77–9.99) rather than
+  below it, and the remaining `parse` and `strings` cells are 1.00× and 0.99×.
 
-*Rejected:* adopting `mimalloc` now on its `typed` win. It is a real,
-reproducible 3–4% on that one shape and inside the apparatus on the other two,
-against a lever table whose other rows are the 3.9× P7's slice 7.5 took off an
-`INSERT` scan, the 184× the map's own
-per-block rebuild turned out to be worth, and 54.6%
-of a warm `parse`'s user time — and the cost is not the one-line default flip.
-Adopting makes every other table here a figure of a binary that is no longer
-shipped, with no mechanical oracle to acknowledge it, so the whole document
-reads stale until the wrap's sweep pair. Paying that for one shape's 3–4%, on a
-ranking whose largest number is about to be invalidated by 7.13, is buying the
-decision at its least informative moment. The features stay in the manifest so
-the re-take costs nothing.
+**The decision this figure existed to make is therefore made: the platform
+allocator stays.** The features stay in the manifest so a later re-take costs
+five minutes, and the deadline that bound it — settle before the wrap's sweep
+pair, since adopting after it would invalidate a freshly-taken thirteen-table
+document with no sweep left to repair it — is discharged rather than deferred
+again. The reasoning that would have applied had a leg won is beside the
+mechanism ([`architecture.md`](architecture.md), "The allocator is the binary's
+choice").
 
-**The decision is deferred, not made, and it has a deadline.** The re-take
-belongs to 7.13, which removes the allocation dominating `jemalloc`'s `parse`
-column; the *adoption* decision belongs to that same slice, and either way it
-must be settled **before the wrap's sweep pair**. That is the real constraint
-the phase spec's ordering paragraph is about: adopting before the sweep costs
-only what the sweep re-takes anyway, and adopting after it would invalidate a
-freshly-taken thirteen-table document with no sweep left to repair it.
+**The old table's legs were nearly published against a fresh reference.**
+`ensure_allocator_binary` short-circuited on `runs/pgdq-alloc-<leg>` existing,
+and that file outlives a session, so the first re-take timed the *previous*
+session's jemalloc and mimalloc binaries against this session's `pgdq` — two
+different sources, reported as two allocators, with nothing to notice because a
+stale leg still answers `--version` with its own allocator name. The build is
+now memoized per **process** rather than per machine, and every leg is built
+before the first reading rather than lazily at the rep that wants it. The tell
+in a run log: `building the <leg> allocator leg into …` must appear once per
+non-reference leg before `rep1`.
 
 ## Scan throughput by input shape
 
