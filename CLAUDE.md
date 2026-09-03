@@ -157,7 +157,10 @@ names every site that must change when a scanner event is added.
 **A citation names a section, and `cd scripts && uv run citations.py` resolves
 every one of them in the tree.** Run it after rewriting a heading or moving a
 section — that is the moment citations to it go stale, everywhere but in the
-file you edited. A few sections in `architecture.md` carry an
+file you edited. **A dated entry whose day has closed is exempt**, because an
+entry states what was true on its date and is not maintained; today's is read,
+so a citation written into a history entry is still checked on the day it is
+written. A few sections in `architecture.md` carry an
 `<!-- section: <id> -->` marker because their heading states a measured finding
 and is rewritten when the finding moves; **cite those by the id, never by the
 heading**, and the check fails naming the id if you do. The convention and its

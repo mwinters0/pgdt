@@ -39,3 +39,26 @@ facts as they stand when the day closes, in one pass, as if looking back:
 This is CLAUDE.md's "document what is, not what was" applied inside a file whose
 name is a date. The date records *when* something was learned; it is not licence
 to narrate *how*.
+
+## An entry carries yesterday's truth
+
+An entry says what was true on its date and is not maintained afterwards.
+Comparing it against today is what `git log` is for, and that is the property
+that makes writing one affordable: it is written in a single pass, as the day's
+settled facts, without classifying each sentence against a future that has not
+happened.
+
+**So a citation in a dated entry is a statement about the day it was written,
+not a live pointer.** Its target may since have been renamed or deleted — a
+keystone deletes phase docs and is forbidden to rewrite history, so it leaves
+such citations dangling by rule rather than by oversight — and that is not a
+defect and is not repaired.
+
+The exception is a citation that **never** resolved: a relative path written at
+the wrong depth, a section named by a title its target has never carried. That
+was not true yesterday either, so nothing protects it, and it is fixed like any
+other typo. `git log` is what tells the two apart.
+
+This is what "actively misleading" above does and does not reach. An entry
+whose *claims* have become traps is corrected; a pointer that has merely
+outlived its target is not one, given this understanding.

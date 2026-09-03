@@ -242,6 +242,28 @@ Three sections earn their keep beyond the checklist:
   every document that used the word in its plain sense disclaim it, and that is
   prose paying for a naming mistake.
 
+  **`D` stays reserved and unused, and that is a decision rather than an
+  omission.** A standing decision record — numbered entries, kept current,
+  compacted when one supersedes another, each pointing at the immutable history
+  that produced it — is a real pattern and other projects run on it. This doc
+  set does not need one, because it already routes every decision to a
+  subject-filed home that has all three of those properties: the fact-routing
+  table above sends the decision to the design doc and the evidence to a dated
+  entry, the subject-filed doc is rewritten in place rather than appended to, a
+  superseded alternative is kept beside the mechanism that replaced it, and a
+  decision may cite as many dated entries as produced it. The one thing missing
+  was a handle stable enough to cite when the heading above it moves, which is
+  what a section marker is. Adding a register on top of that would create a
+  second authority over decisions the design docs already state, which is the
+  thing a keystone exists to remove.
+
+  Two things would change the answer, and neither has happened: a decision that
+  fits none of the subject-filed homes — not a mechanism, not a standing rule,
+  not an external invariant — turning up more than once; or somebody needing a
+  supersession *chain* and being unable to rebuild it from the rejected
+  alternatives filed beside the mechanism. Re-raise it on one of those rather
+  than on the reserved letter looking unused.
+
   Eight rules keep it working, and the first is the one whose absence is
   hardest to see:
 
@@ -751,6 +773,20 @@ from.
 - **Rewrite or delete history.** Dated entries have no read-trigger, so they
   cost nothing to keep, and they are the raw evidence beneath the distillate —
   including the evidence for the review itself.
+
+  **This covers their citations too**, which is the one place it differs from
+  the register carve-out above and the difference is worth stating, because a
+  keystone reading that clause by analogy would reach the opposite conclusion. A
+  pointer out of the register is repaired because the register is **present
+  tense**: it asserts what is true now, so a dangling pointer in it is a claim
+  that has gone wrong. A dated entry asserts what was true on its date, so a
+  pointer that has outlived its target is still an accurate record of the day —
+  the target *was* there — and repairing it would be rewriting history to say
+  something the day did not say. A keystone therefore leaves every history
+  citation of the docs it deletes dangling, deliberately, and any check over
+  citations must exempt dated entries or it goes permanently red at the first
+  keystone. What is *not* exempt is a citation that never resolved at all: that
+  was not the day's truth either, and it is a typo like any other.
 - **Freeze the distillate.** `initial.md` is frozen because it records what we
   thought at the start. The architecture doc records what is true *now*; it is
   edited like any live doc, and a keystone that produces a second frozen

@@ -9,8 +9,13 @@ each artifact must pass" is blunt about what a broken one costs: a session
 spends a tool call following it and finds nothing, which is worse than having no
 pointer at all. Headings are rewritten as the things under them move,
 so the discipline decays quietly and in exactly the places nobody re-reads --
-three of the thirteen this first reported sit in phase *inboxes*, which are read
+three of the nine this first reported sit in phase *inboxes*, which are read
 at grilling time, the moment a stale pointer costs most.
+
+**A dated entry whose day has closed is exempt**, and that is a property of what
+history *is* rather than a concession: an entry states what was true on its date
+and is not maintained, so a stale pointer in one is not a defect. See
+`reads_citations`, which holds the whole of that rule.
 
 Three resolutions, and they are deliberately not one rule:
 
@@ -92,6 +97,7 @@ from __future__ import annotations
 import argparse
 import ast
 import bisect
+import datetime as dt
 import io as _io
 import os
 import re
@@ -115,6 +121,20 @@ ROOT_DOCS = ("README.md", "CLAUDE.md", "CONTRIBUTING.md")
 #: of one is accepted whole rather than reported, which is the honest reading --
 #: the target is real and this checkout simply cannot see it.
 UNCHECKED_DOCS = ("CLAUDE.local.md",)
+
+#: Dated entries. An entry states what was true on its date and is not
+#: maintained afterwards (`docs/status/history/README.md`, "An entry carries
+#: yesterday's truth"), so a keystone that deletes a phase doc leaves every
+#: history citation of it dangling *by rule* -- `docs/process.md`, "What a
+#: keystone review must not do", forbids rewriting them -- and repairing one is
+#: not owed. Their **headings are still resolvable targets**: the out-of-band
+#: ledger's `Why` column cites a dated entry by heading, so the exclusion is on
+#: the reading side alone and never on `documents()`.
+HISTORY_DIR = "docs/status/history/"
+
+#: `YYYY-MM-DD.md`, the shape of a dated entry. `README.md` beside them states
+#: the rules rather than a day's facts, so it is read like any other document.
+DATED_ENTRY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.md$")
 
 #: Rust: sources only. Comments and doc comments, never code.
 RUST_ROOTS = ("pgdump_query", "pgdump_query-cli")
@@ -587,6 +607,26 @@ def sources(repo: Path = REPO) -> list[Path]:
     return [p for p in out if p.is_file()]
 
 
+def reads_citations(rel: str, today: str) -> bool:
+    """Whether a file's own citations are resolved.
+
+    Every file's, except a dated entry whose day has closed. The two failures
+    are not the same age: a mistyped path or a section named by a title its
+    target has never carried is wrong the *moment* it is written, while a
+    pointer only goes stale when something else deletes or renames its target,
+    which takes days. So today's entry is still read -- the session writing it
+    gets its own pointers resolved -- and no entry is ever re-litigated after
+    its date, which is what keeps the red count from growing with every
+    keystone. A permanently red check stops being read.
+    """
+    if not rel.startswith(HISTORY_DIR):
+        return True
+    name = rel[len(HISTORY_DIR) :]
+    if not DATED_ENTRY_RE.match(name):
+        return True
+    return name == f"{today}.md"
+
+
 def documents(repo: Path = REPO) -> dict[str, list[Section]]:
     """Every Markdown document a citation may name, and what it offers."""
     out: dict[str, list[Section]] = {}
@@ -598,7 +638,11 @@ def documents(repo: Path = REPO) -> dict[str, list[Section]]:
     return out
 
 
-def collect(repo: Path = REPO) -> tuple[list[Citation], dict[str, list[Section]], dict[str, str], list[str]]:
+def collect(
+    repo: Path = REPO, today: str | None = None
+) -> tuple[list[Citation], dict[str, list[Section]], dict[str, str], list[str], int]:
+    if today is None:
+        today = dt.date.today().isoformat()
     docs = documents(repo)
     ids: dict[str, str] = {}
     problems: list[str] = []
@@ -625,10 +669,14 @@ def collect(repo: Path = REPO) -> tuple[list[Citation], dict[str, list[Section]]
                 continue
             ids[s.text] = doc
     citations: list[Citation] = []
+    read = 0
     for p in sources(repo):
         rel = repo_rel(p, repo)
+        if not reads_citations(rel, today):
+            continue
+        read += 1
         citations.extend(citations_in(rel, prose_of(p), ids))
-    return citations, docs, ids, problems
+    return citations, docs, ids, problems, read
 
 
 def report(
@@ -661,10 +709,10 @@ def report(
         print("Every citation resolves to the section it names.", file=out)
 
 
-def check(repo: Path = REPO, out=sys.stdout) -> int:
-    citations, docs, ids, problems = collect(repo)
+def check(repo: Path = REPO, out=sys.stdout, today: str | None = None) -> int:
+    citations, docs, ids, problems, read = collect(repo, today)
     problems = list(problems) + reconcile(citations, docs, ids)
-    report(citations, docs, ids, problems, len(sources(repo)), out=out)
+    report(citations, docs, ids, problems, read, out=out)
     return 1 if problems else 0
 
 
