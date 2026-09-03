@@ -10,9 +10,14 @@ kept**.
 lets these tables be differenced against each other, and what "are these
 figures from before or after my change" is answered by. `uv run measure.py
 --stale` reads that commit back and names the figures a diff has invalidated
-since. The one exception is `session-drift`, which no sweep can take: it is
-derived across the published sweep and a second one taken two minutes later on
-the same commit, and it says so in its own section.
+since. **Five tables stand outside that sweep and each says so in its own
+apparatus line**, so a reading taken from one of them and differenced against a
+sweep table is a cross-sitting difference and must clear the drift figure
+below: `session-drift` itself, which no sweep can take — it is derived across
+the published sweep and a second one taken two minutes later on the same commit
+— and `allocator`, `per-block-quadratic`, `map-only` and `preamble-prepass`,
+each re-taken after a change that moved it, the last three together because
+they share readings.
 
 All figures are on the hardware `CLAUDE.local.md` describes. Synthetic inputs
 are regenerable with `--seed 42` and are **never committed** — they measure
@@ -528,7 +533,8 @@ allocator`, five minutes — after that slice rather than treated as settled.
 
 *Rejected:* adopting `mimalloc` now on its `typed` win. It is a real,
 reproducible 3–4% on that one shape and inside the apparatus on the other two,
-against a lever table whose other rows are 16.5×, 19.0 s of 20.8 s, and 54.6%
+against a lever table whose other rows are 16.5×, the 184× the map's own
+per-block rebuild turned out to be worth, and 54.6%
 of a warm `parse`'s user time — and the cost is not the one-line default flip.
 Adopting makes every other table here a figure of a binary that is no longer
 shipped, with no mechanical oracle to acknowledge it, so the whole document
@@ -1454,15 +1460,18 @@ the worst case the generators can build:
 | | Wall |
 |---|---|
 | `parse --preamble-only`, 4000-table dump | **0.045 s** |
-| full `parse` of the same file | 20.75 s |
+| full `parse` of the same file | 0.113 s |
 
-Apparatus over every run in this table: CPU stall ≤0.43%, I/O stall ≤9.25%, machine ≤6% busy, steal ≤0.00%, busiest core ≥3.60 GHz, ≤61°C.
+Apparatus over every run in this table: CPU stall ≤0.26%, I/O stall ≤11.18%, machine ≤3% busy, steal ≤0.00%, busiest core ≥3.65 GHz, ≤63°C. **Taken in the same sitting as the quadratic table below**, whose 4000-block "after" column the second row is.
 
 The second row is not a second measurement: it is the quadratic table's
-4000-block "after" column. What the pair has to establish is that an
-uncancellable region is *milliseconds* against a scan of seconds to an hour,
-and at 461× it clears that by more than any apparatus difference could take
-away.
+4000-block "after" column. **The pair is no longer a ratio worth quoting** —
+that scan went from 20.75 s to 0.113 s when the map's per-block rebuild moved
+behind the save throttle's gate, so 461× became 2.5× without the prepass
+changing at all. The ratio was never the claim. What has to hold is that the
+uncancellable region is *milliseconds*: 45 ms here, on the most preamble-heavy
+shape the generators can build, half of whose bytes are preamble — and 63,333
+bytes of one read on koji, against a scan of an hour.
 
 ```sh
 cd scripts && uv run measure.py --figure preamble-prepass
@@ -1501,22 +1510,29 @@ working tree. The cache is written to the tmpfs directory too, mounted into
 the container, so no run writes to the container's own layer.
 
 **"Before" is a whole-commit comparison, not a throttle-isolating one.** The
-two builds differ in everything that landed after `b726f6b`, not only in the
-save throttle, so the column says what the throttle era bought and must not be
-differenced against a later change. What isolates a mechanism is the
-census-off method above — one line, one rebuild — and what the P7 inbox
-consumes is the map's own quadratic below, which needs no historical build at
-all.
+two builds differ in everything that landed after `b726f6b` — the save
+throttle, and then the gate that put the map's own rebuild behind it — so the
+column says what those two eras bought together and must not be differenced
+against a later change. What isolates a mechanism is the census-off method
+above — one line, one rebuild — and what the parallel-scan phase consumes is
+the map's own quadratic below, which needs no historical build at all.
 
 | blocks | dump | final cache | before | after | saves before → after |
 |---|---|---|---|---|---|
-| 1 (control) | 2.0 MB | 1 KB | 0.028 s | 0.005 s | 4 → 5 |
-| 500 | 242 KB | 319 KB | 0.616 s | 0.280 s | 503 → 15 |
-| 1000 | 484 KB | 640 KB | 2.46 s | 1.057 s | 1003 → 25 |
-| 2000 | 973 KB | 1.3 MB | 10.79 s | 4.62 s | 2003 → 50 |
-| 4000 | 1.9 MB | 2.5 MB | 47.18 s | 20.75 s | 4003 → 105 |
+| 1 (control) | 2.0 MB | 1 KB | 0.005 s | 0.005 s | 4 → 5 |
+| 500 | 242 KB | 319 KB | 0.623 s | 0.015 s | 503 → 5 |
+| 1000 | 484 KB | 640 KB | 2.49 s | 0.029 s | 1003 → 5 |
+| 2000 | 973 KB | 1.3 MB | 10.89 s | 0.056 s | 2003 → 5 |
+| 4000 | 1.9 MB | 2.5 MB | 44.70 s | 0.113 s | 4003 → 5 |
 
-Apparatus over every run in this table: CPU stall ≤0.26%, I/O stall ≤7.50%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.67 GHz, ≤66°C.
+Per-rep readings (s):
+- 1 (control) — before: 0.004, 0.005; after: 0.005, 0.004
+- 500 — before: 0.631, 0.615; after: 0.015, 0.015
+- 1000 — before: 2.49, 2.49; after: 0.031, 0.028
+- 2000 — before: 10.98, 10.80; after: 0.056, 0.056
+- 4000 — before: 44.84, 44.56; after: 0.111, 0.114
+
+Apparatus over every run in this table: CPU stall ≤0.31%, I/O stall ≤7.04%, machine ≤7% busy, steal ≤0.00%, busiest core ≥4.06 GHz, ≤66°C. **Taken in its own sitting**, with the `map-only` and `preamble-prepass` tables that share its readings, not in the `ba2fc12` sweep the stamp above records.
 
 Every run is 99% CPU at every point: the cost is *serializing* the index, not
 writing it. **The control is the table's first row** — the same byte count in
@@ -1530,15 +1546,20 @@ a control nothing runs is one that goes stale without anyone noticing.
 `scripts/test_measure.py` asserts that every declared input is consumed by some
 figure, which is the check that catches one sitting unread.
 
-**The throttle does exactly what it was designed to do, and the series still
-quadruples per doubling.** Saves fall well under the `1/K` bound — visible in
-the last column, and *self-tuning*: the throttle skips a save unless 20× the
-last save's own duration has elapsed, so a faster machine or libc saves fewer
-times, not the same number faster. The ~26 s of saving at 4000 blocks becomes
-about 1.7 s of a 21 s scan. What is left is a *second* quadratic with the same
-shape and a different cause: every `CopyEnd` clones the whole span list
-(`map::Builder::snapshot`, then `stream::splice` over the prefix), so the map
-is O(blocks²) with the cache **disabled entirely**:
+**The "after" column no longer quadruples per doubling — it doubles**, which
+is the shape a scan of a file twice as long should have. Two mechanisms
+produced that between them and they are not separable here, because the second
+changed the input to the first: the save throttle skips a save unless 20× the
+last save's own duration has elapsed, and the gate it opens is now also what
+decides when `stream::splice` rebuilds the map
+([`architecture.md`](architecture.md), "`parse` resumes, and saves as it
+goes"). Removing the per-block rebuild shortened the scan, and a shorter scan
+earns fewer saves under a rule that is a ratio against elapsed time — so the
+save count falls to **5** at every size rather than tracking the block count at
+`1/K` of it. What is left of the original quadratic is the rebuild *itself*,
+which is O(blocks) each time it runs and still runs per block wherever the gate
+does not close — and the gate cannot close on a cache that costs nothing, so
+with the cache **disabled entirely** the map is O(blocks²) exactly as it was:
 
 ```sh
 # maps to EOF (the table never matches) and never saves
@@ -1549,33 +1570,35 @@ is O(blocks²) with the cache **disabled entirely**:
 
 | blocks | 1000 | 2000 | 4000 |
 |---|---|---|---|
-| map only, no saving | 1.012 s | 4.56 s | 19.03 s |
+| map only, no saving | 1.004 s | 3.98 s | 19.07 s |
 
-Apparatus over every run in this table: CPU stall ≤9.41%, I/O stall ≤4.05%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.60 GHz, ≤66°C.
+Per-rep readings (s):
+- 1000 blocks: 1.004, 1.014, 0.989
+- 2000 blocks: 4.19, 3.98, 3.92
+- 4000 blocks: 18.14, 19.07, 19.08
 
-**The 9.41% CPU stall belongs to a reading that is not in this table.** The
-gate is armed at 5% and it fired: one `blocks1000` rep was discarded and
-retaken clean at 0.999 s, which is the mechanism working. The apparatus line
-reports the worst of *every* run the figure took, discarded ones included, so
-it can name a number no published reading carries — over-reporting, in the
-direction that costs a reader nothing but an explanation.
+Apparatus over every run in this table: CPU stall ≤0.19%, I/O stall ≤5.19%, machine ≤5% busy, steal ≤0.00%, busiest core ≥3.60 GHz, ≤68°C. **Taken in the same sitting as the quadratic table above.**
 
-**The 2000-block row moved +9%** against the previous stamp, where the other
-two moved ~1%; the second sweep of the pair reproduces all three inside 1.4%.
-The sizes are what this figure is for, and they were never in question; the
-third decimal was.
+**This table is what says the gate above did nothing here**, which is why it
+was re-taken alongside it rather than assumed: 1.004 / 3.98 / 19.07 s against
+the previous stamp's 1.012 / 4.56 / 19.03 s. `--dqcache none` makes
+`cache::CacheMode::save` a no-op, so the throttle has no cost to amortize, its
+gate never closes, and the map is rebuilt at every `CopyEnd` exactly as before.
+The 2000-block row is the one that moves between sittings — +9% at the previous
+stamp, −13% here, against ~0.2% for the other two — and the sizes, which are
+what this figure is for, have never been in question.
 
-So at 4000 blocks the map is **most of what a throttled `parse` costs** —
-19.0 s of 20.8 s — and the cache is the ~1.7 s left. That remainder cannot be
-resolved more finely: it is the difference of two ~20 s readings taken in
-different figures, which the drift figure puts several percent apart, and
-several percent of 20 s is the whole of it. Against the *unthrottled* build the
-split is 28 s of saving against 19 s of mapping.
-Closing the second half means not rebuilding the span list per block; it is
-`KD5`, discharged by P7's slice 7.4
-([`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md)), which
-moves the splice inside the throttle's own gate and pays for it in what an
-interrupt banks.
+So the two tables bracket the same mechanism from either side. **With a cache,
+the map's rebuild is gone**: 0.113 s at 4000 blocks against the 20.75 s the
+same command cost at the previous stamp, when it spliced per block — a
+cross-sitting difference, and the only kind this document permits, since 184×
+is two orders of magnitude past the 8.5% a session's own drift reaches.
+**Without a cache it is the whole cost**: 19.1 s for the same file. Against the
+*unthrottled* `b726f6b` build the split is ~26 s of saving against ~19 s of
+mapping, which is the pair the "before" column and this table make. What is left is `KD5`
+([`../status/STATUS.md`](../status/STATUS.md), "Known deficiencies") — the
+rebuild is still a whole-list clone, so it is only ever as cheap as the gate is
+closed.
 
 Save counts come from `strace -f -e trace=open,openat` filtered to the cache
 path (`std::fs::write` opens once per save; the first is the load's miss).

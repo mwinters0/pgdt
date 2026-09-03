@@ -1587,6 +1587,11 @@ class Figure:
 #: from before or after my change" has a second answer.
 SCAN = ("pgdump_query/src/scan.rs", "pgdump_query/src/copy.rs", "pgdump_query/src/stream.rs")
 MAP = ("pgdump_query/src/map.rs",)
+#: The map's own per-block cost is two files, not one: `map::Builder::snapshot`
+#: clones the span list and `stream::splice` rebuilds the index from it, under
+#: the save throttle's gate. A figure that prices the map declares both, or a
+#: change to the gate reads green against a table it just moved.
+MAP_BUILD = (*MAP, "pgdump_query/src/stream.rs")
 CACHE = ("pgdump_query/src/cache.rs",)
 NESTED = ("pgdump_query/src/nested.rs", "pgdump_query/src/batch.rs")
 PREAMBLE = ("pgdump_query/src/index.rs", "pgdump_query/src/preamble.rs")
@@ -2404,7 +2409,7 @@ FIGURES: list[Figure] = [
         ),
         section="Per-block cache saving is quadratic in block count, and so is the map",
         stage="warm",
-        depends=(*MAP, *CACHE, *GEN_BLOCKS, *GEN_PERF),
+        depends=(*MAP_BUILD, *CACHE, *GEN_BLOCKS, *GEN_PERF),
         warm_inputs=tuple(name for name, _ in _QUADRATIC_ROWS),
         run=run_per_block_quadratic,
     ),
@@ -2417,7 +2422,7 @@ FIGURES: list[Figure] = [
         ),
         section="Per-block cache saving is quadratic in block count, and so is the map (map alone)",
         stage="warm",
-        depends=(*MAP, *QUERY_CLI, *GEN_BLOCKS),
+        depends=(*MAP_BUILD, *QUERY_CLI, *GEN_BLOCKS),
         warm_inputs=("blocks1000", "blocks2000", "blocks4000"),
         run=run_map_only,
     ),
@@ -2429,7 +2434,11 @@ FIGURES: list[Figure] = [
         ),
         section="The preamble prepass is bounded by the schema, not by the dump",
         stage="warm",
-        depends=(*PREAMBLE, *GEN_BLOCKS),
+        #: Its second row is `per-block-quadratic`'s 4000-block "after" reading,
+        #: borrowed rather than re-measured (`requires`, below) -- so this
+        #: figure inherits that one's staleness edges as well as its own, or a
+        #: change to the map moves a row here that reads green.
+        depends=(*PREAMBLE, *MAP_BUILD, *CACHE, *GEN_BLOCKS),
         warm_inputs=("blocks4000",),
         requires=("per-block-quadratic",),
         run=run_preamble_prepass,

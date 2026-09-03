@@ -16,29 +16,45 @@ each is in.
 
 [`../design/measurements.md`](../design/measurements.md) carries the `ba2fc12`
 stamp of 2026-09-03: the scan-performance baseline sweep pair was taken and
-folded in whole, so thirteen of its fourteen tables come from one sitting. The
-fourteenth is `allocator`, taken in its own sitting by 7.3 — its ratios are
-within-sitting, which is what that table is for, and its reference column
-reproduces the sweep's three headline absolutes to within 2.5%.
+folded in whole, so ten of its fourteen tables come from one sitting. Four were
+taken on their own afterwards and each says so in its own section — `allocator`
+by 7.3, whose ratios are within-sitting and whose reference column reproduces
+the sweep's three headline absolutes to within 2.5%, and
+`per-block-quadratic`, `map-only` and `preamble-prepass` by 7.4, which moved
+the first of the three by two orders of magnitude and re-took the other two in
+the same sitting because they share its readings and its subject.
 
-**Seven figures are stale, and the reasons are written down.** Six —
-`nested-end-to-end`, `census-attribution`, `cross-file-floor`, `map-only`,
-`projection-widths` and `allocator` — are stale on `pgdump_query-cli/src/`,
-which 7.3 both widened from `main.rs` (a declared path is matched by prefix,
-and the crate now has three modules) and then changed, by adding `mod alloc;`
-and a `--version` string. That one is owed a **measured** acknowledgement
-rather than a reachability one: this figure's reference column is a fresh
-reading of the three headline shapes on the changed binary, and it reproduces
-`ba2fc12` to 2.5%, 0.7% and 1.4%. An `acknowledged.py` entry cannot name its
-own sha, so it lands as a follow-up
+**Thirteen figures read stale against the `ba2fc12` stamp, and three of them
+are not.** `per-block-quadratic`, `map-only` and `preamble-prepass` were
+re-taken by 7.4 on this build, in one sitting, and are current in fact;
+`--stale` reads staleness off the doc's stamp, which no per-figure re-take
+moves, so they stay listed until the wrap sweep — the same standing the
+`allocator` table has had since 7.3.
+
+**Ten are genuinely stale, and the reasons are written down.** Six —
+`census-brace-free`, `census-arrays`, `scan-throughput-cold`,
+`scan-throughput-warm`, `projection-widths` and `allocator` — are red on
+`pgdump_query/src/stream.rs`, which 7.4 changed. Every one of them times a
+single-`COPY`-block input, where the gate 7.4 added is open at the one
+`CopyEnd` there is, so the changed path is reached and does the same work — an
+argument the harness's reachability oracle cannot make, since the code *is*
+executed, so they stay red rather than acknowledged. Three more —
+`nested-end-to-end`, `census-attribution` and `cross-file-floor` — are red on
+`pgdump_query-cli/src/`, from 7.3's `mod alloc;` and `--version` string, which
+also holds `projection-widths` and `allocator`; `allocator` is owed a
+**measured** acknowledgement for that one, its reference column being a fresh
+reading of the three headline shapes on the changed binary that reproduces
+`ba2fc12` to 2.5%, 0.7% and 1.4%, and an `acknowledged.py` entry cannot name
+its own sha
 ([`../design/roadmap-P7.3-allocator-notes.md`](../design/roadmap-P7.3-allocator-notes.md)).
-The seventh is `session-drift`, red on `scripts/measure.py`: 7.3 added a real
-figure function there, so the reachability oracle that excused the five
-`--profile-recipe` commits does not stretch to it, and the wrap sweep is what
-clears it. `measure.ACKNOWLEDGED` still carries those six entries — two for
+The tenth is `session-drift`, red on `scripts/measure.py`: 7.3 added a real
+figure function there and 7.4 corrected three figures' declared paths, so the
+reachability oracle that excused the five `--profile-recipe` commits stretches
+to neither, and the wrap sweep is what clears it.
+`measure.ACKNOWLEDGED` still carries six entries — two for
 `7545dc6`, four for `fbaaa49`, `a6bf6cd`, `305af4b` and `360e144` — every one
-of them now inert, held red by the uncommitted change. `7545dc6`'s `batch.rs`
-entry gained `allocator` in its figure list, because a new figure declaring an
+of them now inert, held red by the uncommitted change; `7545dc6`'s `batch.rs`
+entry names `allocator` in its figure list, because a figure declaring an
 already-excused path has to be named there or the old excuse silently stops
 covering it. A stale figure obliges
 no sweep and neither does a wrap: a full
@@ -46,6 +62,15 @@ sweep is an hour of a quiet machine and belongs to the phase that is about
 performance, which will re-take every table under its own apparatus
 ([`../design/measurements.md`](../design/measurements.md), "A stale figure does
 not oblige a sweep").
+
+**Three figures were blind to the file they measure.** `per-block-quadratic`
+and `map-only` price the map's per-block rebuild and declared
+`pgdump_query/src/map.rs` without `pgdump_query/src/stream.rs`, where
+`stream::splice` lives — so 7.4 would have read green against the two tables it
+moved by two orders of magnitude. `preamble-prepass` *borrows* the first's
+4000-block reading for its second row and declared neither. All three now
+declare `MAP_BUILD`, and the third declares the edges of the reading it
+borrows.
 
 | Capability | State |
 |---|---|
@@ -97,11 +122,12 @@ profiles of the three control shapes
 [`../design/architecture.md`](../design/architecture.md), "Where a scan's time
 goes"** — the decomposition, which is the durable half of the phase.
 
-**Figures.** Thirteen of the fourteen figures in
+**Figures.** Ten of the fourteen figures in
 [`../design/measurements.md`](../design/measurements.md) come from the
 `ba2fc12` sweep of 2026-09-03, folded in whole, each table carrying an
-apparatus line; `allocator` is the fourteenth and was taken on its own, which
-its section says. `--check` reconciles fourteen markers against fourteen
+apparatus line; `allocator`, `per-block-quadratic`, `map-only` and
+`preamble-prepass` were taken on their own afterwards, and each section says
+so. `--check` reconciles fourteen markers against fourteen
 figures. `session-drift` is derived across that sweep and a second one taken
 three minutes later on the same commit, which is the pair `--drift` reads.
 `measure.ACKNOWLEDGED` carries the six entries above: a fresh stamp spends
@@ -166,9 +192,15 @@ an allocator adopted after a figure is taken invalidates that figure, and
       penalty is 3,161 `madvise` calls from the per-chunk allocation that slice
       removes. Notes:
       [`../design/roadmap-P7.3-allocator-notes.md`](../design/roadmap-P7.3-allocator-notes.md)
-- [ ] **7.4** `KD5` — `stream::splice` moves inside the throttle's gate, the
-      interrupt's promise is restated, and the entry is rewritten to whatever
-      residual the measurement leaves.
+- [x] **7.4** `KD5` — `stream::splice` rides the throttle's gate, with a third
+      opener (a completed block whose header names the queried table) that
+      keeps the early stop exact. A 4000-block `parse` falls **20.75 s →
+      0.113 s** and its saves 105 → 5, the two costs having been multiplying;
+      the interrupt now banks the last spliced watermark, ~20 ms of scanning at
+      that size and nothing at all on koji. `KD5` is rewritten to the residual —
+      `--dqcache none`, where the gate never closes — and re-homed onto P16.
+      Notes:
+      [`../design/roadmap-P7.4-splice-gate-notes.md`](../design/roadmap-P7.4-splice-gate-notes.md)
 - [ ] **7.5** `KD9` — the `INSERT` fast path at 7.2's layer, with a reusable
       quote-aware statement-end primitive.
 - [ ] **7.6** Bulk `simdutf8` over the chunk's whole-row prefix, with
@@ -201,9 +233,9 @@ an allocator adopted after a figure is taken invalidates that figure, and
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 - **P7 is open**, grilled and sliced; the checklist above is its progress. Its
-  two evidence slices and the allocator reading have landed, and **no library
-  code has changed for it** — 7.3's only shipped code is a CLI module choosing
-  the allocator. Six
+  two evidence slices, the allocator reading and the first library change have
+  landed — 7.4's gate in `stream.rs`, which is the phase's first edit to a
+  timed path. Six
   other phases are sketched and one more is
   specified — P13, P16, P10, P14, P6, P15, P8, in the roadmap table's schedule
   order; a `P<k>` is an identifier, so the numbers say nothing about the order
@@ -287,12 +319,13 @@ here rather than reading as a phase nobody has sliced.
   are not ordinary identifiers, which neither any fixture nor koji is. Detail:
   [`../design/architecture.md`](../design/architecture.md), "Type resolution".
 
-- **KD5** — mapping is O(blocks²): every `CopyEnd` rebuilds `DumpIndex::spans`
-  whole, and the save throttle only halved the series. **(b) owned by P7**,
-  slice **7.4**, which moves the splice inside the throttle's gate and pays for
-  it in what an interrupt banks. Detail:
-  [`../design/architecture.md`](../design/architecture.md), "`parse` resumes,
-  and saves as it goes".
+- **KD5** — a map rebuild is still a whole-list clone, so mapping is
+  O(blocks²) wherever the save throttle's gate does not close it — which is
+  every `--dqcache none` scan, since a no-op save leaves nothing to amortize:
+  19.1 s for 4000 blocks. **(b) owned by P16**, which reworks `splice` for a
+  parallel splitter anyway and is where the appendable-spans fix belongs.
+  Detail: [`../design/architecture.md`](../design/architecture.md), "`parse`
+  resumes, and saves as it goes".
 
 - **KD6** — a conflicting table past a query's stopping point is never seen, so
   `Error::AmbiguousTable` is not raised for it and the query returns the

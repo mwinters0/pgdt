@@ -193,7 +193,8 @@ one and the question would be settled by default rather than deliberately.
 **Fact.** `ScanOptions::cancel: Option<Arc<AtomicBool>>` (default `None`) stops
 a mapping scan cooperatively — read once per chunk and at every completed
 `COPY` block. `stream::map_file` reports it as `MapRun::interrupted` and the
-cache holds everything up to the last completed block; `stream::table_stream`
+cache holds everything up to the last watermark the save throttle's gate opened
+at — not necessarily the last completed block; `stream::table_stream`
 instead yields `Error::ScanCancelled { scanned_through }` on its first poll
 past the mapping pass, because rows from the blocks a stopped mapping pass
 happened to reach are a prefix of the answer with nothing saying so. The CLI

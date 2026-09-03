@@ -26,10 +26,11 @@
 //! it buys: the map is never behind the rows, so a [`ResumeToken`] can only
 //! ever point inside already-mapped territory, and a query-built `DumpIndex`
 //! tiles the file exactly the way [`crate::index::build_index`]'s does, with
-//! no exemption for resumed streams. A [`CacheMode::Enabled`] cache is
-//! persisted at completed blocks as the map advances — every one whose save
-//! has earned its cost ([`SaveThrottle`]), and unconditionally at every exit
-//! — so a caller that stops polling keeps what the map learned;
+//! no exemption for resumed streams. **The map advances and a
+//! [`CacheMode::Enabled`] cache is persisted at the same points**: completed
+//! blocks whose save has earned its cost ([`SaveThrottle`]), the block that
+//! settles the query, and every exit — so a caller that stops polling keeps
+//! what the map learned;
 //! [`CacheMode::Disabled`] runs the same way with `save` a no-op, mapping in
 //! memory only.
 //!
@@ -478,16 +479,20 @@ async fn map_forward<S: ByteRangeSource>(
     let mut read_pos = seg_start;
     let mut buf: Vec<u8> = Vec::with_capacity(scan_options.chunk_size);
     let mut throttle = SaveThrottle::new();
+    // Whether the `COPY` block currently open is one `target_settled` would
+    // count — see the `CopyEnd` arm, which is the only reader.
+    let mut open_block_targets = false;
 
     loop {
         // Once per chunk, before anything is read: this is the check that
         // gets a scan out of a block big enough that its `CopyEnd` is an hour
         // away (`ScanOptions::cancel`); the `CopyEnd` arm carries the other
         // one, for the file whose whole scan fits in two chunks. `index` is
-        // consistent at the last completed block whatever the buffer holds —
-        // nothing between watermarks touches it — so the save needs no
-        // snapshot logic of its own, and it is unconditional: the throttle's
-        // skipped saves are exactly what an interrupt is here to make good.
+        // consistent at the last *spliced* watermark whatever the buffer holds
+        // — nothing between splices touches it — so the save needs no snapshot
+        // logic of its own, and it is unconditional: everything since that
+        // watermark is what an interrupt costs, which the `CopyEnd` arm
+        // bounds.
         if scan_options.cancelled() {
             cache.save(source, index).await?;
             return Ok(MapStop::Interrupted);
@@ -517,6 +522,19 @@ async fn map_forward<S: ByteRangeSource>(
                     // handed over ends where the `Data` span is about to
                     // begin rather than swallowing the comment.
                     let boundary = builder.pending_comment_start().unwrap_or(start.header_offset);
+                    // Whether this block can be the one that settles `target`,
+                    // read off the header before it moves into the builder —
+                    // the `CopyEnd` arm's reason to splice for a block the
+                    // throttle would have skipped. **Deliberately the header
+                    // alone**, which is a superset: a block whose database the
+                    // selector excludes cannot settle the target either, but
+                    // repeating that test here would tie the gate's width to
+                    // `target_settled`'s body, where a later narrowing there
+                    // would silently make the gate too narrow. Over-splicing
+                    // costs a clone on a block whose name is the queried one;
+                    // under-splicing loses the early stop.
+                    open_block_targets =
+                        target.is_some_and(|(table, _)| start.header.matches(table));
                     builder.on_copy_start(start);
                     // **Once per database, not once per block.** Recomputing
                     // at every `CopyStart` and leaning on idempotence would
@@ -543,17 +561,7 @@ async fn map_forward<S: ByteRangeSource>(
                     // exactly where `snapshot` is sound.
                     let watermark = end.end_offset;
                     builder.on_copy_end(end);
-                    index.spans =
-                        splice(&prefix, builder.snapshot(watermark), seg_start, watermark, size);
-                    index.roles.extend(builder.roles().iter().cloned());
-                    index.tablespaces.extend(builder.tablespaces().iter().cloned());
-                    index.scanned_through = index.scanned_through.max(watermark);
-                    // The save at the *last* watermark before an early stop is
-                    // what persists the map for the next query, so a settled
-                    // target saves whether or not the throttle would have —
-                    // and so does an interrupt.
-                    let settled = target
-                        .is_some_and(|(table, selector)| target_settled(index, table, selector));
+                    let targets = std::mem::take(&mut open_block_targets);
                     // The second of the guard's two check points, and the one
                     // that covers the opposite extreme from the chunk check
                     // above: a block-rich file can spend tens of seconds
@@ -561,7 +569,43 @@ async fn map_forward<S: ByteRangeSource>(
                     // twice in the whole scan. The two together bound the
                     // response by the shorter of a chunk and a block.
                     let cancelled = scan_options.cancelled();
-                    if settled || cancelled || throttle.due() {
+                    let due = throttle.due();
+                    // **The splice rides the throttle's gate.** Rebuilding
+                    // `index.spans` clones the whole list, so doing it per
+                    // block is O(blocks²) — the half of that quadratic the
+                    // throttle did not reach (`architecture.md`, "`parse`
+                    // resumes, and saves as it goes"). Nothing between gate
+                    // openings reads `index`: the metadata recompute above
+                    // splices its own copy, and `target_settled` is the one
+                    // reader that would — which is why a block whose header
+                    // could satisfy it opens the gate too. What this costs is
+                    // the interrupt's promise, bounded in *time* by the
+                    // throttle rather than in blocks.
+                    if targets || cancelled || due {
+                        index.spans = splice(
+                            &prefix,
+                            builder.snapshot(watermark),
+                            seg_start,
+                            watermark,
+                            size,
+                        );
+                        index.roles.extend(builder.roles().iter().cloned());
+                        index.tablespaces.extend(builder.tablespaces().iter().cloned());
+                        index.scanned_through = index.scanned_through.max(watermark);
+                    }
+                    // Only a block `target_settled` counts can turn it from
+                    // false to true, and `index` has just been spliced for
+                    // exactly those — so this reads a map that is current
+                    // through `watermark` every time it is consulted.
+                    let settled = targets
+                        && target.is_some_and(|(table, selector)| {
+                            target_settled(index, table, selector)
+                        });
+                    // The save at the *last* watermark before an early stop is
+                    // what persists the map for the next query, so a settled
+                    // target saves whether or not the throttle would have —
+                    // and so does an interrupt.
+                    if settled || cancelled || due {
                         throttle.save(cache, source, index).await?;
                     }
                     if settled {
@@ -628,6 +672,13 @@ const SAVE_THROTTLE_K: u32 = 20;
 /// **Exits are exempt.** EOF, a settled target and an interrupt all save
 /// unconditionally — the whole risk the throttle adds is the window between
 /// saves, and those three are where that window would cost something real.
+///
+/// **The gate also decides when the map is rebuilt.** `stream::splice` is the
+/// other half of the same quadratic, and it fires at the openings of this gate
+/// rather than at every `CopyEnd` (see [`map_forward`]'s `CopyEnd` arm). The
+/// consequence for this type is that its rule now prices two costs at once:
+/// with a disabled cache `save` is ~free, so the gate always clears and the
+/// map is rebuilt per block exactly as it was — the residual `KD5` names.
 struct SaveThrottle {
     last_save: Instant,
     last_cost: Duration,
@@ -677,7 +728,8 @@ impl SaveThrottle {
 #[derive(Debug)]
 pub struct MapRun {
     /// The map as it stands after the run: whole-file when `interrupted` is
-    /// false, everything up to the last completed block when it is true.
+    /// false, everything up to the last *spliced* watermark when it is true —
+    /// which is the last save, since both ride one gate ([`SaveThrottle`]).
     pub index: DumpIndex,
     /// The frontier this run started from.
     pub resumed_from: u64,

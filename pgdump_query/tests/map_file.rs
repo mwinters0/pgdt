@@ -110,6 +110,76 @@ async fn a_partial_cache_is_finished_into_the_same_index_an_eager_scan_builds() 
     assert_eq!(reloaded.spans, eager.spans);
 }
 
+/// A block-rich dump with one three-row `COPY` block per table, the schema
+/// section first the way `pg_dump` orders a plain dump. The shape koji cannot
+/// show — block-rich and byte-poor — at a size a test can afford, and the one
+/// the save throttle's gate actually closes over: every block after the first
+/// completes far inside 20× the first save's own cost.
+fn block_rich(dir: &Path, tables: usize) -> PathBuf {
+    let mut sql = String::from("SET client_encoding = 'UTF8';\n\n");
+    for i in 0..tables {
+        sql.push_str(&format!("CREATE TABLE public.t{i} (id integer, v text);\n\n"));
+    }
+    for i in 0..tables {
+        sql.push_str(&format!("COPY public.t{i} (id, v) FROM stdin;\n"));
+        for row in 0..3 {
+            sql.push_str(&format!("{row}\tvalue {row} of t{i}\n"));
+        }
+        sql.push_str("\\.\n\n\n");
+    }
+    let dump = dir.join("block_rich.sql");
+    std::fs::write(&dump, sql).unwrap();
+    dump
+}
+
+/// **The gate the splice rides.** `stream::splice` fires at the save
+/// throttle's openings rather than at every `CopyEnd`, so on a block-rich file
+/// most blocks never rebuild `index.spans` on their own. Two things must
+/// survive that, and neither is visible on a fixture with three blocks:
+///
+/// - **The early stop.** `target_settled` is the one reader of `index.spans`
+///   inside the mapping loop, so a block whose header could settle the query
+///   opens the gate itself. Query the *last* table and the stop still lands on
+///   its block, short of EOF — if the gate had eaten it, the scan would run to
+///   EOF and `scanned_through` would be the file's size.
+/// - **The map is whole anyway.** A skipped splice is not a lost block: the
+///   `Builder` accumulates every one, and the next splice snapshots all of
+///   them. So the cache the query banks holds all 40, and finishing it
+///   reproduces the eager index span for span.
+#[tokio::test]
+async fn a_query_settles_on_a_late_block_and_banks_every_block_before_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = block_rich(dir.path(), 40);
+    let source = LocalFileSource::open(&dump).unwrap();
+    let size = source.size().await.unwrap();
+    let mode = CacheMode::Enabled(cache::colocated_path(&dump));
+
+    let mut stream = table_stream(
+        &source,
+        "public.t39",
+        ScanOptions::default(),
+        QueryOptions::default(),
+        None,
+        mode.clone(),
+    );
+    let mut rows = 0;
+    while let Some(batch) = stream.next().await {
+        rows += batch.unwrap().num_rows();
+    }
+    assert_eq!(rows, 3, "the last table's rows");
+
+    let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let last_end = eager.blocks().last().expect("40 blocks").end_offset;
+    assert!(last_end < size, "sanity: the file does not end at the last block");
+
+    let banked = mode.load(&source).await.unwrap().expect("the query wrote a cache");
+    assert_eq!(banked.scanned_through, last_end, "stopped on the settling block, not at EOF");
+    assert_eq!(banked.blocks().count(), 40, "every block before it is in the map too");
+
+    let run = map_file(&source, &ScanOptions::default(), &mode).await.unwrap();
+    assert_matches_eager(&run.index, &eager, "finished from a gated query's cache");
+}
+
 /// The other shape of partial cache: `--preamble-only`, which stops at the
 /// first `COPY` header and leaves an `Unscanned` tail covering everything
 /// after it. Resuming from it must splice onto the prepass's spans rather than
@@ -280,14 +350,16 @@ impl ByteRangeSource for CancelsPast<'_> {
 }
 
 /// **The interrupt guard.** A cancelled scan is not an error and not a lie: it
-/// reports `interrupted`, the index it returns stops at the last completed
-/// block, and the cache on disk holds exactly that — whether or not the
-/// throttle had skipped that block's own save, since every exit saves
-/// unconditionally.
+/// reports `interrupted`, the index it returns stops at the last **spliced**
+/// watermark, and the cache on disk holds exactly that — every exit saves
+/// unconditionally, so what is on disk is never behind what is in hand.
 ///
 /// The flag trips one byte past the first block's end, with one-byte reads so
 /// that offset is a read boundary: the block's `CopyEnd` has been processed,
-/// nothing after it has.
+/// nothing after it has. **The first block of a segment is always a spliced
+/// watermark** — `SaveThrottle::new` starts due — so "last spliced" and "last
+/// completed" coincide here, which is what keeps this assertion exact rather
+/// than timing-dependent.
 #[tokio::test]
 async fn a_cancelled_map_file_reports_it_and_banks_what_it_scanned() {
     let (_dir, dump) = sandboxed();
@@ -308,7 +380,7 @@ async fn a_cancelled_map_file_reports_it_and_banks_what_it_scanned() {
 
     let run = map_file(&tripping, &options, &mode).await.unwrap();
     assert!(run.interrupted, "a cancelled scan says so");
-    assert_eq!(run.index.scanned_through, first_block_end, "banked the block that completed");
+    assert_eq!(run.index.scanned_through, first_block_end, "banked the first spliced watermark");
     assert!(!run.index.is_complete(size), "and does not claim the whole file");
 
     let status = cache::load(&cache_path, &source).await.unwrap();

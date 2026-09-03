@@ -59,12 +59,17 @@ interrupted at byte 41231843328 of 784019857152 — the cache at koji.dump.dqcac
 re-run `pgdq parse --source koji.dump` to continue
 ```
 
-A clean stop like that loses only the block it was reading. A **second** Ctrl-C
-exits immediately without waiting for the write, and so does `kill -9`, a power
-cut or a crash — those fall back to the last save the scan happened to take,
-which can be a few blocks earlier, because a scan that saved after every block
-would spend more time saving than scanning. Nothing is ever left *corrupt*: the
-cache either loads or it does not, and `pgdq info` states how far it goes.
+A clean stop loses whatever the scan has done since it last banked, which is
+the block it was reading plus any that finished in the moment before the
+signal. A **second** Ctrl-C exits immediately without waiting for the write,
+and so does `kill -9`, a power cut or a crash — they fall back to that same
+last banking. `parse` banks often enough that the skipped work stays a small
+fraction of the scan, and it spaces the bankings by what one costs rather than
+by a fixed interval, because a scan that banked after every block would spend
+more time banking than scanning. On a large dump, where blocks are minutes
+apart, every block is banked and a clean stop loses only the one it was
+reading. Nothing is ever left *corrupt*: the cache either loads or it does not,
+and `pgdq info` states how far it goes.
 
 ### `parse --preamble-only`
 

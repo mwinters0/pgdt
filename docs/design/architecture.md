@@ -2160,9 +2160,11 @@ needs.
 yields until the first is done**:
 
 1. **`map_forward`** — a free `async fn`, not part of the generator. Walks from
-   `index.scanned_through`, drives a `map::Builder`, and after every `CopyEnd`
-   splices `snapshot` onto the base spans, advances `scanned_through`, merges
-   the builder's `roles()`/`tablespaces()`, and persists. At a `CopyStart`
+   `index.scanned_through`, drives a `map::Builder`, and at each opening of the
+   save throttle's gate splices `snapshot` onto the base spans, advances
+   `scanned_through`, merges the builder's `roles()`/`tablespaces()`, and
+   persists — see "`parse` resumes, and saves as it goes" for what opens that
+   gate and what banking at it rather than at every `CopyEnd` costs. At a `CopyStart`
    opening a database the metadata does not yet cover, it restates
    `index.metadata` — I1's recurring boundary; see "`parse` resumes, and saves
    as it goes". Returns when the target is settled or at EOF. Its stop rule is
@@ -4044,7 +4046,9 @@ at most twice per map (once after the preamble prepass, once at the end), and
 in a 100,000-sample profile of a 4000-block `parse` — the input built to make
 per-block costs visible — it takes **zero samples**. That same profile is
 43% `stream::splice` and 57% allocator traffic underneath it, which is `KD5`
-and nothing else.
+and nothing else; it was taken on the build that spliced at every `CopyEnd`, so
+those two numbers describe the cost the gate has since removed rather than what
+that command costs today.
 
 ### The allocator is the binary's choice
 
@@ -4291,8 +4295,8 @@ metadata in hand covers. That is what makes an interrupted `parse` come back
 prepass captured.
 
 **Once per database, not once per block.** Recomputing at every `CopyStart` and
-relying on idempotence would put a third whole-index-sized cost in a loop that
-already carries two (the throttle and the splice, below); a single-database
+relying on idempotence would put a whole-index-sized cost in the loop at every
+block — the very shape the gate below took the splice out of; a single-database
 dump — koji included — recomputes nothing here at all, the prepass having stood
 on that same offset. The comparison state is seeded from
 `metadata.databases.last()`, since `dump_metadata_from_spans` finalizes the
@@ -4324,51 +4328,86 @@ saving"). `SaveThrottle` skips a block's save unless at least `K = 20` times
 the last save's own *measured duration* has elapsed since it, which bounds save
 overhead at roughly `1/K` of scan time in every regime with no constant that
 has to be right in two of them — a cheap cache saves often, an expensive one
-saves rarely, koji is untouched. Measured at 4000 blocks: 4003 saves become
-105, and ~26 s of saving becomes ~1.7 s of a 20.8 s scan. *Rejected:* "every N
-seconds" and "every N bytes"; both choose a number against one dump shape, and
-the cost tracks block count rather than bytes read.
+saves rarely, koji is untouched. *Rejected:* "every N seconds" and "every N
+bytes"; both choose a number against one dump shape, and the cost tracks block
+count rather than bytes read.
+
+**One gate decides both halves of that quadratic.** The save is one; the
+*splice* is the other, and it is the larger — every `CopyEnd` used to clone the
+whole span list (`map::Builder::snapshot`, then `stream::splice` over the
+prefix) whether or not anything read the result. So `map_forward` rebuilds
+`index.spans` at the gate's openings rather than at every watermark, which
+takes a 4000-block `parse` from 20.8 s to **0.113 s** (`measurements.md`,
+"Per-block cache saving"). The two costs were multiplying rather than adding:
+the splice inflated the scan, and a longer scan is what the throttle reads as
+licence to save again, so removing one shrank the other with it.
+
+**Three things open the gate**, and the third is what a `parse` never needs:
+the throttle being due, a pending cancellation, and a completed block whose
+`COPY` header names the queried table. That last is there because
+`target_settled` is the one reader of `index.spans` inside the loop, and only a
+block it counts can turn its answer from false to true — so splicing for those
+keeps the early stop exact while every other block skips. It is matched on the
+**header alone**, deliberately a superset of `target_settled`'s own test: a
+block the database selector excludes cannot settle the target either, but
+repeating that test at the gate would tie the gate's width to `target_settled`'s
+body, where a later narrowing there would silently cost the early stop. The
+metadata recompute at `CopyStart` is not a fourth opener — it splices its own
+copy and never touches `index`.
+
+**What it costs is the interrupt's promise, and the bound is time rather than
+blocks.** A graceful interrupt banks the last *spliced* watermark, not the last
+completed block, so it loses whatever completed since the gate last opened. The
+throttle is self-tuning against the last save's own duration, so that window is
+~1/`K` of elapsed scan time wherever saving costs anything, and *nothing at all*
+where blocks are far apart — koji's are ~45 s apart with sub-second saves, so
+its gate clears at every `CopyEnd` and its interrupt still loses only the block
+in flight. The degradation is confined to the shape where the lost blocks are
+small. **The first block of a segment always splices** (`SaveThrottle::new`
+starts due), so a scan that dies early still leaves a resume point.
+
+**The byte-identical-resume property is untouched**: the resume point moves, the
+structural record it reproduces does not.
 
 <!-- deficiency: KD5 -->
-**What the throttle does not fix**: the *rest* of the same quadratic. Every
-`CopyEnd` also clones the whole span list (`map::Builder::snapshot`, then
-`stream::splice` over the prefix), so the map itself is O(blocks²) with the
-cache disabled entirely — 19.0 s for 4000 blocks under `query --dqcache none`,
-which is most of the 20.8 s a throttled `parse` of the same file costs. koji
-cannot show it: 74 blocks over 784 GB. That is deficiency `KD5`
-(`../status/STATUS.md`, "Known deficiencies"), owned by P7. A profile of the
+**What the gate does not fix**: the splice itself is still a whole-list rebuild,
+so the map is O(blocks × splices) rather than O(blocks). With a cache that costs
+something the throttle holds the splice count to dozens; **with `--dqcache none`
+it holds nothing** — `cache.save` is a no-op, so `due()` is always true and the
+map is rebuilt per block exactly as it was, 19.1 s for 4000 blocks under `query
+--dqcache none` (`measurements.md`, "Per-block cache saving"). koji cannot show
+either shape: 74 blocks over 784 GB. That is deficiency `KD5`
+(`../status/STATUS.md`, "Known deficiencies"). A profile of the pre-gate
 4000-block `parse` puts `stream::splice`'s subtree at **43%** of it, over an
 allocator that is **57%** of the whole — `_int_malloc`, `_int_free_chunk`,
 `memmove` and `__libc_malloc2` alone are 12% each — which is what cloning a
 span list per block looks like from underneath (see "Where a scan's time
 goes").
 
-**The fix is the gate the throttle already owns**, and it costs the interrupt's
-promise. Nothing reads `index.spans` between saves during a `parse` — `target`
-is `None`, so `target_settled` never runs — so moving the splice inside
-`if settled || cancelled || throttle.due()` fires it a few dozen times instead
-of once per block: roughly 19.0 s to 1 s at 4000 blocks, with no redesign. What
-it trades is the guarantee below that a graceful interrupt loses only the block
-in flight; it would lose everything since the last spliced watermark, which the
-throttle bounds in *time* rather than in blocks — ~0.2 s of scanning at 4000
-blocks, and nothing at all on koji, where the gate clears at every `CopyEnd`.
-P7 takes it on those terms; the arithmetic is in
-[`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md),
-"Discharging `KD5`".
+*Rejected:* giving the throttle a floor so that a disabled cache throttles too.
+It reads as the obvious repair for the paragraph above, and it buys the
+`--dqcache none` case by taking the in-memory map's own interrupt: `map_file`
+under a disabled cache returns its `DumpIndex` to the caller, and a gate that
+never opens would hand back one that maps almost nothing. The throttle's rule is
+a ratio against a *measured* cost, and there is no cost to measure there.
 
 *Rejected:* keeping the frontier's spans appendable rather than rebuilt. It is
-the structurally right fix and it is a rework of an already-tested core path
-for a series the gate has already flattened by 20×; it is also what a parallel
-splitter wants, so it belongs to the phase that reworks `splice` anyway.
+the structurally right fix and it is a rework of an already-tested core path for
+a series the gate has already flattened by 184×; it is also what a parallel
+splitter wants, so it belongs to the phase that reworks `splice` anyway —
+`roadmap.md`'s parallel-scan phase, which owns `KD5`'s remainder.
 `map::Builder::snapshot` `debug_assert!`s `Mode::Idle`, so the chunk-top check
-cannot re-derive the spans mid-block — which is why the coupling cannot be
-worked around locally and the promise has to move with the fix.
+cannot re-derive the spans mid-block — which is why the coupling could not be
+worked around locally and the promise had to move with the fix.
 
 **A save count is a property of the apparatus, not only of `K`.** The throttle
 is a ratio against the last save's own duration, so a faster machine, libc or
-allocator saves *fewer* times rather than the same number more cheaply: the
-4000-block count reads 105 on glibc against 110 on musl and 195 on the
-SSD-warm session that first recorded it.
+allocator saves *fewer* times rather than the same number more cheaply — and,
+since the gate above put the splice on the same rule, so does a faster *loop*:
+the 4000-block count read 105 on glibc, 110 on musl and 195 on the SSD-warm
+session that first recorded it, and reads **5** once the map stops being
+rebuilt per block. It is therefore a reading about the whole apparatus and
+never a number to compare across builds.
 
 **Every exit saves unconditionally** — EOF, a settled target, and an interrupt.
 The throttle's whole risk is the window between saves, and those three are
@@ -4400,10 +4439,14 @@ believed. The preamble is an uncancellable region bounded by its own length,
 and a Ctrl-C during a query's prepass is honoured at `map_forward`'s first
 chunk check immediately after, with the prepass's metadata already saved.
 
-What the guard costs the throttle is close to nothing: the splice, the roles,
-the tablespaces and `scanned_through` are updated at every watermark whether or
-not the save runs, so a graceful interrupt loses only the block in flight, and
-the throttle's window belongs to `SIGKILL`, power loss and panics alone.
+**A graceful interrupt and a `SIGKILL` lose the same thing**, because the
+splice, the roles, the tablespaces and `scanned_through` all move at the gate's
+openings rather than at every watermark — so during a `parse`, where the gate's
+only opener is the throttle, the last spliced watermark *is* the last save. The
+guard's remaining value is that the graceful case says where it stopped and
+exits 130/143, and that a query's settled stop banks a watermark the throttle
+would have skipped. What the throttle's window costs is stated above and is the
+same for both: whatever completed since the gate last opened.
 
 **A resumed scan reproduces an uninterrupted one exactly.** Not the same
 totals — the same structural record, span for span. Verified against the 784 GB
