@@ -1198,6 +1198,11 @@ its `NestedPlan`, and a `debug_assert` pairs the two: a built-in mapped to a
 `List` or a `Struct` with no plan named there would be filled by a scalar
 builder and would read every value as text.
 
+*Rejected: widening `builtin_scalar`'s tuple to a triple, so the plan comes out
+of the arm with the other two.* Both Python checks parse that tuple's first
+element and would have survived it, so the cost is not the parse: it is that
+every one of the two dozen scalar arms would then have to write
+`NestedPlan::Scalar` to say nothing, for the one arm that has something to say.
 *Rejected: deriving the plan from the `DataType` the arm yields, since exactly
 one built-in arm returns a `List` today.* It is true today and it is the
 inference `NestedPlan` exists to deny — the enum's whole premise is that one
@@ -1505,6 +1510,32 @@ not carry rather than guessing, so a new arm arrives loudly. `Utf8View` renders
 as `string`: a floor is a claim about which values a column can hold, and the
 three Arrow string layouts hold the same ones.
 
+*Rejected: a Rust test emitting the mapping into a committed file the check
+reads instead.* It removes the parse and adds a third artifact to keep in step,
+and the parse's own failure modes are already answered — every anchor it keys
+on has a test that removes it, and a `DataType` expression the rendering table
+does not carry is reported rather than guessed.
+
+**The stances are kept apart mechanically, not by wording.** A
+`below-by-decision`, `different-encodings` or `waiting` row must be one this
+build models *no* Arrow type for, and a `narrower` row must be one where both
+sides are real types — so a mapping that gave `money` an `Int64` while its
+stance still stood fails on the pairing rather than passing under a line that
+has quietly stopped being true.
+
+**Two things the join deliberately does not read**, each because reading them
+would check something that cannot fail:
+
+- **The extension metadata.** Release 24 stamps `arrow.json` on `json`/`jsonb`
+  and nothing else, where we stamp those two plus `arrow.uuid`, so the metadata
+  floor is met everywhere by construction. `extension` is read here only for
+  `arrow.opaque`, which is a statement about the type rather than about
+  metadata. Release 25's unreleased `POSTGRESQL:type` commit is what would turn
+  this into a real obligation.
+- **The built-in ranges.** `builtin_range_subtype`'s twelve names are mapped
+  outside `builtin_scalar` and every one of their floor rows is `arrow.opaque`,
+  so joining them would add twelve "floor undefined" lines and answer nothing.
+
 **What the check computes is equality, not a subtype lattice**, and the
 difference is deliberately conservative. A pair that is not equal is either
 *below* — ours is the text fallback, which is the widest answer there is — or
@@ -1709,7 +1740,13 @@ a future reader to re-derive:
   included, which is what makes `-1 days +01:00:00`. The tail otherwise takes
   one sign for the whole of it, its hour field at least two digits and
   unbounded above (I40). `render_interval`'s test table is a live server's own
-  answers for each rule rather than a reading of `EncodeInterval`.
+  answers for each rule rather than a reading of `EncodeInterval`, committed as
+  a literal table in `decode.rs` so that no test depends on a server existing.
+  *Rejected: putting the sign cases in `t_interval` and regenerating six
+  majors*, which is how a codec's evidence usually lands here. These are pure
+  function inputs, so the fixture would buy a slower unit test — and it could
+  not reach the `i32` and nanosecond ceilings at all, since no `pg_dump` can
+  write a value past them.
 - **The `interval` grammar is read once, by `interval_parts`, for two
   consumers.** The decoder narrows the three parts to Arrow's widths; the
   ordering fuses them into `interval_cmp_value`'s 128-bit span. Sharing the

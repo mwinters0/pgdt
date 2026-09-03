@@ -311,3 +311,31 @@ Two further facts about the mapping, from the v55 source:
   (`datafusion/sqllogictest/test_files/array_query.slt`), so nothing about
   DataFusion obstructs pushing a nested comparison down. Whether it *should* be
   pushed down is the `Unsupported`/`Exact` question above, per element type.
+
+---
+
+## The floor is checkable, and stating it is P6's to do
+
+**Fact.** P12 built the mechanism that makes *"the Arrow schema you get is at
+least as good as the ADBC PostgreSQL driver's"* a checked claim rather than an
+aspiration: `fixtures/<13–18>/adbc/floor.tsv` records what
+`adbc_driver_postgresql` 1.12.0 answers for every declarable `pg_catalog` type,
+`scripts/floor_mapping.py` joins it against `builtin_scalar` and fails in both
+directions, a floor pass of `generate_fixtures.py` ends by running it, and the
+three rows outside the rule each carry a written stance. **Nothing about it is
+in the manual**, deliberately: the promise is embedder-facing and there is no
+embedder-facing surface to read it against.
+
+**Why P6 cares.** P6 is that surface, so P6 is where the promise either gets
+made or does not — and the decision is now a documentation choice rather than
+an engineering one, since the evidence exists and regenerates itself. Two
+things bear on it: the floor is a *release* (`apache-arrow-adbc-24`), so a
+published promise inherits the obligation to say which release it is about and
+to re-take the sweep when the pin moves; and `money` is deliberately below it
+(`KD13`), so any wording has to be "at least as good, with one named
+exception" rather than an unqualified claim.
+
+**Origin.** P12, 2026-09-03, D9 of the phase spec. The mechanism is
+[`architecture.md`](architecture.md), "The floor: the ADBC driver's answer
+bounds ours"; contingent on the pin, since a driver release that answers a type
+differently changes what the promise would say.

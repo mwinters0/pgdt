@@ -26,6 +26,14 @@ those mechanisms is described by subject in
 [`../design/architecture.md`](../design/architecture.md), which is where a
 session touching one meets its rejected alternatives and its limitations.
 
+**P12 — the ADBC type floor — is complete**, in six slices: the floor oracle
+over every declarable `pg_catalog` type, the reconciliation that joins it
+against `builtin_scalar` and fails both ways, `interval`'s decoder and
+render-back refusal, and `int2vector`'s fixture column and codec. Its spec and
+[notes](../design/roadmap-P12-adbc-type-floor-notes.md) stand until a keystone
+strikes them; the mechanisms are filed by subject like every other, under "The
+floor: the ADBC driver's answer bounds ours" and "The ADBC floor oracle".
+
 [`../design/measurements.md`](../design/measurements.md) carries the `b70589f`
 stamp, and **`uv run measure.py --stale` names all thirteen of its figures** —
 the paragraphs below the table say what is a decision and what is an omission.
@@ -131,50 +139,19 @@ measured, so `uv run measure.py --drift <sweep> <sweep>` re-derives it from two
 sweeps' `raw.json` without measuring anything; what it lacks is a pair taken
 past this commit. The scan-performance phase will supply one.
 
-## P12 progress
-
-The ADBC type floor. Spec:
-[`../design/roadmap-P12-adbc-type-floor.md`](../design/roadmap-P12-adbc-type-floor.md).
-
-- [x] **12.1** The floor oracle — the catalog sweep, `fixtures/<13–18>/adbc/floor.tsv`,
-      and the `adbc_driver_postgresql` pin in `scripts/pyproject.toml`. No library code.
-      Notes: [`../design/roadmap-P12.1-floor-oracle-notes.md`](../design/roadmap-P12.1-floor-oracle-notes.md)
-- [x] **12.2** The reconciliation — `scripts/floor_mapping.py`, joining the oracle
-      against `builtin_scalar` and failing both ways; D2's stances as declared
-      dispositions, `interval` and `int2vector` naming 12.3 and 12.6; the rule filed
-      beside "The bar"; `money` earns `KD13` under stance (a). Notes:
-      [`../design/roadmap-P12.2-reconciliation-notes.md`](../design/roadmap-P12.2-reconciliation-notes.md)
-- [x] **12.3** `interval`: `decode.rs`'s `interval_parts` walk shared with the
-      ordering's span, the `decode_interval`/`render_interval` pair, the
-      `Interval(MonthDayNano)` resolution arm and its `ColumnBuilder`; the
-      reconciliation's `waiting` disposition dropped. Notes:
-      [`../design/roadmap-P12.3-interval-decoder-notes.md`](../design/roadmap-P12.3-interval-decoder-notes.md)
-- [x] **12.4** `interval`: render-back's sub-microsecond refusal, the comparison
-      register's arm, and the interval decode failure folded into the existing
-      `infinity`/`NaN` register entry (`KD8`). Notes:
-      [`../design/roadmap-P12.4-interval-render-notes.md`](../design/roadmap-P12.4-interval-render-notes.md)
-- [x] **12.5** `int2vector`: `public.t_int2vector` in `fixture_schema_types.sql`,
-      five rows covering the whole of `int2vectorout`'s grammar, and the six-major
-      regeneration of the `types` schema. No library code. Notes:
-      [`../design/roadmap-P12.5-int2vector-fixture-notes.md`](../design/roadmap-P12.5-int2vector-fixture-notes.md)
-- [x] **12.6** `int2vector`: `nested.rs`'s `decode_int2vector`/`render_int2vector`/
-      `parse_int2vector`, the `builtin_scalar` arm and its `NestedPlan`/`NestedCompare`
-      nodes, the comparison-oracle case, I47, and the reconciliation's `waiting`
-      disposition dropped. Notes:
-      [`../design/roadmap-P12.6-int2vector-codec-notes.md`](../design/roadmap-P12.6-int2vector-codec-notes.md)
-
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **Six phases are sketched and two are specified** — P13, P7, P12, P10, P14,
-  P6, P15, P8, in the roadmap table's schedule order; a `P<k>` is an identifier,
-  so the numbers say nothing about the order they run in. P13 is grilled and
-  **blocked** on an external seekable-xz crate; P12 is grilled, specified and
-  **current**. Every remaining phase that carries an inbox must have it drained
-  as part of its own grilling, which `process.md` step 6 re-grills the roadmap
-  before.
+- **Six phases are sketched and one is specified** — P13, P7, P10, P14, P6,
+  P15, P8, in the roadmap table's schedule order; a `P<k>` is an identifier, so
+  the numbers say nothing about the order they run in. P13 is grilled,
+  specified and **blocked** on an external seekable-xz crate. **No phase is
+  open**: the next one is grilled and specified before any of its code is
+  written, and `process.md` step 6 re-grills the roadmap first. Every remaining
+  phase that carries an inbox must have it drained as part of its own
+  grilling.
 
 ## Known deficiencies
 

@@ -18,7 +18,7 @@ reused, including a struck phase's.
 | P1–P5, P9, P11 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
 | P13 — compressed input | Specified; **blocked**, and its remaining decisions ungrilled | [`roadmap-P13-compressed-input.md`](roadmap-P13-compressed-input.md) — waits on an external seekable-xz crate; inbox drained |
 | P7 — scan performance | Sketched; design doc ahead of its phase | [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md); [inbox](roadmap-P7-scan-performance-inbox.md) |
-| P12 — ADBC type floor | **Current** | [`roadmap-P12-adbc-type-floor.md`](roadmap-P12-adbc-type-floor.md) — eleven decisions settled; inbox drained |
+| P12 — ADBC type floor | **Complete** | [`roadmap-P12-adbc-type-floor.md`](roadmap-P12-adbc-type-floor.md) and its [notes](roadmap-P12-adbc-type-floor-notes.md); the mechanisms are in [`architecture.md`](architecture.md) |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
@@ -392,27 +392,27 @@ measured defaults the engine story adds, not a rework of this phase.
 
 ## P12 — The ADBC type floor
 
-**Specified**:
+**Complete**, in six slices.
 [`roadmap-P12-adbc-type-floor.md`](roadmap-P12-adbc-type-floor.md) holds the
 eleven decisions this phase settled — which revision of the driver is the floor,
 the rule and the three stances that put a row outside it, what the rule is
-scoped to, the two types it closes, how the floor is taken and kept from
-decaying, and the six slices. Its inbox has been drained.
+scoped to, the two types it closes, and how the floor is taken and kept from
+decaying; its
+[notes](roadmap-P12-adbc-type-floor-notes.md) hold what the phase left that
+subject-filing has no home for. The mechanisms themselves are in
+[`architecture.md`](architecture.md), "The floor: the ADBC driver's answer
+bounds ours" and "The ADBC floor oracle".
 
 The phase replaces the Future item *"exhaustive built-in type coverage, with
 tests to match"*: an open-ended "every built-in type, eventually" becomes a
 bounded target set by somebody else's shipped driver.
 
-**Scheduled after P11, ahead of P10 and P6; its position relative to P7 is
-free.** After P11 because `builtin_scalar` answers "which Arrow type" and "how
-do two of these compare" in one arm, and the register-to-oracle reconciliation
-requires a case for every arm — so a type mapped before that register settles
-writes arms against a moving spec. Ahead of P10 because a per-row-group minimum
-over a `Utf8View` column is a lexicographic bound where a typed one is a real
-one, and statistics are worth more over the wider type coverage. Ahead of P6
-because "the schema you get is at least as good as ADBC's" is an
-embedder-facing promise, and P6 is the phase that presents promises over
-mechanisms that have stopped moving.
+**It ran ahead of P10 and P6, and both still inherit that ordering.** P10's
+per-row-group minimum over a `Utf8View` column is a lexicographic bound where a
+typed one is a real one, so statistics are worth more over the wider type
+coverage this phase bought. P6 is where *"the schema you get is at least as good
+as ADBC's"* would be published, and that is a promise over a mechanism which has
+stopped moving — the P6 inbox carries what stating it would oblige.
 
 **Three of the survey's rows were never this phase's**, and landed as
 out-of-band work during P11's run rather than waiting: `oid`, which maps to an
