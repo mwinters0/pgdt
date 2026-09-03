@@ -4073,7 +4073,12 @@ the failure the marker exists to prevent, arrived at by the route that leaves no
 trace. What that leaves is a citation whose target has to be *found* rather than
 resolved, and the check that resolves every form — a marker id strictly, a
 heading leniently, and a marked section's heading as a failure naming the id to
-use instead — is [`roadmap.md`](roadmap.md), `M50`.
+use instead — is `scripts/citations.py`, over every citation in the tree. It is
+what makes marking a section cost nothing later: mark one, and the citations
+that then name its heading are named rather than left to rot. It reads comments
+and prose and never string literals, because a citation is something written to
+a reader; the grammars it has to survive, and the one thing it cannot see, are
+in its own module docstring.
 
 <!-- section: parse-profile -->
 

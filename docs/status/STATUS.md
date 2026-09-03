@@ -173,6 +173,20 @@ are beside the rule
 ([`../design/measurements.md`](../design/measurements.md), "The floor is read
 directionally").
 
+**Every `<doc>.md`, "section" citation in the tree is resolved by `cd scripts &&
+uv run citations.py`, and it is red: 13 of 534 do not resolve.** That is `M50`
+landing ahead of `M51`, which repairs what it reports — the two are separate
+rows because "does this matcher have the right grammar" and "what did each of
+these citations mean" are different reviews, and `M51` carries `P7` in the
+ledger's `Blocks` column so no slice lands between them looking at a red check
+nobody has explained. Nothing acknowledges or baselines the thirteen: the check
+fails, and the window is meant to be short. The convention it enforces —
+a section whose heading states a measured finding is addressed by an
+`<!-- section: <id> -->` marker, and cited by that id rather than by the
+heading — is beside the mechanism
+([`../design/architecture.md`](../design/architecture.md), "Where a scan's time
+goes").
+
 ## P7 progress
 
 The phase's spec, its measured baseline and the lever table each row measures:
@@ -424,4 +438,23 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-Nothing is open.
+- **The citation check holds `history/` to the same bar as every other
+  document, and three of its thirteen findings are dated entries.** `M50`'s
+  ledger row describes resolving *sections*; resolving the *document* first is
+  implied by it and was not stated, and it is what reports four of the
+  thirteen — two history entries citing a phase spec a keystone deleted, one
+  history entry whose relative path is written at the wrong depth, and one
+  inbox citing an inbox that was drained. **The decision is whether a dated
+  entry's citation of a since deleted document is a defect `M51` repairs at
+  all.** The call made was yes, on the reading that a pointer nobody can follow
+  costs a session a tool call wherever it is written, and that
+  [`../process.md`](../process.md), "The keystone: striking the centering"
+  forbids *rewriting* history, not repairing a citation in it — it says an
+  entry that has become actively misleading is corrected. The other reading is
+  that a history entry is a record of what was true on its date, that a
+  citation in it is provenance rather than a live pointer, and that the check
+  should scope `history/` out of document resolution. Reversing it drops three
+  of the thirteen and changes one line of `scripts/citations.py`; leaving it
+  puts three judgement calls into `M51` that are about how history is
+  maintained, which is a rule question rather than a repair. The wrong-depth
+  path is a defect either way.

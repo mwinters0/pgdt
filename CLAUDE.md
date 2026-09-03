@@ -42,6 +42,9 @@ cd scripts && uv run python -m unittest test_measure   # the harness's own tests
 
 cd scripts && uv run deficiencies.py              # deficiency register: index vs. detail entries vs. code markers vs. the slice pairing vs. the roadmap's phase index
 cd scripts && uv run python -m unittest test_deficiencies  # that check's own tests
+
+cd scripts && uv run citations.py                 # every `<doc>.md`, "section" citation in the tree, resolved against the section it names
+cd scripts && uv run python -m unittest test_citations  # that check's own tests
 ```
 
 ## Long-running processes (>10 minutes)
@@ -150,6 +153,17 @@ is how you meet it. Two sections are hard constraints rather than description: "
 robustness requirements (hardcoded)" is what the `COPY`-block scanner
 (`scan.rs`, `copy.rs`) implements, and "`Event` is the scanner's contract"
 names every site that must change when a scanner event is added.
+
+**A citation names a section, and `cd scripts && uv run citations.py` resolves
+every one of them in the tree.** Run it after rewriting a heading or moving a
+section — that is the moment citations to it go stale, everywhere but in the
+file you edited. A few sections in `architecture.md` carry an
+`<!-- section: <id> -->` marker because their heading states a measured finding
+and is rewritten when the finding moves; **cite those by the id, never by the
+heading**, and the check fails naming the id if you do. The convention and its
+limits are beside the mechanism (`docs/design/architecture.md`, "Where a scan's
+time goes"). A heading that names a mechanism rather than a finding is cited by
+heading as before, exactly or as a truncated leading clause.
 
 `docs/design/layering.md` assigns every module to one of four layers and states
 the rules that keep dependencies pointing downward. **Read it before adding a
