@@ -159,10 +159,12 @@ an allocator adopted after a figure is taken invalidates that figure, and
       [`../design/roadmap-P7.2-decomposition-notes.md`](../design/roadmap-P7.2-decomposition-notes.md)
 - [x] **7.3** The allocator — measured, and **not adopted**: `jemalloc` is
       1.87×/1.19×/1.07× on the three headline shapes and `mimalloc`
-      0.98×/0.96×/0.96×, so the lever's factor-sized stake is a 4% win on two
-      of three shapes. The features stay, the figure re-takes in five minutes,
-      and 7.13 owes a re-take — jemalloc's `parse` penalty is 3,161 `madvise`
-      calls from the per-chunk allocation that slice removes. Notes:
+      0.98×/0.96×/0.96×, so the lever's factor-sized stake is 3–4% on `typed`
+      alone — the confirming sitting puts `parse` and `strings` inside the
+      apparatus. The features stay, the figure re-takes in five minutes, and
+      7.13 owes the re-take *and* the adoption decision — jemalloc's `parse`
+      penalty is 3,161 `madvise` calls from the per-chunk allocation that slice
+      removes. Notes:
       [`../design/roadmap-P7.3-allocator-notes.md`](../design/roadmap-P7.3-allocator-notes.md)
 - [ ] **7.4** `KD5` — `stream::splice` moves inside the throttle's gate, the
       interrupt's promise is restated, and the entry is rewritten to whatever
@@ -189,8 +191,9 @@ an allocator adopted after a figure is taken invalidates that figure, and
 - [ ] **7.13** Who owns the bytes between the kernel and the scanner —
       `read_range`'s per-chunk zeroed allocation and each read loop's copy into
       its own buffer, over all three loops. Reviewed alone, ahead of 7.6 and
-      7.7. Also owes `--figure allocator`, whose ranking this slice's
-      allocation dominates (7.3's notes).
+      7.7. Also owes `--figure allocator` **and the adoption decision 7.3
+      deferred** — this slice's allocation dominates that ranking, and the
+      decision must be settled before 7.12's sweep pair (7.3's notes).
 
 ## Not started
 
@@ -350,23 +353,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`mimalloc` was measured 4% faster on both `query` shapes and was not
-  adopted.** The call: `pgdq` keeps the platform allocator. The reading is
-  real, not noise — `typed` at 9.77 s against 10.21, spreads that do not
-  overlap, and the sign reproduced in two independent sittings — and the one
-  written floor that would have dismissed it (7.2's "two builds of one source
-  can differ by ~10% by layout") was measured on `insert_run` and explicitly
-  *not* on these shapes. It was made this way because the flip is one line and
-  the cost is not: adopting makes every other table in `measurements.md` a
-  figure of a binary nobody ships, with no mechanical oracle to acknowledge it,
-  until the wrap's sweep pair — and because the ranking's largest number
-  (jemalloc 1.87× on `parse`) is 3,161 `madvise` calls from the per-chunk
-  allocation slice 7.13 removes, so the post-7.13 ranking is a different
-  question. If reconsidered: `default = ["mimalloc"]` in
-  `pgdump_query-cli/Cargo.toml` is the whole change, and it costs one
-  `--figure allocator` plus reading every other figure as pre-adoption until
-  7.12. Detail:
-  [`../design/roadmap-P7.3-allocator-notes.md`](../design/roadmap-P7.3-allocator-notes.md);
-  the rejected-alternative paragraphs are beside the mechanism in
-  [`../design/architecture.md`](../design/architecture.md), "The allocator is
-  the binary's choice".
+Nothing is open.

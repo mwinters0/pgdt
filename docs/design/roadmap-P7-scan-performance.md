@@ -378,10 +378,19 @@ the plan slipping. This is the exception [`../process.md`](../process.md)'s
 "Slice numbering" names: the general rule fixes slice order at spec time, and
 an evidence-led phase cannot, because the evidence is what orders the work.
 
-**Two orderings bind, and they are the whole of it.** `7.3`, because an
-allocator adopted after a figure is taken invalidates that figure; and `7.13`
-ahead of `7.6` and `7.7`, because those two rework how a row is walked inside
-the buffer `7.13` replaces. `7.13` is also the worked example of a slice
+**Two orderings bind, and they are the whole of it.** The **allocator decision
+before the wrap sweep**, because an allocator adopted after a figure is taken
+invalidates that figure; and `7.13` ahead of `7.6` and `7.7`, because those two
+rework how a row is walked inside the buffer `7.13` replaces.
+
+The first is stated against the sweep rather than against `7.3` because `7.3`
+has landed *without* adopting, and the hazard it names is still live. What the
+early slice bought was pricing the lever while it was cheap to change; what
+actually binds is the deadline. Adopting at any point before the sweep pair
+costs only figures the sweep re-takes anyway; adopting after it would leave
+thirteen freshly-taken tables describing a binary that is no longer shipped,
+with no sweep left to repair them. The question is re-asked at `7.13`, which
+removes the allocation dominating the current ranking's largest number. `7.13` is also the worked example of a slice
 admitted *after* spec time — a row the profile found, on the terms "The levers"
 sets — which is why its number sits past the wrap slice and says nothing about
 when it runs.
@@ -400,7 +409,7 @@ when it runs.
 | **7.10** | **Scalar decode and the typed column build**, split by the profile into a `decode.rs` half and a builder-append half. |
 | **7.11** | **The viewing builder for `List<Utf8View>`** — conditional on **7.10's builder-append half** pricing the Arrow build, last, and reviewed alone. It lands only if that reading puts the `List<Utf8View>` build above **1 µs/row** on the arrays file, which is the phase's own cross-file apparatus floor and therefore the smallest prize this table can honestly claim. |
 | **7.12** | **The sweep pair and the koji regression run**, folded in: thirteen tables re-taken in one sitting, koji's byte-identity check on a glibc build, and the written statement of what a parallel splitter needs from coverage and from the census, filed to P16. |
-| **7.13** | **Who owns the bytes between the kernel and the scanner** — `read_range`'s per-chunk zeroed allocation and the copy into each read loop's own buffer, over all three loops, with the `object_store` shape and the query path's chunk retention settled explicitly. Reviewed alone, and ahead of 7.6 and 7.7, which both rework how a row is walked inside the buffer this replaces. |
+| **7.13** | **Who owns the bytes between the kernel and the scanner** — `read_range`'s per-chunk zeroed allocation and the copy into each read loop's own buffer, over all three loops, with the `object_store` shape and the query path's chunk retention settled explicitly. Reviewed alone, and ahead of 7.6 and 7.7, which both rework how a row is walked inside the buffer this replaces. **Also re-takes `--figure allocator` and settles adoption** — 7.3 measured but deferred, this slice removes the allocation that dominated the ranking, so it either adopts the winner or records the refusal beside the mechanism. |
 
 ## What this phase is not: parallelism is P16
 

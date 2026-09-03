@@ -22,25 +22,37 @@ and a `--version` string.
 | `scripts/measure.py`, `_census_specs` | extracted, because two figures now borrow the census-on spec |
 | `scripts/test_measure.py`, `Allocator` | eighteen assertions, each a way to publish a plausible table of the wrong comparison |
 
-## The answer, and the two ways it could have been read wrong
+## The answer, and the three ways it could have been read wrong
 
 `jemalloc` **1.87× / 1.19× / 1.07×** and `mimalloc` **0.98× / 0.96× / 0.96×**
 on `parse`, a `strings` query and a typed one. The lever table's stake was a
 factor — 1.8–2.4× between two stock libcs on everything that moves real bytes —
-and what is actually on the table is 4%, in one direction, on two of three
-shapes. The platform allocator stays; the rejected-alternative paragraph for
+and what is actually on the table is **3–4%, in one direction, on one of three
+shapes**. The platform allocator stays; the rejected-alternative paragraph for
 adopting `mimalloc` anyway is beside the mechanism.
 
-**mimalloc's 4% is a real reading, not noise, and saying otherwise would have
-been the easy mistake.** Its `typed` spread (9.75–9.79) does not overlap the
-reference's (10.14–10.44), the sign reproduced in two independent sittings the
-same day, and the one written floor that could have dismissed it — 7.2's "two
-builds of one source can differ by ~10% from code layout alone" — was measured
-on `insert_run` and explicitly *not* on these three shapes, where the alignment
-flag moved nothing. So the case against adopting has to be about what 4% is
-worth, and it is: the flip is one line and the cost is that every other table
-in `measurements.md` becomes a figure of a binary nobody ships, with no
-mechanical oracle, until the wrap's sweep pair.
+**mimalloc's `typed` win is a real reading, not noise, and saying otherwise
+would have been the easy mistake.** Its `typed` spread (9.75–9.79) does not
+overlap the reference's (10.14–10.44), the sign reproduced in two independent
+sittings the same day, and the one written floor that could have dismissed it —
+7.2's "two builds of one source can differ by ~10% from code layout alone" —
+was measured on `insert_run` and explicitly *not* on these three shapes, where
+the alignment flag moved nothing. So the case against adopting has to be about
+what that 3–4% is worth, and it is: the flip is one line and the cost is that
+every other table in `measurements.md` becomes a figure of a binary nobody
+ships, with no mechanical oracle, until the wrap's sweep pair.
+
+**The mistake actually made was to claim it on two shapes.** This slice landed
+saying "4% on both `query` shapes", and the confirming sitting recorded in the
+figure's own prose says otherwise: per shape across the two sittings, `parse`
+is 0.98× and 1.00×, `strings` 0.96× and 0.99×, `typed` 0.96× and 0.97×. Only
+`typed` reproduces its magnitude. `strings` reads 4% once and 1% once, which is
+`measurements.md`'s own "a move smaller than the apparatus resolves is not a
+finding" firing inside the table that states the rule — a sign reproducing is
+not a magnitude reproducing, and the ratio columns were read as though it were.
+Corrected in the same review that closed the entry; the lesson for a later
+figure is that a confirming sitting is checked **per cell**, not for whether
+the signs agree.
 
 **The other misreading would have been to treat jemalloc's `parse` number as
 an allocator result.** It is not: it is 3,161 `madvise` calls against glibc's
@@ -49,10 +61,24 @@ an allocator result.** It is not: it is 3,161 `madvise` calls against glibc's
 
 ## What 7.13 owes, and why this figure is not settled
 
-**7.13 must re-take `--figure allocator`.** The ranking's largest number is an
-artifact of the allocation 7.13 removes, so the post-7.13 ranking is a
-different question and is the one that should decide adoption. Five minutes,
-one figure, no sweep.
+**7.13 must re-take `--figure allocator` and settle adoption.** The ranking's
+largest number is an artifact of the allocation 7.13 removes, so the post-7.13
+ranking is a different question and is the one that should decide adoption.
+Five minutes, one figure, no sweep.
+
+**Both halves are now written into the spec's 7.13 row and its checklist
+entry**, because the re-take alone is a table nobody acts on. This slice
+originally left the adoption question in `STATUS.md`'s "Decisions worth another
+look", where closing the entry is *deleting* it — so the decision the entry
+existed to keep open would have been made by omission the moment it was
+reviewed. An obligation that must outlive an entry belongs on a slice row.
+
+**The deadline is the sweep pair, not 7.13.** 7.13 is where the question is
+re-asked; what binds is that it be answered before 7.12 re-takes every table,
+since adopting after that would invalidate thirteen fresh tables with no sweep
+left to repair them. The spec's ordering paragraph now says this — as landed it
+named `7.3`, which reads as satisfied by that slice having run, exactly when the
+hazard is still live.
 
 The evidence, all on the host and none of it a figure — the same class as 7.2's
 `perf stat` and `strace` attributions:

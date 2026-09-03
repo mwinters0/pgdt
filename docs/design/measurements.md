@@ -500,7 +500,19 @@ own sitting**, not in the `ba2fc12` sweep the stamp above records — so setting
 one of its absolutes beside that sweep's costs the ~8% a warm absolute resolves
 to across sessions, while its **ratios** are within-sitting, which is what the
 table is for. A second, independent sitting the same day gave jemalloc at
-1.89×/1.18×/1.06× and mimalloc at 1.00×/0.99×/0.97×, so both signs reproduce.
+1.89×/1.18×/1.06× and mimalloc at 1.00×/0.99×/0.97×.
+
+**Reproducing a sign is not reproducing a magnitude, and for `mimalloc` only
+one shape does both.** Read per shape across the two sittings: `parse` 0.98×
+and 1.00×, `strings` 0.96× and 0.99×, `typed` 0.96× and 0.97×. `jemalloc`'s
+three ratios are far enough from 1 that both sittings say the same thing. For
+`mimalloc` only **`typed`** does — a 3–4% win whose within-sitting spread
+(9.75–9.79 against the reference's 10.14–10.44) does not overlap, in both
+sittings. `parse` is nothing. `strings` reads 4% once and 1% once, and two
+sittings disagreeing by that much *is* this document's "a move smaller than the
+apparatus resolves is not a finding" being demonstrated inside one table. So
+the `mimalloc` result to carry forward is **one shape, not two**, and any
+argument for adopting it is an argument about `typed` alone.
 
 **`jemalloc`'s `parse` penalty is a syscall storm, and it belongs to a lever
 this phase has not pulled yet.** All of it is system time — 0.27 s → 0.80 s on
@@ -514,16 +526,24 @@ removes. So the ranking above is dominated on one of its three shapes by an
 allocation that is scheduled to disappear, and the table is re-taken — `--figure
 allocator`, five minutes — after that slice rather than treated as settled.
 
-*Rejected:* adopting `mimalloc` now on its 4% win. It is a real, reproducible
-4% on the two `query` shapes and nothing on `parse`, against a lever table
-whose other rows are 16.5×, 19.0 s of 20.8 s, and 54.6% of a warm `parse`'s
-user time — and the cost is not the one-line default flip. Adopting makes every
-other table here a figure of a binary that is no longer shipped, with no
-mechanical oracle to acknowledge it, so the whole document reads stale until
-the wrap's sweep pair. Paying that for 4%, on a ranking whose largest number is
-about to be invalidated by 7.13, is buying the decision at its least
-informative moment. The features stay in the manifest so the re-take costs
-nothing.
+*Rejected:* adopting `mimalloc` now on its `typed` win. It is a real,
+reproducible 3–4% on that one shape and inside the apparatus on the other two,
+against a lever table whose other rows are 16.5×, 19.0 s of 20.8 s, and 54.6%
+of a warm `parse`'s user time — and the cost is not the one-line default flip.
+Adopting makes every other table here a figure of a binary that is no longer
+shipped, with no mechanical oracle to acknowledge it, so the whole document
+reads stale until the wrap's sweep pair. Paying that for one shape's 3–4%, on a
+ranking whose largest number is about to be invalidated by 7.13, is buying the
+decision at its least informative moment. The features stay in the manifest so
+the re-take costs nothing.
+
+**The decision is deferred, not made, and it has a deadline.** The re-take
+belongs to 7.13, which removes the allocation dominating `jemalloc`'s `parse`
+column; the *adoption* decision belongs to that same slice, and either way it
+must be settled **before the wrap's sweep pair**. That is the real constraint
+the phase spec's ordering paragraph is about: adopting before the sweep costs
+only what the sweep re-takes anyway, and adopting after it would invalidate a
+freshly-taken thirteen-table document with no sweep left to repair it.
 
 ## Scan throughput by input shape
 

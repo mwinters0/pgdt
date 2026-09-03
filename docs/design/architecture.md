@@ -4054,6 +4054,17 @@ two off-by-default Cargo features (`jemalloc`, `mimalloc`), one
 `#[global_allocator]` behind each, a `compile_error!` if both are asked for,
 and a `VERSION` string that `pgdq --version` prints.
 
+**`--all-features` does not build this workspace, and that is the mechanism
+working.** Asking for both allocators asks for two `#[global_allocator]`s, and
+`alloc.rs` refuses it with a `compile_error!` naming the reason rather than
+letting `rustc` report a symbol collision. The repair that suggests itself — a
+precedence rule, so the build succeeds and one feature quietly wins — must not
+be made: it would let the harness label a measured leg by the feature it passed
+rather than by the allocator it got, which is the single guarantee the
+`--version` interrogation below exists to provide. So the two features are one
+choice rather than a matrix, `--all-features` is knowingly unsupported, and a
+session that meets the error is reading a decision rather than a defect.
+
 **The choice is the binary's and never the library's.** A `#[global_allocator]`
 in `pgdump_query` would impose one on every embedder, which is exactly the
 audience the embedding work is for. The consequence is stated rather than
@@ -4074,8 +4085,17 @@ was taken under": `jemalloc` is **1.87×** on `parse`, 1.19× on a `strings`
 query and 1.07× on a typed one; `mimalloc` is 0.98×, 0.96× and 0.96×. So the
 lever's stake — a factor, on the evidence that two stock libcs differ by
 1.8–2.4× — did not survive contact with two allocators that are both tuned for
-this shape of work: what is on the table is 4%, in one direction, on two of the
-three shapes.
+this shape of work.
+
+**What `mimalloc` actually wins is one shape.** The figure's confirming sitting
+reads it at 1.00×/0.99×/0.97×, so across the two sittings `parse` is 0.98× and
+1.00×, `strings` 0.96× and 0.99×, and `typed` 0.96× and 0.97×. Only `typed`
+reproduces its magnitude as well as its sign, and it does so on non-overlapping
+within-sitting spreads. `parse` is nothing and `strings` is two readings that
+disagree by more than the effect — which is `measurements.md`'s "a move smaller
+than the apparatus resolves is not a finding", demonstrated inside the table
+that states it. So what is on the table is **3–4% on `typed` alone**, and that
+is the number any adoption argument has to be worth.
 
 **`jemalloc`'s `parse` penalty is not the allocator being slow, and it is the
 part that decides when this is re-asked.** All of it is system time (0.27 s →
@@ -4087,12 +4107,22 @@ kernel and re-faulted once per chunk. That allocation is itself a lever
 so the ranking is dominated on one shape by something scheduled to be removed,
 and the table is re-taken once it is.
 
-*Rejected:* adopting `mimalloc` on its 4%. The one-line default flip is not the
-cost — the cost is that every other table in `measurements.md` becomes a figure
-of a binary no longer shipped, with no mechanical oracle to acknowledge it, so
-the whole document reads stale until the next full sweep. Paying that for 4% on
-a ranking whose largest number is about to move is buying the decision at its
-least informative moment. The features stay so the re-take is five minutes.
+*Rejected:* adopting `mimalloc` on its `typed` 3–4%. The one-line default flip
+is not the cost — the cost is that every other table in `measurements.md`
+becomes a figure of a binary no longer shipped, with no mechanical oracle to
+acknowledge it, so the whole document reads stale until the next full sweep.
+Paying that for one shape, on a ranking whose largest number is about to move,
+is buying the decision at its least informative moment. The features stay so
+the re-take is five minutes.
+
+**Deferred is not decided, and the deadline is the wrap sweep rather than any
+particular slice.** The adoption question is re-asked when 7.13 removes the
+per-chunk allocation, because that is what invalidates the current ranking — but
+what *binds* is that it be settled before the phase's sweep pair. Adopting
+before the sweep costs only figures the sweep re-takes; adopting after it would
+make thirteen freshly-taken tables describe a binary that is no longer shipped,
+with no sweep left to repair them. This is why the phase spec's ordering
+paragraph names the sweep and not just `7.3`.
 
 *Rejected:* a `--global-allocator` flag or an environment variable. A global
 allocator is chosen when the binary is linked, so a runtime switch would have
