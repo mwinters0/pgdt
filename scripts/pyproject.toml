@@ -8,8 +8,9 @@ requires-python = ">=3.13"
 #
 # `adbc-driver-postgresql` *is* the ADBC floor: what it returns for a type is
 # what `fixtures/<major>/adbc/floor.tsv` records, so the pin is the release the
-# floor is a claim about (roadmap-P12-adbc-type-floor.md, D1 and D8) and moving
-# it obliges re-taking the oracle. Every row carries the version it was taken
+# floor is a claim about (`docs/design/architecture.md`, "The floor: the ADBC
+# driver's answer bounds ours") and moving it obliges re-taking the oracle.
+# Every row carries the version it was taken
 # with, so the two cannot drift silently.
 #
 # `pyarrow` is pinned for the same reason one step removed: the sweep writes

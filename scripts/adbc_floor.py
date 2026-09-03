@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """The ADBC floor oracle: what somebody else's driver returns for a type.
 
-`docs/design/roadmap-P12-adbc-type-floor.md` is the binding spec and
-`docs/design/architecture.md`, "The ADBC floor oracle", is the description;
-this module is the sweep and the file format. It has no container plumbing of
-its own -- `generate_fixtures.py` owns that and calls in here, the same
-division the comparison oracle already runs on.
+`docs/design/architecture.md`, "The ADBC floor oracle", is the description and
+"The floor: the ADBC driver's answer bounds ours" is the rule this file is
+evidence for; this module is the sweep and the file format. It has no container
+plumbing of its own -- `generate_fixtures.py` owns that and calls in here, the
+same division the comparison oracle already runs on.
 
 **What it records.** One row per `pg_type` row a user could declare a column
 of, saying what Arrow type `adbc_driver_postgresql` hands back for it. That is

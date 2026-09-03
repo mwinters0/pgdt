@@ -335,7 +335,7 @@ to re-take the sweep when the pin moves; and `money` is deliberately below it
 (`KD13`), so any wording has to be "at least as good, with one named
 exception" rather than an unqualified claim.
 
-**Origin.** P12, 2026-09-03, D9 of the phase spec. The mechanism is
+**Origin.** P12, 2026-09-03. The mechanism is
 [`architecture.md`](architecture.md), "The floor: the ADBC driver's answer
 bounds ours"; contingent on the pin, since a driver release that answers a type
 differently changes what the promise would say.

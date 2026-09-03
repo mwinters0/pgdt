@@ -1198,6 +1198,17 @@ its `NestedPlan`, and a `debug_assert` pairs the two: a built-in mapped to a
 `List` or a `Struct` with no plan named there would be filled by a scalar
 builder and would read every value as text.
 
+**So closing a built-in type is one indivisible change, whatever a plan says.**
+The arm carries the Arrow type and the comparison, the `NestedPlan` table
+carries the literal where the type is a container, and [the register-to-oracle
+reconciliation](#the-register-to-oracle-reconciliation) demands an oracle case
+for the new declared name — so landing the arm and deferring any of the other
+three fails a check rather than shipping a half-mapped type. Two things do
+separate cleanly, and they are the seams to cut at: the **fixture column** the
+type needs, which comes first so the mapping is checked against bytes it did not
+produce, and any **render-back** rework a new value class forces, which is a
+change to an already-tested path rather than a new one.
+
 *Rejected: widening `builtin_scalar`'s tuple to a triple, so the plan comes out
 of the arm with the other two.* Both Python checks parse that tuple's first
 element and would have survived it, so the cost is not the parse: it is that
@@ -1423,7 +1434,9 @@ install would declare us below a floor that does not exist in the world.
 `fixtures/<major>/adbc/floor.tsv` records the version it was taken with, and
 the reconciliation asserts the two are equal — so bumping the pin is the
 deliberate act that obliges re-taking the sweep, and the two cannot drift
-silently. Upstream main is a watch item: two unreleased commits there give
+silently. *Rejected: checking the rows against whatever `uv` resolves as
+latest.* It turns somebody else's release into a spurious local failure, and
+makes the check fire on an event nobody in this project chose. Upstream main is a watch item: two unreleased commits there give
 `uuid` a `FixedSizeBinary(16)` and stamp `POSTGRESQL:type` on every non-root
 field, which is what release 25 will likely ask for and is not what this floor
 says.
@@ -1489,6 +1502,16 @@ neither acquires a stance:
   of mixed dimensionality or `[lb:ub]` decoration to `Utf8View`. Strictly read
   we are wider; their narrower type is a wrong answer, so scoped to fidelity we
   are not. `KD3` keeps its own stance and this rule adds nothing to it.
+
+  *Rejected: making the shape-general `Struct{dims, lbounds, elements}` the
+  automatic demotion target, so the floor holds with no carve-out and `KD3`
+  closes.* It is the tempting answer and it over-reaches. That representation is
+  scoped as a **caller-selected knob** (`roadmap.md`, "Future — wanted,
+  unscheduled"), so making it what a demotion silently produces pre-empts the
+  choice it exists to leave with the caller — and it takes `List`, the signal
+  every generic Arrow consumer reads as "this is an array", off columns that
+  have it today. The knob stays wanted; a floor rule is not the thing that
+  should decide it.
 - **Name resolution.** A type name that needs quoting (`KD4`), or a composite
   whose body the grammar could not read, resolves `Utf8View` where ADBC —
   resolving by OID against a live catalog — always gets a real type. Those are
@@ -4399,7 +4422,14 @@ its six container starts included, which a combined run does not pay twice.
 The three `--skip-*` flags split the three passes, and skipping the dumps is
 the ordinary way to re-take either answer table: a dump regeneration is not
 byte-reproducible (below), so touching the `.sql` tree to change an answer
-table would bury the change in noise.
+table would bury the change in noise. Within that 80, an oracle re-take
+(`--skip-dumps`) is **63 seconds** and one schema's dumps (`--schema <name>`)
+**43** — each paying its own six container starts, which is why the parts
+overshoot the whole rather than dividing it. **Scope a regeneration to the
+schema that moved**: a wider one
+rewrites every file it touches with a fresh `\restrict` token and adds
+`--binary-upgrade`'s OID drift on top, both of which bury the change under
+review.
 
 **That figure has a mechanical trigger, not a comment asking someone to notice
 it.** The script prints its own elapsed time at the end of every run, and past

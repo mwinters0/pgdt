@@ -8,8 +8,8 @@ discoveries are in `history/`.
 
 ## What exists
 
-P1–P5, P9 and P11 are complete and were struck at keystone reviews; how each
-mechanism works is [`../design/architecture.md`](../design/architecture.md),
+P1–P5, P9, P11 and P12 are complete and were struck at keystone reviews; how
+each mechanism works is [`../design/architecture.md`](../design/architecture.md),
 filed by subject. What P11 — typed predicates — built, in twenty-three
 slices: the comparison oracle, its cross-major differ and the reconciliation
 that keeps the register's arms and the oracle's cases in step; the fixture
@@ -26,13 +26,12 @@ those mechanisms is described by subject in
 [`../design/architecture.md`](../design/architecture.md), which is where a
 session touching one meets its rejected alternatives and its limitations.
 
-**P12 — the ADBC type floor — is complete**, in six slices: the floor oracle
-over every declarable `pg_catalog` type, the reconciliation that joins it
-against `builtin_scalar` and fails both ways, `interval`'s decoder and
-render-back refusal, and `int2vector`'s fixture column and codec. Its spec and
-[notes](../design/roadmap-P12-adbc-type-floor-notes.md) stand until a keystone
-strikes them; the mechanisms are filed by subject like every other, under "The
-floor: the ADBC driver's answer bounds ours" and "The ADBC floor oracle".
+And what P12 — the ADBC type floor — built, in six: the floor oracle over
+every declarable `pg_catalog` type, the reconciliation that joins it against
+`builtin_scalar` and fails both ways, `interval`'s decoder and render-back
+refusal, and `int2vector`'s fixture column and codec. Filed by subject like
+every other, under "The floor: the ADBC driver's answer bounds ours" and "The
+ADBC floor oracle".
 
 [`../design/measurements.md`](../design/measurements.md) carries the `b70589f`
 stamp, and **`uv run measure.py --stale` names all thirteen of its figures** —

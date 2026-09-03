@@ -275,7 +275,7 @@ class Dispositions(unittest.TestCase):
     """The half that makes a waiting row close itself."""
 
     #: A `waiting` row, which the committed table no longer carries: `interval`
-    #: and `int2vector` were the two, and both closed inside P12. The mechanism
+    #: and `int2vector` were the two, and both have closed. The mechanism
     #: stays because it is what the next below-floor row a slice intends to
     #: close will be held to, so it is exercised against a synthetic row rather
     #: than deleted along with the last real one.

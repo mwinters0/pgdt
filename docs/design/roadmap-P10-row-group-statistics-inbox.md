@@ -57,10 +57,10 @@ Some rows of the register still order bytewise where the server does not — a
 states as something other than `C`/`POSIX`, a `jsonb` string leaf, and `json` —
 and each of those says so through `TableStream::comparison_notes`.
 
-**Why P10 cares.** `roadmap.md`'s P12 section justifies its own position with
-"a per-row-group minimum over a `Utf8View` column is a lexicographic bound
-where a typed one is a real one", which reads as though the Arrow type decides
-whether a statistic is meaningful. It does not any more. A min/max over a bare
+**Why P10 cares.** The ADBC-floor work was scheduled ahead of this phase on
+the argument that "a per-row-group minimum over a `Utf8View` column is a
+lexicographic bound where a typed one is a real one", which reads as though the
+Arrow type decides whether a statistic is meaningful. It does not any more. A min/max over a bare
 `numeric` or an enum column can be a *real* bound taken with the column's own
 comparison before that column ever gains a narrower Arrow type — and, in the
 other direction, a `text` column's lexicographic bound is knowably wrong for

@@ -15,10 +15,9 @@ reused, including a struck phase's.
 
 | Phase | State | Where it is |
 |---|---|---|
-| P1–P5, P9, P11 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
+| P1–P5, P9, P11, P12 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
 | P13 — compressed input | Specified; **blocked**, and its remaining decisions ungrilled | [`roadmap-P13-compressed-input.md`](roadmap-P13-compressed-input.md) — waits on an external seekable-xz crate; inbox drained |
 | P7 — scan performance | Sketched; design doc ahead of its phase | [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md); [inbox](roadmap-P7-scan-performance-inbox.md) |
-| P12 — ADBC type floor | **Complete** | [`roadmap-P12-adbc-type-floor.md`](roadmap-P12-adbc-type-floor.md) and its [notes](roadmap-P12-adbc-type-floor-notes.md); the mechanisms are in [`architecture.md`](architecture.md) |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
@@ -390,40 +389,6 @@ readahead depth and chunk-size defaults measured against local devices say
 nothing about a high-latency ranged backend — and that is a second set of
 measured defaults the engine story adds, not a rework of this phase.
 
-## P12 — The ADBC type floor
-
-**Complete**, in six slices.
-[`roadmap-P12-adbc-type-floor.md`](roadmap-P12-adbc-type-floor.md) holds the
-eleven decisions this phase settled — which revision of the driver is the floor,
-the rule and the three stances that put a row outside it, what the rule is
-scoped to, the two types it closes, and how the floor is taken and kept from
-decaying; its
-[notes](roadmap-P12-adbc-type-floor-notes.md) hold what the phase left that
-subject-filing has no home for. The mechanisms themselves are in
-[`architecture.md`](architecture.md), "The floor: the ADBC driver's answer
-bounds ours" and "The ADBC floor oracle".
-
-The phase replaces the Future item *"exhaustive built-in type coverage, with
-tests to match"*: an open-ended "every built-in type, eventually" becomes a
-bounded target set by somebody else's shipped driver.
-
-**It ran ahead of P10 and P6, and both still inherit that ordering.** P10's
-per-row-group minimum over a `Utf8View` column is a lexicographic bound where a
-typed one is a real one, so statistics are worth more over the wider type
-coverage this phase bought. P6 is where *"the schema you get is at least as good
-as ADBC's"* would be published, and that is a promise over a mechanism which has
-stopped moving — the P6 inbox carries what stating it would oblige.
-
-**Three of the survey's rows were never this phase's**, and landed as
-out-of-band work during P11's run rather than waiting: `oid`, which maps to an
-unsigned integer under the existing bar, and the `arrow.json` and `arrow.uuid`
-extension names, which attach to types we already emit and are validated
-against exactly those storage types. What they map to is
-[`architecture.md`](architecture.md), "Type resolution"; why they landed
-outside this phase is
-[`../status/history/2026-08-31.md`](../status/history/2026-08-31.md), "`oid`,
-and the two canonical extension names".
-
 ## P10 — Per-row-group column statistics
 
 **Inbox:** [`roadmap-P10-row-group-statistics-inbox.md`](roadmap-P10-row-group-statistics-inbox.md) — facts earlier
@@ -735,7 +700,7 @@ order, which is why a queued row may sit above one that landed before it.
 item admitted while a phase is open is either in the way of that phase's
 remaining slices or it is not, and the session that just finished grilling the
 decision can say which; a session picking the row up weeks later cannot, and
-guesses. `Blocks` names the phase (`P12`) when the phase's remaining slices
+guesses. `Blocks` names the open phase when that phase's remaining slices
 should not be landed around it, and is empty otherwise. It is read by the
 unattended loop — [`.claude/skills/go/SKILL.md`](../../.claude/skills/go/SKILL.md)
 takes a blocking row ahead of the next unticked slice — and cleared when the
@@ -752,15 +717,17 @@ until a keystone, which strikes it along with the phase docs and leaves a
 watermark saying which numbers are spent (`../process.md`, "The out-of-band
 ledger is struck too").
 
-**M1–M42 are struck**, and nothing at or below `M42` is reused. That is a
+**M1–M45 are struck**, and nothing at or below `M45` is reused. That is a
 high-water mark rather than a claim that every one of them landed: some were
 absorbed into a neighbour or folded into a phase slice, and their numbers are
 spent all the same. What each struck item did is filed by subject —
 [`architecture.md`](architecture.md) for a mechanism,
 [`measurements.md`](measurements.md) for an apparatus change,
-[`layering.md`](layering.md) and [`../process.md`](../process.md) for a rule —
-and why it was done is in the dated history entry it was filed under. The table
-opens again at `M43`, the first item to land after this keystone.
+[`layering.md`](layering.md), [`../process.md`](../process.md) and
+[`.claude/skills/`](../../.claude/skills/) for a rule — and why it was done is
+in the dated history entry it was filed under. **There is no table below**: it
+is written again by the first item to land after this keystone, which takes
+`M46`.
 
 **One live obligation outlived them.** An `INSERT`-run scan costs
 **mid-teens times** a `COPY` scan per byte, CPU-bound, which argues for a scanner-level `INSERT`
@@ -769,12 +736,6 @@ amendment → a numbered slice rather than through this section. It is filed in
 the scan-performance phase's inbox
 ([`roadmap-P7-scan-performance-inbox.md`](roadmap-P7-scan-performance-inbox.md))
 until then.
-
-| # | Date | Blocks | What changed | Why |
-|---|---|---|---|---|
-| `M43` | 2026-09-02 | | the unattended loop can carry a whole phase: `/gosolo` runs `gosub` with a new entry under "Decisions worth another look" as a transition rather than a stop, `/gm` stands in for the maintainer by adjudicating each `/dwal` recommendation against the written record — agreeing only on a citation, escalating anything that binds beyond the open phase — and records the exchange verbatim outside the repo; every agent in the stack is disposable, `/gm` retiring itself and its griller at a rotation boundary and `/gosolo` starting a fresh pair from the repo; `/go` reads this ledger as a work queue, taking a row whose `Blocks` names the open phase ahead of the next unticked slice | [`../status/history/2026-09-02.md`](../status/history/2026-09-02.md) |
-| `M44` | 2026-09-02 | | two loop rules imported back from `schemadetection`: a handback reads out **every** live "Decisions worth another look" entry rather than only the ones the loop added, and a maintainer's review does **not** re-arm `/gosub` — a review is a re-plan, and `/gosolo`'s Override 1 is the one exception. `grilling` gains that project's sub-agent fact-finding, unblocked, and its record-every-specific-in-the-same-turn rule; the three-questions-per-round format stays | [`../status/history/2026-09-02.md`](../status/history/2026-09-02.md) |
-| `M45` | 2026-09-03 | | `nested_accepted_form`'s trailing clause told the user every element, field or bound is "written in its own type's output form", which the code does not enforce — `order_key`'s integer arms are `str::parse` and take a leading `+` and leading zeros — so the sentence now gives the dump's form as advice without claiming to be the boundary of what is accepted, and the manual's copy of the same claim goes with it | [`../status/history/2026-09-03.md`](../status/history/2026-09-03.md) |
 
 ## Future — wanted, unscheduled
 
