@@ -215,13 +215,16 @@ to skip:
   partial-sweep note into the doc**, verbatim in substance. `measure.py` emits
   that note precisely when a borrow could not be satisfied, and dropping it
   publishes a reference column that looks shared and is not.
-- **The harness's advice names its direct sources, not the closure.** Re-taking
-  a figure that others borrow from drags them too: `census-brace-free` is
-  borrowed by both throughput tables, so the honest set behind the allocator
-  table is four figures where the note names two. The graph is not declared
-  anywhere the harness can read (out-of-band `M48`), so until it is, a session
-  weighing a partial sitting computes the closure by hand from the
-  `session.borrow` call sites.
+- **The harness names the closure, not its direct sources.** Re-taking a figure
+  that others borrow from drags them too: `census-brace-free` is borrowed by
+  both throughput tables, so the honest set behind the allocator table is four
+  figures where its direct sources are two. Each figure declares what it
+  borrows, so the harness computes that closure rather than a session working
+  it out by hand — `--figure` takes what a figure borrows and names the rest
+  before the first reading, the partial-sweep note states the whole set to
+  re-take, `--list` prints it per figure, and `--check` reports a partial
+  sitting the doc still carries. A **deliberate** partial sitting is
+  `--figure <id> --alone`, which borrows nothing and emits that note.
 
 **One line, in two regimes: 3.00 GiB inputs read by a `glibc` binary in a
 512 MB `postgres:16` container, timed by that container's own `bash`.** Warm

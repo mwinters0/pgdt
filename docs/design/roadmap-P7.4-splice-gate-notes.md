@@ -88,7 +88,7 @@ next: its second row is not its own measurement but `per-block-quadratic`'s
 borrowed row carries the lending figure's staleness edges and this one declared
 none of them, so a change to the map moved a published row here that read
 green. It now declares them explicitly. The harness models the sharing
-(`requires`, `session.borrow`) without deriving the edges from it; deriving
+(`Figure.shares`) without deriving the *staleness* edges from it; deriving
 them is the general fix and was left alone as harness surgery this slice did
 not owe.
 

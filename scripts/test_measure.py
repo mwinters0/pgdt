@@ -548,6 +548,147 @@ class Selection(unittest.TestCase):
         self.assertEqual(got, ["map-only"])
 
 
+class BorrowGraph(unittest.TestCase):
+    """The sharing relation, declared on `Figure` and read by the harness.
+
+    Its whole reason to be declared is the *transitive* case: a note written at
+    a `session.borrow` call site names the source it just asked for, and behind
+    the allocator table that is two figures where the honest set is four."""
+
+    def _session(self, readings=None):
+        session = measure.Session.__new__(measure.Session)
+        session.readings = dict(readings or {})
+        return session
+
+    def test_requires_is_read_off_the_declared_borrows(self):
+        # One list, not two: a second declaration of the same fact drifts, and
+        # the one that drifts is the one no run function reads.
+        fig = measure.FIGURES_BY_ID["allocator"]
+        self.assertEqual(
+            fig.requires, ("census-brace-free", "nested-end-to-end")
+        )
+
+    def test_every_borrow_names_a_known_figure(self):
+        for fig in measure.EVERY_FIGURE:
+            for shared in fig.shares:
+                with self.subTest(figure=fig.id, source=shared.source):
+                    self.assertIn(shared.source, measure.EVERY_BY_ID)
+                    self.assertTrue(shared.what)
+
+    def test_every_republished_spec_is_one_its_source_takes(self):
+        """A borrow is a dictionary lookup that silently returns nothing.
+
+        So every declared key is checked against the specs the source figure
+        actually sweeps — the failure it guards against is a rename on one side
+        producing a table that measures its own reference column and says it
+        shared it."""
+        taken = {
+            "census-brace-free": {
+                spec.key("census-brace-free")
+                for regime in ("cold", "warm")
+                for spec in measure._census_specs("control", regime)
+            },
+            "nested-end-to-end": {
+                spec.key("nested-end-to-end") for spec in measure._nested_specs()
+            },
+            "per-block-quadratic": {
+                measure.RunSpec(
+                    binary, name, "parse-cache-out", "warm", ""
+                ).key("per-block-quadratic")
+                for name, _ in measure._QUADRATIC_ROWS
+                for binary in ("before", "pgdq")
+            },
+        }
+        for fig in measure.EVERY_FIGURE:
+            for shared in fig.shares:
+                for spec in shared.republished:
+                    with self.subTest(figure=fig.id, spec=spec.key(shared.source)):
+                        self.assertIn(shared.source, taken)
+                        self.assertIn(spec.key(shared.source), taken[shared.source])
+
+    def test_the_closure_is_transitive(self):
+        # The four the history entry names: `allocator` borrows two, and both
+        # throughput tables borrow the census reading in turn.
+        self.assertEqual(
+            measure.sharing_closure("allocator"),
+            [
+                "census-brace-free",
+                "scan-throughput-cold",
+                "scan-throughput-warm",
+                "nested-end-to-end",
+            ],
+        )
+
+    def test_the_closure_is_symmetric(self):
+        for fig in measure.EVERY_FIGURE:
+            for other in measure.sharing_closure(fig.id):
+                with self.subTest(figure=fig.id, other=other):
+                    self.assertIn(fig.id, measure.sharing_closure(other))
+
+    def test_a_consumed_reading_is_not_a_closure_edge(self):
+        # `cross-file-floor` differences the nested sweep's reps into a per-row
+        # cost. That is a derived quantity, not the nested table's number a
+        # second time, so re-taking one does not put two numbers in the doc for
+        # one measurement -- but it still orders the run.
+        self.assertNotIn("cross-file-floor", measure.sharing_closure("nested-end-to-end"))
+        self.assertEqual(
+            measure.FIGURES_BY_ID["cross-file-floor"].requires, ("nested-end-to-end",)
+        )
+
+    def test_a_satisfied_borrow_is_copied_and_said_to_be_shared(self):
+        source = measure.RunSpec("pgdq", "control", "parse", "warm", "")
+        session = self._session({source.key("census-brace-free"): [1.0, 2.0]})
+        note = measure.share_readings(session, "scan-throughput-warm")
+        self.assertEqual(session.readings[source.key("scan-throughput-warm")], [1.0, 2.0])
+        self.assertIn("Shared, not measured again", note)
+        self.assertNotIn("Partial sweep", note)
+
+    def test_an_unsatisfied_borrow_names_the_whole_closure(self):
+        note = measure.share_readings(self._session(), "allocator")
+        self.assertIn("**Partial sweep**", note)
+        for fid in measure.sharing_closure("allocator"):
+            with self.subTest(figure=fid):
+                self.assertIn(fid, note)
+
+    def test_nothing_is_faked_for_an_unsatisfied_borrow(self):
+        # The figure measures it instead, which is what the note discloses.
+        session = self._session()
+        measure.share_readings(session, "allocator")
+        self.assertEqual(session.readings, {})
+
+    def test_closure_gaps_name_what_a_selection_leaves_out(self):
+        gaps = measure.closure_gaps(measure.resolve_selection(["allocator"]))
+        self.assertTrue(any(g.startswith("allocator —") for g in gaps))
+        joined = " ".join(gaps)
+        self.assertIn("scan-throughput-cold", joined)
+        self.assertIn("scan-throughput-warm", joined)
+
+    def test_a_whole_closure_leaves_no_gap(self):
+        ids = ["allocator", *measure.sharing_closure("allocator")]
+        self.assertEqual(measure.closure_gaps(measure.resolve_selection(ids)), [])
+
+    def test_alone_takes_exactly_what_is_named(self):
+        got = [f.id for f in measure.resolve_selection(["allocator"], alone=True)]
+        self.assertEqual(got, ["allocator"])
+
+    def test_alone_refuses_a_reading_it_cannot_measure_for_itself(self):
+        with self.assertRaises(SystemExit):
+            measure.resolve_selection(["cross-file-floor"], alone=True)
+
+    def test_a_partial_note_is_attributed_to_the_marker_above_it(self):
+        text = (
+            "<!-- figure: census-brace-free -->\nnothing here\n"
+            "<!-- figure: allocator -->\n**Partial sweep**: measured here.\n"
+        )
+        self.assertEqual(
+            measure.partial_sittings(text),
+            [("allocator", measure.sharing_closure("allocator"))],
+        )
+
+    def test_a_doc_with_no_partial_note_reports_none(self):
+        self.assertEqual(measure.partial_sittings("<!-- figure: allocator -->\n"), [])
+
+
 class Register(unittest.TestCase):
     def test_ids_are_unique(self):
         ids = [f.id for f in measure.ALL_FIGURES]

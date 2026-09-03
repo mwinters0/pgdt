@@ -1385,12 +1385,24 @@ class Session:
     def has(self, figure: str, spec: RunSpec) -> bool:
         return spec.key(figure) in self.readings
 
-    def borrow(self, from_figure: str, spec: RunSpec) -> list[float] | None:
-        """A reading another figure already took. The warm scan-throughput
-        table's `COPY` row *is* the census table's warm census-on column --
-        re-measuring it would put two different numbers in the doc for one
-        measurement."""
-        return self.readings.get(spec.key(from_figure))
+    def borrow(self, figure: str, shared: Shared) -> list[RunSpec]:
+        """Copy the readings one declared `Shared` names into `figure`'s keys.
+
+        A reading another figure already took. The warm scan-throughput table's
+        `COPY` row *is* the census table's warm census-on column -- re-measuring
+        it would put two different numbers in the doc for one measurement.
+
+        Returns the specs that were satisfied, which is empty when the source
+        figure was not in this sitting. What is *not* satisfied is left absent
+        rather than faked, so the figure's own sweep measures it and the note
+        says so."""
+        got = []
+        for spec in shared.republished:
+            readings = self.readings.get(spec.key(shared.source))
+            if readings:
+                self.readings[spec.key(figure)] = list(readings)
+                got.append(spec)
+        return got
 
 
 def ensure_before_binary(cfg: Config, log: Callable[[str], None]) -> Path:
@@ -1560,6 +1572,35 @@ def count_saves(
 # --------------------------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class Shared:
+    """A reading this figure takes from another figure rather than measuring.
+
+    Declared here rather than left in a `session.borrow` call site, because a
+    call site is not a graph: the harness could not compute what re-taking a
+    figure drags, so `--figure` could not name it and every run function
+    assembled its provenance paragraph by hand -- naming its own direct
+    sources, which is short of the honest set whenever a source is itself
+    borrowed from.
+
+    `republished` are the runs whose *number* appears in this figure's table as
+    well as in the source's. That is the relation the closure is computed over,
+    because it is the one that puts two numbers in the doc for one measurement
+    when only half the pair is re-taken. It is empty where the readings are
+    consumed without being republished -- `cross-file-floor` differences
+    `nested-end-to-end`'s reps into a per-row cost, which is a derived quantity
+    and not that figure's number a second time -- and such an entry still
+    orders the run and still pulls its source into a selection.
+    """
+
+    source: str
+    #: What this figure's table calls the borrowed reading, in its own terms.
+    #: The generated note is only as legible as this phrase, since it is what a
+    #: reader deciding whether to fold the table in actually reads.
+    what: str
+    republished: tuple[RunSpec, ...] = ()
+
+
 @dataclass
 class Figure:
     id: str
@@ -1582,8 +1623,11 @@ class Figure:
     table_label: str = ""
     cold_inputs: tuple[str, ...] = ()
     warm_inputs: tuple[str, ...] = ()
-    #: Figures whose readings this one uses, pulled in automatically.
-    requires: tuple[str, ...] = ()
+    #: Readings this figure takes from another rather than measuring them.
+    #: The borrow graph, declared: `requires` and `sharing_closure` are both
+    #: read off it, and `share_readings` writes the table's provenance
+    #: paragraph from it.
+    shares: tuple[Shared, ...] = ()
     #: Documents that repeat this figure's numbers, or the claim it licenses.
     #: `depends` is the edge into a figure -- what invalidates it; this is the
     #: edge out -- what a moved figure invalidates. Both exist for the same
@@ -1592,6 +1636,15 @@ class Figure:
     #: a 19.7 s map where `measurements.md`'s table says 103 and 18.62).
     quoted_by: tuple[str, ...] = ()
     run: Callable[[Session], str] = field(default=lambda s: "")
+
+    @property
+    def requires(self) -> tuple[str, ...]:
+        """The figures whose readings this one uses, pulled in automatically.
+
+        Derived from `shares` rather than declared beside it: two lists of the
+        same fact drift, and the one that drifts is the one no run function
+        reads."""
+        return tuple(dict.fromkeys(s.source for s in self.shares))
 
 
 #: The paths behind each mechanism a figure can depend on. Declared narrowly
@@ -1672,21 +1725,8 @@ def _throughput_figure(session: Session, figure: str, regime: str, reps: int) ->
     input. Measuring it twice would put two numbers in the doc for one
     measurement, which is the defect the whole sweep exists to remove."""
     specs = _throughput_specs(regime)
-    borrowed = session.borrow("census-brace-free", _census_specs("control", regime)[1])
-    if borrowed:
-        session.readings[specs[0].key(figure)] = list(borrowed)
-        to_run = specs[1:]
-        note = (
-            "\nThe `COPY` row is the census table's census-on column for this regime — the same "
-            "binary, command and input, not a second measurement of it.\n"
-        )
-    else:
-        to_run = specs
-        note = (
-            "\n**Partial sweep**: `census-brace-free` was not emitted in this session, so the "
-            "`COPY` row was measured here rather than shared with it. The two are the same "
-            "measurement and must agree, so emit them together before folding either in.\n"
-        )
+    note = share_readings(session, figure)
+    to_run = [s for s in specs if s.key(figure) not in session.readings]
     session.sweep(figure, to_run, reps)
     return (
         _throughput_table(session, figure, specs)
@@ -2053,16 +2093,11 @@ def run_preamble_prepass(session: Session) -> str:
     figure = "preamble-prepass"
     preamble = RunSpec("pgdq", "blocks4000", "parse-preamble", "warm", "preamble-only blocks4000")
     session.sweep(figure, [preamble], session.cfg.reps(5))
-    full = session.borrow("per-block-quadratic", RunSpec("pgdq", "blocks4000", "parse-cache-out", "warm", ""))
-    note = ""
-    if full is None:
-        full_spec = RunSpec("pgdq", "blocks4000", "parse-cache-out", "warm", "full parse blocks4000")
+    note = share_readings(session, figure)
+    full_spec = RunSpec("pgdq", "blocks4000", "parse-cache-out", "warm", "full parse blocks4000")
+    if full_spec.key(figure) not in session.readings:
         session.sweep(figure, [full_spec], session.cfg.reps(2))
-        full = session.get(figure, full_spec)
-        note = (
-            "\n**Partial sweep**: the full-`parse` row was measured here rather than shared with "
-            "the quadratic table's 4000-block \"after\" column, which is the same measurement.\n"
-        )
+    full = session.get(figure, full_spec)
     pv = session.get(figure, preamble)
     dump = session.input_path("blocks4000", "warm")
     first_copy = 0
@@ -2183,6 +2218,19 @@ _ALLOCATOR_SHAPES: tuple[tuple[str, str, str], ...] = (
 )
 
 
+#: The same three shapes as a borrow graph the register can read. Built from
+#: `_ALLOCATOR_SHAPES` rather than written out again, so a shape added there
+#: cannot be one the harness forgets to share.
+ALLOCATOR_SHARES: tuple[Shared, ...] = tuple(
+    Shared(
+        source,
+        f"the reference column's `{command}` row",
+        (RunSpec("pgdq", "control", command, "warm", ""),),
+    )
+    for command, _, source in _ALLOCATOR_SHAPES
+)
+
+
 def _allocator_reference(cfg: Config) -> str:
     """The allocator the *shipped* binary links against, read out of it.
 
@@ -2246,13 +2294,7 @@ def run_allocator(session: Session) -> str:
     # The reference column, shape by shape, from whichever figure already took
     # it. Borrowed rather than retaken so the doc carries one number per
     # measurement; measured here, with a note, when this figure runs alone.
-    borrowed = []
-    for command, _, source in _ALLOCATOR_SHAPES:
-        spec = RunSpec("pgdq", "control", command, "warm", "")
-        readings = session.borrow(source, spec)
-        if readings:
-            session.readings[spec.key(figure)] = list(readings)
-            borrowed.append(f"`{command}` from `{source}`")
+    note = share_readings(session, figure)
     to_run = [s for s in specs if s.key(figure) not in session.readings]
     session.sweep(figure, to_run, session.cfg.reps(5))
 
@@ -2297,20 +2339,7 @@ def run_allocator(session: Session) -> str:
             f"{legs} — so a leg whose build silently dropped its feature cannot be "
             "published as a comparison of two identical binaries.\n"
         )
-    if borrowed:
-        provenance += (
-            "\nThe reference column is shared, not retaken: "
-            + ", ".join(borrowed)
-            + " — the same binary, command and input.\n"
-        )
-    else:
-        provenance += (
-            "\n**Partial sweep**: the reference column was measured here rather than shared "
-            "with `census-brace-free` and `nested-end-to-end`, which this session did not "
-            "emit. Those are the same measurements and must agree, so emit them together "
-            "before folding any of them in.\n"
-        )
-    return table + "\n\n" + provenance + "\n" + _per_rep(figure, session, specs)
+    return table + "\n\n" + provenance + note + "\n" + _per_rep(figure, session, specs)
 
 
 def _fmt_ns(ns: float) -> str:
@@ -2372,7 +2401,13 @@ FIGURES: list[Figure] = [
         stage="cold",
         depends=(*SCAN, *MAP, *READ, *GEN_SHAPES),
         cold_inputs=("control", "large_object", "insert_run"),
-        requires=("census-brace-free",),
+        shares=(
+            Shared(
+                "census-brace-free",
+                "the `COPY` row, which is the census table's census-on column for this regime",
+                (RunSpec("pgdq", "control", "parse", "cold", ""),),
+            ),
+        ),
         run=run_scan_throughput_cold,
     ),
     Figure(
@@ -2389,7 +2424,13 @@ FIGURES: list[Figure] = [
         stage="warm",
         depends=(*SCAN, *MAP, *READ, *GEN_SHAPES),
         warm_inputs=("control", "large_object", "insert_run"),
-        requires=("census-brace-free",),
+        shares=(
+            Shared(
+                "census-brace-free",
+                "the `COPY` row, which is the census table's census-on column for this regime",
+                (RunSpec("pgdq", "control", "parse", "warm", ""),),
+            ),
+        ),
         run=run_scan_throughput_warm,
     ),
     Figure(
@@ -2427,7 +2468,14 @@ FIGURES: list[Figure] = [
         stage="warm",
         depends=(*NESTED, *READ, *QUERY_CLI, *GEN_PERF),
         warm_inputs=("control", "control43"),
-        requires=("nested-end-to-end",),
+        shares=(
+            #: Consumed, not republished: row 1 is `_per_row_diffs` over the
+            #: nested sweep's own reps, which publishes a per-row difference
+            #: rather than either of the readings it is taken from. So it
+            #: orders the run and pulls the source in, and is not an edge of
+            #: the sharing closure.
+            Shared("nested-end-to-end", "row 1's per-rep differences"),
+        ),
         run=run_cross_file_floor,
     ),
     Figure(
@@ -2470,7 +2518,13 @@ FIGURES: list[Figure] = [
         #: change to the map moves a row here that reads green.
         depends=(*PREAMBLE, *MAP_BUILD, *READ, *CACHE, *GEN_BLOCKS),
         warm_inputs=("blocks4000",),
-        requires=("per-block-quadratic",),
+        shares=(
+            Shared(
+                "per-block-quadratic",
+                'the full-`parse` row, which is the quadratic table\'s 4000-block "after" column',
+                (RunSpec("pgdq", "blocks4000", "parse-cache-out", "warm", ""),),
+            ),
+        ),
         run=run_preamble_prepass,
     ),
     Figure(
@@ -2529,6 +2583,7 @@ FIGURES: list[Figure] = [
             "pgdump_query-cli/Cargo.toml",
         ),
         warm_inputs=("control",),
+        shares=ALLOCATOR_SHARES,
         run=run_allocator,
     ),
 ]
@@ -2584,6 +2639,101 @@ ALL_BY_ID = {f.id: f for f in ALL_FIGURES}
 #: instruments. Not `ALL_FIGURES`, which is the set the *doc* must carry.
 SELECTABLE = FIGURES + UNTAKEN
 SELECTABLE_BY_ID = {f.id: f for f in SELECTABLE}
+
+#: Every figure the register knows, whether or not a sweep takes it.
+EVERY_FIGURE = FIGURES + UNTAKEN + DERIVED
+EVERY_BY_ID = {f.id: f for f in EVERY_FIGURE}
+
+
+# --------------------------------------------------------------------------
+# The borrow graph: what a re-take drags with it.
+# --------------------------------------------------------------------------
+
+
+def sharing_edges() -> dict[str, set[str]]:
+    """The republication graph, undirected.
+
+    Undirected because the defect is symmetric: `allocator` borrowing
+    `census-brace-free`'s reading and the two throughput tables borrowing the
+    same one put the same number in four tables, and re-taking *any* of them
+    alone leaves the doc carrying two numbers for one measurement. Direction
+    only says which figure measures it."""
+    edges: dict[str, set[str]] = {}
+    for fig in EVERY_FIGURE:
+        for shared in fig.shares:
+            if not shared.republished:
+                continue
+            edges.setdefault(fig.id, set()).add(shared.source)
+            edges.setdefault(shared.source, set()).add(fig.id)
+    return edges
+
+
+def sharing_closure(fid: str) -> list[str]:
+    """Every other figure that publishes a reading this one would move.
+
+    Transitive, which is the whole point of declaring the graph: the note a
+    run function used to write by hand named its *direct* sources, and behind
+    the allocator table that is two figures where the honest set is four --
+    `census-brace-free` is itself borrowed by both throughput tables. Returned
+    in register order, so the closure reads as a run order."""
+    edges = sharing_edges()
+    seen, queue = {fid}, [fid]
+    while queue:
+        for nxt in edges.get(queue.pop(), ()):
+            if nxt not in seen:
+                seen.add(nxt)
+                queue.append(nxt)
+    return [f.id for f in EVERY_FIGURE if f.id in seen and f.id != fid]
+
+
+def share_readings(session: Session, figure: str) -> str:
+    """Borrow every reading this figure declares, and say what happened.
+
+    The provenance paragraph is generated from the declaration rather than
+    written at the call site. That is what makes it name the closure: a call
+    site knows the source it just asked for, and nothing else."""
+    fig = EVERY_BY_ID[figure]
+    taken: list[Shared] = []
+    missing: list[Shared] = []
+    for shared in fig.shares:
+        if not shared.republished:
+            continue
+        got = session.borrow(figure, shared)
+        (taken if len(got) == len(shared.republished) else missing).append(shared)
+    lines = []
+    if taken:
+        lines.append(
+            "\nShared, not measured again — the same binary, command and input:\n"
+            + "".join(f"- {s.what}, from `{s.source}`.\n" for s in taken)
+        )
+    if missing:
+        closure = ", ".join(f"`{f}`" for f in sharing_closure(figure))
+        lines.append(
+            "\n**Partial sweep**: this session did not emit every figure this table shares a "
+            "reading with, so these were measured here instead:\n"
+            + "".join(f"- {s.what}, which is `{s.source}`'s.\n" for s in missing)
+            + "\nThose are the same measurements and must agree, so the doc now carries two "
+            f"numbers for one reading. The whole set that shares readings with this table is "
+            f"{closure} — re-take it together before folding any of them in.\n"
+        )
+    return "".join(lines)
+
+
+def closure_gaps(figures: Sequence[Figure]) -> list[str]:
+    """What a selection shares a reading with and does not take, one line each.
+
+    Said before the first reading rather than discovered at fold-in time. A
+    figure here is not necessarily *wrong* — the doc publishes a partial
+    sitting so long as it says so — but it is a table whose absolutes may not
+    be set beside the ones it shares a reading with, and this is the last
+    moment adding them to the selection is free."""
+    selected = {f.id for f in figures}
+    out = []
+    for fig in figures:
+        absent = [f for f in sharing_closure(fig.id) if f not in selected]
+        if absent:
+            out.append(f"{fig.id} — shares a reading with {', '.join(absent)}")
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -2764,8 +2914,16 @@ NOT_OURS = {
 }
 
 
-def resolve_selection(ids: Iterable[str]) -> list[Figure]:
-    """Selected figures plus whatever they share a reading with, in run order."""
+def resolve_selection(ids: Iterable[str], alone: bool = False) -> list[Figure]:
+    """Selected figures plus whatever they borrow from, in run order.
+
+    `alone` takes exactly what was named, which is how a **deliberate** partial
+    sitting is asked for: the borrowed rows are then measured by the figure
+    itself and its table carries the harness's partial-sweep note. It is
+    refused where a figure *consumes* another's readings without republishing
+    them, since there is no local measurement for that figure to fall back on
+    -- the reading it wants is the other figure's reps, not a run it could
+    take."""
     wanted: set[str] = set()
 
     def add(fid: str) -> None:
@@ -2774,11 +2932,21 @@ def resolve_selection(ids: Iterable[str]) -> list[Figure]:
         if fid not in SELECTABLE_BY_ID:
             raise SystemExit(f"unknown figure {fid!r}; `--list` names them all")
         wanted.add(fid)
+        if alone:
+            return
         for dep in SELECTABLE_BY_ID[fid].requires:
             add(dep)
 
     for fid in ids:
         add(fid)
+    if alone:
+        for fid in sorted(wanted):
+            for shared in SELECTABLE_BY_ID[fid].shares:
+                if not shared.republished and shared.source not in wanted:
+                    raise SystemExit(
+                        f"--alone refuses {fid}: it reads {shared.source}'s own reps "
+                        f"({shared.what}) and cannot measure them for itself"
+                    )
     return [f for f in SELECTABLE if f.id in wanted]
 
 
@@ -2802,6 +2970,33 @@ MARKER_RE = re.compile(r"<!--\s*figure:\s*([a-z0-9-]+)")
 def markers_in(doc: Path) -> list[str]:
     """Every figure id `measurements.md` claims to carry, in order."""
     return MARKER_RE.findall(doc.read_text())
+
+
+#: The lead-in `share_readings` writes when a borrow could not be satisfied,
+#: and the one the doc carries verbatim in substance when such a table is
+#: published (`measurements.md`, "The apparatus").
+PARTIAL_RE = re.compile(r"\*\*Partial sweep\*\*")
+
+
+def partial_sittings(text: str) -> list[tuple[str, list[str]]]:
+    """Tables the doc publishes that measured a reading they share.
+
+    One reading, two numbers: the figure named and the figures it shares with
+    each carry a measurement of the same run. The doc **permits** this, so long
+    as the harness's note is carried with the table -- which is why `--check`
+    reports it rather than failing on it. What it buys is that the set to
+    re-take is named at the moment someone is reading the doc to decide, rather
+    than recomputed by hand from the harness's source.
+
+    Attribution is by position: a note belongs to the nearest figure marker
+    above it, which is how the emitted table is laid out."""
+    marks = [(m.start(), m.group(1)) for m in MARKER_RE.finditer(text)]
+    seen: list[str] = []
+    for note in PARTIAL_RE.finditer(text):
+        above = [fid for pos, fid in marks if pos < note.start()]
+        if above and above[-1] not in seen:
+            seen.append(above[-1])
+    return [(fid, sharing_closure(fid)) for fid in seen]
 
 
 def stamped_commit(doc: Path) -> str | None:
@@ -2896,6 +3091,15 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
             "!! apparatus overridden (size or reps): this run is a smoke test, and its tables "
             "must not be folded into measurements.md"
         )
+
+    # Named before the first reading, not discovered at fold-in: a selection
+    # that takes half of a shared reading is publishable only with the note
+    # that says so, and the closure is what the note has to name.
+    gaps = closure_gaps(figures)
+    if gaps:
+        log("!! this sitting is short of the set it shares readings with:")
+        for gap in gaps:
+            log("!!   " + gap)
 
     stager = Stager(cfg, log)
     stager.plan(figures)
@@ -3002,6 +3206,15 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
             "policy the machine was left in. Fix that and re-run.",
             "",
         ]
+    if gaps:
+        header += [
+            "> **Short of the set it shares readings with.** Each of these publishes a reading "
+            "a figure this sitting did not take also publishes, so their absolutes may not be "
+            "set beside those tables' until all of them are re-taken together: "
+            + "; ".join(gaps)
+            + ".",
+            "",
+        ]
     if failures:
         header += ["> **Figures that failed:** " + ", ".join(f"`{f}` ({m})" for f, m in failures), ""]
 
@@ -3038,7 +3251,10 @@ def cmd_list() -> None:
     for fig in ALL_FIGURES:
         print(f"  {fig.id:<24} [{fig.stage}]  {fig.section}")
         if fig.requires:
-            print(f"  {'':<24}  shares readings with: {', '.join(fig.requires)}")
+            print(f"  {'':<24}  borrows readings from: {', '.join(fig.requires)}")
+        closure = sharing_closure(fig.id)
+        if closure:
+            print(f"  {'':<24}  re-take it with: {', '.join(closure)}")
         print(f"  {'':<24}  invalidated by: {', '.join(fig.depends)}")
         print(f"  {'':<24}  quoted by: {', '.join(fig.quoted_by) or '(nothing else)'}")
         reproduce = (
@@ -3382,8 +3598,15 @@ def cmd_check(doc: Path) -> int:
     """Reconcile the register against the doc: which figures have landed a
     marker, which markers name nothing, and which documents a fold-in must
     re-read because they repeat a figure's numbers."""
+    text = doc.read_text()
     found = markers_in(doc)
     unknown = [m for m in found if m not in ALL_BY_ID]
+    dangling = [
+        f"{fig.id} borrows from {shared.source}"
+        for fig in EVERY_FIGURE
+        for shared in fig.shares
+        if shared.source not in EVERY_BY_ID
+    ]
     duplicated = sorted({m for m in found if found.count(m) > 1})
     missing = [f.id for f in ALL_FIGURES if f.id not in found]
 
@@ -3404,6 +3627,22 @@ def cmd_check(doc: Path) -> int:
         print("Markers appearing more than once — one figure is one table:")
         for m in duplicated:
             print(f"  {m}")
+        print()
+    if dangling:
+        print("Borrows naming no figure — a rename that did not reach the register:")
+        for line in dangling:
+            print(f"  {line}")
+        print()
+    partial = partial_sittings(text)
+    if partial:
+        print(
+            "One reading published twice — a table below measured a reading it shares.\n"
+            "The doc permits it while the harness's note is carried with the table; what it\n"
+            "costs is that the set must be re-taken together before any of it moves:"
+        )
+        for fid, closure in partial:
+            print(f"  {fid}")
+            print(f"      re-take with: {', '.join(closure) or '(nothing — it shares no reading)'}")
         print()
     if UNTAKEN:
         print("Built, not taken (no marker expected — see `--list`):")
@@ -3437,7 +3676,7 @@ def cmd_check(doc: Path) -> int:
         print(f"  {fig.id}")
         for q in fig.quoted_by:
             print(f"      {q}")
-    return 1 if (unknown or duplicated or unknown_ack or spent_ack) else 0
+    return 1 if (unknown or duplicated or dangling or unknown_ack or spent_ack) else 0
 
 
 def acknowledgement_problems(
@@ -3657,6 +3896,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--list", action="store_true", help="name every figure and what invalidates it")
     parser.add_argument("--figure", action="append", default=[], help="figure id (repeatable, or comma-separated)")
     parser.add_argument("--stage", choices=["cold", "warm", "criterion"], help="every figure of one stage")
+    parser.add_argument(
+        "--alone",
+        action="store_true",
+        help="take exactly the figures named, borrowing nothing — a deliberate partial "
+        "sitting, whose tables carry the harness's partial-sweep note",
+    )
     parser.add_argument("--all", action="store_true", help="the whole sweep — what the doc's session stamp means")
     parser.add_argument("--stale", action="store_true", help="say which figures a diff has invalidated")
     parser.add_argument(
@@ -3740,7 +3985,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         keep_warm=args.keep_warm,
         pin_governor=args.pin_governor or Config().pin_governor,
     )
-    figures = resolve_selection(ids)
+    figures = resolve_selection(ids, alone=args.alone)
     if not cfg.dry_run and not cfg.bin_pgdq.exists():
         parser.error(f"{cfg.bin_pgdq} is missing — `cargo build --release -p pgdump_query-cli`")
     needs_nocensus = any(f.id.startswith("census") for f in figures)

@@ -756,7 +756,7 @@ again by the first item admitted after this keystone.
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
 | `M47` | 2026-09-03 | The profile recipe takes its libc symbols from an installed detached-symbol package when there is one, reports which source it used, and falls back through `perf buildid-cache --debuginfod` rather than a hand-rolled `curl` | | [2026-09-03](../status/history/2026-09-03.md), "Two premises under the profiler's symbol fetch were wrong" |
-| `M48` | | The borrow graph declared on `Figure` rather than buried in `session.borrow` call sites, so the harness computes a figure's transitive closure — `--figure` names or takes it, the partial-sweep note states it, and `--check` catches one reading published twice | | [2026-09-03](../status/history/2026-09-03.md), "The harness's partial-sweep note understates its own closure" |
+| `M48` | 2026-09-03 | The borrow graph declared on `Figure` rather than buried in `session.borrow` call sites, so the harness computes a figure's transitive closure — `--figure` names or takes it, the partial-sweep note states it, and `--check` catches one reading published twice | | [2026-09-03](../status/history/2026-09-03.md), "`M48`: the borrow graph is declared, and the harness computes the closure" |
 
 **One obligation outlived them and is most of the way discharged.** An
 `INSERT`-run scan cost **mid-teens times** a `COPY` scan per byte, CPU-bound,

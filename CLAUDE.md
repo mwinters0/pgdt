@@ -34,7 +34,8 @@ cd scripts && uv run measure.py --list            # every figure, and what inval
 cd scripts && uv run measure.py --stale           # which figures a diff has made stale
 cd scripts && uv run measure.py --check           # figure markers vs the doc, and each figure's consumers
 cd scripts && uv run measure.py --verify-additive # inputs regenerated at two revisions, compared byte for byte
-cd scripts && uv run measure.py --figure <id>     # re-take one figure — one whole table
+cd scripts && uv run measure.py --figure <id>     # re-take one figure — one whole table, plus what it borrows
+cd scripts && uv run measure.py --figure <id> --alone   # take it borrowing nothing: a deliberate partial sitting
 cd scripts && uv run measure.py --all             # the whole sweep: ~1 h, detach it
 cd scripts && uv run measure.py --profile-recipe  # the sampling-profile sequence, printed; minutes, not detached
 cd scripts && uv run python -m unittest test_measure   # the harness's own tests
@@ -248,12 +249,19 @@ largest figure's own inputs plus a margin rather than configured, so it travels
 to a machine with a smaller `/dev/shm` instead of being a number that happened
 to work here.
 
-**A figure declares both edges.** `depends` is what invalidates it; `quoted_by`
-is what *it* invalidates — the documents that repeat its numbers or the claim
-it licenses, which a fold-in must re-read. **The doc addresses a figure by an
-`<!-- figure: <id> -->` marker, never by its heading**, so a heading may quote
-a number and be rewritten when that number moves; `--check` reconciles the
-markers against the register and prints each figure's consumers. The paths and sizes it uses are environment
+**A figure declares three edges.** `depends` is what invalidates it;
+`quoted_by` is what *it* invalidates — the documents that repeat its numbers or
+the claim it licenses, which a fold-in must re-read; and `shares` is the borrow
+graph, the readings this figure takes from another rather than measuring.
+**Figures that share a reading are re-taken together**, because half a shared
+reading published alone puts two numbers in the doc for one measurement — the
+harness computes that set transitively rather than a session working it out by
+hand, so `--figure` takes what a figure borrows and names the rest, and
+`--alone` is how a partial sitting is asked for deliberately. **The doc
+addresses a figure by an `<!-- figure: <id> -->` marker, never by its
+heading**, so a heading may quote a number and be rewritten when that number
+moves; `--check` reconciles the markers against the register, reports a partial
+sitting the doc still carries, and prints each figure's consumers. The paths and sizes it uses are environment
 variables (`PGDQ_MEASURE_*`) whose defaults suit this machine — see
 `CLAUDE.local.md`.
 
