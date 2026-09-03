@@ -23,6 +23,16 @@ which will re-take every table under its own apparatus
 ([`../design/measurements.md`](../design/measurements.md), "A stale figure does
 not oblige a sweep").
 
+**That sweep is in flight** — the scan-performance baseline, launched detached
+on 2026-09-03. It is a *pair*: two `--all` sweeps 120 s apart, because twelve
+figures are taken by a sweep and `session-drift` is derived across two. Until
+it is folded in, `measurements.md` still carries the `b70589f` tables and
+everything above stays true. **Nothing may build or test while it runs** — a
+`cargo` job across 24 cores moves the numbers it is taking. The log paths, the
+process group to stop it by, and what the next session does with the result:
+[`history/2026-09-03.md`](history/2026-09-03.md), "P7's baseline sweep pair is
+running detached".
+
 | Capability | State |
 |---|---|
 | Streaming row extraction from plain-format dumps, push and pull mode, resumable | working; a batch flushes on whichever of `max_rows`, `max_bytes` or `max_source_span` comes first, the last of which is what bounds the read chunks an in-flight batch pins ([`../design/architecture.md`](../design/architecture.md), "Three flush triggers") |
@@ -117,7 +127,8 @@ apparatus that figure measures — so neither byte-identity nor reachability
 applies and nothing but taking it settles it. It is derived rather than
 measured, so `uv run measure.py --drift <sweep> <sweep>` re-derives it from two
 sweeps' `raw.json` without measuring anything; what it lacks is a pair taken
-past this commit. The scan-performance phase will supply one.
+past this commit. The sweep pair in flight is that pair, which is why it is a
+pair and not one sweep.
 
 ## Not started
 
