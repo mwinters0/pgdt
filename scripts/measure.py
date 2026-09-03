@@ -2826,15 +2826,23 @@ PERF = _env("PGDQ_PROFILE_PERF", "perf")
 #: **A distribution's detached-symbol package is the better source and this is
 #: the fallback**: installed under `/usr/lib/debug`, symbols are found through
 #: the `.gnu_debuglink` with no network, no environment and no cache, and the
-#: package manager keeps them in lockstep with libc. The fetch covers the
-#: machine that has not installed one and the DSO no package offers. Empty
-#: disables the step, which is right on a machine whose libc already carries
-#: symbols and wrong on one that silently does not.
+#: package manager keeps them in lockstep with libc. So the recipe looks for an
+#: installed package first — under `/usr/lib/debug/.build-id/`, because that is
+#: the copy of the same file whose *name* proves it matches this libc, where
+#: `.gnu_debuglink`'s does not — and fetches only when there is none, and prints
+#: which of the two it took, because the failure this whole constant exists
+#: against is a profile that came back looking fine off the wrong symbols. The
+#: fetch covers the machine that has not installed one and the DSO no package
+#: offers. Empty disables the step whole, which is right on a machine whose
+#: libc already carries symbols — there the package lookup would report a miss
+#: it has no fetch to answer — and wrong on one that silently does not.
 #:
-#: `perf buildid-cache --debuginfod[=URLs] -a <dso>` is `perf`'s own interface
-#: to the same thing, and `M47` is what moves the recipe onto it; the flag lives
-#: on `buildid-cache` alone, with `perf` top-level and `perf report` rejecting
-#: it, which is what sent the first version down the explicit route below.
+#: **The fetch is `perf buildid-cache --debuginfod[=URLs] -a <dso>`**, `perf`'s
+#: own interface to its own cache, rather than a `curl` re-deriving that cache's
+#: layout from outside — a path construction that fails silently, writing the
+#: `debug` file somewhere `perf` does not read and yielding bare addresses with
+#: no error. The flag lives on `buildid-cache` alone, with `perf` top-level and
+#: `perf report` rejecting it, which is what once read as `perf` not having one.
 DEBUGINFOD = _env("PGDQ_PROFILE_DEBUGINFOD", "https://debuginfod.archlinux.org")
 
 #: Sampling frequency, in Hz. Prime, so it cannot fall into lockstep with a
@@ -2913,10 +2921,15 @@ def profile_recipe(cfg: Config) -> str:
       proportions. Staging is a host copy for the same reason the sweep's is --
       writing 3 GiB of tmpfs from inside the 512 MB container charges those
       pages to its cgroup.
-    * **libc's symbols, fetched before the first `perf record`.** Without them
+    * **libc's symbols, resolved before the first `perf record`.** Without them
       ~48% of a warm `parse` profile is bare addresses, and they are the
-      `memmove` and `memset` a phase about zero-copy exists to see -- see
-      `DEBUGINFOD` above for why the fetch is explicit rather than `perf`'s.
+      `memmove` and `memset` a phase about zero-copy exists to see. The step
+      keys on libc's build ID, which is the only thing that distinguishes
+      symbols that match from symbols that merely have the right filename: an
+      installed package answers at `/usr/lib/debug/.build-id/`, and only a miss
+      there reaches the `debuginfod` fetch. It prints which of the two it took,
+      because both a skew and a failed fetch otherwise surface as a profile
+      that looks entirely plausible -- see `DEBUGINFOD` above.
 
     And one thing that is not a mistake but reads like one: **no container.**
     A profile is about proportions, and the cgroup adds capability plumbing
@@ -2958,19 +2971,24 @@ def profile_recipe(cfg: Config) -> str:
         head(
             "Name the libc frames. Without them ~48% of a warm `parse` profile",
             "is bare addresses in libc.so.6 -- and they are the memmove and",
-            "memset a zero-copy phase exists to see. Skip this if your libc's",
-            "detached symbols are installed under /usr/lib/debug, which is the",
-            "better source: no network, and kept in lockstep with libc. See",
-            "CONTRIBUTING.md, 'Profiling'. This fetch is the fallback, into",
-            "perf's own build-id cache.",
+            "memset a zero-copy phase exists to see. An installed detached-symbol",
+            "package is the better source and is preferred here: no network, and",
+            "kept in lockstep with libc by the package manager. See",
+            "CONTRIBUTING.md, 'Profiling'. The fetch is the fallback, and it is",
+            "perf's own, into perf's own build-id cache. Both branches say which",
+            "source the profiles below will be reading.",
         )
         lines += [
             f"LIBC=$(ldd {binary} | awk '/libc\\.so/{{print $3}}')",
             'BID=$(readelf -n "$LIBC" | awk \'/Build ID/{print $NF}\')',
-            'DBG="$HOME/.debug/${LIBC#/}/$BID"',
-            'mkdir -p "$DBG"',
-            'test -f "$DBG/debug" || curl -sSf -o "$DBG/debug" \\',
-            f'  "{DEBUGINFOD}/buildid/$BID/debuginfo"',
+            'DBG=/usr/lib/debug/.build-id/$(printf %.2s "$BID")'
+            '/$(printf %s "$BID" | cut -c3-).debug',
+            'if [ -e "$DBG" ]; then',
+            '  echo "libc symbols: installed package, $DBG"',
+            "else",
+            '  echo "libc symbols: no package for build ID $BID; fetching"',
+            f'  {PERF} buildid-cache --debuginfod={DEBUGINFOD} -a "$LIBC"',
+            "fi",
             "",
         ]
 

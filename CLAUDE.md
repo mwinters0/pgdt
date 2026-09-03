@@ -277,7 +277,10 @@ property of the machine rather than of the command**, so they are set up once
 rather than passed: [`CONTRIBUTING.md`](CONTRIBUTING.md), "Profiling", is how,
 and `CLAUDE.local.md` records that it is done here. **Read that section before
 reading a profile you did not take** — a profile missing them looks entirely
-plausible and is missing its largest bucket.
+plausible and is missing its largest bucket. The recipe's symbol step keys on
+libc's build ID, prefers an installed detached-symbol package to the
+`debuginfod` fetch, and prints which of the two it resolved, so that line is
+the thing to look for before trusting a profile.
 
 `docs/design/pg-dump-compatibility.md` tracks which `pg_dump` options/variants
 are tested/untested/unsupported.

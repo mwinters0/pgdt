@@ -954,12 +954,47 @@ class ProfileRecipe(unittest.TestCase):
     def test_the_libc_frames_are_named_before_anything_is_recorded(self):
         # Without symbols, ~48% of a warm `parse` profile is bare addresses in
         # libc.so.6 — and they are memmove and memset, which is the half of a
-        # zero-copy phase's answer. The fetch must precede the first `perf
+        # zero-copy phase's answer. The step must precede the first `perf
         # record`, or the first profile is the unreadable one.
         recipe = self._recipe()
         self.assertIn(measure.DEBUGINFOD, recipe)
-        self.assertIn(".debug/", recipe)
-        self.assertLess(recipe.index("buildid"), recipe.index("perf record"))
+        self.assertLess(recipe.index("buildid-cache"), recipe.index("perf record"))
+
+    def test_an_installed_package_is_preferred_over_the_fetch(self):
+        # The package is kept in lockstep with libc by the package manager and
+        # needs no network; the fetch is neither. So the recipe looks under
+        # /usr/lib/debug first and only a miss there reaches debuginfod — and
+        # it looks by *build ID*, which is the only thing that separates
+        # symbols that match from symbols that merely have the right filename.
+        recipe = self._recipe()
+        self.assertIn("/usr/lib/debug/.build-id/", recipe)
+        self.assertIn('BID=$(readelf -n "$LIBC"', recipe)
+        self.assertLess(
+            recipe.index("/usr/lib/debug/.build-id/"), recipe.index("--debuginfod")
+        )
+
+    def test_the_fetch_is_perfs_own_and_not_a_hand_rolled_one(self):
+        # A `curl` into ~/.debug re-derives perf's cache layout from outside,
+        # and a path construction that drifts fails silently: the `debug` file
+        # lands where perf does not read it and the profile is bare addresses
+        # with no error. `perf buildid-cache --debuginfod` is perf writing its
+        # own cache. The flag lives on that subcommand alone.
+        recipe = self._recipe()
+        self.assertIn(f"{measure.PERF} buildid-cache --debuginfod=", recipe)
+        self.assertNotIn("curl", recipe)
+
+    def test_the_step_says_which_source_the_symbols_came_from(self):
+        # Both ways of getting this wrong — a skewed package, a fetch that
+        # failed — return a profile that looks entirely plausible, so the one
+        # cheap defence is that the recipe says out loud which source the
+        # `perf record`s below are reading.
+        echoes = [
+            ln for ln in self._recipe().splitlines() if ln.strip().startswith("echo ")
+        ]
+        self.assertTrue(echoes)
+        for line in echoes:
+            with self.subTest(line=line):
+                self.assertIn("libc symbols:", line)
 
     def test_the_step_numbering_has_no_hole_without_debuginfod(self):
         # The step is optional — right on a machine whose libc carries symbols.

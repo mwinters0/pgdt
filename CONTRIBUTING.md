@@ -64,6 +64,11 @@ The flag lives on `buildid-cache` alone — `perf` top-level and `perf report`
 both reject it. This is a fallback: it needs the network, it caches per user,
 and nothing keeps it in step with a libc upgrade.
 
+The profiling recipe below makes this choice for you, by build ID: it takes an
+installed package when one matches and fetches only when none does, and it
+prints which of the two it resolved. Read that line — a skewed package and a
+failed fetch both leave you with the unreadable profile, and neither says so.
+
 ### Taking a profile
 
 `cd scripts && uv run measure.py --profile-recipe` prints the whole sequence
