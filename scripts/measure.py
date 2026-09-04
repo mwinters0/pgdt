@@ -19,7 +19,10 @@ What it enforces, from that doc's standing rules:
   reps runs them in the opposite order, because within a pair the second run is
   the warmer one;
 * a warm figure is read from tmpfs and a cold one from the SSD with
-  `drop_caches` before *every* run, including before the floor;
+  `drop_caches` before *every* run, including before the floor; a `cold-nvme`
+  figure is the same discipline on the third device class, which is the only
+  one where I/O and parse are within a small factor of each other and
+  therefore the only one that can price a readahead or chunk-size default;
 * every table carries its per-rep readings, so a wrong median is visible
   against the numbers that produced it (an SE from one sweep is not an error
   bar -- that doc's ninth rule);
@@ -133,6 +136,14 @@ class Config:
     )
     # tmpfs, for every warm figure.
     warm_dir: Path = Path(_env("PGDQ_MEASURE_WARM_DIR", "/dev/shm/pgdq"))
+    # A second *device*, not a second cache: the `cold-nvme` regime exists to
+    # read the same bytes off a disk fast enough that the parse is not hidden
+    # behind it, so what this path names has to be NVMe and not the SSD
+    # `cache_dir` points at. Inputs are copied here from that cache and kept,
+    # exactly as they are kept there -- it is disk, not RAM.
+    nvme_dir: Path = Path(
+        _env("PGDQ_MEASURE_NVME_DIR", "/var/tmp/pgdump_query/measure")
+    )
     # How much of the tmpfs the harness may fill. **Normally computed, not
     # configured**: the harness knows which inputs each figure needs and how
     # big they are, so the budget is the largest figure's own need plus
@@ -515,8 +526,14 @@ SWEEP_GOVERNOR = "performance"
 #: `cpu_steal_pct` is zero on this bare-metal box in every reading ever taken,
 #: so its limit is untested here and exists for the VM case, where steal is the
 #: single most valuable number available.
+#:
+#: `cold-nvme` is the same regime on a faster device, so it is gated on the
+#: same three limits. Naming it rather than falling back to `cold`'s row is
+#: deliberate: a regime with no entry gates *nothing*, so a typo'd or newly
+#: added regime would silently take every reading it was given.
 CONTENTION_LIMITS: dict[str, dict[str, float]] = {
     "cold": {"cpu_busy_pct": 15.0, "psi_cpu_some_pct": 5.0, "cpu_steal_pct": 2.0},
+    "cold-nvme": {"cpu_busy_pct": 15.0, "psi_cpu_some_pct": 5.0, "cpu_steal_pct": 2.0},
     "warm": {"cpu_busy_pct": 15.0, "psi_cpu_some_pct": 5.0, "cpu_steal_pct": 2.0},
 }
 
@@ -903,6 +920,38 @@ class Stager:
             warm.unlink()
         return out
 
+    # -- NVMe staging -----------------------------------------------------
+
+    def nvme_path(self, name: str) -> Path:
+        """The input on the NVMe, copied from the SSD cache and kept there.
+
+        A copy rather than a second generation, for the reason the tmpfs
+        staging copies: a `--seed`ed generator is byte-for-byte reproducible,
+        so the two files are the same file, and a 3 GiB copy is seconds where
+        the generator is minutes.
+
+        **Stamped like the SSD cache, and kept like it.** The stamp is what
+        stops a checkout that already has a copy from measuring pre-change
+        bytes forever after the generator moves -- the same failure
+        `ensure_generated` exists to prevent, one device along. Kept because
+        this is disk rather than RAM: eviction buys nothing here, and a cold
+        figure that had to re-copy 3 GiB before every sitting would pay for
+        nothing."""
+        src = self.ensure_generated(name)
+        dst = self.cfg.nvme_dir / f"{name}.sql"
+        stamp = self.cfg.nvme_dir / f"{name}.stamp"
+        want = input_stamp(INPUTS[name], self.cfg)
+        if dst.exists() and stamp.exists() and stamp.read_text().strip() == want:
+            return dst
+        if self.cfg.dry_run:
+            self.log(f"  [dry-run] would stage {name} -> {dst}")
+            return dst
+        self.cfg.nvme_dir.mkdir(parents=True, exist_ok=True)
+        self.log(f"  staging {name} -> {dst}")
+        shutil.copyfile(src, dst)
+        stamp.write_text(want + "\n")
+        return dst
+
     # -- tmpfs staging ----------------------------------------------------
 
     def _adopt_warm_dir(self) -> None:
@@ -1016,7 +1065,11 @@ class Stager:
                 "PGDQ_MEASURE_WARM_DIR at a larger memory-backed filesystem, or lower "
                 "PGDQ_MEASURE_SIZE_GIB — which makes the run unpublishable"
             )
-        wanted = {n for fig in figures for n in (*fig.cold_inputs, *fig.warm_inputs)}
+        wanted = {
+            n
+            for fig in figures
+            for n in (*fig.cold_inputs, *fig.warm_inputs, *fig.nvme_inputs)
+        }
         missing = sum(
             self.expected_size(n)
             for n in wanted
@@ -1033,7 +1086,37 @@ class Stager:
                 f"{self.cfg.cache_dir} has {cache_free / GIB:.2f} GiB free, under the "
                 f"{missing / GIB:.2f} GiB of inputs still to generate"
             )
+        problems += self._nvme_preflight(figures)
         return problems
+
+    def _nvme_preflight(self, figures: Sequence[Figure]) -> list[str]:
+        """Does the NVMe hold the copies the `cold-nvme` regime reads from.
+
+        Its own check rather than a third branch of the one above, because the
+        NVMe area is neither of the other two: it is not a budget to evict
+        against like tmpfs, and it is not where the generators write. What it
+        can fail on is a path that is not there and a device that is full, and
+        both are knowable in the first second."""
+        wanted = {n for fig in figures for n in fig.nvme_inputs}
+        if not wanted:
+            return []
+        try:
+            self.cfg.nvme_dir.mkdir(parents=True, exist_ok=True)
+            free = shutil.disk_usage(self.cfg.nvme_dir).free
+        except OSError as exc:
+            return [f"{self.cfg.nvme_dir} is not usable as an NVMe staging area: {exc}"]
+        want = sum(
+            self.expected_size(n)
+            for n in wanted
+            if not (self.cfg.nvme_dir / f"{n}.sql").exists()
+        )
+        if want > free:
+            return [
+                f"{self.cfg.nvme_dir} has {free / GIB:.2f} GiB free, under the "
+                f"{want / GIB:.2f} GiB of inputs the cold-NVMe figures still need copied "
+                "there. Point PGDQ_MEASURE_NVME_DIR at an NVMe volume with room"
+            ]
+        return []
 
     def _next_need(self, name: str, figure_index: int) -> float:
         return min(
@@ -1137,7 +1220,7 @@ class RunSpec:
     binary: str  # "pgdq" | "nocensus" | "before" | "none" (dd)
     input: str
     command: str
-    regime: str  # "cold" | "warm"
+    regime: str  # "cold" | "cold-nvme" | "warm"
     label: str
 
     def key(self, figure: str) -> str:
@@ -1320,6 +1403,8 @@ class Session:
     def input_path(self, name: str, regime: str) -> Path:
         if regime == "cold":
             return self.stager.cold_path(name)
+        if regime == "cold-nvme":
+            return self.stager.nvme_path(name)
         return self.stager.warm_path(name, self.figure_index)
 
     def drop_caches(self) -> None:
@@ -1349,7 +1434,11 @@ class Session:
             argv += ["-v", m]
         argv += [self.cfg.image, "bash", "-c", _script(spec.command)]
 
-        if spec.regime == "cold":
+        # Every cold regime drops the cache, whichever device it names: what
+        # "cold" means is that the bytes come off the disk, and a `cold-nvme`
+        # reading taken out of page cache would measure RAM and read as a
+        # device with no floor at all.
+        if spec.regime.startswith("cold"):
             self.drop_caches()
         if self.cfg.dry_run:
             self.log("  [dry-run] " + " ".join(shlex.quote(a) for a in argv))
@@ -1692,6 +1781,11 @@ class Figure:
     table_label: str = ""
     cold_inputs: tuple[str, ...] = ()
     warm_inputs: tuple[str, ...] = ()
+    #: Inputs this figure reads cold off the NVMe. A third list rather than a
+    #: flag on `cold_inputs`, because the two name different *devices* and a
+    #: figure is free to want both -- which is what the throughput section
+    #: does, one table per regime over the same three files.
+    nvme_inputs: tuple[str, ...] = ()
     #: Readings this figure takes from another rather than measuring them.
     #: The borrow graph, declared: `requires` and `sharing_closure` are both
     #: read off it, and `share_readings` writes the table's provenance
@@ -1817,6 +1911,19 @@ def run_scan_throughput_cold(session: Session) -> str:
 
 def run_scan_throughput_warm(session: Session) -> str:
     return _throughput_figure(session, "scan-throughput-warm", "warm", session.cfg.reps(3))
+
+
+def run_scan_throughput_nvme(session: Session) -> str:
+    """The same four rows, cold on the NVMe.
+
+    **Five reps rather than the other two tables' three.** What this table is
+    read for is a *ratio* against its own floor, at a device fast enough that
+    the ratio is near 1 and a few percent of it decides three levers; and each
+    reading here is a third of a cold SSD one, so the reps are affordable where
+    they would not be there. The comparison the doc makes across the three
+    tables is the ratio, never one table's absolute against another's, so the
+    differing rep count costs nothing it relies on."""
+    return _throughput_figure(session, "scan-throughput-nvme", "cold-nvme", session.cfg.reps(5))
 
 
 # -- the census pair --------------------------------------------------------
@@ -2584,6 +2691,27 @@ FIGURES: list[Figure] = [
         ),
         run=run_scan_throughput_warm,
     ),
+    # The third device class, and the only one that can price the I/O
+    # defaults: on the HDD and the SATA SSD the device is the whole cost and
+    # on tmpfs there is no device at all, so a readahead, `fadvise` or
+    # chunk-size change has nowhere to show. It borrows nothing -- no census
+    # figure is taken in this regime -- so its `COPY` row is its own reading
+    # rather than a republished one.
+    Figure(
+        id="scan-throughput-nvme",
+        quoted_by=(
+            "docs/design/roadmap-P7-scan-performance.md",
+            "docs/design/pg-dump-compatibility.md",
+            "docs/design/architecture.md",
+            "docs/status/STATUS.md",
+        ),
+        section="Scan throughput by input shape",
+        table_label="Every run cold, on the NVMe",
+        stage="cold-nvme",
+        depends=(*SCAN, *MAP, *READ, *GEN_SHAPES),
+        nvme_inputs=("control", "large_object", "insert_run"),
+        run=run_scan_throughput_nvme,
+    ),
     Figure(
         id="nested-end-to-end",
         quoted_by=(
@@ -3318,6 +3446,8 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
         try:
             for name in fig.cold_inputs:
                 stager.ensure_generated(name)
+            for name in fig.nvme_inputs:
+                stager.nvme_path(name)
             for name in fig.warm_inputs:
                 stager.warm_path(name, i)
             body = fig.run(session)
@@ -4065,7 +4195,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--list", action="store_true", help="name every figure and what invalidates it")
     parser.add_argument("--figure", action="append", default=[], help="figure id (repeatable, or comma-separated)")
-    parser.add_argument("--stage", choices=["cold", "warm", "criterion"], help="every figure of one stage")
+    parser.add_argument(
+        "--stage",
+        choices=["cold", "cold-nvme", "warm", "criterion"],
+        help="every figure of one stage",
+    )
     parser.add_argument(
         "--alone",
         action="store_true",
@@ -4141,7 +4275,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     for item in args.figure:
         ids += [p for p in item.split(",") if p]
     if args.stage:
-        ids += [f.id for f in FIGURES if args.stage in f.stage]
+        # Split on `+` rather than matching as a substring: a figure taken in
+        # two regimes declares `cold+warm`, and both must select it, while
+        # `cold` must *not* reach `cold-nvme` -- a different device, whose
+        # absolutes belong to no cold-SSD sitting.
+        ids += [f.id for f in FIGURES if args.stage in f.stage.split("+")]
     if args.all:
         ids = [f.id for f in FIGURES]
     if not ids:

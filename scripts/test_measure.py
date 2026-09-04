@@ -785,7 +785,7 @@ class Register(unittest.TestCase):
 
     def test_every_named_input_is_defined(self):
         for fig in measure.FIGURES:
-            for name in (*fig.cold_inputs, *fig.warm_inputs):
+            for name in (*fig.cold_inputs, *fig.warm_inputs, *fig.nvme_inputs):
                 with self.subTest(figure=fig.id, input=name):
                     self.assertIn(name, measure.INPUTS)
 
@@ -803,7 +803,11 @@ class Register(unittest.TestCase):
         "under 10 ms" and gave the command that regenerates the *input*, while
         no figure took the reading — so nothing re-took it when the code it
         controls for moved."""
-        used = {n for f in measure.SELECTABLE for n in (*f.cold_inputs, *f.warm_inputs)}
+        used = {
+            n
+            for f in measure.SELECTABLE
+            for n in (*f.cold_inputs, *f.warm_inputs, *f.nvme_inputs)
+        }
         self.assertEqual(sorted(set(measure.INPUTS) - used), [])
 
     def test_the_quadratic_carries_its_one_block_control(self):
@@ -853,7 +857,7 @@ class Untaken(unittest.TestCase):
         # The structural checks `Register` applies to a figure apply here too:
         # an instrument nobody can stage is not built.
         for fig in measure.UNTAKEN:
-            for name in (*fig.cold_inputs, *fig.warm_inputs):
+            for name in (*fig.cold_inputs, *fig.warm_inputs, *fig.nvme_inputs):
                 with self.subTest(figure=fig.id, input=name):
                     self.assertIn(name, measure.INPUTS)
             for path in fig.depends:
@@ -1517,6 +1521,122 @@ class SharedSections(unittest.TestCase):
                 for fig in figs:
                     with self.subTest(section=section, figure=fig.id):
                         self.assertTrue(fig.table_label)
+
+
+class ColdNvme(unittest.TestCase):
+    """The third device class, and the only instrument that can price a
+    readahead, `fadvise` or chunk-size default.
+
+    What has to hold is that it really is a third *device*: an input read out
+    of the SSD cache, or out of page cache, would produce a plausible table of
+    the wrong thing — which is the failure mode every check here is aimed at.
+    """
+
+    def test_the_figure_reads_from_the_nvme_and_not_the_ssd(self):
+        fig = measure.FIGURES_BY_ID["scan-throughput-nvme"]
+        self.assertEqual(fig.nvme_inputs, ("control", "large_object", "insert_run"))
+        # A `cold_inputs` entry would be read in place off the SSD cache, which
+        # is the device the cold table above already measures.
+        self.assertEqual(fig.cold_inputs, ())
+        self.assertEqual(fig.warm_inputs, ())
+
+    def test_it_measures_the_same_three_shapes_and_a_floor(self):
+        # The three tables are read against each other as ratios, so they have
+        # to be the same rows over the same files.
+        cold = measure.FIGURES_BY_ID["scan-throughput-cold"]
+        self.assertEqual(
+            measure.FIGURES_BY_ID["scan-throughput-nvme"].nvme_inputs, cold.cold_inputs
+        )
+        specs = measure._throughput_specs("cold-nvme")
+        self.assertEqual([s.regime for s in specs], ["cold-nvme"] * 4)
+        self.assertEqual(specs[-1].command, "dd")
+
+    def test_the_nvme_regime_resolves_under_the_nvme_directory(self):
+        cfg = measure.Config(dry_run=True, warm_budget=8)
+        session = measure.Session(cfg, measure.Stager(cfg, lambda _m: None), lambda _m: None)
+        self.assertEqual(session.input_path("control", "cold-nvme").parent, cfg.nvme_dir)
+        self.assertEqual(session.input_path("control", "cold").parent, cfg.cache_dir)
+        self.assertEqual(session.input_path("control", "warm").parent, cfg.warm_dir)
+        # Three regimes, three devices: two of them resolving to one directory
+        # would be a table of the wrong thing that still formats correctly.
+        self.assertEqual(len({cfg.nvme_dir, cfg.cache_dir, cfg.warm_dir}), 3)
+
+    def test_a_copy_of_stale_bytes_is_replaced_rather_than_measured(self):
+        # The SSD cache's own rule, one device along: a stamp that does not
+        # match the generator's source is a file benchmarking pre-change bytes.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cfg = measure.Config(cache_dir=root / "ssd", nvme_dir=root / "nvme")
+            (root / "ssd").mkdir()
+            (root / "ssd" / "control.sql").write_bytes(b"new bytes")
+            (root / "ssd" / "control.stamp").write_text(
+                measure.input_stamp(measure.INPUTS["control"], cfg) + "\n"
+            )
+            (root / "nvme").mkdir()
+            (root / "nvme" / "control.sql").write_bytes(b"old bytes")
+            (root / "nvme" / "control.stamp").write_text("a stamp from another generator\n")
+            stager = measure.Stager(cfg, lambda _m: None)
+            got = stager.nvme_path("control")
+            self.assertEqual(got.read_bytes(), b"new bytes")
+
+    def test_a_matching_copy_is_left_alone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cfg = measure.Config(cache_dir=root / "ssd", nvme_dir=root / "nvme")
+            stamp = measure.input_stamp(measure.INPUTS["control"], cfg)
+            for name, body in (("ssd", b"new bytes"), ("nvme", b"already here")):
+                (root / name).mkdir()
+                (root / name / "control.sql").write_bytes(body)
+                (root / name / "control.stamp").write_text(stamp + "\n")
+            stager = measure.Stager(cfg, lambda _m: None)
+            self.assertEqual(stager.nvme_path("control").read_bytes(), b"already here")
+
+    def test_every_regime_is_gated_for_contention(self):
+        # A regime with no limits gates nothing, so a new one nobody added a
+        # row for would take every reading it was handed, however busy the
+        # machine was.
+        for regime in ("cold", "cold-nvme", "warm"):
+            with self.subTest(regime=regime):
+                self.assertTrue(measure.CONTENTION_LIMITS.get(regime))
+        self.assertIsNotNone(
+            measure.contention_verdict({"cpu_busy_pct": 99.0}, "cold-nvme")
+        )
+        self.assertIsNone(measure.contention_verdict({"cpu_busy_pct": 1.0}, "cold-nvme"))
+
+    def test_the_nvme_area_being_full_is_refused_before_any_run(self):
+        # An empty staging area, so the check is against what still has to be
+        # copied there rather than against whatever this machine happens to
+        # have left behind from an earlier sitting.
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = measure.Config(dry_run=True, nvme_dir=Path(tmp) / "nvme")
+            stager = measure.Stager(cfg, lambda _m: None)
+            figures = [measure.FIGURES_BY_ID["scan-throughput-nvme"]]
+            stager.plan(figures)
+            tiny = collections.namedtuple("usage", "total used free")(0, 0, 1024)
+            with unittest.mock.patch.object(measure.shutil, "disk_usage", return_value=tiny):
+                problems = stager._nvme_preflight(figures)
+        self.assertTrue(any("cold-NVMe" in p for p in problems), problems)
+
+    def test_a_figure_with_no_nvme_inputs_checks_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = measure.Config(dry_run=True, nvme_dir=Path(tmp) / "nvme")
+            stager = measure.Stager(cfg, lambda _m: None)
+            self.assertEqual(
+                stager._nvme_preflight([measure.FIGURES_BY_ID["scan-throughput-warm"]]), []
+            )
+            # Not even a directory: a check that mkdir'd one for a sweep that
+            # takes no NVMe figure would leave the area behind on every run.
+            self.assertFalse((Path(tmp) / "nvme").exists())
+
+    def test_a_cold_stage_selection_does_not_reach_another_device(self):
+        # `--stage` splits on `+` rather than matching as a substring, so
+        # `cold+warm` is selected by both and `cold-nvme` by neither.
+        cold = [f.id for f in measure.FIGURES if "cold" in f.stage.split("+")]
+        self.assertIn("scan-throughput-cold", cold)
+        self.assertIn("census-brace-free", cold)
+        self.assertNotIn("scan-throughput-nvme", cold)
+        nvme = [f.id for f in measure.FIGURES if "cold-nvme" in f.stage.split("+")]
+        self.assertEqual(nvme, ["scan-throughput-nvme"])
 
 
 class Drift(unittest.TestCase):

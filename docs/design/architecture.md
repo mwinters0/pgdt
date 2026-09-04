@@ -521,8 +521,10 @@ the two paths is a consequence of that call, not the argument for it.
 **An `INSERT` run costs a few times a `COPY` scan per byte.** Warm it is
 **4.3×** — 2.27 s against 0.532 s over 3.00 GiB — and **7.5× the `dd` floor**
 where a `COPY` scan is 1.8×; cold on the SSD the difference is gone, 1.02× the
-floor against 1.01× ([`measurements.md`](measurements.md), "Scan throughput by
-input shape"). Carry it as a magnitude rather than a value: the legs are warm
+floor against 1.01×, and **cold on the NVMe it is back, 2.66× against 1.10×**
+([`measurements.md`](measurements.md), "Scan throughput by input shape"). Which
+of those three a user meets is decided by their storage, not by their dump.
+Carry it as a magnitude rather than a value: the legs are warm
 sub-second and sub-three-second readings that move several percent between
 sittings, and the ratio is the durable half. Correctness, tiling and row counts
 are unaffected.
@@ -544,15 +546,18 @@ statement rule needs and no `INSERT` statement does. Nearly 80% of the flat
 profile is `memchr` across four needle widths ("insert-profile"), so both cuts
 land on the dominant term.
 
-**What decides whether the remainder costs anything is a device figure this
-phase has not taken.** "Cold, the difference is gone" is a claim about the SATA
-SSD, whose ~557 MB/s hides a path running at 1422 MB/s. It does not carry to
-the NVMe: at that rate the `INSERT` path would be several times a 970 EVO
-Plus's floor where the `COPY` path stays under it, and
-[`roadmap.md`](roadmap.md)'s goal is device-bound "on hardware from HDD through
-NVMe" for the bulk-row path, which an `INSERT` run is. P7's slice 7.8 takes the
-cold-NVMe figure; that reading is what promotes this entry to owned work or
-retires it to a property.
+**The remainder costs a user on fast storage most of the scan, and the device
+figure that says so has been taken.** "Cold, the difference is gone" was always
+a claim about the SATA SSD, whose ~557 MB/s hides a path running well above it.
+It does not carry to the NVMe: cold on a 970 EVO Plus an `INSERT` scan is
+**2.66× the device's own time** where the `COPY` path is 1.10×, so roughly 2.1 s
+of a 3.40 s scan is spent where the disk is idle
+([`measurements.md`](measurements.md), "Scan throughput by input shape", the
+cold-NVMe table). That is what [`roadmap.md`](roadmap.md)'s goal of device-bound
+"on hardware from HDD through NVMe" asks of the bulk-row path, and an `INSERT`
+run does not meet it at the top of that range. **This entry is not retired to a
+property**: the two named cuts above are real and untaken, and what is missing
+is an owner rather than evidence.
 
 **What made it mid-teens was the accumulation, and P7's slice 7.5 removed
 that.** Under the `ba2fc12` stamp the same scan read 9.19 s warm, 16.5×, and

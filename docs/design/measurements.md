@@ -10,7 +10,7 @@ kept**.
 lets these tables be differenced against each other, and what "are these
 figures from before or after my change" is answered by. `uv run measure.py
 --stale` reads that commit back and names the figures a diff has invalidated
-since. **Nine tables stand outside that sweep and each says so in its own
+since. **Ten tables stand outside that sweep and each says so in its own
 apparatus line**, so a reading taken from one of them and differenced against a
 sweep table is a cross-sitting difference and must clear the drift figure
 below: `session-drift` itself, which no sweep can take — it is derived across
@@ -18,9 +18,9 @@ the published sweep and a second one taken two minutes later on the same commit
 — and `allocator`, `per-block-quadratic`, `map-only`, `preamble-prepass`,
 `census-brace-free`, `scan-throughput-cold` and `scan-throughput-warm`, each
 re-taken after a change that moved it, in two groups that each share readings.
-The ninth, `predicate-terms`, stands outside it for the other reason: it did
-not exist when the sweep ran, being the first table here to pass a filter at
-all.
+Two stand outside it for the other reason, having not existed when the sweep
+ran: `predicate-terms`, the first table here to pass a filter at all, and
+`scan-throughput-nvme`, the first taken on a third device class.
 
 All figures are on the hardware `CLAUDE.local.md` describes. Synthetic inputs
 are regenerable with `--seed 42` and are **never committed** — they measure
@@ -229,13 +229,22 @@ to skip:
   sitting the doc still carries. A **deliberate** partial sitting is
   `--figure <id> --alone`, which borrows nothing and emits that note.
 
-**One line, in two regimes: 3.00 GiB inputs read by a `glibc` binary in a
+**One line, in three regimes: 3.00 GiB inputs read by a `glibc` binary in a
 512 MB `postgres:16` container, timed by that container's own `bash`.** Warm
 figures read from `/dev/shm`; cold ones read from the SSD with `drop_caches`
-before every run, including before the floor. Nothing else builds or runs on
-the machine while a sweep does — a `cargo` job across 24 cores moves the
+before every run, including before the floor; `cold-nvme` ones are that same
+discipline against a copy of the input on the NVMe. Nothing else builds or runs
+on the machine while a sweep does — a `cargo` job across 24 cores moves the
 numbers being taken, which is "a koji figure taken while local work ran is not
 a figure" one scale down.
+
+**A regime names a device, and a figure that reads the wrong one still emits a
+plausible table.** That is why the three staging areas are three directories
+and never one, why `cold-nvme` is its own regime rather than a flag on `cold`,
+and why `--stage cold` does not reach a cold-NVMe figure: its absolutes belong
+to no cold-SSD sitting. The contention gate carries a row per regime for the
+same reason — a regime with no row gates nothing, so a fourth one added without
+a row would silently take every reading it was handed.
 
 **The harness stages the inputs, and the budget is computed.** The full input
 set is six 3.00 GiB files, which does not fit `/dev/shm`, so it stages one
@@ -244,7 +253,12 @@ ceiling is the largest single figure's own inputs plus 10% — 9.90 GiB here —
 checked against the filesystem's real free space before the first measurement
 rather than discovered twenty minutes into a sweep. Inputs are generated onto
 the SSD once and *copied* into tmpfs, both from the host: 3 GiB written from
-inside the 512 MB container would be charged to its cgroup and kill it.
+inside the 512 MB container would be charged to its cgroup and kill it. The
+NVMe copies are made the same way and **kept** rather than evicted — that area
+is disk, not RAM, so there is no budget to reclaim and nothing to buy by
+re-copying 3 GiB before every sitting. Each copy carries the generator stamp
+its source does, so a changed generator replaces it instead of measuring
+pre-change bytes forever.
 
 **Each figure's section carries an `<!-- figure: <id> -->` marker**, and that
 marker — not the heading — is how the harness addresses it. Headings here are
@@ -604,11 +618,15 @@ non-reference leg before `rep1`.
 ## Scan throughput by input shape
 
 Three 3.00 GiB synthetic dumps, a whole-file `pgdq` scan in a 512MB-limited
-container, in both regimes. **Cold** is `drop_caches` before every run,
+container, in three regimes. **Cold** is `drop_caches` before every run,
 including before the floor, because that is the only regime in which a device
 floor means anything: this file fits page cache twice over, so a second read of
 it measures RAM. **Warm** is the same files on tmpfs, which is where the CPU
-the device hides becomes visible.
+the device hides becomes visible. **Cold on the NVMe** is the same discipline
+as the first on a device roughly 4.5× as fast, and it is here for one reason:
+it is the only device class we own on which reading the bytes and parsing them
+are within a small factor of each other, so it is the only place a readahead,
+`fadvise` or chunk-size default can show anything at all.
 
 <!-- figure: scan-throughput-cold — reproduce with `cd scripts && uv run measure.py --figure scan-throughput-cold` -->
 
@@ -636,9 +654,29 @@ Apparatus over every run in this table: CPU stall ≤1.03%, I/O stall ≤17.77%,
 
 Apparatus over every run in this table: CPU stall ≤0.24%, I/O stall ≤7.00%, machine ≤5% busy, steal ≤0.00%, busiest core ≥4.04 GHz, ≤66°C. **Taken in the same sitting as the cold table above.**
 
-Each table's `COPY` row is the census figure's census-on column for that
-regime — the same binary, the same command, the same input, not a second
-measurement of it.
+<!-- figure: scan-throughput-nvme — reproduce with `cd scripts && uv run measure.py --figure scan-throughput-nvme` -->
+
+**Every run cold, on the NVMe**
+
+| Input | Wall | Rate | Against the floor |
+|---|---|---|---|
+| `COPY` block | **1.406 s** (1.285–1.499) | ~2291 MB/s | 1.10× the floor's time |
+| Large-object region | **1.532 s** (1.450–1.828) | ~2103 MB/s | 1.20× the floor's time |
+| `INSERT` run | **3.40 s** (3.31–3.45) | ~946 MB/s | **2.66× the floor's time** |
+| `dd` → `/dev/null` | **1.281 s** (1.259–1.305) | ~2515 MB/s | — |
+
+Per-rep readings (s):
+- `COPY` block (cold-nvme): 1.406, 1.340, 1.499, 1.412, 1.285
+- Large-object region (cold-nvme): 1.594, 1.526, 1.828, 1.532, 1.450
+- `INSERT` run (cold-nvme): 3.41, 3.36, 3.45, 3.40, 3.31
+- `dd` → `/dev/null` (cold-nvme): 1.280, 1.259, 1.292, 1.281, 1.305
+
+Apparatus over every run in this table: CPU stall ≤0.61%, I/O stall ≤10.27%, machine ≤9% busy, steal ≤0.00%, busiest core ≥3.47 GHz, ≤66°C. **Taken entirely alone**, on 2026-09-04 at `e889634`, five reps rather than the other two tables' three — each reading here is a third of a cold SSD one, and what the table is read for is a ratio near 1 where a few percent decides three levers. The harness change that added the regime was uncommitted when it ran, which is what the stamp's "uncommitted changes under a measured path" recorded; no library path was dirty, so the binary is `e889634`'s exactly.
+
+Each cold-SSD and warm table's `COPY` row is the census figure's census-on
+column for that regime — the same binary, the same command, the same input, not
+a second measurement of it. **The NVMe table borrows nothing**: no census
+figure is taken in that regime, so its `COPY` row is its own reading.
 
 Every run completes inside the 512 MB cgroup, which is the memory claim this
 apparatus can actually make. **It carries no max-RSS figure**: `/usr/bin/time
@@ -648,10 +686,29 @@ what koji's row below records for a 784 GB scan. pgdq's own resident set is the
 koji figure, ~9 MiB.
 
 **What this says.** All three paths are device-bound to the point of
-disappearing into the device: cold, each spends **1.00–1.02×** the wall-clock
-of reading the same bytes and doing nothing. Warm, the same scans cost 0.532 s,
-0.449 s and 2.27 s against a 0.302 s `dd` floor — so the CPU is there, and at
-557 MB/s the disk covers all of it.
+disappearing into the device: cold on the SSD, each spends **1.00–1.02×** the
+wall-clock of reading the same bytes and doing nothing. Warm, the same scans
+cost 0.532 s, 0.449 s and 2.27 s against a 0.302 s `dd` floor — so the CPU is
+there, and at 557 MB/s the disk covers all of it.
+
+**"Device-bound" is a claim about a device, and the NVMe is where it stops
+holding for one of the three.** At 2515 MB/s the `COPY` and large-object paths
+are still inside the device — **1.10×** and **1.20×** its time — and the
+`INSERT` path is not: **2.66×**, which is 2.1 s of a 3.40 s scan spent
+somewhere the disk is idle. The ratios are what may be read across the three
+tables; the absolutes may not, these having been taken in a different sitting a
+day later, on a commit four library changes ahead of the stamp above.
+
+**The one number the I/O-defaults levers are sized against is 1.10×.** Whatever
+readahead, `posix_fadvise` or a different chunk size could do, none of them can
+put a scan below the time the device takes to deliver the bytes — so on the
+fastest disk this project has, the whole prize for overlapping I/O with parsing
+is the **0.125 s** by which a cold `COPY` scan exceeds its own floor, **8.9%**
+of that scan, and less than that in practice since no scheme overlaps
+perfectly. The kernel's own readahead is what has already taken the rest.
+Nothing about a slower device changes that arithmetic in the levers' favour:
+on the SATA SSD the same subtraction is 1% and on the HDD the scan is device-
+bound by a factor of several.
 
 **The `INSERT` path is still a different algorithm, and the warm table is the
 only place that shows it.** Warm, an `INSERT` run costs **2.27 s against the
@@ -659,10 +716,11 @@ only place that shows it.** Warm, an `INSERT` run costs **2.27 s against the
 **7.5× the `dd` floor** where the `COPY` path is 1.8×. A `COPY` block's data is
 walked and skipped; an `INSERT` run's bytes have to be read quote-aware to
 find where each statement ends, because that is the only thing that says where
-one row stops ([`architecture.md`](architecture.md), "Bulk regions"). Cold, the
-difference is gone entirely — 1.02× against 1.01× — which is exactly why the
-two tables are here together rather than one being differenced against the
-other's regime.
+one row stops ([`architecture.md`](architecture.md), "Bulk regions"). Cold on
+the SSD the difference is gone entirely — 1.02× against 1.01× — which is
+exactly why these tables are here together rather than one being differenced
+against another's regime. **Cold on the NVMe it is back**: 2.66× against 1.10×,
+the same algorithms against a device fast enough to stop paying for them.
 
 **Quote it as a small multiple, not to three figures.** The ratio is the
 durable half of this table and neither of its legs is: across sweeps the legs
@@ -678,10 +736,13 @@ are most of what an `INSERT` statement is
 ([`architecture.md`](architecture.md), "Bulk regions"). What is left is partly
 a property of the two algorithms — an `INSERT` run's end can only be found by
 crossing every byte — and partly two named, untaken cuts, which is why `KD9`
-is rewritten to the residual rather than struck. **The cold row is not the
-evidence that the residual is free**: at 1422 MB/s warm, a device faster than
-this SATA SSD stops hiding it, and slice 7.8's cold-NVMe figure is what says
-whether it reaches one. The claim is corrected wherever it is repeated —
+is rewritten to the residual rather than struck. **The cold-SSD row was never
+the evidence that the residual is free, and the NVMe table is the evidence that
+it is not**: 7.8 took it, and an `INSERT` scan there costs **2.66× the device's
+own time** where the `COPY` path costs 1.10×. A user on ordinary SATA storage
+pays nothing for the residual and a user on NVMe pays most of the scan for it,
+which is the reading that settles what the entry is about. The claim is
+corrected wherever it is repeated —
 [`pg-dump-compatibility.md`](pg-dump-compatibility.md),
 [`roadmap.md`](roadmap.md) and [`architecture.md`](architecture.md), which
 `--check` names as this table's consumers along with

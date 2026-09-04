@@ -16,7 +16,7 @@ each is in.
 
 [`../design/measurements.md`](../design/measurements.md) carries the `ba2fc12`
 stamp of 2026-09-03: the scan-performance baseline sweep pair was taken and
-folded in whole, so seven of its fifteen tables come from one sitting. Seven
+folded in whole, so seven of its sixteen tables come from one sitting. Seven
 were taken on their own afterwards and each says so in its own section —
 `allocator` twice, by 7.3 and again by 7.13, whose ratios are within-sitting
 and whose second sitting reversed both cells the adoption argument rested on;
@@ -25,19 +25,25 @@ the first of the three by two orders of magnitude and re-took the other two in
 the same sitting because they share its readings and its subject; and
 `scan-throughput-cold`, `scan-throughput-warm` and `census-brace-free` by 7.5,
 the three of them in one sitting because the two throughput tables' `COPY` row
-*is* the census table's census-on column. The fifteenth, `predicate-terms`,
-stands outside the sweep for the other reason and is the doc's newest table:
-it did not exist when the sweep ran, being the first to pass a filter at all,
-and 7.7 took it on 2026-09-04 at `42b1611`. **It is now stale in fact as well
-as mechanically**: it measures a walk from the front of the row per term, and
-7.7.1 made a row's boundaries shared, so its two headline numbers are a reading
-of the shape the lever replaced. Its section says so, and 7.12's sweep re-takes
-it with everything else.
+*is* the census table's census-on column. **Two stand outside the sweep for the
+other reason, having not existed when it ran.** `predicate-terms` was the first
+table to pass a filter at all, and 7.7 took it on 2026-09-04 at `42b1611`; **it
+is now stale in fact as well as mechanically**, measuring a walk from the front
+of the row per term where 7.7.1 made a row's boundaries shared, so its two
+headline numbers are a reading of the shape the lever replaced. Its section says
+so, and 7.12's sweep re-takes it with everything else. `scan-throughput-nvme` is
+the doc's newest table and the first taken on a third device class: 7.8 took it
+on 2026-09-04 at `e889634`, alone, and it is the one figure here that is current
+in fact as well as by its stamp — every P7 change to a timed path is behind it.
 
-**Fourteen of the fifteen read stale against the `ba2fc12` stamp — the
-thirteen sweep figures and `predicate-terms` — and none of them is current in
-fact.** `nested-decode-micro` is the one that does not: it times a decoder in
-isolation and reaches no `pgdq` run. `allocator` is the newest of the thirteen sweep figures,
+**Fifteen of the sixteen read stale against the `ba2fc12` stamp, and one of
+those fifteen is stale only mechanically.** `--stale` is relative to the doc's
+session stamp rather than to when each table was taken, so
+`scan-throughput-nvme` reads red although it was taken at `e889634`, behind
+every P7 change to a timed path — it is the one table here that is current in
+fact. The other fourteen — the thirteen sweep figures and `predicate-terms` —
+are stale in fact too. `nested-decode-micro` is the one that reads green: it
+times a decoder in isolation and reaches no `pgdq` run. `allocator` is the newest of the thirteen sweep figures,
 re-taken by 7.13 on the pooled read path, and 7.13.1 has since moved it too;
 `per-block-quadratic`, `map-only` and `preamble-prepass` (7.4) and the three 7.5
 re-took were current until 7.13. Every one of them times a `pgdq` run, and each
@@ -69,9 +75,10 @@ there is no shape that escapes it. `nested-end-to-end`, `census-attribution` and
 `mod alloc;` and `--version` string. `session-drift` is red on
 `scripts/measure.py`: 7.3 added a real figure function there, 7.4 corrected
 three figures' declared paths, 7.13 added a fourth mechanism and fixed the
-allocator legs' build cache, and `M48` declared the borrow graph the sweep now
-reads, so the reachability oracle that excused the five `--profile-recipe`
-commits stretches to none of them, and the wrap sweep is what clears it.
+allocator legs' build cache, `M48` declared the borrow graph the sweep now
+reads, and 7.8 added a third regime and the staging area behind it — so the
+reachability oracle that excused the five `--profile-recipe` commits stretches
+to none of them, and the wrap sweep is what clears it.
 `measure.ACKNOWLEDGED` still carries six entries — two for
 `7545dc6`, four for `fbaaa49`, `a6bf6cd`, `305af4b` and `360e144` — every one
 of them now inert, held red by the uncommitted change; `7545dc6`'s `batch.rs`
@@ -227,10 +234,12 @@ The phase's spec, its measured baseline and the lever table each row measures:
 **7.1 and 7.2 are ordered; the rest is allocation order, not schedule** — the
 phase follows the profile, so a slice landing out of numeric order is the plan
 working ([`../process.md`](../process.md), "Slice numbering", which carries the
-exception an evidence-led phase runs under). **Both orderings that bound are
+exception an evidence-led phase runs under). **All three orderings that bind are
 discharged**: the allocator decision before the wrap sweep, which 7.13 re-took
-and settled, and `7.13.1` ahead of `7.6` and `7.7.1`, which rework how a row is
-walked inside the buffer it replaced. What remains is unordered.
+and settled; `7.13.1` ahead of `7.6` and `7.7.1`, which rework how a row is
+walked inside the buffer it replaced; and `7.8` ahead of `7.8.1`, the figure
+that prices three levers before the levers themselves. What remains is
+unordered.
 
 - [x] **7.1** The profiling apparatus — `[profile.profiling]`, `perf`, and a
       `measure.py --profile-recipe` that prints the invocation on the
@@ -305,10 +314,24 @@ walked inside the buffer it replaced. What remains is unordered.
       second entry point that walked the row directly cost the unfiltered path
       2.4% by existing, `push_field` losing its inline. Notes:
       [`../design/roadmap-P7.7.1-shared-field-split-notes.md`](../design/roadmap-P7.7.1-shared-field-split-notes.md)
-- [ ] **7.8** The I/O defaults — the cold-NVMe figure, then readahead,
-      `posix_fadvise` and the chunk-size constant, each landed or rejected
-      against it. That figure is also what `KD9` is read against: it is the
-      one device we own on which an `INSERT` run's CPU could outrun the read.
+- [x] **7.8** The cold-NVMe figure — `scan-throughput-nvme`, the harness's
+      third regime and the first figure taken on a third device class. The
+      three shapes and the `dd` floor, cold on a 970 EVO Plus: the `COPY` path
+      is **1.10×** the device's own time, the large-object path 1.20×, and the
+      `INSERT` path **2.66×** — so the SATA SSD's "the difference is gone"
+      (1.02× against 1.01×) is a fact about that disk and not about the
+      algorithms. Two readings come out of it. **`KD9` reaches a real device**:
+      2.1 s of a 3.40 s `INSERT` scan is spent where the disk is idle, so the
+      entry is rewritten from *unmeasured* to *measured and unowned* rather
+      than retired. And **the I/O-defaults levers are bounded at 8.9%**: no
+      readahead or chunk-size change can put a scan below its device floor, and
+      on the fastest disk we own a cold `COPY` scan exceeds that floor by
+      0.125 s of 1.406 s. No library code. Notes:
+      [`../design/roadmap-P7.8-cold-nvme-figure-notes.md`](../design/roadmap-P7.8-cold-nvme-figure-notes.md)
+- [ ] **7.8.1** The I/O defaults — readahead, `posix_fadvise` and the
+      chunk-size constant, each landed or rejected against 7.8's figure.
+      **Earned**: 7.8's row paired the instrument that prices these three
+      levers with the levers themselves, which is two review cycles.
 - [ ] **7.9** `decode_array`'s `Vec<Option<String>>` intermediate, replaced by
       borrowed slices where the literal carries no escapes.
 - [ ] **7.10** Scalar decode and the typed column build, split by the profile
@@ -348,7 +371,7 @@ walked inside the buffer it replaced. What remains is unordered.
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 - **P7 is open**, grilled and sliced; the checklist above is its progress. Its
-  three evidence slices, the allocator reading and six library changes have
+  four evidence slices, the allocator reading and six library changes have
   landed — 7.4's gate in `stream.rs`, 7.5's `INSERT` statement scan in
   `preamble.rs`/`map.rs`, 7.13's read-buffer pool in `io.rs`, 7.13.1's read
   carry in `scan.rs`/`stream.rs`, 7.6's bulk UTF-8 pass in
@@ -470,11 +493,11 @@ here rather than reading as a phase nobody has sliced.
   [`../design/architecture.md`](../design/architecture.md), "Decoders and
   render-back".
 
-- **KD9** — an `INSERT` run costs **4.3×** a `COPY` scan's per-byte CPU warm,
-  and two specific cuts against that remainder are known and untaken. **(c)
-  unowned**; promoted by slice **7.8**'s cold-NVMe figure, the only reading
-  that says whether the remainder reaches a real device — the SATA SSD hides it
-  and the project's goal names NVMe. Detail:
+- **KD9** — an `INSERT` run costs **4.3×** a `COPY` scan's per-byte CPU warm
+  and **2.66×** the device's own time cold on NVMe against 1.10×, and two cuts
+  against that remainder are known and untaken. **(c) unowned**; 7.8's figure
+  confirmed it where it might have retired it, so it waits on an owner rather
+  than on evidence. Detail:
   [`../design/architecture.md`](../design/architecture.md), "Bulk regions: one
   span kind, three payloads".
 
@@ -503,4 +526,19 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **`KD9` was confirmed by 7.8's figure and given no owner.** The cold-NVMe
+  reading was written into the register as the thing that would *promote the
+  entry to owned work or retire it to a property*, and it promotes it: an
+  `INSERT` scan on the fastest disk here costs 2.66× the device's own time
+  against a `COPY` scan's 1.10×, so roughly 2.1 s of a 3.40 s scan is CPU no
+  device hides. The call was to rewrite the entry to that and leave it **(c)
+  unowned** rather than allocate a slice for the two named cuts. The reason is
+  that allocating one is a decision an unattended session may not make — P7's
+  slice list has no row for them, and adding one changes what the phase
+  committed to. What changes if it is reconsidered: the two cuts named in
+  `architecture.md`'s "Bulk regions" become a P7 row (they are both inside
+  `preamble::StatementScan`, so the work is contained), or the entry acquires a
+  later phase as its `(b)` destination, or it stays as it is on the reading
+  that an `--inserts` dump on NVMe is not a shape anyone has brought us.
 

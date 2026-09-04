@@ -180,3 +180,30 @@ why it is filed here rather than guessed at now.
 the read path's allocation, and the seam that earned 7.13.1"). Contingent on
 the pool surviving `7.13.1`, which reworks who copies the chunk but not who
 allocates it.
+
+## Parallel *discovery* has ~10% to win even on the fastest disk here
+
+**Fact.** Cold on a 970 EVO Plus — the fastest device this project owns — a
+single-threaded whole-file `pgdq parse` of a `COPY` dump costs **1.10×** the
+time `dd` takes to read the same bytes, and a large-object region 1.20×. One
+core already saturates that device on the discovery path. The `INSERT` run is
+the exception at **2.66×**
+([`measurements.md`](measurements.md), "Scan throughput by input shape", the
+cold-NVMe table, taken by P7's slice 7.8).
+
+**Why this phase cares.** It says where the workers go. The HDD reading already
+said parallel discovery wins nothing on rotational media; what was open was
+whether a fast device changes that, and it does not — the whole prize for
+parallelising `parse` on NVMe is the 0.125 s by which a 1.406 s scan exceeds
+its floor, and a splitter's own coordination has to come out of that. Row
+extraction is the opposite case at 13.3× the warm floor before a column is
+typed. So a parallel scheme that speeds up discovery and not extraction is
+measurable only in the regime where nothing needed speeding up. It also
+sharpens the `INSERT` entry above: that shape *is* where cores would pay on a
+fast device, and it is the one region kind speculative splitting cannot touch.
+
+**Origin.** P7's slice 7.8, 2026-09-04
+([`../status/history/2026-09-04.md`](../status/history/2026-09-04.md), "The NVMe
+is where the `INSERT` path stops being device-bound"). Contingent on the
+device: a faster disk than this one would reopen it, and none is available here
+to measure on.
