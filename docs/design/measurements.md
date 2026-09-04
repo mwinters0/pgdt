@@ -1076,7 +1076,7 @@ figures (tens of ns/row rejected, 1.49 µs/row inspected) are what
 [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md) actually consumes, and
 the census-off column exists to establish it once.
 
-## Nested decode costs what it copies, and an element is an allocation
+## Nested decode costs what it copies, and an element is now a borrowed slice
 
 <!-- figure: nested-decode-micro — reproduce with `cd scripts && uv run measure.py --figure nested-decode-micro` -->
 
@@ -1084,44 +1084,59 @@ the census-off column exists to establish it once.
 because there are two questions.**
 
 - **Copy** — `String::from` over the same byte count: 20 ns at 49 bytes,
-  24 ns at 601, 20 ns at 42. A nested value has no borrowed arm
-  (`crate::batch::append_nested`), so this isolates what the *parse* costs on
-  top of the copy it cannot avoid, which is the variable P7 is choosing
-  over.
+  41 ns at 601, 20 ns at 42. A nested value's *element* has no borrowed arm at
+  the Arrow builder (`crate::batch::append_nested` copies whatever it is
+  handed), so this isolates what the *parse* costs on top of the copy the
+  builder cannot avoid.
 - **View** — one `append_view_unchecked` into a block the builder does not
   own, which is what `push_utf8view_field` does for an unescaped text field:
-  **2.55 ns**, from `text_view_x1024`'s median ÷ 1024. Length-independent,
+  **2.96 ns**, from `text_view_x1024`'s median ÷ 1024. Length-independent,
   which is the point of a view. This is what a user comparing a text column
   against an array column actually pays.
 
 | Literal | Bytes | `decode` | `render` | ÷ copy | ÷ view |
 |---|---|---|---|---|---|
-| `integer[]`, 4 elements | 49 | 290 ns | 223 ns | **26.0×** | **202×** |
-| `integer[]`, 50 elements | 601 | 3.85 µs | 1.48 µs | **226.4×** | **2092×** |
-| two-field composite | 42 | 190 ns | 178 ns | **18.9×** | **145×** |
+| `integer[]`, 4 elements | 49 | 218 ns | 237 ns | **23.2×** | **154×** |
+| `integer[]`, 50 elements | 601 | 2.41 µs | 1.48 µs | **94.8×** | **1316×** |
+| two-field composite | 42 | 114 ns | 175 ns | **14.8×** | **98×** |
+
+Apparatus: **taken entirely alone**, on 2026-09-04 against `7b456ae` plus the
+working-tree change it measures — which is what a lever's own before-and-after
+always is. This figure runs no `pgdq` and reads no file, so it carries none of
+the stall, temperature or device gates the sweep's tables do.
 
 **Both control figures are read with a caveat.** `text_view_x1024` reports
 1024 appends and must be divided — timing one append through
 `iter_batched_ref` gave ~12.6 ns against a harness floor that `bool/decode`
-puts at ~1.1 ns, so three quarters of it was criterion. And 2.55 ns is a
+puts at ~1.1 ns, so three quarters of it was criterion. And 2.96 ns is a
 *floor* on the borrowed arm rather than the borrowed arm itself:
 `push_utf8view_field` also scans the chunk deque with `find_map` and calls
 `block_for`. So the `÷ view` column bounds the real ratio **from above**.
 
 **The `÷ copy` column for the 50-element row is the least stable number in the
 table**, because its denominator is: the 601-byte copy control has read 24, 42,
-41, 24 and 24 ns over five sweeps, which put that ratio at 122× two stamps back
-and 226× here while `decode` itself moved 11%. Read the `decode`
+41, 24, 24 and now 41 ns over six sittings, which has put that ratio at 122×,
+226× and 94.8× while `decode` moved for reasons of its own. Read the `decode`
 and `render` columns, which are what the design consumes; treat `÷ copy` as
 the order of magnitude it establishes.
 
-**What this says.** Cost is per *element*, not per byte: the two array lengths
-differ only in element count, and the slope between them is **77 ns per
-element** decoding and **27 ns per element** rendering. That is the shape of
-one allocation per element, which is what `ArrayLiteral::elements` being a
-`Vec<Option<String>>` buys — every element is its own `String`. A composite
-sits where its field count says it should: two fields, and it costs about what
-a four-element array does.
+**What this says.** Cost is still per *element* rather than per byte — the two
+array lengths differ only in element count — but the slope is now **48 ns per
+element** decoding against the **77 ns** an allocation-per-element cost, and
+**27 ns per element** rendering, unchanged. An element of an array literal is
+a borrowed slice of the field unless it actually carried an escape
+([`architecture.md`](architecture.md), "The nested literal codec"), so what is
+left in the decode slope is the scan itself: `scan_token` walks each token
+once for its terminator and `needs_quote` walks it again to reject what
+`array_out` would have quoted. A composite sits where its field count says it
+should: two fields, and it costs about half what a four-element array does.
+
+**Rendering is now the more expensive direction on the short rows**, which it
+was not before: 237 ns against 218 for a four-element array, and 175 against
+114 for the composite. Nothing in the render path changed — the decode side
+stopped allocating and the two crossed over. `render` is the CLI's write-back
+and no embedder pays it ("A mode difference and a per-column delta are CLI
+numbers").
 
 Comparing a composite against an array of the same *byte* count is therefore
 meaningless; comparing them per element is the only reading these three rows

@@ -155,7 +155,7 @@ async fn a_nested_layer_round_trips_through_the_other_conventions_codec() {
                 .elements
                 .iter()
                 .map(|element| {
-                    element.as_ref().map(|text| {
+                    element.as_deref().map(|text| {
                         let record = decode_record(text).unwrap();
                         assert_eq!(record.fields.len(), 2, "point2d has two fields");
                         composites_seen += 1;
@@ -163,7 +163,12 @@ async fn a_nested_layer_round_trips_through_the_other_conventions_codec() {
                     })
                 })
                 .collect();
-            assert_eq!(elements, outer.elements, "pg_dump {version}: v_points");
+            let original: Vec<Option<&str>> = outer.elements.iter().map(|e| e.as_deref()).collect();
+            assert_eq!(
+                elements.iter().map(|e| e.as_deref()).collect::<Vec<_>>(),
+                original,
+                "pg_dump {version}: v_points"
+            );
             assert_eq!(render_array(&outer), value, "pg_dump {version}: v_points");
         }
         assert!(composites_seen >= 3, "pg_dump {version}: {composites_seen} nested composites");

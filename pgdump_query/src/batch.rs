@@ -491,7 +491,7 @@ fn append_nested(builder: &mut ColumnBuilder, value: Option<&str>) -> std::resul
 fn append_array_level(
     parts: &mut ListParts,
     dims: &[usize],
-    elements: &mut std::slice::Iter<'_, Option<String>>,
+    elements: &mut std::slice::Iter<'_, Option<std::borrow::Cow<'_, str>>>,
 ) -> std::result::Result<(), ()> {
     if dims.len() == 1 {
         for _ in 0..dims[0] {
@@ -1153,7 +1153,7 @@ fn collect_array(
     child_plan: &NestedPlan,
     depth: usize,
     dims: &mut Vec<usize>,
-    elements: &mut Vec<Option<String>>,
+    elements: &mut Vec<Option<std::borrow::Cow<'static, str>>>,
 ) -> Result<()> {
     let values = column.as_any().downcast_ref::<ListArray>().unwrap().value(row);
     if dims.len() == depth {
@@ -1164,7 +1164,8 @@ fn collect_array(
             NestedPlan::Array(inner) => {
                 collect_array(values.as_ref(), i, inner, depth + 1, dims, elements)?;
             }
-            _ => elements.push(render_field(values.as_ref(), i, child_plan)?),
+            _ => elements
+                .push(render_field(values.as_ref(), i, child_plan)?.map(std::borrow::Cow::Owned)),
         }
     }
     Ok(())

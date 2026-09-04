@@ -37,16 +37,21 @@ was the first table taken on a third device class: 7.8 took it on 2026-09-04 at
 `chunk-size` is the doc's newest table and the only one taken at a working-tree
 commit: 7.8.1 took it on 2026-09-04, alone, in all three regimes at once, and
 it is the figure that decided the read chunk and bounded the other two
-I/O-defaults levers.
+I/O-defaults levers. **A fourth now stands outside the sweep**:
+`nested-decode-micro`, which 7.9 re-took alone on 2026-09-04 as its own
+before-and-after, and which is the only table in the doc a library change has
+re-taken *and* left current in fact.
 
-**Sixteen of the seventeen read stale against the `ba2fc12` stamp, and two of
-those sixteen are stale only mechanically.** `--stale` is relative to the doc's
-session stamp rather than to when each table was taken, so
-`scan-throughput-nvme` and `chunk-size` read red although both were taken after
-every P7 change to a timed path — they are the two tables here that are current
-in fact. The other fourteen — the thirteen sweep figures and `predicate-terms` —
-are stale in fact too. `nested-decode-micro` is the one that reads green: it
-times a decoder in isolation and reaches no `pgdq` run. `allocator` is the newest of the thirteen sweep figures,
+**All seventeen now read stale against the `ba2fc12` stamp, and three of them
+are stale only mechanically.** `--stale` is relative to the doc's session stamp
+rather than to when each table was taken, so `scan-throughput-nvme`,
+`chunk-size` and `nested-decode-micro` read red although all three were taken
+after every P7 change that reaches them — they are the three tables here that
+are current in fact. `nested-decode-micro` is the one that changed sides: it
+times a decoder in isolation and reaches no `pgdq` run, so it read green until
+7.9 edited the decoder it times, and 7.9 re-took it in the same change. The
+other fourteen — the thirteen sweep figures and `predicate-terms` —
+are stale in fact too. `allocator` is the newest of the thirteen sweep figures,
 re-taken by 7.13 on the pooled read path, and 7.13.1 has since moved it too;
 `per-block-quadratic`, `map-only` and `preamble-prepass` (7.4) and the three 7.5
 re-took were current until 7.13. Every one of them times a `pgdq` run, and each
@@ -128,7 +133,7 @@ exists as of that figure, and it is the only figure that declares it.
 | Array shape census | recorded by every mapping pass and consumed: a query retypes its top-level array columns from the union over the blocks it will replay, before the first batch |
 | CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, cache-only `info` | working; **`parse` is the only scanner** — it resumes from a matching cache, banks at `COPY` block boundaries under a self-tuning throttle, and saves unconditionally on Ctrl-C (exit 130/143). `info` reports from the cache and never scans. Both scanning commands take `--chunk-size <bytes>`, whose 1 MiB default is the fastest of six sizes measured on the one device class where the size makes a difference ([`../design/measurements.md`](../design/measurements.md), "What the read chunk size is worth"); above 8 MiB the read buffer stops being pooled and a warm scan doubles. `--verbose` adds each block's byte offsets, a per-column resolution line, an enum column's declared labels beneath it, and — under the `user-defined types` count that heads it — one line per user-defined type, every `TypeKind` arm rendered with its payload. Text output shape is provisional; `--json` carries no shape promise at all, and states the labels once per type in `metadata.databases[].types[]` rather than per column |
 | Partial reporting | `info` reports an unfinished scan's cache for as far as it got, with `Scan completion: N%` stated once at the top and nothing below it qualified. An interrupted cache is **typed** for every database segment the scan finished (I1) |
-| Measurement harness | `scripts/measure.py` takes every figure in [`../design/measurements.md`](../design/measurements.md) and emits that doc's tables — sixteen figures, fifteen taken by a sweep and one derived across two, each declaring what invalidates it, which documents repeat it, and which readings it borrows from another figure — that third edge is what lets `--figure` pull in what a figure borrows and name the rest of the set that must be re-taken with it, and `--alone` is how a partial sitting is asked for deliberately. `measure.UNTAKEN` is empty: nothing is built and unrun. It also builds and interrogates the `allocator` figure's three legs, reading each binary's allocator out of `pgdq --version` rather than trusting the flags it passed, and names the shipped one in the session stamp. A leg is rebuilt **once per harness process** rather than reused from `runs/`, which is what stops a fresh reference being timed against last session's legs, and all of them are built before the first reading rather than at the rep that wants one |
+| Measurement harness | `scripts/measure.py` takes every figure in [`../design/measurements.md`](../design/measurements.md) and emits that doc's tables — seventeen figures, sixteen taken by a sweep and one derived across two, each declaring what invalidates it, which documents repeat it, and which readings it borrows from another figure — that third edge is what lets `--figure` pull in what a figure borrows and name the rest of the set that must be re-taken with it, and `--alone` is how a partial sitting is asked for deliberately. `measure.UNTAKEN` is empty: nothing is built and unrun. It also builds and interrogates the `allocator` figure's three legs, reading each binary's allocator out of `pgdq --version` rather than trusting the flags it passed, and names the shipped one in the session stamp. A leg is rebuilt **once per harness process** rather than reused from `runs/`, which is what stops a fresh reference being timed against last session's legs, and all of them are built before the first reading rather than at the rep that wants one |
 | Column projection | working, library and CLI: `QueryOptions::projection` names columns, cuts the reported `ResolvedSchema` with the batches, may reorder, and may be empty (`COUNT(*)`); `pgdq query` spells it `--column <name>` repeated, or `--no-columns`, which prints no header so `\| wc -l` is a row count. A filter may name a column the projection does not, and an unprojected column is never decoded, so projecting a column away escapes its `Error::FieldDecode` — including `KD2`'s, which the error message does not name ([`../design/architecture.md`](../design/architecture.md), "Projection"; [`../manual/type-handling.md`](../manual/type-handling.md)). Measured on one 3.00 GiB file at five widths: `--no-columns` is 3.18 µs a row against 28.56 for all 19, the two array columns alone are +13.21 and the composite +0.98 ([`../design/measurements.md`](../design/measurements.md), "What a column costs") |
 | The filter expression, evaluated three-valued | working: `QueryOptions::filter` is one `Expr` — `Term`/`And`/`Or`/`Not`, `And` and `Or` n-ary — evaluated in SQL's `True`/`False`/`Unknown` domain, a row surviving only where the root is `True`. A NULL field is `Unknown` under every comparing operator, which is the row set the old collapse gave for every conjunction and is what makes `Not` expressible at all. `IS DISTINCT FROM`/`IS NOT DISTINCT FROM` come with it, being the one thing `Not` cannot spell. Short-circuiting is defined against the *root*: `And` stops at the first non-`True` unless a `Not` is above it, which is where a decode failure surfaces or does not. Nothing folds two terms, so a contradictory pair is a query with no rows. Reachable from the CLI as well as the library: `pgdq query --where <expr>` builds the tree and a repeated `--filter` still builds the conjunction ([`../design/architecture.md`](../design/architecture.md), "Predicates") |
 | The `--where` expression grammar | working, CLI only — `Expr` is an enum an embedder fills in, so nothing below L4 parses an expression. Parens group, `NOT` binds tighter than `AND` and `AND` tighter than `OR`, the keywords are case-insensitive and are keywords only outside quotes, and everything that is not a paren or a keyword is a term handed to the `--filter` grammar unchanged. A keyword is recognised only against whitespace or a paren, so `tag=and` stays an equality; a `NOT` after the word `is` belongs to the term, so `IS NOT NULL` and `IS NOT DISTINCT FROM` survive whole; juxtaposition is not an implicit `AND`; and a value holding a paren must be quoted. Both flags together are one conjunction. **No `--filter` string changes meaning** — that is what the separate flag buys ([`../design/architecture.md`](../design/architecture.md), "`--where` builds an expression out of those terms"; [`../manual/type-handling.md`](../manual/type-handling.md), "Combining terms: `--where`") |
@@ -167,14 +172,14 @@ profiles of the three control shapes
 [`../design/architecture.md`](../design/architecture.md), "Where a scan's time
 goes"** — the decomposition, which is the durable half of the phase.
 
-**Figures.** Seven of the sixteen figures in
+**Figures.** Six of the seventeen figures in
 [`../design/measurements.md`](../design/measurements.md) come from the
 `ba2fc12` sweep of 2026-09-03, folded in whole, each table carrying an
 apparatus line; `allocator`, `per-block-quadratic`, `map-only`,
-`preamble-prepass`, `scan-throughput-cold`, `scan-throughput-warm` and
-`census-brace-free` were taken on their own afterwards, and each section says
-so. `--check` reconciles seventeen markers against seventeen
-figures. `session-drift` is derived across that sweep and a second one taken
+`preamble-prepass`, `scan-throughput-cold`, `scan-throughput-warm`,
+`census-brace-free` and `nested-decode-micro` were taken on their own
+afterwards, and each section says so. `--check` reconciles seventeen markers
+against seventeen figures. `session-drift` is derived across that sweep and a second one taken
 three minutes later on the same commit, which is the pair `--drift` reads.
 `measure.ACKNOWLEDGED` carries the six entries above: a fresh stamp spends
 every entry, and `--check` named the previous six so they were deleted rather
@@ -351,8 +356,19 @@ unordered.
       **Earned**: 7.8's row paired the instrument that prices these three
       levers with the levers themselves, which is two review cycles. Notes:
       [`../design/roadmap-P7.8.1-io-defaults-notes.md`](../design/roadmap-P7.8.1-io-defaults-notes.md)
-- [ ] **7.9** `decode_array`'s `Vec<Option<String>>` intermediate, replaced by
-      borrowed slices where the literal carries no escapes.
+- [x] **7.9** `decode_array`'s element allocations — `ArrayLiteral::elements`
+      is `Vec<Option<Cow<'_, str>>>`, and `scan_quoted` looks for the closing
+      quote before it copies anything, so an element is copied only where the
+      literal carried a `\` or a doubled `""`. Decode falls **290 → 218 ns**
+      at four elements, **3.85 → 2.41 µs** at fifty and **190 → 114 ns** for
+      the composite, taking the per-element slope **77 → 48 ns**; a whole typed
+      `--arrays --composite` query falls **176.38 G → 165.37 G user
+      instructions**, every after rep below every before rep. **No `unsafe`**
+      and no behaviour change — the borrowed arm is `str::from_utf8` over a
+      subslice. The record and range literals keep owned fields and take the
+      same scanner, which still bought them 40% and is why the borrow stopped
+      at the array. Notes:
+      [`../design/roadmap-P7.9-array-borrow-notes.md`](../design/roadmap-P7.9-array-borrow-notes.md)
 - [ ] **7.10** Scalar decode and the typed column build, split by the profile
       into a `decode.rs` half and a builder-append half.
 - [ ] **7.11** The viewing builder for `List<Utf8View>` — conditional on
@@ -390,12 +406,13 @@ unordered.
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 - **P7 is open**, grilled and sliced; the checklist above is its progress. Its
-  four evidence slices, the allocator reading, six library changes and one
+  four evidence slices, the allocator reading, seven library changes and one
   measured refusal have landed — 7.4's gate in `stream.rs`, 7.5's `INSERT`
   statement scan in `preamble.rs`/`map.rs`, 7.13's read-buffer pool in
   `io.rs`, 7.13.1's read carry in `scan.rs`/`stream.rs`, 7.6's bulk UTF-8 pass
-  in `copy.rs`/`stream.rs` and 7.7.1's shared field split across
-  `copy.rs`/`predicate.rs`/`batch.rs`/`stream.rs`, all edits to timed paths,
+  in `copy.rs`/`stream.rs`, 7.7.1's shared field split across
+  `copy.rs`/`predicate.rs`/`batch.rs`/`stream.rs` and 7.9's borrowed array
+  element in `nested.rs`/`batch.rs`, all edits to timed paths,
   plus 7.8.1's `--chunk-size`, which changes no default and refuses the other
   two I/O levers. Six
   other phases are sketched and one more is
@@ -547,3 +564,21 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **`nested::needs_quote` is now the largest single symbol in a typed nested
+  query, and 7.9 did not admit it as a lever.** At 14.1% of an
+  `--arrays --composite` typed run it outranks every other symbol, and it is
+  one predicate reached from two directions — `push_token` re-quoting each
+  element on the way out (the CLI's, through `render_field`) and `scan_token`
+  rejecting an element `array_out` would have quoted on the way in (the
+  library's, and what is left of the per-element decode slope after 7.9). A
+  byte-classification table would fuse `scan_token`'s terminator walk with
+  `needs_quote`'s second walk over the same bytes. **The call was to leave the
+  spec's lever table alone and file the finding**, because the phase's "a lever
+  the profile finds and this table does not name is admitted" paragraph
+  requires amending that table, and amending a spec is a decision change an
+  unattended session should not make on its own. What changes if it is
+  reconsidered: `needs_quote` gets a lever row and a slice number, and the
+  decode half is the only part of it a library change can remove. Evidence:
+  [`../design/roadmap-P7.9-array-borrow-notes.md`](../design/roadmap-P7.9-array-borrow-notes.md),
+  "What the profile now says".

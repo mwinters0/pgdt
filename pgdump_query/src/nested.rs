@@ -62,6 +62,8 @@
 //! different `typdelim` (`box`, or any C-level base type) is not decoded as an
 //! array at all — see `docs/design/architecture.md`, "Type resolution".
 
+use std::borrow::Cow;
+
 /// How a quoted token escapes an embedded `"`. Both conventions escape an
 /// embedded `\` by doubling it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,11 +144,29 @@ fn push_token(out: &mut String, value: Option<&str>, syntax: &Syntax) {
 }
 
 /// Consume a `"`-delimited token starting at the opening quote, returning its
-/// unescaped bytes and the index just past the closing quote.
-fn scan_quoted(s: &[u8], mut i: usize, escape: Escape) -> Option<(Vec<u8>, usize)> {
+/// unescaped text and the index just past the closing quote.
+///
+/// **Borrowed unless the token actually carries an escape.** The first pass
+/// looks for the closing quote and copies nothing; a `\` or a doubled `""`
+/// aborts it into the second, which rebuilds the token from the bytes already
+/// walked. Real `pg_dump` output quotes far more tokens than it escapes — a
+/// value holding a space or a separator is quoted with nothing inside to undo
+/// — so the borrowed arm is the common one even here.
+fn scan_quoted(s: &[u8], mut i: usize, escape: Escape) -> Option<(Cow<'_, str>, usize)> {
     debug_assert_eq!(s.get(i), Some(&b'"'));
     i += 1;
-    let mut out = Vec::new();
+    let start = i;
+    loop {
+        match *s.get(i)? {
+            b'"' if !(escape == Escape::Double && s.get(i + 1) == Some(&b'"')) => {
+                let text = std::str::from_utf8(&s[start..i]).ok()?;
+                return Some((Cow::Borrowed(text), i + 1));
+            }
+            b'"' | b'\\' => break,
+            _ => i += 1,
+        }
+    }
+    let mut out = Vec::from(&s[start..i]);
     loop {
         match *s.get(i)? {
             b'"' => {
@@ -154,7 +174,7 @@ fn scan_quoted(s: &[u8], mut i: usize, escape: Escape) -> Option<(Vec<u8>, usize
                     out.push(b'"');
                     i += 2;
                 } else {
-                    return Some((out, i + 1));
+                    return Some((Cow::Owned(String::from_utf8(out).ok()?), i + 1));
                 }
             }
             b'\\' => {
@@ -173,22 +193,22 @@ fn scan_quoted(s: &[u8], mut i: usize, escape: Escape) -> Option<(Vec<u8>, usize
 /// any byte in `terminators`. Returns the token — `None` for SQL NULL — and
 /// the index of the byte it stopped on, which is always present: a token that
 /// runs off the end of the input is malformed, since every container closes.
-fn scan_token(
-    s: &[u8],
+fn scan_token<'a>(
+    s: &'a [u8],
     i: usize,
     syntax: &Syntax,
     terminators: &[u8],
-) -> Option<(Option<String>, usize)> {
+) -> Option<(Option<Cow<'a, str>>, usize)> {
     let stops = |c: u8| c == syntax.separator || terminators.contains(&c);
 
     if s.get(i) == Some(&b'"') {
-        let (bytes, next) = scan_quoted(s, i, syntax.escape)?;
+        let (text, next) = scan_quoted(s, i, syntax.escape)?;
         // Nothing may follow a closing quote but a separator or a terminator;
         // `"a"b` is not something any `*_out` function can produce.
         if !stops(*s.get(next)?) {
             return None;
         }
-        return Some((Some(String::from_utf8(bytes).ok()?), next));
+        return Some((Some(text), next));
     }
 
     let start = i;
@@ -222,7 +242,7 @@ fn scan_token(
     if needs_quote(text, syntax) {
         return None;
     }
-    Some((Some(text.to_string()), i))
+    Some((Some(Cow::Borrowed(text)), i))
 }
 
 /// An `array_out` literal: elements flattened row-major, plus the shape they
@@ -232,12 +252,21 @@ fn scan_token(
 /// (I21) — `integer[][]`, `integer[3]` and `integer[]` are all written
 /// `integer[]`, and consecutive rows of one column may legitimately disagree.
 /// That is what this type exists to carry.
+///
+/// **An element borrows from the literal wherever it can**, which is why this
+/// type carries a lifetime. `array_out` writes most elements verbatim — an
+/// escape appears only inside a quoted token that held a `"` or a `\` — so
+/// the common element is a slice of the field and only the rare escaped one
+/// is copied. The alternative, a `String` per element, is what
+/// `docs/design/measurements.md`, "Nested decode costs what it copies",
+/// measured at 77 ns of the per-element decode slope against the 48 ns the
+/// scan alone costs.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ArrayLiteral {
+pub struct ArrayLiteral<'a> {
     /// Row-major, flattened across every dimension. `None` is a SQL NULL
     /// element (which an array spells as a bare `NULL`, distinguishing it from
     /// the *string* `NULL` by quoting alone).
-    pub elements: Vec<Option<String>>,
+    pub elements: Vec<Option<Cow<'a, str>>>,
     /// One entry per dimension. Empty for `{}`, which `array_out` emits for a
     /// zero-element array whatever its dimensionality (I20).
     pub dims: Vec<usize>,
@@ -246,7 +275,7 @@ pub struct ArrayLiteral {
     pub lower_bounds: Vec<i32>,
 }
 
-impl ArrayLiteral {
+impl ArrayLiteral<'_> {
     /// Number of dimensions; `0` for the empty array.
     pub fn ndim(&self) -> usize {
         self.dims.len()
@@ -260,6 +289,11 @@ impl ArrayLiteral {
     }
 }
 
+/// The elements of one array literal, row-major and flattened across every
+/// dimension. Borrowed from the literal wherever no escape had to be undone —
+/// see [`ArrayLiteral`], whose field this is.
+type Elements<'a> = Vec<Option<Cow<'a, str>>>;
+
 /// Accumulator for the recursive brace walk. `dims` and `leaf_depth` are
 /// filled in as the structure is discovered and cross-checked as it repeats:
 /// every sibling list at one depth must have the same length, and every token
@@ -268,10 +302,10 @@ struct ArrayScan<'a> {
     s: &'a [u8],
     dims: Vec<Option<usize>>,
     leaf_depth: Option<usize>,
-    elements: Vec<Option<String>>,
+    elements: Elements<'a>,
 }
 
-impl ArrayScan<'_> {
+impl<'a> ArrayScan<'a> {
     fn record_dim(&mut self, depth: usize, count: usize) -> Option<()> {
         if self.dims.len() <= depth {
             self.dims.resize(depth + 1, None);
@@ -349,7 +383,7 @@ fn parse_int(s: &[u8], mut i: usize) -> Option<(i32, usize)> {
 
 /// Decode an `array_out` literal. `None` means the text is not one — the
 /// caller turns that into `Error::FieldDecode` naming the column.
-pub fn decode_array(s: &str) -> Option<ArrayLiteral> {
+pub fn decode_array(s: &str) -> Option<ArrayLiteral<'_>> {
     let b = s.as_bytes();
     let mut i = 0;
 
@@ -412,7 +446,7 @@ pub fn decode_array(s: &str) -> Option<ArrayLiteral> {
     Some(ArrayLiteral { elements, dims, lower_bounds })
 }
 
-fn render_braces(out: &mut String, a: &ArrayLiteral, depth: usize, cursor: &mut usize) {
+fn render_braces(out: &mut String, a: &ArrayLiteral<'_>, depth: usize, cursor: &mut usize) {
     out.push('{');
     for k in 0..a.dims[depth] {
         if k > 0 {
@@ -434,7 +468,7 @@ fn render_braces(out: &mut String, a: &ArrayLiteral, depth: usize, cursor: &mut 
 ///
 /// Panics if `dims` and `elements` disagree, which [`decode_array`] cannot
 /// produce and a hand-built value must not.
-pub fn render_array(a: &ArrayLiteral) -> String {
+pub fn render_array(a: &ArrayLiteral<'_>) -> String {
     if a.elements.is_empty() {
         return "{}".to_string();
     }
@@ -475,7 +509,7 @@ pub fn decode_record(s: &str) -> Option<RecordLiteral> {
     let mut fields = Vec::new();
     loop {
         let (value, next) = scan_token(b, i, &RECORD, b")")?;
-        fields.push(value);
+        fields.push(value.map(Cow::into_owned));
         i = next;
         match b.get(i) {
             Some(&b',') => i += 1,
@@ -546,10 +580,12 @@ pub fn decode_range(s: &str) -> Option<RangeLiteral> {
         _ => return None,
     };
     let (lower, i) = scan_token(b, 1, &RANGE_BOUND, b"])")?;
+    let lower = lower.map(Cow::into_owned);
     if b.get(i) != Some(&b',') {
         return None;
     }
     let (upper, i) = scan_token(b, i + 1, &RANGE_BOUND, b"])")?;
+    let upper = upper.map(Cow::into_owned);
     let upper_inclusive = match *b.get(i)? {
         b']' => true,
         b')' => false,
@@ -824,12 +860,12 @@ fn read_unquoted_array_element(s: &[u8], mut i: usize) -> Option<(ArrayToken, us
 /// serving as both input and output, which is what lets one walk check a
 /// declared shape and deduce an undeclared one. `ndim` is `0` when nothing was
 /// declared.
-fn read_array_body(
-    s: &[u8],
+fn read_array_body<'a>(
+    s: &'a [u8],
     mut i: usize,
     mut ndim: usize,
     dim: &mut [Option<usize>; MAXDIM],
-) -> Option<(usize, Vec<Option<String>>, usize)> {
+) -> Option<(usize, Elements<'a>, usize)> {
     // Once a dimensionality is declared, or an element has been seen, the
     // nesting may not get deeper.
     let mut frozen = ndim != 0;
@@ -885,7 +921,12 @@ fn read_array_body(
                     return None;
                 }
                 elements.push(match token {
-                    ArrayToken::Elem(value) => Some(value),
+                    // Owned unconditionally: `array_in` trims, unescapes and
+                    // re-cases, so a token here is rarely the bytes the user
+                    // typed. This grammar reads one filter literal per query
+                    // rather than one per row, so the borrow is not worth the
+                    // second scanner it would need.
+                    ArrayToken::Elem(value) => Some(Cow::Owned(value)),
                     _ => None,
                 });
                 frozen = true;
@@ -940,7 +981,7 @@ fn skip_space(s: &[u8], mut i: usize) -> usize {
 /// **A literal with no elements is the zero-dimensional empty array**, however
 /// it was written: `{}`, `{ }` and (on v17+) `{{},{}}` are all the value
 /// `array_out` writes as `{}`.
-pub fn parse_array(s: &str) -> Option<ArrayLiteral> {
+pub fn parse_array(s: &str) -> Option<ArrayLiteral<'_>> {
     let b = s.as_bytes();
     let mut i = 0;
     let mut dim = [None; MAXDIM];
@@ -1282,10 +1323,17 @@ mod tests {
         Some(v.to_string())
     }
 
+    /// One array element. Borrowed, because `Cow` compares by its contents:
+    /// an assertion built with this passes against either arm, and which arm
+    /// a decode actually took is asserted on its own below.
+    fn elem(v: &str) -> Option<Cow<'_, str>> {
+        Some(Cow::Borrowed(v))
+    }
+
     /// The whole point of the module: decode then render must be the identity
     /// on anything a `*_out` function can produce.
     #[track_caller]
-    fn array_round_trips(literal: &str) -> ArrayLiteral {
+    fn array_round_trips(literal: &str) -> ArrayLiteral<'_> {
         let decoded = decode_array(literal).unwrap_or_else(|| panic!("decode failed: {literal}"));
         assert_eq!(render_array(&decoded), literal);
         decoded
@@ -1294,29 +1342,55 @@ mod tests {
     #[test]
     fn one_dimensional_arrays_round_trip_with_every_null_and_quoting_case() {
         let a = array_round_trips("{1,2,3}");
-        assert_eq!(a.elements, vec![some("1"), some("2"), some("3")]);
+        assert_eq!(a.elements, vec![elem("1"), elem("2"), elem("3")]);
         assert_eq!(a.dims, vec![3]);
         assert_eq!(a.ndim(), 1);
 
         // `{}`, `{NULL}` and a one-element array holding the *string* `NULL`
         // are three different values that look alike.
-        assert_eq!(array_round_trips("{}").elements, Vec::<Option<String>>::new());
+        assert_eq!(array_round_trips("{}").elements, Vec::<Option<Cow<str>>>::new());
         assert_eq!(array_round_trips("{NULL}").elements, vec![None]);
-        assert_eq!(array_round_trips("{\"NULL\"}").elements, vec![some("NULL")]);
-        assert_eq!(array_round_trips("{\"\"}").elements, vec![some("")]);
-        assert_eq!(array_round_trips("{1,NULL,3}").elements, vec![some("1"), None, some("3")]);
+        assert_eq!(array_round_trips("{\"NULL\"}").elements, vec![elem("NULL")]);
+        assert_eq!(array_round_trips("{\"\"}").elements, vec![elem("")]);
+        assert_eq!(array_round_trips("{1,NULL,3}").elements, vec![elem("1"), None, elem("3")]);
     }
 
     #[test]
     fn an_array_backslash_escapes_inside_a_quoted_element() {
         let a = array_round_trips(r#"{"a,b","c{d}","e\"f","g\\h"}"#);
-        assert_eq!(a.elements, vec![some("a,b"), some("c{d}"), some(r#"e"f"#), some(r"g\h")]);
+        assert_eq!(a.elements, vec![elem("a,b"), elem("c{d}"), elem(r#"e"f"#), elem(r"g\h")]);
+    }
+
+    /// The borrowed arm is what slice 7.9 is: an element is a slice of the
+    /// literal unless it actually carried an escape, and a *quoted* element
+    /// with nothing to undo is still borrowed. Asserted on the arm rather
+    /// than on the text, since `Cow`'s own equality cannot tell them apart.
+    #[test]
+    fn an_element_is_copied_only_where_the_literal_escaped_it() {
+        let plain = decode_array(r#"{1,"a,b","c{d}",NULL,""}"#).unwrap();
+        assert!(
+            plain.elements.iter().flatten().all(|e| matches!(e, Cow::Borrowed(_))),
+            "nothing here escapes: {:?}",
+            plain.elements
+        );
+
+        // `\"` and `\\` are the only two escapes `array_out` writes, and each
+        // one is what forces the copy.
+        let escaped = decode_array(r#"{"e\"f","g\\h",plain}"#).unwrap();
+        assert!(matches!(escaped.elements[0], Some(Cow::Owned(_))));
+        assert!(matches!(escaped.elements[1], Some(Cow::Owned(_))));
+        assert!(matches!(escaped.elements[2], Some(Cow::Borrowed(_))));
+
+        // A record's doubled `""` is the other escape convention, and it is
+        // the same split — `scan_token` serves all three forms.
+        let (doubled, _) = scan_token(br#""a""b","#, 0, &RECORD, b")").unwrap();
+        assert!(matches!(doubled, Some(Cow::Owned(_))));
     }
 
     #[test]
     fn whitespace_and_the_delimiter_force_quotes_on_render() {
         let a = ArrayLiteral {
-            elements: vec![some("has space"), some("has,comma"), some("has'quote"), some("plain")],
+            elements: vec![elem("has space"), elem("has,comma"), elem("has'quote"), elem("plain")],
             dims: vec![4],
             lower_bounds: vec![1],
         };
@@ -1329,11 +1403,11 @@ mod tests {
         let a = array_round_trips("{{1,2},{3,4}}");
         assert_eq!(a.dims, vec![2, 2]);
         assert_eq!(a.ndim(), 2);
-        assert_eq!(a.elements, vec![some("1"), some("2"), some("3"), some("4")]);
+        assert_eq!(a.elements, vec![elem("1"), elem("2"), elem("3"), elem("4")]);
 
         let deep = array_round_trips("{{{1},{2}},{{3},{4}}}");
         assert_eq!(deep.dims, vec![2, 2, 1]);
-        assert_eq!(deep.elements, vec![some("1"), some("2"), some("3"), some("4")]);
+        assert_eq!(deep.elements, vec![elem("1"), elem("2"), elem("3"), elem("4")]);
     }
 
     #[test]
@@ -1408,7 +1482,7 @@ mod tests {
         let record = decode_record(literal).unwrap();
         assert_eq!(record.fields[1].as_deref(), Some(r#"{"x\"y","p q",NULL}"#));
         let field = decode_array(record.fields[1].as_deref().unwrap()).unwrap();
-        assert_eq!(field.elements, vec![some(r#"x"y"#), some("p q"), None]);
+        assert_eq!(field.elements, vec![elem(r#"x"y"#), elem("p q"), None]);
         assert_eq!(render_record(&record), literal);
     }
 
@@ -1512,7 +1586,12 @@ mod tests {
 
     #[track_caller]
     fn array_elements(literal: &str) -> Vec<Option<String>> {
-        parse_array(literal).unwrap_or_else(|| panic!("should parse: {literal}")).elements
+        parse_array(literal)
+            .unwrap_or_else(|| panic!("should parse: {literal}"))
+            .elements
+            .into_iter()
+            .map(|e| e.map(Cow::into_owned))
+            .collect()
     }
 
     #[test]

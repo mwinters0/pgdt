@@ -2944,7 +2944,7 @@ FIGURES: list[Figure] = [
         quoted_by=(
             "docs/design/roadmap-P7-scan-performance.md",
         ),
-        section="Nested decode costs what it copies, and an element is an allocation",
+        section="Nested decode costs what it copies, and an element is now a borrowed slice",
         stage="criterion",
         depends=("pgdump_query/src/nested.rs", "pgdump_query/benches/decoders.rs"),
         run=run_nested_decode_micro,

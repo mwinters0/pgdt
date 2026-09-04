@@ -2172,6 +2172,17 @@ Three properties are load-bearing and easy to lose:
   `(,)` both have absent bounds; only the flag separates them. A bound is never
   SQL NULL, so `None` unambiguously means unbounded and `Some("")` is the
   empty-string bound.
+- **An array element borrows from the literal unless it carried an escape.**
+  `ArrayLiteral::elements` is `Vec<Option<Cow<'_, str>>>`, and `scan_quoted`
+  looks for the closing quote before it copies anything: a token holding a `\`
+  or a doubled `""` falls into a second pass that rebuilds it, and every other
+  token — quoted or bare — is a slice of the field. `array_out` quotes far
+  more elements than it escapes, since a space or a separator is enough to
+  force quoting and neither needs undoing, so the borrowed arm is the common
+  one. It is asserted on the arm rather than on the text, because `Cow`'s
+  equality cannot tell the two apart
+  ([`measurements.md`](measurements.md), "Nested decode costs what it
+  copies").
 
 **`int2vector` is the fourth form and it shares none of that machinery** —
 which is the point rather than an omission. `int2vectorout` writes `int16`s
@@ -4541,10 +4552,24 @@ premise holds up in the same profile: `GenericByteViewArray::value` and the
 copies field bytes.
 
 **Nested columns move the weight into the codec, not out of the CLI.** On the
-`--arrays --composite` file the typed profile reads `print_batch` 51.4% and
-`poll_next` 46.8%, with `nested::decode_array` 17.0% under `append_typed`'s
-30.8% and `nested::needs_quote` 8.8% under `render_field` — the write-back
-re-quoting each element.
+`--arrays --composite` file the typed profile reads `print_batch` **59.1%** and
+`poll_next` **40.4%**, with `nested::decode_array` **15.5%** under
+`append_typed`'s 28.8% and `nested::needs_quote` **14.1%** — that last one now
+the largest single symbol in the run, and split roughly evenly between the two
+directions: `push_token` re-quoting each element on the way out, and
+`scan_token` rejecting an element `array_out` would have quoted on the way in.
+
+**The codec no longer allocates per element**, which is what moved those
+shares: an array element is a borrowed slice of the field unless it carried an
+escape ("The nested literal codec"). Measured on the same file and shape, a
+whole `pgdq query --schema-mode typed` fell **176.38 G → 165.37 G user
+instructions**, −6.2%, and 19.02 → 17.40 s of user time, every one of three
+after reps below every before rep; the glibc allocation symbols all fall with
+it (`_int_malloc` 5.0% → 4.1%, `malloc` 3.7% → 2.4%, `cfree` 2.6% → 1.9%).
+Because more than half this shape's work is `print_batch`, which no library
+change touches, the library's own half moved by roughly twice that. The
+proportions above are their own sitting, taken with the change in hand rather
+than folded from the sweep's.
 
 <!-- section: insert-profile -->
 
