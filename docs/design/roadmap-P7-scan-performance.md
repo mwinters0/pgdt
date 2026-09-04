@@ -227,6 +227,7 @@ profile is read against.
 | **`needs_quote`'s per-byte `force_quote` scan** | 14.1% of a typed `--arrays --composite` run, of which **10.1% is `memchr` inside `slice_contains`** — `force_quote` is a `&'static [u8]`, so every byte of every token costs a linear walk of a 4–6 byte slice. Split 5.28% decode (`scan_token`) and 4.82% render (`push_token`), which are the same predicate reached from two directions |
 | **Scalar decode and the typed column build** | 2.61 µs/row of the library's 4.06 on a typed control read — `append_typed` 1.66 and `decode_field` 0.95, which is 2.13 s of the 9.81 s of user time; the builder half is the larger and exceeds the whole typed premium over `strings` |
 | **`render_bytea`'s and `render_uuid`'s per-byte `format!`** | **37.75% of a typed control query** — `render_bytea` 27.34% and `render_uuid` 10.41%, inclusive, under a `render_field` at 60.01% and making up nearly all of a `format_inner` bucket of **42.68%**, which is the largest single bucket in the run and larger than the whole of `poll_next` at 27.74%. Each renders one `format!`-and-allocate per byte of the value: **85 allocations a row against the 16 the rest of `render_field` costs**. Two limits: the shares are a property of the control's 64-byte `bytea` and 16-byte `uuid` columns, and both are **zero** under `--schema-mode strings` and for an embedder consuming `RecordBatch`es |
+| **The per-value renderers' `core::fmt` cost, and the `render_field` sink** | **11.81% of a typed control query** for `render_timestamp_micros` alone, with `render_decimal`, `render_f64`, `render_time64_micros` and `render_date32` each under 3% — what is left of a `format_inner` bucket still at 20.68% once the hex pair table has gone. A `format!("{out_year:04}-{m:02}-{d:02} …")` drives `Formatter::pad_integral` once per zero-padded field, and `format_hms_frac` allocates twice more. Unlike the row above, the share is the **realistic** case rather than the favourable one: the control's three date/time columns draw their microsecond component uniformly, on the evidence that koji's `task.create_time` holds no value with an empty fraction. Same beneficiary limit as the row above — zero under `--schema-mode strings`, zero for an embedder, no `parse` figure moves |
 | **A viewing builder for `List<Utf8View>`** | to be re-derived: the profile puts the whole library batch stream at 33.7% of a typed read, so the Arrow build's share is bounded well below the 7.3 µs/row this row once claimed |
 | **The mapping pass's double read** | exactly one extra pass — 2.0000× the file's bytes with `--dqcache none`, 1.0000× with a cache |
 | **`attach_text`'s O(blocks × DDL) re-slice** | nothing: zero samples in a 100,000-sample profile of a 4000-block `parse` |
@@ -253,6 +254,20 @@ inverse of, and the phase publishes `query --schema-mode typed` figures
 (`cross-file-floor`, `nested-end-to-end`, `allocator`) that carry the cost.
 Reasoning: [`../status/history/2026-09-04.md`](../status/history/2026-09-04.md),
 "The render-back's per-byte `format!` is admitted as a lever".
+
+**The row below it is that row's own scheduled re-ask, and it carries the sink
+the earlier row refused.** The refusal was conditional and said so — the sink's
+prize is whatever the per-value renderers leave, and nobody had measured it —
+with the trigger written down: re-asked when that row's profile is re-read, or
+not at all. It was re-read, and the number came back. The two are **one** row
+rather than two because neither collects the prize alone: `render_field` returns
+a `String` per field and each date/time renderer allocates its own before
+returning it, so a sink alone still pays every internal allocation and adds a
+copy, while hand-rolled zero-padding alone removes `pad_integral` and still
+allocates per value. They share one public-signature change and one review
+question — does the render path still produce identical text. Reasoning:
+[`../status/history/2026-09-04.md`](../status/history/2026-09-04.md), "The
+per-value renderers are admitted as one lever, and the sink comes with them".
 
 **Four rows aim inside `poll_next`, and the per-row budget says they do not
 overlap.** [`architecture.md`](architecture.md), "The library's own per-row
@@ -456,14 +471,22 @@ the plan slipping. This is the exception [`../process.md`](../process.md)'s
 "Slice numbering" names: the general rule fixes slice order at spec time, and
 an evidence-led phase cannot, because the evidence is what orders the work.
 
-**Four orderings bind, and they are the whole of it.** The **allocator
+**Five orderings bind, and they are the whole of it.** The **allocator
 decision before the wrap sweep**, because an allocator adopted after a figure is
 taken invalidates that figure; `7.13.1` ahead of `7.6` and `7.7.1`, because those
-two rework how a row is walked inside the buffer `7.13.1` replaces; and `7.15`
-and `7.14` each ahead of `7.12`, for the allocator's reason rather than their
-own — four of the sweep's thirteen tables time a typed query, and taking them
-over a path about to lose most of its largest bucket would leave them describing
-a binary that is no longer shipped, with no sweep left to repair them.
+two rework how a row is walked inside the buffer `7.13.1` replaces; and `7.15`,
+`7.14` and `7.16` each ahead of `7.12`, for the allocator's reason rather than
+their own — four of the sweep's thirteen tables time a typed query, and taking
+them over a path about to lose most of its largest bucket would leave them
+describing a binary that is no longer shipped, with no sweep left to repair them.
+
+**That last clause has now bound three times, which makes it a property of this
+phase rather than a coincidence of three rows.** An evidence-led phase admits
+rows from its own profiles as it runs, the profiled path is the typed query, and
+four of the sweep's tables time exactly that — so *any* row admitted after spec
+time against a typed-query profile lands ahead of `7.12` by construction, and
+`7.12` is last for as long as the profile keeps yielding rows. Read it as the
+standing rule and not as three special cases.
 
 `7.14`'s clause was added late and the count with it. `7.15`'s admission wrote
 this paragraph while `7.14` was already on the page, and reasoned about the
@@ -507,6 +530,7 @@ when it runs.
 | **7.13.1** | **The copy into each read loop's own buffer**, over all three loops, with the query path's chunk retention settled explicitly. **Earned, not planned**: the row above paired a contained change to one module with a rework of three already-tested scan loops, which is two review cycles and not one, and the seam was only visible from inside. Reviewed alone, and ahead of 7.6 and 7.7.1, which both rework how a row is walked inside the buffer this replaces. Reasoning: [`../status/history/2026-09-03.md`](../status/history/2026-09-03.md). |
 | **7.10.1** | **The typed column build** — the builder-append half, `append_typed`'s dispatch and the Arrow appends under it, and the `List<Utf8View>` reading 7.11's gate is read from. **Earned, not planned**: the row above named its own seam — a `decode.rs` half and a builder-append half — and the two ask different review questions, *is this decoder still the function it was* against *is this rework of the batch builder correct*. The decode half is pure functions with an oracle to check against; the build half edits the batch layer three slices of this phase have already reworked. Reasoning: [`../status/history/2026-09-04.md`](../status/history/2026-09-04.md). |
 | **7.14** | **`Syntax::force_quote` as a `const` 256-bit set**, one indexed bit per byte in place of the linear `contains`. **Admitted after spec time**, on the same terms as 7.13 — a row the profile found that this table did not name. It reaches decode and render in one change, because `scan_token` and `push_token` share the predicate, and it changes `needs_quote`'s truth table not at all. **The fusion of `scan_token`'s terminator walk with `needs_quote` is not admitted**: its prize is whatever this row leaves, which nobody has measured. Re-takes `nested-decode-micro` and re-reads the library's per-row budget. Reasoning: [`../status/history/2026-09-04.md`](../status/history/2026-09-04.md). |
+| **7.16** | **The date and time renderers, and the `render_field` sink** — hand-rolled zero-padding in place of `format!`, writing through a `render_field_into(&mut String)` that lets `print_batch` build a row in one buffer instead of collecting a `String` per field. **Admitted after spec time**, on the same terms as 7.13, 7.14 and 7.15. **It is 7.15's own scheduled re-ask, not a reversal**: that row refused the sink because its prize was whatever the per-value renderers left and nobody had measured it, with the trigger written as *re-asked when this row's profile is re-read, or not at all* — and 7.15's notes doc re-read it. **One row, not two**, because neither half collects the prize alone: each renderer allocates internally before returning, so a sink alone adds a copy, and hand-rolled padding alone still allocates per value. They share one review question — does the render path emit identical text — answered by one differential corpus over both halves. Ordered ahead of 7.12, for the allocator's reason. **`render_decimal` and `render_f64` are out of scope**, named here so their omission is not read as an oversight: each is under 3%, and each is a different problem — `format_shortest`'s float algorithm and `numeric` digit-string surgery — needing its own correctness argument against `float8out`/`numeric_out` and, if it is worth taking, its own row. **Re-derives the count of what is left**: the 16 `String`s a row this table quotes for the rest of `render_field` is one-per-field and looks low, since the four date/time columns appear to account for nine alone. `predicate.rs`'s `comparison_form` calls these renderers once per term per query and is in the blast radius, not in the stake. Reasoning: [`../status/history/2026-09-04.md`](../status/history/2026-09-04.md), "The per-value renderers are admitted as one lever, and the sink comes with them". |
 | **7.15** | **A hex-pair table for `render_bytea` and `render_uuid`**, written into one pre-sized `String` in place of a `format!`-and-allocate per byte — the render-direction counterpart to `HEX_NIBBLE`, and the same shape of change 7.10 made to their decoding halves. **Admitted after spec time**, on the same terms as 7.13 and 7.14 — a row the profile found that this table did not name. Ordered ahead of 7.12, for the allocator's reason. **The `render_field` sink is not admitted**: `render_field` returns a `String` per field and a `render_field_into` would remove 16 allocations a row across every column, but at 85 per-byte allocations a row against those 16 its prize is whatever this row leaves, which nobody has measured — the same refusal 7.14 makes of the fusion. Owes **no** figure re-take and **no** re-read of the library's per-row budget: `benches/decoders.rs`'s `uuid`/`bytea` groups already bench these two and feed no registered figure, and `render_field` is outside `poll_next`, which is what the budget splits. It does owe a re-statement of [`architecture.md`](architecture.md)'s `query-profile` section, whose heading states the finding this row is aimed at. Reasoning: [`../status/history/2026-09-04.md`](../status/history/2026-09-04.md). |
 
 ## What this phase is not: parallelism is P16

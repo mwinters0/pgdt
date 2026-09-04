@@ -509,6 +509,14 @@ repair them.
       positions. **No `unsafe`**, and the shape was chosen by measuring three of
       them. Notes:
       [`../design/roadmap-P7.15-hex-pair-table-notes.md`](../design/roadmap-P7.15-hex-pair-table-notes.md)
+- [ ] **7.16** The date and time renderers, and the `render_field` sink —
+      hand-rolled zero-padding in place of `format!`, written through a
+      `render_field_into(&mut String)` so `print_batch` builds a row in one
+      buffer. **Admitted after spec time**, and it is 7.15's own scheduled
+      re-ask rather than a reversal: `render_timestamp_micros` is **11.81%** of
+      a typed control profile, the four others under 3% each. One row, not two —
+      neither half collects the prize alone. `render_decimal` and `render_f64`
+      are out of scope. **Ahead of 7.12**, on the same reason 7.14 and 7.15 were.
 
 ## Not started
 
@@ -679,26 +687,5 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-**The date and time renderers are now the largest `core::fmt` consumer on the
-render path, and 7.15 did not admit them as a lever.** With the hex pair table
-in, `alloc::fmt::format::format_inner` is still **20.68%** of a typed control
-profile, and its largest single contributor is `render_timestamp_micros` at
-**11.81%** — a `format!("{out_year:04}-{m:02}-{d:02} …")` driving
-`Formatter::pad_integral` once per zero-padded field, which is the same shape of
-cost 7.15 just removed and is unchanged in absolute terms.
-`render_decimal`, `render_f64`, `render_time64_micros` and `render_date32`
-follow, each under 3%. **The decision is whether P7 admits it as a row**, and
-the reason it is filed rather than taken is
-[`../design/roadmap-P7-scan-performance.md`](../design/roadmap-P7-scan-performance.md),
-"The levers": admitting a lever means amending the spec's table, which an
-unattended session may not do. What follows from admitting it: it would have to
-run **before 7.12**, for the reason 7.14 and 7.15 did — it moves the same four
-typed-query tables, and there is no sweep after the sweep to repair them. What
-follows from declining it: 7.12 takes the tables as they stand and the
-render-back stays roughly half of a typed `pgdq query`, which is a CLI cost and
-reaches no embedder. Reading:
-[`../design/roadmap-P7.15-hex-pair-table-notes.md`](../design/roadmap-P7.15-hex-pair-table-notes.md),
-"What the profile says now".
 
 

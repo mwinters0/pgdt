@@ -2080,8 +2080,9 @@ stop sharing one reading of the text, which is what makes them agree on what a
 renderers are the only per-*byte* loops going the other way, and both knew their
 whole output length before they started while allocating a `String` per byte
 anyway: `format!("{b:02x}")` for each byte of a `bytea` and each of a `uuid`'s
-sixteen, which on the control is 64 and 21 allocations a row against 16 for the
-whole rest of `render_field`. What replaced them is `HEX_PAIRS` — the 256
+sixteen, which on the control is 64 and 21 allocations a row against roughly 16
+for the whole rest of `render_field` — a count taken as one `String` per field
+and, per the paragraph below, low. What replaced them is `HEX_PAIRS` — the 256
 lowercase pairs end to end as one `&'static str`, `HEX_NIBBLE`'s counterpart in
 the render direction — so a byte is an indexed
 two-byte slice and a `push_str`, and the UTF-8 conversion happens once at
@@ -2091,13 +2092,23 @@ over the control falls **89.725 G → 49.074 G user instructions**, −45.3%, wi
 adding a renderer**: `core::fmt` is an expensive way to write a fixed-width
 integer, and the cost is paid once per value of every rendered column.
 
-*Rejected: a `render_field_into(&mut String)` sink*, which would let
-`print_batch` write a whole row into one buffer instead of collecting a `String`
-per field. It removes 16 allocations a row across all columns, against the 85
-per-byte ones the hex pair table removed from two, and it changes a public
-signature; its prize is whatever the per-value renderers leave, which is a
-number nobody has taken. The same refusal the nested codec makes of the
-`scan_token` fusion, for the same reason.
+**What the pair table left behind is `core::fmt` in the date and time
+renderers**, and that is the render path's largest remaining cost:
+`format_inner` is still 20.68% of a typed control profile, of which
+`render_timestamp_micros` alone is **11.81%** — a
+`format!("{out_year:04}-{m:02}-{d:02} …")` driving `Formatter::pad_integral`
+once per zero-padded field, with `format_hms_frac` allocating twice more
+underneath it. `render_decimal`, `render_f64`, `render_time64_micros` and
+`render_date32` follow, each under 3%. `render_field` still returns a `String`
+per field and `print_batch` still collects a `Vec<String>` per row, so a
+`render_field_into(&mut String)` sink would write a whole row into one buffer
+instead; it changes a public signature, and it is worth taking only together
+with the renderers, since each of them allocates internally before returning and
+a sink alone would add a copy on top. Both are the scan-performance work's to
+take, and the count of what is left to remove — quoted here and in the lever
+table as 16 `String`s a row for the rest of `render_field` — is re-derived when
+it is, since the four date/time columns appear to account for nine of those on
+their own.
 
 The equivalence to the shapes these replaced is asserted rather than argued:
 `decode.rs`'s `differential` tests keep the previous implementations verbatim
