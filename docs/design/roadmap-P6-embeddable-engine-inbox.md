@@ -350,8 +350,11 @@ differently changes what the promise would say.
 **34.0%** of a `strings` query's user time and **62.8%** of a typed one's, with
 `batch::render_field` alone at 52.6% of the latter. An embedder consuming
 `RecordBatch`es pays none of it. Measured on the 3.00 GiB control: the library's
-own typed extraction is 4.06 µs a row against `strings`'s 2.48 — a factor of
-1.6, where the wall times a reader would quote show 2.4. The same figures also
+own typed extraction is **3.10 µs a row against `strings`'s 2.42** — a factor of
+1.3, where the wall times a reader would quote show 2.4. **Read that pair off
+the budget when P6 comes up rather than off this entry**, since every landing
+lever re-reads it: the same two numbers were 4.06 and 2.48 when this was filed,
+and one P7 slice moved the typed one by a quarter. The same figures also
 all run `--dqcache none`, so each one contains a full mapping pass and reads the
 file exactly twice (2.0000× its bytes, counted with `strace`); an embedder with
 a cache reads it once. Both are in

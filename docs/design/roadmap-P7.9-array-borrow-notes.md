@@ -85,12 +85,18 @@ Two things follow, and neither is this slice's to take.
   `nested.rs` that the lever table does not name, so it needs the spec
   amendment the phase's "a lever the profile finds" paragraph describes rather
   than being folded into a slice quietly.
-- **The render half is the CLI's**, reached through `render_field`, and no
-  library change removes it. It is the reason a whole-query number on this
-  shape understates a library-only one: `print_batch` is 59.1% of the run.
+- **The render half is library code too**, not the CLI's. `push_token` is in
+  `nested.rs` and 4.82% of the run is inside it; what the CLI decides is
+  *whether* rendering runs, not what a byte costs while it does — which is why
+  `7.14` reaches both directions in one change
+  ([`../status/history/2026-09-04.md`](../status/history/2026-09-04.md),
+  "`needs_quote` is admitted as a lever"). What *is* true is that a whole-query
+  number on this shape understates a library-only one: `print_batch` is 59.1%
+  of the run.
 
 **7.11's gate is unaffected by this slice.** The viewing builder is measured
-against 7.10's builder-append half on the arrays file, and `append_typed`'s
+against 7.10.1 — the builder-append half, which is its own slice as of 7.10's
+split — on the arrays file, and `append_typed`'s
 share barely moved (30.7% → 28.8%) — the allocation that went was under
 `decode_array`, not under the Arrow build.
 

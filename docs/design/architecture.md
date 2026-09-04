@@ -2054,6 +2054,35 @@ producing and consuming an unscaled integer digit string at a fixed scale,
 which `i128::from_str`/`i256::from_str` accept directly. `Int16/32/64` use
 `str::parse` directly in `batch.rs`, with no dedicated function.
 
+**A `decode_*` allocates only where its return type is an allocation.**
+`decode_bytea` owns a `Vec<u8>` and `decimal_unscaled_digits` a digit string
+because that is what they hand back; nothing else on the scalar path takes a
+`String` on the way to a fixed-size value. Three of them used to — `decode_uuid`
+collected the hyphen-stripped text, `parse_time_of_day` padded its fraction to
+six digits and parsed the result, and the digit string was built three times
+over — and each was a `malloc`/`free` pair per *field*, which is per row per
+column. What replaced them is arithmetic on the field's own bytes: a nibble
+table for the two hex decoders (`HEX_NIBBLE`, with validity accumulated across
+the value and tested once rather than branched on per byte), a multiply by a
+power of ten for the fractional seconds, and indices into `int_part`/`frac_part`
+for the unscaled digits. **Keep that property when adding a decoder**: the cost
+here is paid on every scalar column of every typed row, so an intermediate
+`String` in a decoder is a decision, not a detail.
+
+*Rejected: giving `batch.rs` an `i128` straight from the `numeric` text*, which
+would remove the last allocation on that arm. It moves the fixed-scale
+arithmetic into the builder, where `Decimal256` cannot follow it — `i256` has no
+`from_str_radix`-shaped constructor this could feed — so the two widths would
+stop sharing one reading of the text, which is what makes them agree on what a
+`numeric` field means.
+
+The equivalence to the shapes these replaced is asserted rather than argued:
+`decode.rs`'s `differential` tests keep the previous implementations verbatim
+and check the new ones against them over a generated corpus — a free-form one
+that exercises the rejecting branches, and a per-decoder one built to that
+decoder's own grammar and then damaged, because a random string is almost never
+a well-formed time of day.
+
 Non-obvious calendar and formatting facts, pinned as tests rather than left for
 a future reader to re-derive:
 
@@ -4472,6 +4501,17 @@ replaced it. The rows above are again left as taken; the budget below is
 re-derived from a fresh sitting, since that is the table the change is sized
 against.
 
+**The scalar decoders move one row and one row only, and it is the largest
+proportional move any slice has made to this table.** `batch::append_typed` was
+13.8% of the typed profile and is **7.48%** of a fresh one, because three of the
+decoders it calls stopped taking a `String` per field ("Decoders and
+render-back"); `decode_bytea`, the largest of them, falls from **3.75% to
+0.67%** of the run's user time and `decode_uuid` disappears below the profile's
+own floor. `strings` does not move at all — not "within the noise", but
+24.772 G user instructions on both sides — which is the control that says the
+change is confined to the typed path. The rows above are again left as taken;
+the budget below is the fresh sitting.
+
 **Two-thirds of a typed query is the CLI writing the values back out as
 text**, and 79% of the gap between the two modes is that one function: typed
 costs 6.24 s more than `strings`, of which 4.95 s is `print_batch` and 1.29 s
@@ -4485,7 +4525,7 @@ query at 31× the warm `dd` floor and a `strings` query at 13.3×
 ([`measurements.md`](measurements.md), "Scan throughput by input shape"), and
 those are `pgdq query` figures: an embedder that consumes `RecordBatch`es pays
 `poll_next` and nothing under `print_batch`. The library's own typed extraction
-is 4.04 µs a row against `strings`'s 2.50 — a factor of 1.6, not the factor of
+is 3.10 µs a row against `strings`'s 2.42 — a factor of 1.3, not the factor of
 2.4 the wall times show.
 
 #### The library's own per-row budget
@@ -4500,27 +4540,33 @@ numbers"). It is a set of proportions, so it carries no marker and is not a
 figure itself; a lever that lands re-reads it the same way it re-takes a table.
 
 Its own sitting, and a later one than the table above: the shares are from a
-pair of profiles of the shipped binary and the user times (3.25 s and 10.06 s,
+pair of profiles of the shipped binary and the user times (3.22 s and 9.10 s,
 medians of five) from the same binary and input without `perf` on it.
 
 | Per row, library only | `strings` | `typed` |
 |---|---|---|
-| `batch::append_typed` — the builder | — | **1.64 µs** |
-| `copy::RawRow::decode` — unescape, and the borrow | **1.04 µs** | **1.04 µs** |
-| the row split and walk inside `push_row` | **0.84 µs** | **0.73 µs** |
-| `copy::validated_prefix` — the bulk UTF-8 pass | 0.10 µs | 0.10 µs |
-| the stream and scan machinery around it | 0.52 µs | 0.52 µs |
-| **total (`poll_next`)** | **2.50 µs** | **4.04 µs** |
+| `batch::append_typed` — the builder, decoders included | — | **0.84 µs** |
+| `copy::RawRow::decode` — unescape, and the borrow | **1.06 µs** | **1.03 µs** |
+| the row split and walk inside `push_row` | **0.75 µs** | **0.66 µs** |
+| `copy::validated_prefix` — the bulk UTF-8 pass | 0.06 µs | 0.06 µs |
+| the stream and scan machinery around it | 0.55 µs | 0.51 µs |
+| **total (`poll_next`)** | **2.42 µs** | **3.10 µs** |
 
 Two things fall out of it that the percentages hide. **The decode and the field
 split are each about a microsecond a row and neither depends on the mode** —
 they are what `strings` spends nearly all of its time on, and they are
 unchanged when typing is switched on, so they are the only part of the library
-that a `strings` consumer can be made faster by. And **the builder is the
-largest single library bucket in `typed` mode**, larger than the decode it
-feeds: the typed premium over `strings` is 1.54 µs a row, and `append_typed`
-alone is 1.64, which is to say typing a row costs more in Arrow assembly than
-in parsing.
+that a `strings` consumer can be made faster by. And **the builder is no longer
+the largest library bucket**: the unescape is, in both modes. `append_typed`
+read 1.64 µs against the unescape's 1.04 until the scalar decoders it calls
+stopped allocating per field ("Decoders and render-back"), which took a typed
+`pgdq query` over the control from **95.046 G to 90.719 G user instructions**,
+−4.55%, every after rep below every before rep, with a `strings` query
+unmoved at 24.772 G — the control that says the change is confined to the typed
+path. Typing a row now costs less in Arrow assembly
+than in parsing, which reverses what this paragraph said for as long as the
+builder's bucket carried three `malloc`/`free` pairs per row that were not the
+builder's.
 
 **The split row is now shared, and this budget is still the unfiltered one.**
 A row's boundaries are found once and read by the filter's terms as well as by

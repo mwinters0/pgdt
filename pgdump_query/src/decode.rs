@@ -18,8 +18,6 @@
 //! which is also decoded text, for exactly this reason; the on-disk-byte leg
 //! is covered separately in `tests/scan.rs`.
 
-use crate::copy::hex_val;
-
 /// `t`/`f`, COPY TEXT's boolean spelling.
 pub fn decode_bool(s: &str) -> Option<bool> {
     match s {
@@ -217,6 +215,10 @@ pub fn render_date32(days: i32) -> String {
     s
 }
 
+/// Powers of ten up to a microsecond, indexed by how many fractional digits
+/// a time-of-day literal is short of six.
+const POW10: [i64; 7] = [1, 10, 100, 1_000, 10_000, 100_000, 1_000_000];
+
 /// `HH:MM:SS[.ffffff]`, no offset. Returns whole seconds since midnight and
 /// the microsecond remainder separately, since callers need both a plain
 /// `Time64` value (`seconds*1_000_000 + micros`) and, for a timestamp, the
@@ -232,10 +234,15 @@ pub(crate) fn parse_time_of_day(s: &str) -> Option<(i64, i64)> {
     if parts.next().is_some() || frac.len() > 6 || !frac.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
-    let mut frac_digits = frac.to_string();
-    frac_digits.push_str(&"0".repeat(6 - frac_digits.len()));
-    let micros: i64 = if frac_digits.is_empty() { 0 } else { frac_digits.parse().ok()? };
-    Some((h * 3600 + mi * 60 + se, micros))
+    // `frac` is checked above to be at most six ASCII digits, so padding it
+    // to six and parsing the result — which is what this replaces, at two
+    // allocations per field — is exactly a scale by a power of ten: `.5` is
+    // 500000 µs, `.000001` is 1.
+    let mut micros: i64 = 0;
+    for b in frac.bytes() {
+        micros = micros * 10 + i64::from(b - b'0');
+    }
+    Some((h * 3600 + mi * 60 + se, micros * POW10[6 - frac.len()]))
 }
 
 /// The exact inverse of [`parse_time_of_day`]'s micros-since-midnight value —
@@ -539,17 +546,50 @@ pub fn render_interval(months: i32, days: i32, nanos: i64) -> Option<String> {
     Some(out)
 }
 
+/// Nibble value per byte, `BAD_NIBBLE` for anything that is not a hex digit.
+/// The two hex decoders below are the only per-*byte* loops on the typed
+/// scalar path, so they read a table rather than branching through
+/// [`crate::copy::hex_val`]'s three ranges: a pair becomes two loads, a
+/// shift and an or, and validity is one bit test on the accumulated `or`.
+const HEX_NIBBLE: [u8; 256] = {
+    let mut table = [BAD_NIBBLE; 256];
+    let mut b = 0usize;
+    while b < 256 {
+        table[b] = match b as u8 {
+            d @ b'0'..=b'9' => d - b'0',
+            d @ b'a'..=b'f' => d - b'a' + 10,
+            d @ b'A'..=b'F' => d - b'A' + 10,
+            _ => BAD_NIBBLE,
+        };
+        b += 1;
+    }
+    table
+};
+
+/// Out of a nibble's range, and out of the low four bits, so `hi | lo` of a
+/// pair carries "either was bad" in its high nibble.
+const BAD_NIBBLE: u8 = 0xFF;
+
 /// Canonical `8-4-4-4-12` hex form, case-insensitive on input (PostgreSQL
 /// always dumps lowercase, but nothing forces that on a hand-edited fixture).
+///
+/// Hyphens are dropped wherever they fall and exactly 32 hex digits must
+/// remain — the same rule as the `chars().filter().collect::<String>()` this
+/// replaces, without that string: `-` is ASCII, so dropping it from the
+/// bytes and dropping it from the chars leave the same sequence, and a
+/// non-ASCII byte is not a hex digit either way.
 pub fn decode_uuid(s: &str) -> Option<[u8; 16]> {
-    let clean: String = s.chars().filter(|c| *c != '-').collect();
-    if clean.len() != 32 {
-        return None;
-    }
-    let b = clean.as_bytes();
+    let mut nibbles = s.bytes().filter(|b| *b != b'-');
     let mut bytes = [0u8; 16];
-    for (i, byte) in bytes.iter_mut().enumerate() {
-        *byte = (hex_val(b[i * 2])? << 4 | hex_val(b[i * 2 + 1])?) as u8;
+    let mut bad = 0u8;
+    for byte in &mut bytes {
+        let hi = HEX_NIBBLE[nibbles.next()? as usize];
+        let lo = HEX_NIBBLE[nibbles.next()? as usize];
+        bad |= hi | lo;
+        *byte = hi << 4 | lo;
+    }
+    if bad & 0xF0 != 0 || nibbles.next().is_some() {
+        return None;
     }
     Some(bytes)
 }
@@ -572,13 +612,23 @@ pub fn render_uuid(bytes: &[u8; 16]) -> String {
 /// docs).
 pub fn decode_bytea(s: &str) -> Option<Vec<u8>> {
     let hex = s.strip_prefix("\\x")?;
-    if hex.len() % 2 != 0 {
+    let b = hex.as_bytes();
+    if b.len() % 2 != 0 {
         return None;
     }
-    let b = hex.as_bytes();
-    let mut out = Vec::with_capacity(hex.len() / 2);
-    for i in (0..b.len()).step_by(2) {
-        out.push((hex_val(b[i])? << 4 | hex_val(b[i + 1])?) as u8);
+    // The whole field is one `bytea` value, so validity is accumulated and
+    // tested once rather than branched on per pair; a bad nibble poisons the
+    // high bits of `bad` and the vector is dropped unread.
+    let mut out = Vec::with_capacity(b.len() / 2);
+    let mut bad = 0u8;
+    for [first, second] in b.as_chunks::<2>().0 {
+        let hi = HEX_NIBBLE[*first as usize];
+        let lo = HEX_NIBBLE[*second as usize];
+        bad |= hi | lo;
+        out.push(hi << 4 | lo);
+    }
+    if bad & 0xF0 != 0 {
+        return None;
     }
     Some(out)
 }
@@ -625,24 +675,51 @@ pub fn decimal_unscaled_digits(s: &str, scale: i8) -> Option<String> {
     {
         return None;
     }
-    let digits = format!("{int_part}{frac_part}");
+    // `int_part ++ frac_part` is the digit string, and it is never
+    // materialized: `digit(i)` indexes into whichever half `i` falls in, so
+    // the whole of what follows — drop `cut` trailing digits, trim leading
+    // zeros, append `pad` — is arithmetic on indices and the answer is
+    // written once, into a `String` of its final length.
+    let total = int_part.len() + frac_part.len();
+    let digit = |i: usize| {
+        if i < int_part.len() {
+            int_part.as_bytes()[i]
+        } else {
+            frac_part.as_bytes()[i - int_part.len()]
+        }
+    };
     let shift = i32::from(scale) - frac_part.len() as i32;
-    let unscaled = if shift >= 0 {
-        format!("{digits}{}", "0".repeat(shift as usize))
+    let (keep, pad) = if shift >= 0 {
+        (total, shift as usize)
     } else {
         let cut = (-shift) as usize;
-        if cut > digits.len() {
+        if cut > total {
             return None;
         }
-        let (keep, dropped) = digits.split_at(digits.len() - cut);
-        if !dropped.bytes().all(|b| b == b'0') {
+        let keep = total - cut;
+        // The digits divided out have to be the zeros the typmod implies; a
+        // non-zero among them means the text is not a value of this column.
+        if (keep..total).any(|i| digit(i) != b'0') {
             return None;
         }
-        keep.to_string()
+        (keep, 0)
     };
-    let unscaled = if unscaled.is_empty() { "0" } else { unscaled.trim_start_matches('0') };
-    let unscaled = if unscaled.is_empty() { "0" } else { unscaled };
-    Some(if neg && unscaled != "0" { format!("-{unscaled}") } else { unscaled.to_string() })
+    let mut start = 0;
+    while start < keep && digit(start) == b'0' {
+        start += 1;
+    }
+    // All-zero digits collapse to `"0"` whatever the padding would have
+    // been, and carry no sign: `-0.00` at scale 2 is `0`, not `-000`.
+    if start == keep {
+        return Some("0".to_string());
+    }
+    let mut out = String::with_capacity(usize::from(neg) + keep - start + pad);
+    if neg {
+        out.push('-');
+    }
+    out.extend((start..keep).map(|i| char::from(digit(i))));
+    out.extend(std::iter::repeat_n('0', pad));
+    Some(out)
 }
 
 /// Render an unscaled decimal integer (`i128`/`i256`'s own `Display`, e.g.
@@ -968,5 +1045,301 @@ mod tests {
         let unscaled = decimal_unscaled_digits("1200", -2).unwrap();
         assert_eq!(unscaled, "12");
         assert_eq!(render_decimal(&unscaled, -2), "1200");
+    }
+}
+
+/// The four scalar decoders this module's allocation-free forms replaced,
+/// kept verbatim as the oracle they are checked against. A decoder that is
+/// asked to be exactly what it was is checked against what it was: the
+/// corpora below are generated rather than listed, so a disagreement on an
+/// input nobody thought to write down is a test failure and not a report
+/// from the field.
+#[cfg(test)]
+mod prior_shape {
+    use crate::copy::hex_val;
+
+    pub fn parse_time_of_day(s: &str) -> Option<(i64, i64)> {
+        let (hms, frac) = s.split_once('.').unwrap_or((s, ""));
+        let mut parts = hms.splitn(3, ':');
+        let h: i64 = parts.next()?.parse().ok()?;
+        let mi: i64 = parts.next()?.parse().ok()?;
+        let se: i64 = parts.next()?.parse().ok()?;
+        if parts.next().is_some() || frac.len() > 6 || !frac.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let mut frac_digits = frac.to_string();
+        frac_digits.push_str(&"0".repeat(6 - frac_digits.len()));
+        let micros: i64 = if frac_digits.is_empty() { 0 } else { frac_digits.parse().ok()? };
+        Some((h * 3600 + mi * 60 + se, micros))
+    }
+
+    pub fn decode_uuid(s: &str) -> Option<[u8; 16]> {
+        let clean: String = s.chars().filter(|c| *c != '-').collect();
+        if clean.len() != 32 {
+            return None;
+        }
+        let b = clean.as_bytes();
+        let mut bytes = [0u8; 16];
+        for (i, byte) in bytes.iter_mut().enumerate() {
+            *byte = (hex_val(b[i * 2])? << 4 | hex_val(b[i * 2 + 1])?) as u8;
+        }
+        Some(bytes)
+    }
+
+    pub fn decode_bytea(s: &str) -> Option<Vec<u8>> {
+        let hex = s.strip_prefix("\\x")?;
+        if hex.len() % 2 != 0 {
+            return None;
+        }
+        let b = hex.as_bytes();
+        let mut out = Vec::with_capacity(hex.len() / 2);
+        for i in (0..b.len()).step_by(2) {
+            out.push((hex_val(b[i])? << 4 | hex_val(b[i + 1])?) as u8);
+        }
+        Some(out)
+    }
+
+    pub fn decimal_unscaled_digits(s: &str, scale: i8) -> Option<String> {
+        if s == "NaN" {
+            return None;
+        }
+        let (neg, s) = match s.strip_prefix('-') {
+            Some(rest) => (true, rest),
+            None => (false, s),
+        };
+        let (int_part, frac_part) = s.split_once('.').unwrap_or((s, ""));
+        if int_part.is_empty() && frac_part.is_empty() {
+            return None;
+        }
+        if !int_part.bytes().all(|b| b.is_ascii_digit())
+            || !frac_part.bytes().all(|b| b.is_ascii_digit())
+        {
+            return None;
+        }
+        let digits = format!("{int_part}{frac_part}");
+        let shift = i32::from(scale) - frac_part.len() as i32;
+        let unscaled = if shift >= 0 {
+            format!("{digits}{}", "0".repeat(shift as usize))
+        } else {
+            let cut = (-shift) as usize;
+            if cut > digits.len() {
+                return None;
+            }
+            let (keep, dropped) = digits.split_at(digits.len() - cut);
+            if !dropped.bytes().all(|b| b == b'0') {
+                return None;
+            }
+            keep.to_string()
+        };
+        let unscaled = if unscaled.is_empty() { "0" } else { unscaled.trim_start_matches('0') };
+        let unscaled = if unscaled.is_empty() { "0" } else { unscaled };
+        Some(if neg && unscaled != "0" { format!("-{unscaled}") } else { unscaled.to_string() })
+    }
+}
+
+#[cfg(test)]
+mod differential {
+    use super::*;
+
+    /// A deterministic 64-bit LCG, so a failure is reproducible from the
+    /// seed alone and the corpus does not have to be committed.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            self.0 >> 11
+        }
+
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n as u64) as usize
+        }
+
+        fn pick(&mut self, from: &[u8]) -> char {
+            char::from(from[self.below(from.len())])
+        }
+    }
+
+    /// Bytes that reach a hex or digit loop: the valid ones, the ones that
+    /// sit just outside each accepted range, the separators the grammars
+    /// use, and one multi-byte character.
+    const ALPHABET: &[u8] = b"0123456789abcdefABCDEFgGxX-.:+ \\/`z@\x7f";
+
+    fn fuzz(seed: u64, len: usize, f: impl Fn(&str)) {
+        let mut rng = Rng(seed);
+        for _ in 0..20_000 {
+            let n = rng.below(len) + 1;
+            let mut s = String::new();
+            for _ in 0..n {
+                if rng.below(32) == 0 {
+                    s.push('é');
+                } else {
+                    s.push(rng.pick(ALPHABET));
+                }
+            }
+            f(&s);
+        }
+    }
+
+    /// The free-form corpus above almost never lands on a *well-formed*
+    /// literal — one in twenty thousand, for a time of day — so each decoder
+    /// also gets a corpus built to its own grammar and then perturbed, which
+    /// is where the accepting branches actually get exercised.
+    fn shaped(seed: u64, build: impl Fn(&mut Rng) -> String, f: impl Fn(&str)) {
+        let mut rng = Rng(seed);
+        for _ in 0..20_000 {
+            let s = build(&mut rng);
+            // Two thirds are left well-formed; the rest are damaged at one
+            // position, which is what puts a rejecting branch beside every
+            // accepting one.
+            let s = if rng.below(3) == 0 && !s.is_empty() {
+                let mut chars: Vec<char> = s.chars().collect();
+                let at = rng.below(chars.len());
+                chars[at] = if rng.below(16) == 0 { 'é' } else { rng.pick(ALPHABET) };
+                chars.into_iter().collect()
+            } else {
+                s
+            };
+            f(&s);
+        }
+    }
+
+    fn digits(rng: &mut Rng, count: usize) -> String {
+        (0..count).map(|_| rng.pick(b"0123456789")).collect()
+    }
+
+    #[test]
+    fn time_of_day_agrees_with_the_shape_it_replaced() {
+        let check =
+            |s: &str| assert_eq!(parse_time_of_day(s), prior_shape::parse_time_of_day(s), "{s:?}");
+        fuzz(1, 20, check);
+        shaped(
+            11,
+            |rng| {
+                let widths = [rng.below(3) + 1, rng.below(3) + 1, rng.below(3) + 1];
+                let h = digits(rng, widths[0]);
+                let mi = digits(rng, widths[1]);
+                let se = digits(rng, widths[2]);
+                let mut s = format!("{h}:{mi}:{se}");
+                // Zero fractional digits through eight: six is the limit, so
+                // the widths either side of it are both in the corpus.
+                let frac = rng.below(9);
+                if frac > 0 {
+                    s.push('.');
+                    s.push_str(&digits(rng, frac));
+                }
+                s
+            },
+            check,
+        );
+        // Every fractional width, which is what the multiply stands in for.
+        for (text, want) in [
+            ("00:00:00", 0),
+            ("00:00:00.5", 500_000),
+            ("00:00:00.05", 50_000),
+            ("00:00:00.005", 5_000),
+            ("00:00:00.0005", 500),
+            ("00:00:00.00005", 50),
+            ("00:00:00.000005", 5),
+            ("00:00:00.000000", 0),
+        ] {
+            assert_eq!(parse_time_of_day(text), Some((0, want)), "{text}");
+        }
+        assert_eq!(parse_time_of_day("00:00:00.0000005"), None);
+    }
+
+    #[test]
+    fn uuid_agrees_with_the_shape_it_replaced() {
+        let check = |s: &str| assert_eq!(decode_uuid(s), prior_shape::decode_uuid(s), "{s:?}");
+        fuzz(2, 40, check);
+        shaped(
+            22,
+            |rng| {
+                // 31, 32 or 33 hex digits, with hyphens scattered through
+                // them rather than only at the canonical four positions.
+                let count = 31 + rng.below(3);
+                let mut s = String::new();
+                for _ in 0..count {
+                    if rng.below(6) == 0 {
+                        s.push('-');
+                    }
+                    s.push(rng.pick(b"0123456789abcdefABCDEF"));
+                }
+                s
+            },
+            check,
+        );
+        // A canonical value, and the two ways to be the wrong length.
+        let canonical = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11";
+        assert!(decode_uuid(canonical).is_some());
+        assert_eq!(decode_uuid(&canonical[..35]), None);
+        assert_eq!(decode_uuid(&format!("{canonical}0")), None);
+        // Hyphens are dropped wherever they fall, which is what the byte
+        // filter has to keep doing.
+        assert_eq!(decode_uuid("-a0eebc999c0b4ef8bb6d6bb9bd380a11-"), decode_uuid(canonical));
+    }
+
+    #[test]
+    fn bytea_agrees_with_the_shape_it_replaced() {
+        let check = |s: &str| {
+            let escaped = format!("\\x{s}");
+            assert_eq!(decode_bytea(&escaped), prior_shape::decode_bytea(&escaped), "{escaped:?}");
+            assert_eq!(decode_bytea(s), prior_shape::decode_bytea(s), "{s:?}");
+        };
+        fuzz(3, 24, check);
+        // Both parities of length, including the empty `\x`.
+        shaped(
+            33,
+            |rng| {
+                let count = rng.below(17);
+                (0..count).map(|_| rng.pick(b"0123456789abcdefABCDEF")).collect()
+            },
+            check,
+        );
+    }
+
+    #[test]
+    fn numeric_agrees_with_the_shape_it_replaced() {
+        for scale in [-3i8, -1, 0, 1, 2, 6, 10] {
+            let check = |s: &str| {
+                assert_eq!(
+                    decimal_unscaled_digits(s, scale),
+                    prior_shape::decimal_unscaled_digits(s, scale),
+                    "{s:?} at scale {scale}"
+                );
+            };
+            fuzz(u64::from(scale.unsigned_abs()) + 4, 16, check);
+            shaped(
+                u64::from(scale.unsigned_abs()) + 44,
+                |rng| {
+                    // Leading zeros, all-zero values and both signs, since
+                    // the trim, the collapse to `"0"` and the sign are the
+                    // three places the rewrite could disagree.
+                    let mut s = String::new();
+                    if rng.below(3) == 0 {
+                        s.push('-');
+                    }
+                    let int = rng.below(6);
+                    let frac = rng.below(12);
+                    if rng.below(4) == 0 {
+                        s.push_str(&"0".repeat(int + frac));
+                        if frac > 0 {
+                            s.insert(s.len() - frac, '.');
+                        }
+                        return s;
+                    }
+                    s.push_str(&digits(rng, int));
+                    if frac > 0 || rng.below(2) == 0 {
+                        s.push('.');
+                        s.push_str(&digits(rng, frac));
+                    }
+                    s
+                },
+                check,
+            );
+        }
     }
 }

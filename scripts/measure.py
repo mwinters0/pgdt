@@ -1878,6 +1878,15 @@ MAP_BUILD = (*MAP, "pgdump_query/src/stream.rs")
 #: nothing in the register was moved by this file and nothing declared it --
 #: which is the same shape of blindness the read path had before `READ`.
 PREDICATE = ("pgdump_query/src/predicate.rs",)
+#: Per-type scalar decode and render-back. Its own mechanism rather than part
+#: of `NESTED`, because the figures it moves are not the ones `NESTED` moves:
+#: every figure that runs a *typed* query pays it on every scalar column,
+#: including `projection-widths`, whose narrow rows have no nested column in
+#: them at all. Undeclared until the scalar decoders lost their per-field
+#: allocations, which is the third instance of the blindness `READ` and
+#: `PREDICATE` record: a file nothing declared because no slice had yet
+#: touched it.
+DECODE = ("pgdump_query/src/decode.rs",)
 CACHE = ("pgdump_query/src/cache.rs",)
 NESTED = ("pgdump_query/src/nested.rs", "pgdump_query/src/batch.rs")
 PREAMBLE = ("pgdump_query/src/index.rs", "pgdump_query/src/preamble.rs")
@@ -2853,7 +2862,7 @@ FIGURES: list[Figure] = [
         ),
         section="A typed query over nested columns costs 13.2 µs a row more than a string one",
         stage="warm",
-        depends=(*NESTED, *MAP, *READ, *QUERY_CLI, *GEN_PERF),
+        depends=(*NESTED, *DECODE, *MAP, *READ, *QUERY_CLI, *GEN_PERF),
         warm_inputs=("control", "composite", "arrays"),
         run=run_nested_end_to_end,
     ),
@@ -2878,7 +2887,7 @@ FIGURES: list[Figure] = [
         ),
         section="The cross-file subtraction bottoms out at about half a microsecond a row",
         stage="warm",
-        depends=(*NESTED, *READ, *QUERY_CLI, *GEN_PERF),
+        depends=(*NESTED, *DECODE, *READ, *QUERY_CLI, *GEN_PERF),
         warm_inputs=("control", "control43"),
         shares=(
             #: Consumed, not republished: row 1 is `_per_row_diffs` over the
@@ -2962,7 +2971,7 @@ FIGURES: list[Figure] = [
         ),
         section="What a column costs: five projection widths over one file",
         stage="warm",
-        depends=(*SCAN, *NESTED, *READ, *QUERY_CLI, *GEN_PERF),
+        depends=(*SCAN, *NESTED, *DECODE, *READ, *QUERY_CLI, *GEN_PERF),
         warm_inputs=("arrays",),
         run=run_projection_widths,
     ),
@@ -3004,6 +3013,7 @@ FIGURES: list[Figure] = [
             *SCAN,
             *MAP,
             *NESTED,
+            *DECODE,
             *READ,
             *QUERY_CLI,
             *GEN_PERF,

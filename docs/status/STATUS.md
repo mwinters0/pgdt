@@ -80,7 +80,10 @@ fast path is never entered, so those two slices left them doing the same work �
 but 7.13.1 changes how every chunk of every input is handed to the scanner, so
 there is no shape that escapes it. `nested-end-to-end`, `census-attribution` and
 `cross-file-floor` are additionally red on `pgdump_query-cli/src/`, from 7.3's
-`mod alloc;` and `--version` string. `session-drift` is red on
+`mod alloc;` and `--version` string, and the four typed-query figures —
+`nested-end-to-end`, `cross-file-floor`, `projection-widths` and `allocator` —
+are red on `pgdump_query/src/decode.rs` as of 7.10, on an edge that did not
+exist to be red before it. `session-drift` is red on
 `scripts/measure.py`: 7.3 added a real figure function there, 7.4 corrected
 three figures' declared paths, 7.13 added a fourth mechanism and fixed the
 allocator legs' build cache, `M48` declared the borrow graph the sweep now
@@ -121,6 +124,19 @@ which `SCAN` and `MAP_BUILD` already declared.
 named `pgdump_query/src/predicate.rs` — not blindness this time, since until
 7.7 no figure passed a filter and the file could not have moved one. `PREDICATE`
 exists as of that figure, and it is the only figure that declares it.
+
+**And a sixth arrived with 7.10, which is blindness again.**
+`pgdump_query/src/decode.rs` was declared by nothing, though every figure that
+runs a *typed* query pays a per-type decoder on every scalar column — so a slice
+that took a typed control query down 4.55% would have read green against all
+four of them. `DECODE` now exists and is declared by `nested-end-to-end`,
+`cross-file-floor`, `projection-widths` and `allocator`. It is not part of
+`NESTED`, because `projection-widths`'s narrow rows have no nested column in
+them and are moved by it all the same; and the figures it does *not* reach were
+checked one at a time rather than assumed — the throughput trio, the census pair,
+`chunk-size` and the map figures are `parse` and `dd` only, `predicate-terms` is
+`--schema-mode strings` throughout, and `nested-decode-micro` runs `cargo bench
+-- nested`, which filters out the scalar groups its bench file also holds.
 
 | Capability | State |
 |---|---|
@@ -369,11 +385,27 @@ unordered.
       same scanner, which still bought them 40% and is why the borrow stopped
       at the array. Notes:
       [`../design/roadmap-P7.9-array-borrow-notes.md`](../design/roadmap-P7.9-array-borrow-notes.md)
-- [ ] **7.10** Scalar decode and the typed column build, split by the profile
-      into a `decode.rs` half and a builder-append half.
+- [x] **7.10** Scalar decode — a `decode_*` now allocates only where its
+      return type is an allocation. `decode_uuid`'s hyphen-stripped `String`,
+      `parse_time_of_day`'s padded fraction and two of
+      `decimal_unscaled_digits`'s three digit strings are gone, and the two hex
+      decoders read a nibble table with validity accumulated across the value
+      instead of branching per byte. A typed control query falls **95.046 G →
+      90.719 G user instructions** (−4.55%), every after rep below every before
+      rep, while a `strings` one is **unmoved** at 24.772 G — the control that
+      says the change is confined to the typed path. **No behaviour change, and
+      it is asserted rather than argued**: the four previous implementations are
+      kept verbatim and checked against over a generated corpus, and each test
+      kills a mutation of the function it covers. `measure.py` gains `DECODE`,
+      the mechanism no figure declared. Notes:
+      [`../design/roadmap-P7.10-scalar-decode-notes.md`](../design/roadmap-P7.10-scalar-decode-notes.md)
+- [ ] **7.10.1** The typed column build — `append_typed`'s dispatch and the
+      Arrow appends under it, plus the `List<Utf8View>` reading 7.11's gate is
+      read from. **Earned**: 7.10's row named its own seam, and pure decoders
+      with an oracle are not one review with a rework of the batch layer.
 - [ ] **7.11** The viewing builder for `List<Utf8View>` — conditional on
-      7.10's builder-append half putting the `List<Utf8View>` build above
-      1 µs/row, last, reviewed alone.
+      7.10.1 putting the `List<Utf8View>` build above 1 µs/row, last, reviewed
+      alone.
 - [ ] **7.12** The sweep pair and the koji regression run, folded in, plus the
       written statement of what a parallel splitter needs from coverage and
       from the census, filed to P16.
@@ -410,13 +442,14 @@ unordered.
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 - **P7 is open**, grilled and sliced; the checklist above is its progress. Its
-  four evidence slices, the allocator reading, seven library changes and one
+  four evidence slices, the allocator reading, eight library changes and one
   measured refusal have landed — 7.4's gate in `stream.rs`, 7.5's `INSERT`
   statement scan in `preamble.rs`/`map.rs`, 7.13's read-buffer pool in
   `io.rs`, 7.13.1's read carry in `scan.rs`/`stream.rs`, 7.6's bulk UTF-8 pass
   in `copy.rs`/`stream.rs`, 7.7.1's shared field split across
-  `copy.rs`/`predicate.rs`/`batch.rs`/`stream.rs` and 7.9's borrowed array
-  element in `nested.rs`/`batch.rs`, all edits to timed paths,
+  `copy.rs`/`predicate.rs`/`batch.rs`/`stream.rs`, 7.9's borrowed array
+  element in `nested.rs`/`batch.rs` and 7.10's allocation-free scalar decoders
+  in `decode.rs`, all edits to timed paths,
   plus 7.8.1's `--chunk-size`, which changes no default and refuses the other
   two I/O levers. Six
   other phases are sketched and one more is
@@ -568,3 +601,26 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **`render_bytea` and `render_uuid` are a lever the table does not name, and
+  together they are a third of a typed run.** In a typed profile of the 3.00 GiB
+  control, `decode::render_bytea` is **27.34%** of the whole run and
+  `render_uuid` **10.41%**, under a `render_field` at 60.01%. Both are
+  `pgdump_query` functions: `render_bytea` does a `format!("{b:02x}")` — one
+  `String` allocation — per byte of the value, and `render_uuid` the same per
+  byte through five `collect::<String>()`s. A hex-pair table written into one
+  pre-sized `String` is the same shape of change 7.10 just made to their
+  decoding counterparts, contained to two functions in `decode.rs`, and larger
+  than anything 7.10 removed. **What is being decided is whether to amend the
+  lever table with a row for it.** The precedent points at yes and is why this
+  is worth a minute rather than a session: 7.14's admission already settled that
+  a render-side cost in the library is this phase's, in those words — "what the
+  CLI decides is *whether* rendering runs, not what a byte costs while it does"
+  ([2026-09-04](history/2026-09-04.md), "`needs_quote` is admitted as a lever").
+  What is different here is only that `render_field` is the *inverse* of the
+  row-extraction path the phase targets rather than part of it, and that the
+  cost is paid by `pgdq query` and by an embedder's own render-back rather than
+  by extraction. Filed rather than admitted because the spec reserves the
+  amendment to a review, not because the case is thin. Evidence:
+  [`../design/roadmap-P7.10-scalar-decode-notes.md`](../design/roadmap-P7.10-scalar-decode-notes.md),
+  "What the profile says next".
