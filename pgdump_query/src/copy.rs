@@ -258,6 +258,10 @@ pub struct RowSplit {
     /// Whether `ends` reaches the row's last field, so nothing more can be
     /// found.
     complete: bool,
+    /// The length of the row the boundaries above were found in, once
+    /// something has asked for one. Debug builds only — see [`Self::bind`].
+    #[cfg(debug_assertions)]
+    row_len: Option<usize>,
 }
 
 impl RowSplit {
@@ -267,6 +271,43 @@ impl RowSplit {
     pub fn restart(&mut self) {
         self.ends.clear();
         self.complete = false;
+        #[cfg(debug_assertions)]
+        {
+            self.row_len = None;
+        }
+    }
+
+    /// Tie the split to the row its boundaries belong to, in debug builds.
+    ///
+    /// The accessors take the row on every call and nothing in the types says
+    /// it is the row the ends were found in, so a missed [`Self::restart`]
+    /// would yield **in-range indices into the wrong row**: wrong fields,
+    /// wrong comparisons, wrong rows emitted, and no panic anywhere. That is
+    /// the failure mode the borrowed-slice design accepts in exchange for
+    /// having no `unsafe` in the split, and it is only acceptable because it
+    /// is a test failure rather than a silent answer — which is what this is.
+    ///
+    /// **A length, not the row's identity.** It is free (the accessors hold
+    /// `row.len()` already), it survives a row that moved, and it catches the
+    /// mistake in the shape it actually occurs: a `restart` missed on a row
+    /// path runs on every row of a block, and a block whose rows are all the
+    /// same length is not one any real dump is made of. What it does not catch
+    /// is a single equal-length pair, which is why this is a guard rather than
+    /// a proof.
+    #[inline]
+    fn bind(&mut self, row: &[u8]) {
+        #[cfg(debug_assertions)]
+        match self.row_len {
+            Some(len) => assert_eq!(
+                len,
+                row.len(),
+                "RowSplit read against a row of a different length than the one \
+                 its boundaries were found in — a `restart` was missed"
+            ),
+            None => self.row_len = Some(row.len()),
+        }
+        #[cfg(not(debug_assertions))]
+        let _ = row;
     }
 
     /// The range of field `index`, extending the split as far as it must and
@@ -281,6 +322,7 @@ impl RowSplit {
     /// already here, or one `memchr` away.
     #[inline]
     pub fn field(&mut self, row: &[u8], index: usize) -> Option<Range<usize>> {
+        self.bind(row);
         while !self.complete && self.ends.len() <= index {
             self.extend(row);
         }
@@ -298,6 +340,7 @@ impl RowSplit {
     /// replaces was `memchr` in a loop with the position in a register.
     #[inline]
     pub fn complete(&mut self, row: &[u8]) -> &[usize] {
+        self.bind(row);
         if !self.complete {
             let mut pos = self.ends.last().map_or(0, |end| end + 1);
             loop {
@@ -939,6 +982,41 @@ mod tests {
         assert_eq!(split.ends, vec![1, 3], "two boundaries, not five");
         assert_eq!(split.field(bytes, 4), Some(8..9));
         assert_eq!(split.ends, vec![1, 3, 5, 7, 9]);
+    }
+
+    /// A split read against a row it was not restarted for panics in a debug
+    /// build, in both accessors. Without this the mistake is in-range indices
+    /// into the wrong row and no error anywhere, which is the one failure the
+    /// borrowed-slice design has no type to prevent.
+    #[test]
+    #[cfg(debug_assertions)]
+    fn a_missed_restart_panics_in_a_debug_build() {
+        let first = b"aaa\tbbb";
+        let second = b"aa\tbb";
+
+        let mut split = RowSplit::default();
+        split.complete(first);
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| split.field(second, 0)))
+                .is_err(),
+            "`field` on an unrestarted split"
+        );
+
+        let mut split = RowSplit::default();
+        split.field(first, 0);
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                split.complete(second).len()
+            }))
+            .is_err(),
+            "`complete` on an unrestarted split"
+        );
+
+        // And a `restart` in between is the whole of what the guard asks for.
+        let mut split = RowSplit::default();
+        split.complete(first);
+        split.restart();
+        assert_eq!(split.field(second, 0), Some(0..2));
     }
 
     #[test]

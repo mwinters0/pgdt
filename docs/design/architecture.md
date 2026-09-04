@@ -2732,6 +2732,23 @@ when the branch to it never runs, because `push_field` stops being inlined into
 it, and neither did sharing one loop body behind a closure
 ([`roadmap-P7.7.1-shared-field-split-notes.md`](roadmap-P7.7.1-shared-field-split-notes.md)).
 
+**A `RowSplit` is bound to its row by an assertion, not by a type.** `field`
+and `complete` take the row on every call, so nothing in the signatures says it
+is the row the boundaries were found in: a missed `restart` yields **in-range
+indices into the wrong row** — wrong fields, wrong comparisons, wrong rows
+emitted, and no panic anywhere. That silent failure is the price of a split
+that holds offsets rather than borrows, and it is only affordable because a
+`#[cfg(debug_assertions)]` row length, checked in both accessors, turns the
+class into a `cargo test` failure. The guard is a **length**, which the
+accessors already hold, so it costs nothing in either build and survives a row
+that moved; what it does not catch is a single equal-length pair, and it does
+not need to — a missed `restart` sits on a row path and runs on every row of a
+block, and no real dump has a block whose rows are all one length. *Rejected:
+`unsafe` on the borrow, or a `RowSplit<'a>` that holds the row.* The first is
+what the offsets exist to avoid, and the second puts a lifetime on a buffer the
+replay reuses across every row of every block, which is the reuse the sharing
+is for.
+
 **A decode failure therefore surfaces only where evaluation reaches it**, so
 which rows error depends on where the term sits in the tree and on whether a
 `Not` sits above it. That is a property, not a defect: when `a=1 OR b<2`
