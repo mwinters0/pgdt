@@ -547,23 +547,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`pgdq --chunk-size` is new user surface, added so that the chunk-size
-  lever could be priced at all.** P7's spec says of that lever that
-  "`ScanOptions::chunk_size` already exposes this; the work is measuring the
-  right defaults per device class rather than adding a knob" — and the field
-  was exposed to *library* callers only, so the CLI the sweep times could not
-  vary it. The alternatives were a binary per size, built in a worktree with
-  the constant patched (the `pgdq-nocensus` precedent), or no measurement.
-  The flag was taken because it is the better-provenanced instrument — the
-  value is in every rep's recorded command line rather than in a build step
-  whose failure mode is six identical binaries and a flat table — and because
-  the spec's own next paragraph says "an operator can pick", which was not true
-  of anyone using the CLI. **What is being decided**: whether the flag stays
-  now that the figure says the default needs no change, or is removed as a knob
-  justified by a null result, taking the `chunk-size` figure's instrument with
-  it. Reversing it costs the figure its command shape and nothing else; pre-1.0
-  there is no compatibility question. Detail:
-  [`../design/roadmap-P7.8.1-io-defaults-notes.md`](../design/roadmap-P7.8.1-io-defaults-notes.md),
-  "The instrument is a flag, not a build per size".
-

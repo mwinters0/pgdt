@@ -42,6 +42,15 @@ const POOL_SLOTS: usize = 4;
 /// map and never again; holding one of those for the rest of a process would
 /// trade the flat ~9 MiB RSS this design is built around for an allocation
 /// nothing is going to ask for twice.
+///
+/// **Size stands in for one-off-ness, and a large chunk is caught by the
+/// proxy.** A chunk buffer at the configured size is asked for once per chunk
+/// for the whole scan, which is what the pool is for — but it is
+/// indistinguishable from a span read by length alone, so raising `ScanOptions::chunk_size` past
+/// this loses pooling entirely (`docs/design/architecture.md`, "Execution
+/// model and API surface"). Keeping a buffer whose length is the configured
+/// chunk size would fix it, and is queued as `M55` in
+/// `docs/design/roadmap.md`'s out-of-band ledger.
 const POOL_MAX_BYTES: usize = 8 << 20;
 
 /// Read buffers, reused rather than allocated per chunk.

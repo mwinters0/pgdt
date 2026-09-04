@@ -160,6 +160,21 @@ owns a cold `COPY` scan exceeds that floor by 8.9%
 the SATA SSD the same subtraction is ~1%; on the HDD the scan is device-bound
 by a factor of several.
 
+*Rejected:* removing `--chunk-size` once the sweep came back flat, on the
+grounds that a knob justified by a null result is surface nobody needs. Two
+things say otherwise. The flag **is** the figure's regeneration command, and a
+figure whose command is gone is deleted rather than kept — so removing it
+deletes the published evidence that 1 MiB is right, which `DEFAULT_CHUNK_SIZE`'s
+doc comment and the manual both cite and which cost a six-size, three-regime,
+nine-rep sitting. And the null result is scoped to the three device classes
+this project owns; a lever worth nothing on all of them is exactly what someone
+on unlike hardware needs in order to find out it is worth something there. It
+stays on both `parse` and `query`, because they are the same read path under
+the same `ScanOptions` and an asymmetry there would read as a defect rather
+than as restraint. *Also rejected:* keeping it but refusing values above the
+8 MiB pool ceiling, the way zero is refused — that would delete the figure's
+16 MiB row, which is the one that shows the cliff.
+
 *Rejected:* `posix_fadvise(POSIX_FADV_SEQUENTIAL | WILLNEED)` on the local
 backend. The chunk sweep is the experiment that answers it: a 16 MiB chunk is a
 deeper prefetch than a doubled readahead window, issued while the parser is
@@ -185,11 +200,25 @@ harder cannot recover what is already overlapped.
 A chunk larger than the 8 MiB the pool keeps is never returned to it, so every
 chunk becomes the fresh `calloc` the pool exists to remove — which is worth
 0.386 s → 0.825 s warm at 16 MiB against 8 MiB, **2.07×**, not a few
-percent. That is a property with
-a remedy the user already has (do not raise `--chunk-size` past 8 MiB), stated
-in the flag's help and in `DEFAULT_CHUNK_SIZE`'s own doc comment, since the
-constant is what a future session would move without knowing the ceiling was
-there.
+percent. The remedy the user has today is not to raise `--chunk-size` past
+8 MiB, and that is stated in the flag's help and in `DEFAULT_CHUNK_SIZE`'s own
+doc comment, since the constant is what a future session would move without
+knowing the ceiling was there.
+
+**The cliff is a size proxy, not a property of the read path**, and describing
+it as the latter is what let the remedy be a sentence rather than a fix. What
+`POOL_MAX_BYTES` is defending against is `attach_text`'s coalesced span read —
+one allocation, once per map, that nothing asks for twice. A chunk buffer at
+the configured size is the opposite of that: asked for once per chunk, for the
+whole scan. The pool cannot tell the two apart, so it discriminates by size and
+catches a deliberately large chunk as collateral — a caller who asked for
+16 MiB has already accepted 16 MiB of buffer and gets the memory *and* the
+`calloc`. Keeping a buffer whose length is the configured `chunk_size`, and
+keeping the ceiling for everything else, would remove the cliff at a bounded
+cost: `POOL_SLOTS` is 4, so a 16 MiB chunk could retain up to 64 MiB against
+the ~9 MiB above. That is queued as `M55` in
+[`roadmap.md`](roadmap.md)'s out-of-band ledger; `io.rs` is in the
+`chunk-size` figure's `depends`, so landing it re-takes that figure.
 
 **Two entry points, deliberately different in kind:**
 

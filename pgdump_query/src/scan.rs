@@ -468,6 +468,11 @@ impl ChunkCarry {
 /// [`ScanOptions::chunk_size`] is compared against, and because the
 /// measurement that chose it has to be able to name the value it chose.
 ///
+/// **It is public for callers that compare against or scale from the
+/// default**, which `ScanOptions::default().chunk_size` serves badly: it
+/// builds a whole options struct to read one number, and it is not a constant
+/// expression. The CLI's use of it is incidental to that.
+///
 /// **It sits below the read path's pool ceiling deliberately.** A chunk larger
 /// than `io::POOL_MAX_BYTES` is never kept by the buffer pool, so every chunk
 /// becomes a fresh zeroed allocation — the cost the pool exists to remove

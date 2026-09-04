@@ -30,18 +30,34 @@ this doc holds the apparatus, the two refusals and what they rest on.
 `ScanOptions::chunk_size` was a library field the CLI never passed, so the size
 could only be varied by building a binary per value — a worktree, a patched
 constant, and a build cache, on the `pgdq-nocensus` and `pgdq-before-throttle`
-precedents. A flag is the cheaper instrument and the better-provenanced one:
-the value is in the recorded command line of every rep, where the harness's own
-`raw.json` carries it, rather than in a build step whose failure mode is six
-identical binaries and a beautifully flat table.
+precedents. A flag is the cheaper instrument: the value is in the recorded
+command line of every rep, where the harness's own `raw.json` carries it,
+rather than in a build step.
+
+**It is not the better-provenanced one, and the first version of this
+paragraph said it was.** The failure mode a build per size is supposed to have
+— six identical binaries and a beautifully flat table — is one this project has
+already closed twice. The harness builds `pgdq-before-throttle` itself, in a
+temporary git worktree, and the `allocator` figure's three legs are
+interrogated with `pgdq --version` before being timed, precisely so that a leg
+that did not take cannot masquerade as a null result. A chunk-size constant
+could have been carried the same way. What the flag actually saved is the step
+that would have made the two equal: teaching `--version` to report the compiled
+chunk size. That is a real saving and a small one. **So the flag is not
+justified as a necessary instrument, and stands or falls on what it is worth to
+an operator.**
 
 It also discharges a sentence the spec already carried. "`ScanOptions::chunk_size`
 stays tunable and the per-device-class numbers are published, so an operator
 can pick" was not true of anyone using the CLI, which is every user this
-project has. **That is the half worth another look**, and it is flagged under
-`STATUS.md`'s "Decisions worth another look": the spec's lever bullet says the
-work is "measuring the right defaults per device class rather than adding a
-knob", and this slice added a knob in order to do the measuring.
+project has. That the slice added a knob in order to do the measuring, against
+a spec bullet saying the work was "measuring the right defaults per device
+class rather than adding a knob", was reviewed and the flag was kept — on
+operator value and on the figure, not on the instrument argument above.
+The reasoning is beside the mechanism
+([`architecture.md`](architecture.md), "Execution model and API surface") and
+the evidence is in [2026-09-04](../status/history/2026-09-04.md), "The
+chunk-size flag is reviewed and kept, and the cliff behind it is a proxy".
 
 *Rejected: an environment variable.* It is the same surface with none of the
 discoverability — `--help` would not carry it, so the only people who could
@@ -61,12 +77,33 @@ needed.
 boundary deliberately (8 MiB and 16 MiB rows), which is why the table can state
 it rather than leave a reader to assume the curve continues.
 
-This is a **property** of the read path, not a deficiency: the remedy is
-already the user's — do not set `--chunk-size` above 8 MiB — and the flag's own
-help text says so. It is written beside the mechanism
-([`architecture.md`](architecture.md), "Execution model and API surface") and
-in `DEFAULT_CHUNK_SIZE`'s own doc comment, because the constant is what a
-future session would move without knowing the ceiling was there.
+**It is not a property of the read path, and the first version of this
+paragraph called it one.** `POOL_MAX_BYTES`' own doc comment says what it is
+for: `attach_text`'s coalesced span read, which "happens once per map and never
+again", and which would trade the flat ~9 MiB RSS this design is built around
+"for an allocation nothing is going to ask for twice". A chunk buffer at the
+configured size is the exact opposite — asked for once per chunk, for the whole
+scan. **The pool filters by size as a proxy for one-off-ness**, and a
+deliberately large chunk buffer is caught as collateral: a caller who asked for
+16 MiB has already accepted 16 MiB of buffer, and gets the memory *and* the
+`calloc`, which is the worst of both.
+
+Calling it a property is what let the remedy be a sentence in `--help` rather
+than a fix, and "the remedy is already the user's" is circular — the hazard is
+the user's only because the flag put it there. What is true, and is what the
+docs should say, is narrower: **the ceiling is a size proxy the chunk buffer
+can walk off, the remedy today is not to set `--chunk-size` above 8 MiB, and a
+pool that kept a buffer whose length is the configured `chunk_size` would
+remove the cliff at a bounded, honest cost** — `POOL_SLOTS` is 4, so a 16 MiB
+chunk could retain up to 64 MiB against the ~9 MiB this design advertises.
+That trade is out-of-band work — it moves no published number, since every
+figure is taken at the default — and is admitted as `M55`
+([`roadmap.md`](roadmap.md)'s out-of-band ledger), with `Blocks` empty.
+
+Until it lands, every description states the behaviour as built, and the
+remedy in `--help` is still the real one. The characterization is filed in
+[`architecture.md`](architecture.md), "Execution model and API surface", and in
+`POOL_MAX_BYTES`' own doc comment, which is where a session would meet it.
 
 ## Nine reps, because five could not have resolved this
 
@@ -143,3 +180,13 @@ is already overlapped.
 parse CPU exceeded read time would reopen both schemes at once. That is not a
 deficiency and has no owner: it is a bound stated with its apparatus, and the
 thing that would promote it is hardware, not a decision.
+
+**Removing the flag would delete the figure with it.** The entry under
+`STATUS.md`'s "Decisions worth another look" prices removal as costing the
+`chunk-size` figure its command shape "and nothing else". That understates it:
+`CLAUDE.md`'s standing rule is that a figure whose regeneration command is gone
+should be deleted rather than kept, and the flag *is* that command. So removal
+deletes the published evidence that 1 MiB is right and that the lever is worth
+nothing — evidence `DEFAULT_CHUNK_SIZE`'s doc comment and the manual both cite,
+and which cost a six-size, three-regime, nine-rep sitting to get. That is the
+decisive cost on that side, and the entry did not name it.
