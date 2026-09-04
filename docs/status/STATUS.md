@@ -264,12 +264,21 @@ The phase's spec, its measured baseline and the lever table each row measures:
 **7.1 and 7.2 are ordered; the rest is allocation order, not schedule** — the
 phase follows the profile, so a slice landing out of numeric order is the plan
 working ([`../process.md`](../process.md), "Slice numbering", which carries the
-exception an evidence-led phase runs under). **All three orderings that bind are
+exception an evidence-led phase runs under). **Three orderings that bind are
 discharged**: the allocator decision before the wrap sweep, which 7.13 re-took
 and settled; `7.13.1` ahead of `7.6` and `7.7.1`, which rework how a row is
 walked inside the buffer it replaced; and `7.8` ahead of `7.8.1`, the figure
-that prices three levers before the levers themselves. What remains is
-unordered.
+that prices three levers before the levers themselves.
+
+**Two bind still, and both point the same way: `7.14` and `7.15` run before
+`7.12`.** Each moves a path the sweep's typed-query tables time, so taking those
+tables first would publish thirteen freshly-measured figures describing a binary
+that is no longer shipped, with no sweep left to repair them — the allocator's
+reason, reached by two more routes. `7.15` is the wider of the two, reaching
+every typed query that renders values back to text; `7.14` is the narrower,
+since `Syntax::force_quote` lives in `nested.rs` and so reaches the
+nested-bearing shapes — `nested-end-to-end` for certain, which is one of the
+thirteen. Everything else in the phase is unordered.
 
 - [x] **7.1** The profiling apparatus — `[profile.profiling]`, `perf`, and a
       `measure.py --profile-recipe` that prints the invocation on the
@@ -449,7 +458,14 @@ unordered.
 - [ ] **7.14** `Syntax::force_quote` as a `const` 256-bit set, replacing the
       linear `contains` that costs a 4–6 byte walk per token byte — 14.1% of a
       typed `--arrays --composite` run, decode and render together. **Admitted
-      after spec time**, from 7.9's profile.
+      after spec time**, from 7.9's profile. **Ahead of 7.12**, on 7.15's
+      reason rather than its own: the predicate lives in `nested.rs`, so it
+      reaches the sweep's nested-bearing typed tables — `nested-end-to-end` for
+      certain — which taking the sweep first would leave describing a binary
+      that is no longer shipped. 7.10.1 corroborated the reach from a second
+      direction: `memchr_naive` is **15.3%** of an isolated `text[]` run
+      against 14.1% on `--arrays --composite`, so the cost is not a property of
+      the composite column.
 - [ ] **7.15** A hex-pair table for `render_bytea` and `render_uuid`, in place
       of a `format!`-and-allocate per byte — 37.75% of a typed control query,
       and 85 of the 101 allocations `render_field` makes per row. **Admitted
