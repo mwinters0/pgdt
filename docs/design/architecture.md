@@ -4291,8 +4291,9 @@ is 4.04 µs a row against `strings`'s 2.50 — a factor of 1.6, not the factor o
 
 #### The library's own per-row budget
 
-The shares above, converted at each mode's user time over the control's
-814,362 rows. **This is the decomposition an embedder pays and the only one a
+A profile's shares converted at each mode's user time over the control's
+814,362 rows — **its own shares, not the table above's**, which is a different
+and earlier sitting. **This is the decomposition an embedder pays and the only one a
 library change can move**, so it is what a proposed optimization is sized
 against — and no figure in `measurements.md` states it, because every figure
 there times the CLI ("A mode difference and a per-column delta are CLI

@@ -266,14 +266,13 @@ walked inside the buffer it replaced. What remains is unordered.
       2.919 G** user instructions, which is most of **7.7**'s census half.
       Notes:
       [`../design/roadmap-P7.6-bulk-utf8-notes.md`](../design/roadmap-P7.6-bulk-utf8-notes.md)
-- [ ] **7.7** One field split per row, shared by the predicate's terms,
-      `push_row`, the census and the decoders. Reviewed alone. **Its stake is
-      smaller than the spec's row says**: 7.6 made the splitter itself SIMD, so
-      a whole `parse` of the file where the census costs most now runs on a
-      sixth of the instructions, and what is left to win by *sharing* one split
-      is the walk, not the split
-      ([2026-09-04](history/2026-09-04.md), "The census's field split was the
-      byte loop, not the census").
+- [ ] **7.7** One field split per row, shared by the predicate's terms and
+      `push_row`. Reviewed alone, and **preconditioned on a predicated
+      reading** — the walks it removes are the predicate's, and no registered
+      figure runs one. The census left this row's scope for good: it splits in
+      the *mapping* pass, so no arrangement of this lever reaches it
+      ([2026-09-04](history/2026-09-04.md), "7.7 is smaller and narrower than
+      its rows said").
 - [ ] **7.8** The I/O defaults — the cold-NVMe figure, then readahead,
       `posix_fadvise` and the chunk-size constant, each landed or rejected
       against it. That figure is also what `KD9` is read against: it is the
@@ -472,31 +471,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **7.7's row is now mis-sized and its spec row was not touched.** 7.6's
-  splitter took the census's field split from a per-byte closure to `memchr`,
-  which took an `--arrays --composite` `parse` to a sixth of its
-  instructions; 7.7's spec
-  row still promises "one field split per row, shared by the predicate's terms,
-  `push_row`, the census and the decoders" against a stake that named the
-  census re-splitting every brace-bearing row. **The decision is whether 7.7's
-  spec row is re-scoped** — a spec edit, since the decision it records has
-  changed — or whether it stands and the shrunken stake is left in the
-  checklist and the history entry, which is where an unattended session may put
-  it without amending a spec. It was left standing: the row's *query*-path half
-  is untouched by 7.6, so the row still names real work, and re-scoping a slice
-  nobody has grilled since the evidence moved is the kind of call the phase's
-  own rule sends back through grilling. Reversing this costs one spec row and a
-  history entry. ([2026-09-04](history/2026-09-04.md), "The census's field split
-  was the byte loop, not the census")
-
-- **The `query` profile section now carries two sittings.**
-  [`../design/architecture.md`](../design/architecture.md), "query-profile",
-  keeps its table as taken — 7.13.1's precedent, since re-taking it means
-  publishing a fresh sitting of every row beside the one that moved — while the
-  per-row budget beneath it *is* re-derived from a new sitting, because 7.6
-  moves that table directly and the phase spec obliges a landing lever to
-  re-read it. **The decision is whether one section may hold two sittings** with
-  the seam written down, or whether the profile table should have been re-taken
-  with it so the whole section is one. The seam is stated in both places and the
-  ±8% a warm absolute resolves to is named beside it; the alternative costs a
-  second sitting of a table nothing in this slice moved.
+Nothing is open.

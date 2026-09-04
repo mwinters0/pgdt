@@ -220,7 +220,7 @@ profile is read against.
 | **`INSERT`-run fast path** (`KD9`) | 16.5× a `COPY` block's per-byte CPU; ~48 CPU-minutes per TB against ~3 |
 | **The map's per-`CopyEnd` rebuild** (`KD5`) | 19.0 s of a 20.8 s 4000-block `parse` |
 | **Bulk `simdutf8`** in place of per-field `std::str::from_utf8` | 16 validation calls per row of the control today, one per borrowed field |
-| **One field split per row**, shared by the predicate's terms, `push_row` and the decoders | a five-way disjunction walks the row five times; the census re-splits every brace-bearing row |
+| **One field split per row**, shared by the predicate's terms and `push_row` | a five-way disjunction walks the row five times. The census re-splits every brace-bearing row too, but in the **mapping** pass, so it is not this row's to win — see "What this lever cannot reach" below |
 | **Readahead, `fadvise`, chunk-size defaults** | ≤38% of `parse` wall — NVMe only, zero elsewhere |
 | **The read path's per-chunk zero and copy** | 54.6% of a warm `parse`'s *user* time on the control, 0.158 s of a 0.60 s scan; ~9% of a warm `strings` query |
 | **`decode_array`'s `Vec<Option<String>>` intermediate** | 4.14 µs/row on the arrays file — the micro figure's *decode* column for both array literals (290 ns + 3.85 µs), library-only and paid before the Arrow build is reached |
@@ -250,6 +250,36 @@ two rows name one function, the order is stated: **7.6 acts on `decode_field`
 before 7.10 does**, since the unchecked borrow path for an escape-free field is
 a precondition for whatever per-type work is left, not a competitor for the
 same microseconds.
+
+### What this lever cannot reach, and what it must measure first
+
+**Owning the `push_row` split is an accounting claim, not a prize.** A query
+with no predicate splits each row exactly once, in `push_row`, and every
+decoder already takes its field out of *that* split — `RawRow::decode` is
+handed the range `push_row` computed, which 7.6 delivered. So the budget's
+split-and-walk row is irreducible on that shape: there is nothing for it to
+share with. What 7.7 can actually remove is the predicate's **redundant**
+walks, one `field_ranges(..).nth(i)` from the front of the row per term, which
+is why a five-way disjunction is the stake's worked example and a bare
+`--table` query is not.
+
+**And nothing published measures that.** No registered figure passes `--where`
+or `--filter`, so the shape this lever pays off on is absent from the whole
+apparatus. The slice therefore takes a predicated reading before it takes the
+lever — the phase's rule is that a row lands when its *measured* prize is worth
+the change, and this row has no measurement to be worth anything against.
+
+**The census is in the other pass, so no arrangement of this lever reaches
+it.** The splitter's three production callers are `map::Builder::on_row`,
+`Predicate`'s per-term walk and `push_row`; the first runs in `map_forward` and
+the other two in the replay, across the hard boundary
+[`architecture.md`](architecture.md), "Query: mapping and streaming are separate
+passes" describes. Sharing one split across that boundary *is* the interleaved
+form that section records as deliberately deferred — a different item, and a
+much larger one. The census's own re-split was made cheap instead, by 7.6's
+splitter, and that is the whole of what was available here. Reasoning:
+[`../status/history/2026-09-04.md`](../status/history/2026-09-04.md), "7.7 is
+smaller and narrower than its rows said".
 
 **Only two of these rows move the `strings` path at all.** `decode_field` and
 the field split are each ~1 µs a row and neither changes when typing is
@@ -409,7 +439,7 @@ when it runs.
 | **7.4** | **`KD5`** — `stream::splice` moves inside the throttle's gate, the interrupt's promise is restated in `architecture.md`, and the entry is rewritten to whatever residual the measurement leaves. |
 | **7.5** | **`KD9`** — the `INSERT` fast path at the layer 7.2 chose, with the quote-aware statement-end primitive built to be reusable by P8 Track A's row reader. |
 | **7.6** | **Bulk `simdutf8`** over the chunk's largest whole-row prefix, with `decode_field` gaining the unchecked borrow path for a field with no escapes. |
-| **7.7** | **One field split per row**, shared by the predicate's terms, `push_row`, the census and the decoders. Its own review: it is a rework of an already-tested core path, and it crosses layers, so [`layering.md`](layering.md) is read before it is placed. |
+| **7.7** | **One field split per row**, shared by the predicate's terms and `push_row`. **Preconditioned on a predicated reading**: the redundant walks are the predicate's, and no registered figure runs a predicate, so the shape to size this against does not exist yet and the slice takes it first. Its own review: it is a rework of an already-tested core path, and it crosses layers, so [`layering.md`](layering.md) is read before it is placed. |
 | **7.8** | **The I/O defaults** — the cold-NVMe figure, then readahead, `posix_fadvise` and the chunk-size constant, each landed or rejected against it. |
 | **7.9** | **`decode_array`'s `Vec<Option<String>>`** intermediate, replaced by borrowed slices where the literal carries no escapes. |
 | **7.10** | **Scalar decode and the typed column build**, split by the profile into a `decode.rs` half and a builder-append half. |
