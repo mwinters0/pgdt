@@ -133,6 +133,18 @@ Adding that is a method on an existing type, and shaping it is a spec-time
 question because it decides whether a reader walks lines (as the map does) or
 chunks.
 
+**This phase also owns `KD9`'s two untaken cuts**, both inside the scan above,
+because slicing P8 is when they acquire a slice and `scripts/deficiencies.py`
+holds the pairing. One is that `map::Builder::insert_run_line` feeds the
+`INSERT INTO <table>` prefix it has just matched back into `feed_line`, so
+those bytes are crossed twice; the other is that `feed` counts parens in a
+second `memchr2` pass per plain run, which no `INSERT` statement's end needs.
+The second is why the reader's requirements have to come first: skipping it is
+a mode flag, and whether the depth count is dead weight is a question only a
+caller splitting a `VALUES` tuple can answer. Neither is measured — a profile
+sizes both, and `architecture.md`'s "Bulk regions" carries the reading that
+made them worth keeping.
+
 **Also worth knowing at spec time.** The trailing-`;` test uses ASCII
 whitespace where `str::trim_end` used Unicode, and the map's own `feed_line`
 joins lines with `\n` *between* them and never before the first — both are

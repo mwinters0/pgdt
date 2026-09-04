@@ -495,9 +495,9 @@ here rather than reading as a phase nobody has sliced.
 
 - **KD9** — an `INSERT` run costs **4.3×** a `COPY` scan's per-byte CPU warm
   and **2.66×** the device's own time cold on NVMe against 1.10×, and two cuts
-  against that remainder are known and untaken. **(c) unowned**; 7.8's figure
-  confirmed it where it might have retired it, so it waits on an owner rather
-  than on evidence. Detail:
+  against that remainder are known and untaken. **(b) owned by P8**, whose
+  Track A row reader extends the very scan both cuts are in; 7.8's figure
+  confirmed the entry where it might have retired it. Detail:
   [`../design/architecture.md`](../design/architecture.md), "Bulk regions: one
   span kind, three payloads".
 
@@ -527,18 +527,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`KD9` was confirmed by 7.8's figure and given no owner.** The cold-NVMe
-  reading was written into the register as the thing that would *promote the
-  entry to owned work or retire it to a property*, and it promotes it: an
-  `INSERT` scan on the fastest disk here costs 2.66× the device's own time
-  against a `COPY` scan's 1.10×, so roughly 2.1 s of a 3.40 s scan is CPU no
-  device hides. The call was to rewrite the entry to that and leave it **(c)
-  unowned** rather than allocate a slice for the two named cuts. The reason is
-  that allocating one is a decision an unattended session may not make — P7's
-  slice list has no row for them, and adding one changes what the phase
-  committed to. What changes if it is reconsidered: the two cuts named in
-  `architecture.md`'s "Bulk regions" become a P7 row (they are both inside
-  `preamble::StatementScan`, so the work is contained), or the entry acquires a
-  later phase as its `(b)` destination, or it stays as it is on the reading
-  that an `--inserts` dump on NVMe is not a shape anyone has brought us.
 

@@ -556,8 +556,30 @@ of a 3.40 s scan is spent where the disk is idle
 cold-NVMe table). That is what [`roadmap.md`](roadmap.md)'s goal of device-bound
 "on hardware from HDD through NVMe" asks of the bulk-row path, and an `INSERT`
 run does not meet it at the top of that range. **This entry is not retired to a
-property**: the two named cuts above are real and untaken, and what is missing
-is an owner rather than evidence.
+property**: the two named cuts above are real and untaken.
+
+**Both cuts belong to P8, not to the phase that measured them.** Track A's row
+reader has to find where each `INSERT INTO … VALUES (…);` statement ends, which
+is this scan — extended rather than rewritten, so that
+`standard_conforming_strings` is assumed in one place
+([`roadmap-P8-format-coverage-inbox.md`](roadmap-P8-format-coverage-inbox.md),
+"The statement-end scan Track A needs already exists"). That is the session
+that opens `StatementScan` with a second caller's requirements in hand, and the
+paren cut in particular cannot be shaped without them: a reader splitting a
+`VALUES` tuple has its own view of whether the depth count is dead weight,
+where a scan-only micro-benchmark does not. *Rejected: taking the two cuts as a
+P7 slice, which the phase's own rules allow* — a row admitted after spec time
+takes the next free number, and three rows of that table already did. It is
+refused because it would price both cuts against a workload that only *maps* an
+`INSERT` run, months before the reader that gives the second cut its shape, and
+would then have P8 re-open the same function anyway.
+
+**Neither cut is measured, and the instrument is a profile rather than a
+figure.** "insert-profile" puts nearly 80% of the flat profile in `memchr`
+across four needle widths but does not split the prefix's double crossing from
+the paren pass, so which of the two is worth taking is open. A profile answers
+it in seconds and publishes no number, so the reading is not a slice of its
+own.
 
 **What made it mid-teens was the accumulation, and P7's slice 7.5 removed
 that.** Under the `ba2fc12` stamp the same scan read 9.19 s warm, 16.5×, and
