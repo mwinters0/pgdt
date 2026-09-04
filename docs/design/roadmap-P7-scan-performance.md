@@ -224,6 +224,7 @@ profile is read against.
 | **Readahead, `fadvise`, chunk-size defaults** | ≤38% of `parse` wall — NVMe only, zero elsewhere |
 | **The read path's per-chunk zero and copy** | 54.6% of a warm `parse`'s *user* time on the control, 0.158 s of a 0.60 s scan; ~9% of a warm `strings` query |
 | **`decode_array`'s `Vec<Option<String>>` intermediate** | 4.14 µs/row on the arrays file — the micro figure's *decode* column for both array literals (290 ns + 3.85 µs), library-only and paid before the Arrow build is reached |
+| **`needs_quote`'s per-byte `force_quote` scan** | 14.1% of a typed `--arrays --composite` run, of which **10.1% is `memchr` inside `slice_contains`** — `force_quote` is a `&'static [u8]`, so every byte of every token costs a linear walk of a 4–6 byte slice. Split 5.28% decode (`scan_token`) and 4.82% render (`push_token`), which are the same predicate reached from two directions |
 | **Scalar decode and the typed column build** | 2.61 µs/row of the library's 4.06 on a typed control read — `append_typed` 1.66 and `decode_field` 0.95, which is 2.13 s of the 9.81 s of user time; the builder half is the larger and exceeds the whole typed premium over `strings` |
 | **A viewing builder for `List<Utf8View>`** | to be re-derived: the profile puts the whole library batch stream at 33.7% of a typed read, so the Arrow build's share is bounded well below the 7.3 µs/row this row once claimed |
 | **The mapping pass's double read** | exactly one extra pass — 2.0000× the file's bytes with `--dqcache none`, 1.0000× with a cache |
@@ -344,6 +345,24 @@ entry, which is what "the spec changes when a decision changes" is for. Filing
 every unlisted finding forward would read as discipline and would really be a
 way of not acting on the evidence the phase exists to gather.
 
+**An unattended session discharges this by filing, not by amending**, and that
+is the intended route rather than a gap in it.
+[`.claude/skills/go/SKILL.md`](../../.claude/skills/go/SKILL.md) requires the
+phase spec to be left untouched, so a loop running without the maintainer
+cannot amend the table above; what it can do is put the finding, with its
+profile, in `STATUS.md`'s "Decisions worth another look", and the next review
+admits the lever or declines it. Rewriting either rule to close the apparent
+conflict was considered and refused. Widening `go` to permit an amendment
+wherever a spec pre-authorises one generalises a carve-out any future spec
+could claim, and the amendment is exactly the step a reviewer should see;
+narrowing this paragraph to make the admission the maintainer's would delete a
+warning that is still correct, since the failure it names — filing a finding
+*instead of* acting on it — is one a session with the maintainer present can
+still commit. The worked instance is `7.14`, where the review that admitted the
+lever also found that the filing entry had named the wrong mechanism and had
+wrongly called the render half unreachable by a library change; an
+auto-admitting session would have carried both into a scanner rework.
+
 The last three are the ones whose implementation would be expensive: the
 viewing builder honours three sharp edges recursively at every level of `List`
 and `Struct` nesting, eliminating the double read means carrying the live
@@ -455,6 +474,7 @@ when it runs.
 | **7.7.1** | **One field split per row**, shared by the predicate's terms and `push_row`, sized against `7.7`'s reading. **Earned, not planned**: the row above paired the instrument that measures this lever with the lever itself, which is two review cycles — *does this figure measure the right shape* is not *is this rework of the replay loop correct*, and the evidence has to land first so the mechanism is checked against a figure it did not produce. Its own review: it is a rework of an already-tested core path, and it crosses layers, so [`layering.md`](layering.md) is read before it is placed. Reasoning: [`../status/history/2026-09-04.md`](../status/history/2026-09-04.md). |
 | **7.8.1** | **The I/O defaults** — readahead, `posix_fadvise` and the chunk-size constant, each landed or rejected against 7.8's figure. **Earned, not planned**: the row above paired the instrument that prices these three levers with the levers themselves, which is the seam this phase has now met four times — *is this figure measuring the right device* is not *is this rework of the read path correct*, and the evidence has to land first so the mechanism is checked against a figure it did not produce. Reasoning: [`../status/history/2026-09-04.md`](../status/history/2026-09-04.md). |
 | **7.13.1** | **The copy into each read loop's own buffer**, over all three loops, with the query path's chunk retention settled explicitly. **Earned, not planned**: the row above paired a contained change to one module with a rework of three already-tested scan loops, which is two review cycles and not one, and the seam was only visible from inside. Reviewed alone, and ahead of 7.6 and 7.7.1, which both rework how a row is walked inside the buffer this replaces. Reasoning: [`../status/history/2026-09-03.md`](../status/history/2026-09-03.md). |
+| **7.14** | **`Syntax::force_quote` as a `const` 256-bit set**, one indexed bit per byte in place of the linear `contains`. **Admitted after spec time**, on the same terms as 7.13 — a row the profile found that this table did not name. It reaches decode and render in one change, because `scan_token` and `push_token` share the predicate, and it changes `needs_quote`'s truth table not at all. **The fusion of `scan_token`'s terminator walk with `needs_quote` is not admitted**: its prize is whatever this row leaves, which nobody has measured. Re-takes `nested-decode-micro` and re-reads the library's per-row budget. Reasoning: [`../status/history/2026-09-04.md`](../status/history/2026-09-04.md). |
 
 ## What this phase is not: parallelism is P16
 

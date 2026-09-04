@@ -399,6 +399,10 @@ unordered.
       contained module with a rework of three already-tested scan loops, which
       is two review cycles. Notes:
       [`../design/roadmap-P7.13.1-read-loop-carry-notes.md`](../design/roadmap-P7.13.1-read-loop-carry-notes.md)
+- [ ] **7.14** `Syntax::force_quote` as a `const` 256-bit set, replacing the
+      linear `contains` that costs a 4–6 byte walk per token byte — 14.1% of a
+      typed `--arrays --composite` run, decode and render together. **Admitted
+      after spec time**, from 7.9's profile.
 
 ## Not started
 
@@ -564,21 +568,3 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **`nested::needs_quote` is now the largest single symbol in a typed nested
-  query, and 7.9 did not admit it as a lever.** At 14.1% of an
-  `--arrays --composite` typed run it outranks every other symbol, and it is
-  one predicate reached from two directions — `push_token` re-quoting each
-  element on the way out (the CLI's, through `render_field`) and `scan_token`
-  rejecting an element `array_out` would have quoted on the way in (the
-  library's, and what is left of the per-element decode slope after 7.9). A
-  byte-classification table would fuse `scan_token`'s terminator walk with
-  `needs_quote`'s second walk over the same bytes. **The call was to leave the
-  spec's lever table alone and file the finding**, because the phase's "a lever
-  the profile finds and this table does not name is admitted" paragraph
-  requires amending that table, and amending a spec is a decision change an
-  unattended session should not make on its own. What changes if it is
-  reconsidered: `needs_quote` gets a lever row and a slice number, and the
-  decode half is the only part of it a library change can remove. Evidence:
-  [`../design/roadmap-P7.9-array-borrow-notes.md`](../design/roadmap-P7.9-array-borrow-notes.md),
-  "What the profile now says".
