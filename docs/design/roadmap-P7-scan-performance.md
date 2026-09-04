@@ -456,14 +456,24 @@ the plan slipping. This is the exception [`../process.md`](../process.md)'s
 "Slice numbering" names: the general rule fixes slice order at spec time, and
 an evidence-led phase cannot, because the evidence is what orders the work.
 
-**Three orderings bind, and they are the whole of it.** The **allocator
+**Four orderings bind, and they are the whole of it.** The **allocator
 decision before the wrap sweep**, because an allocator adopted after a figure is
 taken invalidates that figure; `7.13.1` ahead of `7.6` and `7.7.1`, because those
 two rework how a row is walked inside the buffer `7.13.1` replaces; and `7.15`
-ahead of `7.12`, for the allocator's reason rather than its own — four of the
-sweep's thirteen tables time a typed query, and taking them over a render path
-about to lose most of its largest bucket would leave them describing a binary
-that is no longer shipped, with no sweep left to repair them.
+and `7.14` each ahead of `7.12`, for the allocator's reason rather than their
+own — four of the sweep's thirteen tables time a typed query, and taking them
+over a path about to lose most of its largest bucket would leave them describing
+a binary that is no longer shipped, with no sweep left to repair them.
+
+`7.14`'s clause was added late and the count with it. `7.15`'s admission wrote
+this paragraph while `7.14` was already on the page, and reasoned about the
+figure `7.14` *owes* rather than the figures it *invalidates*; `7.14` is the
+narrower of the two — `Syntax::force_quote` lives in `nested.rs`, so it reaches
+the nested-bearing shapes rather than every typed query that renders — but one
+of the thirteen tables is `nested-end-to-end`, and one is enough for the
+ordering to bind. Reasoning:
+[`../status/history/2026-09-04.md`](../status/history/2026-09-04.md),
+"`7.14` runs before `7.12`, on `7.15`'s reason".
 
 The first is stated against the sweep rather than against `7.3` because `7.3`
 has landed *without* adopting, and the hazard it names is still live. What the
@@ -489,7 +499,7 @@ when it runs.
 | **7.8** | **The cold-NVMe figure** — the third device class registered as a regime of its own, and taken: the one instrument that can price a readahead, `fadvise` or chunk-size default, and the reading `KD9` is read against. No library code. |
 | **7.9** | **`decode_array`'s `Vec<Option<String>>`** intermediate, replaced by borrowed slices where the literal carries no escapes. |
 | **7.10** | **Scalar decode** — the `decode.rs` half, where a per-type decoder's cost is a parser problem. |
-| **7.11** | **The viewing builder for `List<Utf8View>`** — conditional on **7.10.1** pricing the Arrow build, last, and reviewed alone. It lands only if that reading puts the `List<Utf8View>` build above **1 µs/row** on the arrays file, which is the phase's own cross-file apparatus floor and therefore the smallest prize this table can honestly claim. |
+| **7.11** | **The viewing builder for a nested `Utf8View`** — `List` elements and `Struct` fields alike, since `append_nested`'s copying arm serves both. Conditional on **7.10.1** pricing the Arrow build, last, and reviewed alone. **The gate is on the prize, not on the build**: it lands only if the build *minus* the view write it substitutes exceeds **1 µs/row**, which is the phase's own cross-file apparatus floor and therefore the smallest prize this table can honestly claim. Gating on the build alone was the original wording and is **amended**: `nested-decode-micro` puts the view write's own floor at 2.96 ns of a 7.66 ns element build, so a build reading of exactly 1 µs/row licenses a change worth ≤0.62 µs/row — below the floor the gate was chosen to be. Reasoning: [`../status/history/2026-09-04.md`](../status/history/2026-09-04.md). |
 | **7.12** | **The sweep pair and the koji regression run**, folded in: thirteen tables re-taken in one sitting, koji's byte-identity check on a glibc build, and the written statement of what a parallel splitter needs from coverage and from the census, filed to P16. |
 | **7.13** | **Who owns the bytes between the kernel and the scanner, the allocation half** — `read_range`'s per-chunk zeroed allocation, removed with the `object_store` shape settled explicitly. **Also re-takes `--figure allocator` and settles adoption** — 7.3 measured but deferred, this slice removes the allocation that dominated the ranking, so it either adopts the winner or records the refusal beside the mechanism. |
 | **7.7.1** | **One field split per row**, shared by the predicate's terms and `push_row`, sized against `7.7`'s reading. **Earned, not planned**: the row above paired the instrument that measures this lever with the lever itself, which is two review cycles — *does this figure measure the right shape* is not *is this rework of the replay loop correct*, and the evidence has to land first so the mechanism is checked against a figure it did not produce. Its own review: it is a rework of an already-tested core path, and it crosses layers, so [`layering.md`](layering.md) is read before it is placed. Reasoning: [`../status/history/2026-09-04.md`](../status/history/2026-09-04.md). |

@@ -2213,6 +2213,20 @@ Three properties are load-bearing and easy to lose:
   ([`measurements.md`](measurements.md), "Nested decode costs what it
   copies").
 
+*Rejected: pushing that borrow into `decode_record` and `decode_range` too, so
+that a composite's or a range's fields are slices as well.* Both call
+`Cow::into_owned` at the call site, on the same `scan_quoted` the array uses, so
+the change is their literals' field types plus the `predicate.rs` and `batch.rs`
+sites that read them — `range_key` takes `&Option<String>` and `batch.rs` builds
+both literals to render them back. What says it is not worth that reach is the
+figure: `record_2/decode` fell **190 ns → 114 ns** when the array's elements were
+borrowed and the record's were *not*, because the win there was `scan_quoted`
+sizing a quoted token before it allocates rather than the final `String`. The
+whole composite column is **+0.98 µs a row** at the end-to-end level against the
+two array columns' +13.21 ([`measurements.md`](measurements.md), "What a column
+costs"), so one `String` per field of it is a sliver of a sliver — and its prize
+is whatever the landed levers leave, which nobody has measured.
+
 **`int2vector` is the fourth form and it shares none of that machinery** —
 which is the point rather than an omission. `int2vectorout` writes `int16`s
 separated by one space (I47), and an `int16`'s spelling can contain neither the
@@ -4593,6 +4607,22 @@ a row**, 7.7 ns an element, inside a row that costs 11.08 µs end to end and
 one in the builder and the builder is still not where a nested row's time goes:
 `nested::decode_array` is 3.88 µs of that same isolated row, ten times the
 build it feeds.
+
+*Rejected: a viewing builder for a nested `Utf8View`, replacing that copy with
+a view over the read chunk the way `push_utf8view_field` already does at the
+top level.* **The prize is the build minus the view write that replaces it, not
+the build**, and `measurements.md`'s "Nested decode costs what it copies" floors
+one `append_view_unchecked` at 2.96 ns — a floor that bounds the real cost from
+above, since the borrowed arm also walks the chunk deque and calls `block_for`.
+So the swap is worth **at most 4.7 ns an element**, 0.24 µs of that 11.08 µs
+row, before any of the recursive chunk-retention and block-invalidation the
+change needs. **The copy is one arm** — `batch::append_nested`'s
+`ColumnBuilder::Utf8View` — and it serves a `Struct`'s fields as well as a
+`List`'s elements, so the bound reaches both: the registered `--arrays
+--composite` file, whose composite is a `Struct{Int32, Utf8View}` with a
+quoted-but-unescaped text field, spends 0.19 µs a row on *all* its Arrow
+appends across nineteen columns. The `text[]` file was only ever needed for the
+`List` leg.
 
 **The split row is now shared, and this budget is still the unfiltered one.**
 A row's boundaries are found once and read by the filter's terms as well as by

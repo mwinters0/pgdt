@@ -56,14 +56,35 @@ control run, together under 6 ns a row, which is below every instrument this
 campaign owns. Landing it would also make a one-row batch allocate 8192 slots
 in every column, so it is a memory regression bought with nothing.
 
-## 7.11's gate: 0.383 µs/row against 1 µs/row
+## 7.11's gate: 0.237 µs/row against 1 µs/row
 
-**The gate names a file that cannot answer it.** `7.11`'s row reads the
-`List<Utf8View>` build "on the arrays file", and the registered `arrays` input's
-two array columns are `integer[]` — deliberately, so that element count is the
-only variable (`scripts/generate_perf_data.py`, `ARRAY_COLUMNS`). No committed
-input carries a `List<Utf8View>` at all, so the gate was read on a purpose-built
-one instead.
+**The gate is on the prize, and the prize is the build minus the view write.**
+The row's original wording gated on the `List<Utf8View>` build alone; that was
+amended in review, because `nested-decode-micro` floors one
+`append_view_unchecked` at 2.96 ns of a 7.66 ns element build, so a build
+reading of exactly 1 µs/row would have licensed a change worth ≤0.62 µs/row —
+below the floor the gate was chosen to be
+([`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md), the lever
+table's `7.11` row; [`../status/history/2026-09-04.md`](../status/history/2026-09-04.md)).
+The reading below is the build; **the prize is 0.237 µs/row**, and it is what
+the gate refuses.
+
+**The refusal has two legs, and one of them is a registered input.** The `Struct`
+leg is free: `batch::append_nested`'s copying arm is *one* arm, serving a
+composite's fields exactly as it serves a list's elements, and the registered
+`--arrays --composite` file's `perf_comp AS (a integer, b text)` is a
+`Struct{Int32, Utf8View}` whose `b` is a quoted-but-unescaped lorem token —
+`scan_quoted`'s `Cow::Borrowed` arm, so the eligible shape. That file spends
+**0.19 µs a row on every Arrow append across all nineteen columns**, which
+bounds the composite's `Utf8View` child below a fifth of the gate on committed
+bytes. Only the `List` leg needed a file the tree does not have.
+
+**For that leg the gate names a file that cannot answer it.** `7.11`'s row reads
+the build "on the arrays file", and the registered `arrays` input's two array
+columns are `integer[]` — deliberately, so that element count is the only
+variable (`scripts/generate_perf_data.py`, `ARRAY_COLUMNS`). No committed input
+carries a `List<Utf8View>` at all, so that leg was read on a purpose-built one
+instead.
 
 **That input is specified here and lives only in `runs/`.** It is the
 `--arrays` shape with the two array columns changed to `text[]`: the same
@@ -83,15 +104,34 @@ chosen to be **favourable to 7.11**, so that a refusal read off it is safe:
   the registered apparatus uses, so the per-element cost is multiplied by as
   much as any published input multiplies it.
 
+*Rejected: committing the shape as a `generate_perf_data.py --text-arrays` flag,
+with or without a registered figure to consume it.* The specification above is
+the record, and rebuilding the generator from it is minutes. What a flag would
+buy is re-running a reading that is already discharged: it refused a lever, it
+published no number, and `measurements.md`'s rule that a figure whose
+regeneration command is gone should be deleted has its mirror here — a
+non-figure owes no command. A registered figure would be worse again, making
+every future sweep pay an hour a time for a question that is closed. The cost
+accepted is that re-checking the refusal means writing the generator again
+rather than passing a flag.
+
 Isolated with `--column v_text_array_long`, the `List<Utf8View>` build is
-**0.383 µs a row — 7.7 ns an element — against a gate of 1 µs a row**. What
-7.11 would actually win is smaller again: it replaces the copy with a view
-write, which `nested-decode-micro` floors at 2.96 ns
-([`measurements.md`](measurements.md), "Nested decode costs what it copies"),
-so the difference is at most ~5 ns an element, **0.24 µs a row on this
-shape** — 2% of that query's 11.08 µs row and 4% of the library's own 5.46 µs
-— before any of the recursive chunk-retention and block-invalidation machinery
-the change needs at every level of `List` and `Struct` nesting.
+**0.383 µs a row — 7.7 ns an element**. The prize the gate reads is that minus
+the view write which replaces the copy, and `nested-decode-micro` floors that
+write at 2.96 ns ([`measurements.md`](measurements.md), "Nested decode costs
+what it copies"): **at most 4.7 ns an element, 0.237 µs a row against a 1 µs
+gate** — 2% of that query's 11.08 µs row and 4% of the library's own 5.46 µs —
+before any of the recursive chunk-retention and block-invalidation machinery the
+change needs at every level of `List` and `Struct` nesting. The 2.96 ns is
+itself a floor bounding the ratio from above, since the borrowed arm also walks
+the chunk deque and calls `block_for`, so 0.237 µs is generous to 7.11 as well.
+
+**The sensitivity worth knowing is element width, not element count.** At or
+below `arrow`'s 12-byte inlining threshold the prize is exactly zero; above it
+the copy grows with the element and the view write does not, so the ratio of
+prize to build rises with width while element count scales both together. On
+this shape the prize reaches the gate at roughly **210 elements a row** — the
+build reaches it at 130.
 
 **The build is not where a nested row's time goes.** On the same isolated run
 `nested::decode_array` is 3.88 µs a row against the build's 0.383 — ten to
@@ -103,8 +143,9 @@ nested path is expensive rather than the builder.
 ## What the next slices inherit
 
 - **7.11 is a refusal, not a build.** Its gate has a measured reading and the
-  reading is 38% of the threshold on a shape built to flatter it. The slice's
-  delivery is a notes doc saying so; it lands no viewing builder.
+  prize is **24% of the threshold** on a shape built to flatter it — with the
+  `Struct` half of the same arm bounded well below that on a registered input.
+  The slice's delivery is a notes doc saying so; it lands no viewing builder.
 - **7.12's sweep is unaffected by this slice.** No code changed, so no figure
   moved and no figure's staleness changed. The per-row budget's typed
   `poll_next` read 3.25 µs this sitting against the published 3.10, which is
