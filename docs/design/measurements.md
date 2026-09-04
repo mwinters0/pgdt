@@ -156,6 +156,19 @@ Twelve standing rules for reading anything below:
   [`architecture.md`](architecture.md), "Bulk regions: one span kind, three
   payloads"; the evidence is
   [`../status/history/2026-09-03.md`](../status/history/2026-09-03.md).
+- **A criterion baseline is taken from the same working directory, never from a
+  worktree.** `--save-baseline` at the old revision and `--baseline` on the new
+  one is the right shape, and the tempting way to get the old revision is a
+  `git worktree` with `CARGO_TARGET_DIR` pointed back at the main `target/` so
+  both land in one `target/criterion`. That builds the same source at a
+  different path, which is the layout hazard above with nothing to warn you:
+  taken that way, 7.14's before/after read −1.2%, 0% and −3.6% on the three
+  decode rows while the **copy control moved +70% on code neither revision
+  touched**. Re-taken by checking the old file into the same tree, the same
+  three rows read −27.5%, −25.4% and −18.6%, which is what the whole-query
+  instruction count independently says. The control moving is the tell, so a
+  bench group is worth having one; what makes the trap sharp is that the
+  contaminated reading was *conservative* and looked like an honest refusal.
 - **A mode difference and a per-column delta are CLI numbers, so neither sizes
   a library change.** Every `query` figure here is a `pgdq query` figure, which
   means `pgdq::print_batch` — the CLI turning each batch back into TSV — is
@@ -1083,24 +1096,24 @@ the census-off column exists to establish it once.
 `benches/decoders.rs`'s `nested` group, criterion medians. **Two controls,
 because there are two questions.**
 
-- **Copy** — `String::from` over the same byte count: 20 ns at 49 bytes,
+- **Copy** — `String::from` over the same byte count: 19 ns at 49 bytes,
   41 ns at 601, 20 ns at 42. A nested value's *element* has no borrowed arm at
   the Arrow builder (`crate::batch::append_nested` copies whatever it is
   handed), so this isolates what the *parse* costs on top of the copy the
   builder cannot avoid.
 - **View** — one `append_view_unchecked` into a block the builder does not
   own, which is what `push_utf8view_field` does for an unescaped text field:
-  **2.96 ns**, from `text_view_x1024`'s median ÷ 1024. Length-independent,
+  **3.03 ns**, from `text_view_x1024`'s median ÷ 1024. Length-independent,
   which is the point of a view. This is what a user comparing a text column
   against an array column actually pays.
 
 | Literal | Bytes | `decode` | `render` | ÷ copy | ÷ view |
 |---|---|---|---|---|---|
-| `integer[]`, 4 elements | 49 | 218 ns | 237 ns | **23.2×** | **154×** |
-| `integer[]`, 50 elements | 601 | 2.41 µs | 1.48 µs | **94.8×** | **1316×** |
-| two-field composite | 42 | 114 ns | 175 ns | **14.8×** | **98×** |
+| `integer[]`, 4 elements | 49 | 170 ns | 161 ns | **17.0×** | **109×** |
+| `integer[]`, 50 elements | 601 | 1.93 µs | 841 ns | **67.6×** | **915×** |
+| two-field composite | 42 | 84 ns | 167 ns | **12.4×** | **83×** |
 
-Apparatus: **taken entirely alone**, on 2026-09-04 against `7b456ae` plus the
+Apparatus: **taken entirely alone**, on 2026-09-04 against `39940fe` plus the
 working-tree change it measures — which is what a lever's own before-and-after
 always is. This figure runs no `pgdq` and reads no file, so it carries none of
 the stall, temperature or device gates the sweep's tables do.
@@ -1108,35 +1121,41 @@ the stall, temperature or device gates the sweep's tables do.
 **Both control figures are read with a caveat.** `text_view_x1024` reports
 1024 appends and must be divided — timing one append through
 `iter_batched_ref` gave ~12.6 ns against a harness floor that `bool/decode`
-puts at ~1.1 ns, so three quarters of it was criterion. And 2.96 ns is a
+puts at ~1.1 ns, so three quarters of it was criterion. And 3.03 ns is a
 *floor* on the borrowed arm rather than the borrowed arm itself:
 `push_utf8view_field` also scans the chunk deque with `find_map` and calls
 `block_for`. So the `÷ view` column bounds the real ratio **from above**.
 
 **The `÷ copy` column for the 50-element row is the least stable number in the
 table**, because its denominator is: the 601-byte copy control has read 24, 42,
-41, 24, 24 and now 41 ns over six sittings, which has put that ratio at 122×,
-226× and 94.8× while `decode` moved for reasons of its own. Read the `decode`
-and `render` columns, which are what the design consumes; treat `÷ copy` as
-the order of magnitude it establishes.
+41, 24, 24, 41 and now 41 ns over seven sittings, which has put that ratio at
+122×, 226×, 94.8× and 67.6× while `decode` moved for reasons of its own. Read
+the `decode` and `render` columns, which are what the design consumes; treat
+`÷ copy` as the order of magnitude it establishes.
 
 **What this says.** Cost is still per *element* rather than per byte — the two
-array lengths differ only in element count — but the slope is now **48 ns per
-element** decoding against the **77 ns** an allocation-per-element cost, and
-**27 ns per element** rendering, unchanged. An element of an array literal is
-a borrowed slice of the field unless it actually carried an escape
-([`architecture.md`](architecture.md), "The nested literal codec"), so what is
-left in the decode slope is the scan itself: `scan_token` walks each token
-once for its terminator and `needs_quote` walks it again to reject what
-`array_out` would have quoted. A composite sits where its field count says it
-should: two fields, and it costs about half what a four-element array does.
+array lengths differ only in element count — but the slope is now **38 ns per
+element** decoding, against the 48 ns a linear force-quote set cost and the
+77 ns an allocation per element cost before that, and **15 ns per element**
+rendering, against 27 ns. An element of an array literal is a borrowed slice of
+the field unless it actually carried an escape
+([`architecture.md`](architecture.md), "The nested literal codec"), and the
+per-byte predicate that decides whether it *would* have been quoted is one
+indexed bit rather than a search of a byte slice. What is left in the decode
+slope is the two walks themselves: `scan_token` walks each token once for its
+terminator and `needs_quote` walks it again. A composite sits where its field
+count says it should: two fields, and it costs about half what a four-element
+array does.
 
-**Rendering is now the more expensive direction on the short rows**, which it
-was not before: 237 ns against 218 for a four-element array, and 175 against
-114 for the composite. Nothing in the render path changed — the decode side
-stopped allocating and the two crossed over. `render` is the CLI's write-back
-and no embedder pays it ("A mode difference and a per-column delta are CLI
-numbers").
+**Which direction is more expensive now depends on the shape.** For the
+composite, `render` is still the larger at 167 ns against 84 — the decode side
+stopped allocating in one slice and its per-byte predicate got cheaper in the
+next, while the record's render path holds a `String` per field and moved 3.4%.
+For the arrays the two have crossed back: 161 ns rendering against 170
+decoding at four elements, 841 ns against 1.93 µs at fifty, because the
+force-quote set is the whole of `push_token`'s per-byte work and only part of
+`scan_token`'s. `render` is the CLI's write-back and no embedder pays it ("A
+mode difference and a per-column delta are CLI numbers").
 
 Comparing a composite against an array of the same *byte* count is therefore
 meaningless; comparing them per element is the only reading these three rows

@@ -38,9 +38,9 @@ was the first table taken on a third device class: 7.8 took it on 2026-09-04 at
 commit: 7.8.1 took it on 2026-09-04, alone, in all three regimes at once, and
 it is the figure that decided the read chunk and bounded the other two
 I/O-defaults levers. **A fourth now stands outside the sweep**:
-`nested-decode-micro`, which 7.9 re-took alone on 2026-09-04 as its own
-before-and-after, and which is the only table in the doc a library change has
-re-taken *and* left current in fact.
+`nested-decode-micro`, taken alone on 2026-09-04 twice — by 7.9 and again by
+7.14, each as its own before-and-after — and the only table in the doc a library
+change has re-taken *and* left current in fact.
 
 **All seventeen now read stale against the `ba2fc12` stamp, and three of them
 are stale only mechanically.** `--stale` is relative to the doc's session stamp
@@ -49,7 +49,8 @@ rather than to when each table was taken, so `scan-throughput-nvme`,
 after every P7 change that reaches them — they are the three tables here that
 are current in fact. `nested-decode-micro` is the one that changed sides: it
 times a decoder in isolation and reaches no `pgdq` run, so it read green until
-7.9 edited the decoder it times, and 7.9 re-took it in the same change. The
+7.9 edited the decoder it times; 7.9 and then 7.14 each re-took it in the change
+that moved it. The
 other fourteen — the thirteen sweep figures and `predicate-terms` —
 are stale in fact too. `allocator` is the newest of the thirteen sweep figures,
 re-taken by 7.13 on the pooled read path, and 7.13.1 has since moved it too;
@@ -57,7 +58,10 @@ re-taken by 7.13 on the pooled read path, and 7.13.1 has since moved it too;
 re-took were current until 7.13. Every one of them times a `pgdq` run, and each
 of 7.6, 7.13, 7.13.1 and 7.7.1 changed what such a run costs per byte of
 input — 7.7.1 by ~9 instructions per field walked, which is +0.4% on the
-full-projection shapes and +2.9% on a `--no-columns` one.
+full-projection shapes and +2.9% on a `--no-columns` one. **7.14 moves the four
+that run a typed query and only where the file has a nested column**: it is
+−12.47% on a `--arrays --composite` query and exactly nothing on the control,
+so `nested-end-to-end` is the sweep table it certainly reaches.
 
 **One published cell is not merely stale but wrong by a factor of six, and is
 not to be quoted until 7.12 re-takes it.** `census-arrays` prices the census on
@@ -264,21 +268,20 @@ The phase's spec, its measured baseline and the lever table each row measures:
 **7.1 and 7.2 are ordered; the rest is allocation order, not schedule** — the
 phase follows the profile, so a slice landing out of numeric order is the plan
 working ([`../process.md`](../process.md), "Slice numbering", which carries the
-exception an evidence-led phase runs under). **Three orderings that bind are
+exception an evidence-led phase runs under). **Four orderings that bind are
 discharged**: the allocator decision before the wrap sweep, which 7.13 re-took
 and settled; `7.13.1` ahead of `7.6` and `7.7.1`, which rework how a row is
-walked inside the buffer it replaced; and `7.8` ahead of `7.8.1`, the figure
-that prices three levers before the levers themselves.
+walked inside the buffer it replaced; `7.8` ahead of `7.8.1`, the figure
+that prices three levers before the levers themselves; and `7.14` ahead of
+`7.12`, which has landed.
 
-**Two bind still, and both point the same way: `7.14` and `7.15` run before
-`7.12`.** Each moves a path the sweep's typed-query tables time, so taking those
-tables first would publish thirteen freshly-measured figures describing a binary
-that is no longer shipped, with no sweep left to repair them — the allocator's
-reason, reached by two more routes. `7.15` is the wider of the two, reaching
-every typed query that renders values back to text; `7.14` is the narrower,
-since `Syntax::force_quote` lives in `nested.rs` and so reaches the
-nested-bearing shapes — `nested-end-to-end` for certain, which is one of the
-thirteen. Everything else in the phase is unordered.
+**One binds still: `7.15` runs before `7.12`.** It moves a path the sweep's four
+typed-query tables time, so taking those tables first would publish thirteen
+freshly-measured figures describing a binary that is no longer shipped, with no
+sweep left to repair them — the allocator's reason, reached by another route.
+`7.15` is the wider of the pair that carried it, reaching every typed query that
+renders values back to text, where `7.14` reached the nested-bearing shapes
+alone. Everything else in the phase is unordered.
 
 - [x] **7.1** The profiling apparatus — `[profile.profiling]`, `perf`, and a
       `measure.py --profile-recipe` that prints the invocation on the
@@ -469,17 +472,23 @@ thirteen. Everything else in the phase is unordered.
       contained module with a rework of three already-tested scan loops, which
       is two review cycles. Notes:
       [`../design/roadmap-P7.13.1-read-loop-carry-notes.md`](../design/roadmap-P7.13.1-read-loop-carry-notes.md)
-- [ ] **7.14** `Syntax::force_quote` as a `const` 256-bit set, replacing the
-      linear `contains` that costs a 4–6 byte walk per token byte — 14.1% of a
-      typed `--arrays --composite` run, decode and render together. **Admitted
-      after spec time**, from 7.9's profile. **Ahead of 7.12**, on 7.15's
-      reason rather than its own: the predicate lives in `nested.rs`, so it
-      reaches the sweep's nested-bearing typed tables — `nested-end-to-end` for
-      certain — which taking the sweep first would leave describing a binary
-      that is no longer shipped. 7.10.1 corroborated the reach from a second
-      direction: `memchr_naive` is **15.3%** of an isolated `text[]` run
-      against 14.1% on `--arrays --composite`, so the cost is not a property of
-      the composite column.
+- [x] **7.14** `Syntax::force_quote` as a `const` 256-bit set — `ByteSet` is
+      `[u64; 4]` built by a `const fn`, so the predicate every token byte pays
+      in both directions is a shift and a mask instead of a `memchr` over a
+      4–6 byte slice. A typed `--arrays --composite` query falls **162.807 G →
+      142.500 G user instructions** (−12.47%), every after rep below every
+      before rep; `nested::needs_quote` was **14.63%** of that run as its own
+      symbol and is inlined away. The typed **control** is unmoved at
+      **90.719 G** — it has no nested column, so the predicate is never reached,
+      and the library's per-row budget is a control-file decomposition and
+      stands. `nested-decode-micro` re-taken: decode **218 → 170 ns** at four
+      elements, **2.41 → 1.93 µs** at fifty, **114 → 84 ns** for the composite,
+      the per-element slope **48 → 38 ns**. **No behaviour change and it is
+      asserted rather than argued** — each set is checked against the byte
+      string its `Syntax` was written as over all 256 bytes. The fusion the spec
+      declines now has a size: the `memchr` left under `scan_token`'s
+      `terminators` is **1.4%**. Notes:
+      [`../design/roadmap-P7.14-force-quote-set-notes.md`](../design/roadmap-P7.14-force-quote-set-notes.md)
 - [ ] **7.15** A hex-pair table for `render_bytea` and `render_uuid`, in place
       of a `format!`-and-allocate per byte — 37.75% of a typed control query,
       and 85 of the 101 allocations `render_field` makes per row. **Admitted
@@ -492,14 +501,15 @@ thirteen. Everything else in the phase is unordered.
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 - **P7 is open**, grilled and sliced; the checklist above is its progress. Its
-  four evidence slices, the allocator reading, eight library changes and three
+  four evidence slices, the allocator reading, nine library changes and three
   measured refusals have landed — 7.4's gate in `stream.rs`, 7.5's `INSERT`
   statement scan in `preamble.rs`/`map.rs`, 7.13's read-buffer pool in
   `io.rs`, 7.13.1's read carry in `scan.rs`/`stream.rs`, 7.6's bulk UTF-8 pass
   in `copy.rs`/`stream.rs`, 7.7.1's shared field split across
   `copy.rs`/`predicate.rs`/`batch.rs`/`stream.rs`, 7.9's borrowed array
-  element in `nested.rs`/`batch.rs` and 7.10's allocation-free scalar decoders
-  in `decode.rs`, all edits to timed paths,
+  element in `nested.rs`/`batch.rs`, 7.10's allocation-free scalar decoders
+  in `decode.rs` and 7.14's force-quote `ByteSet` in `nested.rs`, all edits to
+  timed paths,
   plus 7.8.1's `--chunk-size`, which changes no default and refuses the other
   two I/O levers, 7.10.1, which refuses the typed column build on a reading and
   lands nothing at all, and 7.11, which refuses the viewing builder on 7.10.1's

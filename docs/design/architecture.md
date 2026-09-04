@@ -2186,7 +2186,7 @@ gets wrong. A multirange needs no parameter set of its own: `multirange_out`
 concatenates its members' `range_out` results unescaped, so the split walks
 brackets and steps over quoted bounds.
 
-Three properties are load-bearing and easy to lose:
+Five properties are load-bearing and easy to lose:
 
 - **`ArrayLiteral` carries the shape, not just the elements.** `dims` and
   `lower_bounds` belong to the value (I21); the elements are flattened
@@ -2212,6 +2212,33 @@ Three properties are load-bearing and easy to lose:
   equality cannot tell the two apart
   ([`measurements.md`](measurements.md), "Nested decode costs what it
   copies").
+- **The force-quote set is 256 bits, not a byte slice.** `needs_quote` asks
+  "does this byte force quoting" once per byte of every token, in **both**
+  directions — `scan_token` to reject an unquoted token `*_out` would have
+  quoted, `push_token` to decide whether to quote at all — so it is the
+  innermost operation of the whole codec. Held as the `&'static [u8]` it was
+  written as, the test was a linear `[u8]::contains`, which specializes to
+  `memchr` over four to six bytes and cost **10.4% of a typed
+  `--arrays --composite` query** by itself; `ByteSet` is a `[u64; 4]` built by
+  a `const fn`, so every `Syntax` is still a compile-time constant and the test
+  is a shift and a mask. The truth table is unchanged by construction, and
+  `the_force_quote_set_holds_exactly_the_bytes_each_syntax_names` checks each
+  set against the byte string its `Syntax` was written as over the whole byte
+  domain, rather than over the cases the round-trip tests happen to reach.
+
+*Rejected: fusing `scan_token`'s terminator walk with `needs_quote`'s second
+walk, into one byte-classification table that answers both.* The two walks are
+real — a token is scanned once for the byte that ends it and once to check it
+against the quoting rule — but the cost of a walk is what each byte costs
+inside it, and that is now one bit test. What is left of the terminator walk's
+own search is **1.4%** of a typed `--arrays --composite` query: `stops` calls
+`terminators.contains(&c)`, which is the same linear `memchr` the force-quote
+set stopped being, over a one- to two-byte slice. Fusing would buy some part of
+that 1.4% at the cost of a scanner rework, and the strictness rule that makes
+decode and render inverses lives in the second walk, so the two are not merely
+adjacent loops. The cheaper half of it — giving `terminators` the same
+`ByteSet` representation — is a smaller change with a measured ceiling and no
+strictness consequence, and it is the one to try first if anyone reopens this.
 
 *Rejected: pushing that borrow into `decode_record` and `decode_range` too, so
 that a composite's or a range's fields are slices as well.* Both call
@@ -4528,6 +4555,22 @@ own floor. `strings` does not move at all — not "within the noise", but
 change is confined to the typed path. The rows above are again left as taken;
 the budget below is the fresh sitting.
 
+**The force-quote set moves neither this table nor the budget, and that is the
+reading rather than a gap in it.** `needs_quote` lives in `nested.rs`, and the
+control file has no array, composite or range column in it, so the predicate is
+never reached: a typed `pgdq query` over the control reads **90.719 G** user
+instructions on both sides of the change, medians of six reps a leg, which is
+the same number the scalar decoders left it at. Where the lever lands is the
+shape this file does not have — over the `--arrays --composite` file the same
+query falls **162.807 G → 142.500 G** (−12.47%), every after rep below every
+before rep, with user time 14.96 s → 13.74 s. `nested::needs_quote` was
+**14.63%** of that run as its own symbol and is inlined away afterwards, its two
+callers `scan_token` and `push_token` carrying the whole predicate at 5.47% and
+3.21% of a run that is itself smaller. So a lever's reach is a property of the
+columns a file has, and this budget is a control-file decomposition: it sizes
+what a *scalar* row costs, and a nested column's per-element cost is
+[`measurements.md`](measurements.md), "Nested decode costs what it copies".
+
 **Two-thirds of a typed query is the CLI writing the values back out as
 text**, and 79% of the gap between the two modes is that one function: typed
 costs 6.24 s more than `strings`, of which 4.95 s is `print_batch` and 1.29 s
@@ -4614,7 +4657,7 @@ build it feeds.
 a view over the read chunk the way `push_utf8view_field` already does at the
 top level.* **The prize is the build minus the view write that replaces it, not
 the build**, and `measurements.md`'s "Nested decode costs what it copies" floors
-one `append_view_unchecked` at 2.96 ns — a floor that bounds the real cost from
+one `append_view_unchecked` at 3.03 ns — a floor that bounds the real cost from
 above, since the borrowed arm also walks the chunk deque and calls `block_for`.
 So the swap is worth **at most 4.7 ns an element**, 0.24 µs of that 11.08 µs
 row, before any of the recursive chunk-retention and block-invalidation the

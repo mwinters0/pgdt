@@ -74,6 +74,37 @@ enum Escape {
     Double,
 }
 
+/// A set of bytes as 256 bits, tested by index rather than by search.
+///
+/// The membership test is the innermost operation of the whole nested codec:
+/// `needs_quote` asks it once per byte of every token, in both directions.
+/// Held as a byte slice it was a linear `[u8]::contains`, which specializes to
+/// `memchr` over four to six bytes and cost **10.4% of a typed
+/// `--arrays --composite` query** on its own; one indexed bit answers the same
+/// question in a shift and a mask. Every `Syntax` is a `const`, so every set is
+/// built at compile time.
+#[derive(Debug, Clone, Copy)]
+struct ByteSet([u64; 4]);
+
+impl ByteSet {
+    /// `const` so a `Syntax` stays a compile-time constant.
+    const fn new(bytes: &[u8]) -> Self {
+        let mut words = [0u64; 4];
+        let mut i = 0;
+        while i < bytes.len() {
+            let c = bytes[i];
+            words[(c >> 6) as usize] |= 1u64 << (c & 0x3f);
+            i += 1;
+        }
+        ByteSet(words)
+    }
+
+    #[inline]
+    const fn contains(&self, c: u8) -> bool {
+        self.0[(c >> 6) as usize] & (1u64 << (c & 0x3f)) != 0
+    }
+}
+
 /// One instantiation of the quoted-token grammar. The wrapper is not here:
 /// a range's brackets vary per value (`[`/`(`, `]`/`)`), so each caller opens
 /// and closes its own container and passes the bytes that terminate a token.
@@ -84,21 +115,33 @@ struct Syntax {
     /// Characters that force a token to be quoted, beyond the empty-string
     /// rule. Whitespace is tested separately, and the separator is included
     /// here explicitly rather than implied.
-    force_quote: &'static [u8],
+    force_quote: ByteSet,
     /// True where a bare `NULL` token means SQL NULL and an empty token is
     /// malformed (`array_out`); false where SQL NULL is spelled as nothing at
     /// all and `""` is the empty string (`record_out`, `range_bound_escape`).
     bare_null: bool,
 }
 
-const ARRAY: Syntax =
-    Syntax { separator: b',', escape: Escape::Backslash, force_quote: b"\"\\{},", bare_null: true };
+const ARRAY: Syntax = Syntax {
+    separator: b',',
+    escape: Escape::Backslash,
+    force_quote: ByteSet::new(b"\"\\{},"),
+    bare_null: true,
+};
 
-const RECORD: Syntax =
-    Syntax { separator: b',', escape: Escape::Double, force_quote: b"\"\\(),", bare_null: false };
+const RECORD: Syntax = Syntax {
+    separator: b',',
+    escape: Escape::Double,
+    force_quote: ByteSet::new(b"\"\\(),"),
+    bare_null: false,
+};
 
-const RANGE_BOUND: Syntax =
-    Syntax { separator: b',', escape: Escape::Double, force_quote: b"\"\\()[],", bare_null: false };
+const RANGE_BOUND: Syntax = Syntax {
+    separator: b',',
+    escape: Escape::Double,
+    force_quote: ByteSet::new(b"\"\\()[],"),
+    bare_null: false,
+};
 
 /// `array_isspace`, and `isspace()` in the C locale: the same six characters,
 /// which is why one predicate serves all three forms.
@@ -113,7 +156,7 @@ fn needs_quote(value: &str, syntax: &Syntax) -> bool {
     if syntax.bare_null && value.eq_ignore_ascii_case("NULL") {
         return true;
     }
-    value.bytes().any(|c| syntax.force_quote.contains(&c) || is_space(c))
+    value.bytes().any(|c| syntax.force_quote.contains(c) || is_space(c))
 }
 
 /// Append one token in `syntax`'s form. `None` is SQL NULL: a bare `NULL` for
@@ -1396,6 +1439,26 @@ mod tests {
         };
         assert_eq!(render_array(&a), r#"{"has space","has,comma",has'quote,plain}"#);
         assert_eq!(decode_array(&render_array(&a)).unwrap(), a);
+    }
+
+    /// The bit set answers exactly what the byte slice it replaced answered,
+    /// over the whole byte domain rather than over the cases the round-trip
+    /// tests happen to reach. Each syntax is checked against the literal it
+    /// was written as, so a typo in one of the three `ByteSet::new` calls is a
+    /// failure here rather than a token that silently stops being quoted.
+    #[test]
+    fn the_force_quote_set_holds_exactly_the_bytes_each_syntax_names() {
+        for (syntax, spelled) in
+            [(&ARRAY, &b"\"\\{},"[..]), (&RECORD, b"\"\\(),"), (&RANGE_BOUND, b"\"\\()[],")]
+        {
+            for c in 0..=u8::MAX {
+                assert_eq!(
+                    syntax.force_quote.contains(c),
+                    spelled.contains(&c),
+                    "byte {c:#04x} in {spelled:?}"
+                );
+            }
+        }
     }
 
     #[test]

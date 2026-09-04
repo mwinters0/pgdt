@@ -2948,9 +2948,13 @@ FIGURES: list[Figure] = [
         ),
         run=run_preamble_prepass,
     ),
+    # `quoted_by` carries `architecture.md` because the rejected viewing-builder
+    # paragraph reads this table's view control as the floor its bound is
+    # arithmetic on — a consumer nothing declared until 7.14 moved the control.
     Figure(
         id="nested-decode-micro",
         quoted_by=(
+            "docs/design/architecture.md",
             "docs/design/roadmap-P7-scan-performance.md",
         ),
         section="Nested decode costs what it copies, and an element is now a borrowed slice",
