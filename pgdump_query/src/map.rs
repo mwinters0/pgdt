@@ -1604,8 +1604,8 @@ impl Builder {
 
 /// A bare `SET ...;` or `SELECT pg_catalog.set_config(...);` — the two
 /// statement shapes `_doSetFixedOutputState()` writes ahead of the archive
-/// proper (`docs/design/architecture.md`, "Framing
-/// spans") and `_selectTablespace()` writes ahead of a definition — read for
+/// proper (`docs/design/architecture.md`, "TOC enrichment") and
+/// `_selectTablespace()` writes ahead of a definition — read for
 /// its tablespace reference by `push_statement_span`'s
 /// `extract_statement_cross_refs` call regardless of how
 /// this function classifies it. Neither is one of this module's three

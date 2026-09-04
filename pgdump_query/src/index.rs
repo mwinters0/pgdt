@@ -21,7 +21,8 @@ use crate::scan::{Event, ScanOptions, scan};
 /// row, letting a later reader seek into the middle of a large block instead
 /// of scanning from its start. Reserved in the cache format from the first
 /// release; not populated yet — `docs/design/roadmap-P7-scan-performance.md`,
-/// "Cache: a sparse row index", defines its real shape.
+/// "The sparse row index: not here either", says which phase defines its real
+/// shape.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SparseRowIndex {
     /// Rows between checkpoints (matches the default batch size, 8192 — see

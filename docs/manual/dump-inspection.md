@@ -297,8 +297,8 @@ merged into one line, just written differently by `pg_dump`. A dump
 containing large objects (`lo_create`/`lowrite` calls, not `COPY` data) shows
 their whole region as a single `large objects` entry — pgdq accounts for the
 bytes but does not read large-object contents; see
-[`docs/design/roadmap.md`](../design/roadmap.md), "Large objects: ranges, not
-contents", if you need to know why.
+[`docs/design/pg-dump-compatibility.md`](../design/pg-dump-compatibility.md)'s
+"Large objects (BLOBs)" row if you need to know why.
 
 ## Scripting against the output: `--json`
 

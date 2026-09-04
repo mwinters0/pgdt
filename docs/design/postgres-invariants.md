@@ -400,8 +400,8 @@ originally claimed a later `\connect`-ed database's own pair needs no such
 handling, "held within that database's own segment" — reasoning about
 `pg_dumpall`'s child-process structure without a concatenated fixture to
 check it against. The fixture tree has one (two `--create` fixtures
-concatenated — `docs/design/architecture.md`, "Fixtures
-tree") and found the opposite: a later child's version-header pair prints ahead of
+concatenated — `docs/design/architecture.md`, "Fixtures") and found the
+opposite: a later child's version-header pair prints ahead of
 *its own* `\connect`, exactly like the first child's does ahead of its
 `\connect` — which puts those lines in `PreambleBuilder::feed_line` while
 `current` is still the *previous* database's finished (`preamble_complete`)

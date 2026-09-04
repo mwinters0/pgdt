@@ -174,14 +174,16 @@ are beside the rule
 directionally").
 
 **Every `<doc>.md`, "section" citation in the tree is resolved by `cd scripts &&
-uv run citations.py`, and it is red: 9 of 507 do not resolve.** That is `M50`
-landing ahead of `M51`, which repairs what it reports — the two are separate
-rows because "does this matcher have the right grammar" and "what did each of
-these citations mean" are different reviews, and `M51` carries `P7` in the
-ledger's `Blocks` column so no slice lands between them looking at a red check
-nobody has explained. Nothing acknowledges or baselines the nine: the check
-fails, and the window is meant to be short. A **dated entry whose day has
-closed is not read** — an entry states what was true on its date, so a keystone
+uv run citations.py`, and it is green: 491 citations in 253 files, none
+dangling.** The nine `M50` first reported were repaired by `M51`, each read for
+what it meant — **seven of the nine were one keystone's sweep**, which repointed
+a citation's *document* at `architecture.md` and left its *section* naming a
+heading only the deleted doc ever had; the other two were an inbox that has
+since been drained and a phase spec renaming its own section as it was written.
+Nothing acknowledges or baselines a citation: the check fails rather than
+reports, so a dangling one is repaired rather than lived with. A **dated entry
+whose day has closed is not read** — an entry states what was true on its date,
+so a keystone
 that deletes a phase doc leaves its citations dangling by rule and repairing one
 is not owed; today's entry is still read, since a typo is wrong the moment it is
 written ([`history/README.md`](history/README.md), "An entry carries yesterday's

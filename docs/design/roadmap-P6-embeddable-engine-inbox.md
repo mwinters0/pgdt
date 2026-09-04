@@ -33,7 +33,7 @@ way.
 
 **Origin.** 2026-08-24. See
 [`architecture.md`](architecture.md),
-"Diagnostics: a file-level channel on `DumpIndex`", and
+"Diagnostics: one severity scale, two types", and
 [`../status/history/2026-08-24.md`](../status/history/2026-08-24.md), "The
 diagnostic vocabulary is a scale, not a type".
 

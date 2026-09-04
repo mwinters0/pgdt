@@ -38,7 +38,7 @@ phase is not".
 
 **Origin.** 2026-08-24. See
 [`architecture.md`](architecture.md),
-"What the next slice inherits".
+"Query: mapping and streaming are separate passes".
 
 ---
 
@@ -57,8 +57,9 @@ the koji `.xz` (31,150 self-contained streams, ~24 MiB uncompressed each): one
 core decodes ~446 MB/s of plaintext, four concurrent per-stream decodes reach
 ~1.48 GB/s at 397% CPU, and `xz`'s own `-T8` on that file gains nothing, its
 threaded decoder parallelising blocks within a stream where each stream holds
-one. Numbers and method: `roadmap-P13-compressed-input-inbox.md`, "xz decodes at
-~446 MB/s of plaintext per core" — probes, not figures.
+one. Numbers and method:
+[`roadmap-P13-compressed-input.md`](roadmap-P13-compressed-input.md),
+"Evidence this phase rests on" — probes, not figures.
 
 **Why this phase cares.** P13 lands the decompressing source and deliberately
 does *not* take parallel decode, leaving it to this phase. So this phase inherits a second parallelism case with a

@@ -1162,9 +1162,9 @@ where
         // block itself (`crate::index::scan_preamble`'s docs) — every
         // `Typed`-mode query needs it for type resolution below, not just a
         // caller that goes on to persist a cache. `CacheMode::Disabled`
-        // still runs the scan (`docs/design/architecture.md`,
-        // "`--dqcache none` disables persistence, not typing") but
-        // `cache.save` below is a no-op for it, so nothing is written.
+        // still runs the scan (`docs/design/architecture.md`, "Bounded
+        // preamble-only reads") but `cache.save` below is a no-op for it, so
+        // nothing is written.
         // Persisted immediately (not deferred to whenever the mapping pass
         // next saves) so it survives even a caller that polls the stream
         // once and drops it.
