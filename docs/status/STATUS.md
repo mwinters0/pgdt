@@ -184,6 +184,12 @@ and seven more sit beside them from the decomposition: the `INSERT`-run pair at
 two commits in both build configurations, a 4000-block `parse`, and `release`
 profiles of the three control shapes
 ([`../design/roadmap-P7.2-decomposition-notes.md`](../design/roadmap-P7.2-decomposition-notes.md)).
+**One profile input is not a registered one.** 7.10.1 needed a
+`List<Utf8View>` column and no committed input carries one, so its two
+`text[]` profiles read a `runs/` file the notes doc specifies rather than a
+`measure.py` input; the generator lives in `runs/` and nothing consumes its
+output
+([`../design/roadmap-P7.10.1-typed-column-build-notes.md`](../design/roadmap-P7.10.1-typed-column-build-notes.md)).
 **What a scan spends its time on is
 [`../design/architecture.md`](../design/architecture.md), "Where a scan's time
 goes"** — the decomposition, which is the durable half of the phase.
@@ -399,13 +405,22 @@ unordered.
       kills a mutation of the function it covers. `measure.py` gains `DECODE`,
       the mechanism no figure declared. Notes:
       [`../design/roadmap-P7.10-scalar-decode-notes.md`](../design/roadmap-P7.10-scalar-decode-notes.md)
-- [ ] **7.10.1** The typed column build — `append_typed`'s dispatch and the
-      Arrow appends under it, plus the `List<Utf8View>` reading 7.11's gate is
-      read from. **Earned**: 7.10's row named its own seam, and pure decoders
-      with an oracle are not one review with a rework of the batch layer.
-- [ ] **7.11** The viewing builder for `List<Utf8View>` — conditional on
-      7.10.1 putting the `List<Utf8View>` build above 1 µs/row, last, reviewed
-      alone.
+- [x] **7.10.1** The typed column build — **measured, and no library code**:
+      `append_typed`'s 0.79 µs a row on the control splits 0.68 µs of
+      decoders, 0.06 µs of dispatch and **0.052 µs of Arrow appends**, so the
+      builder-append half of the lever is 1.6% of a typed library row and
+      there is nothing in it to take. Pre-sizing the builders is priced at
+      under 6 ns a row and refused. **7.11's gate is read and not met**: the
+      registered `arrays` input's array columns are `integer[]`, so the gate
+      was read on a purpose-built `text[]` file chosen to flatter it — 50
+      elements a row, 21 bytes each, above `arrow`'s 12-byte inline threshold
+      — where one `List<Utf8View>` builds in **0.383 µs a row against the
+      1 µs gate**, and the copy-to-view swap 7.11 proposes is worth at most
+      0.24 µs of an 11.08 µs row. Notes:
+      [`../design/roadmap-P7.10.1-typed-column-build-notes.md`](../design/roadmap-P7.10.1-typed-column-build-notes.md)
+- [ ] **7.11** The viewing builder for `List<Utf8View>` — **its gate failed**:
+      7.10.1 read the build at 0.383 µs/row against the 1 µs/row threshold, so
+      what remains is the refusal and its notes doc, not a builder.
 - [ ] **7.12** The sweep pair and the koji regression run, folded in, plus the
       written statement of what a parallel splitter needs from coverage and
       from the census, filed to P16.
@@ -447,8 +462,8 @@ unordered.
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 - **P7 is open**, grilled and sliced; the checklist above is its progress. Its
-  four evidence slices, the allocator reading, eight library changes and one
-  measured refusal have landed — 7.4's gate in `stream.rs`, 7.5's `INSERT`
+  four evidence slices, the allocator reading, eight library changes and two
+  measured refusals have landed — 7.4's gate in `stream.rs`, 7.5's `INSERT`
   statement scan in `preamble.rs`/`map.rs`, 7.13's read-buffer pool in
   `io.rs`, 7.13.1's read carry in `scan.rs`/`stream.rs`, 7.6's bulk UTF-8 pass
   in `copy.rs`/`stream.rs`, 7.7.1's shared field split across
@@ -456,7 +471,8 @@ unordered.
   element in `nested.rs`/`batch.rs` and 7.10's allocation-free scalar decoders
   in `decode.rs`, all edits to timed paths,
   plus 7.8.1's `--chunk-size`, which changes no default and refuses the other
-  two I/O levers. Six
+  two I/O levers, and 7.10.1, which refuses the typed column build on a reading
+  and lands nothing at all. Six
   other phases are sketched and one more is
   specified — P13, P16, P10, P14, P6, P15, P8, in the roadmap table's schedule
   order; a `P<k>` is an identifier, so the numbers say nothing about the order
@@ -607,5 +623,24 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-Nothing open.
+- **7.11's gate was read on an input the gate does not name, and the input's
+  element width is what decides the answer.** The spec gates the viewing
+  builder on the `List<Utf8View>` build exceeding 1 µs/row *on the arrays
+  file*, and that file's array columns are `integer[]` — no committed input
+  carries a `List<Utf8View>` at all, so the gate as written has no reading.
+  7.10.1 built one in `runs/` instead: the `--arrays` shape with `text[]`
+  columns, 50 elements a row, every element 21 bytes so that it sits above
+  `arrow`'s 12-byte view-inlining threshold, where a copy and a view are the
+  same instructions and 7.11's prize would be exactly zero. The reading is
+  **0.383 µs/row against the 1 µs gate**, so 7.11 is refused. **What a person
+  should weigh** is that the element width was chosen, not measured: at 12
+  bytes or less the answer is zero by construction, and a wider element or a
+  longer array would raise it — 130 elements of this width would clear the
+  gate on the build, though the copy-to-view *saving* would still be a fifth
+  of the row. If the maintainer would rather the gate be read on a registered
+  input, that is a `generate_perf_data.py` flag and a figure to consume it,
+  which is a slice and not this one. Reasoning and the input's full
+  specification:
+  [`../design/roadmap-P7.10.1-typed-column-build-notes.md`](../design/roadmap-P7.10.1-typed-column-build-notes.md),
+  "7.11's gate: 0.383 µs/row against 1 µs/row".
 

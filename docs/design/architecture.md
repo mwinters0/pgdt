@@ -4568,6 +4568,32 @@ than in parsing, which reverses what this paragraph said for as long as the
 builder's bucket carried three `malloc`/`free` pairs per row that were not the
 builder's.
 
+**What is left in that row is the decoders, and the Arrow appends are 1.6% of
+a typed library row.** Splitting `append_typed`'s bucket by what sits under it
+— a call graph resolved through the inline frames, over the same control, the
+same regime and the same `--dqcache none` shape — gives **0.68 µs of
+decoders, 0.06 µs of its own dispatch, and 0.052 µs of Arrow builder
+appends**, against a `poll_next` the same sitting reads at 3.25 µs. So the
+builder-append half of the lever this budget sizes is **52 ns a row**: below
+what any of this campaign's instruments resolves, and an order of magnitude
+under the arithmetic that made `append_typed` look like the larger half before
+the decoders stopped allocating. The dispatch is a jump table over
+`batch::ColumnBuilder`'s twenty variants and the appends are `arrow-rs`'s own;
+there is nothing between them to take. Reading:
+[`roadmap-P7.10.1-typed-column-build-notes.md`](roadmap-P7.10.1-typed-column-build-notes.md).
+
+**A nested column moves that row and does not change the answer.** The same
+split over the `--arrays --composite` file reads **0.19 µs a row** of Arrow
+appends for two `integer[]` columns of 54 elements between them, a composite
+and the sixteen scalars — about 2.5 ns an element — and over a file whose two
+list columns are `text[]` instead, **0.55 µs**. Isolated on that file with
+`--column`, one 50-element `text[]` builds its `List<Utf8View>` in **0.383 µs
+a row**, 7.7 ns an element, inside a row that costs 11.08 µs end to end and
+5.46 µs in the library. A `Utf8View` element costs about three times an `Int32`
+one in the builder and the builder is still not where a nested row's time goes:
+`nested::decode_array` is 3.88 µs of that same isolated row, ten times the
+build it feeds.
+
 **The split row is now shared, and this budget is still the unfiltered one.**
 A row's boundaries are found once and read by the filter's terms as well as by
 `push_row` ("Predicates"), so on a query that passes a filter this row is
