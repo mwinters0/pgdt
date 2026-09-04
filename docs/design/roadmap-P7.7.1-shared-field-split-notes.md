@@ -136,9 +136,40 @@ this row's.
 - **No `Vec<u32>`.** It would halve the split's memory traffic and cost a
   width check on a row longer than 4 GiB. The 9 instructions a field are not
   mostly the store.
+- **No preallocated `ends` written by index** — which is a cheaper *safe*
+  form, so the cost side is not "`unsafe` or nothing". `restart` keeps
+  capacity and every row of a block has the same width, so from the second row
+  on, `Vec::push`'s capacity load-compare-branch and its length store are both
+  known-redundant: sizing `ends` to the width once per block and writing
+  `ends[n] = end` against a counter removes them. It is worth perhaps 2–3 of
+  the 9 instructions — real, and small — and it is left for **7.10**, which
+  rewrites this module anyway; see below.
+- **No selectivity gate.** Rejected beside the mechanism rather than here
+  ([`architecture.md`](architecture.md), "Predicates"): a flag that turned
+  memoization off for a single-term filter would trade the rejected-row regime
+  for the kept-row one, not remove a cost.
 - **No re-take of `predicate-terms`, and no sweep.** Every figure that times a
   `pgdq` run was already stale; this slice moves the ones that pass a filter and
   the ones that do not, and 7.12 is what re-takes them.
 - **No profile published.** One was taken to find the inlining regression above
   and is a diagnostic, not a proportion anything cites; it lives in
   `runs/p771-{before,after}.{data,txt}`.
+
+## What 7.10 inherits
+
+That slice rewrites `batch.rs`, which holds the split's only production
+consumer. Three things arrive with it, and the first is already stated above
+in its own section.
+
+- **A call site is not free in this module.** Adding one to a function on the
+  row path cost 2.4% before it ever ran, and the unfiltered shape is the one to
+  measure it on.
+- **The preallocated `ends` is unclaimed**, and this is the module that would
+  take it. Worth 2–3 instructions a field; it needs the unfiltered reading, not
+  a filtered one, since that is the shape the memoization is a pure cost on.
+- **`RowSplit` is bound to its row by discipline, not by the type.** `field`
+  and `complete` re-take the row on every call and nothing checks it is the row
+  the ends were found in, so a missed `restart` returns in-range indices into
+  the wrong row — wrong answers, no panic. One production call chain restarts
+  correctly today; the debug assertion that would make the class a test failure
+  is admitted as `M54` and lands ahead of this slice.

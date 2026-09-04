@@ -504,20 +504,3 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-**7.7.1 landed unconditionally, and it costs the unfiltered path.** Sharing a
-row's field split wins 12–40% of a filtered query's user instructions and costs
-**0.09–0.12 G** on one that filters nothing — +0.4% of a full-projection
-`strings` query, +2.9% of a `pgdq query --no-columns` row count. The decision
-is whether that trade is the one to make: the phase's rule is that a row lands
-when its measured prize is worth the change, and it does not say what to do when
-the change also has a measured cost on a *different* shape. Three things were
-weighed. The cost is the memoization itself, ~9 instructions a field, and there
-is no cheaper form of it without `unsafe`. The obvious way to avoid it — a
-second `push_row` that walks directly when no filter read anything — was built
-and measured and is **worse**, costing the unfiltered path 2.4% merely by
-existing, because a second `push_field` call site in `batch.rs` loses that
-function its inline. And doing nothing keeps a five-term filter paying 65 field
-walks a row where 16 would do. Reversing it means deleting `RowSplit` and
-restoring `field_ranges(..).nth(i)` in `ResolvedTerm::eval`; nothing else
-depends on it. Detail:
-[`../design/roadmap-P7.7.1-shared-field-split-notes.md`](../design/roadmap-P7.7.1-shared-field-split-notes.md).

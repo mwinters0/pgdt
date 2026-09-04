@@ -2693,6 +2693,34 @@ five terms over rows that all survive **11.7%**, and five shallow terms 2.2%;
 against that, one deep term on rejected rows is **4.5%** worse, a bare
 `--no-columns` count 2.9%, and a full-projection query with no filter 0.4%.
 
+**Those losses are upper bounds and the wins are not, which is what makes the
+unconditional sharing a bounded trade rather than an open one.** `push_row`
+walks the whole row whatever the projection is, so on a row that *survives* the
+filter the split is found once and shared for nothing; every loss above is
+measured on a shape where no row survives, which is the pessimal end of the
+selectivity axis. Move along that axis and the 4.5% shrinks toward zero while
+the 39.7% does not. **The largest loss is a filtered shape, not the unfiltered
+one** — one term against a late column, rejecting every row, which is an
+ordinary ad-hoc query and the shape to weigh the trade against; the unfiltered
+readings are the smaller half of the cost side, not its worst case. Both losing
+shapes are *registered figures* — `predicate-terms`' one-term-thirteenth-column
+row and `projection-widths`' zero-column row, which passes no filter at all
+([`measurements.md`](measurements.md), "What a filter term costs" and "What a
+column costs") — so a sweep republishes the regression rather than anyone having
+to remember it, and the absolute magnitudes on that instrument are 0.155 G lost
+against 2.78 G and 3.35 G won.
+
+*Rejected: a `shared` flag on `RowSplit`, set once per block from the filter's
+term count, so a single-term filter's `field` walks without memoizing.* It is
+the term-count gate the eager arithmetic implied, moved out of `batch.rs` where
+the second-call-site trap below lives, and it looks like a free recovery of the
+4.5%. It is not: with one term the memoization is a loss on a *rejected* row
+and a win on a *kept* one, since `complete` reuses the boundaries that term
+found. The flag trades one selectivity regime for the other instead of removing
+a cost, which makes it a heuristic needing a reading of its own — and the shape
+that would decide it, a single deep term over rows that survive, is measured
+nowhere.
+
 **There is one `push_row`, and giving the unfiltered case its own was measured
 and refused.** A second entry point that walked the row directly cost the
 unfiltered path **2.4%** of a query's user instructions, against the 0.4% of
