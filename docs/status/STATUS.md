@@ -499,24 +499,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-### `predicate-terms` prices a filter on a shape that returns no rows
-
-**The call.** All six rows of the new figure ask an all-false disjunction, so
-every term is evaluated and no row survives — the decode, the Arrow build and
-`print_batch` are identically absent from every row of the table. That is what
-lets one table carry both a term-count axis and a field-depth axis, and it is
-what makes an adjacent-row difference the predicate and nothing else.
-
-**Why it was made that way.** The alternative shape — a filter every row
-satisfies, over a projection that builds everything — cannot be built on the
-control file: every column but `id` carries 2% NULLs, so an N-term conjunction
-is `Unknown` on 1 − 0.98^N of the rows and drops them, moving the emit cost the
-subtraction needs held constant. Confining the terms to `id` fixes that and
-leaves a single field depth, which is the axis the lever is sized on.
-
-**What would change if it were reconsidered.** The table stops being an
-absolute a user recognises — nobody runs a query for its zero rows — and the
-shape outlives this slice, since 7.12's sweep re-takes it. The additive answer
-is a second figure on a keeps-everything filter, deliberately not taken here;
-reversing this one instead means either giving up the depth axis or generating
-a NULL-free input, which is a new apparatus input for one table.
+Nothing is open.

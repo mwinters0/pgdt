@@ -1324,8 +1324,28 @@ predicate's terms and `push_row` replaces five walks of thirteen fields with one
 walk of sixteen, so the ceiling on this shape is the 0.27 µs above, less the one
 full-row walk that replaces them. **It is a ceiling on a five-term predicate and
 not on the ordinary one**: at one term the same change buys nothing on this
-shape and costs a wider walk than the term needed, since no row survives to
-reach `push_row`'s split and share it.
+shape and costs a wider walk than the term needed.
+
+**Every row of this table is a rejected row, which is deliberate: it is where
+the lever looks worst.** `RowBatcher::push_row` walks the whole row whatever the
+projection is, so on a row that survives the filter the whole-row split already
+happens and sharing it costs nothing. Selectivity is therefore the axis the
+lever turns on, and a figure on which nothing survives sits at its pessimal end.
+What that buys is that the losses read off this table are **upper bounds** —
+at any other selectivity they shrink toward zero while the many-term win does
+not — so the shape gives up an absolute a reader recognises and gets a
+conservative bound in exchange.
+
+*Rejected: a filter every row satisfies.* It would have given that absolute,
+and the **depth** axis is what defeats it rather than the term count. An
+all-true conjunction does not short-circuit, and every shape here puts its N
+terms on one column, so the 2% of rows dropped as `Unknown` is flat across the
+term axis. The depth axis needs two columns of equal NULL-ness at different
+offsets and this file has none: `id` is its only NOT NULL column and it sits at
+depth 1, so the depth pair would differ by 2% of the rows *emitted* — and where
+a filter keeps everything the emit dominates, so that 2% would swamp a walk
+difference worth 18% of a zero-emit query. It is an obstruction in the input,
+not in the predicate language; a NULL-free deep column would answer it.
 
 **This sitting was taken with another session resident on the machine**, which
 the gate held to its 15%-busy limit rather than excluded. The last two reps
@@ -1335,6 +1355,18 @@ So read the **ordering and the magnitude** off this table, not the third
 decimal; the deterministic corroboration is `runs/measure-7.7.tsv`, retired
 user instructions on the host, which is immune to what else the machine was
 doing and puts the same walk at 49% of a five-term query's instructions.
+
+*Why this is published rather than re-taken.* This document's standing rule is
+that a figure taken while local work ran is not a figure, and the rule exists
+because contention corrupts a number silently — nobody reading the table
+afterwards can tell. Three things make that inapplicable here rather than
+waived: the per-rep readings are published above, so the drift is visible in the
+evidence itself; the caveat states the precision the table supports; and the
+claim anything else cites — that the walk is 49% of a five-term query — rests on
+the deterministic instrument, not on this wall clock. What the rule forbids is
+an unauditable number, and this one is auditable. **The wall table is therefore
+not to be quoted at its stated precision elsewhere** until 7.12's sweep re-takes
+it with every other figure.
 
 ```sh
 cd scripts && uv run measure.py --figure predicate-terms

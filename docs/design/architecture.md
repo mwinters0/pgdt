@@ -2670,13 +2670,21 @@ short-circuit is protecting.** `ResolvedTerm::eval` takes its operand with
 term, so N terms walk it N times and a term deep in a wide table walks further
 than one at its head. Measured over the 16-column control, with nothing
 surviving to be decoded: a term one field in costs 0.033 µs a row, one thirteen
-fields in 0.09–0.12, and a five-term disjunction at that depth spends **49% of
-the whole query's user instructions** on the walk alone
+fields in 0.09–0.12 — wall readings from a sitting the machine was not quiet
+for, so magnitudes rather than exact figures — and a five-term disjunction at
+that depth spends **49% of the whole query's user instructions** on the walk
+alone, which is the deterministic half of that reading
 ([`measurements.md`](measurements.md), "What a filter term costs"). The row is
 split once more in `RowBatcher::push_row`, and the terms do not share that
 split; sharing it is future work, and it is bounded rather than free — one
 whole-row split replaces N partial ones, so it wins on a many-term predicate
 and loses on a single shallow term.
+
+**That loss is confined to rejected rows**, because `push_row` walks the whole
+row whatever the projection is: on a row that survives the filter the whole-row
+split already happens, so sharing it is free there. Selectivity is the axis, the
+measured losses are taken where nothing survives, and they are therefore upper
+bounds rather than typical costs.
 
 **A decode failure therefore surfaces only where evaluation reaches it**, so
 which rows error depends on where the term sits in the tree and on whether a

@@ -34,11 +34,25 @@ identically absent from all six rows of the table. That is what makes the
 difference between two rows the predicate and nothing else.
 
 *Rejected: a conjunction of terms every row satisfies.* It would have given an
-absolute a reader recognises, and it cannot be built on this file: every column
-but `id` carries 2% NULLs, so an N-term conjunction is `Unknown` on
-1 − 0.98^N of the rows and drops them, moving the very emit cost the
-subtraction needs held constant. Confining the terms to `id` fixes that and
-leaves one depth, which is the axis the figure exists for.
+absolute a reader recognises, and **what defeats it is the depth axis, not the
+term-count axis.** An all-true conjunction does not short-circuit — `And` stops
+at the first non-`True` conjunct and there is none — so term count is
+measurable that way. Nor does NULL contamination vary along that axis: every
+shape puts all N terms on **one** column, so the 2% of rows that are `Unknown`
+and get dropped is a flat 2% whatever N is. The depth axis is what cannot be
+built: it needs two columns of equal NULL-ness at different offsets, and this
+file has none. `id` is the only NOT NULL column in the sixteen and it sits at
+depth 1, so a `v_bool`-against-`id` pair differs by 2% of the rows *emitted* —
+and on a filter that keeps everything the emit dominates, so that 2% would
+swamp a walk difference worth 18% of a zero-emit query. Confining the terms to
+`id` removes the contamination and leaves one depth, which is the axis the
+figure exists for.
+
+The obstruction is therefore a property of the input rather than of the
+predicate language: a NULL-free column deep in the row would answer it. The
+control has none — `ARRAY_COLUMNS` and `COMPOSITE_COLUMNS` are never NULL by
+construction, but they exist only under `--arrays`/`--composite`, which is a
+different input whose decode is the thing 7.9 measures.
 
 **Two depths, and the deep column is `v_bool` rather than the last one.**
 `ResolvedTerm::eval` takes its operand with `field_ranges(..).nth(i)`, from the
@@ -109,14 +123,24 @@ not lose:
 
 - **The prize is real and large on a many-term predicate**, and it is the
   largest single term in such a query.
-- **The lever is not monotone.** On the shape most users actually run — one
-  term, and often a shallow one — a shared full-row split costs more than the
-  partial walks it replaces, *on a query that emits nothing*. It stops costing
-  anything the moment rows survive, because `push_row` then splits the whole
-  row anyway and the shared split is free; so the losing case is exactly a
-  highly selective single-term filter. Whether `7.7.1` lands, and whether it
-  lands unconditionally or behind a term-count test, is that trade and this
-  table is what it is decided against.
+- **The lever is not monotone, and the axis it turns on is selectivity.**
+  `RowBatcher::push_row` walks the whole row unconditionally — its own contract
+  says so, "the whole row is walked whatever the projection is" — so on a row
+  that *survives* the filter the whole-row split already happens and sharing it
+  is free. Every cell above is therefore a **rejected** row, and the two losing
+  ones are the cost of splitting sixteen fields for a row that was going to be
+  thrown away.
+
+  **That makes this table the lever's worst case, and the losses upper
+  bounds.** A figure taken where nothing survives sits at the pessimal end of
+  the selectivity axis; at any other selectivity the +5% and +31% shrink toward
+  zero and the −40% is untouched. So `7.7.1` inherits a bounded trade rather
+  than an open question: the lever cannot cost more than 31% anywhere, and that
+  worst case needs a filter that is single-term, shallow, and rejects
+  essentially every row. Whether it lands unconditionally or behind a
+  term-count test is decided against that, and the number that would settle it —
+  what a *keeps-everything* filter costs — is knowable without measuring,
+  because on those rows the sharing is free by construction.
 
 The rows above are arithmetic over one measured slope, not six more readings —
 57.5 M per boundary times a count. Stated so that nobody re-quotes them as
