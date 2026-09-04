@@ -145,6 +145,52 @@ way to also delete the scanner's own chunk copy; that copy is gone without it
 ("The scanner never owns the bytes it scans": the carry), which is what makes
 the refusal free.
 
+**The read chunk is one measured constant, and the two schemes above it are
+refused.** `ScanOptions::chunk_size` defaults to `scan::DEFAULT_CHUNK_SIZE`,
+1 MiB, and `pgdq parse`/`pgdq query` expose it as `--chunk-size` — a tuning
+escape hatch for a device unlike the three measured, not a knob with a known
+win behind it. **1 MiB is the fastest of the six sizes swept**: on the only
+device class where a chunk size shows anything, its neighbours tie with it and
+everything further out is clearly slower, and on the other two it is flat
+([`measurements.md`](measurements.md), "What the read chunk size is worth"). What decides all three of the I/O defaults is one subtraction:
+**no scheme that overlaps I/O with parsing can put a cold scan below the time
+the device takes to deliver the bytes**, and on the fastest disk this project
+owns a cold `COPY` scan exceeds that floor by 8.9%
+([`measurements.md`](measurements.md), "Scan throughput by input shape"). On
+the SATA SSD the same subtraction is ~1%; on the HDD the scan is device-bound
+by a factor of several.
+
+*Rejected:* `posix_fadvise(POSIX_FADV_SEQUENTIAL | WILLNEED)` on the local
+backend. The chunk sweep is the experiment that answers it: a 16 MiB chunk is a
+deeper prefetch than a doubled readahead window, issued while the parser is
+idle and stated rather than inferred — and it is the **slowest** row cold on the
+NVMe, 1.37× the 1 MiB default, with 8 MiB slower too
+([`measurements.md`](measurements.md), "What the read chunk size is worth").
+Cold time does not fall with request depth on any device measured, so the
+kernel's own readahead has already taken what there was and a hint asking for
+more has nothing to win. It would also cost this crate its first direct
+`libc`/`rustix` dependency, which is not what the spec's six-line bullet
+looked like.
+
+*Rejected:* double-buffered readahead — issuing chunk *N+1*'s read while chunk
+*N* is parsed. Its prize is `min(device time, parse time)` and it is bounded by
+the same 8.9%, on the one device class where that number is not ~0; against
+that it is a rework of three read loops, a second in-flight buffer against the
+flat ~9 MiB RSS this design is built on, and one more thing the interrupt guard
+and the query path's chunk retention have to be correct about. Most of the
+parse CPU is already hidden behind the read on that device, and overlapping
+harder cannot recover what is already overlapped.
+
+**The pool ceiling is a cliff, and it bounds a useful chunk size from above.**
+A chunk larger than the 8 MiB the pool keeps is never returned to it, so every
+chunk becomes the fresh `calloc` the pool exists to remove — which is worth
+0.386 s → 0.825 s warm at 16 MiB against 8 MiB, **2.07×**, not a few
+percent. That is a property with
+a remedy the user already has (do not raise `--chunk-size` past 8 MiB), stated
+in the flag's help and in `DEFAULT_CHUNK_SIZE`'s own doc comment, since the
+constant is what a future session would move without knowing the ceiling was
+there.
+
 **Two entry points, deliberately different in kind:**
 
 - **Pull mode** — an async `Stream<Item = Result<RecordBatch>>`, natural for

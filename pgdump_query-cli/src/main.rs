@@ -74,6 +74,16 @@ enum Command {
         /// reads like any other.
         #[arg(long)]
         preamble_only: bool,
+        /// Bytes requested per read from the dump. The default, 1 MiB, is
+        /// the fastest of the six sizes measured on the one device class
+        /// where a chunk size shows anything at all, and makes no measurable
+        /// difference on the other two (`docs/design/measurements.md`, "What the read
+        /// chunk size is worth") — so this is a tuning escape hatch for a
+        /// device unlike those, not a knob with a win behind it. Above 8 MiB
+        /// the read buffer stops being pooled and every chunk is allocated
+        /// and zeroed afresh, which doubles a warm scan.
+        #[arg(long, value_name = "BYTES", value_parser = parse_chunk_size)]
+        chunk_size: Option<usize>,
     },
     /// Report what a dump's cache holds. **`info` never scans** — it reads the
     /// cache `pgdq parse` wrote and errors if there is not one, rather than
@@ -211,7 +221,34 @@ enum Command {
         /// for a database an incremental scan hasn't read the DDL for yet.
         #[arg(long, value_enum, default_value_t)]
         schema_mode: CliSchemaMode,
+        /// Bytes requested per read from the dump — the same knob `parse`
+        /// carries, and with the same measured answer behind its default.
+        #[arg(long, value_name = "BYTES", value_parser = parse_chunk_size)]
+        chunk_size: Option<usize>,
     },
+}
+
+/// A `--chunk-size` value: a byte count, and never zero.
+///
+/// Zero is refused here rather than at the read loop because the loop's
+/// `min(chunk_size, remaining)` would ask for nothing, forever — a scan that
+/// never advances and never errors, which is the one input shape a knob like
+/// this can turn into a hang.
+fn parse_chunk_size(text: &str) -> std::result::Result<usize, String> {
+    match text.parse::<usize>() {
+        Ok(0) => Err("a chunk size of 0 would read nothing".to_string()),
+        Ok(n) => Ok(n),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// The [`ScanOptions`] one scanning command runs under: the default, with
+/// `--chunk-size` applied where it was given.
+fn scan_options(chunk_size: Option<usize>) -> ScanOptions {
+    ScanOptions {
+        chunk_size: chunk_size.unwrap_or(pgdump_query::DEFAULT_CHUNK_SIZE),
+        ..ScanOptions::default()
+    }
 }
 
 /// Turn the two projection flags into [`QueryOptions::projection`]. The three
@@ -646,7 +683,7 @@ fn print_batch(batch: &RecordBatch, plans: &[NestedPlan]) -> Result<()> {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Parse { source: file, dqcache, preamble_only: preamble_only_flag } => {
+        Command::Parse { source: file, dqcache, preamble_only: preamble_only_flag, chunk_size } => {
             // `parse` is the only scanner (`docs/design/architecture.md`,
             // "CLI surface"). Reject `--dqcache none` up front, before paying
             // for a scan we won't be allowed to persist.
@@ -658,7 +695,7 @@ async fn main() -> Result<()> {
             let source = LocalFileSource::open(&file)?;
             if preamble_only_flag {
                 let (metadata, diagnostics) =
-                    preamble_only(&source, &ScanOptions::default(), &mode).await?;
+                    preamble_only(&source, &scan_options(chunk_size), &mode).await?;
                 print_metadata(&metadata, false);
                 print_diagnostics(&diagnostics);
                 println!();
@@ -668,7 +705,7 @@ async fn main() -> Result<()> {
             let size = source.size().await?;
             let cancel = Arc::new(AtomicBool::new(false));
             let signalled = install_interrupt_guard(Arc::clone(&cancel))?;
-            let scan_options = ScanOptions { cancel: Some(cancel), ..ScanOptions::default() };
+            let scan_options = ScanOptions { cancel: Some(cancel), ..scan_options(chunk_size) };
             let run = pgdump_query::map_file(&source, &scan_options, &mode).await?;
             if run.interrupted {
                 // No listing: the user asked the scan to stop, not for a
@@ -762,6 +799,7 @@ async fn main() -> Result<()> {
             no_columns,
             database,
             schema_mode,
+            chunk_size,
         } => {
             let mode = CacheMode::resolve(&file, dqcache.as_deref());
             // Every term is parsed before the file is opened, so a
@@ -806,7 +844,7 @@ async fn main() -> Result<()> {
             let mut stream = pgdump_query::table_stream(
                 &source,
                 &table,
-                ScanOptions::default(),
+                scan_options(chunk_size),
                 query_options,
                 None,
                 mode,

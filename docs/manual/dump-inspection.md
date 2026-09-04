@@ -85,6 +85,24 @@ other. Roles, tablespaces, the object-kind summary and the table listing are
 unavailable until you run a full `parse`, because they require having read the
 rest of the file.
 
+### `--chunk-size`: you almost certainly do not need it
+
+`parse` and `query` read the dump in 1 MiB pieces. `--chunk-size <bytes>`
+changes that, and the reason to mention it at all is to say that the default
+was chosen by measurement rather than by taste: over six sizes from 64 KiB to
+16 MiB, on a SATA SSD, an NVMe drive and a RAM disk, 1 MiB was the fastest on
+the only one of the three where the size made any difference at all, and the
+sizes either side of it were ties rather than improvements.
+
+Two things are worth knowing if you change it anyway. **Small is slower**:
+64 KiB costs about 50% more CPU than 1 MiB, because the per-chunk work is paid
+sixteen times as often. **Above 8 MiB is much slower**: the read buffer stops
+being reused above that size, so every chunk is allocated and zeroed afresh,
+which roughly doubles the scan when the file is already in memory.
+
+The flag exists for a device unlike any of those three. If you have one and
+find a size that beats 1 MiB on it, that is worth reporting.
+
 ## `info`: reporting what is known
 
 ```sh

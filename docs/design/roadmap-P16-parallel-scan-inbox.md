@@ -207,3 +207,25 @@ fast device, and it is the one region kind speculative splitting cannot touch.
 is where the `INSERT` path stops being device-bound"). Contingent on the
 device: a faster disk than this one would reopen it, and none is available here
 to measure on.
+
+---
+
+## A read buffer that misses the pool costs 2.07× a warm scan
+
+**Fact.** `io::BufferPool` holds **four** slots and keeps nothing above 8 MiB.
+A read whose buffer is not pooled falls back to `vec![0u8; len]`, which is the
+`calloc` 7.13 was landed to remove — and the chunk-size sweep priced it
+directly: a 16 MiB chunk, which the pool refuses, takes **0.825 s warm against
+0.386 s** at 8 MiB on the same file and the same binary
+([`measurements.md`](measurements.md), "What the read chunk size is worth").
+The pool is per-`LocalFileSource`, and its bound was chosen against a scan that
+holds one chunk at a time plus the query path's retained chunks.
+
+**Why this phase cares.** Parallel extraction raises the number of chunks in
+flight against one source, which is exactly what the four slots were sized
+against. This is the first measurement that says what a miss costs, so "does
+the pool need to scale with the worker count" is a question with a number
+behind it rather than a guess — and it is a number large enough that getting it
+wrong would eat a meaningful share of what parallelism buys.
+
+**Origin.** 2026-09-04, P7.8.1.

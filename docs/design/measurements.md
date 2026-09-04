@@ -801,6 +801,94 @@ same kind of bytes and a fifth of what the `INSERT` path costs, is the
 one span *and one stored text string* per `lowrite` call, hundreds of
 thousands of them.
 
+## What the read chunk size is worth
+
+<!-- figure: chunk-size — reproduce with `cd scripts && uv run measure.py --figure chunk-size` -->
+
+One `pgdq parse` of the 3.00 GiB `COPY` control at six read chunk sizes, in all
+three regimes, differing in nothing but the number `--chunk-size` carries.
+`scan::DEFAULT_CHUNK_SIZE` is the shipped constant and the ratio column is
+against its row. The figure exists to decide one of P7's three I/O defaults and
+to bound the other two.
+
+**Nine reps, not the throughput tables' three or five.** The cold-NVMe `COPY`
+row above spreads about 15% of its median over five reps, against a total
+envelope for all three I/O levers of 8.9%. An instrument that cannot resolve a
+lever cannot report that the lever is worth nothing — it can only report that it
+saw nothing, which is a different sentence.
+
+| Chunk | Warm, tmpfs | Cold, SATA SSD | Cold, NVMe |
+|---|---|---|---|
+| 64 KiB | **0.611 s** (0.552–0.659) · 1.53× | **5.79 s** (5.77–5.80) · 1.00× | **1.643 s** (1.516–1.823) · 1.18× |
+| 256 KiB | **0.445 s** (0.422–0.505) · 1.12× | **5.78 s** (5.76–5.79) · 1.00× | **1.423 s** (1.329–1.489) · 1.03× |
+| 1 MiB *(default)* | **0.399 s** (0.386–0.445) · 1.00× | **5.78 s** (5.76–5.79) · 1.00× | **1.387 s** (1.323–1.594) · 1.00× |
+| 4 MiB | **0.400 s** (0.375–0.423) · 1.00× | **5.78 s** (5.77–5.80) · 1.00× | **1.455 s** (1.357–1.754) · 1.05× |
+| 8 MiB | **0.386 s** (0.370–0.397) · 0.97× | **5.79 s** (5.78–5.85) · 1.00× | **1.599 s** (1.544–1.692) · 1.15× |
+| 16 MiB | **0.825 s** (0.807–0.941) · 2.07× | **5.83 s** (5.81–5.87) · 1.01× | **1.897 s** (1.821–1.915) · 1.37× |
+
+Per-rep readings (s):
+- 64 KiB (warm): 0.564, 0.659, 0.569, 0.553, 0.615, 0.644, 0.618, 0.552, 0.611
+- 256 KiB (warm): 0.434, 0.445, 0.455, 0.422, 0.462, 0.463, 0.440, 0.505, 0.445
+- 1 MiB (warm): 0.386, 0.409, 0.399, 0.389, 0.445, 0.413, 0.394, 0.387, 0.428
+- 4 MiB (warm): 0.378, 0.399, 0.400, 0.384, 0.401, 0.417, 0.406, 0.423, 0.375
+- 8 MiB (warm): 0.388, 0.388, 0.381, 0.375, 0.391, 0.397, 0.386, 0.370, 0.372
+- 16 MiB (warm): 0.818, 0.853, 0.920, 0.807, 0.941, 0.826, 0.825, 0.822, 0.809
+- 64 KiB (cold): 5.80, 5.78, 5.79, 5.79, 5.79, 5.79, 5.80, 5.77, 5.78
+- 256 KiB (cold): 5.78, 5.79, 5.77, 5.76, 5.78, 5.79, 5.79, 5.78, 5.78
+- 1 MiB (cold): 5.76, 5.77, 5.78, 5.79, 5.78, 5.78, 5.79, 5.76, 5.78
+- 4 MiB (cold): 5.78, 5.78, 5.77, 5.80, 5.78, 5.79, 5.78, 5.77, 5.78
+- 8 MiB (cold): 5.78, 5.79, 5.79, 5.85, 5.79, 5.79, 5.80, 5.78, 5.78
+- 16 MiB (cold): 5.82, 5.83, 5.81, 5.84, 5.84, 5.82, 5.84, 5.81, 5.87
+- 64 KiB (cold-nvme): 1.566, 1.698, 1.516, 1.661, 1.726, 1.823, 1.643, 1.524, 1.555
+- 256 KiB (cold-nvme): 1.423, 1.423, 1.329, 1.427, 1.489, 1.426, 1.472, 1.354, 1.356
+- 1 MiB (cold-nvme): 1.594, 1.425, 1.323, 1.407, 1.387, 1.452, 1.354, 1.362, 1.336
+- 4 MiB (cold-nvme): 1.754, 1.420, 1.374, 1.455, 1.501, 1.515, 1.540, 1.417, 1.357
+- 8 MiB (cold-nvme): 1.692, 1.589, 1.550, 1.608, 1.627, 1.599, 1.593, 1.639, 1.544
+- 16 MiB (cold-nvme): 1.897, 1.895, 1.821, 1.909, 1.915, 1.913, 1.897, 1.915, 1.855
+
+Apparatus over every run in this table: CPU stall ≤1.15%, I/O stall ≤41.78%, machine ≤14% busy, steal ≤0.00%, busiest core ≥3.60 GHz, ≤67°C. **Taken entirely alone**, on 2026-09-04, against `8712756` plus the working-tree change that added the flag and this figure — which is what the stamp's "uncommitted changes under a measured path" records, and which is unavoidable for a figure whose instrument is the change being measured.
+
+**The default is the fastest row, and nothing is within reach of beating
+it.** On the one device class where a chunk size can show anything, 1 MiB is
+the fastest median in the table. Its two neighbours are not distinguishable
+from it — 256 KiB at 1.03× and 4 MiB at 1.05×, both inside the reps' own spread
+— and everything further out is clearly slower: 1.18× at 64 KiB, 1.15× at
+8 MiB, 1.37× at 16 MiB, each with a spread that does not reach the default's.
+So the chunk-size lever is not worth "at most 8.9%" — it is worth **nothing**,
+because no value measured beats the one already shipped and the ones that could
+have are ties. The constant stays at 1 MiB and
+`--chunk-size` is a tuning escape hatch for a device unlike these three, not a
+knob with a win behind it.
+
+**The SATA SSD reads 1.00× at every size, which is the point of having it in
+the table.** Nothing can be won there — the device is the whole cost — but
+something could have been *lost*, and this is what says a default chosen on the
+NVMe does not cost the other classes anything. The one exception is small and
+in the same direction as everywhere else: 16 MiB is 1.01×.
+
+**A deeper read is not a faster one, and that is what settles `fadvise`.** The
+16 MiB row is a 16 MiB synchronous read issued while the parser is idle —
+a far deeper prefetch than `POSIX_FADV_SEQUENTIAL`'s doubled window, and one
+the kernel is told about rather than has to infer. It is the **slowest** row
+cold on the NVMe, and 8 MiB is slower than 1 MiB too. Cold time does not fall
+with request depth on any device here, so the kernel's own readahead has
+already taken what there was to take and a hint asking for more has nothing to
+win ([`architecture.md`](architecture.md), "Execution model and API surface",
+where both schemes are refused).
+
+**16 MiB doubles the warm scan, and that is the read path's pool ceiling
+rather than the chunk size.** `io::BufferPool` keeps nothing above 8 MiB, so at
+16 MiB every chunk is a fresh `vec![0u8; len]` — the `calloc` the pool exists
+to remove, back once per chunk. Warm, where nothing hides it, that is 0.386 s
+→ 0.825 s, **2.07×**, against the 8 MiB row immediately above it. It is the
+same cost the buffer pool was landed to remove, re-entering through a knob, and
+it is why the sweep brackets the ceiling rather than stopping at it.
+
+**Small chunks cost CPU, not I/O.** 64 KiB is 1.53× warm and 1.18× cold on the
+NVMe, and 1.00× on the SATA SSD — the per-chunk work (a syscall, a pool
+take/give, a carry check) paid 16× as often, which the slower device hides
+entirely and the faster one does not.
+
 ## The census on brace-free rows costs a few percent of a warm scan
 
 <!-- figure: census-brace-free — reproduce with `cd scripts && uv run measure.py --figure census-brace-free` -->

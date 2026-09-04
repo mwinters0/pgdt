@@ -16,7 +16,7 @@ each is in.
 
 [`../design/measurements.md`](../design/measurements.md) carries the `ba2fc12`
 stamp of 2026-09-03: the scan-performance baseline sweep pair was taken and
-folded in whole, so seven of its sixteen tables come from one sitting. Seven
+folded in whole, so seven of its seventeen tables come from one sitting. Seven
 were taken on their own afterwards and each says so in its own section —
 `allocator` twice, by 7.3 and again by 7.13, whose ratios are within-sitting
 and whose second sitting reversed both cells the adoption argument rested on;
@@ -25,23 +25,26 @@ the first of the three by two orders of magnitude and re-took the other two in
 the same sitting because they share its readings and its subject; and
 `scan-throughput-cold`, `scan-throughput-warm` and `census-brace-free` by 7.5,
 the three of them in one sitting because the two throughput tables' `COPY` row
-*is* the census table's census-on column. **Two stand outside the sweep for the
-other reason, having not existed when it ran.** `predicate-terms` was the first
+*is* the census table's census-on column. **Three stand outside the sweep for
+the other reason, having not existed when it ran.** `predicate-terms` was the first
 table to pass a filter at all, and 7.7 took it on 2026-09-04 at `42b1611`; **it
 is now stale in fact as well as mechanically**, measuring a walk from the front
 of the row per term where 7.7.1 made a row's boundaries shared, so its two
 headline numbers are a reading of the shape the lever replaced. Its section says
-so, and 7.12's sweep re-takes it with everything else. `scan-throughput-nvme` is
-the doc's newest table and the first taken on a third device class: 7.8 took it
-on 2026-09-04 at `e889634`, alone, and it is the one figure here that is current
-in fact as well as by its stamp — every P7 change to a timed path is behind it.
+so, and 7.12's sweep re-takes it with everything else. `scan-throughput-nvme`
+was the first table taken on a third device class: 7.8 took it on 2026-09-04 at
+`e889634`, alone, and no P7 change to a timed path has landed behind it since.
+`chunk-size` is the doc's newest table and the only one taken at a working-tree
+commit: 7.8.1 took it on 2026-09-04, alone, in all three regimes at once, and
+it is the figure that decided the read chunk and bounded the other two
+I/O-defaults levers.
 
-**Fifteen of the sixteen read stale against the `ba2fc12` stamp, and one of
-those fifteen is stale only mechanically.** `--stale` is relative to the doc's
+**Sixteen of the seventeen read stale against the `ba2fc12` stamp, and two of
+those sixteen are stale only mechanically.** `--stale` is relative to the doc's
 session stamp rather than to when each table was taken, so
-`scan-throughput-nvme` reads red although it was taken at `e889634`, behind
-every P7 change to a timed path — it is the one table here that is current in
-fact. The other fourteen — the thirteen sweep figures and `predicate-terms` —
+`scan-throughput-nvme` and `chunk-size` read red although both were taken after
+every P7 change to a timed path — they are the two tables here that are current
+in fact. The other fourteen — the thirteen sweep figures and `predicate-terms` —
 are stale in fact too. `nested-decode-micro` is the one that reads green: it
 times a decoder in isolation and reaches no `pgdq` run. `allocator` is the newest of the thirteen sweep figures,
 re-taken by 7.13 on the pooled read path, and 7.13.1 has since moved it too;
@@ -123,9 +126,9 @@ exists as of that figure, and it is the only figure that declares it.
 | Best-effort structural cache with source-identity checking and cache-only inspection | working |
 | Arrays, composites, ranges, multiranges, `int2vector` | typed and decoded end to end: `List<T>`, `Struct<…>`, the five-field range struct, `List<`range struct`>`, `List<List<T>>`, and `int2vector`'s `List<Int16>` — a fifth literal form with no wrapper, no quoting and no NULL element (I47), compared through `anyarray` polymorphism's `array_lt`/`array_eq` so `'2' < '10'` is true where a byte comparison says false. Three shapes stay strings, each with its own resolution outcome — an opaque element type, an element type that is itself an array (I26), and values that disagree on shape. **Every container kind now compares structurally** — element-wise, field-wise and bound-wise through a `ComparisonPlan::Nested` tree, `array_cmp`'s shape tie-break, and one NULL rule at every level (I45) — with the literal read through the `*_in` supersets (I44) and each leaf in its own type's output form. Comparability and divergence are both inherited: a `json` position refuses the column's *ordering* and names itself, a `text[]` announces its element's collation. A column whose order one position refuses still answers `=` — over the container's whole text — and **says what that costs at the position that did it**, since `array_cmp` raises for a `json` element rather than comparing, so bytewise is an answer the server does not have; a position the *resolver* declined instead (I22, I26) resolves the column to text before any tree is read and is silent. **A range is put into the form the server stores it in before it is compared** (I46): `range_serialize`'s out-of-order refusal and empty-collapse, then the canonical function the three discrete built-ins have, so `int4range '[1,10]'`, `'(0,10)'` and `'[1,11)'` are one value and `'(1,2)'` is `empty`; a multirange's members are sorted, coalesced and emptied out before the sequence is walked. A user-defined range declaring a `canonical` function is refused under **every** operator, `=` included, since the server rewrites both operands through arbitrary server-side code before comparing them |
 | Array shape census | recorded by every mapping pass and consumed: a query retypes its top-level array columns from the union over the blocks it will replay, before the first batch |
-| CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, cache-only `info` | working; **`parse` is the only scanner** — it resumes from a matching cache, banks at `COPY` block boundaries under a self-tuning throttle, and saves unconditionally on Ctrl-C (exit 130/143). `info` reports from the cache and never scans. `--verbose` adds each block's byte offsets, a per-column resolution line, an enum column's declared labels beneath it, and — under the `user-defined types` count that heads it — one line per user-defined type, every `TypeKind` arm rendered with its payload. Text output shape is provisional; `--json` carries no shape promise at all, and states the labels once per type in `metadata.databases[].types[]` rather than per column |
+| CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, cache-only `info` | working; **`parse` is the only scanner** — it resumes from a matching cache, banks at `COPY` block boundaries under a self-tuning throttle, and saves unconditionally on Ctrl-C (exit 130/143). `info` reports from the cache and never scans. Both scanning commands take `--chunk-size <bytes>`, whose 1 MiB default is the fastest of six sizes measured on the one device class where the size makes a difference ([`../design/measurements.md`](../design/measurements.md), "What the read chunk size is worth"); above 8 MiB the read buffer stops being pooled and a warm scan doubles. `--verbose` adds each block's byte offsets, a per-column resolution line, an enum column's declared labels beneath it, and — under the `user-defined types` count that heads it — one line per user-defined type, every `TypeKind` arm rendered with its payload. Text output shape is provisional; `--json` carries no shape promise at all, and states the labels once per type in `metadata.databases[].types[]` rather than per column |
 | Partial reporting | `info` reports an unfinished scan's cache for as far as it got, with `Scan completion: N%` stated once at the top and nothing below it qualified. An interrupted cache is **typed** for every database segment the scan finished (I1) |
-| Measurement harness | `scripts/measure.py` takes every figure in [`../design/measurements.md`](../design/measurements.md) and emits that doc's tables — fifteen figures, fourteen taken by a sweep and one derived across two, each declaring what invalidates it, which documents repeat it, and which readings it borrows from another figure — that third edge is what lets `--figure` pull in what a figure borrows and name the rest of the set that must be re-taken with it, and `--alone` is how a partial sitting is asked for deliberately. `measure.UNTAKEN` is empty: nothing is built and unrun. It also builds and interrogates the `allocator` figure's three legs, reading each binary's allocator out of `pgdq --version` rather than trusting the flags it passed, and names the shipped one in the session stamp. A leg is rebuilt **once per harness process** rather than reused from `runs/`, which is what stops a fresh reference being timed against last session's legs, and all of them are built before the first reading rather than at the rep that wants one |
+| Measurement harness | `scripts/measure.py` takes every figure in [`../design/measurements.md`](../design/measurements.md) and emits that doc's tables — sixteen figures, fifteen taken by a sweep and one derived across two, each declaring what invalidates it, which documents repeat it, and which readings it borrows from another figure — that third edge is what lets `--figure` pull in what a figure borrows and name the rest of the set that must be re-taken with it, and `--alone` is how a partial sitting is asked for deliberately. `measure.UNTAKEN` is empty: nothing is built and unrun. It also builds and interrogates the `allocator` figure's three legs, reading each binary's allocator out of `pgdq --version` rather than trusting the flags it passed, and names the shipped one in the session stamp. A leg is rebuilt **once per harness process** rather than reused from `runs/`, which is what stops a fresh reference being timed against last session's legs, and all of them are built before the first reading rather than at the rep that wants one |
 | Column projection | working, library and CLI: `QueryOptions::projection` names columns, cuts the reported `ResolvedSchema` with the batches, may reorder, and may be empty (`COUNT(*)`); `pgdq query` spells it `--column <name>` repeated, or `--no-columns`, which prints no header so `\| wc -l` is a row count. A filter may name a column the projection does not, and an unprojected column is never decoded, so projecting a column away escapes its `Error::FieldDecode` — including `KD2`'s, which the error message does not name ([`../design/architecture.md`](../design/architecture.md), "Projection"; [`../manual/type-handling.md`](../manual/type-handling.md)). Measured on one 3.00 GiB file at five widths: `--no-columns` is 3.18 µs a row against 28.56 for all 19, the two array columns alone are +13.21 and the composite +0.98 ([`../design/measurements.md`](../design/measurements.md), "What a column costs") |
 | The filter expression, evaluated three-valued | working: `QueryOptions::filter` is one `Expr` — `Term`/`And`/`Or`/`Not`, `And` and `Or` n-ary — evaluated in SQL's `True`/`False`/`Unknown` domain, a row surviving only where the root is `True`. A NULL field is `Unknown` under every comparing operator, which is the row set the old collapse gave for every conjunction and is what makes `Not` expressible at all. `IS DISTINCT FROM`/`IS NOT DISTINCT FROM` come with it, being the one thing `Not` cannot spell. Short-circuiting is defined against the *root*: `And` stops at the first non-`True` unless a `Not` is above it, which is where a decode failure surfaces or does not. Nothing folds two terms, so a contradictory pair is a query with no rows. Reachable from the CLI as well as the library: `pgdq query --where <expr>` builds the tree and a repeated `--filter` still builds the conjunction ([`../design/architecture.md`](../design/architecture.md), "Predicates") |
 | The `--where` expression grammar | working, CLI only — `Expr` is an enum an embedder fills in, so nothing below L4 parses an expression. Parens group, `NOT` binds tighter than `AND` and `AND` tighter than `OR`, the keywords are case-insensitive and are keywords only outside quotes, and everything that is not a paren or a keyword is a term handed to the `--filter` grammar unchanged. A keyword is recognised only against whitespace or a paren, so `tag=and` stays an equality; a `NOT` after the word `is` belongs to the term, so `IS NOT NULL` and `IS NOT DISTINCT FROM` survive whole; juxtaposition is not an implicit `AND`; and a value holding a paren must be quoted. Both flags together are one conjunction. **No `--filter` string changes meaning** — that is what the separate flag buys ([`../design/architecture.md`](../design/architecture.md), "`--where` builds an expression out of those terms"; [`../manual/type-handling.md`](../manual/type-handling.md), "Combining terms: `--where`") |
@@ -164,13 +167,13 @@ profiles of the three control shapes
 [`../design/architecture.md`](../design/architecture.md), "Where a scan's time
 goes"** — the decomposition, which is the durable half of the phase.
 
-**Figures.** Seven of the fifteen figures in
+**Figures.** Seven of the sixteen figures in
 [`../design/measurements.md`](../design/measurements.md) come from the
 `ba2fc12` sweep of 2026-09-03, folded in whole, each table carrying an
 apparatus line; `allocator`, `per-block-quadratic`, `map-only`,
 `preamble-prepass`, `scan-throughput-cold`, `scan-throughput-warm` and
 `census-brace-free` were taken on their own afterwards, and each section says
-so. `--check` reconciles fifteen markers against fifteen
+so. `--check` reconciles seventeen markers against seventeen
 figures. `session-drift` is derived across that sweep and a second one taken
 three minutes later on the same commit, which is the pair `--drift` reads.
 `measure.ACKNOWLEDGED` carries the six entries above: a fresh stamp spends
@@ -328,10 +331,26 @@ unordered.
       on the fastest disk we own a cold `COPY` scan exceeds that floor by
       0.125 s of 1.406 s. No library code. Notes:
       [`../design/roadmap-P7.8-cold-nvme-figure-notes.md`](../design/roadmap-P7.8-cold-nvme-figure-notes.md)
-- [ ] **7.8.1** The I/O defaults — readahead, `posix_fadvise` and the
-      chunk-size constant, each landed or rejected against 7.8's figure.
+- [x] **7.8.1** The I/O defaults — all three decided, and **none of them
+      landed a scheme**. `chunk-size` is the new figure: one `parse` of the
+      3.00 GiB control at six sizes, in all three regimes, nine reps.
+      **1 MiB is the fastest row of the swept range** — cold on the NVMe its
+      neighbours are ties (1.03× at 256 KiB, 1.05× at 4 MiB, both inside the
+      reps' spread) and everything further out is clearly slower (1.18× at
+      64 KiB, 1.15× at 8 MiB, **1.37× at 16 MiB**), while cold on the SATA SSD
+      every row is 1.00× — so the lever is worth nothing rather than "at most
+      8.9%". The same table settles `fadvise`:
+      a 16 MiB chunk is a deeper prefetch than `POSIX_FADV_SEQUENTIAL` would
+      arrange and it is the *slowest* cold row, so no depth is left to buy;
+      double-buffered readahead is refused on 7.8's 8.9% ceiling against a
+      rework of three read loops. What did land is the instrument —
+      `pgdq parse|query --chunk-size`, flagged under "Decisions worth another
+      look" as new surface the spec's lever bullet did not ask for — and one
+      fact no figure had shown: above the read path's 8 MiB pool ceiling the
+      buffer stops being kept, which is **2.07× a warm scan**, not a taper.
       **Earned**: 7.8's row paired the instrument that prices these three
-      levers with the levers themselves, which is two review cycles.
+      levers with the levers themselves, which is two review cycles. Notes:
+      [`../design/roadmap-P7.8.1-io-defaults-notes.md`](../design/roadmap-P7.8.1-io-defaults-notes.md)
 - [ ] **7.9** `decode_array`'s `Vec<Option<String>>` intermediate, replaced by
       borrowed slices where the literal carries no escapes.
 - [ ] **7.10** Scalar decode and the typed column build, split by the profile
@@ -371,12 +390,14 @@ unordered.
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 - **P7 is open**, grilled and sliced; the checklist above is its progress. Its
-  four evidence slices, the allocator reading and six library changes have
-  landed — 7.4's gate in `stream.rs`, 7.5's `INSERT` statement scan in
-  `preamble.rs`/`map.rs`, 7.13's read-buffer pool in `io.rs`, 7.13.1's read
-  carry in `scan.rs`/`stream.rs`, 7.6's bulk UTF-8 pass in
-  `copy.rs`/`stream.rs` and 7.7.1's shared field split across
-  `copy.rs`/`predicate.rs`/`batch.rs`/`stream.rs`, all edits to timed paths. Six
+  four evidence slices, the allocator reading, six library changes and one
+  measured refusal have landed — 7.4's gate in `stream.rs`, 7.5's `INSERT`
+  statement scan in `preamble.rs`/`map.rs`, 7.13's read-buffer pool in
+  `io.rs`, 7.13.1's read carry in `scan.rs`/`stream.rs`, 7.6's bulk UTF-8 pass
+  in `copy.rs`/`stream.rs` and 7.7.1's shared field split across
+  `copy.rs`/`predicate.rs`/`batch.rs`/`stream.rs`, all edits to timed paths,
+  plus 7.8.1's `--chunk-size`, which changes no default and refuses the other
+  two I/O levers. Six
   other phases are sketched and one more is
   specified — P13, P16, P10, P14, P6, P15, P8, in the roadmap table's schedule
   order; a `P<k>` is an identifier, so the numbers say nothing about the order
@@ -527,4 +548,22 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
+- **`pgdq --chunk-size` is new user surface, added so that the chunk-size
+  lever could be priced at all.** P7's spec says of that lever that
+  "`ScanOptions::chunk_size` already exposes this; the work is measuring the
+  right defaults per device class rather than adding a knob" — and the field
+  was exposed to *library* callers only, so the CLI the sweep times could not
+  vary it. The alternatives were a binary per size, built in a worktree with
+  the constant patched (the `pgdq-nocensus` precedent), or no measurement.
+  The flag was taken because it is the better-provenanced instrument — the
+  value is in every rep's recorded command line rather than in a build step
+  whose failure mode is six identical binaries and a flat table — and because
+  the spec's own next paragraph says "an operator can pick", which was not true
+  of anyone using the CLI. **What is being decided**: whether the flag stays
+  now that the figure says the default needs no change, or is removed as a knob
+  justified by a null result, taking the `chunk-size` figure's instrument with
+  it. Reversing it costs the figure its command shape and nothing else; pre-1.0
+  there is no compatibility question. Detail:
+  [`../design/roadmap-P7.8.1-io-defaults-notes.md`](../design/roadmap-P7.8.1-io-defaults-notes.md),
+  "The instrument is a flag, not a build per size".
 

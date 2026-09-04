@@ -459,10 +459,28 @@ impl ChunkCarry {
     }
 }
 
+/// Bytes requested per read from the source, unless a caller says otherwise.
+///
+/// **One measured constant, not a runtime probe** — the shipped default is the
+/// one that is worst-case-best across the device classes measured
+/// (`docs/design/measurements.md`, "What the read chunk size is worth"). It is
+/// named rather than written inline because it is what
+/// [`ScanOptions::chunk_size`] is compared against, and because the
+/// measurement that chose it has to be able to name the value it chose.
+///
+/// **It sits below the read path's pool ceiling deliberately.** A chunk larger
+/// than `io::POOL_MAX_BYTES` is never kept by the buffer pool, so every chunk
+/// becomes a fresh zeroed allocation — the cost the pool exists to remove
+/// (`docs/design/architecture.md`, "Execution model and API surface"). A
+/// caller raising `chunk_size` past it pays that, and the figure above is
+/// where it is priced.
+pub const DEFAULT_CHUNK_SIZE: usize = 1 << 20;
+
 /// Tuning knobs for a full-file scan.
 #[derive(Debug, Clone)]
 pub struct ScanOptions {
-    /// Bytes requested per read from the source.
+    /// Bytes requested per read from the source. Defaults to
+    /// [`DEFAULT_CHUNK_SIZE`].
     pub chunk_size: usize,
     /// Hard cap on a single line's length. A dump whose lines exceed this is
     /// rejected rather than buffered without bound — the scanner cannot emit
@@ -490,7 +508,7 @@ pub struct ScanOptions {
 
 impl Default for ScanOptions {
     fn default() -> Self {
-        Self { chunk_size: 1 << 20, max_line_bytes: 64 << 20, cancel: None }
+        Self { chunk_size: DEFAULT_CHUNK_SIZE, max_line_bytes: 64 << 20, cancel: None }
     }
 }
 

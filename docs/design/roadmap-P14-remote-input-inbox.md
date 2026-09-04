@@ -68,3 +68,30 @@ its I/O, this phase inherits the problem.
 **Origin.** 2026-09-02, grilling P13.
 
 **Contingent on** the crate honouring R2; re-check the requirements file.
+
+---
+
+## The 1 MiB read chunk and the refusal of double-buffering are both facts about local disks
+
+**Fact.** `scan::DEFAULT_CHUNK_SIZE` is 1 MiB, chosen by measurement over six
+sizes from 64 KiB to 16 MiB on a SATA SSD, an NVMe drive and tmpfs
+([`measurements.md`](measurements.md), "What the read chunk size is worth"). Two
+things travel with it. `io::BufferPool` **keeps nothing above 8 MiB**, so a
+chunk larger than that is a fresh zeroed allocation every time — worth **2.07×
+a warm scan** at 16 MiB. And double-buffered readahead was refused on the
+arithmetic that a cold scan cannot go below the device's own delivery time,
+which on the fastest local disk we own leaves an 8.9% envelope for the whole
+overlap idea ([`architecture.md`](architecture.md), "Execution model and API
+surface").
+
+**Why P14 cares.** Both premises fail over a network. A ranged GET has latency
+a local `pread` does not, so overlapping the next request with the current
+parse is worth something here even though it was refused there — the refusal is
+a local-disk result and must not be read as a decision about the trait. And a
+1 MiB range is almost certainly too small for `object_store`, where per-request
+overhead dominates; the first size that looks right will be several MiB, which
+walks straight into the pool ceiling and silently turns the pool off. Whichever
+way P14 goes, `POOL_MAX_BYTES` is a constant it has to look at rather than
+inherit.
+
+**Origin.** 2026-09-04, P7.8.1.

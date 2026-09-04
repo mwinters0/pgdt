@@ -1315,6 +1315,34 @@ def predicate_expr(shape: str) -> str:
     return " OR ".join(f"{column}=zzz{i}" for i in range(1, terms + 1))
 
 
+#: The read chunk sizes `chunk-size` is taken at, in bytes, smallest first.
+#: `1 << 20` is the shipped default (`scan::DEFAULT_CHUNK_SIZE`) and every
+#: other row is read against it.
+#:
+#: **The range brackets the read path's own buffer-pool ceiling.** A chunk
+#: above 8 MiB is refused by `io::BufferPool::give`, so at 16 MiB every chunk
+#: is a fresh zeroed allocation and the pool 7.13 landed is off. That row is in
+#: the table on purpose: the ceiling is a property of the read path, and a
+#: sweep that stopped at 8 MiB would leave a reader to assume the curve
+#: continues.
+CHUNK_SIZES: tuple[int, ...] = (64 << 10, 256 << 10, 1 << 20, 4 << 20, 8 << 20, 16 << 20)
+
+#: The row every other chunk-size row is a ratio against.
+CHUNK_DEFAULT = 1 << 20
+
+
+def fmt_chunk(size: int) -> str:
+    """A chunk size as the table spells it — KiB below a mebibyte, else MiB.
+
+    Every registered size is a whole number of either, which a test holds:
+    a table row reading `1.5 MiB` would be a size nobody chose."""
+    if size % (1 << 20) == 0:
+        return f"{size >> 20} MiB"
+    if size % (1 << 10) == 0:
+        return f"{size >> 10} KiB"
+    raise ValueError(f"chunk size {size} is not a whole number of KiB")
+
+
 def _script(command: str) -> str:
     """The in-container shell for one command shape.
 
@@ -1366,6 +1394,20 @@ def _script(command: str) -> str:
     if command == "query-nomatch":
         # Maps to EOF (the table never matches) and never saves.
         return f"{q} query --source /dump.sql --table public.nosuchtable --dqcache none >/dev/null"
+    if command.startswith("parse-chunk-"):
+        # The read chunk, the one lever of the three I/O defaults that is a
+        # value rather than a scheme. `parse` rather than `query`: this is
+        # about the bytes arriving, and the row machinery above it is what the
+        # rest of the register measures.
+        size = command.rpartition("-")[2]
+        if not size.isdigit():
+            raise ValueError(f"unknown command shape {command!r}")
+        if int(size) not in CHUNK_SIZES:
+            raise ValueError(f"{command!r} names a chunk size the figure does not carry")
+        return (
+            f"{q} parse --source /dump.sql --dqcache /tmp/x.dqcache "
+            f"--chunk-size {size} >/dev/null"
+        )
     if command == "dd":
         return "time dd if=/dump.sql of=/dev/null bs=4M"
     raise ValueError(f"unknown command shape {command!r}")
@@ -1924,6 +1966,76 @@ def run_scan_throughput_nvme(session: Session) -> str:
     tables is the ratio, never one table's absolute against another's, so the
     differing rep count costs nothing it relies on."""
     return _throughput_figure(session, "scan-throughput-nvme", "cold-nvme", session.cfg.reps(5))
+
+
+# -- the read chunk size ----------------------------------------------------
+
+#: The three regimes the chunk size is swept in, in the table's column order,
+#: with the caption each column carries.
+#:
+#: **All three, not the NVMe alone.** The NVMe is the only class on which a
+#: chunk size *can* win — the other two hide everything behind the device — but
+#: the default that ships is the one that is worst-case-best across the
+#: classes, so the two that cannot win are exactly the ones that say what
+#: changing it would cost. Warm is here for the third question the other two
+#: cannot answer: what a chunk size costs in CPU, where no device hides it.
+CHUNK_REGIMES: tuple[tuple[str, str], ...] = (
+    ("warm", "Warm, tmpfs"),
+    ("cold", "Cold, SATA SSD"),
+    ("cold-nvme", "Cold, NVMe"),
+)
+
+
+def _chunk_specs() -> list[RunSpec]:
+    return [
+        RunSpec(
+            "pgdq",
+            "control",
+            f"parse-chunk-{size}",
+            regime,
+            f"{fmt_chunk(size)} ({regime})",
+        )
+        for regime, _ in CHUNK_REGIMES
+        for size in CHUNK_SIZES
+    ]
+
+
+def run_chunk_size(session: Session) -> str:
+    """One `parse` of the control file at six chunk sizes, in three regimes.
+
+    **Nine reps.** The cold-NVMe throughput table's own `COPY` row spreads
+    1.285–1.499 s over five — about 15% of its median, which is nearly twice
+    the whole 8.9% envelope this figure's decision lives inside
+    (`roadmap-P7.8-cold-nvme-figure-notes.md`, "What 7.8.1 inherits, stated as
+    arithmetic"). Five reps cannot resolve a lever that small; nine is what
+    makes a flat table mean *flat* rather than *unresolved*, and the per-rep
+    listing beneath is what lets a reader check that for themselves.
+
+    **Every row is one file, one command and one binary**, differing only in
+    the number the flag carries — which is the within-file attribution this
+    campaign's rules ask for, and the reason this is a sweep over a flag
+    rather than over six builds."""
+    specs = _chunk_specs()
+    session.sweep("chunk-size", specs, session.cfg.reps(9))
+
+    by_regime = {regime: {} for regime, _ in CHUNK_REGIMES}
+    for spec in specs:
+        size = int(spec.command.rpartition("-")[2])
+        by_regime[spec.regime][size] = median(session.get("chunk-size", spec))
+
+    rows = []
+    for size in CHUNK_SIZES:
+        cells = [fmt_chunk(size) + (" *(default)*" if size == CHUNK_DEFAULT else "")]
+        for regime, _ in CHUNK_REGIMES:
+            got = by_regime[regime][size]
+            ratio = got / by_regime[regime][CHUNK_DEFAULT]
+            spec = next(
+                s for s in specs if s.regime == regime and s.command.endswith(f"-{size}")
+            )
+            cells.append(f"{fmt_median_spread(session.get('chunk-size', spec))} · {ratio:.2f}×")
+        rows.append(cells)
+    table = md_table(["Chunk", *(label for _, label in CHUNK_REGIMES)], rows)
+    return table + "\n" + _per_rep("chunk-size", session, specs)
 
 
 # -- the census pair --------------------------------------------------------
@@ -2711,6 +2823,27 @@ FIGURES: list[Figure] = [
         depends=(*SCAN, *MAP, *READ, *GEN_SHAPES),
         nvme_inputs=("control", "large_object", "insert_run"),
         run=run_scan_throughput_nvme,
+    ),
+    # The one of the three I/O defaults that is a value rather than a scheme,
+    # and the only one that can be swept without a second build: `--chunk-size`
+    # is a flag, so every row here is the same binary over the same file.
+    # It borrows nothing -- the default row is a `parse` under a flag the
+    # throughput tables do not pass, so it is its own reading even where the
+    # number would look interchangeable with theirs.
+    Figure(
+        id="chunk-size",
+        quoted_by=(
+            "docs/design/architecture.md",
+            "docs/design/roadmap-P7-scan-performance.md",
+            "docs/status/STATUS.md",
+        ),
+        section="What the read chunk size is worth",
+        stage="warm+cold+cold-nvme",
+        depends=(*SCAN, *MAP, *READ, *QUERY_CLI, *GEN_PERF),
+        warm_inputs=("control",),
+        cold_inputs=("control",),
+        nvme_inputs=("control",),
+        run=run_chunk_size,
     ),
     Figure(
         id="nested-end-to-end",
