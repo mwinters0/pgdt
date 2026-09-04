@@ -31,7 +31,7 @@ through.
 | If you are touching… | Read |
 |---|---|
 | the async/IO trait, batch sizing, push vs. pull | [Execution model and API surface](#execution-model-and-api-surface) |
-| `scan.rs`, `copy.rs`, a new `Event` variant, a read loop's buffer | [Bytes and structure](#bytes-and-structure) |
+| `scan.rs`, `copy.rs`, a new `Event` variant, a read loop's buffer, how a field's bytes become a `str` | [Bytes and structure](#bytes-and-structure) |
 | `map.rs`, spans, tiling, TOC headers, `INSERT`/large-object regions | [The file map](#the-file-map) |
 | `index.rs`, what the index owns, diagnostics | [`DumpIndex`: one owner per fact](#dumpindex-one-owner-per-fact) |
 | array dimensionality, `ArrayShape`, what a scan records per row and what retypes a column from it | [The array shape census](#the-array-shape-census) |
@@ -59,7 +59,7 @@ through.
 |---|---|---|
 | Byte-range I/O trait + local-file impl | `pgdump_query/src/io.rs` | L1 |
 | `COPY` block and large-object structure discovery, and the read loops' chunk carry (`ChunkCarry`) | `pgdump_query/src/scan.rs` | L1 |
-| COPY TEXT field splitting / escaping / unescaping | `pgdump_query/src/copy.rs` | L1 |
+| COPY TEXT field splitting / escaping / unescaping, and the bulk UTF-8 pass a row is decoded off (`RawRow`, `field_ranges`, `validated_prefix`) | `pgdump_query/src/copy.rs` | L1 |
 | `Span`/`SpanBody`/`DataBlock`/`TocHeader`, the boundary+classification state machine (`Builder`), `check_tiling`, `attach_text` | `pgdump_query/src/map.rs` | L1 |
 | DDL statement grammar: `classify_statement`, `statement_complete`, `in_open_quote`, `extract_statement_cross_refs`, `dump_metadata_from_spans`; `DumpMetadata` and friends | `pgdump_query/src/preamble.rs` | L1 |
 | `DumpIndex`, `CopyBlock`, `build_index`/`scan_preamble`/`preamble_only` | `pgdump_query/src/index.rs` | L1 |
@@ -293,6 +293,68 @@ convenience that `COPY TO` never produces.
 here needs one: every correctness fixture is real `pg_dump` output, never
 hand-encoded, and the single use is proving the two functions round-trip
 against real on-disk bytes.
+
+### A row's bytes are validated once, in bulk
+
+A `Utf8View` column takes its bytes straight out of the read chunk, so every
+field that reaches it has to be known-UTF-8 first. That check used to be
+`std::str::from_utf8` **per field** — sixteen calls a row on the 16-column
+control, each one a scalar validation of a few bytes, and together **7.81% of
+a `strings` query profile** and 2.60% of a typed one. It is now one SIMD pass
+per chunk.
+
+**The soundness is one property of UTF-8 and one of COPY TEXT.** A COPY TEXT
+row is delimited by `0x09` and terminated by `0x0A`, both ASCII, and an ASCII
+byte never occurs inside a multi-byte UTF-8 sequence — so every tab-delimited
+piece of a validated row is itself valid UTF-8, and no field needs its own
+check. `copy::validated_prefix` is that pass: the largest prefix of a span
+ending on a newline, through `simdutf8::basic::from_utf8`. Cutting at the last
+newline is what makes it safe to run over a *chunk* — the bytes past it are a
+partial line whose continuation is in the next chunk, and a multi-byte sequence
+split across that boundary would fail for no reason.
+
+**What a row carries is `copy::RawRow`**, the row's bytes plus, when the loop
+validated them, the same bytes as `str`; `RawRow::decode` takes a field's
+*range* and slices whichever of the two it has. `copy::field_ranges` is the
+splitter both consumers walk — `split_fields` is it, resolved — because a
+caller holding the row twice needs the position rather than the slice.
+
+**The escaped path still validates, and must.** `\xNN` and the octal forms
+synthesize bytes the input did not carry, so `unescape_field` ends in
+`String::from_utf8` exactly as it always did. Only the borrow path — a field
+with no backslash, which is the common case and the only one a zero-copy view
+is taken of — skips a check.
+
+**Nothing about which inputs are accepted changes.** A prefix that does not
+validate answers the empty string, which puts every row of that span back on
+the per-field check, raising `Error::InvalidUtf8` at exactly the fields it
+always did — so a dump carrying non-UTF-8 bytes behaves as before and pays one
+extra pass over the spans that hold them. `tests/stream.rs` drives both halves:
+a query answers identically at every chunk size from 1 byte up, and a non-UTF-8
+field is refused only where a projection actually reads it.
+
+**The bulk pass is taken on the first row that will decode something**, not per
+chunk unconditionally. A query that decodes nothing — `COUNT(*)`, `pgdq query
+--no-columns`, no filter — would otherwise pay a validation of bytes it never
+reads; `RowBatcher::decodes_fields` and `ResolvedExpr::reads_fields` are the
+gate, and the `--no-columns` row of "What a column costs" is what it protects.
+
+**There is no `unsafe` in it**, which was a design choice rather than an
+accident. The obvious shape — `str::from_utf8_unchecked` under a boolean the
+caller promises — makes a safe function able to cause undefined behaviour if a
+caller's offset arithmetic is wrong. Slicing the validated `&str` with
+`str::get` instead costs a bounds-and-boundary check per field, which is O(1),
+and a wrong range costs that row its fast path rather than the process.
+
+*Rejected:* validating per row rather than per chunk. It is one call instead of
+sixteen and needs no plumbing at all, but it leaves the per-call overhead that
+is most of what the sixteen cost on short fields, and `simdutf8`'s dispatch is
+amortized over a megabyte in the shape above and over 200 bytes in this one.
+
+*Rejected:* shortening the prefix to `compat::from_utf8`'s `valid_up_to` when a
+span fails, so that the rows before a bad byte keep the fast path. It buys
+nothing on a dump that is UTF-8 (the common case, and the only one the figures
+are taken on) and complicates the one path a reader has to trust.
 
 ## The file map
 
@@ -4140,11 +4202,26 @@ the census-on/census-off pair reads +0.030 s in the `ba2fc12` sweep and
 share that agrees with a subtraction taken by a different instrument is the
 evidence that the user-time correction above is being applied correctly.
 
-**On a brace-bearing file the picture inverts.** Over the `--arrays
---composite` file `map::Builder::on_row` is **85.6%** of the `parse` profile
-and the chunk copy was 5.7% before it went. Both readings are true and they are
-about different inputs: the pre-filter is what a brace-free scan pays, and the
-field split behind it is what a brace-bearing one pays.
+**On a brace-bearing file the picture inverts, and the field split behind it
+was the whole of the inversion.** Over the `--arrays --composite` file
+`map::Builder::on_row` was **85.6%** of the `parse` profile and the chunk copy
+5.7% before it went. What that share was made of turned out to be the *splitter*
+rather than the census: the census's `copy::split_fields` walked the row a byte
+at a time through a closure, and putting it on `memchr` — which is all
+"A row's bytes are validated once, in bulk" did to it — takes a whole-file
+`parse` of that file from **17.781 G user instructions to 2.919 G**, a factor
+of **6.1**, with the cache it writes byte-identical. `on_row`'s *self* share falls from 87.9–90.2% to 5.96–6.25%
+across three profiles each, its work moving into `memchr`, and what is left of
+that scan is three SIMD searches: the LF search (52.2%), the field split
+(20.1%) and the brace pre-filter (14.7%).
+
+**Both original readings were true and they are about different inputs**: the
+pre-filter is what a brace-free scan pays, and the split behind it is what a
+brace-bearing one paid. The correction is that the split's cost was never the
+census deciding anything — it was the byte-at-a-time walk underneath, which is
+why a change aimed at the *query* path moved a `parse` figure by six-fold
+([`../status/history/2026-09-04.md`](../status/history/2026-09-04.md), "The
+census's field split was the byte loop, not the census").
 
 <!-- section: query-profile -->
 
@@ -4183,6 +4260,19 @@ whole-query instruction count puts at **−2.1% for `strings`** (26.86 G →
 20× as much. That cost is inside the `poll_next` rows, which are therefore
 overstated by about their own share of it, and no other row moves.
 
+**The bulk UTF-8 pass moves them again, and renames one row.**
+`copy::decode_field` is no longer a symbol on this path: a row arrives as a
+`copy::RawRow` and the field goes through `RawRow::decode` into
+`copy::unescape_field`, with no per-field validation between them ("A row's
+bytes are validated once, in bulk"). Whole-query user instructions fall a
+further **6.11% for `strings`** (26.288 G → 24.682 G) and **2.42% for `typed`**
+(96.115 G → 93.785 G), every after rep below every before rep, and within one
+sitting `core::str::converts::from_utf8` goes from 7.81% and 2.60% of the two
+profiles to nothing at all, against 2.62% and 0.85% for the bulk pass that
+replaced it. The rows above are again left as taken; the budget below is
+re-derived from a fresh sitting, since that is the table the change is sized
+against.
+
 **Two-thirds of a typed query is the CLI writing the values back out as
 text**, and 79% of the gap between the two modes is that one function: typed
 costs 6.24 s more than `strings`, of which 4.95 s is `print_batch` and 1.29 s
@@ -4196,7 +4286,7 @@ query at 31× the warm `dd` floor and a `strings` query at 13.3×
 ([`measurements.md`](measurements.md), "Scan throughput by input shape"), and
 those are `pgdq query` figures: an embedder that consumes `RecordBatch`es pays
 `poll_next` and nothing under `print_batch`. The library's own typed extraction
-is 4.06 µs a row against `strings`'s 2.48 — a factor of 1.6, not the factor of
+is 4.04 µs a row against `strings`'s 2.50 — a factor of 1.6, not the factor of
 2.4 the wall times show.
 
 #### The library's own per-row budget
@@ -4209,27 +4299,45 @@ there times the CLI ("A mode difference and a per-column delta are CLI
 numbers"). It is a set of proportions, so it carries no marker and is not a
 figure itself; a lever that lands re-reads it the same way it re-takes a table.
 
+Its own sitting, and a later one than the table above: the shares are from a
+pair of profiles of the shipped binary and the user times (3.25 s and 10.06 s,
+medians of five) from the same binary and input without `perf` on it.
+
 | Per row, library only | `strings` | `typed` |
 |---|---|---|
-| `batch::append_typed` — the builder | — | **1.66 µs** |
-| `copy::decode_field` | **0.99 µs** | **0.95 µs** |
-| the row split and walk inside `push_row` | **0.99 µs** | **0.98 µs** |
-| the stream and scan machinery around it | 0.50 µs | 0.47 µs |
-| **total (`poll_next`)** | **2.48 µs** | **4.06 µs** |
+| `batch::append_typed` — the builder | — | **1.64 µs** |
+| `copy::RawRow::decode` — unescape, and the borrow | **1.04 µs** | **1.04 µs** |
+| the row split and walk inside `push_row` | **0.84 µs** | **0.73 µs** |
+| `copy::validated_prefix` — the bulk UTF-8 pass | 0.10 µs | 0.10 µs |
+| the stream and scan machinery around it | 0.52 µs | 0.52 µs |
+| **total (`poll_next`)** | **2.50 µs** | **4.04 µs** |
 
-Two things fall out of it that the percentages hide. **`decode_field` and the
-field split are each about 1 µs a row and neither depends on the mode** — they
-are what `strings` spends nearly all of its time on, and they are unchanged
-when typing is switched on, so they are the only part of the library that a
-`strings` consumer can be made faster by. And **the builder is the largest
-single library bucket in `typed` mode**, larger than the decode it feeds: the
-typed premium over `strings` is 1.58 µs a row, and `append_typed` alone is
-1.66, which is to say typing a row costs more in Arrow assembly than in
-parsing.
+Two things fall out of it that the percentages hide. **The decode and the field
+split are each about a microsecond a row and neither depends on the mode** —
+they are what `strings` spends nearly all of its time on, and they are
+unchanged when typing is switched on, so they are the only part of the library
+that a `strings` consumer can be made faster by. And **the builder is the
+largest single library bucket in `typed` mode**, larger than the decode it
+feeds: the typed premium over `strings` is 1.54 µs a row, and `append_typed`
+alone is 1.64, which is to say typing a row costs more in Arrow assembly than
+in parsing.
 
-**`decode_field` is the largest single library bucket in `strings` mode** and
+**The validation row is new and the split row is what shrank.** The per-field
+`std::str::from_utf8` sat inside `push_row`'s split-and-walk bucket, never in
+the decode's, which is why removing it moved a row that does not name it; what
+replaced it is a tenth of a microsecond outside `push_row` entirely. Read the
+two sittings against each other only that far: a warm absolute resolves to
+about ±8% across sessions ([`measurements.md`](measurements.md), "A move
+smaller than the apparatus resolves is not a finding"), and the numbers that
+carry the change are the within-sitting ones under "A row's bytes are validated
+once, in bulk".
+
+**The decode is the largest single library bucket in `strings` mode** and
 stays largest when arrays are added (14.6% on the `--arrays --composite` file),
-so it is the shared row machinery rather than the nested path. The zero-copy
+so it is the shared row machinery rather than the nested path. What is left in
+it is the *unescape*: `copy::unescape_field` alone is 22.45% of a `strings`
+profile against `RawRow::decode`'s own 2.05%, so a further cut there is an
+escaping question, not a validation one. The zero-copy
 premise holds up in the same profile: `GenericByteViewArray::value` and the
 `StringViewBuilder` appends together are under 8%, and no `Utf8View` column
 copies field bytes.

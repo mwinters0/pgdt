@@ -13,7 +13,7 @@
 
 use std::borrow::Cow;
 use std::collections::VecDeque;
-use std::ops::ControlFlow;
+use std::ops::{ControlFlow, Range};
 use std::sync::Arc;
 
 use arrow::array::builder::{
@@ -34,7 +34,7 @@ use arrow::datatypes::{
 };
 
 use crate::cache::CacheMode;
-use crate::copy::{CopyHeader, DELIMITER, decode_field};
+use crate::copy::{CopyHeader, DELIMITER, RawRow};
 use crate::decode;
 use crate::io::ByteRangeSource;
 use crate::nested::{self, RangeLiteral};
@@ -735,6 +735,12 @@ pub(crate) struct RowBatcher {
     /// stops an empty batch from flushing while the scanner walks a long
     /// stretch that matches nothing.
     span: Option<(u64, u64)>,
+    /// Whether any field of this block feeds a projected column. When
+    /// nothing does — `COUNT(*)`, `pgdq query --no-columns` — no field is
+    /// decoded, so the read loop is spared the bulk UTF-8 validation as well
+    /// (`docs/design/architecture.md`, "A row's bytes are validated once, in
+    /// bulk").
+    decodes_fields: bool,
     options: QueryOptions,
 }
 
@@ -764,6 +770,7 @@ impl RowBatcher {
         Self {
             schema,
             table,
+            decodes_fields: field_targets.iter().any(Option::is_some),
             field_targets,
             declared_types,
             columns,
@@ -793,6 +800,11 @@ impl RowBatcher {
     /// type, which is worded exactly as this batcher words its own.
     pub(crate) fn table(&self) -> &str {
         &self.table
+    }
+
+    /// Whether pushing a row here decodes anything — see the field.
+    pub(crate) fn decodes_fields(&self) -> bool {
+        self.decodes_fields
     }
 
     /// Whether any of the three flush triggers has fired. All three are
@@ -826,14 +838,14 @@ impl RowBatcher {
         &mut self,
         header_offset: u64,
         row_offset: u64,
-        raw: &[u8],
+        row: RawRow<'_>,
         chunks: &mut VecDeque<SourceChunk>,
     ) -> Result<()> {
+        let raw = row.bytes();
         let mut col = 0;
         let mut pos = 0usize;
         loop {
             let end = memchr::memchr(DELIMITER, &raw[pos..]).map_or(raw.len(), |i| pos + i);
-            let field = &raw[pos..end];
             let expected = self.field_targets.len();
             if col >= expected {
                 return Err(Error::ColumnCountMismatch {
@@ -844,8 +856,15 @@ impl RowBatcher {
                 });
             }
             if let Some(target) = self.field_targets[col] {
-                self.push_field(target, row_offset, row_offset + pos as u64, field, chunks)?;
-                self.bytes_in_batch += field.len();
+                self.push_field(
+                    target,
+                    row_offset,
+                    row_offset + pos as u64,
+                    row,
+                    pos..end,
+                    chunks,
+                )?;
+                self.bytes_in_batch += end - pos;
             }
             col += 1;
             if end == raw.len() {
@@ -875,10 +894,12 @@ impl RowBatcher {
         col: usize,
         row_offset: u64,
         field_offset: u64,
-        field: &[u8],
+        row: RawRow<'_>,
+        field: Range<usize>,
         chunks: &mut VecDeque<SourceChunk>,
     ) -> Result<()> {
-        let decoded = decode_field(field)?;
+        let field_len = field.len();
+        let decoded = row.decode(field)?;
         // Disjoint-field borrow: `columns[col]` is mutated below while
         // `schema`/`table`/`declared_types` are only ever read, on the
         // (rare) error path.
@@ -890,7 +911,7 @@ impl RowBatcher {
         };
         match builder {
             ColumnBuilder::Utf8View(b) => {
-                push_utf8view_field(b, col, field_offset, field, text, chunks)
+                push_utf8view_field(b, col, field_offset, field_len, text, chunks)
             }
             _ => {
                 if let Err(value) = append_typed(builder, &text) {
@@ -936,7 +957,7 @@ fn push_utf8view_field(
     builder: &mut StringViewBuilder,
     col: usize,
     field_offset: u64,
-    field: &[u8],
+    field_len: usize,
     text: Cow<'_, str>,
     chunks: &mut VecDeque<SourceChunk>,
 ) {
@@ -945,7 +966,7 @@ fn push_utf8view_field(
         Cow::Borrowed(s) => {
             let view = chunks
                 .iter_mut()
-                .find_map(|c| c.contains(field_offset, field.len()).map(|coords| (c, coords)));
+                .find_map(|c| c.contains(field_offset, field_len).map(|coords| (c, coords)));
             match view {
                 Some((chunk, (local_offset, len))) => {
                     let block = chunk.block_for(col, builder);
@@ -1595,9 +1616,9 @@ mod tests {
         let options = QueryOptions { max_bytes: Some(4), ..Default::default() };
         let mut batcher = one_column_batcher_fed_by(options, vec![None, Some(0)], DataType::Int32);
         let mut chunks = VecDeque::new();
-        batcher.push_row(0, 0, b"not an integer\t77", &mut chunks).unwrap();
+        batcher.push_row(0, 0, RawRow::unchecked(b"not an integer\t77"), &mut chunks).unwrap();
         assert!(!batcher.should_flush(), "only the projected field's bytes count");
-        batcher.push_row(0, 20, b"nor is this\t88", &mut chunks).unwrap();
+        batcher.push_row(0, 20, RawRow::unchecked(b"nor is this\t88"), &mut chunks).unwrap();
         assert!(batcher.should_flush(), "two projected bytes, then four");
         let batch = batcher.flush().unwrap();
         assert_eq!(batch.num_columns(), 1);
@@ -1616,7 +1637,7 @@ mod tests {
         );
         assert_eq!(batcher.field_count(), 3, "a resumed stream needs the block's own width");
         let mut chunks = VecDeque::new();
-        let err = batcher.push_row(0, 0, b"a\t1", &mut chunks).unwrap_err();
+        let err = batcher.push_row(0, 0, RawRow::unchecked(b"a\t1"), &mut chunks).unwrap_err();
         match err {
             Error::ColumnCountMismatch { expected, found, .. } => {
                 assert_eq!((expected, found), (3, 2));
@@ -1642,8 +1663,8 @@ mod tests {
             vec![None, None],
         );
         let mut chunks = VecDeque::new();
-        batcher.push_row(0, 0, b"a\tb", &mut chunks).unwrap();
-        batcher.push_row(0, 4, b"c\td", &mut chunks).unwrap();
+        batcher.push_row(0, 0, RawRow::unchecked(b"a\tb"), &mut chunks).unwrap();
+        batcher.push_row(0, 4, RawRow::unchecked(b"c\td"), &mut chunks).unwrap();
         let batch = batcher.flush().unwrap();
         assert_eq!(batch.num_columns(), 0);
         assert_eq!(batch.num_rows(), 2);
@@ -1680,10 +1701,10 @@ mod tests {
         // Offsets 0, 4, 8, … each three bytes of row: the span after the row
         // at offset `n` is `n + 3`, so the first `>= 100` is at offset 100.
         for offset in (0..100).step_by(4) {
-            batcher.push_row(0, offset, b"abc", &mut chunks).unwrap();
+            batcher.push_row(0, offset, RawRow::unchecked(b"abc"), &mut chunks).unwrap();
             assert!(!batcher.should_flush(), "span {} is under the cap", offset + 3);
         }
-        batcher.push_row(0, 100, b"abc", &mut chunks).unwrap();
+        batcher.push_row(0, 100, RawRow::unchecked(b"abc"), &mut chunks).unwrap();
         assert!(batcher.should_flush(), "span 103 has reached the cap");
 
         // Flushing reopens the span at the next row rather than at the
@@ -1691,7 +1712,7 @@ mod tests {
         // covered four bytes has not covered 100.
         assert_eq!(batcher.flush().unwrap().num_rows(), 26);
         assert!(!batcher.should_flush());
-        batcher.push_row(0, 104, b"abc", &mut chunks).unwrap();
+        batcher.push_row(0, 104, RawRow::unchecked(b"abc"), &mut chunks).unwrap();
         assert!(!batcher.should_flush(), "the span restarts at the first row after a flush");
     }
 
@@ -1709,9 +1730,9 @@ mod tests {
         };
         let mut batcher = one_column_batcher(options);
         let mut chunks = VecDeque::new();
-        batcher.push_row(0, 1_000_000, b"abc", &mut chunks).unwrap();
+        batcher.push_row(0, 1_000_000, RawRow::unchecked(b"abc"), &mut chunks).unwrap();
         assert!(!batcher.should_flush(), "a span opens at the first selected row, not at zero");
-        batcher.push_row(0, 1_000_040, b"abc", &mut chunks).unwrap();
+        batcher.push_row(0, 1_000_040, RawRow::unchecked(b"abc"), &mut chunks).unwrap();
         assert!(!batcher.should_flush(), "43 bytes of span, whatever lay between");
     }
 
@@ -1727,8 +1748,8 @@ mod tests {
         };
         let mut batcher = one_column_batcher(options);
         let mut chunks = VecDeque::new();
-        batcher.push_row(0, 0, b"abc", &mut chunks).unwrap();
-        batcher.push_row(0, 1 << 40, b"abc", &mut chunks).unwrap();
+        batcher.push_row(0, 0, RawRow::unchecked(b"abc"), &mut chunks).unwrap();
+        batcher.push_row(0, 1 << 40, RawRow::unchecked(b"abc"), &mut chunks).unwrap();
         assert!(!batcher.should_flush());
     }
 }

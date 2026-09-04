@@ -10,6 +10,7 @@
 //! `&str` output and works purely in "unescaped text vs. Arrow value" terms.
 
 use std::borrow::Cow;
+use std::ops::Range;
 
 use serde::{Deserialize, Serialize};
 
@@ -191,7 +192,120 @@ pub fn scan_dollar_quotes(line: &[u8], mut tag: Option<Vec<u8>>) -> (Option<Vec<
 /// escapes an in-value tab as the two bytes `\` `t`, so a bare `0x09` byte is
 /// unambiguously a field separator.
 pub fn split_fields(line: &[u8]) -> impl Iterator<Item = &[u8]> {
-    line.split(|&b| b == DELIMITER)
+    field_ranges(line).map(|r| &line[r])
+}
+
+/// The same split as [`split_fields`], as **ranges** into the line.
+///
+/// A caller holding the row as `&str` as well as `&[u8]` — which is what
+/// [`RawRow`] is — needs the position rather than the slice, so that it can
+/// take the same field out of either. `split_fields` is this, resolved.
+pub fn field_ranges(line: &[u8]) -> FieldRanges<'_> {
+    FieldRanges { line, start: 0, done: false }
+}
+
+/// [`field_ranges`]'s iterator. Yields one range per field, always at least
+/// one — an empty line is a single empty field, exactly as `split` gives it.
+#[derive(Debug)]
+pub struct FieldRanges<'a> {
+    line: &'a [u8],
+    start: usize,
+    done: bool,
+}
+
+impl Iterator for FieldRanges<'_> {
+    type Item = Range<usize>;
+
+    fn next(&mut self) -> Option<Range<usize>> {
+        if self.done {
+            return None;
+        }
+        match memchr::memchr(DELIMITER, &self.line[self.start..]) {
+            Some(rel) => {
+                let end = self.start + rel;
+                let range = self.start..end;
+                self.start = end + 1;
+                Some(range)
+            }
+            None => {
+                self.done = true;
+                Some(self.start..self.line.len())
+            }
+        }
+    }
+}
+
+/// The largest prefix of `span` that ends on a row terminator **and** is
+/// valid UTF-8 — the empty string when no whole row of it validates.
+///
+/// This is the bulk half of the codec: one SIMD validation per chunk in place
+/// of one `std::str::from_utf8` per field, sound because a COPY TEXT row's
+/// delimiters (`0x09`) and terminator (`0x0A`) are ASCII and an ASCII byte
+/// never occurs inside a multi-byte UTF-8 sequence, so every field of a
+/// validated row is itself validated. See `docs/design/architecture.md`, "A
+/// row's bytes are validated once, in bulk".
+///
+/// Cutting at the last newline is what makes the call safe to make on a
+/// *chunk*: the bytes after it are a partial line whose continuation is in the
+/// next chunk, and a multi-byte sequence split across that boundary would
+/// fail validation for no reason. A failure anywhere in the prefix answers
+/// empty rather than a shorter prefix — the fallback is the per-field check
+/// this replaces, which raises `Error::InvalidUtf8` at exactly the fields it
+/// always did, so a dump carrying non-UTF-8 bytes behaves exactly as before
+/// and only pays for the extra pass.
+pub fn validated_prefix(span: &[u8]) -> &str {
+    let end = memchr::memrchr(b'\n', span).map_or(0, |i| i + 1);
+    simdutf8::basic::from_utf8(&span[..end]).unwrap_or("")
+}
+
+/// One raw COPY TEXT data row, with whatever the read loop already knows
+/// about its encoding.
+///
+/// A row lifted out of a [`validated_prefix`] arrives as [`Self::validated`]
+/// and every field it hands back skips the UTF-8 check; one the loop could
+/// not validate in bulk arrives as [`Self::unchecked`] and each field is checked
+/// as it decodes. The two are the same bytes and the same answers — the
+/// difference is only where the validation happened.
+#[derive(Debug, Clone, Copy)]
+pub struct RawRow<'a> {
+    bytes: &'a [u8],
+    /// The same bytes as `str`, when a bulk validation already covered them.
+    text: Option<&'a str>,
+}
+
+impl<'a> RawRow<'a> {
+    /// A row whose bytes nothing has validated: each field is UTF-8-checked
+    /// as it is decoded, which is what `decode_field` always did.
+    pub fn unchecked(bytes: &'a [u8]) -> Self {
+        Self { bytes, text: None }
+    }
+
+    /// A row taken out of a span [`validated_prefix`] already validated.
+    pub fn validated(text: &'a str) -> Self {
+        Self { bytes: text.as_bytes(), text: Some(text) }
+    }
+
+    /// The row's raw, still-escaped bytes — what [`field_ranges`] splits and
+    /// what a caller measuring or locating a field works in.
+    pub fn bytes(&self) -> &'a [u8] {
+        self.bytes
+    }
+
+    /// Decode the field at `field`, one of [`field_ranges`]'s ranges.
+    ///
+    /// **The `str` path is a total fallback, not an assertion.** `str::get`
+    /// answers `None` for a range that is out of bounds or not on a character
+    /// boundary, and this drops back to the checked decode there rather than
+    /// panicking — so a caller that computes a range wrongly gets the old
+    /// answer, never a crash and never undefined behaviour. Neither can
+    /// happen for a range this module produced: fields are delimited by ASCII
+    /// bytes, which are always character boundaries.
+    pub fn decode(&self, field: Range<usize>) -> Result<Option<Cow<'a, str>>> {
+        match self.text.and_then(|text| text.get(field.clone())) {
+            Some(text) => decode_validated_field(text),
+            None => decode_field(&self.bytes[field]),
+        }
+    }
 }
 
 /// Decode one still-escaped COPY TEXT field.
@@ -206,7 +320,28 @@ pub fn decode_field(field: &[u8]) -> Result<Option<Cow<'_, str>>> {
     if !field.contains(&b'\\') {
         return Ok(Some(Cow::Borrowed(as_utf8(field)?)));
     }
+    Ok(Some(Cow::Owned(unescape_field(field)?)))
+}
 
+/// [`decode_field`] over a field whose bytes are already known to be UTF-8 —
+/// the borrow path with no per-field validation left in it.
+///
+/// The escaped path still validates, and must: `\xNN` and the octal forms can
+/// synthesize a byte sequence that is not UTF-8 out of input that is.
+fn decode_validated_field(field: &str) -> Result<Option<Cow<'_, str>>> {
+    if field.as_bytes() == NULL_MARKER {
+        return Ok(None);
+    }
+    if !field.as_bytes().contains(&b'\\') {
+        return Ok(Some(Cow::Borrowed(field)));
+    }
+    Ok(Some(Cow::Owned(unescape_field(field.as_bytes())?)))
+}
+
+/// The escaped path of [`decode_field`]: unescape into an owned buffer, and
+/// validate that buffer, since an escape can produce bytes the input did not
+/// carry.
+fn unescape_field(field: &[u8]) -> Result<String> {
     let mut out = Vec::with_capacity(field.len());
     let mut i = 0;
     while i < field.len() {
@@ -274,10 +409,8 @@ pub fn decode_field(field: &[u8]) -> Result<Option<Cow<'_, str>>> {
         }
     }
 
-    match String::from_utf8(out) {
-        Ok(s) => Ok(Some(Cow::Owned(s))),
-        Err(e) => Err(Error::InvalidUtf8 { valid_up_to: e.utf8_error().valid_up_to() }),
-    }
+    String::from_utf8(out)
+        .map_err(|e| Error::InvalidUtf8 { valid_up_to: e.utf8_error().valid_up_to() })
 }
 
 /// Re-apply COPY TEXT escaping to already-unescaped text — the exact inverse
@@ -640,5 +773,77 @@ mod tests {
         let (tag, touched) = scan_dollar_quotes(b"SELECT $1$;", None);
         assert_eq!(tag, None);
         assert!(!touched);
+    }
+
+    /// Every row this codec is ever handed, in one place: escapes, the NULL
+    /// marker, an empty field, multi-byte UTF-8, and the escapes that
+    /// *synthesize* bytes the input did not carry.
+    const ROWS: [&str; 7] = [
+        "1\talpha\ta simple widget",
+        "2\t\\N\t",
+        "3\tmulti\\nline\\twith a backslash \\\\ inside\t\\N",
+        "4\tcafé\tsnowman ☃ and an emoji 🐈",
+        "5\tcarriage\\rreturn, octal \\101, hex \\x42\tx",
+        "6\t\t",
+        "",
+    ];
+
+    #[test]
+    fn field_ranges_resolve_to_the_same_split() {
+        for row in ROWS {
+            let bytes = row.as_bytes();
+            let by_range: Vec<&[u8]> = field_ranges(bytes).map(|r| &bytes[r]).collect();
+            let by_slice: Vec<&[u8]> = bytes.split(|&b| b == DELIMITER).collect();
+            assert_eq!(by_range, by_slice, "{row:?}");
+        }
+    }
+
+    #[test]
+    fn a_validated_prefix_stops_at_the_last_row_terminator() {
+        // The bytes past the last newline are a partial line whose rest is in
+        // the next chunk; validating them would fail on a split multi-byte
+        // sequence for no reason.
+        let span = "a\nb\n☃".as_bytes();
+        assert_eq!(validated_prefix(span), "a\nb\n");
+        assert_eq!(validated_prefix(&span[..span.len() - 1]), "a\nb\n");
+        // No whole row at all, and a chunk that is exactly whole rows.
+        assert_eq!(validated_prefix(b"no newline here"), "");
+        assert_eq!(validated_prefix(b"a\n"), "a\n");
+        assert_eq!(validated_prefix(b""), "");
+    }
+
+    #[test]
+    fn a_prefix_that_does_not_validate_answers_empty() {
+        // 0xFF is not UTF-8 anywhere. The whole prefix is refused rather than
+        // shortened, which is what puts every row of the span back on the
+        // per-field check that raises `Error::InvalidUtf8` exactly where it
+        // always did.
+        let mut span = b"good row\n".to_vec();
+        span.extend_from_slice(b"bad \xff row\n");
+        assert_eq!(validated_prefix(&span), "");
+    }
+
+    #[test]
+    fn a_validated_row_decodes_exactly_as_an_unchecked_one() {
+        for row in ROWS {
+            let bytes = row.as_bytes();
+            for field in field_ranges(bytes) {
+                let unchecked = RawRow::unchecked(bytes).decode(field.clone()).unwrap();
+                let validated = RawRow::validated(row).decode(field.clone()).unwrap();
+                assert_eq!(unchecked, validated, "{row:?} at {field:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_range_off_a_character_boundary_falls_back_rather_than_panicking() {
+        // Not reachable from `field_ranges` — fields are delimited by ASCII —
+        // but the fallback is what makes that a performance property rather
+        // than a safety one.
+        let row = "☃";
+        assert_eq!(
+            RawRow::validated(row).decode(0..1).unwrap_err().to_string(),
+            RawRow::unchecked(row.as_bytes()).decode(0..1).unwrap_err().to_string()
+        );
     }
 }

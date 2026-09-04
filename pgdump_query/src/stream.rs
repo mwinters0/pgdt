@@ -72,7 +72,7 @@ use crate::batch::{
     QueryOptions, RowBatcher, ScanExtent, SourceChunk, column_names, invalidate_block_cache,
 };
 use crate::cache::CacheMode;
-use crate::copy::{CopyHeader, DELIMITER};
+use crate::copy::{CopyHeader, DELIMITER, RawRow, validated_prefix};
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
 use crate::index::{
     ArrayShape, CopyBlock, DumpIndex, scan_preamble, tiling_diagnostics, toc_coverage_diagnostic,
@@ -83,7 +83,7 @@ use crate::map::{Builder, Span, SpanBody, attach_text};
 use crate::preamble::{DumpMetadata, dump_metadata_from_spans};
 use crate::predicate::{ComparisonNote, Expr, PredicateOp, ResolvedExpr, resolve_term};
 use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
-use crate::scan::{ChunkCarry, CopyScanner, Event, ScanOptions};
+use crate::scan::{ChunkCarry, CopyScanner, Event, Row, ScanOptions};
 use crate::{Error, Result};
 
 /// State for a `COPY` block whose table matches the query: the batcher
@@ -98,6 +98,21 @@ use crate::{Error, Result};
 /// and a term may name a column the projection does not — plus the typed
 /// comparison it makes.
 type Active = (u64, CopyHeader, RowBatcher, ResolvedExpr, Option<String>);
+
+/// Where `row` sits inside `prefix`, the UTF-8-validated leading part of the
+/// span it was scanned out of — `None` when the row runs past it, which is
+/// every row of a span whose validation failed and none of a span whose
+/// validation held.
+///
+/// `str::get` rather than an index: it answers `None` for a range that is out
+/// of bounds or off a character boundary, so a mis-derived offset costs the
+/// row its fast path instead of panicking. Neither can happen here — a row
+/// starts just past a line terminator and ends just before one, and both are
+/// ASCII.
+fn row_text<'a>(prefix: &'a str, span_base: u64, row: &Row<'_>) -> Option<&'a str> {
+    let start = usize::try_from(row.offset.checked_sub(span_base)?).ok()?;
+    prefix.get(start..start.checked_add(row.raw.len())?)
+}
 
 /// `database`, rendered as `database.schema.table`, or just `schema.table`
 /// when the file had no `\connect` at all — the form `Error::AmbiguousTable`
@@ -1314,6 +1329,18 @@ where
                 carry.absorb(&chunk);
                 for pass in ChunkCarry::PASSES {
                     let (span, span_eof) = carry.span(pass, &chunk, eof);
+                    // `pos` is 0 at the top of every pass — `take_consumed`
+                    // resets it — so this is the absolute offset of `span[0]`,
+                    // which is what turns a row's file offset into a position
+                    // inside `validated` below.
+                    let span_base = scanner.position();
+                    // The span's rows, validated as UTF-8 in one SIMD pass
+                    // rather than one `from_utf8` per field. **Taken on the
+                    // first row that will decode something**, so a query that
+                    // decodes nothing pays nothing
+                    // (`docs/design/architecture.md`, "A row's bytes are
+                    // validated once, in bulk").
+                    let mut validated: Option<&str> = None;
                     while let Some(event) = scanner.next_event(span, span_eof)? {
                         match event {
                             Event::CopyStart(start) => {
@@ -1405,13 +1432,23 @@ where
                                 if let Some((header_offset, _, batcher, filter, _)) =
                                     active.as_mut()
                                 {
-                                    let keep =
-                                        filter.matches(row.raw, batcher.table(), row.offset)?;
+                                    let unchecked = RawRow::unchecked(row.raw);
+                                    let raw = if batcher.decodes_fields()
+                                        || filter.reads_fields()
+                                    {
+                                        let prefix = *validated
+                                            .get_or_insert_with(|| validated_prefix(span));
+                                        row_text(prefix, span_base, &row)
+                                            .map_or(unchecked, RawRow::validated)
+                                    } else {
+                                        unchecked
+                                    };
+                                    let keep = filter.matches(raw, batcher.table(), row.offset)?;
                                     if keep {
                                         batcher.push_row(
                                             *header_offset,
                                             row.offset,
-                                            row.raw,
+                                            raw,
                                             &mut chunks,
                                         )?;
                                     }

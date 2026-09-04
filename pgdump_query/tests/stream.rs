@@ -511,3 +511,109 @@ async fn an_unmarked_target_still_stops_early_in_a_file_containing_marked_blocks
     assert_eq!(index.scanned_through, evt_m.end_offset);
     assert!(index.scanned_through < source.size().await.unwrap());
 }
+
+/// A dump whose rows carry multi-byte UTF-8 beside COPY TEXT escapes, the
+/// NULL marker and an empty field, written to a temp file so the chunk-size
+/// sweep below has something a fixture does not contain.
+fn utf8_dump(dir: &std::path::Path, third_column: &[u8]) -> std::path::PathBuf {
+    let mut dump = Vec::new();
+    dump.extend_from_slice(b"SET client_encoding = 'UTF8';\n\n");
+    dump.extend_from_slice(b"COPY public.notes (id, note, tail) FROM stdin;\n");
+    for (id, note) in [
+        "caf\u{e9} \u{2603} \u{1f408}",
+        "multi\\nline\\twith a backslash \\\\ inside",
+        "\\N",
+        "",
+        "\u{1f408}\u{1f408}\u{1f408}\u{1f408}\u{1f408}\u{1f408}\u{1f408}\u{1f408}",
+    ]
+    .iter()
+    .enumerate()
+    {
+        dump.extend_from_slice(format!("{}\t{note}\t", id + 1).as_bytes());
+        dump.extend_from_slice(third_column);
+        dump.push(b'\n');
+    }
+    dump.extend_from_slice(b"\\.\n");
+    let path = dir.join("notes.sql");
+    std::fs::write(&path, dump).unwrap();
+    path
+}
+
+async fn notes_rows(
+    path: &std::path::Path,
+    chunk_size: usize,
+    options: QueryOptions,
+) -> pgdump_query::Result<Vec<Vec<Option<String>>>> {
+    let source = LocalFileSource::open(path).unwrap();
+    let mut stream = table_stream(
+        &source,
+        "public.notes",
+        ScanOptions { chunk_size, ..ScanOptions::default() },
+        options,
+        None,
+        CacheMode::Disabled,
+    );
+    let mut rows = Vec::new();
+    while let Some(batch) = stream.next().await {
+        rows.extend(rows_of(&batch?));
+    }
+    Ok(rows)
+}
+
+/// **The bulk UTF-8 validation does not depend on where the chunks fall.**
+/// A row is decoded off the validated prefix of the span it was scanned in,
+/// and at a small enough chunk size every row straddles a boundary and
+/// arrives on the carry instead — so the same file read one byte at a time
+/// and read whole must give the same values, multi-byte sequences split
+/// across the boundary included
+/// (`docs/design/architecture.md`, "A row's bytes are validated once, in
+/// bulk").
+#[tokio::test]
+async fn a_query_answers_the_same_at_every_chunk_size() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = utf8_dump(dir.path(), "end".as_bytes());
+    let cat = "\u{1f408}";
+    let reference: Vec<Vec<Option<String>>> = vec![
+        vec![Some("1".into()), Some(format!("caf\u{e9} \u{2603} {cat}")), Some("end".into())],
+        vec![
+            Some("2".into()),
+            Some("multi\nline\twith a backslash \\ inside".into()),
+            Some("end".into()),
+        ],
+        vec![Some("3".into()), None, Some("end".into())],
+        vec![Some("4".into()), Some(String::new()), Some("end".into())],
+        vec![Some("5".into()), Some(cat.repeat(8)), Some("end".into())],
+    ];
+    assert_eq!(notes_rows(&path, 1 << 20, QueryOptions::default()).await.unwrap(), reference);
+    for chunk_size in [1, 2, 3, 7, 13, 64, 511, 4096] {
+        let got = notes_rows(&path, chunk_size, QueryOptions::default()).await.unwrap();
+        assert_eq!(got, reference, "chunk_size {chunk_size}");
+    }
+}
+
+/// **A dump that is not UTF-8 fails exactly where it always did**, at the
+/// field that is decoded and not before. The bulk validation refuses the
+/// whole span it covers, which puts every row of it back on the per-field
+/// check — so a projection that never reads the offending column still
+/// answers, and one that reads it still raises `InvalidUtf8`.
+#[tokio::test]
+async fn a_non_utf8_field_is_refused_only_where_it_is_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = utf8_dump(dir.path(), b"tail \xff byte");
+
+    for chunk_size in [1, 13, 4096, 1 << 20] {
+        let err = notes_rows(&path, chunk_size, QueryOptions::default()).await.unwrap_err();
+        assert!(
+            matches!(err, pgdump_query::Error::InvalidUtf8 { .. }),
+            "chunk_size {chunk_size}: {err}"
+        );
+
+        let projected = QueryOptions {
+            projection: Some(vec!["id".to_string(), "note".to_string()]),
+            ..QueryOptions::default()
+        };
+        let rows = notes_rows(&path, chunk_size, projected).await.unwrap();
+        assert_eq!(rows.len(), 5, "chunk_size {chunk_size}");
+        assert_eq!(rows[0][1].as_deref(), Some("caf\u{e9} \u{2603} \u{1f408}"));
+    }
+}

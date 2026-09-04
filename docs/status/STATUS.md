@@ -35,11 +35,20 @@ re-took were current until 7.13. Every one of them times a `pgdq` run, and the
 two slices that follow the stamp both changed what such a run costs per byte of
 input.
 
+**One published cell is not merely stale but wrong by a factor of six, and is
+not to be quoted until 7.12 re-takes it.** `census-arrays` prices the census on
+array-bearing rows; 7.6 put the field split behind it on `memchr`, and a
+whole-file `parse` of that input falls **17.781 G → 2.919 G** user instructions
+([2026-09-04](history/2026-09-04.md), "The census's field split was the byte
+loop, not the census"). It was already red on `pgdump_query/src/copy.rs`, so
+nothing about the register missed it; what is new is the size.
+
 **The genuinely stale ones and their reasons.** Every figure that times a
 `pgdq` run is red on `pgdump_query/src/io.rs` and on
 `pgdump_query/src/scan.rs`/`stream.rs` — 7.13's buffer pool and 7.13.1's read
 carry, which between them took **26%** of a warm `parse`'s user instructions and
-cannot be argued away. That subsumes the case `census-arrays` and
+cannot be argued away — and every figure that reads a `COPY` row is red on
+`pgdump_query/src/copy.rs` as well, which is 7.6. That subsumes the case `census-arrays` and
 `projection-widths` used to make on their own: both time a single-`COPY`-block
 input, where 7.4's gate is open at the one `CopyEnd` there is and 7.5's `INSERT`
 fast path is never entered, so those two slices left them doing the same work —
@@ -244,10 +253,27 @@ walked inside the buffer it replaced. What remains is unordered.
       accumulation is gone, two named cuts against the remainder are not.
       Notes:
       [`../design/roadmap-P7.5-insert-fast-path-notes.md`](../design/roadmap-P7.5-insert-fast-path-notes.md)
-- [ ] **7.6** Bulk `simdutf8` over the chunk's whole-row prefix, with
-      `decode_field` gaining the unchecked borrow path.
+- [x] **7.6** Bulk `simdutf8` over the chunk's whole-row prefix, with the
+      borrow path losing its per-field check: a row travels as `copy::RawRow`
+      and `copy::validated_prefix` validates a chunk's rows in one SIMD pass,
+      lazily, only where something will decode. A `strings` query loses
+      **6.11%** of its user instructions and a typed one **2.42%**, every after
+      rep below every before rep, with `core::str::converts::from_utf8` leaving
+      both profiles. **No `unsafe`**: the row is sliced out of the validated
+      `&str` with `str::get`, so a wrong range costs the fast path rather than
+      the process. The splitter it needed also took `map::Builder::on_row` off
+      a per-byte closure — an `--arrays --composite` `parse` falls **17.781 G →
+      2.919 G** user instructions, which is most of **7.7**'s census half.
+      Notes:
+      [`../design/roadmap-P7.6-bulk-utf8-notes.md`](../design/roadmap-P7.6-bulk-utf8-notes.md)
 - [ ] **7.7** One field split per row, shared by the predicate's terms,
-      `push_row`, the census and the decoders. Reviewed alone.
+      `push_row`, the census and the decoders. Reviewed alone. **Its stake is
+      smaller than the spec's row says**: 7.6 made the splitter itself SIMD, so
+      a whole `parse` of the file where the census costs most now runs on a
+      sixth of the instructions, and what is left to win by *sharing* one split
+      is the walk, not the split
+      ([2026-09-04](history/2026-09-04.md), "The census's field split was the
+      byte loop, not the census").
 - [ ] **7.8** The I/O defaults — the cold-NVMe figure, then readahead,
       `posix_fadvise` and the chunk-size constant, each landed or rejected
       against it. That figure is also what `KD9` is read against: it is the
@@ -291,11 +317,11 @@ walked inside the buffer it replaced. What remains is unordered.
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 - **P7 is open**, grilled and sliced; the checklist above is its progress. Its
-  two evidence slices, the allocator reading and four library changes have
+  two evidence slices, the allocator reading and five library changes have
   landed — 7.4's gate in `stream.rs`, 7.5's `INSERT` statement scan in
-  `preamble.rs`/`map.rs`, 7.13's read-buffer pool in `io.rs` and 7.13.1's read
-  carry in `scan.rs`/`stream.rs`, all edits to
-  timed paths. Six
+  `preamble.rs`/`map.rs`, 7.13's read-buffer pool in `io.rs`, 7.13.1's read
+  carry in `scan.rs`/`stream.rs` and 7.6's bulk UTF-8 pass in
+  `copy.rs`/`stream.rs`, all edits to timed paths. Six
   other phases are sketched and one more is
   specified — P13, P16, P10, P14, P6, P15, P8, in the roadmap table's schedule
   order; a `P<k>` is an identifier, so the numbers say nothing about the order
@@ -446,4 +472,31 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-Nothing is open.
+- **7.7's row is now mis-sized and its spec row was not touched.** 7.6's
+  splitter took the census's field split from a per-byte closure to `memchr`,
+  which took an `--arrays --composite` `parse` to a sixth of its
+  instructions; 7.7's spec
+  row still promises "one field split per row, shared by the predicate's terms,
+  `push_row`, the census and the decoders" against a stake that named the
+  census re-splitting every brace-bearing row. **The decision is whether 7.7's
+  spec row is re-scoped** — a spec edit, since the decision it records has
+  changed — or whether it stands and the shrunken stake is left in the
+  checklist and the history entry, which is where an unattended session may put
+  it without amending a spec. It was left standing: the row's *query*-path half
+  is untouched by 7.6, so the row still names real work, and re-scoping a slice
+  nobody has grilled since the evidence moved is the kind of call the phase's
+  own rule sends back through grilling. Reversing this costs one spec row and a
+  history entry. ([2026-09-04](history/2026-09-04.md), "The census's field split
+  was the byte loop, not the census")
+
+- **The `query` profile section now carries two sittings.**
+  [`../design/architecture.md`](../design/architecture.md), "query-profile",
+  keeps its table as taken — 7.13.1's precedent, since re-taking it means
+  publishing a fresh sitting of every row beside the one that moved — while the
+  per-row budget beneath it *is* re-derived from a new sitting, because 7.6
+  moves that table directly and the phase spec obliges a landing lever to
+  re-read it. **The decision is whether one section may hold two sittings** with
+  the seam written down, or whether the profile table should have been re-taken
+  with it so the whole section is one. The seam is stated in both places and the
+  ±8% a warm absolute resolves to is named beside it; the alternative costs a
+  second sitting of a table nothing in this slice moved.

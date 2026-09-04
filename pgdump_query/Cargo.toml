@@ -18,6 +18,9 @@ bytes = "1.12.1"
 futures = "0.3.34"
 memchr = "2.8.3"
 serde = { version = "1.0.229", features = ["derive"] }
+# SIMD UTF-8 validation, for the one bulk check a chunk of rows gets in place
+# of one per field (`copy::validated_prefix`).
+simdutf8 = "0.1.5"
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["rt", "sync"] }
 

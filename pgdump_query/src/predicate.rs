@@ -4,7 +4,7 @@ use std::cmp::Ordering;
 
 use arrow::datatypes::i256;
 
-use crate::copy::{decode_field, split_fields};
+use crate::copy::{RawRow, field_ranges};
 use crate::decode;
 use crate::nested;
 use crate::pgtype::{
@@ -2385,10 +2385,10 @@ impl ResolvedTerm {
     /// `IsNull`/`IsNotNull`, which compare nothing, and the two `IS DISTINCT
     /// FROM` forms, which count NULL as a value — so `IsDistinctFrom` on a
     /// NULL field is `True` where `Ne` is `Unknown`.
-    fn eval(&self, raw_row: &[u8], table: &str, row_offset: u64) -> Result<Truth> {
-        let field = split_fields(raw_row).nth(self.index);
+    fn eval(&self, raw_row: RawRow<'_>, table: &str, row_offset: u64) -> Result<Truth> {
+        let field = field_ranges(raw_row.bytes()).nth(self.index);
         let decoded = match field {
-            Some(f) => decode_field(f)?,
+            Some(f) => raw_row.decode(f)?,
             None => None,
         };
         let Some(compared) = self.compared.as_ref() else {
@@ -2479,7 +2479,12 @@ impl ResolvedExpr {
     /// [`Truth::True`]. `Unknown` and `False` both drop the row, which is
     /// what makes the collapse at the root sound even though it is not sound
     /// under a `Not` (`docs/design/architecture.md`, "Predicates").
-    pub(crate) fn matches(&self, raw_row: &[u8], table: &str, row_offset: u64) -> Result<bool> {
+    pub(crate) fn matches(
+        &self,
+        raw_row: RawRow<'_>,
+        table: &str,
+        row_offset: u64,
+    ) -> Result<bool> {
         Ok(self.eval(false, raw_row, table, row_offset)?.is_true())
     }
 
@@ -2501,7 +2506,13 @@ impl ResolvedExpr {
     /// projection already has — deciding needs strictly less than
     /// materializing — and a row whose answer was settled by a field that
     /// did decode returns nothing wrong.
-    fn eval(&self, exact: bool, raw_row: &[u8], table: &str, row_offset: u64) -> Result<Truth> {
+    fn eval(
+        &self,
+        exact: bool,
+        raw_row: RawRow<'_>,
+        table: &str,
+        row_offset: u64,
+    ) -> Result<Truth> {
         Ok(match self {
             Self::Term(term) => term.eval(raw_row, table, row_offset)?,
             Self::And(children) => {
@@ -2540,6 +2551,20 @@ impl ResolvedExpr {
         let mut out = Vec::new();
         self.collect_notes(&mut out);
         out
+    }
+
+    /// Whether evaluating this tree reads a field at all. An empty
+    /// conjunction — the `Expr::And(vec![])` a query with no filter carries —
+    /// reads nothing, and a stream whose projection is also empty therefore
+    /// decodes nothing and skips the bulk UTF-8 validation
+    /// (`docs/design/architecture.md`, "A row's bytes are validated once, in
+    /// bulk").
+    pub(crate) fn reads_fields(&self) -> bool {
+        match self {
+            Self::Term(_) => true,
+            Self::And(children) | Self::Or(children) => children.iter().any(Self::reads_fields),
+            Self::Not(inner) => inner.reads_fields(),
+        }
     }
 
     fn collect_notes(&self, out: &mut Vec<ComparisonNote>) {
@@ -2591,7 +2616,7 @@ mod tests {
 
     /// One text term's own truth value over `raw_row`.
     fn truth(p: &Predicate, raw_row: &[u8], index: usize) -> Truth {
-        text_term(p, index).eval(raw_row, "public.t", 0).unwrap()
+        text_term(p, index).eval(RawRow::unchecked(raw_row), "public.t", 0).unwrap()
     }
 
     /// Whether a row survives a conjunction of text terms — the shape every
@@ -2604,7 +2629,7 @@ mod tests {
                 .map(|(p, &i)| ResolvedExpr::Term(text_term(p, i)))
                 .collect(),
         );
-        expr.matches(raw_row, "public.t", 0).unwrap()
+        expr.matches(RawRow::unchecked(raw_row), "public.t", 0).unwrap()
     }
 
     /// The type list every one-column schema below resolves against: one
@@ -2684,7 +2709,7 @@ mod tests {
     ) -> Result<Truth> {
         let p = Predicate { column: "v".into(), op, value: Some(literal.into()) };
         resolve_term(&p, 0, &nested_column(declared, types), 0)?.eval(
-            field.as_bytes(),
+            RawRow::unchecked(field.as_bytes()),
             "public.t",
             0,
         )
@@ -2705,7 +2730,7 @@ mod tests {
     ) -> Result<bool> {
         let p = order_predicate(op, value);
         let term = resolve_term(&p, 0, &one_column(declared, data_type), 0)?;
-        Ok(term.eval(field.as_bytes(), "public.t", 0)?.is_true())
+        Ok(term.eval(RawRow::unchecked(field.as_bytes()), "public.t", 0)?.is_true())
     }
 
     #[test]
@@ -2758,9 +2783,11 @@ mod tests {
         // The half `NOT` gets wrong, stated as the pair it is.
         let eq = Predicate { column: "x".into(), op: PredicateOp::Eq, value: Some("a".into()) };
         let negated = ResolvedExpr::Not(Box::new(ResolvedExpr::Term(text_term(&eq, 1))));
-        assert!(!negated.matches(b"other\t\\N", "public.t", 0).unwrap());
+        assert!(!negated.matches(RawRow::unchecked(b"other\t\\N"), "public.t", 0).unwrap());
         assert!(
-            ResolvedExpr::Term(text_term(&idf, 1)).matches(b"other\t\\N", "public.t", 0).unwrap()
+            ResolvedExpr::Term(text_term(&idf, 1))
+                .matches(RawRow::unchecked(b"other\t\\N"), "public.t", 0)
+                .unwrap()
         );
     }
 
@@ -2823,7 +2850,7 @@ mod tests {
     }
 
     fn exact(expr: &ResolvedExpr) -> Truth {
-        expr.eval(true, THREE_VALUED_ROW, "public.t", 0).unwrap()
+        expr.eval(true, RawRow::unchecked(THREE_VALUED_ROW), "public.t", 0).unwrap()
     }
 
     const VALUES: [Truth; 3] = [Truth::True, Truth::False, Truth::Unknown];
@@ -2886,7 +2913,7 @@ mod tests {
         assert!(all.len() > 1000, "only {} trees", all.len());
         for expr in &all {
             assert_eq!(
-                expr.matches(THREE_VALUED_ROW, "public.t", 0).unwrap(),
+                expr.matches(RawRow::unchecked(THREE_VALUED_ROW), "public.t", 0).unwrap(),
                 exact(expr).is_true(),
                 "{expr:?}"
             );
@@ -2931,12 +2958,24 @@ mod tests {
         let corrupt = || term("b", PredicateOp::Gt, "0", 1);
         let ok = |value| term("a", PredicateOp::Eq, value, 0);
 
-        assert!(corrupt().matches(row, "public.t", 0).is_err());
+        assert!(corrupt().matches(RawRow::unchecked(row), "public.t", 0).is_err());
         // Settled by a field that did decode, in both directions.
-        assert!(ResolvedExpr::Or(vec![ok("1"), corrupt()]).matches(row, "public.t", 0).unwrap());
-        assert!(!ResolvedExpr::And(vec![ok("2"), corrupt()]).matches(row, "public.t", 0).unwrap());
+        assert!(
+            ResolvedExpr::Or(vec![ok("1"), corrupt()])
+                .matches(RawRow::unchecked(row), "public.t", 0)
+                .unwrap()
+        );
+        assert!(
+            !ResolvedExpr::And(vec![ok("2"), corrupt()])
+                .matches(RawRow::unchecked(row), "public.t", 0)
+                .unwrap()
+        );
         // Not settled: the walk reaches the corrupt field.
-        assert!(ResolvedExpr::And(vec![ok("1"), corrupt()]).matches(row, "public.t", 0).is_err());
+        assert!(
+            ResolvedExpr::And(vec![ok("1"), corrupt()])
+                .matches(RawRow::unchecked(row), "public.t", 0)
+                .is_err()
+        );
 
         // An unknown conjunct settles the *root*, so the walk stops there —
         // until a `Not` above it makes `Unknown` and `False` different
@@ -2946,8 +2985,12 @@ mod tests {
             let p = Predicate { column: "c".into(), op: PredicateOp::Eq, value: Some("x".into()) };
             ResolvedExpr::And(vec![ResolvedExpr::Term(text_term(&p, 2)), corrupt()])
         };
-        assert!(!unknown().matches(row, "public.t", 0).unwrap());
-        assert!(ResolvedExpr::Not(Box::new(unknown())).matches(row, "public.t", 0).is_err());
+        assert!(!unknown().matches(RawRow::unchecked(row), "public.t", 0).unwrap());
+        assert!(
+            ResolvedExpr::Not(Box::new(unknown()))
+                .matches(RawRow::unchecked(row), "public.t", 0)
+                .is_err()
+        );
     }
 
     #[test]
@@ -4011,8 +4054,8 @@ mod tests {
         let note = only_note(&term).expect("an unmodelled scalar announces");
         assert_eq!(note.divergence, ComparisonDivergence::UnmodelledType);
         assert!(note.message().contains("`box` compares areas"), "{}", note.message());
-        assert!(term.eval(b"(1,1),(0,0)", "public.t", 0).unwrap().is_true());
-        assert!(!term.eval(b"(3,3),(2,2)", "public.t", 0).unwrap().is_true());
+        assert!(term.eval(RawRow::unchecked(b"(1,1),(0,0)"), "public.t", 0).unwrap().is_true());
+        assert!(!term.eval(RawRow::unchecked(b"(3,3),(2,2)"), "public.t", 0).unwrap().is_true());
 
         // A nested column the register does not compare is the other
         // plan-less population and is silent: its `range_out` text is a
@@ -4069,8 +4112,14 @@ mod tests {
             // comparison of the container's own canonical text it was.
             let term =
                 resolve_term(&order_predicate(PredicateOp::Eq, "{1,2}"), 0, &resolved, 0).unwrap();
-            assert!(term.eval(b"{1,2}", "public.t", 0).unwrap().is_true(), "{declared}");
-            assert!(!term.eval(b"{1,3}", "public.t", 0).unwrap().is_true(), "{declared}");
+            assert!(
+                term.eval(RawRow::unchecked(b"{1,2}"), "public.t", 0).unwrap().is_true(),
+                "{declared}"
+            );
+            assert!(
+                !term.eval(RawRow::unchecked(b"{1,3}"), "public.t", 0).unwrap().is_true(),
+                "{declared}"
+            );
             // And the announcement replaces a silence under `=`, not the
             // refusal under `<`, which still names the same position.
             let Err(err) = resolve_term(&order_predicate(PredicateOp::Lt, "{}"), 0, &resolved, 0)
@@ -4150,8 +4199,8 @@ mod tests {
         // term evaluates bytewise.
         let term = resolve_term(&eq, 0, &schema(Some("public.icu_ci"), &collations), 0).unwrap();
         assert!(only_note(&term).is_some());
-        assert!(term.eval(b"a", "public.t", 0).unwrap().is_true());
-        assert!(!term.eval(b"A", "public.t", 0).unwrap().is_true());
+        assert!(term.eval(RawRow::unchecked(b"a"), "public.t", 0).unwrap().is_true());
+        assert!(!term.eval(RawRow::unchecked(b"A"), "public.t", 0).unwrap().is_true());
     }
 
     /// The three tie-breaks `array_cmp` reaches only when the elements
@@ -4431,7 +4480,7 @@ mod tests {
 
         use super::*;
         use crate::cache::CacheMode;
-        use crate::copy::encode_field;
+        use crate::copy::{decode_field, encode_field, split_fields};
         use crate::index::preamble_only;
         use crate::io::LocalFileSource;
         use crate::preamble::{ColumnDef, DatabaseMetadata, DumpMetadata};
@@ -4705,7 +4754,9 @@ mod tests {
                 Err(e) => return (Err(e.to_string()), false),
             };
             let announced = !term.comparison_notes().is_empty();
-            let got = term.eval(&encode_field(field), "public.t", 0).map_err(|e| e.to_string());
+            let got = term
+                .eval(RawRow::unchecked(&encode_field(field)), "public.t", 0)
+                .map_err(|e| e.to_string());
             (got, announced)
         }
 
