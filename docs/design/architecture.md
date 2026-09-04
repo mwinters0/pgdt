@@ -2471,8 +2471,10 @@ field**, not the fragment that tripped it, because that is what
 
 **Nested values always copy, `Utf8View` elements included.** Widening the
 zero-copy view path into a recursive builder means honouring its three sharp
-edges at every level of nesting; that is a scan-performance change P7 owns
-and measures before it takes (`roadmap-P7-scan-performance.md`, slice 7.11).
+edges at every level of nesting, and **that swap has been measured and
+refused**: it is worth at most 4.7 ns an element, 0.24 µs of an 11.08 µs row,
+on a file built to flatter it. The reading and what would reopen it are under
+"The library's own per-row budget".
 
 A `COPY` header with no explicit column list gets placeholder names
 (`column1`, `column2`, …) sized to the **first row's** field count, so **a
@@ -4623,6 +4625,17 @@ change needs. **The copy is one arm** — `batch::append_nested`'s
 quoted-but-unescaped text field, spends 0.19 µs a row on *all* its Arrow
 appends across nineteen columns. The `text[]` file was only ever needed for the
 `List` leg.
+
+**What would reopen it is element *width*, and then element count.** At or below
+`arrow`'s 12-byte view-inlining threshold a view and a copy are the same
+instruction sequence and the prize is exactly zero; above it the copy grows with
+the element and the view write does not, so the ratio of prize to build rises
+with width while count scales both together. On the 21-byte shape above the
+prize reaches 1 µs a row at roughly **210 elements a row**. That is the trigger
+to re-read this on, and it is not the whole argument: the recursive
+chunk-retention and block-invalidation the change needs at every level of `List`
+and `Struct` nesting is a fixed cost in correctness surface that does not shrink
+as the prize grows.
 
 **The split row is now shared, and this budget is still the unfiltered one.**
 A row's boundaries are found once and read by the filter's terms as well as by

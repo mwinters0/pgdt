@@ -460,10 +460,10 @@ fn append_null(builder: &mut ColumnBuilder) {
 
 /// Append one already-COPY-unescaped value — or SQL NULL — into a builder
 /// sitting *inside* a nested value. Unlike the top level, a `Utf8View` here
-/// copies: widening the zero-copy view path into a recursive builder means
-/// honouring its chunk-retention and block-invalidation edges at every level,
-/// which is a scan-performance change P7 owns
-/// (`docs/design/roadmap-P7-scan-performance.md`, slice 7.11).
+/// copies, deliberately: widening the zero-copy view path into a recursive
+/// builder means honouring its chunk-retention and block-invalidation edges at
+/// every level, and the swap was measured at under 5 ns an element and refused
+/// (`docs/design/architecture.md`, "The library's own per-row budget").
 ///
 /// The error is unit rather than the offending text: `Error::FieldDecode`
 /// reports the *field*'s value, so a failure deep inside a nested literal is

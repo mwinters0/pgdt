@@ -430,10 +430,20 @@ thirteen. Everything else in the phase is unordered.
       in 0.383 µs a row, of which the copy-to-view swap is worth at most
       **0.237 µs against the 1 µs gate**. Notes:
       [`../design/roadmap-P7.10.1-typed-column-build-notes.md`](../design/roadmap-P7.10.1-typed-column-build-notes.md)
-- [ ] **7.11** The viewing builder for a nested `Utf8View` — **its gate
-      failed**: 7.10.1 read the prize at 0.237 µs/row against the 1 µs/row
-      threshold, so what remains is the refusal and its notes doc, not a
-      builder.
+- [x] **7.11** The viewing builder for a nested `Utf8View` — **refused, and no
+      library code**: 7.10.1 read the prize at **0.237 µs/row against the
+      1 µs/row gate**, 24% of it, on a file built to flatter the change, with
+      the `Struct` leg of the same arm bounded well below that on a registered
+      input. The lever table's largest admitted prize closes at a quarter of
+      its own threshold, and what took it apart was the decomposition rather
+      than an attempt. What this slice landed is the decision: the rejected
+      alternative and its reopening trigger — element **width** above `arrow`'s
+      12-byte inlining threshold, then ~210 elements a row — filed beside the
+      mechanism, and the two live obligations that still promised the
+      measurement discharged (`architecture.md`'s "nested values always copy"
+      paragraph and `batch::append_nested`'s doc comment, retargeted from the
+      phase spec at the mechanism's section). Notes:
+      [`../design/roadmap-P7.11-viewing-builder-notes.md`](../design/roadmap-P7.11-viewing-builder-notes.md)
 - [ ] **7.12** The sweep pair and the koji regression run, folded in, plus the
       written statement of what a parallel splitter needs from coverage and
       from the census, filed to P16.
@@ -482,7 +492,7 @@ thirteen. Everything else in the phase is unordered.
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 - **P7 is open**, grilled and sliced; the checklist above is its progress. Its
-  four evidence slices, the allocator reading, eight library changes and two
+  four evidence slices, the allocator reading, eight library changes and three
   measured refusals have landed — 7.4's gate in `stream.rs`, 7.5's `INSERT`
   statement scan in `preamble.rs`/`map.rs`, 7.13's read-buffer pool in
   `io.rs`, 7.13.1's read carry in `scan.rs`/`stream.rs`, 7.6's bulk UTF-8 pass
@@ -491,8 +501,9 @@ thirteen. Everything else in the phase is unordered.
   element in `nested.rs`/`batch.rs` and 7.10's allocation-free scalar decoders
   in `decode.rs`, all edits to timed paths,
   plus 7.8.1's `--chunk-size`, which changes no default and refuses the other
-  two I/O levers, and 7.10.1, which refuses the typed column build on a reading
-  and lands nothing at all. Six
+  two I/O levers, 7.10.1, which refuses the typed column build on a reading and
+  lands nothing at all, and 7.11, which refuses the viewing builder on 7.10.1's
+  reading and lands only the decision. Six
   other phases are sketched and one more is
   specified — P13, P16, P10, P14, P6, P15, P8, in the roadmap table's schedule
   order; a `P<k>` is an identifier, so the numbers say nothing about the order
