@@ -1187,6 +1187,51 @@ def projection_flags(width: int) -> str:
     return " ".join(f"--column {name}" for name in names)
 
 
+#: The predicate shapes `predicate-terms` is taken at: a column of the control
+#: file, and how many terms are asked against it.
+#:
+#: **Every term is false for every row, and the terms are OR'd.** `Or`
+#: evaluates its children until one is `True`, so an all-false disjunction
+#: evaluates every one of them on every row -- and no row survives, so the
+#: decode, the Arrow build and the render are identically absent from every
+#: row of the table. That is what makes the difference between two rows here
+#: the predicate and nothing else. A conjunction would do the opposite: `And`
+#: stops at the first non-`True` conjunct, so an N-term one costs what a
+#: 1-term one does.
+#:
+#: **Two depths, because what a shared split would remove is the walk.**
+#: `ResolvedTerm::eval` takes its field with `field_ranges(..).nth(i)`, from
+#: the front of the row, once per term -- so a term against the control's
+#: thirteenth column walks thirteen fields and one against its first walks
+#: one. `v_bool` is the deep column rather than the last one because the two
+#: depths must differ by the walk and not by what decoding the field costs,
+#: and its values are one byte; `v_escaped` and `v_long_text` are the two the
+#: row order otherwise recommends and both are the wrong shape for that.
+PREDICATE_SHAPES: dict[str, tuple[str, int]] = {
+    "deep-1": ("v_bool", 1),
+    "deep-2": ("v_bool", 2),
+    "deep-3": ("v_bool", 3),
+    "deep-5": ("v_bool", 5),
+    "shallow-5": ("id", 5),
+    "shallow-1": ("id", 1),
+}
+
+
+def predicate_expr(shape: str) -> str:
+    """The `--where` expression one shape asks for.
+
+    Distinct literals rather than one repeated, so the tree really is N terms:
+    nothing folds two terms (`architecture.md`, "Predicates"), but a table
+    whose rows differ only in how often one term is repeated invites the
+    reader to wonder."""
+    if shape not in PREDICATE_SHAPES:
+        raise ValueError(f"no predicate registered as {shape!r}")
+    column, terms = PREDICATE_SHAPES[shape]
+    if terms < 1:
+        raise ValueError(f"predicate {shape!r} asks for no terms")
+    return " OR ".join(f"{column}=zzz{i}" for i in range(1, terms + 1))
+
+
 def _script(command: str) -> str:
     """The in-container shell for one command shape.
 
@@ -1221,6 +1266,19 @@ def _script(command: str) -> str:
         return (
             f"{q} query --source /dump.sql --table public.perf --dqcache none "
             f"--schema-mode typed {projection_flags(int(width))} >/dev/null"
+        )
+    if command.startswith("query-where-"):
+        # `strings`, always, for two reasons that agree. The typed `=` decodes
+        # the literal once against the column's own type, so `zzz1` on an
+        # `integer` column is `Error::PredicateValueDecode` before the first
+        # row; and the zero-copy path is the one this lever is read against,
+        # since `strings` is where the field split and the walk are most of
+        # what the library does (`roadmap-P7-scan-performance.md`, "Only two of
+        # these rows move the `strings` path at all").
+        expr = predicate_expr(command.removeprefix("query-where-"))
+        return (
+            f"{q} query --source /dump.sql --table public.perf --dqcache none "
+            f"--schema-mode strings --where '{expr}' >/dev/null"
         )
     if command == "query-nomatch":
         # Maps to EOF (the table never matches) and never saves.
@@ -1679,6 +1737,11 @@ MAP = ("pgdump_query/src/map.rs",)
 #: the save throttle's gate. A figure that prices the map declares both, or a
 #: change to the gate reads green against a table it just moved.
 MAP_BUILD = (*MAP, "pgdump_query/src/stream.rs")
+#: Where a filter term is resolved and evaluated. Its own mechanism because
+#: until `predicate-terms` no registered figure passed a filter at all, so
+#: nothing in the register was moved by this file and nothing declared it --
+#: which is the same shape of blindness the read path had before `READ`.
+PREDICATE = ("pgdump_query/src/predicate.rs",)
 CACHE = ("pgdump_query/src/cache.rs",)
 NESTED = ("pgdump_query/src/nested.rs", "pgdump_query/src/batch.rs")
 PREAMBLE = ("pgdump_query/src/index.rs", "pgdump_query/src/preamble.rs")
@@ -1981,6 +2044,83 @@ def run_projection_widths(session: Session) -> str:
         f"{profile['columns']} columns — read {len(_PROJECTION_ROWS)} ways, warm and typed, "
         "through the CLI. Per-row differences are paired rep by rep and then taken as a "
         "median.\n\nPer-rep readings (s):\n"
+        + "\n".join(per_rep)
+        + "\n"
+    )
+
+
+# -- what a filter term costs ------------------------------------------------
+
+#: The rows of `predicate-terms`, in the order the table carries them. The
+#: first four are one depth at four term counts, so their differences are what
+#: one more term costs; the fifth is the fourth's terms moved to the front of
+#: the row, so its difference is the walk those five terms pay; the sixth
+#: closes the shallow ladder, so the reader has a slope at both depths.
+_PREDICATE_ROWS: tuple[tuple[str, str, str], ...] = (
+    ("deep-1", "1 term, 13th column", "the base: one term, thirteen fields in"),
+    ("deep-2", "2 terms, 13th column", "one more term at that depth"),
+    ("deep-3", "3 terms, 13th column", "one more"),
+    ("deep-5", "5 terms, 13th column", "two more — the five-way disjunction"),
+    ("shallow-5", "5 terms, 1st column", "**the walk those five terms pay**"),
+    ("shallow-1", "1 term, 1st column", "four of those five terms, walk-free"),
+)
+
+
+def run_predicate_terms(session: Session) -> str:
+    """One file, six predicates, no row surviving any of them.
+
+    The shape the split-sharing lever pays off on, which no other figure in
+    the register runs: every one of these queries evaluates every term of an
+    all-false disjunction on every row and emits nothing, so what separates
+    two rows is the predicate and nothing downstream of it.
+    """
+    figure = "predicate-terms"
+    specs = [
+        RunSpec("pgdq", "control", f"query-where-{shape}", "warm", label)
+        for shape, label, _ in _PREDICATE_ROWS
+    ]
+    # Six, as `projection-widths` takes: the reading that matters is a paired
+    # difference between two rows, and pairing is per rep.
+    session.sweep(figure, specs, session.cfg.reps(6))
+    profile = session.stager.profile("control")
+    rows, per_rep, previous = [], [], None
+    for shape, label, buys in _PREDICATE_ROWS:
+        spec = RunSpec("pgdq", "control", f"query-where-{shape}", "warm", "")
+        values = session.get(figure, spec)
+        if previous is None:
+            delta = "—"
+        else:
+            paired = [(a - b) / profile["rows"] * 1e6 for a, b in zip(values, previous)]
+            delta = f"**{median(paired):+.2f} µs**"
+        rows.append(
+            [
+                label,
+                f"{fmt_s(median(values))} s",
+                f"{median(values) / profile['rows'] * 1e6:.2f} µs",
+                delta,
+                buys,
+            ]
+        )
+        per_rep.append(f"- {label}: {fmt_readings(values)}")
+        previous = values
+    table = md_table(
+        ["Predicate", "Median", "Per row", "Δ per row against the row above", "What that buys"],
+        rows,
+    )
+    written = "\n".join(
+        f"- {label}: `--where '{predicate_expr(shape)}'`"
+        for shape, label, _ in _PREDICATE_ROWS
+    )
+    return (
+        table
+        + f"\n\nOne file — the brace-free control, {profile['rows']:,} rows of "
+        f"{profile['columns']} columns — read {len(_PREDICATE_ROWS)} ways, warm and "
+        "`--schema-mode strings`, through the CLI. Every term is an equality against a "
+        "literal no value of the column can equal, so every row is walked, every term is "
+        "evaluated, and no row is decoded, built or rendered. Per-row differences are "
+        "paired rep by rep and then taken as a median.\n\nAs written:\n"
+        + written
+        + "\n\nPer-rep readings (s):\n"
         + "\n".join(per_rep)
         + "\n"
     )
@@ -2564,6 +2704,25 @@ FIGURES: list[Figure] = [
         depends=(*SCAN, *NESTED, *READ, *QUERY_CLI, *GEN_PERF),
         warm_inputs=("arrays",),
         run=run_projection_widths,
+    ),
+    # The only figure in the register that passes a filter, and therefore the
+    # only one a change to `predicate.rs` can move. `depends` carries the scan
+    # path for the same reason `projection-widths` does — every row is an
+    # absolute reading of replay with nothing decoded — and `QUERY_CLI`
+    # because `--where` is parsed there. `batch.rs` is deliberately absent:
+    # no row survives any of these predicates, so `push_row` never runs.
+    Figure(
+        id="predicate-terms",
+        quoted_by=(
+            "docs/design/architecture.md",
+            "docs/design/roadmap-P7-scan-performance.md",
+            "docs/status/STATUS.md",
+        ),
+        section="What a filter term costs, and how much of it is the walk to its field",
+        stage="warm",
+        depends=(*PREDICATE, *SCAN, *READ, *QUERY_CLI, *GEN_PERF),
+        warm_inputs=("control",),
+        run=run_predicate_terms,
     ),
     # `depends` is the union of what moves the three shapes it times, because
     # a table of *ratios* between allocators is invalidated by a change in

@@ -16,7 +16,7 @@ each is in.
 
 [`../design/measurements.md`](../design/measurements.md) carries the `ba2fc12`
 stamp of 2026-09-03: the scan-performance baseline sweep pair was taken and
-folded in whole, so seven of its fourteen tables come from one sitting. Seven
+folded in whole, so seven of its fifteen tables come from one sitting. Seven
 were taken on their own afterwards and each says so in its own section —
 `allocator` twice, by 7.3 and again by 7.13, whose ratios are within-sitting
 and whose second sitting reversed both cells the adoption argument rested on;
@@ -25,11 +25,20 @@ the first of the three by two orders of magnitude and re-took the other two in
 the same sitting because they share its readings and its subject; and
 `scan-throughput-cold`, `scan-throughput-warm` and `census-brace-free` by 7.5,
 the three of them in one sitting because the two throughput tables' `COPY` row
-*is* the census table's census-on column.
+*is* the census table's census-on column. The fifteenth, `predicate-terms`,
+stands outside the sweep for the other reason and is the doc's newest table:
+it did not exist when the sweep ran, being the first to pass a filter at all,
+and 7.7 took it on 2026-09-04 at `42b1611` plus this slice's own uncommitted
+harness change. **It reads stale and is current in fact**, and that is
+mechanical rather than a finding: `--stale` diffs every declared path against
+the doc's session stamp, so a table taken *after* that stamp is red on every
+path that moved between the two — which for this one is the whole set 7.6,
+7.13 and 7.13.1 moved, all of them before it was taken. 7.12's sweep clears
+the stamp and the whole column with it.
 
 **All thirteen sweep figures read stale against the `ba2fc12` stamp, and none
-of them is current in fact.** `allocator` is the doc's newest table, re-taken by
-7.13 on the pooled read path, and 7.13.1 has since moved it too;
+of them is current in fact.** `allocator` is the newest of the thirteen,
+re-taken by 7.13 on the pooled read path, and 7.13.1 has since moved it too;
 `per-block-quadratic`, `map-only` and `preamble-prepass` (7.4) and the three 7.5
 re-took were current until 7.13. Every one of them times a `pgdq` run, and the
 two slices that follow the stamp both changed what such a run costs per byte of
@@ -91,6 +100,11 @@ and `census-attribution` declare no scanner path and are moved by it all the
 same. 7.13.1's carry needed no such fix: it lives in `scan.rs` and `stream.rs`,
 which `SCAN` and `MAP_BUILD` already declared.
 
+**A fifth mechanism arrived with `predicate-terms`.** Nothing in the register
+named `pgdump_query/src/predicate.rs` — not blindness this time, since until
+7.7 no figure passed a filter and the file could not have moved one. `PREDICATE`
+exists as of that figure, and it is the only figure that declares it.
+
 | Capability | State |
 |---|---|
 | Streaming row extraction from plain-format dumps, push and pull mode, resumable | working; a batch flushes on whichever of `max_rows`, `max_bytes` or `max_source_span` comes first, the last of which is what bounds the read chunks an in-flight batch pins ([`../design/architecture.md`](../design/architecture.md), "Three flush triggers") |
@@ -102,7 +116,7 @@ which `SCAN` and `MAP_BUILD` already declared.
 | Array shape census | recorded by every mapping pass and consumed: a query retypes its top-level array columns from the union over the blocks it will replay, before the first batch |
 | CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, cache-only `info` | working; **`parse` is the only scanner** — it resumes from a matching cache, banks at `COPY` block boundaries under a self-tuning throttle, and saves unconditionally on Ctrl-C (exit 130/143). `info` reports from the cache and never scans. `--verbose` adds each block's byte offsets, a per-column resolution line, an enum column's declared labels beneath it, and — under the `user-defined types` count that heads it — one line per user-defined type, every `TypeKind` arm rendered with its payload. Text output shape is provisional; `--json` carries no shape promise at all, and states the labels once per type in `metadata.databases[].types[]` rather than per column |
 | Partial reporting | `info` reports an unfinished scan's cache for as far as it got, with `Scan completion: N%` stated once at the top and nothing below it qualified. An interrupted cache is **typed** for every database segment the scan finished (I1) |
-| Measurement harness | `scripts/measure.py` takes every figure in [`../design/measurements.md`](../design/measurements.md) and emits that doc's tables — fourteen figures, thirteen taken by a sweep and one derived across two, each declaring what invalidates it, which documents repeat it, and which readings it borrows from another figure — that third edge is what lets `--figure` pull in what a figure borrows and name the rest of the set that must be re-taken with it, and `--alone` is how a partial sitting is asked for deliberately. `measure.UNTAKEN` is empty: nothing is built and unrun. It also builds and interrogates the `allocator` figure's three legs, reading each binary's allocator out of `pgdq --version` rather than trusting the flags it passed, and names the shipped one in the session stamp. A leg is rebuilt **once per harness process** rather than reused from `runs/`, which is what stops a fresh reference being timed against last session's legs, and all of them are built before the first reading rather than at the rep that wants one |
+| Measurement harness | `scripts/measure.py` takes every figure in [`../design/measurements.md`](../design/measurements.md) and emits that doc's tables — fifteen figures, fourteen taken by a sweep and one derived across two, each declaring what invalidates it, which documents repeat it, and which readings it borrows from another figure — that third edge is what lets `--figure` pull in what a figure borrows and name the rest of the set that must be re-taken with it, and `--alone` is how a partial sitting is asked for deliberately. `measure.UNTAKEN` is empty: nothing is built and unrun. It also builds and interrogates the `allocator` figure's three legs, reading each binary's allocator out of `pgdq --version` rather than trusting the flags it passed, and names the shipped one in the session stamp. A leg is rebuilt **once per harness process** rather than reused from `runs/`, which is what stops a fresh reference being timed against last session's legs, and all of them are built before the first reading rather than at the rep that wants one |
 | Column projection | working, library and CLI: `QueryOptions::projection` names columns, cuts the reported `ResolvedSchema` with the batches, may reorder, and may be empty (`COUNT(*)`); `pgdq query` spells it `--column <name>` repeated, or `--no-columns`, which prints no header so `\| wc -l` is a row count. A filter may name a column the projection does not, and an unprojected column is never decoded, so projecting a column away escapes its `Error::FieldDecode` — including `KD2`'s, which the error message does not name ([`../design/architecture.md`](../design/architecture.md), "Projection"; [`../manual/type-handling.md`](../manual/type-handling.md)). Measured on one 3.00 GiB file at five widths: `--no-columns` is 3.18 µs a row against 28.56 for all 19, the two array columns alone are +13.21 and the composite +0.98 ([`../design/measurements.md`](../design/measurements.md), "What a column costs") |
 | The filter expression, evaluated three-valued | working: `QueryOptions::filter` is one `Expr` — `Term`/`And`/`Or`/`Not`, `And` and `Or` n-ary — evaluated in SQL's `True`/`False`/`Unknown` domain, a row surviving only where the root is `True`. A NULL field is `Unknown` under every comparing operator, which is the row set the old collapse gave for every conjunction and is what makes `Not` expressible at all. `IS DISTINCT FROM`/`IS NOT DISTINCT FROM` come with it, being the one thing `Not` cannot spell. Short-circuiting is defined against the *root*: `And` stops at the first non-`True` unless a `Not` is above it, which is where a decode failure surfaces or does not. Nothing folds two terms, so a contradictory pair is a query with no rows. Reachable from the CLI as well as the library: `pgdq query --where <expr>` builds the tree and a repeated `--filter` still builds the conjunction ([`../design/architecture.md`](../design/architecture.md), "Predicates") |
 | The `--where` expression grammar | working, CLI only — `Expr` is an enum an embedder fills in, so nothing below L4 parses an expression. Parens group, `NOT` binds tighter than `AND` and `AND` tighter than `OR`, the keywords are case-insensitive and are keywords only outside quotes, and everything that is not a paren or a keyword is a term handed to the `--filter` grammar unchanged. A keyword is recognised only against whitespace or a paren, so `tag=and` stays an equality; a `NOT` after the word `is` belongs to the term, so `IS NOT NULL` and `IS NOT DISTINCT FROM` survive whole; juxtaposition is not an implicit `AND`; and a value holding a paren must be quoted. Both flags together are one conjunction. **No `--filter` string changes meaning** — that is what the separate flag buys ([`../design/architecture.md`](../design/architecture.md), "`--where` builds an expression out of those terms"; [`../manual/type-handling.md`](../manual/type-handling.md), "Combining terms: `--where`") |
@@ -141,13 +155,13 @@ profiles of the three control shapes
 [`../design/architecture.md`](../design/architecture.md), "Where a scan's time
 goes"** — the decomposition, which is the durable half of the phase.
 
-**Figures.** Seven of the fourteen figures in
+**Figures.** Seven of the fifteen figures in
 [`../design/measurements.md`](../design/measurements.md) come from the
 `ba2fc12` sweep of 2026-09-03, folded in whole, each table carrying an
 apparatus line; `allocator`, `per-block-quadratic`, `map-only`,
 `preamble-prepass`, `scan-throughput-cold`, `scan-throughput-warm` and
 `census-brace-free` were taken on their own afterwards, and each section says
-so. `--check` reconciles fourteen markers against fourteen
+so. `--check` reconciles fifteen markers against fifteen
 figures. `session-drift` is derived across that sweep and a second one taken
 three minutes later on the same commit, which is the pair `--drift` reads.
 `measure.ACKNOWLEDGED` carries the six entries above: a fresh stamp spends
@@ -213,7 +227,7 @@ phase follows the profile, so a slice landing out of numeric order is the plan
 working ([`../process.md`](../process.md), "Slice numbering", which carries the
 exception an evidence-led phase runs under). **Both orderings that bound are
 discharged**: the allocator decision before the wrap sweep, which 7.13 re-took
-and settled, and `7.13.1` ahead of `7.6` and `7.7`, which rework how a row is
+and settled, and `7.13.1` ahead of `7.6` and `7.7.1`, which rework how a row is
 walked inside the buffer it replaced. What remains is unordered.
 
 - [x] **7.1** The profiling apparatus — `[profile.profiling]`, `perf`, and a
@@ -263,14 +277,28 @@ walked inside the buffer it replaced. What remains is unordered.
       `&str` with `str::get`, so a wrong range costs the fast path rather than
       the process. The splitter it needed also took `map::Builder::on_row` off
       a per-byte closure — an `--arrays --composite` `parse` falls **17.781 G →
-      2.919 G** user instructions, which is most of **7.7**'s census half.
-      Notes:
+      2.919 G** user instructions, which is the census re-split no lever claims
+      any more: it happens in the mapping pass, where **7.7.1** cannot reach
+      it. Notes:
       [`../design/roadmap-P7.6-bulk-utf8-notes.md`](../design/roadmap-P7.6-bulk-utf8-notes.md)
-- [ ] **7.7** One field split per row, shared by the predicate's terms and
-      `push_row`. Reviewed alone, and **preconditioned on a predicated
-      reading** — the walks it removes are the predicate's, and no registered
-      figure runs one. The census left this row's scope for good: it splits in
-      the *mapping* pass, so no arrangement of this lever reaches it
+- [x] **7.7** The predicated reading — `predicate-terms`, the first registered
+      figure to pass a filter at all: one file at four term counts and two
+      field depths, every term false and OR'd so all of them are evaluated and
+      nothing survives to be decoded. The same five terms against a 16-column
+      table's thirteenth column and against its first differ by **49% of the
+      deep one's user instructions**, and that difference is the walk; a
+      walk-free term is 0.033 µs a row against 0.09–0.12 for a deep one. No
+      library code; one CLI test runs every registered shape and requires each
+      to keep no row, which is what the whole subtraction rests on. Notes:
+      [`../design/roadmap-P7.7-predicated-reading-notes.md`](../design/roadmap-P7.7-predicated-reading-notes.md)
+- [ ] **7.7.1** One field split per row, shared by the predicate's terms and
+      `push_row`. **Earned**: 7.7's row paired the instrument that measures
+      this lever with the lever itself, which is two review cycles and not one.
+      Reviewed alone, and **bounded** by 7.7's reading rather than merely
+      motivated by it — one whole-row split replaces N partial ones, so it wins
+      on a many-term predicate and loses on a single shallow one. The census
+      left this row's scope for good: it splits in the *mapping* pass, so no
+      arrangement of this lever reaches it
       ([2026-09-04](history/2026-09-04.md), "7.7 is smaller and narrower than
       its rows said").
 - [ ] **7.8** The I/O defaults — the cold-NVMe figure, then readahead,
@@ -316,7 +344,7 @@ walked inside the buffer it replaced. What remains is unordered.
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 - **P7 is open**, grilled and sliced; the checklist above is its progress. Its
-  two evidence slices, the allocator reading and five library changes have
+  three evidence slices, the allocator reading and five library changes have
   landed — 7.4's gate in `stream.rs`, 7.5's `INSERT` statement scan in
   `preamble.rs`/`map.rs`, 7.13's read-buffer pool in `io.rs`, 7.13.1's read
   carry in `scan.rs`/`stream.rs` and 7.6's bulk UTF-8 pass in
@@ -471,4 +499,24 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-Nothing is open.
+### `predicate-terms` prices a filter on a shape that returns no rows
+
+**The call.** All six rows of the new figure ask an all-false disjunction, so
+every term is evaluated and no row survives — the decode, the Arrow build and
+`print_batch` are identically absent from every row of the table. That is what
+lets one table carry both a term-count axis and a field-depth axis, and it is
+what makes an adjacent-row difference the predicate and nothing else.
+
+**Why it was made that way.** The alternative shape — a filter every row
+satisfies, over a projection that builds everything — cannot be built on the
+control file: every column but `id` carries 2% NULLs, so an N-term conjunction
+is `Unknown` on 1 − 0.98^N of the rows and drops them, moving the emit cost the
+subtraction needs held constant. Confining the terms to `id` fixes that and
+leaves a single field depth, which is the axis the lever is sized on.
+
+**What would change if it were reconsidered.** The table stops being an
+absolute a user recognises — nobody runs a query for its zero rows — and the
+shape outlives this slice, since 7.12's sweep re-takes it. The additive answer
+is a second figure on a keeps-everything filter, deliberately not taken here;
+reversing this one instead means either giving up the depth axis or generating
+a NULL-free input, which is a new apparatus input for one table.

@@ -220,7 +220,7 @@ profile is read against.
 | **`INSERT`-run fast path** (`KD9`) | 16.5× a `COPY` block's per-byte CPU; ~48 CPU-minutes per TB against ~3 |
 | **The map's per-`CopyEnd` rebuild** (`KD5`) | 19.0 s of a 20.8 s 4000-block `parse` |
 | **Bulk `simdutf8`** in place of per-field `std::str::from_utf8` | 16 validation calls per row of the control today, one per borrowed field |
-| **One field split per row**, shared by the predicate's terms and `push_row` | a five-way disjunction walks the row five times. The census re-splits every brace-bearing row too, but in the **mapping** pass, so it is not this row's to win — see "What this lever cannot reach" below |
+| **One field split per row**, shared by the predicate's terms and `push_row` | the same five-way disjunction against a 16-column table's thirteenth column and against its first differ by **49% of the deep one's user instructions**, and that difference is the walk. The census re-splits every brace-bearing row too, but in the **mapping** pass, so it is not this row's to win — see "What this lever cannot reach" below |
 | **Readahead, `fadvise`, chunk-size defaults** | ≤38% of `parse` wall — NVMe only, zero elsewhere |
 | **The read path's per-chunk zero and copy** | 54.6% of a warm `parse`'s *user* time on the control, 0.158 s of a 0.60 s scan; ~9% of a warm `strings` query |
 | **`decode_array`'s `Vec<Option<String>>` intermediate** | 4.14 µs/row on the arrays file — the micro figure's *decode* column for both array literals (290 ns + 3.85 µs), library-only and paid before the Arrow build is reached |
@@ -241,10 +241,10 @@ overlap.** [`architecture.md`](architecture.md), "The library's own per-row
 budget", splits a typed control row's 4.06 µs four ways, and each part has
 exactly one owner: `append_typed` at 1.66 µs and `decode_field` at 0.95 are
 7.10's two halves; the field split and row walk inside `push_row`, 0.98 µs, is
-**7.7's** and not 7.10's; and the 0.47 µs of stream and scan machinery around
+**7.7.1's** and not 7.10's; and the 0.47 µs of stream and scan machinery around
 them is nobody's row. Stating it matters in one direction in particular — 7.10
 was written claiming the whole 3.31 s of `poll_next`, which is 55% more than
-its own two halves are worth, and a session landing 7.7 afterwards would have
+its own two halves are worth, and a session landing 7.7.1 afterwards would have
 found the split already gone with no record of which row had claimed it. Where
 two rows name one function, the order is stated: **7.6 acts on `decode_field`
 before 7.10 does**, since the unchecked borrow path for an escape-free field is
@@ -258,16 +258,22 @@ with no predicate splits each row exactly once, in `push_row`, and every
 decoder already takes its field out of *that* split — `RawRow::decode` is
 handed the range `push_row` computed, which 7.6 delivered. So the budget's
 split-and-walk row is irreducible on that shape: there is nothing for it to
-share with. What 7.7 can actually remove is the predicate's **redundant**
+share with. What 7.7.1 can actually remove is the predicate's **redundant**
 walks, one `field_ranges(..).nth(i)` from the front of the row per term, which
 is why a five-way disjunction is the stake's worked example and a bare
 `--table` query is not.
 
-**And nothing published measures that.** No registered figure passes `--where`
-or `--filter`, so the shape this lever pays off on is absent from the whole
-apparatus. The slice therefore takes a predicated reading before it takes the
-lever — the phase's rule is that a row lands when its *measured* prize is worth
-the change, and this row has no measurement to be worth anything against.
+**Nothing published measured that, so the reading comes first and it is its own
+slice.** No registered figure passed `--where` or `--filter`, so the shape this
+lever pays off on was absent from the whole apparatus; the phase's rule is that
+a row lands when its *measured* prize is worth the change, and this row had no
+measurement to be worth anything against. The reading is `predicate-terms`
+([`measurements.md`](measurements.md), "What a filter term costs"), and the
+lever is `7.7.1`. They are two slices because they ask two different review
+questions — *does this instrument measure the shape the lever pays off on*
+against *is this rework of the replay loop correct* — and because the evidence
+half has to land first, so that the mechanism is checked against a figure it
+did not produce.
 
 **The census is in the other pass, so no arrangement of this lever reaches
 it.** The splitter's three production callers are `map::Builder::on_row`,
@@ -285,7 +291,7 @@ smaller and narrower than its rows said".
 the field split are each ~1 µs a row and neither changes when typing is
 switched on, so together they are 80% of the library's whole 2.48 µs `strings`
 row; `append_typed` and the viewing builder do not exist in that mode. So 7.6
-and 7.7 are the phase's only levers on the zero-copy path — the one the
+and 7.7.1 are the phase's only levers on the zero-copy path — the one the
 baseline puts at 13.3× the `dd` floor — and 7.10 and 7.11 cannot touch it.
 
 **Three of those stakes are corrections, not fresh estimates, and they all
@@ -416,7 +422,7 @@ an evidence-led phase cannot, because the evidence is what orders the work.
 
 **Two orderings bind, and they are the whole of it.** The **allocator decision
 before the wrap sweep**, because an allocator adopted after a figure is taken
-invalidates that figure; and `7.13.1` ahead of `7.6` and `7.7`, because those
+invalidates that figure; and `7.13.1` ahead of `7.6` and `7.7.1`, because those
 two rework how a row is walked inside the buffer `7.13.1` replaces.
 
 The first is stated against the sweep rather than against `7.3` because `7.3`
@@ -439,14 +445,15 @@ when it runs.
 | **7.4** | **`KD5`** — `stream::splice` moves inside the throttle's gate, the interrupt's promise is restated in `architecture.md`, and the entry is rewritten to whatever residual the measurement leaves. |
 | **7.5** | **`KD9`** — the `INSERT` fast path at the layer 7.2 chose, with the quote-aware statement-end primitive built to be reusable by P8 Track A's row reader. |
 | **7.6** | **Bulk `simdutf8`** over the chunk's largest whole-row prefix, with `decode_field` gaining the unchecked borrow path for a field with no escapes. |
-| **7.7** | **One field split per row**, shared by the predicate's terms and `push_row`. **Preconditioned on a predicated reading**: the redundant walks are the predicate's, and no registered figure runs a predicate, so the shape to size this against does not exist yet and the slice takes it first. Its own review: it is a rework of an already-tested core path, and it crosses layers, so [`layering.md`](layering.md) is read before it is placed. |
+| **7.7** | **The predicated reading** the lever is sized against — a registered figure that passes a filter, which none did, over one file at several term counts and two field depths. No library code. |
 | **7.8** | **The I/O defaults** — the cold-NVMe figure, then readahead, `posix_fadvise` and the chunk-size constant, each landed or rejected against it. |
 | **7.9** | **`decode_array`'s `Vec<Option<String>>`** intermediate, replaced by borrowed slices where the literal carries no escapes. |
 | **7.10** | **Scalar decode and the typed column build**, split by the profile into a `decode.rs` half and a builder-append half. |
 | **7.11** | **The viewing builder for `List<Utf8View>`** — conditional on **7.10's builder-append half** pricing the Arrow build, last, and reviewed alone. It lands only if that reading puts the `List<Utf8View>` build above **1 µs/row** on the arrays file, which is the phase's own cross-file apparatus floor and therefore the smallest prize this table can honestly claim. |
 | **7.12** | **The sweep pair and the koji regression run**, folded in: thirteen tables re-taken in one sitting, koji's byte-identity check on a glibc build, and the written statement of what a parallel splitter needs from coverage and from the census, filed to P16. |
 | **7.13** | **Who owns the bytes between the kernel and the scanner, the allocation half** — `read_range`'s per-chunk zeroed allocation, removed with the `object_store` shape settled explicitly. **Also re-takes `--figure allocator` and settles adoption** — 7.3 measured but deferred, this slice removes the allocation that dominated the ranking, so it either adopts the winner or records the refusal beside the mechanism. |
-| **7.13.1** | **The copy into each read loop's own buffer**, over all three loops, with the query path's chunk retention settled explicitly. **Earned, not planned**: the row above paired a contained change to one module with a rework of three already-tested scan loops, which is two review cycles and not one, and the seam was only visible from inside. Reviewed alone, and ahead of 7.6 and 7.7, which both rework how a row is walked inside the buffer this replaces. Reasoning: [`../status/history/2026-09-03.md`](../status/history/2026-09-03.md). |
+| **7.7.1** | **One field split per row**, shared by the predicate's terms and `push_row`, sized against `7.7`'s reading. **Earned, not planned**: the row above paired the instrument that measures this lever with the lever itself, which is two review cycles — *does this figure measure the right shape* is not *is this rework of the replay loop correct*, and the evidence has to land first so the mechanism is checked against a figure it did not produce. Its own review: it is a rework of an already-tested core path, and it crosses layers, so [`layering.md`](layering.md) is read before it is placed. Reasoning: [`../status/history/2026-09-04.md`](../status/history/2026-09-04.md). |
+| **7.13.1** | **The copy into each read loop's own buffer**, over all three loops, with the query path's chunk retention settled explicitly. **Earned, not planned**: the row above paired a contained change to one module with a rework of three already-tested scan loops, which is two review cycles and not one, and the seam was only visible from inside. Reviewed alone, and ahead of 7.6 and 7.7.1, which both rework how a row is walked inside the buffer this replaces. Reasoning: [`../status/history/2026-09-03.md`](../status/history/2026-09-03.md). |
 
 ## What this phase is not: parallelism is P16
 

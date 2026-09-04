@@ -194,6 +194,7 @@ class Scripts(unittest.TestCase):
             "query-strings",
             "query-nomatch",
             *(f"query-project-{w}" for w in measure.PROJECTION_WIDTHS),
+            *(f"query-where-{s}" for s in measure.PREDICATE_SHAPES),
             "dd",
         ):
             with self.subTest(command=command):
@@ -458,6 +459,81 @@ class Allocator(unittest.TestCase):
 
     def test_a_stamp_with_no_binary_to_ask_names_no_allocator(self):
         self.assertNotIn("allocator", measure.session_stamp("deadbee", dirty=False))
+
+
+class PredicateShapes(unittest.TestCase):
+    """Six predicates over one file, which is the whole instrument.
+
+    Three things make the adjacent-row subtraction mean what the table says it
+    means: the terms are OR'd and every one of them is false, so all of them
+    are evaluated and no row survives to be decoded; the two depths differ in
+    the column and not in the term count, so their difference is the walk; and
+    every column named is one the generator writes, so the query does not fail
+    three minutes into a sweep."""
+
+    def test_every_shape_names_a_column_the_generator_writes(self):
+        emitted = {name for name, _ in measure.perf.COLUMNS}
+        for shape, (column, _) in measure.PREDICATE_SHAPES.items():
+            with self.subTest(shape=shape):
+                self.assertIn(column, emitted)
+
+    def test_an_expression_carries_exactly_that_many_terms(self):
+        for shape, (column, terms) in measure.PREDICATE_SHAPES.items():
+            with self.subTest(shape=shape):
+                expr = measure.predicate_expr(shape)
+                self.assertEqual(expr.count(f"{column}="), terms)
+                self.assertEqual(expr.count(" OR "), terms - 1)
+
+    def test_the_terms_are_distinct(self):
+        for shape in measure.PREDICATE_SHAPES:
+            with self.subTest(shape=shape):
+                parts = measure.predicate_expr(shape).split(" OR ")
+                self.assertEqual(len(set(parts)), len(parts))
+
+    def test_the_terms_are_disjoined_never_conjoined(self):
+        # `And` stops at the first non-`True` conjunct, so a conjunction of N
+        # false terms evaluates one of them and the table would read flat.
+        for shape in measure.PREDICATE_SHAPES:
+            with self.subTest(shape=shape):
+                self.assertNotIn(" AND ", measure.predicate_expr(shape))
+
+    def test_a_shape_the_register_does_not_carry_is_an_error(self):
+        # The command shape is parsed rather than matched, so an unregistered
+        # one has to be refused explicitly or it would run a query with no
+        # filter at all and be read as a predicate.
+        for command in ("query-where-deep-4", "query-where-", "query-where-all"):
+            with self.subTest(command=command):
+                with self.assertRaises(ValueError):
+                    measure._script(command)
+
+    def test_every_run_is_strings_and_carries_its_filter(self):
+        # Typed `=` decodes the literal against the column's own type, so
+        # `zzz1` on an `integer` column is refused before the first row.
+        for shape in measure.PREDICATE_SHAPES:
+            with self.subTest(shape=shape):
+                script = measure._script(f"query-where-{shape}")
+                self.assertIn("--schema-mode strings", script)
+                self.assertIn(f"--where '{measure.predicate_expr(shape)}'", script)
+
+    def test_the_two_depths_differ_only_in_the_column(self):
+        deep, shallow = measure.PREDICATE_SHAPES["deep-5"], measure.PREDICATE_SHAPES["shallow-5"]
+        self.assertEqual(deep[1], shallow[1])
+        self.assertNotEqual(deep[0], shallow[0])
+
+    def test_the_deep_column_is_deeper_than_the_shallow_one(self):
+        order = [name for name, _ in measure.perf.COLUMNS]
+        deep = order.index(measure.PREDICATE_SHAPES["deep-5"][0])
+        shallow = order.index(measure.PREDICATE_SHAPES["shallow-5"][0])
+        self.assertGreater(deep, shallow)
+
+    def test_the_table_rows_are_the_registered_shapes(self):
+        shapes = [s for s, _, _ in measure._PREDICATE_ROWS]
+        self.assertEqual(sorted(shapes), sorted(measure.PREDICATE_SHAPES))
+
+    def test_the_figure_is_taken_on_the_brace_free_control(self):
+        fig = measure.SELECTABLE_BY_ID["predicate-terms"]
+        self.assertEqual(fig.warm_inputs, ("control",))
+        self.assertIn("pgdump_query/src/predicate.rs", fig.depends)
 
 
 class ProjectionWidths(unittest.TestCase):

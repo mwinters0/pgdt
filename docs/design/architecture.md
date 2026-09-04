@@ -2664,6 +2664,20 @@ remaining term of every such row — a regression in exactly the cost model this
 section states, bought for nothing, since no caller can observe the difference
 the flag hides.
 
+**A term's cost is mostly finding its field, and that is what the
+short-circuit is protecting.** `ResolvedTerm::eval` takes its operand with
+`copy::field_ranges(..).nth(i)`, which walks the row from the front — once per
+term, so N terms walk it N times and a term deep in a wide table walks further
+than one at its head. Measured over the 16-column control, with nothing
+surviving to be decoded: a term one field in costs 0.033 µs a row, one thirteen
+fields in 0.09–0.12, and a five-term disjunction at that depth spends **49% of
+the whole query's user instructions** on the walk alone
+([`measurements.md`](measurements.md), "What a filter term costs"). The row is
+split once more in `RowBatcher::push_row`, and the terms do not share that
+split; sharing it is future work, and it is bounded rather than free — one
+whole-row split replaces N partial ones, so it wins on a many-term predicate
+and loses on a single shallow term.
+
 **A decode failure therefore surfaces only where evaluation reaches it**, so
 which rows error depends on where the term sits in the tree and on whether a
 `Not` sits above it. That is a property, not a defect: when `a=1 OR b<2`

@@ -10,7 +10,7 @@ kept**.
 lets these tables be differenced against each other, and what "are these
 figures from before or after my change" is answered by. `uv run measure.py
 --stale` reads that commit back and names the figures a diff has invalidated
-since. **Eight tables stand outside that sweep and each says so in its own
+since. **Nine tables stand outside that sweep and each says so in its own
 apparatus line**, so a reading taken from one of them and differenced against a
 sweep table is a cross-sitting difference and must clear the drift figure
 below: `session-drift` itself, which no sweep can take — it is derived across
@@ -18,6 +18,9 @@ the published sweep and a second one taken two minutes later on the same commit
 — and `allocator`, `per-block-quadratic`, `map-only`, `preamble-prepass`,
 `census-brace-free`, `scan-throughput-cold` and `scan-throughput-warm`, each
 re-taken after a change that moved it, in two groups that each share readings.
+The ninth, `predicate-terms`, stands outside it for the other reason: it did
+not exist when the sweep ran, being the first table here to pass a filter at
+all.
 
 All figures are on the hardware `CLAUDE.local.md` describes. Synthetic inputs
 are regenerable with `--seed 42` and are **never committed** — they measure
@@ -1266,6 +1269,100 @@ cd scripts && uv run generate_perf_data.py --arrays --composite \
 *Rejected: folding these rows into "A typed query over nested columns".* A
 figure is exactly one whole table, and adding rows to a published one would
 silently restate a number under a heading that does not claim it.
+
+## What a filter term costs, and how much of it is the walk to its field
+
+<!-- figure: predicate-terms — reproduce with `cd scripts && uv run measure.py --figure predicate-terms` -->
+
+One file, read six ways, and **the only table in this document that passes a
+filter at all.** The terms are OR'd and every one of them is false, so `Or`
+evaluates all of them on every row and nothing survives — which is what makes
+the difference between two rows here the predicate and nothing downstream of
+it, the decode, the Arrow build and the render being identically absent from
+all six. Two axes: how many terms, and how far into the row each one reaches.
+
+| Predicate | Median | Per row | Δ per row against the row above | What that buys |
+|---|---|---|---|---|
+| 1 term, 13th column | 0.984 s | 1.21 µs | — | the base: one term, thirteen fields in |
+| 2 terms, 13th column | 0.996 s | 1.22 µs | **+0.09 µs** | one more term at that depth |
+| 3 terms, 13th column | 1.095 s | 1.34 µs | **+0.12 µs** | one more |
+| 5 terms, 13th column | 1.236 s | 1.52 µs | **+0.16 µs** | two more — the five-way disjunction |
+| 5 terms, 1st column | 1.014 s | 1.24 µs | **-0.27 µs** | **the walk those five terms pay** |
+| 1 term, 1st column | 0.871 s | 1.07 µs | **-0.13 µs** | four of those five terms, walk-free |
+
+One file — the brace-free control, 814,362 rows of 16 columns — read 6 ways, warm and `--schema-mode strings`, through the CLI. Every term is an equality against a literal no value of the column can equal, so every row is walked, every term is evaluated, and no row is decoded, built or rendered. Per-row differences are paired rep by rep and then taken as a median.
+
+As written:
+- 1 term, 13th column: `--where 'v_bool=zzz1'`
+- 2 terms, 13th column: `--where 'v_bool=zzz1 OR v_bool=zzz2'`
+- 3 terms, 13th column: `--where 'v_bool=zzz1 OR v_bool=zzz2 OR v_bool=zzz3'`
+- 5 terms, 13th column: `--where 'v_bool=zzz1 OR v_bool=zzz2 OR v_bool=zzz3 OR v_bool=zzz4 OR v_bool=zzz5'`
+- 5 terms, 1st column: `--where 'id=zzz1 OR id=zzz2 OR id=zzz3 OR id=zzz4 OR id=zzz5'`
+- 1 term, 1st column: `--where 'id=zzz1'`
+
+Per-rep readings (s):
+- 1 term, 13th column: 0.986, 0.870, 0.887, 0.981, 1.152, 1.067
+- 2 terms, 13th column: 1.136, 0.954, 0.943, 0.948, 1.039, 1.272
+- 3 terms, 13th column: 1.085, 1.104, 1.071, 1.019, 1.239, 1.270
+- 5 terms, 13th column: 1.207, 1.265, 1.184, 1.164, 1.492, 1.368
+- 5 terms, 1st column: 1.006, 0.878, 1.021, 0.920, 1.135, 1.293
+- 1 term, 1st column: 0.869, 0.837, 0.873, 0.840, 1.161, 1.012
+
+Apparatus over every run in this table: CPU stall ≤0.34%, I/O stall ≤39.87%, machine ≤15% busy, steal ≤0.00%, busiest core ≥4.22 GHz, ≤71°C.
+
+**A term's cost is mostly the walk to its field, and the depth is what says
+so.** `ResolvedTerm::eval` takes its operand with
+`field_ranges(..).nth(i)` — from the front of the row, once per term — so a
+term against the control's thirteenth column re-walks thirteen fields and one
+against its first walks one. The two five-term rows are the same five terms at
+those two depths, and they differ by **0.27 µs a row**: 18% of what the deep
+one costs, on a query that decodes nothing. The two one-term rows put the
+walk-free term at **0.033 µs**, against 0.09–0.12 for a deep one.
+
+**What that bounds, for the shared-split lever.** Sharing one split between the
+predicate's terms and `push_row` replaces five walks of thirteen fields with one
+walk of sixteen, so the ceiling on this shape is the 0.27 µs above, less the one
+full-row walk that replaces them. **It is a ceiling on a five-term predicate and
+not on the ordinary one**: at one term the same change buys nothing on this
+shape and costs a wider walk than the term needed, since no row survives to
+reach `push_row`'s split and share it.
+
+**This sitting was taken with another session resident on the machine**, which
+the gate held to its 15%-busy limit rather than excluded. The last two reps
+drift upward across every row — the raw readings above are what says so — and
+the paired difference behind the 0.27 µs ranges 0.08 to 0.39 s across the six.
+So read the **ordering and the magnitude** off this table, not the third
+decimal; the deterministic corroboration is `runs/measure-7.7.tsv`, retired
+user instructions on the host, which is immune to what else the machine was
+doing and puts the same walk at 49% of a five-term query's instructions.
+
+```sh
+cd scripts && uv run measure.py --figure predicate-terms
+```
+
+The input alone, for a reader who wants it without the harness, is the same
+brace-free control the census and throughput figures are taken on:
+
+```sh
+cd scripts && uv run generate_perf_data.py --seed 42 \
+  --size-mb 3072 /dev/shm/pgdq/control.sql
+```
+
+*Rejected: a conjunction of terms every row satisfies, so that every row
+survives.* It would give an absolute a user recognises — a filter that keeps
+everything over a projection that builds everything — and it cannot be built
+here: every column of this file but `id` carries 2% NULLs, so an N-term
+conjunction is `Unknown` on 1 − 0.98^N of the rows and drops them, which moves
+the emit cost the whole subtraction depends on holding constant. Confining the
+terms to `id` fixes that and leaves one depth, which is the axis the table
+exists for. The all-false disjunction has neither problem: `Or` evaluates every
+child and keeps nothing, at either depth.
+
+*Rejected: `--schema-mode typed`.* The typed `=` decodes the literal against the
+column's own type once per block, so `zzz1` on an `integer` column is
+`Error::PredicateValueDecode` before the first row. Picking literals that decode
+would put a per-type comparison cost inside every delta, which is 7.10's row and
+not this one's.
 
 ## What a session's own drift costs, measured rather than asserted
 

@@ -11,10 +11,10 @@
 //! else under the other — a string that reads as structure is refused by both,
 //! and quoting is the remedy under both.
 
-use std::process::Output;
+use std::process::{Command, Output};
 
 mod common;
-use common::{fixture, run, stderr_of, stdout_of};
+use common::{fixture, require_uv, run, scripts_dir, stderr_of, stdout_of};
 
 /// `public.widgets` from the real `pg_dump` edge-case fixture: five rows over
 /// `(id, name, description, is_active, created_at)`. Row 2 has a NULL
@@ -166,4 +166,88 @@ fn the_filter_flag_takes_the_worded_operators() {
         kept(&["--filter", "is_active is not distinct from t"]),
         ["alpha", "gamma", "delta"]
     );
+}
+
+/// **The `predicate-terms` figure's six command shapes actually run, and none
+/// of them keeps a row.**
+///
+/// The same guard `query_projection.rs` puts on the projection figure, plus
+/// the property this figure's subtraction rests on. Every shape asks an
+/// all-false disjunction, so `Or` evaluates every term on every row and
+/// nothing survives to be decoded, built or rendered — which is what makes the
+/// difference between two of the table's rows the predicate alone. A literal
+/// that ever matched would put the whole emit path inside one row of the
+/// table and nothing else would notice
+/// (`docs/design/measurements.md`, "What a filter term costs").
+///
+/// The expressions come from `predicate_expr` rather than being transcribed,
+/// so a shape added to the harness is run here without anyone remembering to.
+///
+/// **Failed, not skipped, when `uv` is absent** — see `common::require_uv`.
+#[test]
+fn the_registered_predicate_shapes_are_executable() {
+    require_uv("the predicate figure's command shapes");
+
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("perf.sql");
+    let status = Command::new("uv")
+        .current_dir(scripts_dir())
+        .args(["run", "generate_perf_data.py", "--size-mb", "2", "--seed", "42"])
+        .arg(&dump)
+        .status()
+        .expect("uv runs");
+    assert!(status.success(), "generating the perf input failed");
+
+    for (shape, expr) in registered_predicates() {
+        let out = run(&[
+            "query",
+            "--source",
+            dump.to_str().unwrap(),
+            "--table",
+            "public.perf",
+            "--dqcache",
+            "none",
+            "--schema-mode",
+            "strings",
+            "--where",
+            &expr,
+        ]);
+        assert!(
+            out.status.success(),
+            "the {shape} shape `{expr}` does not run: {}",
+            stderr_of(&out)
+        );
+        assert_eq!(
+            stdout_of(&out).lines().count(),
+            0,
+            "the {shape} shape `{expr}` kept rows, so its reading is not the predicate alone"
+        );
+    }
+}
+
+/// `PREDICATE_SHAPES` and the expression `measure.py` derives for each, read
+/// out of the harness rather than restated.
+fn registered_predicates() -> Vec<(String, String)> {
+    let out = Command::new("uv")
+        .args([
+            "run",
+            "python",
+            "-c",
+            "import measure\n\
+             for s in measure.PREDICATE_SHAPES:\n\
+             \x20   print(f'{s}\\t{measure.predicate_expr(s)}')",
+        ])
+        .current_dir(scripts_dir())
+        .output()
+        .expect("uv runs");
+    assert!(out.status.success(), "reading the registered predicates failed: {}", stderr_of(&out));
+    let shapes: Vec<(String, String)> = stdout_of(&out)
+        .lines()
+        .map(|line| {
+            let (shape, expr) = line.split_once('\t').expect("shape and expression are tabbed");
+            (shape.to_string(), expr.to_string())
+        })
+        .collect();
+    assert!(!shapes.is_empty(), "measure.py registers at least one predicate shape");
+    shapes
 }
