@@ -4,7 +4,7 @@ use std::cmp::Ordering;
 
 use arrow::datatypes::i256;
 
-use crate::copy::{RawRow, field_ranges};
+use crate::copy::{RawRow, RowSplit};
 use crate::decode;
 use crate::nested;
 use crate::pgtype::{
@@ -2385,8 +2385,14 @@ impl ResolvedTerm {
     /// `IsNull`/`IsNotNull`, which compare nothing, and the two `IS DISTINCT
     /// FROM` forms, which count NULL as a value — so `IsDistinctFrom` on a
     /// NULL field is `True` where `Ne` is `Unknown`.
-    fn eval(&self, raw_row: RawRow<'_>, table: &str, row_offset: u64) -> Result<Truth> {
-        let field = field_ranges(raw_row.bytes()).nth(self.index);
+    fn eval(
+        &self,
+        raw_row: RawRow<'_>,
+        split: &mut RowSplit,
+        table: &str,
+        row_offset: u64,
+    ) -> Result<Truth> {
+        let field = split.field(raw_row.bytes(), self.index);
         let decoded = match field {
             Some(f) => raw_row.decode(f)?,
             None => None,
@@ -2482,10 +2488,11 @@ impl ResolvedExpr {
     pub(crate) fn matches(
         &self,
         raw_row: RawRow<'_>,
+        split: &mut RowSplit,
         table: &str,
         row_offset: u64,
     ) -> Result<bool> {
-        Ok(self.eval(false, raw_row, table, row_offset)?.is_true())
+        Ok(self.eval(false, raw_row, split, table, row_offset)?.is_true())
     }
 
     /// Kleene evaluation, left to right, stopping as soon as **the root's**
@@ -2510,15 +2517,16 @@ impl ResolvedExpr {
         &self,
         exact: bool,
         raw_row: RawRow<'_>,
+        split: &mut RowSplit,
         table: &str,
         row_offset: u64,
     ) -> Result<Truth> {
         Ok(match self {
-            Self::Term(term) => term.eval(raw_row, table, row_offset)?,
+            Self::Term(term) => term.eval(raw_row, split, table, row_offset)?,
             Self::And(children) => {
                 let mut unknown = false;
                 for child in children {
-                    match child.eval(exact, raw_row, table, row_offset)? {
+                    match child.eval(exact, raw_row, split, table, row_offset)? {
                         Truth::True => {}
                         Truth::False => return Ok(Truth::False),
                         Truth::Unknown if exact => unknown = true,
@@ -2530,7 +2538,7 @@ impl ResolvedExpr {
             Self::Or(children) => {
                 let mut unknown = false;
                 for child in children {
-                    match child.eval(exact, raw_row, table, row_offset)? {
+                    match child.eval(exact, raw_row, split, table, row_offset)? {
                         Truth::True => return Ok(Truth::True),
                         Truth::Unknown if exact => unknown = true,
                         Truth::False | Truth::Unknown => {}
@@ -2538,7 +2546,7 @@ impl ResolvedExpr {
                 }
                 if unknown { Truth::Unknown } else { Truth::False }
             }
-            Self::Not(inner) => inner.eval(true, raw_row, table, row_offset)?.not(),
+            Self::Not(inner) => inner.eval(true, raw_row, split, table, row_offset)?.not(),
         })
     }
 
@@ -2616,7 +2624,9 @@ mod tests {
 
     /// One text term's own truth value over `raw_row`.
     fn truth(p: &Predicate, raw_row: &[u8], index: usize) -> Truth {
-        text_term(p, index).eval(RawRow::unchecked(raw_row), "public.t", 0).unwrap()
+        text_term(p, index)
+            .eval(RawRow::unchecked(raw_row), &mut RowSplit::default(), "public.t", 0)
+            .unwrap()
     }
 
     /// Whether a row survives a conjunction of text terms — the shape every
@@ -2629,7 +2639,7 @@ mod tests {
                 .map(|(p, &i)| ResolvedExpr::Term(text_term(p, i)))
                 .collect(),
         );
-        expr.matches(RawRow::unchecked(raw_row), "public.t", 0).unwrap()
+        expr.matches(RawRow::unchecked(raw_row), &mut RowSplit::default(), "public.t", 0).unwrap()
     }
 
     /// The type list every one-column schema below resolves against: one
@@ -2710,6 +2720,7 @@ mod tests {
         let p = Predicate { column: "v".into(), op, value: Some(literal.into()) };
         resolve_term(&p, 0, &nested_column(declared, types), 0)?.eval(
             RawRow::unchecked(field.as_bytes()),
+            &mut RowSplit::default(),
             "public.t",
             0,
         )
@@ -2730,7 +2741,9 @@ mod tests {
     ) -> Result<bool> {
         let p = order_predicate(op, value);
         let term = resolve_term(&p, 0, &one_column(declared, data_type), 0)?;
-        Ok(term.eval(RawRow::unchecked(field.as_bytes()), "public.t", 0)?.is_true())
+        Ok(term
+            .eval(RawRow::unchecked(field.as_bytes()), &mut RowSplit::default(), "public.t", 0)?
+            .is_true())
     }
 
     #[test]
@@ -2783,10 +2796,14 @@ mod tests {
         // The half `NOT` gets wrong, stated as the pair it is.
         let eq = Predicate { column: "x".into(), op: PredicateOp::Eq, value: Some("a".into()) };
         let negated = ResolvedExpr::Not(Box::new(ResolvedExpr::Term(text_term(&eq, 1))));
-        assert!(!negated.matches(RawRow::unchecked(b"other\t\\N"), "public.t", 0).unwrap());
+        assert!(
+            !negated
+                .matches(RawRow::unchecked(b"other\t\\N"), &mut RowSplit::default(), "public.t", 0)
+                .unwrap()
+        );
         assert!(
             ResolvedExpr::Term(text_term(&idf, 1))
-                .matches(RawRow::unchecked(b"other\t\\N"), "public.t", 0)
+                .matches(RawRow::unchecked(b"other\t\\N"), &mut RowSplit::default(), "public.t", 0)
                 .unwrap()
         );
     }
@@ -2850,7 +2867,14 @@ mod tests {
     }
 
     fn exact(expr: &ResolvedExpr) -> Truth {
-        expr.eval(true, RawRow::unchecked(THREE_VALUED_ROW), "public.t", 0).unwrap()
+        expr.eval(
+            true,
+            RawRow::unchecked(THREE_VALUED_ROW),
+            &mut RowSplit::default(),
+            "public.t",
+            0,
+        )
+        .unwrap()
     }
 
     const VALUES: [Truth; 3] = [Truth::True, Truth::False, Truth::Unknown];
@@ -2913,7 +2937,13 @@ mod tests {
         assert!(all.len() > 1000, "only {} trees", all.len());
         for expr in &all {
             assert_eq!(
-                expr.matches(RawRow::unchecked(THREE_VALUED_ROW), "public.t", 0).unwrap(),
+                expr.matches(
+                    RawRow::unchecked(THREE_VALUED_ROW),
+                    &mut RowSplit::default(),
+                    "public.t",
+                    0
+                )
+                .unwrap(),
                 exact(expr).is_true(),
                 "{expr:?}"
             );
@@ -2958,22 +2988,26 @@ mod tests {
         let corrupt = || term("b", PredicateOp::Gt, "0", 1);
         let ok = |value| term("a", PredicateOp::Eq, value, 0);
 
-        assert!(corrupt().matches(RawRow::unchecked(row), "public.t", 0).is_err());
+        assert!(
+            corrupt()
+                .matches(RawRow::unchecked(row), &mut RowSplit::default(), "public.t", 0)
+                .is_err()
+        );
         // Settled by a field that did decode, in both directions.
         assert!(
             ResolvedExpr::Or(vec![ok("1"), corrupt()])
-                .matches(RawRow::unchecked(row), "public.t", 0)
+                .matches(RawRow::unchecked(row), &mut RowSplit::default(), "public.t", 0)
                 .unwrap()
         );
         assert!(
             !ResolvedExpr::And(vec![ok("2"), corrupt()])
-                .matches(RawRow::unchecked(row), "public.t", 0)
+                .matches(RawRow::unchecked(row), &mut RowSplit::default(), "public.t", 0)
                 .unwrap()
         );
         // Not settled: the walk reaches the corrupt field.
         assert!(
             ResolvedExpr::And(vec![ok("1"), corrupt()])
-                .matches(RawRow::unchecked(row), "public.t", 0)
+                .matches(RawRow::unchecked(row), &mut RowSplit::default(), "public.t", 0)
                 .is_err()
         );
 
@@ -2985,10 +3019,14 @@ mod tests {
             let p = Predicate { column: "c".into(), op: PredicateOp::Eq, value: Some("x".into()) };
             ResolvedExpr::And(vec![ResolvedExpr::Term(text_term(&p, 2)), corrupt()])
         };
-        assert!(!unknown().matches(RawRow::unchecked(row), "public.t", 0).unwrap());
+        assert!(
+            !unknown()
+                .matches(RawRow::unchecked(row), &mut RowSplit::default(), "public.t", 0)
+                .unwrap()
+        );
         assert!(
             ResolvedExpr::Not(Box::new(unknown()))
-                .matches(RawRow::unchecked(row), "public.t", 0)
+                .matches(RawRow::unchecked(row), &mut RowSplit::default(), "public.t", 0)
                 .is_err()
         );
     }
@@ -4054,8 +4092,17 @@ mod tests {
         let note = only_note(&term).expect("an unmodelled scalar announces");
         assert_eq!(note.divergence, ComparisonDivergence::UnmodelledType);
         assert!(note.message().contains("`box` compares areas"), "{}", note.message());
-        assert!(term.eval(RawRow::unchecked(b"(1,1),(0,0)"), "public.t", 0).unwrap().is_true());
-        assert!(!term.eval(RawRow::unchecked(b"(3,3),(2,2)"), "public.t", 0).unwrap().is_true());
+        assert!(
+            term.eval(RawRow::unchecked(b"(1,1),(0,0)"), &mut RowSplit::default(), "public.t", 0)
+                .unwrap()
+                .is_true()
+        );
+        assert!(
+            !term
+                .eval(RawRow::unchecked(b"(3,3),(2,2)"), &mut RowSplit::default(), "public.t", 0)
+                .unwrap()
+                .is_true()
+        );
 
         // A nested column the register does not compare is the other
         // plan-less population and is silent: its `range_out` text is a
@@ -4113,11 +4160,16 @@ mod tests {
             let term =
                 resolve_term(&order_predicate(PredicateOp::Eq, "{1,2}"), 0, &resolved, 0).unwrap();
             assert!(
-                term.eval(RawRow::unchecked(b"{1,2}"), "public.t", 0).unwrap().is_true(),
+                term.eval(RawRow::unchecked(b"{1,2}"), &mut RowSplit::default(), "public.t", 0)
+                    .unwrap()
+                    .is_true(),
                 "{declared}"
             );
             assert!(
-                !term.eval(RawRow::unchecked(b"{1,3}"), "public.t", 0).unwrap().is_true(),
+                !term
+                    .eval(RawRow::unchecked(b"{1,3}"), &mut RowSplit::default(), "public.t", 0)
+                    .unwrap()
+                    .is_true(),
                 "{declared}"
             );
             // And the announcement replaces a silence under `=`, not the
@@ -4199,8 +4251,17 @@ mod tests {
         // term evaluates bytewise.
         let term = resolve_term(&eq, 0, &schema(Some("public.icu_ci"), &collations), 0).unwrap();
         assert!(only_note(&term).is_some());
-        assert!(term.eval(RawRow::unchecked(b"a"), "public.t", 0).unwrap().is_true());
-        assert!(!term.eval(RawRow::unchecked(b"A"), "public.t", 0).unwrap().is_true());
+        assert!(
+            term.eval(RawRow::unchecked(b"a"), &mut RowSplit::default(), "public.t", 0)
+                .unwrap()
+                .is_true()
+        );
+        assert!(
+            !term
+                .eval(RawRow::unchecked(b"A"), &mut RowSplit::default(), "public.t", 0)
+                .unwrap()
+                .is_true()
+        );
     }
 
     /// The three tie-breaks `array_cmp` reaches only when the elements
@@ -4755,7 +4816,12 @@ mod tests {
             };
             let announced = !term.comparison_notes().is_empty();
             let got = term
-                .eval(RawRow::unchecked(&encode_field(field)), "public.t", 0)
+                .eval(
+                    RawRow::unchecked(&encode_field(field)),
+                    &mut RowSplit::default(),
+                    "public.t",
+                    0,
+                )
                 .map_err(|e| e.to_string());
             (got, announced)
         }

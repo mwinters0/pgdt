@@ -1311,30 +1311,30 @@ Per-rep readings (s):
 Apparatus over every run in this table: CPU stall ≤0.34%, I/O stall ≤39.87%, machine ≤15% busy, steal ≤0.00%, busiest core ≥4.22 GHz, ≤71°C.
 
 **A term's cost is mostly the walk to its field, and the depth is what says
-so.** `ResolvedTerm::eval` takes its operand with
-`field_ranges(..).nth(i)` — from the front of the row, once per term — so a
-term against the control's thirteenth column re-walks thirteen fields and one
-against its first walks one. The two five-term rows are the same five terms at
-those two depths, and they differ by **0.27 µs a row**: 18% of what the deep
-one costs, on a query that decodes nothing. The two one-term rows put the
-walk-free term at **0.033 µs**, against 0.09–0.12 for a deep one.
+so.** A term against the control's thirteenth column crosses thirteen field
+boundaries and one against its first crosses one. The two five-term rows are the
+same five terms at those two depths, and they differ by **0.27 µs a row**: 18%
+of what the deep one costs, on a query that decodes nothing. The two one-term
+rows put the walk-free term at **0.033 µs**, against 0.09–0.12 for a deep one.
 
-**What that bounds, for the shared-split lever.** Sharing one split between the
-predicate's terms and `push_row` replaces five walks of thirteen fields with one
-walk of sixteen, so the ceiling on this shape is the 0.27 µs above, less the one
-full-row walk that replaces them. **It is a ceiling on a five-term predicate and
-not on the ordinary one**: at one term the same change buys nothing on this
-shape and costs a wider walk than the term needed.
+**This table was taken before the terms shared one split, and it is what sized
+that change.** Each term walked from the front of the row on its own here, so
+five deep terms crossed sixty-five boundaries; a row's boundaries are now found
+once and read by every term and by `push_row` alike
+([`architecture.md`](architecture.md), "Predicates"). The figure is therefore
+stale in the register's sense and in fact, and 7.12's sweep re-takes it; what
+the sharing measured, on the deterministic instrument and over five more shapes
+than this table has, is
+[`roadmap-P7.7.1-shared-field-split-notes.md`](roadmap-P7.7.1-shared-field-split-notes.md).
 
 **Every row of this table is a rejected row, which is deliberate: it is where
-the lever looks worst.** `RowBatcher::push_row` walks the whole row whatever the
-projection is, so on a row that survives the filter the whole-row split already
-happens and sharing it costs nothing. Selectivity is therefore the axis the
-lever turns on, and a figure on which nothing survives sits at its pessimal end.
-What that buys is that the losses read off this table are **upper bounds** —
-at any other selectivity they shrink toward zero while the many-term win does
-not — so the shape gives up an absolute a reader recognises and gets a
-conservative bound in exchange.
+the lever it sized looks worst.** `RowBatcher::push_row` walks the whole row
+whatever the projection is, so on a row that survives the filter the whole-row
+walk already happens and sharing it costs less. Selectivity is therefore the
+axis the sharing turns on, and a figure on which nothing survives sits at its
+pessimal end — which is what made the losses read off this table **upper
+bounds**, and the shape gives up an absolute a reader recognises to get a
+conservative one.
 
 *Rejected: a filter every row satisfies.* It would have given that absolute,
 and the **depth** axis is what defeats it rather than the term count. An

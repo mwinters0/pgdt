@@ -59,7 +59,7 @@ through.
 |---|---|---|
 | Byte-range I/O trait + local-file impl | `pgdump_query/src/io.rs` | L1 |
 | `COPY` block and large-object structure discovery, and the read loops' chunk carry (`ChunkCarry`) | `pgdump_query/src/scan.rs` | L1 |
-| COPY TEXT field splitting / escaping / unescaping, and the bulk UTF-8 pass a row is decoded off (`RawRow`, `field_ranges`, `validated_prefix`) | `pgdump_query/src/copy.rs` | L1 |
+| COPY TEXT field splitting / escaping / unescaping, the split a row's consumers share (`RowSplit`), and the bulk UTF-8 pass a row is decoded off (`RawRow`, `field_ranges`, `validated_prefix`) | `pgdump_query/src/copy.rs` | L1 |
 | `Span`/`SpanBody`/`DataBlock`/`TocHeader`, the boundary+classification state machine (`Builder`), `check_tiling`, `attach_text` | `pgdump_query/src/map.rs` | L1 |
 | DDL statement grammar: `classify_statement`, `statement_complete`, `in_open_quote`, `extract_statement_cross_refs`, `dump_metadata_from_spans`; `DumpMetadata` and friends | `pgdump_query/src/preamble.rs` | L1 |
 | `DumpIndex`, `CopyBlock`, `build_index`/`scan_preamble`/`preamble_only` | `pgdump_query/src/index.rs` | L1 |
@@ -315,9 +315,11 @@ split across that boundary would fail for no reason.
 
 **What a row carries is `copy::RawRow`**, the row's bytes plus, when the loop
 validated them, the same bytes as `str`; `RawRow::decode` takes a field's
-*range* and slices whichever of the two it has. `copy::field_ranges` is the
-splitter both consumers walk — `split_fields` is it, resolved — because a
-caller holding the row twice needs the position rather than the slice.
+*range* and slices whichever of the two it has. The range comes from
+`copy::field_ranges`, or — on the replay path, where a row has more than one
+consumer — from the `copy::RowSplit` they share; either way it is a position
+rather than a slice, because a caller holding the row twice needs to take the
+same field out of either. `split_fields` is `field_ranges`, resolved.
 
 **The escaped path still validates, and must.** `\xNN` and the octal forms
 synthesize bytes the input did not carry, so `unescape_field` ends in
@@ -2513,15 +2515,16 @@ depend on which block matched, which is what every other lookup avoids by going
 through the `COPY` header.
 
 **A filter term may name a column the projection does not.** The projection
-decides what is *built*, never what may be *tested*: `ResolvedTerm::eval`
-walks the raw row itself, so every term's column index is resolved against the
+decides what is *built*, never what may be *tested*: `ResolvedTerm::eval` reads
+the row's own field split, so every term's column index is resolved against the
 block's **unprojected** schema. That is also what makes a filtered row count —
 zero columns plus a filter — expressible.
 
 **A projection narrows what is decoded, never what is walked.**
 `RowBatcher::push_row` skips `decode_field` and the builder append for a column
-nobody asked for; it does not stop at the last needed field. The walk is
-`memchr` and is the cheap half, and it is the system's **only** field-count
+nobody asked for; it does not stop at the last needed field. The walk is the
+row's `copy::RowSplit`, finished from wherever the filter's terms left it, and
+it is the cheap half — and it is the system's **only** field-count
 check — `push_row` is the sole site raising `Error::ColumnCountMismatch`, and
 the mapping pass, which walks every field for the array-shape census, never
 errors on a count. A row is checked against the block's width, not the
@@ -2664,27 +2667,42 @@ remaining term of every such row — a regression in exactly the cost model this
 section states, bought for nothing, since no caller can observe the difference
 the flag hides.
 
-**A term's cost is mostly finding its field, and that is what the
-short-circuit is protecting.** `ResolvedTerm::eval` takes its operand with
-`copy::field_ranges(..).nth(i)`, which walks the row from the front — once per
-term, so N terms walk it N times and a term deep in a wide table walks further
-than one at its head. Measured over the 16-column control, with nothing
+**A term's cost is mostly finding its field, and the row is split once for all
+of them.** Every consumer of a row — each term, then `RowBatcher::push_row` —
+reads its field out of one `copy::RowSplit`, which the replay's row arm resets
+per row and hands to the filter first. Each boundary is found by exactly one
+`memchr`, by whichever consumer asks first, and every later ask is an index
+into what is already there. Measured over the 16-column control, with nothing
 surviving to be decoded: a term one field in costs 0.033 µs a row, one thirteen
 fields in 0.09–0.12 — wall readings from a sitting the machine was not quiet
-for, so magnitudes rather than exact figures — and a five-term disjunction at
-that depth spends **49% of the whole query's user instructions** on the walk
-alone, which is the deterministic half of that reading
-([`measurements.md`](measurements.md), "What a filter term costs"). The row is
-split once more in `RowBatcher::push_row`, and the terms do not share that
-split; sharing it is future work, and it is bounded rather than free — one
-whole-row split replaces N partial ones, so it wins on a many-term predicate
-and loses on a single shallow term.
+for, so magnitudes rather than exact figures — and before the sharing, a
+five-term disjunction at that depth spent **49% of the whole query's user
+instructions** on the walk alone, which is the deterministic half of that
+reading ([`measurements.md`](measurements.md), "What a filter term costs").
 
-**That loss is confined to rejected rows**, because `push_row` walks the whole
-row whatever the projection is: on a row that survives the filter the whole-row
-split already happens, so sharing it is free there. Selectivity is the axis, the
-measured losses are taken where nothing survives, and they are therefore upper
-bounds rather than typical costs.
+**The split extends only as far as it is asked to, and that is what makes the
+sharing unconditional.** A term reading field 3 finds four boundaries and stops,
+so a row the filter rejects is never walked past its deepest term — the eager
+whole-row split, which would have needed a term-count gate to avoid costing a
+shallow filter 31%, is not what is built. What is left on the cost side is the
+memoization: a boundary now costs a `Vec` push and a read back as well as the
+`memchr`, about **9 instructions a field**, paid by every row that reaches the
+batcher whether a filter read anything or not. On the 3.00 GiB control, warm and
+untyped: a five-term disjunction thirteen fields in falls **39.7%**, the same
+five terms over rows that all survive **11.7%**, and five shallow terms 2.2%;
+against that, one deep term on rejected rows is **4.5%** worse, a bare
+`--no-columns` count 2.9%, and a full-projection query with no filter 0.4%.
+
+**There is one `push_row`, and giving the unfiltered case its own was measured
+and refused.** A second entry point that walked the row directly cost the
+unfiltered path **2.4%** of a query's user instructions, against the 0.4% of
+bookkeeping it would have saved there. The cause is not the
+split: a second `push_field` call site in `batch.rs` is enough on its own, even
+when the branch to it never runs, because `push_field` stops being inlined into
+`push_row` and `GenericByteViewArray::value` stops being inlined into
+`render_field` beside it. `#[inline]` and `#[inline(always)]` did not recover
+it, and neither did sharing one loop body behind a closure
+([`roadmap-P7.7.1-shared-field-split-notes.md`](roadmap-P7.7.1-shared-field-split-notes.md)).
 
 **A decode failure therefore surfaces only where evaluation reaches it**, so
 which rows error depends on where the term sits in the tree and on whether a
@@ -2719,16 +2737,17 @@ rest on.
 
 **Nothing folds two terms together.** Two terms on one column are evaluated
 independently, so a contradictory pair is a query with no rows rather than an
-error, and a redundant pair costs a second walk. There is no simplifier and no
-plan; each term walks the row itself, so a five-way disjunction is up to five
-walks per row.
+error, and a redundant pair costs a second comparison. There is no simplifier
+and no plan — what the shared split removed is the second *walk*, not the
+second evaluation.
 
 *Rejected: keeping `filters` and adding an expression field beside it.* Two
 ways to say one thing, with a rule needed for how they combine.
 
 *Rejected: normalizing to disjunctive normal form and evaluating a flat list
 of conjunctions.* That is a planner, and there is deliberately none; DNF also
-multiplies term count, and each term walks the row separately.
+multiplies term count, which is no longer a multiplied walk but is still a
+multiplied comparison.
 
 **On the command line a filter repeats rather than splits**, exactly as a
 projection does: `pgdq query --filter <term>`, once per term, ANDed into
@@ -4344,6 +4363,15 @@ largest single library bucket in `typed` mode**, larger than the decode it
 feeds: the typed premium over `strings` is 1.54 µs a row, and `append_typed`
 alone is 1.64, which is to say typing a row costs more in Arrow assembly than
 in parsing.
+
+**The split row is now shared, and this budget is still the unfiltered one.**
+A row's boundaries are found once and read by the filter's terms as well as by
+`push_row` ("Predicates"), so on a query that passes a filter this row is
+smaller than the terms and the batcher used to cost between them. The budget
+above is a profile of a query with **no** filter, where there is nothing to
+share with: on that shape the row grew by the memoization, about 9 instructions
+a field, which is 0.3% of the `strings` query it was measured on and below what
+a re-profile would resolve.
 
 **The validation row is new and the split row is what shrank.** The per-field
 `std::str::from_utf8` sat inside `push_row`'s split-and-walk bucket, never in

@@ -72,7 +72,7 @@ use crate::batch::{
     QueryOptions, RowBatcher, ScanExtent, SourceChunk, column_names, invalidate_block_cache,
 };
 use crate::cache::CacheMode;
-use crate::copy::{CopyHeader, DELIMITER, RawRow, validated_prefix};
+use crate::copy::{CopyHeader, DELIMITER, RawRow, RowSplit, validated_prefix};
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
 use crate::index::{
     ArrayShape, CopyBlock, DumpIndex, scan_preamble, tiling_diagnostics, toc_coverage_diagnostic,
@@ -1298,6 +1298,9 @@ where
         // stream only yields right after a flush, and by then any pending
         // headerless block has already seen its first row (see `active`).
         let mut pending: Option<(CopyHeader, u64, Option<String>)> = None;
+        // One buffer for the whole replay: every row of a block has the same
+        // width, so after the first it never grows again.
+        let mut split = RowSplit::default();
 
         for block in matches.iter().filter(|b| b.end_offset > resume_offset) {
             let seg_start = block.header_offset.max(resume_offset);
@@ -1443,12 +1446,22 @@ where
                                     } else {
                                         unchecked
                                     };
-                                    let keep = filter.matches(raw, batcher.table(), row.offset)?;
+                                    // One split per row, shared: the terms
+                                    // find the boundaries they read and
+                                    // `push_row` finds the rest.
+                                    split.restart();
+                                    let keep = filter.matches(
+                                        raw,
+                                        &mut split,
+                                        batcher.table(),
+                                        row.offset,
+                                    )?;
                                     if keep {
                                         batcher.push_row(
                                             *header_offset,
                                             row.offset,
                                             raw,
+                                            &mut split,
                                             &mut chunks,
                                         )?;
                                     }

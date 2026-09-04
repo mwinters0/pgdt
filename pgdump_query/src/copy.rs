@@ -235,6 +235,102 @@ impl Iterator for FieldRanges<'_> {
     }
 }
 
+/// One row's field boundaries, discovered once and shared by everything that
+/// reads that row.
+///
+/// [`field_ranges`] walks from the front every time it is asked, so a
+/// predicate's N terms used to walk the row N times and
+/// [`crate::batch::RowBatcher`] once more. This is the same split, memoized:
+/// each boundary is found by exactly one `memchr`, whichever consumer asks
+/// for it first, and every later ask is an index into what is already here.
+///
+/// **It extends only as far as it is asked to.** A term reading field 3 finds
+/// four boundaries and stops; the walk to the end of the row happens when
+/// something needs the end of the row, which on a row the filter rejects is
+/// never. That is what makes the sharing pay on a deep or many-term filter
+/// and cost almost nothing on a shallow one — see
+/// `docs/design/architecture.md`, "Predicates".
+#[derive(Debug, Default)]
+pub struct RowSplit {
+    /// The end offset of every field found so far, in order. Field `i` runs
+    /// from `ends[i - 1] + 1` (or `0`) to `ends[i]`.
+    ends: Vec<usize>,
+    /// Whether `ends` reaches the row's last field, so nothing more can be
+    /// found.
+    complete: bool,
+}
+
+impl RowSplit {
+    /// Begin a new row, keeping the capacity the last one discovered. Every
+    /// row of a block has the same width, so after the first the buffer never
+    /// grows again.
+    pub fn restart(&mut self) {
+        self.ends.clear();
+        self.complete = false;
+    }
+
+    /// The range of field `index`, extending the split as far as it must and
+    /// no further. `None` where the row has no such field.
+    ///
+    /// The answer is [`field_ranges`]'s, for the same row and the same index:
+    /// a row always has at least one field, and a trailing delimiter is
+    /// followed by an empty one.
+    ///
+    /// `#[inline]` because the caller is one predicate term per row and the
+    /// loop below usually does not run at all — the boundary it wants is
+    /// already here, or one `memchr` away.
+    #[inline]
+    pub fn field(&mut self, row: &[u8], index: usize) -> Option<Range<usize>> {
+        while !self.complete && self.ends.len() <= index {
+            self.extend(row);
+        }
+        let end = *self.ends.get(index)?;
+        let start = if index == 0 { 0 } else { self.ends[index - 1] + 1 };
+        Some(start..end)
+    }
+
+    /// Every field of the row, as end offsets — the split finished from
+    /// wherever the last consumer stopped.
+    ///
+    /// This is one tight walk rather than [`Self::field`] called in a loop,
+    /// and the difference is measurable: the caller is
+    /// `RowBatcher::push_row`, which wants all of them, and the walk it
+    /// replaces was `memchr` in a loop with the position in a register.
+    #[inline]
+    pub fn complete(&mut self, row: &[u8]) -> &[usize] {
+        if !self.complete {
+            let mut pos = self.ends.last().map_or(0, |end| end + 1);
+            loop {
+                match memchr::memchr(DELIMITER, &row[pos..]) {
+                    Some(rel) => {
+                        let end = pos + rel;
+                        self.ends.push(end);
+                        pos = end + 1;
+                    }
+                    None => {
+                        self.ends.push(row.len());
+                        self.complete = true;
+                        break;
+                    }
+                }
+            }
+        }
+        &self.ends
+    }
+
+    #[inline]
+    fn extend(&mut self, row: &[u8]) {
+        let start = self.ends.last().map_or(0, |end| end + 1);
+        match memchr::memchr(DELIMITER, &row[start..]) {
+            Some(rel) => self.ends.push(start + rel),
+            None => {
+                self.ends.push(row.len());
+                self.complete = true;
+            }
+        }
+    }
+}
+
 /// The largest prefix of `span` that ends on a row terminator **and** is
 /// valid UTF-8 — the empty string when no whole row of it validates.
 ///
@@ -796,6 +892,53 @@ mod tests {
             let by_slice: Vec<&[u8]> = bytes.split(|&b| b == DELIMITER).collect();
             assert_eq!(by_range, by_slice, "{row:?}");
         }
+    }
+
+    /// The shared split answers exactly what `field_ranges` answers, at every
+    /// index and one past the end — which is the whole of its contract, since
+    /// two consumers now read a row through it instead of walking it twice.
+    #[test]
+    fn a_row_split_answers_what_field_ranges_answers() {
+        let mut split = RowSplit::default();
+        for row in ROWS {
+            let bytes = row.as_bytes();
+            let expected: Vec<Range<usize>> = field_ranges(bytes).collect();
+            // Ascending, which is how both consumers ask.
+            split.restart();
+            for (i, want) in expected.iter().enumerate() {
+                assert_eq!(split.field(bytes, i).as_ref(), Some(want), "{row:?} field {i}");
+            }
+            assert_eq!(split.field(bytes, expected.len()), None, "{row:?} past the end");
+            // And `complete` agrees with what `field` found one at a time.
+            split.restart();
+            let ends: Vec<usize> = expected.iter().map(|r| r.end).collect();
+            assert_eq!(split.complete(bytes), ends.as_slice(), "{row:?}");
+            // Straight to the last field, then back: a term reads one field
+            // and `push_row` then reads them all.
+            split.restart();
+            let last = expected.len() - 1;
+            assert_eq!(split.field(bytes, last).as_ref(), expected.last(), "{row:?}");
+            for (i, want) in expected.iter().enumerate() {
+                assert_eq!(split.field(bytes, i).as_ref(), Some(want), "{row:?} re-read {i}");
+            }
+            // Past the end first: the split completes and stays complete.
+            split.restart();
+            assert_eq!(split.field(bytes, expected.len() + 3), None, "{row:?}");
+            assert_eq!(split.field(bytes, 0).as_ref(), expected.first(), "{row:?}");
+        }
+    }
+
+    /// A term deep in the row leaves the split holding every boundary it
+    /// crossed and no more — the property that keeps sharing from costing
+    /// anything on a row nothing else reads.
+    #[test]
+    fn a_row_split_extends_only_as_far_as_it_is_asked() {
+        let bytes = b"a\tb\tc\td\te";
+        let mut split = RowSplit::default();
+        assert_eq!(split.field(bytes, 1), Some(2..3));
+        assert_eq!(split.ends, vec![1, 3], "two boundaries, not five");
+        assert_eq!(split.field(bytes, 4), Some(8..9));
+        assert_eq!(split.ends, vec![1, 3, 5, 7, 9]);
     }
 
     #[test]

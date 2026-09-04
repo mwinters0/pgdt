@@ -28,21 +28,22 @@ the three of them in one sitting because the two throughput tables' `COPY` row
 *is* the census table's census-on column. The fifteenth, `predicate-terms`,
 stands outside the sweep for the other reason and is the doc's newest table:
 it did not exist when the sweep ran, being the first to pass a filter at all,
-and 7.7 took it on 2026-09-04 at `42b1611` plus this slice's own uncommitted
-harness change. **It reads stale and is current in fact**, and that is
-mechanical rather than a finding: `--stale` diffs every declared path against
-the doc's session stamp, so a table taken *after* that stamp is red on every
-path that moved between the two — which for this one is the whole set 7.6,
-7.13 and 7.13.1 moved, all of them before it was taken. 7.12's sweep clears
-the stamp and the whole column with it.
+and 7.7 took it on 2026-09-04 at `42b1611`. **It is now stale in fact as well
+as mechanically**: it measures a walk from the front of the row per term, and
+7.7.1 made a row's boundaries shared, so its two headline numbers are a reading
+of the shape the lever replaced. Its section says so, and 7.12's sweep re-takes
+it with everything else.
 
-**All thirteen sweep figures read stale against the `ba2fc12` stamp, and none
-of them is current in fact.** `allocator` is the newest of the thirteen,
+**Fourteen of the fifteen read stale against the `ba2fc12` stamp — the
+thirteen sweep figures and `predicate-terms` — and none of them is current in
+fact.** `nested-decode-micro` is the one that does not: it times a decoder in
+isolation and reaches no `pgdq` run. `allocator` is the newest of the thirteen sweep figures,
 re-taken by 7.13 on the pooled read path, and 7.13.1 has since moved it too;
 `per-block-quadratic`, `map-only` and `preamble-prepass` (7.4) and the three 7.5
-re-took were current until 7.13. Every one of them times a `pgdq` run, and the
-two slices that follow the stamp both changed what such a run costs per byte of
-input.
+re-took were current until 7.13. Every one of them times a `pgdq` run, and each
+of 7.6, 7.13, 7.13.1 and 7.7.1 changed what such a run costs per byte of
+input — 7.7.1 by ~9 instructions per field walked, which is +0.4% on the
+full-projection shapes and +2.9% on a `--no-columns` one.
 
 **One published cell is not merely stale but wrong by a factor of six, and is
 not to be quoted until 7.12 re-takes it.** `census-arrays` prices the census on
@@ -57,7 +58,8 @@ nothing about the register missed it; what is new is the size.
 `pgdump_query/src/scan.rs`/`stream.rs` — 7.13's buffer pool and 7.13.1's read
 carry, which between them took **26%** of a warm `parse`'s user instructions and
 cannot be argued away — and every figure that reads a `COPY` row is red on
-`pgdump_query/src/copy.rs` as well, which is 7.6. That subsumes the case `census-arrays` and
+`pgdump_query/src/copy.rs` as well, which is 7.6 and now 7.7.1's `RowSplit`
+too. That subsumes the case `census-arrays` and
 `projection-widths` used to make on their own: both time a single-`COPY`-block
 input, where 7.4's gate is open at the one `CopyEnd` there is and 7.5's `INSERT`
 fast path is never entered, so those two slices left them doing the same work —
@@ -291,16 +293,18 @@ walked inside the buffer it replaced. What remains is unordered.
       library code; one CLI test runs every registered shape and requires each
       to keep no row, which is what the whole subtraction rests on. Notes:
       [`../design/roadmap-P7.7-predicated-reading-notes.md`](../design/roadmap-P7.7-predicated-reading-notes.md)
-- [ ] **7.7.1** One field split per row, shared by the predicate's terms and
-      `push_row`. **Earned**: 7.7's row paired the instrument that measures
-      this lever with the lever itself, which is two review cycles and not one.
-      Reviewed alone, and **bounded** by 7.7's reading rather than merely
-      motivated by it — one whole-row split replaces N partial ones, so it wins
-      on a many-term predicate and loses on a single shallow one. The census
-      left this row's scope for good: it splits in the *mapping* pass, so no
-      arrangement of this lever reaches it
-      ([2026-09-04](history/2026-09-04.md), "7.7 is smaller and narrower than
-      its rows said").
+- [x] **7.7.1** One field split per row — `copy::RowSplit`, reset once per row
+      and read by every term and then by `push_row`, so each boundary is found
+      by exactly one `memchr`. **It extends only as far as it is asked to**,
+      which is why it lands unconditionally and not behind the term-count gate
+      7.7's eager arithmetic implied. A five-term disjunction thirteen fields in
+      falls **39.7%** of its user instructions and the same five terms over rows
+      that all survive **11.7%**; the cost is the memoization, ~9 instructions a
+      field, which is +4.5% on one deep term over rejected rows and +0.4% on a
+      full-projection query with no filter. **There is one `push_row`**: a
+      second entry point that walked the row directly cost the unfiltered path
+      2.4% by existing, `push_field` losing its inline. Notes:
+      [`../design/roadmap-P7.7.1-shared-field-split-notes.md`](../design/roadmap-P7.7.1-shared-field-split-notes.md)
 - [ ] **7.8** The I/O defaults — the cold-NVMe figure, then readahead,
       `posix_fadvise` and the chunk-size constant, each landed or rejected
       against it. That figure is also what `KD9` is read against: it is the
@@ -344,11 +348,12 @@ walked inside the buffer it replaced. What remains is unordered.
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 - **P7 is open**, grilled and sliced; the checklist above is its progress. Its
-  three evidence slices, the allocator reading and five library changes have
+  three evidence slices, the allocator reading and six library changes have
   landed — 7.4's gate in `stream.rs`, 7.5's `INSERT` statement scan in
   `preamble.rs`/`map.rs`, 7.13's read-buffer pool in `io.rs`, 7.13.1's read
-  carry in `scan.rs`/`stream.rs` and 7.6's bulk UTF-8 pass in
-  `copy.rs`/`stream.rs`, all edits to timed paths. Six
+  carry in `scan.rs`/`stream.rs`, 7.6's bulk UTF-8 pass in
+  `copy.rs`/`stream.rs` and 7.7.1's shared field split across
+  `copy.rs`/`predicate.rs`/`batch.rs`/`stream.rs`, all edits to timed paths. Six
   other phases are sketched and one more is
   specified — P13, P16, P10, P14, P6, P15, P8, in the roadmap table's schedule
   order; a `P<k>` is an identifier, so the numbers say nothing about the order
@@ -499,4 +504,20 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-Nothing is open.
+**7.7.1 landed unconditionally, and it costs the unfiltered path.** Sharing a
+row's field split wins 12–40% of a filtered query's user instructions and costs
+**0.09–0.12 G** on one that filters nothing — +0.4% of a full-projection
+`strings` query, +2.9% of a `pgdq query --no-columns` row count. The decision
+is whether that trade is the one to make: the phase's rule is that a row lands
+when its measured prize is worth the change, and it does not say what to do when
+the change also has a measured cost on a *different* shape. Three things were
+weighed. The cost is the memoization itself, ~9 instructions a field, and there
+is no cheaper form of it without `unsafe`. The obvious way to avoid it — a
+second `push_row` that walks directly when no filter read anything — was built
+and measured and is **worse**, costing the unfiltered path 2.4% merely by
+existing, because a second `push_field` call site in `batch.rs` loses that
+function its inline. And doing nothing keeps a five-term filter paying 65 field
+walks a row where 16 would do. Reversing it means deleting `RowSplit` and
+restoring `field_ranges(..).nth(i)` in `ResolvedTerm::eval`; nothing else
+depends on it. Detail:
+[`../design/roadmap-P7.7.1-shared-field-split-notes.md`](../design/roadmap-P7.7.1-shared-field-split-notes.md).

@@ -34,7 +34,7 @@ use arrow::datatypes::{
 };
 
 use crate::cache::CacheMode;
-use crate::copy::{CopyHeader, DELIMITER, RawRow};
+use crate::copy::{CopyHeader, RawRow, RowSplit};
 use crate::decode;
 use crate::io::ByteRangeSource;
 use crate::nested::{self, RangeLiteral};
@@ -834,27 +834,40 @@ impl RowBatcher {
     /// check: this is the sole site that raises `Error::ColumnCountMismatch`,
     /// and the mapping pass never errors on a count
     /// (`docs/design/architecture.md`, "Projection").
+    ///
+    /// **The walk is `split`'s**, which the caller has already offered to the
+    /// filter, so a boundary a term crossed is not crossed again here and one
+    /// nothing read is found now. There is deliberately no second entry point
+    /// that walks the row directly for the unfiltered case: a second
+    /// `push_field` call site in this module costs the unfiltered path 2.4% of
+    /// a query's user instructions by itself, which is far more than the
+    /// bookkeeping it would save
+    /// (`docs/design/roadmap-P7.7.1-shared-field-split-notes.md`).
     pub(crate) fn push_row(
         &mut self,
         header_offset: u64,
         row_offset: u64,
         row: RawRow<'_>,
+        split: &mut RowSplit,
         chunks: &mut VecDeque<SourceChunk>,
     ) -> Result<()> {
         let raw = row.bytes();
-        let mut col = 0;
+        let expected = self.field_targets.len();
+        let ends = split.complete(raw);
+        let found = ends.len();
+        if found != expected {
+            return Err(Error::ColumnCountMismatch {
+                header_offset,
+                row_offset,
+                expected,
+                // The walking check this replaced stopped at the first field
+                // past the width rather than counting the rest, and the
+                // message is unchanged.
+                found: if found > expected { expected + 1 } else { found },
+            });
+        }
         let mut pos = 0usize;
-        loop {
-            let end = memchr::memchr(DELIMITER, &raw[pos..]).map_or(raw.len(), |i| pos + i);
-            let expected = self.field_targets.len();
-            if col >= expected {
-                return Err(Error::ColumnCountMismatch {
-                    header_offset,
-                    row_offset,
-                    expected,
-                    found: col + 1,
-                });
-            }
+        for (col, &end) in ends.iter().enumerate() {
             if let Some(target) = self.field_targets[col] {
                 self.push_field(
                     target,
@@ -866,19 +879,7 @@ impl RowBatcher {
                 )?;
                 self.bytes_in_batch += end - pos;
             }
-            col += 1;
-            if end == raw.len() {
-                break;
-            }
             pos = end + 1;
-        }
-        if col != self.field_targets.len() {
-            return Err(Error::ColumnCountMismatch {
-                header_offset,
-                row_offset,
-                expected: self.field_targets.len(),
-                found: col,
-            });
         }
         self.rows_in_batch += 1;
         let row_end = row_offset + raw.len() as u64;
@@ -1616,9 +1617,25 @@ mod tests {
         let options = QueryOptions { max_bytes: Some(4), ..Default::default() };
         let mut batcher = one_column_batcher_fed_by(options, vec![None, Some(0)], DataType::Int32);
         let mut chunks = VecDeque::new();
-        batcher.push_row(0, 0, RawRow::unchecked(b"not an integer\t77"), &mut chunks).unwrap();
+        batcher
+            .push_row(
+                0,
+                0,
+                RawRow::unchecked(b"not an integer\t77"),
+                &mut RowSplit::default(),
+                &mut chunks,
+            )
+            .unwrap();
         assert!(!batcher.should_flush(), "only the projected field's bytes count");
-        batcher.push_row(0, 20, RawRow::unchecked(b"nor is this\t88"), &mut chunks).unwrap();
+        batcher
+            .push_row(
+                0,
+                20,
+                RawRow::unchecked(b"nor is this\t88"),
+                &mut RowSplit::default(),
+                &mut chunks,
+            )
+            .unwrap();
         assert!(batcher.should_flush(), "two projected bytes, then four");
         let batch = batcher.flush().unwrap();
         assert_eq!(batch.num_columns(), 1);
@@ -1637,10 +1654,66 @@ mod tests {
         );
         assert_eq!(batcher.field_count(), 3, "a resumed stream needs the block's own width");
         let mut chunks = VecDeque::new();
-        let err = batcher.push_row(0, 0, RawRow::unchecked(b"a\t1"), &mut chunks).unwrap_err();
+        let err = batcher
+            .push_row(0, 0, RawRow::unchecked(b"a\t1"), &mut RowSplit::default(), &mut chunks)
+            .unwrap_err();
         match err {
             Error::ColumnCountMismatch { expected, found, .. } => {
                 assert_eq!((expected, found), (3, 2));
+            }
+            other => panic!("expected ColumnCountMismatch, got {other:?}"),
+        }
+    }
+
+    /// A row a term has already begun splitting is finished by the batcher,
+    /// not re-walked — the sharing itself, seen from the batcher's side, and
+    /// the same answer as a split nothing touched.
+    #[test]
+    fn a_partly_filled_split_gives_the_same_row_as_a_fresh_one() {
+        let rows: [&[u8]; 3] = [b"a\t1\tz", b"x\t\\N\ty", b"\t2\t"];
+        for row in rows {
+            let targets = vec![None, Some(0), None];
+            let mut fresh = one_column_batcher_fed_by(
+                QueryOptions::default(),
+                targets.clone(),
+                DataType::Utf8View,
+            );
+            let mut shared =
+                one_column_batcher_fed_by(QueryOptions::default(), targets, DataType::Utf8View);
+            let mut chunks = VecDeque::new();
+            let mut split = RowSplit::default();
+            fresh.push_row(0, 0, RawRow::unchecked(row), &mut split, &mut chunks).unwrap();
+            split.restart();
+            // What a `--filter` on the middle column reads first.
+            assert!(split.field(row, 1).is_some(), "{row:?}");
+            shared.push_row(0, 0, RawRow::unchecked(row), &mut split, &mut chunks).unwrap();
+            assert_eq!(rendered(&fresh.flush().unwrap()), rendered(&shared.flush().unwrap()));
+        }
+    }
+
+    /// A row wider than the block is refused with the count the walking check
+    /// used to report — the first field past the width, not the row's real
+    /// one.
+    #[test]
+    fn a_row_wider_than_the_block_reports_one_past_the_width() {
+        let mut batcher = one_column_batcher_fed_by(
+            QueryOptions::default(),
+            vec![None, Some(0)],
+            DataType::Utf8View,
+        );
+        let mut chunks = VecDeque::new();
+        let err = batcher
+            .push_row(
+                0,
+                0,
+                RawRow::unchecked(b"a\t1\tz\textra"),
+                &mut RowSplit::default(),
+                &mut chunks,
+            )
+            .unwrap_err();
+        match err {
+            Error::ColumnCountMismatch { expected, found, .. } => {
+                assert_eq!((expected, found), (2, 3));
             }
             other => panic!("expected ColumnCountMismatch, got {other:?}"),
         }
@@ -1663,8 +1736,12 @@ mod tests {
             vec![None, None],
         );
         let mut chunks = VecDeque::new();
-        batcher.push_row(0, 0, RawRow::unchecked(b"a\tb"), &mut chunks).unwrap();
-        batcher.push_row(0, 4, RawRow::unchecked(b"c\td"), &mut chunks).unwrap();
+        batcher
+            .push_row(0, 0, RawRow::unchecked(b"a\tb"), &mut RowSplit::default(), &mut chunks)
+            .unwrap();
+        batcher
+            .push_row(0, 4, RawRow::unchecked(b"c\td"), &mut RowSplit::default(), &mut chunks)
+            .unwrap();
         let batch = batcher.flush().unwrap();
         assert_eq!(batch.num_columns(), 0);
         assert_eq!(batch.num_rows(), 2);
@@ -1701,10 +1778,20 @@ mod tests {
         // Offsets 0, 4, 8, … each three bytes of row: the span after the row
         // at offset `n` is `n + 3`, so the first `>= 100` is at offset 100.
         for offset in (0..100).step_by(4) {
-            batcher.push_row(0, offset, RawRow::unchecked(b"abc"), &mut chunks).unwrap();
+            batcher
+                .push_row(
+                    0,
+                    offset,
+                    RawRow::unchecked(b"abc"),
+                    &mut RowSplit::default(),
+                    &mut chunks,
+                )
+                .unwrap();
             assert!(!batcher.should_flush(), "span {} is under the cap", offset + 3);
         }
-        batcher.push_row(0, 100, RawRow::unchecked(b"abc"), &mut chunks).unwrap();
+        batcher
+            .push_row(0, 100, RawRow::unchecked(b"abc"), &mut RowSplit::default(), &mut chunks)
+            .unwrap();
         assert!(batcher.should_flush(), "span 103 has reached the cap");
 
         // Flushing reopens the span at the next row rather than at the
@@ -1712,7 +1799,9 @@ mod tests {
         // covered four bytes has not covered 100.
         assert_eq!(batcher.flush().unwrap().num_rows(), 26);
         assert!(!batcher.should_flush());
-        batcher.push_row(0, 104, RawRow::unchecked(b"abc"), &mut chunks).unwrap();
+        batcher
+            .push_row(0, 104, RawRow::unchecked(b"abc"), &mut RowSplit::default(), &mut chunks)
+            .unwrap();
         assert!(!batcher.should_flush(), "the span restarts at the first row after a flush");
     }
 
@@ -1730,9 +1819,25 @@ mod tests {
         };
         let mut batcher = one_column_batcher(options);
         let mut chunks = VecDeque::new();
-        batcher.push_row(0, 1_000_000, RawRow::unchecked(b"abc"), &mut chunks).unwrap();
+        batcher
+            .push_row(
+                0,
+                1_000_000,
+                RawRow::unchecked(b"abc"),
+                &mut RowSplit::default(),
+                &mut chunks,
+            )
+            .unwrap();
         assert!(!batcher.should_flush(), "a span opens at the first selected row, not at zero");
-        batcher.push_row(0, 1_000_040, RawRow::unchecked(b"abc"), &mut chunks).unwrap();
+        batcher
+            .push_row(
+                0,
+                1_000_040,
+                RawRow::unchecked(b"abc"),
+                &mut RowSplit::default(),
+                &mut chunks,
+            )
+            .unwrap();
         assert!(!batcher.should_flush(), "43 bytes of span, whatever lay between");
     }
 
@@ -1748,8 +1853,12 @@ mod tests {
         };
         let mut batcher = one_column_batcher(options);
         let mut chunks = VecDeque::new();
-        batcher.push_row(0, 0, RawRow::unchecked(b"abc"), &mut chunks).unwrap();
-        batcher.push_row(0, 1 << 40, RawRow::unchecked(b"abc"), &mut chunks).unwrap();
+        batcher
+            .push_row(0, 0, RawRow::unchecked(b"abc"), &mut RowSplit::default(), &mut chunks)
+            .unwrap();
+        batcher
+            .push_row(0, 1 << 40, RawRow::unchecked(b"abc"), &mut RowSplit::default(), &mut chunks)
+            .unwrap();
         assert!(!batcher.should_flush());
     }
 }
