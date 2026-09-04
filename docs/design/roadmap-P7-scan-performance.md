@@ -226,16 +226,33 @@ profile is read against.
 | **`decode_array`'s `Vec<Option<String>>` intermediate** | 4.14 µs/row on the arrays file — the micro figure's *decode* column for both array literals (290 ns + 3.85 µs), library-only and paid before the Arrow build is reached |
 | **`needs_quote`'s per-byte `force_quote` scan** | 14.1% of a typed `--arrays --composite` run, of which **10.1% is `memchr` inside `slice_contains`** — `force_quote` is a `&'static [u8]`, so every byte of every token costs a linear walk of a 4–6 byte slice. Split 5.28% decode (`scan_token`) and 4.82% render (`push_token`), which are the same predicate reached from two directions |
 | **Scalar decode and the typed column build** | 2.61 µs/row of the library's 4.06 on a typed control read — `append_typed` 1.66 and `decode_field` 0.95, which is 2.13 s of the 9.81 s of user time; the builder half is the larger and exceeds the whole typed premium over `strings` |
+| **`render_bytea`'s and `render_uuid`'s per-byte `format!`** | **37.75% of a typed control query** — `render_bytea` 27.34% and `render_uuid` 10.41%, inclusive, under a `render_field` at 60.01% and making up nearly all of a `format_inner` bucket of **42.68%**, which is the largest single bucket in the run and larger than the whole of `poll_next` at 27.74%. Each renders one `format!`-and-allocate per byte of the value: **85 allocations a row against the 16 the rest of `render_field` costs**. Two limits: the shares are a property of the control's 64-byte `bytea` and 16-byte `uuid` columns, and both are **zero** under `--schema-mode strings` and for an embedder consuming `RecordBatch`es |
 | **A viewing builder for `List<Utf8View>`** | to be re-derived: the profile puts the whole library batch stream at 33.7% of a typed read, so the Arrow build's share is bounded well below the 7.3 µs/row this row once claimed |
 | **The mapping pass's double read** | exactly one extra pass — 2.0000× the file's bytes with `--dqcache none`, 1.0000× with a cache |
 | **`attach_text`'s O(blocks × DDL) re-slice** | nothing: zero samples in a 100,000-sample profile of a 4000-block `parse` |
 
-**The scalar row is the largest library bucket and the newest to the list.**
-Every other lever targets the shared row machinery or the nested path; this one
-is where the time goes for the shape most dumps actually have. The profile
-splits it in two, because the halves have different remedies: a per-type cost
-in `decode.rs` is a parser problem, and a builder-append cost is the same
-family of fix as the viewing builder.
+**The scalar row is the largest library bucket inside `poll_next`.** Every
+other lever aimed there targets the shared row machinery or the nested path;
+this one is where the time goes for the shape most dumps actually have. The
+profile splits it in two, because the halves have different remedies: a
+per-type cost in `decode.rs` is a parser problem, and a builder-append cost is
+the same family of fix as the viewing builder.
+
+**The render row is the largest library bucket anywhere, and it is the only
+one that lies outside `poll_next`.** It is admitted on the terms 7.14 was —
+library code on a timed path, where what the CLI decides is *whether*
+rendering runs, not what a byte costs while it does — and its stake states two
+limits because a share taken on the shape most favourable to it reads as a
+general claim once it is in a table. What is genuinely different from every
+other row is the beneficiary: this one's prize appears only where a caller asks
+for typed values *and* renders them back to text, so an embedder taking
+`RecordBatch`es sees none of it, and no `parse` figure moves at all. That is
+also why the row is worth having in a phase about scan performance — the two
+functions together cost more than the entire extraction pipeline they are the
+inverse of, and the phase publishes `query --schema-mode typed` figures
+(`cross-file-floor`, `nested-end-to-end`, `allocator`) that carry the cost.
+Reasoning: [`../status/history/2026-09-04.md`](../status/history/2026-09-04.md),
+"The render-back's per-byte `format!` is admitted as a lever".
 
 **Four rows aim inside `poll_next`, and the per-row budget says they do not
 overlap.** [`architecture.md`](architecture.md), "The library's own per-row
@@ -439,10 +456,14 @@ the plan slipping. This is the exception [`../process.md`](../process.md)'s
 "Slice numbering" names: the general rule fixes slice order at spec time, and
 an evidence-led phase cannot, because the evidence is what orders the work.
 
-**Two orderings bind, and they are the whole of it.** The **allocator decision
-before the wrap sweep**, because an allocator adopted after a figure is taken
-invalidates that figure; and `7.13.1` ahead of `7.6` and `7.7.1`, because those
-two rework how a row is walked inside the buffer `7.13.1` replaces.
+**Three orderings bind, and they are the whole of it.** The **allocator
+decision before the wrap sweep**, because an allocator adopted after a figure is
+taken invalidates that figure; `7.13.1` ahead of `7.6` and `7.7.1`, because those
+two rework how a row is walked inside the buffer `7.13.1` replaces; and `7.15`
+ahead of `7.12`, for the allocator's reason rather than its own — four of the
+sweep's thirteen tables time a typed query, and taking them over a render path
+about to lose most of its largest bucket would leave them describing a binary
+that is no longer shipped, with no sweep left to repair them.
 
 The first is stated against the sweep rather than against `7.3` because `7.3`
 has landed *without* adopting, and the hazard it names is still live. What the
@@ -476,6 +497,7 @@ when it runs.
 | **7.13.1** | **The copy into each read loop's own buffer**, over all three loops, with the query path's chunk retention settled explicitly. **Earned, not planned**: the row above paired a contained change to one module with a rework of three already-tested scan loops, which is two review cycles and not one, and the seam was only visible from inside. Reviewed alone, and ahead of 7.6 and 7.7.1, which both rework how a row is walked inside the buffer this replaces. Reasoning: [`../status/history/2026-09-03.md`](../status/history/2026-09-03.md). |
 | **7.10.1** | **The typed column build** — the builder-append half, `append_typed`'s dispatch and the Arrow appends under it, and the `List<Utf8View>` reading 7.11's gate is read from. **Earned, not planned**: the row above named its own seam — a `decode.rs` half and a builder-append half — and the two ask different review questions, *is this decoder still the function it was* against *is this rework of the batch builder correct*. The decode half is pure functions with an oracle to check against; the build half edits the batch layer three slices of this phase have already reworked. Reasoning: [`../status/history/2026-09-04.md`](../status/history/2026-09-04.md). |
 | **7.14** | **`Syntax::force_quote` as a `const` 256-bit set**, one indexed bit per byte in place of the linear `contains`. **Admitted after spec time**, on the same terms as 7.13 — a row the profile found that this table did not name. It reaches decode and render in one change, because `scan_token` and `push_token` share the predicate, and it changes `needs_quote`'s truth table not at all. **The fusion of `scan_token`'s terminator walk with `needs_quote` is not admitted**: its prize is whatever this row leaves, which nobody has measured. Re-takes `nested-decode-micro` and re-reads the library's per-row budget. Reasoning: [`../status/history/2026-09-04.md`](../status/history/2026-09-04.md). |
+| **7.15** | **A hex-pair table for `render_bytea` and `render_uuid`**, written into one pre-sized `String` in place of a `format!`-and-allocate per byte — the render-direction counterpart to `HEX_NIBBLE`, and the same shape of change 7.10 made to their decoding halves. **Admitted after spec time**, on the same terms as 7.13 and 7.14 — a row the profile found that this table did not name. Ordered ahead of 7.12, for the allocator's reason. **The `render_field` sink is not admitted**: `render_field` returns a `String` per field and a `render_field_into` would remove 16 allocations a row across every column, but at 85 per-byte allocations a row against those 16 its prize is whatever this row leaves, which nobody has measured — the same refusal 7.14 makes of the fusion. Owes **no** figure re-take and **no** re-read of the library's per-row budget: `benches/decoders.rs`'s `uuid`/`bytea` groups already bench these two and feed no registered figure, and `render_field` is outside `poll_next`, which is what the budget splits. It does owe a re-statement of [`architecture.md`](architecture.md)'s `query-profile` section, whose heading states the finding this row is aimed at. Reasoning: [`../status/history/2026-09-04.md`](../status/history/2026-09-04.md). |
 
 ## What this phase is not: parallelism is P16
 

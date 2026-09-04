@@ -435,6 +435,11 @@ unordered.
       linear `contains` that costs a 4–6 byte walk per token byte — 14.1% of a
       typed `--arrays --composite` run, decode and render together. **Admitted
       after spec time**, from 7.9's profile.
+- [ ] **7.15** A hex-pair table for `render_bytea` and `render_uuid`, in place
+      of a `format!`-and-allocate per byte — 37.75% of a typed control query,
+      and 85 of the 101 allocations `render_field` makes per row. **Admitted
+      after spec time**, from 7.10's profile. **Ahead of 7.12**, whose four
+      typed-query tables it would otherwise invalidate.
 
 ## Not started
 
@@ -602,25 +607,5 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`render_bytea` and `render_uuid` are a lever the table does not name, and
-  together they are a third of a typed run.** In a typed profile of the 3.00 GiB
-  control, `decode::render_bytea` is **27.34%** of the whole run and
-  `render_uuid` **10.41%**, under a `render_field` at 60.01%. Both are
-  `pgdump_query` functions: `render_bytea` does a `format!("{b:02x}")` — one
-  `String` allocation — per byte of the value, and `render_uuid` the same per
-  byte through five `collect::<String>()`s. A hex-pair table written into one
-  pre-sized `String` is the same shape of change 7.10 just made to their
-  decoding counterparts, contained to two functions in `decode.rs`, and larger
-  than anything 7.10 removed. **What is being decided is whether to amend the
-  lever table with a row for it.** The precedent points at yes and is why this
-  is worth a minute rather than a session: 7.14's admission already settled that
-  a render-side cost in the library is this phase's, in those words — "what the
-  CLI decides is *whether* rendering runs, not what a byte costs while it does"
-  ([2026-09-04](history/2026-09-04.md), "`needs_quote` is admitted as a lever").
-  What is different here is only that `render_field` is the *inverse* of the
-  row-extraction path the phase targets rather than part of it, and that the
-  cost is paid by `pgdq query` and by an embedder's own render-back rather than
-  by extraction. Filed rather than admitted because the spec reserves the
-  amendment to a review, not because the case is thin. Evidence:
-  [`../design/roadmap-P7.10-scalar-decode-notes.md`](../design/roadmap-P7.10-scalar-decode-notes.md),
-  "What the profile says next".
+Nothing open.
+
