@@ -2076,12 +2076,38 @@ arithmetic into the builder, where `Decimal256` cannot follow it — `i256` has 
 stop sharing one reading of the text, which is what makes them agree on what a
 `numeric` field means.
 
+**And a `render_*` writes one value into one pre-sized `String`.** The two hex
+renderers are the only per-*byte* loops going the other way, and both knew their
+whole output length before they started while allocating a `String` per byte
+anyway: `format!("{b:02x}")` for each byte of a `bytea` and each of a `uuid`'s
+sixteen, which on the control is 64 and 21 allocations a row against 16 for the
+whole rest of `render_field`. What replaced them is `HEX_PAIRS` — the 256
+lowercase pairs end to end as one `&'static str`, `HEX_NIBBLE`'s counterpart in
+the render direction — so a byte is an indexed
+two-byte slice and a `push_str`, and the UTF-8 conversion happens once at
+compile time over a table that is ASCII by construction. A typed `pgdq query`
+over the control falls **89.725 G → 49.074 G user instructions**, −45.3%, with a
+`strings` query unmoved at 24.7935 G on both sides. **Keep that property when
+adding a renderer**: `core::fmt` is an expensive way to write a fixed-width
+integer, and the cost is paid once per value of every rendered column.
+
+*Rejected: a `render_field_into(&mut String)` sink*, which would let
+`print_batch` write a whole row into one buffer instead of collecting a `String`
+per field. It removes 16 allocations a row across all columns, against the 85
+per-byte ones the hex pair table removed from two, and it changes a public
+signature; its prize is whatever the per-value renderers leave, which is a
+number nobody has taken. The same refusal the nested codec makes of the
+`scan_token` fusion, for the same reason.
+
 The equivalence to the shapes these replaced is asserted rather than argued:
 `decode.rs`'s `differential` tests keep the previous implementations verbatim
 and check the new ones against them over a generated corpus — a free-form one
 that exercises the rejecting branches, and a per-decoder one built to that
 decoder's own grammar and then damaged, because a random string is almost never
-a well-formed time of day.
+a well-formed time of day. The two renderers take bytes rather than text, so
+theirs is enumerated instead of fuzzed: every entry of the pair table, and for
+the `uuid` every entry at each of the sixteen positions the hyphens are
+interleaved into.
 
 Non-obvious calendar and formatting facts, pinned as tests rather than left for
 a future reader to re-derive:
@@ -4571,21 +4597,46 @@ columns a file has, and this budget is a control-file decomposition: it sizes
 what a *scalar* row costs, and a nested column's per-element cost is
 [`measurements.md`](measurements.md), "Nested decode costs what it copies".
 
-**Two-thirds of a typed query is the CLI writing the values back out as
-text**, and 79% of the gap between the two modes is that one function: typed
-costs 6.24 s more than `strings`, of which 4.95 s is `print_batch` and 1.29 s
-is the library. In a `release` profile the same thing shows up as
-`core::fmt` — `format_inner`, `fmt::write`, `Formatter::pad_integral`,
-`<u8 as LowerHex>::fmt` and `String::write_str` together are about a fifth of
-the typed profile, with the allocator traffic they generate on top.
+**Two-thirds of a typed query was the CLI writing the values back out as
+text**, and 79% of the gap between the two modes was that one function: typed
+cost 6.24 s more than `strings`, of which 4.95 s was `print_batch` and 1.29 s
+the library. In a `release` profile the same thing showed up as `core::fmt` —
+`format_inner`, `fmt::write`, `Formatter::pad_integral`, `<u8 as LowerHex>::fmt`
+and `String::write_str` together about a fifth of the typed profile, with the
+allocator traffic they generate on top.
+
+**The hex pair table halves that, and the heading above now holds by a
+margin rather than by a factor.** `render_bytea` and `render_uuid` stopped
+allocating a `String` per byte ("Decoders and render-back"), which takes a typed
+`pgdq query` over the control from **89.725 G to 49.074 G user instructions**
+(−45.31%, five reps a leg, every after rep below every before rep) and its wall
+from 9.40 to 6.03 s; a `strings` query is unmoved at **24.7935 G on both
+sides**, the control that says the change is confined to the render path. In a
+matched pair of profiles `print_batch` goes **70.61% → 52.74%** and `poll_next`
+**28.46% → 45.83%**, so the CLI's render-back is still the larger of the two and
+no longer twice the library. The two functions themselves go 25.66% and 10.73%
+of the run to **0.86% and 0.48%** of a run that is itself 45% smaller. The
+rows above are again left as taken.
+
+**What is left of `core::fmt` there is the date and time renderers.**
+`format_inner` is still about a fifth of the typed profile (42.85% → 20.68%,
+which is a share of a much smaller run), and the largest single contributor to
+it is now `render_timestamp_micros` at **11.81%**, whose `format!("{out_year:04}-{m:02}-{d:02} …")`
+drives `pad_integral` for each of its zero-padded fields;
+`render_decimal`, `render_f64`, `render_time64_micros` and `render_date32` are
+the rest, each under 3%. None of them is admitted as a lever here.
 
 **What that means for reading the headline table.** The baseline puts a typed
 query at 31× the warm `dd` floor and a `strings` query at 13.3×
 ([`measurements.md`](measurements.md), "Scan throughput by input shape"), and
 those are `pgdq query` figures: an embedder that consumes `RecordBatch`es pays
 `poll_next` and nothing under `print_batch`. The library's own typed extraction
-is 3.10 µs a row against `strings`'s 2.42 — a factor of 1.3, not the factor of
-2.4 the wall times show.
+is 3.10 µs a row against `strings`'s 2.42 — a factor of 1.3, where the CLI's
+wall times showed 2.4 and, since the hex pair table, show **1.6** (6.03 s
+against 3.75 on the control, warm). The gap between the library's factor and the
+CLI's is what `print_batch` costs, and it is now half what it was; both `pgdq
+query` figures in that table are stale by this amount and are re-taken with the
+rest.
 
 #### The library's own per-row budget
 

@@ -172,9 +172,10 @@ Twelve standing rules for reading anything below:
 - **A mode difference and a per-column delta are CLI numbers, so neither sizes
   a library change.** Every `query` figure here is a `pgdq query` figure, which
   means `pgdq::print_batch` — the CLI turning each batch back into TSV — is
-  inside it, and it is not a rounding error: on the control **79% of the
+  inside it, and it is not a rounding error: on the control **most of the
   `typed` − `strings` gap is that one function**, and a typed query spends
-  62.8% of its user time there
+  **52.74%** of its user time there — 70.61% before the hex pair table halved
+  what a `bytea` and a `uuid` cost to write back out
   ([`architecture.md`](architecture.md), "Where a scan's time goes"). So the
   two sharpest instruments in this document price decode **plus** the Arrow
   build **plus** the render-back: "A typed query over nested columns…"'s

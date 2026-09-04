@@ -594,16 +594,48 @@ pub fn decode_uuid(s: &str) -> Option<[u8; 16]> {
     Some(bytes)
 }
 
+/// The 256 lowercase hex pairs end to end, so byte `b`'s pair is the two
+/// bytes at `b * 2` — [`HEX_NIBBLE`]'s counterpart in the render direction.
+/// The two renderers below are the only per-*byte* loops on the render-back
+/// path, and each knows its whole output length before it starts, so a byte
+/// becomes an indexed slice and a two-byte copy into a pre-sized `String`, in
+/// place of the `format!("{b:02x}")` that allocated a `String` per byte and
+/// drove `core::fmt` for each of them.
+const HEX_PAIRS_BYTES: [u8; 512] = {
+    let digits = *b"0123456789abcdef";
+    let mut table = [0u8; 512];
+    let mut b = 0usize;
+    while b < 256 {
+        table[b * 2] = digits[b >> 4];
+        table[b * 2 + 1] = digits[b & 0x0F];
+        b += 1;
+    }
+    table
+};
+
+/// The same table as text, so a renderer appends a pair with `push_str` and
+/// pays no UTF-8 validation of its own — the conversion happens once, at
+/// compile time, over a table that is ASCII by construction.
+static HEX_PAIRS: &str = match str::from_utf8(&HEX_PAIRS_BYTES) {
+    Ok(s) => s,
+    Err(_) => panic!("hex digits are ASCII"),
+};
+
+fn push_hex_pair(out: &mut String, byte: u8) {
+    let at = byte as usize * 2;
+    out.push_str(&HEX_PAIRS[at..at + 2]);
+}
+
 pub fn render_uuid(bytes: &[u8; 16]) -> String {
-    let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
-    format!(
-        "{}-{}-{}-{}-{}",
-        hex(&bytes[0..4]),
-        hex(&bytes[4..6]),
-        hex(&bytes[6..8]),
-        hex(&bytes[8..10]),
-        hex(&bytes[10..16])
-    )
+    // `8-4-4-4-12`: 32 hex digits and four hyphens.
+    let mut out = String::with_capacity(36);
+    for (i, byte) in bytes.iter().enumerate() {
+        if matches!(i, 4 | 6 | 8 | 10) {
+            out.push('-');
+        }
+        push_hex_pair(&mut out, *byte);
+    }
+    out
 }
 
 /// PostgreSQL's default `bytea_output = hex` form, `\x` followed by
@@ -634,12 +666,12 @@ pub fn decode_bytea(s: &str) -> Option<Vec<u8>> {
 }
 
 pub fn render_bytea(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(2 + bytes.len() * 2);
-    s.push_str("\\x");
-    for b in bytes {
-        s.push_str(&format!("{b:02x}"));
+    let mut out = String::with_capacity(2 + bytes.len() * 2);
+    out.push_str("\\x");
+    for byte in bytes {
+        push_hex_pair(&mut out, *byte);
     }
-    s
+    out
 }
 
 /// Parse a `numeric` field's text into an unscaled integer digit string at
@@ -1048,15 +1080,36 @@ mod tests {
     }
 }
 
-/// The four scalar decoders this module's allocation-free forms replaced,
-/// kept verbatim as the oracle they are checked against. A decoder that is
-/// asked to be exactly what it was is checked against what it was: the
-/// corpora below are generated rather than listed, so a disagreement on an
-/// input nobody thought to write down is a test failure and not a report
-/// from the field.
+/// The four scalar decoders and two hex renderers this module's
+/// allocation-free forms replaced, kept verbatim as the oracle they are
+/// checked against. A function that is asked to be exactly what it was is
+/// checked against what it was: the corpora below are generated rather than
+/// listed, so a disagreement on an input nobody thought to write down is a
+/// test failure and not a report from the field.
 #[cfg(test)]
 mod prior_shape {
     use crate::copy::hex_val;
+
+    pub fn render_uuid(bytes: &[u8; 16]) -> String {
+        let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+        format!(
+            "{}-{}-{}-{}-{}",
+            hex(&bytes[0..4]),
+            hex(&bytes[4..6]),
+            hex(&bytes[6..8]),
+            hex(&bytes[8..10]),
+            hex(&bytes[10..16])
+        )
+    }
+
+    pub fn render_bytea(bytes: &[u8]) -> String {
+        let mut s = String::with_capacity(2 + bytes.len() * 2);
+        s.push_str("\\x");
+        for b in bytes {
+            s.push_str(&format!("{b:02x}"));
+        }
+        s
+    }
 
     pub fn parse_time_of_day(s: &str) -> Option<(i64, i64)> {
         let (hms, frac) = s.split_once('.').unwrap_or((s, ""));
@@ -1299,6 +1352,41 @@ mod differential {
             },
             check,
         );
+    }
+
+    /// The two hex renderers take bytes rather than text, so their corpus is
+    /// enumerated rather than fuzzed: every entry of the pair table is
+    /// reachable, and for the `uuid` every entry at every one of the sixteen
+    /// positions the hyphens are interleaved into.
+    #[test]
+    fn hex_render_agrees_with_the_shape_it_replaced() {
+        let every_byte: Vec<u8> = (0..=u8::MAX).collect();
+        assert_eq!(render_bytea(&every_byte), prior_shape::render_bytea(&every_byte));
+        for b in 0..=u8::MAX {
+            assert_eq!(render_bytea(&[b]), prior_shape::render_bytea(&[b]), "{b}");
+        }
+        // The empty value (`\x` alone) and every length either side of the
+        // pair-chunking the decoder's inverse does.
+        for len in 0..=33usize {
+            let v: Vec<u8> = (0..len).map(|i| every_byte[(i * 7 + 3) % 256]).collect();
+            assert_eq!(render_bytea(&v), prior_shape::render_bytea(&v), "{v:?}");
+        }
+
+        for at in 0..16 {
+            for b in 0..=u8::MAX {
+                let mut bytes = [0u8; 16];
+                bytes[at] = b;
+                assert_eq!(render_uuid(&bytes), prior_shape::render_uuid(&bytes), "{at} {b}");
+            }
+        }
+        let mut rng = Rng(5);
+        for _ in 0..20_000 {
+            let mut bytes = [0u8; 16];
+            for b in &mut bytes {
+                *b = rng.next() as u8;
+            }
+            assert_eq!(render_uuid(&bytes), prior_shape::render_uuid(&bytes), "{bytes:?}");
+        }
     }
 
     #[test]

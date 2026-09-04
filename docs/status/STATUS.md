@@ -61,7 +61,11 @@ input — 7.7.1 by ~9 instructions per field walked, which is +0.4% on the
 full-projection shapes and +2.9% on a `--no-columns` one. **7.14 moves the four
 that run a typed query and only where the file has a nested column**: it is
 −12.47% on a `--arrays --composite` query and exactly nothing on the control,
-so `nested-end-to-end` is the sweep table it certainly reaches.
+so `nested-end-to-end` is the sweep table it certainly reaches. **7.15 moves the
+same four and by far the most of any P7 change, wherever the file has a `bytea`
+or a `uuid` column**: a typed control query falls **45.31%** and a `strings` one
+not at all, so the four typed-query tables' typed legs are the ones most wrong
+today and their `strings` legs are untouched.
 
 **One published cell is not merely stale but wrong by a factor of six, and is
 not to be quoted until 7.12 re-takes it.** `census-arrays` prices the census on
@@ -268,20 +272,18 @@ The phase's spec, its measured baseline and the lever table each row measures:
 **7.1 and 7.2 are ordered; the rest is allocation order, not schedule** — the
 phase follows the profile, so a slice landing out of numeric order is the plan
 working ([`../process.md`](../process.md), "Slice numbering", which carries the
-exception an evidence-led phase runs under). **Four orderings that bind are
-discharged**: the allocator decision before the wrap sweep, which 7.13 re-took
-and settled; `7.13.1` ahead of `7.6` and `7.7.1`, which rework how a row is
-walked inside the buffer it replaced; `7.8` ahead of `7.8.1`, the figure
-that prices three levers before the levers themselves; and `7.14` ahead of
-`7.12`, which has landed.
+exception an evidence-led phase runs under). **Every ordering that binds is
+discharged, and `7.12` is what is left**: the allocator decision before the wrap
+sweep, which 7.13 re-took and settled; `7.13.1` ahead of `7.6` and `7.7.1`,
+which rework how a row is walked inside the buffer it replaced; `7.8` ahead of
+`7.8.1`, the figure that prices three levers before the levers themselves; and
+`7.14` and `7.15` each ahead of `7.12`, both of which have landed.
 
-**One binds still: `7.15` runs before `7.12`.** It moves a path the sweep's four
-typed-query tables time, so taking those tables first would publish thirteen
-freshly-measured figures describing a binary that is no longer shipped, with no
-sweep left to repair them — the allocator's reason, reached by another route.
-`7.15` is the wider of the pair that carried it, reaching every typed query that
-renders values back to text, where `7.14` reached the nested-bearing shapes
-alone. Everything else in the phase is unordered.
+The last of those was `7.15`, which moves a path the sweep's four typed-query
+tables time — a typed control query falls **45.31%** of its user instructions —
+so taking those tables first would have published thirteen freshly-measured
+figures describing a binary that is no longer shipped, with no sweep left to
+repair them.
 
 - [x] **7.1** The profiling apparatus — `[profile.profiling]`, `perf`, and a
       `measure.py --profile-recipe` that prints the invocation on the
@@ -489,11 +491,24 @@ alone. Everything else in the phase is unordered.
       declines now has a size: the `memchr` left under `scan_token`'s
       `terminators` is **1.4%**. Notes:
       [`../design/roadmap-P7.14-force-quote-set-notes.md`](../design/roadmap-P7.14-force-quote-set-notes.md)
-- [ ] **7.15** A hex-pair table for `render_bytea` and `render_uuid`, in place
-      of a `format!`-and-allocate per byte — 37.75% of a typed control query,
-      and 85 of the 101 allocations `render_field` makes per row. **Admitted
-      after spec time**, from 7.10's profile. **Ahead of 7.12**, whose four
-      typed-query tables it would otherwise invalidate.
+- [x] **7.15** The hex pair table — `HEX_PAIRS`, the 256 lowercase pairs end to
+      end as one `&'static str` converted at compile time, so a byte of a
+      `bytea` or a `uuid` is an indexed two-byte slice and a `push_str` into one
+      pre-sized `String` instead of a `format!`-and-allocate. A typed control
+      query falls **89.725 G → 49.074 G user instructions** (−45.31%), wall
+      9.40 → 6.03 s, every after rep below every before rep, while a `strings`
+      one is **unmoved at 24.7935 G** — the control that says the change is
+      confined to the render path and reaches no embedder. `uuid/render`
+      **925.82 → 24.399 ns** and `bytea/render` **5.3445 µs → 130.95 ns** on the
+      unregistered `benches/decoders.rs` groups. `print_batch` goes 70.61% →
+      **52.74%** of the profile and `poll_next` 28.46% → **45.83%**, so the
+      render-back is still the larger bucket but no longer twice the library.
+      **No behaviour change, asserted rather than argued**: both previous
+      implementations kept verbatim and checked against over an enumerated
+      corpus — every pair, and every byte at each of the `uuid`'s sixteen
+      positions. **No `unsafe`**, and the shape was chosen by measuring three of
+      them. Notes:
+      [`../design/roadmap-P7.15-hex-pair-table-notes.md`](../design/roadmap-P7.15-hex-pair-table-notes.md)
 
 ## Not started
 
@@ -501,14 +516,15 @@ alone. Everything else in the phase is unordered.
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 - **P7 is open**, grilled and sliced; the checklist above is its progress. Its
-  four evidence slices, the allocator reading, nine library changes and three
+  four evidence slices, the allocator reading, ten library changes and three
   measured refusals have landed — 7.4's gate in `stream.rs`, 7.5's `INSERT`
   statement scan in `preamble.rs`/`map.rs`, 7.13's read-buffer pool in
   `io.rs`, 7.13.1's read carry in `scan.rs`/`stream.rs`, 7.6's bulk UTF-8 pass
   in `copy.rs`/`stream.rs`, 7.7.1's shared field split across
   `copy.rs`/`predicate.rs`/`batch.rs`/`stream.rs`, 7.9's borrowed array
   element in `nested.rs`/`batch.rs`, 7.10's allocation-free scalar decoders
-  in `decode.rs` and 7.14's force-quote `ByteSet` in `nested.rs`, all edits to
+  in `decode.rs`, 7.14's force-quote `ByteSet` in `nested.rs` and 7.15's hex
+  pair table in `decode.rs`, all edits to
   timed paths,
   plus 7.8.1's `--chunk-size`, which changes no default and refuses the other
   two I/O levers, 7.10.1, which refuses the typed column build on a reading and
@@ -663,5 +679,26 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+**The date and time renderers are now the largest `core::fmt` consumer on the
+render path, and 7.15 did not admit them as a lever.** With the hex pair table
+in, `alloc::fmt::format::format_inner` is still **20.68%** of a typed control
+profile, and its largest single contributor is `render_timestamp_micros` at
+**11.81%** — a `format!("{out_year:04}-{m:02}-{d:02} …")` driving
+`Formatter::pad_integral` once per zero-padded field, which is the same shape of
+cost 7.15 just removed and is unchanged in absolute terms.
+`render_decimal`, `render_f64`, `render_time64_micros` and `render_date32`
+follow, each under 3%. **The decision is whether P7 admits it as a row**, and
+the reason it is filed rather than taken is
+[`../design/roadmap-P7-scan-performance.md`](../design/roadmap-P7-scan-performance.md),
+"The levers": admitting a lever means amending the spec's table, which an
+unattended session may not do. What follows from admitting it: it would have to
+run **before 7.12**, for the reason 7.14 and 7.15 did — it moves the same four
+typed-query tables, and there is no sweep after the sweep to repair them. What
+follows from declining it: 7.12 takes the tables as they stand and the
+render-back stays roughly half of a typed `pgdq query`, which is a CLI cost and
+reaches no embedder. Reading:
+[`../design/roadmap-P7.15-hex-pair-table-notes.md`](../design/roadmap-P7.15-hex-pair-table-notes.md),
+"What the profile says now".
 
 
