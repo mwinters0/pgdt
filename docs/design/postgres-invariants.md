@@ -316,7 +316,9 @@ terminator.
 
 **Verified against:** koji (19.58B rows, no false terminator); the
 `public.escapes` round-trip on `pg_dump` 13.23 / 16.15 / 18.6.
-**Relied on by:** `roadmap-P7-scan-performance.md` (structure discovery).
+**Relied on by:** nothing built — the scanner enumerates lines. It is what
+would make the needle search safe, and that scheme is deferred rather than
+refused: `architecture.md`, "parse-profile".
 **Re-verify:** the `public.escapes` fixture test already asserts the escaping
 rule this rests on; a new major that changed it would fail that test.
 

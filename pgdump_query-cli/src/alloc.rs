@@ -3,8 +3,8 @@
 //! **The choice is the binary's, never the library's.** A
 //! `#[global_allocator]` in `pgdump_query` would impose one on every embedder,
 //! and an embedder's own binary is where that call belongs — see
-//! `docs/design/roadmap-P7-scan-performance.md`, "The allocator is chosen in
-//! the binary, and measured before anything else". The consequence is stated
+//! `docs/design/architecture.md`, "The allocator is the binary's
+//! choice". The consequence is stated
 //! rather than hidden: every figure in `docs/design/measurements.md` is a
 //! **CLI** figure, taken under whatever this module selects, and an embedder
 //! inherits whatever their own binary chose.

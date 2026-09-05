@@ -94,4 +94,4 @@ walks straight into the pool ceiling and silently turns the pool off. Whichever
 way P14 goes, `POOL_MAX_BYTES` is a constant it has to look at rather than
 inherit.
 
-**Origin.** 2026-09-04, P7.8.1.
+**Origin.** 2026-09-04, the I/O-defaults reading.

@@ -6,8 +6,9 @@ members = ["pgdump_query", "pgdump_query-cli"]
 version = "0.1.0"
 edition = "2024"
 
-# The profiling build. P7's primary instrument is a sampling profile
-# (`docs/design/roadmap-P7-scan-performance.md`, "How this phase measures"), and
+# The profiling build. A sampling profile is how this project attributes scan
+# cost per function rather than per subtraction (`docs/design/architecture.md`,
+# "Where a scan's time goes"), and
 # a profile of a stock `release` binary is unreadable: no line tables, and
 # `perf`'s frame-pointer unwinder walks into garbage the moment it leaves a
 # leaf. This profile inherits `release` and adds only what the unwinder needs,

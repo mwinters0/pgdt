@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Generate a synthetic pg_dump-shaped plain-text dump for throughput benchmarks.
 
-Backs docs/design/measurements.md ("Decoder and whole-file benchmarks") and
-docs/design/roadmap-P7-scan-performance.md ("Measurement discipline"). Unlike generate_fixtures.py, this is *not* a correctness
+Backs docs/design/measurements.md ("Decoder and whole-file benchmarks"), whose
+preamble carries the rules a figure taken over this input obeys. Unlike
+generate_fixtures.py, this is *not* a correctness
 fixture: its output is never checked against real pg_dump, only shaped
 closely enough to satisfy this codebase's own COPY/DDL grammar so pgdq can
 read it back. Two different runs producing different bytes is fine -- this

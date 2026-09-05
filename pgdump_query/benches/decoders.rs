@@ -2,8 +2,8 @@
 //! family (`docs/design/architecture.md`, "Testing philosophy"). A regression tripwire for
 //! `decode.rs`'s own per-byte CPU cost, not a throughput number for the
 //! reader — see `benches/whole_file.rs` for that, and
-//! `docs/design/roadmap-P7-scan-performance.md` for the wider
-//! measurement campaign this narrowly feeds into.
+//! `docs/design/measurements.md` for the wider set of figures this narrowly
+//! feeds into.
 //!
 //! `text`/`varchar`/`char` decode zero-copy (`Utf8View`, no `decode.rs`
 //! function at all) and enum's "decode" is an unparsed dictionary-key append
@@ -25,7 +25,8 @@
 //! answers. `text_copy` is `String::from` over the same byte count: a nested
 //! value has no borrowed arm at all (`crate::batch::append_nested`), so what
 //! the parse can be asked to justify is its cost *on top of* the copy it
-//! cannot avoid — which is the variable P7 is choosing over.
+//! cannot avoid — which is the variable a viewing builder would change
+//! (`docs/design/architecture.md`, "The library's own per-row budget").
 //! `text_view_x1024` is the other one: a top-level `Utf8View` field takes
 //! `push_utf8view_field`'s `Cow::Borrowed` arm whenever it carried no escapes,
 //! writing a 16-byte view into a block it does not own, and that is what a

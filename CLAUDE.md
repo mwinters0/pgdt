@@ -199,12 +199,24 @@ slug some earlier phase used. Full rule: `docs/process.md`, "Phase identity is
 
 A phase that has been specified gets its own doc,
 `docs/design/roadmap-P<N>-<slug>.md`; keep that convention when a new
-phase's plan is written. `docs/design/roadmap-P7-scan-performance.md` is
-the performance design for the local-file read path — read it before touching
-the batch layer or the cache format, which it constrains ahead of its own
-phase. **No phase is open right now**: the next one is grilled and specified
-before any of its code is written, and step 6 of `docs/process.md`'s loop
-re-grills the roadmap first.
+phase's plan is written. **No phase is open right now**: the next one is
+grilled and specified before any of its code is written, and step 6 of
+`docs/process.md`'s loop re-grills the roadmap first.
+
+**The read path's performance design is `architecture.md`, filed by subject —
+read it before touching a timed path.** "Execution model and API surface"
+holds the buffer pool, the chunk-size constant and the three I/O schemes that
+were measured and refused; "The scanner never owns the bytes it scans" holds
+the carry; "Where a scan's time goes" holds the decomposition, which is what
+says whether a proposed change is aimed at anything. A change to any of them
+re-reads the library's own per-row budget in the same change, the way it
+re-takes a figure — that budget is what an embedder pays and no figure states
+it. **Read the mechanism's section before proposing an optimization to the
+read, decode or render paths**: most of the obvious ones — mmap, `fadvise`,
+double-buffered readahead, a viewing builder for nested values, pre-sized Arrow
+builders, a term-count gate on the shared row split, a second `push_row` entry
+point — carry a measurement against them already, filed as a rejected
+alternative beside the thing they would have changed.
 
 `docs/design/roadmap-P<N>-<slug>-inbox.md` holds facts an *earlier* phase found
 that phase N will need — filed by destination, because a notes doc filed by

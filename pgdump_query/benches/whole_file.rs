@@ -1,8 +1,7 @@
 //! One warm-cache whole-file run (`docs/design/architecture.md`, "Testing
 //! philosophy"): an end-to-end regression tripwire for typed-decode CPU cost,
 //! complementing `benches/decoders.rs`'s per-family microbenchmarks. It is
-//! deliberately narrow — the device-bound campaign
-//! (`docs/design/roadmap-P7-scan-performance.md`) is where the dial
+//! deliberately narrow — `docs/design/measurements.md` is where the dial
 //! turns up to koji-sized (~100 GB) runs and CPU%/bytes-per-second tracking;
 //! this only has to catch a regression on data that fits page cache.
 //!
@@ -100,8 +99,9 @@ fn warm_cache_whole_file(c: &mut Criterion) {
     let path = perf_data_path();
     let rt = tokio::runtime::Runtime::new().unwrap();
 
-    // Warm the page cache before measuring -- roadmap-P7-scan-performance.md,
-    // "Measurement discipline": separate I/O-bound from CPU-bound.
+    // Warm the page cache before measuring: a figure about parsing CPU is
+    // taken warm, never against a device (`docs/design/measurements.md`,
+    // "Scan throughput by input shape").
     let rows = rt.block_on(scan_once(&path));
     assert!(rows > 0, "perf dataset produced no rows");
 

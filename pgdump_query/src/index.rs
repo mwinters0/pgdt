@@ -20,13 +20,15 @@ use crate::scan::{Event, ScanOptions, scan};
 /// A block's sparse row index: the byte offset of every `interval`-th data
 /// row, letting a later reader seek into the middle of a large block instead
 /// of scanning from its start. Reserved in the cache format from the first
-/// release; not populated yet — `docs/design/roadmap-P7-scan-performance.md`,
-/// "The sparse row index: not here either", says which phase defines its real
-/// shape.
+/// release and **not populated yet**. Its interval, serialization and
+/// invalidation rules are defined by whichever of the parallel-scan or
+/// row-group-statistics work runs first, because those are the first readers
+/// of one and the second inherits the interval as a decision already made
+/// (`docs/design/roadmap.md`). Reserving the slot is what keeps that additive
+/// rather than a cache-format break.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SparseRowIndex {
-    /// Rows between checkpoints (matches the default batch size, 8192 — see
-    /// `roadmap-P7-scan-performance.md`).
+    /// Rows between checkpoints (matches the default batch size, 8192).
     pub interval: u64,
     /// `checkpoints[i]` is the byte offset of data row `i * interval` within
     /// the block.

@@ -1384,8 +1384,9 @@ def _script(command: str) -> str:
         # `integer` column is `Error::PredicateValueDecode` before the first
         # row; and the zero-copy path is the one this lever is read against,
         # since `strings` is where the field split and the walk are most of
-        # what the library does (`roadmap-P7-scan-performance.md`, "Only two of
-        # these rows move the `strings` path at all").
+        # what the library does (`architecture.md`, "The library's own per-row
+        # budget", whose split-and-walk and decode rows do not move with the
+        # mode).
         expr = predicate_expr(command.removeprefix("query-where-"))
         return (
             f"{q} query --source /dump.sql --table public.perf --dqcache none "
@@ -2742,7 +2743,6 @@ FIGURES: list[Figure] = [
         id="census-brace-free",
         quoted_by=(
             "docs/design/architecture.md",
-            "docs/design/roadmap-P7-scan-performance.md",
             "docs/status/STATUS.md",
         ),
         section="The census on brace-free rows costs 8% of a warm scan",
@@ -2756,7 +2756,6 @@ FIGURES: list[Figure] = [
         id="census-arrays",
         quoted_by=(
             "docs/design/architecture.md",
-            "docs/design/roadmap-P7-scan-performance.md",
             "docs/status/STATUS.md",
         ),
         section="The census on array-bearing rows more than triples a warm scan",
@@ -2769,7 +2768,6 @@ FIGURES: list[Figure] = [
     Figure(
         id="scan-throughput-cold",
         quoted_by=(
-            "docs/design/roadmap-P7-scan-performance.md",
             "docs/design/pg-dump-compatibility.md",
             "docs/design/roadmap.md",
             "docs/design/architecture.md",
@@ -2792,7 +2790,6 @@ FIGURES: list[Figure] = [
     Figure(
         id="scan-throughput-warm",
         quoted_by=(
-            "docs/design/roadmap-P7-scan-performance.md",
             "docs/design/pg-dump-compatibility.md",
             "docs/design/roadmap.md",
             "docs/design/architecture.md",
@@ -2821,7 +2818,6 @@ FIGURES: list[Figure] = [
     Figure(
         id="scan-throughput-nvme",
         quoted_by=(
-            "docs/design/roadmap-P7-scan-performance.md",
             "docs/design/pg-dump-compatibility.md",
             "docs/design/architecture.md",
             "docs/status/STATUS.md",
@@ -2843,7 +2839,6 @@ FIGURES: list[Figure] = [
         id="chunk-size",
         quoted_by=(
             "docs/design/architecture.md",
-            "docs/design/roadmap-P7-scan-performance.md",
             "docs/status/STATUS.md",
         ),
         section="What the read chunk size is worth",
@@ -2857,7 +2852,6 @@ FIGURES: list[Figure] = [
     Figure(
         id="nested-end-to-end",
         quoted_by=(
-            "docs/design/roadmap-P7-scan-performance.md",
             "docs/status/STATUS.md",
         ),
         section="A typed query over nested columns costs 13.2 µs a row more than a string one",
@@ -2869,7 +2863,6 @@ FIGURES: list[Figure] = [
     Figure(
         id="census-attribution",
         quoted_by=(
-            "docs/design/roadmap-P7-scan-performance.md",
             "docs/status/STATUS.md",
         ),
         section="The untyped baseline is not file-independent (census attribution)",
@@ -2881,7 +2874,6 @@ FIGURES: list[Figure] = [
     Figure(
         id="cross-file-floor",
         quoted_by=(
-            "docs/design/roadmap-P7-scan-performance.md",
             "docs/design/architecture.md",
             "docs/status/STATUS.md",
         ),
@@ -2903,7 +2895,6 @@ FIGURES: list[Figure] = [
         id="per-block-quadratic",
         quoted_by=(
             "docs/design/architecture.md",
-            "docs/design/roadmap-P7-scan-performance.md",
             "docs/status/STATUS.md",
         ),
         section="Per-block cache saving is quadratic in block count, and so is the map",
@@ -2916,7 +2907,6 @@ FIGURES: list[Figure] = [
         id="map-only",
         quoted_by=(
             "docs/design/architecture.md",
-            "docs/design/roadmap-P7-scan-performance.md",
             "docs/status/STATUS.md",
         ),
         section="Per-block cache saving is quadratic in block count, and so is the map (map alone)",
@@ -2928,7 +2918,6 @@ FIGURES: list[Figure] = [
     Figure(
         id="preamble-prepass",
         quoted_by=(
-            "docs/design/roadmap-P7-scan-performance.md",
             "docs/status/STATUS.md",
         ),
         section="The preamble prepass is bounded by the schema, not by the dump",
@@ -2955,7 +2944,6 @@ FIGURES: list[Figure] = [
         id="nested-decode-micro",
         quoted_by=(
             "docs/design/architecture.md",
-            "docs/design/roadmap-P7-scan-performance.md",
         ),
         section="Nested decode costs what it copies, and an element is now a borrowed slice",
         stage="criterion",
@@ -2970,7 +2958,6 @@ FIGURES: list[Figure] = [
         id="projection-widths",
         quoted_by=(
             "docs/design/architecture.md",
-            "docs/design/roadmap-P7-scan-performance.md",
             "docs/status/STATUS.md",
         ),
         section="What a column costs: five projection widths over one file",
@@ -2989,7 +2976,6 @@ FIGURES: list[Figure] = [
         id="predicate-terms",
         quoted_by=(
             "docs/design/architecture.md",
-            "docs/design/roadmap-P7-scan-performance.md",
             "docs/status/STATUS.md",
         ),
         section="What a filter term costs, and how much of it is the walk to its field",
@@ -3008,7 +2994,6 @@ FIGURES: list[Figure] = [
         id="allocator",
         quoted_by=(
             "docs/design/architecture.md",
-            "docs/design/roadmap-P7-scan-performance.md",
             "docs/status/STATUS.md",
         ),
         section="Which allocator a figure was taken under",
@@ -3071,7 +3056,6 @@ DERIVED: list[Figure] = [
         # path.
         depends=("scripts/measure.py",),
         quoted_by=(
-            "docs/design/roadmap-P7-scan-performance.md",
             "docs/status/STATUS.md",
         ),
     )
@@ -3810,8 +3794,8 @@ def cmd_koji(wrap: bool) -> int:
 # --------------------------------------------------------------------------
 # The profiling recipe: printed, never run.
 #
-# P7's primary instrument is a sampling profile rather than a figure
-# (`roadmap-P7-scan-performance.md`, "How this phase measures"): it runs in
+# A sampling profile is not a figure
+# (`measurements.md`, "The apparatus"): it runs in
 # seconds, it attributes cost per function rather than per subtraction, and it
 # needs no quiet machine, because the answer it gives is a proportion. So it is
 # **not** a `Figure`: no reps, no median, no apparatus gate, no
@@ -3943,8 +3927,7 @@ def profile_recipe(cfg: Config) -> str:
 
     And one thing that is not a mistake but reads like one: **no container.**
     A profile is about proportions, and the cgroup adds capability plumbing
-    without changing them (`roadmap-P7-scan-performance.md`, "How this phase
-    measures")."""
+    without changing them."""
     warm = cfg.warm_dir
     binary = REPO / "target/profiling/pgdq"
     cache = warm / "profile.dqcache"
@@ -4034,7 +4017,7 @@ def cmd_profile() -> int:
     print(
         "# A profile is not a figure: no medians, no apparatus gate, no marker in\n"
         "# measurements.md. It is a runs/ artifact, read for proportions\n"
-        "# (roadmap-P7-scan-performance.md, \"How this phase measures\"). The whole\n"
+        "# (measurements.md, \"The apparatus\"). The whole\n"
         "# sequence is minutes, so it is not a detached job.\n"
     )
     print(profile_recipe(cfg))

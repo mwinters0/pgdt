@@ -15,10 +15,9 @@ reused, including a struck phase's.
 
 | Phase | State | Where it is |
 |---|---|---|
-| P1–P5, P9, P11, P12 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
+| P1–P5, P7, P9, P11, P12 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
 | P13 — compressed input | Specified; **blocked**, and its remaining decisions ungrilled | [`roadmap-P13-compressed-input.md`](roadmap-P13-compressed-input.md) — waits on an external seekable-xz crate; inbox drained |
-| P7 — scan performance | **Complete** | [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md) — spec; what it refused is [its notes](roadmap-P7-scan-performance-notes.md); what it built is [`architecture.md`](architecture.md), by subject |
-| P16 — parallel scan and extraction | Sketched; not grilled | this file, below; [inbox](roadmap-P16-parallel-scan-inbox.md) — carved out of P7 |
+| P16 — parallel scan and extraction | Sketched; not grilled | this file, below; [inbox](roadmap-P16-parallel-scan-inbox.md) — carved out of the scan-performance work |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
@@ -86,8 +85,9 @@ Two things distinguish this project from existing `pg_dump` tooling
   difference between a saturated-device scan and a merely-correct one is the
   difference between a usable tool and an overnight job. Concretely: the
   local-file path should stay device-bound, not CPU-bound, on hardware from
-  HDD through NVMe, at flat memory. See
-  `docs/design/roadmap-P7-scan-performance.md`.
+  HDD through NVMe, at flat memory. Where it currently stands, and what a scan
+  spends its time on, is [`architecture.md`](architecture.md), "Where a scan's
+  time goes"; the figures are [`measurements.md`](measurements.md).
 
   This targets the `COPY`-block/bulk-row path specifically. Preamble and other
   non-data DDL scanning is bounded by schema size, not file
@@ -264,8 +264,8 @@ one it named both instruments — "a `decoders.rs` micro **and** `pgdq query
 only "composite decode throughput", got a micro, and earned **4.6.1** at
 review to supply the end-to-end half. Same row, same author, same slice: the
 half that named its instrument was delivered whole. Every phase from here is
-measurement-heavy — P7 is an entire performance campaign — so the hazard
-is live for four unwritten specs. Reasoning:
+measurement-heavy — one of them was an entire performance campaign — so the
+hazard is live for the unwritten specs. Reasoning:
 [`../status/history/2026-08-27.md`](../status/history/2026-08-27.md), "4.6.1
 is earned, and the spec row's ambiguity is why".
 
@@ -296,8 +296,8 @@ checkout, per `CLAUDE.local.md`'s rule for the koji replica.
 ### Four decisions that keep later phases additive
 
 Plain-format-only and single-threaded is a deliberate scope, not a limitation
-to design around. These four choices are what make P7 and P8 additive
-rather than a rewrite, and they are cheap to hold to — so hold to them, even
+to design around. These four choices are what made the scan-performance work
+additive and are what make P8 additive rather than a rewrite, and they are cheap to hold to — so hold to them, even
 where the work in front of you would not require them.
 
 - **The COPY TEXT decoder stays independent of where its bytes came from.**
@@ -319,10 +319,11 @@ where the work in front of you would not require them.
   compressed archive entry. Opaque now means the representation can change
   without an API break.
 
-P7 adds a fifth that already binds: the batch layer builds `Utf8View`
-arrays over the scanner's existing chunk buffer instead of copying field bytes
-out of it. See
-[`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md).
+A fifth already binds: the batch layer builds `Utf8View` arrays over the
+scanner's existing chunk buffer instead of copying field bytes out of it, and
+the read path pools that buffer so it outlives the pass that scans it
+([`architecture.md`](architecture.md), "Arrow assembly and the zero-copy path"
+and "Execution model and API surface").
 
 ### Permanent non-goals
 
@@ -351,54 +352,17 @@ fixtures, the figures owed, and the slice list — are grilled when it unblocks.
 
 Its inbox has been drained.
 
-## P7 — Scan performance
-
-Its inbox has been drained.
-
-Concentrated optimization of the local-file read path, **single-threaded
-throughout**: the row-extraction path first, since that is where the
-device-bound goal is an order of magnitude from being met, plus the two
-deficiencies discovery owes (`KD5`, `KD9`) and the I/O defaults. Parallelism
-is P16. The spec, its measured baseline and the measurements gating each piece:
-[`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md).
-
-Scheduled ahead of the engine story, and ahead of P8 and P10, for three
-independent reasons. Local-file performance is a project goal rather than a
-later optimization, and two deficiencies wait on this phase (`KD5`, `KD9`). The
-format work multiplies the surface area any later optimization has to be
-correct against, so the fast path should exist first and archive containers
-should be built to fit it.
-
-**Two reasons for a later placement have been withdrawn, and both are recorded
-so they are not re-derived.** The first was that pushdown "changes which bytes
-get touched at all, so optimizing the pre-pushdown parser would partly optimize
-code that pushdown deletes" — pushdown deletes no parser code and never did; a
-projection skips `decode_field` and the builder append for a column nobody
-asked for and changes nothing about what the scanner does
-([`architecture.md`](architecture.md), "Projection").
-
-The second was that an `object_store` backend (now P14) "settles the I/O
-layer that any readahead or parallelism scheme has to live behind". That
-question is already settled *here* rather than there:
-[`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md) rejects mmap
-precisely because it bypasses `ByteRangeSource` and so could never be the path
-an `object_store` backend takes, and commits instead to positioned reads behind
-that same abstraction. What genuinely does not transfer is the *tuning* —
-readahead depth and chunk-size defaults measured against local devices say
-nothing about a high-latency ranged backend — and that is a second set of
-measured defaults the engine story adds, not a rework of this phase.
-
 ## P16 — Parallel scan and extraction
 
-Carved out of P7, which stays single-threaded. Everything parallel lives here:
-splitting a block's byte range across workers and reassembling batches in range
-order, the speculative scheme for discovering structure without a cold-start
-guess, and worker counts set by device class rather than by core count.
+Carved out of the scan-performance work, which stayed single-threaded
+throughout. Everything parallel lives here: splitting a block's byte range
+across workers and reassembling batches in range order, the speculative
+scheme for discovering structure without a cold-start guess, and worker counts set by device class rather than by core count.
 
-Two things make it a phase of its own rather than P7's last slice. Its blast
-radius is three already-tested mechanisms — `stream::splice`'s assumption that
-coverage is a contiguous prefix, the array-shape census's per-block
-accumulation and finalization at `CopyEnd`, and the interrupt guard's promise
+Two things make it a phase of its own rather than a last slice of that work.
+Its blast radius is three already-tested mechanisms — `stream::splice`'s
+assumption that coverage is a contiguous prefix, the array-shape census's
+per-block accumulation and finalization at `CopyEnd`, and the interrupt guard's promise
 to bank the last *completed block* — and reworking those cannot share a review
 cycle with self-contained per-byte work. And it has two source shapes to serve,
 not one: a plain byte range resynced to the next LF, and a compressed block
@@ -408,7 +372,7 @@ core where the plain path is device-bound at ~240 on the same HDD.
 **It also builds the sparse row index** — the byte offset of every Nth row,
 ~19 MB for koji against ~157 GB for a dense one — because this is the first
 phase that reads one: it turns a speculative split into a real one, at known
-row boundaries with no resync scan. P7 leaves it the reserved
+row boundaries with no resync scan. What exists today is the reserved
 `CopyBlock::sparse_index` field and nothing else. P10 needs the same
 structure, and needs its checkpoint interval to coincide with the row group its
 statistics attach to, so whichever of the two runs first builds it and the
@@ -467,7 +431,7 @@ tables big enough to matter: koji's blocks run to billions of rows, and the
 min/max of a monotonic `id` column over a whole block spans the entire domain, so
 it prunes nothing. Parquet's win comes from row-group granularity, and there is
 already a natural unit to reuse — the sparse row index checkpoints every 8192
-rows (`docs/design/roadmap-P7-scan-performance.md`). Statistics attach to
+rows. Statistics attach to
 those checkpoints; block-level statistics are then just the roll-up, free to
 compute and still worth storing for the coarse first pass.
 
@@ -579,10 +543,12 @@ trustworthy; **cancellation and timeouts**, since a ranged GET can hang where a
 ([`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md));
 **where a remote compressed file's seek table comes from**, which is P13's
 answer or else one ranged GET per stream footer; and the **second set of
-measured defaults** a high-latency backend needs, which P7 names as the part of
-its tuning that does not transfer.
+measured defaults** a high-latency backend needs — readahead depth and
+chunk-size defaults measured against local devices say nothing about a
+high-latency ranged backend, which is the one part of that tuning that does not
+transfer.
 
-**Scheduled after P10 and ahead of P6.** Backburnered relative to P13 and P7,
+**Scheduled after P10 and ahead of P6.** Backburnered relative to P13 and the scan-performance work,
 which is the maintainer's call; ahead of P6 because that phase's own reason for
 going last is that it presents surfaces over mechanisms that have stopped
 moving, and a `TableProvider` commits to the I/O layer beneath it. That layer is
@@ -742,7 +708,7 @@ until a keystone, which strikes it along with the phase docs and leaves a
 watermark saying which numbers are spent (`../process.md`, "The out-of-band
 ledger is struck too").
 
-**M1–M46 are struck**, and nothing at or below `M46` is reused. That is a
+**M1–M58 are struck**, and nothing at or below `M58` is reused. That is a
 high-water mark rather than a claim that every one of them landed: some were
 absorbed into a neighbour or folded into a phase slice, and their numbers are
 spent all the same. What each struck item did is filed by subject —
@@ -750,19 +716,17 @@ spent all the same. What each struck item did is filed by subject —
 [`measurements.md`](measurements.md) for an apparatus change,
 [`layering.md`](layering.md), [`../process.md`](../process.md) and
 [`.claude/skills/`](../../.claude/skills/) for a rule — and why it was done is
-in the dated history entry it was filed under. The table below was started
-again by the first item admitted after this keystone.
+in the dated history entry it was filed under.
+
+**What the table below still holds is the queue, not the record.** A landed
+item's row is provenance and goes with the rest of the centering; a row whose
+Date is still empty is a live obligation, so it stays and keeps its number.
+The next item admitted takes `M59` and joins them.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
-| `M47` | 2026-09-03 | The profile recipe takes its libc symbols from an installed detached-symbol package when there is one, reports which source it used, and falls back through `perf buildid-cache --debuginfod` rather than a hand-rolled `curl` | | [2026-09-03](../status/history/2026-09-03.md), "Two premises under the profiler's symbol fetch were wrong" |
-| `M48` | 2026-09-03 | The borrow graph declared on `Figure` rather than buried in `session.borrow` call sites, so the harness computes a figure's transitive closure — `--figure` names or takes it, the partial-sweep note states it, and `--check` catches one reading published twice | | [2026-09-03](../status/history/2026-09-03.md), "`M48`: the borrow graph is declared, and the harness computes the closure" |
-| `M49` | 2026-09-03 | Cited sections in `architecture.md` addressed by a stable `<!-- section: … -->` marker rather than by their heading, so a heading stating a measured proportion is free to be rewritten when the number moves | | [2026-09-03](../status/history/2026-09-03.md), "Citation by heading is unenforced, and citations are already dangling" |
-| `M50` | 2026-09-03 | A citation check: a `section:` id strictly — named or bare, by set membership — a heading or bold lead leniently, since that grammar admits truncated clauses, and a **marked** section's heading as a failure naming the id instead | | [2026-09-03](../status/history/2026-09-03.md), "Citation by heading is unenforced, and citations are already dangling" |
-| `M51` | 2026-09-04 | The nine dangling citations `M50` reported retargeted, each read for what it meant rather than pattern-matched — seven of them left by one keystone sweep, which repointed each citation's document and not its section | | [2026-09-04](../status/history/2026-09-04.md), "`M51`: what the nine dangling citations meant" |
 | `M52` | | A figure whose reps another figure *derives* from names that consumer when it is taken alone — `--figure` says so at run time, `--check` reports the relationship beside the partial sittings — closing the one hazard the republication-only closure leaves | | [2026-09-03](../status/history/2026-09-03.md), "The sharing closure's reverse edge is silent" |
-| `M53` | | The `query` profile table re-taken from the profiles already in `runs/`, retiring the three standing corrections beneath it, each surviving as one sentence of what that slice moved | | [2026-09-04](../status/history/2026-09-04.md), "The `query` profile table is re-taken, not annotated again" |
-| `M54` | 2026-09-04 | `copy::RowSplit` bound to its row by a `#[cfg(debug_assertions)]` length, asserted in `field` and `complete`, so a missed `restart` is a test failure rather than in-range indices into the wrong row | | [2026-09-04](../status/history/2026-09-04.md), "`M54`: the shared split is bound to its row" |
+| `M53` | | The `query` profile table re-taken from the profiles already in `runs/`, retiring the standing corrections beneath it, each surviving as one sentence of what it moved | | [2026-09-04](../status/history/2026-09-04.md), "The `query` profile table is re-taken, not annotated again" |
 | `M55` | | The read path's buffer pool keeps a buffer whose length is the configured `chunk_size`, keeping the 8 MiB ceiling for everything else, so a raised `--chunk-size` stops losing pooling to a size proxy aimed at `attach_text`'s span read | | [2026-09-04](../status/history/2026-09-04.md), "The chunk-size flag is reviewed and kept, and the cliff behind it is a proxy" |
 | `M56` | | The census-off binary carries a source stamp beside it the way a generated input does, and the harness refuses a census figure whose stamp is not the commit it is measuring — so a binary the harness is forbidden to build cannot silently be one it is forbidden to trust | | [2026-09-05](../status/history/2026-09-05.md), "The census-off binary is apparatus, and nothing was checking its age" |
 | `M57` | | The register's boundary made mechanical: a section outside it declares itself, `--check` asserts such a section carries no figure marker, and the doc's "every figure below was taken by `measure.py`" is scoped to what the register actually holds rather than to everything printed under it | | [2026-09-05](../status/history/2026-09-05.md), "The koji section is outside the figure register, and only its prose said so" |
@@ -772,7 +736,8 @@ again by the first item admitted after this keystone.
 `INSERT`-run scan cost **mid-teens times** a `COPY` scan per byte, CPU-bound,
 which argued for an `INSERT` fast path — and *that* changes a decision, so it
 went through grilling → spec amendment → a numbered slice rather than through
-this section. It is `KD9`, and P7's slice 7.5 took it to **4.9× warm**. The
+this section. It is `KD9`, and the `INSERT` statement scan took it to
+**4.9× warm**. The
 entry stays live at that residual: part of it is a property of the two
 algorithms and cannot go, and part of it is two named, untaken cuts
 ([`architecture.md`](architecture.md), "Bulk regions: one span kind, three

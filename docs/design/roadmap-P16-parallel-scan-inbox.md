@@ -1,15 +1,16 @@
 # P16 inbox — facts filed for its grilling
 
-Evidence for P16 (parallel scan and extraction), the phase carved out of P7 at
-P7's grilling. **This is a queue, not a document**: when P16 is grilled, walk
-every entry, fold it into that phase's spec or discard it as stale, and delete
-this file. See `docs/process.md`, "Inboxes: facts filed by destination".
+Evidence for P16 (parallel scan and extraction), the phase carved out of the
+scan-performance work when the parallel half became its own. **This is a queue,
+not a document**: when P16 is grilled, walk every entry, fold it into that
+phase's spec or discard it as stale, and delete this file. See
+`docs/process.md`, "Inboxes: facts filed by destination".
 
 Each entry says what the fact is, why *this* phase cares, and where it came
-from — go re-check the origin rather than trusting an entry that has aged.
-Three of them were filed at P7 and moved here whole when the parallel half
-became its own phase; their "why this phase cares" paragraphs are rewritten
-only where they named P7 for work P7 no longer does.
+from — go re-check the origin rather than trusting an entry that has aged. The
+scan-performance work has since **finished**, so every entry here describes
+something that is true of the code as it stands rather than something still
+moving.
 
 ---
 
@@ -25,15 +26,16 @@ seam would silently paper over the wrong range.
 
 **Why this phase cares.** This is the *one* place the P3 spec's "coverage is
 a prefix, by construction" stopped being an observation and became an
-assumption in code. That spec section already names P7's device-aware
+assumption in code. That spec section already names device-aware
 parallelism as "the plausible future source of interior holes" and argues a
 span list (rather than a watermark) is what makes them expressible. It is
 right that the *format* allows them — but `splice` does not, and out-of-order
 NVMe scanning is exactly what would produce them. Whatever this phase does about
 scan ordering has to either keep coverage prefix-shaped or rework `splice`'s
-seam rule, and that should be a decision, not a discovery. **P7's answer is the
-entry "P7 leaves coverage prefix-shaped" below**, which says which of the two it
-chose and what it added to the assumption while it was there.
+seam rule, and that should be a decision, not a discovery. **The answer already
+given is the entry "coverage is left prefix-shaped" below**, which says which of
+the two the scan-performance work chose and what it added to the assumption
+while it was there.
 
 **Origin.** 2026-08-24. See
 [`architecture.md`](architecture.md),
@@ -103,8 +105,8 @@ the crate actually committed to.
 
 ## The sparse row index is this phase's to build, and P10 needs the same interval
 
-**Fact.** The index — the byte offset of every Nth row — was P7's until P7's
-grilling found it had no consumer there. `ResumeToken` already carries a byte
+**Fact.** The index — the byte offset of every Nth row — was the
+scan-performance work's until its grilling found it had no consumer there. `ResumeToken` already carries a byte
 offset and an in-block row count, so resuming a query does not rescan a block
 from its start, and nothing in the library or the CLI exposes a row-range seek.
 koji puts the scale on it: 19,575,829,920 rows is ~2.4M checkpoints at ~19 MB
@@ -117,7 +119,7 @@ entirely. The interval is not a free choice — P10 attaches per-row-group
 statistics to it, so whichever of the two phases runs first settles it and the
 other inherits it. Decide it against both, not against splitting alone.
 
-**Origin.** P7's grilling, 2026-09-03
+**Origin.** The scan-performance grilling, 2026-09-03
 ([`../status/history/2026-09-03.md`](../status/history/2026-09-03.md), "P7's
 grilling").
 
@@ -135,7 +137,7 @@ worker cannot tell a `);` inside a string literal from the one that ends the
 statement without having crossed every byte before it.
 
 **Why this phase cares.** It inverts the obvious priority. An `INSERT` run is
-the most CPU-hungry shape this scanner has — 4.3× a `COPY` scan's per-byte cost
+the most CPU-hungry shape this scanner has — 4.9× a `COPY` scan's per-byte cost
 warm, the deficiency register's `KD9` — so it is where cores would pay best,
 and it is the one region kind speculative splitting cannot touch. Three ways
 out, and the choice belongs to this phase's grilling rather than here:
@@ -148,7 +150,8 @@ run's start, which is O(run) per worker and self-defeating.
 Note the same fact bounds P13: a compressed-block boundary lands mid-statement
 just as a speculative split does.
 
-**Origin.** P7's slice 7.5 and the review of its `KD9` call, 2026-09-03
+**Origin.** The `INSERT` statement scan and the review of its `KD9` call,
+2026-09-03
 ([`../status/history/2026-09-03.md`](../status/history/2026-09-03.md), "`KD9`
 reviewed: struck, then restored to its residual"). Found by asking what the
 residual costs beyond scan time; contingent on nothing — it follows from the
@@ -174,7 +177,7 @@ which removes the lock and the miss at once but multiplies the resident buffers.
 Neither is decidable without knowing how this phase splits the work, which is
 why it is filed here rather than guessed at now.
 
-**Origin.** P7's slice 7.13, 2026-09-03
+**Origin.** The read path's buffer pool, 2026-09-03
 ([`../status/history/2026-09-03.md`](../status/history/2026-09-03.md), "7.13:
 the read path's allocation, and the seam that earned 7.13.1"). Contingent on
 the pool surviving `7.13.1`, which reworks who copies the chunk but not who
@@ -188,20 +191,23 @@ time `dd` takes to read the same bytes, and a large-object region 1.20×. One
 core already saturates that device on the discovery path. The `INSERT` run is
 the exception at **2.66×**
 ([`measurements.md`](measurements.md), "Scan throughput by input shape", the
-cold-NVMe table, taken by P7's slice 7.8).
+cold-NVMe table).
 
 **Why this phase cares.** It says where the workers go. The HDD reading already
 said parallel discovery wins nothing on rotational media; what was open was
 whether a fast device changes that, and it does not — the whole prize for
-parallelising `parse` on NVMe is the 0.125 s by which a 1.406 s scan exceeds
-its floor, and a splitter's own coordination has to come out of that. Row
-extraction is the opposite case at 13.3× the warm floor before a column is
-typed. So a parallel scheme that speeds up discovery and not extraction is
+parallelising `parse` on NVMe is the **0.076 s** by which a 1.314 s scan
+exceeds its floor, and a splitter's own coordination has to come out of that.
+That gap has narrowed since this entry was filed, where it read 0.125 s of
+1.406 s, because the read path got faster by more than the device did: the
+argument is stronger now, not weaker. Row extraction is the opposite case at
+**10.9×** the warm floor untyped and 15.0× typed, having been 13.3× and 31×
+when the entry was written. So a parallel scheme that speeds up discovery and not extraction is
 measurable only in the regime where nothing needed speeding up. It also
 sharpens the `INSERT` entry above: that shape *is* where cores would pay on a
 fast device, and it is the one region kind speculative splitting cannot touch.
 
-**Origin.** P7's slice 7.8, 2026-09-04
+**Origin.** The cold-NVMe figure, 2026-09-04
 ([`../status/history/2026-09-04.md`](../status/history/2026-09-04.md), "The NVMe
 is where the `INSERT` path stops being device-bound"). Contingent on the
 device: a faster disk than this one would reopen it, and none is available here
@@ -213,7 +219,7 @@ to measure on.
 
 **Fact.** `io::BufferPool` holds **four** slots and keeps nothing above 8 MiB.
 A read whose buffer is not pooled falls back to `vec![0u8; len]`, which is the
-`calloc` 7.13 was landed to remove — and the chunk-size sweep priced it
+`calloc` the buffer pool was landed to remove — and the chunk-size sweep priced it
 directly: a 16 MiB chunk, which the pool refuses, takes **0.825 s warm against
 0.386 s** at 8 MiB on the same file and the same binary
 ([`measurements.md`](measurements.md), "What the read chunk size is worth").
@@ -227,23 +233,24 @@ the pool need to scale with the worker count" is a question with a number
 behind it rather than a guess — and it is a number large enough that getting it
 wrong would eat a meaningful share of what parallelism buys.
 
-**Origin.** 2026-09-04, P7.8.1.
+**Origin.** 2026-09-04, the I/O-defaults reading.
 
 ---
 
-## P7 leaves coverage prefix-shaped, and hardened the assumption rather than relaxing it
+## Coverage is left prefix-shaped, and the assumption was hardened rather than relaxed
 
-**Fact.** P7 did **not** rework `splice`'s seam rule. `stream::splice` still
+**Fact.** The scan-performance work did **not** rework `splice`'s seam rule.
+`stream::splice` still
 rebuilds `DumpIndex::spans` as `prefix ++ built ++ [Unscanned tail]` and still
 closes the seam by extending the last prefix span, exactly as the first entry in
-this file describes; what P7 changed is only *how often* it runs, by putting it
+this file describes; what changed is only *how often* it runs, by putting it
 behind the save throttle's gate ([`architecture.md`](architecture.md), "`parse`
 resumes, and saves as it goes"). Three things about the assumption are now more
 sharply stated than they were, and all three bind a splitter:
 
 - **A contribution's unit is a whole block, never a byte range.**
   `map::Builder::snapshot` `debug_assert!`s `Mode::Idle`, so spans can be taken
-  off a `Builder` only between blocks. That coupling is why P7's gate could not
+  off a `Builder` only between blocks. That coupling is why the gate could not
   be worked around locally, and it is why a worker that has scanned an interior
   byte range has no way to hand its spans back through today's interface — the
   obstacle is `snapshot` and `splice`, not the span list, which can express a
@@ -260,27 +267,27 @@ sharply stated than they were, and all three bind a splitter:
   seam a prefix has.
 - **The rework and `KD5` are one change, not two.** `KD5`'s remainder — keeping
   the frontier's spans appendable rather than rebuilt — is already owned by this
-  phase, and P7's rejected-alternative paragraph refuses it here precisely
+  phase, and the rejected-alternative paragraph beside the mechanism refuses
+  it here precisely
   because it is what a parallel splitter wants anyway. So "make spans
   appendable" and "let coverage have interior holes" are the same piece of work,
   and costing them separately will double-count.
 
-**Why this phase cares.** This is the written statement the first entry says P7
+**Why this phase cares.** This is the written statement the first entry says
+that work
 owes, and it is the half that was a decision rather than a discovery: coverage
-is prefix-shaped by choice through the end of P7, so this phase inherits the
+is prefix-shaped by choice, so this phase inherits the
 assumption whole and pays for relaxing it. The practical consequence is that a
 splitter cannot be built on top of `splice` — it either constrains workers to
 produce a prefix (finish block *k* before block *k+1* is published, which throws
 away most of what out-of-order scanning buys) or it lands the appendable-spans
 rework first and treats `KD5` as discharged by the same change.
 
-**Origin.** P7's slice 7.4 and the phase's standing scope decision, restated at
-7.12 on 2026-09-05
-([`architecture.md`](architecture.md), "`parse` resumes, and saves as it goes",
-whose `KD5` paragraph carries the rejected alternative;
-[`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md), "What this
-phase is not"). Contingent on nothing P7 has left to land — 7.12 is a
-measurement slice and touches no scan path.
+**Origin.** The splice gate and the standing scope decision, restated
+2026-09-05 ([`architecture.md`](architecture.md), "`parse` resumes, and saves
+as it goes", whose `KD5` paragraph carries the rejected alternative). Contingent
+on nothing: the scan-performance work has finished and left `splice`'s seam rule
+as it found it.
 
 ---
 
@@ -322,7 +329,7 @@ partiality representable and keep `resolve_columns` from ever being handed one �
 and "the census is a per-block accumulation" is the wrong reason to hesitate,
 because it is not.
 
-**Origin.** P7's slice 7.12, 2026-09-05, reading the census against
+**Origin.** 2026-09-05, reading the census against
 `pgdump_query/src/index.rs` (`ArrayShape::merge`, `union_census`) and
 `pgdump_query/src/map.rs` (`Builder::on_row`) rather than against the prose.
 Contingent on the merge staying a semilattice: an `ArrayShape` field that is

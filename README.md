@@ -48,7 +48,6 @@ cargo run -p pgdump_query-cli -- info --source <dump.sql> --verbose
 - [`docs/design/postgres-invariants.md`](docs/design/postgres-invariants.md) — `pg_dump` behaviours the design relies on, with source evidence and re-verification steps.
 - [`docs/design/measurements.md`](docs/design/measurements.md) — every performance figure the design relies on, each with the command that reproduces it.
 - [`docs/design/pg-dump-compatibility.md`](docs/design/pg-dump-compatibility.md) — tracked `pg_dump` option support matrix.
-- [`docs/design/roadmap-P7-scan-performance.md`](docs/design/roadmap-P7-scan-performance.md) — performance design for the local-file read path, and what it constrains ahead of its own phase.
 - [`docs/design/historical/initial.md`](docs/design/historical/initial.md) — frozen original design handoff.
 - [`docs/process.md`](docs/process.md) — the phased development process this project follows (project-agnostic; written to be copied into other projects). Agents reach it through the `process` skill, which requires reading it in full before implementing a roadmap slice.
 - [`CLAUDE.md`](CLAUDE.md) — repo guidance for AI coding agents (full command reference, architecture detail).

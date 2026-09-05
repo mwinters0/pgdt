@@ -8,7 +8,7 @@ discoveries are in `history/`.
 
 ## What exists
 
-P1–P5, P9, P11 and P12 are complete and were struck at keystone reviews; how
+P1–P5, P7, P9, P11 and P12 are complete and were struck at keystone reviews; how
 each mechanism works is [`../design/architecture.md`](../design/architecture.md),
 filed by subject, which is where a session touching one meets its rejected
 alternatives and its limitations. The capability table below says what state
@@ -16,7 +16,8 @@ each is in.
 
 [`../design/measurements.md`](../design/measurements.md) carries the `af15eac`
 stamp of 2026-09-05, and **for the first time every one of its seventeen tables
-comes from one sitting**: sixteen from P7's wrap sweep and `session-drift`,
+comes from one sitting**: sixteen from the scan-performance wrap sweep and
+`session-drift`,
 which no sweep can take because it is derived *across* two, from that sweep and
 a second begun the minute it finished. No table carries a partial-sitting note,
 no absolute in the document is a cross-sitting reading, and `measure.UNTAKEN`
@@ -26,8 +27,8 @@ previous `ba2fc12` stamp ten of the seventeen stood outside the sweep.
 
 **The largest correction the register has carried is `census-arrays`.** Its warm
 census cost read 1.045 s and 1.49 µs a row under the old stamp and now reads
-**0.201 s and 287 ns** — a factor of five — because 7.6 put the census's field
-split behind `memchr` and the split was the byte loop, not the census. It was
+**0.201 s and 287 ns** — a factor of five — because the census's field split
+went behind `memchr` and the split was the byte loop, not the census. It was
 red on `pgdump_query/src/copy.rs` throughout, so nothing about the register
 missed it; what a red figure never says is *how far* a number has moved.
 
@@ -37,19 +38,19 @@ what an inspected row costs, against 4% before — so "one tier, not two" no
 longer holds. `census-attribution`'s baseline gap fell from +0.874 s to
 +0.033 s, which is inside the drift figure, so the untyped baseline's
 file-dependence is now invisible without the census-off binary rather than
-obvious with it. `predicate-terms` measures the shared field split 7.7.1
-landed, and its term-count axis has gone flat: five terms at one depth cost
-+0.05 µs a row over one, against +0.37 before. And the I/O-defaults ceiling fell
-from 8.9% to **5.8%**, because 7.13 and 7.13.1 took the parse below the device
-by more than they took the device — every lever 7.8.1 declined at 8.9% is
-declined harder now.
+obvious with it. `predicate-terms` measures the shared field split, and its
+term-count axis has gone flat: five terms at one depth cost +0.05 µs a row over
+one, against +0.37 before. And the I/O-defaults ceiling fell from 8.9% to
+**5.8%**, because the read-path work took the parse below the device by more
+than it took the device — every I/O lever declined at 8.9% is declined harder
+now.
 
 **The query path roughly halved.** A typed control query went 10.36 s → 4.75 s
 and the `--arrays --composite` file 19.93 s → 9.12 s, against `strings` legs of
 4.42 s → 3.44 s and 5.36 s → 3.45 s; the nested-column increment went
 **13.5 µs → 6.5 µs a row** and every row of `projection-widths` about halved
-with the same ordering intact. 7.10, 7.13, 7.13.1 and the four render-path
-slices 7.14–7.17 are what moved them.
+with the same ordering intact. The scalar decoders, the read path and the four
+render-path changes are what moved them.
 
 **One reading weakened a settled claim without reopening it.** `mimalloc` now
 reads 0.97×, 0.97× and 0.99× on the three headline shapes — marginally ahead of
@@ -74,9 +75,9 @@ directionally"). Session drift over 92 shared readings is a median absolute
 **What is stale now is five figures on comment-only edits.** Every figure was
 current in fact at `af15eac`; the fold-in touched no declared path at all —
 `scripts/acknowledged.py` is its own module precisely so that an acknowledgement
-edit does not re-stale the stamp it was just given — and P7's wrap touched three
-(`batch.rs`, `decode.rs`, `scripts/measure.py`) purely to retarget citations out
-of the slice notes it deleted, which marks `nested-end-to-end`,
+edit does not re-stale the stamp it was just given — and P7's wrap and keystone
+touched three (`batch.rs`, `decode.rs`, `scripts/measure.py`) purely to retarget
+citations out of the phase docs they deleted, which marks `nested-end-to-end`,
 `cross-file-floor`, `projection-widths`, `allocator` and `session-drift` red. The
 mechanical oracle applies — **reachability**: no executable line changed, so no
 command shape the sweep runs executes anything different. The acknowledgement
@@ -116,7 +117,7 @@ not oblige a sweep").
 | Compressed input (`--source foo.dump.xz`) | not started — P13 for xz, P15 for gzip/zstd. Input is assumed already-decompressed plain SQL text; `pg_dump -Fp --compress=…` output is therefore unreadable today ([`../design/pg-dump-compatibility.md`](../design/pg-dump-compatibility.md)). **P13 is grilled, partly specified and blocked**: no crate answers a positioned read over an `.xz` file, so the seekable-xz layer is being carved out into its own repository ([`../design/roadmap-P13-compressed-input.md`](../design/roadmap-P13-compressed-input.md), "Blocked") |
 | Remote input (`--source https://…`), over `object_store` | not started — P14, carved out of P6. `ByteRangeSource` is already shaped against `get_range`/`head`, and there is exactly one implementation: `LocalFileSource` |
 | Python bindings, DataFusion `TableProvider` | not started — P6 |
-| Device-bound scan performance campaign | **complete** — P7, single-threaded throughout and aimed at the row-extraction path; parallelism is P16. Twelve library changes on timed paths, four measured refusals, and the decomposition that is its durable half ([`../design/architecture.md`](../design/architecture.md), "Where a scan's time goes"). Warm on the 3.00 GiB control a typed `pgdq query` is 15.0× the `dd` floor where it was 31×, a `strings` one 10.9× where it was 13.3×, and a `parse` 1.43×; cold on the SATA SSD every scan shape is inside the device, and cold on NVMe the `COPY` path is 1.06× it. What the phase refused, and why, is [`../design/roadmap-P7-scan-performance-notes.md`](../design/roadmap-P7-scan-performance-notes.md) |
+| Device-bound scan performance campaign | **complete** — P7, single-threaded throughout and aimed at the row-extraction path; parallelism is P16. Twelve library changes on timed paths, four measured refusals, and the decomposition that is its durable half ([`../design/architecture.md`](../design/architecture.md), "Where a scan's time goes"). Warm on the 3.00 GiB control a typed `pgdq query` is 15.0× the `dd` floor where it was 31×, a `strings` one 10.9× where it was 13.3×, and a `parse` 1.43×; cold on the SATA SSD every scan shape is inside the device, and cold on NVMe the `COPY` path is 1.06× it. What it refused, and why, is beside each mechanism as a rejected alternative |
 | Per-row-group column statistics, sparse row index | not started — the index is built by whichever of P16 (parallel splits) or P10 (row groups) runs first; `CopyBlock::sparse_index` and `CopyBlock::column_stats` stay reserved `None`s |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — P8 (the map already locates and attributes `INSERT` runs) |
 
@@ -161,7 +162,7 @@ forcing 64-byte function alignment collapsed the gap. There was nothing to
 bisect to. What it changes is how a figure is read, which is now a standing
 rule ([`../design/measurements.md`](../design/measurements.md), "Two builds of
 one source can differ by layout"). The ratio was never in doubt at the time —
-16.5× against 16.7× — and 7.5 took it to 4.3×, where the read path's own gains have since put it at 4.9×.
+16.5× against 16.7× — and the `INSERT` statement scan took it to 4.3×, where the read path's own gains have since put it at 4.9×.
 
 **The sweep's `control` warm floor sits 22.4% above the previous stamp's**,
 which is over the ~15% a co-measured floor is judged against — and the sweep
@@ -200,10 +201,9 @@ goes").
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **No phase is open.** P7 wrapped; what it built is beside each mechanism in
-  [`../design/architecture.md`](../design/architecture.md) and what it refused
-  is
-  [`../design/roadmap-P7-scan-performance-notes.md`](../design/roadmap-P7-scan-performance-notes.md).
+- **No phase is open.** P7 wrapped and was struck at a keystone review; what it
+  built and what it refused are both beside each mechanism in
+  [`../design/architecture.md`](../design/architecture.md), filed by subject.
   Six other phases are sketched and one more is specified — P13, P16, P10, P14,
   P6, P15, P8, in the roadmap table's schedule order; a `P<k>` is an
   identifier, so the numbers say nothing about the order they run in. P13 is
@@ -324,8 +324,8 @@ here rather than reading as a phase nobody has sliced.
 - **KD9** — an `INSERT` run costs **4.9×** a `COPY` scan's per-byte CPU warm
   and **2.62×** the device's own time cold on NVMe against 1.06×, and two cuts
   against that remainder are known and untaken. **(b) owned by P8**, whose
-  Track A row reader extends the very scan both cuts are in; 7.8's figure
-  confirmed the entry where it might have retired it. Detail:
+  Track A row reader extends the very scan both cuts are in; the cold-NVMe
+  figure confirmed the entry where it might have retired it. Detail:
   [`../design/architecture.md`](../design/architecture.md), "Bulk regions: one
   span kind, three payloads".
 

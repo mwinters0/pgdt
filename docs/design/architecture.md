@@ -145,6 +145,19 @@ way to also delete the scanner's own chunk copy; that copy is gone without it
 ("The scanner never owns the bytes it scans": the carry), which is what makes
 the refusal free.
 
+*Rejected:* **mmap**, which is the intuitive choice for reading a very large
+file and is the wrong default here, on three grounds that need no measurement.
+It bypasses `ByteRangeSource`, so it could never be the path a ranged backend
+takes and adopting it means maintaining two readers. Page faults on a
+hundreds-of-gigabytes file on slow media are synchronous and uninterruptible,
+with no way to bound prefetch depth or time out — against a design whose
+interrupt guard is a promise. And I/O errors arrive as `SIGBUS` rather than
+`Result`, which for a tool whose whole premise is reading a file bigger than
+memory is a bad trade. It stays available as a possible local-only fast path,
+gated on a measurement showing it beats positioned reads by enough to justify a
+second code path; nobody has taken that measurement, and every win the scan
+work found was inside the shape above.
+
 **The read chunk is one measured constant, and the two schemes above it are
 refused.** `ScanOptions::chunk_size` defaults to `scan::DEFAULT_CHUNK_SIZE`,
 1 MiB, and `pgdq parse`/`pgdq query` expose it as `--chunk-size` — a tuning
@@ -158,7 +171,18 @@ the device takes to deliver the bytes**, and on the fastest disk this project
 owns a cold `COPY` scan exceeds that floor by 5.8%
 ([`measurements.md`](measurements.md), "Scan throughput by input shape"). On
 the SATA SSD the same subtraction is ~1%; on the HDD the scan is device-bound
-by a factor of several.
+by a factor of several. **That ceiling is a fact about the fastest disk we
+own**, not a general one: a device on which parse CPU exceeded read time would
+reopen both schemes below at once. It has no owner and is not a deficiency —
+what would promote it is hardware.
+
+*Rejected:* choosing the chunk size at run time from
+`/sys/block/<dev>/queue/rotational`. It is Linux-only, and it degrades exactly
+where this tool runs — `/sys` may be masked inside a container, and on LVM,
+dm-crypt, MD, NFS or an overlay, resolving a path to its backing device is a
+walk with several ways to be wrong. The sweep then made the question moot: the
+measured spread is a tie across the middle of the range and flat on two of the
+three device classes, so there is nothing for adaptivity to chase.
 
 *Rejected:* removing `--chunk-size` once the sweep came back flat, on the
 grounds that a knob justified by a null result is surface nobody needs. Two
@@ -642,9 +666,9 @@ is this scan — extended rather than rewritten, so that
 that opens `StatementScan` with a second caller's requirements in hand, and the
 paren cut in particular cannot be shaped without them: a reader splitting a
 `VALUES` tuple has its own view of whether the depth count is dead weight,
-where a scan-only micro-benchmark does not. *Rejected: taking the two cuts as a
-P7 slice, which the phase's own rules allow* — a row admitted after spec time
-takes the next free number, and three rows of that table already did. It is
+where a scan-only micro-benchmark does not. *Rejected: taking the two cuts inside the
+scan-performance work, which its own rules allowed* — it admitted levers from
+its own profiles as it ran, and did so three times. It is
 refused because it would price both cuts against a workload that only *maps* an
 `INSERT` run, months before the reader that gives the second cut its shape, and
 would then have P8 re-open the same function anyway.
@@ -656,8 +680,8 @@ the paren pass, so which of the two is worth taking is open. A profile answers
 it in seconds and publishes no number, so the reading is not a slice of its
 own.
 
-**What made it mid-teens was the accumulation, and P7's slice 7.5 removed
-that.** Under the `ba2fc12` stamp the same scan read 9.19 s warm, 16.5×, and
+**What made it mid-teens was the accumulation, and removing that is what
+moved it.** Under the `ba2fc12` stamp the same scan read 9.19 s warm, 16.5×, and
 1.89× the floor cold, because `feed_line` turned every line into a `String`
 (`String::from_utf8_lossy(raw).into_owned()`) and `push_stmt_line` copied it
 into a buffer that `statement_complete` then re-walked with
@@ -670,6 +694,17 @@ between them with one `memchr3` for the next mode-changing byte plus a
 `memchr2` count for the parens. `Mode::InsertRun` holds that scan in place of
 the `String` it used to hold, which it can because a run's span carries a table
 name and a row count and nothing reads its text.
+
+**`Mode::Statement` still accumulates a `String` and still re-walks it per
+line, and that asymmetry is the reason the fast path was worth building.** A
+statement span carries its text, which `classify_statement` and
+`extract_statement_cross_refs` read, so the buffer cannot simply go the way
+`Mode::InsertRun`'s did; the per-line re-walk could be made incremental with a
+second `StatementScan` beside the buffer. It is left because the two modes see
+different volumes of the same file: DDL is a few megabytes even in a
+784 GB dump ([`roadmap.md`](roadmap.md), "Project goals"), where an `INSERT`
+run is the file. Nobody owns it, and nothing would promote it short of a
+producer that writes gigabytes of statements outside a data run.
 
 **The fast path declines every line it cannot decide, and `Builder::step`
 decides those exactly as it did before.** `Builder::insert_run_line` hands back
@@ -4470,6 +4505,20 @@ scripts && uv run measure.py --profile-recipe` prints. Every figure quoted as
 seconds is a `measurements.md` table; every percentage is a profile, which is a
 proportion and never a median.
 
+**On this workload the allocation is the cost and the bounds check is not**,
+which is the one generalization the scan-performance work earned and the reason
+none of these paths contains `unsafe`. It came up four times — slicing a row
+out of a bulk-validated `&str` rather than `from_utf8_unchecked`, a hex table
+of `&'static str` rather than a `Vec<u8>` finished with
+`String::from_utf8_unchecked`, offsets pushed and indexed in `RowSplit` rather
+than written raw, and escaping an array element in place through
+`String::as_mut_vec` — and in three of the four the safe shape was also the
+*faster* one, because it did strictly less work rather than the same work
+unchecked. Only the fourth would have been faster, and it buys one allocation
+per array value. Each refusal is filed beside its own mechanism; the pattern is
+here because a session reaching for `unsafe` on a hot path in this codebase
+should expect to be measuring the wrong thing.
+
 **These headings state a proportion, and that is deliberate.** A heading here is
 the section's one-line finding, met for free by a reader skimming the contents,
 so it is written to say what the profile found and rewritten whenever the finding
@@ -4594,6 +4643,24 @@ the census-on/census-off pair reads **+0.057 s** where it stands today, against
 ([`measurements.md`](measurements.md), "The census on brace-free rows"). A
 share that agrees with a subtraction taken by a different instrument is the
 evidence that the user-time correction above is being applied correctly.
+
+*Deferred: deleting the LF search outright, by seeking straight to the block
+terminator.* Inside a `COPY` block the only thing that ends the block is a line
+holding exactly `\.`, and that line is unambiguous — COPY TEXT doubles a
+backslash in a value, so `LF 5C 2E` never begins a data line (I7). One
+`memchr::memmem` for that three-byte needle would therefore find the end
+without looking at a single row, which is the natural shape for a pass whose
+whole job is to *skip*. **What stops it is that two things do look at every
+row**: `CopyEnd::row_count`, which the cache stores and `info` reports, and the
+array-shape census, which every mapping pass records and a query reads back to
+retype its array columns before the first batch. Counting without enumerating
+is available — `memchr::count` over the block extent is the same kind of SIMD
+pass — but the census is not, because it needs the bytes. So adopting the
+needle search means deciding what happens to the census, and the whole prize is
+the LF search's share of a path the table above puts at a quarter-second per
+3 GiB warm and inside the noise cold. It is written down because the invariant
+that makes it *safe* is the expensive half and is already established; what is
+missing is a reason.
 
 **On a brace-bearing file the picture inverts, and the field split behind it
 was the whole of the inversion.** Over the `--arrays --composite` file
@@ -4814,6 +4881,15 @@ the decoders stopped allocating. The dispatch is a jump table over
 `batch::ColumnBuilder`'s twenty variants and the appends are `arrow-rs`'s own;
 there is nothing between them to take.
 
+*Rejected: pre-sizing the builders.* `new_column_builder` builds every one with
+`::new()` rather than `with_capacity(max_rows)`, so each grows by doubling —
+about thirteen reallocations per column per 8192-row batch, which is the shape
+that looks like free money. The profile prices the whole of it: `reserve` and
+`capacity` under `append_typed` are 0.018% and 0.034% of the control run,
+together **under 6 ns a row**, below every instrument this project owns. And it
+would make a one-row batch allocate 8192 slots in every column, so it is a
+memory regression bought with nothing measurable.
+
 **A nested column moves that row and does not change the answer.** The same
 split over the `--arrays --composite` file reads **0.19 µs a row** of Arrow
 appends for two `integer[]` columns of 54 elements between them, a composite
@@ -4936,7 +5012,8 @@ than folded from the sweep's.
 Over the 3.00 GiB `INSERT`-run file, warm, a `parse` — the profile that chose
 the fast path's layer, and the profile of the path that replaced it:
 
-Flat shares under the `ba2fc12` stamp, before P7's slice 7.5:
+Flat shares under the `ba2fc12` stamp, before the statement scan replaced
+the accumulator:
 
 | Share | Symbol | Reached from |
 |---|---|---|
@@ -5044,6 +5121,11 @@ that are both tuned for this shape of work: what is on the table is single
 percentage points, in a table whose own instrument does not resolve them. The
 features stay in `pgdump_query-cli`'s manifest so a later re-take is five
 minutes.
+
+*Rejected:* a third leg. `tcmalloc` and its neighbours are a fishing expedition
+on the strength of the two named replacements both losing; `ALLOCATOR_LEGS`
+takes one by a single entry if anyone wants it, so nothing has to be designed
+for that day.
 
 **The claim is "nothing beats it by more than the instrument's own noise", and
 it used to be "nothing beats it".** Three sittings have given three answers for

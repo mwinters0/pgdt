@@ -347,14 +347,16 @@ differently changes what the promise would say.
 **Fact.** Every `query` figure in [`measurements.md`](measurements.md) times
 `pgdq query … >/dev/null`, and a sampling profile of that command puts
 `pgdq::print_batch` — the CLI turning each `RecordBatch` back into TSV — at
-**34.0%** of a `strings` query's user time and **62.8%** of a typed one's, with
-`batch::render_field` alone at 52.6% of the latter. An embedder consuming
-`RecordBatch`es pays none of it. Measured on the 3.00 GiB control: the library's
-own typed extraction is **3.10 µs a row against `strings`'s 2.42** — a factor of
-1.3, where the wall times a reader would quote show 2.4. **Read that pair off
-the budget when P6 comes up rather than off this entry**, since every landing
-lever re-reads it: the same two numbers were 4.06 and 2.48 when this was filed,
-and one P7 slice moved the typed one by a quarter. The same figures also
+**25.75%** of a `strings` query's user time and **36.42%** of a typed one's,
+and it was 34.0% and 62.8% when this entry was filed — the render path has since
+been reworked three times and the library is now the larger bucket in both
+modes. An embedder consuming `RecordBatch`es pays none of it. Measured on the
+3.00 GiB control: the library's own typed extraction is **3.10 µs a row against
+`strings`'s 2.42** — a factor of 1.3, where the wall times a reader would quote
+now show 1.38 and once showed 2.4. **Read every one of those numbers off the
+budget when P6 comes up rather than off this entry**, which is the point of the
+entry rather than a caveat on it: the pair was 4.06 and 2.48 when it was filed.
+The same figures also
 all run `--dqcache none`, so each one contains a full mapping pass and reads the
 file exactly twice (2.0000× its bytes, counted with `strace`); an embedder with
 a cache reads it once. Both are in
@@ -367,30 +369,34 @@ the typed cost by roughly 2.5× and understates how much a warm cache buys. The
 decision P6 has to make is whether it states a performance claim at all and, if
 so, against what instrument.
 
-**P7 will not build that instrument, which narrows the question rather than
-leaving it open.** A figure that stops at the batch would need either a
+**The instrument was deliberately not built, which narrows the question rather
+than leaving it open.** A figure that stops at the batch would need either a
 published bench through push mode — whose only caller is tests, and whose fate
 is the entry above — or a measurement-only flag in the shipped binary, against
-a doc whose standing position is that a figure here is a CLI figure. So P7
-keeps the library's cost as *proportions* instead:
+a doc whose standing position is that a figure here is a CLI figure. So the
+library's cost is kept as *proportions* instead:
 [`architecture.md`](architecture.md), "The library's own per-row budget", splits
-a control row four ways in each mode, and P7's spec obliges a landing lever to
-re-read it. **That is what P6 has to read a claim off**, and it is a table of
-profile shares rather than medians — so a claim built on it is a ratio or a
-per-row cost, never a throughput with an apparatus line behind it. If P6 wants
-the latter, building the instrument is P6's work and not inherited.
+a control row four ways in each mode, and a change to a timed path re-reads it
+in the same change that re-takes a figure. **That is what P6 has to read a claim
+off**, and it is a table of profile shares rather than medians — so a claim
+built on it is a ratio or a per-row cost, never a throughput with an apparatus
+line behind it. If P6 wants the latter, building the instrument is P6's work and
+not inherited.
 
 **And the allocator is the embedder's, not ours, which sharpens what a claim
 may say.** `pgdq` links the platform allocator by its own choice — a
 `#[global_allocator]` in `pgdump_query` would impose one on every embedder — so
 an embedder's numbers are under whatever their binary chose, and that is
-measurably not the same number. On the three headline shapes, `jemalloc` reads
-1.87×/1.19×/1.07× against the platform allocator and `mimalloc`
-0.98×/0.96×/0.96×
+measurably not the same number — though by less than this entry once said. On
+the three headline shapes `jemalloc` now reads 1.02×/1.12×/1.10× against the
+platform allocator and `mimalloc` 0.97×/0.97×/0.99×, where the first sitting
+read 1.87×/1.19×/1.07× and 0.98×/0.96×/0.96×; the largest cell there was
+measuring an allocation in the read path that has since gone
 ([`measurements.md`](measurements.md), "Which allocator a figure was taken
-under"). So even the per-row cost P6 would quote is allocator-conditional, and
-a claim has to be a ratio *and* name the allocator it was taken under, or be
-stated as a range. Origin: P7.3, 2026-09-03.
+under"). So the per-row cost P6 would quote is still allocator-conditional and
+a claim has to name the allocator it was taken under — but the honest spread is
+now single-digit percent rather than a factor, which is a weaker caveat than
+the one filed. Origin: the allocator reading, 2026-09-03.
 
 **Origin.** The scan-performance decomposition, 2026-09-03
 ([`../status/history/2026-09-03.md`](../status/history/2026-09-03.md)),

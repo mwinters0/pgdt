@@ -14,12 +14,18 @@ arrive, koji's included.
 
 ## Why xz first, and why it is not the easy case
 
-Scheduled ahead of P7 because it is the maintainer's priority, and because it
-changes what that phase is measuring: a compressed source inverts the
-arithmetic behind "device-bound". Reading koji compressed is 37.6 GiB off the
-device instead of 730 GiB, paid for in CPU at roughly 446 MB/s of plaintext per
-core. P7 sets readahead, chunk-size and parallelism defaults, and it should set
-them knowing both source shapes exist.
+It is the maintainer's priority, and it **inverts the arithmetic behind
+"device-bound"**: reading koji compressed is 37.6 GiB off the device instead of
+730 GiB, paid for in CPU at roughly 446 MB/s of plaintext per core. The
+local-file read path's own defaults were measured before this phase, against
+uncompressed input on three device classes, and the number they were decided on
+— that no overlap scheme can put a scan below the time the device takes to
+deliver the bytes — is exactly the one a compressed source breaks
+([`architecture.md`](architecture.md), "Execution model and API surface"). So
+this phase does not inherit those defaults as settled; it inherits them as
+measured **for a source shape it does not have**, and owes its own reading of
+whether the chunk size and the read shape still suit when the device is no
+longer the bound.
 
 **The trait already fits and the cost model does not.** A decompressing
 `ByteRangeSource` satisfies `read_range`/`size`/`modified` exactly; what it
@@ -199,7 +205,7 @@ the streaming form. *Rejected: decoding from the covering block on every call*,
 which re-decodes 24–128 MiB per 1 MiB read.
 
 Concurrent `read_range` calls serialize on the mutex. Nothing calls
-concurrently today, and parallel stream-aligned decode is P7's — its inbox
+concurrently today, and parallel stream-aligned decode is P16's — its inbox
 already carries the note that this is where the scaling is.
 
 ## Evidence this phase rests on

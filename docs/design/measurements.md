@@ -158,7 +158,8 @@ Twelve standing rules for reading anything below:
   `git worktree` with `CARGO_TARGET_DIR` pointed back at the main `target/` so
   both land in one `target/criterion`. That builds the same source at a
   different path, which is the layout hazard above with nothing to warn you:
-  taken that way, 7.14's before/after read −1.2%, 0% and −3.6% on the three
+  taken that way, the force-quote set's before/after read −1.2%, 0% and −3.6% on
+  the three
   decode rows while the **copy control moved +70% on code neither revision
   touched**. Re-taken by checking the old file into the same tree, the same
   three rows read −27.5%, −25.4% and −18.6%, which is what the whole-query
@@ -184,11 +185,32 @@ Twelve standing rules for reading anything below:
   and therefore what a library lever can remove, comes from a profile's shares
   or from a criterion bench (`benches/decoders.rs`, whose `decode` and `render`
   columns are separate for exactly this reason) — **never** from a difference
-  taken across two CLI runs. Two lever rows in
-  [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md) were sized
-  the wrong way before this was written down, and a third was still wrong after
-  the first two were corrected, which is why the rule is here rather than in
-  each figure's own prose.
+  taken across two CLI runs. Three proposed optimizations were sized the wrong
+  way before this was written down — two of them at once, and a third still
+  wrong after those two were corrected — which is why the rule is here rather
+  than in each figure's own prose.
+- **The deterministic instrument is `perf stat -e instructions:u`, and
+  `callgrind` is not it.** Retired user instructions hold still when layout
+  moves and when the machine is busy, which is why they carry most of the
+  before-and-after readings this document's arguments rest on, and why a
+  scan-path change is argued on them rather than on a wall figure the harness
+  would need a quiet hour for. *Rejected: `callgrind` / `iai-callgrind` as the
+  standing instrument.* It gives per-function counts immune to machine state,
+  which is exactly what a shared machine wants — and it cannot see the changes
+  that move memory behaviour rather than instruction count. The allocator,
+  zero-copy views and chunk sizing are all of that kind, so an instrument built
+  on counting would report them as free. Reach for it when a specific lever
+  turns out to be instruction-bound, which is the role `instructions:u` already
+  fills more cheaply.
+- **A landed lever invalidates the tables that time its path, so a campaign's
+  sweep goes last.** This binds by construction rather than by taste: a phase
+  that admits levers from its own profiles is profiling the shape its figures
+  time, so *any* row admitted after the plan was written lands ahead of the
+  sweep. Taking the sweep first publishes freshly-measured tables describing a
+  binary that is no longer shipped, with no sweep left to repair them — which is
+  strictly worse than a stale table, because a stale one at least reads stale.
+  The same argument is what fixes an allocator decision ahead of a sweep rather
+  than after it.
 - **Long runs are detached.** A koji-scale scan is roughly an hour; see
   `CLAUDE.md`, "Long-running processes", for why waiting on one is expensive
   and what to do instead.
@@ -641,6 +663,15 @@ it is the only device class we own on which reading the bytes and parsing them
 are within a small factor of each other, so it is the only place a readahead,
 `fadvise` or chunk-size default can show anything at all.
 
+**The HDD is not a fourth regime, and it is deliberately not one.** *Rejected:
+an HDD throughput figure in the sweep.* A synthetic 3 GiB file on a rotational
+disk measures one file's layout, and the koji scan below already answers the
+only HDD question this design has — the scan is device-bound there by a factor
+of several, so no default measured above changes anything a user on that
+hardware sees. Adding the row would cost minutes of every sweep to re-confirm a
+bound two 54-minute runs agree on to within 1%. The HDD therefore stays
+koji-only and stays a *regression* check rather than a throughput one.
+
 <!-- figure: scan-throughput-cold — reproduce with `cd scripts && uv run measure.py --figure scan-throughput-cold` -->
 
 **Every run cold, on the SSD**
@@ -725,10 +756,11 @@ on the SATA SSD the same subtraction is under 1% and on the HDD the scan is
 device-bound by a factor of several.
 
 **That ceiling has fallen since it was set, and it only ever bounded levers
-that were already refused.** 7.8 read it at 0.125 s and 8.9% on a slower
-`COPY` path; the read-path work of 7.13 and 7.13.1 took the parse below the
+that were already refused.** It first read 0.125 s and 8.9% on a slower
+`COPY` path; the read-path work — the buffer pool and the read-loop carry — took
+the parse below the
 device by more than it took the device, so the gap the levers could compete for
-narrowed. Every lever 7.8.1 priced against 8.9% was declined at that number and
+narrowed. Every lever priced against 8.9% was declined at that number and
 is declined harder at 5.8%.
 
 **The `INSERT` path is still a different algorithm, and the warm table is the
@@ -746,7 +778,7 @@ the same algorithms against a device fast enough to stop paying for them.
 **The warm ratio has grown, and nothing about the `INSERT` path caused it.**
 Under the `ba2fc12` stamp it was 4.3×; it is 4.9× now because the `COPY` path
 fell 0.532 s → 0.457 s while the `INSERT` path barely moved, 2.27 s → 2.25 s.
-The read-path work of 7.13 and 7.13.1 is per byte of file and both shapes read
+The read-path work is per byte of file and both shapes read
 the same 3.00 GiB, so what changed is the denominator. `KD9`'s residual is
 therefore a larger share of a faster scan than when the entry was last
 rewritten, which is a reason to keep the entry rather than to re-price it.
@@ -758,8 +790,8 @@ applied at mid-teens applies here.
 
 **This table is what `KD9` is read off, and the warm row is what keeps the
 entry live.** Under the `ba2fc12` stamp the same two rows read **9.19 s warm against
-0.558 s — 16.5×** — and **10.87 s cold, 1.89× the floor**. P7's slice 7.5 put
-the `INSERT` run's statement scan on raw bytes: no `String` per line, no
+0.558 s — 16.5×** — and **10.87 s cold, 1.89× the floor**. Putting the
+`INSERT` run's statement scan on raw bytes is what moved it: no `String` per line, no
 statement buffer to re-walk, and a `memchr` pass across the string values that
 are most of what an `INSERT` statement is
 ([`architecture.md`](architecture.md), "Bulk regions"). What is left is partly
@@ -774,11 +806,7 @@ which is the reading that settles what the entry is about. The claim is
 corrected wherever it is repeated —
 [`pg-dump-compatibility.md`](pg-dump-compatibility.md),
 [`roadmap.md`](roadmap.md) and [`architecture.md`](architecture.md), which
-`--check` names as this table's consumers along with
-[`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md), whose lever
-table records the stake the phase *committed* to and is left alone
-([`../process.md`](../process.md), "Progress lives in STATUS, never in the
-spec").
+`--check` names as this table's consumers.
 
 **Both legs of the earlier ratio drifted between stamps and the ratio did
 not**, which is the reading that says to quote the multiple rather than the
@@ -837,8 +865,9 @@ thousands of them.
 One `pgdq parse` of the 3.00 GiB `COPY` control at six read chunk sizes, in all
 three regimes, differing in nothing but the number `--chunk-size` carries.
 `scan::DEFAULT_CHUNK_SIZE` is the shipped constant and the ratio column is
-against its row. The figure exists to decide one of P7's three I/O defaults and
-to bound the other two.
+against its row. The figure exists to decide one of the three I/O defaults and
+to bound the other two ([`architecture.md`](architecture.md), "Execution model
+and API surface").
 
 **Nine reps, not the throughput tables' three or five.** The cold-NVMe `COPY`
 row above spreads about a fifth of its median over five reps, against a total
@@ -915,7 +944,7 @@ same cost the buffer pool was landed to remove, re-entering through a knob, and
 it is why the sweep brackets the ceiling rather than stopping at it. The cliff
 is a little shallower than the previous stamp's 2.07×, and in the direction the
 rest of this sweep moved: the pooled rows got faster while the unpooled one did
-not, since what 7.13.1 removed is paid per chunk either way.
+not, since what the read-loop carry removed is paid per chunk either way.
 
 **Small chunks cost CPU, not I/O.** 64 KiB is 1.38× warm and 1.17× cold on the
 NVMe, and 1.00× on the SATA SSD — the per-chunk work (a syscall, a pool
@@ -983,7 +1012,7 @@ and every one is positive, which is the finding; **the heading names no number**
 because that number is the half the instrument does not hold still, and
 `measure.py`'s own heading string for this figure still carries the 8% one sweep
 read. This stamp's reading is **+14%**, the highest yet and the top of that
-band rather than outside it: the read-path work of 7.13 and 7.13.1 cut the
+band rather than outside it: the read-path work cut the
 denominator — census-off warm fell 0.484 s → 0.400 s between stamps — while the
 census's own absolute cost moved much less, so the same census is now a larger
 fraction of a smaller scan.
@@ -1000,7 +1029,8 @@ row is not a cost worth a knob.
 the rows that pass the pre-filter (next section), and the pre-filter is
 **25% of what such a row costs** — 71 ns against 287 ns. Under the `ba2fc12`
 stamp the same ratio was 60 ns against 1.49 µs, or 4%, which is what licensed
-calling the pre-filter a rounding error on the inspected path. 7.6 took the
+calling the pre-filter a rounding error on the inspected path. Putting the
+splitter on `memchr` took the
 field split off a per-byte closure and the inspected row got five times cheaper
 while the pre-filter did not, so the two tiers are now within a factor of four
 of each other and the subtraction below has to be read with that in mind. The
@@ -1082,7 +1112,7 @@ the bytes are already resident.
 
 **This cell was wrong by a factor of five until this stamp, and the fault was
 staleness rather than method.** The `ba2fc12` reading was 1.045 s and 1.49 µs a
-row, taken before 7.6 put the census's field split behind `memchr`; the split
+row, taken before the census's field split went behind `memchr`; the split
 was the byte loop, not the census
 ([`../status/history/2026-09-04.md`](../status/history/2026-09-04.md), "The
 census's field split was the byte loop, not the census"). Nothing about the
@@ -1097,7 +1127,7 @@ this stamp — both tables come from the same sweep, where they used to be
 cross-sitting — so it no longer needs the argument that the conclusion survives
 either value. Splitting the row into fields and running `observe` over all 19 of
 them, the work the pre-filter exists to avoid, is **75% of the census's whole
-cost**, down from 96–98% before 7.6. The pre-filter is what keeps the brace-free
+cost**, down from 96–98% before that. The pre-filter is what keeps the brace-free
 case off that path, and it is now a quarter of the price rather than a
 rounding error. The census is
 unconditional either way (`architecture.md`, "The array shape census") — the
@@ -1123,9 +1153,9 @@ first one a project adds sets the precedent for what features are for — here,
 a build in which `architecture.md`'s "the census is unconditional" is untrue,
 serving a comparison taken about once a phase. The escape if the patch-and-
 revert ever bites is to drop the comparison, not to gate it: the absolute
-figures (71 ns/row rejected, 287 ns/row inspected) are what
-[`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md) actually consumes, and
-the census-off column exists to establish it once.
+figures (71 ns/row rejected, 287 ns/row inspected) are what the census's own
+section actually consumes ([`architecture.md`](architecture.md), "The array
+shape census"), and the census-off column exists to establish them once.
 
 ## Nested decode costs what it copies, and an element is now a borrowed slice
 
@@ -1265,8 +1295,8 @@ files.
 **Both legs fell hard since the `ba2fc12` stamp, and the typed leg fell
 furthest.** The control's `typed` went 10.36 s → 4.75 s and the arrays file's
 19.93 s → 9.12 s, against `strings` legs that went 4.42 s → 3.44 s and
-5.36 s → 3.45 s. Four render-path slices (7.14–7.17), the scalar-decode work of
-7.10 and the read path of 7.13/7.13.1 are between the two stamps, and the
+5.36 s → 3.45 s. Four render-path changes, the scalar decoders and the read
+path are between the two stamps, and the
 nested-column increment more than halved with them: **13.5 µs → 6.5 µs a row**.
 The ratio moved 3.72× → 2.65× on the same rows, which is why the ratio is the
 derived half.
@@ -1305,7 +1335,7 @@ baseline gap large enough to see without the census-off binary.
 
 **So the finding survives and its headline number does not.** A `strings` leg
 is still a scan plus a census whose price depends on the data's shape rather
-than a flat per-byte floor; but 7.6 took the census's field split off a per-byte
+than a flat per-byte floor; but the census's field split came off a per-byte
 closure, and the shape-dependent term fell with it from about a fifth of the
 run to about a twentieth. A reader who wants to know whether the untyped
 baseline is file-independent still needs this table — the +0.033 s census-on gap
@@ -1323,9 +1353,10 @@ The micro above covers 3.3 µs of the 6.5 µs — decode plus render for a
 composite (235 ns), which are exactly this file's three nested columns. The
 remaining ~3.2 µs is the Arrow build the micro does not reach: 56 per-element
 `append_value` calls into the child builders, plus the list offsets. **The
-literal parse is about half of nested decoding**, which is the fact
-P7 needs before deciding what to do about nested values always copying — and
-the two halves have stayed close to even as both fell.
+literal parse is about half of nested decoding**, which is the fact behind the
+refusal to stop copying nested values ([`architecture.md`](architecture.md),
+"The library's own per-row budget") — and the two halves have stayed close to
+even as both fell.
 
 ### The cross-file subtraction bottoms out at about half a microsecond a row
 
@@ -1484,7 +1515,7 @@ end-to-end figure reports.
 **Every row of this table roughly halved between stamps, and the shape did
 not.** The floor went 3.18 → 1.61 µs, the fifteen scalars 11.03 → 4.46, the
 composite 0.98 → 0.75 and the two arrays 13.21 → 6.03. The render-path slices
-7.14–7.17 and the scalar decode of 7.10 are what moved them, and they moved the
+The four render-path changes and the scalar decoders are what moved them, and they moved the
 expensive rows hardest — but an array column is still eight times a scalar's
 average and the ordering of the five rows is unchanged.
 
@@ -1560,7 +1591,7 @@ depths and differ by **0.07 µs a row**: 5.6% of what the deep one costs, on a
 query that decodes nothing. The two one-term rows differ by 0.09 µs, which is
 the same walk bought by a single term.
 
-**This table now reads the mechanism 7.7.1 landed, where the previous stamp
+**This table now reads the shared field split, where the previous stamp
 read the one it replaced.** Under `ba2fc12` each term walked from the front of
 the row on its own, so five deep terms crossed sixty-five boundaries and the
 same depth difference read **0.27 µs, 18%** of the deep query. A row's
@@ -1604,7 +1635,7 @@ it at its stated precision; this one ran at ≤5% busy with per-rep spreads insi
 2% of their medians, so that caveat is discharged rather than restated. The
 deterministic corroboration remains `runs/measure-7.7.tsv` — retired user
 instructions on the host, immune to what else the machine was doing — which put
-the walk at 49% of a five-term query's instructions under the pre-7.7.1
+the walk at 49% of a five-term query's instructions under the unshared
 mechanism this table no longer measures.
 
 ```sh
@@ -1632,7 +1663,8 @@ child and keeps nothing, at either depth.
 *Rejected: `--schema-mode typed`.* The typed `=` decodes the literal against the
 column's own type once per block, so `zzz1` on an `integer` column is
 `Error::PredicateValueDecode` before the first row. Picking literals that decode
-would put a per-type comparison cost inside every delta, which is 7.10's row and
+would put a per-type comparison cost inside every delta, which is the scalar
+decoders' subject and
 not this one's.
 
 ## What a session's own drift costs, measured rather than asserted
@@ -1745,7 +1777,7 @@ preamble.
 | `COPY` blocks | 74 |
 | Rows | 19,575,829,920 |
 | Bytes accounted for | 784,019,857,152 |
-| RSS | flat, ~9 MiB (untyped scan) — musl's, and ~1 MB high since 7.13.1 |
+| RSS | flat, ~9 MiB (untyped scan) — musl's, and ~1 MB high since the read-loop carry |
 | `UnterminatedCopyBlock` | none |
 
 **The `.dqcache` a run leaves behind dies at the next cache-format bump**, and
@@ -1780,8 +1812,8 @@ without re-deriving the recipe.
 
 **The identity check has been taken on the glibc build, at `f5768e7`.** The
 2026-09-05 run (container `pgdq-koji`, `runs/pgdq-koji-scan.log`, `exit=0`,
-00:54:18Z → 01:57:03Z) is the regression check for the whole of P7: eleven
-landed slices reworked how bytes reach the parser — the read buffer pool and the
+00:54:18Z → 01:57:03Z) is the regression check for the whole scan-performance
+campaign: eleven landed changes reworked how bytes reach the parser — the read buffer pool and the
 read-loop carry (`io.rs`, `scan.rs`, `stream.rs`), the bulk UTF-8 pass and the
 shared field split (`copy.rs`), the splice gate (`stream.rs`), the `INSERT`
 statement scan (`preamble.rs`, `map.rs`) — and koji is the only input at a scale
@@ -1808,7 +1840,7 @@ report gained since August, `public.pgstattuple_type`'s composite fields.
 direction too.** The recipe captures no memory figure at all — it reads exit code
 and wall clock from `nerdctl inspect` and nothing else — so the 2026-09-05 run
 could not re-take it, and that container has since exited, taking its cgroup with
-it. Independently of the build, 7.13.1 removed a `chunk_size`-sized `Vec` per
+it. Independently of the build, the read-loop carry removed a `chunk_size`-sized `Vec` per
 read loop and took a warm 3.00 GiB `parse` from 7.9 MB to 6.0 MB peak RSS, so
 ~9 MiB has been about a megabyte high since that slice landed.
 
@@ -1835,8 +1867,8 @@ byte-identity check has no timing in it and the sweep could not run there.
 The rate is written down so the next run's is not read against nothing. But
 **the ~238–241 MB/s below is not a like-for-like reference**, and differencing
 the two crosses three boundaries at once: those rows are musl's, taken in a
-`postgres:16-alpine` image; they predate eleven P7 slices that changed what a
-scan costs per byte; and they were taken uncontended where this one was not. So
+`postgres:16-alpine` image; they predate the eleven changes above, which moved
+what a scan costs per byte; and they were taken uncontended where this one was not. So
 ~208 against ~241 is not a 13% regression, and neither number is evidence about
 the other until an uncontended glibc run supplies the missing half.
 
@@ -2110,7 +2142,7 @@ The 2000-block row is the one that moves between sittings — +9%, then −13%, 
 −3% here — and the sizes, which are what this figure is for, have never been in
 question. Three stamps now agree to within a few percent on all three rows,
 which is the strongest statement this figure has carried: **the read-path work
-of 7.13 and 7.13.1 did not touch it**, because a 2 MB file's cost is the map's
+did not touch it**, because a 2 MB file's cost is the map's
 rebuild and not its bytes.
 
 So the two tables bracket the same mechanism from either side. **With a cache,

@@ -10,9 +10,8 @@ path = "src/main.rs"
 # The allocator is the *binary's* choice, never the library's: a
 # `#[global_allocator]` in `pgdump_query` would impose one on every embedder,
 # which is precisely P6's audience. See
-# `docs/design/roadmap-P7-scan-performance.md`, "The allocator is chosen in
-# the binary", and `docs/design/measurements.md`, "Which allocator a figure
-# was taken under".
+# `docs/design/architecture.md`, "The allocator is the binary's choice", and
+# `docs/design/measurements.md`, "Which allocator a figure was taken under".
 #
 # Both features are measured legs of one figure rather than a supported
 # matrix: `cd scripts && uv run measure.py --figure allocator` builds all

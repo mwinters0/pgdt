@@ -3,11 +3,12 @@
 //! field (`docs/design/architecture.md`, "Arrow assembly and the zero-copy
 //! path").
 //!
-//! Per `docs/design/roadmap-P7-scan-performance.md`, a `Utf8View` field
+//! A `Utf8View` field
 //! that needs no unescaping is appended as a zero-copy view into the Arrow
 //! `Buffer` backing the read chunk it came from, rather than copied into the
-//! builder's own storage — retrofitting that later would be expensive, so
-//! it's built in even though the rest of the performance work is not. Every other mapped type always copies: its decoded value has
+//! builder's own storage — retrofitting that would have been expensive, so it
+//! was built in from the start (`docs/design/architecture.md`, "Arrow assembly
+//! and the zero-copy path"). Every other mapped type always copies: its decoded value has
 //! its own representation (an `i32`, a `[u8; 16]`, …), not a byte range of
 //! the original field.
 
