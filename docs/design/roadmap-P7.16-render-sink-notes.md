@@ -62,9 +62,20 @@ element goes through `render_field` *and* `render_field_into` where it used to
 go through one function, and `#[inline]` on `push_padded`/`push_integer` bought
 0.5% of it. The residual is **65.018 G → 67.517 G, +3.8%** on an array column
 projected alone, against −29.5% on the sixteen scalar columns of the same row —
-so every registered file improves and the array-bearing one improves least. Closing it means
-`collect_array` not needing an owned `String` per element, which is a rework of
-`nested::ArrayLiteral`'s shape and belongs to whoever takes that.
+so every registered file improves and the array-bearing one improves least.
+
+**Closing it is `7.17`, and the lever is not `ArrayLiteral`.** The array arm
+stops at the nested boundary exactly as the other four do: `render_field_into`
+builds a whole `String` through `render_array` and copies it into the caller's
+buffer, so an array row pays a `String` per element, the `Vec` holding them, an
+un-presized whole-array `String` — the `String::new()` pathology this row fixed
+in two other places and left here — and that final copy. What removes them is
+writing each element through `render_field_into` while walking the Arrow list,
+against a scratch buffer reused across elements, since `push_token` needs the
+finished element text to decide quoting. `ArrayLiteral`'s `Cow` is not the
+lever and must not be reshaped for this: `collect_array` produces `Cow::Owned`
+unconditionally, so the borrow serves decode alone
+([`architecture.md`](architecture.md), "The nested literal codec").
 
 *Rejected: `str::from_utf8` over a stack digit buffer.* It is the shape
 `i64::to_string` uses internally (with `from_utf8_unchecked`) and the natural

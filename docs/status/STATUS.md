@@ -537,6 +537,13 @@ longer shipped, with no sweep left to repair them.
       costs **20 allocations, none of them in a column this touched**, and 18 of
       the 20 are `render_f32`/`render_f64`/`render_decimal`. Notes:
       [`../design/roadmap-P7.16-render-sink-notes.md`](../design/roadmap-P7.16-render-sink-notes.md)
+- [ ] **7.17** The array arm's render, through the sink — `render_field_into`
+      writes an array's elements into the caller's buffer as it walks the Arrow
+      list, removing the `String` per element, the `Vec`, the un-presized
+      whole-array `String` and the copy of it. **7.16's residual**, and that
+      row's stated closure path was wrong: `ArrayLiteral`'s `Cow` is
+      `Cow::Owned` unconditionally on the render side and must not be reshaped
+      for this. Array arm only, by evidence rather than symmetry. Ahead of 7.12.
 
 ## Not started
 
@@ -708,23 +715,5 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
-
-- **7.16 ships a measured regression on one column type's render, and the
-  decision is whether that was the right boundary to stop at.** The row sink
-  takes a typed control query down 29.5% and every registered file down
-  something, but an array column's *own* render is **+3.8%**: an element goes
-  through `render_field` and then `render_field_into` where it used to go
-  through one function, and `collect_array` needs an owned `String` per element
-  either way. Two spellings of that arm were measured and fixed before this
-  residual was what was left ([2026-09-04](history/2026-09-04.md), "Both obvious
-  ways to append an integer are slower than `to_string`"), and the
-  `--arrays --composite` file is still **−8.0%** overall, so nothing gets
-  slower end to end. **What was chosen over it** was reworking
-  `nested::ArrayLiteral` so an element need not own its text — which is a
-  change to a path 7.9 already reworked and tested, on a judgement call, in a
-  session with no reviewer, and is the thing an unattended session is told not
-  to do. If that reads as too cautious, the fix is a slice of its own and the
-  reading above is its stake; if it reads as right, the residual belongs beside
-  the mechanism as a property rather than here.
 
 

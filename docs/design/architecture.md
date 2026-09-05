@@ -2288,6 +2288,18 @@ Five properties are load-bearing and easy to lose:
   equality cannot tell the two apart
   ([`measurements.md`](measurements.md), "Nested decode costs what it
   copies").
+
+  **The borrow serves decode only, and the render direction has no use for
+  it.** `batch::collect_array` fills `elements` with
+  `render_field(..)?.map(Cow::Owned)` — every element it produces is `Owned`,
+  unconditionally, because it is rendering an Arrow value rather than slicing a
+  literal. So `ArrayLiteral`'s lifetime is not a lever on the render path, and a
+  session trying to make rendering allocate less by reshaping `elements` would
+  be reworking the structure that carries the reading above while buying
+  nothing. What the render path needs is not a different `ArrayLiteral` but not
+  to build one: to write each element through `render_field_into` as it walks
+  the Arrow list, quoting from a scratch buffer reused across elements, since
+  `push_token`'s quoting decision needs the finished element text.
 - **The force-quote set is 256 bits, not a byte slice.** `needs_quote` asks
   "does this byte force quoting" once per byte of every token, in **both**
   directions — `scan_token` to reject an unquoted token `*_out` would have
