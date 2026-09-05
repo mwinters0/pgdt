@@ -155,7 +155,7 @@ everything further out is clearly slower, and on the other two it is flat
 ([`measurements.md`](measurements.md), "What the read chunk size is worth"). What decides all three of the I/O defaults is one subtraction:
 **no scheme that overlaps I/O with parsing can put a cold scan below the time
 the device takes to deliver the bytes**, and on the fastest disk this project
-owns a cold `COPY` scan exceeds that floor by 8.9%
+owns a cold `COPY` scan exceeds that floor by 5.8%
 ([`measurements.md`](measurements.md), "Scan throughput by input shape"). On
 the SATA SSD the same subtraction is ~1%; on the HDD the scan is device-bound
 by a factor of several.
@@ -189,7 +189,7 @@ looked like.
 
 *Rejected:* double-buffered readahead — issuing chunk *N+1*'s read while chunk
 *N* is parsed. Its prize is `min(device time, parse time)` and it is bounded by
-the same 8.9%, on the one device class where that number is not ~0; against
+the same 5.8%, on the one device class where that number is not ~0; against
 that it is a rework of three read loops, a second in-flight buffer against the
 flat ~9 MiB RSS this design is built on, and one more thing the interrupt guard
 and the query path's chunk retention have to be correct about. Most of the
@@ -199,7 +199,7 @@ harder cannot recover what is already overlapped.
 **The pool ceiling is a cliff, and it bounds a useful chunk size from above.**
 A chunk larger than the 8 MiB the pool keeps is never returned to it, so every
 chunk becomes the fresh `calloc` the pool exists to remove — which is worth
-0.386 s → 0.825 s warm at 16 MiB against 8 MiB, **2.07×**, not a few
+0.472 s → 0.866 s warm at 16 MiB against 8 MiB, **1.83×**, not a few
 percent. The remedy the user has today is not to raise `--chunk-size` past
 8 MiB, and that is stated in the flag's help and in `DEFAULT_CHUNK_SIZE`'s own
 doc comment, since the constant is what a future session would move without
@@ -594,9 +594,9 @@ the two paths is a consequence of that call, not the argument for it.
 
 <!-- deficiency: KD9 -->
 **An `INSERT` run costs a few times a `COPY` scan per byte.** Warm it is
-**4.3×** — 2.27 s against 0.532 s over 3.00 GiB — and **7.5× the `dd` floor**
+**4.9×** — 2.25 s against 0.457 s over 3.00 GiB — and **7.05× the `dd` floor**
 where a `COPY` scan is 1.8×; cold on the SSD the difference is gone, 1.02× the
-floor against 1.01×, and **cold on the NVMe it is back, 2.66× against 1.10×**
+floor against 1.00×, and **cold on the NVMe it is back, 2.62× against 1.06×**
 ([`measurements.md`](measurements.md), "Scan throughput by input shape"). Which
 of those three a user meets is decided by their storage, not by their dump.
 Carry it as a magnitude rather than a value: the legs are warm
@@ -610,7 +610,7 @@ block's data is *skipped* — the terminator is a line-anchored needle — while
 byte has to be crossed quote-aware to find where a statement ends. No
 implementation of this path reaches a `COPY` scan's cost.
 
-**What that argument does not establish is that 4.3× *is* that floor, which is
+**What that argument does not establish is that 4.9× *is* that floor, which is
 why `KD9` is a live entry rather than a property.** Two cuts are known,
 specific, and untaken. `insert_run_line` feeds the whole line to the scan
 including the `INSERT INTO <table>` prefix it has just matched, whose
@@ -625,7 +625,7 @@ land on the dominant term.
 figure that says so has been taken.** "Cold, the difference is gone" was always
 a claim about the SATA SSD, whose ~557 MB/s hides a path running well above it.
 It does not carry to the NVMe: cold on a 970 EVO Plus an `INSERT` scan is
-**2.66× the device's own time** where the `COPY` path is 1.10×, so roughly 2.1 s
+**2.62× the device's own time** where the `COPY` path is 1.06×, so roughly 2.0 s
 of a 3.40 s scan is spent where the disk is idle
 ([`measurements.md`](measurements.md), "Scan throughput by input shape", the
 cold-NVMe table). That is what [`roadmap.md`](roadmap.md)'s goal of device-bound
@@ -1076,7 +1076,7 @@ by patching that function.
 brace-free data — the koji shape — a row pays the pre-filter alone, tens of
 nanoseconds per 16-column row (60 ns at the current reading, 36 ns at the
 `ba2fc12` stamp), a few percent of a scan reading from memory; a row that passes
-pays field splitting and `observe` on top, 1.49 µs over 19 columns, +219% warm. Both
+pays field splitting and `observe` on top, 287 ns over 19 columns, +54% warm. Both
 collapse to +0% and +1% cold on this SSD, where the device floor hides them
 ([`measurements.md`](measurements.md), "The census on brace-free rows" and
 "…on array-bearing rows"). It runs unconditionally anyway: the alternative is a
@@ -2359,8 +2359,8 @@ both literals to render them back. What says it is not worth that reach is the
 figure: `record_2/decode` fell **190 ns → 114 ns** when the array's elements were
 borrowed and the record's were *not*, because the win there was `scan_quoted`
 sizing a quoted token before it allocates rather than the final `String`. The
-whole composite column is **+0.98 µs a row** at the end-to-end level against the
-two array columns' +13.21 ([`measurements.md`](measurements.md), "What a column
+whole composite column is **+0.75 µs a row** at the end-to-end level against the
+two array columns' +6.03 ([`measurements.md`](measurements.md), "What a column
 costs"), so one `String` per field of it is a sliver of a sliver — and its prize
 is whatever the landed levers leave, which nobody has measured.
 
@@ -2837,12 +2837,12 @@ still does not show it costing anything.
 **What a projection saves is measured, and it is the columns' whole build
 cost.** One 3.00 GiB file read at five widths, warm and typed
 ([`measurements.md`](measurements.md), "What a column costs: five projection
-widths over one file"): `--no-columns` costs **3.18 µs a row** where all 19
-columns cost **28.56**, so the replay a projection cannot avoid — the block
+widths over one file"): `--no-columns` costs **1.61 µs a row** where all 19
+columns cost **12.97**, so the replay a projection cannot avoid — the block
 read, every row walked and field-counted, the predicate evaluated — is a ninth
 of a complete typed read. Between those, one `smallint` is +0.13 µs, the
 other fifteen scalars +11.03 between them, the composite +0.98, and the two
-array columns **+13.21** — 93% of what all three nested columns cost, and more
+array columns **+6.03** — 89% of what all three nested columns cost, and more
 than every scalar column in the table. So the saving is real, it is
 concentrated in the nested columns, and it is what makes projecting one array
 column away worth more than projecting every scalar away.

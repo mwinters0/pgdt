@@ -14,149 +14,67 @@ filed by subject, which is where a session touching one meets its rejected
 alternatives and its limitations. The capability table below says what state
 each is in.
 
-[`../design/measurements.md`](../design/measurements.md) carries the `ba2fc12`
-stamp of 2026-09-03: the scan-performance baseline sweep pair was taken and
-folded in whole, so seven of its seventeen tables come from one sitting. Seven
-were taken on their own afterwards and each says so in its own section —
-`allocator` twice, by 7.3 and again by 7.13, whose ratios are within-sitting
-and whose second sitting reversed both cells the adoption argument rested on;
-`per-block-quadratic`, `map-only` and `preamble-prepass` by 7.4, which moved
-the first of the three by two orders of magnitude and re-took the other two in
-the same sitting because they share its readings and its subject; and
-`scan-throughput-cold`, `scan-throughput-warm` and `census-brace-free` by 7.5,
-the three of them in one sitting because the two throughput tables' `COPY` row
-*is* the census table's census-on column. **Three stand outside the sweep for
-the other reason, having not existed when it ran.** `predicate-terms` was the first
-table to pass a filter at all, and 7.7 took it on 2026-09-04 at `42b1611`; **it
-is now stale in fact as well as mechanically**, measuring a walk from the front
-of the row per term where 7.7.1 made a row's boundaries shared, so its two
-headline numbers are a reading of the shape the lever replaced. Its section says
-so, and 7.12's sweep re-takes it with everything else. `scan-throughput-nvme`
-was the first table taken on a third device class: 7.8 took it on 2026-09-04 at
-`e889634`, alone, and no P7 change to a timed path has landed behind it since.
-`chunk-size` is the doc's newest table and the only one taken at a working-tree
-commit: 7.8.1 took it on 2026-09-04, alone, in all three regimes at once, and
-it is the figure that decided the read chunk and bounded the other two
-I/O-defaults levers. **A fourth now stands outside the sweep**:
-`nested-decode-micro`, taken alone on 2026-09-04 twice — by 7.9 and again by
-7.14, each as its own before-and-after — and the only table in the doc a library
-change has re-taken *and* left current in fact. It stays current in fact after
-7.17, which added two functions to `nested.rs` and changed none of the four the
-figure times.
+[`../design/measurements.md`](../design/measurements.md) carries the `af15eac`
+stamp of 2026-09-05, and **for the first time every one of its seventeen tables
+comes from one sitting**: sixteen from P7's wrap sweep and `session-drift`,
+which no sweep can take because it is derived *across* two, from that sweep and
+a second begun the minute it finished. No table carries a partial-sitting note,
+no absolute in the document is a cross-sitting reading, and `measure.UNTAKEN`
+and `measure.ACKNOWLEDGED` are both empty — the fresh stamp spent all six
+acknowledgements and they were deleted rather than kept as sediment. Under the
+previous `ba2fc12` stamp ten of the seventeen stood outside the sweep.
 
-**All seventeen now read stale against the `ba2fc12` stamp, and three of them
-are stale only mechanically.** `--stale` is relative to the doc's session stamp
-rather than to when each table was taken, so `scan-throughput-nvme`,
-`chunk-size` and `nested-decode-micro` read red although all three were taken
-after every P7 change that reaches them — they are the three tables here that
-are current in fact. `nested-decode-micro` is the one that changed sides: it
-times a decoder in isolation and reaches no `pgdq` run, so it read green until
-7.9 edited the decoder it times; 7.9 and then 7.14 each re-took it in the change
-that moved it, and 7.17 left it red without moving it — the two functions that
-slice added to `nested.rs` are reachable from `batch.rs` alone, so the only path
-from there to this figure is code layout, which is a standing rule rather than a
-re-take. The
-other fourteen — the thirteen sweep figures and `predicate-terms` —
-are stale in fact too. `allocator` is the newest of the thirteen sweep figures,
-re-taken by 7.13 on the pooled read path, and 7.13.1 has since moved it too;
-`per-block-quadratic`, `map-only` and `preamble-prepass` (7.4) and the three 7.5
-re-took were current until 7.13. Every one of them times a `pgdq` run, and each
-of 7.6, 7.13, 7.13.1 and 7.7.1 changed what such a run costs per byte of
-input — 7.7.1 by ~9 instructions per field walked, which is +0.4% on the
-full-projection shapes and +2.9% on a `--no-columns` one. **7.14 moves the four
-that run a typed query and only where the file has a nested column**: it is
-−12.47% on a `--arrays --composite` query and exactly nothing on the control,
-so `nested-end-to-end` is the sweep table it certainly reaches. **7.15 moves the
-same four and by far the most of any P7 change, wherever the file has a `bytea`
-or a `uuid` column**: a typed control query falls **45.31%** and a `strings` one
-not at all. **7.16 then moves the four again *and* their `strings` legs** — a
-typed control query falls a further **29.47%** and a `strings` one **20.91%**,
-the row sink being what a `strings` query pays for its text columns — so the
-four typed-query tables are the ones most wrong today in both of their legs.
-**7.17 moves them once more and, like 7.14, only where the file has an array
-column**: −19.38% on a `--arrays --composite` query and −26.79% on that file's
-50-element array column alone, against a typed control query inside its own
-spread — so `nested-end-to-end` and `projection-widths` are the two it certainly
-reaches. `parse`, which renders nothing, is the only shape none of this reaches.
+**The largest correction the register has carried is `census-arrays`.** Its warm
+census cost read 1.045 s and 1.49 µs a row under the old stamp and now reads
+**0.201 s and 287 ns** — a factor of five — because 7.6 put the census's field
+split behind `memchr` and the split was the byte loop, not the census. It was
+red on `pgdump_query/src/copy.rs` throughout, so nothing about the register
+missed it; what a red figure never says is *how far* a number has moved.
 
-**One published cell is not merely stale but wrong by a factor of six, and is
-not to be quoted until 7.12 re-takes it.** `census-arrays` prices the census on
-array-bearing rows; 7.6 put the field split behind it on `memchr`, and a
-whole-file `parse` of that input falls **17.781 G → 2.919 G** user instructions
-([2026-09-04](history/2026-09-04.md), "The census's field split was the byte
-loop, not the census"). It was already red on `pgdump_query/src/copy.rs`, so
-nothing about the register missed it; what is new is the size.
+**Four other findings changed shape rather than magnitude.** The census's two
+tiers are now within a factor of four of each other — the pre-filter is 25% of
+what an inspected row costs, against 4% before — so "one tier, not two" no
+longer holds. `census-attribution`'s baseline gap fell from +0.874 s to
++0.033 s, which is inside the drift figure, so the untyped baseline's
+file-dependence is now invisible without the census-off binary rather than
+obvious with it. `predicate-terms` measures the shared field split 7.7.1
+landed, and its term-count axis has gone flat: five terms at one depth cost
++0.05 µs a row over one, against +0.37 before. And the I/O-defaults ceiling fell
+from 8.9% to **5.8%**, because 7.13 and 7.13.1 took the parse below the device
+by more than they took the device — every lever 7.8.1 declined at 8.9% is
+declined harder now.
 
-**The genuinely stale ones and their reasons.** Every figure that times a
-`pgdq` run is red on `pgdump_query/src/io.rs` and on
-`pgdump_query/src/scan.rs`/`stream.rs` — 7.13's buffer pool and 7.13.1's read
-carry, which between them took **26%** of a warm `parse`'s user instructions and
-cannot be argued away — and every figure that reads a `COPY` row is red on
-`pgdump_query/src/copy.rs` as well, which is 7.6 and now 7.7.1's `RowSplit`
-too. That subsumes the case `census-arrays` and
-`projection-widths` used to make on their own: both time a single-`COPY`-block
-input, where 7.4's gate is open at the one `CopyEnd` there is and 7.5's `INSERT`
-fast path is never entered, so those two slices left them doing the same work —
-but 7.13.1 changes how every chunk of every input is handed to the scanner, so
-there is no shape that escapes it. `nested-end-to-end`, `census-attribution` and
-`cross-file-floor` are additionally red on `pgdump_query-cli/src/`, from 7.3's
-`mod alloc;` and `--version` string, and the four typed-query figures —
-`nested-end-to-end`, `cross-file-floor`, `projection-widths` and `allocator` —
-are red on `pgdump_query/src/decode.rs` as of 7.10, on an edge that did not
-exist to be red before it. `session-drift` is red on
-`scripts/measure.py`: 7.3 added a real figure function there, 7.4 corrected
-three figures' declared paths, 7.13 added a fourth mechanism and fixed the
-allocator legs' build cache, `M48` declared the borrow graph the sweep now
-reads, and 7.8 added a third regime and the staging area behind it — so the
-reachability oracle that excused the five `--profile-recipe` commits stretches
-to none of them, and the wrap sweep is what clears it.
-`measure.ACKNOWLEDGED` still carries six entries — two for
-`7545dc6`, four for `fbaaa49`, `a6bf6cd`, `305af4b` and `360e144` — every one
-of them now inert, held red by the uncommitted change; `7545dc6`'s `batch.rs`
-entry names `allocator` in its figure list, because a figure declaring an
-already-excused path has to be named there or the old excuse silently stops
-covering it. A stale figure obliges
-no sweep and neither does a wrap: a full
-sweep is an hour of a quiet machine and belongs to the phase that is about
-performance, which will re-take every table under its own apparatus
+**The query path roughly halved.** A typed control query went 10.36 s → 4.75 s
+and the `--arrays --composite` file 19.93 s → 9.12 s, against `strings` legs of
+4.42 s → 3.44 s and 5.36 s → 3.45 s; the nested-column increment went
+**13.5 µs → 6.5 µs a row** and every row of `projection-widths` about halved
+with the same ordering intact. 7.10, 7.13, 7.13.1 and the four render-path
+slices 7.14–7.17 are what moved them.
+
+**One reading is flagged rather than acted on.** `mimalloc` now reads 0.97×,
+0.97× and 0.99× on the three headline shapes — marginally ahead of the platform
+allocator on all three, where the previous sitting read 1.00×/0.99×/1.01×. Every
+cell's spread overlaps the reference's and the largest gap is 3%, so the settled
+decision stands, but the statement behind it has weakened from "nothing beats
+it" to "nothing beats it by more than the instrument's own noise". It is under
+"Decisions worth another look" below.
+
+**The pair that produced this stamp cleared the contention gate on the number
+alone**, which the previous stamp did not: no warm floor is near the ~15%
+threshold, and the two files' floors moved in *opposite* directions — `control`
+−2.5% to −5.3%, `arrays` +3.4% — which is the opposite of the shared slow move
+that disqualifies a sweep
+([`../design/measurements.md`](../design/measurements.md), "The floor is read
+directionally"). Session drift over 92 shared readings is a median absolute
+**1.6%** and a largest 14.3%.
+
+**What is stale now is only what this commit changed.** Every figure was current
+in fact at `af15eac`; the fold-in commit itself edits documents and
+`scripts/acknowledged.py`, which is its own module precisely so that an
+acknowledgement edit touches no path a figure declares. A stale figure obliges
+no sweep and neither does a wrap
 ([`../design/measurements.md`](../design/measurements.md), "A stale figure does
 not oblige a sweep").
-
-**Three figures were blind to the file they measure.** `per-block-quadratic`
-and `map-only` price the map's per-block rebuild and declared
-`pgdump_query/src/map.rs` without `pgdump_query/src/stream.rs`, where
-`stream::splice` lives — so 7.4 would have read green against the two tables it
-moved by two orders of magnitude. `preamble-prepass` *borrows* the first's
-4000-block reading for its second row and declared neither. All three now
-declare `MAP_BUILD`, and the third declares the edges of the reading it
-borrows.
-
-**And every figure was blind to the read path.** Nothing declared
-`pgdump_query/src/io.rs`, though every table that times a `pgdq` run reads its
-bytes through it — so 7.13, which removed the largest single term in a warm
-`parse`'s user time, would have read green against all twelve. It is now its
-own mechanism (`READ`) rather than part of `SCAN`, because `nested-end-to-end`
-and `census-attribution` declare no scanner path and are moved by it all the
-same. 7.13.1's carry needed no such fix: it lives in `scan.rs` and `stream.rs`,
-which `SCAN` and `MAP_BUILD` already declared.
-
-**A fifth mechanism arrived with `predicate-terms`.** Nothing in the register
-named `pgdump_query/src/predicate.rs` — not blindness this time, since until
-7.7 no figure passed a filter and the file could not have moved one. `PREDICATE`
-exists as of that figure, and it is the only figure that declares it.
-
-**And a sixth arrived with 7.10, which is blindness again.**
-`pgdump_query/src/decode.rs` was declared by nothing, though every figure that
-runs a *typed* query pays a per-type decoder on every scalar column — so a slice
-that took a typed control query down 4.55% would have read green against all
-four of them. `DECODE` now exists and is declared by `nested-end-to-end`,
-`cross-file-floor`, `projection-widths` and `allocator`. It is not part of
-`NESTED`, because `projection-widths`'s narrow rows have no nested column in
-them and are moved by it all the same; and the figures it does *not* reach were
-checked one at a time rather than assumed — the throughput trio, the census pair,
-`chunk-size` and the map figures are `parse` and `dd` only, `predicate-terms` is
-`--schema-mode strings` throughout, and `nested-decode-micro` runs `cargo bench
--- nested`, which filters out the scalar groups its bench file also holds.
 
 | Capability | State |
 |---|---|
@@ -170,7 +88,7 @@ checked one at a time rather than assumed — the throughput trio, the census pa
 | CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, cache-only `info` | working; **`parse` is the only scanner** — it resumes from a matching cache, banks at `COPY` block boundaries under a self-tuning throttle, and saves unconditionally on Ctrl-C (exit 130/143). `info` reports from the cache and never scans. Both scanning commands take `--chunk-size <bytes>`, whose 1 MiB default is the fastest of six sizes measured on the one device class where the size makes a difference ([`../design/measurements.md`](../design/measurements.md), "What the read chunk size is worth"); above 8 MiB the read buffer stops being pooled and a warm scan doubles. `--verbose` adds each block's byte offsets, a per-column resolution line, an enum column's declared labels beneath it, and — under the `user-defined types` count that heads it — one line per user-defined type, every `TypeKind` arm rendered with its payload. Text output shape is provisional; `--json` carries no shape promise at all, and states the labels once per type in `metadata.databases[].types[]` rather than per column |
 | Partial reporting | `info` reports an unfinished scan's cache for as far as it got, with `Scan completion: N%` stated once at the top and nothing below it qualified. An interrupted cache is **typed** for every database segment the scan finished (I1) |
 | Measurement harness | `scripts/measure.py` takes every figure in [`../design/measurements.md`](../design/measurements.md) and emits that doc's tables — seventeen figures, sixteen taken by a sweep and one derived across two, each declaring what invalidates it, which documents repeat it, and which readings it borrows from another figure — that third edge is what lets `--figure` pull in what a figure borrows and name the rest of the set that must be re-taken with it, and `--alone` is how a partial sitting is asked for deliberately. `measure.UNTAKEN` is empty: nothing is built and unrun. It also builds and interrogates the `allocator` figure's three legs, reading each binary's allocator out of `pgdq --version` rather than trusting the flags it passed, and names the shipped one in the session stamp. A leg is rebuilt **once per harness process** rather than reused from `runs/`, which is what stops a fresh reference being timed against last session's legs, and all of them are built before the first reading rather than at the rep that wants one |
-| Column projection | working, library and CLI: `QueryOptions::projection` names columns, cuts the reported `ResolvedSchema` with the batches, may reorder, and may be empty (`COUNT(*)`); `pgdq query` spells it `--column <name>` repeated, or `--no-columns`, which prints no header so `\| wc -l` is a row count. A filter may name a column the projection does not, and an unprojected column is never decoded, so projecting a column away escapes its `Error::FieldDecode` — including `KD2`'s, which the error message does not name ([`../design/architecture.md`](../design/architecture.md), "Projection"; [`../manual/type-handling.md`](../manual/type-handling.md)). Measured on one 3.00 GiB file at five widths: `--no-columns` is 3.18 µs a row against 28.56 for all 19, the two array columns alone are +13.21 and the composite +0.98 ([`../design/measurements.md`](../design/measurements.md), "What a column costs") |
+| Column projection | working, library and CLI: `QueryOptions::projection` names columns, cuts the reported `ResolvedSchema` with the batches, may reorder, and may be empty (`COUNT(*)`); `pgdq query` spells it `--column <name>` repeated, or `--no-columns`, which prints no header so `\| wc -l` is a row count. A filter may name a column the projection does not, and an unprojected column is never decoded, so projecting a column away escapes its `Error::FieldDecode` — including `KD2`'s, which the error message does not name ([`../design/architecture.md`](../design/architecture.md), "Projection"; [`../manual/type-handling.md`](../manual/type-handling.md)). Measured on one 3.00 GiB file at five widths: `--no-columns` is 1.61 µs a row against 12.97 for all 19, the two array columns alone are +6.03 and the composite +0.75 ([`../design/measurements.md`](../design/measurements.md), "What a column costs") |
 | The filter expression, evaluated three-valued | working: `QueryOptions::filter` is one `Expr` — `Term`/`And`/`Or`/`Not`, `And` and `Or` n-ary — evaluated in SQL's `True`/`False`/`Unknown` domain, a row surviving only where the root is `True`. A NULL field is `Unknown` under every comparing operator, which is the row set the old collapse gave for every conjunction and is what makes `Not` expressible at all. `IS DISTINCT FROM`/`IS NOT DISTINCT FROM` come with it, being the one thing `Not` cannot spell. Short-circuiting is defined against the *root*: `And` stops at the first non-`True` unless a `Not` is above it, which is where a decode failure surfaces or does not. Nothing folds two terms, so a contradictory pair is a query with no rows. Reachable from the CLI as well as the library: `pgdq query --where <expr>` builds the tree and a repeated `--filter` still builds the conjunction ([`../design/architecture.md`](../design/architecture.md), "Predicates") |
 | The `--where` expression grammar | working, CLI only — `Expr` is an enum an embedder fills in, so nothing below L4 parses an expression. Parens group, `NOT` binds tighter than `AND` and `AND` tighter than `OR`, the keywords are case-insensitive and are keywords only outside quotes, and everything that is not a paren or a keyword is a term handed to the `--filter` grammar unchanged. A keyword is recognised only against whitespace or a paren, so `tag=and` stays an equality; a `NOT` after the word `is` belongs to the term, so `IS NOT NULL` and `IS NOT DISTINCT FROM` survive whole; juxtaposition is not an implicit `AND`; and a value holding a paren must be quoted. Both flags together are one conjunction. **No `--filter` string changes meaning** — that is what the separate flag buys ([`../design/architecture.md`](../design/architecture.md), "`--where` builds an expression out of those terms"; [`../manual/type-handling.md`](../manual/type-handling.md), "Combining terms: `--where`") |
 | The `--filter` term grammar | working, CLI only — `Predicate` is a struct an embedder fills in, so nothing below L4 parses a term. Whitespace outside quotes is trimmed on both sides of the operator; `'` and `"` both quote either side, matching pairs only, with an interior quote doubled; the operator split skips quoted regions, so a column named `a=b` is askable; and the `IS NULL` forms are the fallback, tried only on a term with no operator, which is what makes `note=this is null` the equality it reads as. `IS DISTINCT FROM`/`IS NOT DISTINCT FROM` are candidates at the same positions the punctuation spellings are, so the earliest operator still wins in both directions, and the phrase needs whitespace on both sides — which is what leaves a column named `is distinct from` askable as `is distinct from=x`. A malformed quote is refused, never reinterpreted. `--column` and `--table` take their names verbatim and say so when a quoted-looking name is not found ([`../design/architecture.md`](../design/architecture.md), "A filter term is parsed for two audiences"; [`../manual/type-handling.md`](../manual/type-handling.md), "Writing a filter term") |
@@ -214,18 +132,16 @@ output
 [`../design/architecture.md`](../design/architecture.md), "Where a scan's time
 goes"** — the decomposition, which is the durable half of the phase.
 
-**Figures.** Six of the seventeen figures in
+**Figures.** All sixteen sweep figures in
 [`../design/measurements.md`](../design/measurements.md) come from the
-`ba2fc12` sweep of 2026-09-03, folded in whole, each table carrying an
-apparatus line; `allocator`, `per-block-quadratic`, `map-only`,
-`preamble-prepass`, `scan-throughput-cold`, `scan-throughput-warm`,
-`census-brace-free` and `nested-decode-micro` were taken on their own
-afterwards, and each section says so. `--check` reconciles seventeen markers
-against seventeen figures. `session-drift` is derived across that sweep and a second one taken
-three minutes later on the same commit, which is the pair `--drift` reads.
-`measure.ACKNOWLEDGED` carries the six entries above: a fresh stamp spends
-every entry, and `--check` named the previous six so they were deleted rather
-than kept as sediment.
+`af15eac` sweep of 2026-09-05, folded in whole, each table carrying an
+apparatus line and none carrying a partial-sitting note. `--check` reconciles
+seventeen markers against seventeen figures. `session-drift` is the
+seventeenth, derived across that sweep and a second begun the minute it
+finished on the same commit, which is the pair `--drift` reads.
+`measure.ACKNOWLEDGED` is empty: a fresh stamp spends every entry, and
+`--check` named the previous six so they were deleted rather than kept as
+sediment.
 
 **Nothing is built and unrun.** `measure.UNTAKEN` is empty: `projection-widths`
 was taken and moved into `FIGURES`, and `composite-isolated` was deleted
@@ -243,7 +159,7 @@ forcing 64-byte function alignment collapsed the gap. There was nothing to
 bisect to. What it changes is how a figure is read, which is now a standing
 rule ([`../design/measurements.md`](../design/measurements.md), "Two builds of
 one source can differ by layout"). The ratio was never in doubt at the time —
-16.5× against 16.7× — and 7.5 has since taken it to 4.3×.
+16.5× against 16.7× — and 7.5 took it to 4.3×, where the read path's own gains have since put it at 4.9×.
 
 **The sweep's `control` warm floor sits 22.4% above the previous stamp's**,
 which is over the ~15% a co-measured floor is judged against — and the sweep
@@ -285,21 +201,18 @@ The phase's spec, its measured baseline and the lever table each row measures:
 phase follows the profile, so a slice landing out of numeric order is the plan
 working ([`../process.md`](../process.md), "Slice numbering", which carries the
 exception an evidence-led phase runs under). **Every ordering that binds is
-discharged, and `7.12` is all that is left**: the allocator decision before the wrap
+discharged and every slice has landed**: the allocator decision before the wrap
 sweep, which 7.13 re-took and settled; `7.13.1` ahead of `7.6` and `7.7.1`,
 which rework how a row is walked inside the buffer it replaced; `7.8` ahead of
 `7.8.1`, the figure that prices three levers before the levers themselves; and
-`7.14`, `7.15`, `7.16` and `7.17` each ahead of `7.12`, all four of which have
-landed.
+`7.14`, `7.15`, `7.16` and `7.17` each ahead of `7.12`, which is now folded in.
 
-The last of those was `7.17`, which takes an array-bearing typed query down a
-further **19.38%** of its user instructions and that file's 50-element array
-column **26.79%** — the shape `nested-end-to-end` and `projection-widths` are
-built around. `7.16` before it moved the same four typed-query tables and,
-unlike every render-path slice before that, their `strings` legs as well: a
-typed control query fell **29.47%** and a `strings` one **20.91%**. Taking those
-tables first would have published thirteen freshly-measured figures describing a
-binary that is no longer shipped, with no sweep left to repair them.
+**The phase is ready to wrap.** `7.12` published the sweep last because the four
+render-path slices ahead of it each moved the tables it takes: taking them
+first would have published thirteen freshly-measured figures describing a
+binary that is no longer shipped, with no sweep left to repair them. The
+ordering held, and the fold-in's own numbers are what say it was worth holding —
+a typed control query is 4.75 s where the previous stamp read 10.36 s.
 
 - [x] **7.1** The profiling apparatus — `[profile.profiling]`, `perf`, and a
       `measure.py --profile-recipe` that prints the invocation on the
@@ -465,10 +378,9 @@ binary that is no longer shipped, with no sweep left to repair them.
       paragraph and `batch::append_nested`'s doc comment, retargeted from the
       phase spec at the mechanism's section). Notes:
       [`../design/roadmap-P7.11-viewing-builder-notes.md`](../design/roadmap-P7.11-viewing-builder-notes.md)
-- [ ] **7.12** The sweep pair and the koji regression run, folded in, plus the
+- [x] **7.12** The sweep pair and the koji regression run, folded in, plus the
       written statement of what a parallel splitter needs from coverage and
-      from the census, filed to P16. **Two of the three have landed; the sweep
-      pair is running and its fold-in is what ticks this box.** P16's inbox now carries P7's answer on
+      from the census, filed to P16. P16's inbox carries P7's answer on
       both mechanisms — coverage stays prefix-shaped and P7 hardened the
       assumption rather than relaxing it, so the appendable-spans rework P16
       already owns and "let coverage have interior holes" are one change; and
@@ -478,42 +390,24 @@ binary that is no longer shipped, with no sweep left to repair them.
       a partial census — a confidently wrong schema — from reaching
       `resolve_columns`
       ([`../design/roadmap-P16-parallel-scan-inbox.md`](../design/roadmap-P16-parallel-scan-inbox.md)).
-      **The koji regression run is done and folded in.** The 2026-09-05 scan
-      finished `exit=0` in 62.7 minutes and reproduced 74 blocks,
-      19,575,829,920 rows and 784,019,857,152 bytes with **all 222 per-block
-      offsets identical** to the P9 wrap run's, on the glibc build at
-      `f5768e7` — the first koji scan in the configuration the allocator rule
-      requires, so that section's counts are no longer musl's. The two `info
-      --verbose` reports differ by one line, the user-defined-type detail the
-      report gained since August, and `lock_monitor.activity` is one block of
-      16,428 rows
+      **The koji regression run** finished `exit=0` in 62.7 minutes and
+      reproduced 74 blocks, 19,575,829,920 rows and 784,019,857,152 bytes with
+      **all 222 per-block offsets identical** to the P9 wrap run's, on the glibc
+      build at `f5768e7` — the first koji scan in the configuration the
+      allocator rule requires, so that section's counts are no longer musl's
       ([`../design/measurements.md`](../design/measurements.md), "koji full scan
       — the regression check").
-      **The sweep pair ran and did not produce a publishable sweep.** It was
-      launched 2026-09-05T02:11Z once the machine came back under the contention
-      gate — 0.57% and 2.97% `cpu_busy_pct` against the harness's 15%, where the
-      earlier attempt read 19.2–19.4% — and finished 03:01Z. Leg A, fixed as the
-      publishable sweep before either ran, met ~60% `cpu_busy_pct` and **failed
-      seven figures** — `scan-throughput-nvme`, `chunk-size`,
-      `nested-end-to-end`, `census-attribution`, `per-block-quadratic`,
-      `projection-widths` and `predicate-terms`, with `cross-file-floor`,
-      `preamble-prepass` and `allocator` skipped behind the ones they borrow
-      from; leg B, the drift partner, ran 02:24–03:01Z with **no
-      failures and two retried readings**, and `session-drift` is `skipped`
-      because it needs both. The gate did its job — nothing contended was
-      published. What is undecided is whether leg B may be promoted, which would
-      spend the pre-registration that fixed the roles before either ran, or
-      whether the pair is re-run. The handoff is
-      `runs/measure-pair-20260905-0220/HANDOFF.md`; the two tables are
-      `runs/measure-20260905T021113/` (leg A, partial) and
-      `runs/measure-20260905T022434/` (leg B, clean). The apparatus is staged and verified —
-      including `runs/pgdq-nocensus`, which was **40 commits stale** and is
-      rebuilt at `f5768e7` (`M56` is the durable fix), and
-      `runs/pgdq-before-throttle`, which is a fixed historical commit and must
-      not be. **What remains is the fold-in**: leg A's sixteen tables plus the
-      derived `session-drift` one into their seventeen figure markers, each
-      figure's `quoted_by` consumers re-read, and the session stamp moved off
-      `ba2fc12`. Nothing may `cargo build` or `cargo test` while the pair runs.
+      **The sweep pair took two attempts.** The first, launched
+      2026-09-05T02:11Z, lost leg A to a ~60% contention burst that failed seven
+      figures; the gate discarded every contended reading and leg B was **not**
+      promoted, the roles having been fixed before either ran. The second,
+      launched 09:11Z at `af15eac` into a machine at load 1.24, finished
+      `PAIR DONE legA=0 legB=0 drift=0` at 10:23Z with no failed figures and two
+      retried readings. **Leg A is folded in whole**: sixteen tables plus the
+      derived `session-drift` one into their seventeen figure markers, every
+      figure's `quoted_by` consumer re-read, the six spent acknowledgements
+      deleted, and the session stamp moved off `ba2fc12`. Notes:
+      [`../design/roadmap-P7.12-sweep-fold-in-notes.md`](../design/roadmap-P7.12-sweep-fold-in-notes.md)
 - [x] **7.13** The read path's per-chunk zeroed allocation, pooled behind the
       `object_store` shape: a warm `parse` loses **9.4% of its user
       instructions** (1.882 G → 1.706 G, ±0.00% either side) and
@@ -758,8 +652,8 @@ here rather than reading as a phase nobody has sliced.
   [`../design/architecture.md`](../design/architecture.md), "Decoders and
   render-back".
 
-- **KD9** — an `INSERT` run costs **4.3×** a `COPY` scan's per-byte CPU warm
-  and **2.66×** the device's own time cold on NVMe against 1.10×, and two cuts
+- **KD9** — an `INSERT` run costs **4.9×** a `COPY` scan's per-byte CPU warm
+  and **2.62×** the device's own time cold on NVMe against 1.06×, and two cuts
   against that remainder are known and untaken. **(b) owned by P8**, whose
   Track A row reader extends the very scan both cuts are in; 7.8's figure
   confirmed the entry where it might have retired it. Detail:
@@ -792,5 +686,24 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-Nothing open.
+- **`mimalloc` is now marginally ahead of the platform allocator on all three
+  headline shapes, and I published that without reopening the adoption
+  decision.** The `af15eac` sweep reads `mimalloc` at **0.97× / 0.97× / 0.99×**
+  on `parse`, `strings` and `typed`, where 7.13's sitting read
+  1.00× / 0.99× / 1.01× and 7.3's read 0.98× / 0.96× / 0.96×. So two of the
+  three sittings now put it ahead on every shape. **Against acting on it**:
+  every cell's spread overlaps the reference's, the largest gap is 3%, and the
+  drift table in the same sweep puts the median absolute drift between two
+  sittings at 1.6% — this is a within-sitting ratio, which does not get that
+  excuse automatically, but the margin is close enough to it that one more
+  sitting could reverse the sign again, as two already have. **For acting on
+  it**: 7.13's settlement rested on the sentence "nothing beats the platform
+  allocator on any of the three shapes", and that sentence is now false as
+  written; what replaced it in `measurements.md` is the weaker "nothing beats it
+  by more than the instrument's own noise". **The call**: leave the platform
+  allocator and let the weaker sentence stand, or re-take `--figure allocator`
+  alone a few times to find out whether 1–3% is real before P7 wraps. Reversing
+  it costs five minutes of build — the features are still in the manifest.
+  Detail: [`../design/measurements.md`](../design/measurements.md), "Which
+  allocator a figure was taken under".
 

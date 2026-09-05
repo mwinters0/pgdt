@@ -772,7 +772,7 @@ again by the first item admitted after this keystone.
 `INSERT`-run scan cost **mid-teens times** a `COPY` scan per byte, CPU-bound,
 which argued for an `INSERT` fast path — and *that* changes a decision, so it
 went through grilling → spec amendment → a numbered slice rather than through
-this section. It is `KD9`, and P7's slice 7.5 took it to **4.3× warm**. The
+this section. It is `KD9`, and P7's slice 7.5 took it to **4.9× warm**. The
 entry stays live at that residual: part of it is a property of the two
 algorithms and cannot go, and part of it is two named, untaken cuts
 ([`architecture.md`](architecture.md), "Bulk regions: one span kind, three
