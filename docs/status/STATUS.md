@@ -376,18 +376,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`peak-rss` was published from its own single-figure sitting rather than
-  waiting for the next sweep.** `M58` could not land without a table, and the
-  alternative was to register the instrument as `UNTAKEN` and leave the koji row
-  — a claim already known to be a megabyte high and, as it turns out, wrong on
-  its second axis — standing until an hour-long sweep happened. So the figure
-  was taken alone at `7ee5db5`, and `measurements.md`'s stamp now reads
-  "seventeen of the eighteen come from this sitting" where it used to read
-  "every one". **The decision is whether that is acceptable or whether a figure
-  may only enter the doc through a sweep.** It costs one real thing: `--stale`
-  reads a single commit for the whole document, so this figure reads stale
-  against the very changes it postdates until a sweep re-takes it — a red with a
-  reason, which the doc states at the table, but a red that is wrong in the
-  other direction from every other one there. Reversing it means striking the
-  section and re-taking it in the next sweep; nothing else in the doc depends on
-  it, since it borrows no reading and is the only table denominated in bytes.
+None open.

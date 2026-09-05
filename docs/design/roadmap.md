@@ -721,7 +721,7 @@ in the dated history entry it was filed under.
 **What the table below still holds is the queue, not the record.** A landed
 item's row is provenance and goes with the rest of the centering; a row whose
 Date is still empty is a live obligation, so it stays and keeps its number.
-The next item admitted takes `M60` and joins them.
+The next item admitted takes `M61` and joins them.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
@@ -732,6 +732,7 @@ The next item admitted takes `M60` and joins them.
 | `M57` | 2026-09-05 | The register's boundary made mechanical: a section outside it declares itself, `--check` asserts such a section carries no figure marker, and the doc's "every figure below was taken by `measure.py`" is scoped to what the register actually holds rather than to everything printed under it | | [2026-09-05](../status/history/2026-09-05.md), "The koji section is outside the figure register, and only its prose said so" |
 | `M58` | 2026-09-05 | The flat-RSS claim re-homed out of koji into the registered `peak-rss` figure, which finds it true per byte and **false per block** (~9.9 KB a block, 43.6 MiB at 4,000) — koji's row struck, the design paragraphs resting on ~9 MiB repointed at the one-block reading, the per-block growth registered as `KD14`, and `--koji-recipe` reading `VmHWM` from `/proc/<pid>/status` so koji's own record still gets one | | [2026-09-05](../status/history/2026-09-05.md), "The RSS row was resting a design claim on the input least able to test it" |
 | `M59` | | The census-off binary's stamp is checked as an ancestor of HEAD with no path the selected census figures declare changed in between, rather than as equal to HEAD — a non-ancestor stamp still refused, and the refusal reusing the prefix predicate `--stale` already argues staleness from rather than a second authority over what moves a reading | | [2026-09-05](../status/history/2026-09-05.md), "The census stamp tolerates a commit that moves nothing it measures" |
+| `M60` | | A figure taken outside the sweep carries its sitting commit inside its own `<!-- figure: … -->` marker, and every reader of the session stamp — `--stale`, acknowledgement spentness, `--verify-additive` — argues from that figure's commit instead; `--check` fails a sitting that borrows or is derived from, or that does not descend from the stamp, `--figure` refuses such a selection, the stamp's accounting sentence is generated rather than hand-written, and `measurements.md` gains the standing rule the whole thing enforces | | [2026-09-05](../status/history/2026-09-05.md), "A figure may be published outside a sweep, and its sitting becomes data" |
 
 **One obligation outlived them and is most of the way discharged.** An
 `INSERT`-run scan cost **mid-teens times** a `COPY` scan per byte, CPU-bound,
