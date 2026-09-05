@@ -186,6 +186,40 @@ fn push_token(out: &mut String, value: Option<&str>, syntax: &Syntax) {
     out.push('"');
 }
 
+/// Append the bare `NULL` an array spells a SQL NULL element as.
+///
+/// Exists for the render path that writes an element straight into the
+/// caller's buffer and so never builds an [`ArrayLiteral`] to hand to
+/// [`render_array`] (`batch::render_array_into`). The spelling stays here,
+/// beside the grammar that owns it.
+pub(crate) fn push_array_null(out: &mut String) {
+    push_token(out, None, &ARRAY);
+}
+
+/// Quote, in place, the array element whose rendered text is already sitting
+/// at `out[mark..]`.
+///
+/// **The common element needs no quoting and this copies nothing** — the text
+/// is already where it belongs, so a bare element costs one [`needs_quote`]
+/// walk and no move at all. One that does need quoting is taken aside into
+/// `scratch` and re-emitted through [`push_token`]; `scratch` is cleared per
+/// element and reused across the whole value, so a fifty-element row allocates
+/// at most once and only if some element was quotable.
+///
+/// **The scratch is unavoidable rather than incidental.** The quoting decision
+/// is made from the *finished* element text and escaping expands it, so there
+/// is no room in `out` to write the escaped form over the raw one — and
+/// `String` offers no safe way to shift bytes within itself.
+pub(crate) fn quote_array_element(out: &mut String, mark: usize, scratch: &mut String) {
+    if !needs_quote(&out[mark..], &ARRAY) {
+        return;
+    }
+    scratch.clear();
+    scratch.push_str(&out[mark..]);
+    out.truncate(mark);
+    push_token(out, Some(scratch), &ARRAY);
+}
+
 /// Consume a `"`-delimited token starting at the opening quote, returning its
 /// unescaped text and the index just past the closing quote.
 ///

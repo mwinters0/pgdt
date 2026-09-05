@@ -10,7 +10,10 @@
 //!
 //! The shape is the measured control's: the sixteen columns
 //! `scripts/generate_perf_data.py` writes, in its order, which is what
-//! [`docs/design/measurements.md`]'s `query` figures time.
+//! [`docs/design/measurements.md`]'s `query` figures time. Beside it sits the
+//! array pair the same generator writes under `--arrays`, at both of its
+//! element counts, because what an array arm costs is the count that has to
+//! *not* grow with the elements.
 //!
 //! **This binary installs a counting global allocator**, which is why it is a
 //! test file of its own rather than a case in `tests/batch.rs`.
@@ -21,9 +24,11 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use arrow::array::{
     ArrayRef, BinaryArray, BooleanArray, Date32Array, Decimal128Array, FixedSizeBinaryArray,
-    Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, StringViewArray,
+    Float32Array, Float64Array, Int16Array, Int32Array, Int64Array, ListArray, StringViewArray,
     Time64MicrosecondArray, TimestampMicrosecondArray,
 };
+use arrow::buffer::OffsetBuffer;
+use arrow::datatypes::{DataType, Field};
 use pgdump_query::{NestedPlan, render_field_into};
 
 struct Counting;
@@ -86,6 +91,27 @@ fn control_row() -> Vec<ArrayRef> {
         ])),
         Arc::new(StringViewArray::from(vec!["a\tb\nc\\d"])),
     ]
+}
+
+/// One `integer[]` column of `len` elements, and one `text[]` of `len`
+/// elements every one of which `array_out` would quote. The text elements are
+/// all the same width, so the scratch buffer that quoting needs is grown by
+/// the first of them and reused by the rest — which is the point being
+/// counted.
+fn array_row(len: usize) -> (ArrayRef, ArrayRef) {
+    let ints: ArrayRef = Arc::new(Int32Array::from((0..len as i32).collect::<Vec<_>>()));
+    let texts: ArrayRef = Arc::new(StringViewArray::from(
+        (0..len).map(|i| format!("has space,{i:03}")).collect::<Vec<_>>(),
+    ));
+    let wrap = |values: ArrayRef, item: DataType| -> ArrayRef {
+        Arc::new(ListArray::new(
+            Arc::new(Field::new("item", item, true)),
+            OffsetBuffer::from_lengths([len]),
+            values,
+            None,
+        ))
+    };
+    (wrap(ints, DataType::Int32), wrap(texts, DataType::Utf8View))
 }
 
 /// **One test, deliberately.** The counter is process-wide, so a second test
@@ -157,6 +183,38 @@ fn the_render_path_allocation_budget_per_row() {
     assert!(!wrote);
     assert!(line.is_empty());
     assert_eq!(counted, 0, "allocations to render a SQL NULL");
+
+    // **An array column costs the same at fifty elements as at five**, which
+    // is the property the direct walk exists for: the elements are written
+    // where they will be read, so nothing per element is allocated. What is
+    // left is `ListArray::value`'s slice, one `Arc` per array value, plus one
+    // scratch `String` for a column whose elements need quoting — one for the
+    // whole value, not one per element. Before, each element cost a `String`
+    // of its own, and the collected `Vec` and the whole-array `String` grew
+    // with the element count on top of that.
+    let array_plan = NestedPlan::Array(Box::new(NestedPlan::Scalar));
+    let mut counts = Vec::new();
+    for len in [5usize, 50] {
+        let (ints, texts) = array_row(len);
+        for column in [&ints, &texts] {
+            // Warm the scratch's growth out of the count for the same reason
+            // the control's line buffer is warmed: it is not a per-row cost.
+            line.clear();
+            render_field_into(column.as_ref(), 0, &array_plan, &mut line).unwrap();
+            let warm = line.clone();
+            line.clear();
+            counts.push(counting(|| {
+                render_field_into(column.as_ref(), 0, &array_plan, &mut line).unwrap();
+            }));
+            assert_eq!(line, warm, "the counted pass rendered the same array");
+        }
+    }
+    assert_eq!(
+        counts,
+        //   int[5] text[5] int[50] text[50]
+        vec![1, 2, 1, 2],
+        "allocations per array value, at five elements and at fifty",
+    );
 }
 
 /// Run `body` with the counter on, and return how many times the allocator

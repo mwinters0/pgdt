@@ -1055,7 +1055,12 @@ pub fn render_field_into(
     match plan {
         NestedPlan::Scalar => {}
         NestedPlan::Array(child) => {
-            out.push_str(&render_array(column, row, child)?);
+            // Both are empty and neither allocates until it is used: `scratch`
+            // only where an element needs quoting, `dims` only where the value
+            // has a second dimension.
+            let mut scratch = String::new();
+            let mut dims = Vec::new();
+            render_array_into(column, row, child, out, &mut scratch, &mut dims)?;
             return Ok(true);
         }
         NestedPlan::Multirange(bound) => {
@@ -1205,46 +1210,93 @@ pub fn render_field_into(
     Ok(true)
 }
 
-/// Walk one `List` level, appending its lengths to `dims` and its leaves to
-/// `elements` in row-major order — the flattened shape [`nested::ArrayLiteral`]
-/// wants. Rectangularity is not re-checked: only [`append_typed`] fills these
-/// columns, and it rejects a value whose shape does not fit.
-fn collect_array(
+/// Write an `array_out` literal for a `List` value straight into `out`,
+/// walking the Arrow list rather than building a [`nested::ArrayLiteral`]
+/// first.
+///
+/// **Nothing between an element's value and the caller's buffer.** Each
+/// element is rendered where it will be read, and
+/// [`nested::quote_array_element`] moves it aside only if the grammar wants it
+/// quoted — so an `integer[]` of fifty is fifty appends and no allocation at
+/// all, where an `ArrayLiteral` cost a `String` per element, the `Vec` holding
+/// them, an un-presized whole-array `String` and a copy of it into `out`.
+///
+/// Lower bounds are always 1, so no `[lb:ub]=` prefix is ever written: a
+/// decorated value is refused at append time (I21), and no column holds one to
+/// render back.
+fn render_array_into(
+    column: &dyn Array,
+    row: usize,
+    child_plan: &NestedPlan,
+    out: &mut String,
+    scratch: &mut String,
+    dims: &mut Vec<usize>,
+) -> Result<()> {
+    let mark = out.len();
+    let mut leaves = 0usize;
+    render_list_level(column, row, child_plan, 0, dims, out, scratch, &mut leaves)?;
+    // `array_out` writes `{}` for a zero-element array whatever its
+    // dimensionality (I20), so a `List<List<T>>` whose inner lists are all
+    // empty collapses to it rather than keeping its outer braces.
+    if leaves == 0 {
+        out.truncate(mark);
+        out.push_str("{}");
+    }
+    Ok(())
+}
+
+/// One `List` level of [`render_array_into`]: braces, separators, and either a
+/// recursion or the leaf elements.
+///
+/// `dims` records the length of the first list seen at each depth **below the
+/// outermost**, which every later list at that depth is asserted against — the
+/// same rectangularity guard the flattened `dims`/`elements` pair used to make
+/// as a product at the end, now made per list. It is untouched for a
+/// one-dimensional array, where there is one list and nothing to disagree with
+/// it, which is why the common case allocates nothing.
+#[allow(clippy::too_many_arguments)]
+fn render_list_level(
     column: &dyn Array,
     row: usize,
     child_plan: &NestedPlan,
     depth: usize,
     dims: &mut Vec<usize>,
-    elements: &mut Vec<Option<std::borrow::Cow<'static, str>>>,
+    out: &mut String,
+    scratch: &mut String,
+    leaves: &mut usize,
 ) -> Result<()> {
     let values = column.as_any().downcast_ref::<ListArray>().unwrap().value(row);
-    if dims.len() == depth {
-        dims.push(values.len());
-    }
-    for i in 0..values.len() {
-        match child_plan {
-            NestedPlan::Array(inner) => {
-                collect_array(values.as_ref(), i, inner, depth + 1, dims, elements)?;
-            }
-            _ => elements
-                .push(render_field(values.as_ref(), i, child_plan)?.map(std::borrow::Cow::Owned)),
+    if let Some(d) = depth.checked_sub(1) {
+        if dims.len() == d {
+            dims.push(values.len());
+        } else {
+            assert_eq!(
+                dims[d],
+                values.len(),
+                "a List column's sub-lists must all be the same length at one depth; \
+                 append_typed rejects a value whose shape does not fit"
+            );
         }
     }
-    Ok(())
-}
-
-/// Rebuild an `array_out` literal from a `List` value. Lower bounds are
-/// always 1: a decorated value is refused at append time, so no column ever
-/// holds one to render back.
-fn render_array(column: &dyn Array, row: usize, child_plan: &NestedPlan) -> Result<String> {
-    let mut dims = Vec::new();
-    let mut elements = Vec::new();
-    collect_array(column, row, child_plan, 0, &mut dims, &mut elements)?;
-    if elements.is_empty() {
-        return Ok("{}".to_string());
+    out.push('{');
+    for i in 0..values.len() {
+        if i > 0 {
+            out.push(',');
+        }
+        if let NestedPlan::Array(inner) = child_plan {
+            render_list_level(values.as_ref(), i, inner, depth + 1, dims, out, scratch, leaves)?;
+            continue;
+        }
+        let mark = out.len();
+        if render_field_into(values.as_ref(), i, child_plan, out)? {
+            nested::quote_array_element(out, mark, scratch);
+        } else {
+            nested::push_array_null(out);
+        }
+        *leaves += 1;
     }
-    let lower_bounds = vec![1; dims.len()];
-    Ok(nested::render_array(&nested::ArrayLiteral { elements, dims, lower_bounds }))
+    out.push('}');
+    Ok(())
 }
 
 /// Scan `source` end to end, assembling typed `RecordBatch`es for every row
@@ -1923,5 +1975,239 @@ mod tests {
             .push_row(0, 1 << 40, RawRow::unchecked(b"abc"), &mut RowSplit::default(), &mut chunks)
             .unwrap();
         assert!(!batcher.should_flush());
+    }
+}
+
+/// The `ArrayLiteral`-building render that [`render_array_into`]'s direct walk
+/// replaced, kept verbatim as the oracle it is checked against. A function
+/// that is asked to be exactly what it was is checked against what it was, over
+/// a generated corpus rather than a listed one, so a disagreement on an input
+/// nobody thought to write down is a test failure and not a report from the
+/// field.
+#[cfg(test)]
+mod prior_shape {
+    use super::*;
+
+    /// Walk one `List` level, appending its lengths to `dims` and its leaves
+    /// to `elements` in row-major order — the flattened shape
+    /// [`nested::ArrayLiteral`] wants.
+    fn collect_array(
+        column: &dyn Array,
+        row: usize,
+        child_plan: &NestedPlan,
+        depth: usize,
+        dims: &mut Vec<usize>,
+        elements: &mut Vec<Option<std::borrow::Cow<'static, str>>>,
+    ) -> Result<()> {
+        let values = column.as_any().downcast_ref::<ListArray>().unwrap().value(row);
+        if dims.len() == depth {
+            dims.push(values.len());
+        }
+        for i in 0..values.len() {
+            match child_plan {
+                NestedPlan::Array(inner) => {
+                    collect_array(values.as_ref(), i, inner, depth + 1, dims, elements)?;
+                }
+                _ => elements.push(
+                    render_field(values.as_ref(), i, child_plan)?.map(std::borrow::Cow::Owned),
+                ),
+            }
+        }
+        Ok(())
+    }
+
+    /// Rebuild an `array_out` literal from a `List` value.
+    pub(super) fn render_array(
+        column: &dyn Array,
+        row: usize,
+        child_plan: &NestedPlan,
+    ) -> Result<String> {
+        let mut dims = Vec::new();
+        let mut elements = Vec::new();
+        collect_array(column, row, child_plan, 0, &mut dims, &mut elements)?;
+        if elements.is_empty() {
+            return Ok("{}".to_string());
+        }
+        let lower_bounds = vec![1; dims.len()];
+        Ok(nested::render_array(&nested::ArrayLiteral { elements, dims, lower_bounds }))
+    }
+}
+
+/// [`render_array_into`] against the shape it replaced, over generated element
+/// text and generated shapes. The corpus is built as Arrow values directly
+/// rather than through [`append_typed`], because the quoting rule is what is
+/// under test and `decode_array` only ever hands back text `array_out` would
+/// have written — so a corpus routed through it could not reach an element
+/// holding a brace, a bare `NULL` or a lone backslash.
+#[cfg(test)]
+mod differential {
+    use arrow::datatypes::Field;
+
+    use super::*;
+
+    /// The same deterministic 64-bit LCG `decode.rs`'s differential tests use,
+    /// so a failure is reproducible from the seed alone and the corpus does
+    /// not have to be committed.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            self.0 >> 11
+        }
+
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n as u64) as usize
+        }
+    }
+
+    /// Every byte class the array grammar branches on: the force-quote set,
+    /// each whitespace character `array_isspace` knows, and ordinary text.
+    const ALPHABET: &[&str] = &[
+        "a", "Z", "0", ",", "{", "}", "\"", "\\", " ", "\t", "\n", "\r", "\x0b", "\x0c", "é", "N",
+        "U", "L",
+    ];
+
+    fn element(rng: &mut Rng) -> Option<String> {
+        match rng.below(12) {
+            0 => return None,
+            1 => return Some(String::new()),
+            2 => return Some("NULL".to_string()),
+            3 => return Some("null".to_string()),
+            _ => {}
+        }
+        let len = rng.below(6);
+        Some((0..len).map(|_| ALPHABET[rng.below(ALPHABET.len())]).collect())
+    }
+
+    fn utf8_list(rows: &[Vec<Option<String>>]) -> ArrayRef {
+        let mut values = StringViewBuilder::new();
+        for row in rows {
+            for v in row {
+                match v {
+                    Some(s) => values.append_value(s),
+                    None => values.append_null(),
+                }
+            }
+        }
+        Arc::new(ListArray::new(
+            Arc::new(Field::new("item", DataType::Utf8View, true)),
+            OffsetBuffer::from_lengths(rows.iter().map(Vec::len)),
+            Arc::new(values.finish()) as ArrayRef,
+            None,
+        ))
+    }
+
+    /// Wrap a `List` in another `List`, `width` inner lists to each outer one
+    /// — the rectangular shape `append_typed` is the only thing that produces.
+    fn nest(inner: ArrayRef, width: usize) -> ArrayRef {
+        let outer = inner.len() / width;
+        let field = Arc::new(Field::new("item", inner.data_type().clone(), true));
+        Arc::new(ListArray::new(
+            field,
+            OffsetBuffer::from_lengths((0..outer).map(|_| width)),
+            inner,
+            None,
+        ))
+    }
+
+    #[track_caller]
+    fn agrees(column: &ArrayRef, plan: &NestedPlan, child: &NestedPlan) {
+        for row in 0..column.len() {
+            let expected = prior_shape::render_array(column.as_ref(), row, child)
+                .expect("the oracle renders every corpus row");
+            let actual = render_field(column.as_ref(), row, plan)
+                .expect("the walk renders every corpus row")
+                .expect("no corpus row is a SQL NULL array");
+            assert_eq!(actual, expected, "row {row}");
+        }
+    }
+
+    /// One dimension, generated element text: the shape every registered
+    /// figure's array columns are, and where the quoting decision lives.
+    #[test]
+    fn a_one_dimensional_array_renders_as_the_literal_builder_did() {
+        let mut rng = Rng(0x5eed_0717);
+        let rows: Vec<Vec<Option<String>>> =
+            (0..400).map(|_| (0..rng.below(7)).map(|_| element(&mut rng)).collect()).collect();
+        assert!(rows.iter().any(Vec::is_empty), "the corpus must reach the empty array");
+        let column = utf8_list(&rows);
+        let child = NestedPlan::Scalar;
+        agrees(&column, &NestedPlan::Array(Box::new(child.clone())), &child);
+    }
+
+    /// Two dimensions, including the all-empty shape `array_out` writes as
+    /// `{}` whatever its dimensionality (I20) — the one case where the walk
+    /// has to unwind the braces it has already written.
+    #[test]
+    fn a_two_dimensional_array_renders_as_the_literal_builder_did() {
+        let mut rng = Rng(0x5eed_0718);
+        for width in [1usize, 2, 3] {
+            for inner_len in [0usize, 1, 4] {
+                let rows: Vec<Vec<Option<String>>> = (0..(6 * width))
+                    .map(|_| (0..inner_len).map(|_| element(&mut rng)).collect())
+                    .collect();
+                let column = nest(utf8_list(&rows), width);
+                let child = NestedPlan::Array(Box::new(NestedPlan::Scalar));
+                agrees(&column, &NestedPlan::Array(Box::new(child.clone())), &child);
+            }
+        }
+    }
+
+    /// Three dimensions, so the depth-keyed rectangularity check is exercised
+    /// below the level a two-dimensional value reaches.
+    #[test]
+    fn a_three_dimensional_array_renders_as_the_literal_builder_did() {
+        let mut rng = Rng(0x5eed_0719);
+        let rows: Vec<Vec<Option<String>>> =
+            (0..24).map(|_| (0..2).map(|_| element(&mut rng)).collect()).collect();
+        let column = nest(nest(utf8_list(&rows), 3), 2);
+        let child = NestedPlan::Array(Box::new(NestedPlan::Array(Box::new(NestedPlan::Scalar))));
+        agrees(&column, &NestedPlan::Array(Box::new(child.clone())), &child);
+    }
+
+    /// A nested element that is not a scalar: the composite arm still builds
+    /// its own literal and is pushed through the same quoting decision, which
+    /// is the boundary this row deliberately stops at.
+    #[test]
+    fn an_array_of_composites_renders_as_the_literal_builder_did() {
+        let mut rng = Rng(0x5eed_071a);
+        let mut a = Int32Builder::new();
+        let mut b = StringViewBuilder::new();
+        let mut lengths = Vec::new();
+        for _ in 0..60 {
+            let len = rng.below(4);
+            lengths.push(len);
+            for _ in 0..len {
+                match rng.below(5) {
+                    0 => a.append_null(),
+                    _ => a.append_value(rng.below(1000) as i32 - 500),
+                }
+                match element(&mut rng) {
+                    Some(s) => b.append_value(&s),
+                    None => b.append_null(),
+                }
+            }
+        }
+        let fields = Fields::from(vec![
+            Field::new("a", DataType::Int32, true),
+            Field::new("b", DataType::Utf8View, true),
+        ]);
+        let values = Arc::new(StructArray::new(
+            fields.clone(),
+            vec![Arc::new(a.finish()) as ArrayRef, Arc::new(b.finish()) as ArrayRef],
+            None,
+        )) as ArrayRef;
+        let column = Arc::new(ListArray::new(
+            Arc::new(Field::new("item", DataType::Struct(fields), true)),
+            OffsetBuffer::from_lengths(lengths),
+            values,
+            None,
+        )) as ArrayRef;
+        let child = NestedPlan::Record(vec![NestedPlan::Scalar, NestedPlan::Scalar]);
+        agrees(&column, &NestedPlan::Array(Box::new(child.clone())), &child);
     }
 }

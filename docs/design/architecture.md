@@ -2117,11 +2117,32 @@ strings` too — **24.793 G → 19.610 G, −20.9%** — because the sink is wha
 `strings` query pays for its sixteen text columns; a `parse`, which renders
 nothing, is flat to 0.0004%.
 
+**An array column is written where it will be read, not assembled first.**
+`render_array_into` walks the Arrow `List` and appends each element into the
+caller's buffer through `render_field_into`, in place of building a
+`nested::ArrayLiteral` and copying its rendered text in — which cost a `String`
+per element, the `Vec` collecting them, an un-presized whole-array `String` and
+that final copy. An element is rendered at a mark in the buffer and then offered
+to `nested::quote_array_element`, which **leaves it alone unless the grammar
+wants it quoted**; only a quotable element is moved aside, into a scratch
+`String` cleared per element and reused for the whole value. The scratch is
+unavoidable rather than incidental: the quoting decision is made from the
+finished element text, escaping expands it, and `String` has no safe in-place
+shift. A typed `pgdq query` over the `--arrays --composite` file falls
+**104.094 G → 83.925 G user instructions** (−19.4%) and the 50-element array
+column projected alone **67.535 G → 49.440 G** (−26.8%), while the same query
+over a file with no array column is +0.14% with the legs' ranges overlapping and
+a `parse` is flat to 0.00003%. The four other nested arms deliberately keep the shape this
+replaced: each would need its own container grammar pushed into a sink form,
+and each renders one value a row against an array's fifty.
+
 **The count of what is left is a test rather than a paragraph**, since it is
 the property most likely to rot: `tests/render_allocations.rs` installs a
 counting allocator and asserts, per column of the measured control shape, that
 rendering one row into a warm buffer allocates **20 times, none of them in a
-column this work touched**. Eighteen of the twenty are `render_f32` (5),
+column this work touched**, and that an array column costs the same at fifty
+elements as at five — one allocation for `ListArray::value`'s slice, plus one
+for the scratch where the elements are quotable at all. Eighteen of the twenty are `render_f32` (5),
 `render_f64` (7) and `render_decimal` (6), which build their digit strings
 through `format!`; the other two are `render_uuid` and `render_bytea`, one
 pre-sized `String` each. The count this replaces was 16 `String`s a row, taken
@@ -2290,16 +2311,17 @@ Five properties are load-bearing and easy to lose:
   copies").
 
   **The borrow serves decode only, and the render direction has no use for
-  it.** `batch::collect_array` fills `elements` with
-  `render_field(..)?.map(Cow::Owned)` — every element it produces is `Owned`,
-  unconditionally, because it is rendering an Arrow value rather than slicing a
-  literal. So `ArrayLiteral`'s lifetime is not a lever on the render path, and a
-  session trying to make rendering allocate less by reshaping `elements` would
-  be reworking the structure that carries the reading above while buying
-  nothing. What the render path needs is not a different `ArrayLiteral` but not
-  to build one: to write each element through `render_field_into` as it walks
-  the Arrow list, quoting from a scratch buffer reused across elements, since
-  `push_token`'s quoting decision needs the finished element text.
+  it.** Rendering an Arrow value produces every element `Owned`,
+  unconditionally, because it is rendering rather than slicing a literal — so
+  `ArrayLiteral`'s lifetime is not a lever on the render path, and a session
+  trying to make rendering allocate less by reshaping `elements` would be
+  reworking the structure that carries the reading above while buying nothing.
+  What the render path needed was not a different `ArrayLiteral` but not to
+  build one, and it no longer does: `batch::render_array_into` walks the Arrow
+  list and writes each element through `render_field_into` ("Decoders and
+  render-back"). `ArrayLiteral` is what the *decode* direction returns and what
+  renders back through `render_array`, which is where its shape fields and this
+  borrow earn their keep.
 - **The force-quote set is 256 bits, not a byte slice.** `needs_quote` asks
   "does this byte force quoting" once per byte of every token, in **both**
   directions — `scan_token` to reject an unquoted token `*_out` would have
@@ -4702,6 +4724,19 @@ against `print_batch` 25.75%. The control that says the change reaches no scan
 figure is `parse` instead: 1.404590 G → 1.404585 G, flat to 0.0004%. What is
 left of the CLI in the mode difference is 0.76 s of a 1.35 s gap, which is
 still most of it. The rows above are again left as taken.
+
+**The array arm's sink moves neither this table nor the budget, for the
+force-quote set's reason.** The control has no array column, so a typed query
+over it is +0.14% with the two legs' ranges overlapping — layout on a function
+whose changed branch such a row never takes — and a `parse` over the
+array-bearing file is flat to 0.00003%. Where it lands is again the shape this
+file does not have: over the `--arrays --composite` file the same typed query
+falls **104.094 G → 83.925 G** (−19.4%), wall 12.43 → 10.19 s, and that file's
+50-element array column projected alone falls **67.535 G → 49.440 G** (−26.8%)
+("Decoders and render-back"). A profile of the array-bearing file after it reads
+`poll_next` **63.05%** against `print_batch`'s **36.42%** — the same side of the
+line the control is on, and the array render is about 9% of the run in self
+time against `nested::scan_token`'s 9.12% going the other way.
 
 **What that means for reading the headline table.** The baseline puts a typed
 query at 31× the warm `dd` floor and a `strings` query at 13.3×

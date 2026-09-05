@@ -40,7 +40,9 @@ it is the figure that decided the read chunk and bounded the other two
 I/O-defaults levers. **A fourth now stands outside the sweep**:
 `nested-decode-micro`, taken alone on 2026-09-04 twice — by 7.9 and again by
 7.14, each as its own before-and-after — and the only table in the doc a library
-change has re-taken *and* left current in fact.
+change has re-taken *and* left current in fact. It stays current in fact after
+7.17, which added two functions to `nested.rs` and changed none of the four the
+figure times.
 
 **All seventeen now read stale against the `ba2fc12` stamp, and three of them
 are stale only mechanically.** `--stale` is relative to the doc's session stamp
@@ -50,7 +52,10 @@ after every P7 change that reaches them — they are the three tables here that
 are current in fact. `nested-decode-micro` is the one that changed sides: it
 times a decoder in isolation and reaches no `pgdq` run, so it read green until
 7.9 edited the decoder it times; 7.9 and then 7.14 each re-took it in the change
-that moved it. The
+that moved it, and 7.17 left it red without moving it — the two functions that
+slice added to `nested.rs` are reachable from `batch.rs` alone, so the only path
+from there to this figure is code layout, which is a standing rule rather than a
+re-take. The
 other fourteen — the thirteen sweep figures and `predicate-terms` —
 are stale in fact too. `allocator` is the newest of the thirteen sweep figures,
 re-taken by 7.13 on the pooled read path, and 7.13.1 has since moved it too;
@@ -67,8 +72,12 @@ or a `uuid` column**: a typed control query falls **45.31%** and a `strings` one
 not at all. **7.16 then moves the four again *and* their `strings` legs** — a
 typed control query falls a further **29.47%** and a `strings` one **20.91%**,
 the row sink being what a `strings` query pays for its text columns — so the
-four typed-query tables are the ones most wrong today in both of their legs,
-and `parse`, which renders nothing, is the only shape none of this reaches.
+four typed-query tables are the ones most wrong today in both of their legs.
+**7.17 moves them once more and, like 7.14, only where the file has an array
+column**: −19.38% on a `--arrays --composite` query and −26.79% on that file's
+50-element array column alone, against a typed control query inside its own
+spread — so `nested-end-to-end` and `projection-widths` are the two it certainly
+reaches. `parse`, which renders nothing, is the only shape none of this reaches.
 
 **One published cell is not merely stale but wrong by a factor of six, and is
 not to be quoted until 7.12 re-takes it.** `census-arrays` prices the census on
@@ -280,15 +289,17 @@ discharged, and `7.12` is all that is left**: the allocator decision before the 
 sweep, which 7.13 re-took and settled; `7.13.1` ahead of `7.6` and `7.7.1`,
 which rework how a row is walked inside the buffer it replaced; `7.8` ahead of
 `7.8.1`, the figure that prices three levers before the levers themselves; and
-`7.14`, `7.15` and `7.16` each ahead of `7.12`, all three of which have
+`7.14`, `7.15`, `7.16` and `7.17` each ahead of `7.12`, all four of which have
 landed.
 
-The last of those was `7.16`, which moves a path the sweep's four typed-query
-tables time and — unlike every render-path slice before it — their `strings`
-legs as well: a typed control query falls a further **29.47%** of its user
-instructions and a `strings` one **20.91%**. Taking those tables first would
-have published thirteen freshly-measured figures describing a binary that is no
-longer shipped, with no sweep left to repair them.
+The last of those was `7.17`, which takes an array-bearing typed query down a
+further **19.38%** of its user instructions and that file's 50-element array
+column **26.79%** — the shape `nested-end-to-end` and `projection-widths` are
+built around. `7.16` before it moved the same four typed-query tables and,
+unlike every render-path slice before that, their `strings` legs as well: a
+typed control query fell **29.47%** and a `strings` one **20.91%**. Taking those
+tables first would have published thirteen freshly-measured figures describing a
+binary that is no longer shipped, with no sweep left to repair them.
 
 - [x] **7.1** The profiling apparatus — `[profile.profiling]`, `perf`, and a
       `measure.py --profile-recipe` that prints the invocation on the
@@ -537,13 +548,31 @@ longer shipped, with no sweep left to repair them.
       costs **20 allocations, none of them in a column this touched**, and 18 of
       the 20 are `render_f32`/`render_f64`/`render_decimal`. Notes:
       [`../design/roadmap-P7.16-render-sink-notes.md`](../design/roadmap-P7.16-render-sink-notes.md)
-- [ ] **7.17** The array arm's render, through the sink — `render_field_into`
-      writes an array's elements into the caller's buffer as it walks the Arrow
-      list, removing the `String` per element, the `Vec`, the un-presized
-      whole-array `String` and the copy of it. **7.16's residual**, and that
-      row's stated closure path was wrong: `ArrayLiteral`'s `Cow` is
-      `Cow::Owned` unconditionally on the render side and must not be reshaped
-      for this. Array arm only, by evidence rather than symmetry. Ahead of 7.12.
+- [x] **7.17** The array arm's render, through the sink —
+      `batch::render_array_into` walks the Arrow list and appends each element
+      into the caller's buffer through `render_field_into`, so the `String` per
+      element, the `Vec` collecting them, the un-presized whole-array `String`
+      and the copy of it are all gone. An element is rendered **at a mark in
+      that buffer** and moved aside only if the grammar wants it quoted, into a
+      scratch cleared per element — so an `integer[]` costs one allocation at
+      fifty elements and at five, which is a test. A typed `--arrays
+      --composite` query falls **104.094 G → 83.925 G user instructions**
+      (−19.38%), wall 12.43 → 10.19 s, and that file's 50-element array column
+      projected alone **67.535 G → 49.440 G** (−26.79%) — 7.16 left that shape
+      at **+3.8%**, so the residual is closed and the arm is 24.0% below where
+      7.16 found it. **`parse` is the control**, flat at 2.919233 → 2.919234 G,
+      and a typed query on the array-free control is **+0.14%** with the two
+      legs' ranges overlapping — reported rather than called zero, since such a
+      row re-enters `render_field_into` without taking the branch that changed.
+      **No behaviour change, asserted rather than argued**: three whole-file
+      outputs byte-identical over 699,962 / 803,995 / 814,362 rows, plus the
+      previous implementation kept verbatim and checked against a corpus built
+      as Arrow values at three dimensionalities. The one difference is the
+      rectangularity guard, now per list rather than a flattened product —
+      strictly stronger, on a shape neither `append_typed` nor `decode_array`
+      admits. **The other four nested arms did not fall out of it** and none
+      changed. Notes:
+      [`../design/roadmap-P7.17-array-render-sink-notes.md`](../design/roadmap-P7.17-array-render-sink-notes.md)
 
 ## Not started
 
@@ -551,7 +580,7 @@ longer shipped, with no sweep left to repair them.
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 - **P7 is open**, grilled and sliced; the checklist above is its progress. Its
-  four evidence slices, the allocator reading, eleven library changes and three
+  four evidence slices, the allocator reading, twelve library changes and three
   measured refusals have landed — 7.4's gate in `stream.rs`, 7.5's `INSERT`
   statement scan in `preamble.rs`/`map.rs`, 7.13's read-buffer pool in
   `io.rs`, 7.13.1's read carry in `scan.rs`/`stream.rs`, 7.6's bulk UTF-8 pass
@@ -559,8 +588,9 @@ longer shipped, with no sweep left to repair them.
   `copy.rs`/`predicate.rs`/`batch.rs`/`stream.rs`, 7.9's borrowed array
   element in `nested.rs`/`batch.rs`, 7.10's allocation-free scalar decoders
   in `decode.rs`, 7.14's force-quote `ByteSet` in `nested.rs`, 7.15's hex
-  pair table in `decode.rs` and 7.16's row sink across
-  `decode.rs`/`batch.rs`/`pgdump_query-cli`, all edits to
+  pair table in `decode.rs`, 7.16's row sink across
+  `decode.rs`/`batch.rs`/`pgdump_query-cli` and 7.17's array render walk across
+  `batch.rs`/`nested.rs`, all edits to
   timed paths,
   plus 7.8.1's `--chunk-size`, which changes no default and refuses the other
   two I/O levers, 7.10.1, which refuses the typed column build on a reading and
