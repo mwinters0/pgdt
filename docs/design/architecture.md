@@ -4685,136 +4685,88 @@ census's field split was the byte loop, not the census").
 
 <!-- section: query-profile -->
 
-### `query`: the library's batch stream is the largest bucket again
+### `query`: the library's batch stream is the larger bucket in both modes
 
 Same file, same regime, `--dqcache none` (which is what every published `query`
 figure times, so the mapping pass is inside these numbers). Structure is read
-off the call graph; the flat shares agree with a `release` build's.
+off the call graph; the flat shares agree with a `release` build's. The whole
+table is **one sitting of the shipped binary**: wall/user/system are medians of
+five runs with no `perf` on them, and the shares come from two `--call-graph
+fp` profiles taken in the same window (`runs/m53-query-profile.sh`).
 
 | | `strings` | `typed` |
 |---|---|---|
-| wall / user / system | 4.48 / 3.56 / 0.88 s | 10.72 / 9.81 / 0.86 s |
-| `poll_next` — the library's whole batch stream | 56.8% | 33.7% |
-|  ↳ `RowBatcher::push_row` | 45.2% | 29.8% |
-|  ↳ `copy::decode_field` | 22.6% | 7.9% |
-|  ↳ `batch::append_typed` | — | 13.8% |
-| `pgdq::print_batch` — the CLI turning the batch back into TSV | **34.0%** | **62.8%** |
-|  ↳ `batch::render_field` | 9.9% | 52.6% |
-| the `read_range` thread | 7.2% → **—** | 2.6% → **—** |
+| wall / user / system | 3.53 / 2.63 / 0.84 s | 4.90 / 4.01 / 0.85 s |
+| `poll_next` — the library's whole batch stream | **73.5%** | **61.5%** |
+|  ↳ `RowBatcher::push_row` | 55.6% | 50.2% |
+|  ↳ `copy::RawRow::decode` | 32.4% | 20.7% |
+|  ↳ `batch::append_typed` | — | 16.3% |
+| `pgdq::print_batch` — the CLI turning the batch back into TSV | **25.2%** | **37.4%** |
+|  ↳ `batch::render_field_into` | 8.0% | 21.7% |
 
-**The read thread's row is now empty, and it is the only row this section's
-own work has moved.** Everything that thread did in *user* space was the
-per-chunk memset; the `pread` itself is system time a `Pu` profile cannot see.
-With the buffer pool in place, neither profile has a single frame under
-`read_exact_at` above the 0.5% floor. The rows above are left as taken rather
-than re-derived: removing that thread's samples re-bases every share upward by
-its own share and moves no absolute, so the per-row budget below — which is
-what an embedder actually pays — is unchanged, and re-taking the shares would
-have meant publishing a sitting this machine was too busy to give.
+**The mode difference is still mostly the CLI, and it is a much smaller
+difference.** A typed query costs 1.38 s of user time more than a `strings`
+one, of which 0.84 s is `print_batch` and 0.53 s the library — the CLI is 61%
+of that gap, where it was 79% of a gap four and a half times the size.
 
-**The carry moves them by the same small amount, in the same direction.** The
-replay loop stopped copying each chunk into a second buffer too, which the
-whole-query instruction count puts at **−2.1% for `strings`** (26.86 G →
-26.29 G) and **−1.4% for `typed`** (96.93 G → 95.59 G) — smaller than a
-`parse`'s −17.6% because the same absolute saving sits under a run that costs
-20× as much. That cost is inside the `poll_next` rows, which are therefore
-overstated by about their own share of it, and no other row moves.
+**The read path has no row here, because it takes no user samples.** Everything
+the `read_range` thread did in user space was the per-chunk memset, and the
+`pread` itself is system time a `Pu` profile cannot see; with the buffer pool
+and the carry in place neither profile has a frame under `read_exact_at` above
+the 0.5% floor, where the thread was once 7.2% and 2.6% of the two runs
+("Execution model and API surface"; "The scanner never owns the bytes it
+scans"). The carry took the replay loop's second copy of each chunk with it,
+which is **−2.1%** of a `strings` query's user instructions and **−1.4%** of a
+typed one's.
 
-**The bulk UTF-8 pass moves them again, and renames one row.**
-`copy::decode_field` is no longer a symbol on this path: a row arrives as a
-`copy::RawRow` and the field goes through `RawRow::decode` into
-`copy::unescape_field`, with no per-field validation between them ("A row's
-bytes are validated once, in bulk"). Whole-query user instructions fall a
-further **6.11% for `strings`** (26.288 G → 24.682 G) and **2.42% for `typed`**
-(96.115 G → 93.785 G), every after rep below every before rep, and within one
-sitting `core::str::converts::from_utf8` goes from 7.81% and 2.60% of the two
-profiles to nothing at all, against 2.62% and 0.85% for the bulk pass that
-replaced it. The rows above are again left as taken; the budget below is
-re-derived from a fresh sitting, since that is the table the change is sized
-against.
+**The decode row names one function, because the validation left it.** The
+per-field `std::str::from_utf8` became a single bulk pass over the row ("A
+row's bytes are validated once, in bulk"), which is why the row reads
+`copy::RawRow::decode` rather than the `copy::decode_field` that used to be a
+symbol on this path: whole-query user instructions fell **6.11%** for `strings`
+and **2.42%** for typed, and `core::str::converts::from_utf8` went from 7.81%
+and 2.60% of the two profiles to nothing at all.
 
-**The scalar decoders move one row and one row only, and it is the largest
-proportional move any slice has made to this table.** `batch::append_typed` was
-13.8% of the typed profile and is **7.48%** of a fresh one, because three of the
-decoders it calls stopped taking a `String` per field ("Decoders and
-render-back"); `decode_bytea`, the largest of them, falls from **3.75% to
-0.67%** of the run's user time and `decode_uuid` disappears below the profile's
-own floor. `strings` does not move at all — not "within the noise", but
-24.772 G user instructions on both sides — which is the control that says the
-change is confined to the typed path. The rows above are again left as taken;
-the budget below is the fresh sitting.
+**The builder's row is a share of a run that has since halved.** The scalar
+decoders took `batch::append_typed` from 13.8% to **7.48%** of the profile they
+were measured in — `decode_bytea` alone from 3.75% to 0.67% and `decode_uuid`
+below the floor — with a `strings` query unmoved at 24.772 G user instructions
+on both sides, the control that says the change was confined to the typed path
+("Decoders and render-back"). It reads 16.3% here only because the render-path
+work below took the run it is a share of down by more than it took the builder.
 
-**The force-quote set moves neither this table nor the budget, and that is the
-reading rather than a gap in it.** `needs_quote` lives in `nested.rs`, and the
-control file has no array, composite or range column in it, so the predicate is
-never reached: a typed `pgdq query` over the control reads **90.719 G** user
-instructions on both sides of the change, medians of six reps a leg, which is
-the same number the scalar decoders left it at. Where the lever lands is the
-shape this file does not have — over the `--arrays --composite` file the same
-query falls **162.807 G → 142.500 G** (−12.47%), every after rep below every
-before rep, with user time 14.96 s → 13.74 s. `nested::needs_quote` was
-**14.63%** of that run as its own symbol and is inlined away afterwards, its two
-callers `scan_token` and `push_token` carrying the whole predicate at 5.47% and
-3.21% of a run that is itself smaller. So a lever's reach is a property of the
-columns a file has, and this budget is a control-file decomposition: it sizes
-what a *scalar* row costs, and a nested column's per-element cost is
+**The CLI's render-back was two-thirds of a typed query and is 37.4%.** Two
+changes did it on this file, each with a control that says where it landed
+("Decoders and render-back"). The hex pair table took a typed control query
+from **89.725 G to 49.074 G** user instructions (−45.3%) and its wall from 9.40
+to 6.03 s, with a `strings` query unmoved at 24.7935 G — the control that
+confined it to the typed render path. The date and time renderers and the row
+sink took it **49.074 G → 34.610 G** (−29.5%), wall 6.07 → 4.75 s, and unlike
+the hex table reached `strings` as well, **24.793 G → 19.610 G** (−20.9%),
+where the control is a `parse` instead: flat to 0.0004%, so no scan figure
+moved. Before them `print_batch` was 62.8% of a typed profile and `core::fmt`
+was the shape of it, `format_inner`, `fmt::write`, `Formatter::pad_integral`,
+`<u8 as LowerHex>::fmt` and `String::write_str` together about a fifth of the
+run with the allocator traffic they generate on top.
+
+**What is left inside `render_field_into` is the floats.** `render_f64` is
+**5.0%** of the typed run and is still a `format!`, against `render_decimal`'s
+2.1%, `render_bytea`'s 1.2% and 2.0% for every date/time renderer together.
+
+**A lever's reach is a property of the columns a file has, which is why two
+render-path changes are absent from this table entirely.** `nested::needs_quote`
+and the array arm's sink both live in `nested.rs`, and the control has no array,
+composite or range column, so neither is ever reached over it: the force-quote
+set reads **90.719 G** user instructions on both sides and the array sink
+**+0.14%** with the two legs' ranges overlapping. Where they land is the shape
+this file does not have — over the `--arrays --composite` file the same typed
+query falls **−12.47%** (162.807 G → 142.500 G) and then **−19.4%** (104.094 G
+→ 83.925 G, wall 12.43 → 10.19 s), and that file's 50-element array column
+projected alone falls **−26.8%**. A profile of it after both reads `poll_next`
+**63.05%** against `print_batch`'s **36.42%**, the same side of the line the
+control is on. So this table is a **control-file decomposition**: it sizes what
+a *scalar* row costs, and a nested column's per-element cost is
 [`measurements.md`](measurements.md), "Nested decode costs what it copies".
-
-**Two-thirds of a typed query was the CLI writing the values back out as
-text**, and 79% of the gap between the two modes was that one function: typed
-cost 6.24 s more than `strings`, of which 4.95 s was `print_batch` and 1.29 s
-the library. In a `release` profile the same thing showed up as `core::fmt` —
-`format_inner`, `fmt::write`, `Formatter::pad_integral`, `<u8 as LowerHex>::fmt`
-and `String::write_str` together about a fifth of the typed profile, with the
-allocator traffic they generate on top.
-
-**The hex pair table halves that, and the heading above now holds by a
-margin rather than by a factor.** `render_bytea` and `render_uuid` stopped
-allocating a `String` per byte ("Decoders and render-back"), which takes a typed
-`pgdq query` over the control from **89.725 G to 49.074 G user instructions**
-(−45.31%, five reps a leg, every after rep below every before rep) and its wall
-from 9.40 to 6.03 s; a `strings` query is unmoved at **24.7935 G on both
-sides**, the control that says the change is confined to the render path. In a
-matched pair of profiles `print_batch` goes **70.61% → 52.74%** and `poll_next`
-**28.46% → 45.83%**, so the CLI's render-back is still the larger of the two and
-no longer twice the library. The two functions themselves go 25.66% and 10.73%
-of the run to **0.86% and 0.48%** of a run that is itself 45% smaller. The
-rows above are again left as taken.
-
-**The date and time renderers and the row sink take the heading back the other
-way, and this is where it stops being close.** With the four date/time columns
-writing their digits into the line `print_batch` reuses ("Decoders and
-render-back"), a typed control query falls **49.074 G → 34.610 G user
-instructions** (−29.5%, five reps a leg, every after rep below every before
-rep) and its wall from 6.07 to 4.75 s. In a matched pair of profiles
-`print_batch` goes **52.74% → 36.42%** and `poll_next` **45.83% → 62.51%**: for
-the first time since this section was written the library is the larger bucket,
-by a factor of 1.7 rather than the 2.5 the CLI once held. `render_field_into` is
-20.6% of the run and `core::fmt` is no longer the shape of it — `render_f64` is
-its largest remaining contributor at 4.64%, `render_decimal` 1.96%,
-`render_bytea` 1.37% and every date/time renderer together 1.14%.
-
-**This one is not confined to `typed`, and that is the difference from the
-hex table.** The sink is what a `strings` query pays for its sixteen text
-columns too, so that mode falls **24.793 G → 19.610 G** (−20.9%) where the hex
-table left it exactly unmoved, and its own profile reads `poll_next` 73.07%
-against `print_batch` 25.75%. The control that says the change reaches no scan
-figure is `parse` instead: 1.404590 G → 1.404585 G, flat to 0.0004%. What is
-left of the CLI in the mode difference is 0.76 s of a 1.35 s gap, which is
-still most of it. The rows above are again left as taken.
-
-**The array arm's sink moves neither this table nor the budget, for the
-force-quote set's reason.** The control has no array column, so a typed query
-over it is +0.14% with the two legs' ranges overlapping — layout on a function
-whose changed branch such a row never takes — and a `parse` over the
-array-bearing file is flat to 0.00003%. Where it lands is again the shape this
-file does not have: over the `--arrays --composite` file the same typed query
-falls **104.094 G → 83.925 G** (−19.4%), wall 12.43 → 10.19 s, and that file's
-50-element array column projected alone falls **67.535 G → 49.440 G** (−26.8%)
-("Decoders and render-back"). A profile of the array-bearing file after it reads
-`poll_next` **63.05%** against `print_batch`'s **36.42%** — the same side of the
-line the control is on, and the array render is about 9% of the run in self
-time against `nested::scan_token`'s 9.12% going the other way.
 
 **What that means for reading the published `query` figures**, which are the
 two `query` rows of [`measurements.md`](measurements.md), "Which allocator a
@@ -4832,16 +4784,20 @@ is what `print_batch` costs, and it is now close to closed.
 
 A profile's shares converted at each mode's user time over the control's
 814,362 rows — **its own shares, not the table above's**, which is a different
-and earlier sitting. **This is the decomposition an embedder pays and the only one a
+sitting. **This is the decomposition an embedder pays and the only one a
 library change can move**, so it is what a proposed optimization is sized
 against — and no figure in `measurements.md` states it, because every figure
 there times the CLI ("A mode difference and a per-column delta are CLI
 numbers"). It is a set of proportions, so it carries no marker and is not a
 figure itself; a lever that lands re-reads it the same way it re-takes a table.
 
-Its own sitting, and a later one than the table above: the shares are from a
+Its own sitting, and an earlier one than the table above: the shares are from a
 pair of profiles of the shipped binary and the user times (3.22 s and 9.10 s,
-medians of five) from the same binary and input without `perf` on it.
+medians of five) from the same binary and input without `perf` on it. **The
+totals survive the sitting above it**, which converts to 2.37 µs and 3.03 µs on
+its own shares and user times — within 3% of this table, on a run whose typed
+user time is less than half of this one's, which is the check that says the
+render-path work took nothing out of the library.
 
 | Per row, library only | `strings` | `typed` |
 |---|---|---|
