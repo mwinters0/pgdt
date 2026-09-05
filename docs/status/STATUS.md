@@ -467,7 +467,53 @@ binary that is no longer shipped, with no sweep left to repair them.
       [`../design/roadmap-P7.11-viewing-builder-notes.md`](../design/roadmap-P7.11-viewing-builder-notes.md)
 - [ ] **7.12** The sweep pair and the koji regression run, folded in, plus the
       written statement of what a parallel splitter needs from coverage and
-      from the census, filed to P16.
+      from the census, filed to P16. **Two of the three have landed; the sweep
+      pair is running and its fold-in is what ticks this box.** P16's inbox now carries P7's answer on
+      both mechanisms — coverage stays prefix-shaped and P7 hardened the
+      assumption rather than relaxing it, so the appendable-spans rework P16
+      already owns and "let coverage have interior holes" are one change; and
+      the census's
+      combine is a bounded semilattice, so its accumulation unit is free and
+      what a splitter actually threatens is the per-block *totality* that keeps
+      a partial census — a confidently wrong schema — from reaching
+      `resolve_columns`
+      ([`../design/roadmap-P16-parallel-scan-inbox.md`](../design/roadmap-P16-parallel-scan-inbox.md)).
+      **The koji regression run is done and folded in.** The 2026-09-05 scan
+      finished `exit=0` in 62.7 minutes and reproduced 74 blocks,
+      19,575,829,920 rows and 784,019,857,152 bytes with **all 222 per-block
+      offsets identical** to the P9 wrap run's, on the glibc build at
+      `f5768e7` — the first koji scan in the configuration the allocator rule
+      requires, so that section's counts are no longer musl's. The two `info
+      --verbose` reports differ by one line, the user-defined-type detail the
+      report gained since August, and `lock_monitor.activity` is one block of
+      16,428 rows
+      ([`../design/measurements.md`](../design/measurements.md), "koji full scan
+      — the regression check").
+      **The sweep pair ran and did not produce a publishable sweep.** It was
+      launched 2026-09-05T02:11Z once the machine came back under the contention
+      gate — 0.57% and 2.97% `cpu_busy_pct` against the harness's 15%, where the
+      earlier attempt read 19.2–19.4% — and finished 03:01Z. Leg A, fixed as the
+      publishable sweep before either ran, met ~60% `cpu_busy_pct` and **failed
+      seven figures** — `scan-throughput-nvme`, `chunk-size`,
+      `nested-end-to-end`, `census-attribution`, `per-block-quadratic`,
+      `projection-widths` and `predicate-terms`, with `cross-file-floor`,
+      `preamble-prepass` and `allocator` skipped behind the ones they borrow
+      from; leg B, the drift partner, ran 02:24–03:01Z with **no
+      failures and two retried readings**, and `session-drift` is `skipped`
+      because it needs both. The gate did its job — nothing contended was
+      published. What is undecided is whether leg B may be promoted, which would
+      spend the pre-registration that fixed the roles before either ran, or
+      whether the pair is re-run. The handoff is
+      `runs/measure-pair-20260905-0220/HANDOFF.md`; the two tables are
+      `runs/measure-20260905T021113/` (leg A, partial) and
+      `runs/measure-20260905T022434/` (leg B, clean). The apparatus is staged and verified —
+      including `runs/pgdq-nocensus`, which was **40 commits stale** and is
+      rebuilt at `f5768e7` (`M56` is the durable fix), and
+      `runs/pgdq-before-throttle`, which is a fixed historical commit and must
+      not be. **What remains is the fold-in**: leg A's sixteen tables plus the
+      derived `session-drift` one into their seventeen figure markers, each
+      figure's `quoted_by` consumers re-read, and the session stamp moved off
+      `ba2fc12`. Nothing may `cargo build` or `cargo test` while the pair runs.
 - [x] **7.13** The read path's per-chunk zeroed allocation, pooled behind the
       `object_store` shape: a warm `parse` loses **9.4% of its user
       instructions** (1.882 G → 1.706 G, ±0.00% either side) and
@@ -746,4 +792,5 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
+Nothing open.
 

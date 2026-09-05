@@ -31,10 +31,9 @@ span list (rather than a watermark) is what makes them expressible. It is
 right that the *format* allows them — but `splice` does not, and out-of-order
 NVMe scanning is exactly what would produce them. Whatever this phase does about
 scan ordering has to either keep coverage prefix-shaped or rework `splice`'s
-seam rule, and that should be a decision, not a discovery. P7 owes this phase
-a written statement of which — see
-[`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md), "What this
-phase is not".
+seam rule, and that should be a decision, not a discovery. **P7's answer is the
+entry "P7 leaves coverage prefix-shaped" below**, which says which of the two it
+chose and what it added to the assumption while it was there.
 
 **Origin.** 2026-08-24. See
 [`architecture.md`](architecture.md),
@@ -229,3 +228,103 @@ behind it rather than a guess — and it is a number large enough that getting i
 wrong would eat a meaningful share of what parallelism buys.
 
 **Origin.** 2026-09-04, P7.8.1.
+
+---
+
+## P7 leaves coverage prefix-shaped, and hardened the assumption rather than relaxing it
+
+**Fact.** P7 did **not** rework `splice`'s seam rule. `stream::splice` still
+rebuilds `DumpIndex::spans` as `prefix ++ built ++ [Unscanned tail]` and still
+closes the seam by extending the last prefix span, exactly as the first entry in
+this file describes; what P7 changed is only *how often* it runs, by putting it
+behind the save throttle's gate ([`architecture.md`](architecture.md), "`parse`
+resumes, and saves as it goes"). Three things about the assumption are now more
+sharply stated than they were, and all three bind a splitter:
+
+- **A contribution's unit is a whole block, never a byte range.**
+  `map::Builder::snapshot` `debug_assert!`s `Mode::Idle`, so spans can be taken
+  off a `Builder` only between blocks. That coupling is why P7's gate could not
+  be worked around locally, and it is why a worker that has scanned an interior
+  byte range has no way to hand its spans back through today's interface — the
+  obstacle is `snapshot` and `splice`, not the span list, which can express a
+  hole perfectly well.
+- **How a map was assembled must not be visible in it**, and it is a test:
+  `full.spans == eager.spans` in `pgdump_query/tests/query_cache.rs`, span for
+  span and census field for census field. The concrete trap is blank-line
+  attribution — a `Builder` starting partway through a file opens its first span
+  at its first *recognized content*, which is after its start byte whenever
+  blank lines separate the two, and `splice` repairs that by extending the
+  **preceding** span. A start floor on `Builder` was tried and rejected because
+  it hands that blank line to the following span instead. N workers merging
+  pairwise must apply the same repair at **every** seam, not only at the one
+  seam a prefix has.
+- **The rework and `KD5` are one change, not two.** `KD5`'s remainder — keeping
+  the frontier's spans appendable rather than rebuilt — is already owned by this
+  phase, and P7's rejected-alternative paragraph refuses it here precisely
+  because it is what a parallel splitter wants anyway. So "make spans
+  appendable" and "let coverage have interior holes" are the same piece of work,
+  and costing them separately will double-count.
+
+**Why this phase cares.** This is the written statement the first entry says P7
+owes, and it is the half that was a decision rather than a discovery: coverage
+is prefix-shaped by choice through the end of P7, so this phase inherits the
+assumption whole and pays for relaxing it. The practical consequence is that a
+splitter cannot be built on top of `splice` — it either constrains workers to
+produce a prefix (finish block *k* before block *k+1* is published, which throws
+away most of what out-of-order scanning buys) or it lands the appendable-spans
+rework first and treats `KD5` as discharged by the same change.
+
+**Origin.** P7's slice 7.4 and the phase's standing scope decision, restated at
+7.12 on 2026-09-05
+([`architecture.md`](architecture.md), "`parse` resumes, and saves as it goes",
+whose `KD5` paragraph carries the rejected alternative;
+[`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md), "What this
+phase is not"). Contingent on nothing P7 has left to land — 7.12 is a
+measurement slice and touches no scan path.
+
+---
+
+## The census may be accumulated over any unit; what parallel splitting threatens is its totality
+
+**Fact.** `ArrayShape::merge` is min-of-mins, max-of-maxes and OR of the
+`[lb:ub]=` flag, with `ArrayShape::default()` as its identity — a bounded
+semilattice, so the combine is **commutative, associative and idempotent**. And
+`index::union_census` folds it length-tolerantly: it resizes to the longest
+vector it has seen and a shorter one contributes only over its own prefix, a
+missing entry reading as the default. `map::Builder::on_row` is likewise
+stateless per row — one `memchr2` pre-filter for `{` or `[`, then a field split
+and `observe` — so it carries nothing across rows.
+
+Taken together: **any partition of a block's rows, censused in any order on any
+number of workers and folded with `merge`, gives bit-identical results to the
+single-threaded pass.** The accumulation unit is free. The one thing that is not
+free is that a headered block's vector is pre-sized from the header and a
+header-less block's grows by field index, so two workers on different row ranges
+of a header-less block legitimately return vectors of different lengths — which
+the fold already handles and a hand-rolled merge would not.
+
+**Why this phase cares.** The obvious worry is the wrong one. The merge is safe
+to parallelize; what a splitter actually breaks is the invariant that **a mapped
+block always carries a *total* census** — today `scanned_through` advances only
+at a `CopyEnd` watermark, so a block that reached the map was walked end to end
+and there is no half-censused block for a later pass to repair
+([`architecture.md`](architecture.md), "The array shape census"). A worker
+owning rows *[a, b)* of a block holds a partial one, and a partial census is not
+a *weaker* answer than none — it is a **wrong** one. A column holding `{1,2}`
+and `{{1,2},{3,4}}` records `(1, 2)` and degrades to `Utf8View`; a worker that
+saw only the 2-D rows records `(2, 2)`, which resolves to `List<List<T>>` and
+then hard-fails on every 1-D value in the half it never read
+([`architecture.md`](architecture.md), "What the census decides, and who may
+believe it"). That is exactly the confidently-wrong schema the both-bounds
+design exists to prevent, reintroduced by the split. So this phase must either
+publish a block's census only once every range of it has been folded in, or make
+partiality representable and keep `resolve_columns` from ever being handed one —
+and "the census is a per-block accumulation" is the wrong reason to hesitate,
+because it is not.
+
+**Origin.** P7's slice 7.12, 2026-09-05, reading the census against
+`pgdump_query/src/index.rs` (`ArrayShape::merge`, `union_census`) and
+`pgdump_query/src/map.rs` (`Builder::on_row`) rather than against the prose.
+Contingent on the merge staying a semilattice: an `ArrayShape` field that is
+order-sensitive — a first-seen or last-seen value, a count — would falsify the
+whole entry, and nothing today is one.

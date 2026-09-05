@@ -1663,12 +1663,31 @@ Both sweeps are `runs/measure-*` directories; the table is computed from their
 The 784GB real sample (`CLAUDE.local.md` has the path). Roughly an hour on the
 HDD; run it detached per `CLAUDE.md`.
 
+**Nothing in this section is a figure, and that is what licenses the readings
+below.** koji carries no `<!-- figure: … -->` marker, `--check` does not
+reconcile it, `--stale` cannot name it, and no figure's `quoted_by` reaches it —
+the harness owns koji's *invocation* and never runs it, which is the standing it
+also gives the profiling recipe. The throughput rows further down are disk
+throughputs with no `cat`-to-`/dev/null` floor, so the first standing rule above
+already puts them outside the register on their own terms. This section is
+documented context for a run nobody can repeat cheaply, not a table of figures,
+and the rule at the head of this document — that a figure losing its
+regeneration command should be deleted — is about a figure.
+
+*Rejected:* keeping a disqualified reading out of the section entirely. A koji
+run's rate is the only calibration the next run's reader has, and withholding it
+does not leave them with nothing — it leaves them with the rows below and no
+reason to distrust them, which is how a contended run gets read as a regression.
+The cost is a number someone may quote without the sentence attached, and it is
+paid down by stating the disqualification *at* the number rather than once in a
+preamble.
+
 | | |
 |---|---|
 | `COPY` blocks | 74 |
 | Rows | 19,575,829,920 |
 | Bytes accounted for | 784,019,857,152 |
-| RSS | flat, ~9 MiB (untyped scan) |
+| RSS | flat, ~9 MiB (untyped scan) — musl's, and ~1 MB high since 7.13.1 |
 | `UnterminatedCopyBlock` | none |
 
 **The `.dqcache` a run leaves behind dies at the next cache-format bump**, and
@@ -1687,14 +1706,81 @@ check is for.
 stdout;` substring — must parse as one correct block. That is the case that
 motivated line-anchored detection.
 
-**These are musl-build figures**, taken before the glibc rule above and under
-a static-binary container recipe that no longer exists. The scan is
-device-bound at ~33% of one core, so the allocator is unlikely to move them —
-but the next koji run takes them on the glibc build, and until one does they
-are not comparable to the figures above. koji is deliberately **outside** the
-sweep: a different medium, ~54 minutes, and a regression check rather than a
-throughput figure. The harness owns the *invocation* — `uv run measure.py
---koji-recipe` — so the next run conforms without re-deriving the recipe.
+**The counts above are confirmed on the glibc build; the throughput rows below
+are still musl's.** The 2026-09-05 run recorded next is the first koji scan on
+the default glibc build in a glibc image, which is what the allocator rule above
+requires, and it reproduced every count in the table — the RSS row excepted,
+which the recipe does not capture and which no run since has measured. The
+throughput readings further down predate that rule and were taken under a
+static-binary container recipe that no longer exists; the scan is device-bound
+at ~33% of one core, so the allocator is unlikely to move them, but until an
+uncontended glibc run takes them they are not comparable to the figures above.
+koji is deliberately **outside** the sweep: a different medium, ~54 minutes, and
+a regression check rather than a throughput figure. The harness owns the
+*invocation* — `uv run measure.py --koji-recipe` — so the next run conforms
+without re-deriving the recipe.
+
+**The identity check has been taken on the glibc build, at `f5768e7`.** The
+2026-09-05 run (container `pgdq-koji`, `runs/pgdq-koji-scan.log`, `exit=0`,
+00:54:18Z → 01:57:03Z) is the regression check for the whole of P7: eleven
+landed slices reworked how bytes reach the parser — the read buffer pool and the
+read-loop carry (`io.rs`, `scan.rs`, `stream.rs`), the bulk UTF-8 pass and the
+shared field split (`copy.rs`), the splice gate (`stream.rs`), the `INSERT`
+statement scan (`preamble.rs`, `map.rs`) — and koji is the only input at a scale
+where *what the parser concludes is unchanged* can be checked against something
+other than a fixture.
+
+| | |
+|---|---|
+| `COPY` blocks | 74 |
+| Rows | 19,575,829,920 |
+| Bytes accounted for | 784,019,857,152 — `Scan completion: 100%` |
+| Per-block offsets | all 222 identical to the P9 wrap run's |
+| `lock_monitor.activity` | one block, 16,428 rows |
+| `UnterminatedCopyBlock` | none |
+
+The offsets are the identity check and they were compared as **text**, against
+`runs/koji-wrap-final-info.log` (2026-08-27, 818 lines): a cache dies at the
+next format bump, so two runs' caches are not comparable and this one's is
+248,479 bytes against that run's 247,380. The whole-file diff of the two `info
+--verbose` reports is **one added line** — the user-defined-type detail the
+report gained since August, `public.pgstattuple_type`'s composite fields.
+
+**The RSS row is the last musl reading here, and it is wrong in the other
+direction too.** The recipe captures no memory figure at all — it reads exit code
+and wall clock from `nerdctl inspect` and nothing else — so the 2026-09-05 run
+could not re-take it, and that container has since exited, taking its cgroup with
+it. Independently of the build, 7.13.1 removed a `chunk_size`-sized `Vec` per
+read loop and took a warm 3.00 GiB `parse` from 7.9 MB to 6.0 MB peak RSS, so
+~9 MiB has been about a megabyte high since that slice landed.
+
+**That claim is being re-homed rather than re-taken here**, because koji is the
+worst input in the tree for it. The row bundles two assertions — that nothing
+accumulates per byte, and that nothing accumulates per block — and this
+document's own standing rules say koji cannot test the second: 74 blocks over
+784 GB is block-poor, so a cost that scales with block count "cannot express
+itself in it at all". Both halves are cheap on inputs the harness already
+stages, and as a registered figure the claim gets a `depends` edge that goes red
+when the read path moves — which is precisely what did not happen for a whole
+slice. Queued as `M58`, which also strikes this row, repoints the four design
+paragraphs resting on ~9 MiB, and teaches the recipe to read `VmHWM` from
+`/proc/<pid>/status` so koji's own record still carries one. The container
+cgroup's `memory.peak` is the wrong instrument: it is charged the page cache of
+a 784 GB read, so it reports the 512 MB limit rather than the process.
+
+**That run's wall clock is not a throughput reading, and neither is the number
+to read it against.** 62.7 minutes, ~208 MB/s, with the machine at ~19%
+`cpu_busy_pct` throughout — well over the 15% the apparatus gate holds every
+published figure to. It was launched into that window deliberately, because a
+byte-identity check has no timing in it and the sweep could not run there.
+
+The rate is written down so the next run's is not read against nothing. But
+**the ~238–241 MB/s below is not a like-for-like reference**, and differencing
+the two crosses three boundaries at once: those rows are musl's, taken in a
+`postgres:16-alpine` image; they predate eleven P7 slices that changed what a
+scan costs per byte; and they were taken uncontended where this one was not. So
+~208 against ~241 is not a 13% regression, and neither number is evidence about
+the other until an uncontended glibc run supplies the missing half.
 
 **Throughput, re-measured clean.** A 2026-08-25 re-run on an uncontended disk
 (container `pgdq-koji`, `runs/koji-throughput-scan.log`) reproduced the same
