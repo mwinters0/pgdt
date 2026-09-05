@@ -286,7 +286,12 @@ graph, the readings this figure takes from another rather than measuring.
 reading published alone puts two numbers in the doc for one measurement — the
 harness computes that set transitively rather than a session working it out by
 hand, so `--figure` takes what a figure borrows and names the rest, and
-`--alone` is how a partial sitting is asked for deliberately. **The doc
+`--alone` is how a partial sitting is asked for deliberately. A reading another
+table *derives* from — a difference over this figure's reps rather than its
+number a second time — is **named rather than dragged in**: `--figure` says
+which table a re-take strands, before the first reading and again in the
+emitted header, and `--check` reports the relationship beside the partial
+sittings. **The doc
 addresses a figure by an `<!-- figure: <id> -->` marker, never by its
 heading**, so a heading may quote a number and be rewritten when that number
 moves; `--check` reconciles the markers against the register, reports a partial

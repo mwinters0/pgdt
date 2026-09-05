@@ -743,6 +743,44 @@ class BorrowGraph(unittest.TestCase):
         ids = ["allocator", *measure.sharing_closure("allocator")]
         self.assertEqual(measure.closure_gaps(measure.resolve_selection(ids)), [])
 
+    def test_the_derived_direction_is_read_off_the_same_declaration(self):
+        # The reverse of a non-republishing share, which the closure does not
+        # carry: `cross-file-floor`'s row 1 is a difference over the nested
+        # sweep's reps, so re-taking that sweep strands it.
+        self.assertEqual(
+            measure.derived_consumers("nested-end-to-end"),
+            [("cross-file-floor", "row 1's per-rep differences")],
+        )
+
+    def test_the_edge_names_both_ends_and_the_quantity(self):
+        # What `--check` prints: the consumer, the source whose reps it reads,
+        # and what it makes of them.
+        self.assertEqual(
+            measure.derivation_edges(),
+            [("cross-file-floor", "nested-end-to-end", "row 1's per-rep differences")],
+        )
+
+    def test_a_republished_share_is_not_a_derivation(self):
+        # `scan-throughput-warm` publishes `census-brace-free`'s reading as its
+        # own number, which is the closure's business and not this edge's.
+        self.assertEqual(measure.derived_consumers("census-brace-free"), [])
+
+    def test_re_taking_a_source_alone_names_the_table_it_strands(self):
+        gaps = measure.derivation_gaps(measure.resolve_selection(["nested-end-to-end"]))
+        self.assertEqual(len(gaps), 1)
+        self.assertIn("nested-end-to-end", gaps[0])
+        self.assertIn("cross-file-floor", gaps[0])
+
+    def test_taking_the_consumer_too_leaves_no_derivation_gap(self):
+        selection = measure.resolve_selection(["cross-file-floor"])
+        self.assertIn("nested-end-to-end", [f.id for f in selection])
+        self.assertEqual(measure.derivation_gaps(selection), [])
+
+    def test_the_forward_direction_was_never_the_hazard(self):
+        # Selection reads every share, republished or not, so a consumer always
+        # drags its source in. Only the reverse needed naming.
+        self.assertEqual(measure.derivation_gaps(measure.resolve_selection(["map-only"])), [])
+
     def test_alone_takes_exactly_what_is_named(self):
         got = [f.id for f in measure.resolve_selection(["allocator"], alone=True)]
         self.assertEqual(got, ["allocator"])

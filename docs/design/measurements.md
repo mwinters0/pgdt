@@ -263,6 +263,19 @@ to skip:
   re-take, `--list` prints it per figure, and `--check` reports a partial
   sitting the doc still carries. A **deliberate** partial sitting is
   `--figure <id> --alone`, which borrows nothing and emits that note.
+- **A reading one table *derives* from is named, not dragged in.** The closure
+  is computed over republication — the runs whose number appears in two tables —
+  because that is the relation that puts two numbers in the doc for one
+  measurement. `cross-file-floor`'s first row is instead a per-row *difference*
+  over `nested-end-to-end`'s reps, which is a derived quantity and not that
+  table's number a second time, so the two are free to come from different
+  sittings. What re-taking the source alone costs is that the derived row is
+  then a difference over reps the doc no longer holds anywhere, so the harness
+  says so where it can be acted on: `--figure` names the consumer before the
+  first reading and again in the emitted header, and `--check` reports the
+  relationship beside the partial sittings. It reports rather than fails, for
+  the same reason a blessed partial sitting does — nothing here is wrong, and a
+  permanently red check stops being read.
 
 **One line, in three regimes: 3.00 GiB inputs read by a `glibc` binary in a
 512 MB `postgres:16` container, timed by that container's own `bash`.** Warm

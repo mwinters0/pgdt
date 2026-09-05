@@ -1788,10 +1788,11 @@ class Shared:
     anywhere -- but at the cost of dragging a fifth figure into every
     `allocator` sitting and falsifying the four-figure closure
     `measurements.md` publishes. The hazard is closed by *naming* the reverse
-    direction rather than taking it (`roadmap.md`, `M52`), which is the
-    distinction `--figure` already draws. Selection is directional and reads
-    every share, so the forward direction -- `--figure cross-file-floor`
-    pulling its source in -- was never at risk.
+    direction rather than taking it, which is the distinction `--figure`
+    already draws: `derivation_gaps` says it before the first reading and in
+    the emitted header, and `--check` reports it beside the partial sittings.
+    Selection is directional and reads every share, so the forward direction --
+    `--figure cross-file-floor` pulling its source in -- was never at risk.
     """
 
     source: str
@@ -3165,6 +3166,49 @@ def closure_gaps(figures: Sequence[Figure]) -> list[str]:
     return out
 
 
+def derivation_edges() -> list[tuple[str, str, str]]:
+    """Every non-republishing borrow, as `(consumer, source, what)`.
+
+    The direction the closure deliberately does not carry: a derived quantity
+    is not the source's number a second time, so the two tables are free to be
+    published from different sittings — right up until the source is re-taken,
+    at which point the consumer's row is a difference over reps the doc no
+    longer holds anywhere.
+
+    Naming is the whole remedy. Widening the closure would drag the consumer
+    into every sitting that touches its source (`Shared`, above), where what
+    the hazard actually needs is that nobody folds the source in without being
+    told which table is now derived from readings that are gone. In register
+    order, so a report of it reads as a run order."""
+    return [
+        (fig.id, shared.source, shared.what)
+        for fig in EVERY_FIGURE
+        for shared in fig.shares
+        if not shared.republished
+    ]
+
+
+def derived_consumers(fid: str) -> list[tuple[str, str]]:
+    """Figures whose own table is computed over `fid`'s reps, and what of."""
+    return [(c, what) for c, source, what in derivation_edges() if source == fid]
+
+
+def derivation_gaps(figures: Sequence[Figure]) -> list[str]:
+    """Consumers of a selected figure's reps that this sitting does not take.
+
+    The counterpart of `closure_gaps` for the derived direction, and said at the
+    same moment for the same reason: `--figure nested-end-to-end` is a perfectly
+    good sitting, but folding it in strands `cross-file-floor`'s first row, and
+    that is knowable before the first reading rather than at fold-in time."""
+    selected = {f.id for f in figures}
+    return [
+        f"{fig.id} — {consumer} derives {what} from its reps"
+        for fig in figures
+        for consumer, what in derived_consumers(fig.id)
+        if consumer not in selected
+    ]
+
+
 # --------------------------------------------------------------------------
 # Acknowledged commits: a declared path changed, and no reading moved.
 # --------------------------------------------------------------------------
@@ -3529,6 +3573,14 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
         log("!! this sitting is short of the set it shares readings with:")
         for gap in gaps:
             log("!!   " + gap)
+    # The reverse edge, which the closure deliberately does not carry: a table
+    # this sitting is not taking is a difference over reps it *is* re-taking.
+    # Named, not dragged in -- `derived_consumers` says why.
+    derivations = derivation_gaps(figures)
+    if derivations:
+        log("!! this sitting re-takes reps a figure it does not take derives from:")
+        for line in derivations:
+            log("!!   " + line)
 
     stager = Stager(cfg, log)
     stager.plan(figures)
@@ -3643,6 +3695,15 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
             "a figure this sitting did not take also publishes, so their absolutes may not be "
             "set beside those tables' until all of them are re-taken together: "
             + "; ".join(gaps)
+            + ".",
+            "",
+        ]
+    if derivations:
+        header += [
+            "> **A table this sitting did not take is derived from these reps.** Its published "
+            "row is computed over readings replaced below, so folding one of these in without "
+            "re-taking that table leaves a difference over reps the doc no longer holds: "
+            + "; ".join(derivations)
             + ".",
             "",
         ]
@@ -4073,6 +4134,21 @@ def cmd_check(doc: Path) -> int:
         for fid, closure in partial:
             print(f"  {fid}")
             print(f"      re-take with: {', '.join(closure) or '(nothing — it shares no reading)'}")
+        print()
+    derived = derivation_edges()
+    if derived:
+        # Reported rather than failed on, for the same reason a blessed partial
+        # sitting is: nothing here is wrong, and a check that is permanently red
+        # stops being read. What it buys is that the relationship is in front of
+        # whoever is reading this to decide what a re-take drags.
+        print(
+            "Derived, not republished — one table's row is computed over another's reps.\n"
+            "Not a closure edge: the number is not in the doc twice, so the two may come from\n"
+            "different sittings. What it costs is that re-taking the source alone strands the\n"
+            "consumer's row on reps the doc no longer holds:"
+        )
+        for consumer, source, what in derived:
+            print(f"  {consumer} derives {what} from {source}")
         print()
     if UNTAKEN:
         print("Built, not taken (no marker expected — see `--list`):")
