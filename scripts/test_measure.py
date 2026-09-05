@@ -461,6 +461,98 @@ class Allocator(unittest.TestCase):
         self.assertNotIn("allocator", measure.session_stamp("deadbee", dirty=False))
 
 
+class CensusBinary(unittest.TestCase):
+    """The census-off binary's stamp: the harness will not build that binary,
+    and now will not trust one built from another commit either.
+
+    A census figure is a subtraction between it and `target/release/pgdq`, so
+    every difference between the two trees is attributed to the census — which
+    is why the age of the hand-built half has to be checkable at all.
+    """
+
+    HEAD = "a" * 40
+    OTHER = "b" * 40
+
+    def _resolve(self, rev):
+        if rev == "HEAD":
+            return self.HEAD
+        return {"aaaaaaa": self.HEAD, "bbbbbbb": self.OTHER}.get(rev[:7])
+
+    def _cfg(self, tmp, *, binary=True, stamp=None):
+        cfg = measure.Config(bin_nocensus=Path(tmp) / "runs" / "pgdq-nocensus")
+        cfg.bin_nocensus.parent.mkdir(parents=True, exist_ok=True)
+        if binary:
+            cfg.bin_nocensus.write_text("#!/bin/true\n")
+        if stamp is not None:
+            cfg.bin_nocensus_stamp.write_text(stamp)
+        return cfg
+
+    def test_the_stamp_sits_beside_the_binary_it_describes(self):
+        # Derived from the binary's path, so PGDQ_MEASURE_CENSUS_OFF_BIN moves
+        # both and cannot leave them describing different files.
+        cfg = measure.Config(bin_nocensus=Path("/elsewhere/pgdq-nocensus"))
+        self.assertEqual(
+            cfg.bin_nocensus_stamp, Path("/elsewhere/pgdq-nocensus.stamp")
+        )
+
+    def test_a_missing_binary_is_still_refused_by_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._cfg(tmp, binary=False)
+            problem = measure.census_binary_problem(cfg, self._resolve)
+            self.assertIn("pgdq-nocensus", problem)
+            self.assertIn("is missing", problem)
+
+    def test_a_binary_with_no_stamp_is_refused(self):
+        # The state every checkout was in before this rule: a binary from some
+        # tree, and nothing saying which.
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._cfg(tmp)
+            problem = measure.census_binary_problem(cfg, self._resolve)
+            self.assertIn("pgdq-nocensus.stamp", problem)
+
+    def test_a_stamp_that_names_no_commit_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._cfg(tmp, stamp="not-a-sha\n")
+            self.assertIn(
+                "not a commit", measure.census_binary_problem(cfg, self._resolve)
+            )
+
+    def test_an_empty_stamp_is_refused_rather_than_read_as_head(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._cfg(tmp, stamp="\n")
+            self.assertIsNotNone(measure.census_binary_problem(cfg, self._resolve))
+
+    def test_a_stamp_naming_another_commit_is_refused_naming_both(self):
+        # The 2026-09-05 failure: a binary 40 commits behind, differenced
+        # against a fresh one, with every commit between them charged to the
+        # census.
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._cfg(tmp, stamp=self.OTHER + "\n")
+            problem = measure.census_binary_problem(cfg, self._resolve)
+            self.assertIn(self.OTHER[:7], problem)
+            self.assertIn(self.HEAD[:7], problem)
+
+    def test_a_stamp_naming_the_commit_being_measured_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._cfg(tmp, stamp=self.HEAD + "\n")
+            self.assertIsNone(measure.census_binary_problem(cfg, self._resolve))
+
+    def test_a_short_stamp_still_resolves(self):
+        # `git rev-parse HEAD` writes a full sha, but a stamp written by hand
+        # may be short and still name the same commit.
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._cfg(tmp, stamp="aaaaaaa\n")
+            self.assertIsNone(measure.census_binary_problem(cfg, self._resolve))
+
+    def test_the_doc_s_recipe_writes_the_stamp_the_harness_reads(self):
+        # The two halves have to meet: a recipe that does not write the stamp
+        # leaves the check unsatisfiable, and the recipe is where a hand build
+        # is described.
+        doc = (measure.REPO / "docs/design/measurements.md").read_text()
+        name = measure.Config().bin_nocensus_stamp.name
+        self.assertIn(f"git rev-parse HEAD > runs/{name}", doc)
+
+
 class PredicateShapes(unittest.TestCase):
     """Six predicates over one file, which is the whole instrument.
 

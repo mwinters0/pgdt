@@ -1085,6 +1085,7 @@ on_row` in `map.rs` — the pre-filter and everything after it, and nothing else
 ```sh
 cargo build --release -p pgdump_query-cli          # default target: glibc
 cp target/release/pgdq runs/pgdq-nocensus          # then revert map.rs
+git rev-parse HEAD > runs/pgdq-nocensus.stamp      # what it was built from
 ```
 
 and the harness takes it from there, staging both regimes, interleaving the
@@ -1093,6 +1094,25 @@ pair, reversing the order halfway and taking the floor in the same container:
 ```sh
 cd scripts && uv run measure.py --figure census-brace-free
 ```
+
+**The stamp is not bookkeeping: it is what makes the subtraction mean the
+census.** These tables difference that binary against `target/release/pgdq`, so
+whatever differs between the two *trees* is charged to the census — and a
+hand-built binary has no provenance the harness can read, where every generated
+input carries a `.stamp` naming its generator. So the census-off binary carries
+one too, the harness refuses a census figure whose stamp is not the commit it is
+measuring, and the refusal comes in the first second rather than an hour into a
+sweep. **Not building it and not trusting it are separate rules**: the patch
+stays a hand build, because a harness that patches its own subject can produce
+any figure it likes. The binary was found 40 commits stale on 2026-09-05 with
+nothing having noticed
+([`../status/history/2026-09-05.md`](../status/history/2026-09-05.md), "The
+census-off binary is apparatus, and nothing was checking its age"), in the table
+that already carried the register's largest correction; a stamp cannot catch a
+re-stamp without a rebuild, but *age* is the failure that happens, and it is the
+one nothing else can see. The pre-throttle binary needs none of this: it is a
+build of a fixed historical commit — deliberately not this one — and the harness
+builds it itself.
 
 **Never redirect stderr inside a timed command.** Some shells route `time`'s
 own report through the timed command's redirection, so a `2>/dev/null` meant

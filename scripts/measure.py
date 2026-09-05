@@ -43,7 +43,12 @@ Two binaries this cannot build for itself, by design:
 
 * the **census-off** binary is `map::Builder::on_row`'s body preceded by a bare
   `return;` -- a source patch no harness should perform. Build it by hand (the
-  recipe is in measurements.md) and point `PGDQ_MEASURE_CENSUS_OFF_BIN` at it;
+  recipe is in measurements.md) and point `PGDQ_MEASURE_CENSUS_OFF_BIN` at it.
+  **It carries a `.stamp` beside it naming the commit it was built from**, the
+  way a generated input does, and a census figure is refused when that is not
+  the commit being measured: not building it and not trusting an unstamped one
+  are different rules, and the second is what says the difference between the
+  two binaries is the census;
 * the **pre-throttle** binary for the quadratic table's "before" column is a
   release build of a historical commit. This one *is* mechanical, so the
   harness builds it into a git worktree when it is missing, or takes
@@ -194,6 +199,17 @@ class Config:
     reps_override: int | None = None
     dry_run: bool = False
     keep_warm: bool = False
+
+    @property
+    def bin_nocensus_stamp(self) -> Path:
+        """The commit the census-off binary was built from, recorded beside it
+        exactly as a generated input's `.stamp` sits beside the input.
+
+        Derived from the binary's own path rather than given its own
+        environment variable, so pointing `PGDQ_MEASURE_CENSUS_OFF_BIN` at
+        another build moves the stamp with it and cannot leave the two
+        describing different files."""
+        return self.bin_nocensus.with_name(self.bin_nocensus.name + ".stamp")
 
     @property
     def publishable(self) -> bool:
@@ -1593,6 +1609,88 @@ class Session:
                 self.readings[spec.key(figure)] = list(readings)
                 got.append(spec)
         return got
+
+
+def resolve_commit(rev: str) -> str | None:
+    """`rev` as a full commit sha, or `None` where this repository has no such
+    commit."""
+    proc = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}"],
+        cwd=str(REPO),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    return proc.stdout.strip() or None
+
+
+def census_binary_problem(
+    cfg: Config, resolve: Callable[[str], str | None] = resolve_commit
+) -> str | None:
+    """Why the census-off binary may not be measured against this commit, if it
+    may not. `None` means it may.
+
+    **Refusing to build it and refusing to trust it are two rules, and only the
+    first was here.** The harness will not apply the source patch -- a harness
+    that patches its own subject can produce any figure it likes -- so the
+    binary arrives from a hand build, and nothing recorded which tree it came
+    from. Every *generated input* answers exactly that question with a `.stamp`
+    beside it; this is the same file for the same reason, and the recipe in
+    `measurements.md` writes it.
+
+    The cost of not having it is not hypothetical. A census figure is a
+    subtraction between this binary and `target/release/pgdq`, so **everything
+    that differs between the two trees is attributed to the census**: the
+    binary found 40 commits behind on 2026-09-05 would have charged ten slices
+    of read-path work to the census, in the one table that was already the
+    register's largest correction, with nothing to tell the two errors apart.
+
+    What the stamp buys is bounded, and worth saying: it is only as honest as
+    the hand that wrote it, so it cannot catch a re-stamp without a rebuild.
+    What it does catch is *age*, which is the failure that actually happened
+    and the one nothing else can see. Three things stay deliberately out of
+    scope: a dirty tree, which the session stamp already declares;
+    `bin_before`, which is a build of a fixed historical commit -- not HEAD by
+    design -- and which the harness builds for itself and therefore knows the
+    provenance of; and `--dry-run`, which checks no binary at all because it
+    measures nothing and must run where none exists, so the refusal it would
+    give lands seconds later instead, at the first second of the sitting that
+    would have published the figure.
+    """
+    if not cfg.bin_nocensus.exists():
+        return (
+            f"{cfg.bin_nocensus} is missing. The census-off binary is a source patch no harness "
+            "should perform: add a bare `return;` as the first statement of "
+            "`map::Builder::on_row`, `cargo build --release -p pgdump_query-cli`, copy the binary "
+            f"to {cfg.bin_nocensus}, then revert. measurements.md's census section has the recipe."
+        )
+    want = resolve("HEAD")
+    if want is None:
+        return (
+            "HEAD does not resolve to a commit, so nothing can say which source "
+            f"{cfg.bin_nocensus} ought to have been built from."
+        )
+    stamp = cfg.bin_nocensus_stamp
+    if not stamp.exists():
+        return (
+            f"{stamp} is missing, so nothing says which source {cfg.bin_nocensus} was built from "
+            "— and a census figure is that binary differenced against this one. Rebuild it from "
+            "measurements.md's census recipe, which ends by writing that stamp."
+        )
+    text = stamp.read_text().strip()
+    got = resolve(text) if text else None
+    if got is None:
+        return (
+            f"{stamp} reads {text!r}, which is not a commit in this repository. It must name the "
+            f"commit {cfg.bin_nocensus} was built from."
+        )
+    if got != want:
+        return (
+            f"{cfg.bin_nocensus} was built at {got[:7]}, not the {want[:7]} being measured, so a "
+            "census figure would charge everything between the two to the census. Rebuild it from "
+            f"measurements.md's census recipe, which ends by re-writing {stamp}."
+        )
+    return None
 
 
 def ensure_before_binary(cfg: Config, log: Callable[[str], None]) -> Path:
@@ -4503,13 +4601,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not cfg.dry_run and not cfg.bin_pgdq.exists():
         parser.error(f"{cfg.bin_pgdq} is missing — `cargo build --release -p pgdump_query-cli`")
     needs_nocensus = any(f.id.startswith("census") for f in figures)
-    if not cfg.dry_run and needs_nocensus and not cfg.bin_nocensus.exists():
-        parser.error(
-            f"{cfg.bin_nocensus} is missing. The census-off binary is a source patch no harness "
-            "should perform: add a bare `return;` as the first statement of "
-            "`map::Builder::on_row`, `cargo build --release -p pgdump_query-cli`, copy the binary "
-            f"to {cfg.bin_nocensus}, then revert. measurements.md's census section has the recipe."
-        )
+    if not cfg.dry_run and needs_nocensus:
+        # Existence and age in one refusal, in the first second and before the
+        # run directory exists: a sweep that starts on a stale census-off
+        # binary loses its census tables an hour later, and worse, may not
+        # look like it lost anything.
+        problem = census_binary_problem(cfg)
+        if problem:
+            parser.error(problem)
     return emit(cfg, figures)
 
 
