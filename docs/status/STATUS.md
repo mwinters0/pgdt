@@ -363,20 +363,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **The census-off binary's stamp must equal HEAD exactly, rather than be
-  tolerated where nothing a figure declares changed between them.** `M56` was
-  admitted in those words and landed in them, so any commit at all — a
-  doc-only one included — now makes a `census-*` figure refuse until the binary
-  is rebuilt and re-stamped, and that rebuild is a hand patch of `map.rs`, a
-  build, a copy and a stamp rather than one command. The looser rule is already
-  sitting in the harness: `changed_paths`/`figures_touched` is what `--stale`
-  uses, so "the stamp is an ancestor of HEAD and no path this figure declares
-  changed in between" is a few lines and would let a doc commit pass. It was
-  not taken because exact equality is the rule the ledger row states, it needs
-  no second authority over what can move a reading, and today it costs nothing:
-  the tree's binary is `f5768e7` against HEAD `9ce7865`, and `M55` changed the
-  read path in between, so a rebuild is owed either way. What would change if
-  reconsidered is friction on a hand ritual — the failure mode being a session
-  that reaches for the old binary rather than rebuilding — against a check that
-  can no longer say "this binary is the commit under measurement" without
-  consulting the same path lists a figure's staleness is argued from.
+Nothing open.
