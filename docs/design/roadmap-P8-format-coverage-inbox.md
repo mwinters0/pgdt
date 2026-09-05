@@ -150,6 +150,7 @@ whitespace where `str::trim_end` used Unicode, and the map's own `feed_line`
 joins lines with `\n` *between* them and never before the first — both are
 documented on the type and both are load-bearing for a caller that reuses it.
 
-**Origin.** P7.5, 2026-09-03. See
-[`roadmap-P7.5-insert-fast-path-notes.md`](roadmap-P7.5-insert-fast-path-notes.md)
-and `architecture.md`'s "Bulk regions: one span kind, three payloads".
+**Origin.** The `INSERT` fast path, 2026-09-03
+([`../status/history/2026-09-03.md`](../status/history/2026-09-03.md)). The
+mechanism is [`architecture.md`](architecture.md), "Bulk regions: one span
+kind, three payloads".

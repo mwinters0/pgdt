@@ -478,6 +478,19 @@ is why it is a conjunct with the number rather than a replacement for it — a
 weak test now carrying the separation the number used to, which is the standing
 cost of the overlap above.
 
+**Nothing may be committed between the legs of a pair.** `emit()` reads
+`git_head()` once, at its top, so each leg stamps whatever `HEAD` is when *that
+leg* starts — and `session-drift` is defined as the drift between two sittings
+of the same binaries on the same commit. A commit landing between them gives
+the two legs different commits, and the drift table silently stops measuring
+drift and starts measuring whatever was committed. It is invisible from the
+orchestration script, which is why it is written here rather than left in a
+handoff. Uncommitted files are fine and always were: `git_head()`'s dirty flag
+counts only changes under a figure's declared paths, which no document is —
+which is also why the acknowledgement register lives in
+`scripts/acknowledged.py`, so that a fold-in deleting spent entries touches no
+declared path and does not re-stale the stamp it was just given.
+
 **Which sweep is published is fixed before either runs**, so this check gates
 the published sweep rather than selecting it. The first of the pair is the
 publishable one and the second exists so `session-drift` has a second reading;
@@ -1561,8 +1574,8 @@ Going from one term to five at the same depth costs **+0.05 µs a row in total**
 previous stamp. Five terms against one column now cost almost exactly what one
 does, because four of them are reading boundaries the first already found. What
 the sharing measured on the deterministic instrument, over five more shapes than
-this table has, is
-[`roadmap-P7.7.1-shared-field-split-notes.md`](roadmap-P7.7.1-shared-field-split-notes.md).
+this table has — including the two it costs — is
+[`architecture.md`](architecture.md), "Predicates".
 
 **Every row of this table is a rejected row, which is deliberate: it is where
 the lever it sized looks worst.** `RowBatcher::push_row` walks the whole row

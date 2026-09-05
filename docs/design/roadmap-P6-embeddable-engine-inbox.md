@@ -392,8 +392,8 @@ under"). So even the per-row cost P6 would quote is allocator-conditional, and
 a claim has to be a ratio *and* name the allocator it was taken under, or be
 stated as a range. Origin: P7.3, 2026-09-03.
 
-**Origin.** P7.2, 2026-09-03
-([`roadmap-P7.2-decomposition-notes.md`](roadmap-P7.2-decomposition-notes.md)),
+**Origin.** The scan-performance decomposition, 2026-09-03
+([`../status/history/2026-09-03.md`](../status/history/2026-09-03.md)),
 narrowed the same day when the maintainer settled that library-only *figures*
 are not required so long as library-only performance stays easy to understand —
 the expectation being that the library numbers are the more stable of the two

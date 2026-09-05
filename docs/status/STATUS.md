@@ -51,13 +51,16 @@ and the `--arrays --composite` file 19.93 s → 9.12 s, against `strings` legs o
 with the same ordering intact. 7.10, 7.13, 7.13.1 and the four render-path
 slices 7.14–7.17 are what moved them.
 
-**One reading is flagged rather than acted on.** `mimalloc` now reads 0.97×,
-0.97× and 0.99× on the three headline shapes — marginally ahead of the platform
-allocator on all three, where the previous sitting read 1.00×/0.99×/1.01×. Every
-cell's spread overlaps the reference's and the largest gap is 3%, so the settled
-decision stands, but the statement behind it has weakened from "nothing beats
-it" to "nothing beats it by more than the instrument's own noise". It is under
-"Decisions worth another look" below.
+**One reading weakened a settled claim without reopening it.** `mimalloc` now
+reads 0.97×, 0.97× and 0.99× on the three headline shapes — marginally ahead of
+the platform allocator on all three, where the previous sitting read
+1.00×/0.99×/1.01×. Every cell's spread overlaps the reference's and the largest
+gap is 3%, so the decision stands and the platform allocator is kept, but the
+statement behind it has weakened from "nothing beats it" to "nothing beats it by
+more than the instrument's own noise". Reviewed and affirmed at P7's wrap; what
+would reopen it is an instrument that resolves a 1% wall difference, not another
+sitting of this one ([`../design/architecture.md`](../design/architecture.md),
+"The allocator is the binary's choice").
 
 **The pair that produced this stamp cleared the contention gate on the number
 alone**, which the previous stamp did not: no warm floor is near the ~15%
@@ -68,11 +71,17 @@ that disqualifies a sweep
 directionally"). Session drift over 92 shared readings is a median absolute
 **1.6%** and a largest 14.3%.
 
-**What is stale now is only what this commit changed.** Every figure was current
-in fact at `af15eac`; the fold-in commit itself edits documents and
-`scripts/acknowledged.py`, which is its own module precisely so that an
-acknowledgement edit touches no path a figure declares. A stale figure obliges
-no sweep and neither does a wrap
+**What is stale now is five figures on comment-only edits.** Every figure was
+current in fact at `af15eac`; the fold-in touched no declared path at all —
+`scripts/acknowledged.py` is its own module precisely so that an acknowledgement
+edit does not re-stale the stamp it was just given — and P7's wrap touched three
+(`batch.rs`, `decode.rs`, `scripts/measure.py`) purely to retarget citations out
+of the slice notes it deleted, which marks `nested-end-to-end`,
+`cross-file-floor`, `projection-widths`, `allocator` and `session-drift` red. The
+mechanical oracle applies — **reachability**: no executable line changed, so no
+command shape the sweep runs executes anything different. The acknowledgement
+lands as a follow-up, an entry being unable to name its own sha. A stale figure
+obliges no sweep and neither does a wrap
 ([`../design/measurements.md`](../design/measurements.md), "A stale figure does
 not oblige a sweep").
 
@@ -107,30 +116,23 @@ not oblige a sweep").
 | Compressed input (`--source foo.dump.xz`) | not started — P13 for xz, P15 for gzip/zstd. Input is assumed already-decompressed plain SQL text; `pg_dump -Fp --compress=…` output is therefore unreadable today ([`../design/pg-dump-compatibility.md`](../design/pg-dump-compatibility.md)). **P13 is grilled, partly specified and blocked**: no crate answers a positioned read over an `.xz` file, so the seekable-xz layer is being carved out into its own repository ([`../design/roadmap-P13-compressed-input.md`](../design/roadmap-P13-compressed-input.md), "Blocked") |
 | Remote input (`--source https://…`), over `object_store` | not started — P14, carved out of P6. `ByteRangeSource` is already shaped against `get_range`/`head`, and there is exactly one implementation: `LocalFileSource` |
 | Python bindings, DataFusion `TableProvider` | not started — P6 |
-| Device-bound scan performance campaign | not started — P7, which is single-threaded and aimed at the row-extraction path; parallelism is P16 |
+| Device-bound scan performance campaign | **complete** — P7, single-threaded throughout and aimed at the row-extraction path; parallelism is P16. Twelve library changes on timed paths, four measured refusals, and the decomposition that is its durable half ([`../design/architecture.md`](../design/architecture.md), "Where a scan's time goes"). Warm on the 3.00 GiB control a typed `pgdq query` is 15.0× the `dd` floor where it was 31×, a `strings` one 10.9× where it was 13.3×, and a `parse` 1.43×; cold on the SATA SSD every scan shape is inside the device, and cold on NVMe the `COPY` path is 1.06× it. What the phase refused, and why, is [`../design/roadmap-P7-scan-performance-notes.md`](../design/roadmap-P7-scan-performance-notes.md) |
 | Per-row-group column statistics, sparse row index | not started — the index is built by whichever of P16 (parallel splits) or P10 (row groups) runs first; `CopyBlock::sparse_index` and `CopyBlock::column_stats` stay reserved `None`s |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — P8 (the map already locates and attributes `INSERT` runs) |
 
 **Profiles are not figures.** `cd scripts && uv run measure.py
 --profile-recipe` prints the sampling-profile sequence and runs none of it; a
 profile is a `runs/` artifact with no median, no apparatus gate and no marker.
-Six were taken from that recipe — `parse`, `strings` and `typed` over the
-control and the `--arrays --composite` file — with the instrument's own floor
-beside them
-([`../design/roadmap-P7.1-profiling-apparatus-notes.md`](../design/roadmap-P7.1-profiling-apparatus-notes.md)),
-and seven more sit beside them from the decomposition: the `INSERT`-run pair at
-two commits in both build configurations, a 4000-block `parse`, and `release`
-profiles of the three control shapes
-([`../design/roadmap-P7.2-decomposition-notes.md`](../design/roadmap-P7.2-decomposition-notes.md)).
-**One profile input is not a registered one.** 7.10.1 needed a
-`List<Utf8View>` column and no committed input carries one, so its two
-`text[]` profiles read a `runs/` file the notes doc specifies rather than a
-`measure.py` input; the generator lives in `runs/` and nothing consumes its
-output
-([`../design/roadmap-P7.10.1-typed-column-build-notes.md`](../design/roadmap-P7.10.1-typed-column-build-notes.md)).
-**What a scan spends its time on is
+Some three dozen sit in `runs/` from the scan-performance campaign, over every
+shape the recipe knows and both build configurations. **One profile input is
+not a registered one**: reading the refused viewing builder's gate needed a
+`List<Utf8View>` column and no committed input carries one, so that reading was
+taken on a purpose-built `text[]` file whose specification is beside the
+refusal ([`../design/architecture.md`](../design/architecture.md), "The
+library's own per-row budget"); the generator lives in `runs/` and nothing
+consumes its output. **What a scan spends its time on is
 [`../design/architecture.md`](../design/architecture.md), "Where a scan's time
-goes"** — the decomposition, which is the durable half of the phase.
+goes"**.
 
 **Figures.** All sixteen sweep figures in
 [`../design/measurements.md`](../design/measurements.md) come from the
@@ -193,355 +195,22 @@ heading — is beside the mechanism
 ([`../design/architecture.md`](../design/architecture.md), "Where a scan's time
 goes").
 
-## P7 progress
-
-The phase's spec, its measured baseline and the lever table each row measures:
-[`../design/roadmap-P7-scan-performance.md`](../design/roadmap-P7-scan-performance.md).
-**7.1 and 7.2 are ordered; the rest is allocation order, not schedule** — the
-phase follows the profile, so a slice landing out of numeric order is the plan
-working ([`../process.md`](../process.md), "Slice numbering", which carries the
-exception an evidence-led phase runs under). **Every ordering that binds is
-discharged and every slice has landed**: the allocator decision before the wrap
-sweep, which 7.13 re-took and settled; `7.13.1` ahead of `7.6` and `7.7.1`,
-which rework how a row is walked inside the buffer it replaced; `7.8` ahead of
-`7.8.1`, the figure that prices three levers before the levers themselves; and
-`7.14`, `7.15`, `7.16` and `7.17` each ahead of `7.12`, which is now folded in.
-
-**The phase is ready to wrap.** `7.12` published the sweep last because the four
-render-path slices ahead of it each moved the tables it takes: taking them
-first would have published thirteen freshly-measured figures describing a
-binary that is no longer shipped, with no sweep left to repair them. The
-ordering held, and the fold-in's own numbers are what say it was worth holding —
-a typed control query is 4.75 s where the previous stamp read 10.36 s.
-
-- [x] **7.1** The profiling apparatus — `[profile.profiling]`, `perf`, and a
-      `measure.py --profile-recipe` that prints the invocation on the
-      `--koji-recipe` precedent. Six first profiles, and the instrument's own
-      floor. No library code. Notes:
-      [`../design/roadmap-P7.1-profiling-apparatus-notes.md`](../design/roadmap-P7.1-profiling-apparatus-notes.md)
-- [x] **7.2** The decomposition, published — `architecture.md`'s "Where a
-      scan's time goes", the `INSERT` +10% attribution, the `INSERT` fast
-      path's layer (`map.rs`), and readings for the three measure-only levers.
-      No library code. Notes:
-      [`../design/roadmap-P7.2-decomposition-notes.md`](../design/roadmap-P7.2-decomposition-notes.md)
-- [x] **7.3** The allocator — measured, and **not adopted**: `jemalloc` is
-      1.87×/1.19×/1.07× on the three headline shapes and `mimalloc`
-      0.98×/0.96×/0.96×, so the lever's factor-sized stake is 3–4% on `typed`
-      alone — the confirming sitting puts `parse` and `strings` inside the
-      apparatus. It named the re-take 7.13 owed, on the reading that jemalloc's
-      `parse` penalty was 3,161 `madvise` calls from that slice's allocation;
-      the re-take took the `typed` win away too. Notes:
-      [`../design/roadmap-P7.3-allocator-notes.md`](../design/roadmap-P7.3-allocator-notes.md)
-- [x] **7.4** `KD5` — `stream::splice` rides the throttle's gate, with a third
-      opener (a completed block whose header names the queried table) that
-      keeps the early stop exact. A 4000-block `parse` falls **20.75 s →
-      0.113 s** and its saves 105 → 5, the two costs having been multiplying;
-      the interrupt now banks the last spliced watermark, ~20 ms of scanning at
-      that size and nothing at all on koji. `KD5` is rewritten to the residual —
-      `--dqcache none`, where the gate never closes — and re-homed onto P16.
-      Notes:
-      [`../design/roadmap-P7.4-splice-gate-notes.md`](../design/roadmap-P7.4-splice-gate-notes.md)
-- [x] **7.5** `KD9` — the `INSERT` fast path at 7.2's layer:
-      `preamble::StatementScan`, one incremental byte-level quote-aware scan
-      carried across a run's lines, in place of a `String` per line and a
-      statement buffer re-walked per line. A warm 3.00 GiB `INSERT` `parse`
-      falls **9.19 s → 2.27 s**, 16.5× a `COPY` scan's per-byte CPU → **4.3×**,
-      and cold on the SSD the difference is gone (1.02× the device floor
-      against 1.01×). `KD9` is **rewritten to that residual**, not struck: the
-      accumulation is gone, two named cuts against the remainder are not.
-      Notes:
-      [`../design/roadmap-P7.5-insert-fast-path-notes.md`](../design/roadmap-P7.5-insert-fast-path-notes.md)
-- [x] **7.6** Bulk `simdutf8` over the chunk's whole-row prefix, with the
-      borrow path losing its per-field check: a row travels as `copy::RawRow`
-      and `copy::validated_prefix` validates a chunk's rows in one SIMD pass,
-      lazily, only where something will decode. A `strings` query loses
-      **6.11%** of its user instructions and a typed one **2.42%**, every after
-      rep below every before rep, with `core::str::converts::from_utf8` leaving
-      both profiles. **No `unsafe`**: the row is sliced out of the validated
-      `&str` with `str::get`, so a wrong range costs the fast path rather than
-      the process. The splitter it needed also took `map::Builder::on_row` off
-      a per-byte closure — an `--arrays --composite` `parse` falls **17.781 G →
-      2.919 G** user instructions, which is the census re-split no lever claims
-      any more: it happens in the mapping pass, where **7.7.1** cannot reach
-      it. Notes:
-      [`../design/roadmap-P7.6-bulk-utf8-notes.md`](../design/roadmap-P7.6-bulk-utf8-notes.md)
-- [x] **7.7** The predicated reading — `predicate-terms`, the first registered
-      figure to pass a filter at all: one file at four term counts and two
-      field depths, every term false and OR'd so all of them are evaluated and
-      nothing survives to be decoded. The same five terms against a 16-column
-      table's thirteenth column and against its first differ by **49% of the
-      deep one's user instructions**, and that difference is the walk; a
-      walk-free term is 0.033 µs a row against 0.09–0.12 for a deep one. No
-      library code; one CLI test runs every registered shape and requires each
-      to keep no row, which is what the whole subtraction rests on. Notes:
-      [`../design/roadmap-P7.7-predicated-reading-notes.md`](../design/roadmap-P7.7-predicated-reading-notes.md)
-- [x] **7.7.1** One field split per row — `copy::RowSplit`, reset once per row
-      and read by every term and then by `push_row`, so each boundary is found
-      by exactly one `memchr`. **It extends only as far as it is asked to**,
-      which is why it lands unconditionally and not behind the term-count gate
-      7.7's eager arithmetic implied. A five-term disjunction thirteen fields in
-      falls **39.7%** of its user instructions and the same five terms over rows
-      that all survive **11.7%**; the cost is the memoization, ~9 instructions a
-      field, which is +4.5% on one deep term over rejected rows and +0.4% on a
-      full-projection query with no filter. **There is one `push_row`**: a
-      second entry point that walked the row directly cost the unfiltered path
-      2.4% by existing, `push_field` losing its inline. Notes:
-      [`../design/roadmap-P7.7.1-shared-field-split-notes.md`](../design/roadmap-P7.7.1-shared-field-split-notes.md)
-- [x] **7.8** The cold-NVMe figure — `scan-throughput-nvme`, the harness's
-      third regime and the first figure taken on a third device class. The
-      three shapes and the `dd` floor, cold on a 970 EVO Plus: the `COPY` path
-      is **1.10×** the device's own time, the large-object path 1.20×, and the
-      `INSERT` path **2.66×** — so the SATA SSD's "the difference is gone"
-      (1.02× against 1.01×) is a fact about that disk and not about the
-      algorithms. Two readings come out of it. **`KD9` reaches a real device**:
-      2.1 s of a 3.40 s `INSERT` scan is spent where the disk is idle, so the
-      entry is rewritten from *unmeasured* to *measured and unowned* rather
-      than retired. And **the I/O-defaults levers are bounded at 8.9%**: no
-      readahead or chunk-size change can put a scan below its device floor, and
-      on the fastest disk we own a cold `COPY` scan exceeds that floor by
-      0.125 s of 1.406 s. No library code. Notes:
-      [`../design/roadmap-P7.8-cold-nvme-figure-notes.md`](../design/roadmap-P7.8-cold-nvme-figure-notes.md)
-- [x] **7.8.1** The I/O defaults — all three decided, and **none of them
-      landed a scheme**. `chunk-size` is the new figure: one `parse` of the
-      3.00 GiB control at six sizes, in all three regimes, nine reps.
-      **1 MiB is the fastest row of the swept range** — cold on the NVMe its
-      neighbours are ties (1.03× at 256 KiB, 1.05× at 4 MiB, both inside the
-      reps' spread) and everything further out is clearly slower (1.18× at
-      64 KiB, 1.15× at 8 MiB, **1.37× at 16 MiB**), while cold on the SATA SSD
-      every row is 1.00× — so the lever is worth nothing rather than "at most
-      8.9%". The same table settles `fadvise`:
-      a 16 MiB chunk is a deeper prefetch than `POSIX_FADV_SEQUENTIAL` would
-      arrange and it is the *slowest* cold row, so no depth is left to buy;
-      double-buffered readahead is refused on 7.8's 8.9% ceiling against a
-      rework of three read loops. What did land is the instrument —
-      `pgdq parse|query --chunk-size`, flagged under "Decisions worth another
-      look" as new surface the spec's lever bullet did not ask for — and one
-      fact no figure had shown: above the read path's 8 MiB pool ceiling the
-      buffer stops being kept, which is **2.07× a warm scan**, not a taper.
-      **Earned**: 7.8's row paired the instrument that prices these three
-      levers with the levers themselves, which is two review cycles. Notes:
-      [`../design/roadmap-P7.8.1-io-defaults-notes.md`](../design/roadmap-P7.8.1-io-defaults-notes.md)
-- [x] **7.9** `decode_array`'s element allocations — `ArrayLiteral::elements`
-      is `Vec<Option<Cow<'_, str>>>`, and `scan_quoted` looks for the closing
-      quote before it copies anything, so an element is copied only where the
-      literal carried a `\` or a doubled `""`. Decode falls **290 → 218 ns**
-      at four elements, **3.85 → 2.41 µs** at fifty and **190 → 114 ns** for
-      the composite, taking the per-element slope **77 → 48 ns**; a whole typed
-      `--arrays --composite` query falls **176.38 G → 165.37 G user
-      instructions**, every after rep below every before rep. **No `unsafe`**
-      and no behaviour change — the borrowed arm is `str::from_utf8` over a
-      subslice. The record and range literals keep owned fields and take the
-      same scanner, which still bought them 40% and is why the borrow stopped
-      at the array. Notes:
-      [`../design/roadmap-P7.9-array-borrow-notes.md`](../design/roadmap-P7.9-array-borrow-notes.md)
-- [x] **7.10** Scalar decode — a `decode_*` now allocates only where its
-      return type is an allocation. `decode_uuid`'s hyphen-stripped `String`,
-      `parse_time_of_day`'s padded fraction and two of
-      `decimal_unscaled_digits`'s three digit strings are gone, and the two hex
-      decoders read a nibble table with validity accumulated across the value
-      instead of branching per byte. A typed control query falls **95.046 G →
-      90.719 G user instructions** (−4.55%), every after rep below every before
-      rep, while a `strings` one is **unmoved** at 24.772 G — the control that
-      says the change is confined to the typed path. **No behaviour change, and
-      it is asserted rather than argued**: the four previous implementations are
-      kept verbatim and checked against over a generated corpus, and each test
-      kills a mutation of the function it covers. `measure.py` gains `DECODE`,
-      the mechanism no figure declared. Notes:
-      [`../design/roadmap-P7.10-scalar-decode-notes.md`](../design/roadmap-P7.10-scalar-decode-notes.md)
-- [x] **7.10.1** The typed column build — **measured, and no library code**:
-      `append_typed`'s 0.79 µs a row on the control splits 0.68 µs of
-      decoders, 0.06 µs of dispatch and **0.052 µs of Arrow appends**, so the
-      builder-append half of the lever is 1.6% of a typed library row and
-      there is nothing in it to take. Pre-sizing the builders is priced at
-      under 6 ns a row and refused. **7.11's gate is read and not met**, on
-      two legs. The `Struct` leg is registered — `append_nested`'s copying arm
-      serves a composite's fields too, and the `--arrays --composite` file
-      spends **0.19 µs a row on all nineteen columns' Arrow appends**. The
-      `List` leg needed a file the tree does not have, since the registered
-      `arrays` input's array columns are `integer[]`: on a purpose-built
-      `text[]` file chosen to flatter it — 50 elements a row, 21 bytes each,
-      above `arrow`'s 12-byte inline threshold — one `List<Utf8View>` builds
-      in 0.383 µs a row, of which the copy-to-view swap is worth at most
-      **0.237 µs against the 1 µs gate**. Notes:
-      [`../design/roadmap-P7.10.1-typed-column-build-notes.md`](../design/roadmap-P7.10.1-typed-column-build-notes.md)
-- [x] **7.11** The viewing builder for a nested `Utf8View` — **refused, and no
-      library code**: 7.10.1 read the prize at **0.237 µs/row against the
-      1 µs/row gate**, 24% of it, on a file built to flatter the change, with
-      the `Struct` leg of the same arm bounded well below that on a registered
-      input. The lever table's largest admitted prize closes at a quarter of
-      its own threshold, and what took it apart was the decomposition rather
-      than an attempt. What this slice landed is the decision: the rejected
-      alternative and its reopening trigger — element **width** above `arrow`'s
-      12-byte inlining threshold, then ~210 elements a row — filed beside the
-      mechanism, and the two live obligations that still promised the
-      measurement discharged (`architecture.md`'s "nested values always copy"
-      paragraph and `batch::append_nested`'s doc comment, retargeted from the
-      phase spec at the mechanism's section). Notes:
-      [`../design/roadmap-P7.11-viewing-builder-notes.md`](../design/roadmap-P7.11-viewing-builder-notes.md)
-- [x] **7.12** The sweep pair and the koji regression run, folded in, plus the
-      written statement of what a parallel splitter needs from coverage and
-      from the census, filed to P16. P16's inbox carries P7's answer on
-      both mechanisms — coverage stays prefix-shaped and P7 hardened the
-      assumption rather than relaxing it, so the appendable-spans rework P16
-      already owns and "let coverage have interior holes" are one change; and
-      the census's
-      combine is a bounded semilattice, so its accumulation unit is free and
-      what a splitter actually threatens is the per-block *totality* that keeps
-      a partial census — a confidently wrong schema — from reaching
-      `resolve_columns`
-      ([`../design/roadmap-P16-parallel-scan-inbox.md`](../design/roadmap-P16-parallel-scan-inbox.md)).
-      **The koji regression run** finished `exit=0` in 62.7 minutes and
-      reproduced 74 blocks, 19,575,829,920 rows and 784,019,857,152 bytes with
-      **all 222 per-block offsets identical** to the P9 wrap run's, on the glibc
-      build at `f5768e7` — the first koji scan in the configuration the
-      allocator rule requires, so that section's counts are no longer musl's
-      ([`../design/measurements.md`](../design/measurements.md), "koji full scan
-      — the regression check").
-      **The sweep pair took two attempts.** The first, launched
-      2026-09-05T02:11Z, lost leg A to a ~60% contention burst that failed seven
-      figures; the gate discarded every contended reading and leg B was **not**
-      promoted, the roles having been fixed before either ran. The second,
-      launched 09:11Z at `af15eac` into a machine at load 1.24, finished
-      `PAIR DONE legA=0 legB=0 drift=0` at 10:23Z with no failed figures and two
-      retried readings. **Leg A is folded in whole**: sixteen tables plus the
-      derived `session-drift` one into their seventeen figure markers, every
-      figure's `quoted_by` consumer re-read, the six spent acknowledgements
-      deleted, and the session stamp moved off `ba2fc12`. Notes:
-      [`../design/roadmap-P7.12-sweep-fold-in-notes.md`](../design/roadmap-P7.12-sweep-fold-in-notes.md)
-- [x] **7.13** The read path's per-chunk zeroed allocation, pooled behind the
-      `object_store` shape: a warm `parse` loses **9.4% of its user
-      instructions** (1.882 G → 1.706 G, ±0.00% either side) and
-      `__memset_avx2_…` leaves the profile entirely, wall being unchanged
-      because the prize was inside the quarter-second discovery already sat
-      within. `--figure allocator` re-taken, and **adoption settled: the
-      platform allocator stays** — `jemalloc` 1.02×/1.11×/1.06× and `mimalloc`
-      1.00×/0.99×/1.01×, both cells that had kept the question open having been
-      this allocation rather than an allocator. Notes:
-      [`../design/roadmap-P7.13-read-buffer-pool-notes.md`](../design/roadmap-P7.13-read-buffer-pool-notes.md)
-- [x] **7.13.1** The copy into each read loop's own buffer, over all three
-      loops: `scan::ChunkCarry` carries the one line straddling a chunk's front
-      edge and every loop scans the rest of the chunk where it lies. A warm
-      3.00 GiB `parse` loses **17.6% of its user instructions** (1.704 G →
-      1.404 G, spreads under 0.003%), `__memmove_avx_…` leaves the profile
-      entirely, and this one **reaches wall time** — 0.48 s → 0.40 s with
-      system flat, peak RSS 7.9 → 6.0 MB. The query path's chunk retention
-      needed no change: eviction keys on the scanner's position and a
-      straddling row is carried, not scanned. **Earned**: 7.13's row paired one
-      contained module with a rework of three already-tested scan loops, which
-      is two review cycles. Notes:
-      [`../design/roadmap-P7.13.1-read-loop-carry-notes.md`](../design/roadmap-P7.13.1-read-loop-carry-notes.md)
-- [x] **7.14** `Syntax::force_quote` as a `const` 256-bit set — `ByteSet` is
-      `[u64; 4]` built by a `const fn`, so the predicate every token byte pays
-      in both directions is a shift and a mask instead of a `memchr` over a
-      4–6 byte slice. A typed `--arrays --composite` query falls **162.807 G →
-      142.500 G user instructions** (−12.47%), every after rep below every
-      before rep; `nested::needs_quote` was **14.63%** of that run as its own
-      symbol and is inlined away. The typed **control** is unmoved at
-      **90.719 G** — it has no nested column, so the predicate is never reached,
-      and the library's per-row budget is a control-file decomposition and
-      stands. `nested-decode-micro` re-taken: decode **218 → 170 ns** at four
-      elements, **2.41 → 1.93 µs** at fifty, **114 → 84 ns** for the composite,
-      the per-element slope **48 → 38 ns**. **No behaviour change and it is
-      asserted rather than argued** — each set is checked against the byte
-      string its `Syntax` was written as over all 256 bytes. The fusion the spec
-      declines now has a size: the `memchr` left under `scan_token`'s
-      `terminators` is **1.4%**. Notes:
-      [`../design/roadmap-P7.14-force-quote-set-notes.md`](../design/roadmap-P7.14-force-quote-set-notes.md)
-- [x] **7.15** The hex pair table — `HEX_PAIRS`, the 256 lowercase pairs end to
-      end as one `&'static str` converted at compile time, so a byte of a
-      `bytea` or a `uuid` is an indexed two-byte slice and a `push_str` into one
-      pre-sized `String` instead of a `format!`-and-allocate. A typed control
-      query falls **89.725 G → 49.074 G user instructions** (−45.31%), wall
-      9.40 → 6.03 s, every after rep below every before rep, while a `strings`
-      one is **unmoved at 24.7935 G** — the control that says the change is
-      confined to the render path and reaches no embedder. `uuid/render`
-      **925.82 → 24.399 ns** and `bytea/render` **5.3445 µs → 130.95 ns** on the
-      unregistered `benches/decoders.rs` groups. `print_batch` goes 70.61% →
-      **52.74%** of the profile and `poll_next` 28.46% → **45.83%**, so the
-      render-back is still the larger bucket but no longer twice the library.
-      **No behaviour change, asserted rather than argued**: both previous
-      implementations kept verbatim and checked against over an enumerated
-      corpus — every pair, and every byte at each of the `uuid`'s sixteen
-      positions. **No `unsafe`**, and the shape was chosen by measuring three of
-      them. Notes:
-      [`../design/roadmap-P7.15-hex-pair-table-notes.md`](../design/roadmap-P7.15-hex-pair-table-notes.md)
-- [x] **7.16** The date and time renderers, and the `render_field` sink —
-      `DEC_PAIRS`, the 100 two-digit decimal pairs as one `&'static str`, so a
-      calendar or clock field is an indexed slice; and
-      `render_field_into(&mut String)`, which `print_batch` appends every column
-      of a row into and clears per row. A typed control query falls **49.074 G
-      → 34.610 G user instructions** (−29.47%), wall 6.07 → 4.71 s, and a
-      `strings` one **24.793 G → 19.610 G** (−20.91%) — **this one is not
-      confined to `typed`**, since the sink is what a `strings` query pays for
-      its sixteen text columns, so 7.15's control does not work here and `parse`
-      is the control instead, flat at 1.404590 → 1.404585 G. `poll_next`
-      **45.83% → 62.51%** of the profile against `print_batch`'s **52.74% →
-      36.42%**: the library is the larger bucket for the first time, and
-      `architecture.md`'s `query-profile` heading is rewritten to say so. The
-      four renderers are **80–88%** faster in isolation. **No behaviour change,
-      asserted rather than argued**: three whole-file `pgdq query` outputs
-      byte-identical over 2.3 M rows, plus swept differential corpora against
-      the replaced shapes. **Both obvious spellings are slower and each cost a
-      build to find** — `write!` through `core::fmt` is 287 instructions an
-      array element, and a `String` that starts empty grows twice per value. The
-      row's re-derivation obligation is discharged as a test: one control row
-      costs **20 allocations, none of them in a column this touched**, and 18 of
-      the 20 are `render_f32`/`render_f64`/`render_decimal`. Notes:
-      [`../design/roadmap-P7.16-render-sink-notes.md`](../design/roadmap-P7.16-render-sink-notes.md)
-- [x] **7.17** The array arm's render, through the sink —
-      `batch::render_array_into` walks the Arrow list and appends each element
-      into the caller's buffer through `render_field_into`, so the `String` per
-      element, the `Vec` collecting them, the un-presized whole-array `String`
-      and the copy of it are all gone. An element is rendered **at a mark in
-      that buffer** and moved aside only if the grammar wants it quoted, into a
-      scratch cleared per element — so an `integer[]` costs one allocation at
-      fifty elements and at five, which is a test. A typed `--arrays
-      --composite` query falls **104.094 G → 83.925 G user instructions**
-      (−19.38%), wall 12.43 → 10.19 s, and that file's 50-element array column
-      projected alone **67.535 G → 49.440 G** (−26.79%) — 7.16 left that shape
-      at **+3.8%**, so the residual is closed and the arm is 24.0% below where
-      7.16 found it. **`parse` is the control**, flat at 2.919233 → 2.919234 G,
-      and a typed query on the array-free control is **+0.14%** with the two
-      legs' ranges overlapping — reported rather than called zero, since such a
-      row re-enters `render_field_into` without taking the branch that changed.
-      **No behaviour change, asserted rather than argued**: three whole-file
-      outputs byte-identical over 699,962 / 803,995 / 814,362 rows, plus the
-      previous implementation kept verbatim and checked against a corpus built
-      as Arrow values at three dimensionalities. The one difference is the
-      rectangularity guard, now per list rather than a flattened product —
-      strictly stronger, on a shape neither `append_typed` nor `decode_array`
-      admits. **The other four nested arms did not fall out of it** and none
-      changed. Notes:
-      [`../design/roadmap-P7.17-array-render-sink-notes.md`](../design/roadmap-P7.17-array-render-sink-notes.md)
-
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **P7 is open**, grilled and sliced; the checklist above is its progress. Its
-  four evidence slices, the allocator reading, twelve library changes and three
-  measured refusals have landed — 7.4's gate in `stream.rs`, 7.5's `INSERT`
-  statement scan in `preamble.rs`/`map.rs`, 7.13's read-buffer pool in
-  `io.rs`, 7.13.1's read carry in `scan.rs`/`stream.rs`, 7.6's bulk UTF-8 pass
-  in `copy.rs`/`stream.rs`, 7.7.1's shared field split across
-  `copy.rs`/`predicate.rs`/`batch.rs`/`stream.rs`, 7.9's borrowed array
-  element in `nested.rs`/`batch.rs`, 7.10's allocation-free scalar decoders
-  in `decode.rs`, 7.14's force-quote `ByteSet` in `nested.rs`, 7.15's hex
-  pair table in `decode.rs`, 7.16's row sink across
-  `decode.rs`/`batch.rs`/`pgdump_query-cli` and 7.17's array render walk across
-  `batch.rs`/`nested.rs`, all edits to
-  timed paths,
-  plus 7.8.1's `--chunk-size`, which changes no default and refuses the other
-  two I/O levers, 7.10.1, which refuses the typed column build on a reading and
-  lands nothing at all, and 7.11, which refuses the viewing builder on 7.10.1's
-  reading and lands only the decision. Six
-  other phases are sketched and one more is
-  specified — P13, P16, P10, P14, P6, P15, P8, in the roadmap table's schedule
-  order; a `P<k>` is an identifier, so the numbers say nothing about the order
-  they run in. P13 is grilled, specified and **blocked** on an external
-  seekable-xz crate. Every remaining phase that carries an inbox must have it
-  drained as part of its own grilling.
+- **No phase is open.** P7 wrapped; what it built is beside each mechanism in
+  [`../design/architecture.md`](../design/architecture.md) and what it refused
+  is
+  [`../design/roadmap-P7-scan-performance-notes.md`](../design/roadmap-P7-scan-performance-notes.md).
+  Six other phases are sketched and one more is specified — P13, P16, P10, P14,
+  P6, P15, P8, in the roadmap table's schedule order; a `P<k>` is an
+  identifier, so the numbers say nothing about the order they run in. P13 is
+  grilled, specified and **blocked** on an external seekable-xz crate. The next
+  phase is grilled and specified before any of its code is written, and every
+  remaining phase that carries an inbox must have it drained as part of that
+  grilling.
 
 ## Known deficiencies
 
@@ -686,24 +355,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`mimalloc` is now marginally ahead of the platform allocator on all three
-  headline shapes, and I published that without reopening the adoption
-  decision.** The `af15eac` sweep reads `mimalloc` at **0.97× / 0.97× / 0.99×**
-  on `parse`, `strings` and `typed`, where 7.13's sitting read
-  1.00× / 0.99× / 1.01× and 7.3's read 0.98× / 0.96× / 0.96×. So two of the
-  three sittings now put it ahead on every shape. **Against acting on it**:
-  every cell's spread overlaps the reference's, the largest gap is 3%, and the
-  drift table in the same sweep puts the median absolute drift between two
-  sittings at 1.6% — this is a within-sitting ratio, which does not get that
-  excuse automatically, but the margin is close enough to it that one more
-  sitting could reverse the sign again, as two already have. **For acting on
-  it**: 7.13's settlement rested on the sentence "nothing beats the platform
-  allocator on any of the three shapes", and that sentence is now false as
-  written; what replaced it in `measurements.md` is the weaker "nothing beats it
-  by more than the instrument's own noise". **The call**: leave the platform
-  allocator and let the weaker sentence stand, or re-take `--figure allocator`
-  alone a few times to find out whether 1–3% is real before P7 wraps. Reversing
-  it costs five minutes of build — the features are still in the manifest.
-  Detail: [`../design/measurements.md`](../design/measurements.md), "Which
-  allocator a figure was taken under".
-
+Nothing open.

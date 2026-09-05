@@ -842,7 +842,7 @@ impl RowBatcher {
     /// `push_field` call site in this module costs the unfiltered path 2.4% of
     /// a query's user instructions by itself, which is far more than the
     /// bookkeeping it would save
-    /// (`docs/design/roadmap-P7.7.1-shared-field-split-notes.md`).
+    /// (`docs/design/architecture.md`, "Predicates").
     pub(crate) fn push_row(
         &mut self,
         header_offset: u64,

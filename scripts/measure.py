@@ -2015,8 +2015,8 @@ def run_chunk_size(session: Session) -> str:
     **Nine reps.** The cold-NVMe throughput table's own `COPY` row spreads
     1.285–1.499 s over five — about 15% of its median, which is nearly twice
     the whole 8.9% envelope this figure's decision lives inside
-    (`roadmap-P7.8-cold-nvme-figure-notes.md`, "What 7.8.1 inherits, stated as
-    arithmetic"). Five reps cannot resolve a lever that small; nine is what
+    (`measurements.md`, "Scan throughput by input shape", whose NVMe table
+    carries that arithmetic). Five reps cannot resolve a lever that small; nine is what
     makes a flat table mean *flat* rather than *unresolved*, and the per-rep
     listing beneath is what lets a reader check that for themselves.
 

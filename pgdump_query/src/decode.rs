@@ -197,7 +197,7 @@ static DEC_DIGITS: &str = "0123456789";
 ///
 /// Three properties are load-bearing rather than stylistic, and each was a
 /// measured regression in a shape that lacked it
-/// (`docs/design/roadmap-P7.16-render-sink-notes.md`):
+/// (`docs/design/architecture.md`, "Decoders and render-back"):
 ///
 /// - **The digits come out two at a time**, off [`DEC_PAIRS`], which is the
 ///   algorithm the standard library's own integer `Display` uses. The
@@ -249,7 +249,7 @@ fn push_padded(out: &mut String, value: i64, width: usize) {
 /// 53-element `integer[]` row that machinery costs several times what the
 /// digits do — measured as a whole-query regression that cancelled this
 /// slice's win on the array-bearing file
-/// (`docs/design/roadmap-P7.16-render-sink-notes.md`).
+/// (`docs/design/architecture.md`, "Decoders and render-back").
 #[inline]
 pub(crate) fn push_integer(out: &mut String, value: i64) {
     push_padded(out, value, 0);

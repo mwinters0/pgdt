@@ -2839,9 +2839,9 @@ cost.** One 3.00 GiB file read at five widths, warm and typed
 ([`measurements.md`](measurements.md), "What a column costs: five projection
 widths over one file"): `--no-columns` costs **1.61 µs a row** where all 19
 columns cost **12.97**, so the replay a projection cannot avoid — the block
-read, every row walked and field-counted, the predicate evaluated — is a ninth
-of a complete typed read. Between those, one `smallint` is +0.13 µs, the
-other fifteen scalars +11.03 between them, the composite +0.98, and the two
+read, every row walked and field-counted, the predicate evaluated — is an
+eighth of a complete typed read. Between those, one `smallint` is +0.12 µs, the
+other fifteen scalars +4.46 between them, the composite +0.75, and the two
 array columns **+6.03** — 89% of what all three nested columns cost, and more
 than every scalar column in the table. So the saving is real, it is
 concentrated in the nested columns, and it is what makes projecting one array
@@ -3006,6 +3006,18 @@ column costs") — so a sweep republishes the regression rather than anyone havi
 to remember it, and the absolute magnitudes on that instrument are 0.155 G lost
 against 2.78 G and 3.35 G won.
 
+**Two or three of those nine instructions are unclaimed, and the shape that
+would take them is known.** `restart` keeps the `Vec`'s capacity and every row
+of a block has the same width, so from the second row on, `Vec::push`'s
+capacity load-compare-branch and its length store are both known-redundant:
+sizing `ends` to the width once per block and writing `ends[n] = end` against a
+counter removes them, bounds-checked and without `unsafe`. It is left because
+the reading that would size it is the *unfiltered* shape — the one the
+memoization is a pure cost on, at 0.4% of a full-projection query — and 2–3
+instructions a field is below what any instrument this project owns resolves
+there. Nobody owns it; it is written down so that a session reaching for the
+`unsafe` version meets the cheaper safe one first.
+
 *Rejected: a `shared` flag on `RowSplit`, set once per block from the filter's
 term count, so a single-term filter's `field` walks without memoizing.* It is
 the term-count gate the eager arithmetic implied, moved out of `batch.rs` where
@@ -3025,8 +3037,7 @@ split: a second `push_field` call site in `batch.rs` is enough on its own, even
 when the branch to it never runs, because `push_field` stops being inlined into
 `push_row` and `GenericByteViewArray::value` stops being inlined into
 `render_field` beside it. `#[inline]` and `#[inline(always)]` did not recover
-it, and neither did sharing one loop body behind a closure
-([`roadmap-P7.7.1-shared-field-split-notes.md`](roadmap-P7.7.1-shared-field-split-notes.md)).
+it, and neither did sharing one loop body behind a closure.
 
 **A `RowSplit` is bound to its row by an assertion, not by a type.** `field`
 and `complete` take the row on every call, so nothing in the signatures says it
@@ -4578,8 +4589,8 @@ amount and only the share differs.
 the subtraction that measures it.** Grouping the out-of-line entry points with
 their inlined ones puts the LF search at 48.8% and the brace pre-filter at
 35.0%, or 0.059 s against 0.042 s — and that second figure is the check, since
-the census-on/census-off pair reads +0.030 s in the `ba2fc12` sweep and
-+0.048 s where that pair reads today
+the census-on/census-off pair reads **+0.057 s** where it stands today, against
++0.030 s under the stamp before the read path stopped allocating and copying
 ([`measurements.md`](measurements.md), "The census on brace-free rows"). A
 share that agrees with a subtraction taken by a different instrument is the
 evidence that the user-time correction above is being applied correctly.
@@ -4738,18 +4749,17 @@ falls **104.094 G → 83.925 G** (−19.4%), wall 12.43 → 10.19 s, and that fi
 line the control is on, and the array render is about 9% of the run in self
 time against `nested::scan_token`'s 9.12% going the other way.
 
-**What that means for reading the headline table.** The baseline puts a typed
-query at 31× the warm `dd` floor and a `strings` query at 13.3×
-([`measurements.md`](measurements.md), "Scan throughput by input shape"), and
-those are `pgdq query` figures: an embedder that consumes `RecordBatch`es pays
-`poll_next` and nothing under `print_batch`. The library's own typed extraction
-is 3.10 µs a row against `strings`'s 2.42 — a factor of 1.3, where the CLI's
-wall times showed 2.4 and, since the hex pair table and the row sink, show
-**1.41** (4.71 s against 3.33 on the control, warm). The gap between the
-library's factor and the CLI's is what `print_batch` costs, and it is now close
-to closed; both `pgdq query` figures in that table are stale by this amount and
-are re-taken with the rest — and so is the `strings` one, which the sink moved
-and the hex table did not.
+**What that means for reading the published `query` figures**, which are the
+two `query` rows of [`measurements.md`](measurements.md), "Which allocator a
+figure was taken under" — the only table that times both modes against a
+co-measured warm floor. They are `pgdq query` figures: an embedder that
+consumes `RecordBatch`es pays `poll_next` and nothing under `print_batch`. A
+typed query is **15.0×** that floor and a `strings` one **10.9×** (4.75 s and
+3.44 s against 0.317 s), where before this section's render-path work they
+were 31× and 13.3×. The library's own typed extraction is 3.10 µs a row
+against `strings`'s 2.42 — a factor of 1.3, where the CLI's wall times showed
+2.4 and now show **1.38**. The gap between the library's factor and the CLI's
+is what `print_batch` costs, and it is now close to closed.
 
 #### The library's own per-row budget
 
@@ -4802,8 +4812,7 @@ what any of this campaign's instruments resolves, and an order of magnitude
 under the arithmetic that made `append_typed` look like the larger half before
 the decoders stopped allocating. The dispatch is a jump table over
 `batch::ColumnBuilder`'s twenty variants and the appends are `arrow-rs`'s own;
-there is nothing between them to take. Reading:
-[`roadmap-P7.10.1-typed-column-build-notes.md`](roadmap-P7.10.1-typed-column-build-notes.md).
+there is nothing between them to take.
 
 **A nested column moves that row and does not change the answer.** The same
 split over the `--arrays --composite` file reads **0.19 µs a row** of Arrow
@@ -4837,12 +4846,36 @@ appends across nineteen columns. The `text[]` file was only ever needed for the
 `arrow`'s 12-byte view-inlining threshold a view and a copy are the same
 instruction sequence and the prize is exactly zero; above it the copy grows with
 the element and the view write does not, so the ratio of prize to build rises
-with width while count scales both together. On the 21-byte shape above the
+with width while count scales both together. On the 21-byte shape below the
 prize reaches 1 µs a row at roughly **210 elements a row**. That is the trigger
 to re-read this on, and it is not the whole argument: the recursive
 chunk-retention and block-invalidation the change needs at every level of `List`
 and `Struct` nesting is a fixed cost in correctness surface that does not shrink
 as the prize grows.
+
+**The `text[]` file is not a registered input, and this is its specification**,
+because rebuilding it is what re-reading the bound above costs. It is
+`scripts/generate_perf_data.py`'s `--arrays` shape with the two array columns
+changed from `integer[]` to `text[]` — the same sixteen scalars from `COLUMNS`,
+the same 3–5 and 50 element counts, `--seed 42` — every element the literal
+token `lorem_ipsum_dolor_sit`. Three of its properties are load-bearing and all
+three are chosen to be **favourable to the change**, so that a refusal read off
+it is safe in the direction it is read: **21 bytes an element**, above the
+inlining threshold, since at or below it the prize is zero by construction and
+the file would have refused the lever rather than the evidence doing it; **no
+whitespace in an element**, so `array_out` quotes none of them and the literal's
+grammar matches the `integer[]` one, leaving the child builder as the only
+difference between the two files; and **fifty elements in every row**, never
+NULL and never ragged, the widest the registered apparatus uses.
+
+*Rejected: committing it as a `generate_perf_data.py` flag, with or without a
+registered figure to consume it.* The paragraph above is the record and
+rebuilding the generator from it is minutes. A flag would buy re-running a
+reading that is already discharged — it refused a lever and published no number
+— and [`measurements.md`](measurements.md)'s rule that a figure whose
+regeneration command is gone should be deleted has its mirror here: a
+non-figure owes no command. A registered figure would be worse again, making
+every future sweep pay an hour a time for a question that is closed.
 
 **The split row is now shared, and this budget is still the unfiltered one.**
 A row's boundaries are found once and read by the filter's terms as well as by
@@ -4876,10 +4909,13 @@ copies field bytes.
 **Nested columns move the weight into the codec, not out of the CLI.** On the
 `--arrays --composite` file the typed profile reads `print_batch` **59.1%** and
 `poll_next` **40.4%**, with `nested::decode_array` **15.5%** under
-`append_typed`'s 28.8% and `nested::needs_quote` **14.1%** — that last one now
-the largest single symbol in the run, and split roughly evenly between the two
-directions: `push_token` re-quoting each element on the way out, and
-`scan_token` rejecting an element `array_out` would have quoted on the way in.
+`append_typed`'s 28.8% and `nested::needs_quote` **14.1%** — that last one the
+largest single symbol in the run *as that sitting was taken*, and split roughly
+evenly between the two directions: `push_token` re-quoting each element on the
+way out, and `scan_token` rejecting an element `array_out` would have quoted on
+the way in. It is no longer a symbol at all; the force-quote set inlined it
+away, and the two sinks after it moved the `print_batch` share to the other
+side of the line (the paragraphs above, and the array-file profile they end on).
 
 **The codec no longer allocates per element**, which is what moved those
 shares: an array element is a borrowed slice of the field unless it carried an
@@ -5000,38 +5036,61 @@ notice; with it, a leg whose build silently dropped its feature cannot be
 published as a comparison of two identical binaries.
 
 The reading is [`measurements.md`](measurements.md), "Which allocator a figure
-was taken under", and it is **settled**: over the three headline shapes
-`jemalloc` is 1.02× / 1.11× / 1.06× and `mimalloc` 1.00× / 0.99× / 1.01×.
-Nothing beats the platform allocator anywhere, so the lever's stake — a factor,
-on the evidence that two stock libcs differ by 1.8–2.4× — did not survive
-contact with two allocators that are both tuned for this shape of work. The
+was taken under", and the decision it exists to make is **settled**: over the
+three headline shapes `jemalloc` is 1.02× / 1.12× / 1.10× and `mimalloc`
+0.97× / 0.97× / 0.99×. The lever's stake — a factor, on the evidence that two
+stock libcs differ by 1.8–2.4× — did not survive contact with two allocators
+that are both tuned for this shape of work: what is on the table is single
+percentage points, in a table whose own instrument does not resolve them. The
 features stay in `pgdump_query-cli`'s manifest so a later re-take is five
 minutes.
 
-**Both readings that once argued otherwise were measuring the read path, not
-an allocator.** The figure was taken twice: once before the per-chunk read
-buffer was pooled, once after, and the two differ on exactly the two cells that
-had made adoption a live question.
+**The claim is "nothing beats it by more than the instrument's own noise", and
+it used to be "nothing beats it".** Three sittings have given three answers for
+`mimalloc` — 0.98× / 0.96× / 0.96×, then 1.00× / 0.99× / 1.01×, then the row
+above — so two of the three now put it marginally ahead on every shape. Every
+cell's spread overlaps the reference's and the largest gap is 3%, against a
+1.6% median drift between two sittings of identical binaries; a within-sitting
+ratio does not inherit that excuse automatically, which is why the weaker
+sentence is written rather than the reading dismissed.
+
+**Both readings that once argued for adopting were measuring the read path, not
+an allocator.** The figure has been taken three times — before the per-chunk
+read buffer was pooled, after, and at the wrap sweep — and the two cells that
+had made adoption a live question are exactly the two that did not survive the
+pooling.
 
 - **`jemalloc`'s `parse` was 1.87×.** All of it was system time (0.27 s →
   0.80 s, with user time slightly *lower*), and `strace -c` counted 3,161
   `madvise` calls against glibc's 50 over a file read in 3,072 chunks: it was
   `LocalFileSource::read_range`'s per-chunk `vec![0u8; 1 MiB]` handed back to
   the kernel and re-faulted once per chunk. With the buffer pooled ("Execution
-  model and API surface") it is 1.02×, which is nothing.
+  model and API surface") it is 1.02× and has stayed there, while that leg's
+  two `query` cells — 1.12× and 1.10× — are the clearest losses in the table.
 - **`mimalloc`'s `typed` was 0.96×**, twice, on non-overlapping within-sitting
   spreads — the one cell of that table that reproduced its magnitude and the
-  whole of the case for adopting. It is now 1.01×, with its spread above the
-  reference's rather than below.
+  whole of the case for adopting. Pooled, it read 1.01× with its spread *above*
+  the reference's, and at the wrap sweep 0.99× with the spreads overlapping. A
+  cell that has read below, above and below again across three sittings is
+  measuring the apparatus.
 
-*Rejected:* adopting `mimalloc` on the 3–4% `typed` win it showed before the
-buffer pool. The one-line default flip was never the cost — the cost is that
-every other table in [`measurements.md`](measurements.md) becomes a figure of a
-binary no longer shipped, with no mechanical oracle to acknowledge it, so the
-whole document reads stale until the next full sweep. Paying that for one shape
-would have been buying the decision at its least informative moment, on a
-ranking whose largest number was measuring an allocation about to be deleted.
-The reading that replaced it says the win was not there to buy.
+*Rejected:* adopting `mimalloc`. It has been refused twice on two different
+numbers, and the reason is the same both times. The one-line default flip was
+never the cost — the cost is that every other table in
+[`measurements.md`](measurements.md) becomes a figure of a binary no longer
+shipped, with no mechanical oracle to acknowledge it, so the whole document
+reads stale until the next full sweep. **On the 3–4% `typed` win it showed
+before the buffer pool**, paying that would have been buying the decision at
+its least informative moment, on a ranking whose largest number was measuring
+an allocation about to be deleted; the next sitting agreed, reading that cell
+at 1.01×. **On the 1–3% margin it shows now**, the price is the same and the
+evidence is weaker still: no cell's spread clears the reference's, and a lever
+whose sign has changed twice across three sittings is one more sitting away
+from changing again. What would settle it is not another sitting of this
+figure but an instrument that resolves a 1% wall difference, which this
+campaign does not own and which the deterministic one — user instructions —
+cannot supply, since an allocator moves where time goes and not how many
+instructions retire. Reopen it on an instrument, not on a sign.
 
 *Rejected:* a `--global-allocator` flag or an environment variable. A global
 allocator is chosen when the binary is linked, so a runtime switch would have

@@ -17,7 +17,7 @@ reused, including a struck phase's.
 |---|---|---|
 | P1–P5, P9, P11, P12 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
 | P13 — compressed input | Specified; **blocked**, and its remaining decisions ungrilled | [`roadmap-P13-compressed-input.md`](roadmap-P13-compressed-input.md) — waits on an external seekable-xz crate; inbox drained |
-| P7 — scan performance | **Current**; sliced | [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md) — inbox drained |
+| P7 — scan performance | **Complete** | [`roadmap-P7-scan-performance.md`](roadmap-P7-scan-performance.md) — spec; what it refused is [its notes](roadmap-P7-scan-performance-notes.md); what it built is [`architecture.md`](architecture.md), by subject |
 | P16 — parallel scan and extraction | Sketched; not grilled | this file, below; [inbox](roadmap-P16-parallel-scan-inbox.md) — carved out of P7 |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
