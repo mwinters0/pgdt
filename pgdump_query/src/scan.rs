@@ -473,12 +473,12 @@ impl ChunkCarry {
 /// builds a whole options struct to read one number, and it is not a constant
 /// expression. The CLI's use of it is incidental to that.
 ///
-/// **It sits below the read path's pool ceiling deliberately.** A chunk larger
-/// than `io::POOL_MAX_BYTES` is never kept by the buffer pool, so every chunk
-/// becomes a fresh zeroed allocation — the cost the pool exists to remove
-/// (`docs/design/architecture.md`, "Execution model and API surface"). A
-/// caller raising `chunk_size` past it pays that, and the figure above is
-/// where it is priced.
+/// **Raising it costs memory, not pooling.** Every read loop announces the
+/// size it is about to repeat ([`crate::ByteRangeSource::hint_read_size`]), so
+/// a chunk of any size is kept and reused by the local source's buffer pool
+/// rather than allocated and zeroed afresh. What a larger chunk does cost is
+/// the pool holding up to four buffers of it
+/// (`docs/design/architecture.md`, "Execution model and API surface").
 pub const DEFAULT_CHUNK_SIZE: usize = 1 << 20;
 
 /// Tuning knobs for a full-file scan.
@@ -536,6 +536,10 @@ where
     F: FnMut(Event<'_>) -> ControlFlow<()>,
 {
     let size = source.size().await?;
+    // The chunk length this loop will ask for until EOF, announced once so a
+    // buffer-recycling source can keep one of that size whatever it is
+    // (`ByteRangeSource::hint_read_size`).
+    source.hint_read_size(options.chunk_size);
     let mut scanner = CopyScanner::new();
     let mut carry = ChunkCarry::new();
     let mut read_pos = 0u64;

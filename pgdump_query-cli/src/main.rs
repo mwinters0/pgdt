@@ -80,9 +80,9 @@ enum Command {
         /// where a chunk size shows anything at all, and makes no measurable
         /// difference on the other two (`docs/design/measurements.md`, "What the read
         /// chunk size is worth") — so this is a tuning escape hatch for a
-        /// device unlike those, not a knob with a win behind it. Above 8 MiB
-        /// the read buffer stops being pooled and every chunk is allocated
-        /// and zeroed afresh, which doubles a warm scan.
+        /// device unlike those, not a knob with a win behind it. A raised
+        /// value keeps its buffer pooling and costs memory instead: the read
+        /// path holds up to four buffers of whatever size you ask for.
         #[arg(long, value_name = "BYTES", value_parser = parse_chunk_size)]
         chunk_size: Option<usize>,
     },

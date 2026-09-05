@@ -948,16 +948,20 @@ already taken what there was to take and a hint asking for more has nothing to
 win ([`architecture.md`](architecture.md), "Execution model and API surface",
 where both schemes are refused).
 
-**16 MiB doubles the warm scan, and that is the read path's pool ceiling
-rather than the chunk size.** `io::BufferPool` keeps nothing above 8 MiB, so at
-16 MiB every chunk is a fresh `vec![0u8; len]` — the `calloc` the pool exists
-to remove, back once per chunk. Warm, where nothing hides it, that is 0.472 s
-→ 0.866 s, **1.83×**, against the 8 MiB row immediately above it. It is the
-same cost the buffer pool was landed to remove, re-entering through a knob, and
-it is why the sweep brackets the ceiling rather than stopping at it. The cliff
-is a little shallower than the previous stamp's 2.07×, and in the direction the
-rest of this sweep moved: the pooled rows got faster while the unpooled one did
-not, since what the read-loop carry removed is paid per chunk either way.
+**16 MiB doubles the warm scan, and that was the read path's pool ceiling
+rather than the chunk size.** At the stamp above, `io::BufferPool` kept nothing
+over 8 MiB, so at 16 MiB every chunk was a fresh `vec![0u8; len]` — the
+`calloc` the pool exists to remove, back once per chunk. Warm, where nothing
+hides it, that is 0.472 s → 0.866 s, **1.83×**, against the 8 MiB row
+immediately above it: the price of a pool miss, measured on a real file, which
+is why the sweep brackets the ceiling rather than stopping at it.
+
+**This row is the one the register expects to move.** The pool now keeps a
+buffer of whatever length a read loop announces
+([`architecture.md`](architecture.md), "Execution model and API surface"), so a
+16 MiB chunk is pooled like any other and this table's last row is stale until
+the figure is re-taken. Nothing else in it is: every other row runs at or below
+a ceiling that decided nothing for them.
 
 **Small chunks cost CPU, not I/O.** 64 KiB is 1.38× warm and 1.17× cold on the
 NVMe, and 1.00× on the SATA SSD — the per-chunk work (a syscall, a pool

@@ -215,16 +215,17 @@ to measure on.
 
 ---
 
-## A read buffer that misses the pool costs 2.07× a warm scan
+## A read buffer that misses the pool costs 1.83× a warm scan
 
-**Fact.** `io::BufferPool` holds **four** slots and keeps nothing above 8 MiB.
-A read whose buffer is not pooled falls back to `vec![0u8; len]`, which is the
-`calloc` the buffer pool was landed to remove — and the chunk-size sweep priced it
-directly: a 16 MiB chunk, which the pool refuses, takes **0.825 s warm against
-0.386 s** at 8 MiB on the same file and the same binary
-([`measurements.md`](measurements.md), "What the read chunk size is worth").
-The pool is per-`LocalFileSource`, and its bound was chosen against a scan that
-holds one chunk at a time plus the query path's retained chunks.
+**Fact.** `io::BufferPool` holds **four** slots, keeps nothing above 8 MiB
+except a length a read loop announced through
+`ByteRangeSource::hint_read_size`, and falls back to `vec![0u8; len]` for a
+read it has nothing for — which is the `calloc` the buffer pool was landed to
+remove. The chunk-size sweep priced a miss directly, back when a 16 MiB chunk
+was one: **0.866 s warm against 0.472 s** at 8 MiB on the same file and the
+same binary ([`measurements.md`](measurements.md), "What the read chunk size is
+worth"). The pool is per-`LocalFileSource`, and its bound was chosen against a
+scan that holds one chunk at a time plus the query path's retained chunks.
 
 **Why this phase cares.** Parallel extraction raises the number of chunks in
 flight against one source, which is exactly what the four slots were sized
@@ -233,7 +234,10 @@ the pool need to scale with the worker count" is a question with a number
 behind it rather than a guess — and it is a number large enough that getting it
 wrong would eat a meaningful share of what parallelism buys.
 
-**Origin.** 2026-09-04, the I/O-defaults reading.
+**Origin.** 2026-09-04, the I/O-defaults reading; the announced read length and
+the current price are from 2026-09-05
+([`../status/history/2026-09-05.md`](../status/history/2026-09-05.md), "`M55`:
+the pool keeps the chunk size the caller asked for").
 
 ---
 

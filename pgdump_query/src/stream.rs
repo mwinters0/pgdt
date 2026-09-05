@@ -491,6 +491,9 @@ async fn map_forward<S: ByteRangeSource>(
     let mut metadata_covers: Option<Option<String>> =
         index.metadata.as_ref().and_then(|m| m.databases.last()).map(|db| db.name.clone());
 
+    // The chunk length this loop repeats to the frontier, announced once
+    // (`ByteRangeSource::hint_read_size`).
+    source.hint_read_size(scan_options.chunk_size);
     let mut scanner = CopyScanner::resume(seg_start, None);
     let mut read_pos = seg_start;
     let mut carry = ChunkCarry::new();
@@ -1274,6 +1277,11 @@ where
 
         let resume_offset = resume.as_ref().map_or(0, |t| t.offset);
         let mut rows_emitted = resume.as_ref().map_or(0, |t| t.rows_emitted);
+
+        // The chunk length every block's replay repeats, announced once for
+        // the whole replay rather than per block
+        // (`ByteRangeSource::hint_read_size`).
+        source.hint_read_size(scan_options.chunk_size);
 
         // Only the first replayed block can start mid-block (a resumed
         // stream paused between two of its rows); its scanner and in-flight

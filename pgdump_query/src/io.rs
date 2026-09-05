@@ -1,6 +1,7 @@
 use std::future::Future;
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
@@ -10,10 +11,12 @@ use crate::{Error, Result};
 
 /// Minimal async byte-range read abstraction.
 ///
-/// Shaped to mirror `object_store`'s `get_range`/`head` semantics so a real
-/// `object_store`-backed implementation can be added later (behind a Cargo
-/// feature flag — see `docs/design/architecture.md`, "Execution model and API
-/// surface") without changing this trait.
+/// The three required methods are shaped to mirror `object_store`'s
+/// `get_range`/`head` semantics so a real `object_store`-backed implementation
+/// can be added later (behind a Cargo feature flag — see
+/// `docs/design/architecture.md`, "Execution model and API surface") without
+/// changing them. [`ByteRangeSource::hint_read_size`] sits outside that mirror
+/// and is defaulted, so such an implementation need not know it exists.
 pub trait ByteRangeSource: Send + Sync {
     fn read_range(&self, offset: u64, len: usize) -> impl Future<Output = Result<Bytes>> + Send;
     fn size(&self) -> impl Future<Output = Result<u64>> + Send;
@@ -23,6 +26,18 @@ pub trait ByteRangeSource: Send + Sync {
     /// (`docs/design/architecture.md`, "The cache") treats an absent mtime as
     /// nothing to compare against, never as a mismatch.
     fn modified(&self) -> impl Future<Output = Result<Option<SystemTime>>> + Send;
+    /// The read length this caller is about to ask for over and over — a
+    /// read loop's `ScanOptions::chunk_size`, announced once before the loop
+    /// starts.
+    ///
+    /// **Advisory, and it defaults to doing nothing.** It exists because
+    /// one-off-ness is a property of the *caller* and nothing in a
+    /// `read_range` call carries it: an implementation that recycles buffers
+    /// has to tell a chunk read, which repeats for the whole scan, from
+    /// `map::attach_text`'s coalesced span read, which happens once per map,
+    /// and by length alone it cannot ([`LocalFileSource`], and
+    /// `docs/design/architecture.md`, "Execution model and API surface").
+    fn hint_read_size(&self, _len: usize) {}
 }
 
 /// How many released buffers a [`LocalFileSource`] keeps.
@@ -31,10 +46,13 @@ pub trait ByteRangeSource: Send + Sync {
 /// replay path retains chunks past the read that produced them
 /// (`crate::batch::SourceChunk`), so the buffer of chunk *N* can still be
 /// alive when chunk *N+1* is read. Four is that depth with room to spare, and
-/// it is what bounds the pool's contribution to RSS.
+/// it is what bounds the pool's contribution to RSS: four buffers of whatever
+/// read length the caller announced, which at the default chunk size is 4 MiB
+/// and at a raised one is four times that.
 const POOL_SLOTS: usize = 4;
 
-/// The largest buffer worth keeping, in bytes.
+/// The largest buffer worth keeping, in bytes, for a length nobody has
+/// announced as a read size.
 ///
 /// The read path's steady state is chunk-sized — 1 MiB by default, and
 /// tunable through `ScanOptions::chunk_size`. What can be far larger is
@@ -43,14 +61,15 @@ const POOL_SLOTS: usize = 4;
 /// trade the flat ~9 MiB RSS this design is built around for an allocation
 /// nothing is going to ask for twice.
 ///
-/// **Size stands in for one-off-ness, and a large chunk is caught by the
-/// proxy.** A chunk buffer at the configured size is asked for once per chunk
-/// for the whole scan, which is what the pool is for — but it is
-/// indistinguishable from a span read by length alone, so raising `ScanOptions::chunk_size` past
-/// this loses pooling entirely (`docs/design/architecture.md`, "Execution
-/// model and API surface"). Keeping a buffer whose length is the configured
-/// chunk size would fix it, and is queued as `M55` in
-/// `docs/design/roadmap.md`'s out-of-band ledger.
+/// **Size stands in for one-off-ness, which is why it is not the only rule.**
+/// A chunk buffer at the configured size is asked for once per chunk for the
+/// whole scan — the thing the pool is for — and by length alone it is
+/// indistinguishable from a span read, so this ceiling on its own turns
+/// pooling off for any chunk above it. What tells the two apart is the caller
+/// saying so: [`ByteRangeSource::hint_read_size`] names the length a read loop
+/// is about to repeat, and a buffer of exactly that length is kept however
+/// large it is (`docs/design/architecture.md`, "Execution model and API
+/// surface").
 const POOL_MAX_BYTES: usize = 8 << 20;
 
 /// Read buffers, reused rather than allocated per chunk.
@@ -78,6 +97,17 @@ struct BufferPool {
     /// it is a list of scratch buffers — so every caller recovers the guard
     /// rather than propagating a panic from an unrelated task.
     free: Mutex<Vec<Vec<u8>>>,
+    /// The read length a caller announced through
+    /// [`ByteRangeSource::hint_read_size`], or `0` for none — a buffer of
+    /// exactly this length is kept past [`POOL_MAX_BYTES`].
+    ///
+    /// It is an atomic rather than part of the `Mutex` because it is written
+    /// once per read loop and read once per released buffer, and because
+    /// `hint_read_size` takes `&self`: a source is shared, and the announcement
+    /// must not have to wait behind a `take` on another task. `Relaxed` is
+    /// enough — nothing is published through it, and a hint that arrives a
+    /// buffer late costs one allocation.
+    hinted: AtomicUsize,
 }
 
 impl BufferPool {
@@ -97,8 +127,22 @@ impl BufferPool {
         }
     }
 
+    /// Announce the read length a loop is about to repeat, so a buffer of
+    /// that length survives [`POOL_MAX_BYTES`].
+    fn hint(&self, len: usize) {
+        self.hinted.store(len, Ordering::Relaxed);
+    }
+
+    /// Whether a released buffer is worth keeping: anything under the ceiling,
+    /// plus a buffer of exactly the announced read length. **Exactly**, not
+    /// "up to": a span read that happens to be smaller than a large chunk is
+    /// still the one-off allocation the ceiling exists to drop.
+    fn keeps(&self, len: usize) -> bool {
+        len <= POOL_MAX_BYTES || len == self.hinted.load(Ordering::Relaxed)
+    }
+
     fn give(&self, buf: Vec<u8>) {
-        if buf.len() > POOL_MAX_BYTES {
+        if !self.keeps(buf.len()) {
             return;
         }
         let mut free = self.free.lock().unwrap_or_else(|e| e.into_inner());
@@ -190,6 +234,15 @@ impl ByteRangeSource for LocalFileSource {
             .map_err(Error::from)?;
         Ok(Some(mtime))
     }
+
+    /// **The pool's one non-size rule.** A read loop announcing its chunk size
+    /// is what lets a buffer of that length be kept above [`POOL_MAX_BYTES`],
+    /// so a raised `ScanOptions::chunk_size` keeps its pooling instead of
+    /// paying a fresh `calloc` per chunk. The cost is bounded and is the
+    /// caller's own number: [`POOL_SLOTS`] buffers of the size it asked for.
+    fn hint_read_size(&self, len: usize) {
+        self.pool.hint(len);
+    }
 }
 
 #[cfg(test)]
@@ -234,9 +287,9 @@ mod tests {
         assert_eq!(&next[..], b"89abcdef");
     }
 
-    /// A buffer above the ceiling is dropped rather than pooled, so one
-    /// oversized `attach_text` read cannot hold megabytes for the life of the
-    /// process.
+    /// A buffer above the ceiling that no caller announced as its read length
+    /// is dropped rather than pooled, so one oversized `attach_text` read
+    /// cannot hold megabytes for the life of the process.
     #[test]
     fn the_pool_refuses_a_buffer_above_the_ceiling() {
         let pool = BufferPool::default();
@@ -244,6 +297,45 @@ mod tests {
         assert!(pool.free.lock().unwrap().is_empty());
         pool.give(vec![0u8; 64]);
         assert_eq!(pool.free.lock().unwrap().len(), 1);
+    }
+
+    /// The announced read length is the one thing that survives the ceiling,
+    /// and only at exactly that length: a scan configured with a large chunk
+    /// keeps its pooling, while a span read of some other oversized length is
+    /// still dropped.
+    #[test]
+    fn the_pool_keeps_a_buffer_of_the_announced_read_length() {
+        let chunk = 16 << 20;
+        let pool = BufferPool::default();
+        pool.give(vec![0u8; chunk]);
+        assert!(pool.free.lock().unwrap().is_empty());
+
+        pool.hint(chunk);
+        pool.give(vec![0u8; chunk]);
+        assert_eq!(pool.free.lock().unwrap().len(), 1);
+        // The same read asked for again gets that buffer back rather than a
+        // fresh `calloc`, which is the whole point.
+        let taken = pool.take(chunk);
+        assert_eq!(taken.len(), chunk);
+        assert!(pool.free.lock().unwrap().is_empty());
+        pool.give(taken);
+
+        // A one-off span read at another oversized length is still dropped,
+        // even one *smaller* than the announced chunk.
+        pool.give(vec![0u8; chunk - 1]);
+        pool.give(vec![0u8; chunk + 1]);
+        assert_eq!(pool.free.lock().unwrap().len(), 1);
+    }
+
+    /// The hint reaches the pool through the trait method, which is the only
+    /// way a read loop has of announcing anything.
+    #[test]
+    fn a_source_passes_the_hint_to_its_pool() {
+        let (_file, source) = source_of(b"0123456789abcdef");
+        let chunk = POOL_MAX_BYTES + 1;
+        source.hint_read_size(chunk);
+        source.pool.give(vec![0u8; chunk]);
+        assert_eq!(source.pool.free.lock().unwrap().len(), 1);
     }
 
     /// The pool holds `POOL_SLOTS` buffers and no more, and a take picks the

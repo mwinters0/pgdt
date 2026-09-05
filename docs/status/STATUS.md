@@ -73,20 +73,26 @@ that disqualifies a sweep
 directionally"). Session drift over 92 shared readings is a median absolute
 **1.6%** and a largest 14.3%.
 
-**Nothing is stale, and two acknowledgements are why.** Every figure was current
-in fact at `af15eac`; the fold-in touched no declared path at all —
-`scripts/acknowledged.py` is its own module precisely so that an acknowledgement
-edit does not re-stale the stamp it was just given — and P7's wrap and keystone
-touched nine between them, every hunk of every one a comment, a docstring, or a
-`quoted_by` edge into the phase docs they deleted. `measure.ACKNOWLEDGED`
-carries both commits and `--stale` reports *no figure is stale: every touched
-path is accounted for*. The mechanical oracle is **reachability** — no
-executable line changed, so no command shape the sweep runs executes anything
-different — and each entry names the diff that re-checks it. Both landed as a
-follow-up, an entry being unable to name its own sha. Note that a stale figure
-would have obliged no sweep either
+**Sixteen figures are stale, and no acknowledgement can excuse them.** `M55`
+changed the read path — `io.rs`, `scan.rs`, `stream.rs` and the CLI — so every
+figure that times a run is red, and `session-drift` has been red on
+`scripts/measure.py` since `M52`. The change adds executable lines, so neither
+mechanical oracle applies: reachability excuses only a diff no command shape
+executes, and byte-identity settles generator changes alone. **One published
+number actually moves**, the `chunk-size` table's 16 MiB row, which was taken
+when a chunk that large missed the buffer pool; that row is called out where it
+stands. A stale figure obliges no sweep
 ([`../design/measurements.md`](../design/measurements.md), "A stale figure does
-not oblige a sweep").
+not oblige a sweep"), and a sweep is what re-takes these: seventeen tables from
+one sitting is the property the `af15eac` stamp has and a partial sitting would
+spend.
+
+The two acknowledgements the register carries still stand and still hold for
+what they name. `measure.ACKNOWLEDGED` records P7's wrap and keystone, whose
+every hunk is a comment, a docstring, or a `quoted_by` edge into the phase docs
+they deleted; each entry names the diff that re-checks it.
+`scripts/acknowledged.py` is its own module precisely so that an acknowledgement
+edit does not re-stale the stamp it was just given.
 
 | Capability | State |
 |---|---|
@@ -97,7 +103,7 @@ not oblige a sweep").
 | Best-effort structural cache with source-identity checking and cache-only inspection | working |
 | Arrays, composites, ranges, multiranges, `int2vector` | typed and decoded end to end: `List<T>`, `Struct<…>`, the five-field range struct, `List<`range struct`>`, `List<List<T>>`, and `int2vector`'s `List<Int16>` — a fifth literal form with no wrapper, no quoting and no NULL element (I47), compared through `anyarray` polymorphism's `array_lt`/`array_eq` so `'2' < '10'` is true where a byte comparison says false. Three shapes stay strings, each with its own resolution outcome — an opaque element type, an element type that is itself an array (I26), and values that disagree on shape. **Every container kind now compares structurally** — element-wise, field-wise and bound-wise through a `ComparisonPlan::Nested` tree, `array_cmp`'s shape tie-break, and one NULL rule at every level (I45) — with the literal read through the `*_in` supersets (I44) and each leaf in its own type's output form. Comparability and divergence are both inherited: a `json` position refuses the column's *ordering* and names itself, a `text[]` announces its element's collation. A column whose order one position refuses still answers `=` — over the container's whole text — and **says what that costs at the position that did it**, since `array_cmp` raises for a `json` element rather than comparing, so bytewise is an answer the server does not have; a position the *resolver* declined instead (I22, I26) resolves the column to text before any tree is read and is silent. **A range is put into the form the server stores it in before it is compared** (I46): `range_serialize`'s out-of-order refusal and empty-collapse, then the canonical function the three discrete built-ins have, so `int4range '[1,10]'`, `'(0,10)'` and `'[1,11)'` are one value and `'(1,2)'` is `empty`; a multirange's members are sorted, coalesced and emptied out before the sequence is walked. A user-defined range declaring a `canonical` function is refused under **every** operator, `=` included, since the server rewrites both operands through arbitrary server-side code before comparing them |
 | Array shape census | recorded by every mapping pass and consumed: a query retypes its top-level array columns from the union over the blocks it will replay, before the first batch |
-| CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, cache-only `info` | working; **`parse` is the only scanner** — it resumes from a matching cache, banks at `COPY` block boundaries under a self-tuning throttle, and saves unconditionally on Ctrl-C (exit 130/143). `info` reports from the cache and never scans. Both scanning commands take `--chunk-size <bytes>`, whose 1 MiB default is the fastest of six sizes measured on the one device class where the size makes a difference ([`../design/measurements.md`](../design/measurements.md), "What the read chunk size is worth"); above 8 MiB the read buffer stops being pooled and a warm scan doubles. `--verbose` adds each block's byte offsets, a per-column resolution line, an enum column's declared labels beneath it, and — under the `user-defined types` count that heads it — one line per user-defined type, every `TypeKind` arm rendered with its payload. Text output shape is provisional; `--json` carries no shape promise at all, and states the labels once per type in `metadata.databases[].types[]` rather than per column |
+| CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, cache-only `info` | working; **`parse` is the only scanner** — it resumes from a matching cache, banks at `COPY` block boundaries under a self-tuning throttle, and saves unconditionally on Ctrl-C (exit 130/143). `info` reports from the cache and never scans. Both scanning commands take `--chunk-size <bytes>`, whose 1 MiB default is the fastest of six sizes measured on the one device class where the size makes a difference ([`../design/measurements.md`](../design/measurements.md), "What the read chunk size is worth"); a raised value keeps its pooling, because each read loop announces the length it repeats, and costs up to four buffers of that size in RSS instead. `--verbose` adds each block's byte offsets, a per-column resolution line, an enum column's declared labels beneath it, and — under the `user-defined types` count that heads it — one line per user-defined type, every `TypeKind` arm rendered with its payload. Text output shape is provisional; `--json` carries no shape promise at all, and states the labels once per type in `metadata.databases[].types[]` rather than per column |
 | Partial reporting | `info` reports an unfinished scan's cache for as far as it got, with `Scan completion: N%` stated once at the top and nothing below it qualified. An interrupted cache is **typed** for every database segment the scan finished (I1) |
 | Measurement harness | `scripts/measure.py` takes every figure in [`../design/measurements.md`](../design/measurements.md) and emits that doc's tables — seventeen figures, sixteen taken by a sweep and one derived across two, each declaring what invalidates it, which documents repeat it, and which readings it borrows from another figure — that third edge is what lets `--figure` pull in what a figure borrows and name the rest of the set that must be re-taken with it, and `--alone` is how a partial sitting is asked for deliberately. Its reverse direction is **named rather than taken**: a table whose row is a difference over another figure's reps — `cross-file-floor` over `nested-end-to-end`, the register's one such edge — is not a closure edge, so `--figure` names it in the run log and in the emitted header when a sitting re-takes the reps it is derived from, and `--check` reports the relationship beside the partial sittings ([`../design/measurements.md`](../design/measurements.md), "The apparatus"). `measure.UNTAKEN` is empty: nothing is built and unrun. It also builds and interrogates the `allocator` figure's three legs, reading each binary's allocator out of `pgdq --version` rather than trusting the flags it passed, and names the shipped one in the session stamp. A leg is rebuilt **once per harness process** rather than reused from `runs/`, which is what stops a fresh reference being timed against last session's legs, and all of them are built before the first reading rather than at the rep that wants one |
 | Column projection | working, library and CLI: `QueryOptions::projection` names columns, cuts the reported `ResolvedSchema` with the batches, may reorder, and may be empty (`COUNT(*)`); `pgdq query` spells it `--column <name>` repeated, or `--no-columns`, which prints no header so `\| wc -l` is a row count. A filter may name a column the projection does not, and an unprojected column is never decoded, so projecting a column away escapes its `Error::FieldDecode` — including `KD2`'s, which the error message does not name ([`../design/architecture.md`](../design/architecture.md), "Projection"; [`../manual/type-handling.md`](../manual/type-handling.md)). Measured on one 3.00 GiB file at five widths: `--no-columns` is 1.61 µs a row against 12.97 for all 19, the two array columns alone are +6.03 and the composite +0.75 ([`../design/measurements.md`](../design/measurements.md), "What a column costs") |
@@ -357,4 +363,25 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-Nothing open.
+- **`hint_read_size` is a third method on `ByteRangeSource`, not a
+  `LocalFileSource` setter.** `M55` had to tell the buffer pool which read
+  length repeats, and the size is configured in `ScanOptions`, which only the
+  read loops see — so the announcement is a defaulted, advisory trait method
+  and every loop makes it. The alternative leaves the trait holding only the
+  methods [`../design/architecture.md`](../design/architecture.md), "Execution
+  model and API surface", says mirror `object_store`, and makes the CLI call a
+  setter when `--chunk-size` is given; it configures one thing in two places
+  and loses an embedder's pooling silently. **Decide:** whether the trait may carry an
+  advisory method at all. Reversing it means deleting the method, moving the
+  call to the three CLI construction sites, and accepting that a library
+  embedder who raises `chunk_size` gets no pooling.
+
+- **The `chunk-size` figure was left stale rather than re-taken alone.** The
+  entry that admitted `M55` expected landing it to re-take that one figure. The
+  change reddens sixteen, one whole sweep is what replaces them, and a partial
+  sitting of one table would put a second sitting into a doc whose current
+  property is that all seventeen came from one. So the 16 MiB row stands with a
+  note saying it was taken when a chunk that large missed the pool. **Decide:**
+  whether that row is worth a partial sitting before the next sweep. Reversing
+  it is `uv run measure.py --figure chunk-size`, folded in with the harness's
+  partial-sitting note.

@@ -76,22 +76,27 @@ its I/O, this phase inherits the problem.
 **Fact.** `scan::DEFAULT_CHUNK_SIZE` is 1 MiB, chosen by measurement over six
 sizes from 64 KiB to 16 MiB on a SATA SSD, an NVMe drive and tmpfs
 ([`measurements.md`](measurements.md), "What the read chunk size is worth"). Two
-things travel with it. `io::BufferPool` **keeps nothing above 8 MiB**, so a
-chunk larger than that is a fresh zeroed allocation every time — worth **2.07×
-a warm scan** at 16 MiB. And double-buffered readahead was refused on the
-arithmetic that a cold scan cannot go below the device's own delivery time,
-which on the fastest local disk we own leaves an 8.9% envelope for the whole
-overlap idea ([`architecture.md`](architecture.md), "Execution model and API
-surface").
+things travel with it. `io::BufferPool` **keeps nothing above 8 MiB unless a
+read loop announced that length** through `ByteRangeSource::hint_read_size`, so
+an unannounced read above the ceiling is a fresh zeroed allocation every time —
+worth **1.83× a warm scan** at 16 MiB, back when a chunk was one. And
+double-buffered readahead was refused on the arithmetic that a cold scan cannot
+go below the device's own delivery time, which on the fastest local disk we own
+leaves a 5.8% envelope for the whole overlap idea
+([`architecture.md`](architecture.md), "Execution model and API surface").
 
 **Why P14 cares.** Both premises fail over a network. A ranged GET has latency
 a local `pread` does not, so overlapping the next request with the current
 parse is worth something here even though it was refused there — the refusal is
 a local-disk result and must not be read as a decision about the trait. And a
 1 MiB range is almost certainly too small for `object_store`, where per-request
-overhead dominates; the first size that looks right will be several MiB, which
-walks straight into the pool ceiling and silently turns the pool off. Whichever
-way P14 goes, `POOL_MAX_BYTES` is a constant it has to look at rather than
-inherit.
+overhead dominates; the first size that looks right will be several MiB. A
+local-file read loop keeps its pooling at that size because it announces it,
+but a P14 source that recycles buffers of its own has to implement
+`hint_read_size` to get the same — a defaulted trait method does nothing, and
+doing nothing is exactly the silent pooling loss the ceiling used to produce.
 
-**Origin.** 2026-09-04, the I/O-defaults reading.
+**Origin.** 2026-09-04, the I/O-defaults reading; the announced read length is
+from 2026-09-05
+([`../status/history/2026-09-05.md`](../status/history/2026-09-05.md), "`M55`:
+the pool keeps the chunk size the caller asked for").

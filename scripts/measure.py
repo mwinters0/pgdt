@@ -1319,12 +1319,12 @@ def predicate_expr(shape: str) -> str:
 #: `1 << 20` is the shipped default (`scan::DEFAULT_CHUNK_SIZE`) and every
 #: other row is read against it.
 #:
-#: **The range brackets the read path's own buffer-pool ceiling.** A chunk
-#: above 8 MiB is refused by `io::BufferPool::give`, so at 16 MiB every chunk
-#: is a fresh zeroed allocation and the pool 7.13 landed is off. That row is in
-#: the table on purpose: the ceiling is a property of the read path, and a
-#: sweep that stopped at 8 MiB would leave a reader to assume the curve
-#: continues.
+#: **The range brackets the read path's own buffer-pool ceiling.** 8 MiB is
+#: the largest buffer `io::BufferPool::give` keeps for a length nobody
+#: announced; a read loop announces its chunk size, so a 16 MiB chunk is
+#: pooled like the rest. The 16 MiB row is in the table on purpose either way:
+#: a sweep that stopped at the ceiling would leave a reader to assume the curve
+#: continues, and this row is what says whether it does.
 CHUNK_SIZES: tuple[int, ...] = (64 << 10, 256 << 10, 1 << 20, 4 << 20, 8 << 20, 16 << 20)
 
 #: The row every other chunk-size row is a ratio against.

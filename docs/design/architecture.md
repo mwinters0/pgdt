@@ -130,10 +130,31 @@ is what returns it**, which is what makes this safe for the query replay path:
 that path retains a chunk in `batch::SourceChunk` for as long as a zero-copy
 `Utf8View` points into it ("Arrow assembly and the zero-copy path"), so the
 buffer must not be recycled on the read loop's schedule. And **the pool is
-bounded at both ends** — four slots, nothing above 8 MiB kept — because
-`map::attach_text`'s coalesced span read can be far larger than a chunk and
-happens once per map, and holding one of those for the life of the process
-would trade the flat ~9 MiB RSS for an allocation nothing asks for twice.
+bounded at both ends** — four slots, and nothing above 8 MiB kept unless a
+caller announced it as its read size — because `map::attach_text`'s coalesced
+span read can be far larger than a chunk and happens once per map, and holding
+one of those for the life of the process would trade the flat ~9 MiB RSS for an
+allocation nothing asks for twice.
+
+**One-off-ness is a property of the caller, so the caller says it.**
+`ByteRangeSource::hint_read_size` is a third, advisory method — defaulted to
+nothing, deliberately outside the `object_store` surface the other two mirror —
+through which each of the three read loops announces its `chunk_size` once
+before it starts. `LocalFileSource` keeps a buffer of exactly that length
+however large it is, and applies the 8 MiB ceiling to every other length,
+including a span read *smaller* than a large chunk. Nothing else in a
+`read_range` call distinguishes a chunk read, which repeats for the whole scan,
+from a span read that happens once per map; length alone stood in for that
+distinction and caught a deliberately large chunk as collateral.
+
+*Rejected:* a `LocalFileSource`-only setter the CLI calls when `--chunk-size` is
+given, which leaves the trait untouched. `ScanOptions::chunk_size` is where the
+size is configured and a library embedder never touches the CLI, so that shape
+configures one thing in two places and silently loses pooling for the embedder
+who sets only the one the library reads. *Also rejected:* inferring the chunk
+size inside the pool from the lengths it is asked for — a rule keyed on a length
+repeating turns a second map of the same file into a retained span buffer,
+which is the failure the ceiling exists to prevent, reintroduced as a heuristic.
 
 *Rejected:* changing `read_range` to read into a caller-owned buffer. It
 departs from `get_range` exactly where the trait exists to mirror it, and
@@ -197,7 +218,8 @@ stays on both `parse` and `query`, because they are the same read path under
 the same `ScanOptions` and an asymmetry there would read as a defect rather
 than as restraint. *Also rejected:* keeping it but refusing values above the
 8 MiB pool ceiling, the way zero is refused — that would delete the figure's
-16 MiB row, which is the one that shows the cliff.
+16 MiB row, which is the one that brackets the ceiling, and the ceiling no
+longer decides anything for a chunk in any case.
 
 *Rejected:* `posix_fadvise(POSIX_FADV_SEQUENTIAL | WILLNEED)` on the local
 backend. The chunk sweep is the experiment that answers it: a 16 MiB chunk is a
@@ -220,29 +242,21 @@ and the query path's chunk retention have to be correct about. Most of the
 parse CPU is already hidden behind the read on that device, and overlapping
 harder cannot recover what is already overlapped.
 
-**The pool ceiling is a cliff, and it bounds a useful chunk size from above.**
-A chunk larger than the 8 MiB the pool keeps is never returned to it, so every
-chunk becomes the fresh `calloc` the pool exists to remove — which is worth
-0.472 s → 0.866 s warm at 16 MiB against 8 MiB, **1.83×**, not a few
-percent. The remedy the user has today is not to raise `--chunk-size` past
-8 MiB, and that is stated in the flag's help and in `DEFAULT_CHUNK_SIZE`'s own
-doc comment, since the constant is what a future session would move without
-knowing the ceiling was there.
+**What a raised chunk size costs is memory, and the bound is the caller's own
+number.** `POOL_SLOTS` is 4, so a 16 MiB chunk can hold 64 MiB against the flat
+~9 MiB a scan otherwise sits at — which a caller who asked for 16 MiB buffers
+has largely accepted already. That is the whole cost, and it is stated in the
+flag's help, in the manual and in `DEFAULT_CHUNK_SIZE`'s own doc comment.
 
-**The cliff is a size proxy, not a property of the read path**, and describing
-it as the latter is what let the remedy be a sentence rather than a fix. What
-`POOL_MAX_BYTES` is defending against is `attach_text`'s coalesced span read —
-one allocation, once per map, that nothing asks for twice. A chunk buffer at
-the configured size is the opposite of that: asked for once per chunk, for the
-whole scan. The pool cannot tell the two apart, so it discriminates by size and
-catches a deliberately large chunk as collateral — a caller who asked for
-16 MiB has already accepted 16 MiB of buffer and gets the memory *and* the
-`calloc`. Keeping a buffer whose length is the configured `chunk_size`, and
-keeping the ceiling for everything else, would remove the cliff at a bounded
-cost: `POOL_SLOTS` is 4, so a 16 MiB chunk could retain up to 64 MiB against
-the ~9 MiB above. That is queued as `M55` in
-[`roadmap.md`](roadmap.md)'s out-of-band ledger; `io.rs` is in the
-`chunk-size` figure's `depends`, so landing it re-takes that figure.
+**What it used to cost is the measurement of what the pool is worth.** Before
+the announced read size, a chunk above the ceiling was never returned to the
+pool, so every chunk became the fresh `calloc` the pool exists to remove:
+0.472 s → 0.866 s warm at 16 MiB against 8 MiB, **1.83×**, not a few percent
+([`measurements.md`](measurements.md), "What the read chunk size is worth" —
+whose 16 MiB row was taken under that behaviour and is stale until the figure
+is re-taken). The number is kept because it prices the pool from the outside:
+it is what a per-chunk allocation costs on a real file, measured rather than
+argued, and nothing else in the register states it.
 
 **Two entry points, deliberately different in kind:**
 

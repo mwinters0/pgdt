@@ -96,9 +96,10 @@ sizes either side of it were ties rather than improvements.
 
 Two things are worth knowing if you change it anyway. **Small is slower**:
 64 KiB costs about 50% more CPU than 1 MiB, because the per-chunk work is paid
-sixteen times as often. **Above 8 MiB is much slower**: the read buffer stops
-being reused above that size, so every chunk is allocated and zeroed afresh,
-which roughly doubles the scan when the file is already in memory.
+sixteen times as often. **Large costs memory**: read buffers are reused at
+whatever size you ask for, and up to four of them are held, so a 16 MiB chunk
+is 64 MiB of resident memory against the handful of megabytes a scan otherwise
+uses.
 
 The flag exists for a device unlike any of those three. If you have one and
 find a size that beats 1 MiB on it, that is worth reporting.
