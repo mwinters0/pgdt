@@ -20,10 +20,11 @@ comes from one sitting**: sixteen from the scan-performance wrap sweep and
 `session-drift`,
 which no sweep can take because it is derived *across* two, from that sweep and
 a second begun the minute it finished. No table carries a partial-sitting note,
-no absolute in the document is a cross-sitting reading, and `measure.UNTAKEN`
-and `measure.ACKNOWLEDGED` are both empty — the fresh stamp spent all six
-acknowledgements and they were deleted rather than kept as sediment. Under the
-previous `ba2fc12` stamp ten of the seventeen stood outside the sweep.
+no absolute in the document is a cross-sitting reading, and `measure.UNTAKEN` is
+empty. The fresh stamp spent all six of the previous acknowledgements, which
+were deleted rather than kept as sediment; the two the register carries now are
+P7's wrap and keystone, and they are comment-only. Under the previous `ba2fc12`
+stamp ten of the seventeen stood outside the sweep.
 
 **The largest correction the register has carried is `census-arrays`.** Its warm
 census cost read 1.045 s and 1.49 µs a row under the old stamp and now reads
@@ -72,17 +73,18 @@ that disqualifies a sweep
 directionally"). Session drift over 92 shared readings is a median absolute
 **1.6%** and a largest 14.3%.
 
-**What is stale now is five figures on comment-only edits.** Every figure was
-current in fact at `af15eac`; the fold-in touched no declared path at all —
+**Nothing is stale, and two acknowledgements are why.** Every figure was current
+in fact at `af15eac`; the fold-in touched no declared path at all —
 `scripts/acknowledged.py` is its own module precisely so that an acknowledgement
 edit does not re-stale the stamp it was just given — and P7's wrap and keystone
-touched three (`batch.rs`, `decode.rs`, `scripts/measure.py`) purely to retarget
-citations out of the phase docs they deleted, which marks `nested-end-to-end`,
-`cross-file-floor`, `projection-widths`, `allocator` and `session-drift` red. The
-mechanical oracle applies — **reachability**: no executable line changed, so no
-command shape the sweep runs executes anything different. The acknowledgement
-lands as a follow-up, an entry being unable to name its own sha. A stale figure
-obliges no sweep and neither does a wrap
+touched nine between them, every hunk of every one a comment, a docstring, or a
+`quoted_by` edge into the phase docs they deleted. `measure.ACKNOWLEDGED`
+carries both commits and `--stale` reports *no figure is stale: every touched
+path is accounted for*. The mechanical oracle is **reachability** — no
+executable line changed, so no command shape the sweep runs executes anything
+different — and each entry names the diff that re-checks it. Both landed as a
+follow-up, an entry being unable to name its own sha. Note that a stale figure
+would have obliged no sweep either
 ([`../design/measurements.md`](../design/measurements.md), "A stale figure does
 not oblige a sweep").
 
@@ -142,9 +144,9 @@ apparatus line and none carrying a partial-sitting note. `--check` reconciles
 seventeen markers against seventeen figures. `session-drift` is the
 seventeenth, derived across that sweep and a second begun the minute it
 finished on the same commit, which is the pair `--drift` reads.
-`measure.ACKNOWLEDGED` is empty: a fresh stamp spends every entry, and
-`--check` named the previous six so they were deleted rather than kept as
-sediment.
+`measure.ACKNOWLEDGED` carries the two commits of P7's wrap and keystone, both
+comment-only against a declared path; the previous six were spent by this stamp
+and `--check` named them so they were deleted rather than kept as sediment.
 
 **Nothing is built and unrun.** `measure.UNTAKEN` is empty: `projection-widths`
 was taken and moved into `FIGURES`, and `composite-isolated` was deleted
