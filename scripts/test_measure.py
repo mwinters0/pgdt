@@ -78,9 +78,28 @@ class Formatting(unittest.TestCase):
     def test_readings_are_listed_in_order_taken(self):
         self.assertEqual(measure.fmt_readings([0.51, 0.53]), "0.510, 0.530")
 
-    def test_bytes_render_at_the_doc_s_two_scales(self):
+    def test_bytes_render_at_the_doc_s_three_scales(self):
         self.assertEqual(measure._fmt_bytes(248 * 1024), "248 KB")
         self.assertEqual(measure._fmt_bytes(2 * measure.MIB), "2.0 MB")
+        # `peak-rss` puts a 2 MB input beside a 3.00 GiB one, and "3072.0 MB"
+        # is not the size anybody asked for.
+        self.assertEqual(measure._fmt_bytes(3 * measure.GIB), "3.00 GiB")
+
+    def test_resident_sets_render_in_mebibytes(self):
+        # The only bound this figure is read against — four buffers of at most
+        # 8 MiB — is stated in MiB, and a claim compared against a bound must
+        # not change units on the way.
+        self.assertEqual(measure.fmt_mib(6144), "6.00 MiB")
+        self.assertEqual(
+            measure.fmt_mib_median_spread([6100, 6000, 6300]), "**5.96 MiB** (5.86–6.15)"
+        )
+
+    def test_a_resident_set_difference_renders_at_the_scale_it_lands_on(self):
+        # The figure's two axes are three orders of magnitude apart: tens of
+        # KiB per byte, tens of MiB per block.
+        self.assertEqual(measure.fmt_rss_delta(157.0), "+157 KiB")
+        self.assertEqual(measure.fmt_rss_delta(-12.4), "-12 KiB")
+        self.assertEqual(measure.fmt_rss_delta(40132.0), "+39.19 MiB")
 
     def test_nanoseconds_become_microseconds_above_a_thousand(self):
         self.assertEqual(measure._fmt_ns(265.4), "265 ns")
@@ -193,6 +212,7 @@ class Scripts(unittest.TestCase):
             "query-typed",
             "query-strings",
             "query-nomatch",
+            "parse-rss",
             *(f"query-project-{w}" for w in measure.PROJECTION_WIDTHS),
             *(f"query-where-{s}" for s in measure.PREDICATE_SHAPES),
             "dd",
@@ -203,7 +223,7 @@ class Scripts(unittest.TestCase):
     def test_no_command_redirects_stderr_inside_the_timer(self):
         # Some shells route `time`'s own report through the timed command's
         # redirection, which deletes the figure.
-        for command in ("parse", "query-typed", "parse-cache-out", "dd"):
+        for command in ("parse", "query-typed", "parse-cache-out", "parse-rss", "dd"):
             with self.subTest(command=command):
                 self.assertNotIn("2>", measure._script(command))
 
@@ -696,6 +716,109 @@ class ProjectionWidths(unittest.TestCase):
         fig = measure.SELECTABLE_BY_ID["projection-widths"]
         self.assertEqual(fig.warm_inputs, ("arrays",))
         self.assertEqual(measure.INPUTS["arrays"].args[:2], ("--arrays", "--composite"))
+
+
+class PeakRss(unittest.TestCase):
+    """The one figure whose reading is not a time.
+
+    Two things decide whether the number means what the table says. The
+    *instrument* must report pgdq's peak and not the wrapper's or the client's
+    — every wrong answer here is a plausible-looking one, which is why the
+    wrapper is asserted rather than remembered. And the *rows* must vary one
+    thing each: the byte pair differs in bytes alone, the block rows in blocks
+    alone, and both are read against the same pivot."""
+
+    def _rows(self) -> tuple[str, ...]:
+        return measure._RSS_ROWS
+
+    def test_the_command_is_the_same_parse_the_throughput_tables_time(self):
+        # A wrapped `parse`, not a different command: what this figure reports
+        # has to be the resident set of the scan the rest of the doc measures.
+        script = measure._script("parse-rss")
+        self.assertIn("/pgdq parse --source /dump.sql --dqcache /tmp/x.dqcache", script)
+
+    def test_the_redirection_takes_pgdq_s_stdout_and_not_the_reading(self):
+        # The reading goes to stderr, where bash's own `time` report goes, so
+        # `>/dev/null` on the whole command cannot swallow it.
+        script = measure._script("parse-rss")
+        self.assertTrue(script.rstrip().endswith(">/dev/null"))
+        self.assertIn("printf STDERR", script)
+
+    def test_the_wrapper_execs_so_its_own_footprint_is_not_the_reading(self):
+        # `exec` installs a fresh `mm`, so the forked interpreter's ~5.4 MiB is
+        # not in the child's high-water mark. Without it the table would read
+        # the wrapper.
+        self.assertIn("exec @ARGV", measure.rss_wrapper("x86_64"))
+
+    def test_the_wrapper_reads_the_children_high_water_mark(self):
+        # RUSAGE_CHILDREN (-1), read after `waitpid`. Polling `/proc` instead
+        # would miss a peak in the cache write a `parse` ends with, because the
+        # Vm* lines are gone the moment the process becomes a zombie.
+        wrapper = measure.rss_wrapper("x86_64")
+        self.assertIn("waitpid($pid, 0)", wrapper)
+        self.assertIn(f"syscall({measure.GETRUSAGE_SYSCALL['x86_64']}, -1,", wrapper)
+
+    def test_the_wrapper_propagates_a_failed_run(self):
+        # Otherwise a pgdq that died would be reported as a resident set.
+        self.assertIn("exit($st == 0 ? 0 :", measure.rss_wrapper("x86_64"))
+
+    def test_an_unregistered_machine_is_an_error_not_a_guess(self):
+        # A wrong syscall number returns EINVAL on one architecture and a
+        # plausible reading of the wrong field on another.
+        with self.assertRaises(ValueError):
+            measure.rss_wrapper("s390x")
+
+    def test_the_reading_is_read_back_off_the_wrapper_s_own_line(self):
+        self.assertEqual(measure.parse_maxrss_kib("real\t0m0.5s\nmaxrss_kib=6144\n"), 6144)
+
+    def test_no_reading_is_an_error_not_a_zero(self):
+        with self.assertRaises(ValueError):
+            measure.parse_maxrss_kib("real\t0m0.5s\n")
+
+    def test_two_readings_are_an_error(self):
+        with self.assertRaises(ValueError):
+            measure.parse_maxrss_kib("maxrss_kib=6144\nmaxrss_kib=6200\n")
+
+    def test_block_counts_are_read_off_the_generator(self):
+        # Written beside the row instead, a block count that moved in the
+        # generator would leave a stale number in the table's own column.
+        self.assertEqual(measure.input_block_count("one_block"), 1)
+        self.assertEqual(measure.input_block_count("control"), 1)
+        self.assertEqual(measure.input_block_count("blocks4000"), 4000)
+
+    def test_the_pivot_is_a_row_and_holds_one_block(self):
+        self.assertIn(measure._RSS_PIVOT, self._rows())
+        self.assertEqual(measure.input_block_count(measure._RSS_PIVOT), 1)
+
+    def test_the_byte_pair_differs_in_bytes_alone(self):
+        # `one_block` and `control` are the same generator, same seed, same
+        # shape; only `--size-mb` differs. So their difference is bytes.
+        pivot, big = measure.INPUTS[measure._RSS_PIVOT], measure.INPUTS["control"]
+        self.assertEqual(pivot.generator, big.generator)
+        self.assertEqual(measure.input_block_count("control"), 1)
+        self.assertIn("--seed", pivot.args)
+        self.assertEqual(
+            pivot.args[pivot.args.index("--seed") + 1],
+            big.args[big.args.index("--seed") + 1],
+        )
+
+    def test_the_block_rows_multiply_blocks_against_the_pivot(self):
+        # koji cannot test this half at all — 74 blocks over 784 GB — which is
+        # why the claim was re-homed here.
+        counts = [measure.input_block_count(n) for n in self._rows()]
+        self.assertGreater(max(counts), 1000 * measure.input_block_count(measure._RSS_PIVOT))
+
+    def test_every_row_is_an_input_the_figure_stages(self):
+        fig = measure.SELECTABLE_BY_ID["peak-rss"]
+        self.assertEqual(tuple(fig.warm_inputs), self._rows())
+
+    def test_the_figure_declares_the_read_path_first(self):
+        # The mechanism the claim is about, and the edge whose absence let the
+        # koji row go a megabyte wrong for a whole slice.
+        fig = measure.SELECTABLE_BY_ID["peak-rss"]
+        for path in (*measure.READ, *measure.MAP_BUILD, *measure.CACHE):
+            with self.subTest(path=path):
+                self.assertIn(path, fig.depends)
 
 
 class Selection(unittest.TestCase):
@@ -1538,6 +1661,23 @@ class KojiRecipe(unittest.TestCase):
 
     def test_the_exit_status_is_read_from_inspect(self):
         self.assertIn("{{.State.ExitCode}}", self._recipe())
+
+    def test_the_run_s_own_resident_set_can_be_read(self):
+        # koji's record carried an RSS row that no run since has measured,
+        # because the recipe captured no memory figure at all. `VmHWM` off the
+        # host pid is the instrument: the cgroup's `memory.peak` is charged the
+        # page cache of a 784 GB read and reports the limit.
+        recipe = self._recipe()
+        self.assertIn("VmHWM", recipe)
+        self.assertIn("{{.State.Pid}}", recipe)
+
+    def test_the_resident_set_capture_is_outside_the_exec_d_command(self):
+        # It is read from the host while the scan runs; adding anything to the
+        # container's command would cost `exec` and with it the interrupt guard.
+        for line in self._recipe().splitlines():
+            if "exec /pgdq parse" in line:
+                with self.subTest(line=line):
+                    self.assertNotIn("VmHWM", line)
 
     def test_the_wrap_recipe_stops_reports_resumes_and_compares(self):
         wrap = self._recipe(wrap=True)

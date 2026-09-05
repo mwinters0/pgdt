@@ -98,8 +98,12 @@ Two things are worth knowing if you change it anyway. **Small is slower**:
 64 KiB costs about 50% more CPU than 1 MiB, because the per-chunk work is paid
 sixteen times as often. **Large costs memory**: read buffers are reused at
 whatever size you ask for, and up to four of them are held, so a 16 MiB chunk
-is 64 MiB of resident memory against the handful of megabytes a scan otherwise
-uses.
+is 64 MiB of resident memory on top of whatever the scan already holds.
+
+What it already holds does not grow with the *size* of the dump — a 3 GiB file
+costs no more than a 2 MB one, a few megabytes either way — but it does grow
+with the number of tables in it, by roughly 10 KB each. A dump of a few thousand
+tables is tens of megabytes resident before any chunk size is chosen.
 
 The flag exists for a device unlike any of those three. If you have one and
 find a size that beats 1 MiB on it, that is worth reporting.

@@ -8,7 +8,8 @@ Two things set the direction: it is meant to be **embeddable as a query data
 source** (ultimately a DataFusion `TableProvider`), and **high performance on
 local files is a core goal** rather than a later optimization — dumps are
 routinely hundreds of gigabytes, so the local-file reader aims to stay
-device-bound rather than CPU-bound, at flat memory.
+device-bound rather than CPU-bound, at memory that does not grow with the size
+of the dump.
 
 **Status**: early development, pre-1.0, with no compatibility guarantees yet.
 What works today: streaming row extraction from plain-format dumps into typed

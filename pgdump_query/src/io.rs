@@ -61,8 +61,9 @@ const POOL_SLOTS: usize = 4;
 /// tunable through `ScanOptions::chunk_size`. What can be far larger is
 /// `crate::map::attach_text`'s coalesced span read, which happens once per
 /// map and never again; holding one of those for the rest of a process would
-/// trade the flat ~9 MiB RSS this design is built around for an allocation
-/// nothing is going to ask for twice.
+/// trade the ~5.9 MiB a scan holds resident (`docs/design/measurements.md`,
+/// "What a scan holds resident") for an allocation nothing is going to ask for
+/// twice.
 ///
 /// **Size stands in for one-off-ness, which is why it is not the only rule.**
 /// A chunk buffer at the configured size is asked for once per chunk for the

@@ -12,12 +12,15 @@ one apparatus — which is what
 lets these tables be differenced against each other, and what "are these
 figures from before or after my change" is answered by. `uv run measure.py
 --stale` reads that commit back and names the figures a diff has invalidated
-since. **Every one of the seventeen figures comes from this sitting**: sixteen
+since. **Seventeen of the eighteen figures come from this sitting**: sixteen
 from the sweep itself and `session-drift`, which no sweep can take because it is
 derived *across* two, from that sweep and a second one begun the minute it
-finished. So no table here carries a partial-sitting note, and no absolute in
-this document is a cross-sitting reading — which has not been true since the
-`ba2fc12` stamp, under which ten of the seventeen stood outside the sweep.
+finished. The eighteenth is `peak-rss`, taken alone at commit `7ee5db5` and
+saying so at its own table; it is the only figure here denominated in bytes
+rather than seconds and it shares no reading with any of the others. So no table
+here carries a partial-sitting note, and no absolute in this document is a
+cross-sitting reading — which has not been true since the `ba2fc12` stamp, under
+which ten of the seventeen stood outside the sweep.
 
 **Not everything printed below is a figure, and the ones that are not say so.**
 A section outside the register carries an `<!-- outside-register: <id> -->`
@@ -57,8 +60,8 @@ Twelve standing rules for reading anything below:
   between runs by anything else the machine does. This does not apply to a
   figure whose *subject* is the device ("Scan throughput by input shape"
   below), which is taken cold on purpose. **Every warm figure below is on
-  tmpfs**, and they were re-taken together in one session rather than drifting
-  onto the new footing one at a time — see "The apparatus" below, which every
+  tmpfs**, and they were moved onto that footing together in one session rather
+  than drifting onto it one at a time — see "The apparatus" below, which every
   figure here shares.
 - **Re-take a comparison table whole, in one interleaved sweep.** Never
   difference one row against a figure from another session, and never run a
@@ -768,12 +771,13 @@ column for that regime — the same binary, the same command, the same input, no
 a second measurement of it. **The NVMe table borrows nothing**: no census
 figure is taken in that regime, so its `COPY` row is its own reading.
 
-Every run completes inside the 512 MB cgroup, which is the memory claim this
-apparatus can actually make. **It carries no max-RSS figure**: `/usr/bin/time
--f %M` around `nerdctl run` reports the *nerdctl client's* peak, not pgdq's —
-it read the same ~40–45 MB for a 2 MB input as for a 3.00 GiB one, four times
-what koji's row below records for a 784 GB scan. pgdq's own resident set is the
-koji figure, ~9 MiB.
+Every run completes inside the 512 MB cgroup, which is the memory claim *this*
+table can make. **It carries no max-RSS figure**: `/usr/bin/time -f %M` around
+`nerdctl run` reports the *nerdctl client's* peak, not pgdq's — it read the same
+~40–45 MB for a 2 MB input as for a 3.00 GiB one. pgdq's own resident set is a
+figure of its own, "What a scan holds resident, per byte and per block" below,
+which reads it from inside the container and finds it flat in bytes and not
+flat in block count.
 
 **What this says.** All three paths are device-bound to the point of
 disappearing into the device: cold on the SSD, each spends **1.00–1.03×** the
@@ -903,6 +907,81 @@ same kind of bytes and a fifth of what the `INSERT` path costs, is the
 "skipped, not walked" evidence: walking it statement by statement would mean
 one span *and one stored text string* per `lowrite` call, hundreds of
 thousands of them.
+
+## What a scan holds resident, per byte and per block
+
+<!-- figure: peak-rss — reproduce with `cd scripts && uv run measure.py --figure peak-rss` -->
+
+| Input | Bytes | `COPY` blocks | Peak RSS |
+|---|---|---|---|
+| `one_block` | 2.0 MB | 1 | **5.88 MiB** (5.79–6.05) |
+| `control` | 3.00 GiB | 1 | **5.64 MiB** (5.56–5.88) |
+| `blocks500` | 242 KB | 500 | **9.53 MiB** (9.31–10.04) |
+| `blocks4000` | 1.9 MB | 4,000 | **43.59 MiB** (43.25–43.84) |
+
+Every subtraction is against `one_block`, the 1-block 2.0 MB pivot. **Per byte:** 1535× the bytes costs **-248 KiB**. **Per block**, at byte counts within an order of magnitude of the pivot's: 500 blocks cost +3.65 MiB (+7,667 bytes a block), and 4,000 blocks cost +37.71 MiB (+9,889 bytes a block).
+
+Per-rep readings:
+- `one_block`: 5.88 MiB, 5.79 MiB, 6.05 MiB
+- `control`: 5.64 MiB, 5.88 MiB, 5.56 MiB
+- `blocks500`: 9.31 MiB, 10.04 MiB, 9.53 MiB
+- `blocks4000`: 43.84 MiB, 43.25 MiB, 43.59 MiB
+
+Apparatus over every run in this table: CPU stall ≤0.23%, I/O stall ≤10.34%, machine ≤4% busy, steal ≤0.00%, busiest core ≥3.92 GHz, ≤56°C.
+
+Four inputs, each a warm `pgdq parse`, reporting peak resident set instead of
+wall clock — the only table here whose reading is not a time, so the rules about
+device floors and ratios do not reach it: there is no `dd` floor for a resident
+set, and page-cache state is what those rules exist to hold off a *timing*.
+Everything else applies unchanged, the rule against reading a move smaller than
+the spread most of all. It exists because the claim it
+carries was a row of the koji section below, which is **outside** the register:
+no `depends` edge went red when the read path moved, so the number stayed a
+megabyte high for a whole slice with its designated correction aimed at a run
+that captures no memory figure at all.
+
+**The instrument, because every wrong answer here looks plausible.**
+`/usr/bin/time -f %M` around `nerdctl run` reports the *client's* peak — 40–45
+MB whatever the input — and `postgres:16` carries no `/usr/bin/time` at all, so
+the timed command is wrapped in a four-line `perl` that forks, `exec`s pgdq,
+waits, and reads `ru_maxrss` out of `getrusage(RUSAGE_CHILDREN)`. **`exec`
+installs a fresh `mm`**, so the interpreter's own ~5.4 MiB is not in the child's
+high-water mark: the same wrapper around `/bin/true` reports 1.9 MiB. Polling
+`VmHWM` would be the wrong instrument *here* — the `Vm*` lines are gone the
+moment the process becomes a zombie, and a `parse` writes its cache last, which
+is exactly where a late peak would sit. koji's recipe polls
+`/proc/<pid>/status` instead, because there the process runs for an hour and is
+read while it is still running.
+
+**The rows are two controlled comparisons around one pivot.** `one_block` and
+`control` are the same generator, the same seed and the same shape at 1535× the
+bytes, so those two rows differ in bytes and in nothing else; the block-count
+rows hold the byte count within an order of magnitude of the pivot's while
+multiplying the block count by 500 and 4,000. That second half is the one koji
+cannot do: 74 blocks over 784 GB is block-poor, so a cost scaling with block
+count cannot express itself in it at all.
+
+**What this says.** Nothing accumulates per byte — 1535× the bytes moves the
+reading by −248 KiB, inside the two rows' own spreads. Something accumulates
+**per block**: ~7.7 KB a block at 500 and ~9.9 KB at 4,000, so a 4,000-block
+scan sits at 43.6 MiB where a 1-block one sits at 5.9 MiB. The "flat ~9 MiB"
+the design used to quote was therefore true of one axis and wrong about the
+other, and the axis it was wrong about is the one its own input could not have
+caught.
+
+**What accumulates is not identified, and this table does not attribute it.**
+The map holds a span per block and `map::Builder::snapshot` clones the whole
+list per save (`KD5`); this input's final cache is 2.5 MB; and glibc returns
+little of what a churn of whole-list clones frees. Any of those would produce a
+per-block resident cost and separating them needs a measurement this figure does
+not take. Registered as `KD14`.
+
+**This figure was taken alone**, at commit `7ee5db5` on 2026-09-05, not in the
+sweep the session stamp names. It borrows no reading and republishes none, and
+it is the only table here denominated in bytes, so no absolute in this document
+is differenced across the two sittings. What that costs is that `--stale` reads
+the stamp's commit and will report this figure stale against changes it
+postdates, until the next full sweep re-takes it with everything else.
 
 ## What the read chunk size is worth
 
@@ -1858,7 +1937,6 @@ preamble.
 | `COPY` blocks | 74 |
 | Rows | 19,575,829,920 |
 | Bytes accounted for | 784,019,857,152 |
-| RSS | flat, ~9 MiB (untyped scan) — musl's, and ~1 MB high since the read-loop carry |
 | `UnterminatedCopyBlock` | none |
 
 **The `.dqcache` a run leaves behind dies at the next cache-format bump**, and
@@ -1880,8 +1958,7 @@ motivated line-anchored detection.
 **The counts above are confirmed on the glibc build; the throughput rows below
 are still musl's.** The 2026-09-05 run recorded next is the first koji scan on
 the default glibc build in a glibc image, which is what the allocator rule above
-requires, and it reproduced every count in the table — the RSS row excepted,
-which the recipe does not capture and which no run since has measured. The
+requires, and it reproduced every count in the table. The
 throughput readings further down predate that rule and were taken under a
 static-binary container recipe that no longer exists; the scan is device-bound
 at ~33% of one core, so the allocator is unlikely to move them, but until an
@@ -1917,27 +1994,28 @@ next format bump, so two runs' caches are not comparable and this one's is
 --verbose` reports is **one added line** — the user-defined-type detail the
 report gained since August, `public.pgstattuple_type`'s composite fields.
 
-**The RSS row is the last musl reading here, and it is wrong in the other
-direction too.** The recipe captures no memory figure at all — it reads exit code
-and wall clock from `nerdctl inspect` and nothing else — so the 2026-09-05 run
-could not re-take it, and that container has since exited, taking its cgroup with
-it. Independently of the build, the read-loop carry removed a `chunk_size`-sized `Vec` per
-read loop and took a warm 3.00 GiB `parse` from 7.9 MB to 6.0 MB peak RSS, so
-~9 MiB has been about a megabyte high since that slice landed.
+**This section no longer carries an RSS row, and the claim it used to make is a
+figure.** koji is the worst input in the tree for it: the row bundled two
+assertions — that nothing accumulates per byte, and that nothing accumulates per
+block — and this document's own standing rules say koji cannot test the second,
+74 blocks over 784 GB being block-poor enough that a cost scaling with block
+count "cannot express itself in it at all". Both halves are cheap on inputs the
+harness already stages, so they are "What a scan holds resident, per byte and
+per block" above, which found the per-block half **false**: ~9.9 KB a block, and
+43.6 MiB at 4,000 blocks. As a registered figure the claim now carries a
+`depends` edge that goes red when the read path moves — which is what did not
+happen for a whole slice, leaving the row a megabyte high with its designated
+correction aimed at a run that captures no memory figure at all.
 
-**That claim is being re-homed rather than re-taken here**, because koji is the
-worst input in the tree for it. The row bundles two assertions — that nothing
-accumulates per byte, and that nothing accumulates per block — and this
-document's own standing rules say koji cannot test the second: 74 blocks over
-784 GB is block-poor, so a cost that scales with block count "cannot express
-itself in it at all". Both halves are cheap on inputs the harness already
-stages, and as a registered figure the claim gets a `depends` edge that goes red
-when the read path moves — which is precisely what did not happen for a whole
-slice. Queued as `M58`, which also strikes this row, repoints the four design
-paragraphs resting on ~9 MiB, and teaches the recipe to read `VmHWM` from
-`/proc/<pid>/status` so koji's own record still carries one. The container
-cgroup's `memory.peak` is the wrong instrument: it is charged the page cache of
-a 784 GB read, so it reports the 512 MB limit rather than the process.
+**koji's own record still gets one, from `--koji-recipe`.** `VmHWM` in
+`/proc/<pid>/status`, read from the host while the scan is still running:
+`exec` makes pgdq PID 1, `nerdctl inspect -f '{{.State.Pid}}'` gives the host
+pid, and the kernel maintains the high-water mark, so one read covers
+everything up to it. It adds nothing to the `exec`'d command, so all three
+load-bearing recipe details are untouched. The container cgroup's `memory.peak`
+is the wrong instrument: it is charged the page cache of a 784 GB read, so it
+reports the 512 MB limit rather than the process. No run has taken it yet — the
+2026-09-05 container exited before the recipe could ask.
 
 **That run's wall clock is not a throughput reading, and neither is the number
 to read it against.** 62.7 minutes, ~208 MB/s, with the machine at ~19%

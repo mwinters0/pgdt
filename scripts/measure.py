@@ -83,6 +83,7 @@ import dataclasses
 import hashlib
 import json
 import os
+import platform
 import re
 import shlex
 import shutil
@@ -743,6 +744,33 @@ def fmt_us_per_row(seconds: float, rows: int) -> str:
     return f"{seconds / rows * 1e6:+.2f}"
 
 
+def fmt_mib(kib: float) -> str:
+    """A resident-set reading, in MiB.
+
+    Mebibytes rather than decimal megabytes because the only thing this figure
+    is read against is a bound stated in them -- `4 x max(8 MiB, announced)`
+    from the buffer pool -- and a claim compared against a bound must not
+    change units on the way."""
+    return f"{kib / 1024:.2f} MiB"
+
+
+def fmt_mib_median_spread(values: Sequence[float]) -> str:
+    lo, hi = spread(values)
+    return f"**{fmt_mib(median(values))}** ({lo / 1024:.2f}–{hi / 1024:.2f})"
+
+
+def fmt_rss_delta(kib: float) -> str:
+    """A *difference* between two resident-set readings.
+
+    Two scales, because this figure's two axes are three orders of magnitude
+    apart: the per-byte difference is tens of kibibytes, which MiB would round
+    to `0.00`, and the per-block one is tens of mebibytes, which KiB would
+    print as a five-digit number nobody can read against the table above it."""
+    if abs(kib) >= 1024:
+        return f"{kib / 1024:+.2f} MiB"
+    return f"{kib:+.0f} KiB"
+
+
 def md_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
     """A GitHub-flavoured table in measurements.md's own style: no padding,
     one `---` per column."""
@@ -770,6 +798,79 @@ def parse_bash_time(text: str) -> float:
         raise ValueError(f"{len(matches)} `real` lines in one timed run; the script times more than one command")
     minutes, seconds = matches[0]
     return int(minutes) * 60 + float(seconds)
+
+
+#: What the RSS wrapper prints, on stderr, beside bash's own `real` line.
+MAXRSS_RE = re.compile(r"^maxrss_kib=(\d+)$", re.MULTILINE)
+
+
+def parse_maxrss_kib(text: str) -> int:
+    """The peak resident set of the timed process, in KiB.
+
+    Exactly one line per wrapped command, for the same reason `parse_bash_time`
+    insists on one `real` line: two would mean the script wrapped two."""
+    matches = MAXRSS_RE.findall(text)
+    if not matches:
+        raise ValueError(f"no `maxrss_kib` line in wrapped output:\n{text[-2000:]}")
+    if len(matches) > 1:
+        raise ValueError(
+            f"{len(matches)} `maxrss_kib` lines in one run; the script wraps more than one command"
+        )
+    return int(matches[0])
+
+
+#: `getrusage`'s syscall number, by machine. Read from the host's own
+#: architecture because the container shares this kernel, so the two cannot
+#: disagree; an unlisted machine is an error rather than a guess, since a wrong
+#: number returns `EINVAL` for one arch and *a plausible reading of the wrong
+#: field* for another.
+GETRUSAGE_SYSCALL = {"x86_64": 98, "aarch64": 165}
+
+#: Where `ru_maxrss` sits in `struct rusage`, counted in 64-bit words: two
+#: `timeval`s (four words) come first.
+RUSAGE_MAXRSS_WORD = 4
+
+
+def rss_wrapper(machine: str) -> str:
+    """A shell prefix that runs its arguments and reports their peak RSS.
+
+    **Why a wrapper at all.** `/usr/bin/time -f %M` around `nerdctl run` reports
+    the *client's* peak, not pgdq's — it read 40–45 MB for a 2 MB input
+    (`measurements.md`, "Scan throughput by input shape"), and the timer has to
+    go inside the container anyway. Inside `postgres:16` there is no
+    `/usr/bin/time` at all, and bash's `time` reports no memory.
+
+    **Why `getrusage` rather than polling `/proc`.** `VmHWM` is the same
+    kernel-maintained high-water mark, but it is gone the instant the process
+    becomes a zombie, so a poller's last successful read is whatever it managed
+    *before* the end of the run — and a `parse` writes its cache last, which is
+    exactly where a late peak would sit. `RUSAGE_CHILDREN` is read after
+    `waitpid` and cannot miss it. koji's recipe polls `/proc/<pid>/status`
+    instead because there the process runs for an hour and is read while it is
+    still running.
+
+    **The wrapper does not contaminate the reading.** `exec` installs a fresh
+    `mm`, so the forked interpreter's own ~5.4 MiB is not in the child's
+    high-water mark: the same wrapper around `/bin/true` reports 1.9 MiB.
+    """
+    if machine not in GETRUSAGE_SYSCALL:
+        raise ValueError(
+            f"no getrusage syscall number registered for {machine!r}; "
+            f"known: {', '.join(sorted(GETRUSAGE_SYSCALL))}"
+        )
+    # `qq{}` throughout, so the whole program can sit inside the single quotes
+    # the container's shell needs and nothing has to be escaped twice.
+    prog = (
+        "my $pid = fork(); defined $pid or die qq{fork: $!}; "
+        "if ($pid == 0) { exec @ARGV or die qq{exec: $!} } "
+        "waitpid($pid, 0); my $st = $?; "
+        "my $buf = qq{\\0} x 256; "
+        f"syscall({GETRUSAGE_SYSCALL[machine]}, -1, $buf) != -1 or die qq{{getrusage: $!}}; "
+        "printf STDERR qq{maxrss_kib=%d\\n}, "
+        f"(unpack qq{{q*}}, $buf)[{RUSAGE_MAXRSS_WORD}]; "
+        "exit($st == 0 ? 0 : ($st >> 8) || 1);"
+    )
+    return f"perl -e '{prog}' --"
 
 
 def criterion_median_ns(criterion_root: Path, full_id: str) -> float:
@@ -1369,6 +1470,15 @@ def _script(command: str) -> str:
     q = "time /pgdq"
     if command == "parse":
         return f"{q} parse --source /dump.sql --dqcache /tmp/x.dqcache >/dev/null"
+    if command == "parse-rss":
+        # The same `parse` as above, wrapped so the run reports its own peak
+        # resident set as well as its wall clock. The redirection is outside
+        # the wrapper and takes pgdq's stdout with it; the reading goes to
+        # stderr, where bash's `time` report already goes.
+        return (
+            f"time {rss_wrapper(platform.machine())} /pgdq parse --source /dump.sql "
+            "--dqcache /tmp/x.dqcache >/dev/null"
+        )
     if command == "parse-preamble":
         return f"{q} parse --preamble-only --source /dump.sql --dqcache /tmp/x.dqcache >/dev/null"
     if command == "parse-cache-out":
@@ -1436,11 +1546,17 @@ class Session:
         self.stager = stager
         self.log = log
         self.readings: dict[str, list[float]] = {}
+        #: Peak resident set, in KiB, under the same keys as `readings`. A
+        #: second dict rather than a second number per reading: only the runs
+        #: whose command shape carries the RSS wrapper have one, and a figure
+        #: that wants it wants it *instead of* the wall clock, not beside it.
+        self.rss: dict[str, list[float]] = {}
         self.records: list[dict] = []
         self.figure_index = 0
         self.figure_id = ""
         self._dry_reps: dict[str, int] = {}
         self._last_telemetry: dict[str, float] = {}
+        self._last_rss: float | None = None
         self.sampler = Sampler()
         #: Every reading's telemetry, in the order taken, so a sweep can be
         #: audited after the fact even where the gate let a reading through.
@@ -1509,6 +1625,7 @@ class Session:
             rep = self._dry_reps.get(key, 0)
             self._dry_reps[key] = rep + 1
             digest = hashlib.sha256(f"{key}/{rep}".encode()).digest()
+            self._last_rss = 6000 + digest[1] / 255 * 500 if "rss" in spec.command else None
             return 0.4 + digest[0] / 255 * 5.0
         # The counters bracket the run as tightly as possible: two procfile
         # reads, outside the timer, either side of the subprocess. Their
@@ -1523,12 +1640,14 @@ class Session:
                 f"{spec.label} exited {proc.returncode}\n{proc.stdout[-2000:]}\n{proc.stderr[-2000:]}"
             )
         seconds = parse_bash_time(proc.stderr)
+        self._last_rss = parse_maxrss_kib(proc.stderr) if "rss" in spec.command else None
         telemetry = counter_delta(before, after)
         telemetry.update(self.sampler.window(mono_start, mono_end))
         self.records.append(
             {
                 "spec": dataclasses.asdict(spec),
                 "seconds": seconds,
+                "maxrss_kib": self._last_rss,
                 "wall_including_container": round(time.time() - started, 3),
                 "telemetry": telemetry,
                 "argv": argv,
@@ -1555,6 +1674,11 @@ class Session:
             for spec in order:
                 seconds = self.take(spec, rep)
                 self.readings[spec.key(figure)].append(seconds)
+                # Only the accepted reading's RSS is kept: a rep the gate
+                # discarded is discarded whole, never half-kept because the
+                # quantity it carries is one the machine's load cannot move.
+                if self._last_rss is not None:
+                    self.rss.setdefault(spec.key(figure), []).append(self._last_rss)
 
     def take(self, spec: RunSpec, rep: int) -> float:
         """One reading, retaken while the machine says it was contended.
@@ -1587,6 +1711,10 @@ class Session:
 
     def get(self, figure: str, spec: RunSpec) -> list[float]:
         return self.readings[spec.key(figure)]
+
+    def get_rss(self, figure: str, spec: RunSpec) -> list[float]:
+        """The peak resident sets, in KiB, of one spec's accepted reps."""
+        return self.rss[spec.key(figure)]
 
     def has(self, figure: str, spec: RunSpec) -> bool:
         return spec.key(figure) in self.readings
@@ -2539,9 +2667,96 @@ def run_per_block_quadratic(session: Session) -> str:
 
 
 def _fmt_bytes(n: int) -> str:
+    # Three scales, because `peak-rss` puts a 2 MB input and a 3.00 GiB one in
+    # adjacent rows and "3072.0 MB" is not the size anybody asked for.
+    if n >= GIB:
+        return f"{n / GIB:.2f} GiB"
     if n >= MIB:
         return f"{n / MIB:.1f} MB"
     return f"{n / 1024:.0f} KB"
+
+
+# -- what a scan holds resident ---------------------------------------------
+
+#: The four rows of `peak-rss`, in table order: an input and what it varies.
+#:
+#: **Three readings, two controlled comparisons, one pivot.** `one_block` is
+#: the pivot; `control` is the *same generator, same seed, same shape* at 1536x
+#: the bytes, so the first two rows differ in bytes and nothing else; and the
+#: block-count rows hold the byte count near the pivot's while multiplying the
+#: block count by 500 and 4000. That is what lets one table answer both halves
+#: of the claim it carries -- nothing accumulates per byte, nothing accumulates
+#: per block -- which is precisely what koji, at 74 blocks over 784 GB, cannot:
+#: a cost that scales with block count cannot express itself in it at all.
+_RSS_ROWS: tuple[str, ...] = ("one_block", "control", "blocks500", "blocks4000")
+
+#: The pivot every subtraction in this table is taken against.
+_RSS_PIVOT = "one_block"
+
+
+def input_block_count(name: str) -> int:
+    """How many `COPY` blocks one registered input holds.
+
+    Read off the generator and its arguments rather than written beside the
+    row, so a block count that changes in the generator cannot leave a stale
+    number in the table's own column."""
+    spec = INPUTS[name]
+    if spec.generator == "generate_perf_data.py":
+        return 1
+    if spec.generator == "generate_block_count_bench.py":
+        return int(spec.args[spec.args.index("--blocks") + 1])
+    raise ValueError(f"input {name!r} does not say how many blocks it holds")
+
+
+def run_peak_rss(session: Session) -> str:
+    figure = "peak-rss"
+    specs = [
+        RunSpec("pgdq", name, "parse-rss", "warm", f"peak RSS {name}") for name in _RSS_ROWS
+    ]
+    session.sweep(figure, specs, session.cfg.reps(3))
+
+    by_name = dict(zip(_RSS_ROWS, specs))
+    rows, per_rep = [], []
+    for name, spec in zip(_RSS_ROWS, specs):
+        readings = session.get_rss(figure, spec)
+        size = file_size(session.cfg, session.input_path(name, "warm"), name)
+        rows.append(
+            [
+                f"`{name}`",
+                _fmt_bytes(size),
+                f"{input_block_count(name):,}",
+                fmt_mib_median_spread(readings),
+            ]
+        )
+        per_rep.append(f"- `{name}`: " + ", ".join(fmt_mib(v) for v in readings))
+    table = md_table(["Input", "Bytes", "`COPY` blocks", "Peak RSS"], rows)
+
+    pivot = median(session.get_rss(figure, by_name[_RSS_PIVOT]))
+    pivot_size = file_size(
+        session.cfg, session.input_path(_RSS_PIVOT, "warm"), _RSS_PIVOT
+    )
+    byte_size = file_size(session.cfg, session.input_path("control", "warm"), "control")
+    per_byte = median(session.get_rss(figure, by_name["control"])) - pivot
+    steps = []
+    for name in _RSS_ROWS:
+        count = input_block_count(name)
+        if count == input_block_count(_RSS_PIVOT):
+            continue
+        delta = median(session.get_rss(figure, by_name[name])) - pivot
+        extra = count - input_block_count(_RSS_PIVOT)
+        steps.append(
+            f"{count:,} blocks cost {fmt_rss_delta(delta)} "
+            f"({delta * 1024 / extra:+,.0f} bytes a block)"
+        )
+    note = (
+        f"\n\nEvery subtraction is against `{_RSS_PIVOT}`, the 1-block "
+        f"{_fmt_bytes(pivot_size)} pivot. **Per byte:** "
+        f"{byte_size / pivot_size:.0f}× the bytes costs **{fmt_rss_delta(per_byte)}**. "
+        f"**Per block**, at byte counts within an order of magnitude of the pivot's: "
+        + ", and ".join(steps)
+        + ".\n"
+    )
+    return table + note + "\nPer-rep readings:\n" + "\n".join(per_rep) + "\n"
 
 
 # -- the map's own quadratic ------------------------------------------------
@@ -3001,6 +3216,36 @@ FIGURES: list[Figure] = [
         depends=(*MAP_BUILD, *READ, *CACHE, *GEN_BLOCKS, *GEN_PERF),
         warm_inputs=tuple(name for name, _ in _QUADRATIC_ROWS),
         run=run_per_block_quadratic,
+    ),
+    # The one figure here whose reading is not a time. It exists because the
+    # flat-RSS claim three design paragraphs and a doc comment rest on was a
+    # koji row: outside the register, so no `depends` edge went red when the
+    # read path moved, and it stayed a megabyte high for a whole slice with its
+    # designated correction aimed at a run that captures no memory figure at
+    # all. `depends` therefore carries the read path first — that is the
+    # mechanism the claim is about — and the map and the cache, which are what
+    # a per-block cost would accumulate in.
+    Figure(
+        id="peak-rss",
+        #: Four consumers, and two of them are not design documents. `io.rs`'s
+        #: own doc comment quotes the reading, and the manual and the README
+        #: state the *claim* it licenses to a reader who cannot check it
+        #: against the code — which is the one place `docs/process.md` makes a
+        #: falsified sentence binding on the change that falsifies it.
+        quoted_by=(
+            "docs/design/architecture.md",
+            "docs/manual/dump-inspection.md",
+            "README.md",
+            "pgdump_query/src/io.rs",
+        ),
+        section="What a scan holds resident, per byte and per block",
+        stage="warm",
+        # `MAP` rather than `MAP_BUILD`: what the latter adds is `stream.rs`,
+        # which `SCAN` already names, and a path declared twice is printed
+        # twice by `--list`.
+        depends=(*READ, *SCAN, *MAP, *CACHE, *GEN_PERF, *GEN_BLOCKS),
+        warm_inputs=_RSS_ROWS,
+        run=run_peak_rss,
     ),
     Figure(
         id="map-only",
@@ -4003,6 +4248,13 @@ def koji_recipe(cfg: Config, name: str, wrap: bool) -> str:
             leg(name, f"{name}.dqcache", f"{name}-scan.log"),
             "",
             f"# still going?   sudo nerdctl inspect -f '{{{{.State.Status}}}}' {name}",
+            f"# peak RSS:      sudo grep VmHWM /proc/$(sudo nerdctl inspect -f "
+            "'{{.State.Pid}}' " + name + ")/status",
+            "#   Read it while the run is still going: the kernel keeps the high-water mark,",
+            "#   so one read covers everything up to it, and it is gone the moment the",
+            "#   process exits. `exec` above makes pgdq PID 1, so that is the pid to read.",
+            "#   The container cgroup's memory.peak is the wrong instrument here — it is",
+            "#   charged the page cache of a 784 GB read and reports the limit, not pgdq.",
             f"# exit status:   sudo nerdctl inspect -f '{{{{.State.ExitCode}}}}' {name}",
             "#   130 = SIGINT, which is what `nerdctl stop` sends: the postgres images set",
             "#   STOPSIGNAL SIGINT, and --stop-signal on `run` is accepted and then ignored.",

@@ -133,7 +133,8 @@ buffer must not be recycled on the read loop's schedule. And **the pool is
 bounded at both ends** — four slots, and nothing above 8 MiB kept unless a
 caller announced it as its read size — because `map::attach_text`'s coalesced
 span read can be far larger than a chunk and happens once per map, and holding
-one of those for the life of the process would trade the flat ~9 MiB RSS for an
+one of those for the life of the process would trade a scan's ~5.9 MiB resident
+set ([`measurements.md`](measurements.md), "What a scan holds resident") for an
 allocation nothing asks for twice. The bound that follows is
 `4 × max(8 MiB, announced)`, not four chunks: **below the ceiling a one-off is
 pooled like anything else**, since the ceiling is what has to keep working for a
@@ -254,15 +255,17 @@ looked like.
 *N* is parsed. Its prize is `min(device time, parse time)` and it is bounded by
 the same 5.8%, on the one device class where that number is not ~0; against
 that it is a rework of three read loops, a second in-flight buffer against the
-flat ~9 MiB RSS this design is built on, and one more thing the interrupt guard
+~5.9 MiB a scan holds resident ([`measurements.md`](measurements.md), "What a
+scan holds resident"), and one more thing the interrupt guard
 and the query path's chunk retention have to be correct about. Most of the
 parse CPU is already hidden behind the read on that device, and overlapping
 harder cannot recover what is already overlapped.
 
 **What a raised chunk size costs is memory, and the bound is the caller's own
-number.** `POOL_SLOTS` is 4, so a 16 MiB chunk can hold 64 MiB against the flat
-~9 MiB a scan otherwise sits at — which a caller who asked for 16 MiB buffers
-has largely accepted already. That is the whole cost, and it is stated in the
+number.** `POOL_SLOTS` is 4, so a 16 MiB chunk can hold 64 MiB against the
+~5.9 MiB a one-block scan otherwise sits at
+([`measurements.md`](measurements.md), "What a scan holds resident") — which a
+caller who asked for 16 MiB buffers has largely accepted already. That is the whole cost, and it is stated in the
 flag's help, in the manual and in `DEFAULT_CHUNK_SIZE`'s own doc comment.
 
 **What it used to cost is the measurement of what the pool is worth.** Before
@@ -5432,6 +5435,21 @@ splitter wants, so it belongs to the phase that reworks `splice` anyway —
 `map::Builder::snapshot` `debug_assert!`s `Mode::Idle`, so the chunk-top check
 cannot re-derive the spans mid-block — which is why the coupling could not be
 worked around locally and the promise had to move with the fix.
+
+<!-- deficiency: KD14 -->
+**The same series measured in memory grows too, and by more than the spans
+account for.** Peak resident set is flat in *bytes* — 1535× the bytes of a
+one-block dump moves it by less than the readings' own spread — and it is **not**
+flat in *blocks*: ~7.7 KB a block at 500 and ~9.9 KB at 4,000, so a 4,000-block
+`parse` sits at 43.6 MiB where a one-block one sits at 5.9 MiB
+([`measurements.md`](measurements.md), "What a scan holds resident"). Three
+mechanisms could produce that and the figure separates none of them: the span
+list itself, the whole-list clone above, and glibc returning little of what a
+churn of clones frees. That is deficiency `KD14`
+(`../status/STATUS.md`, "Known deficiencies"), unowned, and what would promote it
+is a dump with tens of thousands of blocks — which nothing in hand is, koji
+having 74. What it already changes is how the design's memory claim reads: the
+~5.9 MiB every consumer above quotes is the *one-block* reading, and they say so.
 
 **A save count is a property of the apparatus, not only of `K`.** The throttle
 is a ratio against the last save's own duration, so a faster machine, libc or

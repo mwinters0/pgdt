@@ -339,3 +339,36 @@ because it is not.
 Contingent on the merge staying a semilattice: an `ArrayShape` field that is
 order-sensitive — a first-seen or last-seen value, a count — would falsify the
 whole entry, and nothing today is one.
+
+## The per-block cost is in memory as well as in time, and nobody had measured it
+
+**Fact.** Peak resident set for a `parse` is flat in dump *bytes* — 1535× the
+bytes of a one-block dump moves it by less than the readings' own spread — and
+not flat in *blocks*: ~7.7 KB a block at 500 and ~9.9 KB at 4,000, so a
+4,000-block scan sits at **43.6 MiB** where a one-block scan sits at 5.9 MiB
+([`measurements.md`](measurements.md), "What a scan holds resident, per byte and
+per block"). Three mechanisms could produce it and that figure separates none of
+them: the span list itself, `stream::splice`'s whole-list clone, and glibc
+returning little of what a churn of whole-list clones frees. It is `KD14`,
+unowned.
+
+**Why this phase cares.** `KD5` — the whole-list rebuild — is **owned by this
+phase**, and until now it was priced only in time (19.1 s for 4,000 blocks under
+`--dqcache none`, flattened 184× by the save throttle's gate). The rejected
+"appendable spans" fix is argued in that section as structurally right but not
+worth a rework of a tested core path for a series the gate has already
+flattened; that argument was made against the *time* series alone. If the
+memory growth turns out to be the same clone, the fix buys two things rather
+than one and the balance moves — and if it does not, this phase acquires a
+second per-block cost it has to budget for, because a splitter running *N*
+workers multiplies whatever a scan holds. Either way the attribution is a
+measurement this phase should take before it decides, and it is cheap: the same
+figure re-run over `query --dqcache none` (never saves, rebuilds per block) and
+over `query-nomatch` (maps, never saves the cache) separates the clone from the
+cache in two readings.
+
+**Origin.** `M58`, 2026-09-05 — the figure that re-homed the flat-RSS claim out
+of the koji section, where the per-block axis could not be tested at all (74
+blocks over 784 GB). Contingent on the save throttle's gate: the reading was
+taken under `parse` with a real cache, so it is the *gated* count of splices,
+which the entry above says is 5 for this input.
