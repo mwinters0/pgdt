@@ -367,8 +367,11 @@ figure re-run over `query --dqcache none` (never saves, rebuilds per block) and
 over `query-nomatch` (maps, never saves the cache) separates the clone from the
 cache in two readings.
 
-**Origin.** `M58`, 2026-09-05 — the figure that re-homed the flat-RSS claim out
+**Origin.** 2026-09-05, the figure that re-homed the flat-RSS claim out
 of the koji section, where the per-block axis could not be tested at all (74
-blocks over 784 GB). Contingent on the save throttle's gate: the reading was
+blocks over 784 GB)
+([`../status/history/2026-09-05.md`](../status/history/2026-09-05.md), "The RSS
+row was resting a design claim on the input least able to test it"). Contingent
+on the save throttle's gate: the reading was
 taken under `parse` with a real cache, so it is the *gated* count of splices,
 which the entry above says is 5 for this input.

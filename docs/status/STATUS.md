@@ -15,14 +15,15 @@ alternatives and its limitations. The capability table below says what state
 each is in.
 
 [`../design/measurements.md`](../design/measurements.md) carries the `af15eac`
-stamp of 2026-09-05, and **for the first time every one of its seventeen tables
-comes from one sitting**: sixteen from the scan-performance wrap sweep and
-`session-drift`,
+stamp of 2026-09-05, and **seventeen of its eighteen tables come from one
+sitting**: sixteen from the scan-performance wrap sweep and `session-drift`,
 which no sweep can take because it is derived *across* two, from that sweep and
-a second begun the minute it finished. No table carries a partial-sitting note,
-no absolute in the document is a cross-sitting reading, and `measure.UNTAKEN` is
-empty. The fresh stamp spent all six of the previous acknowledgements, which
-were deleted rather than kept as sediment; the two the register carries now are
+a second begun the minute it finished. The eighteenth is `peak-rss`, taken alone
+at `7ee5db5` and saying so at its own table; it shares no reading with any of
+the others, so no table carries a partial-sitting note, no absolute in the
+document is a cross-sitting reading, and `measure.UNTAKEN` is empty. The fresh
+stamp spent all six of the previous acknowledgements, which were deleted rather
+than kept as sediment; the two the register carries now are
 P7's wrap and keystone, and they are comment-only. Under the previous `ba2fc12`
 stamp ten of the seventeen stood outside the sweep.
 
@@ -73,19 +74,27 @@ that disqualifies a sweep
 directionally"). Session drift over 92 shared readings is a median absolute
 **1.6%** and a largest 14.3%.
 
-**Sixteen figures are stale, and no acknowledgement can excuse them.** `M55`
-changed the read path — `io.rs`, `scan.rs`, `stream.rs` and the CLI — so every
-figure that times a run is red, and `session-drift` has been red on
-`scripts/measure.py` since `M52`. The change adds executable lines, so neither
-mechanical oracle applies: reachability excuses only a diff no command shape
-executes, and byte-identity settles generator changes alone. **One published
-number actually moves**, the `chunk-size` table's 16 MiB row, which was taken
-when a chunk that large missed the buffer pool; that row is called out where it
-stands. A stale figure obliges no sweep
+**Sixteen figures are stale, and no acknowledgement can excuse them.** Making
+the buffer pool keep the chunk size a read loop announces changed `io.rs`,
+`scan.rs`, `stream.rs` and the CLI, so every figure that times a run is red, and
+`session-drift` has been red on `scripts/measure.py` since the harness took the
+derived direction of the borrow graph. Those changes add executable lines, so
+neither mechanical oracle applies: reachability excuses only a diff no command
+shape executes, and byte-identity settles generator changes alone. **One
+published number actually moves**, the `chunk-size` table's 16 MiB row, which
+was taken when a chunk that large missed the buffer pool; that row is called out
+where it stands. A stale figure obliges no sweep
 ([`../design/measurements.md`](../design/measurements.md), "A stale figure does
-not oblige a sweep"), and a sweep is what re-takes these: seventeen tables from
-one sitting is the property the `af15eac` stamp has and a partial sitting would
-spend.
+not oblige a sweep"), and a sweep is what re-takes these: seventeen of the
+eighteen tables from one sitting is the property the `af15eac` stamp has and a
+partial sitting would spend.
+
+`--stale` reports a seventeenth, and it is a **false positive**: `peak-rss` was
+taken at `7ee5db5`, later than every commit that last touched the paths it
+declares, and the only commit since is `30bc173`, whose `io.rs` diff is three
+lines of doc comment. The harness reads one commit for the whole document rather
+than each figure's own sitting; `M60` is the fix, and it is queued rather than
+landed.
 
 The two acknowledgements the register carries still stand and still hold for
 what they name. `measure.ACKNOWLEDGED` records P7's wrap and keystone, whose
@@ -105,7 +114,7 @@ edit does not re-stale the stamp it was just given.
 | Array shape census | recorded by every mapping pass and consumed: a query retypes its top-level array columns from the union over the blocks it will replay, before the first batch |
 | CLI `pgdq parse` / `info` / `query`, including `--map`, `--json`, cache-only `info` | working; **`parse` is the only scanner** — it resumes from a matching cache, banks at `COPY` block boundaries under a self-tuning throttle, and saves unconditionally on Ctrl-C (exit 130/143). `info` reports from the cache and never scans. Both scanning commands take `--chunk-size <bytes>`, whose 1 MiB default is the fastest of six sizes measured on the one device class where the size makes a difference ([`../design/measurements.md`](../design/measurements.md), "What the read chunk size is worth"); a raised value keeps its pooling, because each read loop announces the length it repeats, and costs up to four buffers of that size in RSS instead. `--verbose` adds each block's byte offsets, a per-column resolution line, an enum column's declared labels beneath it, and — under the `user-defined types` count that heads it — one line per user-defined type, every `TypeKind` arm rendered with its payload. Text output shape is provisional; `--json` carries no shape promise at all, and states the labels once per type in `metadata.databases[].types[]` rather than per column |
 | Partial reporting | `info` reports an unfinished scan's cache for as far as it got, with `Scan completion: N%` stated once at the top and nothing below it qualified. An interrupted cache is **typed** for every database segment the scan finished (I1) |
-| Measurement harness | `scripts/measure.py` takes every figure in [`../design/measurements.md`](../design/measurements.md) and emits that doc's tables — seventeen figures, sixteen taken by a sweep and one derived across two, each declaring what invalidates it, which documents repeat it, and which readings it borrows from another figure — that third edge is what lets `--figure` pull in what a figure borrows and name the rest of the set that must be re-taken with it, and `--alone` is how a partial sitting is asked for deliberately. **The boundary of that register is declared rather than inferred**: a section outside it carries an `<!-- outside-register: <id> -->` marker, `--check` resolves those against `measure.NOT_OURS` in both directions and fails on a declared section that also carries a figure marker, and the doc's session stamp is scoped to the markers rather than to everything printed below it ([`../design/measurements.md`](../design/measurements.md), "The apparatus"). Its reverse direction is **named rather than taken**: a table whose row is a difference over another figure's reps — `cross-file-floor` over `nested-end-to-end`, the register's one such edge — is not a closure edge, so `--figure` names it in the run log and in the emitted header when a sitting re-takes the reps it is derived from, and `--check` reports the relationship beside the partial sittings ([`../design/measurements.md`](../design/measurements.md), "The apparatus"). `measure.UNTAKEN` is empty: nothing is built and unrun. **The one binary it refuses to build, it now refuses to trust unstamped**: `runs/pgdq-nocensus` carries a `.stamp` naming the commit it was built from, the way a generated input does, and a `census-*` figure whose stamp is missing, unreadable as a commit, or not the commit being measured is refused in the first second — a census figure being a subtraction that charges everything differing between the two trees to the census ([`../design/measurements.md`](../design/measurements.md), "The census-off binary is a source patch"). The binary in this tree is `f5768e7`, so the next census sitting rebuilds and re-stamps it. It also builds and interrogates the `allocator` figure's three legs, reading each binary's allocator out of `pgdq --version` rather than trusting the flags it passed, and names the shipped one in the session stamp. A leg is rebuilt **once per harness process** rather than reused from `runs/`, which is what stops a fresh reference being timed against last session's legs, and all of them are built before the first reading rather than at the rep that wants one |
+| Measurement harness | `scripts/measure.py` takes every figure in [`../design/measurements.md`](../design/measurements.md) and emits that doc's tables — eighteen figures, sixteen taken by a sweep, one derived across two and one taken alone, each declaring what invalidates it, which documents repeat it, and which readings it borrows from another figure — that third edge is what lets `--figure` pull in what a figure borrows and name the rest of the set that must be re-taken with it, and `--alone` is how a partial sitting is asked for deliberately. **The boundary of that register is declared rather than inferred**: a section outside it carries an `<!-- outside-register: <id> -->` marker, `--check` resolves those against `measure.NOT_OURS` in both directions and fails on a declared section that also carries a figure marker, and the doc's session stamp is scoped to the markers rather than to everything printed below it ([`../design/measurements.md`](../design/measurements.md), "The apparatus"). Its reverse direction is **named rather than taken**: a table whose row is a difference over another figure's reps — `cross-file-floor` over `nested-end-to-end`, the register's one such edge — is not a closure edge, so `--figure` names it in the run log and in the emitted header when a sitting re-takes the reps it is derived from, and `--check` reports the relationship beside the partial sittings ([`../design/measurements.md`](../design/measurements.md), "The apparatus"). `measure.UNTAKEN` is empty: nothing is built and unrun. **The one binary it refuses to build, it now refuses to trust unstamped**: `runs/pgdq-nocensus` carries a `.stamp` naming the commit it was built from, the way a generated input does, and a `census-*` figure whose stamp is missing, unreadable as a commit, or not the commit being measured is refused in the first second — a census figure being a subtraction that charges everything differing between the two trees to the census ([`../design/measurements.md`](../design/measurements.md), "The census-off binary is a source patch"). The binary in this tree is `f5768e7`, so the next census sitting rebuilds and re-stamps it. It also builds and interrogates the `allocator` figure's three legs, reading each binary's allocator out of `pgdq --version` rather than trusting the flags it passed, and names the shipped one in the session stamp. A leg is rebuilt **once per harness process** rather than reused from `runs/`, which is what stops a fresh reference being timed against last session's legs, and all of them are built before the first reading rather than at the rep that wants one |
 | Column projection | working, library and CLI: `QueryOptions::projection` names columns, cuts the reported `ResolvedSchema` with the batches, may reorder, and may be empty (`COUNT(*)`); `pgdq query` spells it `--column <name>` repeated, or `--no-columns`, which prints no header so `\| wc -l` is a row count. A filter may name a column the projection does not, and an unprojected column is never decoded, so projecting a column away escapes its `Error::FieldDecode` — including `KD2`'s, which the error message does not name ([`../design/architecture.md`](../design/architecture.md), "Projection"; [`../manual/type-handling.md`](../manual/type-handling.md)). Measured on one 3.00 GiB file at five widths: `--no-columns` is 1.61 µs a row against 12.97 for all 19, the two array columns alone are +6.03 and the composite +0.75 ([`../design/measurements.md`](../design/measurements.md), "What a column costs") |
 | The filter expression, evaluated three-valued | working: `QueryOptions::filter` is one `Expr` — `Term`/`And`/`Or`/`Not`, `And` and `Or` n-ary — evaluated in SQL's `True`/`False`/`Unknown` domain, a row surviving only where the root is `True`. A NULL field is `Unknown` under every comparing operator, which is the row set the old collapse gave for every conjunction and is what makes `Not` expressible at all. `IS DISTINCT FROM`/`IS NOT DISTINCT FROM` come with it, being the one thing `Not` cannot spell. Short-circuiting is defined against the *root*: `And` stops at the first non-`True` unless a `Not` is above it, which is where a decode failure surfaces or does not. Nothing folds two terms, so a contradictory pair is a query with no rows. Reachable from the CLI as well as the library: `pgdq query --where <expr>` builds the tree and a repeated `--filter` still builds the conjunction ([`../design/architecture.md`](../design/architecture.md), "Predicates") |
 | The `--where` expression grammar | working, CLI only — `Expr` is an enum an embedder fills in, so nothing below L4 parses an expression. Parens group, `NOT` binds tighter than `AND` and `AND` tighter than `OR`, the keywords are case-insensitive and are keywords only outside quotes, and everything that is not a paren or a keyword is a term handed to the `--filter` grammar unchanged. A keyword is recognised only against whitespace or a paren, so `tag=and` stays an equality; a `NOT` after the word `is` belongs to the term, so `IS NOT NULL` and `IS NOT DISTINCT FROM` survive whole; juxtaposition is not an implicit `AND`; and a value holding a paren must be quoted. Both flags together are one conjunction. **No `--filter` string changes meaning** — that is what the separate flag buys ([`../design/architecture.md`](../design/architecture.md), "`--where` builds an expression out of those terms"; [`../manual/type-handling.md`](../manual/type-handling.md), "Combining terms: `--where`") |
@@ -147,14 +156,14 @@ goes"**.
 [`../design/measurements.md`](../design/measurements.md) come from the
 `af15eac` sweep of 2026-09-05, folded in whole, each table carrying an
 apparatus line and none carrying a partial-sitting note. `--check` reconciles
-seventeen markers against seventeen figures, **and the register's boundary as
+eighteen markers against eighteen figures, **and the register's boundary as
 well**: the two sections the harness does not own — koji and the `cargo bench`
 tripwires — each carry an `<!-- outside-register: <id> -->` marker reconciled
 against `measure.NOT_OURS` both ways and held to carrying no figure marker, so
 the session stamp's "every figure below" now claims only what the register
-holds. `session-drift` is the
-seventeenth, derived across that sweep and a second begun the minute it
-finished on the same commit, which is the pair `--drift` reads.
+holds. `session-drift` is derived across that sweep and a second begun the
+minute it finished on the same commit, which is the pair `--drift` reads;
+`peak-rss` is the eighteenth, taken alone at `7ee5db5`.
 `measure.ACKNOWLEDGED` carries the two commits of P7's wrap and keystone, both
 comment-only against a declared path; the previous six were spent by this stamp
 and `--check` named them so they were deleted rather than kept as sediment.
@@ -188,8 +197,8 @@ are beside the rule
 directionally").
 
 **Every `<doc>.md`, "section" citation in the tree is resolved by `cd scripts &&
-uv run citations.py`, and it is green: 491 citations in 253 files, none
-dangling.** The nine `M50` first reported were repaired by `M51`, each read for
+uv run citations.py`, and it is green: 552 citations in 247 files, none
+dangling.** The nine the check first reported were repaired, each read for
 what it meant — **seven of the nine were one keystone's sweep**, which repointed
 a citation's *document* at `architecture.md` and left its *section* naming a
 heading only the deleted doc ever had; the other two were an inbox that has
