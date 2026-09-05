@@ -1011,12 +1011,53 @@ fn push_utf8view_field(
 /// nested column would make "did every caller switch?" a review question
 /// rather than a compile error.
 pub fn render_field(column: &dyn Array, row: usize, plan: &NestedPlan) -> Result<Option<String>> {
+    // The null check is repeated here rather than left to the sink so that a
+    // SQL NULL costs no allocation at all, which is what this returned
+    // `Option<String>` per element costs `collect_array`.
     if column.is_null(row) {
         return Ok(None);
     }
+    // Sized rather than empty. A `String` that starts at zero capacity is
+    // grown by whichever `push_str` writes into it first, and that is a
+    // second allocation path — `grow_amortized` and a realloc — where the
+    // `to_string` this replaced allocated once, exactly. 16 bytes is under
+    // glibc's smallest chunk, so it costs nothing over an exact fit and
+    // covers every scalar an array element can be.
+    let mut out = String::with_capacity(16);
+    if render_field_into(column, row, plan, &mut out)? { Ok(Some(out)) } else { Ok(None) }
+}
+
+/// [`render_field`] appending to a caller's buffer instead of returning one.
+/// `Ok(false)` is SQL NULL and appends nothing; `Ok(true)` says the value was
+/// written. This is the form that does the work — [`render_field`] is a
+/// wrapper over it, so the two cannot drift.
+///
+/// **It exists so that a consumer printing a whole row builds it in one
+/// buffer**: `pgdq query` appends every column of a row into a line it reuses,
+/// where before it collected a `String` per field and joined them. A scalar
+/// column of an integer, a boolean, a text or a date/time type is written
+/// straight into that buffer and allocates nothing at all
+/// (`docs/design/architecture.md`, "Decoders and render-back").
+///
+/// **An error may leave a partial value behind.** A caller that reuses its
+/// buffer across rows clears it per row, and an error aborts the row, so the
+/// only discipline this asks for is not to publish a buffer an error came out
+/// of.
+pub fn render_field_into(
+    column: &dyn Array,
+    row: usize,
+    plan: &NestedPlan,
+    out: &mut String,
+) -> Result<bool> {
+    if column.is_null(row) {
+        return Ok(false);
+    }
     match plan {
         NestedPlan::Scalar => {}
-        NestedPlan::Array(child) => return Ok(Some(render_array(column, row, child)?)),
+        NestedPlan::Array(child) => {
+            out.push_str(&render_array(column, row, child)?);
+            return Ok(true);
+        }
         NestedPlan::Multirange(bound) => {
             let list = column.as_any().downcast_ref::<ListArray>().unwrap();
             let members = list.value(row);
@@ -1027,7 +1068,10 @@ pub fn render_field(column: &dyn Array, row: usize, plan: &NestedPlan) -> Result
                         .expect("a multirange's members are never SQL NULL"))
                 })
                 .collect::<Result<_>>()?;
-            return Ok(Some(format!("{{{}}}", rendered.join(","))));
+            out.push('{');
+            out.push_str(&rendered.join(","));
+            out.push('}');
+            return Ok(true);
         }
         // The one nested form whose elements cannot be NULL: `int2vector`
         // has no encoding for one, so a `List<Int16>` holding a null element
@@ -1044,7 +1088,8 @@ pub fn render_field(column: &dyn Array, row: usize, plan: &NestedPlan) -> Result
                     reason: "an int2vector has no encoding for a NULL element".to_string(),
                 });
             }
-            return Ok(Some(nested::render_int2vector(values.values())));
+            out.push_str(&nested::render_int2vector(values.values()));
+            return Ok(true);
         }
         NestedPlan::Record(field_plans) => {
             let s = column.as_any().downcast_ref::<StructArray>().unwrap();
@@ -1054,60 +1099,75 @@ pub fn render_field(column: &dyn Array, row: usize, plan: &NestedPlan) -> Result
                 .zip(field_plans)
                 .map(|(child, p)| render_field(child.as_ref(), row, p))
                 .collect::<Result<_>>()?;
-            return Ok(Some(nested::render_record(&nested::RecordLiteral { fields })));
+            out.push_str(&nested::render_record(&nested::RecordLiteral { fields }));
+            return Ok(true);
         }
         NestedPlan::Range(bound) => {
             let s = column.as_any().downcast_ref::<StructArray>().unwrap();
             let flag =
                 |i: usize| s.column(i).as_any().downcast_ref::<BooleanArray>().unwrap().value(row);
-            return Ok(Some(nested::render_range(&RangeLiteral {
+            out.push_str(&nested::render_range(&RangeLiteral {
                 empty: flag(4),
                 lower: render_field(s.column(0).as_ref(), row, bound)?,
                 upper: render_field(s.column(1).as_ref(), row, bound)?,
                 lower_inclusive: flag(2),
                 upper_inclusive: flag(3),
-            })));
+            }));
+            return Ok(true);
         }
     }
-    Ok(Some(match column.data_type() {
+    match column.data_type() {
         DataType::Utf8View => {
-            column.as_any().downcast_ref::<StringViewArray>().unwrap().value(row).to_string()
+            out.push_str(column.as_any().downcast_ref::<StringViewArray>().unwrap().value(row))
         }
-        DataType::Boolean => {
-            decode::render_bool(column.as_any().downcast_ref::<BooleanArray>().unwrap().value(row))
-                .to_string()
-        }
+        DataType::Boolean => out.push_str(decode::render_bool(
+            column.as_any().downcast_ref::<BooleanArray>().unwrap().value(row),
+        )),
         DataType::Int16 => {
-            column.as_any().downcast_ref::<Int16Array>().unwrap().value(row).to_string()
+            decode::push_integer(
+                out,
+                i64::from(column.as_any().downcast_ref::<Int16Array>().unwrap().value(row)),
+            );
         }
         DataType::Int32 => {
-            column.as_any().downcast_ref::<Int32Array>().unwrap().value(row).to_string()
+            decode::push_integer(
+                out,
+                i64::from(column.as_any().downcast_ref::<Int32Array>().unwrap().value(row)),
+            );
         }
         DataType::Int64 => {
-            column.as_any().downcast_ref::<Int64Array>().unwrap().value(row).to_string()
+            decode::push_integer(
+                out,
+                column.as_any().downcast_ref::<Int64Array>().unwrap().value(row),
+            );
         }
         DataType::UInt32 => {
-            column.as_any().downcast_ref::<UInt32Array>().unwrap().value(row).to_string()
+            decode::push_integer(
+                out,
+                i64::from(column.as_any().downcast_ref::<UInt32Array>().unwrap().value(row)),
+            );
         }
-        DataType::Float32 => {
-            decode::render_f32(column.as_any().downcast_ref::<Float32Array>().unwrap().value(row))
-        }
-        DataType::Float64 => {
-            decode::render_f64(column.as_any().downcast_ref::<Float64Array>().unwrap().value(row))
-        }
-        DataType::Date32 => {
-            decode::render_date32(column.as_any().downcast_ref::<Date32Array>().unwrap().value(row))
-        }
+        DataType::Float32 => out.push_str(&decode::render_f32(
+            column.as_any().downcast_ref::<Float32Array>().unwrap().value(row),
+        )),
+        DataType::Float64 => out.push_str(&decode::render_f64(
+            column.as_any().downcast_ref::<Float64Array>().unwrap().value(row),
+        )),
+        DataType::Date32 => decode::render_date32_into(
+            column.as_any().downcast_ref::<Date32Array>().unwrap().value(row),
+            out,
+        ),
         DataType::Timestamp(TimeUnit::Microsecond, tz) => {
             let v = column.as_any().downcast_ref::<TimestampMicrosecondArray>().unwrap().value(row);
-            decode::render_timestamp_micros(v, tz.is_some())
+            decode::render_timestamp_micros_into(v, tz.is_some(), out);
         }
-        DataType::Time64(TimeUnit::Microsecond) => decode::render_time64_micros(
+        DataType::Time64(TimeUnit::Microsecond) => decode::render_time64_micros_into(
             column.as_any().downcast_ref::<Time64MicrosecondArray>().unwrap().value(row),
+            out,
         ),
         DataType::Interval(IntervalUnit::MonthDayNano) => {
             let v = column.as_any().downcast_ref::<IntervalMonthDayNanoArray>().unwrap().value(row);
-            decode::render_interval(v.months, v.days, v.nanoseconds).ok_or_else(|| {
+            let rendered = decode::render_interval(v.months, v.days, v.nanoseconds).ok_or_else(|| {
                 Error::FieldRender {
                     declared_type: "interval",
                     reason: format!(
@@ -1115,32 +1175,34 @@ pub fn render_field(column: &dyn Array, row: usize, plan: &NestedPlan) -> Result
                         v.nanoseconds
                     ),
                 }
-            })?
+            })?;
+            out.push_str(&rendered);
         }
         DataType::Decimal128(_, scale) => {
             let v = column.as_any().downcast_ref::<Decimal128Array>().unwrap().value(row);
-            decode::render_decimal(&v.to_string(), *scale)
+            out.push_str(&decode::render_decimal(&v.to_string(), *scale));
         }
         DataType::Decimal256(_, scale) => {
             let v = column.as_any().downcast_ref::<Decimal256Array>().unwrap().value(row);
-            decode::render_decimal(&v.to_string(), *scale)
+            out.push_str(&decode::render_decimal(&v.to_string(), *scale));
         }
         DataType::FixedSizeBinary(16) => {
             let bytes = column.as_any().downcast_ref::<FixedSizeBinaryArray>().unwrap().value(row);
             let bytes: &[u8; 16] =
                 bytes.try_into().expect("FixedSizeBinary(16) is always 16 bytes");
-            decode::render_uuid(bytes)
+            out.push_str(&decode::render_uuid(bytes));
         }
-        DataType::Binary => {
-            decode::render_bytea(column.as_any().downcast_ref::<BinaryArray>().unwrap().value(row))
-        }
+        DataType::Binary => out.push_str(&decode::render_bytea(
+            column.as_any().downcast_ref::<BinaryArray>().unwrap().value(row),
+        )),
         DataType::Dictionary(k, v) if **k == DataType::Int32 && **v == DataType::Utf8 => {
             let dict = column.as_any().downcast_ref::<DictionaryArray<Int32Type>>().unwrap();
             let values = dict.values().as_any().downcast_ref::<StringArray>().unwrap();
-            values.value(dict.keys().value(row) as usize).to_string()
+            out.push_str(values.value(dict.keys().value(row) as usize));
         }
         other => unreachable!("resolve_columns never resolves a column to {other:?}"),
-    }))
+    }
+    Ok(true)
 }
 
 /// Walk one `List` level, appending its lengths to `dims` and its leaves to

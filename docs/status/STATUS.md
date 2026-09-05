@@ -64,8 +64,11 @@ that run a typed query and only where the file has a nested column**: it is
 so `nested-end-to-end` is the sweep table it certainly reaches. **7.15 moves the
 same four and by far the most of any P7 change, wherever the file has a `bytea`
 or a `uuid` column**: a typed control query falls **45.31%** and a `strings` one
-not at all, so the four typed-query tables' typed legs are the ones most wrong
-today and their `strings` legs are untouched.
+not at all. **7.16 then moves the four again *and* their `strings` legs** — a
+typed control query falls a further **29.47%** and a `strings` one **20.91%**,
+the row sink being what a `strings` query pays for its text columns — so the
+four typed-query tables are the ones most wrong today in both of their legs,
+and `parse`, which renders nothing, is the only shape none of this reaches.
 
 **One published cell is not merely stale but wrong by a factor of six, and is
 not to be quoted until 7.12 re-takes it.** `census-arrays` prices the census on
@@ -149,7 +152,7 @@ checked one at a time rather than assumed — the throughput trio, the census pa
 | Capability | State |
 |---|---|
 | Streaming row extraction from plain-format dumps, push and pull mode, resumable | working; a batch flushes on whichever of `max_rows`, `max_bytes` or `max_source_span` comes first, the last of which is what bounds the read chunks an in-flight batch pins ([`../design/architecture.md`](../design/architecture.md), "Three flush triggers") |
-| Typed Arrow columns from `CREATE TABLE` DDL, with per-column resolution diagnostics; `SchemaMode::Strings` for the untyped path | working. `interval` is `Interval(MonthDayNano)` — PostgreSQL's own three fields — with v17's infinities and a time part past `2562047:47:16.854775807` an `Error::FieldDecode` and `--schema-mode strings` the recourse. `oid` is `UInt32` — PostgreSQL's one unsigned integer type, mapped where the ADBC driver's `Int32` turns an OID at or above 2^31 negative. `int2vector` is `List<Int16>` — the one built-in whose Arrow type is a container and whose name is not spelled like one, written as space-separated `int16`s with no quoting and no NULL element (I47), so it travels with a `NestedPlan` of its own exactly as a multirange does. A `uuid` column's field carries the canonical `arrow.uuid` extension name and a `json`/`jsonb` column's `arrow.json`, top level only and written through arrow-rs's own extension types, so neither changes a byte. Render-back has a third outcome besides a value and SQL NULL: `render_field` returns `Result<Option<String>, Error>`, and `Error::FieldRender` is an Arrow value with no PostgreSQL text form — reachable only from an array a caller assembled, since every column this crate fills comes from a decoder whose range its renderer writes back, and carried by `interval` alone, whose nanoseconds are finer than PostgreSQL's microseconds ([`../design/architecture.md`](../design/architecture.md), "Type resolution" and "Decoders and render-back") |
+| Typed Arrow columns from `CREATE TABLE` DDL, with per-column resolution diagnostics; `SchemaMode::Strings` for the untyped path | working. `interval` is `Interval(MonthDayNano)` — PostgreSQL's own three fields — with v17's infinities and a time part past `2562047:47:16.854775807` an `Error::FieldDecode` and `--schema-mode strings` the recourse. `oid` is `UInt32` — PostgreSQL's one unsigned integer type, mapped where the ADBC driver's `Int32` turns an OID at or above 2^31 negative. `int2vector` is `List<Int16>` — the one built-in whose Arrow type is a container and whose name is not spelled like one, written as space-separated `int16`s with no quoting and no NULL element (I47), so it travels with a `NestedPlan` of its own exactly as a multirange does. A `uuid` column's field carries the canonical `arrow.uuid` extension name and a `json`/`jsonb` column's `arrow.json`, top level only and written through arrow-rs's own extension types, so neither changes a byte. Render-back has two entry points — `render_field`, returning `Result<Option<String>, Error>`, and the sink `render_field_into(.., &mut String)` it wraps, which appends and answers `Result<bool, Error>` so a caller printing a row builds it in one buffer — and a third outcome besides a value and SQL NULL: `Error::FieldRender` is an Arrow value with no PostgreSQL text form — reachable only from an array a caller assembled, since every column this crate fills comes from a decoder whose range its renderer writes back, and carried by `interval` alone, whose nanoseconds are finer than PostgreSQL's microseconds ([`../design/architecture.md`](../design/architecture.md), "Type resolution" and "Decoders and render-back") |
 | Full byte-exact file map — every byte in exactly one span, verified over every fixture | working |
 | DDL object inventory: TOC enrichment, referenced roles and tablespaces, object census | working |
 | Best-effort structural cache with source-identity checking and cache-only inspection | working |
@@ -273,17 +276,19 @@ The phase's spec, its measured baseline and the lever table each row measures:
 phase follows the profile, so a slice landing out of numeric order is the plan
 working ([`../process.md`](../process.md), "Slice numbering", which carries the
 exception an evidence-led phase runs under). **Every ordering that binds is
-discharged, and `7.12` is what is left**: the allocator decision before the wrap
+discharged, and `7.12` is all that is left**: the allocator decision before the wrap
 sweep, which 7.13 re-took and settled; `7.13.1` ahead of `7.6` and `7.7.1`,
 which rework how a row is walked inside the buffer it replaced; `7.8` ahead of
 `7.8.1`, the figure that prices three levers before the levers themselves; and
-`7.14` and `7.15` each ahead of `7.12`, both of which have landed.
+`7.14`, `7.15` and `7.16` each ahead of `7.12`, all three of which have
+landed.
 
-The last of those was `7.15`, which moves a path the sweep's four typed-query
-tables time — a typed control query falls **45.31%** of its user instructions —
-so taking those tables first would have published thirteen freshly-measured
-figures describing a binary that is no longer shipped, with no sweep left to
-repair them.
+The last of those was `7.16`, which moves a path the sweep's four typed-query
+tables time and — unlike every render-path slice before it — their `strings`
+legs as well: a typed control query falls a further **29.47%** of its user
+instructions and a `strings` one **20.91%**. Taking those tables first would
+have published thirteen freshly-measured figures describing a binary that is no
+longer shipped, with no sweep left to repair them.
 
 - [x] **7.1** The profiling apparatus — `[profile.profiling]`, `perf`, and a
       `measure.py --profile-recipe` that prints the invocation on the
@@ -509,14 +514,29 @@ repair them.
       positions. **No `unsafe`**, and the shape was chosen by measuring three of
       them. Notes:
       [`../design/roadmap-P7.15-hex-pair-table-notes.md`](../design/roadmap-P7.15-hex-pair-table-notes.md)
-- [ ] **7.16** The date and time renderers, and the `render_field` sink —
-      hand-rolled zero-padding in place of `format!`, written through a
-      `render_field_into(&mut String)` so `print_batch` builds a row in one
-      buffer. **Admitted after spec time**, and it is 7.15's own scheduled
-      re-ask rather than a reversal: `render_timestamp_micros` is **11.81%** of
-      a typed control profile, the four others under 3% each. One row, not two —
-      neither half collects the prize alone. `render_decimal` and `render_f64`
-      are out of scope. **Ahead of 7.12**, on the same reason 7.14 and 7.15 were.
+- [x] **7.16** The date and time renderers, and the `render_field` sink —
+      `DEC_PAIRS`, the 100 two-digit decimal pairs as one `&'static str`, so a
+      calendar or clock field is an indexed slice; and
+      `render_field_into(&mut String)`, which `print_batch` appends every column
+      of a row into and clears per row. A typed control query falls **49.074 G
+      → 34.610 G user instructions** (−29.47%), wall 6.07 → 4.71 s, and a
+      `strings` one **24.793 G → 19.610 G** (−20.91%) — **this one is not
+      confined to `typed`**, since the sink is what a `strings` query pays for
+      its sixteen text columns, so 7.15's control does not work here and `parse`
+      is the control instead, flat at 1.404590 → 1.404585 G. `poll_next`
+      **45.83% → 62.51%** of the profile against `print_batch`'s **52.74% →
+      36.42%**: the library is the larger bucket for the first time, and
+      `architecture.md`'s `query-profile` heading is rewritten to say so. The
+      four renderers are **80–88%** faster in isolation. **No behaviour change,
+      asserted rather than argued**: three whole-file `pgdq query` outputs
+      byte-identical over 2.3 M rows, plus swept differential corpora against
+      the replaced shapes. **Both obvious spellings are slower and each cost a
+      build to find** — `write!` through `core::fmt` is 287 instructions an
+      array element, and a `String` that starts empty grows twice per value. The
+      row's re-derivation obligation is discharged as a test: one control row
+      costs **20 allocations, none of them in a column this touched**, and 18 of
+      the 20 are `render_f32`/`render_f64`/`render_decimal`. Notes:
+      [`../design/roadmap-P7.16-render-sink-notes.md`](../design/roadmap-P7.16-render-sink-notes.md)
 
 ## Not started
 
@@ -524,15 +544,16 @@ repair them.
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
 - **P7 is open**, grilled and sliced; the checklist above is its progress. Its
-  four evidence slices, the allocator reading, ten library changes and three
+  four evidence slices, the allocator reading, eleven library changes and three
   measured refusals have landed — 7.4's gate in `stream.rs`, 7.5's `INSERT`
   statement scan in `preamble.rs`/`map.rs`, 7.13's read-buffer pool in
   `io.rs`, 7.13.1's read carry in `scan.rs`/`stream.rs`, 7.6's bulk UTF-8 pass
   in `copy.rs`/`stream.rs`, 7.7.1's shared field split across
   `copy.rs`/`predicate.rs`/`batch.rs`/`stream.rs`, 7.9's borrowed array
   element in `nested.rs`/`batch.rs`, 7.10's allocation-free scalar decoders
-  in `decode.rs`, 7.14's force-quote `ByteSet` in `nested.rs` and 7.15's hex
-  pair table in `decode.rs`, all edits to
+  in `decode.rs`, 7.14's force-quote `ByteSet` in `nested.rs`, 7.15's hex
+  pair table in `decode.rs` and 7.16's row sink across
+  `decode.rs`/`batch.rs`/`pgdump_query-cli`, all edits to
   timed paths,
   plus 7.8.1's `--chunk-size`, which changes no default and refuses the other
   two I/O levers, 7.10.1, which refuses the typed column build on a reading and
@@ -687,5 +708,23 @@ an entry is filing it and then deleting it, done by the session that hears the
 answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
+
+- **7.16 ships a measured regression on one column type's render, and the
+  decision is whether that was the right boundary to stop at.** The row sink
+  takes a typed control query down 29.5% and every registered file down
+  something, but an array column's *own* render is **+3.8%**: an element goes
+  through `render_field` and then `render_field_into` where it used to go
+  through one function, and `collect_array` needs an owned `String` per element
+  either way. Two spellings of that arm were measured and fixed before this
+  residual was what was left ([2026-09-04](history/2026-09-04.md), "Both obvious
+  ways to append an integer are slower than `to_string`"), and the
+  `--arrays --composite` file is still **−8.0%** overall, so nothing gets
+  slower end to end. **What was chosen over it** was reworking
+  `nested::ArrayLiteral` so an element need not own its text — which is a
+  change to a path 7.9 already reworked and tested, on a judgement call, in a
+  session with no reviewer, and is the thing an unattended session is told not
+  to do. If that reads as too cautious, the fix is a slice of its own and the
+  reading above is its stake; if it reads as right, the residual belongs beside
+  the mechanism as a property rather than here.
 
 

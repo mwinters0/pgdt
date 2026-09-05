@@ -2092,33 +2092,71 @@ over the control falls **89.725 G → 49.074 G user instructions**, −45.3%, wi
 adding a renderer**: `core::fmt` is an expensive way to write a fixed-width
 integer, and the cost is paid once per value of every rendered column.
 
-**What the pair table left behind is `core::fmt` in the date and time
-renderers**, and that is the render path's largest remaining cost:
-`format_inner` is still 20.68% of a typed control profile, of which
-`render_timestamp_micros` alone is **11.81%** — a
-`format!("{out_year:04}-{m:02}-{d:02} …")` driving `Formatter::pad_integral`
-once per zero-padded field, with `format_hms_frac` allocating twice more
-underneath it. `render_decimal`, `render_f64`, `render_time64_micros` and
-`render_date32` follow, each under 3%. `render_field` still returns a `String`
-per field and `print_batch` still collects a `Vec<String>` per row, so a
-`render_field_into(&mut String)` sink would write a whole row into one buffer
-instead; it changes a public signature, and it is worth taking only together
-with the renderers, since each of them allocates internally before returning and
-a sink alone would add a copy on top. Both are the scan-performance work's to
-take, and the count of what is left to remove — quoted here and in the lever
-table as 16 `String`s a row for the rest of `render_field` — is re-derived when
-it is, since the four date/time columns appear to account for nine of those on
-their own.
+**And a row is rendered into one buffer, not into a `String` per field.**
+`render_field_into(column, row, plan, &mut String)` is the form that does the
+work — it appends the value and answers whether there was one, `false` being
+SQL NULL — and `render_field`, which returns `Result<Option<String>>`, is a
+wrapper over it, so the two cannot say different things. `pgdq query` appends
+every column of a row into a line it clears and reuses, where it used to
+collect a `String` per field into a `Vec` and `join` them, which copied every
+field a second time. **An error may leave a partial value in the buffer**; the
+only discipline that asks for is not to print a buffer an error came out of,
+and a caller that reuses one clears it per row anyway.
+
+**The date and time renderers write their digits rather than formatting
+them.** `DEC_PAIRS` is `HEX_PAIRS`'s decimal counterpart — the 100 two-digit
+pairs end to end as one `&'static str` — so every zero-padded field of a
+`date`, a `time` or a `timestamp` is an indexed two-byte slice, and
+`push_padded` reproduces `{:0width$}` for the values outside that range, which
+only a caller-assembled Arrow array can hold. Together with the sink this takes
+a typed `pgdq query` over the control from **49.074 G to 34.610 G user
+instructions** (−29.5%) and its wall from 6.07 to 4.75 s; `date`, `time`,
+`timestamp` and `timestamptz` render **80–88% faster** in isolation
+(`benches/decoders.rs`). Unlike the hex table this one reaches `--schema-mode
+strings` too — **24.793 G → 19.610 G, −20.9%** — because the sink is what a
+`strings` query pays for its sixteen text columns; a `parse`, which renders
+nothing, is flat to 0.0004%.
+
+**The count of what is left is a test rather than a paragraph**, since it is
+the property most likely to rot: `tests/render_allocations.rs` installs a
+counting allocator and asserts, per column of the measured control shape, that
+rendering one row into a warm buffer allocates **20 times, none of them in a
+column this work touched**. Eighteen of the twenty are `render_f32` (5),
+`render_f64` (7) and `render_decimal` (6), which build their digit strings
+through `format!`; the other two are `render_uuid` and `render_bytea`, one
+pre-sized `String` each. The count this replaces was 16 `String`s a row, taken
+as one per field and low: the four date/time renderers alone built nine
+temporaries underneath those, and `print_batch` added the `Vec` and the `join`.
+
+*Rejected: `write!(out, "{value}")` for an integer field.* It reaches the same
+`Display` impl and is the obvious spelling of "append the digits", and it is
+several times slower than `to_string`, because `to_string` for an integer is
+specialised away from `core::fmt` entirely and `write!` is not. It cost 287
+instructions per element on a 50-element `integer[]` column — enough to cancel
+this whole change on the array-bearing file — and `push_integer` exists because
+of it. Two neighbouring details are the same measurement: every piece
+`push_padded` appends is a slice of a `&'static str`, because converting a
+stack byte buffer with `str::from_utf8` put a per-field validation back; and it
+reserves its whole length once, because `push_str` into a `String` that starts
+empty grows it twice for a ten-digit value.
 
 The equivalence to the shapes these replaced is asserted rather than argued:
 `decode.rs`'s `differential` tests keep the previous implementations verbatim
 and check the new ones against them over a generated corpus — a free-form one
 that exercises the rejecting branches, and a per-decoder one built to that
 decoder's own grammar and then damaged, because a random string is almost never
-a well-formed time of day. The two renderers take bytes rather than text, so
-theirs is enumerated instead of fuzzed: every entry of the pair table, and for
-the `uuid` every entry at each of the sixteen positions the hyphens are
-interleaved into.
+a well-formed time of day. The renderers take numbers rather than text, so
+theirs is enumerated and swept instead of fuzzed: every entry of the hex pair
+table, and for the `uuid` every entry at each of the sixteen positions the
+hyphens are interleaved into; for the date and time renderers every day of a
+six-century window and a stride across the whole of `i32`, every fractional
+width, and the values only a caller-assembled array can hold — a negative
+`Time64`, an hour past 99, a year past four digits — which are what the
+two-digit and four-digit fast paths must fall out of rather than panic on.
+`push_integer` is checked against `i64::to_string` the same way. Above them
+all, the three whole-file `pgdq query` outputs the render path is measured on
+are **byte-identical** across the change, which is the statement the corpora
+exist to make about values no committed file happens to hold.
 
 Non-obvious calendar and formatting facts, pinned as tests rather than left for
 a future reader to re-derive:
@@ -2169,7 +2207,8 @@ a future reader to re-derive:
   lose the fields Arrow carries apart.
 
 **Render-back has a third outcome, and it is not a NULL.**
-`render_field` returns `Result<Option<String>, Error>`: `Ok(None)` is SQL NULL
+`render_field` returns `Result<Option<String>, Error>` (`render_field_into`,
+`Result<bool, Error>`): `Ok(None)` is SQL NULL
 and `Error::FieldRender` is an Arrow value no PostgreSQL text form spells. It
 is `Error::FieldDecode`'s mirror and names the Arrow value rather than a table,
 a column and a row offset, because **nothing this crate scans can reach it** —
@@ -2484,8 +2523,9 @@ detail: `int4range[]` and `int4multirange` both resolve to
 `nested.rs` codec at each level. It comes from `ResolvedSchema::plans`,
 positionally.
 
-`render_field(column, row, plan)` is the single entry point: there is
-deliberately **no plan-less sibling**, because one that panicked on a nested
+`render_field(column, row, plan)` and its sink form
+`render_field_into(column, row, plan, &mut String)` are the entry points: there
+is deliberately **no plan-less sibling**, because one that panicked on a nested
 column would make "did every caller switch?" a review question rather than a
 compile error. A scalar caller passes `&NestedPlan::Scalar`, its `Default`.
 
@@ -4533,7 +4573,7 @@ census's field split was the byte loop, not the census").
 
 <!-- section: query-profile -->
 
-### `query`: the CLI's render-back is the largest bucket, not the decode
+### `query`: the library's batch stream is the largest bucket again
 
 Same file, same regime, `--dqcache none` (which is what every published `query`
 figure times, so the mapping pass is inside these numbers). Structure is read
@@ -4629,13 +4669,27 @@ no longer twice the library. The two functions themselves go 25.66% and 10.73%
 of the run to **0.86% and 0.48%** of a run that is itself 45% smaller. The
 rows above are again left as taken.
 
-**What is left of `core::fmt` there is the date and time renderers.**
-`format_inner` is still about a fifth of the typed profile (42.85% → 20.68%,
-which is a share of a much smaller run), and the largest single contributor to
-it is now `render_timestamp_micros` at **11.81%**, whose `format!("{out_year:04}-{m:02}-{d:02} …")`
-drives `pad_integral` for each of its zero-padded fields;
-`render_decimal`, `render_f64`, `render_time64_micros` and `render_date32` are
-the rest, each under 3%. None of them is admitted as a lever here.
+**The date and time renderers and the row sink take the heading back the other
+way, and this is where it stops being close.** With the four date/time columns
+writing their digits into the line `print_batch` reuses ("Decoders and
+render-back"), a typed control query falls **49.074 G → 34.610 G user
+instructions** (−29.5%, five reps a leg, every after rep below every before
+rep) and its wall from 6.07 to 4.75 s. In a matched pair of profiles
+`print_batch` goes **52.74% → 36.42%** and `poll_next` **45.83% → 62.51%**: for
+the first time since this section was written the library is the larger bucket,
+by a factor of 1.7 rather than the 2.5 the CLI once held. `render_field_into` is
+20.6% of the run and `core::fmt` is no longer the shape of it — `render_f64` is
+its largest remaining contributor at 4.64%, `render_decimal` 1.96%,
+`render_bytea` 1.37% and every date/time renderer together 1.14%.
+
+**This one is not confined to `typed`, and that is the difference from the
+hex table.** The sink is what a `strings` query pays for its sixteen text
+columns too, so that mode falls **24.793 G → 19.610 G** (−20.9%) where the hex
+table left it exactly unmoved, and its own profile reads `poll_next` 73.07%
+against `print_batch` 25.75%. The control that says the change reaches no scan
+figure is `parse` instead: 1.404590 G → 1.404585 G, flat to 0.0004%. What is
+left of the CLI in the mode difference is 0.76 s of a 1.35 s gap, which is
+still most of it. The rows above are again left as taken.
 
 **What that means for reading the headline table.** The baseline puts a typed
 query at 31× the warm `dd` floor and a `strings` query at 13.3×
@@ -4643,11 +4697,12 @@ query at 31× the warm `dd` floor and a `strings` query at 13.3×
 those are `pgdq query` figures: an embedder that consumes `RecordBatch`es pays
 `poll_next` and nothing under `print_batch`. The library's own typed extraction
 is 3.10 µs a row against `strings`'s 2.42 — a factor of 1.3, where the CLI's
-wall times showed 2.4 and, since the hex pair table, show **1.6** (6.03 s
-against 3.75 on the control, warm). The gap between the library's factor and the
-CLI's is what `print_batch` costs, and it is now half what it was; both `pgdq
-query` figures in that table are stale by this amount and are re-taken with the
-rest.
+wall times showed 2.4 and, since the hex pair table and the row sink, show
+**1.41** (4.71 s against 3.33 on the control, warm). The gap between the
+library's factor and the CLI's is what `print_batch` costs, and it is now close
+to closed; both `pgdq query` figures in that table are stale by this amount and
+are re-taken with the rest — and so is the `strings` one, which the sink moved
+and the hex table did not.
 
 #### The library's own per-row budget
 

@@ -14,7 +14,8 @@ use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolv
 use pgdump_query::{
     ArrayShape, ByteRangeSource, CompareKind, ComparisonPlan, DataBlock, Diagnostic,
     DiagnosticKind, DumpIndex, DumpMetadata, LocalFileSource, NestedPlan, Predicate, PredicateOp,
-    QueryOptions, ScanOptions, Severity, Span, SpanBody, TypeKind, preamble_only, render_field,
+    QueryOptions, ScanOptions, Severity, Span, SpanBody, TypeKind, preamble_only,
+    render_field_into,
 };
 
 mod alloc;
@@ -649,32 +650,42 @@ fn install_interrupt_guard(cancel: Arc<AtomicBool>) -> Result<Arc<AtomicI32>> {
 
 /// Print one batch's rows tab-separated, `\N` for NULL — mirroring COPY
 /// TEXT's own NULL marker. Each field is rendered back to PostgreSQL text via
-/// [`render_field`], so output is byte-identical whether `--schema-mode` is
-/// `typed` or `strings` (`docs/design/architecture.md`,
+/// [`render_field_into`], so output is byte-identical whether `--schema-mode`
+/// is `typed` or `strings` (`docs/design/architecture.md`,
 /// "CLI surface").
+///
+/// **One buffer for the whole batch.** The line is assembled in a `String`
+/// that is cleared per row and keeps its capacity across the batch, so a
+/// scalar field is written where it will be printed from — in place of a
+/// `String` allocated per field, collected into a `Vec` and then copied again
+/// by `join`.
 ///
 /// `plans` is the stream's own [`pgdump_query::ResolvedSchema::plans`], which
 /// is what says whether a `List<Struct{…}>` column is written as an array of
 /// ranges or as a multirange. A column with no entry falls back to
 /// `NestedPlan::Scalar`, which is right for every non-nested type.
 ///
-/// The `Result` is `render_field`'s refusal of a value with no PostgreSQL
+/// The `Result` is `render_field_into`'s refusal of a value with no PostgreSQL
 /// text form, which **no batch this binary prints can hold**: every typed
 /// column here is filled by a decoder whose range its renderer can write back.
 /// It is propagated rather than unwrapped because an unreachable panic in the
-/// output path is a worse answer than an error message.
+/// output path is a worse answer than an error message. A refused value can
+/// leave a partial field in the buffer; nothing prints it, because the error
+/// ends the query.
 fn print_batch(batch: &RecordBatch, plans: &[NestedPlan]) -> Result<()> {
+    let mut line = String::new();
     for row in 0..batch.num_rows() {
-        let fields: Vec<String> = batch
-            .columns()
-            .iter()
-            .enumerate()
-            .map(|(col, c)| {
-                let plan = plans.get(col).unwrap_or(&NestedPlan::Scalar);
-                Ok(render_field(c.as_ref(), row, plan)?.unwrap_or_else(|| "\\N".to_string()))
-            })
-            .collect::<Result<_>>()?;
-        println!("{}", fields.join("\t"));
+        line.clear();
+        for (col, c) in batch.columns().iter().enumerate() {
+            if col > 0 {
+                line.push('\t');
+            }
+            let plan = plans.get(col).unwrap_or(&NestedPlan::Scalar);
+            if !render_field_into(c.as_ref(), row, plan, &mut line)? {
+                line.push_str("\\N");
+            }
+        }
+        println!("{line}");
     }
     Ok(())
 }

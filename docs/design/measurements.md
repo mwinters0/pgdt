@@ -173,10 +173,13 @@ Twelve standing rules for reading anything below:
   a library change.** Every `query` figure here is a `pgdq query` figure, which
   means `pgdq::print_batch` — the CLI turning each batch back into TSV — is
   inside it, and it is not a rounding error: on the control **most of the
-  `typed` − `strings` gap is that one function**, and a typed query spends
-  **52.74%** of its user time there — 70.61% before the hex pair table halved
-  what a `bytea` and a `uuid` cost to write back out
-  ([`architecture.md`](architecture.md), "Where a scan's time goes"). So the
+  `typed` − `strings` gap is still that one function** — 0.76 s of a 1.35 s
+  gap — and a typed query spends **36.42%** of its user time there against a
+  `strings` query's 25.75%. Those two shares are the fourth reading of the
+  first: 70.61% before the hex pair table halved what a `bytea` and a `uuid`
+  cost to write back out, 52.74% after it, 36.42% once a row was rendered into
+  one buffer ([`architecture.md`](architecture.md), "Where a scan's time
+  goes"). So the
   two sharpest instruments in this document price decode **plus** the Arrow
   build **plus** the render-back: "A typed query over nested columns…"'s
   per-row differences, and "What a column costs…"'s per-column deltas, whose

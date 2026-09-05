@@ -159,6 +159,161 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (y + i64::from(m <= 2), m, d)
 }
 
+/// The 100 two-digit decimal pairs end to end, so `v`'s pair is the two bytes
+/// at `v * 2` — [`HEX_PAIRS`]'s decimal counterpart. Every zero-padded field a
+/// `date`, a `time` or a `timestamp` is written from is two digits wide, so a
+/// field becomes an indexed slice and a two-byte copy in place of the
+/// `format!("{v:02}")` that drove `core::fmt`'s `pad_integral` for each of
+/// them.
+const DEC_PAIRS_BYTES: [u8; 200] = {
+    let digits = *b"0123456789";
+    let mut table = [0u8; 200];
+    let mut v = 0usize;
+    while v < 100 {
+        table[v * 2] = digits[v / 10];
+        table[v * 2 + 1] = digits[v % 10];
+        v += 1;
+    }
+    table
+};
+
+/// The same table as text, converted once at compile time over bytes that are
+/// ASCII by construction, so a renderer appends with `push_str` and pays no
+/// UTF-8 validation of its own — the same shape as [`HEX_PAIRS`].
+static DEC_PAIRS: &str = match str::from_utf8(&DEC_PAIRS_BYTES) {
+    Ok(s) => s,
+    Err(_) => panic!("decimal digits are ASCII"),
+};
+
+/// The ten decimal digits, so a leading odd digit is appended as a `&str`
+/// slice like every other piece and the whole function stays free of
+/// byte-to-`str` conversion.
+static DEC_DIGITS: &str = "0123456789";
+
+/// `format!("{value:0width$}")` for an `i64`, digit for digit: sign-aware zero
+/// padding, so a `-` leads and the padding zeros follow it, and no padding at
+/// all once the digits are already that wide. `width` of `0` is therefore
+/// exactly `i64::to_string`, which is what [`push_integer`] is.
+///
+/// Three properties are load-bearing rather than stylistic, and each was a
+/// measured regression in a shape that lacked it
+/// (`docs/design/roadmap-P7.16-render-sink-notes.md`):
+///
+/// - **The digits come out two at a time**, off [`DEC_PAIRS`], which is the
+///   algorithm the standard library's own integer `Display` uses. The
+///   division is by a literal `100`, so it compiles to a multiply.
+/// - **Every piece is a slice of a `&'static str`**, so nothing here converts
+///   bytes to text and no UTF-8 validation is paid per field.
+/// - **The whole length is reserved once.** `push_str` into a `String` that
+///   starts empty otherwise grows it twice for a ten-digit value, and that
+///   realloc traffic is what a caller rendering one array element per
+///   allocation actually pays.
+#[inline]
+fn push_padded(out: &mut String, value: i64, width: usize) {
+    // Pair values, least significant first; a `u64` has at most nine of them
+    // ahead of its leading one or two digits.
+    let mut pairs = [0u8; 10];
+    let mut count = 0;
+    let mut magnitude = value.unsigned_abs();
+    while magnitude >= 100 {
+        pairs[count] = (magnitude % 100) as u8;
+        count += 1;
+        magnitude /= 100;
+    }
+    let lead = magnitude as usize;
+    let negative = value < 0;
+    let digits = 2 * count + if lead >= 10 { 2 } else { 1 };
+    out.reserve(width.max(digits + usize::from(negative)));
+    if negative {
+        out.push('-');
+    }
+    for _ in (digits + usize::from(negative))..width {
+        out.push('0');
+    }
+    if lead >= 10 {
+        out.push_str(&DEC_PAIRS[lead * 2..lead * 2 + 2]);
+    } else {
+        out.push_str(&DEC_DIGITS[lead..lead + 1]);
+    }
+    for pair in pairs[..count].iter().rev() {
+        let at = usize::from(*pair) * 2;
+        out.push_str(&DEC_PAIRS[at..at + 2]);
+    }
+}
+
+/// An integer field's digits, appended: the same text `i64::to_string`
+/// produces, without the `String` it allocates.
+///
+/// **The obvious spelling is the slow one.** `write!(out, "{value}")` reaches
+/// the same `Display` impl but through `core::fmt::write`, and on a
+/// 53-element `integer[]` row that machinery costs several times what the
+/// digits do — measured as a whole-query regression that cancelled this
+/// slice's win on the array-bearing file
+/// (`docs/design/roadmap-P7.16-render-sink-notes.md`).
+#[inline]
+pub(crate) fn push_integer(out: &mut String, value: i64) {
+    push_padded(out, value, 0);
+}
+
+/// `format!("{value:02}")` — one table lookup for the two-digit range every
+/// calendar and clock field of a well-formed value lives in.
+fn push_two(out: &mut String, value: i64) {
+    if (0..100).contains(&value) {
+        let at = value as usize * 2;
+        out.push_str(&DEC_PAIRS[at..at + 2]);
+    } else {
+        push_padded(out, value, 2);
+    }
+}
+
+/// `format!("{year:04}")`, as two pairs for the four-digit years and the
+/// general path for anything wider — `Date32`'s day range reaches years either
+/// side of five million.
+fn push_year(out: &mut String, year: i64) {
+    if (0..10_000).contains(&year) {
+        push_two(out, year / 100);
+        push_two(out, year % 100);
+    } else {
+        push_padded(out, year, 4);
+    }
+}
+
+/// The fractional-seconds digits, `micros` in `1..1_000_000`: six digits with
+/// trailing zeros trimmed, which is what PostgreSQL writes (`00:00:00.5`, not
+/// `.500000`). The trim is a `truncate` back to the last non-zero digit rather
+/// than a `pop` loop over a temporary, and it is bounded by `start` so it can
+/// never reach text the caller had already written — though it does not have
+/// to be: `micros` is nonzero, so one of the six digits stops it first.
+fn push_fraction(out: &mut String, micros: i64) {
+    let start = out.len();
+    push_two(out, micros / 10_000);
+    push_two(out, (micros / 100) % 100);
+    push_two(out, micros % 100);
+    let mut end = out.len();
+    {
+        let bytes = out.as_bytes();
+        while end > start && bytes[end - 1] == b'0' {
+            end -= 1;
+        }
+    }
+    out.truncate(end);
+}
+
+/// The `YYYY-MM-DD` head a `date` and a `timestamp` share, out of a day count.
+/// Returns whether the value is before the common era: PostgreSQL writes the
+/// `" BC"` marker at the very end, past the time and the zone, so the caller
+/// appends it rather than this.
+fn push_civil_date(out: &mut String, days: i64) -> bool {
+    let (y, m, d) = civil_from_days(days);
+    let (out_year, bc) = if y <= 0 { (1 - y, true) } else { (y, false) };
+    push_year(out, out_year);
+    out.push('-');
+    push_two(out, i64::from(m));
+    out.push('-');
+    push_two(out, i64::from(d));
+    bc
+}
+
 /// Strip a trailing `" BC"` era marker, PostgreSQL's spelling for a
 /// before-common-era date/timestamp. Returns the remaining text and whether
 /// the marker was present.
@@ -206,13 +361,21 @@ pub fn decode_date32(s: &str) -> Option<i32> {
 }
 
 pub fn render_date32(days: i32) -> String {
-    let (y, m, d) = civil_from_days(i64::from(days));
-    let (out_year, bc) = if y <= 0 { (1 - y, true) } else { (y, false) };
-    let mut s = format!("{out_year:04}-{m:02}-{d:02}");
-    if bc {
-        s.push_str(" BC");
+    // `YYYY-MM-DD`, with room for the era marker; a year outside four digits
+    // grows it once and is not a value any dump holds.
+    let mut out = String::with_capacity(16);
+    render_date32_into(days, &mut out);
+    out
+}
+
+/// [`render_date32`] appending to a caller's buffer instead of returning one.
+/// The `_into` form is the one that does the work; the owned form above is a
+/// wrapper, so the two cannot drift (`docs/design/architecture.md`, "Decoders
+/// and render-back").
+pub fn render_date32_into(days: i32, out: &mut String) {
+    if push_civil_date(out, i64::from(days)) {
+        out.push_str(" BC");
     }
-    s
 }
 
 /// Powers of ten up to a microsecond, indexed by how many fractional digits
@@ -250,20 +413,17 @@ pub(crate) fn parse_time_of_day(s: &str) -> Option<(i64, i64)> {
 /// time-of-day component. PostgreSQL trims trailing zeros from the fraction
 /// (confirmed empirically: `00:00:00.5`, not `.500000` —
 /// `docs/status/history/2026-08-23.md`) and omits it entirely when zero.
-fn format_hms_frac(total_micros: i64) -> String {
+fn format_hms_frac_into(out: &mut String, total_micros: i64) {
     let seconds = total_micros.div_euclid(1_000_000);
     let micros = total_micros.rem_euclid(1_000_000);
-    let h = seconds / 3600;
-    let mi = (seconds % 3600) / 60;
-    let se = seconds % 60;
-    if micros == 0 {
-        format!("{h:02}:{mi:02}:{se:02}")
-    } else {
-        let mut frac = format!("{micros:06}");
-        while frac.ends_with('0') {
-            frac.pop();
-        }
-        format!("{h:02}:{mi:02}:{se:02}.{frac}")
+    push_two(out, seconds / 3600);
+    out.push(':');
+    push_two(out, (seconds % 3600) / 60);
+    out.push(':');
+    push_two(out, seconds % 60);
+    if micros != 0 {
+        out.push('.');
+        push_fraction(out, micros);
     }
 }
 
@@ -276,7 +436,15 @@ pub fn decode_time64_micros(s: &str) -> Option<i64> {
 }
 
 pub fn render_time64_micros(v: i64) -> String {
-    format_hms_frac(v)
+    // `HH:MM:SS.ffffff`.
+    let mut out = String::with_capacity(16);
+    render_time64_micros_into(v, &mut out);
+    out
+}
+
+/// [`render_time64_micros`] appending to a caller's buffer.
+pub fn render_time64_micros_into(v: i64, out: &mut String) {
+    format_hms_frac_into(out, v);
 }
 
 /// Pull a `+HH[:MM[:SS]]` / `-HH[:MM[:SS]]` UTC offset off the end of a
@@ -330,18 +498,23 @@ pub fn decode_timestamp_micros(s: &str, with_tz: bool) -> Option<i64> {
 }
 
 pub fn render_timestamp_micros(v: i64, with_tz: bool) -> String {
-    let days = v.div_euclid(86_400_000_000);
-    let time_micros = v.rem_euclid(86_400_000_000);
-    let (y, m, d) = civil_from_days(days);
-    let (out_year, bc) = if y <= 0 { (1 - y, true) } else { (y, false) };
-    let mut s = format!("{out_year:04}-{m:02}-{d:02} {}", format_hms_frac(time_micros));
+    // `YYYY-MM-DD HH:MM:SS.ffffff+00`, with room for the era marker.
+    let mut out = String::with_capacity(32);
+    render_timestamp_micros_into(v, with_tz, &mut out);
+    out
+}
+
+/// [`render_timestamp_micros`] appending to a caller's buffer.
+pub fn render_timestamp_micros_into(v: i64, with_tz: bool, out: &mut String) {
+    let bc = push_civil_date(out, v.div_euclid(86_400_000_000));
+    out.push(' ');
+    format_hms_frac_into(out, v.rem_euclid(86_400_000_000));
     if with_tz {
-        s.push_str("+00");
+        out.push_str("+00");
     }
     if bc {
-        s.push_str(" BC");
+        out.push_str(" BC");
     }
-    s
 }
 
 /// A signed count of `year`/`mon`/`day` units out of an `interval`'s text.
@@ -1080,15 +1253,62 @@ mod tests {
     }
 }
 
-/// The four scalar decoders and two hex renderers this module's
-/// allocation-free forms replaced, kept verbatim as the oracle they are
-/// checked against. A function that is asked to be exactly what it was is
-/// checked against what it was: the corpora below are generated rather than
-/// listed, so a disagreement on an input nobody thought to write down is a
-/// test failure and not a report from the field.
+/// The four scalar decoders, the two hex renderers and the three date/time
+/// renderers this module's allocation-free forms replaced, kept verbatim as
+/// the oracle they are checked against. A function that is asked to be exactly
+/// what it was is checked against what it was: the corpora below are generated
+/// rather than listed, so a disagreement on an input nobody thought to write
+/// down is a test failure and not a report from the field.
 #[cfg(test)]
 mod prior_shape {
+    use super::civil_from_days;
     use crate::copy::hex_val;
+
+    fn format_hms_frac(total_micros: i64) -> String {
+        let seconds = total_micros.div_euclid(1_000_000);
+        let micros = total_micros.rem_euclid(1_000_000);
+        let h = seconds / 3600;
+        let mi = (seconds % 3600) / 60;
+        let se = seconds % 60;
+        if micros == 0 {
+            format!("{h:02}:{mi:02}:{se:02}")
+        } else {
+            let mut frac = format!("{micros:06}");
+            while frac.ends_with('0') {
+                frac.pop();
+            }
+            format!("{h:02}:{mi:02}:{se:02}.{frac}")
+        }
+    }
+
+    pub fn render_date32(days: i32) -> String {
+        let (y, m, d) = civil_from_days(i64::from(days));
+        let (out_year, bc) = if y <= 0 { (1 - y, true) } else { (y, false) };
+        let mut s = format!("{out_year:04}-{m:02}-{d:02}");
+        if bc {
+            s.push_str(" BC");
+        }
+        s
+    }
+
+    pub fn render_time64_micros(v: i64) -> String {
+        format_hms_frac(v)
+    }
+
+    pub fn render_timestamp_micros(v: i64, with_tz: bool) -> String {
+        let days = v.div_euclid(86_400_000_000);
+        let time_micros = v.rem_euclid(86_400_000_000);
+        let (y, m, d) = civil_from_days(days);
+        let (out_year, bc) = if y <= 0 { (1 - y, true) } else { (y, false) };
+        let mut s = format!("{out_year:04}-{m:02}-{d:02} {}", format_hms_frac(time_micros));
+        if with_tz {
+            s.push_str("+00");
+        }
+        if bc {
+            s.push_str(" BC");
+        }
+        s
+    }
 
     pub fn render_uuid(bytes: &[u8; 16]) -> String {
         let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
@@ -1387,6 +1607,165 @@ mod differential {
             }
             assert_eq!(render_uuid(&bytes), prior_shape::render_uuid(&bytes), "{bytes:?}");
         }
+    }
+
+    /// The three date/time renderers take integers rather than text, so their
+    /// corpus is enumerated and swept rather than fuzzed. Three regions
+    /// matter and each is covered on its own: the dense one every real value
+    /// lands in, a stride across the whole width of the argument type, and
+    /// the values only a caller-assembled Arrow array can hold — a negative
+    /// `Time64`, an hour past 99, a year past four digits — which are what
+    /// the two-digit and four-digit fast paths have to fall out of rather
+    /// than panic on.
+    #[test]
+    fn date_and_time_render_agrees_with_the_shape_it_replaced() {
+        // Every day of a six-century window around the epoch, then a stride
+        // over the whole of `i32` — which reaches years either side of five
+        // million and so the wide-year path — and both ends exactly.
+        for days in -200_000..=200_000i32 {
+            assert_eq!(render_date32(days), prior_shape::render_date32(days), "{days}");
+        }
+        let mut days = i32::MIN;
+        loop {
+            assert_eq!(render_date32(days), prior_shape::render_date32(days), "{days}");
+            match days.checked_add(100_003) {
+                Some(next) => days = next,
+                None => break,
+            }
+        }
+        for days in [i32::MIN, i32::MAX, 0, -1, 1, 719_468] {
+            assert_eq!(render_date32(days), prior_shape::render_date32(days), "{days}");
+        }
+
+        // Every fractional width the trim can stop at, against a stride over
+        // the whole day — the `.5`/`.000001`/no-fraction branches.
+        let fractions =
+            [0i64, 1, 10, 100, 1_000, 10_000, 100_000, 500_000, 120_000, 123_456, 999_999];
+        for second in (0..86_401i64).step_by(97) {
+            for frac in fractions {
+                let v = second * 1_000_000 + frac;
+                assert_eq!(render_time64_micros(v), prior_shape::render_time64_micros(v), "{v}");
+            }
+        }
+        for v in
+            [0i64, -1, 1, 86_400_000_000, 360_000_000_000, -360_000_000_000, i64::MIN, i64::MAX]
+        {
+            assert_eq!(render_time64_micros(v), prior_shape::render_time64_micros(v), "{v}");
+        }
+
+        // Timestamps in the range a dump actually holds, at both spellings,
+        // then random `i64`s — which reach BC years, six-digit years and the
+        // negative time-of-day the `rem_euclid` cannot produce but
+        // `render_time64_micros` can.
+        for day in (-800_000..=800_000i64).step_by(4_001) {
+            for frac in fractions {
+                for with_tz in [false, true] {
+                    let v = day * 86_400_000_000 + frac;
+                    assert_eq!(
+                        render_timestamp_micros(v, with_tz),
+                        prior_shape::render_timestamp_micros(v, with_tz),
+                        "{v} {with_tz}"
+                    );
+                }
+            }
+        }
+        let mut rng = Rng(7);
+        for _ in 0..20_000 {
+            let v = rng.next() as i64;
+            for with_tz in [false, true] {
+                assert_eq!(
+                    render_timestamp_micros(v, with_tz),
+                    prior_shape::render_timestamp_micros(v, with_tz),
+                    "{v} {with_tz}"
+                );
+                assert_eq!(render_time64_micros(v), prior_shape::render_time64_micros(v), "{v}");
+            }
+        }
+        for v in [i64::MIN, i64::MAX, 0, -1, 1, -86_400_000_000] {
+            for with_tz in [false, true] {
+                assert_eq!(
+                    render_timestamp_micros(v, with_tz),
+                    prior_shape::render_timestamp_micros(v, with_tz),
+                    "{v} {with_tz}"
+                );
+            }
+        }
+    }
+
+    /// [`push_integer`] is asked to be `i64::to_string`, so it is checked
+    /// against it: every value of a two-digit and three-digit width, where the
+    /// pair loop's odd/even tail lives, both ends of every integer type a
+    /// column can resolve to, and a random sweep of the whole `i64` range.
+    #[test]
+    fn integer_render_agrees_with_to_string() {
+        let check = |v: i64| {
+            let mut out = String::from("|");
+            push_integer(&mut out, v);
+            assert_eq!(out, format!("|{v}"), "{v}");
+        };
+        for v in -1_000..=1_000i64 {
+            check(v);
+        }
+        for v in [
+            0,
+            i64::from(i16::MIN),
+            i64::from(i16::MAX),
+            i64::from(i32::MIN),
+            i64::from(i32::MAX),
+            i64::from(u32::MAX),
+            i64::MIN,
+            i64::MAX,
+            -9,
+            -10,
+            -99,
+            -100,
+            9,
+            10,
+            99,
+            100,
+            999,
+            1_000,
+        ] {
+            check(v);
+        }
+        let mut rng = Rng(9);
+        for _ in 0..50_000 {
+            let v = rng.next() as i64;
+            check(v);
+            check(v % 1_000_000);
+            check(v >> 32);
+        }
+    }
+
+    /// The `_into` forms are what the owned ones call, so the property worth
+    /// asserting is the one that would break if that ever stopped being true:
+    /// appending to a buffer that already holds text leaves what was there
+    /// alone and appends exactly the owned form.
+    #[test]
+    fn the_sink_forms_append_exactly_what_the_owned_forms_return() {
+        let mut out = String::from("head\t");
+        render_date32_into(19_889, &mut out);
+        out.push('\t');
+        render_time64_micros_into(49_530_123_456, &mut out);
+        out.push('\t');
+        render_timestamp_micros_into(1_718_000_000_000_000, false, &mut out);
+        out.push('\t');
+        render_timestamp_micros_into(1_718_000_000_000_000, true, &mut out);
+        assert_eq!(
+            out,
+            format!(
+                "head\t{}\t{}\t{}\t{}",
+                render_date32(19_889),
+                render_time64_micros(49_530_123_456),
+                render_timestamp_micros(1_718_000_000_000_000, false),
+                render_timestamp_micros(1_718_000_000_000_000, true),
+            )
+        );
+        // A trimmed fraction truncates back to its own last non-zero digit
+        // and never into the caller's text, even when that text ends in one.
+        let mut zero_tailed = String::from("00");
+        render_time64_micros_into(500_000, &mut zero_tailed);
+        assert_eq!(zero_tailed, "0000:00:00.5");
     }
 
     #[test]
