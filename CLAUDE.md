@@ -295,7 +295,12 @@ sittings. **The doc
 addresses a figure by an `<!-- figure: <id> -->` marker, never by its
 heading**, so a heading may quote a number and be rewritten when that number
 moves; `--check` reconciles the markers against the register, reports a partial
-sitting the doc still carries, and prints each figure's consumers. The paths and sizes it uses are environment
+sitting the doc still carries, and prints each figure's consumers. **A section
+the harness does not own declares itself the same way**, with an
+`<!-- outside-register: <id> -->` marker — koji and the `cargo bench` tripwires
+— which `--check` reconciles against `measure.NOT_OURS` both ways and holds to
+carrying no figure marker, since the session stamp's "every figure below" claims
+only what the register holds. The paths and sizes it uses are environment
 variables (`PGDQ_MEASURE_*`) whose defaults suit this machine — see
 `CLAUDE.local.md`.
 

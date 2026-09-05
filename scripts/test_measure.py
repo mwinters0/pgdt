@@ -1435,6 +1435,73 @@ class Markers(unittest.TestCase):
         self.assertIsNotNone(stamp)
 
 
+class RegisterBoundary(unittest.TestCase):
+    """The doc carries sections the harness does not own, and the session stamp
+    claims nothing about them. A figure announces itself with a marker and an
+    apparatus line; a section outside the register announced itself with a
+    prose sentence paragraphs from the numbers, which nothing checked."""
+
+    DOC = measure.REPO / "docs/design/measurements.md"
+
+    def _doc(self, tmp: str, text: str) -> Path:
+        doc = Path(tmp) / "measurements.md"
+        doc.write_text(text)
+        return doc
+
+    def test_the_doc_declares_every_section_the_harness_disowns(self):
+        # Both ways: a declaration naming nothing, and a disowned section that
+        # declares nothing, are the two halves of the same drift.
+        declared = {i for i, _ in measure.outside_register_sections(self.DOC.read_text())}
+        self.assertEqual(declared, set(measure.NOT_OURS))
+
+    def test_no_declared_section_carries_a_figure_marker(self):
+        for oid, figs in measure.outside_register_sections(self.DOC.read_text()):
+            with self.subTest(section=oid):
+                self.assertEqual(figs, [])
+
+    def test_a_declaration_covers_its_own_subheadings(self):
+        text = (
+            "## Outside\n\n<!-- outside-register: koji -->\n\n"
+            "### A subsection of it\n\n<!-- figure: map-only -->\n"
+        )
+        self.assertEqual(measure.outside_register_sections(text), [("koji", ["map-only"])])
+
+    def test_a_declaration_stops_at_the_next_section(self):
+        text = (
+            "## Outside\n\n<!-- outside-register: koji -->\n\n"
+            "## A figure of its own\n\n<!-- figure: map-only -->\n"
+        )
+        self.assertEqual(measure.outside_register_sections(text), [("koji", [])])
+
+    def test_a_comment_inside_a_code_fence_does_not_end_a_section(self):
+        # measurements.md publishes a `sh` block whose first line is `# maps to
+        # EOF …`, which reads as a level-1 heading.
+        text = (
+            "## Outside\n\n<!-- outside-register: koji -->\n\n"
+            "```sh\n# maps to EOF (the table never matches)\npgdq parse\n```\n\n"
+            "<!-- figure: map-only -->\n"
+        )
+        self.assertEqual(measure.outside_register_sections(text), [("koji", ["map-only"])])
+
+    def test_headings_skip_fenced_blocks(self):
+        text = "# Real\n\n```sh\n# not a heading\n```\n\n## Also real\n"
+        self.assertEqual([level for _, level in measure.headings(text)], [1, 2])
+
+    def test_the_stamp_is_scoped_to_the_register(self):
+        # The claim was "every figure below", over a document that prints
+        # readings the harness did not take.
+        self.assertIn("<!-- figure:", measure.session_stamp("deadbee", dirty=False))
+
+    def test_the_stamp_s_scope_clause_is_not_read_as_a_figure_marker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            doc = self._doc(tmp, measure.session_stamp("deadbee", dirty=False) + "\n")
+            self.assertEqual(measure.markers_in(doc), [])
+
+    def test_the_doc_s_own_stamp_is_scoped_too(self):
+        head = self.DOC.read_text().split("## The apparatus")[0]
+        self.assertIn("`<!-- figure: … -->` marker, and no other", head)
+
+
 class KojiRecipe(unittest.TestCase):
     """koji is never run from here, but the invocation is owned here — three
     hand-maintained copies is how a documented command was found that could

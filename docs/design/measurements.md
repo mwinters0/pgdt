@@ -5,7 +5,8 @@ reproduces it. A baseline nobody can re-run is a rumour with a decimal point,
 so **a figure that loses its regeneration command should be deleted, not
 kept**.
 
-**Session stamp.** Every figure below was taken by `scripts/measure.py` on
+**Session stamp.** Every figure below — every section carrying a
+`<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on
 2026-09-05, against commit `af15eac`, under the `system` allocator. One sweep,
 one apparatus — which is what
 lets these tables be differenced against each other, and what "are these
@@ -17,6 +18,15 @@ derived *across* two, from that sweep and a second one begun the minute it
 finished. So no table here carries a partial-sitting note, and no absolute in
 this document is a cross-sitting reading — which has not been true since the
 `ba2fc12` stamp, under which ten of the seventeen stood outside the sweep.
+
+**Not everything printed below is a figure, and the ones that are not say so.**
+A section outside the register carries an `<!-- outside-register: <id> -->`
+marker under its heading — koji and the `cargo bench` tripwires are the two —
+and the stamp above makes no claim about its readings. `uv run measure.py
+--check` reconciles those declarations against the harness's own list of what it
+does not own, both ways, and fails if a declared section also carries a figure
+marker; `--list` prints each one with why it is outside. See "The apparatus"
+below.
 
 All figures are on the hardware `CLAUDE.local.md` describes. Synthetic inputs
 are regenerable with `--seed 42` and are **never committed** — they measure
@@ -232,7 +242,9 @@ Twelve standing rules for reading anything below:
 ## The apparatus
 
 **Every figure below is taken by `scripts/measure.py`, and the session stamp
-above records the sweep that took the doc as a whole.** Figures that share a
+above records the sweep that took the doc as a whole** — every figure, which is
+every section carrying a `<!-- figure: … -->` marker and no other. Figures that
+share a
 reading share it rather than measuring it twice: each throughput table's `COPY`
 row *is* the census table's census-on column for that regime, the preamble
 table's full-`parse` row *is* the quadratic table's 4000-block "after" column,
@@ -314,6 +326,27 @@ free to quote a number, and a heading whose number the next sweep moves is
 rewritten with it. `uv run measure.py --check` reconciles the markers against
 the harness's register and names, for each figure, the other documents that
 repeat its numbers; `--stale` names the figures a diff has invalidated.
+
+**The register's boundary is declared, not inferred.** A section this harness
+does not own carries an `<!-- outside-register: <id> -->` marker of its own —
+`koji` and `benches` today — and `--check` resolves each one against
+`measure.NOT_OURS` in both directions, so a declaration naming nothing and a
+disowned section declaring nothing both fail. A declared section carrying a
+figure marker fails too: a section is one or the other, and the figure's
+apparatus line would contradict the declaration. What that buys is what the
+symmetry says — a figure announces itself with a marker and an apparatus line,
+so a section that is *not* one announces itself as well, instead of relying on a
+sentence some paragraphs from the numbers while the stamp above claims the whole
+document.
+
+*Rejected:* leaving the exclusion in prose, which is what it was. The koji
+section had a paragraph saying nothing in it was a figure, and that paragraph
+was eleven paragraphs from the readings it disqualified and contradicted by the
+stamp at the head of the file; nothing broke when either moved. *Rejected too:*
+a doc-only check, asserting no more than that a declared section holds no figure
+marker. It would pass a doc that quietly deleted the declaration, which is the
+state this whole mechanism exists to make visible — hence the two-way
+reconciliation against the harness's list.
 
 *Rejected:* sharpening `depends` until it attributes staleness figure by
 figure. **Any stale figure forces a whole re-sweep** — selection is per figure,
@@ -1794,12 +1827,16 @@ Both sweeps are `runs/measure-*` directories; the table is computed from their
 
 ## koji full scan — the regression check
 
+<!-- outside-register: koji — nothing in this section is a figure; see "The apparatus" -->
+
 The 784GB real sample (`CLAUDE.local.md` has the path). Roughly an hour on the
 HDD; run it detached per `CLAUDE.md`.
 
 **Nothing in this section is a figure, and that is what licenses the readings
-below.** koji carries no `<!-- figure: … -->` marker, `--check` does not
-reconcile it, `--stale` cannot name it, and no figure's `quoted_by` reaches it —
+below.** The marker above says so where a reader meets the section rather than
+eleven paragraphs down, and `--check` holds it: koji carries no
+`<!-- figure: … -->` marker, `--check` reconciles it as a declared section
+instead, `--stale` cannot name it, and no figure's `quoted_by` reaches it —
 the harness owns koji's *invocation* and never runs it, which is the standing it
 also gives the profiling recipe. The throughput rows further down are disk
 throughputs with no `cat`-to-`/dev/null` floor, so the first standing rule above
@@ -2212,8 +2249,12 @@ release build there, the same two-binary method the census figure above uses.
 
 ## Decoder and whole-file benchmarks
 
+<!-- outside-register: benches — `cargo bench` tripwires, not figures; see "The apparatus" -->
+
 `criterion`, `harness = false`. A regression tripwire for per-byte CPU cost,
-not an optimization campaign.
+not an optimization campaign. Nothing here is a figure: these quote no number in
+this document, and `cargo bench` rather than `measure.py` runs them, so the
+session stamp above says nothing about them either.
 
 ```sh
 cargo bench -p pgdump_query

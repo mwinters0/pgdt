@@ -3471,17 +3471,46 @@ def cmd_drift(first: str, second: str) -> int:
     print(drift_table(Path(first) / "raw.json", Path(second) / "raw.json"))
     return 0
 
-#: Figures measurements.md carries that this harness deliberately does not own.
+
+@dataclass(frozen=True)
+class Outside:
+    """A `measurements.md` section the figure register does not hold.
+
+    Every *figure* announces itself twice — a marker and an apparatus line —
+    and a section outside the register used to announce itself with nothing,
+    while the doc's session stamp asserted "every figure below was taken by
+    `scripts/measure.py`" over it. So a section outside the register carries an
+    `<!-- outside-register: <id> -->` marker of its own, and `--check`
+    reconciles those markers against this register both ways and holds each
+    declared section to carrying no figure marker. A section cannot be both."""
+
+    id: str
+    #: The doc heading it sits under, for `--list` and for the check's report.
+    section: str
+    #: Why the harness does not own it. Printed by `--list`.
+    why: str
+
+
+#: Sections measurements.md carries that this harness deliberately does not
+#: own — the other half of the boundary `--check` reconciles.
 NOT_OURS = {
-    "koji full scan": (
-        "784 GB on the HDD, ~54 minutes, a different medium, and a byte-for-byte regression "
-        "check rather than a throughput figure. The harness owns the *invocation* — "
-        "`--koji-recipe`, which prints it — and never runs it."
-    ),
-    "benches/decoders.rs per-type pairs, benches/whole_file.rs": (
-        "Tripwires, not figures: they quote no number in the doc, so there is no table to emit. "
-        "That is a decision, not an oversight -- `cargo bench -p pgdump_query` runs them."
-    ),
+    o.id: o
+    for o in [
+        Outside(
+            "koji",
+            "koji full scan",
+            "784 GB on the HDD, ~54 minutes, a different medium, and a byte-for-byte regression "
+            "check rather than a throughput figure. The harness owns the *invocation* — "
+            "`--koji-recipe`, which prints it — and never runs it.",
+        ),
+        Outside(
+            "benches",
+            "benches/decoders.rs per-type pairs, benches/whole_file.rs",
+            "Tripwires, not figures: they quote no number in the doc, so there is no table to "
+            "emit. That is a decision, not an oversight -- `cargo bench -p pgdump_query` runs "
+            "them.",
+        ),
+    ]
 }
 
 
@@ -3541,6 +3570,64 @@ MARKER_RE = re.compile(r"<!--\s*figure:\s*([a-z0-9-]+)")
 def markers_in(doc: Path) -> list[str]:
     """Every figure id `measurements.md` claims to carry, in order."""
     return MARKER_RE.findall(doc.read_text())
+
+
+#: How a section says it is *outside* the register. The symmetry with
+#: `MARKER_RE` is the point: a figure announces itself and so does a section
+#: that is not one, so "is this table one of ours" is read off the doc rather
+#: than off a prose sentence some paragraphs away (`measurements.md`, "The
+#: apparatus").
+OUTSIDE_RE = re.compile(r"<!--\s*outside-register:\s*([a-z0-9-]+)")
+
+#: An ATX heading. Matched per line rather than with `re.MULTILINE` over the
+#: whole text, because the doc's shell blocks contain comment lines that start
+#: with `#` and would otherwise cut a section in half.
+HEADING_RE = re.compile(r"^(#{1,6}) +\S")
+
+
+def headings(text: str) -> list[tuple[int, int]]:
+    """Every heading's offset and level, code fences excluded.
+
+    The fence skip is load-bearing: `measurements.md` publishes a `sh` block
+    whose first line is `# maps to EOF (the table never matches) and never
+    saves`, which reads as a level-1 heading and would end the section it is
+    printed inside."""
+    out: list[tuple[int, int]] = []
+    pos = 0
+    fenced = False
+    for line in text.splitlines(keepends=True):
+        if line.startswith("```"):
+            fenced = not fenced
+        elif not fenced:
+            match = HEADING_RE.match(line)
+            if match:
+                out.append((pos, len(match.group(1))))
+        pos += len(line)
+    return out
+
+
+def outside_register_sections(text: str) -> list[tuple[str, list[str]]]:
+    """Each section the doc declares outside the register, and the figure
+    markers found inside it — which must be none.
+
+    A section runs from its heading to the next heading at or above its own
+    level, so a declared section covers its own subheadings. A marker under no
+    heading at all takes the text above the first one, which is the preamble:
+    the sentence scoping the session stamp lives there, and it is not a
+    section anybody may declare."""
+    marks = headings(text)
+    found = []
+    for match in OUTSIDE_RE.finditer(text):
+        above = [(pos, level) for pos, level in marks if pos < match.start()]
+        if above:
+            start, level = above[-1]
+            below = [pos for pos, lvl in marks if pos > start and lvl <= level]
+        else:
+            start = 0
+            below = [pos for pos, _ in marks]
+        end = below[0] if below else len(text)
+        found.append((match.group(1), MARKER_RE.findall(text[start:end])))
+    return found
 
 
 #: The lead-in `share_readings` writes when a borrow could not be satisfied,
@@ -3630,11 +3717,18 @@ def session_stamp(head: str, dirty: bool, allocator: str | None = None) -> str:
     allocator a figure was taken under". It is read out of the binary rather
     than assumed, so the day the CLI's default changes the stamp changes with
     it; `None` where there is no binary to ask, which is `--dry-run` and the
-    unit tests."""
+    unit tests.
+
+    **It is scoped to the register, not to everything printed below it.** The
+    doc also carries sections this harness does not own, and the stamp's claim
+    was false over them for as long as it said "every figure below"; the scope
+    is what a section's `<!-- outside-register: <id> -->` marker declares it
+    out of, and `--check` holds the two in step."""
     suffix = " (with uncommitted changes under a measured path)" if dirty else ""
     alloc = f", under the `{allocator}` allocator" if allocator else ""
     return (
-        f"**Session stamp.** Every figure below was taken by `scripts/measure.py` on "
+        f"**Session stamp.** Every figure below — every section carrying a "
+        f"`<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on "
         f"{date.today().isoformat()}, against commit `{head}`{suffix}{alloc}."
     )
 
@@ -3859,9 +3953,10 @@ def cmd_list() -> None:
             print(f"  {'':<24}  invalidated by: {', '.join(fig.depends)}")
             print(f"  {'':<24}  take it: cd scripts && uv run measure.py --figure {fig.id}")
             print()
-    print("Not emitted here, deliberately:\n")
-    for name, why in NOT_OURS.items():
-        print(f"  {name}\n    {why}\n")
+    print("Not emitted here, deliberately (each declares itself in the doc "
+          "with `<!-- outside-register: <id> -->`):\n")
+    for outside in NOT_OURS.values():
+        print(f"  {outside.id:<24} {outside.section}\n  {'':<24}  {outside.why}\n")
 
 
 KOJI_DUMP = _env("PGDQ_KOJI_DUMP", "/mnt/wd12t/fedora/koji/koji-2026-07-23.dump")
@@ -4185,10 +4280,15 @@ def cmd_profile() -> int:
 
 def cmd_check(doc: Path) -> int:
     """Reconcile the register against the doc: which figures have landed a
-    marker, which markers name nothing, and which documents a fold-in must
-    re-read because they repeat a figure's numbers."""
+    marker, which markers name nothing, where the register's boundary runs, and
+    which documents a fold-in must re-read because they repeat a figure's
+    numbers."""
     text = doc.read_text()
     found = markers_in(doc)
+    outside = outside_register_sections(text)
+    undeclared = [o.id for o in NOT_OURS.values() if o.id not in {i for i, _ in outside}]
+    unknown_outside = sorted({i for i, _ in outside if i not in NOT_OURS})
+    both = [(i, figs) for i, figs in outside if figs]
     unknown = [m for m in found if m not in ALL_BY_ID]
     dangling = [
         f"{fig.id} borrows from {shared.source}"
@@ -4221,6 +4321,35 @@ def cmd_check(doc: Path) -> int:
         print("Borrows naming no figure — a rename that did not reach the register:")
         for line in dangling:
             print(f"  {line}")
+        print()
+    if outside:
+        print(
+            "Declared outside the register — sections whose readings this harness did not\n"
+            "take, and which the session stamp above therefore does not cover:"
+        )
+        for oid, _ in outside:
+            print(f"  {oid:<24} {NOT_OURS[oid].section if oid in NOT_OURS else '(unknown)'}")
+        print()
+    if undeclared:
+        print(
+            "Outside the register and saying so nowhere in the doc — add an\n"
+            "`<!-- outside-register: <id> -->` marker under the section's heading:"
+        )
+        for oid in undeclared:
+            print(f"  {oid:<24} {NOT_OURS[oid].section}")
+        print()
+    if unknown_outside:
+        print("Declarations naming no section the harness disowns — see `--list`:")
+        for oid in unknown_outside:
+            print(f"  {oid}")
+        print()
+    if both:
+        print(
+            "Declared outside the register and carrying a figure marker — a section is one\n"
+            "or the other, and the figure's apparatus line contradicts the declaration:"
+        )
+        for oid, figs in both:
+            print(f"  {oid} carries {', '.join(sorted(set(figs)))}")
         print()
     partial = partial_sittings(text)
     if partial:
@@ -4280,7 +4409,20 @@ def cmd_check(doc: Path) -> int:
         print(f"  {fig.id}")
         for q in fig.quoted_by:
             print(f"      {q}")
-    return 1 if (unknown or duplicated or dangling or unknown_ack or spent_ack) else 0
+    return (
+        1
+        if (
+            unknown
+            or duplicated
+            or dangling
+            or undeclared
+            or unknown_outside
+            or both
+            or unknown_ack
+            or spent_ack
+        )
+        else 0
+    )
 
 
 def acknowledgement_problems(
@@ -4515,8 +4657,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--check",
         action="store_true",
-        help="reconcile the register against measurements.md's figure markers, and name the "
-        "documents a moved figure invalidates",
+        help="reconcile the register against measurements.md's figure markers and its "
+        "outside-register declarations, and name the documents a moved figure invalidates",
     )
     parser.add_argument(
         "--verify-additive",
