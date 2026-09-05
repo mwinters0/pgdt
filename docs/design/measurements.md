@@ -937,16 +937,23 @@ something could have been *lost*, and this is what says a default chosen on the
 NVMe does not cost the other classes anything. The one exception is small and
 in the same direction as everywhere else: 16 MiB is 1.01×.
 
-**A deeper read is not a faster one, and that is what settles `fadvise`.** The
-16 MiB row is a 16 MiB synchronous read issued while the parser is idle —
-a far deeper prefetch than `POSIX_FADV_SEQUENTIAL`'s doubled window, and one
-the kernel is told about rather than has to infer. It is the **slowest** row
-cold on the NVMe by a clear margin — 1.42×, where the previous stamp read
-1.37× — and 8 MiB is slower than 1 MiB too. Cold time does not fall
-with request depth on any device here, so the kernel's own readahead has
-already taken what there was to take and a hint asking for more has nothing to
-win ([`architecture.md`](architecture.md), "Execution model and API surface",
-where both schemes are refused).
+**A deeper read is not a faster one, and that is what settles `fadvise`.** Every
+row below the default is a synchronous read issued while the parser is idle —
+a deeper prefetch than `POSIX_FADV_SEQUENTIAL`'s doubled window, and one the
+kernel is told about rather than has to infer. Cold on the NVMe, nothing above
+1 MiB beats it: 4 MiB reads 1.05×, 8 MiB 1.18×, 16 MiB 1.42×.
+
+**The first two carry the argument, and the third only adds margin.** 4 MiB and
+8 MiB run at or below the pool ceiling, so the pool change that made the 16 MiB
+row stale (below) cannot have moved them, while the 16 MiB row's whole cold
+penalty is the same order as its warm one and may be the `calloc` rather than
+the depth. Read without it, the table still says cold time does not *fall* with
+request depth on any device here — so the kernel's own readahead has already
+taken what there was to take, and a hint asking for more has nothing to win. A
+re-take that brought 16 MiB back to a tie with the default would move that row
+from "worse" to "no better", which refuses the lever the same way
+([`architecture.md`](architecture.md), "Execution model and API surface", where
+both schemes are refused).
 
 **16 MiB doubles the warm scan, and that was the read path's pool ceiling
 rather than the chunk size.** At the stamp above, `io::BufferPool` kept nothing

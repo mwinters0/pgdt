@@ -363,25 +363,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`hint_read_size` is a third method on `ByteRangeSource`, not a
-  `LocalFileSource` setter.** `M55` had to tell the buffer pool which read
-  length repeats, and the size is configured in `ScanOptions`, which only the
-  read loops see — so the announcement is a defaulted, advisory trait method
-  and every loop makes it. The alternative leaves the trait holding only the
-  methods [`../design/architecture.md`](../design/architecture.md), "Execution
-  model and API surface", says mirror `object_store`, and makes the CLI call a
-  setter when `--chunk-size` is given; it configures one thing in two places
-  and loses an embedder's pooling silently. **Decide:** whether the trait may carry an
-  advisory method at all. Reversing it means deleting the method, moving the
-  call to the three CLI construction sites, and accepting that a library
-  embedder who raises `chunk_size` gets no pooling.
-
-- **The `chunk-size` figure was left stale rather than re-taken alone.** The
-  entry that admitted `M55` expected landing it to re-take that one figure. The
-  change reddens sixteen, one whole sweep is what replaces them, and a partial
-  sitting of one table would put a second sitting into a doc whose current
-  property is that all seventeen came from one. So the 16 MiB row stands with a
-  note saying it was taken when a chunk that large missed the pool. **Decide:**
-  whether that row is worth a partial sitting before the next sweep. Reversing
-  it is `uv run measure.py --figure chunk-size`, folded in with the harness's
-  partial-sitting note.
+Nothing open.

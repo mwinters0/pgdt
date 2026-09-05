@@ -46,9 +46,12 @@ pub trait ByteRangeSource: Send + Sync {
 /// replay path retains chunks past the read that produced them
 /// (`crate::batch::SourceChunk`), so the buffer of chunk *N* can still be
 /// alive when chunk *N+1* is read. Four is that depth with room to spare, and
-/// it is what bounds the pool's contribution to RSS: four buffers of whatever
-/// read length the caller announced, which at the default chunk size is 4 MiB
-/// and at a raised one is four times that.
+/// it is what bounds the pool's contribution to RSS: four buffers of at most
+/// `max(POOL_MAX_BYTES, announced)` bytes each. In the steady state those are
+/// chunk buffers — 4 MiB at the default chunk size, four times a raised one —
+/// but a sub-ceiling one-off can hold a slot too ([`BufferPool::keeps`]), so
+/// an RSS claim is read against the bound rather than against the steady
+/// state.
 const POOL_SLOTS: usize = 4;
 
 /// The largest buffer worth keeping, in bytes, for a length nobody has
@@ -134,9 +137,17 @@ impl BufferPool {
     }
 
     /// Whether a released buffer is worth keeping: anything under the ceiling,
-    /// plus a buffer of exactly the announced read length. **Exactly**, not
-    /// "up to": a span read that happens to be smaller than a large chunk is
-    /// still the one-off allocation the ceiling exists to drop.
+    /// plus a buffer of exactly the announced read length.
+    ///
+    /// **The hint clause matches exactly, not "up to", and it only bites above
+    /// the ceiling.** Past [`POOL_MAX_BYTES`] the announced length is the only
+    /// thing kept, so a coalesced span read is dropped even when it is
+    /// *smaller* than a raised chunk size — which is the pair the hint exists
+    /// to tell apart. Below the ceiling nothing is told apart: a span read
+    /// under 8 MiB is pooled like any other buffer, exactly as it was before a
+    /// hint existed. That is a deliberate floor rather than an oversight —
+    /// [`POOL_SLOTS`] bounds what it can cost, and the ceiling has to keep
+    /// working for a source no caller ever announced to.
     fn keeps(&self, len: usize) -> bool {
         len <= POOL_MAX_BYTES || len == self.hinted.load(Ordering::Relaxed)
     }

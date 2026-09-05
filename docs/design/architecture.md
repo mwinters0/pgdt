@@ -134,7 +134,11 @@ bounded at both ends** — four slots, and nothing above 8 MiB kept unless a
 caller announced it as its read size — because `map::attach_text`'s coalesced
 span read can be far larger than a chunk and happens once per map, and holding
 one of those for the life of the process would trade the flat ~9 MiB RSS for an
-allocation nothing asks for twice.
+allocation nothing asks for twice. The bound that follows is
+`4 × max(8 MiB, announced)`, not four chunks: **below the ceiling a one-off is
+pooled like anything else**, since the ceiling is what has to keep working for a
+source no caller announced to, and the hint only separates the two above it. An
+RSS claim is read against that bound rather than against the steady state.
 
 **One-off-ness is a property of the caller, so the caller says it.**
 `ByteRangeSource::hint_read_size` is a third, advisory method — defaulted to
@@ -155,6 +159,19 @@ who sets only the one the library reads. *Also rejected:* inferring the chunk
 size inside the pool from the lengths it is asked for — a rule keyed on a length
 repeating turns a second map of the same file into a retained span buffer,
 which is the failure the ceiling exists to prevent, reintroduced as a heuristic.
+
+*Rejected:* **keeping the trait to the `object_store` mirror and refusing an
+advisory method outright.** The mirror is a compatibility argument about the
+three *required* methods — the ones a ranged backend must implement for the
+addition to be additive — and a defaulted method is outside it by construction:
+an `object_store`-backed impl need not know it exists, and inherits the
+do-nothing body that leaves it exactly where it would be without the method.
+What the refusal would buy is a trait whose surface is describable in one
+sentence; what it costs is that the only remaining home for the announcement is
+one implementation's inherent API, which is the setter rejected above. It is
+also the reversible direction: pre-1.0 there is nothing to migrate, so deleting
+the method later is a mechanical change, where discovering that a remote backend
+wanted the caller's read length and having nowhere to put it is not.
 
 *Rejected:* changing `read_range` to read into a caller-owned buffer. It
 departs from `get_range` exactly where the trait exists to mirror it, and
