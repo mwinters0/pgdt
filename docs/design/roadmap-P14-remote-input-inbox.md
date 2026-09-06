@@ -282,3 +282,29 @@ feedback to another crate.
 
 **Origin.** 2026-09-06, `xz-seek` `P3.3` grilling, cross-session exchange with
 the `xz-seek-1d` session.
+
+---
+
+## `ByteRangeSource` now advises its own partitioning, and a remote source has to answer
+
+**Fact.** P16 adds a defaulted `ByteRangeSource` method by which a source says
+how it would like a range split and what each partition costs resident.
+`LocalFileSource` answers "anywhere, one buffer each"; `XzSource` answers "at
+these block boundaries, 32 MiB each". The scheduler above asks the source and
+never learns what is underneath, which is what keeps the fused decode-and-parse
+worker inside [`layering.md`](layering.md)'s rules rather than putting decode
+scheduling in L4.
+
+**Why this phase cares.** A remote source's natural partitioning is a
+ranged-GET size, and it is the one answer that is a property of the *network*
+rather than of the file — so this is a second place, beside the readahead and
+chunk-size defaults this phase already owes, where a measured local default
+says nothing about a high-latency backend. It also composes with the
+compressed source in the way this phase already has to think about: an
+`XzSource` over a remote store partitions at xz block boundaries and then pays
+a ranged GET per partition, so the two answers multiply rather than one
+overriding the other.
+
+**Origin.** P16's grilling, 2026-09-06
+([`roadmap-P16-parallel-scan.md`](roadmap-P16-parallel-scan.md), "The source
+advises its own partitioning, and L4 never learns what it is").

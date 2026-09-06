@@ -406,3 +406,40 @@ the expectation being that the library numbers are the more stable of the two
 and the ones this phase's audience actually needs.
 Contingent on the CLI's output path: a cheaper `print_batch` moves the
 proportion without moving what the library costs.
+
+---
+
+## The partitioned scan surface exists, and it was shaped against `TableProvider::scan`
+
+**Fact.** P16 splits `TableStream` into N sub-streams over a complete map, each
+internally in file order, and the library hands those out rather than merging
+them — `pgdq query` does its own k-way merge on source offset when a human
+wants file order. Running the partitions sequentially *is* the serial path, so
+the parallelism knob's "off" setting is not a second implementation. The
+library defaults to `Parallelism::Serial` and adds no `rt-multi-thread`
+feature: workers go through `tokio::task::spawn_blocking`, so the embedder's
+runtime flavour stays the embedder's choice and the caller's runtime governs
+how much parallelism exists.
+
+**Why this phase cares.** This is the shape a `TableProvider` consumes
+directly, and it was chosen on the argument that an engine partitions by
+construction — so the question this phase inherits is no longer "how do we
+parallelize for DataFusion" but "does DataFusion's partition model actually
+line up with `COPY`-block-derived partitions, and what does it want when the
+answer is one partition". Two known mismatches to check against real
+DataFusion rather than against the sketch: the partition count is decided by
+the *file* (block extents, and below them the compressed source's blocks) where
+an engine usually asks for a count it chose; and a partition's row count is
+unknown until it is read, so nothing here can answer a statistics call at plan
+time until P10 lands.
+
+**Why the ordering still holds.** This phase's reason for going last is that it
+presents surfaces over mechanisms that are still moving. P16 has now settled
+the one beneath it — the byte source's shape, its partitioning advisory, and
+what a parallel read promises in bytes — which is one fewer moving part rather
+than a reason to bring this phase forward.
+
+**Origin.** P16's grilling, 2026-09-06
+([`roadmap-P16-parallel-scan.md`](roadmap-P16-parallel-scan.md), "The library
+hands out partitions; the CLI merges them" and "Workers come from
+`spawn_blocking`").

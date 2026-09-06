@@ -103,3 +103,52 @@ gets made; the other inherits it.
 2026-09-06. **Contingent on** the crate still being unpublished — check
 `pgdump_query/Cargo.toml` for a path dependency versus a version before assuming
 the gate is still open.
+
+---
+
+## The sparse row index is this phase's outright, and no other phase will settle its interval
+
+**Fact.** P16's grilling refused the sparse row index. That phase was expected
+to build it — the roadmap said whichever of P16 and P10 ran first would settle
+the checkpoint interval and the other would inherit it — and the reason
+evaporated when the split unit changed: a worker is handed the interior of a
+`COPY` block a serial leader has already proved open, and splitting that
+interior at LF boundaries costs one row's resync, which `memchr` already gives.
+Known row boundaries buy a splitter nothing. `CopyBlock::sparse_index` is still
+a reserved `None`, so nothing has been built and nothing is a cache-format
+break.
+
+**Why this phase cares.** The interval is now a free choice against *this*
+phase's needs alone, with no second consumer to reconcile against and no
+inherited decision to work around. The sizing argument in the roadmap section
+stands unchanged and is the one that binds: at 8192-row groups koji's 19.58B
+rows give ~2.4M row groups and on the order of half a gigabyte of statistics,
+which is why the statistics interval must be tunable *independently* of the
+index interval rather than pinned to it.
+
+**Origin.** P16's grilling, 2026-09-06
+([`roadmap-P16-parallel-scan.md`](roadmap-P16-parallel-scan.md), "The sparse
+row index and `KD5` both leave this phase"). Contingent on P16's leader
+arrangement surviving its own slices — if the split unit changes back to a
+speculative one, the index becomes a shared concern again.
+
+---
+
+## `KD5` is unowned again, and it is a whole-list clone this phase's cache writes over
+
+**Fact.** `KD5` — `stream::splice` rebuilding the whole span list per splice,
+19.1 s for 4000 blocks under `--dqcache none` — was `(b) owned by P16` on the
+expectation that a parallel splitter would rework `splice` anyway. P16's leader
+keeps coverage prefix-shaped, so `splice` runs once per `CopyEnd` exactly as it
+does today, and the entry has dropped to `(c) unowned`.
+
+**Why this phase cares.** This phase writes per-row-group statistics into the
+same cache record, so it is the next phase with a reason to touch how a
+`DumpIndex` is assembled and persisted, and it is the one that would notice the
+clone's cost multiplied by a much larger payload. Absorbing `KD5` is optional —
+`(c) unowned` is a legitimate resting state — but if this phase reworks that
+record for statistics, closing it in the same change is close to free, and the
+entry should be re-read at that moment rather than after.
+
+**Origin.** P16's grilling, 2026-09-06
+([`../status/STATUS.md`](../status/STATUS.md), "Known deficiencies", `KD5`).

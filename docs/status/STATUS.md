@@ -146,7 +146,7 @@ edit does not re-stale the stamp it was just given.
 | Remote input (`--source https://…`), over `object_store` | not started — P14, carved out of P6. `ByteRangeSource` is already shaped against `get_range`/`head`, and there is exactly one implementation: `LocalFileSource` |
 | Python bindings, DataFusion `TableProvider` | not started — P6 |
 | Device-bound scan performance campaign | **complete** — P7, single-threaded throughout and aimed at the row-extraction path; parallelism is P16. Twelve library changes on timed paths, four measured refusals, and the decomposition that is its durable half ([`../design/architecture.md`](../design/architecture.md), "Where a scan's time goes"). Warm on the 3.00 GiB control a typed `pgdq query` is 15.0× the `dd` floor where it was 31×, a `strings` one 10.9× where it was 13.3×, and a `parse` 1.43×; cold on the SATA SSD every scan shape is inside the device, and cold on NVMe the `COPY` path is 1.06× it. What it refused, and why, is beside each mechanism as a rejected alternative |
-| Per-row-group column statistics, sparse row index | not started — the index is built by whichever of P16 (parallel splits) or P10 (row groups) runs first; `CopyBlock::sparse_index` and `CopyBlock::column_stats` stay reserved `None`s |
+| Per-row-group column statistics, sparse row index | not started — **both are P10's**, the index included: P16's grilling found that splitting an open `COPY` block's interior at LF boundaries costs one row's resync, so known row boundaries buy it nothing `memchr` does not already give, and P10 owns the index and its interval outright. `CopyBlock::sparse_index` and `CopyBlock::column_stats` stay reserved `None`s |
 | `--inserts` row reading; custom/directory/tar archive formats | not started — P8 (the map already locates and attributes `INSERT` runs) |
 
 **Profiles are not figures.** `cd scripts && uv run measure.py
@@ -236,16 +236,51 @@ goes").
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **No phase is open**, and none carries centering. The cache-replacement work
-  wrapped and was struck at a keystone review, as the compressed-input and
-  scan-performance work were before it. What each built and what each refused is
-  beside its mechanism in
-  [`../design/architecture.md`](../design/architecture.md), filed
-  by subject. Seven phases are sketched — P16, P10, P14, P6, P15, P18, P8, in the
-  roadmap table's schedule order; a `P<k>` is an identifier, so the numbers say
-  nothing about the order they run in. Each gets its own full
-  grilling when it becomes current, and every one that carries an inbox must
-  have it drained as part of that grilling.
+- **P16 is open**, specified and sliced; its checklist is below. Six phases
+  remain sketched — P10, P14, P6, P15, P18, P8, in the roadmap table's schedule
+  order; a `P<k>` is an identifier, so the numbers say nothing about the order
+  they run in. Each gets its own full grilling when it becomes current, and
+  every one that carries an inbox must have it drained as part of that
+  grilling.
+
+## P16 progress
+
+**The order after 16.1–16.2 is allocation order, not a schedule** — this
+phase's opening slices produce the evidence that decides what the later ones
+are worth, and the orderings that do bind are named in
+[`../design/roadmap-P16-parallel-scan.md`](../design/roadmap-P16-parallel-scan.md),
+"Slices".
+
+- [ ] **16.1** `xz-decode-scaling` — the 446 MB/s decode probe becomes a
+      registered figure, at 1/2/4/8/12/16/24 workers. No library code.
+- [ ] **16.2** `KD14`'s attribution, and `peak-rss` re-taken at HEAD — two
+      readings separating the span list from the whole-list clone from the
+      allocator. No library code.
+- [ ] **16.3** `layering.md`'s L3 deviation closed — the `Bytes` →
+      `arrow::Buffer` conversion and the chunk-retention deque move from
+      `stream.rs` into `batch.rs`, behaviour-preserving.
+- [ ] **16.4** The block pool — `io::BufferPool` to budget-sized, block-capable
+      slots with backpressure; `max_source_span` re-derived against
+      block-shaped pinning.
+- [ ] **16.5** `XzSource` internally concurrent — per-call block decode over a
+      shared `SeekTable`, replacing the single `Reader` behind a mutex.
+- [ ] **16.6** `ByteRangeSource::partitions` — the defaulted advisory and both
+      implementations. No consumer yet.
+- [ ] **16.7** The `Parallelism` surface — the library enum defaulting to
+      `Serial`, and the CLI's `--jobs` / `--parallel-memory`, with the manual
+      page.
+- [ ] **16.8** Partitioned replay — `TableStream` splits into N sub-streams
+      over a complete map, plain and compressed.
+- [ ] **16.9** The CLI's k-way merge on source offset, one batch per partition.
+- [ ] **16.10** The leader — opens a `COPY` region, hands its LF-split interior
+      to fused workers, merges at `CopyEnd`.
+- [ ] **16.11** Error ordering — the lowest-offset error is the one raised.
+- [ ] **16.12** The determinism test — `--jobs 1` and `--jobs 8` byte-identical
+      over every fixture.
+- [ ] **16.13** `parallel-scan-throughput` and `parallel-peak-rss`, each with
+      an apparatus gate of its own.
+- [ ] **16.14** koji verification — one detached `--jobs` parse of the `.xz`,
+      cache byte-identical to the serial 784 GB scan. Outside the register.
 
 ## Known deficiencies
 
@@ -326,10 +361,13 @@ here rather than reading as a phase nobody has sliced.
 - **KD5** — a map rebuild is still a whole-list clone, so mapping is
   O(blocks²) wherever the save throttle's gate does not close it — which is
   every `--dqcache none` scan, since a no-op save leaves nothing to amortize:
-  19.1 s for 4000 blocks. **(b) owned by P16**, which reworks `splice` for a
-  parallel splitter anyway and is where the appendable-spans fix belongs.
-  Detail: [`../design/architecture.md`](../design/architecture.md), "`parse`
-  resumes, and saves as it goes".
+  19.1 s for 4000 blocks. **(c) unowned**; promoted by a dump with thousands of
+  blocks scanned under `--dqcache none`. P16 was its destination while a
+  parallel splitter was expected to rework `splice` anyway; that phase's leader
+  arrangement keeps coverage prefix-shaped, so `splice` runs once per `CopyEnd`
+  exactly as it does today and nothing there forces the fix. Detail:
+  [`../design/architecture.md`](../design/architecture.md), "`parse` resumes,
+  and saves as it goes".
 
 - **KD6** — a conflicting table past a query's stopping point is never seen, so
   `Error::AmbiguousTable` is not raised for it and the query returns the
@@ -383,8 +421,11 @@ here rather than reading as a phase nobody has sliced.
 
 - **KD14** — peak resident set is flat in dump bytes but grows ~9.9 KB per
   `COPY` block, so a 4,000-block `parse` holds **43.6 MiB** against a one-block
-  one's 5.9 MiB, and what accumulates is not attributed. **(c) unowned**;
-  promoted by a dump with tens of thousands of blocks, which nothing in hand is
+  one's 5.9 MiB, and what accumulates is not attributed. **(c) unowned** — the
+  growth itself has no owner; **P16's 16.2 closes the attribution clause
+  only**, being a phase whose central promise is a memory bound and which
+  therefore has to know what a scan already holds before multiplying it by N.
+  Promoted by a dump with tens of thousands of blocks, which nothing in hand is
   — koji has 74. Detail:
   [`../design/architecture.md`](../design/architecture.md), "`parse` resumes,
   and saves as it goes".

@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P5, P7, P9, P11–P13, P17 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
-| P16 — parallel scan and extraction | Sketched; not grilled | this file, below; [inbox](roadmap-P16-parallel-scan-inbox.md) — carved out of the scan-performance work |
+| P16 — parallel scan and extraction | **Current** | [`roadmap-P16-parallel-scan.md`](roadmap-P16-parallel-scan.md); checklist in [`../status/STATUS.md`](../status/STATUS.md) |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
@@ -336,29 +336,20 @@ item; see below.
 
 ## P16 — Parallel scan and extraction
 
+**Specified and in flight: [`roadmap-P16-parallel-scan.md`](roadmap-P16-parallel-scan.md).**
 Carved out of the scan-performance work, which stayed single-threaded
-throughout. Everything parallel lives here: splitting a block's byte range
-across workers and reassembling batches in range order, the speculative
-scheme for discovering structure without a cold-start guess, and worker counts set by device class rather than by core count.
+throughout.
 
-Two things make it a phase of its own rather than a last slice of that work.
-Its blast radius is three already-tested mechanisms — `stream::splice`'s
-assumption that coverage is a contiguous prefix, the array-shape census's
-per-block accumulation and finalization at `CopyEnd`, and the interrupt guard's promise
-to bank the last *completed block* — and reworking those cannot share a review
-cycle with self-contained per-byte work. And it has two source shapes to serve,
-not one: a plain byte range resynced to the next LF, and a compressed block
-whose boundaries the `.xz` seek table hands over for free, CPU-bound at ~450 MB/s a
-core where the plain path is device-bound at ~240 on the same HDD.
-
-**It also builds the sparse row index** — the byte offset of every Nth row,
-~19 MB for koji against ~157 GB for a dense one — because this is the first
-phase that reads one: it turns a speculative split into a real one, at known
-row boundaries with no resync scan. What exists today is the reserved
-`CopyBlock::sparse_index` field and nothing else. P10 needs the same
-structure, and needs its checkpoint interval to coincide with the row group its
-statistics attach to, so whichever of the two runs first builds it and the
-other inherits the interval as a decision already made.
+Its grilling narrowed it sharply, and two of the results reach beyond the
+phase. **What it parallelizes is what is CPU-bound** — decode always,
+extraction always (plain input included), and discovery only where a decoder
+sits in front of it — so **parallel plain-file discovery is refused rather than
+deferred**, on the cold-NVMe reading that a whole-file `parse` there is 1.06×
+the `dd` floor and the entire prize is 0.076 s of a 1.314 s scan. That refusal
+takes the speculative-split scheme with it. And **the sparse row index is not
+built here**: splitting an open `COPY` block's interior at LF boundaries costs
+one row's resync, so P10 owns the index and its interval outright rather than
+inheriting them from whichever phase ran first.
 
 ## P10 — Per-row-group column statistics
 
@@ -375,17 +366,17 @@ where it sits in the table above:
   one — see "The correctness asymmetry" below — so it cannot share a review
   cycle with a self-contained query-API change (`../process.md`, "Size a slice
   by its review, not by its scope").
-- **It needs an addressing scheme it does not own alone.** Statistics attach to
-  row groups, the row group is the sparse row index's checkpoint interval, and
-  `CopyBlock::sparse_index` is a reserved `None` that P16 fills for the sake of
-  parallel splits. Whichever of the two runs first builds the index and settles
-  the interval; the other inherits it. Running this phase first means building
-  it here, against statistics' needs, and P16 inheriting it — not inventing a
-  second addressing scheme. It is not only an addressing question: this phase's best outcome —
-  sortedness plus the sparse index turning a range predicate into a binary
-  search for a byte range, below — is *unreachable* without that index, so
-  running it first would deliver row-group pruning and leave the payoff that
-  motivated the phase on the table.
+- **It owns the addressing scheme outright, and it is the only consumer left.**
+  Statistics attach to row groups, the row group is the sparse row index's
+  checkpoint interval, and `CopyBlock::sparse_index` is a reserved `None`. That
+  field was expected to be filled by P16 for the sake of parallel splits, and
+  that phase's grilling found it does not need one — an open `COPY` block's
+  interior splits at LF boundaries for a single row's resync, which is what
+  `memchr` already gives. So the interval is settled here, against statistics'
+  needs, with no second phase to reconcile against. It is not only an
+  addressing question: this phase's best outcome — sortedness plus the sparse
+  index turning a range predicate into a binary search for a byte range, below
+  — is *unreachable* without that index.
 
 Reasoning for the split:
 [`../status/history/2026-08-29.md`](../status/history/2026-08-29.md), "Statistics
