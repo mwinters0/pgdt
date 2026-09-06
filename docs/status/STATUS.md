@@ -8,11 +8,11 @@ discoveries are in `history/`.
 
 ## What exists
 
-P1–P5, P7, P9 and P11–P13 are complete and were struck at keystone reviews; how
-each mechanism works is [`../design/architecture.md`](../design/architecture.md),
-filed by subject, which is where a session touching one meets its rejected
-alternatives and its limitations. The capability table below says what state
-each is in.
+P1–P5, P7, P9, P11–P13 and P17 are complete and were struck at keystone
+reviews; how each mechanism works is
+[`../design/architecture.md`](../design/architecture.md), filed by subject,
+which is where a session touching one meets its rejected alternatives and its
+limitations. The capability table below says what state each is in.
 
 [`../design/measurements.md`](../design/measurements.md) carries the `af15eac`
 stamp of 2026-09-05, and **seventeen of its eighteen tables come from one
@@ -230,12 +230,11 @@ goes").
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **No phase is open.** The cache-replacement work wrapped, as the
-  compressed-input and scan-performance work did before it; the first two were
-  struck at keystone reviews and the third's spec and
-  [notes](../design/roadmap-P17-cache-replacement-notes.md) stand until the
-  next one. What each built and what each refused is beside its
-  mechanism in [`../design/architecture.md`](../design/architecture.md), filed
+- **No phase is open**, and none carries centering. The cache-replacement work
+  wrapped and was struck at a keystone review, as the compressed-input and
+  scan-performance work were before it. What each built and what each refused is
+  beside its mechanism in
+  [`../design/architecture.md`](../design/architecture.md), filed
   by subject. Six phases are sketched — P16, P10, P14, P6, P15, P8, in the
   roadmap table's schedule order; a `P<k>` is an identifier, so the numbers say
   nothing about the order they run in. Each gets its own full

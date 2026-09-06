@@ -94,8 +94,9 @@ assumptions above, which are on the warm path and must not be inherited
 unnoticed.
 
 **Origin.** 2026-09-02, grilling the compressed-input work; the half-built state
-found by its wrap audit and closed by `M61`, 2026-09-06
-([`../status/history/2026-09-06.md`](../status/history/2026-09-06.md)).
+found by its wrap audit and closed on 2026-09-06 by the seek-table readback
+([`../status/history/2026-09-06.md`](../status/history/2026-09-06.md), "The seek
+table is read back, and a claim the file contradicts condemns the cache").
 
 ---
 

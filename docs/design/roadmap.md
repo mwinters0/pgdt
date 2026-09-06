@@ -15,8 +15,7 @@ reused, including a struck phase's.
 
 | Phase | State | Where it is |
 |---|---|---|
-| P1–P5, P7, P9, P11–P13 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
-| P17 — cache replacement | **Complete** | [`architecture.md`](architecture.md), "The cache" and "The CLI's two refusals are worded as one"; the [spec](roadmap-P17-cache-replacement.md) and its [notes](roadmap-P17-cache-replacement-notes.md) stand until a keystone strikes them |
+| P1–P5, P7, P9, P11–P13, P17 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
 | P16 — parallel scan and extraction | Sketched; not grilled | this file, below; [inbox](roadmap-P16-parallel-scan-inbox.md) — carved out of the scan-performance work |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
@@ -696,10 +695,11 @@ until a keystone, which strikes it along with the phase docs and leaves a
 watermark saying which numbers are spent (`../process.md`, "The out-of-band
 ledger is struck too").
 
-**M1–M58 are struck**, and nothing at or below `M58` is reused. That is a
-high-water mark rather than a claim that every one of them landed: some were
-absorbed into a neighbour or folded into a phase slice, and their numbers are
-spent all the same. What each struck item did is filed by subject —
+**M1–M58 and `M61` are struck**, and nothing at or below `M62` is reused. That
+is a high-water mark rather than a claim that every number below it landed: some
+were absorbed into a neighbour or folded into a phase slice, some are still
+queued in the table below, and their numbers are spent all the same. What each
+struck item did is filed by subject —
 [`architecture.md`](architecture.md) for a mechanism,
 [`measurements.md`](measurements.md) for an apparatus change,
 [`layering.md`](layering.md), [`../process.md`](../process.md) and
@@ -715,7 +715,6 @@ The next item admitted takes `M63` and joins them.
 |---|---|---|---|---|
 | `M59` | | The census-off binary's stamp is checked as an ancestor of HEAD with no path the selected census figures declare changed in between, rather than as equal to HEAD — a non-ancestor stamp still refused, and the refusal reusing the prefix predicate `--stale` already argues staleness from rather than a second authority over what moves a reading | | [2026-09-05](../status/history/2026-09-05.md), "The census stamp tolerates a commit that moves nothing it measures" |
 | `M60` | | A figure taken outside the sweep carries its sitting commit inside its own `<!-- figure: … -->` marker, and every reader of the session stamp — `--stale`, acknowledgement spentness, `--verify-additive` — argues from that figure's commit instead; `--check` fails a sitting that borrows or is derived from, or that does not descend from the stamp, `--figure` refuses such a selection, the stamp's accounting sentence is generated rather than hand-written, and `measurements.md` gains the standing rule the whole thing enforces | | [2026-09-05](../status/history/2026-09-05.md), "A figure may be published outside a sweep, and its sitting becomes data" |
-| `M61` | 2026-09-06 | An `.xz` source is built from the seek table a matching cache already holds instead of re-walking the file's stream footers, which closes `KD15` — recognition is the layer that decides which source to build, so it is handed the table itself rather than a cache, and `open_local`'s signature is what that wiring moves | | [2026-09-06](../status/history/2026-09-06.md), "The seek table is read back, and a claim the file contradicts condemns the cache" |
 | `M62` | | A cache recording another file's stored size is refused before the source is opened, so an `.xz` mismatch stops paying a stream-footer walk to reach a refusal the cache path alone already settles — the question it opens is where that is answered, `known_compression` collapsing every unusable outcome to `KnownCompression::Unknown` by design | | [2026-09-06](../status/history/2026-09-06.md), "The size-mismatch refusal still walks an `.xz` file's footers first" |
 
 **One obligation outlived them and is most of the way discharged.** An

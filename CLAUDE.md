@@ -255,6 +255,17 @@ where this one has an mtime. `CompressionIndex` is a sibling of `ContainerKind`,
 not a value of it, and the tag stays `Plain` because a compressed source's span
 offsets genuinely are plain-format offsets.
 
+**The library never replaces cache data automatically, and that is a guarantee
+rather than a default** — read `architecture.md`, "The cache" before adding a
+scan entry point, changing how one handles an unusable cache, or writing
+anything that deletes or overwrites a file at a cache path. A cache recording
+another file's stored size is refused with `Error::CacheSourceMismatch` before a
+byte of the dump is read; the other unusable statuses start cold, because nothing
+at that path is worth keeping. The two things that look like the obvious fix are
+both refused there with reasons — an override flag, and the guard moved inside
+`cache::save` — and a startup deletion that once did this job is what the rule
+replaced.
+
 `docs/design/roadmap-P<N>-<slug>-inbox.md` holds facts an *earlier* phase found
 that phase N will need — filed by destination, because a notes doc filed by
 origin never gets read at the right moment. Two triggers, and the second is the

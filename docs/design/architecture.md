@@ -5558,7 +5558,10 @@ to correspond to and is the reason `CacheLoad` is its own type rather than
 the two usable outcomes every one of these callers treats as one. The three
 scan entry points — `map_file`, `table_stream`, `preamble_only` — spell all five
 out rather than wildcarding them, so a reason added later has to be answered at
-each rather than falling through. *Rejected:* keeping `Option<DumpIndex>` and
+each rather than falling through. Enumerating them is also what made the refusal
+itself a compiler-checked edit: one arm at each of three exhaustive matches, with
+"is there a scan entry point we missed" answered by the compiler rather than by a
+search. *Rejected:* keeping `Option<DumpIndex>` and
 adding a second, reporting method beside it — the collapsing one stays the
 shorter call, which is how the reason came to be out of reach of the scan entry
 points in the first place. *Rejected:* an accessor collapsing the reasons back
