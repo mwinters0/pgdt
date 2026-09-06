@@ -4218,7 +4218,7 @@ def declared_hits(fig: Figure, changed: Iterable[str]) -> list[str]:
     commit moved nothing the figures being taken measure. Writing the second
     separately would make it a second authority over what can move a reading,
     which is exactly the objection that kept the stamp rule at exact equality
-    until `M59`."""
+    until the ancestor threshold replaced it."""
     return sorted({c for c in changed for d in fig.depends if c == d or c.startswith(d)})
 
 

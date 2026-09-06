@@ -663,7 +663,7 @@ Small work that belongs to no phase: a CLI ergonomics change, a defect fix
 that changes no decision. It gets a number `M<k>` and **one terse ledger line**
 — date, what changed, whether it blocks the open phase, and the history entry
 that says why — in a table below
-the watermark, started again the first time an item lands after a keystone.
+the watermark, started again by the first item admitted after a keystone.
 Nothing else: no spec (there was no intent doc to write), and no notes doc,
 because the history entry *is* the notes. If out-of-band work turns up a fact
 an unspecified phase needs, that fact goes in that phase's inbox, as always.
@@ -695,29 +695,20 @@ until a keystone, which strikes it along with the phase docs and leaves a
 watermark saying which numbers are spent (`../process.md`, "The out-of-band
 ledger is struck too").
 
-**M1–M58 and `M61` are struck**, and nothing at or below `M62` is reused. That
-is a high-water mark rather than a claim that every number below it landed: some
-were absorbed into a neighbour or folded into a phase slice, some are still
-queued in the table below, and their numbers are spent all the same. What each
-struck item did is filed by subject —
+**M1–M63 are struck**, and nothing at or below `M63` is reused. That is a
+high-water mark rather than a claim that every one of them landed: some were
+absorbed into a neighbour or folded into a phase slice, and their numbers are
+spent all the same. What each struck item did is filed by subject —
 [`architecture.md`](architecture.md) for a mechanism,
 [`measurements.md`](measurements.md) for an apparatus change,
 [`layering.md`](layering.md), [`../process.md`](../process.md) and
 [`.claude/skills/`](../../.claude/skills/) for a rule — and why it was done is
 in the dated history entry it was filed under.
 
-**The table below holds the queue, plus whatever has landed since the
-keystone.** A landed item's row is provenance and goes with the rest of the
-centering at the next one; a row whose Date is still empty is a live
-obligation, so it stays and keeps its number. The next item admitted takes
-`M64` and joins them.
-
-| Item | Date | What changed | Blocks | Why |
-|---|---|---|---|---|
-| `M59` | 2026-09-06 | The census-off binary's stamp is checked as an ancestor of HEAD with no path the selected census figures declare changed in between, rather than as equal to HEAD — a non-ancestor stamp still refused, and the refusal reusing the prefix predicate `--stale` already argues staleness from rather than a second authority over what moves a reading | | [2026-09-06](../status/history/2026-09-06.md), "`M59`: the census stamp is an ancestor, not an equal" |
-| `M60` | 2026-09-06 | A figure taken outside the sweep carries its sitting commit inside its own `<!-- figure: … -->` marker, and every reader of the session stamp — `--stale`, acknowledgement spentness, `--verify-additive` — argues from that figure's commit instead; `--check` fails a sitting that borrows or is derived from, or that does not descend from the stamp, `--figure` refuses such a selection, the stamp's accounting sentence is generated rather than hand-written, and `measurements.md` gains the standing rule the whole thing enforces | | [2026-09-06](../status/history/2026-09-06.md), "`M60`: a figure's sitting is data, and every reader of the stamp argues from it" |
-| `M62` | 2026-09-06 | A cache recording another file's stored size is refused before the source is opened, so an `.xz` mismatch no longer pays a stream-footer walk to reach a refusal the cache path alone already settles: `cache::known_compression` became `cache::claim`, whose second outcome is that mismatch, while every other unusable outcome stays collapsed to `KnownCompression::Unknown`; the CLI narrows it so all three commands keep the sentences they had, and the library keeps its own refusal | | [2026-09-06](../status/history/2026-09-06.md), "`M62`: the cache path settles the size mismatch before anything is opened" |
-| `M63` | 2026-09-06 | `--alone` marks its run unpublishable, joining `--reps` and the size override, so `M60`'s publication refusal stops firing for it by construction rather than by an exemption clause and its tables carry the `NOT PUBLISHABLE` banner — the flag changes no figure that may publish outside a sweep, so what it names is a diagnostic sitting | | [2026-09-06](../status/history/2026-09-06.md), "`--alone` is a diagnostic switch, not an override" |
+**There is no table below**, and nothing is queued: it is written again by the
+first item admitted after this keystone, which takes `M64` — a row whose Date is
+still empty as readily as one that has landed, since a number is allocated on
+admission.
 
 **One obligation outlived them and is most of the way discharged.** An
 `INSERT`-run scan cost **mid-teens times** a `COPY` scan per byte, CPU-bound,

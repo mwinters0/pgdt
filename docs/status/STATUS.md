@@ -102,10 +102,10 @@ and a partial sitting would spend.
 with the rest. It was a **false positive** until the compressed-input work: taken
 at `7ee5db5`, later than every commit that had then touched the paths it
 declares, and red only because the harness read one commit for the whole
-document rather than each figure's own sitting. `M60` fixed that — the sitting
-is in the marker and `--stale` ranges the figure from it — and what is left is
-genuine: `io.rs`, `cache.rs`, `map.rs`, `scan.rs` and `stream.rs` all moved
-between `7ee5db5` and `HEAD`, and those are executable changes.
+document rather than each figure's own sitting. That is fixed — the sitting is
+in the figure's own marker and `--stale` ranges it from there — and what is
+left is genuine: `io.rs`, `cache.rs`, `map.rs`, `scan.rs` and `stream.rs` all
+moved between `7ee5db5` and `HEAD`, and those are executable changes.
 
 The two acknowledgements the register carries still stand and still hold for
 what they name. `measure.ACKNOWLEDGED` records P7's wrap and keystone, whose

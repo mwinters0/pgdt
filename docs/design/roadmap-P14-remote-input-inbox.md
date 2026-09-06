@@ -53,9 +53,10 @@ this phase's: generalise the payload to something an ETag can fill, or give the
 remote identity its own refusal beside this one. Deciding it late means deciding
 it inside a message a user reads.
 
-Related and already owned elsewhere: an `.xz` size mismatch pays its footer walk
-*before* the refusal (`M62`), and over ranged GETs that walk is 31,150 round
-trips on the motivating file — the next entry is where that cost is stated.
+Related and already owned elsewhere: this refusal is settled on the cache path
+before any source is opened, so an `.xz` size mismatch pays no footer walk to
+reach it — and over ranged GETs the walk it spares is 31,150 round trips on the
+motivating file, which the next entry states.
 
 **Origin.** 2026-09-06, wrapping the cache-replacement work
 ([`../status/history/2026-09-06.md`](../status/history/2026-09-06.md), "P17 is
