@@ -22,6 +22,13 @@ pub enum Error {
     ColumnCountMismatch { header_offset: u64, row_offset: u64, expected: usize, found: usize },
     #[error("arrow error: {0}")]
     Arrow(#[from] arrow::error::ArrowError),
+    /// From `xz_seek`: a walk, a seek, or a block decode failed against an
+    /// `.xz`-compressed [`crate::XzSource`]
+    /// (`docs/design/roadmap-P13-compressed-input.md`). The crate's own
+    /// `Error::compressed_offset`/`uncompressed_range` carry the position;
+    /// this variant only wraps and displays it.
+    #[error("xz error: {0}")]
+    Xz(#[from] xz_seek::Error),
     #[error("failed to encode structure cache: {0}")]
     CacheEncode(#[from] bincode::error::EncodeError),
     #[error("cache is disabled (`--dqcache none`), but `{operation}` requires a cache file")]

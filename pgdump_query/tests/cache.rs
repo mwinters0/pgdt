@@ -4,12 +4,13 @@
 //! ("Cache: the dump file's identity is checked, not assumed") adds on top.
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use pgdump_query::cache::{CacheMode, CacheStatus};
 use pgdump_query::map::SpanBody;
 use pgdump_query::{
-    ByteRangeSource, Error, LocalFileSource, ScanOptions, build_index, cache, check_tiling,
-    preamble_only,
+    ByteRangeSource, Error, LocalFileSource, ScanOptions, XzSource, build_index, cache,
+    check_tiling, preamble_only,
 };
 
 mod common;
@@ -460,4 +461,58 @@ async fn load_offline_missing_file_is_missing() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("nonexistent.dqcache");
     assert_eq!(CacheMode::Offline(path).load_offline().await.unwrap(), CacheStatus::Missing);
+}
+
+/// Compress `path` with `xz`, forcing several blocks so this exercises the
+/// seekable shape, into a temp file this test owns. `xz` is not
+/// `mise`-pinned (`docs/design/roadmap-P13-compressed-input.md`,
+/// "Fixtures"), so a missing binary fails loudly rather than skipping
+/// (`docs/design/roadmap.md`, "A test may assume the tools `mise` pins").
+fn xz_compress(path: &Path) -> tempfile::NamedTempFile {
+    let out = Command::new("xz")
+        .arg("--block-size=65536")
+        .arg("-c")
+        .arg(path)
+        .output()
+        .expect("`xz` is not runnable, so this test cannot build its fixture; install it.");
+    assert!(out.status.success(), "xz failed: {}", String::from_utf8_lossy(&out.stderr));
+    let mut compressed = tempfile::NamedTempFile::new().unwrap();
+    std::io::Write::write_all(&mut compressed, &out.stdout).unwrap();
+    compressed
+}
+
+/// `XzSource` is just another `ByteRangeSource` to everything above `io.rs`:
+/// `build_index`'s scan and `cache::save`/`load`'s round trip produce the
+/// same `DumpIndex` whether the bytes came straight off disk or through the
+/// decoder (`docs/design/roadmap-P13-compressed-input.md`, "D5"/"D6") — the
+/// differential parity this slice owes at the library level. The CLI-level
+/// parity against the phase's own two committed fixtures is 13.5's.
+#[tokio::test]
+async fn xz_source_produces_the_same_index_and_cache_as_the_plain_file() {
+    let plain = LocalFileSource::open(edge_cases()).unwrap();
+    let plain_index = build_index(&plain, &ScanOptions::default()).await.unwrap();
+
+    let compressed = xz_compress(&edge_cases());
+    let xz = XzSource::open(compressed.path()).unwrap();
+    assert_eq!(xz.size().await.unwrap(), plain.size().await.unwrap());
+    assert_ne!(
+        xz.stored_size().await.unwrap(),
+        plain.stored_size().await.unwrap(),
+        "the compressed file's on-disk size must not be reported as the plain one's"
+    );
+
+    let xz_index = build_index(&xz, &ScanOptions::default()).await.unwrap();
+    assert_eq!(xz_index, plain_index);
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("edge_cases.sql.xz.dqcache");
+    cache::save(&path, &xz, &xz_index).await.unwrap();
+    match cache::load(&path, &xz).await.unwrap() {
+        CacheStatus::Valid { index, mtime_changed, total_size } => {
+            assert!(!mtime_changed, "just-saved cache must match the source's current mtime");
+            assert_eq!(total_size, plain.size().await.unwrap());
+            assert_eq!(index, plain_index);
+        }
+        other => panic!("a freshly saved cache must load, got {other:?}"),
+    }
 }

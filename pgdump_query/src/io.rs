@@ -77,6 +77,22 @@ pub trait ByteRangeSource: Send + Sync {
     /// and by length alone it cannot ([`LocalFileSource`], and
     /// `docs/design/architecture.md`, "Execution model and API surface").
     fn hint_read_size(&self, _len: usize) {}
+    /// The xz seek table behind this source, for a caller building a cache
+    /// envelope to persist alongside it
+    /// (`docs/design/roadmap-P13-compressed-input.md`, "D5" — the sibling
+    /// field `crate::cache::CompressionIndex` wraps this at save time).
+    ///
+    /// `None` by default, which is exactly right for a source with no
+    /// compression layer; [`LocalFileSource`] never overrides it.
+    /// [`XzSource`] returns the table it already built while walking the
+    /// file's stream footers at open time, so persisting a cache never
+    /// re-walks a file it is about to record one for. A cloned value rather
+    /// than a borrow: the table is a plain, cheaply-cloned value (`Vec`s of
+    /// small `Copy` entries) and a caller building a `CacheFile` needs to own
+    /// it, not hold a borrow across an `await`.
+    fn seek_table(&self) -> Option<xz_seek::SeekTable> {
+        None
+    }
 }
 
 /// How many released buffers a [`LocalFileSource`] keeps.
@@ -307,6 +323,142 @@ impl ByteRangeSource for LocalFileSource {
     }
 }
 
+/// A `ByteRangeSource` decoding an `.xz`-compressed local file on the fly
+/// (`docs/design/roadmap-P13-compressed-input.md`, "D5"/"D6").
+///
+/// **Two file handles, deliberately.** `open` walks the file's stream
+/// footers once (`xz_seek::SeekTable::from_source`'s cost — one read per
+/// stream plus one for the file's tail) and hands one handle to the
+/// `xz_seek::Reader`, which owns it for decoding; the second is kept for
+/// [`ByteRangeSource::stored_size`]/[`ByteRangeSource::modified`], which
+/// report the compressed file's own on-disk facts with a plain `stat` and
+/// must never disturb the decoder's live position to do it.
+///
+/// **The reader lives behind a `Mutex`.** `xz_seek::Reader::read_at` takes
+/// `&mut self` — it holds a single live decode and its current
+/// position — where this trait's methods take `&self`, so the mutex is what
+/// lets several `read_range` calls share one reader at all. Nothing calls it
+/// concurrently today (every read loop in this crate is sequential); D6
+/// hands parallel decode to P16 explicitly, and the mutex is what that phase
+/// serializes against until it has its own scheme.
+///
+/// `Verify::Full` — completing a partly-decoded block's check before the
+/// decoder leaves it — is `xz_seek::Reader::new`'s own default, so nothing
+/// here has to ask for it; D6 and D9 record that this is deliberately the
+/// bulk path's stronger default rather than the seeking path's weaker one.
+pub struct XzSource {
+    path: PathBuf,
+    stat_file: Arc<std::fs::File>,
+    reader: Arc<Mutex<xz_seek::Reader<std::fs::File>>>,
+    pool: Arc<BufferPool>,
+}
+
+impl XzSource {
+    /// Open `path` as `.xz`-compressed input, walking its stream footers to
+    /// build the seek table before this call returns.
+    ///
+    /// This does not sniff the magic bytes — a caller that already knows it
+    /// has an `.xz` file constructs this directly; content-sniffing
+    /// recognition across both source kinds is a library-level convenience
+    /// (D8), and lands with 13.4.
+    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref().to_path_buf();
+        let file = std::fs::File::open(&path)?;
+        let stat_file = Arc::new(file.try_clone()?);
+        let reader = xz_seek::Reader::new(file)?;
+        Ok(Self {
+            path,
+            stat_file,
+            reader: Arc::new(Mutex::new(reader)),
+            pool: Arc::new(BufferPool::default()),
+        })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl ByteRangeSource for XzSource {
+    fn read_range(
+        &self,
+        offset: u64,
+        len: usize,
+    ) -> Pin<Box<dyn Future<Output = Result<Bytes>> + Send + '_>> {
+        Box::pin(async move {
+            let reader = Arc::clone(&self.reader);
+            let pool = Arc::clone(&self.pool);
+            let buf = pool.take(len);
+            // Mirrors `LocalFileSource::read_range`'s `read_exact_at`
+            // contract: `xz_seek::Reader::read_at` is fill-or-EOF, and a
+            // short return here means the file ended before the range this
+            // caller asked for, which every read loop already clamps
+            // `len` to avoid — so a short read is a caller/source
+            // disagreement, reported the same way a short `read_exact_at`
+            // is.
+            let buf = tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
+                let mut buf = buf;
+                let mut reader = reader.lock().unwrap_or_else(|e| e.into_inner());
+                let n = reader.read_at(offset, &mut buf[..len])?;
+                if n != len {
+                    return Err(Error::Io(std::io::Error::new(
+                        std::io::ErrorKind::UnexpectedEof,
+                        "xz stream ended before the requested range",
+                    )));
+                }
+                Ok(buf)
+            })
+            .await
+            .map_err(Error::from)??;
+            Ok(Bytes::from_owner(PooledBuffer { buf: Some(buf), pool }).slice(..len))
+        })
+    }
+
+    /// The uncompressed length, from the seek table built at `open` — no
+    /// further decode or I/O.
+    fn size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
+        Box::pin(async move {
+            let reader = self.reader.lock().unwrap_or_else(|e| e.into_inner());
+            Ok(reader.index().uncompressed_size())
+        })
+    }
+
+    fn modified(&self) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>> {
+        Box::pin(async move {
+            let file = Arc::clone(&self.stat_file);
+            let mtime =
+                tokio::task::spawn_blocking(move || file.metadata().and_then(|m| m.modified()))
+                    .await
+                    .map_err(Error::from)?
+                    .map_err(Error::from)?;
+            Ok(Some(mtime))
+        })
+    }
+
+    /// The compressed file's own on-disk length (D4) — a `stat` on the
+    /// second handle, never the stream-index walk [`XzSource::size`]
+    /// answers from memory.
+    fn stored_size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
+        Box::pin(async move {
+            let file = Arc::clone(&self.stat_file);
+            let len = tokio::task::spawn_blocking(move || file.metadata().map(|m| m.len()))
+                .await
+                .map_err(Error::from)?
+                .map_err(Error::from)?;
+            Ok(len)
+        })
+    }
+
+    fn hint_read_size(&self, len: usize) {
+        self.pool.hint(len);
+    }
+
+    fn seek_table(&self) -> Option<xz_seek::SeekTable> {
+        let reader = self.reader.lock().unwrap_or_else(|e| e.into_inner());
+        Some(reader.index().clone())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -430,5 +582,155 @@ mod tests {
         assert_eq!(pool.take(16).len(), 32);
         // Nothing left that fits: a fresh allocation, exactly as long as asked.
         assert_eq!(pool.take(1024).len(), 1024);
+    }
+
+    /// `xz` is not `mise`-pinned
+    /// (`docs/design/roadmap-P13-compressed-input.md`, "Fixtures"), so a
+    /// missing binary fails with the remedy rather than skipping silently
+    /// (`docs/design/roadmap.md`, "A test may assume the tools `mise`
+    /// pins").
+    fn require_xz() {
+        let ok = std::process::Command::new("xz")
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success());
+        assert!(ok, "`xz` is not runnable, so this test cannot build its fixture; install it.");
+    }
+
+    /// Compress `bytes` with `xz`, passing `extra_args` before the input path
+    /// (e.g. `&["--block-size=4096"]` for a seekable multi-block file, or
+    /// `&[]` for a single-stream, single-block one), and return the temp
+    /// file holding the compressed bytes.
+    fn xz_compress(bytes: &[u8], extra_args: &[&str]) -> tempfile::NamedTempFile {
+        require_xz();
+        let mut input = tempfile::NamedTempFile::new().unwrap();
+        input.write_all(bytes).unwrap();
+        input.flush().unwrap();
+        let out = std::process::Command::new("xz")
+            .args(extra_args)
+            .arg("-c")
+            .arg(input.path())
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "xz {extra_args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let mut compressed = tempfile::NamedTempFile::new().unwrap();
+        compressed.write_all(&out.stdout).unwrap();
+        compressed.flush().unwrap();
+        compressed
+    }
+
+    /// A payload long enough that a small `--block-size` reliably splits it
+    /// into several blocks — not `edge_cases.sql` (that fixture is 13.5's,
+    /// shared by the CLI-level differential tests; this is a throwaway
+    /// pattern for pinning `XzSource`'s own wiring).
+    fn xz_test_payload() -> Vec<u8> {
+        (0..20_000u32).map(|i| (i % 251) as u8).collect()
+    }
+
+    /// The multi-block shape: `size()` is the exact uncompressed length from
+    /// the seek table, with no read yet.
+    #[tokio::test]
+    async fn xz_source_size_is_the_uncompressed_length() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+        let source = XzSource::open(compressed.path()).unwrap();
+        assert_eq!(source.size().await.unwrap(), payload.len() as u64);
+        assert!(source.size_is_exact());
+    }
+
+    /// `stored_size()` is a `stat` on the compressed file itself (D4), not
+    /// the uncompressed length `size()` answers — the two must disagree for
+    /// a payload that actually compresses.
+    #[tokio::test]
+    async fn xz_source_stored_size_is_the_compressed_files_on_disk_length() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+        let on_disk = std::fs::metadata(compressed.path()).unwrap().len();
+        let source = XzSource::open(compressed.path()).unwrap();
+        assert_eq!(source.stored_size().await.unwrap(), on_disk);
+        assert_ne!(source.stored_size().await.unwrap(), source.size().await.unwrap());
+    }
+
+    /// `seek_table()` is what `cache::save` wraps into
+    /// `CompressionIndex::Xz` — a multi-block file must actually report more
+    /// than one block, or the "seekable" half of this test proves nothing.
+    #[tokio::test]
+    async fn xz_source_seek_table_reports_every_block() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+        let source = XzSource::open(compressed.path()).unwrap();
+        let table = source.seek_table().expect("an XzSource always has a table");
+        assert!(table.is_seekable(), "block_count = {}", table.block_count());
+        assert_eq!(table.uncompressed_size(), payload.len() as u64);
+    }
+
+    /// Reading forward in chunks that each land inside one block, straddle a
+    /// block boundary, or span several — the shape every real read loop in
+    /// this crate produces — must reproduce the plaintext exactly.
+    #[tokio::test]
+    async fn xz_source_reads_forward_matching_plain_bytes() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+        let source = XzSource::open(compressed.path()).unwrap();
+
+        let mut offset = 0u64;
+        for len in [100usize, 4096, 3000, 5000] {
+            let got = source.read_range(offset, len).await.unwrap();
+            assert_eq!(&got[..], &payload[offset as usize..offset as usize + len]);
+            offset += len as u64;
+        }
+    }
+
+    /// A read at an offset behind the live decode's position must restart
+    /// the covering block rather than return the wrong bytes — this is the
+    /// only path `LocalFileSource` never has, and it is D6's whole reason to
+    /// exist.
+    #[tokio::test]
+    async fn xz_source_seeks_backward_across_a_block_boundary() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+        let source = XzSource::open(compressed.path()).unwrap();
+
+        // Walk forward past several block boundaries first, exactly like the
+        // multi-chunk test above.
+        let far = source.read_range(15_000, 2000).await.unwrap();
+        assert_eq!(&far[..], &payload[15_000..17_000]);
+
+        // Then jump backward into an earlier block.
+        let near = source.read_range(500, 1000).await.unwrap();
+        assert_eq!(&near[..], &payload[500..1500]);
+
+        // And forward again, past where the first read left off — the live
+        // decode was rebuilt by the backward read, so this is a second
+        // restart, not a continuation of the first pass.
+        let later = source.read_range(18_000, 2000).await.unwrap();
+        assert_eq!(&later[..], &payload[18_000..20_000]);
+    }
+
+    /// The non-seekable shape (D2): one stream, one block, produced by a bare
+    /// `xz` invocation with no `-T`/`--block-size`. Every read still decodes
+    /// to the right bytes, backward ones included — correctly, but from
+    /// zero every time, which is D2's whole point: this phase reads the
+    /// shape rather than refusing it.
+    #[tokio::test]
+    async fn xz_source_reads_a_single_block_non_seekable_file() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &[]);
+        let source = XzSource::open(compressed.path()).unwrap();
+
+        let table = source.seek_table().unwrap();
+        assert_eq!(table.block_count(), 1);
+        assert!(!table.is_seekable());
+
+        let forward = source.read_range(10_000, 5000).await.unwrap();
+        assert_eq!(&forward[..], &payload[10_000..15_000]);
+
+        // Backward, forcing a decode from byte zero of the sole block.
+        let backward = source.read_range(0, 3000).await.unwrap();
+        assert_eq!(&backward[..], &payload[0..3000]);
     }
 }

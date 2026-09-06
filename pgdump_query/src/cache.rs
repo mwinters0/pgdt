@@ -117,12 +117,12 @@ enum ContainerKind {
 /// (`docs/design/roadmap-P13-compressed-input.md`, "D5"). A sibling of
 /// [`ContainerKind`], not a value of it: see that type's docs.
 ///
-/// **Empty of xz content in this slice** — reserved with its eventual real
-/// shape, the way `CopyBlock::sparse_index`/`column_stats` are, so that P13's
-/// decoder slice (13.3) can start constructing `Some(CompressionIndex::Xz(_))`
-/// without a further `FORMAT_VERSION` bump. Nothing in this tree builds an
-/// `XzSource` yet, so every `CacheFile` in this tree carries `compression:
-/// None`.
+/// Built at [`save`] time from [`ByteRangeSource::seek_table`], which
+/// [`crate::XzSource`] answers from the table it already built while
+/// opening — persisting a cache never re-walks the file to get this. P15's
+/// gzip index is a different *shape*, not a variant of this one (a set of
+/// checkpoints, not a list of independently decodable blocks), so it gets
+/// its own sibling variant here rather than trying to fit this one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 enum CompressionIndex {
     Xz(xz_seek::SeekTable),
@@ -308,9 +308,7 @@ pub async fn save(path: &Path, source: &dyn ByteRangeSource, index: &DumpIndex) 
     let file = CacheFile {
         format_version: FORMAT_VERSION,
         container_kind: ContainerKind::Plain,
-        // Nothing constructs an `XzSource` yet — see `CompressionIndex`'s
-        // docs.
-        compression: None,
+        compression: source.seek_table().map(CompressionIndex::Xz),
         identity,
         total_size,
         index: index.clone(),

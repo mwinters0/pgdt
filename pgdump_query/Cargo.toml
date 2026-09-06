@@ -29,8 +29,8 @@ tokio = { version = "1.53.1", features = ["rt", "sync"] }
 # this phase"). The default features (`liblzma`, `fast-checks`) are the
 # manifest's own and this phase's choice over `xz4rust` — see D9's "The build
 # takes `liblzma`". `serde` is turned on for `cache::CompressionIndex` (D5),
-# which names `xz_seek::SeekTable` in its still-empty `Xz` variant; no code
-# here constructs an `XzSource` yet — that starts at 13.3.
+# which names `xz_seek::SeekTable` in its `Xz` variant; `io::XzSource` (13.3)
+# constructs one, walking the file's stream footers at open time.
 xz-seek = { path = "../vendor/xz-seek", features = ["serde"] }
 
 [dev-dependencies]
