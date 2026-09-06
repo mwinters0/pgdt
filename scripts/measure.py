@@ -45,10 +45,11 @@ Two binaries this cannot build for itself, by design:
   `return;` -- a source patch no harness should perform. Build it by hand (the
   recipe is in measurements.md) and point `PGDQ_MEASURE_CENSUS_OFF_BIN` at it.
   **It carries a `.stamp` beside it naming the commit it was built from**, the
-  way a generated input does, and a census figure is refused when that is not
-  the commit being measured: not building it and not trusting an unstamped one
-  are different rules, and the second is what says the difference between the
-  two binaries is the census;
+  way a generated input does, and a census figure is refused unless that commit
+  is an ancestor of the one being measured with no path the selected census
+  figures declare changed in between: not building it and not trusting an
+  unstamped one are different rules, and the second is what says the difference
+  between the two binaries is the census;
 * the **pre-throttle** binary for the quadratic table's "before" column is a
   release build of a historical commit. This one *is* mechanical, so the
   harness builds it into a git worktree when it is missing, or takes
@@ -1753,7 +1754,11 @@ def resolve_commit(rev: str) -> str | None:
 
 
 def census_binary_problem(
-    cfg: Config, resolve: Callable[[str], str | None] = resolve_commit
+    cfg: Config,
+    figures: Iterable[Figure],
+    resolve: Callable[[str], str | None] = resolve_commit,
+    ancestor: Callable[[str, str], bool] | None = None,
+    changed_between: Callable[[str, str], list[str]] | None = None,
 ) -> str | None:
     """Why the census-off binary may not be measured against this commit, if it
     may not. `None` means it may.
@@ -1773,6 +1778,24 @@ def census_binary_problem(
     of read-path work to the census, in the one table that was already the
     register's largest correction, with nothing to tell the two errors apart.
 
+    **The threshold is what that hazard actually is, not commit equality.** A
+    reading moves when *source* differs between the two binaries, and a commit
+    touching no path the figures being taken declare cannot move one -- so the
+    rule is that the stamp is an **ancestor** of HEAD with no declared path
+    changed in between. Exact equality charged a doc-only commit a whole hand
+    rebuild, and that friction lands on a ritual whose failure mode is reaching
+    for the old binary instead of rebuilding, which is the failure this check
+    exists to stop.
+
+    Two consequences of stating it that way, both deliberate. A stamp that is
+    **not** an ancestor stays refused: a divergent or ahead commit has no "in
+    between" to inspect, so "no declared path changed" would be computed over a
+    diff that does not mean what it says, and the binary comes from a tree
+    outside this one's history. And the check is **per sitting**, reading the
+    selected figures' own declared paths -- `census-attribution` declares no
+    scanner path where the other two do -- which is what lets the refusal name
+    the declared path that actually moved.
+
     What the stamp buys is bounded, and worth saying: it is only as honest as
     the hand that wrote it, so it cannot catch a re-stamp without a rebuild.
     What it does catch is *age*, which is the failure that actually happened
@@ -1785,6 +1808,15 @@ def census_binary_problem(
     give lands seconds later instead, at the first second of the sitting that
     would have published the figure.
     """
+    # Defaulted here rather than in the signature: both are git helpers defined
+    # further down the file, where the rest of them live.
+    ancestor = ancestor or is_ancestor
+    changed_between = changed_between or paths_changed_between
+    figures = list(figures)
+    if not figures:
+        # The declared-path question is asked of the selection, so an empty one
+        # would quietly weaken the check to ancestry alone.
+        return "no census figure was named, so nothing says which declared paths to ask about."
     if not cfg.bin_nocensus.exists():
         return (
             f"{cfg.bin_nocensus} is missing. The census-off binary is a source patch no harness "
@@ -1812,11 +1844,27 @@ def census_binary_problem(
             f"{stamp} reads {text!r}, which is not a commit in this repository. It must name the "
             f"commit {cfg.bin_nocensus} was built from."
         )
-    if got != want:
+    rebuild = (
+        "Rebuild it from measurements.md's census recipe, which ends by re-writing "
+        f"{stamp}."
+    )
+    if got == want:
+        return None
+    if not ancestor(got, want):
         return (
-            f"{cfg.bin_nocensus} was built at {got[:7]}, not the {want[:7]} being measured, so a "
-            "census figure would charge everything between the two to the census. Rebuild it from "
-            f"measurements.md's census recipe, which ends by re-writing {stamp}."
+            f"{cfg.bin_nocensus} was built at {got[:7]}, which is not an ancestor of the "
+            f"{want[:7]} being measured — so there is no run of commits between the two to "
+            "inspect, and the tree it came from is as unknown as an unstamped binary's. "
+            + rebuild
+        )
+    changed = changed_between(got, want)
+    moved = [(fig, hits) for fig in figures if (hits := declared_hits(fig, changed))]
+    if moved:
+        detail = "; ".join(f"{fig.id} declares {', '.join(hits)}" for fig, hits in moved)
+        return (
+            f"{cfg.bin_nocensus} was built at {got[:7]}, and paths the figures being taken "
+            f"declare changed between there and the {want[:7]} being measured ({detail}), so a "
+            "census figure would charge that change to the census. " + rebuild
         )
     return None
 
@@ -3908,9 +3956,21 @@ def stamped_commit(doc: Path) -> str | None:
     return match.group(1) if match else None
 
 
+def declared_hits(fig: Figure, changed: Iterable[str]) -> list[str]:
+    """The paths in `changed` that `fig` declares. A declared path is a prefix:
+    a directory matches everything under it.
+
+    **One predicate, two callers.** `--stale` argues from it that a figure has
+    gone stale, and the census-off binary's stamp check argues from it that a
+    commit moved nothing the figures being taken measure. Writing the second
+    separately would make it a second authority over what can move a reading,
+    which is exactly the objection that kept the stamp rule at exact equality
+    until `M59`."""
+    return sorted({c for c in changed for d in fig.depends if c == d or c.startswith(d)})
+
+
 def figures_touched(changed: Iterable[str]) -> list[tuple[Figure, list[str]]]:
-    """Figures whose declared paths a diff touches. A declared path is a
-    prefix: a directory matches everything under it.
+    """Figures whose declared paths a diff touches.
 
     **Every figure, not just the ones a sweep runs.** The derived
     `session-drift` declares `scripts/measure.py` because the harness's own
@@ -3921,9 +3981,9 @@ def figures_touched(changed: Iterable[str]) -> list[tuple[Figure, list[str]]]:
     changed = list(changed)
     out = []
     for fig in ALL_BY_ID.values():
-        hits = [c for c in changed for d in fig.depends if c == d or c.startswith(d)]
+        hits = declared_hits(fig, changed)
         if hits:
-            out.append((fig, sorted(set(hits))))
+            out.append((fig, hits))
     return out
 
 
@@ -3933,6 +3993,18 @@ def changed_paths(since: str) -> list[str]:
     paths = [line.strip() for line in diff.splitlines() if line.strip()]
     paths += [line[3:].strip() for line in status.splitlines() if line.strip()]
     return sorted(set(paths))
+
+
+def paths_changed_between(earlier: str, later: str) -> list[str]:
+    """Repo-relative paths differing between two commits.
+
+    Commit to commit, where `changed_paths` folds the working tree in as well:
+    `--stale` asks what has moved since the doc was stamped, and an
+    uncommitted change is part of that answer. The census stamp's scope stops
+    at committed history, because a dirty tree is already declared by the
+    session stamp."""
+    diff = run(["git", "diff", "--name-only", earlier, later], cwd=REPO, capture=True)
+    return sorted({line.strip() for line in diff.splitlines() if line.strip()})
 
 
 # --------------------------------------------------------------------------
@@ -4994,13 +5066,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     figures = resolve_selection(ids, alone=args.alone)
     if not cfg.dry_run and not cfg.bin_pgdq.exists():
         parser.error(f"{cfg.bin_pgdq} is missing — `cargo build --release -p pgdump_query-cli`")
-    needs_nocensus = any(f.id.startswith("census") for f in figures)
-    if not cfg.dry_run and needs_nocensus:
+    census = [f for f in figures if f.id.startswith("census")]
+    if not cfg.dry_run and census:
         # Existence and age in one refusal, in the first second and before the
         # run directory exists: a sweep that starts on a stale census-off
         # binary loses its census tables an hour later, and worse, may not
-        # look like it lost anything.
-        problem = census_binary_problem(cfg)
+        # look like it lost anything. The census figures *being taken* are
+        # passed in because the age question is asked of their own declared
+        # paths -- the check is per sitting, not against a fixed list.
+        problem = census_binary_problem(cfg, census)
         if problem:
             parser.error(problem)
     return emit(cfg, figures)

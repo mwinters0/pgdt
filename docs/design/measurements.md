@@ -1212,8 +1212,7 @@ census.** These tables difference that binary against `target/release/pgdq`, so
 whatever differs between the two *trees* is charged to the census — and a
 hand-built binary has no provenance the harness can read, where every generated
 input carries a `.stamp` naming its generator. So the census-off binary carries
-one too, the harness refuses a census figure whose stamp is not the commit it is
-measuring, and the refusal comes in the first second rather than an hour into a
+one too, and the refusal comes in the first second rather than an hour into a
 sweep. **Not building it and not trusting it are separate rules**: the patch
 stays a hand build, because a harness that patches its own subject can produce
 any figure it likes. The binary was found 40 commits stale on 2026-09-05 with
@@ -1225,6 +1224,27 @@ re-stamp without a rebuild, but *age* is the failure that happens, and it is the
 one nothing else can see. The pre-throttle binary needs none of this: it is a
 build of a fixed historical commit — deliberately not this one — and the harness
 builds it itself.
+
+**The threshold is the hazard, not commit equality: the stamp must be an
+ancestor of the commit being measured, with no path the census figures *being
+taken* declare changed in between.** What moves a census reading is source
+differing between the two binaries, and a commit touching no declared path
+cannot move one — so exact equality charged a doc-only commit a whole hand
+rebuild (patch `map.rs`, build, copy, revert, re-stamp), and that friction lands
+on a ritual whose failure mode is reaching for the old binary instead of
+rebuilding, which is the failure the check exists to stop
+([`../status/history/2026-09-06.md`](../status/history/2026-09-06.md), "`M59`:
+the census stamp is an ancestor, not an equal"). Three properties of the rule as
+stated. A stamp that is **not** an ancestor stays refused: a divergent or ahead
+commit has no run of commits in between to inspect, so "no declared path
+changed" would be computed over a diff that does not mean what it says, and the
+tree the binary came from is outside this one's history. The check is **per
+sitting**, reading the selected figures' own `depends` — `census-attribution`
+declares no scanner path where the other two do — which is what lets the refusal
+name the declared path that actually moved. And it argues from the same prefix
+predicate `--stale` argues staleness from, rather than a second authority over
+what can move a reading. A dirty tree stays out of scope, the session stamp
+already declaring uncommitted changes under a measured path.
 
 **Never redirect stderr inside a timed command.** Some shells route `time`'s
 own report through the timed command's redirection, so a `2>/dev/null` meant

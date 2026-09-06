@@ -483,20 +483,59 @@ class Allocator(unittest.TestCase):
 
 class CensusBinary(unittest.TestCase):
     """The census-off binary's stamp: the harness will not build that binary,
-    and now will not trust one built from another commit either.
+    and will not trust one whose tree could have moved a reading.
 
     A census figure is a subtraction between it and `target/release/pgdq`, so
     every difference between the two trees is attributed to the census — which
-    is why the age of the hand-built half has to be checkable at all.
+    is why the age of the hand-built half has to be checkable at all. The
+    threshold is that hazard rather than commit equality: an **ancestor** of
+    HEAD with no path the figures being taken declare changed in between.
     """
 
     HEAD = "a" * 40
-    OTHER = "b" * 40
+    ANCESTOR = "b" * 40
+    DIVERGENT = "c" * 40
+
+    #: Two figures declaring different paths, which is what makes the check
+    #: per sitting: `census-attribution` declares no scanner path where the
+    #: other two do.
+    MAPPER = measure.Figure(
+        id="census-fake-mapper",
+        section="",
+        stage="warm",
+        depends=("pgdump_query/src/map.rs", "pgdump_query/src/scan.rs"),
+    )
+    READER = measure.Figure(
+        id="census-fake-reader",
+        section="",
+        stage="warm",
+        depends=("pgdump_query/src/io.rs",),
+    )
 
     def _resolve(self, rev):
         if rev == "HEAD":
             return self.HEAD
-        return {"aaaaaaa": self.HEAD, "bbbbbbb": self.OTHER}.get(rev[:7])
+        return {
+            "aaaaaaa": self.HEAD,
+            "bbbbbbb": self.ANCESTOR,
+            "ccccccc": self.DIVERGENT,
+        }.get(rev[:7])
+
+    def _ancestor(self, earlier, later):
+        return (earlier, later) == (self.ANCESTOR, self.HEAD)
+
+    def _problem(self, cfg, *, figures=None, changed=()):
+        def between(earlier, later):
+            self.assertEqual((earlier, later), (self.ANCESTOR, self.HEAD))
+            return list(changed)
+
+        return measure.census_binary_problem(
+            cfg,
+            [self.MAPPER] if figures is None else figures,
+            self._resolve,
+            self._ancestor,
+            between,
+        )
 
     def _cfg(self, tmp, *, binary=True, stamp=None):
         cfg = measure.Config(bin_nocensus=Path(tmp) / "runs" / "pgdq-nocensus")
@@ -518,7 +557,7 @@ class CensusBinary(unittest.TestCase):
     def test_a_missing_binary_is_still_refused_by_name(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg = self._cfg(tmp, binary=False)
-            problem = measure.census_binary_problem(cfg, self._resolve)
+            problem = self._problem(cfg)
             self.assertIn("pgdq-nocensus", problem)
             self.assertIn("is missing", problem)
 
@@ -527,42 +566,109 @@ class CensusBinary(unittest.TestCase):
         # tree, and nothing saying which.
         with tempfile.TemporaryDirectory() as tmp:
             cfg = self._cfg(tmp)
-            problem = measure.census_binary_problem(cfg, self._resolve)
+            problem = self._problem(cfg)
             self.assertIn("pgdq-nocensus.stamp", problem)
 
     def test_a_stamp_that_names_no_commit_is_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg = self._cfg(tmp, stamp="not-a-sha\n")
-            self.assertIn(
-                "not a commit", measure.census_binary_problem(cfg, self._resolve)
-            )
+            self.assertIn("not a commit", self._problem(cfg))
 
     def test_an_empty_stamp_is_refused_rather_than_read_as_head(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg = self._cfg(tmp, stamp="\n")
-            self.assertIsNotNone(measure.census_binary_problem(cfg, self._resolve))
-
-    def test_a_stamp_naming_another_commit_is_refused_naming_both(self):
-        # The 2026-09-05 failure: a binary 40 commits behind, differenced
-        # against a fresh one, with every commit between them charged to the
-        # census.
-        with tempfile.TemporaryDirectory() as tmp:
-            cfg = self._cfg(tmp, stamp=self.OTHER + "\n")
-            problem = measure.census_binary_problem(cfg, self._resolve)
-            self.assertIn(self.OTHER[:7], problem)
-            self.assertIn(self.HEAD[:7], problem)
+            self.assertIsNotNone(self._problem(cfg))
 
     def test_a_stamp_naming_the_commit_being_measured_passes(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg = self._cfg(tmp, stamp=self.HEAD + "\n")
-            self.assertIsNone(measure.census_binary_problem(cfg, self._resolve))
+            # And without consulting a diff: HEAD against itself has nothing in
+            # between, so the equality case short-circuits.
+            def never(earlier, later):
+                raise AssertionError("the diff was consulted for HEAD against itself")
+
+            self.assertIsNone(
+                measure.census_binary_problem(
+                    cfg, [self.MAPPER], self._resolve, self._ancestor, never
+                )
+            )
 
     def test_a_short_stamp_still_resolves(self):
         # `git rev-parse HEAD` writes a full sha, but a stamp written by hand
         # may be short and still name the same commit.
         with tempfile.TemporaryDirectory() as tmp:
             cfg = self._cfg(tmp, stamp="aaaaaaa\n")
-            self.assertIsNone(measure.census_binary_problem(cfg, self._resolve))
+            self.assertIsNone(self._problem(cfg))
+
+    def test_an_ancestor_that_moved_nothing_measured_is_tolerated(self):
+        # The loosening: a doc-only commit cannot move a reading a census
+        # figure takes, so it does not cost a hand rebuild.
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._cfg(tmp, stamp=self.ANCESTOR + "\n")
+            self.assertIsNone(
+                self._problem(cfg, changed=["docs/design/measurements.md"])
+            )
+
+    def test_an_ancestor_that_moved_a_declared_path_is_refused_naming_it(self):
+        # The 2026-09-05 failure: a binary 40 commits behind, differenced
+        # against a fresh one, with read-path work charged to the census.
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._cfg(tmp, stamp=self.ANCESTOR + "\n")
+            problem = self._problem(cfg, changed=["pgdump_query/src/scan.rs"])
+            self.assertIn(self.ANCESTOR[:7], problem)
+            self.assertIn(self.HEAD[:7], problem)
+            self.assertIn("pgdump_query/src/scan.rs", problem)
+            self.assertIn("census-fake-mapper", problem)
+
+    def test_a_declared_directory_still_matches_everything_under_it(self):
+        # The same prefix predicate `--stale` argues staleness from, which is
+        # what keeps this from being a second authority over what moves a
+        # reading.
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._cfg(tmp, stamp=self.ANCESTOR + "\n")
+            figure = measure.Figure(
+                id="census-fake-dir", section="", stage="warm", depends=("pgdump_query/",)
+            )
+            self.assertIsNotNone(
+                self._problem(
+                    cfg, figures=[figure], changed=["pgdump_query/src/copy.rs"]
+                )
+            )
+
+    def test_the_check_reads_the_figures_being_taken(self):
+        # Per sitting, not against a fixed list: the same commit refuses one
+        # selection and passes another.
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._cfg(tmp, stamp=self.ANCESTOR + "\n")
+            moved = ["pgdump_query/src/io.rs"]
+            self.assertIsNone(self._problem(cfg, figures=[self.MAPPER], changed=moved))
+            self.assertIsNotNone(
+                self._problem(cfg, figures=[self.READER], changed=moved)
+            )
+
+    def test_naming_no_figure_refuses_rather_than_checking_ancestry_alone(self):
+        # The declared-path question is asked of the selection, so an empty one
+        # would quietly weaken the check to the half that is not the point.
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._cfg(tmp, stamp=self.ANCESTOR + "\n")
+            self.assertIsNotNone(self._problem(cfg, figures=[]))
+
+    def test_a_stamp_that_is_not_an_ancestor_is_refused(self):
+        # A divergent or ahead commit has no "in between" to inspect, so the
+        # diff would not mean what it says — and the binary comes from a tree
+        # outside this one's history.
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = self._cfg(tmp, stamp=self.DIVERGENT + "\n")
+
+            def never(earlier, later):
+                raise AssertionError("a non-ancestor stamp was diffed against HEAD")
+
+            problem = measure.census_binary_problem(
+                cfg, [self.MAPPER], self._resolve, self._ancestor, never
+            )
+            self.assertIn("not an ancestor", problem)
+            self.assertIn(self.DIVERGENT[:7], problem)
+            self.assertIn(self.HEAD[:7], problem)
 
     def test_the_doc_s_recipe_writes_the_stamp_the_harness_reads(self):
         # The two halves have to meet: a recipe that does not write the stamp
