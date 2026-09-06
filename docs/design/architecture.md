@@ -140,6 +140,15 @@ than being paid once. *Also rejected:* an `enum AnySource` — it keeps static
 dispatch and one code path, at the price of L1 enumerating every source this
 project will ever have, the recursive wrapping case included.
 
+**The borrow form covers the library; the owned form is what a factory
+forces.** Converting every generic consumer needed `&dyn ByteRangeSource` and
+nothing more — each one already held a plain reference, none an owned handle
+crossing a spawn boundary — so `Arc<dyn ByteRangeSource>` earned its keep only
+where recognition has to *return* a source whose type is decided at run time,
+which is what the CLI holds. Worth knowing when a similar rework is costed
+elsewhere: the two forms are not a matter of taste, and which one is needed is
+decided by whether anything constructs a source it cannot name.
+
 **Three of the four defaulted methods exist for a source the local file is
 not.** `stored_size()` is the bytes as stored on the device where `size()` is
 the addressable length — equal for a plain file, divergent for a decompressing
@@ -389,7 +398,10 @@ recognised whatever it is named, a file merely *named* `.xz` whose bytes are
 plain opens plain, and a file shorter than the magic is answered "not xz"
 rather than an error. *Rejected:* extension-based dispatch — cheaper, since it
 needs no read before the source exists, but wrong on a renamed or extensionless
-file, and every embedder wanting the convenience would reimplement it.
+file, and every embedder wanting the convenience would reimplement it. It is
+exported at the crate root rather than through a public `io` module: `mod io` is
+private with its types re-exported, so recognition joins that list and the
+module's privacy boundary is unchanged.
 
 **One decoder, restarted on seek, retaining nothing.** `XzSource` holds a
 single live `xz_seek::Reader` and its current uncompressed position behind a
@@ -508,7 +520,9 @@ surface exposes no stream-index parser or block decoder, and a survey of
 providing `read_range(offset, len)` over the uncompressed stream. That gap was
 carved out into `xz-seek`, its own crate and repository, and this project is its
 first real-world consumer; it is not published until that consumption has vetted
-the interface, so what this repo depends on is a **frozen read-only copy** at
+the interface, and the gate is two consumers rather than one — this source, and
+the row-group-statistics work, which reads the same addressing layer for a
+different purpose. So what this repo depends on is a **frozen read-only copy** at
 `vendor/xz-seek/`, excluded from the workspace, re-synced on demand by
 `scripts/vendor_xz_seek.py` and stamped with the source commit in
 `vendor/xz-seek/VENDORED_FROM`. A bug found here is fixed upstream and returns
@@ -521,6 +535,30 @@ is what produces the 0.x churn the arrangement avoids. The build takes the
 crate's default `liblzma` backend over its pure-Rust one (unsafe-free, ~2.2×
 slower), pulling vendored C into an otherwise pure-Rust workspace, on the ground
 that the integration being vetted should be the one that ships.
+
+**The snapshot is deliberately behind upstream, and the first consumer that
+needs newer work is what re-syncs it.** The copy was taken at the moment that
+crate's parallel-block-decode work was still unstarted, precisely so it would
+sit still while that work moved the source underneath it. One method asked for
+on this project's behalf — a block count scoped to a byte range, which would let
+the non-seekable warning be bounded to what a query actually touches — landed
+upstream after the snapshot, and re-syncing for it was **refused**: the warning
+this design asks for is file-wide, which the frozen copy answers from
+`SeekTable::block_count()` (always 0 or 1 once a table is not seekable). So the
+parallel-decode work is both the first consumer that needs a newer snapshot and
+the thing that re-syncing would drag in early; it is where the copy is re-taken,
+and where whether a vendored copy is still the right arrangement gets asked
+again. `vendor/xz-seek/VENDORED_FROM` records which commit is in, and
+`scripts/vendor_xz_seek.py` is what re-takes it.
+
+**None of the container facts above is an entry in
+[`postgres-invariants.md`](postgres-invariants.md)**, and that is the register's
+scope rather than an omission: its entries are properties of `pg_dump`'s output,
+and its whole payoff is one ritual — walk the file when a new PostgreSQL major
+lands. Nothing about the xz container or the decoder can be invalidated by a
+PostgreSQL release, so an entry there would be re-verified at a trigger with no
+bearing on it. The facts live here, beside the mechanism that leans on them, and
+the decoder's own guarantees are that crate's register to keep.
 
 ## Bytes and structure
 

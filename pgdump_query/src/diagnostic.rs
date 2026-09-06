@@ -85,7 +85,7 @@ pub enum DiagnosticKind {
     CacheOffline,
     /// A `.xz` source has no usable seek structure — one stream, one block —
     /// so every read (forward included) decodes from byte zero
-    /// (`docs/design/roadmap-P13-compressed-input.md`, "D2"). Never a reason
+    /// (`docs/design/architecture.md`, "The compressed source"). Never a reason
     /// to refuse the file: `pgdq parse` is unaffected since it never reads
     /// backwards, and `pgdq query` still answers, just by paying the decode
     /// each time. `block_count` is `SeekTable::block_count()` — 0 or 1 for a

@@ -17,7 +17,7 @@
 //! (`docs/design/architecture.md`, "The cache"). Every cache records the
 //! source's *stored* size and mtime as observed at save time — bytes on the
 //! device, not the addressable (possibly decompressed) length
-//! (`docs/design/roadmap-P13-compressed-input.md`, "D4"); [`load`]
+//! (`docs/design/architecture.md`, "The cache"); [`load`]
 //! re-observes the live source and compares. A stored-size mismatch means
 //! every byte offset in the cache could be wrong, so the cache is
 //! invalidated the same way a foreign or wrong-version file is — silently,
@@ -64,8 +64,8 @@ const FORMAT_VERSION: u32 = 16;
 /// The dump file's identity as observed when a cache was last saved — see
 /// the module docs.
 ///
-/// **Opaque, not a struct** (`docs/design/roadmap-P13-compressed-input.md`,
-/// "D4"): P14's remote source has no mtime at all — an ETag is not a
+/// **Opaque, not a struct** (`docs/design/architecture.md`, "The cache"):
+/// a remote source has no mtime at all — an ETag is not a
 /// `SystemTime` — so a future variant carries whatever evidence its own kind
 /// of source actually has, rather than every source being forced through one
 /// shared shape. One variant today; a call site reads the fields through the
@@ -107,8 +107,7 @@ impl SourceIdentity {
 /// byte for byte what a plain scan of the same decompressed content
 /// produces — so a compressed source never sets this to anything but
 /// `Plain`; what changes is [`CompressionIndex`], a sibling field rather
-/// than a value of this one (`docs/design/roadmap-P13-compressed-input.md`,
-/// "D5").
+/// than a value of this one (`docs/design/architecture.md`, "The cache").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum ContainerKind {
     Plain,
@@ -116,7 +115,7 @@ enum ContainerKind {
 
 /// What compression sits between this cache's plain-format offsets and the
 /// bytes on disk — `None` for a source that needs no such index
-/// (`docs/design/roadmap-P13-compressed-input.md`, "D5"). A sibling of
+/// (`docs/design/architecture.md`, "The cache"). A sibling of
 /// [`ContainerKind`], not a value of it: see that type's docs.
 ///
 /// Built at [`save`] time from [`ByteRangeSource::seek_table`], which
@@ -139,7 +138,7 @@ struct CacheFile {
     /// The addressable (decompressed, for a compressed source) length —
     /// [`ByteRangeSource::size`] as observed at save time. Its own field
     /// rather than an alias of `identity`'s stored size
-    /// (`docs/design/roadmap-P13-compressed-input.md`, "D4"): the two
+    /// (`docs/design/architecture.md`, "The cache"): the two
     /// diverge for a compressed source, and this is the number
     /// [`CacheStatus::Valid`]/[`CacheStatus::Incomplete`] hand out as
     /// `total_size` for the coverage arithmetic to read.
@@ -180,7 +179,7 @@ pub enum CacheStatus {
     /// A readable cache whose recorded *stored* size disagrees with the live
     /// source's, so every byte offset in it could be wrong — the staleness
     /// check now reads [`ByteRangeSource::stored_size`], not the addressable
-    /// length (`docs/design/roadmap-P13-compressed-input.md`, "D4"). Both
+    /// length (`docs/design/architecture.md`, "The cache"). Both
     /// stored sizes are carried because "the file changed" is the fact a
     /// reporting caller states, and the two numbers are the evidence for it.
     SourceChanged { cached_stored_size: u64, live_stored_size: u64 },

@@ -1,17 +1,15 @@
 //! `pgdq parse` / `query` / `info` against `.xz` input, end to end, and
 //! differential parity against the same content read plain
-//! (`docs/design/roadmap-P13-compressed-input.md`, "Fixtures"; P13's slice
-//! `13.5`).
+//! (`docs/design/architecture.md`, "Testing philosophy").
 //!
-//! 13.1–13.4 landed `XzSource`, recognition and the non-seekable diagnostic
-//! and exercised them through `open_local`/`build_index` directly
-//! (`pgdump_query/tests/cache.rs`). Nothing before this file drives the
-//! actual `pgdq` binary against a `.xz` source — its own argument parsing,
-//! its cache round trip, and its text/JSON rendering, run the way a user
-//! would run them.
+//! `pgdump_query/tests/cache.rs` covers the same ground at the library level,
+//! through `open_local`/`build_index` directly. This file is the only one that
+//! drives the actual `pgdq` binary against a `.xz` source — its own argument
+//! parsing, its cache round trip, and its text/JSON rendering, run the way a
+//! user would run them.
 //!
-//! **Two fixtures, generated at test time, not committed** — the phase spec's
-//! own choice, since the input is 2,352 bytes and the compression cost is
+//! **Two fixtures, generated at test time, not committed** — deliberate, since
+//! the input is 2,352 bytes and the compression cost is
 //! negligible. Both are derived from the same hand-written dump
 //! `pgdump_query/tests/cache.rs`'s own xz tests already use
 //! (`tests/data/edge_cases.sql`), which is deliberately not
@@ -159,7 +157,7 @@ fn non_seekable_xz_parses_to_the_same_index_plus_a_warning() {
 
     // And the warning itself is D2's, in its rendered text form — the
     // human-readable side of the same diagnostic, naming the cause and the
-    // remedy (`docs/design/roadmap-P13-compressed-input.md`, "D2").
+    // remedy (`docs/design/architecture.md`, "The compressed source").
     let text = stdout_of(&run(&["info", "--source", xz_path.to_str().unwrap(), "--verbose"]));
     assert!(text.contains("no seek structure"), "{text}");
     assert!(text.contains("xz -T0"), "{text}");
@@ -181,16 +179,16 @@ fn query_widgets(source: &Path, extra: &[&str]) -> std::process::Output {
     run(&args)
 }
 
-/// A plain `query` against all three sources prints identical rows — this is
-/// the differential parity the phase spec asks for at the row-decoding level,
-/// run through `pgdq` end to end rather than through the library.
+/// A plain `query` against all three sources prints identical rows — the
+/// differential parity at the row-decoding level, run through `pgdq` end to
+/// end rather than through the library.
 ///
 /// It also exercises the mapping pass's own backward read for the
 /// non-seekable fixture: `table_stream`'s replay re-reads the target block
 /// after the mapping pass has already walked past it
-/// (`docs/design/roadmap-P13-compressed-input.md`, "Evidence this phase rests
-/// on" — one of the library's two backward-reading call sites), which for a
-/// single-block `.xz` file is D6's decode-from-zero path. A wrong answer here
+/// (`docs/design/architecture.md`, "The compressed source" — one of the
+/// library's two backward-reading call sites), which for a single-block `.xz`
+/// file is the decode-from-zero path. A wrong answer here
 /// would mean that path decodes the wrong bytes, not just that it is slow.
 #[test]
 fn query_widgets_agrees_across_plain_and_both_xz_shapes() {

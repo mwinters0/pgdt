@@ -127,11 +127,14 @@ was computed as, not an Arrow `DataType`, for the same reason `DumpMetadata`
 stores declared type strings. Rule 6 settles the compute question — the parse
 function is injected downward, not imported upward.
 
-**Archive containers (P8), `object_store` (P14) and the decompressing source
-(P13, P15) are L1-only.** All three are additions *inside* L1: `object_store`
-and the decompressing source as further `ByteRangeSource` implementations, the
-container layer between `io.rs` and `scan.rs`. None belongs above L1, and none
-may introduce an Arrow dependency into it.
+**Archive containers (P8), `object_store` (P14) and the decompressing sources
+are L1-only.** All are additions *inside* L1: `object_store` and a decompressing
+source as further `ByteRangeSource` implementations, the container layer between
+`io.rs` and `scan.rs`. None belongs above L1, and none may introduce an Arrow
+dependency into it. The `.xz` source is the built instance and holds to it —
+`XzSource` lives in `io.rs` beside `LocalFileSource` and nothing above L1 knows
+a source decodes ([`architecture.md`](architecture.md), "The compressed
+source"); the gzip and zstd sources (P15) join it there.
 
 The two byte sources compose in one direction only — a decompressing source
 wraps whatever supplies its compressed bytes, local or remote — so neither

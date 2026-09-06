@@ -15,8 +15,7 @@ reused, including a struck phase's.
 
 | Phase | State | Where it is |
 |---|---|---|
-| P1–P5, P7, P9, P11, P12 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
-| P13 — compressed input | **Complete** | [`architecture.md`](architecture.md), "The compressed source"; the spec is [`roadmap-P13-compressed-input.md`](roadmap-P13-compressed-input.md) until a keystone strikes it |
+| P1–P5, P7, P9, P11–P13 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
 | P16 — parallel scan and extraction | Sketched; not grilled | this file, below; [inbox](roadmap-P16-parallel-scan-inbox.md) — carved out of the scan-performance work |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
@@ -334,40 +333,6 @@ and "Execution model and API surface").
 Note that CSV-format `COPY` blocks are **not** on this list. They are a Future
 item; see below.
 
-## P13 — Compressed input
-
-**Complete.** `.xz` reads end to end through `parse`/`info`/`query`, in all
-three container shapes; how it works is [`architecture.md`](architecture.md),
-"The compressed source", which also carries what the phase refused. The spec
-[`roadmap-P13-compressed-input.md`](roadmap-P13-compressed-input.md) and its
-notes [`roadmap-P13-compressed-input-notes.md`](roadmap-P13-compressed-input-notes.md)
-stand until a keystone strikes them.
-
-**It owes no measurement row, deliberately**, and that survives the wrap: the
-number a caller actually wants is concurrent decode throughput against the plain
-path's device-bound figures, which is unreachable until P16 lands parallel
-decode. The decode probes the phase rested on are probes — no harness, no
-`drop_caches` discipline — and no document quotes them as measurements. What it
-*did* leave stale is every figure that times a run, because reshaping every
-`ByteRangeSource` signature touches the hot read path; a stale figure obliges no
-sweep ([`../status/STATUS.md`](../status/STATUS.md), and
-[`measurements.md`](measurements.md), "A stale figure does not oblige a sweep").
-
-**The addressing layer it waited on is vendored, not published**, read-only at
-`vendor/xz-seek/` (`CLAUDE.local.md`), carved out into its own crate and
-repository on the collation spike's pattern with the requirements written from
-here and kept there. Publication waits on P10 landing too; until then this
-build's dependency is a frozen copy taken by `scripts/vendor_xz_seek.py`. That
-crate's own `P3` (parallel block decode) was never on this phase's critical path
-and has since started moving upstream, so the snapshot here deliberately
-predates it; **P16 is its consumer and is what re-syncs the copy.**
-
-**Its grilling also settled the compressed/remote integration story for P14,
-P15 and P16** — the opaque identity, the size-exactness signal, and the
-enum-tagged compression-index field were all decided with those three phases'
-needs in view. Their own inboxes hold what is theirs to settle at their own
-grilling.
-
 ## P16 — Parallel scan and extraction
 
 Carved out of the scan-performance work, which stayed single-threaded
@@ -382,7 +347,7 @@ per-block accumulation and finalization at `CopyEnd`, and the interrupt guard's 
 to bank the last *completed block* — and reworking those cannot share a review
 cycle with self-contained per-byte work. And it has two source shapes to serve,
 not one: a plain byte range resynced to the next LF, and a compressed block
-whose boundaries P13's seek table hands over for free, CPU-bound at ~450 MB/s a
+whose boundaries the `.xz` seek table hands over for free, CPU-bound at ~450 MB/s a
 core where the plain path is device-bound at ~240 on the same HDD.
 
 **It also builds the sparse row index** — the byte offset of every Nth row,
@@ -534,10 +499,11 @@ cannot touch the mapping pass".
 
 ## P14 — Remote input
 
-**Inbox:** [`roadmap-P14-remote-input-inbox.md`](roadmap-P14-remote-input-inbox.md) — facts P13's grilling filed for this one. Drain it when grilling this phase.
+**Inbox:** [`roadmap-P14-remote-input-inbox.md`](roadmap-P14-remote-input-inbox.md) — facts earlier phases filed for this one. Drain it when grilling this phase.
 
 Read a dump over the network: `pgdq --source https://example.com/foo.dump`
-and, with P13, the `.xz` beside it. Carved out of P6, which sketched it as one
+and, composing with the `.xz` source, the compressed one beside it. Carved out
+of P6, which sketched it as one
 bullet — an `object_store`-backed `ByteRangeSource` is an L1 addition, not a
 presented surface, and it is the only part of that phase with a user-facing CLI
 feature attached.
@@ -557,14 +523,16 @@ with no mtime** — `modified()` already answers `Option`, but an ETag is not a
 trustworthy; **cancellation and timeouts**, since a ranged GET can hang where a
 `pread` cannot and the preamble prepass is an uncancellable region today
 ([`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md));
-**where a remote compressed file's seek table comes from**, which is P13's
-answer or else one ranged GET per stream footer; and the **second set of
+**where a remote compressed file's seek table comes from**, which is the cache
+or else one ranged GET per stream footer, and is unbuilt on both sides today
+(`KD15`); and the **second set of
 measured defaults** a high-latency backend needs — readahead depth and
 chunk-size defaults measured against local devices say nothing about a
 high-latency ranged backend, which is the one part of that tuning that does not
 transfer.
 
-**Scheduled after P10 and ahead of P6.** Backburnered relative to P13 and the scan-performance work,
+**Scheduled after P10 and ahead of P6.** Backburnered relative to the
+compressed-input and scan-performance work,
 which is the maintainer's call; ahead of P6 because that phase's own reason for
 going last is that it presents surfaces over mechanisms that have stopped
 moving, and a `TableProvider` commits to the I/O layer beneath it. That layer is
@@ -606,18 +574,18 @@ questions this phase must answer, not evidence that ages.
 
 ## P15 — gzip and zstd input
 
-**Inbox:** [`roadmap-P15-gzip-zstd-inbox.md`](roadmap-P15-gzip-zstd-inbox.md) — facts P13's grilling filed for this one. Drain it when grilling this phase.
+**Inbox:** [`roadmap-P15-gzip-zstd-inbox.md`](roadmap-P15-gzip-zstd-inbox.md) — facts earlier phases filed for this one. Drain it when grilling this phase.
 
-The codecs P13 leaves behind: `.gz` and `.zst`, in the single-stream shape and
+The codecs the `.xz` source leaves behind: `.gz` and `.zst`, in the single-stream shape and
 in the seekable ones (`bgzip`'s BGZF, `t2sz`'s zstd seekable format). Two things
 separate them from xz, and they are why this is a phase rather than two more
-arms of P13's:
+arms of that source's:
 
 - **Neither answers `size()` from its own footer.** gzip's `ISIZE` is the
   uncompressed length mod 2³², useless above 4 GiB; zstd's frame content size
   is optional and a streaming writer omits it. So this phase either relaxes
   what `ByteRangeSource::size` promises or computes the size in a first pass —
-  a decision P13 never has to make, and one that reaches every caller that
+  a decision xz never forced, and one that reaches every caller that
   clamps a read against `size()`.
 - **These are `pg_dump`'s own plain-format output.** For plain text a nonzero
   `--compress` level compresses the entire output file, as gzip, lz4 or zstd;

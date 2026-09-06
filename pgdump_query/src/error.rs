@@ -24,7 +24,7 @@ pub enum Error {
     Arrow(#[from] arrow::error::ArrowError),
     /// From `xz_seek`: a walk, a seek, or a block decode failed against an
     /// `.xz`-compressed [`crate::XzSource`]
-    /// (`docs/design/roadmap-P13-compressed-input.md`). The crate's own
+    /// (`docs/design/architecture.md`, "The compressed source"). The crate's own
     /// `Error::compressed_offset`/`uncompressed_range` carry the position;
     /// this variant only wraps and displays it.
     #[error("xz error: {0}")]

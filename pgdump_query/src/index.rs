@@ -371,7 +371,7 @@ pub(crate) fn toc_coverage_diagnostic(spans: &[Span]) -> Diagnostic {
 /// `crate::cache::status_from_file`, which reads it off a table just loaded
 /// from a persisted cache — one function so "does this table warrant the
 /// warning" is answered the same way regardless of which of those handed it
-/// the table (`docs/design/roadmap-P13-compressed-input.md`, "D2").
+/// the table (`docs/design/architecture.md`, "The compressed source").
 pub(crate) fn non_seekable_compression_diagnostic(
     table: Option<&xz_seek::SeekTable>,
 ) -> Option<Diagnostic> {

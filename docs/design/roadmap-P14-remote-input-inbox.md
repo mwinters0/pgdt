@@ -12,23 +12,26 @@ from — go re-check the origin rather than trusting an entry that has aged.
 
 ## The trait gains `stored_size()`, and identity is deliberately the cheap number
 
-**Fact.** P13 settles that `ByteRangeSource` grows `stored_size()` — the bytes
-as stored, as against `size()`, which is what `read_range` can address — and
-that the cache's `SourceIdentity` records `stored_size` plus `modified()`
-rather than `size()`. For a plain local file the two are equal; they diverge
-for a decompressing source. P13 also makes the trait **dyn-compatible**
-(`Pin<Box<dyn Future>>` returns, `Arc<dyn ByteRangeSource>` at the call sites),
-specifically so that local, remote and decompressing-over-either do not become
-a combinatorial branch at every caller.
+**Fact.** `ByteRangeSource` carries `stored_size()` — the bytes as stored, as
+against `size()`, which is what `read_range` can address — and the cache's
+`SourceIdentity` records `stored_size` plus `modified()` rather than `size()`.
+For a plain local file the two are equal; they diverge for a decompressing one.
+The trait is also **dyn-compatible** (`Pin<Box<dyn Future>>` returns,
+`Arc<dyn ByteRangeSource>` where a source is constructed rather than borrowed),
+specifically so that local, remote and decompressing-over-either do not become a
+combinatorial branch at every caller. Both are built
+([`architecture.md`](architecture.md), "Execution model and API surface").
 
-**Why P14 cares.** Both are decisions about the trait this phase implements a
-new backend for, and the second was made *for* this phase's benefit. An
+**Why P14 cares.** Both are properties of the trait this phase implements a new
+backend for, and the second was decided *for* this phase's benefit. An
 `object_store` source answers both sizes with the same `head`, so it inherits
 the default `stored_size() == size()` and owes nothing extra — but a remote
-`.xz` composes the two, and that composition is the case D3 exists to keep
-cheap.
+`.xz` composes the two, and that composition is the case dyn-compatibility
+exists to keep cheap. `SourceIdentity` is an opaque enum for the same reason:
+this phase adds a `Remote { etag }` variant and the existing match sites gain an
+arm, rather than the type being redesigned around a source with no mtime.
 
-**Origin.** 2026-09-02, grilling P13.
+**Origin.** 2026-09-02, grilling the compressed-input work.
 
 ---
 
@@ -36,48 +39,33 @@ cheap.
 
 **Fact.** Building an xz seek table means reading each stream's footer, and the
 koji upstream download is **31,150 concatenated streams**. Locally that walk is
-85 s of HDD seeks; over ranged GETs it is 31,150 round trips. P13's answer is to
-persist the table in the `.dqcache` so only a cold source ever pays, and to
-require of the external `xz-seek` crate that a reader can be constructed *from*
-a previously obtained table with no walk at all.
+85 s of HDD seeks; over ranged GETs it is 31,150 round trips. The mitigation was
+designed and only half built: the table *is* persisted in the `.dqcache`
+(`cache::save` takes it through `ByteRangeSource::seek_table()`, `cache::load`
+round trips it) and the decoder crate does support constructing a reader *from*
+a previously obtained table — but nothing in this tree calls it, so
+`XzSource::open` walks the footers on every invocation however complete the
+cache is. That is deficiency `KD15`, unowned
+([`../status/STATUS.md`](../status/STATUS.md);
+[`architecture.md`](architecture.md), "The compressed source"). The fix is
+located rather than open-ended: **recognition** is the layer that decides which
+source to build, so it is also the layer that can consult a loaded cache first —
+but it does not hold one today, and giving it one is a wiring decision.
 
 **Why P14 cares.** It is this phase's worst latency case and it arrives the
-moment remote and compressed compose. It also sharpens a fact this phase depends
-on independently: with a complete structural cache, a query reduces to the cache
-read, `stored_size()`/`modified()` for the identity check, and the replay read of
-the target block — so the round-trip count for a warm remote query is small and
-countable, and that is the number this phase should be designed against.
+moment remote and compressed compose — 31,150 round trips before a byte is
+served, with no cache able to prevent it. So this phase either does that work or
+inherits it undone, and it dominates: everything else in a warm remote query is
+a cache read, an identity check and one block's bytes. That is the same fact
+this phase depends on from the other direction — with a complete structural
+cache the round-trip count for a warm query is small and countable, and that is
+the number this phase should be designed against, so the walk is what stands
+between the design and the number.
 
-**Origin.** 2026-09-02, grilling P13.
-
----
-
-## The seek table is persisted but never read back, so the walk is not yet avoided
-
-**Fact.** P13 landed half of what the entry above says its answer was. The seek
-table *is* persisted — `cache::save` takes it through
-`ByteRangeSource::seek_table()` into the cache envelope and `cache::load` round
-trips it — but nothing constructs a reader *from* a cached table, so
-`XzSource::open` walks the file's stream footers on every invocation however
-complete the cache is. That is deficiency `KD15`, unowned
-([`../status/STATUS.md`](../status/STATUS.md);
-[`architecture.md`](architecture.md), "The compressed source"). The decoder
-crate supports the construction; nothing in this tree calls it. The located fix
-is that **recognition** is the layer that decides which source to build, so it
-is also the layer that can consult a loaded cache first — but it does not hold
-one today, and giving it one is a wiring decision, not a one-liner.
-
-**Why P14 cares.** Locally the walk is 85 s of seeks in the worst case; over
-ranged GETs it is 31,150 round trips, which the entry above calls this phase's
-worst latency case. So the mitigation that entry treats as already decided is
-work this phase either does or inherits undone — and it is *more* than half the
-cost of a warm remote query, since everything else in one is a cache read, an
-identity check and one block's bytes.
-
-**Origin.** P13's wrap audit, 2026-09-06
-([`../status/history/2026-09-06.md`](../status/history/2026-09-06.md), "P13's
-wrap audit: the seek table is persisted and never read back"). Re-check `KD15`:
-if it has been struck, this entry is discharged.
+**Origin.** 2026-09-02, grilling the compressed-input work; the half-built state
+found by its wrap audit, 2026-09-06
+([`../status/history/2026-09-06.md`](../status/history/2026-09-06.md)).
+Re-check `KD15`: if it has been struck, half this entry is discharged.
 
 ---
 
@@ -90,11 +78,11 @@ same crate serves a local file, an `mmap`, an in-memory buffer, and this phase's
 ranged GETs.
 
 **Why P14 cares.** It means "remote compressed input" needs no new work in that
-crate: the composition is P13's `XzSource` wrapping this phase's
+crate: the composition is the existing `XzSource` wrapping this phase's
 `object_store` source. If that requirement is dropped or the crate ships owning
 its I/O, this phase inherits the problem.
 
-**Origin.** 2026-09-02, grilling P13.
+**Origin.** 2026-09-02, grilling the compressed-input work.
 
 **Contingent on** the crate honouring R2; re-check the requirements file.
 
@@ -231,7 +219,7 @@ from this project's chair, and got these answers:
   as fixed state rather than threading it positionally through each `Window`
   construction in a loop — that discipline, not a type change in `xz-seek`,
   is what actually removes the swap risk. Precedent: `stored_size()`/`size()`
-  ([D4](roadmap-P13-compressed-input.md)) is the same shape of adjacent-`u64`
+  ([`architecture.md`](architecture.md), "The cache") is the same shape of adjacent-`u64`
   risk, and this project's answer there was legibility (both surface at the
   accessor and in error text) over a type-level guard.
 - **Composing a tail window with an offset-0 window for a remote footer walk

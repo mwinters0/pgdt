@@ -75,3 +75,30 @@ rest.
 table is the register. **Contingent on** the register's divergent rows, which
 P11 went on to close one type at a time after this was filed — read the table
 rather than trusting any list of them written here.
+
+---
+
+## This phase is the second half of the decoder crate's publication gate
+
+**Fact.** The `.xz` addressing layer this repo builds against is `xz-seek`, and
+it is deliberately **not published** — the dependency is a frozen read-only copy
+under `vendor/xz-seek/`, taken by `scripts/vendor_xz_seek.py` and stamped with
+its source commit ([`architecture.md`](architecture.md), "The compressed
+source"). Publication was gated on two real consumers vetting the interface
+before it is frozen into a version: the compressed source, which has landed, and
+this phase, which has not. So this phase is the remaining half of that gate.
+
+**Why P10 cares.** Two things follow that this phase would otherwise discover
+mid-slice. Whatever it needs of that crate's interface is still **changeable** —
+this is the last moment an awkward signature can be fixed at its source rather
+than worked around here, and the arrangement exists precisely to collect that
+feedback. And this phase inherits a decision it did not make: whether to
+re-sync the vendored snapshot, publish and depend on a version, or keep
+vendoring. The parallel-scan work has its own reason to re-sync (it needs
+upstream work the snapshot predates), so whichever of the two runs first is
+where that call actually gets made, and the other inherits it.
+
+**Origin.** The compressed-input work's grilling, carried here at its keystone,
+2026-09-06. **Contingent on** the crate still being unpublished — check
+`pgdump_query/Cargo.toml` for a path dependency versus a version before assuming
+the gate is still open.

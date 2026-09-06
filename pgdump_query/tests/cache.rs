@@ -465,8 +465,8 @@ async fn load_offline_missing_file_is_missing() {
 
 /// Compress `path` with `xz`, forcing several blocks so this exercises the
 /// seekable shape, into a temp file this test owns. `xz` is not
-/// `mise`-pinned (`docs/design/roadmap-P13-compressed-input.md`,
-/// "Fixtures"), so a missing binary fails loudly rather than skipping
+/// `mise`-pinned (`docs/design/architecture.md`, "Testing philosophy"), so a
+/// missing binary fails loudly rather than skipping
 /// (`docs/design/roadmap.md`, "A test may assume the tools `mise` pins").
 ///
 /// **512, not a round number picked for looks**: `edge_cases.sql` is 2,352
@@ -494,9 +494,9 @@ fn xz_compress(path: &Path) -> tempfile::NamedTempFile {
 /// `XzSource` is just another `ByteRangeSource` to everything above `io.rs`:
 /// `build_index`'s scan and `cache::save`/`load`'s round trip produce the
 /// same `DumpIndex` whether the bytes came straight off disk or through the
-/// decoder (`docs/design/roadmap-P13-compressed-input.md`, "D5"/"D6") — the
-/// differential parity this slice owes at the library level. The CLI-level
-/// parity against the phase's own two committed fixtures is 13.5's.
+/// decoder (`docs/design/architecture.md`, "The compressed source") — the
+/// differential parity at the library level. The CLI-level parity against
+/// generated fixtures is `pgdump_query-cli/tests/xz_source.rs`.
 #[tokio::test]
 async fn xz_source_produces_the_same_index_and_cache_as_the_plain_file() {
     let plain = LocalFileSource::open(edge_cases()).unwrap();

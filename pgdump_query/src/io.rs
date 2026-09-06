@@ -19,14 +19,14 @@ use crate::{Error, Result};
 /// changing them. [`ByteRangeSource::hint_read_size`] sits outside that mirror
 /// and is defaulted, so such an implementation need not know it exists.
 ///
-/// **Dyn-compatible on purpose** (`docs/design/roadmap-P13-compressed-input.md`,
-/// "D3 — `ByteRangeSource` becomes dyn-compatible"): each method returns a
+/// **Dyn-compatible on purpose** (`docs/design/architecture.md`, "Execution
+/// model and API surface"): each method returns a
 /// boxed future rather than `impl Future` (RPITIT), so callers can hold
 /// `&dyn ByteRangeSource` / `Arc<dyn ByteRangeSource>` instead of being
 /// generic over the source. [`XzSource`] is the second implementation and the
 /// case this was done for — a *wrapping* source composes with whatever it
-/// wraps instead of multiplying the branch at every call site, and P14's
-/// remote source squares that again. One allocation per `read_range` call is
+/// wraps instead of multiplying the branch at every call site, and a remote
+/// source would square that again. One allocation per `read_range` call is
 /// noise beside a chunk-sized read.
 pub trait ByteRangeSource: Send + Sync {
     fn read_range(
@@ -43,9 +43,8 @@ pub trait ByteRangeSource: Send + Sync {
     fn modified(&self) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>>;
     /// Bytes as stored on the device — what a `stat` reports — as opposed to
     /// [`ByteRangeSource::size`]'s addressable (possibly decompressed) length
-    /// (`docs/design/roadmap-P13-compressed-input.md`, "D4 — `stored_size()`
-    /// joins the trait, `total_size` leaves `identity.size`, and identity
-    /// becomes opaque"). This is the structure cache's staleness check now:
+    /// (`docs/design/architecture.md`, "The cache"). This is the structure
+    /// cache's staleness check now:
     /// checking `size()` on a decompressing source would cost that source's
     /// whole stream-index walk on every `pgdq info`/`pgdq parse` invocation,
     /// where `stored_size()` costs one `stat`.
@@ -58,9 +57,8 @@ pub trait ByteRangeSource: Send + Sync {
         self.size()
     }
     /// Whether [`ByteRangeSource::size`] is this source's *exact* addressable
-    /// length rather than a bound (`docs/design/roadmap-P13-compressed-input.md`,
-    /// "D7 — `size_is_exact()` joins the trait now, defaulted `true`, for
-    /// P15's benefit"). Every source implemented so far answers `true`
+    /// length rather than a bound (`docs/design/architecture.md`, "Execution
+    /// model and API surface"). Every source implemented so far answers `true`
     /// honestly, xz's own size coming from its stream index exactly; nothing
     /// reads this yet; it exists for P15's gzip/zstd sources, whose sizes
     /// cannot always be known exactly ahead of a full decode.
@@ -81,8 +79,8 @@ pub trait ByteRangeSource: Send + Sync {
     fn hint_read_size(&self, _len: usize) {}
     /// The xz seek table behind this source, for a caller building a cache
     /// envelope to persist alongside it
-    /// (`docs/design/roadmap-P13-compressed-input.md`, "D5" — the sibling
-    /// field `crate::cache::CompressionIndex` wraps this at save time).
+    /// (`docs/design/architecture.md`, "The cache" — the sibling field
+    /// `crate::cache::CompressionIndex` wraps this at save time).
     ///
     /// `None` by default, which is exactly right for a source with no
     /// compression layer; [`LocalFileSource`] never overrides it.
@@ -326,7 +324,7 @@ impl ByteRangeSource for LocalFileSource {
 }
 
 /// A `ByteRangeSource` decoding an `.xz`-compressed local file on the fly
-/// (`docs/design/roadmap-P13-compressed-input.md`, "D5"/"D6").
+/// (`docs/design/architecture.md`, "The compressed source").
 ///
 /// **Two file handles, deliberately.** `open` walks the file's stream
 /// footers once (`xz_seek::SeekTable::from_source`'s cost — one read per
@@ -462,7 +460,7 @@ impl ByteRangeSource for XzSource {
 }
 
 /// The six bytes every `.xz` stream opens with
-/// (`docs/design/roadmap-P13-compressed-input.md`, "D8").
+/// (`docs/design/architecture.md`, "The compressed source").
 const XZ_MAGIC: [u8; 6] = [0xFD, b'7', b'z', b'X', b'Z', 0x00];
 
 /// Open `path` as a [`ByteRangeSource`], choosing between [`LocalFileSource`]
@@ -627,8 +625,8 @@ mod tests {
         assert_eq!(pool.take(1024).len(), 1024);
     }
 
-    /// `xz` is not `mise`-pinned
-    /// (`docs/design/roadmap-P13-compressed-input.md`, "Fixtures"), so a
+    /// `xz` is not `mise`-pinned (`docs/design/architecture.md`, "Testing
+    /// philosophy"), so a
     /// missing binary fails with the remedy rather than skipping silently
     /// (`docs/design/roadmap.md`, "A test may assume the tools `mise`
     /// pins").
@@ -667,9 +665,9 @@ mod tests {
     }
 
     /// A payload long enough that a small `--block-size` reliably splits it
-    /// into several blocks — not `edge_cases.sql` (that fixture is 13.5's,
-    /// shared by the CLI-level differential tests; this is a throwaway
-    /// pattern for pinning `XzSource`'s own wiring).
+    /// into several blocks — not `edge_cases.sql`, which the CLI-level
+    /// differential tests use; this is a throwaway pattern for pinning
+    /// `XzSource`'s own wiring.
     fn xz_test_payload() -> Vec<u8> {
         (0..20_000u32).map(|i| (i % 251) as u8).collect()
     }

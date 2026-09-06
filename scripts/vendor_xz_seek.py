@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Sync the frozen, read-only copy of `xz-seek` at vendor/xz-seek/.
 
-P13 depends on `xz-seek` (docs/design/roadmap-P13-compressed-input.md,
-"D9 -- The dependency is a frozen vendored copy, not published, wired in by
-this phase") before that crate is published: this repo is its first
+This repo depends on `xz-seek` (docs/design/architecture.md, "The compressed
+source") before that crate is published: this repo is its first
 real-world consumer, and the interface is vetted by being used rather than
 frozen into a version and discovered. A path dependency onto the sibling
 working tree was rejected there -- it breaks `cargo check` on any checkout
@@ -43,7 +42,7 @@ REPO = Path(__file__).resolve().parent.parent
 DEST = REPO / "vendor" / "xz-seek"
 
 # This machine's xz-seek checkout (CLAUDE.local.md, "xz-seek (external crate,
-# blocking P13)"). A different machine points this elsewhere.
+# vendored into this repo)"). A different machine points this elsewhere.
 SOURCE = Path(
     os.environ.get("PGDQ_XZ_SEEK_SOURCE", "/mnt/wd12t/fedora/experiments/xz-seek")
 )
@@ -171,10 +170,11 @@ This is a read-only snapshot, not a fork: a bug found here is fixed upstream
 and arrives at the next sync, never patched in this copy directly. Re-sync
 with `cd scripts && uv run vendor_xz_seek.py`.
 
-Nothing in this workspace depends on this crate yet (see
-docs/design/roadmap-P13-compressed-input.md); it is vendored ahead of P13's
-grilling so the copy is stable before xz-seek's own P3 (parallel block
-decode) starts moving the source underneath it.
+`pgdump_query` names this copy as a path dependency (see
+docs/design/architecture.md, "The compressed source"). The snapshot
+deliberately predates xz-seek's own parallel-block-decode work, so it sits
+still rather than moving underneath this build; the first consumer that needs
+newer upstream work is what re-takes it.
 """
     (DEST / "VENDORED_FROM").write_text(stamp)
 

@@ -228,8 +228,9 @@ goes").
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **No phase is in flight.** P13 wrapped; P7 wrapped and was struck at a
-  keystone review. What each built and what each refused is beside its
+- **No phase is in flight.** The compressed-input work wrapped and was struck
+  at a keystone review, as the scan-performance work was before it. What each
+  built and what each refused is beside its
   mechanism in [`../design/architecture.md`](../design/architecture.md), filed
   by subject. Six phases are sketched — P16, P10, P14, P6, P15, P8, in the
   roadmap table's schedule order; a `P<k>` is an identifier, so the numbers say

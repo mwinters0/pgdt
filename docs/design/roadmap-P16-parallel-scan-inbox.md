@@ -59,10 +59,10 @@ core decodes ~446 MB/s of plaintext, four concurrent per-stream decodes reach
 ~1.48 GB/s at 397% CPU, and `xz`'s own `-T8` on that file gains nothing, its
 threaded decoder parallelising blocks within a stream where each stream holds
 one. Numbers and method:
-[`roadmap-P13-compressed-input.md`](roadmap-P13-compressed-input.md),
-"Evidence this phase rests on" — probes, not figures.
+[`architecture.md`](architecture.md), "The compressed source" — probes, not
+figures.
 
-**Why this phase cares.** P13 lands the decompressing source and deliberately
+**Why this phase cares.** The decompressing source is built and deliberately
 does *not* take parallel decode, leaving it to this phase. So this phase inherits a second parallelism case with a
 different bottleneck — CPU-bound at ~450 MB/s a core where the plain path is
 device-bound at ~240 MB/s on the same HDD — and a different unit of work: a
@@ -70,15 +70,12 @@ compressed block rather than a byte range resynced to the next LF. A device-awar
 compressed source is set by cores and decode rate, not by
 `/sys/block/<dev>/queue/rotational`.
 
-**Origin.** 2026-09-02, sketching P13.
-
-**Contingent on** P13 landing first, which is this table's order. If it slips
-behind this phase, the entry becomes a constraint on defaults rather than a
-case to implement.
+**Origin.** 2026-09-02, sketching the compressed-input work, which has since
+landed — so this is a case to implement rather than a constraint on defaults.
 
 ---
 
-## Parallel xz decode is worth ~3.3x, and the seekable-xz crate is being shaped to allow it
+## Parallel xz decode is worth ~3.3x, and the seekable-xz crate leaves room for it
 
 **Fact.** On a 300 MiB stream-aligned slice of the koji `.xz`: one `xz -dc -T1`
 process reaches ~446 MB/s of plaintext at 108% CPU; `xz -dc -T8` on the same
@@ -92,12 +89,12 @@ blocks *within* a stream and every stream in that file holds one block; four
 readahead, chunk-size and parallelism defaults this phase sets have two source
 shapes to satisfy rather than one. The discovery half of parallelism is already
 solved for a seekable stream — block boundaries are known up front from the
-index — so this is the case where only the easy half is left. The external `xz-seek` crate P13 is blocked on is being specified to
-*defer* parallel decode but not design it out: its requirements say the block
-decoders stay independent of one another and of any shared cursor, behind the
-same positioned-read interface.
+index — so this is the case where only the easy half is left. The `xz-seek`
+crate *deferred* parallel decode without designing it out: its requirements say
+the block decoders stay independent of one another and of any shared cursor,
+behind the same positioned-read interface.
 
-**Origin.** 2026-09-02, grilling P13. Re-check
+**Origin.** 2026-09-02, grilling the compressed-input work. Re-check
 `/mnt/wd12t/fedora/experiments/xz-seek/docs/design/historical/initial.md` for what
 the crate actually committed to.
 
@@ -147,8 +144,8 @@ a dump whose data is one large table); make the sparse row index above cover
 entry and this one should be read together; or accept a resync scan from the
 run's start, which is O(run) per worker and self-defeating.
 
-Note the same fact bounds P13: a compressed-block boundary lands mid-statement
-just as a speculative split does.
+Note the same fact bounds a compressed source: a compressed-block boundary
+lands mid-statement just as a speculative split does.
 
 **Origin.** The `INSERT` statement scan and the review of its `KD9` call,
 2026-09-03
@@ -419,6 +416,35 @@ against.
 
 ---
 
+## A worker's floor is the LZMA2 dictionary as well as its decoded block, and the budget arithmetic below omits it
+
+**Fact.** The koji `.xz` files are LZMA2 with an **8 MiB dictionary** (`xz -6`,
+the default preset) and CRC64 per block, read out of the first 32 bytes with
+`od -An -tx1 -N 32` (`CLAUDE.local.md` names both files and this recipe). The
+dictionary is a decoder's per-stream memory floor: a concurrent decode holds one
+*per worker*, on top of whatever decoded output that worker is filling, and it
+is a property of how the file was written rather than something a reader can
+choose.
+
+**Why this phase cares.** It corrects the worker arithmetic two entries below,
+which counts only the decoded block. At 24 MiB blocks a worker's floor is
+24 + 8 = 32 MiB, not 24, so a 512 MB cgroup admits roughly **15** rather than
+19; at 128 MiB blocks 136 against 128 leaves the answer at 3. So the omission
+bites exactly on the many-small-blocks shape, which is the motivating file's.
+The direction of the error also matters: the byte budget this phase asked the
+crate to take is only honest if the number it is given accounts for the
+dictionary, and a budget computed from block size alone overcommits. Two things
+bound how far this generalizes — the dictionary is 8 MiB because these files
+were written at the default preset, and a file written at `-9` carries 64 MiB,
+which would dominate a 24 MiB block outright.
+
+**Origin.** The compressed-input work's grilling, stated in its spec and
+carried here at that phase's keystone, 2026-09-06. Contingent on the preset the file was written at:
+re-read the header bytes for any file this arithmetic is applied to rather than
+assuming 8 MiB.
+
+---
+
 ## The memory bound this phase must promise is in bytes, and the crate will take it in bytes
 
 **Fact.** `xz-seek`'s parallel path will accept **both** a worker count and a
@@ -533,12 +559,10 @@ whether the copy is still the right arrangement, since publication was gated on
 this repo and P10 both landing — is part of this phase's own opening moves
 rather than something already done for it.
 
-**Origin.** P13's implementation and its wrap audit, 2026-09-06
-([`architecture.md`](architecture.md), "The compressed source";
-[`roadmap-P13-compressed-input-notes.md`](roadmap-P13-compressed-input-notes.md),
-"The vendor copy was deliberately not re-synced"). Contingent on nothing in this
-tree; re-check `vendor/xz-seek/VENDORED_FROM` before assuming which snapshot is
-in.
+**Origin.** The compressed-input work and its wrap audit, 2026-09-06
+([`architecture.md`](architecture.md), "The compressed source", which holds both
+the mutex and the refused re-sync). Contingent on nothing in this tree;
+re-check `vendor/xz-seek/VENDORED_FROM` before assuming which snapshot is in.
 
 ---
 

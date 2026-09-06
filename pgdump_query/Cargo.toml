@@ -24,12 +24,11 @@ simdutf8 = "0.1.5"
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["rt", "sync"] }
 # A frozen, read-only vendored copy — `vendor/xz-seek` is excluded from this
-# workspace, not published (D9, `docs/design/roadmap-P13-compressed-input.md`,
-# "D9 — The dependency is a frozen vendored copy, not published, wired in by
-# this phase"). The default features (`liblzma`, `fast-checks`) are the
-# manifest's own and this phase's choice over `xz4rust` — see D9's "The build
-# takes `liblzma`". `serde` is turned on for `cache::CompressionIndex` (D5),
-# which names `xz_seek::SeekTable` in its `Xz` variant; `io::XzSource` (13.3)
+# workspace, not published (`docs/design/architecture.md`, "The compressed
+# source"). The default features (`liblzma`, `fast-checks`) are the manifest's
+# own, and are kept over `xz4rust` so that the integration being vetted is the
+# one that ships. `serde` is turned on for `cache::CompressionIndex`,
+# which names `xz_seek::SeekTable` in its `Xz` variant; `io::XzSource`
 # constructs one, walking the file's stream footers at open time.
 xz-seek = { path = "../vendor/xz-seek", features = ["serde"] }
 

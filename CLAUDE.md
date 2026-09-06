@@ -87,6 +87,15 @@ no musl recipe here any more**: only glibc is measured, so a static musl build
 is an untested configuration and an untested portability claim is worse than
 none. Let the container write the log.
 
+**The two `.xz` copies beside that dump are readable input now, and they are a
+second long-running case rather than the same one.** `pgdq` reads either
+directly, so a scan of one trades ~19× fewer bytes off the device for CPU it did
+not spend before — and the upstream download's 31,150-stream shape pays an 85 s
+footer walk *before* the scan, on every command (`KD15`). Neither is a measured
+configuration: no figure covers a compressed scan, and taking one is the
+parallel-decode work's job, so a reading off one of these files is a probe and
+no document may quote it as a measurement.
+
 **The invocation is not written out here.** `cd scripts && uv run measure.py
 --koji-recipe` prints it with every path filled in, and `--koji-recipe --wrap`
 prints the stop-report-resume-compare sequence. It lived in three
@@ -143,7 +152,8 @@ to read from and can execute garbage. Let it finish, or kill it first.
 
 `docs/design/architecture.md` describes how the built system works, filed by
 subject. **Read the section for the mechanism you are touching** — the scanner,
-the file map, `DumpIndex`, the preamble grammar, type resolution, the decoders,
+the byte sources, the compressed source, the file map, `DumpIndex`, the preamble
+grammar, type resolution, the decoders,
 the zero-copy Arrow path, the query passes, the cache, the CLI, fixtures, the
 comparison oracle, or the testing approach — before changing that mechanism.
 Each section carries its own *Rejected:* paragraphs, which are the part that
@@ -217,6 +227,31 @@ double-buffered readahead, a viewing builder for nested values, pre-sized Arrow
 builders, a term-count gate on the shared row split, a second `push_row` entry
 point — carry a measurement against them already, filed as a rejected
 alternative beside the thing they would have changed.
+
+**A byte source is not just a file, and `architecture.md`, "The compressed
+source" is what says so — read it before touching `io.rs`'s source
+implementations, source recognition, or the vendored decoder.** `.xz` input is
+read end to end by a second `ByteRangeSource`, so `open_local` sniffs content
+rather than a file name, `size()` and `stored_size()` are two different numbers,
+and a backward read's cost depends on a container shape the file chose. That
+section holds the three shapes and what each costs, the decoder restarted on
+seek, `KD15` (the persisted seek table is never read back, so the footer walk is
+paid on every command), and the rule that governs `vendor/xz-seek/`: it is
+**read-only**, a bug there is fixed upstream and returns at the next sync, and
+the first consumer needing newer upstream work is what re-syncs it. A change to
+the trait's own shape — a method added, a signature moved — is
+"Execution model and API surface", which says which of the defaulted methods
+exist for a source the local file is not.
+
+**Reshaping `SourceIdentity`, `total_size` or the cache envelope means reading
+`architecture.md`, "The cache" first.** The staleness check reads
+`stored_size()` deliberately so that it stays a `stat` on a source whose
+addressable length costs a stream-index walk; `total_size` is its own field
+rather than an alias of the identity's; and identity is an **opaque enum** whose
+match sites read fields through the variant, because the next source has an ETag
+where this one has an mtime. `CompressionIndex` is a sibling of `ContainerKind`,
+not a value of it, and the tag stays `Plain` because a compressed source's span
+offsets genuinely are plain-format offsets.
 
 `docs/design/roadmap-P<N>-<slug>-inbox.md` holds facts an *earlier* phase found
 that phase N will need — filed by destination, because a notes doc filed by
