@@ -74,27 +74,32 @@ that disqualifies a sweep
 directionally"). Session drift over 92 shared readings is a median absolute
 **1.6%** and a largest 14.3%.
 
-**Sixteen figures are stale, and no acknowledgement can excuse them.** Making
-the buffer pool keep the chunk size a read loop announces changed `io.rs`,
-`scan.rs`, `stream.rs` and the CLI, so every figure that times a run is red, and
-`session-drift` has been red on `scripts/measure.py` since the harness took the
-derived direction of the borrow graph. Those changes add executable lines, so
-neither mechanical oracle applies: reachability excuses only a diff no command
-shape executes, and byte-identity settles generator changes alone. **One
-published number actually moves**, the `chunk-size` table's 16 MiB row, which
-was taken when a chunk that large missed the buffer pool; that row is called out
-where it stands. A stale figure obliges no sweep
-([`../design/measurements.md`](../design/measurements.md), "A stale figure does
-not oblige a sweep"), and a sweep is what re-takes these: seventeen of the
-eighteen tables from one sitting is the property the `af15eac` stamp has and a
-partial sitting would spend.
+**Seventeen of the eighteen figures are stale, and no acknowledgement can
+excuse them.** Two rounds of library work did it. Making the buffer pool keep
+the chunk size a read loop announces changed `io.rs`, `scan.rs`, `stream.rs` and
+the CLI; then the compressed-input work reshaped every `ByteRangeSource`
+signature to a boxed future and added a second implementation, touching `io.rs`,
+`cache.rs`, `index.rs`, `diagnostic.rs` and the CLI again. So every figure that
+times a run is red, and `session-drift` has been red on `scripts/measure.py`
+since the harness took the derived direction of the borrow graph. Those changes
+add executable lines, so neither mechanical oracle applies: reachability excuses
+only a diff no command shape executes, and byte-identity settles generator
+changes alone. `nested-decode-micro` is the one figure still green, timing
+decoders that none of it touched. **One published number actually moves**, the
+`chunk-size` table's 16 MiB row, which was taken when a chunk that large missed
+the buffer pool; that row is called out where it stands. A stale figure obliges
+no sweep ([`../design/measurements.md`](../design/measurements.md), "A stale
+figure does not oblige a sweep"), and a sweep is what re-takes these: seventeen
+of the eighteen tables from one sitting is the property the `af15eac` stamp has
+and a partial sitting would spend.
 
-`--stale` reports a seventeenth, and it is a **false positive**: `peak-rss` was
-taken at `7ee5db5`, later than every commit that last touched the paths it
-declares, and the only commit since is `30bc173`, whose `io.rs` diff is three
-lines of doc comment. The harness reads one commit for the whole document rather
-than each figure's own sitting; `M60` is the fix, and it is queued rather than
-landed.
+`peak-rss` is the one whose staleness changed character rather than arriving
+with the rest. It was a **false positive** until the compressed-input work: taken
+at `7ee5db5`, later than every commit that had then touched the paths it
+declares, and red only because the harness reads one commit for the whole
+document rather than each figure's own sitting — `M60` is that fix and is queued
+rather than landed. It is now genuinely stale, the `io.rs` and `cache.rs`
+changes beneath it being executable ones.
 
 The two acknowledgements the register carries still stand and still hold for
 what they name. `measure.ACKNOWLEDGED` records P7's wrap and keystone, whose
@@ -131,7 +136,7 @@ edit does not re-stale the stamp it was just given.
 | Register-to-oracle reconciliation | working: `scripts/oracle_register.py` reads the register's arms out of `pgtype.rs` — one per declared base name in `builtin_scalar`, one per `TypeKind` match arm in `comparison_user_type`, the three branches of the walk that are not match arms, and the four branches of `collated_text` — and joins them against the case table both ways, failing on either. **42 arms, 55 cases, nothing uncovered and nothing unplaced.** One arm carries an exemption instead of a case and is reported under its own heading: no oracle case can reach `collation/non-deterministic`, a non-deterministic collation being ICU-only (I42) and an ICU case carrying the `collversion` drift the oracle excludes ICU to avoid. **An exemption names where the arm's evidence is** — `(file, needle)` pointers the check resolves, three unit tests today — because the reason alone says why the oracle cannot cover the arm and nothing about what does; it goes stale from both sides, an exempt arm that acquires a case being a problem and evidence that stops resolving being one too. The pointers name sufficient evidence rather than exhaustive, so the fixture bytes that now carry the shape owe no edit there. Each collation branch is anchored on a string the parse must find, so deleting one is reported rather than shortening the list. The collation is a second dimension: a case's label picks the arm, `C` reaching the bytewise branch and `default` the other two, and the `datcollate` that makes that mapping sound is read out of `meta.tsv` rather than assumed. An oracle pass of `generate_fixtures.py` ends by running it beside the differ ([`../design/architecture.md`](../design/architecture.md), "The register-to-oracle reconciliation") |
 | ADBC floor oracle | `fixtures/<13–18>/adbc/floor.tsv` holds what the Arrow ADBC PostgreSQL driver (`adbc_driver_postgresql` 1.12.0, pinned in `scripts/pyproject.toml`) returns for every declarable `pg_catalog` type — 74 rows at 13, 82 at 14–18, taken from the host over a published port by `scripts/generate_fixtures.py` and committed ([`../design/architecture.md`](../design/architecture.md), "The ADBC floor oracle") |
 | The floor rule, reconciled | working: `scripts/floor_mapping.py` joins the oracle against `builtin_scalar` and fails both ways — every floor row the rule reaches is met or carries a stance, every arm resolves to a floor row, and every stance is about a row that still needs one. **58 of the 82 rows a major are placed by the file's own columns** (`arrow.opaque`, or a driver refusal), 21 of the remaining 24 are simply met, and three carry a stance: `money` below by decision (`KD13`), `regproc` unanswerable because the two encodings denote different values, and `oid` answering `UInt32` where the driver answers `Int32`, which the rule permits. The fourth stance the rule defines — `waiting`, for a row a slice of the open phase closes — is carried by no row now that `interval` and `int2vector` have both closed, and is exercised against a synthetic row in `test_floor_mapping.py`. D8's pin is asserted here — the driver version every row records must equal `scripts/pyproject.toml`'s ([`../design/architecture.md`](../design/architecture.md), "The floor: the ADBC driver's answer bounds ours") |
-| Compressed input (`--source foo.dump.xz`) | **`.xz` reads end to end through `parse`/`info`/`query`** — P13's whole slice checklist is landed, its phase wrap the only thing left. gzip/zstd stay P15's: input other than `.xz` is still assumed already-decompressed plain SQL text, so `pg_dump -Fp --compress=…` output is unreadable today ([`../design/pg-dump-compatibility.md`](../design/pg-dump-compatibility.md)). P13's blocker was discharged by vendoring `xz-seek`, the crate a positioned read over `.xz` needed, read-only at `vendor/xz-seek/` (`CLAUDE.local.md`). `pgdump_query::XzSource` wraps it as a working, tested `ByteRangeSource` — `size()`/`stored_size()` from the seek table and a `stat` respectively, `read_range` a streaming decode restarted on seek — and `pgdump_query::open_local` (D8) recognises one by content and hands it to the CLI's three commands (`parse`/`info`/`query`) in place of a hardcoded `LocalFileSource::open`, with `DiagnosticKind::NonSeekableCompressedSource` (D2) warning once a `.xz` source with no more than one block is scanned or loaded from a cache. Two test-time-generated fixtures (a seekable multi-block file and a non-seekable single-block one, neither committed — the phase spec's own choice) back end-to-end differential-parity tests against the real `pgdq` binary: `parse`/`info --json` agree with the same content read plain, byte for byte outside the non-seekable diagnostic, and `query` renders identical rows across all three shapes, the non-seekable one by way of the decode-from-zero backward-read path. Nine decisions settle the trait/cache shape, the byte source, recognition and the non-seekable diagnostic ([`../design/roadmap-P13-compressed-input.md`](../design/roadmap-P13-compressed-input.md)); slice checklist below |
+| Compressed input (`--source foo.dump.xz`) | **working** — `.xz` reads end to end through `parse`/`info`/`query`, in all three container shapes, the span offsets it produces being uncompressed ones so nothing above L1 knows. `pgdump_query::open_local` recognises a source by **content**, not by name, and hands the CLI's three commands an `XzSource` or a `LocalFileSource`; `XzSource` answers `size()` from the stream index and `stored_size()` from a `stat`, decodes through one streaming reader restarted on seek, and hands its seek table to the cache, which persists it in a `CompressionIndex` envelope field beside a `ContainerKind` that stays `Plain`. A file with no more than one block is **warned about, never refused** (`DiagnosticKind::NonSeekableCompressedSource`, naming `xz -T0` and `--block-size=<size>`). The decoder is a frozen read-only vendored copy of `xz-seek` at `vendor/xz-seek/` (`CLAUDE.local.md`), not a published dependency, since this project is its first consumer and that consumption is what vets the interface. `KD15` is the one thing the mechanism does not do: the persisted table is written and never read back, so every open re-walks the footers. gzip/zstd are not read — `pg_dump -Fp --compress=…` output is unreadable today and is P15's ([`../design/pg-dump-compatibility.md`](../design/pg-dump-compatibility.md)) ([`../design/architecture.md`](../design/architecture.md), "The compressed source") |
 | Remote input (`--source https://…`), over `object_store` | not started — P14, carved out of P6. `ByteRangeSource` is already shaped against `get_range`/`head`, and there is exactly one implementation: `LocalFileSource` |
 | Python bindings, DataFusion `TableProvider` | not started — P6 |
 | Device-bound scan performance campaign | **complete** — P7, single-threaded throughout and aimed at the row-extraction path; parallelism is P16. Twelve library changes on timed paths, four measured refusals, and the decomposition that is its durable half ([`../design/architecture.md`](../design/architecture.md), "Where a scan's time goes"). Warm on the 3.00 GiB control a typed `pgdq query` is 15.0× the `dd` floor where it was 31×, a `strings` one 10.9× where it was 13.3×, and a `parse` 1.43×; cold on the SATA SSD every scan shape is inside the device, and cold on NVMe the `COPY` path is 1.06× it. What it refused, and why, is beside each mechanism as a rejected alternative |
@@ -223,45 +228,14 @@ goes").
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **P13 is the only phase in flight.** P7 wrapped and was struck at a keystone
-  review; what it built and what it refused are both beside each mechanism in
-  [`../design/architecture.md`](../design/architecture.md), filed by subject.
-  Six other phases are sketched — P16, P10, P14, P6, P15, P8, in the roadmap
-  table's schedule order; a `P<k>` is an identifier, so the numbers say
+- **No phase is in flight.** P13 wrapped; P7 wrapped and was struck at a
+  keystone review. What each built and what each refused is beside its
+  mechanism in [`../design/architecture.md`](../design/architecture.md), filed
+  by subject. Six phases are sketched — P16, P10, P14, P6, P15, P8, in the
+  roadmap table's schedule order; a `P<k>` is an identifier, so the numbers say
   nothing about the order they run in. Each of those gets its own full
   grilling when it becomes current, and every one that carries an inbox must
   have it drained as part of that grilling.
-
-## P13 progress
-
-Compressed input (xz). Nine decisions are settled in
-[`../design/roadmap-P13-compressed-input.md`](../design/roadmap-P13-compressed-input.md);
-this phase's slices commit to no measurement row (deferred to P16's parallel
-decode) and use two test-time-generated `.xz` fixtures, no encoding-option
-matrix.
-
-- [x] **13.1** Vendor `xz-seek` as a path dependency on `vendor/xz-seek/` and
-      rework `ByteRangeSource` to dyn-compatible signatures (D3) —
-      `Pin<Box<dyn Future>>` returns, `&dyn`/`Arc<dyn>` call sites. No new
-      behavior; every existing (plain local file) caller must still pass.
-      Notes: [`../design/roadmap-P13.1-dyn-trait-notes.md`](../design/roadmap-P13.1-dyn-trait-notes.md)
-- [x] **13.2** `SourceIdentity` becomes the opaque enum (D4), `stored_size()`
-      and `size_is_exact()` join the trait (D4, D7), `CompressionIndex` enum
-      added empty of xz content (D5). One `FORMAT_VERSION` bump for all of it.
-      Notes: [`../design/roadmap-P13.2-identity-opacity-notes.md`](../design/roadmap-P13.2-identity-opacity-notes.md)
-- [x] **13.3** `XzSource`: the seek table's xz content (D5), the streaming
-      decoder restarted on seek (D6), and the four properties `xz-seek`'s own
-      grilling already committed this phase to — repeated-fill delivery, a
-      blocking boundary, `Verify::Full` by default (D6, D9).
-      Notes: [`../design/roadmap-P13.3-xz-source-notes.md`](../design/roadmap-P13.3-xz-source-notes.md)
-- [x] **13.4** Recognition (D8): the library's content-sniffing
-      `open_local`-shaped convenience, the CLI's three call sites switched to
-      it, and the non-seekable diagnostic (D2) as a new `DiagnosticKind`.
-      Notes: [`../design/roadmap-P13.4-recognition-notes.md`](../design/roadmap-P13.4-recognition-notes.md)
-- [x] **13.5** The two test-time-generated `.xz` fixtures and end-to-end
-      `pgdq parse`/`query`/`info` tests against both, differential parity
-      against the same content read plain. Notes:
-      [`../design/roadmap-P13.5-end-to-end-notes.md`](../design/roadmap-P13.5-end-to-end-notes.md)
 
 ## Known deficiencies
 
@@ -287,8 +261,8 @@ only by naming one.
 
 An entry is struck by the change that closes its last part, not at a phase
 boundary, and a part closing into a *property* migrates beside its mechanism
-rather than being deleted. <!-- deficiency-watermark: KD14 -->
-**`KD1`–`KD14` are allocated, and nothing at or below `KD14` is reused** — a
+rather than being deleted. <!-- deficiency-watermark: KD15 -->
+**`KD1`–`KD15` are allocated, and nothing at or below `KD15` is reused** — a
 number the index below does not carry is a struck entry, not a typo. That
 watermark is what keeps a `KD<k>` in an old commit message resolvable, and the
 marker beside it is what a citation resolves against; the names of the struck
@@ -404,6 +378,14 @@ here rather than reading as a phase nobody has sliced.
   — koji has 74. Detail:
   [`../design/architecture.md`](../design/architecture.md), "`parse` resumes,
   and saves as it goes".
+
+- **KD15** — an `.xz` source's seek table is persisted in the cache and never
+  read back, so every open re-walks the file's stream footers: one read for a
+  single-stream file, **85 s** for the 31,150-stream koji download, however
+  complete the cache is. **(c) unowned**; promoted by anyone running repeated
+  commands against a large many-streams file. Detail:
+  [`../design/architecture.md`](../design/architecture.md), "The compressed
+  source".
 
 ## Decisions worth another look
 

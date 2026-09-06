@@ -509,6 +509,39 @@ out of the cache.
 
 ---
 
+## The compressed source as built is one reader behind one mutex, and the vendored copy predates the pool
+
+**Fact.** `io::XzSource` holds a single `xz_seek::Reader` — one live decode and
+one current uncompressed position — behind a `std::sync::Mutex`, because the
+reader's positioned read takes `&mut self` where `ByteRangeSource`'s methods
+take `&self`. Concurrent `read_range` calls therefore *serialize*; nothing calls
+concurrently today because every read loop in this crate is sequential. And the
+copy of `xz-seek` this repo builds against is a **frozen snapshot at
+`54c7983`**, taken deliberately before that crate's parallel-block-decode work
+started moving its source — so the pool, the pieces and `SeekTable::blocks_in`
+described in the entries above are *not* in this tree. `scripts/vendor_xz_seek.py`
+is what re-takes the snapshot, and `vendor/xz-seek/VENDORED_FROM` records which
+commit is in.
+
+**Why this phase cares.** Two things it might have assumed are false. Parallel
+decode is not a matter of configuring `XzSource` or raising a worker count: the
+single-reader-behind-a-mutex scheme is what this phase replaces, and until it
+does, a compressed source is a serialization point in front of however many
+workers sit above it. And this phase is the **first consumer that needs
+post-`54c7983` upstream work**, so re-syncing the vendored copy — and deciding
+whether the copy is still the right arrangement, since publication was gated on
+this repo and P10 both landing — is part of this phase's own opening moves
+rather than something already done for it.
+
+**Origin.** P13's implementation and its wrap audit, 2026-09-06
+([`architecture.md`](architecture.md), "The compressed source";
+[`roadmap-P13-compressed-input-notes.md`](roadmap-P13-compressed-input-notes.md),
+"The vendor copy was deliberately not re-synced"). Contingent on nothing in this
+tree; re-check `vendor/xz-seek/VENDORED_FROM` before assuming which snapshot is
+in.
+
+---
+
 ## Ordered delivery was asked for, and the unordered case was routed to the pieces on purpose
 
 **Fact.** `xz-seek` offered out-of-order delivery — each chunk tagged with its

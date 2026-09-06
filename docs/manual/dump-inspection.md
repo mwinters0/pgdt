@@ -85,6 +85,50 @@ other. Roles, tablespaces, the object-kind summary and the table listing are
 unavailable until you run a full `parse`, because they require having read the
 rest of the file.
 
+### `.xz` files are read directly
+
+If your dump is `.xz`-compressed, hand it over as it is — there is nothing to
+decompress first, and no flag to pass:
+
+```sh
+pgdq parse --source mydump.sql.xz
+pgdq info  --source mydump.sql.xz
+pgdq query --source mydump.sql.xz --table public.widgets
+```
+
+Everything works exactly as it does on an uncompressed file: the same listing,
+the same cache (written to `mydump.sql.xz.dqcache`), the same rows. Recognition
+is by content, not by name, so a compressed dump called something other than
+`.xz` is still read as one, and a file *named* `.xz` that is really plain text
+is still read as plain text.
+
+**Other compression is not read yet.** `.gz`, `.zst` and `.lz4` — including
+what `pg_dump -Fp --compress=…` writes — still have to be decompressed before
+pgdq sees them.
+
+**One `.xz` file in three is slow to seek into, and pgdq says so when it is.**
+An `.xz` file made of a single compressed block has nothing to seek by, so
+reading anything but the start of it means decoding from the beginning:
+
+```
+diagnostics:
+    [warning] this .xz source has no seek structure (1 block(s), one stream) — every read decodes the file from byte 0; recompress with `xz -T0` or `--block-size=<size>` for random access
+```
+
+`parse` is unaffected: it only ever reads forwards, so it costs the same on
+such a file as on any other. `query` is where you would feel it, and only on a
+large one. The remedy is in the message — recompressing with `xz -T0` or an
+explicit `--block-size` produces a file pgdq can seek into. Files that
+`xz` produced with threads, or that were made by concatenating several `.xz`
+files, are already seekable and earn no warning.
+
+Note that pgdq reads the file's block index afresh on every command. On a file
+built from many concatenated streams — the shape a chunked download or a
+`cat a.xz b.xz` produces — that index costs one disk seek per stream, which on
+a very large file can be a minute or more *per command*, even with a complete
+cache. A file compressed in one go with `xz -T0` or `--block-size` does not
+have this problem: its index is a single read whatever the file's size.
+
 ### `--chunk-size`: you almost certainly do not need it
 
 `parse` and `query` read the dump in 1 MiB pieces. `--chunk-size <bytes>`

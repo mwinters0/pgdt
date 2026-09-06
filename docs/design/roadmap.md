@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P5, P7, P9, P11, P12 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
-| P13 — compressed input | **Current**; sliced | [`roadmap-P13-compressed-input.md`](roadmap-P13-compressed-input.md) — nine decisions settled; [`../status/STATUS.md`](../status/STATUS.md), "P13 progress" for the slice checklist |
+| P13 — compressed input | **Complete** | [`architecture.md`](architecture.md), "The compressed source"; the spec is [`roadmap-P13-compressed-input.md`](roadmap-P13-compressed-input.md) until a keystone strikes it |
 | P16 — parallel scan and extraction | Sketched; not grilled | this file, below; [inbox](roadmap-P16-parallel-scan-inbox.md) — carved out of the scan-performance work |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
@@ -336,31 +336,37 @@ item; see below.
 
 ## P13 — Compressed input
 
-**Current, sliced, and fully specified**:
-[`roadmap-P13-compressed-input.md`](roadmap-P13-compressed-input.md) holds nine
-decisions — what `size()` promises (D1), which xz shapes are read and how the
-non-seekable one is diagnosed (D2), `ByteRangeSource` becoming dyn-compatible
-(D3), `stored_size()` and the opaque `SourceIdentity` enum (D4), where the seek
-table lives as an enum-tagged envelope field (D5), the decoder's read policy
-and the four properties `xz-seek`'s own grilling committed this phase to (D6),
-the size-exactness signal (D7), content-sniffing recognition as a library
-convenience (D8), and the vendored, unpublished dependency (D9) — together
-with the evidence they rest on, two test-time-generated fixtures, and a
-deliberate decision to owe no measurement row until P16 lands parallel decode.
+**Complete.** `.xz` reads end to end through `parse`/`info`/`query`, in all
+three container shapes; how it works is [`architecture.md`](architecture.md),
+"The compressed source", which also carries what the phase refused. The spec
+[`roadmap-P13-compressed-input.md`](roadmap-P13-compressed-input.md) and its
+notes [`roadmap-P13-compressed-input-notes.md`](roadmap-P13-compressed-input-notes.md)
+stand until a keystone strikes them.
 
-**The addressing layer it waited on exists**, vendored read-only at
+**It owes no measurement row, deliberately**, and that survives the wrap: the
+number a caller actually wants is concurrent decode throughput against the plain
+path's device-bound figures, which is unreachable until P16 lands parallel
+decode. The decode probes the phase rested on are probes — no harness, no
+`drop_caches` discipline — and no document quotes them as measurements. What it
+*did* leave stale is every figure that times a run, because reshaping every
+`ByteRangeSource` signature touches the hot read path; a stale figure obliges no
+sweep ([`../status/STATUS.md`](../status/STATUS.md), and
+[`measurements.md`](measurements.md), "A stale figure does not oblige a sweep").
+
+**The addressing layer it waited on is vendored, not published**, read-only at
 `vendor/xz-seek/` (`CLAUDE.local.md`), carved out into its own crate and
 repository on the collation spike's pattern with the requirements written from
-here and kept there. Its own `P3` (parallel block decode) is not on this
-phase's critical path; P16 is its consumer.
+here and kept there. Publication waits on P10 landing too; until then this
+build's dependency is a frozen copy taken by `scripts/vendor_xz_seek.py`. That
+crate's own `P3` (parallel block decode) was never on this phase's critical path
+and has since started moving upstream, so the snapshot here deliberately
+predates it; **P16 is its consumer and is what re-syncs the copy.**
 
-**This grilling also settled the compressed/remote integration story for P14,
+**Its grilling also settled the compressed/remote integration story for P14,
 P15 and P16** — the opaque identity, the size-exactness signal, and the
-enum-tagged compression-index field are all decided with those three phases'
-needs in view, per the (now-drained) second inbox this phase carried. Their own
-inboxes still hold what is theirs to settle at their own grilling.
-
-Slice checklist: [`../status/STATUS.md`](../status/STATUS.md), "P13 progress".
+enum-tagged compression-index field were all decided with those three phases'
+needs in view. Their own inboxes hold what is theirs to settle at their own
+grilling.
 
 ## P16 — Parallel scan and extraction
 

@@ -31,6 +31,7 @@ through.
 | If you are touching… | Read |
 |---|---|
 | the async/IO trait, batch sizing, push vs. pull | [Execution model and API surface](#execution-model-and-api-surface) |
+| `.xz` input, source recognition, `XzSource`, the seek table | [The compressed source](#the-compressed-source) |
 | `scan.rs`, `copy.rs`, a new `Event` variant, a read loop's buffer, how a field's bytes become a `str` | [Bytes and structure](#bytes-and-structure) |
 | `map.rs`, spans, tiling, TOC headers, `INSERT`/large-object regions | [The file map](#the-file-map) |
 | `index.rs`, what the index owns, diagnostics | [`DumpIndex`: one owner per fact](#dumpindex-one-owner-per-fact) |
@@ -57,7 +58,7 @@ through.
 
 | Concern | Where | Layer |
 |---|---|---|
-| Byte-range I/O trait + local-file impl | `pgdump_query/src/io.rs` | L1 |
+| Byte-range I/O trait, the local-file and `.xz` implementations, and `open_local`'s content sniffing | `pgdump_query/src/io.rs` | L1 |
 | `COPY` block and large-object structure discovery, and the read loops' chunk carry (`ChunkCarry`) | `pgdump_query/src/scan.rs` | L1 |
 | COPY TEXT field splitting / escaping / unescaping, the split a row's consumers share (`RowSplit`), and the bulk UTF-8 pass a row is decoded off (`RawRow`, `field_ranges`, `validated_prefix`) | `pgdump_query/src/copy.rs` | L1 |
 | `Span`/`SpanBody`/`DataBlock`/`TocHeader`, the boundary+classification state machine (`Builder`), `check_tiling`, `attach_text` | `pgdump_query/src/map.rs` | L1 |
@@ -93,22 +94,65 @@ synchronous CPU-bound code operating on bytes already read.
 The library defines its own minimal internal trait for byte-range reads:
 
 ```rust
-trait ByteRangeSource {
-    async fn read_range(&self, offset: u64, len: usize) -> Result<Bytes>;
-    async fn size(&self) -> Result<u64>;
-    async fn modified(&self) -> Result<Option<SystemTime>>;
+trait ByteRangeSource: Send + Sync {
+    fn read_range(&self, offset: u64, len: usize)
+        -> Pin<Box<dyn Future<Output = Result<Bytes>> + Send + '_>>;
+    fn size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>>;
+    fn modified(&self)
+        -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>>;
+
+    // defaulted, and each one exists for a source the local file is not
+    fn stored_size(&self) -> …          { self.size() }
+    fn size_is_exact(&self) -> bool     { true }
+    fn hint_read_size(&self, _len: usize) {}
+    fn seek_table(&self) -> Option<xz_seek::SeekTable> { None }
 }
 ```
 
-`read_range`/`size` are shaped to match `object_store`'s `get_range`/`head`
-semantics **on purpose**, so an `object_store`-backed implementation is a
-drop-in addition rather than a redesign. There is exactly one implementation
-today: a local-file backend (`std::fs::File::read_at` wrapped in
-`spawn_blocking`, since `tokio` has no native async positioned-read).
+`read_range`/`size`/`modified` are shaped to match `object_store`'s
+`get_range`/`head` semantics **on purpose**, so an `object_store`-backed
+implementation is a drop-in addition rather than a redesign. Two
+implementations exist: a local-file backend (`std::fs::File::read_at` wrapped
+in `spawn_blocking`, since `tokio` has no native async positioned-read) and
+`XzSource`, which decodes an `.xz` file beneath it ("The compressed source"
+below).
 
 *Rejected:* depending on the `object_store` crate now. It pulls in a cloud-SDK
 dependency tree that buys nothing for "read one local file". The trait shape is
 what keeps the addition additive; it arrives behind a default-off Cargo feature.
+
+**The trait is dyn-compatible, and that is what keeps a second source from
+squaring every caller.** Each method returns `Pin<Box<dyn Future + Send + '_>>`
+rather than `impl Future`, so every consumer — `scan`, `build_index`,
+`scan_preamble`, `preamble_only`, `map_forward`, `map_file`, `table_stream`,
+`attach_text`, `cache::load`/`save` — takes `&dyn ByteRangeSource` instead of a
+type parameter, and the CLI holds an `Arc<dyn ByteRangeSource>`. The cost is one
+allocation per `read_range`, which is one per chunk and noise beside the read
+itself; what it buys is that a *wrapping* source composes with whatever it wraps
+instead of multiplying the branch at every call site. `object_store`'s own trait
+is dyn-safe for the same reason, so this increases the mirroring rather than
+departing from it.
+
+*Rejected:* staying generic, with a per-command `match` over the source kind.
+Zero runtime cost and no API change, but it pushes the same combinatorial branch
+onto every embedder and every test, and it grows with each source added rather
+than being paid once. *Also rejected:* an `enum AnySource` — it keeps static
+dispatch and one code path, at the price of L1 enumerating every source this
+project will ever have, the recursive wrapping case included.
+
+**Three of the four defaulted methods exist for a source the local file is
+not.** `stored_size()` is the bytes as stored on the device where `size()` is
+the addressable length — equal for a plain file, divergent for a decompressing
+one, and it is what the cache's staleness check reads, so that check stays a
+`stat` rather than a stream-index walk ("The cache"). `size_is_exact()` says
+whether `size()` is exact rather than a bound; everything implemented so far
+answers `true` honestly and nothing reads it yet — it is carried for a codec
+that cannot answer exactly (gzip's `ISIZE` is useless above 4 GiB, zstd's frame
+content size is optional), added in the pass that reshaped these signatures
+because a later pass would have had to touch them all again for one bool.
+`seek_table()` hands a compressed source's block index to the cache without the
+cache knowing what kind of source it holds. `hint_read_size` is the fourth and
+is about the caller rather than the source; it is described below.
 
 **The local backend pools its read buffers, and the trait shape is why.**
 `read_range` returns owned `Bytes` because `get_range` does, so the obvious
@@ -318,6 +362,166 @@ persisting whatever it found along the way — so a query for table X that scans
 past A, B and C leaves the cache useful for those too. Eager (`pgdq parse`)
 scans the whole file up front before answering anything.
 
+### The compressed source
+
+`.xz` input is read directly — `pgdq parse|info|query --source foo.dump.xz` —
+by a second `ByteRangeSource` that decodes beneath everything else. Nothing
+above L1 knows: the span offsets a compressed source produces are
+**uncompressed** offsets, byte for byte the offsets a plain scan of the
+decompressed file produces, so the scanner, the map, the schema and the query
+passes are unchanged. gzip and zstd are not read; those are the codecs
+`pg_dump`'s own plain-format `--compress` writes, and closing that
+*compatibility* gap is separate work
+([`pg-dump-compatibility.md`](pg-dump-compatibility.md)). Every `.xz` file this
+reads was compressed by a third party after the fact, which is how the dumps
+that actually get shipped around arrive — koji's included.
+
+**Recognition is a library convenience, deliberately outside the trait.**
+`pgdump_query::open_local(path) -> Result<Arc<dyn ByteRangeSource>>` reads the
+first six bytes, compares them against `.xz`'s magic (`\xfd7zXZ\x00`), and
+returns an `XzSource` or a `LocalFileSource` accordingly; the CLI's three
+commands call it in place of naming a source type. Both implementations stay
+source-agnostic and are constructible directly, so an embedder that already
+knows what it holds need not go through recognition at all, and a further codec
+extends this one function rather than the CLI growing a second dispatch.
+Content sniffing rather than a path-extension check: a real `.xz` file is
+recognised whatever it is named, a file merely *named* `.xz` whose bytes are
+plain opens plain, and a file shorter than the magic is answered "not xz"
+rather than an error. *Rejected:* extension-based dispatch — cheaper, since it
+needs no read before the source exists, but wrong on a renamed or extensionless
+file, and every embedder wanting the convenience would reimplement it.
+
+**One decoder, restarted on seek, retaining nothing.** `XzSource` holds a
+single live `xz_seek::Reader` and its current uncompressed position behind a
+`std::sync::Mutex`, because the reader's own positioned read takes `&mut self`
+where the trait's methods take `&self`. A read at the current position keeps
+pulling, which is every read on the forward path; a read anywhere else restarts
+the decoder at the block covering the offset and discards to it. *Rejected:*
+retaining the last decoded block, so repeated reads inside one block are free —
+it costs 24 MiB resident on a file of ~24 MiB blocks and 128 MiB on a
+`--block-size=128MiB` one, to accelerate a pattern this library barely has,
+since every read but the two backward ones is sequential and those are served
+with no waste by the streaming form. *Also rejected:* decoding from the covering
+block on every call, which re-decodes 24–128 MiB per 1 MiB read.
+
+**Exactly two callers read backwards**, which is what bounds that decision.
+`stream.rs`'s replay loop re-reads a block the mapping pass has already walked
+past (the deliberate double read under "Query: mapping and streaming are
+separate passes"), and `map::attach_text` re-reads the gaps between `Data` spans
+once the scan has finished. Neither is on the `pgdq parse` path, which is purely
+forward.
+
+**Two file handles, deliberately.** `XzSource::open` walks the file's stream
+footers once to build the seek table and gives that handle to the reader, which
+owns it for decoding; a second handle answers `stored_size()`/`modified()` with
+a plain `stat` and never disturbs the decoder's live position. So `size()` is
+the exact **uncompressed** length, read out of the stream index with no further
+I/O, and `stored_size()` is the compressed file's own on-disk length — the two
+axes the cache needs kept apart. `read_range` wraps the reader's positioned read
+in `spawn_blocking`, through the same `BufferPool` `LocalFileSource` uses, and
+turns a short fill into `UnexpectedEof` to match `read_exact_at`'s contract:
+every read loop already clamps its length against `size()`, so a short read here
+is a caller/source disagreement rather than a normal outcome. Verification is
+the decoder's stronger default — a partly-decoded block's check is completed
+before the reader leaves it — because a scan persists the structure it discovers
+as it goes, so bytes whose check failed two calls later would already have been
+recorded as fact.
+
+**`size()` keeps its promise, and the walk is what pays for it.**
+`ByteRangeSource::size()` still means *the exact number of bytes `read_range`
+can address*, which for this source is the exact uncompressed length. *Rejected:*
+relaxing the contract, letting `size()` return a bound and making a zero-length
+read the termination condition. It is mechanically cheaper than it looks — every
+read loop is already `want = chunk_size.min(size - read_pos)` … `read_pos +=
+bytes.len()`, so all of them already tolerate a short read, and only the loop's
+exit test and the coverage denominator depend on the number being exact — but
+the exact number is what `total_size`, `scanned_through` and `pgdq info`'s
+coverage arithmetic *mean*, and xz can answer it honestly. A codec that cannot
+is where that relaxation has to be faced. *Also rejected:* deriving the size from
+a forward decode instead. The seek table does fall out of a forward scan for
+free, but every caller takes `size()` **before** the first read, so a
+forward-only derivation has no answer at the moment the answer is required.
+
+**Which shape a file has decides what a backward read costs**, and the ranking
+is not the intuitive one. An `.xz` file is a sequence of *streams*, each holding
+one or more *blocks* and ending in an index listing every block's compressed and
+uncompressed size:
+
+| Shape | Produced by | Seek table costs | Random access |
+|---|---|---|---|
+| One stream, many blocks | `xz` 5.6+ default (`-T0`), any `-T>1`, `--block-size` | one footer read | per block |
+| Many streams | concatenation — `cat a.xz b.xz`, chunked pipelines | one footer read **per stream** | per stream |
+| One stream, one block | `xz -T1`, xz older than 5.6, library writers | one footer read | **none — every backward read decodes from zero** |
+
+All three are read and none is refused at open. The third is **announced** as a
+`NonSeekableCompressedSource` warning the moment the seek table becomes
+available — freshly walked or loaded from a cache — rather than met by the user
+as a stall, with the cause and the remedy (`xz -T0`, or `--block-size=<size>`)
+in the message ("Diagnostics: one severity scale, two types"). `pgdq parse` is
+unaffected in fact as well as in principle, since it never reads backwards.
+*Rejected:* refusing `query` on a non-seekable file. It denies the user a command
+that would work, merely slowly, and only the user can judge whether one
+decode-from-zero is worth waiting for.
+
+The many-streams shape is the one that costs most in practice and the one the
+motivating file has: the koji upstream download is 31,150 concatenated streams
+of one block each, and walking 31,150 footers is **85 s** on an HDD at 10% CPU,
+because each is a separate seek. One footer read is free. That difference is the
+whole reason the seek table is persisted rather than re-derived per run.
+
+<!-- deficiency: KD15 -->
+**The persisted table is written and never read back.** `cache::save` records
+the seek table through `ByteRangeSource::seek_table()` and `cache::load` round
+trips it, but `XzSource::open` always walks the footers itself — nothing
+constructs a reader *from* a cached table, which the decoder crate supports.
+Every invocation against a many-streams file therefore pays that walk again,
+which is the 85 s above for koji's, however complete the cache is. That is
+deficiency `KD15` (`../status/STATUS.md`, "Known deficiencies"), unowned, and
+what would promote it is anyone running repeated commands against a large
+many-streams file — which is the motivating file. The fix is small and located:
+recognition decides *which* source to build, so it is the place that can also
+consult a loaded cache and hand the table over. Two things bound the cost
+meanwhile: a single-stream file's walk is one read whatever its size, and
+`pgdq info --dqcache <path>` with no `--source` opens no source at all and so
+never pays it.
+
+**A property falls out of the offsets being uncompressed ones**: a cache built
+from the `.xz` describes the decompressed file equally well, differing only in
+the identity that guards it.
+
+**Concurrent `read_range` calls serialize on the mutex**, and nothing calls
+concurrently today — every read loop in this crate is sequential. Parallel,
+stream-aligned decode is the parallel-scan work's, and that is where the scaling
+is: on this corpus one core decodes ~446 MB/s of plaintext where four concurrent
+per-stream decodes reach ~1.48 GB/s, and `xz`'s own threaded decoder gains
+nothing on a many-streams file because it parallelises blocks *within* a stream.
+Those are probes, not registered figures — no harness, no `drop_caches`
+discipline — and no document may quote them as measurements. Nothing here
+commits to a figure: the number a caller actually wants is concurrent decode
+throughput against the plain path's device-bound figures, and that is unreachable
+until parallel decode exists.
+
+**The decoder is a vendored crate, not a published dependency.** No published
+crate answers a positioned read over an `.xz` file — `liblzma`'s safe Rust
+surface exposes no stream-index parser or block decoder, and a survey of
+`lzma-rust2`, `xz4rust`, `gibblox-xz` (GPL), `ixz-core` and `iluvatar` found none
+providing `read_range(offset, len)` over the uncompressed stream. That gap was
+carved out into `xz-seek`, its own crate and repository, and this project is its
+first real-world consumer; it is not published until that consumption has vetted
+the interface, so what this repo depends on is a **frozen read-only copy** at
+`vendor/xz-seek/`, excluded from the workspace, re-synced on demand by
+`scripts/vendor_xz_seek.py` and stamped with the source commit in
+`vendor/xz-seek/VENDORED_FROM`. A bug found here is fixed upstream and returns
+at the next sync, never patched in place. *Rejected:* a live path dependency on
+the sibling working tree — verified that even behind an off-by-default feature
+the dependency graph is resolved before features are considered, so a checkout
+lacking the sibling repo fails `cargo check` outright. *Rejected:* publishing
+first and depending on a version — publishing an interface nobody has consumed
+is what produces the 0.x churn the arrangement avoids. The build takes the
+crate's default `liblzma` backend over its pure-Rust one (unsafe-free, ~2.2×
+slower), pulling vendored C into an otherwise pure-Rust workspace, on the ground
+that the integration being vetted should be the one that ships.
+
 ## Bytes and structure
 
 ### The scanner never owns the bytes it scans
@@ -389,13 +593,14 @@ behaviour.**
   `\n`/`\t`/`\\`) rather than naive byte-level line splitting; confirmed
   load-bearing in koji, whose long text fields contain embedded literal `\n`
   sequences.
-- Input is assumed to be **already-decompressed plain SQL text**. The library
-  does not handle `.gz`/`.xz`/etc. itself; that is caller-side preprocessing
-  today. This is what the scanner assumes, not a scope decision: compressed
-  plain input is planned as a decompressing `ByteRangeSource` beneath it
-  (`roadmap.md`, P13 and P15), which changes nothing about this state machine.
-  Archive formats are different again — they compress per entry, internally,
-  and will need streaming decompression inside their container layer.
+- Input is **plain SQL text by the time it reaches this state machine**, and
+  that is what the scanner assumes rather than a scope decision. Where the file
+  on disk is `.xz`, a decompressing `ByteRangeSource` sits beneath the scanner
+  and hands it the same bytes at the same uncompressed offsets ("The compressed
+  source"), which changes nothing here. `.gz`/`.zst` are not read and stay
+  caller-side preprocessing (`roadmap.md`, P15). Archive formats are different
+  again — they compress per entry, internally, and will need streaming
+  decompression inside their container layer.
 
 ### `Event` is the scanner's contract
 
@@ -5193,7 +5398,8 @@ into `Ok(None)`. `cache::save` propagates I/O failures as `Error::Io`.
 
 **Unusable is four named outcomes, not one.** `CacheStatus` distinguishes
 `Missing`, `Unreadable` (bytes that do not decode), `UnsupportedVersion`
-(another build's envelope), and `SourceChanged { cached_size, live_size }`.
+(another build's envelope), and `SourceChanged { cached_stored_size,
+live_stored_size }`.
 Every caller that can respond by *scanning* treats them alike — which is why
 they were collapsed originally — but `pgdq info` cannot scan, and has a
 different sentence for each: a wrong path, a stale build, and "your file
@@ -5214,11 +5420,28 @@ XDG-style or other implicit location. The colocated default is a trap worth
 knowing about when the dump is mounted read-only — see `CLAUDE.md`,
 "Long-running processes".
 
-**Source identity.** Every cache records the source's size and mtime at save
-time and re-observes on load. Size mismatch invalidates (`SourceChanged` — an
+**Source identity is an opaque enum, and the number it records is the cheap
+one.** Every cache records the source's `stored_size()` and mtime at save time
+and re-observes on load. Size mismatch invalidates (`SourceChanged` — an
 unusable outcome, not a new hard-error path); mtime mismatch surfaces as a
 `CacheMtimeChanged` diagnostic on an otherwise usable cache.
-`ByteRangeSource::modified()` exists for this. That diagnostic matters more
+`ByteRangeSource::modified()` exists for this.
+
+`stored_size()` rather than `size()` is what makes the check a `stat` even for a
+decompressing source, whose addressable length costs a stream-index walk to
+observe — using that as the identity would make the *check* the most expensive
+thing in `pgdq info`, and would check a derived number rather than the file.
+`SourceIdentity` is an enum with one variant today, `LocalFile { stored_size,
+mtime }`, and the sites that read it destructure through the variant rather than
+through a shared accessor: a remote source's identity is an ETag, which is not a
+size-plus-mtime pair under a different name, so there is nothing worth naming
+generically and a second variant is an added match arm rather than a redesign of
+the type. *Rejected:* handing `cache::load` the inner source beside the outer
+one, so that one could be interrogated about the other — every caller would then
+carry two sources, putting the composition back in front of the layer the
+dyn-compatible trait cleared it out of.
+
+That diagnostic matters more
 than it used to: under the old `info` a suspicious cache was about to be
 overwritten by a rescan anyway, and now it is the answer being reported — which
 is why `Diagnostic::cache_mtime_changed` is `pub` where its siblings are
@@ -5226,10 +5449,14 @@ is why `Diagnostic::cache_mtime_changed` is `pub` where its siblings are
 library's answer to "what severity is this", rather than composing its own
 warning beside the ones the index carries.
 
-**`CacheStatus::Valid`/`Incomplete` both carry `total_size`**, the cache's
-*own recorded* `SourceIdentity::size` — sound because a live-size mismatch
-produces `SourceChanged` before either is reached, and a cache-only caller has
-no live size to stat at all. `Incomplete` is `scanned_through` short of it.
+**`CacheStatus::Valid`/`Incomplete` both carry `total_size`**, which is the
+cache's own recorded field of that name — the *addressable* length at save time,
+recorded separately from the identity's stored size precisely because the two
+diverge for a decompressing source, where coverage arithmetic is about
+decompressed bytes and the staleness check is about the file on disk. It is
+sound to report from the cache because a stored-size mismatch produces
+`SourceChanged` before either status is reached, and a cache-only caller has no
+live size to stat at all. `Incomplete` is `scanned_through` short of it.
 Two helpers serve both `load` and `load_offline`: `read_cache_file` does the
 read plus the envelope check (returning the `CacheFile` or the unusable status
 directly), and `status_from_file` turns the file into a status. `load` adds the
@@ -5269,6 +5496,23 @@ generator to learn that `query` never accepts a cache-only mode.
 outcomes from the unusable ones with no scan to fall back on. It cannot reach
 `SourceChanged` at all — there is no live file to compare against, which is
 exactly what its `CacheOffline` diagnostic warns about.
+
+**A compression index is a sibling of `ContainerKind`, not a value of it.**
+`ContainerKind` means *what produced the indexed blocks' byte offsets*, and a
+compressed source's offsets are uncompressed ones — byte for byte what a plain
+scan of the same content produces — so it stays `Plain` and an archive format's
+entry-relative offsets remain the only thing that ever changes it, which is what
+the tag was reserved for. What varies instead is `CacheFile::compression:
+Option<CompressionIndex>`, an enum from the day it was added and holding xz's
+seek table as its only variant. Built at save time from
+`ByteRangeSource::seek_table()`, so persisting a cache never re-walks the file
+to get one, and round-tripped on load. It is an enum rather than a bare table
+because a gzip index is a different *shape* — a set of checkpoints carrying
+~32 KiB of dictionary state each, not a list of independently decodable blocks —
+so a later codec adds a sibling variant rather than restructuring this field or
+guessing its shape from one instance. Size is not a concern in any shape: the
+motivating file's table is 31,150 entries against a koji cache that is already
+833 spans.
 
 **Anything persisted is expressible in L1's vocabulary** — declared type
 strings, not resolved Arrow types. That is `layering.md`'s rule 5 and it
@@ -6892,6 +7136,35 @@ conjunction under `--where` and an equality under `--filter`, which is the
 whole reason there are two flags and cannot be seen from either alone.
 `pgdump_query/tests/map_file.rs` separately covers that a real interruption
 leaves that same shape.
+
+**`xz_source.rs` is the compressed source's end-to-end half**, and the only
+place `.xz` reaches the real binary; the library-level parity lives beside it in
+`pgdump_query/tests/cache.rs`. Its inputs are **compressed at test time and not
+committed** — `xz` shelled out over the same 2,352-byte
+`tests/data/edge_cases.sql` — because regenerating is cheaper than carrying a
+binary blob in git, and `xz` is not `mise`-pinned, so the helpers assert it is
+runnable rather than skipping (`roadmap.md`, "A test may assume the tools `mise`
+pins"). What is asserted is **differential parity, not a transcript**: `parse`
+then `info --json` against the plain file and each `.xz` shape, the parsed JSON
+documents compared whole, with only the non-seekable file's extra diagnostic
+lifted out before the comparison and its *rendered* wording checked separately
+for naming both remedies; then `query`, byte-identical on stdout across all
+three sources. Both fixtures are `parse`d before the query legs run, so those
+reads go through a persisted cache and exercise the round trip of the
+compression index rather than only the live decoder.
+
+**A block size is asserted, never assumed.** A helper compressing with
+`--block-size=65536` claimed to force several blocks and did not — `xz` never
+splits an input smaller than one block, so every caller was silently exercising
+the *non-seekable* shape under the label "seekable", and nothing could see it
+because the two shapes produce identical indexes. The non-seekable diagnostic is
+what finally gave that claim something to disagree with. The helpers now use 512
+and assert `is_seekable()` at each call site, which is the general form: a
+fixture whose *shape* is the thing under test states the shape as an assertion
+rather than in a comment. Row counts are asserted the same way for the same
+reason — through `query`'s own `N row(s)` line rather than by counting stdout
+lines, since a value in that fixture carries an embedded newline and a line
+count overcounts.
 
 **An interrupt is delivered at a file offset, not at a wall-clock moment.**
 `map_file.rs`'s `CancelsPast` is a `ByteRangeSource` that trips the cancel flag

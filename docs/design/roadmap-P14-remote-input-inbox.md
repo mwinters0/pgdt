@@ -52,6 +52,35 @@ countable, and that is the number this phase should be designed against.
 
 ---
 
+## The seek table is persisted but never read back, so the walk is not yet avoided
+
+**Fact.** P13 landed half of what the entry above says its answer was. The seek
+table *is* persisted — `cache::save` takes it through
+`ByteRangeSource::seek_table()` into the cache envelope and `cache::load` round
+trips it — but nothing constructs a reader *from* a cached table, so
+`XzSource::open` walks the file's stream footers on every invocation however
+complete the cache is. That is deficiency `KD15`, unowned
+([`../status/STATUS.md`](../status/STATUS.md);
+[`architecture.md`](architecture.md), "The compressed source"). The decoder
+crate supports the construction; nothing in this tree calls it. The located fix
+is that **recognition** is the layer that decides which source to build, so it
+is also the layer that can consult a loaded cache first — but it does not hold
+one today, and giving it one is a wiring decision, not a one-liner.
+
+**Why P14 cares.** Locally the walk is 85 s of seeks in the worst case; over
+ranged GETs it is 31,150 round trips, which the entry above calls this phase's
+worst latency case. So the mitigation that entry treats as already decided is
+work this phase either does or inherits undone — and it is *more* than half the
+cost of a warm remote query, since everything else in one is a cache read, an
+identity check and one block's bytes.
+
+**Origin.** P13's wrap audit, 2026-09-06
+([`../status/history/2026-09-06.md`](../status/history/2026-09-06.md), "P13's
+wrap audit: the seek table is persisted and never read back"). Re-check `KD15`:
+if it has been struck, this entry is discharged.
+
+---
+
 ## The seekable-xz crate reads its compressed bytes through a trait, on purpose
 
 **Fact.** `/mnt/wd12t/fedora/experiments/xz-seek/docs/design/historical/initial.md`

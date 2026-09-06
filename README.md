@@ -17,10 +17,11 @@ Arrow batches — arrays, composites, ranges and multiranges included — a full
 byte-exact file map and DDL object inventory, a resumable scan that reports
 what it has, a best-effort structural cache, and pushdown: column projection
 and a filter that is a boolean expression — `AND`, `OR`, `NOT` and parens —
-over typed single-column comparisons. Input is plain SQL text: reading a
-compressed or remote dump is planned, not built. What is
-next — compressed input, the performance campaign, richer types, row-group
-statistics, remote input, engine bindings, archive formats — is in
+over typed single-column comparisons. Input is plain SQL text, `.xz`-compressed
+or not — an `.xz` dump is read directly, with no decompression step; other
+codecs and remote sources are planned, not built. What is
+next — parallel scan and extraction, richer types, row-group
+statistics, gzip/zstd input, remote input, engine bindings, archive formats — is in
 [`docs/design/roadmap.md`](docs/design/roadmap.md). See
 [`docs/status/STATUS.md`](docs/status/STATUS.md) for exact implementation
 state, known deficiencies included.

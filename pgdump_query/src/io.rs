@@ -23,9 +23,11 @@ use crate::{Error, Result};
 /// "D3 — `ByteRangeSource` becomes dyn-compatible"): each method returns a
 /// boxed future rather than `impl Future` (RPITIT), so callers can hold
 /// `&dyn ByteRangeSource` / `Arc<dyn ByteRangeSource>` instead of being
-/// generic over the source. With one implementation today the boxing is free
-/// insurance; P13's `XzSource` and P14's remote source are what it is for.
-/// One allocation per `read_range` call is noise beside a chunk-sized read.
+/// generic over the source. [`XzSource`] is the second implementation and the
+/// case this was done for — a *wrapping* source composes with whatever it
+/// wraps instead of multiplying the branch at every call site, and P14's
+/// remote source squares that again. One allocation per `read_range` call is
+/// noise beside a chunk-sized read.
 pub trait ByteRangeSource: Send + Sync {
     fn read_range(
         &self,
@@ -359,8 +361,8 @@ impl XzSource {
     ///
     /// This does not sniff the magic bytes — a caller that already knows it
     /// has an `.xz` file constructs this directly; content-sniffing
-    /// recognition across both source kinds is a library-level convenience
-    /// (D8), and lands with 13.4.
+    /// recognition across both source kinds is [`open_local`], a
+    /// library-level convenience deliberately outside the trait.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref().to_path_buf();
         let file = std::fs::File::open(&path)?;
