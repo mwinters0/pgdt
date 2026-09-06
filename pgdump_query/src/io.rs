@@ -459,6 +459,47 @@ impl ByteRangeSource for XzSource {
     }
 }
 
+/// The six bytes every `.xz` stream opens with
+/// (`docs/design/roadmap-P13-compressed-input.md`, "D8").
+const XZ_MAGIC: [u8; 6] = [0xFD, b'7', b'z', b'X', b'Z', 0x00];
+
+/// Open `path` as a [`ByteRangeSource`], choosing between [`LocalFileSource`]
+/// and [`XzSource`] by **content**, not by name (D8): the first six bytes are
+/// checked against `.xz`'s magic, whatever `path` is called. A file that
+/// really is `.xz`-compressed is recognised however it is named or
+/// extensionless; a file merely *named* `.xz` whose bytes don't match opens
+/// as plain — content sniffing means the two are never confused in either
+/// direction, which a path-extension check cannot promise.
+///
+/// This is a caller convenience layered on top of two sources that stay
+/// agnostic of it — an embedder that already knows what it has can construct
+/// either directly and skip the read this does. The magic check costs one
+/// small read ahead of the source construction that was about to happen
+/// anyway.
+pub fn open_local(path: impl AsRef<Path>) -> Result<Arc<dyn ByteRangeSource>> {
+    let path = path.as_ref();
+    if is_xz_by_magic(path)? {
+        Ok(Arc::new(XzSource::open(path)?))
+    } else {
+        Ok(Arc::new(LocalFileSource::open(path)?))
+    }
+}
+
+/// Whether `path`'s first six bytes are `.xz`'s magic. A file shorter than
+/// six bytes is answered `false` rather than an error — it cannot be a valid
+/// `.xz` file either way, and the plain path already handles an empty or
+/// tiny file correctly.
+fn is_xz_by_magic(path: &Path) -> Result<bool> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut buf = [0u8; XZ_MAGIC.len()];
+    match file.read_exact(&mut buf) {
+        Ok(()) => Ok(buf == XZ_MAGIC),
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Ok(false),
+        Err(e) => Err(Error::Io(e)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -732,5 +773,49 @@ mod tests {
         // Backward, forcing a decode from byte zero of the sole block.
         let backward = source.read_range(0, 3000).await.unwrap();
         assert_eq!(&backward[..], &payload[0..3000]);
+    }
+
+    /// D8: a genuinely `.xz`-compressed file is recognised whatever it is
+    /// named — the temp file `xz_compress` returns carries no `.xz` suffix at
+    /// all, and `open_local` still hands back a source whose `seek_table()`
+    /// answers `Some`, which only `XzSource` ever does.
+    #[tokio::test]
+    async fn open_local_recognizes_xz_content_with_no_xz_name() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+        assert_ne!(compressed.path().extension(), Some(std::ffi::OsStr::new("xz")));
+
+        let source = open_local(compressed.path()).unwrap();
+        assert!(source.seek_table().is_some(), "content-sniffed as .xz");
+        assert_eq!(source.size().await.unwrap(), payload.len() as u64);
+        let got = source.read_range(0, payload.len()).await.unwrap();
+        assert_eq!(&got[..], &payload[..]);
+    }
+
+    /// D8's other direction: a file *named* `.xz` whose bytes are not — the
+    /// rejected extension-based dispatch would have handed this to
+    /// `XzSource` and failed on `xz_seek::Error::NotXz`. Content sniffing
+    /// opens it plain instead, correctly.
+    #[tokio::test]
+    async fn open_local_opens_a_dot_xz_named_file_with_plain_content_as_plain() {
+        let mut file = tempfile::Builder::new().suffix(".xz").tempfile().unwrap();
+        file.write_all(b"not actually compressed").unwrap();
+        file.flush().unwrap();
+
+        let source = open_local(file.path()).unwrap();
+        assert!(source.seek_table().is_none(), "no compression layer — read as plain");
+        let got = source.read_range(0, 23).await.unwrap();
+        assert_eq!(&got[..], b"not actually compressed");
+    }
+
+    /// A file too short to hold the six-byte magic must not be mistaken for
+    /// `.xz`, and must not error just for being short.
+    #[tokio::test]
+    async fn open_local_treats_a_file_shorter_than_the_magic_as_plain() {
+        let (_file, plain) = source_of(b"ab");
+        let path = plain.path().to_path_buf();
+        let source = open_local(&path).unwrap();
+        assert!(source.seek_table().is_none());
+        assert_eq!(source.size().await.unwrap(), 2);
     }
 }

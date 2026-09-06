@@ -1069,7 +1069,12 @@ P6's; a sink can drain this list, so nothing here forecloses it.
 
 Producers today: `TilingBroken` (`check_tiling`), `CacheMtimeChanged`
 (`CacheMode::load`), `TocCoverage` (always `Info`), `CacheOffline`
-(`Severity::Warning`, pushed by `load_offline` on every successful load).
+(`Severity::Warning`, pushed by `load_offline` on every successful load),
+`NonSeekableCompressedSource` (`Severity::Warning`, D2 —
+`index::non_seekable_compression_diagnostic` shared by `build_index`,
+`preamble_only` and `cache::status_from_file` so a `.xz` source with no more
+than one block earns the same warning whether its seek table was just walked
+or read back from a persisted cache).
 
 ### Reserved slots
 

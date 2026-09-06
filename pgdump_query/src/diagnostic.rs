@@ -83,6 +83,16 @@ pub enum DiagnosticKind {
     /// [`crate::cache::CacheMode::load_offline`] on every successful
     /// cache-only load, `Incomplete` included.
     CacheOffline,
+    /// A `.xz` source has no usable seek structure — one stream, one block —
+    /// so every read (forward included) decodes from byte zero
+    /// (`docs/design/roadmap-P13-compressed-input.md`, "D2"). Never a reason
+    /// to refuse the file: `pgdq parse` is unaffected since it never reads
+    /// backwards, and `pgdq query` still answers, just by paying the decode
+    /// each time. `block_count` is `SeekTable::block_count()` — 0 or 1 for a
+    /// non-seekable table — pushed once per index, whether the table was just
+    /// walked (`crate::index::build_index`, `crate::index::preamble_only`) or
+    /// read back from a persisted cache (`crate::cache::status_from_file`).
+    NonSeekableCompressedSource { block_count: usize },
 }
 
 /// One thing worth telling the caller about a file, with no `Result` to carry
@@ -114,5 +124,16 @@ impl Diagnostic {
 
     pub(crate) fn cache_offline() -> Self {
         Self { severity: Severity::Warning, kind: DiagnosticKind::CacheOffline }
+    }
+
+    /// D2's warning — a `.xz` source read correctly but with every read
+    /// decoding from byte zero, since it has no more than one block. Usable
+    /// as-is, so `Warning` rather than `Error`, matching `CacheMtimeChanged`'s
+    /// and `CacheOffline`'s severity.
+    pub(crate) fn non_seekable_compressed_source(block_count: usize) -> Self {
+        Self {
+            severity: Severity::Warning,
+            kind: DiagnosticKind::NonSeekableCompressedSource { block_count },
+        }
     }
 }

@@ -12,10 +12,9 @@ use pgdump_query::cache::{CacheMode, CacheStatus};
 use pgdump_query::pgtype::RANGE_STRUCT_FIELDS;
 use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdump_query::{
-    ArrayShape, ByteRangeSource, CompareKind, ComparisonPlan, DataBlock, Diagnostic,
-    DiagnosticKind, DumpIndex, DumpMetadata, LocalFileSource, NestedPlan, Predicate, PredicateOp,
-    QueryOptions, ScanOptions, Severity, Span, SpanBody, TypeKind, preamble_only,
-    render_field_into,
+    ArrayShape, CompareKind, ComparisonPlan, DataBlock, Diagnostic, DiagnosticKind, DumpIndex,
+    DumpMetadata, NestedPlan, Predicate, PredicateOp, QueryOptions, ScanOptions, Severity, Span,
+    SpanBody, TypeKind, open_local, preamble_only, render_field_into,
 };
 
 mod alloc;
@@ -703,10 +702,10 @@ async fn main() -> Result<()> {
                 .require_enabled("parse")
                 .context("`--dqcache none` cannot be combined with `parse`")?
                 .to_path_buf();
-            let source = LocalFileSource::open(&file)?;
+            let source = open_local(&file)?;
             if preamble_only_flag {
                 let (metadata, diagnostics) =
-                    preamble_only(&source, &scan_options(chunk_size), &mode).await?;
+                    preamble_only(source.as_ref(), &scan_options(chunk_size), &mode).await?;
                 print_metadata(&metadata, false);
                 print_diagnostics(&diagnostics);
                 println!();
@@ -717,7 +716,7 @@ async fn main() -> Result<()> {
             let cancel = Arc::new(AtomicBool::new(false));
             let signalled = install_interrupt_guard(Arc::clone(&cancel))?;
             let scan_options = ScanOptions { cancel: Some(cancel), ..scan_options(chunk_size) };
-            let run = pgdump_query::map_file(&source, &scan_options, &mode).await?;
+            let run = pgdump_query::map_file(source.as_ref(), &scan_options, &mode).await?;
             if run.interrupted {
                 // No listing: the user asked the scan to stop, not for a
                 // report on what it had reached, and `pgdq info` is the
@@ -786,8 +785,8 @@ async fn main() -> Result<()> {
                     )
                 })?
                 .to_path_buf();
-            let source = LocalFileSource::open(&file)?;
-            let status = pgdump_query::cache::load(&path, &source).await?;
+            let source = open_local(&file)?;
+            let status = pgdump_query::cache::load(&path, source.as_ref()).await?;
             let (mut index, mtime_changed, total_size) = match status {
                 CacheStatus::Valid { index, mtime_changed, total_size }
                 | CacheStatus::Incomplete { index, mtime_changed, total_size } => {
@@ -835,7 +834,7 @@ async fn main() -> Result<()> {
                         .collect(),
                 ),
             };
-            let source = LocalFileSource::open(&file)?;
+            let source = open_local(&file)?;
             let mut header_printed = false;
             let mut any_batch = false;
             let mut rows = 0u64;
@@ -853,7 +852,7 @@ async fn main() -> Result<()> {
             // and the zero-copy path"). The scan itself is the same one —
             // `read_table` drains this stream internally.
             let mut stream = pgdump_query::table_stream(
-                &source,
+                source.as_ref(),
                 &table,
                 scan_options(chunk_size),
                 query_options,
@@ -1550,6 +1549,9 @@ fn diagnostic_message(kind: &DiagnosticKind) -> String {
         DiagnosticKind::CacheOffline => {
             "answering from a cache with no source dump file to check it against — unverified, historical as of whenever the cache was last saved".to_string()
         }
+        DiagnosticKind::NonSeekableCompressedSource { block_count } => format!(
+            "this .xz source has no seek structure ({block_count} block(s), one stream) — every read decodes the file from byte 0; recompress with `xz -T0` or `--block-size=<size>` for random access"
+        ),
     }
 }
 

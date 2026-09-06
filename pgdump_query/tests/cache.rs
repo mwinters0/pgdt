@@ -9,8 +9,8 @@ use std::process::Command;
 use pgdump_query::cache::{CacheMode, CacheStatus};
 use pgdump_query::map::SpanBody;
 use pgdump_query::{
-    ByteRangeSource, Error, LocalFileSource, ScanOptions, XzSource, build_index, cache,
-    check_tiling, preamble_only,
+    ByteRangeSource, DiagnosticKind, Error, LocalFileSource, ScanOptions, XzSource, build_index,
+    cache, check_tiling, preamble_only,
 };
 
 mod common;
@@ -468,9 +468,19 @@ async fn load_offline_missing_file_is_missing() {
 /// `mise`-pinned (`docs/design/roadmap-P13-compressed-input.md`,
 /// "Fixtures"), so a missing binary fails loudly rather than skipping
 /// (`docs/design/roadmap.md`, "A test may assume the tools `mise` pins").
+///
+/// **512, not a round number picked for looks**: `edge_cases.sql` is 2,352
+/// bytes, so a `--block-size` at or above that (this helper's own previous
+/// 65536) never actually splits it — confirmed with `xz --list -v` — and
+/// every caller of this helper was silently exercising the *non-seekable*
+/// shape under a docstring claiming otherwise, invisible until D2's
+/// diagnostic gave the "seekable" claim something to disagree with. 512
+/// yields 5 blocks on this fixture; callers that need the seekable property
+/// to hold assert `is_seekable()` themselves rather than trusting the
+/// picked size to keep working as the fixture changes.
 fn xz_compress(path: &Path) -> tempfile::NamedTempFile {
     let out = Command::new("xz")
-        .arg("--block-size=65536")
+        .arg("--block-size=512")
         .arg("-c")
         .arg(path)
         .output()
@@ -494,6 +504,11 @@ async fn xz_source_produces_the_same_index_and_cache_as_the_plain_file() {
 
     let compressed = xz_compress(&edge_cases());
     let xz = XzSource::open(compressed.path()).unwrap();
+    assert!(
+        xz.seek_table().unwrap().is_seekable(),
+        "this test's whole point is the seekable shape — a non-seekable fixture would earn a \
+         D2 diagnostic the plain file's index does not have, and pass for the wrong reason"
+    );
     assert_eq!(xz.size().await.unwrap(), plain.size().await.unwrap());
     assert_ne!(
         xz.stored_size().await.unwrap(),
@@ -515,4 +530,102 @@ async fn xz_source_produces_the_same_index_and_cache_as_the_plain_file() {
         }
         other => panic!("a freshly saved cache must load, got {other:?}"),
     }
+}
+
+/// Compress `path` with a bare `xz` invocation — no `-T`/`--block-size` — so
+/// it comes out one stream, one block: D2's non-seekable shape.
+fn xz_compress_single_block(path: &Path) -> tempfile::NamedTempFile {
+    let out = Command::new("xz")
+        .arg("-c")
+        .arg(path)
+        .output()
+        .expect("`xz` is not runnable, so this test cannot build its fixture; install it.");
+    assert!(out.status.success(), "xz failed: {}", String::from_utf8_lossy(&out.stderr));
+    let mut compressed = tempfile::NamedTempFile::new().unwrap();
+    std::io::Write::write_all(&mut compressed, &out.stdout).unwrap();
+    compressed
+}
+
+fn has_non_seekable_warning(diagnostics: &[pgdump_query::Diagnostic]) -> bool {
+    diagnostics.iter().any(|d| matches!(d.kind, DiagnosticKind::NonSeekableCompressedSource { .. }))
+}
+
+/// D2: `build_index` warns about a source with no seek structure, and does
+/// not warn about the same content compressed seekably.
+#[tokio::test]
+async fn build_index_warns_about_a_non_seekable_xz_source() {
+    let non_seekable = xz_compress_single_block(&edge_cases());
+    let xz = XzSource::open(non_seekable.path()).unwrap();
+    assert!(
+        !xz.seek_table().unwrap().is_seekable(),
+        "fixture must actually be single-block for this test to mean anything"
+    );
+    let index = build_index(&xz, &ScanOptions::default()).await.unwrap();
+    assert!(has_non_seekable_warning(&index.diagnostics), "diagnostics: {:?}", index.diagnostics);
+
+    let seekable = xz_compress(&edge_cases());
+    let xz_seekable = XzSource::open(seekable.path()).unwrap();
+    assert!(xz_seekable.seek_table().unwrap().is_seekable(), "fixture must actually be seekable");
+    let seekable_index = build_index(&xz_seekable, &ScanOptions::default()).await.unwrap();
+    assert!(!has_non_seekable_warning(&seekable_index.diagnostics));
+}
+
+/// The warning survives a save/load round trip through the persisted
+/// `compression` field — `status_from_file` recomputes it from the cache
+/// alone, with no live source to re-walk (D2, D5).
+#[tokio::test]
+async fn a_non_seekable_warning_survives_the_cache_round_trip() {
+    let non_seekable = xz_compress_single_block(&edge_cases());
+    let xz = XzSource::open(non_seekable.path()).unwrap();
+    let index = build_index(&xz, &ScanOptions::default()).await.unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("single_block.xz.dqcache");
+    cache::save(&path, &xz, &index).await.unwrap();
+    match cache::load(&path, &xz).await.unwrap() {
+        CacheStatus::Valid { index, .. } => {
+            assert!(
+                has_non_seekable_warning(&index.diagnostics),
+                "diagnostics: {:?}",
+                index.diagnostics
+            );
+        }
+        other => panic!("expected Valid, got {other:?}"),
+    }
+}
+
+/// `preamble_only` pushes the same warning on a fresh scan, and does not
+/// duplicate it on a second call that finds the preamble already complete in
+/// the cache the first call just wrote.
+#[tokio::test]
+async fn preamble_only_warns_without_duplicating_across_calls() {
+    let non_seekable = xz_compress_single_block(&edge_cases());
+    let xz = XzSource::open(non_seekable.path()).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let mode = CacheMode::Enabled(dir.path().join("preamble.xz.dqcache"));
+
+    let (_metadata, diagnostics) =
+        preamble_only(&xz, &ScanOptions::default(), &mode).await.unwrap();
+    assert_eq!(
+        diagnostics
+            .iter()
+            .filter(|d| matches!(d.kind, DiagnosticKind::NonSeekableCompressedSource { .. }))
+            .count(),
+        1,
+        "diagnostics: {diagnostics:?}"
+    );
+
+    // The preamble is now complete in the cache this just wrote, so this
+    // second call takes the `known` branch — the warning it inherits from
+    // the cache load must not be pushed a second time.
+    let (_metadata, diagnostics) =
+        preamble_only(&xz, &ScanOptions::default(), &mode).await.unwrap();
+    assert_eq!(
+        diagnostics
+            .iter()
+            .filter(|d| matches!(d.kind, DiagnosticKind::NonSeekableCompressedSource { .. }))
+            .count(),
+        1,
+        "diagnostics: {diagnostics:?}"
+    );
 }

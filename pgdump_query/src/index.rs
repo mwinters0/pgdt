@@ -331,6 +331,7 @@ pub async fn build_index(source: &dyn ByteRangeSource, options: &ScanOptions) ->
     attach_text(source, &mut spans).await?;
     let mut diagnostics = tiling_diagnostics(&spans, size);
     diagnostics.push(toc_coverage_diagnostic(&spans));
+    diagnostics.extend(non_seekable_compression_diagnostic(source.seek_table().as_ref()));
     Ok(DumpIndex { spans, scanned_through: size, metadata, roles, tablespaces, diagnostics })
 }
 
@@ -361,6 +362,24 @@ pub(crate) fn tiling_diagnostics(spans: &[Span], expected_end: u64) -> Vec<Diagn
 pub(crate) fn toc_coverage_diagnostic(spans: &[Span]) -> Diagnostic {
     let attributed = spans.iter().filter(|s| s.toc.is_some()).count();
     Diagnostic::toc_coverage(attributed, spans.len())
+}
+
+/// D2's warning for a `.xz` source with no usable seek structure — `None`
+/// when there is no compression layer at all (`table` is `None`) or the
+/// table already has more than one block. Shared by [`build_index`] and
+/// [`preamble_only`], which read it off a live [`ByteRangeSource`], and
+/// `crate::cache::status_from_file`, which reads it off a table just loaded
+/// from a persisted cache — one function so "does this table warrant the
+/// warning" is answered the same way regardless of which of those handed it
+/// the table (`docs/design/roadmap-P13-compressed-input.md`, "D2").
+pub(crate) fn non_seekable_compression_diagnostic(
+    table: Option<&xz_seek::SeekTable>,
+) -> Option<Diagnostic> {
+    let table = table?;
+    if table.is_seekable() {
+        return None;
+    }
+    Some(Diagnostic::non_seekable_compressed_source(table.block_count()))
 }
 
 /// Scan only far enough to recover the first database's preamble — up to
@@ -498,6 +517,16 @@ pub async fn preamble_only(
         base_index.spans.extend(spans);
         attach_text(source, &mut base_index.spans).await?;
         cache.save(source, &base_index).await?;
+    }
+    // `known` (loaded straight from a complete cache) already carries this
+    // diagnostic if it applies, computed by `cache::status_from_file` off the
+    // persisted table — pushing again would duplicate it, so this is
+    // idempotent rather than gated on `!known`, which would miss the case of
+    // a cache that exists but whose preamble was not yet complete.
+    if let Some(d) = non_seekable_compression_diagnostic(source.seek_table().as_ref())
+        && !base_index.diagnostics.contains(&d)
+    {
+        base_index.diagnostics.push(d);
     }
     Ok((base_index.metadata.unwrap_or_default(), base_index.diagnostics))
 }

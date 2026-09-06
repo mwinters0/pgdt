@@ -38,7 +38,9 @@ use std::time::UNIX_EPOCH;
 use serde::{Deserialize, Serialize};
 
 use crate::diagnostic::Diagnostic;
-use crate::index::{DumpIndex, tiling_diagnostics, toc_coverage_diagnostic};
+use crate::index::{
+    DumpIndex, non_seekable_compression_diagnostic, tiling_diagnostics, toc_coverage_diagnostic,
+};
 use crate::io::ByteRangeSource;
 use crate::{Error, Result};
 
@@ -290,6 +292,8 @@ fn status_from_file(file: CacheFile, mtime_changed: bool) -> CacheStatus {
     // would otherwise silently lose the TOC-coverage figure.
     index.diagnostics = tiling_diagnostics(&index.spans, total_size);
     index.diagnostics.push(toc_coverage_diagnostic(&index.spans));
+    let table = file.compression.as_ref().map(|CompressionIndex::Xz(table)| table);
+    index.diagnostics.extend(non_seekable_compression_diagnostic(table));
     if index.is_complete(total_size) {
         CacheStatus::Valid { index, mtime_changed, total_size }
     } else {
