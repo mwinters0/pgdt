@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P5, P7, P9, P11, P12 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
-| P13 — compressed input | Specified; **unblocked**, and its remaining decisions ungrilled | [`roadmap-P13-compressed-input.md`](roadmap-P13-compressed-input.md) — the crate it waited on now answers a positioned read, so that spec's "Blocked" section is stale; [inbox](roadmap-P13-compressed-input-inbox.md) holds the integration story to settle |
+| P13 — compressed input | **Current**; sliced | [`roadmap-P13-compressed-input.md`](roadmap-P13-compressed-input.md) — nine decisions settled; [`../status/STATUS.md`](../status/STATUS.md), "P13 progress" for the slice checklist |
 | P16 — parallel scan and extraction | Sketched; not grilled | this file, below; [inbox](roadmap-P16-parallel-scan-inbox.md) — carved out of the scan-performance work |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
@@ -336,27 +336,31 @@ item; see below.
 
 ## P13 — Compressed input
 
-**Specified, and unblocked**:
-[`roadmap-P13-compressed-input.md`](roadmap-P13-compressed-input.md) holds the
-six decisions this phase has settled — what `size()` promises, which xz shapes
-are read, `ByteRangeSource` becoming dyn-compatible, `stored_size()`, where the
-seek table lives, and the decoder's read policy — together with the evidence
-they rest on.
+**Current, sliced, and fully specified**:
+[`roadmap-P13-compressed-input.md`](roadmap-P13-compressed-input.md) holds nine
+decisions — what `size()` promises (D1), which xz shapes are read and how the
+non-seekable one is diagnosed (D2), `ByteRangeSource` becoming dyn-compatible
+(D3), `stored_size()` and the opaque `SourceIdentity` enum (D4), where the seek
+table lives as an enum-tagged envelope field (D5), the decoder's read policy
+and the four properties `xz-seek`'s own grilling committed this phase to (D6),
+the size-exactness signal (D7), content-sniffing recognition as a library
+convenience (D8), and the vendored, unpublished dependency (D9) — together
+with the evidence they rest on, two test-time-generated fixtures, and a
+deliberate decision to owe no measurement row until P16 lands parallel decode.
 
-**The addressing layer it waited on exists.** It was carved out into its own
-crate and repository on the collation spike's pattern, with the requirements
-written from here and kept there (`CLAUDE.local.md`), and it now answers a
-positioned read. That spec's "Blocked" section is stale and is struck by the
-grilling below.
+**The addressing layer it waited on exists**, vendored read-only at
+`vendor/xz-seek/` (`CLAUDE.local.md`), carved out into its own crate and
+repository on the collation spike's pattern with the requirements written from
+here and kept there. Its own `P3` (parallel block decode) is not on this
+phase's critical path; P16 is its consumer.
 
-The phase's remaining decisions — how a source is recognised as xz, the
-diagnostic that announces a non-seekable file, the fixtures, the figures owed,
-and the slice list — are still ungrilled, and **that grilling also settles the
-compressed/remote integration story for P14, P15 and P16**, which is why this
-phase carries a second inbox
-([`roadmap-P13-compressed-input-inbox.md`](roadmap-P13-compressed-input-inbox.md))
-after its first was drained. Read it, and the three inboxes it names, before
-grilling.
+**This grilling also settled the compressed/remote integration story for P14,
+P15 and P16** — the opaque identity, the size-exactness signal, and the
+enum-tagged compression-index field are all decided with those three phases'
+needs in view, per the (now-drained) second inbox this phase carried. Their own
+inboxes still hold what is theirs to settle at their own grilling.
+
+Slice checklist: [`../status/STATUS.md`](../status/STATUS.md), "P13 progress".
 
 ## P16 — Parallel scan and extraction
 

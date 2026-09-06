@@ -2,14 +2,14 @@
 """Sync the frozen, read-only copy of `xz-seek` at vendor/xz-seek/.
 
 P13 depends on `xz-seek` (docs/design/roadmap-P13-compressed-input.md,
-"Blocked") before that crate is published: this repo is its first real-world
-consumer, and the interface is vetted by being used rather than frozen into a
-version and discovered (docs/design/roadmap-P13-compressed-input-inbox.md,
-"The dependency is a frozen in-repo copy until this project has integrated").
-A path dependency onto the sibling working tree was rejected there -- it
-breaks `cargo check` on any checkout lacking that tree, even behind an
-off-by-default feature, because the dependency graph resolves before features
-are considered. So the copy is committed, and this script is the
+"D9 -- The dependency is a frozen vendored copy, not published, wired in by
+this phase") before that crate is published: this repo is its first
+real-world consumer, and the interface is vetted by being used rather than
+frozen into a version and discovered. A path dependency onto the sibling
+working tree was rejected there -- it breaks `cargo check` on any checkout
+lacking that tree, even behind an off-by-default feature, because the
+dependency graph resolves before features are considered. So the copy is
+committed, and this script is the
 transformation, run again whenever the source moves and re-synced rather than
 hand-merged.
 
