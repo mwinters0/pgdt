@@ -201,6 +201,10 @@ class Config:
     reps_override: int | None = None
     dry_run: bool = False
     keep_warm: bool = False
+    # `--alone`: take exactly the figures named, borrowing nothing. It is a
+    # property of the *run* rather than of the selection because of what it
+    # makes the tables -- see `unpublishable_reason`.
+    alone: bool = False
 
     @property
     def bin_nocensus_stamp(self) -> Path:
@@ -214,10 +218,48 @@ class Config:
         return self.bin_nocensus.with_name(self.bin_nocensus.name + ".stamp")
 
     @property
+    def unpublishable_reason(self) -> str | None:
+        """Why this run's tables must not be pasted into the doc, or `None`.
+
+        Two of the three are the apparatus departing from the recorded one.
+        The third is not an apparatus change at all: `--alone` takes exactly
+        the figures named, so a figure that shares a reading publishes one it
+        measured for itself rather than the run its table is set beside — which
+        is precisely what the publication refusal declines to let a sitting
+        take. Marking the *run* rather than exempting the flag is what keeps
+        that refusal one rule: it is already guarded on publishability, so it
+        stops firing for a diagnostic sitting by construction instead of by a
+        clause naming a flag. What `--alone` is for survives intact — run one
+        figure without the hour its borrowed sources cost, to see whether a
+        change moved it.
+
+        A sentence rather than a boolean because every reader of it says why:
+        the log line, and the banner over the emitted tables."""
+        if self.dry_run:
+            return (
+                "This run measured nothing — `--dry-run` prints what a sitting would do. "
+                "It proves the harness runs; it is not a figure."
+            )
+        if abs(self.size_gib - 3.0) >= 1e-9 or self.reps_override is not None:
+            return (
+                "This run overrode the recorded apparatus "
+                f"(inputs {self.size_gib} GiB, reps {self.reps_override or 'as declared'}). "
+                "It proves the harness runs; it is not a figure."
+            )
+        if self.alone:
+            return (
+                "`--alone` took exactly the figures named, borrowing nothing, so any table "
+                "below that republishes a shared reading measured it here for itself. "
+                "It says whether a change moved a figure; it is not a table to fold in."
+            )
+        return None
+
+    @property
     def publishable(self) -> bool:
-        """A run whose apparatus departs from the recorded one must not have
-        its tables pasted into the doc."""
-        return abs(self.size_gib - 3.0) < 1e-9 and self.reps_override is None and not self.dry_run
+        """A run whose apparatus departs from the recorded one, or which took a
+        deliberate partial sitting, must not have its tables pasted into the
+        doc."""
+        return self.unpublishable_reason is None
 
     def container_argv(self) -> list[str]:
         return shlex.split(self.container)
@@ -3553,7 +3595,11 @@ def publication_refusals(figures: Sequence[Figure]) -> list[str]:
 
     Refusing rather than warning is deliberate: there is no partial version of
     it, and the harness already refuses this way where a selection cannot be
-    honestly taken (`resolve_selection` under `--alone`)."""
+    honestly taken (`resolve_selection` under `--alone`).
+
+    Asked only of a run whose tables could enter the doc at all. `--alone` is
+    not exempted from it -- such a run is unpublishable, so the refusal has no
+    publication to refuse and stops firing by construction."""
     return [
         f"{fig.id} is read beside {', '.join(entangled)}, so only a sweep can move its table"
         for fig in figures
@@ -3844,13 +3890,13 @@ NOT_OURS = {
 def resolve_selection(ids: Iterable[str], alone: bool = False) -> list[Figure]:
     """Selected figures plus whatever they borrow from, in run order.
 
-    `alone` takes exactly what was named, which is how a **deliberate** partial
-    sitting is asked for: the borrowed rows are then measured by the figure
-    itself and its table carries the harness's partial-sweep note. It is
-    refused where a figure *consumes* another's readings without republishing
-    them, since there is no local measurement for that figure to fall back on
-    -- the reading it wants is the other figure's reps, not a run it could
-    take."""
+    `alone` takes exactly what was named, which is how a **diagnostic** sitting
+    is asked for: the borrowed rows are then measured by the figure itself, its
+    table carries the harness's partial-sweep note, and the whole run is marked
+    unpublishable (`Config.unpublishable_reason`). It is refused where a figure
+    *consumes* another's readings without republishing them, since there is no
+    local measurement for that figure to fall back on -- the reading it wants
+    is the other figure's reps, not a run it could take."""
     wanted: set[str] = set()
 
     def add(fid: str) -> None:
@@ -4274,6 +4320,36 @@ def taken_against(dirty: bool, allocator: str | None) -> str:
     return suffix + (f", under the `{allocator}` allocator" if allocator else "")
 
 
+def partial_lead(
+    taken: int,
+    head: str,
+    dirty: bool,
+    allocator: str | None,
+    unpublishable: str | None,
+) -> str:
+    """The header a sitting short of the sweep writes instead of a stamp.
+
+    **The fold-in instruction is conditional on the run being publishable at
+    all.** A `--alone` sitting emits its tables under the `NOT PUBLISHABLE`
+    banner, and a header that told the reader to fold each table in would be
+    directing them to do the thing the banner a few lines down refuses."""
+    fold_in = (
+        "Its tables do not enter the document at all — see the banner below."
+        if unpublishable
+        else "Leave its session stamp alone, and fold each table in with the `taken at` "
+        "commit its own marker carries; `--check` refuses that marker on a figure that "
+        "shares a reading or stands in a derivation, which is every figure a sweep is the "
+        "only way to move."
+    )
+    return (
+        f"**A sitting of its own, not a sweep.** This run took {taken} of the "
+        f"{len(FIGURES)} figures a sweep takes, with `scripts/measure.py` on "
+        f"{date.today().isoformat()}, against commit `{head}`"
+        f"{taken_against(dirty, allocator)} — so this run does not stamp the document. "
+        + fold_in
+    )
+
+
 def emit(cfg: Config, figures: Sequence[Figure]) -> int:
     out_root = cfg.out_dir / f"measure-{time.strftime('%Y%m%dT%H%M%S')}"
     out_root.mkdir(parents=True, exist_ok=True)
@@ -4298,10 +4374,11 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
         + ("" if whole_sweep else ", a sitting of its own (each table declares this commit)")
     )
     log(f"output: {out_root}")
-    if not cfg.publishable:
+    unpublishable = cfg.unpublishable_reason
+    if unpublishable:
         log(
-            "!! apparatus overridden (size or reps): this run is a smoke test, and its tables "
-            "must not be folded into measurements.md"
+            "!! not publishable, and its tables must not be folded into measurements.md: "
+            + unpublishable
         )
 
     # Named before the first reading, not discovered at fold-in: a selection
@@ -4414,16 +4491,7 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
     if whole_sweep:
         lead = session_stamp(head, dirty, allocator, outside)
     else:
-        lead = (
-            f"**A sitting of its own, not a sweep.** This run took {len(figures)} of the "
-            f"{len(FIGURES)} figures a sweep takes, with `scripts/measure.py` on "
-            f"{date.today().isoformat()}, against commit `{head}`"
-            f"{taken_against(dirty, allocator)} — so this run does not stamp the document. "
-            "Leave its session stamp alone, and fold each table in with the `taken at` commit "
-            "its own marker carries; `--check` refuses that marker on a figure that shares a "
-            "reading or stands in a derivation, which is every figure a sweep is the only way "
-            "to move."
-        )
+        lead = partial_lead(len(figures), head, dirty, allocator, unpublishable)
     header = [
         "# measure.py output",
         "",
@@ -4433,13 +4501,8 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
         "`docs/design/measurements.md`.",
         "",
     ]
-    if not cfg.publishable:
-        header += [
-            "> **NOT PUBLISHABLE.** This run overrode the recorded apparatus "
-            f"(inputs {cfg.size_gib} GiB, reps {cfg.reps_override or 'as declared'}). "
-            "It proves the harness runs; it is not a figure.",
-            "",
-        ]
+    if unpublishable:
+        header += ["> **NOT PUBLISHABLE.** " + unpublishable, ""]
     elif governor is not None and not governor.ok:
         # The governor is part of the recorded apparatus, so failing to pin it
         # departs from that apparatus exactly as a resized input does.
@@ -5320,8 +5383,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--alone",
         action="store_true",
-        help="take exactly the figures named, borrowing nothing — a deliberate partial "
-        "sitting, whose tables carry the harness's partial-sweep note",
+        help="take exactly the figures named, borrowing nothing — a diagnostic sitting, "
+        "whose tables carry the partial-sweep note and the NOT PUBLISHABLE banner",
     )
     parser.add_argument("--all", action="store_true", help="the whole sweep — what the doc's session stamp means")
     parser.add_argument("--stale", action="store_true", help="say which figures a diff has invalidated")
@@ -5408,24 +5471,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         reps_override=args.reps,
         dry_run=args.dry_run,
         keep_warm=args.keep_warm,
+        alone=args.alone,
         pin_governor=args.pin_governor or Config().pin_governor,
     )
     figures = resolve_selection(ids, alone=args.alone)
     # A sitting short of the sweep publishes outside the session stamp, which
     # only a figure standing in no borrow edge may do. Asked here, before the
     # measurement is spent, rather than at `--check` after it -- and asked only
-    # of a sitting that could be folded in at all: a smoke run's tables carry
-    # the harness's NOT PUBLISHABLE banner, and `--alone` is the deliberate ask
-    # for a partial sitting, whose tables still cannot enter the doc for an
-    # entangled figure.
-    if not args.alone and cfg.publishable and not {f.id for f in FIGURES} <= {f.id for f in figures}:
+    # of a sitting that could be folded in at all, which is what
+    # `cfg.publishable` answers: a smoke run and a `--alone` sitting both emit
+    # their tables under the NOT PUBLISHABLE banner, so there is no publication
+    # for this to refuse.
+    if cfg.publishable and not {f.id for f in FIGURES} <= {f.id for f in figures}:
         refusals = publication_refusals(figures)
         if refusals:
             parser.error(
                 "this sitting would publish outside the document's session stamp: "
                 + "; ".join(refusals)
                 + ". Take the whole doc (`--all`), which re-stamps it, or `--alone` for a "
-                "sitting you are not folding in."
+                "diagnostic sitting, whose tables come back marked NOT PUBLISHABLE."
             )
     if not cfg.dry_run and not cfg.bin_pgdq.exists():
         parser.error(f"{cfg.bin_pgdq} is missing — `cargo build --release -p pgdump_query-cli`")

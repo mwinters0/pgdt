@@ -35,7 +35,7 @@ cd scripts && uv run measure.py --stale           # which figures a diff has mad
 cd scripts && uv run measure.py --check           # figure markers vs the doc, and each figure's consumers
 cd scripts && uv run measure.py --verify-additive # inputs regenerated at two revisions, compared byte for byte
 cd scripts && uv run measure.py --figure <id>     # re-take one figure — one whole table, plus what it borrows
-cd scripts && uv run measure.py --figure <id> --alone   # take it borrowing nothing: a deliberate partial sitting
+cd scripts && uv run measure.py --figure <id> --alone   # borrowing nothing: a diagnostic sitting, marked NOT PUBLISHABLE
 cd scripts && uv run measure.py --all             # the whole sweep: ~1 h, detach it
 cd scripts && uv run measure.py --profile-recipe  # the sampling-profile sequence, printed; minutes, not detached
 cd scripts && uv run python -m unittest test_measure   # the harness's own tests
@@ -334,7 +334,9 @@ graph, the readings this figure takes from another rather than measuring.
 reading published alone puts two numbers in the doc for one measurement — the
 harness computes that set transitively rather than a session working it out by
 hand, so `--figure` takes what a figure borrows and names the rest, and
-`--alone` is how a partial sitting is asked for deliberately. A reading another
+`--alone` asks for a **diagnostic** sitting — it borrows nothing and marks its
+whole run unpublishable, joining `--reps` and the size override. A reading
+another
 table *derives* from — a difference over this figure's reps rather than its
 number a second time — is **named rather than dragged in**: `--figure` says
 which table a re-take strands, before the first reading and again in the

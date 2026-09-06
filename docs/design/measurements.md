@@ -290,8 +290,9 @@ to skip:
   went unsatisfied and the whole set to re-take. A borrow goes unsatisfied only
   outside a sweep, and a figure that shares a reading may not be published
   outside one at all — so the note now marks a sitting whose tables have no way
-  into the document, and what it is read for is diagnosis: whether a change
-  moved this figure, answered without the hour its borrowed sources cost.
+  into the document, which the run's `NOT PUBLISHABLE` banner says outright, and
+  what it is read for is diagnosis: whether a change moved this figure, answered
+  without the hour its borrowed sources cost.
 - **The harness names the closure, not its direct sources.** Re-taking a figure
   that others borrow from drags them too: `census-brace-free` is borrowed by
   both throughput tables, so the honest set behind the allocator table is four
@@ -325,21 +326,39 @@ the same sitting. The flag's whole behavioural footprint is on the entangled
 figures, which are exactly the ones a sitting of their own may not publish. Three
 of those — `census-brace-free`, `nested-end-to-end`, `per-block-quadratic` — are
 entangled while borrowing nothing, so there the flag does not even change what
-runs: it changes only whether the publication refusal fires. That is what makes
-it a diagnostic switch and not a mode.
+runs: all it decides is whether the sitting is refused outright or taken and
+marked. That is what makes it a diagnostic switch and not a mode.
+
+**So `--alone` marks its run unpublishable**, joining `--reps` and the
+input-size override rather than sitting beside them as an exemption. The
+publication refusal is already guarded on publishability, so it stops firing for
+such a sitting **by construction** and nothing anywhere names the flag; the
+tables come back under the `NOT PUBLISHABLE` banner, which is what the flag's
+remaining use wants in any case — take one figure without the hour its borrowed
+sources cost, and read whether a change moved it. The two alternatives are what
+this replaces: exempting the flag from the refusal is an override token, the
+shape refused for the cache's size-mismatch guard
+([`architecture.md`](architecture.md), "The cache"); refusing the flag outright
+would leave something that changes nothing for any figure that could publish,
+because a figure standing in no borrow edge declares no `shares`. A figure taken
+on its own *for the document* is `--figure <id>` with no flag, which is how
+`peak-rss` was taken.
 
 **What keeps a partial sitting out of the document is a marker and a banner,
 both of which are conventions a person can decline to carry.** `--check` fails
-an entangled figure that declares a sitting of its own, and a sitting whose
-apparatus was overridden emits tables under a `NOT PUBLISHABLE` header — but a
-table pasted in with its sitting marker stripped is indistinguishable from one
-the stamped sweep took, and nothing detects it. The check that would close this
+an entangled figure that declares a sitting of its own, and a run that overrode
+the apparatus or borrowed nothing emits its tables under a `NOT PUBLISHABLE`
+header — but a table pasted in with its sitting marker stripped is
+indistinguishable from one the stamped sweep took, and nothing detects it. The
+check that would close this
 is `--check` recomputing each table against the sitting's own `raw.json`, which
 means the document holding a resolvable link back to run artifacts that `runs/`
 does not keep; it is a much larger mechanism than the markers it would police,
 and no marker has ever been stripped. So this boundary is discipline, recorded
 here rather than left to be re-derived — and the honest statement of the
-protection is the marker and the banner together, not the check alone. 3.00 GiB inputs read by a `glibc` binary in a
+protection is the marker and the banner together, not the check alone.
+
+**One line, in three regimes: 3.00 GiB inputs read by a `glibc` binary in a
 512 MB `postgres:16` container, timed by that container's own `bash`.** Warm
 figures read from `/dev/shm`; cold ones read from the SSD with `drop_caches`
 before every run, including before the floor; `cold-nvme` ones are that same

@@ -17,6 +17,8 @@ takes it.
 from __future__ import annotations
 
 import collections
+import contextlib
+import io
 import json
 import re
 import tempfile
@@ -1488,12 +1490,29 @@ class Stamp(unittest.TestCase):
 class Apparatus(unittest.TestCase):
     def test_the_recorded_apparatus_is_publishable(self):
         self.assertTrue(measure.Config().publishable)
+        self.assertIsNone(measure.Config().unpublishable_reason)
 
     def test_a_smaller_input_is_not(self):
         self.assertFalse(measure.Config(size_gib=0.05).publishable)
 
     def test_an_overridden_rep_count_is_not(self):
         self.assertFalse(measure.Config(reps_override=1).publishable)
+
+    def test_a_diagnostic_sitting_is_not(self):
+        # `--alone` is not an apparatus change; it is a selection that leaves a
+        # shared reading measured by the figure that borrows it, which is the
+        # same table the publication refusal declines to let a sitting take.
+        self.assertFalse(measure.Config(alone=True).publishable)
+
+    def test_each_reason_says_which_departure_it_is(self):
+        # One sentence per departure, because the log line and the banner over
+        # the tables both print it and a reader has to know which run this was.
+        self.assertIn("--alone", measure.Config(alone=True).unpublishable_reason)
+        self.assertIn("--dry-run", measure.Config(dry_run=True).unpublishable_reason)
+        self.assertIn(
+            "overrode the recorded apparatus",
+            measure.Config(reps_override=1).unpublishable_reason,
+        )
 
     def test_size_scales_the_generator_argument(self):
         cfg = measure.Config(size_gib=0.5)
@@ -1848,6 +1867,44 @@ class Sittings(unittest.TestCase):
 
     def test_a_figure_standing_in_no_edge_may_be_taken_on_its_own(self):
         self.assertEqual(measure.publication_refusals([measure.ALL_BY_ID["peak-rss"]]), [])
+
+    def _cli_stderr(self, argv: list[str]) -> str:
+        """`main` up to its first refusal, with nothing measured.
+
+        `emit` is stubbed because the question is which refusals fire before
+        it; a missing release binary is a refusal of its own and is allowed to
+        be the one that ends the run."""
+        err = io.StringIO()
+        with unittest.mock.patch.object(measure, "emit", return_value=0):
+            with contextlib.redirect_stderr(err), contextlib.suppress(SystemExit):
+                measure.main(argv)
+        return err.getvalue()
+
+    def test_an_entangled_figure_is_refused_before_the_measurement_is_spent(self):
+        self.assertIn(
+            "publish outside the document's session stamp",
+            self._cli_stderr(["--figure", "allocator"]),
+        )
+
+    def test_the_refusal_stops_firing_for_a_diagnostic_sitting(self):
+        # Not an exemption clause: `--alone` marks the run unpublishable, so
+        # the guard -- which asks only of a publishable run -- has no
+        # publication left to refuse.
+        self.assertNotIn(
+            "publish outside the document's session stamp",
+            self._cli_stderr(["--figure", "allocator", "--alone"]),
+        )
+
+    def test_a_diagnostic_sitting_is_not_told_to_fold_its_tables_in(self):
+        reason = measure.Config(alone=True).unpublishable_reason
+        lead = measure.partial_lead(1, "deadbee", dirty=False, allocator=None, unpublishable=reason)
+        self.assertIn("do not enter the document", lead)
+        self.assertNotIn("fold each table in", lead)
+
+    def test_a_publishable_partial_sitting_still_says_how_to_fold_it_in(self):
+        lead = measure.partial_lead(1, "deadbee", dirty=False, allocator=None, unpublishable=None)
+        self.assertIn("fold each table in", lead)
+        self.assertIn("does not stamp the document", lead)
 
     def test_a_sitting_that_repeats_the_stamp_is_a_marker_that_should_not_be_there(self):
         problems = measure.sitting_problems(
