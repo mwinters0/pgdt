@@ -375,3 +375,163 @@ row was resting a design claim on the input least able to test it"). Contingent
 on the save throttle's gate: the reading was
 taken under `parse` with a real cache, so it is the *gated* count of splices,
 which the entry above says is 5 for this input.
+
+---
+
+## The xz decode pool belongs to `xz-seek`; the pieces are what this phase probably wants
+
+**Fact.** `xz-seek` will ship both a worker pool that hands back ordered bytes
+over a caller-named range, and the public pieces underneath it — a `Send`,
+self-contained single-block decode plus the arithmetic that partitions a range
+into blocks. Both, because this project asked for both. Three constraints were
+attached to the pool and are commitments the crate is building to: an explicit
+worker count with no core-count default (the right count is a property of the
+device and the build, and the device-awareness rule is *this* phase's to write);
+cancellability mid-range, because `parse` banks its cache on a signal and a
+non-interruptible bulk read would make Ctrl-C unbounded; and one block per unit
+of work drawn from a shared queue rather than a contiguous run per worker.
+
+The reason given for wanting the pieces is a claim about **this phase's shape**,
+and it should be tested rather than inherited: that the natural composition over
+a compressed source is one worker per xz block that **decodes and parses in the
+same thread**, so a decoded 24 MiB never crosses a channel, is never held behind
+an ordering constraint, and is dropped as soon as its rows are batched — leaving
+memory at *N × one block* rather than *N × one block plus a reorder buffer plus
+whatever the consumer has not drained*.
+
+**Why this phase cares.** It decides whether this phase writes a scheduler for
+xz blocks at all. If the fused shape holds, the pool is not used here and the
+pieces are the interface; if it does not, the pool is, and the worker count
+becomes one of this phase's device-class numbers. Note the two are not
+symmetric in cost: taking the pool is free, and taking the pieces means this
+phase owns block scheduling on top of the row scheduling it already owns.
+
+Two facts already in this file bear directly on the fused claim and should be
+read with it: `stream::splice` requires coverage to stay prefix-shaped, and a
+worker holding rows *[a, b)* of a block holds a **partial census**, which is a
+wrong answer rather than a weak one.
+
+**Origin.** 2026-09-06, answering `xz-seek`'s `P3` grilling
+([`../status/history/2026-09-06.md`](../status/history/2026-09-06.md),
+"What `xz-seek` was told, and what it commits us to"). Contingent on that
+crate's `P3` landing as specified; the answers were given, not yet built
+against.
+
+---
+
+## The memory bound this phase must promise is in bytes, and the crate will take it in bytes
+
+**Fact.** `xz-seek`'s parallel path will accept **both** a worker count and a
+byte budget, whichever binds first, because this project asked for both and said
+the byte budget is the one it would set. The reason is that koji runs happen in
+a **512 MB cgroup** (`CLAUDE.md`'s long-running-process rule, asserted by
+`scripts/test_measure.py`) and a worker count cannot be promised to one: the
+same count is 192 MiB against a 24 MiB-block file and 1 GiB against a 128 MiB-block
+one, and this project does not choose which file its user hands it. The crate
+was also asked to make the **derived worker count observable before the read
+starts**, and to account in-flight compressed buffers inside the budget.
+
+**Why this phase cares.** This is the first number this phase has to promise
+that is not about time. Whatever it does with plain input, N workers over a
+compressed source multiply a decoded block, and the budget is where that lands.
+It also sets a precedent the plain path will be measured against: the same
+question — what does a parallel scan hold resident, and can it be stated as a
+number a cgroup accepts — has no answer today for either source shape. `KD14`
+(per-block RSS growth, unowned) is the nearest thing and it is an attribution
+that was never taken.
+
+**Origin.** 2026-09-06, answering `xz-seek`'s `P3` grilling
+([`../status/history/2026-09-06.md`](../status/history/2026-09-06.md),
+"What `xz-seek` was told, and what it commits us to").
+
+---
+
+## The decode pool suits discovery and not extraction, and the rates say so before any of it is built
+
+**Fact.** One core decodes this corpus's `.xz` at ~446 MB/s of plaintext (a
+probe, not a figure). This project's own warm per-thread rates over the 3.00 GiB
+single-block control file are ~7.0 GB/s for structure discovery, ~940 MB/s for
+string-schema extraction and ~680 MB/s for typed extraction
+([`measurements.md`](measurements.md), "Scan throughput by input shape" and "A
+typed query over nested columns costs 6.5 µs a row more than a string one"). So
+one consumer thread absorbs **~16** decode workers on the discovery path and
+**~1.5–2** on the extraction path, while a 512 MB budget admits 19 workers
+against 24 MiB blocks and 3 against 128 MiB ones.
+
+**Why this phase cares.** It settles, arithmetically and before anything is
+written, which of the two compositions belongs where. Ordered bulk delivery from
+`xz-seek`'s pool is well matched to `parse`, where one consumer can keep 16
+decoders busy. It is badly matched to `query`, where the consumer is
+*permanently* the bottleneck and every extra worker is stalled on it — which is
+the same conclusion the fused decode-and-parse shape reaches from the memory
+side, now with a rate behind it rather than an intuition. Two consequences
+follow: this phase should not expect the pool to speed up extraction at all, and
+a delivery-buffer slack parameter (offered by that crate, declined here in
+favour of an exactly-N footprint) would buy nothing in the mode where it is
+cheap and nothing in the mode where it is not.
+
+**Origin.** 2026-09-06, answering `xz-seek`'s `P3` grilling, round two
+([`../status/history/2026-09-06.md`](../status/history/2026-09-06.md),
+"What `xz-seek` was told, and what it commits us to"). Contingent on the decode probe,
+which is not a registered figure — re-take it before resting a decision on the
+ratio rather than on its order of magnitude.
+
+---
+
+## Whole-block decode makes the retained unit a block, not a chunk
+
+**Fact.** The single-block decode `xz-seek` will expose fills a
+**caller-supplied buffer with the block's entire uncompressed output**, check
+already verified — asked for in that shape because a returned `Vec<u8>` is the
+per-chunk `calloc` the buffer pool exists to remove. The consequence is that a
+worker's decoded buffer is 24 MiB, or 128 MiB on a large-block file, where the
+read path's buffer is 1 MiB. The zero-copy `Utf8View` path pins whatever buffer
+a batch views, and `RowBatcher`'s `max_source_span` cap (64 MiB) was chosen
+against chunk-sized pinning, on the arithmetic that pinned bytes never exceed
+the span rounded out to chunk boundaries
+([`architecture.md`](architecture.md), "Three flush triggers, and only one of
+them bounds memory"). Rounded out to *block* boundaries, that bound is 24–128×
+larger, and a 64 MiB span cap cannot even round out to one 128 MiB block.
+
+**Why this phase cares.** It is a second per-worker memory term the byte budget
+does not count: `xz-seek`'s budget counts the decode slot, not what this
+project's batches go on to pin out of it. Two remedies exist and both are this
+phase's to choose — lower the span cap to a chunk-shaped number and accept more
+flushes, or copy on the extraction path and give up the zero-copy view for
+compressed sources. The incremental decode form, which would let a worker fill
+chunk-sized pooled buffers instead, was deliberately **not** asked for: it
+forfeits verify-before-return, which is the property that keeps unverified bytes
+out of the cache.
+
+**Origin.** 2026-09-06, answering `xz-seek`'s `P3` grilling, round two
+([`../status/history/2026-09-06.md`](../status/history/2026-09-06.md),
+"What `xz-seek` was told, and what it commits us to").
+
+---
+
+## Ordered delivery was asked for, and the unordered case was routed to the pieces on purpose
+
+**Fact.** `xz-seek` offered out-of-order delivery — each chunk tagged with its
+uncompressed offset, no reorder buffer, materially cheaper for it to build. It
+was refused, on two grounds. Today's consumer cannot take it at all:
+`CopyScanner` carries partial lines across chunk seams, the map is built in
+offset order, and `stream::splice` rebuilds coverage as a contiguous prefix. And
+a tagged contract would not remove the reorder buffer, only move it into this
+project, where it would be a `BTreeMap` of decoded blocks — the same memory,
+two implementations.
+
+The second half is the part addressed to this phase: when this phase wants
+unordered work it will not want a byte stream at all, so the tagged form was
+declined as a *delivery mode* and the same need routed to the pieces above. The
+crate is therefore not building two delivery contracts, and asking it to later
+is asking it to reverse a decision this project made on this phase's behalf.
+
+**Why this phase cares.** It closes off an option that would otherwise look
+free when this phase is grilled — "ask the crate for tagged chunks" — and says
+where the equivalent capability actually lives. If the fused decode-and-parse
+shape does not survive this phase's grilling, this is the entry to re-open,
+because the pieces were the whole reason for declining.
+
+**Origin.** 2026-09-06, answering `xz-seek`'s `P3` grilling
+([`../status/history/2026-09-06.md`](../status/history/2026-09-06.md),
+"What `xz-seek` was told, and what it commits us to").

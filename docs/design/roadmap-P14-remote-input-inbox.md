@@ -100,3 +100,82 @@ doing nothing is exactly the silent pooling loss the ceiling used to produce.
 from 2026-09-05
 ([`../status/history/2026-09-05.md`](../status/history/2026-09-05.md), "`M55`:
 the pool keeps the chunk size the caller asked for").
+
+---
+
+## The fetch policy over a remote source is this phase's to own, and the crate ships no knob for it
+
+**Fact.** `xz-seek`'s parallel path splits fetching from decoding — a fetch
+stage, a queue of compressed buffers, N decoders — with **one fetcher, no
+coalescing and no fetcher-count parameter**. This project asked for the
+parameter on this phase's behalf and then **withdrew it**, on two grounds: a
+fetcher inside a synchronous crate reaches an async object store only by
+blocking on a future from a blocking thread, so a count multiplies parked
+threads rather than fixing them; and the measurement that motivated coalescing
+turned out to be one thread issuing *block-sized* reads in file order, already
+at the HDD's ceiling, so coalescing has nothing measured to buy locally.
+
+What replaces the knob is **a public `CompressedSource` over a pre-fetched
+window** — a base offset plus bytes, generic over its backing store so a
+`Bytes` or an `Arc<[u8]>` goes in without a copy, reporting the whole file's
+size and erroring rather than short-reading outside its own range. Two
+compositions fall out of it, and choosing between them is this phase's:
+
+- **Take the fetch entirely.** Async, concurrent, coalesced ranged GETs on the
+  runtime this project already has, with `xz-seek` reduced to a CPU-side decoder
+  over buffers handed to it. No blocked threads at all.
+- **Keep the pool, and prefetch underneath it.** This phase's own
+  `CompressedSource` impl issues concurrent GETs ahead of the fetcher's cursor
+  and answers `read_at` out of what has landed. `xz-seek` was asked to
+  **guarantee that its single fetcher requests blocks in ascending order within
+  a range**, which is what makes that anticipation possible; if that promise is
+  absent when this phase is grilled, this composition is not available and the
+  first one is the only one.
+
+The measured tension behind the original request is still worth knowing: on the
+HDD one sequential fetcher delivers 249.6 MB/s of compressed input against 190.8
+at eight concurrent. That is an argument for *fetch concurrency = 1 on a
+spindle*, and this phase's device is the one where the number goes the other
+way — which is now expressed by owning the policy rather than by a parameter.
+
+**Why this phase cares.** It is the difference between remote compressed input
+being a composition that already works and one that is capped in a dependency,
+and the answer moved: nothing is capped, but nothing is provided either. The
+concurrency is this phase's to write.
+
+**Origin.** 2026-09-06, answering `xz-seek`'s `P3` grilling, rounds one and two
+([`../status/history/2026-09-06.md`](../status/history/2026-09-06.md),
+"What `xz-seek` was told, and what it commits us to"). Contingent on that
+crate's `P3` landing as specified.
+
+---
+
+## The sync/async seam bites here and nowhere else, and the window type is the escape
+
+**Fact.** `xz-seek` is synchronous and intends to stay so — an async API there
+would put an executor in the dependency graph of a crate whose distinguishing
+claim is a four-crate unsafe-free build. That costs this project nothing today,
+because every byte it reads already crosses a `spawn_blocking` boundary
+(`io::LocalFileSource::read_range` *is* a blocking `read_exact_at` on a blocking
+thread) and the library depends on `tokio` with `rt` + `sync` only, leaving
+`rt-multi-thread` to the binary.
+
+It costs **this phase** something specific: `CompressedSource::read_at` is
+synchronous and an `object_store` backend is async, so composing them means
+blocking on a future from inside a blocking thread — **one parked OS thread per
+in-flight fetch**. Workable, not good, and it is the reason the entry above
+withdrew the fetcher-count parameter: a count multiplies parked threads instead
+of removing them.
+
+The escape is the pre-fetched window: with it, this phase issues its own async,
+concurrent, coalesced ranged GETs on the runtime it already has, and hands
+`xz-seek` filled buffers. That composition has no blocked threads in it.
+
+**Why this phase cares.** It is the one place in the whole compressed-plus-remote
+composition where the layering does not simply fall out, and the mitigation has
+to be asked for in `xz-seek`'s `P3` rather than discovered here. Whether to take
+the fetch back is a decision this phase makes, not one the crate makes for it.
+
+**Origin.** 2026-09-06, answering `xz-seek`'s `P3` grilling
+([`../status/history/2026-09-06.md`](../status/history/2026-09-06.md),
+"What `xz-seek` was told, and what it commits us to").
