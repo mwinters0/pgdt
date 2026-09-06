@@ -16,6 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P5, P7, P9, P11–P13 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
+| P17 — cache replacement | **Current** | [`roadmap-P17-cache-replacement.md`](roadmap-P17-cache-replacement.md) |
 | P16 — parallel scan and extraction | Sketched; not grilled | this file, below; [inbox](roadmap-P16-parallel-scan-inbox.md) — carved out of the scan-performance work |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
@@ -41,7 +42,7 @@ destination, so it drops to `(c) unowned` unless another phase absorbs it
 The struck phases' mechanisms are described by subject in
 [`architecture.md`](architecture.md), not by phase; their specs and notes went
 at a keystone review (`../process.md`, "The keystone: striking the
-centering"). **Phase numbering continues from `P16`** — nothing at or below it
+centering"). **Phase numbering continues from `P17`** — nothing at or below it
 is reused, whether it was struck, sketched, or never specified.
 
 Two standing-constraint docs cut across everything below.
@@ -731,22 +732,6 @@ payloads").
 
 Work we intend to do without committing it to a phase. An item moves out of
 this section when it acquires a phase number, not when it acquires a design.
-
-- **`pgdq parse` refuses a cache that describes a different file, rather than
-  destroying it.** `parse --source A --dqcache B.dqcache` overwrites `B`'s cache
-  within the first throttled save (`stream.rs`, "`parse` resumes, and saves as
-  it goes"), so aiming the flag at the wrong path — an ordinary operational
-  slip — destroys a cache that was valid for its own input, with no warning and
-  nothing to recover from. `M61`'s startup deletion of a condemned cache made
-  the loss earlier and more visible; it did not introduce it, and reverting it
-  would not prevent it. The fix is for `parse` to stop when the cache at an
-  explicitly given `--dqcache <path>` describes a different file, naming both
-  sizes and leaving the file alone. It is here rather than scheduled because it
-  contradicts a written decision — "`SourceChanged` — an unusable outcome, not
-  a new hard-error path" ([`architecture.md`](architecture.md), "The cache") —
-  so it is grilled before it takes a number, and the grilling is what decides
-  whether the refusal is confined to the explicit-path form or reaches the
-  colocated default too. The maintainer's call, 2026-09-06.
 
 - **TOC attribution across an intervening statement, so `--disable-triggers`
   dumps stay attributed.** I31 puts `ALTER TABLE … DISABLE TRIGGER ALL;` — and

@@ -522,15 +522,16 @@ index the same `save` wrote; it is about to write a correct one over that path
 anyway, and what an interrupt before the first bank then costs is a cache that
 was already unusable.
 
-*Reviewed, and the deletion stands — but it is not what puts a bystander cache
-at risk.* `parse` overwrites whatever sits at its `--dqcache` path within the
-first throttled save ("`parse` resumes, and saves as it goes"), so aiming the
-flag at another file's cache has always destroyed it; deleting at startup moves
-that loss earlier and more visible, and reverting it would not prevent it. What
-prevents it is `parse` refusing such a path outright, which contradicts this
-document's own "not a new hard-error path" below and is therefore filed for
-grilling rather than settled here ([`roadmap.md`](roadmap.md), "Future —
-wanted, unscheduled").
+*The deletion is what the code does today, and it is already superseded.*
+`parse` overwrites whatever sits at its `--dqcache` path within the first
+throttled save ("`parse` resumes, and saves as it goes"), so aiming the flag at
+another file's cache has always destroyed it and deleting at startup only moves
+that loss earlier. The rule that replaces both is that the library never
+replaces cache data automatically: a cache that does not seem to describe its
+source is reported to the caller, which decides. That reverses this document's
+own "not a new hard-error path" below, so it is filed rather than settled here
+([`roadmap.md`](roadmap.md), "Future — wanted, unscheduled"), and this deletion
+goes with it.
 
 `info` and `query` report the unusable cache having read
 nothing, which is what keeps a changed `.xz` from spending its footer walk to

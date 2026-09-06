@@ -223,16 +223,35 @@ heading — is beside the mechanism
 ([`../design/architecture.md`](../design/architecture.md), "Where a scan's time
 goes").
 
+## P17 progress
+
+Spec: [`../design/roadmap-P17-cache-replacement.md`](../design/roadmap-P17-cache-replacement.md).
+The phase's rule is that the library never replaces cache data automatically —
+a cache that does not seem to describe its source is reported to the caller
+rather than silently overwritten.
+
+- [ ] **17.1** `CacheMode::load` stops collapsing its four unusable statuses —
+      the reason reaches the scan entry point, every caller naming the statuses
+      it already handles. No behaviour change; that is the review question.
+- [ ] **17.2** The refusal, and the deletion goes — the scan entry point refuses
+      on a source mismatch before doing any work, `discard_unusable_cache` is
+      removed, and `architecture.md`'s "not a new hard-error path" is reversed
+      in the same change that falsifies it.
+- [ ] **17.3** The CLI surface — `parse`'s message naming what it found, what it
+      expected and the two ways out; `info` and `query` re-checked and changed
+      only if they need it.
+
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **No phase is in flight.** The compressed-input work wrapped and was struck
-  at a keystone review, as the scan-performance work was before it. What each
+- **P17 is the phase in flight**, and its checklist is above. The
+  compressed-input work wrapped and was struck at a keystone review, as the
+  scan-performance work was before it. What each
   built and what each refused is beside its
   mechanism in [`../design/architecture.md`](../design/architecture.md), filed
-  by subject. Six phases are sketched — P16, P10, P14, P6, P15, P8, in the
+  by subject. Six further phases are sketched — P16, P10, P14, P6, P15, P8, in the
   roadmap table's schedule order; a `P<k>` is an identifier, so the numbers say
   nothing about the order they run in. Each of those gets its own full
   grilling when it becomes current, and every one that carries an inbox must
