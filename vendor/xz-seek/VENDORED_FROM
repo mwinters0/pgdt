@@ -1,0 +1,12 @@
+Vendored from /mnt/wd12t/fedora/experiments/xz-seek
+commit 54c798352765fc905888a30063951452e9270e85
+committed 2026-09-06T03:54:17Z
+
+This is a read-only snapshot, not a fork: a bug found here is fixed upstream
+and arrives at the next sync, never patched in this copy directly. Re-sync
+with `cd scripts && uv run vendor_xz_seek.py`.
+
+Nothing in this workspace depends on this crate yet (see
+docs/design/roadmap-P13-compressed-input.md); it is vendored ahead of P13's
+grilling so the copy is stable before xz-seek's own P3 (parallel block
+decode) starts moving the source underneath it.

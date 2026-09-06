@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P5, P7, P9, P11, P12 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
-| P13 — compressed input | Specified; **blocked**, and its remaining decisions ungrilled | [`roadmap-P13-compressed-input.md`](roadmap-P13-compressed-input.md) — waits on an external seekable-xz crate; inbox drained |
+| P13 — compressed input | Specified; **unblocked**, and its remaining decisions ungrilled | [`roadmap-P13-compressed-input.md`](roadmap-P13-compressed-input.md) — the crate it waited on now answers a positioned read, so that spec's "Blocked" section is stale; [inbox](roadmap-P13-compressed-input-inbox.md) holds the integration story to settle |
 | P16 — parallel scan and extraction | Sketched; not grilled | this file, below; [inbox](roadmap-P16-parallel-scan-inbox.md) — carved out of the scan-performance work |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
@@ -336,21 +336,27 @@ item; see below.
 
 ## P13 — Compressed input
 
-**Specified, and blocked**:
+**Specified, and unblocked**:
 [`roadmap-P13-compressed-input.md`](roadmap-P13-compressed-input.md) holds the
 six decisions this phase has settled — what `size()` promises, which xz shapes
 are read, `ByteRangeSource` becoming dyn-compatible, `stored_size()`, where the
 seek table lives, and the decoder's read policy — together with the evidence
 they rest on.
 
-It is blocked because **no crate answers a positioned read over an `.xz` file**.
-That addressing layer is being carved out into its own crate and repository, on
-the collation spike's pattern: the requirements are written from here and kept
-there (`CLAUDE.local.md`). The phase's remaining decisions — how a source is
-recognised as xz, the diagnostic that announces a non-seekable file, the
-fixtures, the figures owed, and the slice list — are grilled when it unblocks.
+**The addressing layer it waited on exists.** It was carved out into its own
+crate and repository on the collation spike's pattern, with the requirements
+written from here and kept there (`CLAUDE.local.md`), and it now answers a
+positioned read. That spec's "Blocked" section is stale and is struck by the
+grilling below.
 
-Its inbox has been drained.
+The phase's remaining decisions — how a source is recognised as xz, the
+diagnostic that announces a non-seekable file, the fixtures, the figures owed,
+and the slice list — are still ungrilled, and **that grilling also settles the
+compressed/remote integration story for P14, P15 and P16**, which is why this
+phase carries a second inbox
+([`roadmap-P13-compressed-input-inbox.md`](roadmap-P13-compressed-input-inbox.md))
+after its first was drained. Read it, and the three inboxes it names, before
+grilling.
 
 ## P16 — Parallel scan and extraction
 

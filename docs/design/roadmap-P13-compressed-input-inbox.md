@@ -105,62 +105,77 @@ them.
 
 ---
 
-## The dependency is a frozen in-repo copy until this project has integrated
+## The dependency is a frozen in-repo copy, and the copy now exists
 
-**Fact.** Settled by the maintainer. `xz-seek` is **not published until this
-repo has integrated against it** — this project is its first real-world
-consumer, and the interface is vetted by being used rather than frozen into a
-published version and then discovered. Publication and a proper versioned
-dependency come after both this phase and P10 are complete with the shape
-questions resolved. The crate's own manifest carries `publish = false` today.
+**Fact.** Settled by the maintainer, and now executed. `xz-seek` is **not
+published until this repo has integrated against it** — this project is its
+first real-world consumer, and the interface is vetted by being used rather
+than frozen into a published version and then discovered. Publication and a
+proper versioned dependency come after both this phase and P10 are complete
+with the shape questions resolved. The crate's own manifest carries `publish =
+false` today.
 
-**The mechanism is a frozen copy inside this repo, committed**, not a path
-dependency pointing at the sibling tree. The distinction is load-bearing: a live
-path dep breaks `cargo test --workspace` on any other checkout at resolve time
-— verified, an optional path dependency behind an off-by-default feature still
-fails with `failed to read …/Cargo.toml`, because the graph is resolved before
-features are considered — and it also couples this build to the state of their
-working tree. A committed copy keeps this repo self-contained and immune to
-their churn, which is the whole point of the arrangement.
+The mechanism is a frozen copy inside this repo, committed, not a path
+dependency pointing at the sibling tree — a live path dep breaks `cargo test
+--workspace` on any other checkout at resolve time (verified: an optional path
+dependency behind an off-by-default feature still fails with `failed to read
+…/Cargo.toml`, because the graph is resolved before features are considered),
+and it couples this build to the state of a tree that is still iterating. A
+committed copy keeps this repo self-contained and immune to that churn.
 
-Five mechanics, each found by inspection rather than assumed:
+**It lives at `vendor/xz-seek/`, excluded from the workspace
+(`exclude = ["vendor/xz-seek"]` in the root `Cargo.toml`), and nothing here
+depends on it yet** — this is the copy, not the integration; P13's own
+decisions (D3's dyn-compatible trait, D4's `stored_size()`, the composition)
+are still what wires it in. `scripts/vendor_xz_seek.py` produced it and
+re-syncs it on demand: it reads `git archive HEAD` from the source checkout
+(never the working tree, which may carry unrelated uncommitted work), keeps
+`src/` and a trimmed `[package]`/`[features]`/`[lints.rust]`/`[dependencies]`
+manifest, drops `tests/`, `fixtures/`, the `[workspace]` table and
+`[dev-dependencies]` — none of which resolves once dropped into another
+workspace — and fails loudly if the source manifest grows a top-level table
+the script doesn't know how to place. `vendor/xz-seek/VENDORED_FROM` carries
+the source commit and path, on the `runs/pgdq-nocensus.stamp` precedent.
+`vendor/xz-seek/target` and `Cargo.lock` are gitignored, since the copy is
+buildable standalone (`cargo check` inside it passed against the default
+`liblzma` backend) and doing so leaves its own build state behind.
 
-- **It is a transformation, not a copy.** `xz-seek`'s manifest carries a
-  `[workspace]` table and dev-dependencies that path-depend on its own workspace
-  members (`fixtures-gen`, `harness`) plus a self-dependency used to force
-  feature combinations into `cargo test`. None of that resolves when dropped in.
-  A usable copy is `src/` (292K) plus a trimmed manifest and the licences —
-  **not** `tests/`, not `fixtures/` (5.5M), not the workspace table, not
-  `[dev-dependencies]`.
-- **Our workspace needs `exclude`** for the vendor directory, or `cargo test
-  --workspace` tries to run its suite without the fixtures it needs.
-- **Make the copy a script**, so the re-sync when `P3` lands is one command
-  rather than a hand-merge — the transformation above has to be repeated
-  identically or the diff is unreadable.
-- **Stamp it with the source commit**, on the precedent of
-  `runs/pgdq-nocensus.stamp`, which names the commit its binary was built from
-  and refuses to be measured against another. The snapshot point as of
-  2026-09-06 is `bf26bf0`.
-- **The copy is read-only.** A bug found here goes upstream and returns at the
-  next sync; it is never patched in place. That is what keeps a snapshot from
-  becoming a fork, and it is the answer to the objection that vendoring creates
-  a second authority over that source.
+The snapshot point is **`54c7983`** — one commit past the `bf26bf0` this entry
+was originally filed against, because that gap is `xz-seek` gaining
+`LICENSE-MIT`/`LICENSE-APACHE`: the manifest had declared `MIT OR Apache-2.0`
+since its first commit, but the license text files didn't exist yet to vendor,
+so they were added upstream first and the vendored copy carries them. `P3`
+(parallel block decode) was still at 0/8 in its checklist at that commit —
+unstarted — which is what made this the moment to vendor rather than a moment
+already past it.
 
-**One build-story decision this forces.** `xz-seek`'s default features pull
-`liblzma`, which compiles vendored C, where this workspace is pure Rust today.
-The alternative is developing against `xz4rust` — pure Rust, unsafe-free,
-roughly 2.2× slower. Since this phase's real figures cannot be taken until
-proper integration anyway, either serves; the argument for keeping `liblzma` is
-that the integration being vetted is then the one that ships.
+**The copy is read-only.** A bug found here goes upstream and returns at the
+next sync; it is never patched in place. That is what keeps a snapshot from
+becoming a fork, and it is the answer to the objection that vendoring creates
+a second authority over that source.
 
-**Why this phase cares.** It is this phase that takes the dependency, and none
-of the above is in the spec. It also bounds what this phase may promise: no
-published crate, so no version to pin, and a window in which the build has a
-prerequisite outside the repo's own history.
+**The build-story decision was made, not deferred: `liblzma`.** It's
+`xz-seek`'s own default and the vendored manifest keeps it, over `xz4rust`
+(pure Rust, unsafe-free, ~2.2× slower) — pulling vendored C into this
+otherwise-pure-Rust workspace, on the ground that the integration being vetted
+is then the one that ships. Nothing here builds against either yet, so this
+bound nothing except the manifest's default; it is still open to revisit once
+D3 actually wires the trait in.
+
+**Why this phase cares.** It is this phase that takes the dependency, and the
+spec (`roadmap-P13-compressed-input.md`) still describes this as a plan under
+"Blocked" — a section this inbox's first entry says is itself stale and due to
+be struck. Both need folding into the spec as one decision at this phase's
+grilling: the dependency exists, at `vendor/xz-seek/`, and what remains is
+naming it in a numbered decision rather than leaving it findable only here. It
+also bounds what this phase may promise: no published crate, so no version to
+pin, and a window in which the build has a prerequisite outside the repo's own
+history.
 
 **Origin.** 2026-09-06
 ([`../status/history/2026-09-06.md`](../status/history/2026-09-06.md),
-"`xz-seek` is not published until this repo has integrated against it").
+"`xz-seek` is not published until this repo has integrated against it", and
+"The vendored copy of `xz-seek` now exists").
 
 ---
 
