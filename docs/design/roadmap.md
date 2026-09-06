@@ -16,7 +16,7 @@ reused, including a struck phase's.
 | Phase | State | Where it is |
 |---|---|---|
 | P1–P5, P7, P9, P11–P13 | **Struck** at a keystone review | [`architecture.md`](architecture.md), by subject; git holds the specs |
-| P17 — cache replacement | **Current** | [`roadmap-P17-cache-replacement.md`](roadmap-P17-cache-replacement.md) |
+| P17 — cache replacement | **Complete** | [`architecture.md`](architecture.md), "The cache" and "The CLI's two refusals are worded as one"; the [spec](roadmap-P17-cache-replacement.md) and its [notes](roadmap-P17-cache-replacement-notes.md) stand until a keystone strikes them |
 | P16 — parallel scan and extraction | Sketched; not grilled | this file, below; [inbox](roadmap-P16-parallel-scan-inbox.md) — carved out of the scan-performance work |
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |

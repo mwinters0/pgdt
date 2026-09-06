@@ -517,12 +517,20 @@ sentence of its own, carrying the same two ways out the size mismatch carries �
 see "The CLI's two refusals are worded as one" for why it stopped borrowing
 `Unreadable`'s.
 
-**Rejecting a table reads no bytes, so nothing is spent reaching the refusal.**
-All three commands report the unusable cache having read nothing, which is what
-keeps a changed `.xz` from spending its footer walk to reach an error it was
-always going to reach. Recognition therefore answers "the cache does not
-describe this file" as an outcome of its own rather than recovering
-transparently.
+**Rejecting a table reads no bytes, so nothing is spent reaching *that*
+refusal.** All three commands report the contradicted claim having read nothing,
+recognition answering "the cache does not describe this file" as an outcome of
+its own rather than recovering transparently.
+
+**The sibling refusal is not free yet.** Where the cache's recorded stored size
+is simply wrong for this file, `known_compression` hands back `Unknown` rather
+than a verdict — it reports knowledge or the absence of it, and the pass behind
+it is what says why — so `open_local` walks the stream footers before `load`
+reaches `SourceChanged` and the library refuses in a millisecond ("The cache").
+That is 85 s on the koji download and one read on every other shape, spent to
+reach an error everything needed for was already on disk. Where the answer
+should be read instead is `M62`'s question, not this section's
+([`roadmap.md`](roadmap.md), "Out-of-band work").
 
 *Rejected:* `parse` deleting that cache and rescanning, which is what it did
 when the table was first read back. It was defensible on its own terms — `parse`
@@ -1364,7 +1372,7 @@ P6's; a sink can drain this list, so nothing here forecloses it.
 Producers today: `TilingBroken` (`check_tiling`), `CacheMtimeChanged`
 (`CacheMode::load`), `TocCoverage` (always `Info`), `CacheOffline`
 (`Severity::Warning`, pushed by `load_offline` on every successful load),
-`NonSeekableCompressedSource` (`Severity::Warning`, D2 —
+`NonSeekableCompressedSource` (`Severity::Warning` —
 `index::non_seekable_compression_diagnostic` shared by `build_index`,
 `preamble_only` and `cache::status_from_file` so a `.xz` source with no more
 than one block earns the same warning whether its seek table was just walked
@@ -5558,6 +5566,22 @@ to an `Option` for callers that do not care; it rebuilds the collapse under a
 shorter name at exactly the sites that must not have it, and the callers that
 genuinely do not care are tests.
 
+**The path in the refusal comes from the mode, not from the load.**
+`CacheMode::source_mismatch` is the one-line constructor each of the three sites
+calls: it matches `Enabled(path)` and answers `Error::CacheModeMismatch` for the
+other two modes, which is the caller-contract answer `load` already gives
+`Offline`. `CacheLoad` carries no path deliberately — `Disabled` has none — and
+every caller that can reach the refusal holds the `&CacheMode` anyway, so
+nothing is re-`stat`ed or re-resolved to say which file is being protected, and
+a CLI printing the error re-derives nothing either.
+
+**"Leaves it alone" is asserted against the bytes.** The test that puts a grown
+dump to all three entry points reads the cache file back and compares it byte
+for byte, because a refusal that raised the error *and* wrote anyway is
+indistinguishable from one that did not — the variant, the path and the two
+sizes are identical either way, so the only assertion that can fail is the one
+over the file.
+
 **A cache *write* failure is a hard error.** If the resolved path cannot be
 written (read-only mount, permissions, disk full), the library returns an error
 rather than silently proceeding without a cache. This is a different axis from
@@ -5715,7 +5739,13 @@ which recognition catches before a source exists, so no `CacheStatus` describes
 it and `load` never sees it ("The compressed source"); `open_with_cache` refuses
 it for all three commands, having read nothing. Two conditions, two sites, one
 tail: **remove it, or name a different cache path**, which is the whole of what
-a caller may do about it (D5 — there is no override).
+a caller may do about it — there is no override.
+
+**`open_with_cache` answers a source or bails**, rather than handing a
+`Recognized` back to three call sites that each write the same refusal. Only
+`CacheMode::Enabled` claims anything about the file, so only it can be
+contradicted, and it is the mode holding the path the message names: the refusal
+has everything it needs where it stands.
 
 **Three of `info`'s four `CacheStatus` sentences reach `pgdq parse` directly
 and the fourth does not.** `parse` scans over `Missing`, `Unreadable` and
@@ -5736,7 +5766,7 @@ the bytes at that path *are* a pgdq cache, for another file.
 
 *Rejected:* re-wording `Error::CacheSourceMismatch` in the CLI so `parse` names
 the dump path as well as the cache path. The library sentence already carries
-what D7 asks — what it found, what it expected, and the two ways out — and the
+what the message owes — what it found, what it expected, and the two ways out — and the
 dump is the argument the user just typed; catching and re-rendering one library
 error at one call site puts a second authority over a message the same error
 prints everywhere else.

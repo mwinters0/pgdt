@@ -35,6 +35,34 @@ arm, rather than the type being redesigned around a source with no mtime.
 
 ---
 
+## A cache that describes another file is now refused, and the refusal's payload is size-shaped
+
+**Fact.** A cache whose recorded stored size is not this source's is no longer
+scanned over: the three scan entry points raise
+`Error::CacheSourceMismatch { path, cached_stored_size, live_stored_size }`
+before a byte of the dump is read, and there is no override
+([`architecture.md`](architecture.md), "The cache"). Both the `CacheLoad`
+variant behind it and the error itself name **two `u64` sizes**, because that is
+what `SourceIdentity::LocalFile` compares.
+
+**Why P14 cares.** This phase adds `SourceIdentity::Remote { etag }`, which has
+no two sizes to quote — an ETag mismatch is a mismatch with nothing numeric in
+it — so the arm this phase adds to the identity enum does *not* fall out at the
+refusal the way the entry above says it does at the match sites. The choice is
+this phase's: generalise the payload to something an ETag can fill, or give the
+remote identity its own refusal beside this one. Deciding it late means deciding
+it inside a message a user reads.
+
+Related and already owned elsewhere: an `.xz` size mismatch pays its footer walk
+*before* the refusal (`M62`), and over ranged GETs that walk is 31,150 round
+trips on the motivating file — the next entry is where that cost is stated.
+
+**Origin.** 2026-09-06, wrapping the cache-replacement work
+([`../status/history/2026-09-06.md`](../status/history/2026-09-06.md), "P17 is
+wrapped").
+
+---
+
 ## A footer walk over a remote `.xz` is one ranged GET per stream
 
 **Fact.** Building an xz seek table means reading each stream's footer, and the

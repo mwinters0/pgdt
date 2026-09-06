@@ -8,7 +8,7 @@ discoveries are in `history/`.
 
 ## What exists
 
-P1–P5, P7, P9, P11 and P12 are complete and were struck at keystone reviews; how
+P1–P5, P7, P9 and P11–P13 are complete and were struck at keystone reviews; how
 each mechanism works is [`../design/architecture.md`](../design/architecture.md),
 filed by subject, which is where a session touching one meets its rejected
 alternatives and its limitations. The capability table below says what state
@@ -75,11 +75,13 @@ directionally"). Session drift over 92 shared readings is a median absolute
 **1.6%** and a largest 14.3%.
 
 **Seventeen of the eighteen figures are stale, and no acknowledgement can
-excuse them.** Two rounds of library work did it. Making the buffer pool keep
+excuse them.** Three rounds of library work did it. Making the buffer pool keep
 the chunk size a read loop announces changed `io.rs`, `scan.rs`, `stream.rs` and
 the CLI; then the compressed-input work reshaped every `ByteRangeSource`
 signature to a boxed future and added a second implementation, touching `io.rs`,
-`cache.rs`, `index.rs`, `diagnostic.rs` and the CLI again. So every figure that
+`cache.rs`, `index.rs`, `diagnostic.rs` and the CLI again; then the
+cache-replacement work put a refusal in front of all three scan entry points,
+touching `cache.rs`, `index.rs`, `stream.rs` and the CLI once more. So every figure that
 times a run is red, and `session-drift` has been red on `scripts/measure.py`
 since the harness took the derived direction of the borrow graph. Those changes
 add executable lines, so neither mechanical oracle applies: reachability excuses
@@ -223,42 +225,20 @@ heading — is beside the mechanism
 ([`../design/architecture.md`](../design/architecture.md), "Where a scan's time
 goes").
 
-## P17 progress
-
-Spec: [`../design/roadmap-P17-cache-replacement.md`](../design/roadmap-P17-cache-replacement.md).
-The phase's rule is that the library never replaces cache data automatically —
-a cache that does not seem to describe its source is reported to the caller
-rather than silently overwritten. **All three slices are landed; the wrap is
-what the phase still owes** — consolidate the slice notes, delete this
-checklist, and set the roadmap index row to `Complete` in that same edit.
-
-- [x] **17.1** `CacheMode::load` stops collapsing its four unusable statuses —
-      the reason reaches the scan entry point, every caller naming the statuses
-      it already handles. No behaviour change; that is the review question.
-      Notes: [`../design/roadmap-P17.1-uncollapsed-load-notes.md`](../design/roadmap-P17.1-uncollapsed-load-notes.md)
-- [x] **17.2** The refusal, and the deletion goes — the scan entry point refuses
-      on a source mismatch before doing any work, `discard_unusable_cache` is
-      removed, and `architecture.md`'s "not a new hard-error path" is reversed
-      in the same change that falsifies it. Notes:
-      [`../design/roadmap-P17.2-the-refusal-notes.md`](../design/roadmap-P17.2-the-refusal-notes.md)
-- [x] **17.3** The CLI surface — `parse`'s message naming what it found, what it
-      expected and the two ways out; `info` and `query` re-checked and changed
-      only if they need it. Notes:
-      [`../design/roadmap-P17.3-the-cli-surface-notes.md`](../design/roadmap-P17.3-the-cli-surface-notes.md)
-
 ## Not started
 
 - **A CLI-feedback pass** — the `pgdq info` / `--map` output shape is accepted
   as provisional pending real user trials; resulting changes land as
   out-of-band items. Nothing is pooled here at present.
-- **P17 is the phase in flight**, and its checklist is above. The
-  compressed-input work wrapped and was struck at a keystone review, as the
-  scan-performance work was before it. What each
-  built and what each refused is beside its
+- **No phase is open.** The cache-replacement work wrapped, as the
+  compressed-input and scan-performance work did before it; the first two were
+  struck at keystone reviews and the third's spec and
+  [notes](../design/roadmap-P17-cache-replacement-notes.md) stand until the
+  next one. What each built and what each refused is beside its
   mechanism in [`../design/architecture.md`](../design/architecture.md), filed
-  by subject. Six further phases are sketched — P16, P10, P14, P6, P15, P8, in the
+  by subject. Six phases are sketched — P16, P10, P14, P6, P15, P8, in the
   roadmap table's schedule order; a `P<k>` is an identifier, so the numbers say
-  nothing about the order they run in. Each of those gets its own full
+  nothing about the order they run in. Each gets its own full
   grilling when it becomes current, and every one that carries an inbox must
   have it drained as part of that grilling.
 
