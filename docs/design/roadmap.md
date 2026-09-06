@@ -745,10 +745,13 @@ spent all the same. What each struck item did is filed by subject —
 [`.claude/skills/`](../../.claude/skills/) for a rule — and why it was done is
 in the dated history entry it was filed under.
 
-**There is no table below**, and nothing is queued: it is written again by the
-first item admitted after this keystone, which takes `M64` — a row whose Date is
-still empty as readily as one that has landed, since a number is allocated on
-admission.
+**The table below was written again by the first item admitted after this
+keystone**, which took `M64`. A row whose Date is still empty belongs here as
+readily as one that has landed, since a number is allocated on admission.
+
+| Item | Date | What changed | Blocks | Why |
+|---|---|---|---|---|
+| `M64` | 2026-09-06 | The vendored `xz-seek` copy is re-synced to `5b549d7`, which carries that crate's parallel block decode whole — pool, pieces, `plan_range`, `SeekTable::blocks_in`, `&T`/`Arc<T>` sources — and the copy now tracks upstream rather than waiting for the consumer that needs it; no library code changed, nothing here names any of the new surface, and the P16 and P10 inbox entries written against the older snapshot are restated against this one | | [2026-09-06](../status/history/2026-09-06.md), "`M64`: the vendored decoder tracks upstream" |
 
 **One obligation outlived them and is most of the way discharged.** An
 `INSERT`-run scan cost **mid-teens times** a `COPY` scan per byte, CPU-bound,

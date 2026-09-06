@@ -726,10 +726,18 @@ mod tests {
     /// exactly the fault that passes every fixture and surfaces on some other
     /// file.
     ///
-    /// **All 91 headers `xz` wrote into the corpus** — the seventeen fixtures
+    /// **Every header `xz` wrote into the corpus** — the eighteen fixtures
     /// `xz --list` reads plus `corrupt-payload-check.xz` and
     /// `corrupt-payload-derail.xz`, whose flipped bits are in a payload and
     /// whose headers are therefore `xz`'s own.
+    ///
+    /// **The coverage claim is stated over the 91 headers the other nineteen
+    /// files carry**, and the floors below are those. `bulk-blocks.xz`'s 256
+    /// are one shape 256 times, so they are volume rather than coverage — but
+    /// the shape is not `many-blocks.xz`'s: its `--lzma2=dict=64KiB` is a
+    /// properties byte no other fixture carries, the corpus reaching 4 KiB,
+    /// 4 MiB and 64 MiB elsewhere and 64 KiB only here. That is why the file is
+    /// re-emitted rather than skipped, and why the floors do not move.
     #[test]
     fn every_real_header_in_the_corpus_re_emits_byte_for_byte() {
         let dir = fixtures_gen::ensure_corpus().expect("the corpus builds");
@@ -806,9 +814,11 @@ mod tests {
             }
         }
 
-        // The nineteen fixtures whose indexes are intact, and the block column
-        // of `harness.md`'s fixture table summed over them.
-        assert_eq!(files, 19);
+        // The twenty fixtures whose indexes are intact, and the block column of
+        // `harness.md`'s fixture table summed over the nineteen that are not
+        // `bulk-blocks.xz` — whose 256 are re-emitted here and deliberately not
+        // counted into the floors, per this test's docs.
+        assert_eq!(files, 20);
         assert!(headers >= 91, "{headers} headers re-emitted");
         assert!(declaring >= 4, "{declaring} headers declare a size");
         assert!(silent >= 83, "{silent} headers declare neither");
@@ -904,6 +914,11 @@ mod tests {
     /// a block payload lose nothing: `corrupt-payload-check.xz` and
     /// `corrupt-payload-derail.xz` are `many-blocks.xz` with one flipped bit
     /// well past the headers, so their headers are that fixture's headers.
+    ///
+    /// `bulk-blocks.xz` is in it, and it is the fixture with most to say here:
+    /// its 256 headers carry a 64 KiB LZMA2 dictionary no other fixture does,
+    /// so this is where the oracle reads that properties byte back — at ~0 s,
+    /// because `xz --list -vv --robot` is one pass over an index.
     #[test]
     fn every_header_in_the_corpus_is_the_one_xz_reports() {
         let dir = fixtures_gen::ensure_corpus().expect("the corpus builds");
@@ -962,7 +977,7 @@ mod tests {
 
         // The corpus is what it was designed to be: every intact fixture walked,
         // and every one of their blocks compared.
-        assert_eq!(files_checked, 17);
+        assert_eq!(files_checked, 18);
         assert!(blocks_checked >= 80, "{blocks_checked} blocks compared");
     }
 

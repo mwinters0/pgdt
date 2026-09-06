@@ -933,7 +933,7 @@ mod tests {
     /// Parallel block decode has to decide what crosses a thread boundary, and
     /// the answer it inherits is that a `BlockDecode` is a self-contained owned
     /// value whose only question mark was the backend's decoder — see
-    /// `docs/design/roadmap-P3-parallel-decode-inbox.md`. `liblzma`'s `Stream`
+    /// `docs/design/architecture.md`, "The block-payload seam". `liblzma`'s `Stream`
     /// declares the impls; `xz4rust`'s decoder owns its dictionary and borrows
     /// nothing, so it holds by inference and this is what notices if that stops
     /// being true.

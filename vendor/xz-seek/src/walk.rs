@@ -14,7 +14,7 @@
 //! …[stream N-1 index][stream N-1 footer][padding][stream N header]…
 //! ```
 //!
-//! So [`Window`] refills as a fixed 4 KiB block **ending at the end of the range
+//! So [`Backfill`] refills as a fixed 4 KiB block **ending at the end of the range
 //! asked for**. Walking backward, that one policy straddles the boundary for
 //! free: the read that fetches stream N's 12-byte header also carries the 4 KiB
 //! below it, which is exactly stream N-1's tail. The walk is therefore one read
@@ -143,16 +143,16 @@ fn missing_end<T>(tail_most: bool, compressed_offset: u64) -> Result<T> {
 /// That is the whole of the straddle: a backward walk asking for the 12 bytes at
 /// a stream's start gets the 4 KiB below it in the same read, and that is where
 /// the previous stream's index and footer live.
-struct Window<'s, S: CompressedSource> {
+struct Backfill<'s, S: CompressedSource> {
     source: &'s S,
     size: u64,
     start: u64,
     buf: Vec<u8>,
 }
 
-impl<'s, S: CompressedSource> Window<'s, S> {
+impl<'s, S: CompressedSource> Backfill<'s, S> {
     fn new(source: &'s S, size: u64) -> Self {
-        Window {
+        Backfill {
             source,
             size,
             start: 0,
@@ -237,7 +237,7 @@ pub(crate) fn walk<S: CompressedSource>(source: &S) -> Result<SeekTable> {
         });
     }
 
-    let mut window = Window::new(source, size);
+    let mut window = Backfill::new(source, size);
     let mut walked: Vec<Walked> = Vec::new();
     let mut end = size;
     // Only the first call starts at the file's own end, so only it can meet a
@@ -263,7 +263,7 @@ pub(crate) fn walk<S: CompressedSource>(source: &S) -> Result<SeekTable> {
 /// the *name* of the two failures that mean "no stream ends here" — see the
 /// module docs, "Only the tail of a file can be cut".
 fn one_stream<S: CompressedSource>(
-    w: &mut Window<'_, S>,
+    w: &mut Backfill<'_, S>,
     end: u64,
     tail_most: bool,
 ) -> Result<Walked> {
@@ -354,7 +354,7 @@ fn stream_flags(flags: [u8; 2], at: u64) -> Result<Check> {
 /// walk through it, because the alternative — a cursor stepping forward through
 /// a window that refills backward — would refill on nearly every record.
 fn index<S: CompressedSource>(
-    w: &mut Window<'_, S>,
+    w: &mut Backfill<'_, S>,
     start: u64,
     size: u64,
 ) -> Result<Vec<(u64, u64)>> {
@@ -499,7 +499,7 @@ mod tests {
     #[test]
     fn the_window_refills_to_end_where_the_request_ends() {
         let src = Counting::new(100_000);
-        let mut w = Window::new(&src, 100_000);
+        let mut w = Backfill::new(&src, 100_000);
 
         // The straddle: asking for twelve bytes brings the 4084 below them.
         assert_eq!(w.bytes(50_000, 12).unwrap().len(), 12);
@@ -525,7 +525,7 @@ mod tests {
     #[test]
     fn the_window_clamps_at_the_start_of_the_file_and_refuses_to_pass_its_end() {
         let src = Counting::new(1_000);
-        let mut w = Window::new(&src, 1_000);
+        let mut w = Backfill::new(&src, 1_000);
         assert_eq!(w.bytes(0, 12).unwrap(), &src.bytes[..12]);
         // Clamped at the start of the file: the window still ends where the
         // request ends, so there is simply less of it.

@@ -111,7 +111,7 @@ pub(crate) const DEFAULT_MEMLIMIT: u64 = 64 << 20;
 /// real corpus file's 1.29 MB block payload is twenty `read_at` calls per
 /// block — nothing on a local file, and twenty range requests where one would
 /// do over a ranged-HTTP source. Revisit only with a measurement.
-const INPUT_CHUNK: usize = 1 << 20;
+pub(crate) const INPUT_CHUNK: usize = 1 << 20;
 
 /// A live decode of one block, from its header to its check.
 ///
@@ -474,6 +474,7 @@ mod tests {
     use super::*;
     use crate::backend::COMPILED;
     use crate::table::SeekTable;
+    use crate::window::Window;
     use std::fs::File;
     use std::path::Path;
 
@@ -577,9 +578,13 @@ mod tests {
     /// returns plain bytes, which is what lets a `src/` unit test call across
     /// the dev-dependency cycle — see `harness`'s crate docs.
     ///
-    /// `reserved-check.xz` is intact and excluded: its stream declares a check
-    /// id nothing implements, so full verification refuses it, and the test
-    /// below is what asserts that instead.
+    /// `reserved-check.xz` is intact and excluded, and it is the only
+    /// exclusion: its stream declares a check id nothing implements, so full
+    /// verification refuses it, and the test below is what asserts that
+    /// instead. `bulk-blocks.xz` is in, at +1.50 s, and it is the one fixture
+    /// whose blocks are numerous enough for the chunk axis below to be run 512
+    /// times over one recipe — `harness.md`, "`bulk-blocks.xz` is out of the
+    /// byte sweep and in everything else".
     #[test]
     fn every_block_in_the_corpus_decodes_to_the_bytes_xz_produces() {
         let dir = fixtures_gen::ensure_corpus().expect("the corpus builds");
@@ -637,13 +642,86 @@ mod tests {
             }
         }
 
-        assert_eq!(files, 16, "every intact fixture but the reserved-check one");
+        assert_eq!(files, 17, "every intact fixture but the reserved-check one");
         assert!(blocks >= 80, "{blocks} blocks decoded");
         assert_eq!(
             decodes,
             blocks * COMPILED.len() * 2,
             "every block, under every compiled backend, at both chunk sizes"
         );
+    }
+
+    /// The same block, decoded out of a [`Window`] holding exactly its own
+    /// compressed range.
+    ///
+    /// This is the parallel path's `(block, window)` handoff rehearsed with
+    /// what exists: a worker is handed the block and the bytes someone else
+    /// fetched for it, and pulls out of them exactly as it pulls out of a file.
+    /// **Two things have to be true and neither is visible from one side
+    /// alone** — the decode must read no byte outside the block's own
+    /// `total_size()` bytes at `compressed_offset`, and the window must refuse
+    /// it if it does. Over a file an overrun is served silently from the page
+    /// cache; here it is an error, so this is what says the fetch size the
+    /// parallel path will use is the right one.
+    ///
+    /// Four fixtures rather than the corpus: the property is about the decode's
+    /// *addressing*, which does not vary with the filter chain, and the
+    /// corpus-wide arm above already decodes every block. `filter-x86.xz` is in
+    /// because a BCJ chain is the one that holds bytes back at the block's end,
+    /// and `mixed-checks.xz` because its blocks span streams whose checks
+    /// differ, so a window over the wrong block would not merely mis-address.
+    #[test]
+    fn a_block_decodes_out_of_a_window_over_its_own_compressed_range() {
+        let dir = fixtures_gen::ensure_corpus().expect("the corpus builds");
+        let mut decodes = 0usize;
+        let mut blocks = 0usize;
+
+        for name in [
+            "many-blocks.xz",
+            "filter-x86.xz",
+            "check-sha256.xz",
+            "mixed-checks.xz",
+        ] {
+            let path = dir.join(name);
+            let (source, table) = walked(&path);
+            let file_size = CompressedSource::size(&source).expect("the fixture measures");
+            let bytes = std::fs::read(&path).expect("the fixture reads");
+            let plaintext = harness::oracle::plaintext_for(&path).expect("xz -dc");
+
+            for (i, block) in table.blocks.iter().enumerate() {
+                let lo = block.compressed_offset as usize;
+                let hi = lo + block.total_size() as usize;
+                let window =
+                    Window::new(block.compressed_offset, file_size, bytes[lo..hi].to_vec());
+                let r = block.uncompressed_range();
+
+                for &backend in COMPILED {
+                    for chunk in [INPUT_CHUNK, SMALL_CHUNK] {
+                        let got = whole_block(
+                            &window,
+                            block,
+                            check_of(&table, i),
+                            DEFAULT_MEMLIMIT,
+                            backend,
+                            chunk,
+                        )
+                        .unwrap_or_else(|e| {
+                            panic!("{name} block {i} on {backend:?} at chunk {chunk}: {e}")
+                        });
+                        assert!(
+                            got == plaintext[r.start as usize..r.end as usize],
+                            "{name} block {i} on {backend:?} at chunk {chunk}: \
+                             bytes differ from xz -dc"
+                        );
+                        decodes += 1;
+                    }
+                }
+                blocks += 1;
+            }
+        }
+
+        assert!(blocks >= 8, "{blocks} blocks decoded out of a window");
+        assert_eq!(decodes, blocks * COMPILED.len() * 2);
     }
 
     /// The same bytes come out when the payload arrives in many small reads.

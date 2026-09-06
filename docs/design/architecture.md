@@ -603,19 +603,25 @@ crate's default `liblzma` backend over its pure-Rust one (unsafe-free, ~2.2×
 slower), pulling vendored C into an otherwise pure-Rust workspace, on the ground
 that the integration being vetted should be the one that ships.
 
-**The snapshot is deliberately behind upstream, and the first consumer that
-needs newer work is what re-syncs it.** The copy was taken at the moment that
-crate's parallel-block-decode work was still unstarted, precisely so it would
-sit still while that work moved the source underneath it. One method asked for
-on this project's behalf — a block count scoped to a byte range, which would let
-the non-seekable warning be bounded to what a query actually touches — landed
-upstream after the snapshot, and re-syncing for it was **refused**: the warning
-this design asks for is file-wide, which the frozen copy answers from
-`SeekTable::block_count()` (always 0 or 1 once a table is not seekable). So the
-parallel-decode work is both the first consumer that needs a newer snapshot and
-the thing that re-syncing would drag in early; it is where the copy is re-taken,
-and where whether a vendored copy is still the right arrangement gets asked
-again. `vendor/xz-seek/VENDORED_FROM` records which commit is in, and
+**The snapshot tracks upstream rather than trailing it, and carries work this
+tree does not read.** The copy holds that crate's parallel block decode whole —
+`Reader::read_range` and the worker pool behind it, `Reader::block_task` and the
+`Window` a worker decodes out of, `plan_range`'s footprint arithmetic, and the
+`&T`/`Arc<T>` source impls that let several readers share one file — and none of
+it is named anywhere in this repo: `XzSource` is still one reader behind one
+mutex, and replacing that is the parallel-scan work's, which is also where
+whether a vendored copy is still the right arrangement gets asked again. Syncing
+on the source's cadence rather than on a consumer's is what keeps "a bug is
+fixed upstream and returns at the next sync" a short trip, and makes
+`cargo check --workspace` here a standing test of the interface this project is
+supposed to be vetting; what it costs is that a sync can move code no test of
+ours exercises, so a sync ends in a workspace check and test run rather than at
+the byte copy. *Rejected:* bounding the non-seekable warning to the blocks a
+query touches, now that `SeekTable::blocks_in` answers which those are — the
+warning this design makes is about the *file*, which `SeekTable::block_count()`
+answers (always 0 or 1 once a table is not seekable), and a per-query warning
+would say different things about one file depending on which rows were asked
+for. `vendor/xz-seek/VENDORED_FROM` records which commit is in, and
 `scripts/vendor_xz_seek.py` is what re-takes it.
 
 **None of the container facts above is an entry in
@@ -703,7 +709,7 @@ behaviour.**
   on disk is `.xz`, a decompressing `ByteRangeSource` sits beneath the scanner
   and hands it the same bytes at the same uncompressed offsets ("The compressed
   source"), which changes nothing here. `.gz`/`.zst` are not read and stay
-  caller-side preprocessing (`roadmap.md`, P15). Archive formats are different
+  caller-side preprocessing (`roadmap.md`, P15 and P18). Archive formats are different
   again — they compress per entry, internally, and will need streaming
   decompression inside their container layer.
 

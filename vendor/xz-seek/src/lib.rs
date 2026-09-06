@@ -25,6 +25,23 @@
 //! it out, the off-by-default `serde` feature serializes it, and
 //! [`Builder::open_with_table`] takes it back without walking the file again.
 //!
+//! **Blocks are independent, and [`Reader::block_task`] hands one out as work.**
+//! A [`BlockTask`] is `Copy` and `Send`, says which compressed bytes the block
+//! needs, and decodes the whole of it into a buffer you own — verified before
+//! the call returns. Fetch those bytes however you like, wrap them in a
+//! [`Window`], and decode on whatever thread you please; nothing on that path
+//! starts a thread of its own.
+//!
+//! **[`Reader::read_range`] is the other way at that**, for a caller who wants
+//! the bytes rather than the scheduling: name a range of the uncompressed
+//! stream, however large, and fill your own buffer from the handle until a short
+//! return says the range ended. Every byte it delivers had its block's check
+//! compared first, and above one worker the blocks are fetched and decoded on
+//! threads the handle owns and joins when you drop it. It is bounded by a worker
+//! count and a byte budget ([`Bulk`]), whichever binds first, and what those two
+//! admit over a given range — the workers, and the bytes they will hold — is
+//! [`Reader::plan_range`], answered before a byte is read.
+//!
 //! **Pre-1.0, and differentially checked.** Every structured `(offset, len)`
 //! over the fixture corpus and an exhaustive sweep over the smallest fixture run
 //! in two orders against `xz -dc`, the damaged fixtures are asserted against the
@@ -49,14 +66,23 @@ mod block;
 mod check;
 mod decode;
 mod error;
+mod plan;
+mod pool;
+mod range;
 mod reader;
 mod source;
 mod table;
+mod task;
 mod walk;
+mod window;
 
 pub use backend::Backend;
 pub use check::implementation as check_implementation;
 pub use error::{Error, Result};
+pub use plan::{Bulk, RangePlan};
+pub use range::RangeRead;
 pub use reader::{Builder, Reader, Verify};
 pub use source::CompressedSource;
 pub use table::{BlockEntry, Check, SeekTable, StreamEntry};
+pub use task::BlockTask;
+pub use window::Window;

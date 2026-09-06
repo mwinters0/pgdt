@@ -171,10 +171,10 @@ and arrives at the next sync, never patched in this copy directly. Re-sync
 with `cd scripts && uv run vendor_xz_seek.py`.
 
 `pgdump_query` names this copy as a path dependency (see
-docs/design/architecture.md, "The compressed source"). The snapshot
-deliberately predates xz-seek's own parallel-block-decode work, so it sits
-still rather than moving underneath this build; the first consumer that needs
-newer upstream work is what re-takes it.
+docs/design/architecture.md, "The compressed source"), and re-takes it as
+upstream moves rather than waiting for a consumer that needs the newer work.
+So a sync can bring in code nothing in this tree exercises: it is finished by
+`cargo check --workspace` and `cargo test --workspace`, not by this script.
 """
     (DEST / "VENDORED_FROM").write_text(stamp)
 

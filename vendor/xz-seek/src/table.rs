@@ -395,6 +395,59 @@ impl SeekTable {
         Ok(())
     }
 
+    /// The block indices a half-open uncompressed byte range covers.
+    ///
+    /// The answer is a contiguous `Range<usize>` into
+    /// [`SeekTable::blocks`], and it is the *work* a bulk read over `range`
+    /// implies: a caller sizes a worker pool with it, and a caller who has not
+    /// set anything up yet uses it as the diagnostic — *"this range admits three
+    /// workers"* — that `xz -T0` or `--block-size` is the remedy for. It needs
+    /// no source and no configuration, so a persisted table answers it.
+    ///
+    /// Three edges are pinned, so that a caller who did defensive arithmetic and
+    /// one who did not get the same answer:
+    ///
+    /// * **An empty range covers no blocks.** `start >= end`, or a range
+    ///   beginning at or past [`SeekTable::uncompressed_size`], gives `0..0` —
+    ///   not an error, and not the block containing the start. Zero-length
+    ///   ranges arise in a caller's span arithmetic, and a *"how much work is
+    ///   this"* query answering non-zero for no work is wrong.
+    /// * **A range starting mid-block includes that block**, because a bulk read
+    ///   decodes a partial first block whole; the answer is a true cost only if
+    ///   it says so.
+    /// * **A range extending past the end of the stream clamps**, with no error.
+    ///   An error would make every caller do the arithmetic twice — once to ask,
+    ///   and once to be allowed to ask.
+    ///
+    /// The end is the first block starting at or after `range.end`, so the
+    /// result is a contiguous run of indices rather than the set of blocks whose
+    /// plaintext actually overlaps. The two differ only for a zero-length block
+    /// strictly inside the range, which nothing produces and which the table's
+    /// own validation accepts; a contiguous run is what a caller scheduling by
+    /// index needs.
+    ///
+    /// The clamp is against the last block's end rather than
+    /// [`SeekTable::uncompressed_size`], which is a sum over every stream and so
+    /// costs 31,150 additions on the corpus file this crate was built for. The
+    /// two are equal: a stream with no blocks carries no plaintext.
+    pub fn blocks_in(&self, range: Range<u64>) -> Range<usize> {
+        let Some(last) = self.blocks.last() else {
+            return 0..0;
+        };
+        let end = range
+            .end
+            .min(last.uncompressed_offset + last.uncompressed_size);
+        if range.start >= end {
+            return 0..0;
+        }
+        let start_i = self
+            .blocks
+            .partition_point(|b| b.uncompressed_offset <= range.start)
+            .saturating_sub(1);
+        let end_i = self.blocks.partition_point(|b| b.uncompressed_offset < end);
+        start_i..end_i
+    }
+
     /// The index into [`SeekTable::blocks`] of the block covering `offset`, or
     /// `None` at or past the end of the file.
     ///
@@ -512,6 +565,67 @@ mod tests {
         assert_eq!(t.block_containing(399), Some(1));
         assert_eq!(t.block_containing(400), Some(2));
         assert_eq!(t.block_containing(600), None);
+    }
+
+    #[test]
+    fn blocks_in_covers_every_block_a_range_touches() {
+        let t = table(&[100, 300, 200]);
+
+        // The whole file, and each block on its own boundaries.
+        assert_eq!(t.blocks_in(0..600), 0..3);
+        assert_eq!(t.blocks_in(0..1), 0..1);
+        assert_eq!(t.blocks_in(0..100), 0..1);
+        assert_eq!(t.blocks_in(0..101), 0..2);
+        assert_eq!(t.blocks_in(100..400), 1..2);
+        assert_eq!(t.blocks_in(399..400), 1..2);
+        assert_eq!(t.blocks_in(400..401), 2..3);
+        assert_eq!(t.blocks_in(599..600), 2..3);
+
+        // A range starting mid-block includes that block, because the read
+        // decodes it whole.
+        assert_eq!(t.blocks_in(50..60), 0..1);
+        assert_eq!(t.blocks_in(150..350), 1..2);
+        assert_eq!(t.blocks_in(99..401), 0..3);
+
+        // The answer is a contiguous run, so it agrees with the covering-block
+        // lookup at every offset the file has.
+        for offset in 0..600u64 {
+            assert_eq!(
+                t.blocks_in(offset..offset + 1),
+                t.block_containing(offset).unwrap()..t.block_containing(offset).unwrap() + 1,
+                "at {offset}"
+            );
+        }
+    }
+
+    #[test]
+    fn blocks_in_s_three_edges_are_empty_mid_block_and_clamped() {
+        let t = table(&[100, 300, 200]);
+
+        // Empty: zero-length anywhere, inverted, and at or past the end. An
+        // inverted range is one of the shapes being pinned, so the lint that
+        // says a literal one yields nothing is exactly the point.
+        #[allow(clippy::reversed_empty_ranges)]
+        let empties = [0..0, 150..150, 600..600, 600..700, 599..599, 300..100];
+        for r in empties {
+            assert_eq!(t.blocks_in(r.clone()), 0..0, "{r:?}");
+        }
+        assert_eq!(t.blocks_in(u64::MAX..u64::MAX), 0..0);
+
+        // Past the end clamps rather than failing.
+        assert_eq!(t.blocks_in(0..u64::MAX), 0..3);
+        assert_eq!(t.blocks_in(500..u64::MAX), 2..3);
+        assert_eq!(t.blocks_in(599..1_000_000), 2..3);
+
+        // A file with no blocks has no work in any range.
+        let empty = table(&[]);
+        assert_eq!(empty.blocks_in(0..u64::MAX), 0..0);
+
+        // A zero-length block resolves the way `block_containing` does: the
+        // last block sharing an offset is the one that covers it.
+        let zero = table(&[100, 0, 200]);
+        assert_eq!(zero.blocks_in(100..300), 2..3);
+        assert_eq!(zero.blocks_in(0..300), 0..3);
     }
 
     /// The two shapes `validate` deliberately lets through.

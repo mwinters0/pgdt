@@ -49,8 +49,11 @@
 use crate::backend::{self, Backend};
 use crate::decode::{BlockDecode, DEFAULT_MEMLIMIT};
 use crate::error::{Error, Result};
+use crate::plan::{Bulk, RangePlan};
+use crate::range::RangeRead;
 use crate::source::CompressedSource;
 use crate::table::{Check, SeekTable};
+use crate::task::BlockTask;
 
 /// The discard buffer, in bytes.
 ///
@@ -343,6 +346,160 @@ impl<S: CompressedSource> Reader<S> {
     /// position to confuse a cold-start cost with.
     pub fn index(&self) -> &SeekTable {
         &self.table
+    }
+
+    /// The work of decoding one block, as a value a caller can schedule.
+    ///
+    /// `index` is an index into [`SeekTable::blocks`](crate::SeekTable::blocks);
+    /// [`SeekTable::blocks_in`](crate::SeekTable::blocks_in) is what turns an
+    /// uncompressed range into the indices covering it. The task carries this
+    /// reader's memory limit, verification state and backend, and the block's
+    /// *resolved* check — so a block decoded through it decodes exactly as
+    /// [`Reader::read_at`] would decode it here.
+    ///
+    /// **`None` past the last block.** The one other way it is `None` is a table
+    /// that places a block outside every stream, so that no check can be
+    /// resolved for it; [`SeekTable::validate`](crate::SeekTable) refuses such a
+    /// table and a walk cannot produce one, so a reader that exists has no such
+    /// block.
+    ///
+    /// **This reader is not borrowed by the task.** `&self` ends with the call:
+    /// a [`BlockTask`] is `Copy` and owns everything it needs, so tasks may be
+    /// collected, sent to threads, and outlive the reader that named them.
+    /// Nothing here reads a byte or touches the live decode, so a reader stays
+    /// usable for positioned reads beside any number of tasks.
+    pub fn block_task(&self, index: usize) -> Option<BlockTask> {
+        let block = *self.table.blocks.get(index)?;
+        let check = self.check_of(index).ok()?;
+        Some(BlockTask::new(
+            block,
+            check,
+            self.verify,
+            self.memlimit,
+            self.backend,
+        ))
+    }
+
+    /// What a bulk read over `range` under `bulk` would hold, and how many
+    /// workers it admits.
+    ///
+    /// **Readable before the read starts**, which is the point of it: it costs
+    /// no source read and no decode, so a caller can ask *"does this file's
+    /// blocks admit any parallelism inside my memory budget?"* and act on the
+    /// answer — including by not making the read at all. See [`RangePlan`], and
+    /// [`Bulk`] for the two numbers it is planned under.
+    ///
+    /// [`Reader::read_range`] plans the same range under the same [`Bulk`] and
+    /// gets the same answer; a caller who wants the number without the read asks
+    /// here, and one who wants it afterwards asks
+    /// [`RangeRead::plan`](crate::RangeRead::plan).
+    ///
+    /// **It never fails.** A budget too small for one worker is not an error but
+    /// a plan whose [`RangePlan::fits`] is false, reporting the footprint one
+    /// worker will use anyway.
+    pub fn plan_range(&self, range: core::ops::Range<u64>, bulk: Bulk) -> RangePlan {
+        RangePlan::new(&self.table, range, bulk)
+    }
+
+    /// An ordered bulk read over a range of the uncompressed stream.
+    ///
+    /// `bulk` is the worker count and the byte budget the read is bounded by,
+    /// whichever binds first; [`Reader::plan_range`] answers what they admit
+    /// over this range, and the handle carries that answer
+    /// ([`RangeRead::plan`](crate::RangeRead::plan)).
+    ///
+    /// The range is half-open, in uncompressed bytes, and **may span gigabytes**:
+    /// the handle delivers it by repeated fill into a buffer the caller owns, so
+    /// nothing here assumes a buffer the whole range fits in. See
+    /// [`RangeRead::read`], which is the whole of the delivery contract.
+    ///
+    /// **Every delivered byte was verified first.** A block is decoded whole and
+    /// its check compared before any of its bytes are handed over, so the
+    /// caveat [`Reader::read_at`] states — that a check failure can arrive from a
+    /// later call than the one that returned the bytes it covers — is not true
+    /// on this path. A caller who set [`Verify::Off`] or [`Verify::Streaming`]
+    /// gets what those mean, here as everywhere.
+    ///
+    /// **The range is clamped, never refused.** A range past the end of the
+    /// stream delivers what exists and then ends; an empty or inverted range
+    /// delivers nothing. Both are shapes a caller's own span arithmetic
+    /// produces, and making them errors would only make every caller do the
+    /// arithmetic twice.
+    ///
+    /// **`&self`, so a reader stays usable while a range is open** — for
+    /// positioned reads, and for other ranges. The handle takes its own clone of
+    /// the source and its own copy of the work, and borrows this reader for no
+    /// longer than the call.
+    ///
+    /// # Every delivered byte is copied once, whatever buffer you pass
+    ///
+    /// The handle decodes each block into a slot of its own and copies out of it,
+    /// because verifying a block before delivering it means the block must land
+    /// somewhere in full first and your buffer is usually smaller than a block.
+    /// **Passing a block-sized buffer does not avoid the copy** — this path never
+    /// compares the two, so a caller reading whole blocks pays a slot and a copy
+    /// it does not need. That is deficiency: KD8, whose detail is in
+    /// `docs/design/architecture.md`.
+    ///
+    /// If that copy matters to you, [`Reader::block_task`] and
+    /// [`BlockTask::decode_into`](crate::BlockTask::decode_into) decode one block
+    /// straight into a buffer you own, verified before they return, with no
+    /// intermediate slot anywhere. What you give up is this method's ordering,
+    /// its clamping and its worker pool: you iterate
+    /// [`SeekTable::blocks_in`](crate::SeekTable::blocks_in) yourself.
+    ///
+    /// # The threads are the handle's, and dropping it joins them
+    ///
+    /// Above one worker the handle owns a fetch stage and
+    /// [`RangePlan::workers`](crate::RangePlan::workers) decoders, started when
+    /// this call returns and joined when the handle is dropped — there is no
+    /// `cancel`, because a repeated fill already hands control back every
+    /// buffer-full and dropping from there is what a caller's own interrupt flag
+    /// does. At one worker there are no threads at all: the calling thread
+    /// fetches and decodes at the delivery head. **Neither is visible in what
+    /// [`RangeRead::read`](crate::RangeRead::read) returns**, which is the same
+    /// bytes in the same order at every count.
+    ///
+    /// # The bound is the pool's, not this path's
+    ///
+    /// `S: Clone + Send + 'static` is what a worker pool needs of a source it
+    /// shares: a handle outlives the call that made it, so the threads under it
+    /// cannot be scoped and the source cannot be lent to them by reference. It
+    /// is asked for here — where nothing yet starts a thread — so that the
+    /// signature a caller writes against does not change when one does.
+    /// `Arc<File>` is the shape it names; `&File` is not `'static` and
+    /// [`File`](std::fs::File) is not [`Clone`].
+    ///
+    /// # Errors
+    ///
+    /// Nothing is decoded here, so the only failure is a table placing a block
+    /// outside every stream — [`Error::IndexInconsistent`], which
+    /// [`SeekTable::validate`](crate::SeekTable) already refuses and a walk
+    /// cannot produce. Everything else arrives from [`RangeRead::read`], at the
+    /// position in the range where it happened.
+    pub fn read_range(&self, range: core::ops::Range<u64>, bulk: Bulk) -> Result<RangeRead<S>>
+    where
+        S: Clone + Send + 'static,
+    {
+        let plan = self.plan_range(range.clone(), bulk);
+        let indices = self.table.blocks_in(range.clone());
+        let mut tasks = Vec::with_capacity(indices.len());
+        for i in indices {
+            tasks.push(BlockTask::new(
+                self.table.blocks[i],
+                self.check_of(i)?,
+                self.verify,
+                self.memlimit,
+                self.backend,
+            ));
+        }
+        Ok(RangeRead::new(
+            self.source.clone(),
+            tasks,
+            plan,
+            range.start,
+            range.end,
+        ))
     }
 
     /// Read the uncompressed bytes at `offset` into `buf`.

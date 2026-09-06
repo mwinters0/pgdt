@@ -93,10 +93,11 @@ mid-slice. Whatever it needs of that crate's interface is still **changeable** �
 this is the last moment an awkward signature can be fixed at its source rather
 than worked around here, and the arrangement exists precisely to collect that
 feedback. And this phase inherits a decision it did not make: whether to
-re-sync the vendored snapshot, publish and depend on a version, or keep
-vendoring. The parallel-scan work has its own reason to re-sync (it needs
-upstream work the snapshot predates), so whichever of the two runs first is
-where that call actually gets made, and the other inherits it.
+publish and depend on a version or keep vendoring. The snapshot itself is kept
+current — it already carries upstream's parallel block decode, which nothing
+here reads — so the question left is the arrangement, not the sync, and
+whichever of this phase and the parallel-scan work runs first is where that call
+gets made; the other inherits it.
 
 **Origin.** The compressed-input work's grilling, carried here at its keystone,
 2026-09-06. **Contingent on** the crate still being unpublished — check

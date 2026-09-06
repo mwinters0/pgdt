@@ -240,7 +240,9 @@ seek, the seek table a cache persists and recognition is handed back so the
 footer walk is paid once per file rather than once per command, and the rule
 that governs `vendor/xz-seek/`: it is
 **read-only**, a bug there is fixed upstream and returns at the next sync, and
-the first consumer needing newer upstream work is what re-syncs it. A change to
+the copy tracks upstream rather than waiting for a consumer — so it carries a
+parallel block decode nothing here reads, and a sync ends in `cargo check
+--workspace` and `cargo test --workspace` rather than at the byte copy. A change to
 the trait's own shape — a method added, a signature moved — is
 "Execution model and API surface", which says which of the defaulted methods
 exist for a source the local file is not.

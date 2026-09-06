@@ -1,8 +1,9 @@
 //! The error taxonomy.
 //!
-//! One `#[non_exhaustive]` enum of eleven variants: R7's six, plus
+//! One `#[non_exhaustive]` enum of twelve variants: R7's six, plus
 //! [`Error::Io`], [`Error::InvalidTable`], [`Error::UnsupportedCheck`],
-//! [`Error::BlockDataError`] and [`Error::BackendUnavailable`]. The rationale
+//! [`Error::BlockDataError`], [`Error::BackendUnavailable`] and
+//! [`Error::BufferTooSmall`]. The rationale
 //! for each addition is in `docs/design/roadmap.md`, "Errors name the case and
 //! the offset", and in `docs/design/architecture.md`, "The error taxonomy".
 //!
@@ -12,12 +13,13 @@
 //! carry an uncompressed range beside it, because "bytes X..Y of your dump are
 //! bad" is the sentence a downstream reports.
 //!
-//! **A variant about the *build* or the caller's configuration rather than
-//! about the file reports no position**, and [`Error::compressed_offset`]
-//! returns `None` for it. [`Error::BackendUnavailable`] — the build does not
-//! carry the decoder the caller named — is the only one today, and the rule is
+//! **A variant about the *build* or the caller's own call rather than about the
+//! file reports no position**, and [`Error::compressed_offset`] returns `None`
+//! for it. There are two — [`Error::BackendUnavailable`], the build does not
+//! carry the decoder the caller named, and [`Error::BufferTooSmall`], the buffer
+//! offered to a whole-block decode is shorter than the block — and the rule is
 //! stated rather than the count because the match below is what enforces it: it
-//! is exhaustive with named arms, so a twelfth variant fails to compile until
+//! is exhaustive with named arms, so a further variant fails to compile until
 //! somebody decides which side it falls on. A fabricated `compressed_offset: 0`
 //! would ask nobody that. See `docs/design/architecture.md`,
 //! "`BackendUnavailable` is the variant with no offset", which files both
@@ -40,7 +42,21 @@
 //! variant that could was rejected — those are
 //! [`Error::IndexInconsistent`], whose offset points at the byte, so the
 //! information is not lost and only the name is. That rule is about faults in a
-//! file; the taxonomy is closed at eleven.
+//! file, and **that half of the taxonomy is closed at ten**: every variant added
+//! since names something that is not a fault in a file — a build that cannot
+//! serve the request, a call that cannot be served.
+//!
+//! **A variant joins that other half only if it is raised before any byte of the
+//! file is read.** That is the bar, rather than "it arrived with an entry point
+//! that could fail that way", which admits anything: every new entry point can
+//! invent a failure. It is what keeps [`Error::compressed_offset`]'s `None`
+//! honest — a fault found mid-read that named no offset would leave a caller who
+//! has already been handed bytes with no way to place it — and both variants
+//! satisfy it, the backend resolved in the constructor and the buffer measured
+//! before the block header. **Each is held to it by a test that drives its entry
+//! point over a source answering nothing**, so a check moved below a read is a
+//! failure rather than a silent demotion: `tests/taxonomy.rs` for the backend,
+//! `src/task.rs`'s short-buffer test for the buffer.
 //!
 //! **This partition is the crate's, not `liblzma`'s**, and agreement with the
 //! reference decoder is not what decides it: `liblzma` answers `LZMA_DATA_ERROR`
@@ -209,6 +225,28 @@ pub enum Error {
         uncompressed_range: Range<u64>,
     },
 
+    /// The buffer handed to [`BlockTask::decode_into`](crate::BlockTask::decode_into)
+    /// is smaller than the block it was asked to hold.
+    ///
+    /// That path fills the caller's buffer with a whole block's output or
+    /// nothing at all — a partial fill would be indistinguishable from a block
+    /// that decoded short, on the one path whose contract is that a returned
+    /// buffer holds a verified block. The seek table already knows the exact
+    /// length, and [`BlockTask::uncompressed_len`](crate::BlockTask::uncompressed_len)
+    /// hands it over, so this is a caller who did not ask.
+    ///
+    /// It is about the call rather than about the file — the file is fine, and
+    /// nothing in it has been read — so
+    /// [`Error::compressed_offset`] is `None`, the same side of the line
+    /// [`Error::BackendUnavailable`] falls on.
+    BufferTooSmall {
+        /// The block's uncompressed size, in bytes, which is what the buffer
+        /// must be at least.
+        required: u64,
+        /// The buffer the caller offered, in bytes.
+        given: u64,
+    },
+
     /// The caller named a decoder backend this build does not carry.
     ///
     /// [`Backend`]'s variants exist whatever features are on, so a caller's
@@ -238,8 +276,9 @@ impl Error {
     ///
     /// Every variant about a file has one, which is why this is a method and
     /// not a match the caller writes. A variant about the build or the caller's
-    /// configuration returns `None`; [`Error::BackendUnavailable`] is the only
-    /// one today.
+    /// own call returns `None` — [`Error::BackendUnavailable`] and
+    /// [`Error::BufferTooSmall`], both raised before a byte of the file is
+    /// read, which is the rule the module docs state for admitting a third.
     ///
     /// **The match is exhaustive with named arms on purpose.** It is the one
     /// place a new variant is obliged to say whether it names a byte in a file,
@@ -268,7 +307,7 @@ impl Error {
             | Error::BlockDataError {
                 compressed_offset, ..
             } => Some(*compressed_offset),
-            Error::BackendUnavailable { .. } => None,
+            Error::BufferTooSmall { .. } | Error::BackendUnavailable { .. } => None,
         }
     }
 
@@ -296,19 +335,29 @@ impl Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // The one variant with no file offset is written first and returns, so
+        // The variants with no file offset are written first and return, so
         // `at` is unconditionally there for every arm below.
-        if let Error::BackendUnavailable { backend } = self {
-            return write!(
-                f,
-                "the {backend} backend is not compiled into this build: enable \
-                 the `{}` feature",
-                backend.feature()
-            );
+        match self {
+            Error::BackendUnavailable { backend } => {
+                return write!(
+                    f,
+                    "the {backend} backend is not compiled into this build: enable \
+                     the `{}` feature",
+                    backend.feature()
+                );
+            }
+            Error::BufferTooSmall { required, given } => {
+                return write!(
+                    f,
+                    "the buffer is too small for the block: {required} bytes are \
+                     needed and {given} were offered"
+                );
+            }
+            _ => {}
         }
         let at = self
             .compressed_offset()
-            .expect("only BackendUnavailable has no offset");
+            .expect("only the two variants above have no offset");
         match self {
             Error::NotXz { .. } => write!(f, "not an xz file: bad magic at offset {at}"),
             Error::Truncated { .. } => write!(f, "truncated xz file: ends at offset {at}"),
@@ -352,8 +401,8 @@ impl fmt::Display for Error {
                  block covers uncompressed {}..{}",
                 uncompressed_range.start, uncompressed_range.end
             ),
-            // Handled above, where its lack of an offset is what selects it.
-            Error::BackendUnavailable { .. } => unreachable!(),
+            // Handled above, where their lack of an offset is what selects them.
+            Error::BackendUnavailable { .. } | Error::BufferTooSmall { .. } => unreachable!(),
         }
     }
 }
@@ -424,7 +473,25 @@ mod tests {
         }
     }
 
-    /// The eleventh variant is about the build, not the file, so it has no
+    /// The two variants that are not about a file have no offset — and each
+    /// names what a caller would act on instead.
+    #[test]
+    fn the_buffer_variant_has_no_offset_and_names_both_lengths() {
+        let e = Error::BufferTooSmall {
+            required: 65_536,
+            given: 4_096,
+        };
+        assert_eq!(e.compressed_offset(), None);
+        assert_eq!(e.uncompressed_range(), None);
+        let text = e.to_string();
+        assert!(text.contains("65536") && text.contains("4096"), "{text:?}");
+        assert!(
+            !text.contains("offset"),
+            "{text:?} talks about a position it does not have"
+        );
+    }
+
+    /// The build variant is about the build, not the file, so it has no
     /// offset — and it names the feature that would fix it instead.
     #[test]
     fn the_backend_variant_has_no_offset_and_names_its_feature() {

@@ -377,16 +377,19 @@ which the entry above says is 5 for this input.
 
 ## The xz decode pool belongs to `xz-seek`; the pieces are what this phase probably wants
 
-**Fact.** `xz-seek` will ship both a worker pool that hands back ordered bytes
-over a caller-named range, and the public pieces underneath it — a `Send`,
-self-contained single-block decode plus the arithmetic that partitions a range
-into blocks. Both, because this project asked for both. Three constraints were
-attached to the pool and are commitments the crate is building to: an explicit
-worker count with no core-count default (the right count is a property of the
-device and the build, and the device-awareness rule is *this* phase's to write);
+**Fact.** `xz-seek` ships both a worker pool that hands back ordered bytes over a
+caller-named range (`Reader::read_range`), and the public pieces underneath it —
+a `Copy + Send + 'static` single-block decode (`Reader::block_task`,
+`BlockTask::decode_into`) plus the arithmetic that partitions a range into
+blocks (`SeekTable::blocks_in`). Both, because this project asked for both, and
+all three constraints attached to the pool were met: an explicit worker count
+with no core-count default (the right count is a property of the device and the
+build, and the device-awareness rule is *this* phase's to write);
 cancellability mid-range, because `parse` banks its cache on a signal and a
-non-interruptible bulk read would make Ctrl-C unbounded; and one block per unit
-of work drawn from a shared queue rather than a contiguous run per worker.
+non-interruptible bulk read would make Ctrl-C unbounded — it is `Drop`, and a
+worker polls the flag inside its decode loop so a join is bounded by a decoder
+call rather than by a 128 MiB block; and one block per unit of work drawn from a
+shared queue rather than a contiguous run per worker.
 
 The reason given for wanting the pieces is a claim about **this phase's shape**,
 and it should be tested rather than inherited: that the natural composition over
@@ -410,9 +413,10 @@ wrong answer rather than a weak one.
 
 **Origin.** 2026-09-06, answering `xz-seek`'s `P3` grilling
 ([`../status/history/2026-09-06.md`](../status/history/2026-09-06.md),
-"What `xz-seek` was told, and what it commits us to"). Contingent on that
-crate's `P3` landing as specified; the answers were given, not yet built
-against.
+"What `xz-seek` was told, and what it commits us to"). That crate's `P3` has
+since landed as specified and the vendored copy carries it, so what this entry
+describes is readable in `vendor/xz-seek/src/` rather than promised — read it
+there before resting a decision on this summary.
 
 ---
 
@@ -438,24 +442,38 @@ bound how far this generalizes — the dictionary is 8 MiB because these files
 were written at the default preset, and a file written at `-9` carries 64 MiB,
 which would dominate a 24 MiB block outright.
 
+**The crate has since made the omission a stated property rather than an
+oversight**, so this correction is now permanently this phase's to apply:
+`RangePlan::footprint()` prices the decoded block, the compressed window and the
+input chunk per worker — plus two spare windows above one worker — and
+*excludes the dictionary*, because its size lives in each block's header and a
+seek table does not carry it, so learning it would cost a source read per block.
+`memlimit` stays per worker and the aggregate is the caller's arithmetic. So a footprint promised to
+a cgroup is `plan.footprint()` plus the dictionary times `plan.workers()`, and
+the dictionary is a number this phase reads off the file.
+
 **Origin.** The compressed-input work's grilling, stated in its spec and
-carried here at that phase's keystone, 2026-09-06. Contingent on the preset the file was written at:
+carried here at that phase's keystone, 2026-09-06, with the crate's exclusion
+confirmed against the vendored copy the same day. Contingent on the preset the file was written at:
 re-read the header bytes for any file this arithmetic is applied to rather than
 assuming 8 MiB.
 
 ---
 
-## The memory bound this phase must promise is in bytes, and the crate will take it in bytes
+## The memory bound this phase must promise is in bytes, and the crate takes it in bytes
 
-**Fact.** `xz-seek`'s parallel path will accept **both** a worker count and a
-byte budget, whichever binds first, because this project asked for both and said
-the byte budget is the one it would set. The reason is that koji runs happen in
+**Fact.** `xz-seek`'s parallel path accepts **both** a worker count and a byte
+budget, whichever binds first — `Bulk::new(workers, budget_bytes)`, neither
+defaulted — because this project asked for both and said the byte budget is the
+one it would set. The reason is that koji runs happen in
 a **512 MB cgroup** (`CLAUDE.md`'s long-running-process rule, asserted by
 `scripts/test_measure.py`) and a worker count cannot be promised to one: the
 same count is 192 MiB against a 24 MiB-block file and 1 GiB against a 128 MiB-block
-one, and this project does not choose which file its user hands it. The crate
-was also asked to make the **derived worker count observable before the read
-starts**, and to account in-flight compressed buffers inside the budget.
+one, and this project does not choose which file its user hands it. Both further
+asks were met: `Reader::plan_range(range, bulk)` answers the **derived worker
+count and its footprint before a byte is read**, from the seek table alone, and
+the budget prices a compressed window and the decode's own input chunk per
+worker beside the decoded block.
 
 **Why this phase cares.** This is the first number this phase has to promise
 that is not about time. Whatever it does with plain input, N workers over a
@@ -506,10 +524,12 @@ ratio rather than on its order of magnitude.
 
 ## Whole-block decode makes the retained unit a block, not a chunk
 
-**Fact.** The single-block decode `xz-seek` will expose fills a
-**caller-supplied buffer with the block's entire uncompressed output**, check
-already verified — asked for in that shape because a returned `Vec<u8>` is the
-per-chunk `calloc` the buffer pool exists to remove. The consequence is that a
+**Fact.** `BlockTask::decode_into` fills a **caller-supplied buffer with the
+block's entire uncompressed output**, check already verified — asked for in that
+shape because a returned `Vec<u8>` is the per-chunk `calloc` the buffer pool
+exists to remove. A buffer shorter than the block is `Error::BufferTooSmall`
+naming both lengths rather than a partial fill, and
+`BlockTask::uncompressed_len` is where the length comes from. The consequence is that a
 worker's decoded buffer is 24 MiB, or 128 MiB on a large-block file, where the
 read path's buffer is 1 MiB. The zero-copy `Utf8View` path pins whatever buffer
 a batch views, and `RowBatcher`'s `max_source_span` cap (64 MiB) was chosen
@@ -535,33 +555,33 @@ out of the cache.
 
 ---
 
-## The compressed source as built is one reader behind one mutex, and the vendored copy predates the pool
+## The compressed source as built is one reader behind one mutex, and everything the entries above describe is vendored and unread
 
 **Fact.** `io::XzSource` holds a single `xz_seek::Reader` — one live decode and
 one current uncompressed position — behind a `std::sync::Mutex`, because the
 reader's positioned read takes `&mut self` where `ByteRangeSource`'s methods
 take `&self`. Concurrent `read_range` calls therefore *serialize*; nothing calls
-concurrently today because every read loop in this crate is sequential. And the
-copy of `xz-seek` this repo builds against is a **frozen snapshot at
-`54c7983`**, taken deliberately before that crate's parallel-block-decode work
-started moving its source — so the pool, the pieces and `SeekTable::blocks_in`
-described in the entries above are *not* in this tree. `scripts/vendor_xz_seek.py`
-is what re-takes the snapshot, and `vendor/xz-seek/VENDORED_FROM` records which
-commit is in.
+concurrently today because every read loop in this crate is sequential. The copy
+of `xz-seek` this repo builds against is the snapshot at **`5b549d7`**, which
+carries that crate's parallel block decode whole — the pool, the pieces,
+`plan_range` and `SeekTable::blocks_in` are all in this tree, compiled by
+`cargo check --workspace` and named by nothing.
+`scripts/vendor_xz_seek.py` re-takes the snapshot, and
+`vendor/xz-seek/VENDORED_FROM` records which commit is in.
 
-**Why this phase cares.** Two things it might have assumed are false. Parallel
-decode is not a matter of configuring `XzSource` or raising a worker count: the
-single-reader-behind-a-mutex scheme is what this phase replaces, and until it
-does, a compressed source is a serialization point in front of however many
-workers sit above it. And this phase is the **first consumer that needs
-post-`54c7983` upstream work**, so re-syncing the vendored copy — and deciding
-whether the copy is still the right arrangement, since publication was gated on
-this repo and P10 both landing — is part of this phase's own opening moves
-rather than something already done for it.
+**Why this phase cares.** Parallel decode is not a matter of configuring
+`XzSource` or raising a worker count: the single-reader-behind-a-mutex scheme is
+what this phase replaces, and until it does, a compressed source is a
+serialization point in front of however many workers sit above it. What this
+phase inherits is a copy that is already current, so the opening move is the
+integration rather than a sync — and the arrangement question that rides with
+it, whether a vendored copy is still right, since publication was gated on this
+repo and P10 both landing and whichever of the two runs first makes the call.
 
-**Origin.** The compressed-input work and its wrap audit, 2026-09-06
+**Origin.** The compressed-input work and its wrap audit, 2026-09-06, restated
+when the copy was re-synced the same day
 ([`architecture.md`](architecture.md), "The compressed source", which holds both
-the mutex and the refused re-sync). Contingent on nothing in this tree;
+the mutex and what the snapshot carries). Contingent on nothing in this tree;
 re-check `vendor/xz-seek/VENDORED_FROM` before assuming which snapshot is in.
 
 ---

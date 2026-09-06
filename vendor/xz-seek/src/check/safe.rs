@@ -278,6 +278,10 @@ mod tests {
 
     /// Every intact fixture's plaintext, decoded once, so the two corpus tests
     /// below pay for `xz -dc` a single time each.
+    ///
+    /// `bulk-blocks.xz` is in it: its 16 MiB costs 0.23 s across both tests,
+    /// which is not what the byte sweep excludes it over — `harness.md`,
+    /// "`bulk-blocks.xz` is out of the byte sweep and in everything else".
     fn corpus() -> Vec<(&'static str, Vec<u8>)> {
         let dir = fixtures_gen::ensure_corpus().expect("the corpus builds");
         fixtures_gen::FIXTURES

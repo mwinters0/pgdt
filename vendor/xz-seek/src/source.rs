@@ -5,6 +5,9 @@
 //! contract — see `docs/design/roadmap.md`, "The compressed bytes arrive through
 //! `CompressedSource`". A local file, a memory map, a ranged HTTP endpoint and
 //! an object store all satisfy it; only the first two are implemented here.
+//!
+//! `&T` and `Arc<T>` are sources whenever `T` is, which is what lets N readers
+//! share one — see [`CompressedSource`].
 
 use std::io;
 
@@ -14,6 +17,13 @@ use std::io;
 /// source. The trait deliberately carries no `Send`, `Sync` or `Clone` bound:
 /// the parallel entry point will ask for what it needs at its own signature
 /// rather than taxing every implementor today.
+///
+/// **Sharing one source is what the blanket impls below are for.** A [`Reader`]
+/// takes its source by value, so `&self` on its own does not let two readers
+/// exist over one file: the shared shapes are `Reader<&T>` and `Reader<Arc<T>>`,
+/// and they compile because `&T` and `Arc<T>` are sources whenever `T` is.
+///
+/// [`Reader`]: crate::Reader
 pub trait CompressedSource {
     /// Fill `buf` with the bytes at `offset`, returning how many were written.
     ///
@@ -58,6 +68,42 @@ impl CompressedSource for std::fs::File {
 
     fn size(&self) -> io::Result<u64> {
         Ok(self.metadata()?.len())
+    }
+}
+
+/// A borrowed source is a source, which is what makes `Reader<&File>` compile.
+///
+/// [`CompressedSource`]'s `&self` says N readers may share one source, and this
+/// is the impl that makes the sentence true rather than merely documented: a
+/// [`Reader`](crate::Reader) owns its source by value, so two readers over one
+/// file are `Reader<&File>` twice over one `File` the caller keeps.
+///
+/// `?Sized` so that `&dyn CompressedSource` is covered too. It does not overlap
+/// the `&[u8]` impl below, because that one is this shape at `T = [u8]` and
+/// `[u8]` is not itself a source.
+impl<T: CompressedSource + ?Sized> CompressedSource for &T {
+    fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
+        (**self).read_at(offset, buf)
+    }
+
+    fn size(&self) -> io::Result<u64> {
+        (**self).size()
+    }
+}
+
+/// An owned share of a source, for the shapes that outlive the call that made
+/// them.
+///
+/// The borrowed impl above cannot serve a value handed to a `'static` thread, so
+/// the shared source is an [`Arc`](std::sync::Arc) and the sharing is a cheap
+/// clone — `docs/design/roadmap.md`, "The reader owns its decode state".
+impl<T: CompressedSource + ?Sized> CompressedSource for std::sync::Arc<T> {
+    fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
+        (**self).read_at(offset, buf)
+    }
+
+    fn size(&self) -> io::Result<u64> {
+        (**self).size()
     }
 }
 
