@@ -3,7 +3,7 @@
 
 use arrow::datatypes::DataType;
 use futures::StreamExt;
-use pgdump_query::cache::CacheMode;
+use pgdump_query::cache::{CacheLoad, CacheMode};
 use pgdump_query::resolve::{ColumnResolution, SchemaMode};
 use pgdump_query::{BlockingTableIter, LocalFileSource, QueryOptions, ScanOptions, table_stream};
 
@@ -506,7 +506,10 @@ async fn an_unmarked_target_still_stops_early_in_a_file_containing_marked_blocks
     assert_eq!(rows, vec![vec![Some("unrelated".to_string())]]);
 
     use pgdump_query::ByteRangeSource;
-    let index = CacheMode::Enabled(cache_path).load(&source).await.unwrap().unwrap();
+    let CacheLoad::Index(index) = CacheMode::Enabled(cache_path).load(&source).await.unwrap()
+    else {
+        panic!("the query wrote a cache")
+    };
     let evt_m = index.blocks_for("public.evt_m").next().unwrap();
     assert_eq!(index.scanned_through, evt_m.end_offset);
     assert!(index.scanned_through < source.size().await.unwrap());

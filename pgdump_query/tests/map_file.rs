@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use arrow::datatypes::{DataType, TimeUnit};
 use futures::StreamExt;
-use pgdump_query::cache::{CacheMode, CacheStatus};
+use pgdump_query::cache::{CacheLoad, CacheMode, CacheStatus};
 use pgdump_query::resolve::{ColumnResolution, SchemaMode, resolve_columns};
 use pgdump_query::{
     ByteRangeSource, DumpIndex, LocalFileSource, QueryOptions, ScanOptions, build_index, cache,
@@ -92,7 +92,9 @@ async fn a_partial_cache_is_finished_into_the_same_index_an_eager_scan_builds() 
         mode.clone(),
     );
     while stream.next().await.is_some() {}
-    let partial = mode.load(&source).await.unwrap().expect("the query wrote a cache");
+    let CacheLoad::Index(partial) = mode.load(&source).await.unwrap() else {
+        panic!("the query wrote a cache")
+    };
     assert!(partial.scanned_through < size, "sanity: the query really did stop short");
 
     let run = map_file(&source, &ScanOptions::default(), &mode).await.unwrap();
@@ -105,7 +107,9 @@ async fn a_partial_cache_is_finished_into_the_same_index_an_eager_scan_builds() 
     assert_matches_eager(&run.index, &eager, "resumed from a query's partial cache");
 
     // And what landed on disk is the finished index, not the partial one.
-    let reloaded = mode.load(&source).await.unwrap().unwrap();
+    let CacheLoad::Index(reloaded) = mode.load(&source).await.unwrap() else {
+        panic!("the map wrote a cache")
+    };
     assert_eq!(reloaded.scanned_through, size);
     assert_eq!(reloaded.spans, eager.spans);
 }
@@ -172,7 +176,9 @@ async fn a_query_settles_on_a_late_block_and_banks_every_block_before_it() {
     let last_end = eager.blocks().last().expect("40 blocks").end_offset;
     assert!(last_end < size, "sanity: the file does not end at the last block");
 
-    let banked = mode.load(&source).await.unwrap().expect("the query wrote a cache");
+    let CacheLoad::Index(banked) = mode.load(&source).await.unwrap() else {
+        panic!("the query wrote a cache")
+    };
     assert_eq!(banked.scanned_through, last_end, "stopped on the settling block, not at EOF");
     assert_eq!(banked.blocks().count(), 40, "every block before it is in the map too");
 
@@ -191,7 +197,9 @@ async fn a_preamble_only_cache_is_finished_into_the_same_index() {
     let mode = CacheMode::Enabled(cache::colocated_path(&dump));
 
     preamble_only(&source, &ScanOptions::default(), &mode).await.unwrap();
-    let preamble_cache = mode.load(&source).await.unwrap().expect("preamble_only wrote a cache");
+    let CacheLoad::Index(preamble_cache) = mode.load(&source).await.unwrap() else {
+        panic!("preamble_only wrote a cache")
+    };
     assert!(preamble_cache.scanned_through > 0);
     assert!(preamble_cache.blocks().next().is_none(), "the prepass stops before the first block");
 
@@ -465,7 +473,9 @@ async fn a_scan_cancelled_before_it_starts_maps_only_the_preamble() {
     assert!(metadata.databases.first().unwrap().preamble_complete);
 
     // On disk, and resumable from where the prepass stopped.
-    let reloaded = mode.load(&source).await.unwrap().expect("the prepass wrote a cache");
+    let CacheLoad::Index(reloaded) = mode.load(&source).await.unwrap() else {
+        panic!("the prepass wrote a cache")
+    };
     assert_eq!(reloaded.scanned_through, run.index.scanned_through);
     assert_eq!(reloaded.metadata, run.index.metadata);
 }

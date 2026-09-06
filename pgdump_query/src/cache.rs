@@ -5,8 +5,11 @@
 //! Reading is best-effort — the cache is never required for correctness, so
 //! a missing, foreign, unrecognised-version, or size-mismatched file just
 //! means "scan instead," never a hard error. Which of the four it was is
-//! still reported — see [`CacheStatus`] — because `pgdq info` has no "scan
-//! instead" to fall back on and has to say what went wrong.
+//! still reported — see [`CacheStatus`], and [`CacheLoad`] for the same four
+//! reaching a caller that holds a live source — because `pgdq info` has no
+//! "scan instead" to fall back on and has to say what went wrong, and because
+//! a caller that is about to scan is the one that decides what happens to the
+//! file at that path.
 //! Writing is not best-effort: [`save`] propagates I/O failures rather than
 //! silently falling back to running without a cache, since a write failure
 //! (read-only mount, permissions, disk full) means something is actually
@@ -159,13 +162,16 @@ pub fn colocated_path(dump_path: &Path) -> PathBuf {
 /// What [`load`] found at a cache path, once checked against the live
 /// source's identity — see the module docs.
 ///
-/// **The four unusable outcomes are named separately, not collapsed.** Every
-/// caller that can only respond by scanning treats them alike and says so
-/// ([`CacheMode::load`] folds all four into `None`), but a caller that cannot
-/// scan — `pgdq info`, which reports from the cache and never reads the dump —
-/// has a different sentence to say for each, and "you have never parsed this
-/// file" is not the same fact as "your file changed since you parsed it" even
-/// though both end in `pgdq parse`.
+/// **The four unusable outcomes are named separately, not collapsed**, and
+/// they stay named all the way to the caller: [`CacheMode::load`] carries each
+/// one across as a [`CacheLoad`] variant rather than answering `None`. A caller
+/// that cannot scan — `pgdq info`, which reports from the cache and never reads
+/// the dump — has a different sentence to say for each, and "you have never
+/// parsed this file" is not the same fact as "your file changed since you
+/// parsed it" even though both end in `pgdq parse`. A caller that *can* scan
+/// has the reason in hand before it does any work, which is where the decision
+/// about what to do with the file at that path belongs
+/// (`docs/design/architecture.md`, "The cache").
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CacheStatus {
     /// Nothing at this path.
@@ -211,6 +217,57 @@ pub enum CacheStatus {
     /// length when one is available, so it serves a cache-only caller (no
     /// live source to stat) the same way it serves a live one.
     Incomplete { index: DumpIndex, mtime_changed: bool, total_size: u64 },
+}
+
+/// What [`CacheMode::load`] answered a caller that holds a live source: an
+/// index to build forward from, or the reason there is none
+/// (`docs/design/architecture.md`, "The cache").
+///
+/// **The reason is not a detail of the cache file alone.** `Disabled` is a
+/// statement about the *caller* — no path was consulted, because the caller
+/// opted out — and has no [`CacheStatus`] to correspond to; the other four are
+/// that status carried across unchanged. A caller therefore answers five
+/// outcomes, and answering them separately is the point: they are alike only
+/// for a caller that has already decided to scan regardless.
+///
+/// **`Valid` and `Incomplete` are one variant here**, deliberately, because a
+/// caller holding a live source builds forward from either — see
+/// [`CacheMode::load`].
+///
+/// *Rejected:* handing back [`CacheStatus`] itself. It splits the usable
+/// outcomes this method exists to treat alike, and it cannot express
+/// `Disabled` at all, so every caller would match arms this method never
+/// produces and miss one it does.
+///
+/// *Rejected:* keeping `Option<DumpIndex>` and adding a second, reporting
+/// method beside it. The collapsing one stays the shorter call, which is how
+/// the reason ended up out of reach of the scan entry points in the first
+/// place.
+///
+/// *Rejected:* an accessor collapsing the four reasons back to `Option` for
+/// the callers that do not care. It rebuilds the collapse under a shorter name
+/// at exactly the sites that must not have it, and the callers that genuinely
+/// do not care are tests, which can say so in a `let … else`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CacheLoad {
+    /// A usable index — a [`CacheStatus::Valid`] or
+    /// [`CacheStatus::Incomplete`] cache, carrying whatever diagnostics the
+    /// load computed about the cache *file*.
+    Index(DumpIndex),
+    /// [`CacheMode::Disabled`]: no path was consulted, and whatever sits at
+    /// the location this mode would otherwise have resolved is untouched.
+    Disabled,
+    /// [`CacheStatus::Missing`] — nothing at the cache path.
+    Missing,
+    /// [`CacheStatus::Unreadable`] — foreign bytes, or a truncated write.
+    Unreadable,
+    /// [`CacheStatus::UnsupportedVersion`] — another build's envelope.
+    UnsupportedVersion,
+    /// [`CacheStatus::SourceChanged`] — the cache records a stored size the
+    /// live source does not have, so every byte offset in it could be wrong.
+    /// Both numbers travel, because "this cache is not about this file" is a
+    /// claim a caller has to be able to state the evidence for.
+    SourceChanged { cached_stored_size: u64, live_stored_size: u64 },
 }
 
 /// Load a cache from `path` and validate it against `source`'s current
@@ -406,28 +463,31 @@ impl CacheMode {
     /// [`CacheMode::Disabled`]'s contract that existing files are ignored,
     /// never read.
     ///
-    /// `Incomplete` is treated exactly like `Valid` — returned as `Some`,
-    /// not folded into `None` — because every caller of this method
+    /// `Incomplete` is treated exactly like `Valid` — both are
+    /// [`CacheLoad::Index`] — because every caller of this method
     /// (`crate::stream::map_file`, `crate::stream::table_stream`,
     /// `crate::index::preamble_only`) wants whatever partial map already
-    /// exists to build forward from. Folding `Incomplete` into `None` here
-    /// would make every partial cache invisible to the next scan, which is
+    /// exists to build forward from. Answering "no index" for `Incomplete`
+    /// here would make every partial cache invisible to the next scan, which is
     /// exactly the incremental caching `docs/design/architecture.md`,
     /// "Query: mapping and streaming are separate passes" depends on. A
     /// caller that instead *reports* what a cache holds reaches for
     /// [`load`]/[`CacheMode::load_offline`] and the full [`CacheStatus`],
     /// which is what `pgdq info` does.
-    pub async fn load(&self, source: &dyn ByteRangeSource) -> Result<Option<DumpIndex>> {
+    ///
+    /// **The four unusable statuses are not collapsed**, and neither is the
+    /// caller's own opt-out: each arrives as its own [`CacheLoad`] variant, so
+    /// a caller about to scan holds the reason before it does any work rather
+    /// than after (`docs/design/architecture.md`, "The cache").
+    pub async fn load(&self, source: &dyn ByteRangeSource) -> Result<CacheLoad> {
         match self {
-            CacheMode::Enabled(path) => match load(path, source).await? {
-                // All four unusable outcomes collapse here: this method's
-                // callers can only respond by scanning, so telling them apart
-                // would be information with no consumer. `pgdq info`, which
-                // has no such response, matches on [`CacheStatus`] directly.
-                CacheStatus::Missing
-                | CacheStatus::Unreadable
-                | CacheStatus::UnsupportedVersion
-                | CacheStatus::SourceChanged { .. } => Ok(None),
+            CacheMode::Enabled(path) => Ok(match load(path, source).await? {
+                CacheStatus::Missing => CacheLoad::Missing,
+                CacheStatus::Unreadable => CacheLoad::Unreadable,
+                CacheStatus::UnsupportedVersion => CacheLoad::UnsupportedVersion,
+                CacheStatus::SourceChanged { cached_stored_size, live_stored_size } => {
+                    CacheLoad::SourceChanged { cached_stored_size, live_stored_size }
+                }
                 CacheStatus::Valid { mut index, mtime_changed, .. }
                 | CacheStatus::Incomplete { mut index, mtime_changed, .. } => {
                     // Reported rather than acted on: too weak to invalidate
@@ -437,10 +497,10 @@ impl CacheMode {
                     if mtime_changed {
                         index.diagnostics.push(Diagnostic::cache_mtime_changed());
                     }
-                    Ok(Some(index))
+                    CacheLoad::Index(index)
                 }
-            },
-            CacheMode::Disabled => Ok(None),
+            }),
+            CacheMode::Disabled => Ok(CacheLoad::Disabled),
             CacheMode::Offline(_) => Err(Error::CacheModeMismatch(
                 "a live dump source requires CacheMode::Enabled or CacheMode::Disabled, not Offline",
             )),
@@ -450,9 +510,10 @@ impl CacheMode {
     /// Load this mode's cache with no live source to check it against — the
     /// cache-only counterpart to [`CacheMode::load`]
     /// (`docs/design/architecture.md`, "The cache"). Unlike `load`, this returns the full [`CacheStatus`]
-    /// rather than collapsing it to `Option<DumpIndex>`: cache-only mode has
-    /// no scan to fall back on, so a caller needs to tell `Valid` apart from
-    /// `Incomplete` to decide whether it has enough to answer from. Every
+    /// rather than a [`CacheLoad`]: cache-only mode has no scan to fall back
+    /// on, so a caller needs to tell `Valid` apart from
+    /// `Incomplete` to decide whether it has enough to answer from — the one
+    /// distinction `load` exists to erase. Every
     /// successful load (`Valid` or `Incomplete`) gets a
     /// [`crate::diagnostic::DiagnosticKind::CacheOffline`] pushed onto it
     /// unconditionally — there is no live file to compare against, so the

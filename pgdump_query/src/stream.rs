@@ -71,7 +71,7 @@ use futures::Stream;
 use crate::batch::{
     QueryOptions, RowBatcher, ScanExtent, SourceChunk, column_names, invalidate_block_cache,
 };
-use crate::cache::CacheMode;
+use crate::cache::{CacheLoad, CacheMode};
 use crate::copy::{CopyHeader, DELIMITER, RawRow, RowSplit, validated_prefix};
 use crate::diagnostic::{Diagnostic, DiagnosticKind};
 use crate::index::{
@@ -829,7 +829,18 @@ pub async fn map_file(
     cache: &CacheMode,
 ) -> Result<MapRun> {
     let size = source.size().await?;
-    let mut index = cache.load(source).await?.unwrap_or_default();
+    let mut index = match cache.load(source).await? {
+        CacheLoad::Index(index) => index,
+        // Five reasons, one response today: nothing to resume from, so the map
+        // is built from byte 0. Spelled out rather than wildcarded — they are
+        // not alike, since what a caller may do to the file at the cache path
+        // differs between them (`docs/design/architecture.md`, "The cache").
+        CacheLoad::Disabled
+        | CacheLoad::Missing
+        | CacheLoad::Unreadable
+        | CacheLoad::UnsupportedVersion
+        | CacheLoad::SourceChanged { .. } => DumpIndex::default(),
+    };
     // The one diagnostic about the cache *file* rather than about the map:
     // everything else the load computed is recomputed below over the finished
     // spans, and `map_forward` assigns `diagnostics` wholesale at EOF anyway.
@@ -1169,7 +1180,19 @@ pub fn table_stream<'a>(
 
         let size = source.size().await?;
 
-        let mut index = cache.load(source).await?.unwrap_or_default();
+        let mut index = match cache.load(source).await? {
+            CacheLoad::Index(index) => index,
+            // Five reasons, one response today: nothing to resume from, so
+            // this query maps from byte 0. Spelled out rather than wildcarded
+            // — they are not alike, since what a caller may do to the file at
+            // the cache path differs between them
+            // (`docs/design/architecture.md`, "The cache").
+            CacheLoad::Disabled
+            | CacheLoad::Missing
+            | CacheLoad::Unreadable
+            | CacheLoad::UnsupportedVersion
+            | CacheLoad::SourceChanged { .. } => DumpIndex::default(),
+        };
 
         // The first database's preamble always gets captured before
         // anything else runs, regardless of which table this particular

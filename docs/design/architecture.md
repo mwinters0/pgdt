@@ -5487,19 +5487,37 @@ is added, removed or reshaped, and never to record which bump that was.
 
 **Reads and writes have deliberately opposite failure modes.** An unrecognised
 `format_version`/`container_kind`, or bytes that do not parse as a cache at
-all, are as unusable as a missing file, and `CacheMode::load` folds all of them
-into `Ok(None)`. `cache::save` propagates I/O failures as `Error::Io`.
+all, are as unusable as a missing file: reading one costs a scan and nothing
+else. `cache::save` propagates I/O failures as `Error::Io`.
 
-**Unusable is four named outcomes, not one.** `CacheStatus` distinguishes
-`Missing`, `Unreadable` (bytes that do not decode), `UnsupportedVersion`
-(another build's envelope), and `SourceChanged { cached_stored_size,
-live_stored_size }`.
-Every caller that can respond by *scanning* treats them alike — which is why
-they were collapsed originally — but `pgdq info` cannot scan, and has a
-different sentence for each: a wrong path, a stale build, and "your file
-changed since you parsed it" send a reader to three different places even
-though all four end in `pgdq parse`. `CacheMode::load`'s single `Ok(None)` arm
-is where the collapse still happens, for the callers that want it.
+**Unusable is four named outcomes, not one, and nothing collapses them.**
+`CacheStatus` distinguishes `Missing`, `Unreadable` (bytes that do not decode),
+`UnsupportedVersion` (another build's envelope), and `SourceChanged {
+cached_stored_size, live_stored_size }`; `CacheMode::load` carries each one
+across to a caller holding a live source as its own `CacheLoad` variant. `pgdq
+info` cannot scan and has a different sentence for each: a wrong path, a stale
+build, and "your file changed since you parsed it" send a reader to three
+different places even though all four end in `pgdq parse`. A caller that *can*
+scan does treat them alike today — but it holds the reason before it does any
+work, which is what lets the decision about the file at that path be taken
+there rather than inside the load.
+
+`CacheLoad` is that answer: `Index` for a usable cache — `Valid` and
+`Incomplete` alike, which is the one distinction `load` exists to erase — plus
+the four unusable statuses and `Disabled`. `Disabled` is a statement about the
+*caller* rather than about anything found at a path, so it has no `CacheStatus`
+to correspond to and is the reason `CacheLoad` is its own type rather than
+`CacheStatus` handed back verbatim; handing back `CacheStatus` would also split
+the two usable outcomes every one of these callers treats as one. The three
+scan entry points — `map_file`, `table_stream`, `preamble_only` — spell all five
+out rather than wildcarding them, so a reason added later has to be answered at
+each rather than falling through. *Rejected:* keeping `Option<DumpIndex>` and
+adding a second, reporting method beside it — the collapsing one stays the
+shorter call, which is how the reason came to be out of reach of the scan entry
+points in the first place. *Rejected:* an accessor collapsing the reasons back
+to an `Option` for callers that do not care; it rebuilds the collapse under a
+shorter name at exactly the sites that must not have it, and the callers that
+genuinely do not care are tests.
 
 **A cache *write* failure is a hard error.** If the resolved path cannot be
 written (read-only mount, permissions, disk full), the library returns an error
@@ -5568,8 +5586,8 @@ there is simply lost.
 **`CacheMode::load` treats `Incomplete` exactly like `Valid`**, and the
 completeness question has two forms, one per kind of caller. A caller holding a
 live source (`map_file`, `table_stream`) compares `DumpIndex::scanned_through`
-against the size it already had to stat; folding `Incomplete` into `None` would
-instead make `map_forward` restart from byte 0 every time, when a partial cache
+against the size it already had to stat; answering "no index" for `Incomplete`
+would instead make `map_forward` restart from byte 0 every time, when a partial cache
 is the *normal* shape there — a cold query's map is designed to stop short once
 its target settles, and a resumed `parse` builds on exactly such a cache. A
 caller that instead *reports* what a cache holds has no live source to compare
@@ -5585,9 +5603,9 @@ is enforced library-side, not just by the CLI: `load`, `save` and
 `Enabled`/`Disabled`; `read_table` (L4) rejects `Offline` explicitly, ahead of
 `table_stream`'s own `load` call, so a caller does not have to trace through a
 generator to learn that `query` never accepts a cache-only mode.
-`load_offline` returns the full `CacheStatus` rather than `load`'s collapsed
-`Option<DumpIndex>`, because a cache-only caller has to tell the usable
-outcomes from the unusable ones with no scan to fall back on. It cannot reach
+`load_offline` returns the full `CacheStatus` rather than `load`'s `CacheLoad`,
+because a cache-only caller has to tell `Valid` from `Incomplete` — the
+distinction `load` erases — with no scan to fall back on. It cannot reach
 `SourceChanged` at all — there is no live file to compare against, which is
 exactly what its `CacheOffline` diagnostic warns about.
 

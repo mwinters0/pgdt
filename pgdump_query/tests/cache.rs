@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use pgdump_query::cache::{CacheMode, CacheStatus};
+use pgdump_query::cache::{CacheLoad, CacheMode, CacheStatus};
 use pgdump_query::map::SpanBody;
 use pgdump_query::{
     ByteRangeSource, DiagnosticKind, Error, KnownCompression, LocalFileSource, Recognized,
@@ -192,6 +192,53 @@ async fn size_mismatch_invalidates_the_cache() {
     );
 }
 
+/// `CacheMode::load` carries all four unusable statuses across as their own
+/// [`CacheLoad`] variants rather than answering "no index" for each
+/// (`docs/design/architecture.md`, "The cache"). It is the same four
+/// `an_unusable_cache_says_which_kind_of_unusable_it_is` and
+/// `size_mismatch_invalidates_the_cache` put to `cache::load`; what this pins
+/// is that the reason survives the trip to a caller that holds a live source
+/// and could scan.
+#[tokio::test]
+async fn cache_mode_load_names_each_unusable_status() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = LocalFileSource::open(edge_cases()).unwrap();
+    let index = build_index(&source, &ScanOptions::default()).await.unwrap();
+
+    let missing = dir.path().join("nonexistent.dqcache");
+    assert_eq!(CacheMode::Enabled(missing).load(&source).await.unwrap(), CacheLoad::Missing);
+
+    let foreign = dir.path().join("garbage.dqcache");
+    std::fs::write(&foreign, b"not a cache file").unwrap();
+    assert_eq!(CacheMode::Enabled(foreign).load(&source).await.unwrap(), CacheLoad::Unreadable);
+
+    let stale = dir.path().join("stale.dqcache");
+    cache::save(&stale, &source, &index).await.unwrap();
+    let mut bytes = std::fs::read(&stale).unwrap();
+    bytes[0] = bytes[0].wrapping_add(1);
+    std::fs::write(&stale, &bytes).unwrap();
+    assert_eq!(
+        CacheMode::Enabled(stale).load(&source).await.unwrap(),
+        CacheLoad::UnsupportedVersion
+    );
+
+    let path = dir.path().join("edge_cases.sql.dqcache");
+    cache::save(&path, &source, &index).await.unwrap();
+    let grown = dir.path().join("grown.sql");
+    let mut grown_bytes = std::fs::read(edge_cases()).unwrap();
+    grown_bytes.push(b'\n');
+    std::fs::write(&grown, &grown_bytes).unwrap();
+    let grown_source = LocalFileSource::open(&grown).unwrap();
+    assert_eq!(
+        CacheMode::Enabled(path).load(&grown_source).await.unwrap(),
+        CacheLoad::SourceChanged {
+            cached_stored_size: source.stored_size().await.unwrap(),
+            live_stored_size: grown_source.stored_size().await.unwrap(),
+        },
+        "the two sizes are the evidence a caller states the mismatch with"
+    );
+}
+
 /// An mtime mismatch alone is a loud warning, not grounds for invalidation
 /// — the cache still loads as `Valid`. Simulated by touching the dump file's
 /// mtime forward after the cache was saved, without changing its size.
@@ -253,8 +300,10 @@ async fn disabled_cache_ignores_an_existing_file_and_persists_nothing() {
     let mode = CacheMode::resolve(&dump, Some(Path::new("none")));
     assert_eq!(mode, CacheMode::Disabled);
 
-    // The existing valid cache at the colocated path is ignored, not read.
-    assert!(mode.load(&source).await.unwrap().is_none());
+    // The existing valid cache at the colocated path is ignored, not read —
+    // and the reason says so: `Disabled` is about the caller, not about
+    // anything found at a path (`docs/design/architecture.md`, "The cache").
+    assert_eq!(mode.load(&source).await.unwrap(), CacheLoad::Disabled);
 
     // Saving under a disabled mode is a no-op: it must not touch whatever is
     // (or isn't) at the would-be colocated path.
@@ -296,11 +345,10 @@ async fn a_changed_mtime_is_a_diagnostic_not_an_invalidation() {
     std::thread::sleep(std::time::Duration::from_millis(20));
     std::fs::write(&dump, &bytes).unwrap();
 
-    let loaded = CacheMode::Enabled(cache_path)
-        .load(&source)
-        .await
-        .unwrap()
-        .expect("an mtime change does not invalidate");
+    let CacheLoad::Index(loaded) = CacheMode::Enabled(cache_path).load(&source).await.unwrap()
+    else {
+        panic!("an mtime change does not invalidate")
+    };
     assert_eq!(loaded.blocks().count(), index.blocks().count(), "contents survive intact");
     assert!(
         loaded.diagnostics.contains(&pgdump_query::Diagnostic {
@@ -333,7 +381,10 @@ async fn diagnostics_do_not_round_trip_through_the_cache() {
         .push(Diagnostic { severity: Severity::Warning, kind: DiagnosticKind::CacheMtimeChanged });
     pgdump_query::cache::save(&cache_path, &source, &index).await.unwrap();
 
-    let loaded = CacheMode::Enabled(cache_path).load(&source).await.unwrap().unwrap();
+    let CacheLoad::Index(loaded) = CacheMode::Enabled(cache_path).load(&source).await.unwrap()
+    else {
+        panic!("the cache this test just saved is usable")
+    };
     // The saved `CacheMtimeChanged` is gone: the mismatch was between the
     // cache and *that* run's observation, and this run's mtime check passed.
     // What is present is recomputed, not restored — the TOC-coverage figure
@@ -353,12 +404,12 @@ async fn diagnostics_do_not_round_trip_through_the_cache() {
 /// A cache whose `scanned_through` falls short of its recorded size loads as
 /// `Incomplete`, not `Valid` — the case `preamble_only_persists_a_real_unscanned_tail`
 /// already exercises through `preamble_only` — but `CacheMode::load` still
-/// hands it back as `Some`, the same as a `Valid` cache, since its callers
-/// (`table_stream`, `preamble_only`) want a partial map to build forward
-/// from rather than a signal to start over
+/// hands it back as `CacheLoad::Index`, the same as a `Valid` cache, since its
+/// callers (`table_stream`, `preamble_only`) want a partial map to build
+/// forward from rather than a signal to start over
 /// (`docs/design/architecture.md`, "The cache").
 #[tokio::test]
-async fn an_incomplete_cache_still_loads_as_some_through_cache_mode() {
+async fn an_incomplete_cache_still_loads_as_an_index_through_cache_mode() {
     let source = LocalFileSource::open(edge_cases()).unwrap();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("edge_cases.sql.dqcache");
@@ -366,7 +417,9 @@ async fn an_incomplete_cache_still_loads_as_some_through_cache_mode() {
 
     preamble_only(&source, &ScanOptions::default(), &mode).await.unwrap();
 
-    let index = mode.load(&source).await.unwrap().expect("Incomplete still yields Some");
+    let CacheLoad::Index(index) = mode.load(&source).await.unwrap() else {
+        panic!("Incomplete still yields an index")
+    };
     let size = source.size().await.unwrap();
     assert!(index.scanned_through < size, "a preamble-only cache never reaches EOF");
 }

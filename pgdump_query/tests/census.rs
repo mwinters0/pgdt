@@ -12,7 +12,7 @@ use std::path::Path;
 
 use futures::StreamExt;
 
-use pgdump_query::cache::CacheMode;
+use pgdump_query::cache::{CacheLoad, CacheMode};
 use pgdump_query::index::ArrayShape;
 use pgdump_query::resolve::ColumnResolution;
 use pgdump_query::{
@@ -133,7 +133,9 @@ async fn every_mapping_pass_censuses_whatever_its_extent() {
         while let Some(batch) = stream.next().await {
             batch.unwrap();
         }
-        let index = cache.load(&source).await.unwrap().unwrap();
+        let CacheLoad::Index(index) = cache.load(&source).await.unwrap() else {
+            panic!("the query wrote a cache: {extent:?}")
+        };
         let block = index.blocks_for("public.t_array").next().unwrap();
         assert_eq!(block.array_shapes.len(), block.header.columns.len(), "{extent:?}");
         // `v_empty` holds `{}` then `{1,2,3}`: a real shape, recorded by a

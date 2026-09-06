@@ -9,7 +9,7 @@ use std::ops::ControlFlow;
 use serde::{Deserialize, Serialize};
 
 use crate::Result;
-use crate::cache::CacheMode;
+use crate::cache::{CacheLoad, CacheMode};
 use crate::copy::CopyHeader;
 use crate::diagnostic::Diagnostic;
 use crate::io::ByteRangeSource;
@@ -489,7 +489,20 @@ pub async fn preamble_only(
     options: &ScanOptions,
     cache: &CacheMode,
 ) -> Result<(DumpMetadata, Vec<Diagnostic>)> {
-    let mut base_index = cache.load(source).await?.unwrap_or_default();
+    let mut base_index = match cache.load(source).await? {
+        CacheLoad::Index(index) => index,
+        // Five reasons, one response today: there is no map to build forward
+        // from, so the preamble is scanned from scratch. They are spelled out
+        // rather than wildcarded because they are not alike — what a caller
+        // may do to the file at the cache path differs between them — so a
+        // reason added later has to be answered here rather than falling
+        // through (`docs/design/architecture.md`, "The cache").
+        CacheLoad::Disabled
+        | CacheLoad::Missing
+        | CacheLoad::Unreadable
+        | CacheLoad::UnsupportedVersion
+        | CacheLoad::SourceChanged { .. } => DumpIndex::default(),
+    };
     let known = base_index
         .metadata
         .as_ref()

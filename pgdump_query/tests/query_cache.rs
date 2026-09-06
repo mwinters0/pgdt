@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use bytes::Bytes;
 use futures::StreamExt;
-use pgdump_query::cache::CacheMode;
+use pgdump_query::cache::{CacheLoad, CacheMode};
 use pgdump_query::{
     ByteRangeSource, LocalFileSource, QueryOptions, ScanExtent, ScanOptions, build_index, cache,
     check_tiling, table_stream,
@@ -218,11 +218,11 @@ async fn a_cold_query_maps_up_to_its_target_and_stops() {
     .await;
     assert_eq!(rows, widgets_expected());
 
-    let index = CacheMode::Enabled(cache_path.clone())
-        .load(&source)
-        .await
-        .unwrap()
-        .expect("a cache was written");
+    let CacheLoad::Index(index) =
+        CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap()
+    else {
+        panic!("a cache was written")
+    };
     let mut tables: Vec<&str> = index.blocks().map(|b| b.header.table.as_str()).collect();
     tables.sort_unstable();
     assert_eq!(tables, vec!["empty_table", "widgets"]);
@@ -248,7 +248,10 @@ async fn scan_extent_full_maps_the_whole_file_from_a_query() {
     .await;
     assert_eq!(rows, widgets_expected(), "the row set is the same either way");
 
-    let index = CacheMode::Enabled(cache_path).load(&source).await.unwrap().unwrap();
+    let CacheLoad::Index(index) = CacheMode::Enabled(cache_path).load(&source).await.unwrap()
+    else {
+        panic!("a cache was written")
+    };
     let mut tables: Vec<&str> = index.blocks().map(|b| b.header.table.as_str()).collect();
     tables.sort_unstable();
     assert_eq!(tables, vec!["Odd Table", "empty_table", "no_column_list", "widgets"]);
@@ -277,11 +280,11 @@ async fn a_cold_query_misses_post_data_grants_but_scan_extent_full_finds_them() 
         CacheMode::Enabled(cache_path.clone()),
     )
     .await;
-    let index = CacheMode::Enabled(cache_path.clone())
-        .load(&source)
-        .await
-        .unwrap()
-        .expect("a cache was written");
+    let CacheLoad::Index(index) =
+        CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap()
+    else {
+        panic!("a cache was written")
+    };
     assert!(index.scanned_through < source.size().await.unwrap(), "stopped before EOF");
     assert!(index.roles.contains("postgres"));
     assert!(
@@ -297,7 +300,10 @@ async fn a_cold_query_misses_post_data_grants_but_scan_extent_full_finds_them() 
         CacheMode::Enabled(cache_path.clone()),
     )
     .await;
-    let index = CacheMode::Enabled(cache_path).load(&source).await.unwrap().unwrap();
+    let CacheLoad::Index(index) = CacheMode::Enabled(cache_path).load(&source).await.unwrap()
+    else {
+        panic!("a cache was written")
+    };
     assert_eq!(index.scanned_through, source.size().await.unwrap());
     assert!(
         index.roles.contains("fixture_reader"),
@@ -337,11 +343,11 @@ async fn interrupted_scan_leaves_correct_partial_progress() {
         }
     }
 
-    let index = CacheMode::Enabled(cache_path.clone())
-        .load(&source)
-        .await
-        .unwrap()
-        .expect("partial progress was persisted");
+    let CacheLoad::Index(index) =
+        CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap()
+    else {
+        panic!("partial progress was persisted")
+    };
     let tables: Vec<&str> = index.blocks().map(|b| b.header.table.as_str()).collect();
     assert_eq!(
         tables,
@@ -391,11 +397,11 @@ async fn interrupted_scan_still_captures_the_first_database_preamble() {
         stream.next().await.unwrap().unwrap();
     }
 
-    let index = CacheMode::Enabled(cache_path.clone())
-        .load(&source)
-        .await
-        .unwrap()
-        .expect("progress was persisted");
+    let CacheLoad::Index(index) =
+        CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap()
+    else {
+        panic!("progress was persisted")
+    };
     assert!(
         index.scanned_through < source.size().await.unwrap(),
         "sanity check: this scan really did stop well short of EOF"
@@ -422,7 +428,11 @@ async fn no_duplication_on_repeat_queries() {
         CacheMode::Enabled(cache_path.clone()),
     )
     .await;
-    let before = CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap().unwrap();
+    let CacheLoad::Index(before) =
+        CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap()
+    else {
+        panic!("the first query wrote a cache")
+    };
 
     drain(
         &source,
@@ -431,7 +441,11 @@ async fn no_duplication_on_repeat_queries() {
         CacheMode::Enabled(cache_path.clone()),
     )
     .await;
-    let after = CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap().unwrap();
+    let CacheLoad::Index(after) =
+        CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap()
+    else {
+        panic!("the second query left a cache")
+    };
 
     let after_count = after.blocks().count();
     assert_eq!(before.blocks().count(), after_count);
@@ -482,7 +496,11 @@ async fn a_query_built_index_tiles_in_every_cache_state() {
                 CacheMode::Enabled(cache_path.clone()),
             )
             .await;
-            let cold = CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap().unwrap();
+            let CacheLoad::Index(cold) =
+                CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap()
+            else {
+                panic!("{label}: the cold query wrote a cache")
+            };
             assert_eq!(check_tiling(&cold.spans, size), vec![], "{label}: cold");
 
             // Warm: a second query resumes mapping from the persisted
@@ -494,7 +512,11 @@ async fn a_query_built_index_tiles_in_every_cache_state() {
                 CacheMode::Enabled(cache_path.clone()),
             )
             .await;
-            let warm = CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap().unwrap();
+            let CacheLoad::Index(warm) =
+                CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap()
+            else {
+                panic!("{label}: the warm query left a cache")
+            };
             assert_eq!(check_tiling(&warm.spans, size), vec![], "{label}: warm");
             assert!(warm.scanned_through >= cold.scanned_through, "{label}: coverage only grows");
 
@@ -507,7 +529,11 @@ async fn a_query_built_index_tiles_in_every_cache_state() {
                 CacheMode::Enabled(cache_path.clone()),
             )
             .await;
-            let full = CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap().unwrap();
+            let CacheLoad::Index(full) =
+                CacheMode::Enabled(cache_path.clone()).load(&source).await.unwrap()
+            else {
+                panic!("{label}: the full query left a cache")
+            };
             assert_eq!(check_tiling(&full.spans, size), vec![], "{label}: full");
             assert_eq!(full.scanned_through, size, "{label}");
             let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
@@ -561,6 +587,9 @@ async fn a_resumed_query_leaves_a_tiling_index() {
     }
     assert_eq!(rows, widgets_expected()[1..], "the rows the first stream hadn't delivered");
 
-    let index = CacheMode::Enabled(cache_path).load(&source).await.unwrap().unwrap();
+    let CacheLoad::Index(index) = CacheMode::Enabled(cache_path).load(&source).await.unwrap()
+    else {
+        panic!("the resumed query left a cache")
+    };
     assert_eq!(check_tiling(&index.spans, size), vec![]);
 }
