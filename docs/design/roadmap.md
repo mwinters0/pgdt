@@ -524,8 +524,11 @@ trustworthy; **cancellation and timeouts**, since a ranged GET can hang where a
 `pread` cannot and the preamble prepass is an uncancellable region today
 ([`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md));
 **where a remote compressed file's seek table comes from**, which is the cache
-or else one ranged GET per stream footer, and is unbuilt on both sides today
-(`KD15`); and the **second set of
+where one exists — that path is built now, against a local `stat` — and
+otherwise one ranged GET per stream footer, which is the cold case this phase
+still owns
+([`roadmap-P14-remote-input-inbox.md`](roadmap-P14-remote-input-inbox.md)); and
+the **second set of
 measured defaults** a high-latency backend needs — readahead depth and
 chunk-size defaults measured against local devices say nothing about a
 high-latency ranged backend, which is the one part of that tuning that does not
@@ -711,7 +714,7 @@ The next item admitted takes `M62` and joins them.
 |---|---|---|---|---|
 | `M59` | | The census-off binary's stamp is checked as an ancestor of HEAD with no path the selected census figures declare changed in between, rather than as equal to HEAD — a non-ancestor stamp still refused, and the refusal reusing the prefix predicate `--stale` already argues staleness from rather than a second authority over what moves a reading | | [2026-09-05](../status/history/2026-09-05.md), "The census stamp tolerates a commit that moves nothing it measures" |
 | `M60` | | A figure taken outside the sweep carries its sitting commit inside its own `<!-- figure: … -->` marker, and every reader of the session stamp — `--stale`, acknowledgement spentness, `--verify-additive` — argues from that figure's commit instead; `--check` fails a sitting that borrows or is derived from, or that does not descend from the stamp, `--figure` refuses such a selection, the stamp's accounting sentence is generated rather than hand-written, and `measurements.md` gains the standing rule the whole thing enforces | | [2026-09-05](../status/history/2026-09-05.md), "A figure may be published outside a sweep, and its sitting becomes data" |
-| `M61` | | An `.xz` source is built from the seek table a matching cache already holds instead of re-walking the file's stream footers, which closes `KD15` — recognition is the layer that decides which source to build, so it is handed the table itself rather than a cache, and `open_local`'s signature is what that wiring moves | | [2026-09-06](../status/history/2026-09-06.md), "The wrap audit: the seek table is persisted and never read back" |
+| `M61` | 2026-09-06 | An `.xz` source is built from the seek table a matching cache already holds instead of re-walking the file's stream footers, which closes `KD15` — recognition is the layer that decides which source to build, so it is handed the table itself rather than a cache, and `open_local`'s signature is what that wiring moves | | [2026-09-06](../status/history/2026-09-06.md), "The seek table is read back, and a claim the file contradicts condemns the cache" |
 
 **One obligation outlived them and is most of the way discharged.** An
 `INSERT`-run scan cost **mid-teens times** a `COPY` scan per byte, CPU-bound,

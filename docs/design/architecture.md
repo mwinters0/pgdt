@@ -386,10 +386,13 @@ reads was compressed by a third party after the fact, which is how the dumps
 that actually get shipped around arrive — koji's included.
 
 **Recognition is a library convenience, deliberately outside the trait.**
-`pgdump_query::open_local(path) -> Result<Arc<dyn ByteRangeSource>>` reads the
-first six bytes, compares them against `.xz`'s magic (`\xfd7zXZ\x00`), and
-returns an `XzSource` or a `LocalFileSource` accordingly; the CLI's three
-commands call it in place of naming a source type. Both implementations stay
+`pgdump_query::open_local(path, known: KnownCompression) -> Result<Recognized>`
+reads the first six bytes, compares them against `.xz`'s magic
+(`\xfd7zXZ\x00`), and returns an `XzSource` or a `LocalFileSource`
+accordingly; the CLI's three commands call it in place of naming a source
+type. `known` is what a cache already said about this file, and the walk it
+spares is below; `KnownCompression::Unknown` is the no-knowledge case and
+always yields a source. Both implementations stay
 source-agnostic and are constructible directly, so an embedder that already
 knows what it holds need not go through recognition at all, and a further codec
 extends this one function rather than the CLI growing a second dispatch.
@@ -481,50 +484,59 @@ of one block each, and walking 31,150 footers is **85 s** on an HDD at 10% CPU,
 because each is a separate seek. One footer read is free. That difference is the
 whole reason the seek table is persisted rather than re-derived per run.
 
-<!-- deficiency: KD15 -->
-**The persisted table is written and never read back.** `cache::save` records
-the seek table through `ByteRangeSource::seek_table()` and `cache::load` round
-trips it, but `XzSource::open` always walks the footers itself — nothing
-constructs a reader *from* a cached table, which the decoder crate supports.
-Every invocation against a many-streams file therefore pays that walk again,
-which is the 85 s above for koji's, however complete the cache is. That is
-deficiency `KD15` (`../status/STATUS.md`, "Known deficiencies"), and it is
-**owned**: `M61` in the out-of-band ledger closes it ([`roadmap.md`](roadmap.md),
-"Out-of-band work"). The fix is small and located:
-recognition decides *which* source to build, so it is the place the table is
-handed to — a bare `xz_seek::SeekTable` rather than a cache, which is what moves
-`open_local`'s signature while leaving `io.rs` naming nothing in `cache`. The
-caller does the loading, through a `cache` entry point that checks the
-envelope's identity against a `stat` on the dump path, since no source exists
-yet to hand `load`; `load` itself is unchanged for the pass that follows.
-*Rejected:* stopping that decode short of the index — `compression` and
-`identity` do sit ahead of it in the envelope, but bincode is positional, and
-decoding the envelope twice is bounded by index size.
+**The persisted table is read back, so a file's walk is paid once rather than
+once per command.** `cache::save` records it through
+`ByteRangeSource::seek_table()`; `cache::known_compression` reads it back
+*before any source exists*, which is the moment recognition needs it, since
+recognition is what decides which source to build; and `open_local` hands it to
+`XzSource::with_table`, which opens the reader over it and walks nothing. What
+crosses that boundary is a bare `xz_seek::SeekTable` rather than a cache, so
+`io.rs` names nothing in `cache` — the caller does the loading, through an entry
+point that checks the envelope's identity against a plain `stat` on the dump
+path, since there is no source yet to hand `load`. `load` itself is unchanged
+and runs a moment later for the pass that follows. *Rejected:* stopping that
+decode short of the index — `compression` and `identity` do sit ahead of it in
+the envelope, but bincode is positional, and decoding the envelope twice is
+bounded by index size.
 
-A table that passes the envelope's identity check and then fails `xz_seek`'s
-own `validate` invalidates the **whole** cache rather than only the table: both
-were written by one `save` from one file, so a table that does not describe this
-file is evidence the span index does not either — and the index is the half that
+**What recognition is told is a claim it checks, not one it believes.**
+`KnownCompression` is three-state — `Unknown`, `Plain`, `Xz(table)` — because
+"the cache says this file is plain" is something the file's own magic can
+contradict, and an `Option` would fold that case into "nothing is known". A
+table that passes the envelope's identity check and then fails `xz_seek`'s own
+`validate` invalidates the **whole** cache rather than only the table: both were
+written by one `save` from one file, so a table that does not describe this file
+is evidence the span index does not either — and the index is the half that
 mis-addresses rows silently, where a bad table is caught loudly by a block
 header's CRC32. The same holds when the envelope carries a compression index for
-a file that no longer sniffs as `.xz`, or the reverse. Each is the existing
-unusable-cache vocabulary rather than a new one, which is what that type's rule
-of naming every unusable outcome separately already asks for.
+a file that no longer sniffs as `.xz`, or the reverse. Each is one outcome,
+`Recognized::Mismatch`, reported in the existing unusable-cache vocabulary
+rather than a new one: `CacheStatus::Unreadable`, which is the one of the four
+whose sentence does not state its own refutation, since reaching this point
+means the two stored sizes `SourceChanged` quotes as its evidence are equal.
 
 **Rejecting a table reads no bytes, so the walk that follows is a choice rather
-than a cost already paid.** `parse` takes it, being about to scan regardless;
-`info` and `query` report the unusable cache having read nothing, which is what
-keeps a changed `.xz` from spending its footer walk to reach an error it was
-always going to reach. Recognition therefore answers "the cache does not
-describe this file" as an outcome of its own rather than recovering
-transparently. The saving is
+than a cost already paid.** `parse` takes it, being about to scan regardless —
+and discards the unusable cache first, so that nothing resumes from the span
+index the same `save` wrote; it is about to write a correct one over that path
+anyway, and what an interrupt before the first bank then costs is a cache that
+was already unusable. `info` and `query` report the unusable cache having read
+nothing, which is what keeps a changed `.xz` from spending its footer walk to
+reach an error it was always going to reach. Recognition therefore answers "the
+cache does not describe this file" as an outcome of its own rather than
+recovering transparently. The saving is
 tested behaviourally rather than by instrumentation: the constructor is handed a
-table a walk of that file would not produce, so a silent walk fails the test.
+table naming a check algorithm this file's streams do not use — which `validate`
+does not police and no walk would ever produce — so a silent walk fails the test
+by succeeding.
 *Rejected:* making `XzSource` generic over its file handle so footer reads can
 be counted — the walk happens below `ByteRangeSource`, so counting it means
 reworking a tested type's signature to buy an assertion the behavioural test
-already makes. Two things bound the
-cost meanwhile: a single-stream file's walk is one read whatever its size, and
+already makes.
+
+**The walk is still paid by the command that first parses a file**, there being
+no cache to read a table out of yet, and by nothing after it. Two things bound
+that meanwhile: a single-stream file's walk is one read whatever its size, and
 `pgdq info --dqcache <path>` with no `--source` opens no source at all and so
 never pays it.
 

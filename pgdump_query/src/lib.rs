@@ -23,7 +23,9 @@ pub use index::{
     ArrayShape, CopyBlock, DumpIndex, MAX_ARRAY_DIMS, RowGroupStats, SparseRowIndex, build_index,
     preamble_only, union_census,
 };
-pub use io::{ByteRangeSource, LocalFileSource, XzSource, open_local};
+pub use io::{
+    ByteRangeSource, KnownCompression, LocalFileSource, Recognized, XzSource, open_local,
+};
 pub use map::{
     DataBlock, InsertRun, LargeObjectRegion, Span, SpanBody, SpanText, TEXT_CAP, TilingIssue,
     TocHeader, attach_text, build_map, check_tiling,

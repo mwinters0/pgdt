@@ -39,35 +39,35 @@ arm, rather than the type being redesigned around a source with no mtime.
 
 **Fact.** Building an xz seek table means reading each stream's footer, and the
 koji upstream download is **31,150 concatenated streams**. Locally that walk is
-85 s of HDD seeks; over ranged GETs it is 31,150 round trips. The mitigation was
-designed and only half built: the table *is* persisted in the `.dqcache`
-(`cache::save` takes it through `ByteRangeSource::seek_table()`, `cache::load`
-round trips it) and the decoder crate does support constructing a reader *from*
-a previously obtained table — but nothing in this tree calls it, so
-`XzSource::open` walks the footers on every invocation however complete the
-cache is. That is deficiency `KD15`, owned by `M61` in the out-of-band ledger
-([`../status/STATUS.md`](../status/STATUS.md);
-[`architecture.md`](architecture.md), "The compressed source";
-[`roadmap.md`](roadmap.md), "Out-of-band work"). The fix is
-located rather than open-ended: **recognition** is the layer that decides which
-source to build, so it is also the layer that can consult a loaded cache first —
-but it does not hold one today, and giving it one is a wiring decision.
+85 s of HDD seeks; over ranged GETs it is 31,150 round trips. The **warm** half
+is built and no longer this phase's to do: a cache's persisted table is read
+back before any source exists and handed to recognition, which builds the source
+from it and walks nothing ([`architecture.md`](architecture.md), "The compressed
+source"). What remains is the **cold** case — the first command against a remote
+`.xz`, where there is no cache to read a table out of and the walk is 31,150
+round trips before a byte is served.
 
-**Why P14 cares.** It is this phase's worst latency case and it arrives the
-moment remote and compressed compose — 31,150 round trips before a byte is
-served, with no cache able to prevent it. So this phase either does that work or
-inherits it undone, and it dominates: everything else in a warm remote query is
-a cache read, an identity check and one block's bytes. That is the same fact
-this phase depends on from the other direction — with a complete structural
-cache the round-trip count for a warm query is small and countable, and that is
-the number this phase should be designed against, so the walk is what stands
-between the design and the number.
+Two details of the warm path are shaped for a local file and are exactly what
+this phase has to replace. The entry point that loads the table
+(`cache::known_compression`) checks the envelope's identity against a plain
+**`stat` on the dump path**, which a remote source does not have — the same
+no-mtime problem the phase already owns for `SourceIdentity`, arriving one layer
+earlier and before any source exists to ask. And recognition sniffs the file's
+magic with a small read from the **path**, not through a `ByteRangeSource`, so a
+remote source needs that first read to be a ranged GET or needs recognition to
+be told what it holds.
+
+**Why P14 cares.** The cold case is this phase's worst latency case and it
+arrives the moment remote and compressed compose. Everything else in a warm
+remote query is a cache read, an identity check and one block's bytes — which is
+the number this phase should be designed against — so what stands between the
+design and that number is now the cold walk alone, plus the two local-file
+assumptions above, which are on the warm path and must not be inherited
+unnoticed.
 
 **Origin.** 2026-09-02, grilling the compressed-input work; the half-built state
-found by its wrap audit, 2026-09-06
+found by its wrap audit and closed by `M61`, 2026-09-06
 ([`../status/history/2026-09-06.md`](../status/history/2026-09-06.md)).
-Re-check `KD15` and `M61` before grilling: if that item has landed, the walk is
-gone and half this entry is discharged.
 
 ---
 

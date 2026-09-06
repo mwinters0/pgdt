@@ -122,12 +122,19 @@ explicit `--block-size` produces a file pgdq can seek into. Files that
 `xz` produced with threads, or that were made by concatenating several `.xz`
 files, are already seekable and earn no warning.
 
-Note that pgdq reads the file's block index afresh on every command. On a file
-built from many concatenated streams — the shape a chunked download or a
-`cat a.xz b.xz` produces — that index costs one disk seek per stream, which on
-a very large file can be a minute or more *per command*, even with a complete
-cache. A file compressed in one go with `xz -T0` or `--block-size` does not
-have this problem: its index is a single read whatever the file's size.
+Note that pgdq has to read the file's block index before it can read anything
+else. On a file built from many concatenated streams — the shape a chunked
+download or a `cat a.xz b.xz` produces — that index costs one disk seek per
+stream, which on a very large file can be a minute or more. You pay it once:
+`pgdq parse` saves the index in the cache beside the dump, and every command
+after that takes it from there. A file compressed in one go with `xz -T0` or
+`--block-size` never has the problem at all — its index is a single read
+whatever the file's size.
+
+If the cache stops matching the file it sits beside — you replaced the dump,
+or pointed `--dqcache` at another file's cache — pgdq says so rather than
+quietly working around it: `info` and `query` refuse it, and `pgdq parse` is
+what builds a fresh one.
 
 ### `--chunk-size`: you almost certainly do not need it
 
@@ -278,7 +285,7 @@ though every one of them is fixed by running `pgdq parse`:
 | Message | What happened |
 |---|---|
 | `no cache at …` | You have not parsed this file yet. |
-| `… is not a pgdq cache` | Something else is at that path. Check `--dqcache`. |
+| `… is not a pgdq cache` | Something else is at that path, or what is there is a cache for some other file. Check `--dqcache`. |
 | `… was written by a different pgdq build` | The cache format changed under you. Pre-1.0 this happens; nothing is migrated. |
 | `… has changed since it was parsed` | The dump file's size no longer matches. Every offset in the cache could be wrong. |
 

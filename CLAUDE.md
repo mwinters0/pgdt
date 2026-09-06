@@ -91,7 +91,8 @@ none. Let the container write the log.
 second long-running case rather than the same one.** `pgdq` reads either
 directly, so a scan of one trades ~19× fewer bytes off the device for CPU it did
 not spend before — and the upstream download's 31,150-stream shape pays an 85 s
-footer walk *before* the scan, on every command (`KD15`). Neither is a measured
+footer walk *before* the first scan, the cache's persisted seek table sparing
+every command after it. Neither is a measured
 configuration: no figure covers a compressed scan, and taking one is the
 parallel-decode work's job, so a reading off one of these files is a probe and
 no document may quote it as a measurement.
@@ -235,8 +236,9 @@ read end to end by a second `ByteRangeSource`, so `open_local` sniffs content
 rather than a file name, `size()` and `stored_size()` are two different numbers,
 and a backward read's cost depends on a container shape the file chose. That
 section holds the three shapes and what each costs, the decoder restarted on
-seek, `KD15` (the persisted seek table is never read back, so the footer walk is
-paid on every command), and the rule that governs `vendor/xz-seek/`: it is
+seek, the seek table a cache persists and recognition is handed back so the
+footer walk is paid once per file rather than once per command, and the rule
+that governs `vendor/xz-seek/`: it is
 **read-only**, a bug there is fixed upstream and returns at the next sync, and
 the first consumer needing newer upstream work is what re-syncs it. A change to
 the trait's own shape — a method added, a signature moved — is

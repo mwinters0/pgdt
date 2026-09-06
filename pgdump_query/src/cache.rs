@@ -41,7 +41,7 @@ use crate::diagnostic::Diagnostic;
 use crate::index::{
     DumpIndex, non_seekable_compression_diagnostic, tiling_diagnostics, toc_coverage_diagnostic,
 };
-use crate::io::ByteRangeSource;
+use crate::io::{ByteRangeSource, KnownCompression};
 use crate::{Error, Result};
 
 /// Bumped whenever the on-disk shape changes incompatibly. A cache written
@@ -120,7 +120,9 @@ enum ContainerKind {
 ///
 /// Built at [`save`] time from [`ByteRangeSource::seek_table`], which
 /// [`crate::XzSource`] answers from the table it already built while
-/// opening — persisting a cache never re-walks the file to get this. P15's
+/// opening — persisting a cache never re-walks the file to get this — and read
+/// back by [`known_compression`] before any source exists, which is what
+/// spares every command after the first one that walk. P15's
 /// gzip index is a different *shape*, not a variant of this one (a set of
 /// checkpoints, not a list of independently decodable blocks), so it gets
 /// its own sibling variant here rather than trying to fit this one.
@@ -255,6 +257,48 @@ fn read_cache_file(path: &Path) -> Result<std::result::Result<CacheFile, CacheSt
         return Ok(Err(CacheStatus::UnsupportedVersion));
     }
     Ok(Ok(file))
+}
+
+/// What the cache at `cache_path` says about the compression layer of the
+/// file at `dump_path`, answered **before any source exists**
+/// (`docs/design/architecture.md`, "The compressed source").
+///
+/// This is the half of the cache a caller needs *early*: recognition decides
+/// which source to build, and for an `.xz` file it either walks the stream
+/// footers or is handed the table a previous walk already produced. There is
+/// no source yet to give [`load`], so identity is checked here against a
+/// plain `stat` on `dump_path` — the same stored-size rule [`load`] applies,
+/// with a differing mtime again too weak to invalidate anything.
+///
+/// **Every unusable outcome collapses to [`KnownCompression::Unknown`].** No
+/// cache, foreign bytes, a version this build does not read, a file that has
+/// changed size: this function hands over knowledge or it does not, and the
+/// pass that follows still reports *why* through [`load`], which is unchanged
+/// and sees the same file a moment later.
+///
+/// *Rejected:* stopping the decode short of the index, since `compression`
+/// and `identity` do sit ahead of it in the envelope — bincode is positional,
+/// so reaching them means decoding what precedes them anyway, and the cost of
+/// decoding the envelope twice is bounded by the index's own size.
+pub fn known_compression(cache_path: &Path, dump_path: &Path) -> Result<KnownCompression> {
+    let Ok(file) = read_cache_file(cache_path)? else {
+        return Ok(KnownCompression::Unknown);
+    };
+    // One variant today; a future one is matched through the variant rather
+    // than a shared accessor — see [`SourceIdentity`].
+    let SourceIdentity::LocalFile { stored_size, .. } = file.identity;
+    // A dump path that cannot be stat'd is left to the open that follows,
+    // which is where that failure has a sentence to say.
+    let Ok(live) = std::fs::metadata(dump_path) else {
+        return Ok(KnownCompression::Unknown);
+    };
+    if stored_size != live.len() {
+        return Ok(KnownCompression::Unknown);
+    }
+    Ok(match file.compression {
+        Some(CompressionIndex::Xz(table)) => KnownCompression::Xz(table),
+        None => KnownCompression::Plain,
+    })
 }
 
 /// Load a cache from `path` with no live source to check it against — the

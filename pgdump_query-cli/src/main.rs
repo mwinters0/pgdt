@@ -12,9 +12,10 @@ use pgdump_query::cache::{CacheMode, CacheStatus};
 use pgdump_query::pgtype::RANGE_STRUCT_FIELDS;
 use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdump_query::{
-    ArrayShape, CompareKind, ComparisonPlan, DataBlock, Diagnostic, DiagnosticKind, DumpIndex,
-    DumpMetadata, NestedPlan, Predicate, PredicateOp, QueryOptions, ScanOptions, Severity, Span,
-    SpanBody, TypeKind, open_local, preamble_only, render_field_into,
+    ArrayShape, ByteRangeSource, CompareKind, ComparisonPlan, DataBlock, Diagnostic,
+    DiagnosticKind, DumpIndex, DumpMetadata, KnownCompression, NestedPlan, Predicate, PredicateOp,
+    QueryOptions, Recognized, ScanOptions, Severity, Span, SpanBody, TypeKind, open_local,
+    preamble_only, render_field_into,
 };
 
 mod alloc;
@@ -702,7 +703,19 @@ async fn main() -> Result<()> {
                 .require_enabled("parse")
                 .context("`--dqcache none` cannot be combined with `parse`")?
                 .to_path_buf();
-            let source = open_local(&file)?;
+            // `parse` is about to scan regardless, so it is the one command
+            // that pays the footer walk rather than reporting a cache that
+            // turns out not to describe this file — and it discards that
+            // cache first, since its span index was written by the same
+            // `save` as the table recognition refused
+            // (`docs/design/architecture.md`, "The compressed source").
+            let source = match open_with_cache(&file, &mode)? {
+                Recognized::Source(source) => source,
+                Recognized::Mismatch => {
+                    discard_unusable_cache(&path)?;
+                    open_unaided(&file)?
+                }
+            };
             if preamble_only_flag {
                 let (metadata, diagnostics) =
                     preamble_only(source.as_ref(), &scan_options(chunk_size), &mode).await?;
@@ -785,7 +798,20 @@ async fn main() -> Result<()> {
                     )
                 })?
                 .to_path_buf();
-            let source = open_local(&file)?;
+            // `info` never scans, so a cache that does not describe this file
+            // leaves nothing to report from — and it says so having read
+            // nothing, rather than spending an `.xz` file's footer walk to
+            // reach an error it was always going to reach. `Unreadable` is
+            // the existing sentence for it: the envelope decoded, but what
+            // sits at that path is not this file's cache.
+            let source = match open_with_cache(&file, &mode)? {
+                Recognized::Source(source) => source,
+                Recognized::Mismatch => anyhow::bail!(unusable_cache_message(
+                    &CacheStatus::Unreadable,
+                    &path,
+                    Some(&file)
+                )),
+            };
             let status = pgdump_query::cache::load(&path, source.as_ref()).await?;
             let (mut index, mtime_changed, total_size) = match status {
                 CacheStatus::Valid { index, mtime_changed, total_size }
@@ -834,7 +860,21 @@ async fn main() -> Result<()> {
                         .collect(),
                 ),
             };
-            let source = open_local(&file)?;
+            // As `info`: a cache that does not describe this file is
+            // reported having read nothing, rather than paying a footer walk
+            // and a whole scan over a map that cannot be trusted. `parse` is
+            // the command that rebuilds it.
+            let source = match open_with_cache(&file, &mode)? {
+                Recognized::Source(source) => source,
+                Recognized::Mismatch => {
+                    let path = mode.require_enabled("query")?;
+                    anyhow::bail!(unusable_cache_message(
+                        &CacheStatus::Unreadable,
+                        path,
+                        Some(&file)
+                    ))
+                }
+            };
             let mut header_printed = false;
             let mut any_batch = false;
             let mut rows = 0u64;
@@ -901,6 +941,56 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Open `file`, handing recognition whatever the cache at `cache` says about
+/// its compression layer, so an `.xz` source is built from the seek table a
+/// previous walk already produced instead of re-walking the file's stream
+/// footers (`docs/design/architecture.md`, "The compressed source").
+///
+/// `--dqcache none` claims nothing, which is what makes an opted-out cache
+/// cost exactly the walk it always did; cache-only mode never reaches here at
+/// all, having no live source to open.
+fn open_with_cache(file: &Path, cache: &CacheMode) -> Result<Recognized> {
+    let known = match cache {
+        CacheMode::Enabled(path) => pgdump_query::cache::known_compression(path, file)?,
+        CacheMode::Disabled | CacheMode::Offline(_) => KnownCompression::Unknown,
+    };
+    Ok(open_local(file, known)?)
+}
+
+/// Recognition with nothing claimed about the file, which cannot report a
+/// mismatch: [`KnownCompression::Unknown`] asserts nothing for the file's own
+/// bytes to contradict.
+fn open_unaided(file: &Path) -> Result<Arc<dyn ByteRangeSource>> {
+    match open_local(file, KnownCompression::Unknown)? {
+        Recognized::Source(source) => Ok(source),
+        Recognized::Mismatch => {
+            unreachable!("`KnownCompression::Unknown` claims nothing recognition could contradict")
+        }
+    }
+}
+
+/// Delete a cache that does not describe the file beside it, so that nothing
+/// resumes from its span index either.
+///
+/// The table recognition just refused and that index were written by one
+/// `save` from one file, so the index is not to be believed and the whole
+/// cache goes (`docs/design/architecture.md`, "The compressed source"). Only
+/// `parse` does this, and only because it is about to write a correct cache
+/// over the same path anyway; the cost of an interrupt before the first bank
+/// is a cache that was already unusable.
+fn discard_unusable_cache(path: &Path) -> Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e).with_context(|| {
+            format!(
+                "failed to remove the cache at {}, which does not describe this file",
+                path.display()
+            )
+        }),
+    }
 }
 
 /// The sentence `pgdq info` prints for a cache it cannot use. All four causes

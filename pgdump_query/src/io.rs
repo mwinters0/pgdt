@@ -374,6 +374,38 @@ impl XzSource {
         })
     }
 
+    /// Open `path` from a seek table a previous walk of the *same* file
+    /// produced, **without walking it again**
+    /// (`docs/design/architecture.md`, "The compressed source").
+    ///
+    /// This is what turns the table a cache persists into a saving: the
+    /// footer walk [`XzSource::open`] pays is one read per stream, which is
+    /// 85 s on the 31,150-stream koji download and is otherwise paid by every
+    /// command against it however complete the cache is.
+    ///
+    /// `xz_seek` validates the table for internal consistency and against the
+    /// file's own length before trusting it, reading **no bytes** — so a
+    /// table that does not describe this file costs nothing to reject, and a
+    /// block header's own CRC32 is what catches one that survives validation.
+    /// A rejected table is `Error::Xz(xz_seek::Error::InvalidTable { .. })`,
+    /// which is the error [`open_local`] turns into [`Recognized::Mismatch`]
+    /// rather than a walk.
+    pub fn with_table(path: impl AsRef<Path>, table: xz_seek::SeekTable) -> Result<Self> {
+        let path = path.as_ref().to_path_buf();
+        let file = std::fs::File::open(&path)?;
+        let stat_file = Arc::new(file.try_clone()?);
+        // `Builder::new()` rather than a configured one: `Reader::new` is the
+        // shortcut through exactly these defaults, so the two constructors
+        // decode identically — `Verify::Full` included.
+        let reader = xz_seek::Builder::new().open_with_table(file, table)?;
+        Ok(Self {
+            path,
+            stat_file,
+            reader: Arc::new(Mutex::new(reader)),
+            pool: Arc::new(BufferPool::default()),
+        })
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -463,6 +495,54 @@ impl ByteRangeSource for XzSource {
 /// (`docs/design/architecture.md`, "The compressed source").
 const XZ_MAGIC: [u8; 6] = [0xFD, b'7', b'z', b'X', b'Z', 0x00];
 
+/// What a caller already knows about a file's compression layer before
+/// [`open_local`] has looked at it — normally read out of a cache written
+/// from that same file (`crate::cache::known_compression`), and the whole
+/// reason an `.xz` source need not re-walk its stream footers
+/// (`docs/design/architecture.md`, "The compressed source").
+///
+/// **A bare [`xz_seek::SeekTable`], not a cache.** Recognition is the layer
+/// that decides which source to build, so it is the layer the table is handed
+/// to; what loads it is the caller's business, which is what keeps `io.rs`
+/// naming nothing in `crate::cache`.
+///
+/// Three states, not an `Option`: "the cache says this file is plain" is a
+/// claim recognition can *contradict*, and folding it together with "nothing
+/// is known" would lose the one case where a cache describes a different file
+/// than the one at the path.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum KnownCompression {
+    /// Nothing is known — recognition reads the file's own bytes and, for
+    /// `.xz`, pays the walk. The only state that can never produce a
+    /// [`Recognized::Mismatch`], since it claims nothing.
+    #[default]
+    Unknown,
+    /// Known to have no compression layer at all.
+    Plain,
+    /// Known to be `.xz`, with the seek table a previous walk of this file
+    /// produced.
+    Xz(xz_seek::SeekTable),
+}
+
+/// What [`open_local`] made of a file, given what its caller claimed to know.
+pub enum Recognized {
+    /// The source, ready to read.
+    Source(Arc<dyn ByteRangeSource>),
+    /// The [`KnownCompression`] handed in does not describe this file: its
+    /// compression layer disagrees with the file's own first bytes, or its
+    /// seek table was refused by `xz_seek`'s validation. Nothing beyond the
+    /// magic was read and no source was built, so the caller still has both
+    /// choices — pay the walk with [`KnownCompression::Unknown`], or report
+    /// the cache it came from as unusable without spending a footer walk to
+    /// reach an error it was always going to reach
+    /// (`docs/design/architecture.md`, "The compressed source").
+    ///
+    /// The claim it contradicts and the cache's span index were written by
+    /// one `save` from one file, so this condemns that index too: a caller
+    /// that goes on to scan must not also resume from it.
+    Mismatch,
+}
+
 /// Open `path` as a [`ByteRangeSource`], choosing between [`LocalFileSource`]
 /// and [`XzSource`] by **content**, not by name (D8): the first six bytes are
 /// checked against `.xz`'s magic, whatever `path` is called. A file that
@@ -476,12 +556,37 @@ const XZ_MAGIC: [u8; 6] = [0xFD, b'7', b'z', b'X', b'Z', 0x00];
 /// either directly and skip the read this does. The magic check costs one
 /// small read ahead of the source construction that was about to happen
 /// anyway.
-pub fn open_local(path: impl AsRef<Path>) -> Result<Arc<dyn ByteRangeSource>> {
+///
+/// `known` is what a caller read out of a cache for this same file, and it is
+/// checked rather than believed: recognition still reads the magic, and a
+/// claim the file contradicts is [`Recognized::Mismatch`] rather than a
+/// silent fallback, because the cache that made the claim is thereby known
+/// not to describe this file at all. [`KnownCompression::Unknown`] is the
+/// no-knowledge case and always yields a source.
+pub fn open_local(path: impl AsRef<Path>, known: KnownCompression) -> Result<Recognized> {
     let path = path.as_ref();
-    if is_xz_by_magic(path)? {
-        Ok(Arc::new(XzSource::open(path)?))
-    } else {
-        Ok(Arc::new(LocalFileSource::open(path)?))
+    let is_xz = is_xz_by_magic(path)?;
+    match (is_xz, known) {
+        // The saving: a table from a previous walk of this file, validated
+        // against the file's length and its own internal consistency without
+        // reading a byte, and never walked for.
+        (true, KnownCompression::Xz(table)) => match XzSource::with_table(path, table) {
+            Ok(source) => Ok(Recognized::Source(Arc::new(source))),
+            Err(Error::Xz(xz_seek::Error::InvalidTable { .. })) => Ok(Recognized::Mismatch),
+            Err(e) => Err(e),
+        },
+        (true, KnownCompression::Unknown) => {
+            Ok(Recognized::Source(Arc::new(XzSource::open(path)?)))
+        }
+        // Both directions of "the cache describes a different file": a
+        // compression index for a file whose bytes are plain, and a plain
+        // cache for a file whose bytes are `.xz`.
+        (true, KnownCompression::Plain) | (false, KnownCompression::Xz(_)) => {
+            Ok(Recognized::Mismatch)
+        }
+        (false, KnownCompression::Unknown | KnownCompression::Plain) => {
+            Ok(Recognized::Source(Arc::new(LocalFileSource::open(path)?)))
+        }
     }
 }
 
@@ -775,6 +880,17 @@ mod tests {
         assert_eq!(&backward[..], &payload[0..3000]);
     }
 
+    /// Recognition with nothing claimed, unwrapped — every test below that is
+    /// not about a mismatch wants the source and nothing else, and
+    /// `KnownCompression::Unknown` claims nothing recognition could
+    /// contradict.
+    fn recognize(path: &Path) -> Arc<dyn ByteRangeSource> {
+        match open_local(path, KnownCompression::Unknown).unwrap() {
+            Recognized::Source(source) => source,
+            Recognized::Mismatch => panic!("`Unknown` claims nothing to contradict"),
+        }
+    }
+
     /// D8: a genuinely `.xz`-compressed file is recognised whatever it is
     /// named — the temp file `xz_compress` returns carries no `.xz` suffix at
     /// all, and `open_local` still hands back a source whose `seek_table()`
@@ -785,7 +901,7 @@ mod tests {
         let compressed = xz_compress(&payload, &["--block-size=4096"]);
         assert_ne!(compressed.path().extension(), Some(std::ffi::OsStr::new("xz")));
 
-        let source = open_local(compressed.path()).unwrap();
+        let source = recognize(compressed.path());
         assert!(source.seek_table().is_some(), "content-sniffed as .xz");
         assert_eq!(source.size().await.unwrap(), payload.len() as u64);
         let got = source.read_range(0, payload.len()).await.unwrap();
@@ -802,7 +918,7 @@ mod tests {
         file.write_all(b"not actually compressed").unwrap();
         file.flush().unwrap();
 
-        let source = open_local(file.path()).unwrap();
+        let source = recognize(file.path());
         assert!(source.seek_table().is_none(), "no compression layer — read as plain");
         let got = source.read_range(0, 23).await.unwrap();
         assert_eq!(&got[..], b"not actually compressed");
@@ -814,8 +930,109 @@ mod tests {
     async fn open_local_treats_a_file_shorter_than_the_magic_as_plain() {
         let (_file, plain) = source_of(b"ab");
         let path = plain.path().to_path_buf();
-        let source = open_local(&path).unwrap();
+        let source = recognize(&path);
         assert!(source.seek_table().is_none());
         assert_eq!(source.size().await.unwrap(), 2);
+    }
+
+    /// A table a previous walk produced is handed back and used: the source
+    /// reads correctly and answers the same table it was given.
+    #[tokio::test]
+    async fn open_local_builds_an_xz_source_from_a_handed_back_table() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+        let table = XzSource::open(compressed.path()).unwrap().seek_table().unwrap();
+
+        let source =
+            match open_local(compressed.path(), KnownCompression::Xz(table.clone())).unwrap() {
+                Recognized::Source(source) => source,
+                Recognized::Mismatch => panic!("the file's own table must describe it"),
+            };
+        assert_eq!(source.seek_table().as_ref(), Some(&table));
+        assert_eq!(source.size().await.unwrap(), payload.len() as u64);
+        let got = source.read_range(9_000, 4000).await.unwrap();
+        assert_eq!(&got[..], &payload[9_000..13_000]);
+    }
+
+    /// **The walk is actually skipped**, tested behaviourally rather than by
+    /// instrumentation (`docs/design/architecture.md`, "The compressed
+    /// source"): the table handed in names a check algorithm this file's
+    /// streams do not use, which `validate` does not police and a walk of
+    /// this file would never produce. The check's size moves the payload's
+    /// end, so a decode from the handed table fails — where a source that had
+    /// silently re-walked would read the payload back happily.
+    #[tokio::test]
+    async fn a_handed_back_table_is_used_rather_than_re_walked() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+        let mut table = XzSource::open(compressed.path()).unwrap().seek_table().unwrap();
+        let real = table.streams[0].check;
+        let wrong = if real == xz_seek::Check::Crc32 {
+            xz_seek::Check::Crc64
+        } else {
+            xz_seek::Check::Crc32
+        };
+        for stream in &mut table.streams {
+            stream.check = wrong;
+        }
+
+        let source = match open_local(compressed.path(), KnownCompression::Xz(table)).unwrap() {
+            Recognized::Source(source) => source,
+            Recognized::Mismatch => panic!("`validate` does not police the check algorithm"),
+        };
+        assert!(
+            source.read_range(0, 4000).await.is_err(),
+            "a decode under the wrong check must fail — a silent re-walk would have succeeded"
+        );
+    }
+
+    /// A table that does not describe this file is refused, and the refusal
+    /// is an outcome rather than an error: nothing was read and the caller
+    /// still chooses whether to pay the walk.
+    #[tokio::test]
+    async fn open_local_reports_a_table_that_does_not_describe_the_file() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+        // A second, shorter file's table: `validate` compares the table's
+        // recorded compressed length against this source's.
+        let other = xz_compress(&payload[..5_000], &["--block-size=4096"]);
+        let other_table = XzSource::open(other.path()).unwrap().seek_table().unwrap();
+
+        assert!(matches!(
+            open_local(compressed.path(), KnownCompression::Xz(other_table)).unwrap(),
+            Recognized::Mismatch
+        ));
+    }
+
+    /// Both directions of "the cache describes a different file": a
+    /// compression index for a file whose bytes are plain, and a plain cache
+    /// for a file whose bytes are `.xz`.
+    #[tokio::test]
+    async fn open_local_reports_a_compression_claim_the_file_contradicts() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+        let table = XzSource::open(compressed.path()).unwrap().seek_table().unwrap();
+        let (plain_file, _plain) = source_of(&payload);
+
+        assert!(matches!(
+            open_local(plain_file.path(), KnownCompression::Xz(table)).unwrap(),
+            Recognized::Mismatch
+        ));
+        assert!(matches!(
+            open_local(compressed.path(), KnownCompression::Plain).unwrap(),
+            Recognized::Mismatch
+        ));
+    }
+
+    /// A plain claim about a plain file is simply right, and costs nothing.
+    #[tokio::test]
+    async fn open_local_accepts_a_plain_claim_about_a_plain_file() {
+        let (file, _plain) = source_of(b"0123456789abcdef");
+        let source = match open_local(file.path(), KnownCompression::Plain).unwrap() {
+            Recognized::Source(source) => source,
+            Recognized::Mismatch => panic!("a plain file is what the claim said"),
+        };
+        assert!(source.seek_table().is_none());
+        assert_eq!(source.size().await.unwrap(), 16);
     }
 }

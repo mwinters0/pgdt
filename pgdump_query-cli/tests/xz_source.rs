@@ -243,3 +243,61 @@ fn filtered_query_agrees_across_plain_and_both_xz_shapes() {
     assert_eq!(stdout_of(&plain_out), stdout_of(&seekable_out));
     assert_eq!(stdout_of(&plain_out), stdout_of(&non_seekable_out));
 }
+
+// ---------------------------------------------------------------------------
+// The persisted seek table
+// ---------------------------------------------------------------------------
+
+/// Replace `path`'s contents with plain (uncompressed) bytes of **exactly the
+/// same length**, so that the cache beside it still passes its stored-size
+/// identity check and the only thing that has changed is what the file's own
+/// first bytes say it is. That is the one arrangement a user can reach that
+/// puts a compression claim and a file's content into contradiction.
+fn overwrite_with_plain_bytes_of_the_same_length(path: &Path) {
+    let len = std::fs::metadata(path).unwrap().len() as usize;
+    let mut bytes = b"-- not compressed any more\n".repeat(len.div_ceil(27));
+    bytes.truncate(len);
+    std::fs::write(path, &bytes).unwrap();
+    assert_eq!(std::fs::metadata(path).unwrap().len() as usize, len);
+}
+
+/// A cache whose compression claim the file contradicts is refused by the two
+/// commands that would otherwise scan around it, and refused **having read
+/// nothing**: no stream-footer walk is spent reaching an error that was
+/// always coming (`docs/design/architecture.md`, "The compressed source").
+#[test]
+fn info_and_query_refuse_a_cache_that_does_not_describe_the_file() {
+    let (_dir, path) = seekable_xz();
+    parse(&path);
+    overwrite_with_plain_bytes_of_the_same_length(&path);
+
+    let info = run(&["info", "--source", path.to_str().unwrap()]);
+    assert!(!info.status.success(), "{}", stdout_of(&info));
+    assert!(stderr_of(&info).contains("is not a pgdq cache"), "{}", stderr_of(&info));
+
+    let query = run(&["query", "--source", path.to_str().unwrap(), "--table", "widgets"]);
+    assert!(!query.status.success(), "{}", stdout_of(&query));
+    assert!(stderr_of(&query).contains("is not a pgdq cache"), "{}", stderr_of(&query));
+}
+
+/// `parse` takes the other branch, being about to scan regardless: it
+/// discards the cache that does not describe this file — table *and* span
+/// index, written by one `save` — and scans the file it actually has.
+#[test]
+fn parse_discards_a_cache_that_does_not_describe_the_file_and_rescans() {
+    let (_dir, path) = seekable_xz();
+    parse(&path);
+    let cache = PathBuf::from(format!("{}.dqcache", path.display()));
+    let before = std::fs::read(&cache).unwrap();
+    overwrite_with_plain_bytes_of_the_same_length(&path);
+
+    let out = run(&["parse", "--source", path.to_str().unwrap()]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+
+    let after = std::fs::read(&cache).unwrap();
+    assert_ne!(before, after, "the cache must describe the file that is there now");
+    // And what it describes is now readable: `info` answers from the rebuilt
+    // cache rather than refusing it.
+    let info = run(&["info", "--source", path.to_str().unwrap()]);
+    assert!(info.status.success(), "{}", stderr_of(&info));
+}
