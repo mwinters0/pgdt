@@ -457,8 +457,8 @@ enum MapStop {
 /// It fires when the block's governing database differs from the one the
 /// metadata in hand was computed at, so a single-database dump (koji included)
 /// pays nothing: the preamble prepass already stood at that same offset.
-async fn map_forward<S: ByteRangeSource>(
-    source: &S,
+async fn map_forward(
+    source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
     cache: &CacheMode,
     index: &mut DumpIndex,
@@ -736,10 +736,10 @@ impl SaveThrottle {
     /// Save, and time the save — that duration is the whole input to the next
     /// decision. A disabled cache makes this ~free and so never throttles,
     /// which is right: there is nothing to amortize.
-    async fn save<S: ByteRangeSource>(
+    async fn save(
         &mut self,
         cache: &CacheMode,
-        source: &S,
+        source: &dyn ByteRangeSource,
         index: &DumpIndex,
     ) -> Result<()> {
         let started = Instant::now();
@@ -823,8 +823,8 @@ pub struct MapRun {
 /// persisted what it holds by then — including the metadata it stated at the
 /// legal boundaries it *did* stand on, which is what makes an interrupted
 /// cache typed rather than merely labelled.
-pub async fn map_file<S: ByteRangeSource>(
-    source: &S,
+pub async fn map_file(
+    source: &dyn ByteRangeSource,
     scan_options: &ScanOptions,
     cache: &CacheMode,
 ) -> Result<MapRun> {
@@ -1132,17 +1132,14 @@ fn snapshot(
 ///
 /// `query_options.scan_extent` decides how much of the file the mapping pass
 /// walks before any row comes back; see [`ScanExtent`].
-pub fn table_stream<'a, S>(
-    source: &'a S,
+pub fn table_stream<'a>(
+    source: &'a dyn ByteRangeSource,
     table: &str,
     scan_options: ScanOptions,
     query_options: QueryOptions,
     resume: Option<ResumeToken>,
     cache: CacheMode,
-) -> TableStream<'a>
-where
-    S: ByteRangeSource + 'a,
-{
+) -> TableStream<'a> {
     let table = table.to_string();
     let fingerprint = query_fingerprint(&table, &query_options);
     let start_token = resume.clone().unwrap_or_else(|| ResumeToken::start(fingerprint));

@@ -68,7 +68,7 @@ struct SourceIdentity {
 }
 
 impl SourceIdentity {
-    async fn observe<S: ByteRangeSource>(source: &S) -> Result<Self> {
+    async fn observe(source: &dyn ByteRangeSource) -> Result<Self> {
         let size = source.size().await?;
         let mtime = source
             .modified()
@@ -163,7 +163,7 @@ pub enum CacheStatus {
 /// identity. See [`CacheStatus`] and the module docs for what "validate"
 /// means. A hard I/O error reading `path` (anything but "not found") still
 /// propagates — only the cache's own *content* is best-effort.
-pub async fn load<S: ByteRangeSource>(path: &Path, source: &S) -> Result<CacheStatus> {
+pub async fn load(path: &Path, source: &dyn ByteRangeSource) -> Result<CacheStatus> {
     let file = match read_cache_file(path)? {
         Ok(file) => file,
         Err(status) => return Ok(status),
@@ -247,7 +247,7 @@ fn status_from_file(file: CacheFile, mtime_changed: bool) -> CacheStatus {
 /// current size/mtime for [`load`] to check next time. Propagates I/O
 /// failures as `Error::Io` rather than swallowing them — see the module
 /// docs.
-pub async fn save<S: ByteRangeSource>(path: &Path, source: &S, index: &DumpIndex) -> Result<()> {
+pub async fn save(path: &Path, source: &dyn ByteRangeSource, index: &DumpIndex) -> Result<()> {
     let identity = SourceIdentity::observe(source).await?;
     let file = CacheFile {
         format_version: FORMAT_VERSION,
@@ -312,7 +312,7 @@ impl CacheMode {
     /// caller that instead *reports* what a cache holds reaches for
     /// [`load`]/[`CacheMode::load_offline`] and the full [`CacheStatus`],
     /// which is what `pgdq info` does.
-    pub async fn load<S: ByteRangeSource>(&self, source: &S) -> Result<Option<DumpIndex>> {
+    pub async fn load(&self, source: &dyn ByteRangeSource) -> Result<Option<DumpIndex>> {
         match self {
             CacheMode::Enabled(path) => match load(path, source).await? {
                 // All four unusable outcomes collapse here: this method's
@@ -378,7 +378,7 @@ impl CacheMode {
     /// whole purpose is to populate the cache should reject a disabled mode
     /// up front with [`CacheMode::require_enabled`] instead of relying on
     /// this silently doing nothing.
-    pub async fn save<S: ByteRangeSource>(&self, source: &S, index: &DumpIndex) -> Result<()> {
+    pub async fn save(&self, source: &dyn ByteRangeSource, index: &DumpIndex) -> Result<()> {
         match self {
             CacheMode::Enabled(path) => save(path, source, index).await,
             CacheMode::Disabled => Ok(()),

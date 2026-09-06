@@ -1,6 +1,7 @@
 use std::future::Future;
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
@@ -17,15 +18,27 @@ use crate::{Error, Result};
 /// `docs/design/architecture.md`, "Execution model and API surface") without
 /// changing them. [`ByteRangeSource::hint_read_size`] sits outside that mirror
 /// and is defaulted, so such an implementation need not know it exists.
+///
+/// **Dyn-compatible on purpose** (`docs/design/roadmap-P13-compressed-input.md`,
+/// "D3 — `ByteRangeSource` becomes dyn-compatible"): each method returns a
+/// boxed future rather than `impl Future` (RPITIT), so callers can hold
+/// `&dyn ByteRangeSource` / `Arc<dyn ByteRangeSource>` instead of being
+/// generic over the source. With one implementation today the boxing is free
+/// insurance; P13's `XzSource` and P14's remote source are what it is for.
+/// One allocation per `read_range` call is noise beside a chunk-sized read.
 pub trait ByteRangeSource: Send + Sync {
-    fn read_range(&self, offset: u64, len: usize) -> impl Future<Output = Result<Bytes>> + Send;
-    fn size(&self) -> impl Future<Output = Result<u64>> + Send;
+    fn read_range(
+        &self,
+        offset: u64,
+        len: usize,
+    ) -> Pin<Box<dyn Future<Output = Result<Bytes>> + Send + '_>>;
+    fn size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>>;
     /// Last-modified time, if the source exposes one — `object_store`'s
     /// `head` carries this too. `None` rather than an error for a source
     /// that genuinely has no notion of one; the structure cache
     /// (`docs/design/architecture.md`, "The cache") treats an absent mtime as
     /// nothing to compare against, never as a mismatch.
-    fn modified(&self) -> impl Future<Output = Result<Option<SystemTime>>> + Send;
+    fn modified(&self) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>>;
     /// The read length this caller is about to ask for over and over — a
     /// read loop's `ScanOptions::chunk_size`, announced once before the loop
     /// starts.
@@ -211,40 +224,51 @@ impl LocalFileSource {
 }
 
 impl ByteRangeSource for LocalFileSource {
-    async fn read_range(&self, offset: u64, len: usize) -> Result<Bytes> {
-        let file = Arc::clone(&self.file);
-        let pool = Arc::clone(&self.pool);
-        let buf = pool.take(len);
-        // A read that fails drops its buffer instead of returning it: the
-        // pool is an optimization, and an error path is the one place where
-        // re-allocating costs nothing anyone will measure.
-        let buf = tokio::task::spawn_blocking(move || -> std::io::Result<Vec<u8>> {
-            let mut buf = buf;
-            file.read_exact_at(&mut buf[..len], offset)?;
-            Ok(buf)
+    fn read_range(
+        &self,
+        offset: u64,
+        len: usize,
+    ) -> Pin<Box<dyn Future<Output = Result<Bytes>> + Send + '_>> {
+        Box::pin(async move {
+            let file = Arc::clone(&self.file);
+            let pool = Arc::clone(&self.pool);
+            let buf = pool.take(len);
+            // A read that fails drops its buffer instead of returning it: the
+            // pool is an optimization, and an error path is the one place where
+            // re-allocating costs nothing anyone will measure.
+            let buf = tokio::task::spawn_blocking(move || -> std::io::Result<Vec<u8>> {
+                let mut buf = buf;
+                file.read_exact_at(&mut buf[..len], offset)?;
+                Ok(buf)
+            })
+            .await
+            .map_err(Error::from)?
+            .map_err(Error::from)?;
+            Ok(Bytes::from_owner(PooledBuffer { buf: Some(buf), pool }).slice(..len))
         })
-        .await
-        .map_err(Error::from)?
-        .map_err(Error::from)?;
-        Ok(Bytes::from_owner(PooledBuffer { buf: Some(buf), pool }).slice(..len))
     }
 
-    async fn size(&self) -> Result<u64> {
-        let file = Arc::clone(&self.file);
-        let len = tokio::task::spawn_blocking(move || file.metadata().map(|m| m.len()))
-            .await
-            .map_err(Error::from)?
-            .map_err(Error::from)?;
-        Ok(len)
+    fn size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
+        Box::pin(async move {
+            let file = Arc::clone(&self.file);
+            let len = tokio::task::spawn_blocking(move || file.metadata().map(|m| m.len()))
+                .await
+                .map_err(Error::from)?
+                .map_err(Error::from)?;
+            Ok(len)
+        })
     }
 
-    async fn modified(&self) -> Result<Option<SystemTime>> {
-        let file = Arc::clone(&self.file);
-        let mtime = tokio::task::spawn_blocking(move || file.metadata().and_then(|m| m.modified()))
-            .await
-            .map_err(Error::from)?
-            .map_err(Error::from)?;
-        Ok(Some(mtime))
+    fn modified(&self) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>> {
+        Box::pin(async move {
+            let file = Arc::clone(&self.file);
+            let mtime =
+                tokio::task::spawn_blocking(move || file.metadata().and_then(|m| m.modified()))
+                    .await
+                    .map_err(Error::from)?
+                    .map_err(Error::from)?;
+            Ok(Some(mtime))
+        })
     }
 
     /// **The pool's one non-size rule.** A read loop announcing its chunk size

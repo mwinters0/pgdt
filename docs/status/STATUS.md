@@ -240,10 +240,11 @@ this phase's slices commit to no measurement row (deferred to P16's parallel
 decode) and use two test-time-generated `.xz` fixtures, no encoding-option
 matrix.
 
-- [ ] **13.1** Vendor `xz-seek` as a path dependency on `vendor/xz-seek/` and
+- [x] **13.1** Vendor `xz-seek` as a path dependency on `vendor/xz-seek/` and
       rework `ByteRangeSource` to dyn-compatible signatures (D3) —
       `Pin<Box<dyn Future>>` returns, `&dyn`/`Arc<dyn>` call sites. No new
       behavior; every existing (plain local file) caller must still pass.
+      Notes: [`../design/roadmap-P13.1-dyn-trait-notes.md`](../design/roadmap-P13.1-dyn-trait-notes.md)
 - [ ] **13.2** `SourceIdentity` becomes the opaque enum (D4), `stored_size()`
       and `size_is_exact()` join the trait (D4, D7), `CompressionIndex` enum
       added empty of xz content (D5). One `FORMAT_VERSION` bump for all of it.

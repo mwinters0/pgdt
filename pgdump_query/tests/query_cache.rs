@@ -7,6 +7,7 @@
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use bytes::Bytes;
@@ -66,7 +67,7 @@ fn widgets_expected() -> Vec<Vec<Option<String>>> {
 }
 
 async fn drain(
-    source: &impl ByteRangeSource,
+    source: &dyn ByteRangeSource,
     table: &str,
     batch_options: QueryOptions,
     cache: CacheMode,
@@ -103,18 +104,20 @@ impl ByteRangeSource for CountingSource {
         &self,
         offset: u64,
         len: usize,
-    ) -> impl Future<Output = pgdump_query::Result<Bytes>> + Send {
+    ) -> Pin<Box<dyn Future<Output = pgdump_query::Result<Bytes>> + Send + '_>> {
         self.bytes_read.fetch_add(len as u64, Ordering::SeqCst);
         self.inner.read_range(offset, len)
     }
 
-    fn size(&self) -> impl Future<Output = pgdump_query::Result<u64>> + Send {
+    fn size(&self) -> Pin<Box<dyn Future<Output = pgdump_query::Result<u64>> + Send + '_>> {
         self.inner.size()
     }
 
     fn modified(
         &self,
-    ) -> impl Future<Output = pgdump_query::Result<Option<std::time::SystemTime>>> + Send {
+    ) -> Pin<
+        Box<dyn Future<Output = pgdump_query::Result<Option<std::time::SystemTime>>> + Send + '_>,
+    > {
         self.inner.modified()
     }
 }

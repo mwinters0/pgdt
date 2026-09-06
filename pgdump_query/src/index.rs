@@ -306,10 +306,7 @@ impl DumpIndex {
 /// pass, not two. `DumpIndex::metadata` is then [`crate::preamble::dump_metadata_from_spans`]
 /// over the result, and [`DumpIndex::blocks`] a filter over it — neither is a
 /// second scan (`docs/design/architecture.md`, "`DumpIndex`: one owner per fact").
-pub async fn build_index<S: ByteRangeSource>(
-    source: &S,
-    options: &ScanOptions,
-) -> Result<DumpIndex> {
+pub async fn build_index(source: &dyn ByteRangeSource, options: &ScanOptions) -> Result<DumpIndex> {
     let mut spans = Builder::new();
 
     scan(source, options, |event| {
@@ -392,8 +389,8 @@ pub(crate) fn toc_coverage_diagnostic(spans: &[Span]) -> Diagnostic {
 /// `COPY` block starts before it — and whatever roles/tablespaces the
 /// preamble region referenced (`DumpIndex::roles`/`tablespaces`'s own
 /// partial-scan caveat applies here too).
-pub(crate) async fn scan_preamble<S: ByteRangeSource>(
-    source: &S,
+pub(crate) async fn scan_preamble(
+    source: &dyn ByteRangeSource,
     options: &ScanOptions,
 ) -> Result<(DumpMetadata, Vec<Span>, u64, BTreeSet<String>, BTreeSet<String>)> {
     let mut spans = Builder::new();
@@ -468,8 +465,8 @@ pub(crate) async fn scan_preamble<S: ByteRangeSource>(
 /// answers with `DumpMetadata` alone rather than a whole `DumpIndex`, so its
 /// diagnostics have nowhere else to travel back to the caller
 /// (`docs/design/architecture.md`, "Diagnostics: one severity scale, two types").
-pub async fn preamble_only<S: ByteRangeSource>(
-    source: &S,
+pub async fn preamble_only(
+    source: &dyn ByteRangeSource,
     options: &ScanOptions,
     cache: &CacheMode,
 ) -> Result<(DumpMetadata, Vec<Diagnostic>)> {

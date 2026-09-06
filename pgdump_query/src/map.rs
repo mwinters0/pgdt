@@ -333,7 +333,7 @@ fn stores_text(body: &SpanBody) -> bool {
 /// the ones between `Data` blocks, so **contiguous runs are coalesced into a
 /// single `read_range`** — in a real dump that is one read per gap between
 /// data blocks, over schema-sized regions the scan just walked.
-pub async fn attach_text<S: ByteRangeSource>(source: &S, spans: &mut [Span]) -> Result<()> {
+pub async fn attach_text(source: &dyn ByteRangeSource, spans: &mut [Span]) -> Result<()> {
     let mut i = 0;
     while i < spans.len() {
         if !stores_text(&spans[i].body) {
@@ -1647,7 +1647,7 @@ fn classify(stmt: &str) -> SpanBody {
 /// docs for what this slice does and doesn't classify. Always scans to EOF;
 /// there is no partial/incremental form here, so
 /// [`SpanBody::Unscanned`] never appears in the result.
-pub async fn build_map<S: ByteRangeSource>(source: &S, options: &ScanOptions) -> Result<Vec<Span>> {
+pub async fn build_map(source: &dyn ByteRangeSource, options: &ScanOptions) -> Result<Vec<Span>> {
     let mut builder = Builder::new();
 
     scan(source, options, |event| {

@@ -23,6 +23,13 @@ serde = { version = "1.0.229", features = ["derive"] }
 simdutf8 = "0.1.5"
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["rt", "sync"] }
+# A frozen, read-only vendored copy — `vendor/xz-seek` is excluded from this
+# workspace, not published, and not yet used by any code here (D9,
+# `docs/design/roadmap-P13-compressed-input.md`, "D9 — The dependency is a
+# frozen vendored copy, not published, wired in by this phase"). The default
+# features (`liblzma`, `fast-checks`) are the manifest's own and this phase's
+# choice over `xz4rust` — see D9's "The build takes `liblzma`".
+xz-seek = { path = "../vendor/xz-seek" }
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["async_tokio"] }

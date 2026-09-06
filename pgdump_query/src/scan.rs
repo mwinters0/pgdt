@@ -530,9 +530,12 @@ impl ScanOptions {
 /// Scan `source` from the beginning, invoking `on_event` for every event.
 ///
 /// The callback may return [`ControlFlow::Break`] to stop early.
-pub async fn scan<S, F>(source: &S, options: &ScanOptions, mut on_event: F) -> Result<()>
+pub async fn scan<F>(
+    source: &dyn ByteRangeSource,
+    options: &ScanOptions,
+    mut on_event: F,
+) -> Result<()>
 where
-    S: ByteRangeSource,
     F: FnMut(Event<'_>) -> ControlFlow<()>,
 {
     let size = source.size().await?;

@@ -234,19 +234,40 @@ struct FailsPast<'a> {
 }
 
 impl ByteRangeSource for FailsPast<'_> {
-    async fn read_range(&self, offset: u64, len: usize) -> pgdump_query::Result<bytes::Bytes> {
-        if offset >= self.fail_at {
-            return Err(pgdump_query::Error::Io(std::io::Error::other("simulated interruption")));
-        }
-        self.inner.read_range(offset, len).await
+    fn read_range(
+        &self,
+        offset: u64,
+        len: usize,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = pgdump_query::Result<bytes::Bytes>> + Send + '_>,
+    > {
+        Box::pin(async move {
+            if offset >= self.fail_at {
+                return Err(pgdump_query::Error::Io(std::io::Error::other(
+                    "simulated interruption",
+                )));
+            }
+            self.inner.read_range(offset, len).await
+        })
     }
 
-    async fn size(&self) -> pgdump_query::Result<u64> {
-        self.inner.size().await
+    fn size(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = pgdump_query::Result<u64>> + Send + '_>>
+    {
+        self.inner.size()
     }
 
-    async fn modified(&self) -> pgdump_query::Result<Option<std::time::SystemTime>> {
-        self.inner.modified().await
+    fn modified(
+        &self,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = pgdump_query::Result<Option<std::time::SystemTime>>>
+                + Send
+                + '_,
+        >,
+    > {
+        self.inner.modified()
     }
 }
 
@@ -333,19 +354,36 @@ struct CancelsPast<'a> {
 }
 
 impl ByteRangeSource for CancelsPast<'_> {
-    async fn read_range(&self, offset: u64, len: usize) -> pgdump_query::Result<bytes::Bytes> {
+    fn read_range(
+        &self,
+        offset: u64,
+        len: usize,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = pgdump_query::Result<bytes::Bytes>> + Send + '_>,
+    > {
         if offset >= self.trip {
             self.cancel.store(true, Ordering::SeqCst);
         }
-        self.inner.read_range(offset, len).await
+        self.inner.read_range(offset, len)
     }
 
-    async fn size(&self) -> pgdump_query::Result<u64> {
-        self.inner.size().await
+    fn size(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = pgdump_query::Result<u64>> + Send + '_>>
+    {
+        self.inner.size()
     }
 
-    async fn modified(&self) -> pgdump_query::Result<Option<std::time::SystemTime>> {
-        self.inner.modified().await
+    fn modified(
+        &self,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = pgdump_query::Result<Option<std::time::SystemTime>>>
+                + Send
+                + '_,
+        >,
+    > {
+        self.inner.modified()
     }
 }
 

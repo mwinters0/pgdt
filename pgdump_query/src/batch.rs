@@ -1316,8 +1316,8 @@ fn render_list_level(
 /// cache-only mode paired with a live source in hand is a caller contract
 /// violation (`docs/design/architecture.md`, "The cache" — `Span::text` is `None` for every `Data` span regardless, so
 /// `query` could never answer from a cache alone even if this were allowed).
-pub async fn read_table<S, F>(
-    source: &S,
+pub async fn read_table<F>(
+    source: &dyn ByteRangeSource,
     table: &str,
     scan_options: &ScanOptions,
     query_options: &QueryOptions,
@@ -1325,7 +1325,6 @@ pub async fn read_table<S, F>(
     mut on_batch: F,
 ) -> Result<(ResolvedSchema, Option<ResumeToken>)>
 where
-    S: ByteRangeSource,
     F: FnMut(RecordBatch) -> ControlFlow<()>,
 {
     use futures::StreamExt;
