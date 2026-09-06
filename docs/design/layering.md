@@ -134,7 +134,7 @@ source as further `ByteRangeSource` implementations, the container layer between
 dependency into it. The `.xz` source is the built instance and holds to it —
 `XzSource` lives in `io.rs` beside `LocalFileSource` and nothing above L1 knows
 a source decodes ([`architecture.md`](architecture.md), "The compressed
-source"); the gzip and zstd sources (P15) join it there.
+source"); the gzip source (P15) and the zstd one (P18) join it there.
 
 The two byte sources compose in one direction only — a decompressing source
 wraps whatever supplies its compressed bytes, local or remote — so neither

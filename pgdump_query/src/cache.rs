@@ -133,9 +133,10 @@ enum ContainerKind {
 /// opening — persisting a cache never re-walks the file to get this — and read
 /// back by [`claim`] before any source exists, which is what
 /// spares every command after the first one that walk. P15's
-/// gzip index is a different *shape*, not a variant of this one (a set of
-/// checkpoints, not a list of independently decodable blocks), so it gets
-/// its own sibling variant here rather than trying to fit this one.
+/// gzip index is a different *shape*, not a variant of this one — a set of
+/// decoder checkpoints for a single-member file, and for a multi-member one a
+/// member list that resembles a block list without being `xz_seek`'s type — so
+/// it gets its own sibling variants here rather than trying to fit this one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 enum CompressionIndex {
     Xz(xz_seek::SeekTable),

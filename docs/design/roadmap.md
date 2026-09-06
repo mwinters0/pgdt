@@ -20,7 +20,8 @@ reused, including a struck phase's.
 | P10 — row-group statistics | Sketched; not grilled | this file, below; [inbox](roadmap-P10-row-group-statistics-inbox.md) |
 | P14 — remote input | Sketched; not grilled | this file, below; [inbox](roadmap-P14-remote-input-inbox.md) |
 | P6 — embeddable engine | Sketched; not grilled | this file, below; [inbox](roadmap-P6-embeddable-engine-inbox.md) |
-| P15 — gzip and zstd input | Sketched; not grilled | this file, below; [inbox](roadmap-P15-gzip-zstd-inbox.md) |
+| P15 — gzip input | Sketched; not grilled | this file, below; [inbox](roadmap-P15-gzip-inbox.md) |
+| P18 — zstd and lz4 input | Sketched; not grilled | this file, below; [inbox](roadmap-P18-zstd-inbox.md) — carved out of the gzip work |
 | P8 — format coverage | Sketched; not grilled | this file, below; [inbox](roadmap-P8-format-coverage-inbox.md) |
 
 **A row's state is one of `Sketched`, `Specified`, `Current`, `Complete` or
@@ -41,7 +42,7 @@ destination, so it drops to `(c) unowned` unless another phase absorbs it
 The struck phases' mechanisms are described by subject in
 [`architecture.md`](architecture.md), not by phase; their specs and notes went
 at a keystone review (`../process.md`, "The keystone: striking the
-centering"). **Phase numbering continues from `P17`** — nothing at or below it
+centering"). **Phase numbering continues from `P18`** — nothing at or below it
 is reused, whether it was struck, sketched, or never specified.
 
 Two standing-constraint docs cut across everything below.
@@ -575,32 +576,70 @@ from going last. Its inbox is
 the largest of the five and none of it decays by waiting: the entries are
 questions this phase must answer, not evidence that ages.
 
-## P15 — gzip and zstd input
+## P15 — gzip input
 
-**Inbox:** [`roadmap-P15-gzip-zstd-inbox.md`](roadmap-P15-gzip-zstd-inbox.md) — facts earlier phases filed for this one. Drain it when grilling this phase.
+**Inbox:** [`roadmap-P15-gzip-inbox.md`](roadmap-P15-gzip-inbox.md) — facts earlier phases filed for this one. Drain it when grilling this phase.
 
-The codecs the `.xz` source leaves behind: `.gz` and `.zst`, in the single-stream shape and
-in the seekable ones (`bgzip`'s BGZF, `t2sz`'s zstd seekable format). Two things
-separate them from xz, and they are why this is a phase rather than two more
-arms of that source's:
+`.gz` input, in both shapes it arrives in: the single-member stream a writer
+produces streaming, and the multi-member one — of which `bgzip`'s BGZF is the
+disciplined case, every member carrying its compressed length in a header extra
+field. **One phase, not two**, because BGZF is a strict subset of gzip rather
+than a sibling format: the magic is the same, the decoder is the same, and a
+gzip source that could not read a BGZF file would be wrong. What differs
+between them is one thing, the payload of the index that makes a backward read
+affordable — a set of decoder *checkpoints* for the single-member shape, a list
+of member offsets for the multi-member one — and everything around that index
+is shared. Splitting them would build the recognition path, the decoder and the
+cache envelope's second variant twice, or once speculatively.
 
-- **Neither answers `size()` from its own footer.** gzip's `ISIZE` is the
-  uncompressed length mod 2³², useless above 4 GiB; zstd's frame content size
-  is optional and a streaming writer omits it. So this phase either relaxes
+Two things separate gzip from xz, and they are why this is a phase rather than
+one more arm of that source's:
+
+- **It does not answer `size()` from its own footer.** `ISIZE` is the
+  uncompressed length mod 2³², useless above 4 GiB. So this phase either relaxes
   what `ByteRangeSource::size` promises or computes the size in a first pass —
   a decision xz never forced, and one that reaches every caller that
-  clamps a read against `size()`.
-- **These are `pg_dump`'s own plain-format output.** For plain text a nonzero
-  `--compress` level compresses the entire output file, as gzip, lz4 or zstd;
-  gzip long predates the method selector and lz4/zstd arrive with PG 16. So
-  this phase closes a **compatibility gap**, not a convenience — and the files
-  it has to read are the non-seekable single-stream shape, since `pg_dump`
-  writes them streaming. lz4 belongs with them for the same reason or stays out
-  for none.
+  clamps a read against `size()`. The two shapes do not answer it alike: a
+  member-walk sums exact per-member `ISIZE`s, while the single-member shape has
+  nothing short of a full decode.
+- **This is `pg_dump`'s own plain-format output.** For plain text a nonzero
+  `--compress` level compresses the entire output file, and gzip long predates
+  the method selector, so `pg_dump -Fp -Z9` has produced a file this build
+  cannot read for as long as there has been a build. That closes a
+  **compatibility gap**, not a convenience — and the file it has to read is the
+  non-seekable single-member shape, since `pg_dump` writes it streaming.
 
-**Scheduled ahead of P8**, whose Track B needs per-entry gzip and zstd
-streaming decode inside the archive container. Landing the decoders here means
-that track reuses them rather than acquiring them alongside a TOC parser.
+**Scheduled ahead of P8**, whose Track B needs per-entry gzip streaming decode
+inside the archive container. Landing the decoder here means that track reuses
+it rather than acquiring it alongside a TOC parser.
+
+## P18 — zstd and lz4 input
+
+**Inbox:** [`roadmap-P18-zstd-inbox.md`](roadmap-P18-zstd-inbox.md) — facts earlier phases filed for this one. Drain it when grilling this phase.
+
+The codecs `pg_dump` gained with PG 16, in the single-frame shape and in the
+seekable one (`t2sz`'s zstd seekable format, a skippable frame carrying the
+frame index). Same argument as P15 above — a `--compress=zstd` plain dump is
+ordinary `pg_dump` output this build cannot read — and the same `size()`
+problem in its own form: zstd's frame content size is *optional* and a
+streaming writer omits it, so the number is unavailable for exactly the files
+this phase exists to read.
+
+**Carved out of P15 rather than shipped with it**, because nothing the gzip
+work does is on this phase's critical path: a different decoder dependency, a
+different seekable container, a different index payload, and a codec that
+arrives with a PG version rather than predating everything. What the two share
+is the `size()` contract decision, and that is settled once — by whichever runs
+first — rather than being a reason to run them together.
+
+**lz4 rides here**, for the reason it never belonged with gzip: it is the third
+arm of the same PG 16 method selector, with the same shape of problem and no
+gzip-specific anything. Whether it is worth reading at all is this phase's to
+decide, and the honest answer may be no — it earns its place from a real dump
+somebody has, not from the flag existing.
+
+**Scheduled ahead of P8** for P15's reason, and after it for no reason beyond
+gzip being the older and more likely input.
 
 ## P8 — Format coverage beyond plain COPY TEXT
 
@@ -646,7 +685,8 @@ in it are genuinely new and should be scoped as such when this phase becomes
 current:
 
 - **Per-entry streaming decompression** (gzip, and lz4/zstd for PG 16+
-  archives) — the decoders P15 lands for whole-file input, applied per entry.
+  archives) — the decoders P15 and P18 land for whole-file input, applied per
+  entry.
   What is new here is the *placement*: an archive compresses **internally**, so
   the container layer decompresses an entry rather than a file, and there is no
   whole-file byte stream for a source below it to present.

@@ -60,8 +60,8 @@ pub trait ByteRangeSource: Send + Sync {
     /// length rather than a bound (`docs/design/architecture.md`, "Execution
     /// model and API surface"). Every source implemented so far answers `true`
     /// honestly, xz's own size coming from its stream index exactly; nothing
-    /// reads this yet; it exists for P15's gzip/zstd sources, whose sizes
-    /// cannot always be known exactly ahead of a full decode.
+    /// reads this yet; it exists for the gzip and zstd sources (P15, P18),
+    /// whose sizes cannot always be known exactly ahead of a full decode.
     fn size_is_exact(&self) -> bool {
         true
     }
