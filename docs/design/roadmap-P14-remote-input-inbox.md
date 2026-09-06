@@ -179,3 +179,49 @@ the fetch back is a decision this phase makes, not one the crate makes for it.
 **Origin.** 2026-09-06, answering `xz-seek`'s `P3` grilling
 ([`../status/history/2026-09-06.md`](../status/history/2026-09-06.md),
 "What `xz-seek` was told, and what it commits us to").
+
+---
+
+## `Window`'s bound, its constructor shape, and footer-walk composition are answered from this side
+
+**Fact.** `xz-seek`'s `P3.3` landed `Window<B>`, asked three questions about it
+from this project's chair, and got these answers:
+
+- **`impl<B: AsRef<[u8]> + Send + Sync> CompressedSource for Window<B>`'s
+  `+ Send + Sync` buys nothing and should come off.** Every backing this
+  project will hand it — `bytes::Bytes` out of an `object_store` GET, `Arc<[u8]>`
+  or `Arc<Vec<u8>>` where one coalesced fetch backs several block decodes, a
+  pooled `Vec<u8>` — is already `Send + Sync`, and `Window<B>`'s own auto-trait
+  status follows from `B`'s regardless of what the impl's `where`-clause says.
+  Nothing here holds compressed bytes in a non-`Sync` handle (an `Rc`); every
+  path in this project crosses `spawn_blocking` or a `tokio` task, so there is
+  no single-threaded stage that would want one.
+- **`Window::new(base, file_size, bytes)`'s swappable `u64`s are left alone.**
+  The mitigation this project owes is on its own side of the boundary: the
+  fetch stage should hold `file_size` once (a `head()`/content-length, cached)
+  as fixed state rather than threading it positionally through each `Window`
+  construction in a loop — that discipline, not a type change in `xz-seek`,
+  is what actually removes the swap risk. Precedent: `stored_size()`/`size()`
+  ([D4](roadmap-P13-compressed-input.md)) is the same shape of adjacent-`u64`
+  risk, and this project's answer there was legibility (both surface at the
+  accessor and in error text) over a type-level guard.
+- **Composing a tail window with an offset-0 window for a remote footer walk
+  stays out of `xz-seek`.** Confirmed this is wanted: a cold `.xz` seen for
+  the first time remotely is exactly the case
+  ["A footer walk over a remote `.xz` is one ranged GET per
+  stream"](#a-footer-walk-over-a-remote-xz-is-one-ranged-get-per-stream) above
+  worries about, and the single-block-per-stream shape needs the six magic
+  bytes at offset 0 *and* the tail. But merging windows needs a policy for
+  overlaps and gaps that only this phase can choose, which is the same reason
+  the fetcher-count knob was withdrawn above — this project owns fetch policy,
+  the crate ships primitives. A composing `CompressedSource` over several
+  windows is this phase's own ~10 lines against the public trait.
+
+**Why P14 cares.** These are exactly the three unresolved questions the crate's
+`Window` type carried into its own grilling (`xz-seek`'s `STATUS.md`, the
+`Send`/`Sync` entry was open); P14 is the type's only planned consumer, so the
+answers are effectively P14 design decisions arrived at early, not just
+feedback to another crate.
+
+**Origin.** 2026-09-06, `xz-seek` `P3.3` grilling, cross-session exchange with
+the `xz-seek-1d` session.
