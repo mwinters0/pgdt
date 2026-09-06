@@ -131,7 +131,7 @@ enum ContainerKind {
 /// Built at [`save`] time from [`ByteRangeSource::seek_table`], which
 /// [`crate::XzSource`] answers from the table it already built while
 /// opening — persisting a cache never re-walks the file to get this — and read
-/// back by [`known_compression`] before any source exists, which is what
+/// back by [`claim`] before any source exists, which is what
 /// spares every command after the first one that walk. P15's
 /// gzip index is a different *shape*, not a variant of this one (a set of
 /// checkpoints, not a list of independently decodable blocks), so it gets
@@ -330,8 +330,39 @@ fn read_cache_file(path: &Path) -> Result<std::result::Result<CacheFile, CacheSt
     Ok(Ok(file))
 }
 
-/// What the cache at `cache_path` says about the compression layer of the
-/// file at `dump_path`, answered **before any source exists**
+/// What the cache at a path settles about a dump file **before any source
+/// exists** — [`claim`]'s answer (`docs/design/architecture.md`, "The
+/// compressed source").
+///
+/// **Two outcomes, because one of them is worth more than knowledge about
+/// compression.** Everything a caller can do with a cache early is decide
+/// which source to build — except for the one unusable outcome that makes the
+/// building itself pointless: a cache recorded against a file of another
+/// stored size is refused by every scan entry point
+/// ([`Error::CacheSourceMismatch`]) and reported by every caller that cannot
+/// scan, so opening the source first buys nothing and, for a many-streams
+/// `.xz`, costs a stream-footer walk to reach a verdict that was already on
+/// disk ("The cache").
+///
+/// The other unusable outcomes stay collapsed into
+/// [`KnownCompression::Unknown`]: no cache, foreign bytes, a version this
+/// build does not read. Nothing downstream refuses on those — the caller
+/// scans, and [`load`] states the reason a moment later — so naming them here
+/// would put a second authority in front of the one that reports them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CacheClaim {
+    /// What the cache says about the file's compression layer: the table a
+    /// previous walk produced, "no compression layer", or nothing known.
+    Compression(KnownCompression),
+    /// The cache records a stored size this file does not have, so it
+    /// describes some *other* file. The same condition [`load`] answers
+    /// [`CacheStatus::SourceChanged`] with, and the same two numbers, reached
+    /// without opening anything.
+    SourceChanged { cached_stored_size: u64, live_stored_size: u64 },
+}
+
+/// What the cache at `cache_path` settles about the file at `dump_path`,
+/// answered **before any source exists**
 /// (`docs/design/architecture.md`, "The compressed source").
 ///
 /// This is the half of the cache a caller needs *early*: recognition decides
@@ -339,21 +370,24 @@ fn read_cache_file(path: &Path) -> Result<std::result::Result<CacheFile, CacheSt
 /// footers or is handed the table a previous walk already produced. There is
 /// no source yet to give [`load`], so identity is checked here against a
 /// plain `stat` on `dump_path` — the same stored-size rule [`load`] applies,
-/// with a differing mtime again too weak to invalidate anything.
-///
-/// **Every unusable outcome collapses to [`KnownCompression::Unknown`].** No
-/// cache, foreign bytes, a version this build does not read, a file that has
-/// changed size: this function hands over knowledge or it does not, and the
-/// pass that follows still reports *why* through [`load`], which is unchanged
-/// and sees the same file a moment later.
+/// with a differing mtime again too weak to invalidate anything. That one
+/// comparison lives here rather than at the caller, which is what keeps the
+/// early refusal the same verdict as the late one rather than a second
+/// authority over it.
 ///
 /// *Rejected:* stopping the decode short of the index, since `compression`
 /// and `identity` do sit ahead of it in the envelope — bincode is positional,
 /// so reaching them means decoding what precedes them anyway, and the cost of
 /// decoding the envelope twice is bounded by the index's own size.
-pub fn known_compression(cache_path: &Path, dump_path: &Path) -> Result<KnownCompression> {
+///
+/// *Rejected:* leaving this answering [`KnownCompression`] alone and adding a
+/// sibling that reports the stored size. Both would decode the envelope, so
+/// the *usable* path — the one that matters, since it is the one a warm koji
+/// run takes — would decode a 31,150-entry seek table twice to spare a walk on
+/// the path that is about to fail.
+pub fn claim(cache_path: &Path, dump_path: &Path) -> Result<CacheClaim> {
     let Ok(file) = read_cache_file(cache_path)? else {
-        return Ok(KnownCompression::Unknown);
+        return Ok(CacheClaim::Compression(KnownCompression::Unknown));
     };
     // One variant today; a future one is matched through the variant rather
     // than a shared accessor — see [`SourceIdentity`].
@@ -361,15 +395,18 @@ pub fn known_compression(cache_path: &Path, dump_path: &Path) -> Result<KnownCom
     // A dump path that cannot be stat'd is left to the open that follows,
     // which is where that failure has a sentence to say.
     let Ok(live) = std::fs::metadata(dump_path) else {
-        return Ok(KnownCompression::Unknown);
+        return Ok(CacheClaim::Compression(KnownCompression::Unknown));
     };
     if stored_size != live.len() {
-        return Ok(KnownCompression::Unknown);
+        return Ok(CacheClaim::SourceChanged {
+            cached_stored_size: stored_size,
+            live_stored_size: live.len(),
+        });
     }
-    Ok(match file.compression {
+    Ok(CacheClaim::Compression(match file.compression {
         Some(CompressionIndex::Xz(table)) => KnownCompression::Xz(table),
         None => KnownCompression::Plain,
-    })
+    }))
 }
 
 /// Load a cache from `path` with no live source to check it against — the

@@ -486,7 +486,7 @@ whole reason the seek table is persisted rather than re-derived per run.
 
 **The persisted table is read back, so a file's walk is paid once rather than
 once per command.** `cache::save` records it through
-`ByteRangeSource::seek_table()`; `cache::known_compression` reads it back
+`ByteRangeSource::seek_table()`; `cache::claim` reads it back
 *before any source exists*, which is the moment recognition needs it, since
 recognition is what decides which source to build; and `open_local` hands it to
 `XzSource::with_table`, which opens the reader over it and walks nothing. What
@@ -517,20 +517,28 @@ sentence of its own, carrying the same two ways out the size mismatch carries �
 see "The CLI's two refusals are worded as one" for why it stopped borrowing
 `Unreadable`'s.
 
-**Rejecting a table reads no bytes, so nothing is spent reaching *that*
-refusal.** All three commands report the contradicted claim having read nothing,
+**Rejecting a table reads no bytes, so nothing is spent reaching the refusal.**
+All three commands report the contradicted claim having read nothing,
 recognition answering "the cache does not describe this file" as an outcome of
 its own rather than recovering transparently.
 
-**The sibling refusal is not free yet.** Where the cache's recorded stored size
-is simply wrong for this file, `known_compression` hands back `Unknown` rather
-than a verdict — it reports knowledge or the absence of it, and the pass behind
-it is what says why — so `open_local` walks the stream footers before `load`
-reaches `SourceChanged` and the library refuses in a millisecond ("The cache").
-That is 85 s on the koji download and one read on every other shape, spent to
-reach an error everything needed for was already on disk. Where the answer
-should be read instead is `M62`'s question, not this section's
-([`roadmap.md`](roadmap.md), "Out-of-band work").
+**The sibling refusal is free as well, and it is the same read that pays for
+it.** Where the cache's recorded stored size is simply wrong for this file,
+`cache::claim` answers `SourceChanged` rather than collapsing it into
+"nothing is known", so no source is opened and no stream footer is walked to
+reach a refusal that was already settled by the envelope and a `stat` — 85 s on
+the koji download, one read on every other shape. It is one *outcome* added to
+the early read rather than a second read: the two facts a caller needs before
+opening a file both come out of the envelope it has just decoded, and the
+comparison stays in `cache.rs` beside `load`'s, so the early refusal is the
+late one pre-empted rather than a second reading of the same rule. The library
+still refuses on its own, which is the guarantee an embedder that never goes
+through the CLI holds ("The cache"). *Rejected:* a sibling function reporting
+the stored size beside this one — both decode the envelope, so the *usable*
+path, which is the one a warm koji run takes, would decode a 31,150-entry seek
+table twice to spare a walk on the path that is about to fail. *Rejected:*
+widening `KnownCompression`: `io.rs` names nothing in `crate::cache`, and a
+cache's identity verdict is not something recognition has any use for.
 
 *Rejected:* `parse` deleting that cache and rescanning, which is what it did
 when the table was first read back. It was defensible on its own terms — `parse`
@@ -5520,6 +5528,16 @@ unusable statuses still start cold: there is nothing at that path worth keeping.
 never a cache to protect. Reading a mismatched cache stays unusable; being
 unusable to read stops licensing a write.
 
+**The CLI reaches that verdict a step earlier, and the library keeps it
+anyway.** `cache::claim` compares the recorded stored size against a `stat`
+before a source is built, so `pgdq` refuses without opening the file at all —
+which is what stops an `.xz` source walking its stream footers to reach an
+answer already on disk ("The compressed source", "The CLI's two refusals are
+worded as one"). The three entry points still refuse on their own: the
+guarantee is the library's, and an embedder that never goes through this binary
+holds it unchanged. That is one rule read at two moments rather than two rules,
+because the comparison lives in `cache.rs` both times.
+
 This reverses the settled "an unusable outcome, not a new hard-error path"
 below, which was right about reading and never separated writing out. The
 mistake it guards is an ordinary operational slip — a path flag aimed at the
@@ -5744,11 +5762,23 @@ it for all three commands, having read nothing. Two conditions, two sites, one
 tail: **remove it, or name a different cache path**, which is the whole of what
 a caller may do about it — there is no override.
 
-**`open_with_cache` answers a source or bails**, rather than handing a
-`Recognized` back to three call sites that each write the same refusal. Only
-`CacheMode::Enabled` claims anything about the file, so only it can be
-contradicted, and it is the mode holding the path the message names: the refusal
-has everything it needs where it stands.
+**Both conditions stop before the file is opened, and only one of them is a
+sentence `open_with_cache` can write.** The contradicted compression claim
+reads the same to all three commands, so that one bails where it is found,
+rather than handing a `Recognized` back to three call sites that each write the
+same refusal; only `CacheMode::Enabled` claims anything about the file, so only
+it can be contradicted, and it is the mode holding the path the message names.
+The stored-size mismatch does not read the same to all three — the two scanning
+commands surface the library's error and `info` prints the sentence below — so
+it comes back as an `Opened::SourceChanged` the caller narrows: `open_for_scan`
+wraps it for `parse` and `query` and raises `CacheMode::source_mismatch`, the
+same constructor the three scan entry points use, and `info` renders the
+`CacheStatus::SourceChanged` that condition *is*. Three wordings stay where they
+were; what changes is that none of them costs an `.xz` file's footer walk to
+reach. *Rejected:* refusing both conditions in `open_with_cache` with one
+sentence, which is the shorter helper and silently retires `info`'s arm — the
+one that names the two ways out ahead of a command that would only refuse
+again.
 
 **Three of `info`'s four `CacheStatus` sentences reach `pgdq parse` directly
 and the fourth does not.** `parse` scans over `Missing`, `Unreadable` and

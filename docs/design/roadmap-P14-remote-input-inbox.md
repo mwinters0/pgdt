@@ -77,10 +77,15 @@ round trips before a byte is served.
 
 Two details of the warm path are shaped for a local file and are exactly what
 this phase has to replace. The entry point that loads the table
-(`cache::known_compression`) checks the envelope's identity against a plain
+(`cache::claim`) checks the envelope's identity against a plain
 **`stat` on the dump path**, which a remote source does not have — the same
 no-mtime problem the phase already owns for `SourceIdentity`, arriving one layer
-earlier and before any source exists to ask. And recognition sniffs the file's
+earlier and before any source exists to ask. That check now decides a *refusal*
+as well as the table: a cache recorded against a file of another stored size is
+answered there, so all three commands report it without opening anything. A
+remote source with no cheap identity to read loses both at once — the spared
+walk and the free refusal — which is why whatever replaces the `stat` has to be
+answerable before a source exists, not merely from one. And recognition sniffs the file's
 magic with a small read from the **path**, not through a `ByteRangeSource`, so a
 remote source needs that first read to be a ranged GET or needs recognition to
 be told what it holds.
@@ -96,7 +101,10 @@ unnoticed.
 **Origin.** 2026-09-02, grilling the compressed-input work; the half-built state
 found by its wrap audit and closed on 2026-09-06 by the seek-table readback
 ([`../status/history/2026-09-06.md`](../status/history/2026-09-06.md), "The seek
-table is read back, and a claim the file contradicts condemns the cache").
+table is read back, and a claim the file contradicts condemns the cache"), and
+the refusal put on that same check the same day
+([`../status/history/2026-09-06.md`](../status/history/2026-09-06.md), "`M62`:
+the cache path settles the size mismatch before anything is opened").
 
 ---
 

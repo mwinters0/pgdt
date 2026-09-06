@@ -329,3 +329,66 @@ fn parse_scans_once_the_refused_cache_is_removed() {
     let info = run(&["info", "--source", path.to_str().unwrap()]);
     assert!(info.status.success(), "{}", stderr_of(&info));
 }
+
+/// **The sibling refusal is free too.** A cache recorded against a file of
+/// another stored size is settled by the cache path and a `stat`, so all three
+/// commands report it without opening the source — and an `.xz` source is what
+/// makes that worth doing, its open being a walk of every stream footer in the
+/// file (`docs/design/architecture.md`, "The compressed source").
+///
+/// **Proven by a file the walk itself would fail on.** Truncating the fixture
+/// does both things at once: it changes the stored size the cache records, and
+/// it removes the stream footer the walk reads. So a command that opened the
+/// source first would report `xz error: …` — asserted below, once the cache is
+/// out of the way — and one that reads the cache first reports the mismatch.
+/// The two are told apart in the output, which no timing assertion could do.
+///
+/// Each command keeps the sentence it had: the library's own error for the two
+/// that scan, and for `info` the one that names the two ways out ahead of
+/// `pgdq parse` (`docs/design/architecture.md`, "The CLI's two refusals are
+/// worded as one").
+#[test]
+fn a_cache_recorded_against_another_file_is_refused_without_walking_this_one() {
+    let (_dir, path) = seekable_xz();
+    parse(&path);
+    let cache = PathBuf::from(format!("{}.dqcache", path.display()));
+    let before = std::fs::read(&cache).unwrap();
+
+    let bytes = std::fs::read(&path).unwrap();
+    std::fs::write(&path, &bytes[..bytes.len() - 32]).unwrap();
+
+    for args in [
+        vec!["info", "--source", path.to_str().unwrap()],
+        vec!["query", "--source", path.to_str().unwrap(), "--table", "widgets"],
+        vec!["parse", "--source", path.to_str().unwrap()],
+    ] {
+        let out = run(&args);
+        assert!(!out.status.success(), "{}: {}", args[0], stdout_of(&out));
+        let err = stderr_of(&out);
+        assert!(err.contains("remove it, or name a different cache path"), "{}: {err}", args[0]);
+        assert!(
+            !err.contains("xz error:"),
+            "{}: the file must not be opened to reach this refusal: {err}",
+            args[0]
+        );
+    }
+    assert!(
+        stderr_of(&run(&["info", "--source", path.to_str().unwrap()]))
+            .contains("has changed since it was parsed"),
+        "`info` keeps its own sentence for this condition"
+    );
+    assert!(
+        stderr_of(&run(&["parse", "--source", path.to_str().unwrap()]))
+            .contains("was written for a source of"),
+        "the two scanning commands keep the library's"
+    );
+
+    assert_eq!(std::fs::read(&cache).unwrap(), before, "the refused cache is untouched");
+
+    // The discriminator is real: with no cache to settle it, opening this file
+    // is what happens, and the walk fails.
+    std::fs::remove_file(&cache).unwrap();
+    let out = run(&["parse", "--source", path.to_str().unwrap()]);
+    assert!(!out.status.success(), "{}", stdout_of(&out));
+    assert!(stderr_of(&out).contains("xz error:"), "{}", stderr_of(&out));
+}

@@ -497,7 +497,7 @@ const XZ_MAGIC: [u8; 6] = [0xFD, b'7', b'z', b'X', b'Z', 0x00];
 
 /// What a caller already knows about a file's compression layer before
 /// [`open_local`] has looked at it — normally read out of a cache written
-/// from that same file (`crate::cache::known_compression`), and the whole
+/// from that same file (`crate::cache::claim`), and the whole
 /// reason an `.xz` source need not re-walk its stream footers
 /// (`docs/design/architecture.md`, "The compressed source").
 ///

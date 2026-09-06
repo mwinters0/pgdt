@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use futures::StreamExt;
-use pgdump_query::cache::{CacheLoad, CacheMode, CacheStatus};
+use pgdump_query::cache::{CacheClaim, CacheLoad, CacheMode, CacheStatus};
 use pgdump_query::map::SpanBody;
 use pgdump_query::{
     ByteRangeSource, DiagnosticKind, Error, KnownCompression, LocalFileSource, QueryOptions,
@@ -764,7 +764,10 @@ async fn a_saved_cache_hands_its_seek_table_back_to_recognition() {
     let path = dir.path().join("edge_cases.sql.xz.dqcache");
     cache::save(&path, &xz, &index).await.unwrap();
 
-    let known = cache::known_compression(&path, compressed.path()).unwrap();
+    let known = match cache::claim(&path, compressed.path()).unwrap() {
+        CacheClaim::Compression(known) => known,
+        other => panic!("the file's own cache describes it: {other:?}"),
+    };
     assert_eq!(known, KnownCompression::Xz(xz.seek_table().unwrap()));
 
     let source = match open_local(compressed.path(), known).unwrap() {
@@ -787,46 +790,80 @@ async fn a_cache_saved_from_a_plain_source_claims_plain() {
     let path = dir.path().join("edge_cases.sql.dqcache");
     cache::save(&path, &plain, &index).await.unwrap();
 
-    assert_eq!(cache::known_compression(&path, &edge_cases()).unwrap(), KnownCompression::Plain);
+    assert_eq!(
+        cache::claim(&path, &edge_cases()).unwrap(),
+        CacheClaim::Compression(KnownCompression::Plain)
+    );
 }
 
-/// Every unusable outcome collapses to "nothing is known": there is no cache,
-/// or the file it describes is not the one at this path. `load` is what
-/// reports *why* a moment later, unchanged.
+/// Every unusable outcome but one collapses to "nothing is known": there is no
+/// cache, it is foreign bytes, or there is no file to compare it against.
+/// `load` is what reports *why* a moment later, unchanged. The exception —
+/// a cache recorded against a file of another stored size — is the test below.
 #[tokio::test]
-async fn known_compression_is_unknown_wherever_the_cache_is_unusable() {
+async fn a_claim_is_unknown_wherever_the_cache_is_unusable() {
     let dir = tempfile::tempdir().unwrap();
     let missing = dir.path().join("nothing.dqcache");
     assert_eq!(
-        cache::known_compression(&missing, &edge_cases()).unwrap(),
-        KnownCompression::Unknown
+        cache::claim(&missing, &edge_cases()).unwrap(),
+        CacheClaim::Compression(KnownCompression::Unknown)
     );
 
     let foreign = dir.path().join("foreign.dqcache");
     std::fs::write(&foreign, b"not a cache at all").unwrap();
     assert_eq!(
-        cache::known_compression(&foreign, &edge_cases()).unwrap(),
-        KnownCompression::Unknown
+        cache::claim(&foreign, &edge_cases()).unwrap(),
+        CacheClaim::Compression(KnownCompression::Unknown)
     );
 
-    // A real cache for a file of another size: the stored-size check is the
-    // same one `load` applies, done here against a plain `stat` because no
-    // source exists yet.
+    let plain = LocalFileSource::open(edge_cases()).unwrap();
+    let index = build_index(&plain, &ScanOptions::default()).await.unwrap();
+    let path = dir.path().join("edge_cases.sql.dqcache");
+    cache::save(&path, &plain, &index).await.unwrap();
+    // A real cache, and a dump path with nothing at it at all: there is no
+    // size to compare against, and the open that follows is where that has a
+    // sentence to say.
+    assert_eq!(
+        cache::claim(&path, &dir.path().join("gone.sql")).unwrap(),
+        CacheClaim::Compression(KnownCompression::Unknown)
+    );
+}
+
+/// The one unusable outcome a caller can act on before opening anything: a
+/// cache whose recorded stored size is not this file's describes some *other*
+/// file, and every command refuses it. The stored-size check is the same one
+/// `load` applies, done here against a plain `stat` because no source exists
+/// yet — and answering it here is what spares an `.xz` file the stream-footer
+/// walk it would otherwise pay to reach that refusal
+/// (`docs/design/architecture.md`, "The compressed source").
+#[tokio::test]
+async fn a_cache_recorded_against_another_file_is_settled_before_any_source_exists() {
+    let dir = tempfile::tempdir().unwrap();
     let compressed = xz_compress(&edge_cases());
     let xz = XzSource::open(compressed.path()).unwrap();
     let index = build_index(&xz, &ScanOptions::default()).await.unwrap();
     let path = dir.path().join("edge_cases.sql.xz.dqcache");
     cache::save(&path, &xz, &index).await.unwrap();
+
+    // The compressed file's own cache, put to the plain file it decompresses
+    // to: same content, different stored size.
     assert_eq!(
-        cache::known_compression(&path, &edge_cases()).unwrap(),
-        KnownCompression::Unknown,
+        cache::claim(&path, &edge_cases()).unwrap(),
+        CacheClaim::SourceChanged {
+            cached_stored_size: std::fs::metadata(compressed.path()).unwrap().len(),
+            live_stored_size: std::fs::metadata(edge_cases()).unwrap().len(),
+        },
         "a cache of the compressed file must not be believed about the plain one"
     );
 
-    // And a dump path with nothing at it at all: the open that follows is
-    // where that has a sentence to say.
+    // The same verdict `load` reaches once a source exists, which is what
+    // makes the early refusal a pre-emption rather than a second rule.
+    let plain = LocalFileSource::open(edge_cases()).unwrap();
     assert_eq!(
-        cache::known_compression(&path, &dir.path().join("gone.xz")).unwrap(),
-        KnownCompression::Unknown
+        cache::load(&path, &plain).await.unwrap(),
+        CacheStatus::SourceChanged {
+            cached_stored_size: std::fs::metadata(compressed.path()).unwrap().len(),
+            live_stored_size: std::fs::metadata(edge_cases()).unwrap().len(),
+        }
     );
 }

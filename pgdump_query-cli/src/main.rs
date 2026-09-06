@@ -8,7 +8,7 @@ use arrow::array::RecordBatch;
 use arrow::datatypes::DataType;
 use clap::{Parser, Subcommand};
 use futures::StreamExt;
-use pgdump_query::cache::{CacheMode, CacheStatus};
+use pgdump_query::cache::{CacheClaim, CacheMode, CacheStatus};
 use pgdump_query::pgtype::RANGE_STRUCT_FIELDS;
 use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdump_query::{
@@ -707,8 +707,10 @@ async fn main() -> Result<()> {
             // `info` and `query` do: it would otherwise scan and overwrite
             // it, which is the one thing this library does not do on its own
             // (`docs/design/architecture.md`, "The cache"). Refused having
-            // read nothing, so no footer walk is spent reaching it.
-            let source = open_with_cache(&file, &mode)?;
+            // read nothing, so no footer walk is spent reaching it — and the
+            // same is true of the stored-size mismatch, which `open_for_scan`
+            // answers with the library's own error before opening anything.
+            let source = open_for_scan(&file, &mode)?;
             if preamble_only_flag {
                 let (metadata, diagnostics) =
                     preamble_only(source.as_ref(), &scan_options(chunk_size), &mode).await?;
@@ -794,8 +796,17 @@ async fn main() -> Result<()> {
             // `info` never scans, so a cache that does not describe this file
             // leaves nothing to report from — and it says so having read
             // nothing, rather than spending an `.xz` file's footer walk to
-            // reach an error it was always going to reach.
-            let source = open_with_cache(&file, &mode)?;
+            // reach an error it was always going to reach. Both conditions
+            // stop before the open; this one keeps `info`'s own sentence,
+            // which names the two ways out ahead of the command they enable.
+            let source = match open_with_cache(&file, &mode)? {
+                Opened::Source(source) => source,
+                Opened::SourceChanged { cached_stored_size, live_stored_size } => {
+                    let changed =
+                        CacheStatus::SourceChanged { cached_stored_size, live_stored_size };
+                    anyhow::bail!(unusable_cache_message(&changed, &path, Some(&file)))
+                }
+            };
             let status = pgdump_query::cache::load(&path, source.as_ref()).await?;
             let (mut index, mtime_changed, total_size) = match status {
                 CacheStatus::Valid { index, mtime_changed, total_size }
@@ -848,7 +859,7 @@ async fn main() -> Result<()> {
             // reported having read nothing, rather than paying a footer walk
             // and a whole scan over a map that cannot be trusted. `parse` is
             // the command that rebuilds it.
-            let source = open_with_cache(&file, &mode)?;
+            let source = open_for_scan(&file, &mode)?;
             let mut header_printed = false;
             let mut any_batch = false;
             let mut rows = 0u64;
@@ -917,6 +928,28 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// What [`open_with_cache`] found: the source to read, or the one refusal the
+/// cache path settles on its own, before anything is opened.
+///
+/// **The second variant is not a refusal this helper can write.** The
+/// contradicted compression claim below reaches all three commands in one
+/// sentence, so `open_with_cache` bails on it; a stored-size mismatch does
+/// not — `parse` and `query` surface the library's own
+/// `Error::CacheSourceMismatch` and `info` prints the sentence that names the
+/// two ways out before `pgdq parse`
+/// (`docs/design/architecture.md`, "The CLI's two refusals are worded as
+/// one"). Handing the condition back is what keeps those three wordings where
+/// they already are while the walk is spared.
+enum Opened {
+    /// The source, ready to read.
+    Source(Arc<dyn pgdump_query::ByteRangeSource>),
+    /// The cache at this mode's path records a stored size the file does not
+    /// have, so it describes another file. The very condition — and the very
+    /// two numbers — `cache::load` would have answered
+    /// [`CacheStatus::SourceChanged`] with once a source existed.
+    SourceChanged { cached_stored_size: u64, live_stored_size: u64 },
+}
+
 /// Open `file`, handing recognition whatever the cache at `cache` says about
 /// its compression layer, so an `.xz` source is built from the seek table a
 /// previous walk already produced instead of re-walking the file's stream
@@ -932,24 +965,53 @@ async fn main() -> Result<()> {
 /// (`docs/design/architecture.md`, "The cache") — and the mode holding the
 /// claim is the mode holding the path the message names, so the refusal has
 /// everything it needs without a caller passing it back down.
-fn open_with_cache(
-    file: &Path,
-    cache: &CacheMode,
-) -> Result<Arc<dyn pgdump_query::ByteRangeSource>> {
+///
+/// **A cache recorded against a file of another stored size stops here too**,
+/// as an [`Opened`] variant rather than as a bail: the file is never opened,
+/// so an `.xz` source never walks its stream footers to reach a refusal the
+/// cache path alone already settles (`docs/design/architecture.md`, "The
+/// cache"). The comparison itself stays in `cache::claim`, so this is the same
+/// verdict the library reaches a moment later rather than a second reading of
+/// the same rule.
+fn open_with_cache(file: &Path, cache: &CacheMode) -> Result<Opened> {
     let claimed_by = match cache {
         CacheMode::Enabled(path) => Some(path.as_path()),
         CacheMode::Disabled | CacheMode::Offline(_) => None,
     };
     let known = match claimed_by {
-        Some(path) => pgdump_query::cache::known_compression(path, file)?,
+        Some(path) => match pgdump_query::cache::claim(path, file)? {
+            CacheClaim::Compression(known) => known,
+            CacheClaim::SourceChanged { cached_stored_size, live_stored_size } => {
+                return Ok(Opened::SourceChanged { cached_stored_size, live_stored_size });
+            }
+        },
         None => KnownCompression::Unknown,
     };
     match open_local(file, known)? {
-        Recognized::Source(source) => Ok(source),
+        Recognized::Source(source) => Ok(Opened::Source(source)),
         Recognized::Mismatch => {
             let path =
                 claimed_by.expect("`KnownCompression::Unknown` claims nothing to contradict");
             anyhow::bail!(cache_written_for_another_file(path, file))
+        }
+    }
+}
+
+/// [`open_with_cache`] for the two commands that scan. Both surface the
+/// library's own `Error::CacheSourceMismatch` for a cache written against
+/// another file, so both raise it here — from `CacheMode::source_mismatch`,
+/// the same constructor the three scan entry points use, which is what makes
+/// the earlier refusal word-for-word the one it pre-empts
+/// (`docs/design/architecture.md`, "The cache").
+///
+/// The library still refuses on its own: this spares the walk, it does not
+/// replace the guarantee, which is the library's to keep for an embedder that
+/// never goes through this binary.
+fn open_for_scan(file: &Path, cache: &CacheMode) -> Result<Arc<dyn pgdump_query::ByteRangeSource>> {
+    match open_with_cache(file, cache)? {
+        Opened::Source(source) => Ok(source),
+        Opened::SourceChanged { cached_stored_size, live_stored_size } => {
+            Err(cache.source_mismatch(cached_stored_size, live_stored_size).into())
         }
     }
 }
