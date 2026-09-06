@@ -708,14 +708,7 @@ async fn main() -> Result<()> {
             // it, which is the one thing this library does not do on its own
             // (`docs/design/architecture.md`, "The cache"). Refused having
             // read nothing, so no footer walk is spent reaching it.
-            let source = match open_with_cache(&file, &mode)? {
-                Recognized::Source(source) => source,
-                Recognized::Mismatch => anyhow::bail!(unusable_cache_message(
-                    &CacheStatus::Unreadable,
-                    &path,
-                    Some(&file)
-                )),
-            };
+            let source = open_with_cache(&file, &mode)?;
             if preamble_only_flag {
                 let (metadata, diagnostics) =
                     preamble_only(source.as_ref(), &scan_options(chunk_size), &mode).await?;
@@ -801,17 +794,8 @@ async fn main() -> Result<()> {
             // `info` never scans, so a cache that does not describe this file
             // leaves nothing to report from — and it says so having read
             // nothing, rather than spending an `.xz` file's footer walk to
-            // reach an error it was always going to reach. `Unreadable` is
-            // the existing sentence for it: the envelope decoded, but what
-            // sits at that path is not this file's cache.
-            let source = match open_with_cache(&file, &mode)? {
-                Recognized::Source(source) => source,
-                Recognized::Mismatch => anyhow::bail!(unusable_cache_message(
-                    &CacheStatus::Unreadable,
-                    &path,
-                    Some(&file)
-                )),
-            };
+            // reach an error it was always going to reach.
+            let source = open_with_cache(&file, &mode)?;
             let status = pgdump_query::cache::load(&path, source.as_ref()).await?;
             let (mut index, mtime_changed, total_size) = match status {
                 CacheStatus::Valid { index, mtime_changed, total_size }
@@ -864,17 +848,7 @@ async fn main() -> Result<()> {
             // reported having read nothing, rather than paying a footer walk
             // and a whole scan over a map that cannot be trusted. `parse` is
             // the command that rebuilds it.
-            let source = match open_with_cache(&file, &mode)? {
-                Recognized::Source(source) => source,
-                Recognized::Mismatch => {
-                    let path = mode.require_enabled("query")?;
-                    anyhow::bail!(unusable_cache_message(
-                        &CacheStatus::Unreadable,
-                        path,
-                        Some(&file)
-                    ))
-                }
-            };
+            let source = open_with_cache(&file, &mode)?;
             let mut header_printed = false;
             let mut any_batch = false;
             let mut rows = 0u64;
@@ -951,19 +925,84 @@ async fn main() -> Result<()> {
 /// `--dqcache none` claims nothing, which is what makes an opted-out cache
 /// cost exactly the walk it always did; cache-only mode never reaches here at
 /// all, having no live source to open.
-fn open_with_cache(file: &Path, cache: &CacheMode) -> Result<Recognized> {
-    let known = match cache {
-        CacheMode::Enabled(path) => pgdump_query::cache::known_compression(path, file)?,
-        CacheMode::Disabled | CacheMode::Offline(_) => KnownCompression::Unknown,
+///
+/// **A contradicted claim is refused here rather than at each of the three
+/// call sites.** All three commands answer it identically — the cache at that
+/// path was written from another file, so it is not this one's to overwrite
+/// (`docs/design/architecture.md`, "The cache") — and the mode holding the
+/// claim is the mode holding the path the message names, so the refusal has
+/// everything it needs without a caller passing it back down.
+fn open_with_cache(
+    file: &Path,
+    cache: &CacheMode,
+) -> Result<Arc<dyn pgdump_query::ByteRangeSource>> {
+    let claimed_by = match cache {
+        CacheMode::Enabled(path) => Some(path.as_path()),
+        CacheMode::Disabled | CacheMode::Offline(_) => None,
     };
-    Ok(open_local(file, known)?)
+    let known = match claimed_by {
+        Some(path) => pgdump_query::cache::known_compression(path, file)?,
+        None => KnownCompression::Unknown,
+    };
+    match open_local(file, known)? {
+        Recognized::Source(source) => Ok(source),
+        Recognized::Mismatch => {
+            let path =
+                claimed_by.expect("`KnownCompression::Unknown` claims nothing to contradict");
+            anyhow::bail!(cache_written_for_another_file(path, file))
+        }
+    }
 }
 
+/// The sentence all three commands print when recognition finds that the
+/// cache at `path` records compression details the file at `source`
+/// contradicts.
+///
+/// **This is the second of the two "written for another file" conditions**,
+/// and it is deliberately not one of [`unusable_cache_message`]'s: that
+/// function matches on [`CacheStatus`], and this condition is not one —
+/// recognition catches it before a source exists, so `load` never sees it
+/// (`docs/design/architecture.md`, "The compressed source"). It borrowed
+/// `Unreadable`'s sentence until the refusal made the two answers differ:
+/// "check the path, or run `pgdq parse`" is advice `parse` cannot take, being
+/// the command that just refused, and the bytes at that path *are* a pgdq
+/// cache — for some other file.
+///
+/// The tail is the pair `Error::CacheSourceMismatch` names for the other
+/// condition, in the same words: the two ways out of a cache that is valid
+/// for a file that is not this one (D5 — there is no override).
+fn cache_written_for_another_file(path: &Path, source: &Path) -> String {
+    format!(
+        "the cache at {} records compression details that {} contradicts, so it was written for \
+         another file{TWO_WAYS_OUT}",
+        path.display(),
+        source.display()
+    )
+}
+
+/// What a caller does about a cache that describes a different file, in the
+/// words both refusals use. There is no third way — no `--force`, no
+/// `CacheMode` variant meaning "replace regardless" — because a flag like that
+/// is set once in a script and never reconsidered
+/// (`docs/design/architecture.md`, "The cache").
+///
+/// `pgdump_query::Error::CacheSourceMismatch` carries the same clause for
+/// the size-mismatch condition, which reaches `parse` and `query` from the
+/// library rather than from here; `refusals_name_both_ways_out`
+/// (`tests/partial_reporting.rs`) is what holds the three of them to one
+/// wording.
+const TWO_WAYS_OUT: &str = " — remove it, or name a different cache path";
+
 /// The sentence `pgdq info` prints for a cache it cannot use. All four causes
-/// end in `pgdq parse`, and they are still four different sentences: the
-/// remedy is the same, the fact the user needs to know is not — "you have
-/// never parsed this file" and "your file changed since you parsed it" send a
-/// reader to different places.
+/// end in `pgdq parse`, and they are still four different sentences: the fact
+/// the user needs to know differs — "you have never parsed this file" and
+/// "your file changed since you parsed it" send a reader to different places.
+///
+/// **Three of the four reach `pgdq parse` directly and one does not.** `parse`
+/// scans over `Missing`, `Unreadable` and `UnsupportedVersion` — there is
+/// nothing at that path worth keeping — and refuses `SourceChanged`, so that
+/// arm names [`TWO_WAYS_OUT`] before it names the command
+/// (`docs/design/architecture.md`, "The cache").
 ///
 /// **One match, two renderings**, the same discipline [`resolution_words`]
 /// applies. `source` is `None` in cache-only mode, which has no dump file to
@@ -1000,12 +1039,18 @@ fn unusable_cache_message(status: &CacheStatus, path: &Path, source: Option<&Pat
             live_stored_size: live_size,
         } => {
             let source = source.expect("cache-only mode has no live source to compare against");
+            // The one arm whose remedy is not `pgdq parse` on its own. `parse`
+            // refuses this very condition rather than scanning over it, so
+            // sending a reader straight there would send them to a second
+            // refusal; the two ways out come first, and `parse` then works
+            // (`docs/design/architecture.md`, "The cache").
             format!(
                 "{} has changed since it was parsed ({live_size} bytes now, {cached_size} when \
-                 the cache at {} was written), so every offset in the cache could be wrong{}",
+                 the cache at {} was written), so every offset in the cache could be \
+                 wrong{TWO_WAYS_OUT}, then run `pgdq parse --source {}`",
                 source.display(),
                 path.display(),
-                remedy("", "")
+                source.display()
             )
         }
         CacheStatus::Valid { .. } | CacheStatus::Incomplete { .. } => {

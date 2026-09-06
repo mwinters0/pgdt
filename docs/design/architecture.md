@@ -510,10 +510,12 @@ is evidence the span index does not either — and the index is the half that
 mis-addresses rows silently, where a bad table is caught loudly by a block
 header's CRC32. The same holds when the envelope carries a compression index for
 a file that no longer sniffs as `.xz`, or the reverse. Each is one outcome,
-`Recognized::Mismatch`, reported in the existing unusable-cache vocabulary
-rather than a new one: `CacheStatus::Unreadable`, which is the one of the four
-whose sentence does not state its own refutation, since reaching this point
-means the two stored sizes `SourceChanged` quotes as its evidence are equal.
+`Recognized::Mismatch`, and it is **not** a `CacheStatus`: reaching this point
+means the two stored sizes `SourceChanged` quotes as its evidence are equal, so
+`load` never sees it and none of the four statuses describes it. It gets a
+sentence of its own, carrying the same two ways out the size mismatch carries —
+see "The CLI's two refusals are worded as one" for why it stopped borrowing
+`Unreadable`'s.
 
 **Rejecting a table reads no bytes, so nothing is spent reaching the refusal.**
 All three commands report the unusable cache having read nothing, which is what
@@ -5493,9 +5495,10 @@ cached_stored_size, live_stored_size }`; `CacheMode::load` carries each one
 across to a caller holding a live source as its own `CacheLoad` variant. `pgdq
 info` cannot scan and has a different sentence for each: a wrong path, a stale
 build, and "your file changed since you parsed it" send a reader to three
-different places even though all four end in `pgdq parse`. A caller that *can*
+different places. A caller that *can*
 scan does not treat them alike either, which is what having the reason before
-it does any work buys — see the refusal below.
+it does any work buys — see the refusal below, and "The CLI's two refusals are
+worded as one" for how that split reaches the sentences.
 
 **The library never replaces cache data automatically.** A cache whose recorded
 stored size is not this source's is a cache that describes some *other* file,
@@ -5701,6 +5704,42 @@ and the name would talk about scanning while doing none).
 `query` is untouched, and the asymmetry is deliberate: `query` is asked for
 rows that exist only in the file, where `info` is asked what is known. Its
 two-path model is what makes a cold query on a 784GB dump affordable.
+
+### The CLI's two refusals are worded as one
+
+**"This cache was written from another file" reaches a user two ways, and both
+end in the same clause.** One is the stored-size mismatch, raised by the
+library as `Error::CacheSourceMismatch` and surfaced verbatim by `parse` and
+`query` ("The cache"). The other is a compression claim the file contradicts,
+which recognition catches before a source exists, so no `CacheStatus` describes
+it and `load` never sees it ("The compressed source"); `open_with_cache` refuses
+it for all three commands, having read nothing. Two conditions, two sites, one
+tail: **remove it, or name a different cache path**, which is the whole of what
+a caller may do about it (D5 — there is no override).
+
+**Three of `info`'s four `CacheStatus` sentences reach `pgdq parse` directly
+and the fourth does not.** `parse` scans over `Missing`, `Unreadable` and
+`UnsupportedVersion` — nothing at that path is worth keeping — and refuses
+`SourceChanged`, so that sentence names the two ways out *before* it names the
+command, a reader sent straight to `parse` otherwise meeting a second refusal.
+That ordering is asserted rather than left to review: `refusals_name_both_ways_out`
+(`pgdump_query-cli/tests/partial_reporting.rs`) puts the mismatch to all three
+commands and checks the clause in each, the wording living in two crates.
+
+*Rejected:* a fifth arm in `unusable_cache_message` for the contradicted
+compression claim. That function matches exhaustively on `CacheStatus` so a new
+status has to be answered; this condition is not one, and an arm for it would
+have to be reached by a synthetic value. It borrowed `Unreadable`'s sentence
+until the refusal made the two answers differ — "check the path, or run `pgdq
+parse`" is advice `parse` cannot take, being the command that just refused, and
+the bytes at that path *are* a pgdq cache, for another file.
+
+*Rejected:* re-wording `Error::CacheSourceMismatch` in the CLI so `parse` names
+the dump path as well as the cache path. The library sentence already carries
+what D7 asks — what it found, what it expected, and the two ways out — and the
+dump is the argument the user just typed; catching and re-rendering one library
+error at one call site puts a second authority over a message the same error
+prints everywhere else.
 
 ### `parse` resumes, and saves as it goes
 

@@ -280,25 +280,29 @@ filter cannot compare against a single label there anyway.
 
 ### When `info` says it cannot answer
 
-`info` exits non-zero rather than scanning. Four things can go wrong, and they
-are four different messages because they mean four different things — even
-though every one of them ends in `pgdq parse`:
+`info` exits non-zero rather than scanning. Five things can go wrong, and they
+are five different messages because they mean five different things:
 
 | Message | What happened |
 |---|---|
 | `no cache at …` | You have not parsed this file yet. |
-| `… is not a pgdq cache` | Something else is at that path, or what is there is a cache for some other file. Check `--dqcache`. |
+| `… is not a pgdq cache` | Something else is at that path. Check `--dqcache`. |
 | `… was written by a different pgdq build` | The cache format changed under you. Pre-1.0 this happens; nothing is migrated. |
 | `… has changed since it was parsed` | The dump file's size no longer matches. Every offset in the cache could be wrong. |
+| `… records compression details that … contradicts` | The cache says this file is compressed and it is not, or the other way round. |
 
-The last one is the one worth reading closely: it is not "your cache went
-missing", it is "your file is not the file you parsed."
+**The first three send you straight to `pgdq parse`; the last two do not.** The
+split is whether the file at the cache path is worth keeping. For the first
+three it is not — there is no cache there, or what is there is not one, or it is
+one this build cannot read — so `parse` simply scans over it.
 
-It is also the one `parse` itself refuses on, rather than scanning and writing
-over what is there. A cache that records a different size for this file is a
-valid index for *some* file, and pgdq does not replace it for you: delete it,
-or pass `--dqcache <path>` naming somewhere else, and run `parse` then. The
-other three it simply scans over — there is nothing at that path worth keeping.
+The last two say one thing two ways: *this cache was written from a different
+file*. It is not "your cache went missing", it is "your file is not the file you
+parsed". `parse` refuses both rather than scanning and writing over what it
+found, because a cache that does not describe this file is a valid index for
+*some* file. So both messages name the only two ways out — **remove it, or name
+a different cache path** — and `parse` builds a fresh one once you have taken
+either. There is no flag that overrides this.
 
 `--dqcache none`, which for `query` means "ignore the cache", is rejected on
 `info` — with nothing to read and no scan to fall back on, there would be

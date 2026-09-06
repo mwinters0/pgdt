@@ -271,6 +271,12 @@ fn overwrite_with_plain_bytes_of_the_same_length(path: &Path) {
 /// other two now: the deletion and the overwrite are the same act one step
 /// apart, and the library replaces neither on its own
 /// (`docs/design/architecture.md`, "The cache").
+///
+/// The sentence is this condition's own. It borrowed `Unreadable`'s —
+/// "… is not a pgdq cache — check the path, or run `pgdq parse`" — until the
+/// refusal made that advice something `parse` cannot take, being the command
+/// that just refused; and what sits at that path *is* a pgdq cache, for some
+/// other file.
 #[test]
 fn every_command_refuses_a_cache_that_does_not_describe_the_file() {
     let (_dir, path) = seekable_xz();
@@ -286,11 +292,13 @@ fn every_command_refuses_a_cache_that_does_not_describe_the_file() {
     ] {
         let out = run(&args);
         assert!(!out.status.success(), "{}: {}", args[0], stdout_of(&out));
+        let err = stderr_of(&out);
+        assert!(err.contains("was written for another file"), "{}: {err}", args[0]);
+        assert!(err.contains("remove it, or name a different cache path"), "{}: {err}", args[0]);
         assert!(
-            stderr_of(&out).contains("is not a pgdq cache"),
-            "{}: {}",
-            args[0],
-            stderr_of(&out)
+            !err.contains("is not a pgdq cache"),
+            "{}: a cache for another file is still a pgdq cache: {err}",
+            args[0]
         );
     }
 

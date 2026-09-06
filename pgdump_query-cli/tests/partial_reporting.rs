@@ -164,6 +164,47 @@ async fn parse_refuses_a_cache_that_records_another_source_and_leaves_it_alone()
     assert_ne!(std::fs::read(&cache_path).unwrap(), before);
 }
 
+/// **The two ways out are worded once, and every refusal says both.** A cache
+/// that describes another file reaches the user from three places — the
+/// library error `parse` and `query` surface, and the CLI sentences `info`
+/// prints for the size mismatch and all three print for a contradicted
+/// compression claim — and there is no third way out, no `--force` and no
+/// `CacheMode` variant meaning "replace regardless"
+/// (`docs/design/architecture.md`, "The cache"). A refusal that named only one
+/// of them would read as a tool with no recourse; one that named a way out the
+/// others do not is the drift this test exists to catch, the wording living in
+/// two crates.
+///
+/// `info`'s is the arm that must name the ways out **and** `pgdq parse`, in
+/// that order: `parse` refuses this same condition, so a reader sent straight
+/// to it meets a second refusal.
+#[tokio::test]
+async fn refusals_name_both_ways_out() {
+    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
+    assert!(run(&["parse", "--source", dump.to_str().unwrap()]).status.success());
+
+    let mut bytes = std::fs::read(&dump).unwrap();
+    bytes.push(b'\n');
+    std::fs::write(&dump, &bytes).unwrap();
+
+    let source = dump.to_str().unwrap();
+    for args in [
+        vec!["parse", "--source", source],
+        vec!["info", "--source", source],
+        vec!["query", "--source", source, "--table", "t_numeric"],
+    ] {
+        let out = run(&args);
+        assert!(!out.status.success(), "{}: {}", args[0], stdout_of(&out));
+        let err = stderr_of(&out);
+        assert!(err.contains("remove it, or name a different cache path"), "{}: {err}", args[0]);
+    }
+
+    let err = stderr_of(&run(&["info", "--source", source]));
+    let ways_out = err.find("remove it, or name a different cache path").unwrap();
+    let parse_hint = err.find("run `pgdq parse").expect("the remedy still ends at `parse`");
+    assert!(ways_out < parse_hint, "the ways out come before the command they enable: {err}");
+}
+
 /// Foreign bytes and a cache from another build are told apart too — the path
 /// is wrong in the first case and right in the second, which is different
 /// advice.
