@@ -389,19 +389,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`pgdq parse` deletes a cache that does not describe the file beside it.**
-  `M61`'s design says a rejected seek table condemns the whole cache — table
-  and span index were one `save` — and that `parse` recovers by walking rather
-  than refusing. Nothing else makes the second half stick: `map_file` calls
-  `CacheMode::load` a moment later, and the condemned cache still passes its
-  identity check, so without removing the file `parse` would resume from an
-  index it had just declared untrustworthy. The alternative was to teach
-  `load` to cross-check the envelope's compression against the live source,
-  which the design rules out in that many words ("`load` itself is unchanged
-  for the pass that follows"). What reconsidering it would change: a user who
-  interrupts that `parse` before its first bank has no cache where they
-  previously had an unusable one, and `--dqcache <path>` aimed at another
-  file's cache deletes that file rather than reporting it — which `info` and
-  `query` do instead ([`../design/architecture.md`](../design/architecture.md),
-  "The compressed source"; [`history/2026-09-06.md`](history/2026-09-06.md),
-  "The seek table is read back").
+None open.

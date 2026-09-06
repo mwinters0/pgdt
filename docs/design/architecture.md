@@ -520,7 +520,19 @@ than a cost already paid.** `parse` takes it, being about to scan regardless —
 and discards the unusable cache first, so that nothing resumes from the span
 index the same `save` wrote; it is about to write a correct one over that path
 anyway, and what an interrupt before the first bank then costs is a cache that
-was already unusable. `info` and `query` report the unusable cache having read
+was already unusable.
+
+*Reviewed, and the deletion stands — but it is not what puts a bystander cache
+at risk.* `parse` overwrites whatever sits at its `--dqcache` path within the
+first throttled save ("`parse` resumes, and saves as it goes"), so aiming the
+flag at another file's cache has always destroyed it; deleting at startup moves
+that loss earlier and more visible, and reverting it would not prevent it. What
+prevents it is `parse` refusing such a path outright, which contradicts this
+document's own "not a new hard-error path" below and is therefore filed for
+grilling rather than settled here ([`roadmap.md`](roadmap.md), "Future —
+wanted, unscheduled").
+
+`info` and `query` report the unusable cache having read
 nothing, which is what keeps a changed `.xz` from spending its footer walk to
 reach an error it was always going to reach. Recognition therefore answers "the
 cache does not describe this file" as an outcome of its own rather than

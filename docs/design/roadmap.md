@@ -732,6 +732,22 @@ payloads").
 Work we intend to do without committing it to a phase. An item moves out of
 this section when it acquires a phase number, not when it acquires a design.
 
+- **`pgdq parse` refuses a cache that describes a different file, rather than
+  destroying it.** `parse --source A --dqcache B.dqcache` overwrites `B`'s cache
+  within the first throttled save (`stream.rs`, "`parse` resumes, and saves as
+  it goes"), so aiming the flag at the wrong path — an ordinary operational
+  slip — destroys a cache that was valid for its own input, with no warning and
+  nothing to recover from. `M61`'s startup deletion of a condemned cache made
+  the loss earlier and more visible; it did not introduce it, and reverting it
+  would not prevent it. The fix is for `parse` to stop when the cache at an
+  explicitly given `--dqcache <path>` describes a different file, naming both
+  sizes and leaving the file alone. It is here rather than scheduled because it
+  contradicts a written decision — "`SourceChanged` — an unusable outcome, not
+  a new hard-error path" ([`architecture.md`](architecture.md), "The cache") —
+  so it is grilled before it takes a number, and the grilling is what decides
+  whether the refusal is confined to the explicit-path form or reaches the
+  colocated default too. The maintainer's call, 2026-09-06.
+
 - **TOC attribution across an intervening statement, so `--disable-triggers`
   dumps stay attributed.** I31 puts `ALTER TABLE … DISABLE TRIGGER ALL;` — and
   a `SET SESSION AUTHORIZATION DEFAULT;` ahead of the first entry — between a
