@@ -398,17 +398,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`--alone` still gets past `M60`'s publication refusal, and the record does
-  not say whether it should.** A sitting short of the whole sweep may publish
-  only a figure standing in no borrow edge, and `--figure allocator` is now
-  refused before a measurement is spent. `--alone` is exempted, on the reading
-  that it is the existing way to ask for a partial sitting deliberately and
-  that its tables already carry the note saying not to fold them in — so what
-  actually stops the fold-in is `--check`, which fails the sitting marker such
-  a table would have to carry. The alternative is to refuse `--alone` too,
-  which would leave the allocator, census, throughput and nested tables
-  movable only by a full sweep and would retire `--alone`'s only remaining
-  use, since a figure that borrows nothing is unaffected by the flag. What
-  would change if reconsidered: one condition in `main`, and `--alone`'s
-  description in [`../design/measurements.md`](../design/measurements.md),
-  "The apparatus".
+None open.

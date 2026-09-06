@@ -285,13 +285,13 @@ to skip:
 - **An apparatus line names the figures its table was taken with**, so a reader
   can tell at a glance which absolutes may be read together. A table taken
   entirely alone says that, in those words.
-- **A table whose *shared* reading was measured alone carries the harness's
-  partial-sweep note into the doc**, verbatim in substance. `measure.py` emits
-  that note precisely when a borrow could not be satisfied, and dropping it
-  publishes a reference column that looks shared and is not. A borrow now goes
-  unsatisfied only inside a sweep — a figure that shares a reading may not be
-  published outside one at all, and `--figure` refuses that sitting before the
-  measurement is spent.
+- **The partial-sweep note labels a sitting rather than a table.** `measure.py`
+  emits it precisely when a borrow could not be satisfied, naming which borrow
+  went unsatisfied and the whole set to re-take. A borrow goes unsatisfied only
+  outside a sweep, and a figure that shares a reading may not be published
+  outside one at all — so the note now marks a sitting whose tables have no way
+  into the document, and what it is read for is diagnosis: whether a change
+  moved this figure, answered without the hour its borrowed sources cost.
 - **The harness names the closure, not its direct sources.** Re-taking a figure
   that others borrow from drags them too: `census-brace-free` is borrowed by
   both throughput tables, so the honest set behind the allocator table is four
@@ -300,8 +300,8 @@ to skip:
   it out by hand — `--figure` takes what a figure borrows and names the rest
   before the first reading, the partial-sweep note states the whole set to
   re-take, `--list` prints it per figure, and `--check` reports a partial
-  sitting the doc still carries. A **deliberate** partial sitting is
-  `--figure <id> --alone`, which borrows nothing and emits that note.
+  sitting the doc still carries. `--figure <id> --alone` is what borrows
+  nothing and emits that note.
 - **A reading one table *derives* from is named, not dragged in.** The closure
   is computed over republication — the runs whose number appears in two tables —
   because that is the relation that puts two numbers in the doc for one
@@ -316,7 +316,30 @@ to skip:
   the same reason a blessed partial sitting does — nothing here is wrong, and a
   permanently red check stops being read.
 
-**One line, in three regimes: 3.00 GiB inputs read by a `glibc` binary in a
+**`--alone` cannot change any figure that may publish outside a sweep, and that
+is a property of the register rather than of the flag.** Its only job is to skip
+the borrow closure, `Figure.requires` is derived from `shares`, and every figure
+standing in no borrow edge declares no `shares` — so for all nine of them
+`--figure <id>` and `--figure <id> --alone` resolve to the same selection and run
+the same sitting. The flag's whole behavioural footprint is on the entangled
+figures, which are exactly the ones a sitting of their own may not publish. Three
+of those — `census-brace-free`, `nested-end-to-end`, `per-block-quadratic` — are
+entangled while borrowing nothing, so there the flag does not even change what
+runs: it changes only whether the publication refusal fires. That is what makes
+it a diagnostic switch and not a mode.
+
+**What keeps a partial sitting out of the document is a marker and a banner,
+both of which are conventions a person can decline to carry.** `--check` fails
+an entangled figure that declares a sitting of its own, and a sitting whose
+apparatus was overridden emits tables under a `NOT PUBLISHABLE` header — but a
+table pasted in with its sitting marker stripped is indistinguishable from one
+the stamped sweep took, and nothing detects it. The check that would close this
+is `--check` recomputing each table against the sitting's own `raw.json`, which
+means the document holding a resolvable link back to run artifacts that `runs/`
+does not keep; it is a much larger mechanism than the markers it would police,
+and no marker has ever been stripped. So this boundary is discipline, recorded
+here rather than left to be re-derived — and the honest statement of the
+protection is the marker and the banner together, not the check alone. 3.00 GiB inputs read by a `glibc` binary in a
 512 MB `postgres:16` container, timed by that container's own `bash`.** Warm
 figures read from `/dev/shm`; cold ones read from the SSD with `drop_caches`
 before every run, including before the floor; `cold-nvme` ones are that same
