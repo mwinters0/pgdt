@@ -861,6 +861,14 @@ class ThisRepo(unittest.TestCase):
             self.assertLessEqual(deficiencies._index(entry.id), deficiencies._index(mark))
 
     def test_every_b_entry_is_owned_by_a_phase_the_index_calls_live(self):
+        """A `(b)` destination that *is* a phase must be one still running.
+
+        **A destination need not be a phase**, and the check itself says so —
+        an out-of-band `M<k>` is a named owner with no slice list to reconcile
+        against, which is the shape a defect takes when it is found after its
+        phase has already wrapped. Those are skipped here for the same reason
+        the check skips them, rather than asserted over: there is nothing to
+        resolve a ledger row against that this test would not be inventing."""
         text = (deficiencies.STATUS).read_text()
         entries, problems = deficiencies.parse_index(text)
         self.assertEqual(problems, [])
@@ -870,9 +878,15 @@ class ThisRepo(unittest.TestCase):
         self.assertEqual(problems, [])
         self.assertTrue(phases, "the roadmap's phase index did not parse")
         owned = [e for e in entries if e.stance == "b"]
-        self.assertTrue(owned, "no (b) entry is owned by a phase")
-        for entry in owned:
-            n = int(deficiencies.DESTINATION_PHASE_RE.search(entry.destination).group(1))
+        self.assertTrue(owned, "no (b) entry names a destination")
+        by_phase = [
+            (e, deficiencies.DESTINATION_PHASE_RE.search(e.destination)) for e in owned
+        ]
+        by_phase = [(e, m) for e, m in by_phase if m]
+        if not by_phase:
+            self.skipTest("every (b) entry is owned by something that is not a phase")
+        for entry, phase in by_phase:
+            n = int(phase.group(1))
             self.assertIn(n, phases, entry.id)
             self.assertNotIn(phases[n], deficiencies.FINISHED_STATES, entry.id)
 

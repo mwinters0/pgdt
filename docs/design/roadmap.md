@@ -705,12 +705,13 @@ in the dated history entry it was filed under.
 **What the table below still holds is the queue, not the record.** A landed
 item's row is provenance and goes with the rest of the centering; a row whose
 Date is still empty is a live obligation, so it stays and keeps its number.
-The next item admitted takes `M61` and joins them.
+The next item admitted takes `M62` and joins them.
 
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
 | `M59` | | The census-off binary's stamp is checked as an ancestor of HEAD with no path the selected census figures declare changed in between, rather than as equal to HEAD — a non-ancestor stamp still refused, and the refusal reusing the prefix predicate `--stale` already argues staleness from rather than a second authority over what moves a reading | | [2026-09-05](../status/history/2026-09-05.md), "The census stamp tolerates a commit that moves nothing it measures" |
 | `M60` | | A figure taken outside the sweep carries its sitting commit inside its own `<!-- figure: … -->` marker, and every reader of the session stamp — `--stale`, acknowledgement spentness, `--verify-additive` — argues from that figure's commit instead; `--check` fails a sitting that borrows or is derived from, or that does not descend from the stamp, `--figure` refuses such a selection, the stamp's accounting sentence is generated rather than hand-written, and `measurements.md` gains the standing rule the whole thing enforces | | [2026-09-05](../status/history/2026-09-05.md), "A figure may be published outside a sweep, and its sitting becomes data" |
+| `M61` | | An `.xz` source is built from the seek table a matching cache already holds instead of re-walking the file's stream footers, which closes `KD15` — recognition is the layer that decides which source to build, so it is the layer given a loaded cache to consult, and `open_local`'s signature is what that wiring moves | | [2026-09-06](../status/history/2026-09-06.md), "The wrap audit: the seek table is persisted and never read back" |
 
 **One obligation outlived them and is most of the way discharged.** An
 `INSERT`-run scan cost **mid-teens times** a `COPY` scan per byte, CPU-bound,

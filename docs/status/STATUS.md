@@ -383,8 +383,9 @@ here rather than reading as a phase nobody has sliced.
 - **KD15** — an `.xz` source's seek table is persisted in the cache and never
   read back, so every open re-walks the file's stream footers: one read for a
   single-stream file, **85 s** for the 31,150-stream koji download, however
-  complete the cache is. **(c) unowned**; promoted by anyone running repeated
-  commands against a large many-streams file. Detail:
+  complete the cache is. **(b) owned by `M61`** in the out-of-band ledger
+  ([`../design/roadmap.md`](../design/roadmap.md), "Out-of-band work"), the
+  compressed-input work having closed before this was found. Detail:
   [`../design/architecture.md`](../design/architecture.md), "The compressed
   source".
 

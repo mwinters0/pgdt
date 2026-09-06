@@ -488,12 +488,13 @@ trips it, but `XzSource::open` always walks the footers itself — nothing
 constructs a reader *from* a cached table, which the decoder crate supports.
 Every invocation against a many-streams file therefore pays that walk again,
 which is the 85 s above for koji's, however complete the cache is. That is
-deficiency `KD15` (`../status/STATUS.md`, "Known deficiencies"), unowned, and
-what would promote it is anyone running repeated commands against a large
-many-streams file — which is the motivating file. The fix is small and located:
+deficiency `KD15` (`../status/STATUS.md`, "Known deficiencies"), and it is
+**owned**: `M61` in the out-of-band ledger closes it ([`roadmap.md`](roadmap.md),
+"Out-of-band work"). The fix is small and located:
 recognition decides *which* source to build, so it is the place that can also
-consult a loaded cache and hand the table over. Two things bound the cost
-meanwhile: a single-stream file's walk is one read whatever its size, and
+consult a loaded cache and hand the table over — which is what moves
+`open_local`'s signature, since it holds no cache today. Two things bound the
+cost meanwhile: a single-stream file's walk is one read whatever its size, and
 `pgdq info --dqcache <path>` with no `--source` opens no source at all and so
 never pays it.
 

@@ -45,9 +45,10 @@ designed and only half built: the table *is* persisted in the `.dqcache`
 round trips it) and the decoder crate does support constructing a reader *from*
 a previously obtained table — but nothing in this tree calls it, so
 `XzSource::open` walks the footers on every invocation however complete the
-cache is. That is deficiency `KD15`, unowned
+cache is. That is deficiency `KD15`, owned by `M61` in the out-of-band ledger
 ([`../status/STATUS.md`](../status/STATUS.md);
-[`architecture.md`](architecture.md), "The compressed source"). The fix is
+[`architecture.md`](architecture.md), "The compressed source";
+[`roadmap.md`](roadmap.md), "Out-of-band work"). The fix is
 located rather than open-ended: **recognition** is the layer that decides which
 source to build, so it is also the layer that can consult a loaded cache first —
 but it does not hold one today, and giving it one is a wiring decision.
@@ -65,7 +66,8 @@ between the design and the number.
 **Origin.** 2026-09-02, grilling the compressed-input work; the half-built state
 found by its wrap audit, 2026-09-06
 ([`../status/history/2026-09-06.md`](../status/history/2026-09-06.md)).
-Re-check `KD15`: if it has been struck, half this entry is discharged.
+Re-check `KD15` and `M61` before grilling: if that item has landed, the walk is
+gone and half this entry is discharged.
 
 ---
 
