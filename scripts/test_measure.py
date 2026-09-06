@@ -1372,6 +1372,42 @@ class Acknowledgements(unittest.TestCase):
         self.assertEqual(unknown, ["aaa names gone"])
         self.assertEqual(spent, [])
 
+    def test_spentness_is_read_off_each_figure_s_own_base(self):
+        # An entry recorded between the stamp and a figure taken later is spent
+        # for that figure and live for every figure read from the stamp, so it
+        # is deleted only when every figure it covers has moved past it.
+        bases = {fid: "stamp" for fid in measure.ALL_BY_ID}
+        bases["peak-rss"] = "later"
+        acks = (
+            measure.Acknowledged(commit="aaa", figures=("peak-rss", "map-only"), why="x"),
+            measure.Acknowledged(commit="bbb", figures=("peak-rss",), why="x"),
+        )
+        # `aaa` is inside `map-only`'s range and behind `peak-rss`'s; `bbb`
+        # covers only the figure that has moved past it.
+        spent = measure.spent_acknowledgements(
+            acks, bases, ancestor=lambda commit, rev: rev == "later"
+        )
+        self.assertEqual(spent, ["bbb"])
+
+    def test_an_entry_covering_every_figure_needs_every_base_past_it(self):
+        bases = {fid: "stamp" for fid in measure.ALL_BY_ID}
+        bases["peak-rss"] = "later"
+        acks = (measure.Acknowledged(commit="aaa", figures=(), why="x"),)
+        self.assertEqual(
+            measure.spent_acknowledgements(acks, bases, ancestor=lambda c, rev: rev == "later"),
+            [],
+        )
+        self.assertEqual(
+            measure.spent_acknowledgements(acks, bases, ancestor=lambda c, rev: True), ["aaa"]
+        )
+
+    def test_a_figure_with_no_base_spends_nothing(self):
+        acks = (measure.Acknowledged(commit="aaa", figures=("map-only",), why="x"),)
+        self.assertEqual(
+            measure.spent_acknowledgements(acks, {"map-only": None}, ancestor=lambda c, r: True),
+            [],
+        )
+
 
 class VerifyAdditive(unittest.TestCase):
     """The evidence half: regenerate at two revisions and compare bytes."""
@@ -1729,6 +1765,163 @@ class RegisterBoundary(unittest.TestCase):
     def test_the_doc_s_own_stamp_is_scoped_too(self):
         head = self.DOC.read_text().split("## The apparatus")[0]
         self.assertIn("`<!-- figure: … -->` marker, and no other", head)
+
+
+class Sittings(unittest.TestCase):
+    """A figure may be published outside the sweep, and then its own marker
+    carries the commit it was taken at. Every reader of the session stamp
+    argues from that commit instead — half-applying it leaves a mechanism
+    reasoning from a commit the doc itself says is not the figure's."""
+
+    DOC = measure.REPO / "docs/design/measurements.md"
+
+    def test_the_emitted_marker_declares_the_sitting_and_is_read_back(self):
+        marker = measure.figure_marker("peak-rss", "7ee5db5")
+        self.assertEqual(measure.figure_sittings(marker), {"peak-rss": "7ee5db5"})
+        self.assertEqual(measure.MARKER_RE.findall(marker), ["peak-rss"])
+
+    def test_a_figure_from_the_sweep_declares_nothing(self):
+        # The datum is present only where it differs from the stamp: a figure
+        # that declares nothing came from the sweep.
+        self.assertEqual(measure.figure_sittings(measure.figure_marker("map-only")), {})
+
+    def test_the_stamp_s_own_scope_clause_is_not_a_sitting(self):
+        stamp = measure.session_stamp("deadbee", dirty=False)
+        self.assertEqual(measure.figure_sittings(stamp), {})
+
+    def test_a_sitting_is_read_only_out_of_its_own_marker(self):
+        # A commit named in the prose *under* a figure is not its provenance;
+        # the marker is, which is why the datum went inside it.
+        text = (
+            "<!-- figure: peak-rss — reproduce with `x` -->\n\n"
+            "This figure was taken alone, at commit `7ee5db5`.\n"
+        )
+        self.assertEqual(measure.figure_sittings(text), {})
+
+    def test_the_doc_carries_exactly_the_sittings_the_register_permits(self):
+        problems = measure.sitting_problems(
+            measure.figure_sittings(self.DOC.read_text()),
+            measure.stamped_commit(self.DOC),
+        )
+        self.assertEqual(problems, [])
+
+    def test_a_base_is_the_figure_s_own_sitting_where_it_declares_one(self):
+        text = measure.session_stamp("aaaaaaa", dirty=False) + "\n" + measure.figure_marker(
+            "peak-rss", "bbbbbbb"
+        )
+        bases = measure.figure_bases(text)
+        self.assertEqual(bases["peak-rss"], "bbbbbbb")
+        self.assertEqual(bases["map-only"], "aaaaaaa")
+        self.assertEqual(set(bases), set(measure.ALL_BY_ID))
+
+    def test_an_explicit_since_overrides_every_figure(self):
+        # `--since` asks one deliberate question of the whole document.
+        text = measure.session_stamp("aaaaaaa", dirty=False) + "\n" + measure.figure_marker(
+            "peak-rss", "bbbbbbb"
+        )
+        bases = measure.figure_bases(text, "ccccccc")
+        self.assertEqual(set(bases.values()), {"ccccccc"})
+
+    def test_an_unstamped_doc_leaves_a_figure_with_no_base(self):
+        bases = measure.figure_bases("# Measurements\n")
+        self.assertIsNone(bases["map-only"])
+
+    def test_a_figure_that_shares_a_reading_may_not_be_published_alone(self):
+        # What one sitting buys is differencing, so the condition is the borrow
+        # graph: `allocator`'s reference column *is* three other tables' rows.
+        self.assertEqual(measure.entangled_with("peak-rss"), [])
+        self.assertIn("census-brace-free", measure.entangled_with("allocator"))
+
+    def test_a_derivation_entangles_in_both_directions(self):
+        # Not a closure edge, and still an edge: `cross-file-floor`'s first row
+        # is a difference over `nested-end-to-end`'s reps.
+        self.assertIn("cross-file-floor", measure.entangled_with("nested-end-to-end"))
+        self.assertIn("nested-end-to-end", measure.entangled_with("cross-file-floor"))
+
+    def test_an_entangled_sitting_is_refused_by_the_doc_and_by_the_run(self):
+        problems = measure.sitting_problems({"allocator": "bbbbbbb"}, "aaaaaaa")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("census-brace-free", problems[0])
+        refusals = measure.publication_refusals([measure.ALL_BY_ID["allocator"]])
+        self.assertEqual(len(refusals), 1)
+        self.assertIn("only a sweep", refusals[0])
+
+    def test_a_figure_standing_in_no_edge_may_be_taken_on_its_own(self):
+        self.assertEqual(measure.publication_refusals([measure.ALL_BY_ID["peak-rss"]]), [])
+
+    def test_a_sitting_that_repeats_the_stamp_is_a_marker_that_should_not_be_there(self):
+        problems = measure.sitting_problems(
+            {"peak-rss": "aaaaaaa"},
+            "aaaaaaa",
+            resolve=lambda rev: rev * 5,
+            ancestor=lambda a, b: True,
+        )
+        self.assertEqual(len(problems), 1)
+        self.assertIn("stamp's own commit", problems[0])
+
+    def test_a_sitting_older_than_the_stamp_is_refused(self):
+        # An older sitting cannot legitimately exist — a sweep replaces every
+        # table at once — so it is a marker a sweep left behind or a hand edit,
+        # and either puts --stale back on the wrong commit.
+        problems = measure.sitting_problems(
+            {"peak-rss": "bbbbbbb"},
+            "aaaaaaa",
+            resolve=lambda rev: rev * 5,
+            ancestor=lambda a, b: False,
+        )
+        self.assertEqual(len(problems), 1)
+        self.assertIn("does not descend", problems[0])
+
+    def test_a_descendant_sitting_passes(self):
+        self.assertEqual(
+            measure.sitting_problems(
+                {"peak-rss": "bbbbbbb"},
+                "aaaaaaa",
+                resolve=lambda rev: rev * 5,
+                ancestor=lambda a, b: True,
+            ),
+            [],
+        )
+
+    def test_a_sitting_naming_no_commit_is_refused(self):
+        problems = measure.sitting_problems(
+            {"peak-rss": "bbbbbbb"}, "aaaaaaa", resolve=lambda rev: None
+        )
+        self.assertEqual(len(problems), 1)
+        self.assertIn("not a commit", problems[0])
+
+    def test_a_sitting_with_no_stamp_to_be_outside_of_is_refused(self):
+        problems = measure.sitting_problems({"peak-rss": "bbbbbbb"}, None)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("session stamp names no commit", problems[0])
+
+    def test_the_accounting_sentence_is_generated_not_counted(self):
+        whole = measure.sitting_accounting([])
+        self.assertIn(f"All {len(measure.ALL_FIGURES)} figures", whole)
+        one = measure.sitting_accounting([("peak-rss", "7ee5db5")])
+        self.assertIn(f"{len(measure.ALL_FIGURES) - 1} of the {len(measure.ALL_FIGURES)}", one)
+        self.assertIn("`peak-rss` (`7ee5db5`)", one)
+        self.assertIn("The other carries its own", one)
+        two = measure.sitting_accounting([("a", "1234567"), ("b", "2345678")])
+        self.assertIn("The other 2 carry their own", two)
+
+    def test_the_doc_carries_the_sentence_the_harness_generates(self):
+        # Hand-maintaining the count is what went wrong silently: the sentence
+        # claiming every marker was false for as long as one figure stood
+        # outside the sweep and said so only in prose.
+        text = self.DOC.read_text()
+        wanted = measure.sitting_accounting(sorted(measure.figure_sittings(text).items()))
+        self.assertIn(" ".join(wanted.split()), " ".join(text.split()))
+
+    def test_the_stamp_carries_that_sentence_too(self):
+        stamp = measure.session_stamp("deadbee", dirty=False, outside=[("peak-rss", "7ee5db5")])
+        self.assertIn(measure.sitting_accounting([("peak-rss", "7ee5db5")]), stamp)
+        # And the stamp is still the one `stamped_commit` reads back: the
+        # accounting's own shas must not be mistaken for the sitting's.
+        with tempfile.TemporaryDirectory() as tmp:
+            doc = Path(tmp) / "measurements.md"
+            doc.write_text(stamp + "\n")
+            self.assertEqual(measure.stamped_commit(doc), "deadbee")
 
 
 class KojiRecipe(unittest.TestCase):

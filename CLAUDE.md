@@ -348,7 +348,13 @@ the harness does not own declares itself the same way**, with an
 `<!-- outside-register: <id> -->` marker — koji and the `cargo bench` tripwires
 — which `--check` reconciles against `measure.NOT_OURS` both ways and holds to
 carrying no figure marker, since the session stamp's "every figure below" claims
-only what the register holds. The paths and sizes it uses are environment
+only what the register holds. **A figure may be published outside the sweep, and
+then its marker carries the commit it was taken at** — permitted only for a
+figure standing in no `shares` or derivation edge, since what one sitting buys
+is differencing; `--stale`, acknowledgement spentness and `--verify-additive`
+all argue from that commit rather than from the stamp, `--figure` refuses such a
+sitting for an entangled figure before the measurement is spent, and the stamp's
+accounting sentence is generated. The paths and sizes it uses are environment
 variables (`PGDQ_MEASURE_*`) whose defaults suit this machine — see
 `CLAUDE.local.md`.
 

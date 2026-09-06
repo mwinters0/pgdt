@@ -97,7 +97,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Callable, Iterable, Sequence
+from typing import Callable, Iterable, Mapping, Sequence
 
 # The acknowledgement register, in its own module so that adding an entry does
 # not touch a path any figure declares. Re-exported: `measure.ACKNOWLEDGED`
@@ -3540,6 +3540,27 @@ def share_readings(session: Session, figure: str) -> str:
     return "".join(lines)
 
 
+def publication_refusals(figures: Sequence[Figure]) -> list[str]:
+    """Why this sitting's tables could not enter the doc, one line per figure.
+
+    A sitting short of the whole sweep publishes outside the session stamp, and
+    a figure may only do that when it stands in no edge of the borrow graph in
+    either direction — a republished share puts one measurement's number in two
+    tables, a derivation makes one table's row a difference over another's reps,
+    and either one crossing two sittings is the doc asserting a differencing it
+    no longer has. It is the same condition `--check` fails a sitting marker on,
+    asked before the measurement is spent rather than after.
+
+    Refusing rather than warning is deliberate: there is no partial version of
+    it, and the harness already refuses this way where a selection cannot be
+    honestly taken (`resolve_selection` under `--alone`)."""
+    return [
+        f"{fig.id} is read beside {', '.join(entangled)}, so only a sweep can move its table"
+        for fig in figures
+        if (entangled := entangled_with(fig.id))
+    ]
+
+
 def closure_gaps(figures: Sequence[Figure]) -> list[str]:
     """What a selection shares a reading with and does not take, one line each.
 
@@ -3758,9 +3779,22 @@ def drift_table(first: Path, second: Path) -> str:
 
 def cmd_drift(first: str, second: str) -> int:
     fig = ALL_BY_ID["session-drift"]
+    # A derived figure is computed across two sweeps of one commit, and that
+    # commit is usually the stamp's -- the sweep pair is what stamps the doc.
+    # Where it is not, this table is published outside the stamp like any
+    # other and declares where it came from. A pair whose legs disagree
+    # declares nothing: nothing was to be committed between them, so the table
+    # is already invalid and its own closing sentence names both commits.
+    commits = {json.loads((Path(d) / "raw.json").read_text())["commit"] for d in (first, second)}
+    stamp = stamped_commit(REPO / "docs/design/measurements.md")
+    taken = commits.pop() if len(commits) == 1 else None
+    sitting = (
+        taken
+        if taken and stamp and resolve_commit(taken) != resolve_commit(stamp)
+        else None
+    )
     print(f"## {fig.section}\n")
-    print(f"<!-- figure: {fig.id} — reproduce with `cd scripts && uv run measure.py "
-          f"--drift <sweep> <sweep>` -->\n")
+    print(figure_marker(fig.id, sitting, reproduce="--drift <sweep> <sweep>") + "\n")
     print(drift_table(Path(first) / "raw.json", Path(second) / "raw.json"))
     return 0
 
@@ -3865,6 +3899,43 @@ def markers_in(doc: Path) -> list[str]:
     return MARKER_RE.findall(doc.read_text())
 
 
+#: How a figure says it was taken **outside** the sitting the session stamp
+#: names. The commit goes *inside* that figure's own marker rather than in a
+#: sibling comment: a sibling can go missing on its own and its absence is
+#: silent, and a figure missing one reads as stamp-sitting, which is the single
+#: error this mechanism exists to make impossible. It is present only where the
+#: sitting differs from the stamp -- the convention `outside-register` already
+#: uses, where declaring nothing is the ordinary case -- so the stamp's commit
+#: is never repeated eighteen times in a document it could disagree with.
+SITTING_RE = re.compile(r"<!--\s*figure:\s*([a-z0-9-]+)[^>]*?taken at `([0-9a-f]{7,40})`")
+
+
+def figure_marker(fid: str, sitting: str | None = None, reproduce: str | None = None) -> str:
+    """The marker a table is emitted under: the figure's id, the commit it was
+    taken at where that is not the stamp's, and how to reproduce it.
+
+    Written in one place so that what `emit` puts above a table is by
+    construction what `markers_in` and `figure_sittings` read back out of the
+    doc after the paste."""
+    reproduce = reproduce or f"--figure {fid}"
+    taken = f" — taken at `{sitting}`" if sitting else ""
+    return (
+        f"<!-- figure: {fid}{taken} — reproduce with "
+        f"`cd scripts && uv run measure.py {reproduce}` -->"
+    )
+
+
+def figure_sittings(text: str) -> dict[str, str]:
+    """Each figure the doc carries from a sitting of its own, and its commit.
+
+    This is the datum every reader of the session stamp argues from: `--stale`
+    ranges each figure from here, an acknowledgement is spent per figure
+    against it, and `--verify-additive` regenerates a figure's inputs at it.
+    Half-applying that -- one reader still reasoning from a commit the doc
+    itself says is not the figure's -- is the same defect one level down."""
+    return dict(SITTING_RE.findall(text))
+
+
 #: How a section says it is *outside* the register. The symmetry with
 #: `MARKER_RE` is the point: a figure announces itself and so does a section
 #: that is not one, so "is this table one of ours" is read off the doc rather
@@ -3950,10 +4021,146 @@ def partial_sittings(text: str) -> list[tuple[str, list[str]]]:
     return [(fid, sharing_closure(fid)) for fid in seen]
 
 
+def stamp_in(text: str) -> str | None:
+    """The commit a session stamp names, read out of the doc's text."""
+    match = STAMP_RE.search(text)
+    return match.group(1) if match else None
+
+
 def stamped_commit(doc: Path) -> str | None:
     """The commit the doc's session stamp names, so `--stale` has a default."""
-    match = STAMP_RE.search(doc.read_text())
-    return match.group(1) if match else None
+    return stamp_in(doc.read_text())
+
+
+def figure_bases(text: str, override: str | None = None) -> dict[str, str | None]:
+    """The commit each figure is argued from: its own sitting where its marker
+    declares one, the session stamp otherwise.
+
+    **One function, every reader of the stamp.** `--stale`, acknowledgement
+    spentness and `--verify-additive` all used to read the stamp directly, and
+    each of them was then wrong for a figure taken elsewhere -- reporting it
+    stale against commits it *postdates*, spending an acknowledgement its range
+    cannot reach, and regenerating its inputs at a revision it was not taken at.
+
+    `override` is `--since`, which asks a deliberate question of every figure at
+    once ("what has moved since X") and so is not per figure. `None` for a
+    figure means nothing says where to argue from: no marker and no stamp."""
+    if override:
+        return {fid: override for fid in ALL_BY_ID}
+    stamp = stamp_in(text)
+    sittings = figure_sittings(text)
+    return {fid: sittings.get(fid, stamp) for fid in ALL_BY_ID}
+
+
+def entangled_with(fid: str) -> list[str]:
+    """Every figure whose readings this one's table cannot be separated from.
+
+    Both edges of the borrow graph in both directions: a republished share
+    puts one measurement's number in two tables, and a derivation makes one
+    table's row a difference over another's reps. A figure with neither may be
+    published from a sitting of its own, because what one sitting buys is the
+    ability to *difference* these tables against each other, and a figure that
+    stands in no edge endangers none of it."""
+    fig = EVERY_BY_ID.get(fid)
+    consumed = [s.source for s in fig.shares if not s.republished] if fig else []
+    return sorted({*sharing_closure(fid), *(c for c, _ in derived_consumers(fid)), *consumed})
+
+
+def sitting_problems(
+    sittings: Mapping[str, str],
+    stamp: str | None,
+    resolve: Callable[[str], str | None] = resolve_commit,
+    ancestor: Callable[[str, str], bool] | None = None,
+) -> list[str]:
+    """Why a figure may not carry the sitting its marker declares, one line each.
+
+    Three refusals, and the third is the one that looks entirely plausible in
+    the doc:
+
+    - **A figure that shares or is derived from may not be published outside
+      the sweep at all.** That is the doc asserting a differencing that crosses
+      sittings, and it is the same class of error as a section declared outside
+      the register while carrying a figure marker.
+    - **A sitting that names the stamp's own commit is a marker that should not
+      be there.** A figure the stamped sweep took declares nothing, so a marker
+      repeating the stamp is a second copy of one fact that can go stale
+      against it.
+    - **A sitting must descend from the stamp.** An older one cannot
+      legitimately exist -- a sweep replaces every table at once, so a figure
+      the sweep took carries no marker and a figure it did not take was folded
+      in later -- which makes a non-descendant either a marker a sweep left
+      behind or a hand edit, both of which republish a fresh table under a lying
+      provenance and put `--stale` back on the wrong commit. It is the
+      `pgdq-nocensus` failure in another mechanism, and it costs one
+      `is_ancestor` call."""
+    ancestor = ancestor or is_ancestor
+    out: list[str] = []
+    for fid, sha in sorted(sittings.items()):
+        if fid not in EVERY_BY_ID:
+            # `--check`'s unknown-marker report already names it; saying it
+            # twice would make one rename look like two problems.
+            continue
+        entangled = entangled_with(fid)
+        if entangled:
+            out.append(
+                f"{fid} declares a sitting of its own ({sha}) and is read beside "
+                f"{', '.join(entangled)} — a figure published outside the stamped sweep must "
+                "share no reading and stand in no derivation, since one sitting is what lets "
+                "these tables be differenced against each other"
+            )
+            continue
+        if stamp is None:
+            out.append(
+                f"{fid} declares a sitting ({sha}) in a document whose session stamp names no "
+                "commit, so there is nothing for it to be outside of"
+            )
+            continue
+        got, base = resolve(sha), resolve(stamp)
+        if got is None:
+            out.append(f"{fid} declares {sha}, which is not a commit in this repository")
+            continue
+        if base is None:
+            out.append(
+                f"{fid} declares {sha}, but the session stamp's {stamp} is not a commit in this "
+                "repository, so nothing can say whether the sitting descends from it"
+            )
+            continue
+        if got == base:
+            out.append(
+                f"{fid} declares the stamp's own commit ({sha}); a figure the stamped sweep took "
+                "carries no sitting marker, and one that carries none is read from the stamp"
+            )
+            continue
+        if not ancestor(base, got):
+            out.append(
+                f"{fid} declares {sha}, which does not descend from the stamp's {stamp} — a "
+                "sitting older than the stamp cannot legitimately exist, so this is a marker a "
+                "sweep left behind or a hand edit, and either republishes a fresh table under a "
+                "lying provenance"
+            )
+    return out
+
+
+def sitting_accounting(outside: Sequence[tuple[str, str]], total: int | None = None) -> str:
+    """The stamp's accounting of which figures came from the sitting it names.
+
+    **Generated, not reconciled.** `session_stamp` already computes the harder
+    half of the sentence, and the count beside it was hand-maintained — which
+    is exactly the thing that goes wrong silently: the sentence claiming all
+    eighteen markers was false for as long as one figure stood outside the
+    sweep and said so only in prose three paragraphs away."""
+    total = len(ALL_FIGURES) if total is None else total
+    if not outside:
+        return f"**All {total} figures below come from that sitting.**"
+    named = ", ".join(f"`{fid}` (`{sha}`)" for fid, sha in outside)
+    rest = (
+        "The other carries its own sitting commit inside its marker, and every reader of this "
+        "stamp argues from that instead"
+        if len(outside) == 1
+        else f"The other {len(outside)} carry their own sitting commits inside their markers, "
+        "and every reader of this stamp argues from those instead"
+    )
+    return f"**{total - len(outside)} of the {total} figures below come from that sitting.** {rest}: {named}."
 
 
 def declared_hits(fig: Figure, changed: Iterable[str]) -> list[str]:
@@ -4026,7 +4233,12 @@ def git_head() -> tuple[str, bool]:
     return head, bool(figures_touched(changed))
 
 
-def session_stamp(head: str, dirty: bool, allocator: str | None = None) -> str:
+def session_stamp(
+    head: str,
+    dirty: bool,
+    allocator: str | None = None,
+    outside: Sequence[tuple[str, str]] = (),
+) -> str:
     """The line the doc carries, and the line `stamped_commit` reads back.
 
     The allocator is part of it because a figure here is a **CLI** figure,
@@ -4040,14 +4252,26 @@ def session_stamp(head: str, dirty: bool, allocator: str | None = None) -> str:
     doc also carries sections this harness does not own, and the stamp's claim
     was false over them for as long as it said "every figure below"; the scope
     is what a section's `<!-- outside-register: <id> -->` marker declares it
-    out of, and `--check` holds the two in step."""
-    suffix = " (with uncommitted changes under a measured path)" if dirty else ""
-    alloc = f", under the `{allocator}` allocator" if allocator else ""
+    out of, and `--check` holds the two in step.
+
+    **`outside` is the figures the doc carries from a sitting of their own**,
+    and the sentence accounting for them is generated here rather than written
+    by hand beside it — see `sitting_accounting`."""
     return (
         f"**Session stamp.** Every figure below — every section carrying a "
         f"`<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on "
-        f"{date.today().isoformat()}, against commit `{head}`{suffix}{alloc}."
+        f"{date.today().isoformat()}, against commit `{head}`{taken_against(dirty, allocator)}. "
+        + sitting_accounting(outside)
     )
+
+
+def taken_against(dirty: bool, allocator: str | None) -> str:
+    """What qualifies a commit in a stamp: the tree's state and the allocator.
+
+    Shared with the header a *partial* sitting writes instead of a stamp, so
+    that the two say the same thing about the same run."""
+    suffix = " (with uncommitted changes under a measured path)" if dirty else ""
+    return suffix + (f", under the `{allocator}` allocator" if allocator else "")
 
 
 def emit(cfg: Config, figures: Sequence[Figure]) -> int:
@@ -4063,9 +4287,15 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
 
     head, dirty = git_head()
     allocator = None if cfg.dry_run else binary_allocator(cfg.bin_pgdq)
+    # A sitting short of the whole sweep does not re-stamp the document, so
+    # each table it emits carries the commit it was taken at inside its own
+    # marker and every reader of the stamp argues from that
+    # (`measurements.md`, "A figure may be published outside the sweep").
+    whole_sweep = {f.id for f in FIGURES} <= {f.id for f in figures}
     log(
         f"measure.py — {len(figures)} figure(s), commit {head}{' (dirty)' if dirty else ''}"
         + (f", allocator {allocator}" if allocator else "")
+        + ("" if whole_sweep else ", a sitting of its own (each table declares this commit)")
     )
     log(f"output: {out_root}")
     if not cfg.publishable:
@@ -4161,11 +4391,8 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
         heading = "" if fig.section in sections_seen else f"## {fig.section}\n\n"
         sections_seen.add(fig.section)
         label = f"**{fig.table_label}**\n\n" if fig.table_label else ""
-        parts.append(
-            f"{heading}"
-            f"<!-- figure: {fig.id} — reproduce with `cd scripts && "
-            f"uv run measure.py --figure {fig.id}` -->\n\n{label}{body}\n{apparatus}{consumers}"
-        )
+        marker = figure_marker(fig.id, None if whole_sweep else head)
+        parts.append(f"{heading}{marker}\n\n{label}{body}\n{apparatus}{consumers}")
 
     stager.cleanup()
     if not cfg.dry_run:
@@ -4173,10 +4400,34 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
     if governor is not None:
         governor.__exit__()
 
+    # What the doc still carries from somewhere other than this sitting: the
+    # markers already in it, minus whatever this run just replaced.
+    doc = REPO / "docs/design/measurements.md"
+    taken = {f.id for f in figures}
+    outside = sorted(
+        (fid, sha)
+        for fid, sha in (figure_sittings(doc.read_text()) if doc.exists() else {}).items()
+        if fid not in taken
+    )
+    # A whole sweep stamps the document; a sitting of its own does not, and
+    # says what it is instead of writing a stamp nobody may paste.
+    if whole_sweep:
+        lead = session_stamp(head, dirty, allocator, outside)
+    else:
+        lead = (
+            f"**A sitting of its own, not a sweep.** This run took {len(figures)} of the "
+            f"{len(FIGURES)} figures a sweep takes, with `scripts/measure.py` on "
+            f"{date.today().isoformat()}, against commit `{head}`"
+            f"{taken_against(dirty, allocator)} — so this run does not stamp the document. "
+            "Leave its session stamp alone, and fold each table in with the `taken at` commit "
+            "its own marker carries; `--check` refuses that marker on a figure that shares a "
+            "reading or stands in a derivation, which is every figure a sweep is the only way "
+            "to move."
+        )
     header = [
         "# measure.py output",
         "",
-        session_stamp(head, dirty, allocator),
+        lead,
         "",
         "Each section below is one figure, ready to paste under its heading in "
         "`docs/design/measurements.md`.",
@@ -4604,11 +4855,12 @@ def cmd_profile() -> int:
 
 def cmd_check(doc: Path) -> int:
     """Reconcile the register against the doc: which figures have landed a
-    marker, which markers name nothing, where the register's boundary runs, and
-    which documents a fold-in must re-read because they repeat a figure's
-    numbers."""
+    marker, which markers name nothing, where the register's boundary runs,
+    which figures were taken outside the stamped sweep, and which documents a
+    fold-in must re-read because they repeat a figure's numbers."""
     text = doc.read_text()
     found = markers_in(doc)
+    sittings = figure_sittings(text)
     outside = outside_register_sections(text)
     undeclared = [o.id for o in NOT_OURS.values() if o.id not in {i for i, _ in outside}]
     unknown_outside = sorted({i for i, _ in outside if i not in NOT_OURS})
@@ -4706,12 +4958,36 @@ def cmd_check(doc: Path) -> int:
         for fig in UNTAKEN:
             print(f"  {fig.id}")
         print()
-    acks = resolved_acknowledgements()
     stamp = stamped_commit(doc)
+    if sittings:
+        print(
+            "Published outside the stamped sweep — each of these declares the commit it was\n"
+            "taken at inside its own marker, and every reader of the stamp argues from that:"
+        )
+        for fid, sha in sorted(sittings.items()):
+            print(f"  {fid:<24} {sha}")
+        print()
+    bad_sittings = sitting_problems(sittings, stamp)
+    if bad_sittings:
+        print("Sittings the doc may not carry:")
+        for line in bad_sittings:
+            print(f"  {line}")
+        print()
+    # Generated, never reconciled: the count beside the stamp was hand-written
+    # and was wrong for as long as one figure stood outside the sweep.
+    accounting = sitting_accounting(sorted(sittings.items()))
+    miscounted = " ".join(accounting.split()) not in " ".join(text.split())
+    if miscounted:
+        print(
+            "The session stamp's accounting sentence is not the one the harness generates.\n"
+            "Replace it with this, verbatim:\n"
+        )
+        print(f"  {accounting}\n")
+    acks = resolved_acknowledgements()
     unknown_ack, spent_ack = acknowledgement_problems(
         acks,
         ALL_BY_ID,
-        [a.commit for a in acks if stamp and is_ancestor(a.commit, stamp)],
+        spent_acknowledgements(acks, figure_bases(text)),
     )
     if acks:
         print("Acknowledged commits — a declared path changed and no reading moved:")
@@ -4724,7 +5000,10 @@ def cmd_check(doc: Path) -> int:
             print(f"  {line}")
         print()
     if spent_ack:
-        print("Spent acknowledgements — the stamp has moved past them; delete these entries:")
+        print(
+            "Spent acknowledgements — every figure they cover has moved past them; delete\n"
+            "these entries:"
+        )
         for line in spent_ack:
             print(f"  {line}")
         print()
@@ -4742,6 +5021,8 @@ def cmd_check(doc: Path) -> int:
             or undeclared
             or unknown_outside
             or both
+            or bad_sittings
+            or miscounted
             or unknown_ack
             or spent_ack
         )
@@ -4755,11 +5036,12 @@ def acknowledgement_problems(
     """Entries naming a figure that does not exist, and entries already spent.
 
     Spent is the one that silts up. An acknowledgement covers a commit inside
-    one session stamp's range; once the doc is re-stamped past that commit, no
-    `--stale` range can reach it again and the entry excuses nothing. Left
-    standing, the register accumulates permanent excuses whose diffs nobody
-    will ever re-read — which is how a mechanism that exists to keep a signal
-    honest turns into the thing dulling it.
+    one figure's `--stale` range; once every figure it names is argued from a
+    commit past it, no range can reach it again and the entry excuses nothing.
+    Left standing, the register accumulates permanent excuses whose diffs
+    nobody will ever re-read — which is how a mechanism that exists to keep a
+    signal honest turns into the thing dulling it. Which entries those are is
+    `spent_acknowledgements`, which reads each figure's own base.
     """
     known = set(known)
     spent = set(spent)
@@ -4767,6 +5049,30 @@ def acknowledgement_problems(
         f"{ack.commit[:7]} names {fid}" for ack in acks for fid in ack.figures if fid not in known
     )
     return unknown, sorted(ack.commit[:7] for ack in acks if ack.commit in spent)
+
+
+def spent_acknowledgements(
+    acks: Sequence[Acknowledged],
+    bases: Mapping[str, str | None],
+    ancestor: Callable[[str, str], bool] | None = None,
+) -> list[str]:
+    """The commits no figure they cover can reach any more.
+
+    **Spentness is per figure**, because the range each figure is argued from
+    is. An entry recorded against a commit between the stamp and a figure taken
+    later is spent *for that figure* — its `--stale` range starts after the
+    commit — and still live for every figure read from the stamp. So an entry
+    goes only when every figure it covers has moved past it; going on the stamp
+    alone would delete an excuse that is still doing work, and the next diff
+    under that path would read stale with the reason gone."""
+    ancestor = ancestor or is_ancestor
+    out = []
+    for ack in acks:
+        covered = ack.figures or tuple(bases)
+        revs = [bases.get(fid) for fid in covered]
+        if revs and all(rev is not None and ancestor(ack.commit, rev) for rev in revs):
+            out.append(ack.commit)
+    return out
 
 
 #: The size `--verify-additive` generates at. Small enough that verifying every
@@ -4790,10 +5096,18 @@ def cmd_verify_additive(since: str | None) -> int:
     What this cannot settle is a change to library code or to the harness's own
     timing path, where there is no cheap oracle and the honest answer is a
     sweep. Those stay stale, and `--stale` keeps saying so.
+
+    **A figure's inputs are regenerated at that figure's own base**, which is
+    its sitting where its marker declares one and the session stamp otherwise.
+    Reading the stamp for all of them rested on "the figure was taken at the
+    stamp, so its inputs existed then" — a sentence a figure published outside
+    the sweep falsifies, and one whose failure is silent: the older revision
+    generates *something*, and the comparison then answers a question nobody
+    asked.
     """
     doc = REPO / "docs/design/measurements.md"
-    rev = since or stamped_commit(doc)
-    if not rev:
+    bases = figure_bases(doc.read_text(), since)
+    if any(bases[fig.id] is None for fig in ALL_FIGURES):
         print(
             "no --since given and measurements.md carries no session stamp naming a commit; "
             "pass --since <rev>",
@@ -4801,91 +5115,85 @@ def cmd_verify_additive(since: str | None) -> int:
         )
         return 2
 
-    changed = set(changed_paths(rev))
-    generators = sorted(
-        {spec.generator for spec in INPUTS.values() if f"scripts/{spec.generator}" in changed}
-    )
-    if not generators:
-        print(f"no generator any figure depends on changed since {rev}.")
-        return 0
-
-    cfg = dataclasses.replace(Config(), size_gib=VERIFY_SIZE_GIB)
+    changed_since = {rev: set(changed_paths(rev)) for rev in sorted({*bases.values()})}
     # Only the inputs a *published* figure is taken on. An input that exists
     # solely for an untaken instrument has no bytes in the doc to be wrong
     # about, and -- as `composite_text` proved on this mechanism's first run --
     # it may not be generatable at the old revision at all, because the commit
     # under test is what added its flag. A published figure's inputs cannot be
-    # new that way: the figure was taken at the stamp, so they existed then.
-    published = {name for fig in ALL_FIGURES for name in (*fig.cold_inputs, *fig.warm_inputs)}
-    specs = sorted(
-        {
-            (spec.name, spec)
-            for name, spec in INPUTS.items()
-            if spec.generator in generators and name in published
-        },
-        key=lambda pair: pair[0],
-    )
-    if not specs:
-        print(
-            "the changed generator(s) feed no published figure's inputs, so nothing the doc "
-            "carries was taken on them."
-        )
+    # new that way: the figure was taken at its own base, so they existed then.
+    wanted: dict[str, dict[str, InputSpec]] = {}
+    covered: dict[str, set[str]] = {}
+    generators: dict[str, set[str]] = {}
+    for fig in ALL_FIGURES:
+        rev = bases[fig.id]
+        for name in (*fig.cold_inputs, *fig.warm_inputs, *fig.nvme_inputs):
+            spec = INPUTS[name]
+            if f"scripts/{spec.generator}" in changed_since[rev]:
+                wanted.setdefault(rev, {})[name] = spec
+                covered.setdefault(rev, set()).add(fig.id)
+                generators.setdefault(rev, set()).add(spec.generator)
+    if not wanted:
+        print("no generator any published figure depends on changed since that figure's base.")
         return 0
-    print(f"{len(generators)} generator(s) changed since {rev}: {', '.join(generators)}")
-    print(f"regenerating {len(specs)} input(s) at {VERIFY_SIZE_GIB} GiB under both revisions\n")
 
-    # Under `runs/`, like the pre-throttle build's worktree: gitignored, so a
-    # crashed run leaves no untracked tree inside the repo being measured.
+    cfg = dataclasses.replace(Config(), size_gib=VERIFY_SIZE_GIB)
     cfg.out_dir.mkdir(parents=True, exist_ok=True)
-    safe = re.sub(r"[^A-Za-z0-9._-]", "_", rev)
-    work = cfg.out_dir / f"worktree-verify-{safe}"
-    run(["git", "worktree", "add", "--detach", str(work), rev], cwd=REPO, quiet=True)
-    identical: list[str] = []
     differing: list[str] = []
-    try:
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp_path = Path(tmp)
-            for name, spec in specs:
-                old_out = tmp_path / f"{name}.old"
-                new_out = tmp_path / f"{name}.new"
-                run(spec.argv(cfg, old_out), cwd=work / "scripts", quiet=True)
-                run(spec.argv(cfg, new_out), cwd=SCRIPTS, quiet=True)
-                old, new = old_out.read_bytes(), new_out.read_bytes()
-                if old == new:
-                    identical.append(name)
-                    print(f"  {name:<16} identical ({len(new)} bytes)")
-                else:
-                    differing.append(name)
-                    at = next(
-                        (i for i, (a, b) in enumerate(zip(old, new)) if a != b),
-                        min(len(old), len(new)),
-                    )
-                    print(f"  {name:<16} DIFFERS at byte {at} ({len(old)} vs {len(new)} bytes)")
-                old_out.unlink()
-                new_out.unlink()
-    finally:
-        run(["git", "worktree", "remove", "--force", str(work)], cwd=REPO, quiet=True)
+    for rev, specs in wanted.items():
+        who = sorted(covered[rev])
+        print(
+            f"{len(generators[rev])} generator(s) changed since {rev} "
+            f"({', '.join(sorted(generators[rev]))}), which {len(who)} figure(s) are taken "
+            f"against: {', '.join(who)}"
+        )
+        print(
+            f"regenerating {len(specs)} input(s) at {VERIFY_SIZE_GIB} GiB under both revisions\n"
+        )
+        # Under `runs/`, like the pre-throttle build's worktree: gitignored, so
+        # a crashed run leaves no untracked tree inside the repo being measured.
+        safe = re.sub(r"[^A-Za-z0-9._-]", "_", rev)
+        work = cfg.out_dir / f"worktree-verify-{safe}"
+        run(["git", "worktree", "add", "--detach", str(work), rev], cwd=REPO, quiet=True)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                tmp_path = Path(tmp)
+                for name, spec in sorted(specs.items()):
+                    old_out = tmp_path / f"{name}.old"
+                    new_out = tmp_path / f"{name}.new"
+                    run(spec.argv(cfg, old_out), cwd=work / "scripts", quiet=True)
+                    run(spec.argv(cfg, new_out), cwd=SCRIPTS, quiet=True)
+                    old, new = old_out.read_bytes(), new_out.read_bytes()
+                    if old == new:
+                        print(f"  {name:<16} identical ({len(new)} bytes)")
+                    else:
+                        differing.append(f"{name} (since {rev})")
+                        at = next(
+                            (i for i, (a, b) in enumerate(zip(old, new)) if a != b),
+                            min(len(old), len(new)),
+                        )
+                        print(
+                            f"  {name:<16} DIFFERS at byte {at} ({len(old)} vs {len(new)} bytes)"
+                        )
+                    old_out.unlink()
+                    new_out.unlink()
+        finally:
+            run(["git", "worktree", "remove", "--force", str(work)], cwd=REPO, quiet=True)
+        print()
 
     if differing:
         print(
-            f"\n{len(differing)} input(s) changed. Those figures are genuinely stale and need a "
-            "sweep; do not acknowledge them."
+            f"{len(differing)} input(s) changed: {', '.join(differing)}. Those figures are "
+            "genuinely stale and need a sweep; do not acknowledge them."
         )
         return 1
 
-    covered = sorted(
-        {
-            fig.id
-            for fig in ALL_BY_ID.values()
-            for dep in fig.depends
-            if dep in {f"scripts/{g}" for g in generators}
-        }
-    )
+    accounted = sorted({fid for ids in covered.values() for fid in ids})
     print(
-        f"\nEvery input is byte-identical, so no figure was taken on different bytes. "
-        f"The {len(covered)} figure(s) this accounts for:\n"
+        f"Every input is byte-identical, so no figure was taken on different bytes. "
+        f"The {len(accounted)} figure(s) this accounts for:\n"
     )
-    for fid in covered:
+    for fid in accounted:
         print(f"  {fid}")
     print(
         "\nThat is the evidence an `Acknowledged` entry carries — record the commit that changed "
@@ -4895,29 +5203,54 @@ def cmd_verify_additive(since: str | None) -> int:
 
 
 def cmd_stale(since: str | None) -> int:
+    """Which figures a diff has invalidated, each argued from its own base.
+
+    A figure published outside the stamped sweep declares the commit it was
+    taken at, and its range starts there: reading the stamp for every figure
+    reported one stale against three commits it *postdates*, which is a red
+    nobody can clear — not by a measurement, which would spend a sitting to
+    conceal that the range was the defect, and not by an acknowledgement, which
+    would assert "this commit moved no reading" about a commit that ran before
+    the reading was taken."""
     doc = REPO / "docs/design/measurements.md"
-    rev = since or stamped_commit(doc)
-    if not rev:
+    text = doc.read_text()
+    bases = figure_bases(text, since)
+    if any(rev is None for rev in bases.values()):
         print(
             "no --since given and measurements.md carries no session stamp naming a commit; "
             "pass --since <rev>",
             file=sys.stderr,
         )
         return 2
-    changed = changed_paths(rev)
-    print(f"{len(changed)} path(s) changed since {rev}\n")
-    touched = figures_touched(changed)
+    changed_since = {rev: changed_paths(rev) for rev in sorted({*bases.values()})}
+    for rev, changed in changed_since.items():
+        who = sorted(fid for fid, base in bases.items() if base == rev)
+        scope = "every figure" if len(who) == len(bases) else ", ".join(who)
+        print(f"{len(changed)} path(s) changed since {rev} — {scope}")
+    print()
+    touched = [
+        (fig, hits)
+        for fig in ALL_BY_ID.values()
+        if (hits := declared_hits(fig, changed_since[bases[fig.id]]))
+    ]
     if not touched:
         print("no figure's declared paths were touched.")
         return 0
 
     acks = resolved_acknowledgements()
     dirty = dirty_paths()
-    by_path = commits_touching({p for _, hits in touched for p in hits}, rev)
+    # Per base, because a commit's position in a range depends on where the
+    # range starts: the same path is touched by different commits for a figure
+    # read from the stamp and one read from its own sitting.
+    by_base = {
+        rev: commits_touching({p for fig, hits in touched if bases[fig.id] == rev for p in hits}, rev)
+        for rev in changed_since
+    }
 
     stale: list[tuple[Figure, list[str]]] = []
     excused_by: dict[str, list[str]] = {}
     for fig, hits in touched:
+        by_path = by_base[bases[fig.id]]
         ok = excused_paths(fig.id, hits, by_path, dirty, acks)
         left = [h for h in hits if h not in ok]
         if left:
@@ -4940,8 +5273,12 @@ def cmd_stale(since: str | None) -> int:
         print("no figure is stale: every touched path is accounted for.")
         return 0
 
+    stamp = stamp_in(text)
     for fig, hits in stale:
-        print(f"  {fig.id:<24} stale — {', '.join(hits)}")
+        base = bases[fig.id]
+        own = "" if base == stamp or since else f" (since its own sitting {base})"
+        print(f"  {fig.id:<24} stale — {', '.join(hits)}{own}")
+        by_path = by_base[base]
         for path, excused, blocking in inert_excuses(fig.id, hits, by_path, acks):
             names = ", ".join(c[:7] for c in excused)
             held = ", ".join(c[:7] for c in blocking) or "an uncommitted change"
@@ -4954,10 +5291,20 @@ def cmd_stale(since: str | None) -> int:
             "`uv run measure.py --drift <sweep> <sweep>`, which measures nothing."
         )
         return 1
+    # `--figure` is what takes one on its own, so a derived figure is not in
+    # this list however few edges it stands in: `--drift` is how it moves.
+    alone = sorted(
+        fig.id for fig, _ in stale if fig.id in SELECTABLE_BY_ID and not entangled_with(fig.id)
+    )
     print(
-        "\nA stale figure must be re-taken with the whole doc: one sweep replaces every table "
+        "\nA stale figure is re-taken with the whole doc: one sweep replaces every table "
         "(`uv run measure.py --all`), because the doc differences across tables."
     )
+    if alone:
+        print(
+            "These stand in no borrow edge, so each may instead be re-taken on its own and "
+            f"declare the sitting in its marker: {', '.join(alone)}."
+        )
     return 1
 
 
@@ -5064,6 +5411,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         pin_governor=args.pin_governor or Config().pin_governor,
     )
     figures = resolve_selection(ids, alone=args.alone)
+    # A sitting short of the sweep publishes outside the session stamp, which
+    # only a figure standing in no borrow edge may do. Asked here, before the
+    # measurement is spent, rather than at `--check` after it -- and asked only
+    # of a sitting that could be folded in at all: a smoke run's tables carry
+    # the harness's NOT PUBLISHABLE banner, and `--alone` is the deliberate ask
+    # for a partial sitting, whose tables still cannot enter the doc for an
+    # entangled figure.
+    if not args.alone and cfg.publishable and not {f.id for f in FIGURES} <= {f.id for f in figures}:
+        refusals = publication_refusals(figures)
+        if refusals:
+            parser.error(
+                "this sitting would publish outside the document's session stamp: "
+                + "; ".join(refusals)
+                + ". Take the whole doc (`--all`), which re-stamps it, or `--alone` for a "
+                "sitting you are not folding in."
+            )
     if not cfg.dry_run and not cfg.bin_pgdq.exists():
         parser.error(f"{cfg.bin_pgdq} is missing — `cargo build --release -p pgdump_query-cli`")
     census = [f for f in figures if f.id.startswith("census")]
