@@ -185,8 +185,8 @@ async fn size_mismatch_invalidates_the_cache() {
     assert_eq!(
         cache::load(&path, &grown_source).await.unwrap(),
         CacheStatus::SourceChanged {
-            cached_size: source.size().await.unwrap(),
-            live_size: grown_source.size().await.unwrap(),
+            cached_stored_size: source.stored_size().await.unwrap(),
+            live_stored_size: grown_source.stored_size().await.unwrap(),
         }
     );
 }

@@ -245,9 +245,10 @@ matrix.
       `Pin<Box<dyn Future>>` returns, `&dyn`/`Arc<dyn>` call sites. No new
       behavior; every existing (plain local file) caller must still pass.
       Notes: [`../design/roadmap-P13.1-dyn-trait-notes.md`](../design/roadmap-P13.1-dyn-trait-notes.md)
-- [ ] **13.2** `SourceIdentity` becomes the opaque enum (D4), `stored_size()`
+- [x] **13.2** `SourceIdentity` becomes the opaque enum (D4), `stored_size()`
       and `size_is_exact()` join the trait (D4, D7), `CompressionIndex` enum
       added empty of xz content (D5). One `FORMAT_VERSION` bump for all of it.
+      Notes: [`../design/roadmap-P13.2-identity-opacity-notes.md`](../design/roadmap-P13.2-identity-opacity-notes.md)
 - [ ] **13.3** `XzSource`: the seek table's xz content (D5), the streaming
       decoder restarted on seek (D6), and the four properties `xz-seek`'s own
       grilling already committed this phase to — repeated-fill delivery, a

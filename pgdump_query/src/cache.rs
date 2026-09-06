@@ -15,11 +15,14 @@
 //!
 //! **The dump file's identity is checked, not assumed**
 //! (`docs/design/architecture.md`, "The cache"). Every cache records the
-//! source's size and mtime as observed at save time; [`load`] re-observes
-//! the live source and compares. A size mismatch means every byte offset in
-//! the cache could be wrong, so the cache is invalidated the same way a
-//! foreign or wrong-version file is — silently, per this module's
-//! best-effort contract, not as a hard error. An mtime mismatch is weaker
+//! source's *stored* size and mtime as observed at save time — bytes on the
+//! device, not the addressable (possibly decompressed) length
+//! (`docs/design/roadmap-P13-compressed-input.md`, "D4"); [`load`]
+//! re-observes the live source and compares. A stored-size mismatch means
+//! every byte offset in the cache could be wrong, so the cache is
+//! invalidated the same way a foreign or wrong-version file is — silently,
+//! per this module's best-effort contract, not as a hard error. An mtime
+//! mismatch is weaker
 //! evidence (mtime granularity and preservation vary too much across
 //! filesystems to be conclusive) and does **not** invalidate the cache; it
 //! is surfaced on [`CacheStatus::Valid`], and [`CacheMode::load`] turns it
@@ -54,28 +57,42 @@ use crate::{Error, Result};
 /// shape. [`CacheStatus::Incomplete`] is the worked example — it reinterprets
 /// `scanned_through` against a size already stored, changing nothing on
 /// disk.
-const FORMAT_VERSION: u32 = 15;
+const FORMAT_VERSION: u32 = 16;
 
-/// The dump file's size and modification time as observed when a cache was
-/// last saved — see the module docs.
+/// The dump file's identity as observed when a cache was last saved — see
+/// the module docs.
+///
+/// **Opaque, not a struct** (`docs/design/roadmap-P13-compressed-input.md`,
+/// "D4"): P14's remote source has no mtime at all — an ETag is not a
+/// `SystemTime` — so a future variant carries whatever evidence its own kind
+/// of source actually has, rather than every source being forced through one
+/// shared shape. One variant today; a call site reads the fields through the
+/// variant it matches, since the two kinds of identity this project will
+/// eventually have share no fields worth naming generically.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-struct SourceIdentity {
-    size: u64,
-    /// `(seconds, nanoseconds)` since the Unix epoch — `SystemTime` itself
-    /// isn't `Serialize`, and this is L1's own on-disk vocabulary rather
-    /// than borrowing `std`'s. `None` when the source exposed no mtime.
-    mtime: Option<(u64, u32)>,
+enum SourceIdentity {
+    /// Backed by [`ByteRangeSource::stored_size`]/`modified` — every source
+    /// today, decompressing or not, since a decompressing source still sits
+    /// on top of bytes with an on-disk size and (usually) an mtime.
+    LocalFile {
+        stored_size: u64,
+        /// `(seconds, nanoseconds)` since the Unix epoch — `SystemTime`
+        /// itself isn't `Serialize`, and this is L1's own on-disk vocabulary
+        /// rather than borrowing `std`'s. `None` when the source exposed no
+        /// mtime.
+        mtime: Option<(u64, u32)>,
+    },
 }
 
 impl SourceIdentity {
     async fn observe(source: &dyn ByteRangeSource) -> Result<Self> {
-        let size = source.size().await?;
+        let stored_size = source.stored_size().await?;
         let mtime = source
             .modified()
             .await?
             .map(|t| t.duration_since(UNIX_EPOCH).unwrap_or_default())
             .map(|d| (d.as_secs(), d.subsec_nanos()));
-        Ok(Self { size, mtime })
+        Ok(SourceIdentity::LocalFile { stored_size, mtime })
     }
 }
 
@@ -83,16 +100,48 @@ impl SourceIdentity {
 /// raw file positions; a future archive format's (`docs/design/roadmap.md`,
 /// P8 Track B)
 /// are entry-relative, so the two must never be silently conflated.
+///
+/// A compressed source's indexed offsets are *also* plain-format offsets —
+/// byte for byte what a plain scan of the same decompressed content
+/// produces — so a compressed source never sets this to anything but
+/// `Plain`; what changes is [`CompressionIndex`], a sibling field rather
+/// than a value of this one (`docs/design/roadmap-P13-compressed-input.md`,
+/// "D5").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 enum ContainerKind {
     Plain,
+}
+
+/// What compression sits between this cache's plain-format offsets and the
+/// bytes on disk — `None` for a source that needs no such index
+/// (`docs/design/roadmap-P13-compressed-input.md`, "D5"). A sibling of
+/// [`ContainerKind`], not a value of it: see that type's docs.
+///
+/// **Empty of xz content in this slice** — reserved with its eventual real
+/// shape, the way `CopyBlock::sparse_index`/`column_stats` are, so that P13's
+/// decoder slice (13.3) can start constructing `Some(CompressionIndex::Xz(_))`
+/// without a further `FORMAT_VERSION` bump. Nothing in this tree builds an
+/// `XzSource` yet, so every `CacheFile` in this tree carries `compression:
+/// None`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+enum CompressionIndex {
+    Xz(xz_seek::SeekTable),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CacheFile {
     format_version: u32,
     container_kind: ContainerKind,
+    compression: Option<CompressionIndex>,
     identity: SourceIdentity,
+    /// The addressable (decompressed, for a compressed source) length —
+    /// [`ByteRangeSource::size`] as observed at save time. Its own field
+    /// rather than an alias of `identity`'s stored size
+    /// (`docs/design/roadmap-P13-compressed-input.md`, "D4"): the two
+    /// diverge for a compressed source, and this is the number
+    /// [`CacheStatus::Valid`]/[`CacheStatus::Incomplete`] hand out as
+    /// `total_size` for the coverage arithmetic to read.
+    total_size: u64,
     index: DumpIndex,
 }
 
@@ -126,17 +175,19 @@ pub enum CacheStatus {
     /// and frequent, and nothing migrates
     /// (`docs/design/roadmap.md`, "Pre-1.0").
     UnsupportedVersion,
-    /// A readable cache whose recorded source size disagrees with the live
-    /// source's, so every byte offset in it could be wrong. Both sizes are
-    /// carried because "the file changed" is the fact a reporting caller
-    /// states, and the two numbers are the evidence for it.
-    SourceChanged { cached_size: u64, live_size: u64 },
+    /// A readable cache whose recorded *stored* size disagrees with the live
+    /// source's, so every byte offset in it could be wrong — the staleness
+    /// check now reads [`ByteRangeSource::stored_size`], not the addressable
+    /// length (`docs/design/roadmap-P13-compressed-input.md`, "D4"). Both
+    /// stored sizes are carried because "the file changed" is the fact a
+    /// reporting caller states, and the two numbers are the evidence for it.
+    SourceChanged { cached_stored_size: u64, live_stored_size: u64 },
     /// A usable cache whose `index.scanned_through` reaches the file's
     /// recorded size — the whole file is mapped. `mtime_changed` is `true`
     /// when the source's current mtime differs from the one recorded at save
-    /// time — weaker evidence than a size mismatch (see the module docs), so
-    /// it does not itself make the cache unusable. `total_size` is the
-    /// recorded [`SourceIdentity::size`], carried for the same reason
+    /// time — weaker evidence than a stored-size mismatch (see the module
+    /// docs), so it does not itself make the cache unusable. `total_size` is
+    /// [`CacheFile::total_size`], carried for the same reason
     /// [`Incomplete`](CacheStatus::Incomplete) carries it: a reporting caller
     /// states coverage against it, and a cache-only caller has no live source
     /// to stat.
@@ -151,11 +202,11 @@ pub enum CacheStatus {
     /// off (`crate::stream::map_file`, `crate::stream::table_stream`,
     /// `crate::index::preamble_only`) wants exactly this partial index to
     /// build on, the same as [`Valid`](CacheStatus::Valid) —
-    /// [`CacheMode::load`] treats it that way. `total_size` is the cache's
-    /// own recorded [`SourceIdentity::size`], which — once this case or
-    /// `Valid` is reached — is already known to equal the live source's size
-    /// when one is available, so it serves a cache-only caller (no live
-    /// source to stat) the same way it serves a live one.
+    /// [`CacheMode::load`] treats it that way. `total_size` is
+    /// [`CacheFile::total_size`], which — once this case or `Valid` is
+    /// reached — is already known to equal the live source's addressable
+    /// length when one is available, so it serves a cache-only caller (no
+    /// live source to stat) the same way it serves a live one.
     Incomplete { index: DumpIndex, mtime_changed: bool, total_size: u64 },
 }
 
@@ -169,20 +220,23 @@ pub async fn load(path: &Path, source: &dyn ByteRangeSource) -> Result<CacheStat
         Err(status) => return Ok(status),
     };
     let live = SourceIdentity::observe(source).await?;
-    if file.identity.size != live.size {
-        return Ok(CacheStatus::SourceChanged {
-            cached_size: file.identity.size,
-            live_size: live.size,
-        });
+    // One variant today, so both patterns are irrefutable; a future variant
+    // (P14's `Remote`) is matched explicitly rather than through a shared
+    // accessor — see `SourceIdentity`'s docs.
+    let SourceIdentity::LocalFile { stored_size: cached_stored_size, mtime: cached_mtime } =
+        file.identity;
+    let SourceIdentity::LocalFile { stored_size: live_stored_size, mtime: live_mtime } = live;
+    if cached_stored_size != live_stored_size {
+        return Ok(CacheStatus::SourceChanged { cached_stored_size, live_stored_size });
     }
-    let mtime_changed = file.identity.mtime != live.mtime;
+    let mtime_changed = cached_mtime != live_mtime;
     Ok(status_from_file(file, mtime_changed))
 }
 
 /// Read and envelope-check the cache at `path`, shared by [`load`] and
 /// [`load_offline`]. `Err(status)` is one of the three unusable outcomes that
-/// need no live source to reach; only a size mismatch does, and that is
-/// [`load`]'s alone.
+/// need no live source to reach; only a stored-size mismatch does, and that
+/// is [`load`]'s alone.
 fn read_cache_file(path: &Path) -> Result<std::result::Result<CacheFile, CacheStatus>> {
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
@@ -217,15 +271,16 @@ pub async fn load_offline(path: &Path) -> Result<CacheStatus> {
 }
 
 /// Shared by [`load`] and [`load_offline`] once a `CacheFile` has passed its
-/// format/container/(when live) size checks: `Valid` when the index's own
-/// `scanned_through` reaches the file's recorded size, `Incomplete`
-/// otherwise, with the index's unpersisted diagnostics recomputed either
-/// way. Reads `file.identity.size` rather than re-stating a live size
-/// — by the time either caller reaches this point the two are already known
-/// equal wherever a live one exists (a live-size mismatch returns
-/// [`CacheStatus::SourceChanged`] earlier in [`load`]), and `load_offline` has no live size to read at all.
+/// format/container/(when live) stored-size checks: `Valid` when the index's
+/// own `scanned_through` reaches the file's recorded addressable length,
+/// `Incomplete` otherwise, with the index's unpersisted diagnostics
+/// recomputed either way. Reads [`CacheFile::total_size`] rather than
+/// re-deriving one from a live source — by the time either caller reaches
+/// this point the stored sizes are already known equal wherever a live one
+/// exists (a live mismatch returns [`CacheStatus::SourceChanged`] earlier in
+/// [`load`]), and `load_offline` has no live source to read at all.
 fn status_from_file(file: CacheFile, mtime_changed: bool) -> CacheStatus {
-    let total_size = file.identity.size;
+    let total_size = file.total_size;
     let mut index = file.index;
     // `DumpIndex::diagnostics` is `#[serde(skip)]`, so a loaded index arrives
     // with none. Both file-level figures are pure functions of the spans and
@@ -244,15 +299,20 @@ fn status_from_file(file: CacheFile, mtime_changed: bool) -> CacheStatus {
 
 /// Write `index` to `path` (colocated or explicit — whichever the caller
 /// resolved), overwriting any existing cache there, and record `source`'s
-/// current size/mtime for [`load`] to check next time. Propagates I/O
-/// failures as `Error::Io` rather than swallowing them — see the module
-/// docs.
+/// current stored size/mtime plus its addressable length for [`load`] to
+/// check next time. Propagates I/O failures as `Error::Io` rather than
+/// swallowing them — see the module docs.
 pub async fn save(path: &Path, source: &dyn ByteRangeSource, index: &DumpIndex) -> Result<()> {
     let identity = SourceIdentity::observe(source).await?;
+    let total_size = source.size().await?;
     let file = CacheFile {
         format_version: FORMAT_VERSION,
         container_kind: ContainerKind::Plain,
+        // Nothing constructs an `XzSource` yet — see `CompressionIndex`'s
+        // docs.
+        compression: None,
         identity,
+        total_size,
         index: index.clone(),
     };
     let bytes = bincode::serde::encode_to_vec(&file, bincode::config::standard())?;

@@ -39,6 +39,32 @@ pub trait ByteRangeSource: Send + Sync {
     /// (`docs/design/architecture.md`, "The cache") treats an absent mtime as
     /// nothing to compare against, never as a mismatch.
     fn modified(&self) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>>;
+    /// Bytes as stored on the device — what a `stat` reports — as opposed to
+    /// [`ByteRangeSource::size`]'s addressable (possibly decompressed) length
+    /// (`docs/design/roadmap-P13-compressed-input.md`, "D4 — `stored_size()`
+    /// joins the trait, `total_size` leaves `identity.size`, and identity
+    /// becomes opaque"). This is the structure cache's staleness check now:
+    /// checking `size()` on a decompressing source would cost that source's
+    /// whole stream-index walk on every `pgdq info`/`pgdq parse` invocation,
+    /// where `stored_size()` costs one `stat`.
+    ///
+    /// Defaults to [`ByteRangeSource::size`], which is exactly right for a
+    /// source that does not decompress — [`LocalFileSource`] never overrides
+    /// this. A decompressing source overrides it to the compressed file's own
+    /// length.
+    fn stored_size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
+        self.size()
+    }
+    /// Whether [`ByteRangeSource::size`] is this source's *exact* addressable
+    /// length rather than a bound (`docs/design/roadmap-P13-compressed-input.md`,
+    /// "D7 — `size_is_exact()` joins the trait now, defaulted `true`, for
+    /// P15's benefit"). Every source implemented so far answers `true`
+    /// honestly, xz's own size coming from its stream index exactly; nothing
+    /// reads this yet; it exists for P15's gzip/zstd sources, whose sizes
+    /// cannot always be known exactly ahead of a full decode.
+    fn size_is_exact(&self) -> bool {
+        true
+    }
     /// The read length this caller is about to ask for over and over — a
     /// read loop's `ScanOptions::chunk_size`, announced once before the loop
     /// starts.
@@ -292,6 +318,23 @@ mod tests {
         file.flush().unwrap();
         let source = LocalFileSource::open(file.path()).unwrap();
         (file, source)
+    }
+
+    /// `LocalFileSource` never overrides [`ByteRangeSource::stored_size`], so
+    /// its default — mirroring [`ByteRangeSource::size`] — is what a
+    /// non-decompressing source is meant to answer (D4).
+    #[tokio::test]
+    async fn stored_size_defaults_to_size() {
+        let (_file, source) = source_of(b"0123456789abcdef");
+        assert_eq!(source.stored_size().await.unwrap(), source.size().await.unwrap());
+    }
+
+    /// Every source implemented so far answers its addressable length
+    /// exactly (D7); nothing overrides the default yet.
+    #[test]
+    fn size_is_exact_defaults_true() {
+        let (_file, source) = source_of(b"0123456789abcdef");
+        assert!(source.size_is_exact());
     }
 
     /// The pool's whole risk: a reused buffer still holding the previous

@@ -1731,6 +1731,7 @@ dependencies = [
  "crc32fast",
  "crc64fast",
  "liblzma",
+ "serde",
  "sha2",
 ]
 

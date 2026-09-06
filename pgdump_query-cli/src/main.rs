@@ -940,7 +940,10 @@ fn unusable_cache_message(status: &CacheStatus, path: &Path, source: Option<&Pat
             path.display(),
             remedy("", "")
         ),
-        CacheStatus::SourceChanged { cached_size, live_size } => {
+        CacheStatus::SourceChanged {
+            cached_stored_size: cached_size,
+            live_stored_size: live_size,
+        } => {
             let source = source.expect("cache-only mode has no live source to compare against");
             format!(
                 "{} has changed since it was parsed ({live_size} bytes now, {cached_size} when \
