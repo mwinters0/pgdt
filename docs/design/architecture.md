@@ -515,29 +515,22 @@ rather than a new one: `CacheStatus::Unreadable`, which is the one of the four
 whose sentence does not state its own refutation, since reaching this point
 means the two stored sizes `SourceChanged` quotes as its evidence are equal.
 
-**Rejecting a table reads no bytes, so the walk that follows is a choice rather
-than a cost already paid.** `parse` takes it, being about to scan regardless —
-and discards the unusable cache first, so that nothing resumes from the span
-index the same `save` wrote; it is about to write a correct one over that path
-anyway, and what an interrupt before the first bank then costs is a cache that
-was already unusable.
+**Rejecting a table reads no bytes, so nothing is spent reaching the refusal.**
+All three commands report the unusable cache having read nothing, which is what
+keeps a changed `.xz` from spending its footer walk to reach an error it was
+always going to reach. Recognition therefore answers "the cache does not
+describe this file" as an outcome of its own rather than recovering
+transparently.
 
-*The deletion is what the code does today, and it is already superseded.*
-`parse` overwrites whatever sits at its `--dqcache` path within the first
-throttled save ("`parse` resumes, and saves as it goes"), so aiming the flag at
-another file's cache has always destroyed it and deleting at startup only moves
-that loss earlier. The rule that replaces both is that the library never
-replaces cache data automatically: a cache that does not seem to describe its
-source is reported to the caller, which decides. That reverses this document's
-own "not a new hard-error path" below, so it is filed rather than settled here
-([`roadmap.md`](roadmap.md), "Future — wanted, unscheduled"), and this deletion
-goes with it.
+*Rejected:* `parse` deleting that cache and rescanning, which is what it did
+when the table was first read back. It was defensible on its own terms — `parse`
+overwrites whatever sits at its `--dqcache` path within the first throttled save
+("`parse` resumes, and saves as it goes"), so deleting at startup only moved a
+loss that was coming anyway — and both halves of that are now the prohibited act:
+the library never replaces cache data automatically ("The cache"). `parse`
+refuses with the other two, and the way out is the caller's.
 
-`info` and `query` report the unusable cache having read
-nothing, which is what keeps a changed `.xz` from spending its footer walk to
-reach an error it was always going to reach. Recognition therefore answers "the
-cache does not describe this file" as an outcome of its own rather than
-recovering transparently. The saving is
+The saving is
 tested behaviourally rather than by instrumentation: the constructor is handed a
 table naming a check algorithm this file's streams do not use — which `validate`
 does not police and no walk would ever produce — so a silent walk fails the test
@@ -5476,7 +5469,10 @@ prices the mechanism above what it is measuring.
 ## The cache
 
 A **best-effort accelerator, never required for correctness**: a stale
-structural index costs a rescan and nothing else.
+structural index costs a rescan and nothing else. What is *not* best-effort is
+what happens to the file at the cache path — a cache that describes another
+source is refused rather than scanned over, which is this section's "the library
+never replaces cache data automatically" below.
 
 **The format-version integer is not tracked in any document.** Pre-1.0 a bump
 is free and nothing migrates, so the number carries no information a reader can
@@ -5498,9 +5494,49 @@ across to a caller holding a live source as its own `CacheLoad` variant. `pgdq
 info` cannot scan and has a different sentence for each: a wrong path, a stale
 build, and "your file changed since you parsed it" send a reader to three
 different places even though all four end in `pgdq parse`. A caller that *can*
-scan does treat them alike today — but it holds the reason before it does any
-work, which is what lets the decision about the file at that path be taken
-there rather than inside the load.
+scan does not treat them alike either, which is what having the reason before
+it does any work buys — see the refusal below.
+
+**The library never replaces cache data automatically.** A cache whose recorded
+stored size is not this source's is a cache that describes some *other* file,
+and a scan started past it overwrites that file's index within the first
+throttled save ("`parse` resumes, and saves as it goes"). So the three scan
+entry points — `map_file`, `table_stream`, `preamble_only` — refuse it with
+`Error::CacheSourceMismatch`, naming the path, what the cache was written for
+and what this source is, before a byte of the dump is read. The other three
+unusable statuses still start cold: there is nothing at that path worth keeping.
+`Disabled` is not a refusal either — the caller consulted no path, so there was
+never a cache to protect. Reading a mismatched cache stays unusable; being
+unusable to read stops licensing a write.
+
+This reverses the settled "an unusable outcome, not a new hard-error path"
+below, which was right about reading and never separated writing out. The
+mistake it guards is an ordinary operational slip — a path flag aimed at the
+wrong path — whose cost is unbounded: on a koji-scale dump the destroyed index
+is an hour of scanning.
+
+*Rejected:* an override — a `--force` flag, or a `CacheMode` variant meaning
+"replace regardless". It exists to be set once in a script and never
+reconsidered, and from that moment the guarantee is gone for exactly the runs
+where the path was wrong. Removing the file is already in every caller's
+vocabulary and is visible in the code that does it. *Rejected:* refusing only
+where `--dqcache <path>` was given explicitly, leaving the colocated default
+silently replacing — the guarantee is worth more without an asterisk on it, and
+there is no workflow in which discarding an index is the intended outcome.
+*Rejected:* prompting; `parse` runs detached, under `setsid` and in containers,
+where blocking on stdin hangs instead of failing. *Rejected:* the guard inside
+`cache::save`, which would cover a future embedder too but turns a write into a
+policy decision an embedder cannot override, and pays an envelope decode on
+every throttled save — for a many-streams `.xz`, re-decoding a 31,150-entry seek
+table repeatedly. The mistake being guarded is made once, at the start.
+
+**Incompleteness is not mismatch**, and neither is an mtime. A partial cache
+that still matches its source resumes exactly as it did — `Incomplete` is a
+statement about coverage, not identity. A changed mtime over an unchanged stored
+size remains a usable cache carrying `CacheMtimeChanged`: mtime moves without
+content moving routinely (`rsync`, a restore from backup, a `touch`, a
+filesystem copy), and a refusal that fires on healthy input is one people learn
+to work around.
 
 `CacheLoad` is that answer: `Index` for a usable cache — `Valid` and
 `Incomplete` alike, which is the one distinction `load` exists to erase — plus
@@ -5534,8 +5570,9 @@ knowing about when the dump is mounted read-only — see `CLAUDE.md`,
 
 **Source identity is an opaque enum, and the number it records is the cheap
 one.** Every cache records the source's `stored_size()` and mtime at save time
-and re-observes on load. Size mismatch invalidates (`SourceChanged` — an
-unusable outcome, not a new hard-error path); mtime mismatch surfaces as a
+and re-observes on load. Size mismatch invalidates (`SourceChanged`, which a
+scanning caller refuses on rather than starting cold past — see above); mtime
+mismatch surfaces as a
 `CacheMtimeChanged` diagnostic on an otherwise usable cache.
 `ByteRangeSource::modified()` exists for this.
 
@@ -6116,9 +6153,14 @@ nowhere to travel.
 
 `Io`, `Join`, `UnterminatedCopyBlock`, `UnterminatedLargeObjectRegion`,
 `LineTooLong`, `InvalidUtf8`, `CacheEncode`, `CacheDisabled`,
-`UnknownPredicateColumn`, `UnknownProjectionColumn`,
+`CacheSourceMismatch`, `UnknownPredicateColumn`, `UnknownProjectionColumn`,
 `DuplicateProjectionColumn`, `ResumeQueryMismatch`, `AmbiguousTable`,
 `MetadataNotScanned`, `FieldDecode`. The CLI uses `anyhow` over these.
+
+`CacheSourceMismatch` is the only one of these a *cache* raises, and it is
+raised for what a scan would do rather than for what the read found: three of
+the four unusable statuses start cold, and the fourth would overwrite an index
+that is valid for another file ("The cache").
 
 A value that contradicts its declared type is an **error, not a null**: a dump
 is machine-generated, so the file is damaged or the mapping is wrong, and both

@@ -135,6 +135,35 @@ async fn info_against_a_changed_file_says_the_file_changed() {
     assert!(!err.contains("no cache at"), "the two messages must not collapse: {err}");
 }
 
+/// **`parse` refuses that same cache rather than scanning over it.** It used
+/// to load it, get a mismatch, scan, and overwrite the file within its first
+/// throttled save — so aiming `--dqcache` at another file's cache destroyed
+/// an index that was valid for its own input, with nothing said
+/// (`docs/design/architecture.md`, "The cache"). The byte comparison is the
+/// half that would fail silently.
+#[tokio::test]
+async fn parse_refuses_a_cache_that_records_another_source_and_leaves_it_alone() {
+    let (_dir, dump) = common::sandboxed("16/types/default.sql", "dump.sql");
+    assert!(run(&["parse", "--source", dump.to_str().unwrap()]).status.success());
+    let cache_path = cache::colocated_path(&dump);
+    let before = std::fs::read(&cache_path).unwrap();
+
+    let mut bytes = std::fs::read(&dump).unwrap();
+    bytes.push(b'\n');
+    std::fs::write(&dump, &bytes).unwrap();
+
+    let out = run(&["parse", "--source", dump.to_str().unwrap()]);
+    assert!(!out.status.success(), "{}", stdout_of(&out));
+    let err = stderr_of(&out);
+    assert!(err.contains(cache_path.to_str().unwrap()), "{err}");
+    assert_eq!(std::fs::read(&cache_path).unwrap(), before, "the refused cache is untouched");
+
+    // The way out is the caller's: remove it, and the same command scans.
+    std::fs::remove_file(&cache_path).unwrap();
+    assert!(run(&["parse", "--source", dump.to_str().unwrap()]).status.success());
+    assert_ne!(std::fs::read(&cache_path).unwrap(), before);
+}
+
 /// Foreign bytes and a cache from another build are told apart too — the path
 /// is wrong in the first case and right in the second, which is different
 /// advice.

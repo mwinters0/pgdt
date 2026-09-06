@@ -491,17 +491,20 @@ pub async fn preamble_only(
 ) -> Result<(DumpMetadata, Vec<Diagnostic>)> {
     let mut base_index = match cache.load(source).await? {
         CacheLoad::Index(index) => index,
-        // Five reasons, one response today: there is no map to build forward
-        // from, so the preamble is scanned from scratch. They are spelled out
-        // rather than wildcarded because they are not alike — what a caller
-        // may do to the file at the cache path differs between them — so a
-        // reason added later has to be answered here rather than falling
-        // through (`docs/design/architecture.md`, "The cache").
+        // Four reasons to start cold: there is no map to build forward from,
+        // so the preamble is scanned from scratch, and nothing at that path
+        // is worth keeping. Spelled out rather than wildcarded so a reason
+        // added later has to be answered here rather than falling through
+        // (`docs/design/architecture.md`, "The cache").
         CacheLoad::Disabled
         | CacheLoad::Missing
         | CacheLoad::Unreadable
-        | CacheLoad::UnsupportedVersion
-        | CacheLoad::SourceChanged { .. } => DumpIndex::default(),
+        | CacheLoad::UnsupportedVersion => DumpIndex::default(),
+        // The fifth is a refusal, before a byte of the dump is read: this
+        // cache describes another file, and scanning would overwrite it.
+        CacheLoad::SourceChanged { cached_stored_size, live_stored_size } => {
+            return Err(cache.source_mismatch(cached_stored_size, live_stored_size));
+        }
     };
     let known = base_index
         .metadata

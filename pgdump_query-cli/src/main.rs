@@ -12,10 +12,9 @@ use pgdump_query::cache::{CacheMode, CacheStatus};
 use pgdump_query::pgtype::RANGE_STRUCT_FIELDS;
 use pgdump_query::resolve::{ColumnResolution, ResolvedSchema, SchemaMode, resolve_columns};
 use pgdump_query::{
-    ArrayShape, ByteRangeSource, CompareKind, ComparisonPlan, DataBlock, Diagnostic,
-    DiagnosticKind, DumpIndex, DumpMetadata, KnownCompression, NestedPlan, Predicate, PredicateOp,
-    QueryOptions, Recognized, ScanOptions, Severity, Span, SpanBody, TypeKind, open_local,
-    preamble_only, render_field_into,
+    ArrayShape, CompareKind, ComparisonPlan, DataBlock, Diagnostic, DiagnosticKind, DumpIndex,
+    DumpMetadata, KnownCompression, NestedPlan, Predicate, PredicateOp, QueryOptions, Recognized,
+    ScanOptions, Severity, Span, SpanBody, TypeKind, open_local, preamble_only, render_field_into,
 };
 
 mod alloc;
@@ -703,18 +702,19 @@ async fn main() -> Result<()> {
                 .require_enabled("parse")
                 .context("`--dqcache none` cannot be combined with `parse`")?
                 .to_path_buf();
-            // `parse` is about to scan regardless, so it is the one command
-            // that pays the footer walk rather than reporting a cache that
-            // turns out not to describe this file — and it discards that
-            // cache first, since its span index was written by the same
-            // `save` as the table recognition refused
-            // (`docs/design/architecture.md`, "The compressed source").
+            // A cache whose compression claim this file contradicts is a
+            // cache for some other file, and `parse` refuses it exactly as
+            // `info` and `query` do: it would otherwise scan and overwrite
+            // it, which is the one thing this library does not do on its own
+            // (`docs/design/architecture.md`, "The cache"). Refused having
+            // read nothing, so no footer walk is spent reaching it.
             let source = match open_with_cache(&file, &mode)? {
                 Recognized::Source(source) => source,
-                Recognized::Mismatch => {
-                    discard_unusable_cache(&path)?;
-                    open_unaided(&file)?
-                }
+                Recognized::Mismatch => anyhow::bail!(unusable_cache_message(
+                    &CacheStatus::Unreadable,
+                    &path,
+                    Some(&file)
+                )),
             };
             if preamble_only_flag {
                 let (metadata, diagnostics) =
@@ -957,40 +957,6 @@ fn open_with_cache(file: &Path, cache: &CacheMode) -> Result<Recognized> {
         CacheMode::Disabled | CacheMode::Offline(_) => KnownCompression::Unknown,
     };
     Ok(open_local(file, known)?)
-}
-
-/// Recognition with nothing claimed about the file, which cannot report a
-/// mismatch: [`KnownCompression::Unknown`] asserts nothing for the file's own
-/// bytes to contradict.
-fn open_unaided(file: &Path) -> Result<Arc<dyn ByteRangeSource>> {
-    match open_local(file, KnownCompression::Unknown)? {
-        Recognized::Source(source) => Ok(source),
-        Recognized::Mismatch => {
-            unreachable!("`KnownCompression::Unknown` claims nothing recognition could contradict")
-        }
-    }
-}
-
-/// Delete a cache that does not describe the file beside it, so that nothing
-/// resumes from its span index either.
-///
-/// The table recognition just refused and that index were written by one
-/// `save` from one file, so the index is not to be believed and the whole
-/// cache goes (`docs/design/architecture.md`, "The compressed source"). Only
-/// `parse` does this, and only because it is about to write a correct cache
-/// over the same path anyway; the cost of an interrupt before the first bank
-/// is a cache that was already unusable.
-fn discard_unusable_cache(path: &Path) -> Result<()> {
-    match std::fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e).with_context(|| {
-            format!(
-                "failed to remove the cache at {}, which does not describe this file",
-                path.display()
-            )
-        }),
-    }
 }
 
 /// The sentence `pgdq info` prints for a cache it cannot use. All four causes

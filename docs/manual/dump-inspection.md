@@ -133,8 +133,10 @@ whatever the file's size.
 
 If the cache stops matching the file it sits beside — you replaced the dump,
 or pointed `--dqcache` at another file's cache — pgdq says so rather than
-quietly working around it: `info` and `query` refuse it, and `pgdq parse` is
-what builds a fresh one.
+quietly working around it. All three commands refuse, `parse` included: a
+cache that does not describe this file describes some *other* file, and
+scanning would write over it. Delete it, or point `--dqcache` somewhere else,
+and `parse` builds a fresh one.
 
 ### `--chunk-size`: you almost certainly do not need it
 
@@ -280,7 +282,7 @@ filter cannot compare against a single label there anyway.
 
 `info` exits non-zero rather than scanning. Four things can go wrong, and they
 are four different messages because they mean four different things — even
-though every one of them is fixed by running `pgdq parse`:
+though every one of them ends in `pgdq parse`:
 
 | Message | What happened |
 |---|---|
@@ -291,6 +293,12 @@ though every one of them is fixed by running `pgdq parse`:
 
 The last one is the one worth reading closely: it is not "your cache went
 missing", it is "your file is not the file you parsed."
+
+It is also the one `parse` itself refuses on, rather than scanning and writing
+over what is there. A cache that records a different size for this file is a
+valid index for *some* file, and pgdq does not replace it for you: delete it,
+or pass `--dqcache <path>` naming somewhere else, and run `parse` then. The
+other three it simply scans over — there is nothing at that path worth keeping.
 
 `--dqcache none`, which for `query` means "ignore the cache", is rejected on
 `info` — with nothing to read and no scan to fall back on, there would be

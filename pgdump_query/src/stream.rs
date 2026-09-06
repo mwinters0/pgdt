@@ -831,15 +831,20 @@ pub async fn map_file(
     let size = source.size().await?;
     let mut index = match cache.load(source).await? {
         CacheLoad::Index(index) => index,
-        // Five reasons, one response today: nothing to resume from, so the map
-        // is built from byte 0. Spelled out rather than wildcarded — they are
-        // not alike, since what a caller may do to the file at the cache path
-        // differs between them (`docs/design/architecture.md`, "The cache").
+        // Four reasons to start cold: nothing to resume from, so the map is
+        // built from byte 0, and nothing at that path is worth keeping.
+        // Spelled out rather than wildcarded (`docs/design/architecture.md`,
+        // "The cache").
         CacheLoad::Disabled
         | CacheLoad::Missing
         | CacheLoad::Unreadable
-        | CacheLoad::UnsupportedVersion
-        | CacheLoad::SourceChanged { .. } => DumpIndex::default(),
+        | CacheLoad::UnsupportedVersion => DumpIndex::default(),
+        // The fifth is a refusal, before a byte of the dump is read: this
+        // cache describes another file, and the scan would overwrite it at
+        // its first throttled save.
+        CacheLoad::SourceChanged { cached_stored_size, live_stored_size } => {
+            return Err(cache.source_mismatch(cached_stored_size, live_stored_size));
+        }
     };
     // The one diagnostic about the cache *file* rather than about the map:
     // everything else the load computed is recomputed below over the finished
@@ -1182,16 +1187,20 @@ pub fn table_stream<'a>(
 
         let mut index = match cache.load(source).await? {
             CacheLoad::Index(index) => index,
-            // Five reasons, one response today: nothing to resume from, so
-            // this query maps from byte 0. Spelled out rather than wildcarded
-            // — they are not alike, since what a caller may do to the file at
-            // the cache path differs between them
+            // Four reasons to start cold: nothing to resume from, so this
+            // query maps from byte 0, and nothing at that path is worth
+            // keeping. Spelled out rather than wildcarded
             // (`docs/design/architecture.md`, "The cache").
             CacheLoad::Disabled
             | CacheLoad::Missing
             | CacheLoad::Unreadable
-            | CacheLoad::UnsupportedVersion
-            | CacheLoad::SourceChanged { .. } => DumpIndex::default(),
+            | CacheLoad::UnsupportedVersion => DumpIndex::default(),
+            // The fifth is a refusal, before a byte of the dump is read: this
+            // cache describes another file, and this query's own mapping pass
+            // would overwrite it.
+            CacheLoad::SourceChanged { cached_stored_size, live_stored_size } => {
+                Err(cache.source_mismatch(cached_stored_size, live_stored_size))?
+            }
         };
 
         // The first database's preamble always gets captured before

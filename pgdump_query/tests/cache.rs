@@ -6,15 +6,17 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use futures::StreamExt;
 use pgdump_query::cache::{CacheLoad, CacheMode, CacheStatus};
 use pgdump_query::map::SpanBody;
 use pgdump_query::{
-    ByteRangeSource, DiagnosticKind, Error, KnownCompression, LocalFileSource, Recognized,
-    ScanOptions, XzSource, build_index, cache, check_tiling, open_local, preamble_only,
+    ByteRangeSource, DiagnosticKind, Error, KnownCompression, LocalFileSource, QueryOptions,
+    Recognized, ScanOptions, XzSource, build_index, cache, check_tiling, map_file, open_local,
+    preamble_only, table_stream,
 };
 
 mod common;
-use common::edge_cases;
+use common::{edge_cases, sandboxed_edge_cases as sandboxed};
 
 #[test]
 fn colocated_path_appends_the_cache_suffix() {
@@ -237,6 +239,68 @@ async fn cache_mode_load_names_each_unusable_status() {
         },
         "the two sizes are the evidence a caller states the mismatch with"
     );
+}
+
+/// **The library never replaces cache data automatically.** All three scan
+/// entry points refuse a cache that records another file's stored size —
+/// naming the path, what the cache expected and what the source is — rather
+/// than starting cold and overwriting it at their first save
+/// (`docs/design/architecture.md`, "The cache"). The other three unusable
+/// statuses still start cold; this is the one that is an error.
+///
+/// The cache is read back byte for byte afterwards, which is the half that
+/// would fail silently: a refusal that still wrote is indistinguishable from
+/// one that did not until the file is compared.
+#[tokio::test]
+async fn a_scan_refuses_a_cache_that_records_another_source_and_leaves_it_alone() {
+    let (_dir, dump) = sandboxed();
+    let source = LocalFileSource::open(&dump).unwrap();
+    let cached_stored_size = source.stored_size().await.unwrap();
+    let path = cache::colocated_path(&dump);
+    let mode = CacheMode::Enabled(path.clone());
+    map_file(&source, &ScanOptions::default(), &mode).await.unwrap();
+    let before = std::fs::read(&path).unwrap();
+
+    // Grow the dump under its own cache: the file at `path` is now a valid
+    // cache for a file that no longer exists, which is what pointing
+    // `--dqcache` at the wrong path produces too.
+    let mut grown = std::fs::read(&dump).unwrap();
+    grown.push(b'\n');
+    std::fs::write(&dump, &grown).unwrap();
+    let source = LocalFileSource::open(&dump).unwrap();
+    let live_stored_size = source.stored_size().await.unwrap();
+    assert_ne!(live_stored_size, cached_stored_size);
+
+    let expected = |what: &str, e: Error| match e {
+        Error::CacheSourceMismatch {
+            path: named,
+            cached_stored_size: cached,
+            live_stored_size: live,
+        } => {
+            assert_eq!(named, path, "{what}: the refusal names the cache it refused");
+            assert_eq!(cached, cached_stored_size, "{what}: what the cache was written for");
+            assert_eq!(live, live_stored_size, "{what}: what this source is");
+        }
+        other => panic!("{what}: expected a source mismatch, got {other:?}"),
+    };
+
+    expected("map_file", map_file(&source, &ScanOptions::default(), &mode).await.unwrap_err());
+    expected(
+        "preamble_only",
+        preamble_only(&source, &ScanOptions::default(), &mode).await.unwrap_err(),
+    );
+    let mut stream = table_stream(
+        &source,
+        "public.widgets",
+        ScanOptions::default(),
+        QueryOptions::default(),
+        None,
+        mode.clone(),
+    );
+    let first = stream.next().await.expect("the stream yields the refusal, not nothing");
+    expected("table_stream", first.unwrap_err());
+
+    assert_eq!(std::fs::read(&path).unwrap(), before, "the refused cache is untouched");
 }
 
 /// An mtime mismatch alone is a loud warning, not grounds for invalidation

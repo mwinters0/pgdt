@@ -261,43 +261,63 @@ fn overwrite_with_plain_bytes_of_the_same_length(path: &Path) {
     assert_eq!(std::fs::metadata(path).unwrap().len() as usize, len);
 }
 
-/// A cache whose compression claim the file contradicts is refused by the two
-/// commands that would otherwise scan around it, and refused **having read
-/// nothing**: no stream-footer walk is spent reaching an error that was
-/// always coming (`docs/design/architecture.md`, "The compressed source").
+/// A cache whose compression claim the file contradicts is refused by all
+/// three commands, and refused **having read nothing**: no stream-footer walk
+/// is spent reaching an error that was always coming
+/// (`docs/design/architecture.md`, "The compressed source").
+///
+/// `parse` used to take the other branch, deleting the cache and rescanning,
+/// because it was about to overwrite that path anyway. It refuses with the
+/// other two now: the deletion and the overwrite are the same act one step
+/// apart, and the library replaces neither on its own
+/// (`docs/design/architecture.md`, "The cache").
 #[test]
-fn info_and_query_refuse_a_cache_that_does_not_describe_the_file() {
-    let (_dir, path) = seekable_xz();
-    parse(&path);
-    overwrite_with_plain_bytes_of_the_same_length(&path);
-
-    let info = run(&["info", "--source", path.to_str().unwrap()]);
-    assert!(!info.status.success(), "{}", stdout_of(&info));
-    assert!(stderr_of(&info).contains("is not a pgdq cache"), "{}", stderr_of(&info));
-
-    let query = run(&["query", "--source", path.to_str().unwrap(), "--table", "widgets"]);
-    assert!(!query.status.success(), "{}", stdout_of(&query));
-    assert!(stderr_of(&query).contains("is not a pgdq cache"), "{}", stderr_of(&query));
-}
-
-/// `parse` takes the other branch, being about to scan regardless: it
-/// discards the cache that does not describe this file — table *and* span
-/// index, written by one `save` — and scans the file it actually has.
-#[test]
-fn parse_discards_a_cache_that_does_not_describe_the_file_and_rescans() {
+fn every_command_refuses_a_cache_that_does_not_describe_the_file() {
     let (_dir, path) = seekable_xz();
     parse(&path);
     let cache = PathBuf::from(format!("{}.dqcache", path.display()));
     let before = std::fs::read(&cache).unwrap();
     overwrite_with_plain_bytes_of_the_same_length(&path);
 
+    for args in [
+        vec!["info", "--source", path.to_str().unwrap()],
+        vec!["query", "--source", path.to_str().unwrap(), "--table", "widgets"],
+        vec!["parse", "--source", path.to_str().unwrap()],
+    ] {
+        let out = run(&args);
+        assert!(!out.status.success(), "{}: {}", args[0], stdout_of(&out));
+        assert!(
+            stderr_of(&out).contains("is not a pgdq cache"),
+            "{}: {}",
+            args[0],
+            stderr_of(&out)
+        );
+    }
+
+    assert_eq!(std::fs::read(&cache).unwrap(), before, "the refused cache is untouched");
+}
+
+/// The way out is the user's, not the tool's: remove the cache that does not
+/// describe this file and `parse` scans it as a cold file would. There is no
+/// override flag, which is what keeps the refusal from being set once in a
+/// script and never reconsidered (`docs/design/architecture.md`, "The cache").
+#[test]
+fn parse_scans_once_the_refused_cache_is_removed() {
+    let (_dir, path) = seekable_xz();
+    parse(&path);
+    let cache = PathBuf::from(format!("{}.dqcache", path.display()));
+    let before = std::fs::read(&cache).unwrap();
+    overwrite_with_plain_bytes_of_the_same_length(&path);
+    std::fs::remove_file(&cache).unwrap();
+
     let out = run(&["parse", "--source", path.to_str().unwrap()]);
     assert!(out.status.success(), "{}", stderr_of(&out));
+    assert_ne!(
+        std::fs::read(&cache).unwrap(),
+        before,
+        "the cache describes the file that is there"
+    );
 
-    let after = std::fs::read(&cache).unwrap();
-    assert_ne!(before, after, "the cache must describe the file that is there now");
-    // And what it describes is now readable: `info` answers from the rebuilt
-    // cache rather than refusing it.
     let info = run(&["info", "--source", path.to_str().unwrap()]);
     assert!(info.status.success(), "{}", stderr_of(&info));
 }

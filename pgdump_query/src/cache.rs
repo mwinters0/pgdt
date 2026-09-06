@@ -3,13 +3,19 @@
 //! (`docs/design/architecture.md`, "The cache").
 //!
 //! Reading is best-effort — the cache is never required for correctness, so
-//! a missing, foreign, unrecognised-version, or size-mismatched file just
-//! means "scan instead," never a hard error. Which of the four it was is
-//! still reported — see [`CacheStatus`], and [`CacheLoad`] for the same four
-//! reaching a caller that holds a live source — because `pgdq info` has no
-//! "scan instead" to fall back on and has to say what went wrong, and because
-//! a caller that is about to scan is the one that decides what happens to the
-//! file at that path.
+//! a missing, foreign or unrecognised-version file just means "scan instead,"
+//! never a hard error. Which of the three it was is still reported — see
+//! [`CacheStatus`], and [`CacheLoad`] for the same statuses reaching a caller
+//! that holds a live source — because `pgdq info` has no "scan instead" to
+//! fall back on and has to say what went wrong.
+//!
+//! **The size-mismatched file is the exception, and it is not about reading.**
+//! A cache whose recorded stored size is not this source's is a cache that
+//! describes some *other* file, and scanning past it means overwriting it
+//! within the first throttled save. The three scan entry points therefore
+//! refuse ([`Error::CacheSourceMismatch`]) rather than starting cold: reading
+//! it stays unusable, and being unusable to read stops licensing a write
+//! (`docs/design/architecture.md`, "The cache").
 //! Writing is not best-effort: [`save`] propagates I/O failures rather than
 //! silently falling back to running without a cache, since a write failure
 //! (read-only mount, permissions, disk full) means something is actually
@@ -22,9 +28,10 @@
 //! device, not the addressable (possibly decompressed) length
 //! (`docs/design/architecture.md`, "The cache"); [`load`]
 //! re-observes the live source and compares. A stored-size mismatch means
-//! every byte offset in the cache could be wrong, so the cache is
-//! invalidated the same way a foreign or wrong-version file is — silently,
-//! per this module's best-effort contract, not as a hard error. An mtime
+//! every byte offset in the cache could be wrong, so the cache is unusable
+//! the way a foreign or wrong-version file is — and, unlike those, it is
+//! reported to a scanning caller as an error rather than started cold past,
+//! per the paragraph above. An mtime
 //! mismatch is weaker
 //! evidence (mtime granularity and preservation vary too much across
 //! filesystems to be conclusive) and does **not** invalidate the cache; it
@@ -267,6 +274,13 @@ pub enum CacheLoad {
     /// live source does not have, so every byte offset in it could be wrong.
     /// Both numbers travel, because "this cache is not about this file" is a
     /// claim a caller has to be able to state the evidence for.
+    ///
+    /// **The three scan entry points refuse on this one**, where they start
+    /// cold on the other three: a cache that describes another file is data
+    /// this library does not replace on its own
+    /// (`docs/design/architecture.md`, "The cache"). The two sizes are what
+    /// [`CacheMode::source_mismatch`] turns into
+    /// [`Error::CacheSourceMismatch`].
     SourceChanged { cached_stored_size: u64, live_stored_size: u64 },
 }
 
@@ -504,6 +518,30 @@ impl CacheMode {
             CacheMode::Offline(_) => Err(Error::CacheModeMismatch(
                 "a live dump source requires CacheMode::Enabled or CacheMode::Disabled, not Offline",
             )),
+        }
+    }
+
+    /// The refusal a scan entry point answers [`CacheLoad::SourceChanged`]
+    /// with: this mode's path, plus the two stored sizes the load already
+    /// compared (`docs/design/architecture.md`, "The cache"). The path lives
+    /// here rather than on `CacheLoad` because [`CacheMode::Disabled`] has
+    /// none, and the mode is what every one of those callers holds anyway.
+    ///
+    /// Only [`CacheMode::Enabled`] can reach it: `Disabled` consults no path
+    /// and answers [`CacheLoad::Disabled`], and `Offline` is refused by
+    /// [`CacheMode::load`] before any status is read. Both therefore answer
+    /// the caller-contract error rather than a plausible sentence about a file
+    /// nothing looked at — the same treatment `load` gives `Offline`.
+    pub fn source_mismatch(&self, cached_stored_size: u64, live_stored_size: u64) -> Error {
+        match self {
+            CacheMode::Enabled(path) => Error::CacheSourceMismatch {
+                path: path.clone(),
+                cached_stored_size,
+                live_stored_size,
+            },
+            CacheMode::Disabled | CacheMode::Offline(_) => Error::CacheModeMismatch(
+                "a source mismatch is only reachable from CacheMode::Enabled",
+            ),
         }
     }
 

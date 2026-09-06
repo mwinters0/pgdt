@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use thiserror::Error as ThisError;
 
 #[derive(Debug, ThisError)]
@@ -35,6 +37,24 @@ pub enum Error {
     CacheDisabled { operation: &'static str },
     #[error("cache mode mismatch: {0}")]
     CacheModeMismatch(&'static str),
+    /// A scan was asked to build forward from a cache that does not describe
+    /// the source it was handed, so it refuses rather than scanning and
+    /// overwriting it (`docs/design/architecture.md`, "The cache"). Raised by
+    /// the three scan entry points — `crate::map_file`,
+    /// `crate::table_stream`, `crate::index::preamble_only` — before any byte
+    /// of the dump is read, from
+    /// [`crate::cache::CacheLoad::SourceChanged`]'s two sizes plus the path
+    /// the mode resolved.
+    ///
+    /// This is the one unusable cache outcome that is an error rather than a
+    /// cold start: `Missing`, `Unreadable` and `UnsupportedVersion` are all
+    /// caches there is nothing to lose by writing over, and this one is a
+    /// cache that is valid for some *other* file.
+    #[error(
+        "the cache at {} was written for a source of {cached_stored_size} byte(s), but this source is {live_stored_size} byte(s), so scanning would overwrite a cache for another file — remove it, or name a different cache path",
+        path.display()
+    )]
+    CacheSourceMismatch { path: PathBuf, cached_stored_size: u64, live_stored_size: u64 },
     #[error("predicate column `{column}` not found in COPY block at offset {header_offset}")]
     UnknownPredicateColumn { header_offset: u64, column: String },
     #[error(
