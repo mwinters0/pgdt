@@ -456,22 +456,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-**The `KD14` attribution was published as a diagnostic, not as a registered
-figure.** The decision: should "What the per-block resident growth is made of"
-([`../design/measurements.md`](../design/measurements.md)) be a `Figure` in
-`measure.FIGURES` with `depends`/`quoted_by` edges, re-taken by every sweep,
-instead of an `outside-register` section `scripts/rss_attribution.py` takes? It was made
-this way because the reading is a *proportion* — which of several mechanisms —
-rather than a number the design quotes; because its legs are diagnostic ones no
-sweep would take (two more allocators, a scan stopped at the preamble, an index
-merely loaded); and because a resident set is not a timing, so none of the
-apparatus control a figure exists for is doing anything for it. That is the
-standing the profiling recipe has. What reconsidering it would change: the
-attribution's numbers would acquire staleness edges and be re-taken with the
-document, at the cost of about four minutes a sweep and a register that carries
-a table nobody differences. A second consideration pushed the same way and
-should be named rather than hidden: a registered figure must declare the commit
-it was taken at, so building the instrument and publishing its reading are two
-commits ([`roadmap-P16.1-xz-decode-scaling-notes.md`](../design/roadmap-P16.1-xz-decode-scaling-notes.md),
-"How the table reached `measurements.md`"), which an unattended session that
-does not commit cannot do.
+None open.

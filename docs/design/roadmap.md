@@ -743,6 +743,8 @@ readily as one that has landed, since a number is allocated on admission.
 | Item | Date | What changed | Blocks | Why |
 |---|---|---|---|---|
 | `M64` | 2026-09-06 | The vendored `xz-seek` copy is re-synced to `5b549d7`, which carries that crate's parallel block decode whole — pool, pieces, `plan_range`, `SeekTable::blocks_in`, `&T`/`Arc<T>` sources — and the copy now tracks upstream rather than waiting for the consumer that needs it; no library code changed, nothing here names any of the new surface, and the P16 and P10 inbox entries written against the older snapshot are restated against this one | | [2026-09-06](../status/history/2026-09-06.md), "`M64`: the vendored decoder tracks upstream" |
+| `M65` | | The RSS attribution becomes a registered figure: `scripts/rss_attribution.py` folds into `measure.py` with `depends` and `quoted_by` edges, its `NOT_OURS` row and its `outside-register` marker go, and `docs/manual/dump-inspection.md`'s per-*table* claim moves onto it from `peak-rss`, which cannot tell per-table from per-block on its own inputs | | [2026-09-07](../status/history/2026-09-07.md), "The RSS attribution is a figure, and what decides that" |
+| `M66` | | `Outside` gains an invalidation edge, so `--stale` can report an outside-register section whose inputs have moved — `koji` has never had one, and that field is what makes staying outside the register safe rather than merely silent | | [2026-09-07](../status/history/2026-09-07.md), "The RSS attribution is a figure, and what decides that" |
 
 **One obligation outlived them and is most of the way discharged.** An
 `INSERT`-run scan cost **mid-teens times** a `COPY` scan per byte, CPU-bound,

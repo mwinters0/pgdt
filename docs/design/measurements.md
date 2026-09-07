@@ -424,9 +424,34 @@ on **every** figure. That puts the stamp's commit in the document eighteen
 times, in eighteen places it can disagree with the stamp, where the convention
 `outside-register` already set is that declaring nothing is the ordinary case.
 
+**What decides which side a section falls on is whether the harness could own
+the run**, not what kind of reading it is. A section belongs in the register
+when this document publishes numbers from it that a change to the tree can
+falsify *and* the harness can re-take them; it stays outside only when the run
+is not the harness's to make — `koji` is 784 GB on a different medium and an
+hour long — or when the section publishes no number the design quotes, which is
+what `benches` is. Neither the *kind* of reading nor the *use* made of it enters
+into it.
+
+*Rejected:* "a proportion needs no apparatus control, and a resident set is not
+a timing anyway", which was the argument for keeping the RSS attribution below
+outside. Both halves fail against the register as it stands. `peak-rss` is a
+registered figure whose reading is a resident set and whose section carries an
+apparatus line over every run, so the apparatus is doing something for an RSS
+figure today; and the `allocator` figure already builds and times the jemalloc
+and mimalloc legs the attribution called exotic — the attribution borrows those
+binaries rather than building them, *because* building them is that figure's
+apparatus rule. What is left of the argument is that a ranking survives drift an
+absolute would not, which says how often a figure needs re-taking, not whether
+anything should be told when it goes stale. The precedent settles that: `peak-rss`
+is in the register because the same claim sat in the koji section outside it,
+where no `depends` edge could go red, and it stayed a megabyte wrong for a whole
+slice.
+
 **The register's boundary is declared, not inferred.** A section this harness
 does not own carries an `<!-- outside-register: <id> -->` marker of its own —
-`koji` and `benches` today — and `--check` resolves each one against
+`koji`, `benches` and, until `M65` lands, `rss-attribution` — and `--check`
+resolves each one against
 `measure.NOT_OURS` in both directions, so a declaration naming nothing and a
 disowned section declaring nothing both fail. A declared section carrying a
 figure marker fails too: a section is one or the other, and the figure's
