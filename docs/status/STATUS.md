@@ -546,23 +546,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **The default memory budget stays at 64 MiB, so two ordinary `.xz` shapes
-  lose the block path — silently.** 16.7.1 made `BLOCK_DECODE_MAX_BYTES`'
-  flat 256 MiB a consequence of the stated budget, which puts the block-decode
-  line at ~60 MiB under the default. `xz --block-size=128MiB` (which is
-  `koji-…blocks128.xz`) and `xz -9 -T0` (~192 MiB blocks, three times its
-  dictionary) therefore fall back to the streaming reader where they used to
-  decode block-wise at 128 or 192 MiB resident against a 64 MiB budget. The
-  call was made because the alternative — a 256 MiB default — costs the
-  *serial* path twice the resident set on every 24 MiB-block `.xz` and four
-  times at a raised `--chunk-size`, and because every published figure was
-  taken under 64 MiB. **What a person should weigh**: whether that trade is the
-  right way round, and separately whether the fallback should announce itself.
-  It does not today — the manual states the line and `--parallel-memory` is the
-  recourse, but a user who never reads it sees only a slower `query`, and the
-  existing `NonSeekableCompressedSource` diagnostic is about a different
-  condition. Reversing either is small:
-  `DEFAULT_MEMORY_BUDGET` is one constant, and a diagnostic would need the
-  source's budget to reach `index.rs`
-  ([`../design/architecture.md`](../design/architecture.md), "The compressed
-  source"; [`../design/roadmap-P16.7.1-stated-budget-notes.md`](../design/roadmap-P16.7.1-stated-budget-notes.md)).
+Nothing open.

@@ -64,9 +64,9 @@ table, as saying anything about memory.
 ## The calls worth knowing about
 
 **The attribution is a diagnostic, not a registered figure**, and that is the
-one call here a reviewer should weigh; it is under
-[`../status/STATUS.md`](../status/STATUS.md), "Decisions worth another look".
-Three things argue for it. It answers *which of several mechanisms* — a
+one call here a reviewer weighed — the review reversed it, and folding the
+attribution into the register is `M65` ([`roadmap.md`](roadmap.md),
+"Out-of-band work"). Three things argued for it. It answers *which of several mechanisms* — a
 proportion, read once, not a number the design quotes and differences. Its legs
 are diagnostic ones no sweep would take: two more allocators, a scan stopped at
 the preamble, an index merely loaded. And a resident set is not a timing, so

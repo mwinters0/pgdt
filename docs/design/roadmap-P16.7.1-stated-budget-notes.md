@@ -72,12 +72,17 @@ threaded block size is three times its 64 MiB dictionary. `parse` does not care
 — it never reads backwards, and 16.5's probe had streaming marginally *faster*
 — but `query` re-decodes forward from a block start on every backward read.
 
-**The fallback is silent, and that is a decision.** A budget-driven fallback is
-not `DiagnosticKind::NonSeekableCompressedSource`'s shape: that warning is
-about a file with no seek structure, which no flag can change, where this is
-about a number the user set. Saying it per run would need the source's budget
-to reach `index.rs`, which is a trait method for a sentence. The manual states
-the line instead. This is the entry under "Decisions worth another look".
+**The fallback is silent, and the review reversed that.** The reasoning this
+slice recorded — that saying it per run "would need the source's budget to
+reach `index.rs`, which is a trait method for a sentence" — was wrong on the
+fact. `ByteRangeSource::partitions` is already that trait method, and
+`XzSource` answers `Partitioning::single` on exactly the declined-on-budget
+arm, so the detection is a comparison between two values `index.rs` already
+holds. The budget default itself was affirmed, including against a per-pass
+split this slice never considered. What a diagnostic must look like, and why
+`info --verbose` reports the file's shape beside it, is
+[`architecture.md`](architecture.md), "The compressed source"; the work is
+`M67` ([`roadmap.md`](roadmap.md), "Out-of-band work").
 
 ## What the next slice inherits
 

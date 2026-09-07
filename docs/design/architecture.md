@@ -692,16 +692,56 @@ that no file changes read path — it keeps the block path for those two shapes
 at the price of the *serial* path holding twice as much on every 24 MiB-block
 `.xz` (four retained blocks where two are enough) and four times as much at a
 raised `--chunk-size`, which is a memory cost paid by every user to spare two
-file shapes a slower read.
+file shapes a slower read. *Rejected: defaulting the two passes differently* —
+a low budget for the scan and a high one for the replay, which the split
+between `ScanOptions::parallelism` and `QueryOptions::parallelism` exists to
+allow, and which would spare the declined shapes their slow path exactly where
+the cost lands, since `parse` never reads backwards and only a backward read
+pays for streaming. It is refused because `--parallel-memory` states a *bound*:
+a run holding 256 MiB after the user asked for 64 is the stated number going
+untrue in the other direction, which is the defect the derivation was written
+to remove — and a resident set larger than the one the user set is harder to
+attribute than a read that is merely slower.
 
-**The fallback is silent, and that is a property rather than a defect.** A file
-declined for budget reasons is not the shape
+**The fallback is silent today, and the reason once given for keeping it so
+does not hold.** A file declined for budget reasons is not the shape
 `DiagnosticKind::NonSeekableCompressedSource` warns about — that warning is
 about a *file* with no seek structure at all, which no flag can change, where
-this one is about a number the user set and can raise. The manual states the
-line ([`../manual/dump-inspection.md`](../manual/dump-inspection.md)); a
-diagnostic saying it per run would need the source's budget to reach
-`index.rs`, which is a trait method for a sentence.
+this one is about a number the user set and can raise, so the two want separate
+kinds carrying separate sentences. What was thought to make a second kind
+expensive — that the source's budget would have to reach `index.rs` — is not
+so. `ByteRangeSource::partitions` is already a trait method, synchronous and
+pure, and `XzSource` answers `Partitioning::single` on exactly the
+declined-on-budget arm, so a source advising one partition over a seek table
+that holds many blocks has declined for budget; `index.rs` already has both
+halves in hand at the point where it pushes the sibling warning. The manual
+states the line ([`../manual/dump-inspection.md`](../manual/dump-inspection.md))
+and `--parallel-memory` is the recourse, but nothing at runtime says the
+fallback happened, and `max_block_uncompressed` reaches no reader outside
+`io.rs` — so the flag says *raise it* without saying what to raise it to.
+Closing both is admitted as `M67` ([`roadmap.md`](roadmap.md), "Out-of-band
+work").
+
+**The two warnings differ in a way that decides where each can be raised, and
+it is not obvious from the condition.** `NonSeekableCompressedSource` is a
+property of the *file*: it survives in the persisted seek table, which is why
+`cache::status_from_file` can replay it out of a cache with no dump present. A
+budget decline is a property of the file **and this run's budget**, so no cache
+can hold it and `info --dqcache` will not report it — which is accepted rather
+than worked around. Persisting the budget in force when the cache was written
+would report a decision made under a number the current run never stated, the
+same untruth refused above. What the offline view can answer is the file's
+*shape*, and all of it is already in the persisted table:
+`SeekTable::stream_count`, `block_count` and `max_block_uncompressed` are
+public and serialized with the envelope, so `info --verbose` can report the
+largest block a user would have to budget for — and the stream count that
+explains the multistream shape's footer walk — with nothing but a cache.
+
+The same asymmetry makes the *push site* a caller's decision rather than a
+source's, which no other diagnostic here needs. The condition holds identically
+under `parse` and `query`, but only a backward read pays for streaming: `parse`
+never seeks backwards and the fallback is neutral-to-faster for it, so warning
+there would be advice to spend memory for nothing.
 
 *Rejected: keying the refusal on block count instead*, so that only a genuinely
 single-block file falls back — that sends a 20 × 512 MiB file down the block
