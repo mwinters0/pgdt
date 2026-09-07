@@ -447,11 +447,17 @@ are worth, and the orderings that do bind are named in
       for the shape of the cut only, takes its economics from `--jobs`, and
       declines a region smaller than one `partition_bytes()`. **The one read
       loop that grants `WaitPolicy::MayWait`**, restoring `NeverWait` on the
-      way out. No consumer: the wiring into `map_forward` is `16.17`, earned
+      way out. No consumer: the wiring into `map_forward` is `16.10.2`, earned
       when the row turned out to carry both confidences
       ([`history/2026-09-07.md`](history/2026-09-07.md), "16.10.1 split again:
       the scheduler, then the loop that runs it"). Notes:
       [`../design/roadmap-P16.10.1-leader-scheduler-notes.md`](../design/roadmap-P16.10.1-leader-scheduler-notes.md)
+- [ ] **16.10.2** The mapping pass runs the leader — `map_forward` offers each
+      open `COPY` region to `leader::scan_region` and closes one it took
+      through the same path a serial `CopyEnd` takes, repositioning the serial
+      scanner past the block. `pgdq parse --jobs` then buys something. Earned,
+      not planned: the remainder of a mis-sized third-level slice is the next
+      increment under its parent, as `11.6.1`'s was.
 - [ ] **16.11** Error ordering — the lowest-offset error is the one raised.
 - [ ] **16.12** The determinism test — `--jobs 1` and `--jobs 8` byte-identical
       over every fixture.
@@ -466,12 +472,6 @@ are worth, and the orderings that do bind are named in
 - [ ] **16.16** `--jobs` defaults to 1 until `16.13` licenses the parallel
       default with a number. The flags are unchanged; what moves is what a
       person who states neither gets.
-- [ ] **16.17** The mapping pass runs the leader — `map_forward` offers each
-      open `COPY` region to `leader::scan_region` and closes one it took
-      through the same path a serial `CopyEnd` takes, repositioning the serial
-      scanner past the block. `pgdq parse --jobs` then buys something. Earned,
-      not planned; it takes the next free number rather than a fourth level,
-      there being none.
 
 ## Known deficiencies
 
@@ -624,19 +624,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-**The remainder of a split third-level slice took a phase-level number
-(`16.17`), because the numbering scheme has no fourth level.** `16.10.1` turned
-out to pair a self-contained scheduler with a rework of `map_forward`, which is
-the seam [`../process.md`](../process.md), "Size a slice by its review, not by
-its scope" names, so it was split and the row rewritten to what landed. Where
-the remainder goes is the part nothing settles: `../process.md` says a third
-level is earned and says nothing about a fourth, and a slice admitted after
-spec time "takes the next free number rather than being inserted" — so `16.17`
-is that rule applied one level up. What it costs is that the checklist now
-reads as if a fresh slice were admitted at the end of the phase rather than a
-row being finished, which only the spec row and the history entry say. The two
-alternatives were a fourth level, `16.10.1.1`, which is an identifier shape the
-project has never used and the process does not describe; and landing both
-halves in one review cycle, which is the thing the split exists to avoid. If
-the answer is that a fourth level is fine, the fix is to renumber `16.17` before
-anything cites it — which nothing outside this change does yet.
+Nothing open.

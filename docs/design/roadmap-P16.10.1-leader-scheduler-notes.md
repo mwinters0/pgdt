@@ -17,7 +17,7 @@ serial scanner, or a `Cancelled`.
 self-contained new scheduler with a rework of `stream::map_forward` — the loop
 every `parse` and every query's first pass runs through — which is the seam
 `../process.md`'s "Size a slice by its review, not by its scope" names. The
-wiring is `16.17` ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md),
+wiring is `16.10.2` ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md),
 "16.10.1 split again: the scheduler, then the loop that runs it").
 
 ## The calls worth knowing about
@@ -91,7 +91,7 @@ the first time a read loop's grant has been exercised at all.
 
 ## What the next slice inherits
 
-**`16.17` is the wiring, and the shape it needs is settled.** In
+**`16.10.2` is the wiring, and the shape it needs is settled.** In
 `map_forward`'s `CopyStart` arm, after `builder.on_copy_start`, offer the region
 to `scan_region`. On `Closed`, the block's census goes onto the `Builder` and
 its `CopyEnd` through the same path a serial one takes — the splice, the
@@ -112,6 +112,6 @@ before `on_copy_end`. `map.rs` is L1 and `leader.rs` is L4, so the method takes
 `&[ArrayShape]` (L1) rather than an `Interior`.
 
 **`ScanOptions::parallelism`'s doc comment says no worker scheduler reads it.**
-That is still true after this slice and stops being true in `16.17`; the same
+That is still true after this slice and stops being true in `16.10.2`; the same
 sentence appears on `Parallelism` in `io.rs` and in `STATUS.md`'s capability
 table.

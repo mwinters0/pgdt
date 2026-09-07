@@ -987,6 +987,17 @@ decision change, not progress-tracking — the reasoning goes in a history entry
 and the spec's slice table says the split was earned. It is the one case where
 the finished half is legitimately ticked.
 
+**A third-level slice can itself be mis-sized, and its remainder is the next
+increment under the same parent** — `P<N>.<M>.2` after `P<N>.<M>.1`, and so on.
+There is no fourth level. The two wrong answers both look reasonable at the
+moment they are needed, which is why this is written down rather than
+re-derived: a fourth level is an identifier shape nothing else uses, and the
+next free *phase-level* number is the rule for a slice **admitted** after spec
+time, which a remainder is not. Sending a remainder there costs exactly what
+the paragraph above refuses to pay for a renumbered tail — it erases the split
+from the identifier, and the checklist then reads as if fresh work had been
+appended to the end of the phase.
+
 **Consolidation at wrap** is not optional cleanup. Per-slice notes exist so a
 slice's detail has somewhere to go while it is fresh, without waiting on the
 phase; leaving five of them behind means the next phase reads five overlapping
