@@ -76,11 +76,12 @@ use crate::index::{
     union_census,
 };
 use crate::io::{ByteRangeSource, Parallelism, PartitionBoundaries, Partitioning, WaitPolicy};
+use crate::leader::{self, RegionScan};
 use crate::map::{Builder, Span, SpanBody, attach_text};
 use crate::preamble::{DumpMetadata, dump_metadata_from_spans};
 use crate::predicate::{ComparisonNote, Expr, PredicateOp, ResolvedExpr, resolve_term};
 use crate::resolve::{ResolvedSchema, SchemaMode, resolve_columns};
-use crate::scan::{ChunkCarry, CopyScanner, Event, Row, ScanOptions};
+use crate::scan::{ChunkCarry, CopyEnd, CopyScanner, Event, Row, ScanOptions};
 use crate::{Error, Result};
 
 /// State for a `COPY` block whose table matches the query: the batcher
@@ -557,6 +558,10 @@ async fn map_forward(
         let eof = read_pos >= size;
 
         carry.absorb(&chunk);
+        // Where the leader closed a block the workers scanned, and therefore
+        // where the serial scanner has to be put back down. `None` for a chunk
+        // no region was taken out of, which is every chunk of a serial scan.
+        let mut resume_at: Option<u64> = None;
         for pass in ChunkCarry::PASSES {
             let (span, span_eof) = carry.span(pass, &chunk, eof);
             while let Some(event) = scanner.next_event(span, span_eof)? {
@@ -590,6 +595,11 @@ async fn map_forward(
                         // under-splicing loses the early stop.
                         open_block_targets =
                             target.is_some_and(|(table, _)| start.header.matches(table));
+                        // Read off the header before it moves into the builder,
+                        // for the offer below.
+                        let header_offset = start.header_offset;
+                        let data_offset = start.data_offset;
+                        let columns = start.header.columns.len();
                         builder.on_copy_start(start);
                         // **Once per database, not once per block.** Recomputing
                         // at every `CopyStart` and leaning on idempotence would
@@ -607,6 +617,75 @@ async fn map_forward(
                             index.metadata = Some(dump_metadata_from_spans(&spans));
                             metadata_covers = Some(db);
                         }
+                        // **The offer, and this loop is the leader making it.**
+                        // Everything from `data_offset` until `\.` is
+                        // line-structured rows — the header this arm just read is
+                        // what proves it — so the region may be handed to workers
+                        // that never parse structure
+                        // (`crate::leader::scan_region`). It answers the block's
+                        // totals as the serial scanner would have stated them, or
+                        // declines and leaves the region where it is; the caller's
+                        // `--jobs` is what decides whether a cut pays.
+                        let scanned = leader::scan_region(
+                            source,
+                            scan_options,
+                            header_offset,
+                            data_offset,
+                            columns,
+                            size,
+                        )
+                        .await?;
+                        match scanned {
+                            RegionScan::Closed(interior) => {
+                                // The workers counted the rows, so the census
+                                // they folded stands in for the `on_row` calls
+                                // this loop never made.
+                                builder.absorb_census(&interior.census);
+                                let watermark = interior.end.end_offset;
+                                let targets = std::mem::take(&mut open_block_targets);
+                                match close_copy_block(
+                                    source,
+                                    scan_options,
+                                    cache,
+                                    index,
+                                    &mut builder,
+                                    &mut throttle,
+                                    &prefix,
+                                    seg_start,
+                                    size,
+                                    target,
+                                    targets,
+                                    interior.end,
+                                )
+                                .await?
+                                {
+                                    // The serial scanner is still standing at
+                                    // this block's `data_offset` and the chunk in
+                                    // hand is bytes the workers have already
+                                    // read, so both are dropped and the loop
+                                    // starts again past the block. Handled after
+                                    // the event loop, which is where `scanner`
+                                    // and `carry` can be moved at all.
+                                    BlockClose::Continue => {
+                                        resume_at = Some(watermark);
+                                        break;
+                                    }
+                                    BlockClose::Settled => return Ok(MapStop::Reached),
+                                    BlockClose::Interrupted => return Ok(MapStop::Interrupted),
+                                }
+                            }
+                            // Nothing happened: the serial scanner owns the
+                            // region and reads on into it exactly as before.
+                            RegionScan::Declined => {}
+                            // Cancelled between two windows, so nothing about
+                            // this block is known. `index` is consistent at the
+                            // last spliced watermark, which is before it — the
+                            // same state the per-chunk check saves at.
+                            RegionScan::Cancelled => {
+                                cache.save(source, index).await?;
+                                return Ok(MapStop::Interrupted);
+                            }
+                        }
                     }
                     // This pass needs only the block's extent, which the
                     // scanner finds from the `\.` terminator — row bytes become
@@ -615,64 +694,26 @@ async fn map_forward(
                     // pass records (`crate::index::CopyBlock::array_shapes`).
                     Event::Row(row) => builder.on_row(row.raw),
                     Event::CopyEnd(end) => {
-                        // `end_offset` is always a safe, resumable watermark —
-                        // the scanner is back in its `Outside` state there — and
-                        // `on_copy_end` leaves the builder `Idle`, which is
-                        // exactly where `snapshot` is sound.
-                        let watermark = end.end_offset;
-                        builder.on_copy_end(end);
                         let targets = std::mem::take(&mut open_block_targets);
-                        // The second of the guard's two check points, and the one
-                        // that covers the opposite extreme from the chunk check
-                        // above: a block-rich file can spend tens of seconds
-                        // inside a *single* chunk, where the chunk check runs
-                        // twice in the whole scan. The two together bound the
-                        // response by the shorter of a chunk and a block.
-                        let cancelled = scan_options.cancelled();
-                        let due = throttle.due();
-                        // **The splice rides the throttle's gate.** Rebuilding
-                        // `index.spans` clones the whole list, so doing it per
-                        // block is O(blocks²) — the half of that quadratic the
-                        // throttle did not reach (`architecture.md`, "`parse`
-                        // resumes, and saves as it goes"). Nothing between gate
-                        // openings reads `index`: the metadata recompute above
-                        // splices its own copy, and `target_settled` is the one
-                        // reader that would — which is why a block whose header
-                        // could satisfy it opens the gate too. What this costs is
-                        // the interrupt's promise, bounded in *time* by the
-                        // throttle rather than in blocks.
-                        if targets || cancelled || due {
-                            index.spans = splice(
-                                &prefix,
-                                builder.snapshot(watermark),
-                                seg_start,
-                                watermark,
-                                size,
-                            );
-                            index.roles.extend(builder.roles().iter().cloned());
-                            index.tablespaces.extend(builder.tablespaces().iter().cloned());
-                            index.scanned_through = index.scanned_through.max(watermark);
-                        }
-                        // Only a block `target_settled` counts can turn it from
-                        // false to true, and `index` has just been spliced for
-                        // exactly those — so this reads a map that is current
-                        // through `watermark` every time it is consulted.
-                        let settled = targets
-                            && target.is_some_and(|(table, selector)| {
-                                target_settled(index, table, selector)
-                            });
-                        // The save at the *last* watermark before an early stop is
-                        // what persists the map for the next query, so a settled
-                        // target saves whether or not the throttle would have —
-                        // and so does an interrupt.
-                        if settled || cancelled || due {
-                            throttle.save(cache, source, index).await?;
-                        }
-                        if settled {
-                            return Ok(MapStop::Reached);
-                        }
-                        if cancelled {
-                            return Ok(MapStop::Interrupted);
+                        match close_copy_block(
+                            source,
+                            scan_options,
+                            cache,
+                            index,
+                            &mut builder,
+                            &mut throttle,
+                            &prefix,
+                            seg_start,
+                            size,
+                            target,
+                            targets,
+                            end,
+                        )
+                        .await?
+                        {
+                            BlockClose::Continue => {}
+                            BlockClose::Settled => return Ok(MapStop::Reached),
+                            BlockClose::Interrupted => return Ok(MapStop::Interrupted),
                         }
                     }
                     Event::Line(line) => builder.feed_line(line.offset, line.raw),
@@ -683,7 +724,27 @@ async fn map_forward(
                     Event::LargeObjectEnd(end) => builder.on_large_object_end(end.end_offset),
                 }
             }
+            if resume_at.is_some() {
+                break;
+            }
             carry.consumed(pass, &chunk, scanner.take_consumed());
+        }
+
+        // **The leader took a region, so the serial scanner is put back down
+        // past it.** The carry is discarded rather than fixed up: whatever it
+        // held was the front edge of a chunk the workers have since read whole,
+        // and `end_offset` is a line start, so a fresh carry is the only correct
+        // one. `read_pos` follows, since the bytes between here and the frontier
+        // are the workers' reads and this loop must not re-read them.
+        if let Some(at) = resume_at {
+            scanner = CopyScanner::resume(at, None);
+            carry = ChunkCarry::new();
+            read_pos = at;
+            // The three hints this loop announced still stand: `scan_region`
+            // restores `WaitPolicy::NeverWait` on its way out, announces the same
+            // `Parallelism` this loop did, and never touches the read size
+            // (`crate::leader::scan_region`).
+            continue;
         }
 
         if eof {
@@ -706,6 +767,96 @@ async fn map_forward(
     index.diagnostics.push(toc_coverage_diagnostic(&index.spans));
     cache.save(source, index).await?;
     Ok(MapStop::Reached)
+}
+
+/// What closing one `COPY` block asks of the loop that closed it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BlockClose {
+    /// Nothing: carry on scanning.
+    Continue,
+    /// The queried table is settled, and the map has been persisted at this
+    /// block's watermark.
+    Settled,
+    /// [`ScanOptions::cancel`] was set, and the map has been persisted at this
+    /// block's watermark.
+    Interrupted,
+}
+
+/// Close a `COPY` block on the [`crate::map::Builder`] and do everything
+/// [`map_forward`] owes at a `CopyEnd`: the splice, the throttled save, and the
+/// early-stop check.
+///
+/// **It is a free function because it has two callers**, and they differ only in
+/// where the `CopyEnd` came from — the serial scanner, or
+/// [`crate::leader::scan_region`] folding the answers of the workers that split
+/// the block's interior. Two copies of this sequence would be two copies of a
+/// subtle ordering (splice before the settled test, save before the return), and
+/// a parallel scan's cache is byte-identical to a serial one's only if the two
+/// paths close a block the same way.
+///
+/// `targets` is whether this block's header could be the one that settles
+/// `target`, read at `CopyStart` — see [`map_forward`]'s `CopyStart` arm for why
+/// it is the header alone.
+#[allow(clippy::too_many_arguments)]
+async fn close_copy_block(
+    source: &dyn ByteRangeSource,
+    scan_options: &ScanOptions,
+    cache: &CacheMode,
+    index: &mut DumpIndex,
+    builder: &mut Builder,
+    throttle: &mut SaveThrottle,
+    prefix: &[Span],
+    seg_start: u64,
+    size: u64,
+    target: Option<(&str, Option<&str>)>,
+    targets: bool,
+    end: CopyEnd,
+) -> Result<BlockClose> {
+    // `end_offset` is always a safe, resumable watermark — the scanner is back
+    // in its `Outside` state there — and `on_copy_end` leaves the builder
+    // `Idle`, which is exactly where `snapshot` is sound.
+    let watermark = end.end_offset;
+    builder.on_copy_end(end);
+    // The second of the guard's two check points, and the one that covers the
+    // opposite extreme from `map_forward`'s per-chunk check: a block-rich file
+    // can spend tens of seconds inside a *single* chunk, where the chunk check
+    // runs twice in the whole scan. The two together bound the response by the
+    // shorter of a chunk and a block.
+    let cancelled = scan_options.cancelled();
+    let due = throttle.due();
+    // **The splice rides the throttle's gate.** Rebuilding `index.spans` clones
+    // the whole list, so doing it per block is O(blocks²) — the half of that
+    // quadratic the throttle did not reach (`architecture.md`, "`parse` resumes,
+    // and saves as it goes"). Nothing between gate openings reads `index`: the
+    // metadata recompute in the `CopyStart` arm splices its own copy, and
+    // `target_settled` is the one reader that would — which is why a block whose
+    // header could satisfy it opens the gate too. What this costs is the
+    // interrupt's promise, bounded in *time* by the throttle rather than in
+    // blocks.
+    if targets || cancelled || due {
+        index.spans = splice(prefix, builder.snapshot(watermark), seg_start, watermark, size);
+        index.roles.extend(builder.roles().iter().cloned());
+        index.tablespaces.extend(builder.tablespaces().iter().cloned());
+        index.scanned_through = index.scanned_through.max(watermark);
+    }
+    // Only a block `target_settled` counts can turn it from false to true, and
+    // `index` has just been spliced for exactly those — so this reads a map that
+    // is current through `watermark` every time it is consulted.
+    let settled =
+        targets && target.is_some_and(|(table, selector)| target_settled(index, table, selector));
+    // The save at the *last* watermark before an early stop is what persists the
+    // map for the next query, so a settled target saves whether or not the
+    // throttle would have — and so does an interrupt.
+    if settled || cancelled || due {
+        throttle.save(cache, source, index).await?;
+    }
+    if settled {
+        return Ok(BlockClose::Settled);
+    }
+    if cancelled {
+        return Ok(BlockClose::Interrupted);
+    }
+    Ok(BlockClose::Continue)
 }
 
 /// How many times the elapsed scan has to cover the last save's own cost

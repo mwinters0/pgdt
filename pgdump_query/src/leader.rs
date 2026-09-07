@@ -30,16 +30,11 @@
 //! know nothing about rows — which is what lets `ByteRangeSource::partitions`
 //! advise block boundaries.
 //!
-//! **Nothing calls [`scan_region`] yet, deliberately.** What folds its answer
-//! into `map::Builder` and the `DumpIndex` is a rework of `stream::map_forward`
-//! — the loop every `parse` and every query's first pass runs through — and it
-//! lands as its own slice so that the scheduler is reviewed against the serial
-//! scanner's own answer before the path that will consume it moves
-//! (`docs/process.md`, "Size a slice by its review, not by its scope"). That is
-//! the same shape `ByteRangeSource::partitions` and `Parallelism` landed in,
-//! and it is why the module allows dead code rather than exporting a surface
-//! for the sake of being called.
-#![allow(dead_code)]
+//! **`stream::map_forward` is the leader.** Its `CopyStart` arm offers each
+//! open region to [`scan_region`] and closes one it took through the same path
+//! a serial `CopyEnd` takes, then puts the serial scanner back down past the
+//! block — so what `--jobs` buys a `parse` is the interior of every `COPY`
+//! block large enough to cut.
 
 use std::ops::Range;
 

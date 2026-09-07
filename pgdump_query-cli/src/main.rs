@@ -63,13 +63,14 @@ struct ParallelArgs {
     /// Ceiling on concurrent workers. Defaults to this machine's available
     /// parallelism; `--jobs 1` is the serial path.
     ///
-    /// **A ceiling, not a request** — three input shapes admit no parallelism
-    /// whatever this says: a plain-file `parse`, a `.xz` file with one block,
-    /// and an `INSERT` run (`docs/manual/dump-inspection.md`). What it reaches
-    /// today is `query`'s row replay, which it cuts into at most this many
-    /// sub-streams read at once and merged back into file order, and how many
-    /// decoded `.xz` blocks the source retains, one per would-be reader.
-    /// `parse` runs no workers yet, so there it is the retention bound alone.
+    /// **A ceiling, not a request** — two input shapes admit no parallelism
+    /// whatever this says: a `.xz` file with one block, and an `INSERT` run
+    /// (`docs/manual/dump-inspection.md`). What it reaches is `query`'s row
+    /// replay, cut into at most this many sub-streams read at once and merged
+    /// back into file order; a `parse`'s structure scan, which splits the
+    /// interior of every `COPY` block large enough to cut and folds the answers
+    /// back into one block list; and how many decoded `.xz` blocks the source
+    /// retains, one per would-be reader.
     #[arg(long, value_name = "N", value_parser = parse_jobs)]
     jobs: Option<usize>,
     /// What those workers may hold between them in read buffers, in bytes.

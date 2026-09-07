@@ -518,15 +518,14 @@ pub struct ScanOptions {
     /// (`docs/design/architecture.md`, "Execution model and API surface").
     ///
     /// **The read path's buffer budget reads it, and so does the leader's
-    /// scheduler — which nothing calls.** Every read loop announces it to the
-    /// source ([`crate::ByteRangeSource::hint_parallelism`]), which sizes its
-    /// pools from the byte half and — for a compressed source — decides from it
+    /// scheduler.** Every read loop announces it to the source
+    /// ([`crate::ByteRangeSource::hint_parallelism`]), which sizes its pools
+    /// from the byte half and — for a compressed source — decides from it
     /// whether a whole block can be decoded at all. The `jobs` half is that
     /// source's retention depth, one decoded block per concurrent reader, and
-    /// the ceiling on the workers [`crate::leader::scan_region`] would run over
-    /// an open `COPY` block's interior; nothing in this build offers it a
-    /// region, so a caller that sets this still gets the serial scan, executing
-    /// it inside the memory it asked for.
+    /// the ceiling on the workers [`crate::leader::scan_region`] runs over an
+    /// open `COPY` block's interior — which the mapping pass offers it at every
+    /// `COPY` header, so this is what a `parse` splits by.
     pub parallelism: Parallelism,
 }
 

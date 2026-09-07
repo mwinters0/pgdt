@@ -1407,6 +1407,28 @@ impl Builder {
         census_row(&mut self.pending_census, raw);
     }
 
+    /// Union an already-folded census into the open `COPY` block's own — what
+    /// a block whose rows were counted by interior workers states instead of
+    /// the [`on_row`](Self::on_row) calls it never made
+    /// (`crate::leader::scan_region`).
+    ///
+    /// **It takes `&[ArrayShape]` rather than the leader's `Interior`** because
+    /// this module is L1 and the leader is L4; the shape vector is the L1 value
+    /// they share (`docs/design/layering.md`).
+    ///
+    /// Length-tolerant for the same reason [`crate::index::union_census`] is: a
+    /// header-less block states no width, so the rows are what grow the vector
+    /// and the workers' union can be wider than what
+    /// [`on_copy_start`](Self::on_copy_start) sized.
+    pub(crate) fn absorb_census(&mut self, census: &[ArrayShape]) {
+        if census.len() > self.pending_census.len() {
+            self.pending_census.resize(census.len(), ArrayShape::default());
+        }
+        for (slot, shape) in self.pending_census.iter_mut().zip(census) {
+            slot.merge(shape);
+        }
+    }
+
     pub(crate) fn on_copy_end(&mut self, end: CopyEnd) {
         // `on_copy_start` always runs first for a matching block
         // (`crate::scan::CopyScanner` never emits `CopyEnd` without a prior

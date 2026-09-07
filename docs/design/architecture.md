@@ -393,16 +393,16 @@ nothing — had to call itself retaining in order to select the behaviour it
 wanted, which is a false statement about the loop made in order to reach a true
 one about the pool.
 
-**No top-level read loop grants the permission, and no command shape reaches
-one that does.** The replay loop cannot: `batch::RetainedChunks` pins every
-chunk a batch has taken a view into and the batch then goes to the caller.
-`scan` and the mapping pass could — the carry copies what it keeps and an
-`Event` borrows only for the callback — and still do not, because what a
-shipped loop's grant buys is exposure rather than coverage (below). The holder
-that genuinely needs the bound is the leader's fused worker, which grants it
-for itself and restores `NeverWait` on the way out ("The interior split"); it
-is a loop nested inside the mapping pass rather than one of the three, and
-nothing schedules the leader in this build.
+**No top-level read loop grants the permission.** The replay loop cannot:
+`batch::RetainedChunks` pins every chunk a batch has taken a view into and the
+batch then goes to the caller. `scan` and the mapping pass could — the carry
+copies what it keeps and an `Event` borrows only for the callback — and still
+do not, because what a shipped loop's grant buys is exposure rather than
+coverage (below). The holder that genuinely needs the bound is the leader's
+fused worker, which grants it for itself and restores `NeverWait` on the way
+out ("The interior split"); it is a loop nested inside the mapping pass rather
+than one of the three, and a scan reaches it whenever the caller states a
+`Parallelism` over a region the source is willing to cut.
 
 **Granting the permission is a promise about the loop, not a request.** A loop
 that keeps two reads alive at once against a one-slot pool blocks forever, so
@@ -3500,11 +3500,11 @@ worker — and the pool that budget belongs to now exists and holds the decoded
 blocks ("The compressed source"): a serial `parse` of the 3.00 GiB `.xz`
 control reads **64.7 MiB** resident, which is that budget's two 24 MiB slots
 plus what a plain scan holds. It is a ceiling only for a loop that grants
-`WaitPolicy::MayWait`, and **no command shape reaches one** — the leader's
-fused worker grants it and nothing schedules the leader ("Execution model and
-API surface") — so today it is a steady state everywhere, and a
-`parallel-peak-rss` figure measures against a ceiling on a `parse` and two
-terms on a `query` once that worker is scheduled.
+`WaitPolicy::MayWait`, which is the leader's fused worker — so it binds on a
+`parse` that states a `Parallelism` over a splittable region and is a steady
+state everywhere else, including every `query` replay ("Execution model and API
+surface"). A `parallel-peak-rss` figure therefore measures against a ceiling on
+a `parse` and two terms on a `query`.
 
 *Rejected: compacting the batch's views once selectivity drops below a
 threshold.* It admits an unbounded peak before the threshold trips, and it
@@ -4004,9 +4004,8 @@ of `measurements.md` naming the new function.
 `COPY` region. It is given the header's offset and width and the file's size,
 and it answers one of three things: the block's totals as the serial scanner
 would have stated them, a **decline** that leaves the region to the serial
-scanner, or a **cancellation**. Nothing calls it — what folds its answer into
-`map::Builder` and the `DumpIndex` is a rework of `stream::map_forward`, which
-is its own slice.
+scanner, or a **cancellation**. `stream::map_forward` is what calls it — see
+"The mapping pass is the leader" below.
 
 **It reads `partitions()` for the shape of the cut and never for whether to
 make one**, which is that method's own contract. The economics are the
@@ -4060,6 +4059,52 @@ invisibility property asserted about the schedule rather than the parse — the
 source's own boundaries, its own window size, its own tail reads, still not
 visible in the answer. It runs at eight jobs against the local source's four
 pool slots, so the wait genuinely blocks and the run completes anyway.
+
+#### The mapping pass is the leader
+
+`stream::map_forward`'s `CopyStart` arm is where a region is offered. The
+header it has just read is the proof the scheduler needs, so the offer sits
+directly after `builder.on_copy_start` and after the per-database metadata
+recompute — it is the *only* place in the loop that holds an open `COPY` region
+and knows nothing yet about how far it runs. What `--jobs` buys a `pgdq parse`
+is the interior of every block large enough to cut; a block smaller than one of
+the source's partitions is declined and read serially, so a scan of a
+block-rich file alternates between the two paths without anything having to
+choose.
+
+**A block the leader closed is closed through the same code a serial `CopyEnd`
+is**, `stream::close_copy_block` — the splice, the throttled save, the settled
+test, in that order. It is a free function with two callers rather than an arm
+with a copy beside it, because the ordering is subtle and two copies of it are
+two orderings free to drift; a parallel scan's cache is byte-identical to a
+serial one's only while the two paths close a block identically. The census the
+workers folded reaches the `Builder` through `absorb_census`, which stands in
+for the `on_row` calls this loop never made and takes the L1 `&[ArrayShape]`
+rather than the leader's own `Interior`.
+
+**Then the serial scanner is put back down past the block.** The scanner is
+resumed at `end_offset` and `read_pos` follows it, so the bytes between are the
+workers' reads and this loop does not read them again. The `ChunkCarry` is
+**discarded rather than fixed up**: what it held was the front edge of a chunk
+the workers have since read whole, and `end_offset` is a line start, so a fresh
+carry is the only correct one. The three hints the loop announced still stand —
+`scan_region` restores `NeverWait` itself, announces the same `Parallelism`, and
+never touches the read size.
+
+A **cancellation** inside a region abandons it: nothing about the block is
+banked, the index is saved at the last spliced watermark, and the scan reports
+itself interrupted, which is exactly the state the loop's own per-chunk check
+saves at. So a region is a fourth place `ScanOptions::cancel` is read, and the
+only one that can abandon a block already partly scanned.
+
+Two tests carry this. `a_parallel_mapping_pass_builds_the_index_a_serial_one_does`
+runs `map_file` over four fixtures at two chunk sizes and three job counts and
+asserts the index against `build_index`'s — 360 regions scheduled and 126
+declined, so both paths are in it. And because an index equality proves nothing
+if every region was declined, `a_parallel_scan_grants_the_wait_inside_the_mapping_pass_and_takes_it_back`
+asserts the leader was reached at all, off the `MayWait` announcement only its
+scheduler makes; `a_cancelled_parallel_region_banks_nothing_and_stays_resumable`
+covers the third arm.
 
 ### Projection
 

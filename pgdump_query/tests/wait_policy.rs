@@ -5,11 +5,12 @@
 //! grants [`WaitPolicy::MayWait`], so nothing a `build_index` or a
 //! `table_stream` does can block on a slot. The one loop that grants it is the
 //! leader's fused worker, which runs *inside* the mapping pass and restores
-//! `NeverWait` on its way out — and nothing schedules the leader in this build,
-//! so no invocation reaches it. A loop that *could* wait safely still does not,
-//! because the two failure directions are not comparable: a bound that fails to
-//! bind costs memory and is visible, and a wait granted wrongly is a hang with
-//! nothing to measure.
+//! `NeverWait` on its way out — so the only invocation that reaches it is a
+//! [`Parallelism::Workers`] scan over a region the source is willing to cut, and
+//! the announcement sequence is what says so from outside. A loop that *could*
+//! wait safely still does not, because the two failure directions are not
+//! comparable: a bound that fails to bind costs memory and is visible, and a
+//! wait granted wrongly is a hang with nothing to measure.
 //!
 //! What is asserted is the announcement, not the behaviour. Nothing in a
 //! `read_range` call carries the policy, so the pool cannot see which loop
@@ -26,8 +27,8 @@ use bytes::Bytes;
 use futures::StreamExt;
 use pgdump_query::cache::CacheMode;
 use pgdump_query::{
-    ByteRangeSource, LocalFileSource, QueryOptions, ScanOptions, WaitPolicy, build_index,
-    table_stream,
+    ByteRangeSource, DEFAULT_MEMORY_BUDGET, LocalFileSource, Parallelism, QueryOptions,
+    ScanOptions, WaitPolicy, build_index, map_file, table_stream,
 };
 
 mod common;
@@ -84,6 +85,18 @@ impl ByteRangeSource for RecordingSource {
         self.inner.hint_read_size(len);
     }
 
+    /// Forwarded, and it has to be: the default declines to advise, and a
+    /// source that declines is never cut — so a wrapper that stopped here would
+    /// make the leader decline every region and quietly turn the test below
+    /// into the serial path.
+    fn partitions(&self, range: std::ops::Range<u64>) -> pgdump_query::Partitioning {
+        self.inner.partitions(range)
+    }
+
+    fn hint_parallelism(&self, parallelism: Parallelism) {
+        self.inner.hint_parallelism(parallelism);
+    }
+
     fn hint_wait_policy(&self, policy: WaitPolicy) {
         self.stated.lock().unwrap().push(policy);
         self.inner.hint_wait_policy(policy);
@@ -100,11 +113,58 @@ async fn a_structural_scan_grants_no_wait() {
     assert_eq!(source.policies(), vec![WaitPolicy::NeverWait]);
 }
 
+/// **A `parse` that states workers reaches the leader, and the sequence is how
+/// that is visible from outside.** `map_forward` states `NeverWait` once and
+/// then offers each open `COPY` region to `leader::scan_region`, which grants
+/// `MayWait` for the window it schedules and restores `NeverWait` before
+/// returning. So a scan that took `n` regions announces `NeverWait` and then
+/// `n` grant-and-restore pairs — the restoration being what the last entry
+/// checks, since a scheduler that forgot it would leave the enclosing loop
+/// reading on under a permission it never granted — and a scan that declined
+/// every region announces `[NeverWait]` alone.
+///
+/// It is also this file's answer to a trap `tests/map_file.rs` cannot spring on
+/// its own: an index equality under `--jobs 8` proves nothing if the scheduler
+/// declined every block, since that is the serial path compared to itself. The
+/// small chunk is what makes a fixture's blocks several partitions each — the
+/// local source's partition unit is its read chunk, so at the shipped 1 MiB
+/// every fixture block is one partition and every region is declined.
+#[tokio::test]
+async fn a_parallel_scan_grants_the_wait_inside_the_mapping_pass_and_takes_it_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("dump.sql");
+    std::fs::copy(edge_cases(), &dump).unwrap();
+    let source = RecordingSource::wrap(LocalFileSource::open(&dump).unwrap());
+    let options = ScanOptions {
+        chunk_size: 256,
+        parallelism: Parallelism::workers(8, DEFAULT_MEMORY_BUDGET),
+        ..ScanOptions::default()
+    };
+    map_file(&source, &options, &CacheMode::Disabled).await.unwrap();
+    // `policies()` collapses consecutive repeats, so the sequence alternates by
+    // construction and what is left to check is its ends and its length.
+    let policies = source.policies();
+    assert!(policies.len() >= 3 && policies.len() % 2 == 1, "{policies:?}");
+    assert_eq!(policies.first(), Some(&WaitPolicy::NeverWait), "the mapping pass states its own");
+    assert!(policies.contains(&WaitPolicy::MayWait), "a region was actually scheduled");
+    assert_eq!(policies.last(), Some(&WaitPolicy::NeverWait), "the scheduler restored it");
+
+    // The same scan at the shipped chunk size declines every one of this
+    // fixture's blocks, so the leader is reached and grants nothing.
+    let source = RecordingSource::wrap(LocalFileSource::open(&dump).unwrap());
+    let options = ScanOptions {
+        parallelism: Parallelism::workers(8, DEFAULT_MEMORY_BUDGET),
+        ..ScanOptions::default()
+    };
+    map_file(&source, &options, &CacheMode::Disabled).await.unwrap();
+    assert_eq!(source.policies(), vec![WaitPolicy::NeverWait], "every region was declined");
+}
+
 /// A query is two loops over one source, and the second could not grant a wait
 /// even if the build armed the bound: the replay pins every chunk a batch has
-/// taken a view into. Both state the same thing today, which is the property
-/// this records — a scheduled leader is what will make the sequence
-/// interesting, by granting a wait inside the first loop and taking it back.
+/// taken a view into. Both state the same thing under the library's serial
+/// default, which is the property this records; a stated `Parallelism` is what
+/// makes the sequence interesting, and that is the test above.
 #[tokio::test]
 async fn a_query_grants_no_wait_in_either_loop() {
     let source = RecordingSource::wrap(LocalFileSource::open(edge_cases()).unwrap());

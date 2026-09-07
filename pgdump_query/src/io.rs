@@ -326,7 +326,7 @@ impl Partitioning {
 /// (`crate::table_stream_partitions`). The caller runs those sub-streams, so
 /// what `jobs` states is a ceiling rather than a request. The third is
 /// [`crate::leader::scan_region`], which both numbers size a window of fused
-/// workers from — and which nothing in this build calls
+/// workers from, and which the mapping pass offers every open `COPY` region to
 /// (`docs/design/architecture.md`, "Execution model and API surface").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Parallelism {
@@ -837,10 +837,10 @@ impl ByteRangeSource for LocalFileSource {
             // re-allocating costs nothing anyone will measure.
             //
             // **The slot is taken inside the blocking task, not before it.**
-            // `obtain` blocks for a transient holder, and blocking the runtime
-            // thread that is meant to be draining the reads which would free a
-            // slot is the one way to make this wait a deadlock in a build that
-            // has no scheduler yet.
+            // `obtain` blocks for a loop that granted the wait, and blocking the
+            // runtime thread that is meant to be driving the sibling reads which
+            // would free a slot is the one way to turn that wait into a
+            // deadlock.
             let slot = tokio::task::spawn_blocking(move || -> std::io::Result<PooledBuffer> {
                 let mut slot = pool.obtain(len);
                 file.read_exact_at(&mut slot.as_mut()[..len], offset)?;
@@ -902,9 +902,15 @@ impl ByteRangeSource for LocalFileSource {
     /// worker count. Raising the ceiling with `jobs` would grow a query's
     /// resident set by `(jobs - POOL_DEPTH)` chunks the moment
     /// `crate::batch::RetainedChunks` releases the buffers a flushed batch was
-    /// pinning, buying idle capacity for concurrency that no scheduler in this
-    /// build produces (`docs/design/architecture.md`, "Execution model and API
+    /// pinning (`docs/design/architecture.md`, "Execution model and API
     /// surface").
+    ///
+    /// **What it means now that the leader schedules concurrent readers over
+    /// this source**: a `parse` at `--jobs n` runs `n` fused workers against
+    /// [`POOL_DEPTH`] chunk slots, so above four of them the extra workers
+    /// block for a slot rather than allocating — which is the wait doing its
+    /// job, and a ceiling on plain-file worker throughput that no figure has
+    /// priced yet.
     fn hint_parallelism(&self, parallelism: Parallelism) {
         self.pool.set_limits(budget_bytes(parallelism), POOL_DEPTH);
     }
@@ -1894,11 +1900,11 @@ mod tests {
     ///
     /// Two threads, because a wait has no behaviour except its interaction
     /// with another holder: with one it can only be asserted not to have
-    /// blocked, which the unwaiting take already guaranteed. **No command
-    /// shape reaches a loop that grants this permission** — the leader's fused
-    /// worker does, and nothing schedules the leader — so this and
-    /// `crate::leader`'s own scheduler tests are where the mechanism is
-    /// exercised at all.
+    /// blocked, which the unwaiting take already guaranteed. The one loop that
+    /// grants this permission is the leader's fused worker, which the mapping
+    /// pass now reaches — so this is the wait's *contract*, and
+    /// `crate::leader`'s scheduler tests are where it is exercised against a
+    /// real source.
     #[test]
     fn a_permitted_wait_takes_a_slot_rather_than_allocating() {
         let unit = 1 << 20;

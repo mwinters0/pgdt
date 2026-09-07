@@ -17,8 +17,8 @@ use futures::StreamExt;
 use pgdump_query::cache::{CacheLoad, CacheMode, CacheStatus};
 use pgdump_query::resolve::{ColumnResolution, SchemaMode, resolve_columns};
 use pgdump_query::{
-    ByteRangeSource, DumpIndex, LocalFileSource, QueryOptions, ScanOptions, build_index, cache,
-    map_file, preamble_only, table_stream,
+    ByteRangeSource, DEFAULT_MEMORY_BUDGET, DumpIndex, LocalFileSource, Parallelism, QueryOptions,
+    ScanOptions, build_index, cache, map_file, preamble_only, table_stream,
 };
 
 /// A private copy of `tests/data/edge_cases.sql` in a fresh tempdir, so each
@@ -67,6 +67,59 @@ async fn a_cold_map_file_matches_build_index() {
             assert!(!run.interrupted);
             let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
             assert_matches_eager(&run.index, &eager, &format!("{schema_dir}/{flag_set}"));
+        }
+    }
+}
+
+/// **What `--jobs` buys a `parse`, and the property it must not cost.** The
+/// mapping pass offers every open `COPY` region to the leader's scheduler, so a
+/// block large enough to cut is scanned by workers that split its interior —
+/// and the index that comes out is still, span for span and census for census,
+/// what one serial eager pass gives (`docs/design/architecture.md`, "The
+/// interior split").
+///
+/// **A fixture is kilobytes, so the chunk size is announced small.** The local
+/// source's partition unit *is* the read chunk, so at the shipped 1 MiB every
+/// block here is one partition and the scheduler correctly declines all of
+/// them — which would make this the serial path compared to itself. 512 bytes
+/// splits nearly every block, 4 KiB splits the larger ones and leaves the rest
+/// to the serial scanner, so the mixed case — a scan that alternates between
+/// the two paths — is in here too. `tests/wait_policy.rs` is where "the leader
+/// was actually reached under these options" is asserted, off the one
+/// announcement only its scheduler makes.
+#[tokio::test]
+async fn a_parallel_mapping_pass_builds_the_index_a_serial_one_does() {
+    for schema_dir in ["edge_cases", "objects", "partitions", "types"] {
+        for flag_set in ["default", "data-only"] {
+            let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../fixtures/16")
+                .join(schema_dir)
+                .join(format!("{flag_set}.sql"));
+            if !fixture.exists() {
+                continue;
+            }
+            let dir = tempfile::tempdir().unwrap();
+            let dump = dir.path().join("dump.sql");
+            std::fs::copy(&fixture, &dump).unwrap();
+            let source = LocalFileSource::open(&dump).unwrap();
+            let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
+
+            for chunk_size in [512usize, 4096] {
+                for jobs in [2usize, 3, 8] {
+                    let label =
+                        format!("{schema_dir}/{flag_set}, {jobs} jobs, {chunk_size}B chunk");
+                    let mode =
+                        CacheMode::Enabled(dir.path().join(format!("{chunk_size}-{jobs}.dqcache")));
+                    let options = ScanOptions {
+                        chunk_size,
+                        parallelism: Parallelism::workers(jobs, DEFAULT_MEMORY_BUDGET),
+                        ..ScanOptions::default()
+                    };
+                    let run = map_file(&source, &options, &mode).await.unwrap();
+                    assert!(!run.interrupted, "{label}");
+                    assert_matches_eager(&run.index, &eager, &label);
+                }
+            }
         }
     }
 }
@@ -393,6 +446,67 @@ impl ByteRangeSource for CancelsPast<'_> {
     > {
         self.inner.modified()
     }
+
+    /// The three the leader reads, forwarded so that a scan stating a
+    /// `Parallelism` through this wrapper is cut exactly as it would be through
+    /// the file itself — the default `partitions` declines to advise, and a
+    /// source that declines is never split.
+    fn hint_read_size(&self, len: usize) {
+        self.inner.hint_read_size(len);
+    }
+
+    fn partitions(&self, range: std::ops::Range<u64>) -> pgdump_query::Partitioning {
+        self.inner.partitions(range)
+    }
+
+    fn hint_parallelism(&self, parallelism: Parallelism) {
+        self.inner.hint_parallelism(parallelism);
+    }
+}
+
+/// **The interrupt guard, reached inside a region the workers were splitting.**
+/// A `COPY` block long enough to need several windows is cancelled between two
+/// of them, which is a fourth place the flag is read and the only one that can
+/// abandon a block already partly scanned: nothing about it is banked, the last
+/// spliced watermark stands, and the scan is a resume point like any other.
+///
+/// The flag trips on the first read at or past the block's `data_offset`, which
+/// is the leader's own first read — so window one dispatches, window two sees
+/// the flag, and the interior is left unfinished by construction rather than by
+/// timing.
+#[tokio::test]
+async fn a_cancelled_parallel_region_banks_nothing_and_stays_resumable() {
+    let mut file = b"COPY public.t (a) FROM stdin;\n".to_vec();
+    let data_offset = file.len() as u64;
+    for i in 0..2000 {
+        file.extend_from_slice(format!("{i}\n").as_bytes());
+    }
+    file.extend_from_slice(b"\\.\n\nSELECT 1;\n");
+    let dir = tempfile::tempdir().unwrap();
+    let dump = dir.path().join("dump.sql");
+    std::fs::write(&dump, &file).unwrap();
+    let source = LocalFileSource::open(&dump).unwrap();
+    let mode = CacheMode::Enabled(cache::colocated_path(&dump));
+
+    let cancel = Arc::new(AtomicBool::new(false));
+    let tripping = CancelsPast { inner: &source, trip: data_offset, cancel: Arc::clone(&cancel) };
+    let options = ScanOptions {
+        chunk_size: 64,
+        cancel: Some(Arc::clone(&cancel)),
+        parallelism: Parallelism::workers(4, DEFAULT_MEMORY_BUDGET),
+        ..ScanOptions::default()
+    };
+
+    let run = map_file(&tripping, &options, &mode).await.unwrap();
+    assert!(run.interrupted, "a cancelled region interrupts the scan");
+    assert_eq!(run.index.scanned_through, 0, "the abandoned block banks nothing");
+    assert_eq!(run.index.blocks().count(), 0);
+
+    // And it resumes into the index one eager pass builds.
+    let eager = build_index(&source, &ScanOptions::default()).await.unwrap();
+    let resumed = map_file(&source, &ScanOptions::default(), &mode).await.unwrap();
+    assert!(!resumed.interrupted);
+    assert_matches_eager(&resumed.index, &eager, "resumed from a cancelled parallel region");
 }
 
 /// **The interrupt guard.** A cancelled scan is not an error and not a lie: it

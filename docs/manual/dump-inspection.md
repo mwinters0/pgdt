@@ -209,20 +209,30 @@ a time, so on a plain file on a fast disk raising it will not show up on a
 clock. On a compressed file the reading is the expensive part, and there it
 can.
 
-It also bounds how many decoded `.xz` blocks are kept at once — one per worker
-you allowed, if `--parallel-memory` leaves room for them. `parse` runs no
-workers yet, so there that bound is all `--jobs` does: raising it on its own
-does nothing, and raising it together with the budget lets a compressed file
-keep more of itself decoded.
+For `parse` it cuts the *inside* of a `COPY` block up. Once pgdq has read a
+block's `COPY … FROM stdin;` header it knows everything until the block's end
+marker is rows, so it hands that stretch out to this many readers at once and
+folds their answers back into the one result — the same block list, the same
+row counts, the same cache, whatever you set. A block too small to be worth
+splitting is read the way it always was, so a dump of many small tables mostly
+ignores the flag and a dump of a few huge ones mostly does not.
 
-**Three shapes will never get parallelism, whatever you set.** A plain
-(uncompressed) file's structure scan is already faster than any disk we have
-measured, so there is nothing to win. An `.xz` file with a single block has no
-seam to split at — the warning above says so when you hit it. And an `INSERT`
-run — a dump taken with `pg_dump --inserts` — has no line-anchored statement
-boundary a second reader could start from, which is unfortunate, because it is
-also the shape that costs the most: about five times a `COPY` block's CPU per
-byte.
+It also bounds how many decoded `.xz` blocks are kept at once — one per worker
+you allowed, if `--parallel-memory` leaves room for them. So on a compressed
+file `--jobs` and `--parallel-memory` are worth raising together: more workers
+with no room to hold what they decode buys less than either number suggests.
+
+**Two shapes will never get parallelism, whatever you set.** An `.xz` file with
+a single block has no seam to split at — the warning above says so when you hit
+it. And an `INSERT` run — a dump taken with `pg_dump --inserts` — has no
+line-anchored statement boundary a second reader could start from, which is
+unfortunate, because it is also the shape that costs the most: about five times
+a `COPY` block's CPU per byte.
+
+A plain (uncompressed) file *is* split, but do not expect much from it: pgdq's
+structure scan of one is already faster than any disk we have measured, so on
+that shape the disk is what you are waiting for and raising `--jobs` moves a
+number that was not the bottleneck.
 
 ## `info`: reporting what is known
 
