@@ -111,6 +111,13 @@ pub trait ByteRangeSource: Send + Sync {
     /// A source that has not thought about being read concurrently must not be
     /// split by a caller that assumed it had, and a cost is meaningless for a
     /// split that is not happening.
+    ///
+    /// **It answers where and at what cost, never whether.** Whether a split
+    /// pays depends on the work the caller is about to do, not on the source:
+    /// the same [`LocalFileSource`] over the same range is worth cutting for
+    /// extraction and not for discovery. A caller reads this for the shape of
+    /// the cut and decides on its own whether to make one
+    /// (`docs/design/architecture.md`, "Execution model and API surface").
     fn partitions(&self, _range: Range<u64>) -> Partitioning {
         Partitioning::single(0)
     }
@@ -203,6 +210,12 @@ pub enum PartitionBoundaries {
     /// Anywhere in the range: no offset costs more to start reading at than
     /// another. A plain file's answer, and what a caller may cut into as many
     /// equal pieces as it has workers.
+    ///
+    /// **It is a fact about seeking, not a verdict on concurrency.** Whether
+    /// seeking is the expensive part of the caller's work is a question this
+    /// source was never asked, so a scheduler must not read this arm as
+    /// "device-bound, stay serial" — a remote source answers `Anywhere` too,
+    /// and it is the one with latency worth hiding.
     Anywhere,
     /// Only at these offsets — ascending, and strictly inside the range, so
     /// `n` of them describe `n + 1` partitions.

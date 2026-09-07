@@ -138,11 +138,28 @@ three cases fall out of it rather than being enumerated:
   every device, so on a plain file it is device-bound and there is nothing to
   win.
 
-**Parallel plain-file discovery is therefore refused, not deferred.** It is
-filed as a rejected alternative beside the scanner with the cold-NVMe figure as
-its evidence — 1.06× the `dd` floor, a 0.076 s prize on a 1.314 s scan, against
-which a splitter's own coordination is charged. That refusal takes the
-speculative-split scheme with it.
+**Parallel plain-file discovery is therefore worth nothing at the default, and
+that is where the refusal lives.** The evidence is the cold-NVMe figure — 1.06×
+the `dd` floor, a 0.076 s prize on a 1.314 s scan, against which a splitter's
+own coordination is charged.
+
+What the evidence does *not* license is a branch in the library refusing to cut
+a plain interior. The leader is built for the compressed case regardless, and
+once it exists, running it over a plain interior is the same `scan_piece` and
+`merge` with cuts that happen to be device reads — so a refusal would be a
+second knob beside `Parallelism`, disagreeing with it, and would put the plain
+path beyond the reach of `16.13`'s own figure. The economics are the caller's
+and are already spelled: `--jobs`, which `16.16` defaults to 1. A user who
+states `--jobs 8` on a plain `parse` buys coordination for ~6% and is entitled
+to; the shipped default is the refusal, stated as a number rather than as a
+branch. This amends an earlier reading of this section — the reasoning is
+[2026-09-07](../status/history/2026-09-07.md), "What `partitions()` answers, and
+where the plain-file refusal actually lives".
+
+**The speculative-split scheme is refused on its own grounds** and does not
+depend on this: the leader makes speculation unnecessary rather than cheap, so
+there is no validation path and no rollback ("A serial leader opens each region"
+below).
 
 ### A serial leader opens each region; workers never guess
 
@@ -596,7 +613,7 @@ wait on a number that never arrives. The condition that once also named
 | **16.8** | **Partitioned replay** — `TableStream` splits into N sub-streams over a complete map, each internally in file order, for a plain source and a compressed one alike. |
 | **16.9** | **The CLI's k-way merge** on source offset, holding one batch per partition, so `pgdq query` keeps file order at N × batch rather than an open-ended reorder buffer. |
 | **16.10** | **The interior split** — what one LF-split piece of an open `COPY` block's interior answers on its own (rows, its own census, the `\.` terminator if it held one), and how the pieces fold back into the block's totals. Pure and synchronous: the body a fused worker runs, and the merge the leader performs, with no source, no dispatch and no consumer. Adds a "Relied on by" line to I7 and I15, which are what make LF-splitting sound. |
-| **16.10.1** | **The leader** — the scheduler that cuts an open `COPY` region's interior where the source advises, runs the fused decode-and-parse workers over the pieces, and merges `16.10`'s answer into `map::Builder` and the `DumpIndex` at `CopyEnd`; the first read loop to grant `WaitPolicy::MayWait`; `pgdq parse --jobs`. **Earned, not planned** ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "16.10 split: the parse, then the scheduler that feeds it"). |
+| **16.10.1** | **The leader** — the scheduler that cuts an open `COPY` region's interior where the source advises, runs the fused decode-and-parse workers over the pieces, and merges `16.10`'s answer into `map::Builder` and the `DumpIndex` at `CopyEnd`; the first read loop to grant `WaitPolicy::MayWait`; `pgdq parse --jobs`. It reads `partitions()` for the shape of the cut only, never for whether to make one, and declines to cut a region smaller than one partition's own `partition_bytes()` — a floor derived from the source's answer rather than set as a constant, which is what keeps a many-small-block dump from paying scheduling per region. **Earned, not planned** ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "16.10 split: the parse, then the scheduler that feeds it"). |
 | **16.11** | **Error ordering** — a failing worker records and stops, the scheduler drains the partitions before it, and the lowest-offset error is the one raised. Asserted, not documented. |
 | **16.12** | **The determinism test** — `pgdq parse --jobs 1` and `--jobs 8` produce byte-identical `.dqcache` files over every fixture, and both equal what this build produces today. |
 | **16.13** | **`parallel-scan-throughput` and `parallel-peak-rss`** — `parse` and `query` against `--jobs` on the HDD, SATA SSD and NVMe, compressed and plain; RSS against `--jobs` at two block sizes. Both carry an apparatus gate of their own, a figure that occupies 24 threads being unable to inherit the sweep's quiet-machine one. |

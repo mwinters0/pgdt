@@ -435,10 +435,13 @@ are worth, and the orderings that do bind are named in
       [`../design/roadmap-P16.10-interior-split-notes.md`](../design/roadmap-P16.10-interior-split-notes.md)
 - [ ] **16.10.1** The leader — cuts the interior where the source advises, runs
       the fused decode-and-parse workers, merges `16.10`'s answer into
-      `map::Builder` and the `DumpIndex` at `CopyEnd`, and arms the wait.
+      `map::Builder` and the `DumpIndex` at `CopyEnd`, and arms the wait. Reads
+      `partitions()` for the shape of the cut only, takes its economics from
+      `--jobs`, and declines a region smaller than one `partition_bytes()`.
       Earned, not planned
       ([`history/2026-09-07.md`](history/2026-09-07.md), "16.10 split: the
-      parse, then the scheduler that feeds it").
+      parse, then the scheduler that feeds it" and "What `partitions()`
+      answers, and where the plain-file refusal actually lives").
 - [ ] **16.11** Error ordering — the lowest-offset error is the one raised.
 - [ ] **16.12** The determinism test — `--jobs 1` and `--jobs 8` byte-identical
       over every fixture.
@@ -605,23 +608,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`PartitionBoundaries` is the only channel the leader can read "is parallel
-  discovery worth it" off, and `Anywhere` is about to be made to mean "no".**
-  The spec refuses parallel plain-file discovery outright — discovery runs at
-  7049 MB/s, above every device this project owns, so a plain `parse` is
-  device-bound and the whole prize is 0.076 s on a 1.314 s cold NVMe scan. L4
-  may not name a source type ([`../design/layering.md`](../design/layering.md)),
-  so the only thing `16.10.1`'s leader can key that refusal on is the source's
-  own advice: `Anywhere` means a positioned read costs the same at every offset,
-  which is a source with no decoder in front of it, and `At` means it named
-  seams because reaching an arbitrary offset is expensive. Keying on that gets
-  the two sources we have exactly right. **What it would get wrong is P14's**: a
-  remote source's natural answer is `At` at a ranged-GET size or `Anywhere`, and
-  a remote read has latency to hide that a local one does not, so a rule reading
-  `Anywhere` as "device-bound, stay serial" would refuse the one case where
-  concurrency is free. Reconsidering means either a third `PartitionBoundaries`
-  arm or a separate advisory saying whether concurrency buys this source
-  anything — both of which are trait-shape changes, which is why the call is
-  flagged rather than taken now. Nothing is built on it yet: `16.10` states the
-  reading in prose and `16.10.1` is where it becomes code
-  ([`../design/roadmap-P16.10-interior-split-notes.md`](../design/roadmap-P16.10-interior-split-notes.md)).
+Nothing open.

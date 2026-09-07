@@ -80,15 +80,25 @@ genuinely fused worker — decode then parse, one piece, both on the blocking
 pool — with no change to the borrow. That is why this slice's parse takes a
 slice rather than a source.
 
-**How the leader decides whether to split at all is still open, and the
-material for it is `partitions()`.** The spec refuses parallel plain-file
-discovery outright, and `PartitionBoundaries` is the only channel L4 has:
-`Anywhere` is a source where a positioned read costs the same at every offset —
-no decoder in front of it — and `At` is one that named seams because reaching an
-arbitrary offset is expensive. Keying the refusal on that is the reading this
-slice's docs assume; it is written up as a question rather than settled, under
-`STATUS.md`'s "Decisions worth another look", because a remote source (P14)
-will answer `Anywhere` and *does* have latency to hide.
+**How the leader decides whether to split at all is settled, and it is not read
+off `partitions()`.** That method answers **where** a cut may fall and **what**
+one costs resident, never **whether** to make one: whether a cut pays depends on
+the caller's workload, and the same `LocalFileSource` over the same range is
+worth cutting for replay's extraction and not for the leader's discovery. The
+economics are `--jobs`, which `16.16` defaults to 1 — so the spec's refusal of
+parallel plain-file discovery is the shipped default rather than a branch in the
+library, which is how it was amended. The one rule the leader does apply is a
+floor: it declines to cut a region smaller than one `partition_bytes()`.
+
+Reading `PartitionBoundaries::Anywhere` as "no decoder, therefore stay serial"
+was the reading this slice's first draft assumed, and it is refused —
+`stream::cut` already reads that arm as "cut into as many pieces as the caller
+wants" and `pgdq query` splits plain files through it today, so the rule would
+have made one arm mean opposite things to two consumers, with P14's remote
+source the same error at longer range
+([`architecture.md`](architecture.md), "Execution model and API surface";
+[`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "What
+`partitions()` answers, and where the plain-file refusal actually lives").
 
 **No figure changed colour.** The diff touches `map.rs` — which every figure
 declaring it was already red on — plus a new module nothing calls and the docs.

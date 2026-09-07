@@ -185,6 +185,31 @@ default is one partition at no stated cost: a source that has not thought about
 concurrency must not be split by a caller that assumed silence was consent.
 P14 inherits the question with a different answer, a ranged-GET size.
 
+**It answers where and at what cost, never whether.** Geometry is the source's
+to state and economics are the caller's, because the same source over the same
+range is worth splitting for one workload and not for another: replay is
+extraction, CPU-bound on every device this project owns, and the leader's
+interior split is discovery, which at 7049 MB/s is above all of them. One
+`LocalFileSource` therefore has to be cut by one caller and left whole by the
+other, and no answer it could give would serve both. So a caller reads
+`partitions` for the shape of the cut and decides for itself whether to make
+one; `Parallelism` is where the caller's half is stated.
+
+*Rejected:* reading `PartitionBoundaries::Anywhere` as "device-bound, stay
+serial" — the proposal being that a source with no decoder in front of it is
+exactly a source parallel discovery cannot help, so L4 could key the refusal on
+the arm without naming a source type. It contradicts the shipped meaning rather
+than extending it: `stream::cut` already reads `Anywhere` as *cut into as many
+pieces as the caller wants*, and `pgdq query` has been splitting plain files
+through it since the CLI merge, so the same arm from the same source would mean
+"split freely" to one consumer and "do not split" to the next. The forward cost
+is the same mistake at longer range — a remote source's honest answer is
+`Anywhere`, and it is the one source with round-trip latency worth hiding, so
+the rule would refuse concurrency exactly where it is free. What the arm says is
+that no offset costs more to start reading at than another; that is a fact about
+seeking, and whether seeking is the expensive part is not a question the source
+was asked.
+
 **Where a split is permitted is a two-armed enum, not a list plus a flag.**
 `PartitionBoundaries::Anywhere` cannot be enumerated and `At(offsets)` cannot be
 generated, so they are genuinely different answers; an empty `At` is one
