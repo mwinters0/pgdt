@@ -39,6 +39,15 @@ which figures a diff has made stale. That is the half a harness alone does not
 fix: a one-line change to `map::Builder::on_row` invalidated both census
 figures and nothing announced it.
 
+**Not every figure times `pgdq`.** `xz-decode-scaling` times the `xz_decode`
+example instead, which reaches past the library to the decoder's own bulk entry
+point -- nothing in the library decodes concurrently yet, and the figure is
+about the decoder rather than about what the library currently does with it.
+The harness builds it (an *example* target, so `target/release/pgdq` is never
+replaced), stages `.xz` inputs beside the plain ones, and gives that figure its
+own container memory and its own contention row, both of which its table
+declares.
+
 Two binaries this cannot build for itself, by design:
 
 * the **census-off** binary is `map::Builder::on_row`'s body preceded by a bare
@@ -591,10 +600,30 @@ SWEEP_GOVERNOR = "performance"
 #: same three limits. Naming it rather than falling back to `cold`'s row is
 #: deliberate: a regime with no entry gates *nothing*, so a typo'd or newly
 #: added regime would silently take every reading it was given.
+#:
+#: **`warm-parallel` is a fourth regime with a gate of its own, and it gates on
+#: almost nothing.** It reads from tmpfs exactly as `warm` does; what differs is
+#: that the reading deliberately occupies every hardware thread, so "the machine
+#: is busy" is the measurement rather than a reason to discard it. Two of the
+#: three limits above are therefore not limits here at all: a 24-worker decode
+#: drives `cpu_busy_pct` to the nineties by construction, and its own workers
+#: are what `psi_cpu_some_pct` sees. `cpu_steal_pct` survives, being about a
+#: neighbour rather than about this run.
+#:
+#: What witnesses such a reading instead is *inside the table*: every row is
+#: read against the one-worker row of the same sitting, so a machine that was
+#: busy with someone else's work moves both and the ratio survives it. That is
+#: the co-measured-floor argument the throughput tables already make, applied to
+#: a figure whose floor is a row rather than a `dd`.
+#:
+#: Falling back to `warm`'s row would have been the alternative and is refused
+#: for the reason the table above names: a regime with no row of its own gates
+#: nothing, so the choice has to be visible.
 CONTENTION_LIMITS: dict[str, dict[str, float]] = {
     "cold": {"cpu_busy_pct": 15.0, "psi_cpu_some_pct": 5.0, "cpu_steal_pct": 2.0},
     "cold-nvme": {"cpu_busy_pct": 15.0, "psi_cpu_some_pct": 5.0, "cpu_steal_pct": 2.0},
     "warm": {"cpu_busy_pct": 15.0, "psi_cpu_some_pct": 5.0, "cpu_steal_pct": 2.0},
+    "warm-parallel": {"cpu_steal_pct": 2.0},
 }
 
 #: How many times a contended reading is retaken before its figure fails.
@@ -862,6 +891,31 @@ def parse_maxrss_kib(text: str) -> int:
     return int(matches[0])
 
 
+#: A `key=value` line an instrument writes on its own stdout. Only the decode
+#: instrument writes any today.
+REPORTED_RE = re.compile(r"^([a-z_]+)=(\S+)$")
+
+
+def parse_reported(text: str) -> dict[str, str]:
+    """The `key=value` lines a timed binary printed about its own run.
+
+    A binary that reports what it did — how many bytes it decoded, how many
+    workers its plan admitted — closes a gap a file size cannot: the harness
+    would otherwise have to compute the plaintext volume behind a compressed
+    input by a second mechanism, and the day the two disagreed the table would
+    publish a rate over the wrong denominator.
+
+    Lines that are not `key=value` are ignored rather than refused, so a binary
+    is free to print whatever else it likes.
+    """
+    out: dict[str, str] = {}
+    for line in text.splitlines():
+        match = REPORTED_RE.match(line.strip())
+        if match:
+            out[match.group(1)] = match.group(2)
+    return out
+
+
 #: `getrusage`'s syscall number, by machine. Read from the host's own
 #: architecture because the container shares this kernel, so the two cannot
 #: disagree; an unlisted machine is an error rather than a guess, since a wrong
@@ -944,6 +998,24 @@ class InputSpec:
     #: Scale `--size-mb`/`--size-gb` with Config.size_gib. The block-count
     #: inputs do not scale -- their size *is* the block count.
     scales: bool = True
+    #: What the staged file is called. `.sql` for a plain dump; `.xz` for a
+    #: compressed one, which is a *different kind of input* rather than a plain
+    #: one under another name -- `pgdq` recognises a source by content, but the
+    #: harness's own staging, eviction and stamping all key on the file name,
+    #: and two inputs whose names collided would evict each other silently.
+    suffix: str = ".sql"
+    #: The input this one is built from, staged first and passed to the
+    #: generator as `@SOURCE@`. The `.xz` legs are compressions of inputs the
+    #: register already generates, and re-generating the plaintext separately
+    #: would put two files with different bytes behind one figure's rows.
+    #: Its stamp folds into this one's, so a change to the *source's* generator
+    #: regenerates both.
+    derives_from: str | None = None
+    #: What this input weighs when it has never been generated, where that is
+    #: not `size_gib`. A compressed input is a fraction of its plaintext, and a
+    #: dry run that guessed 3.00 GiB for it would size the tmpfs budget against
+    #: a file five times larger than the one it stages.
+    nominal_bytes: int | None = None
 
     def argv(self, cfg: Config, out: Path) -> list[str]:
         args = list(self.args)
@@ -952,7 +1024,20 @@ class InputSpec:
                 f"{cfg.size_gib * 1024:g}" if a == "@SIZE_MB@" else a for a in args
             ]
             args = [f"{cfg.size_gib:g}" if a == "@SIZE_GB@" else a for a in args]
+        if self.derives_from:
+            source = str(cfg.cache_dir / input_file(self.derives_from))
+            args = [source if a == "@SOURCE@" else a for a in args]
         return ["uv", "run", self.generator, *args, str(out)]
+
+
+def input_file(name: str) -> str:
+    """What an input is called wherever it is staged.
+
+    One function rather than an `f"{name}.sql"` at each of the dozen staging,
+    eviction and preflight sites: the moment one input stopped being a plain
+    dump, every one of those was a place the `.xz` leg could be staged under a
+    name nothing else looked for."""
+    return name + INPUTS[name].suffix
 
 
 def _perf(name: str, *flags: str) -> InputSpec:
@@ -990,6 +1075,63 @@ for _n in (500, 1000, 2000, 4000):
         scales=False,
     )
 
+# The two `.xz` legs of `xz-decode-scaling`, both at koji's own container
+# parameters -- preset 6, so an 8 MiB LZMA2 dictionary, 24 MiB blocks, CRC64 --
+# and both about 3.00 GiB of *plaintext*, which is the register's input size and
+# the quantity a decode rate is a rate of.
+#
+# Two of them because the two answer the question differently and neither alone
+# is honest. The generated leg is reproducible from committed sources on a
+# machine that has never seen koji, which is what makes the figure re-takeable;
+# the koji leg is real data at a real compression ratio, which is what the
+# phase's arithmetic is written against.
+INPUTS["control_xz"] = InputSpec(
+    "control_xz",
+    "generate_xz_input.py",
+    ("--from-dump", "@SOURCE@"),
+    scales=False,
+    suffix=".xz",
+    derives_from="control",
+    # ~5.4x on the control's rows; a generous nominal, since over-reserving
+    # tmpfs is recoverable and under-reserving is a figure lost mid-sweep.
+    nominal_bytes=700 * MIB,
+)
+#: The koji download, and where in it the koji leg's streams are taken from.
+#: **Not the head of the file**: koji's first 3 GiB of plaintext compresses
+#: 56.19x against the whole file's 19.41x, and a decode rate is per plaintext
+#: byte, so a slice cut there would report a rate for bytes unlike the rest of
+#: the dump. Seeking past it costs one seek.
+#:
+#: **This offset is a sample, not a representative, and nothing pretends
+#: otherwise.** koji sampled at twelve depths runs from 5.02x to 33.05x, so no
+#: single offset stands for the file; 20 GB yields 15.70x, a little denser than
+#: the middle. What that costs is confined to the absolute rates -- the scaling
+#: curve is a within-leg ratio and barely moves -- and it is why the ratio is
+#: gated rather than assumed (`roadmap-P16.1-xz-decode-scaling-notes.md`).
+KOJI_XZ = _env(
+    "PGDQ_KOJI_XZ", "/mnt/wd12t/fedora/koji/koji-2026-07-23.dump.multistream.xz"
+)
+KOJI_XZ_OFFSET = int(_env("PGDQ_KOJI_XZ_OFFSET", str(20_000_000_000)))
+#: How many whole streams the koji leg keeps. The download is one 24 MiB block
+#: per stream, so 128 of them is 3.00 GiB of plaintext -- the register's input
+#: size, and enough blocks that 24 workers are never clamped by the work.
+KOJI_XZ_STREAMS = 128
+INPUTS["koji_xz"] = InputSpec(
+    "koji_xz",
+    "generate_xz_input.py",
+    (
+        "--from-koji",
+        KOJI_XZ,
+        "--streams",
+        str(KOJI_XZ_STREAMS),
+        "--from-offset",
+        str(KOJI_XZ_OFFSET),
+    ),
+    scales=False,
+    suffix=".xz",
+    nominal_bytes=250 * MIB,
+)
+
 
 def input_stamp(spec: InputSpec, cfg: Config) -> str:
     """A hash of the generator's source and the arguments it was given.
@@ -998,10 +1140,19 @@ def input_stamp(spec: InputSpec, cfg: Config) -> str:
     generated file regenerated only when *missing* means a checkout that
     already has one benchmarks pre-change bytes forever, silently -- and the
     population that has one is exactly the population comparing a new number to
-    an old one."""
+    an old one.
+
+    **A derived input folds its source's stamp in.** `control_xz` is a
+    compression of `control`, so a change to the *perf* generator moves the
+    bytes behind it exactly as it moves the bytes behind every other figure --
+    and hashing only this generator would leave the compressed leg measuring
+    pre-change rows for as long as the file sat there.
+    """
     h = hashlib.sha256()
     h.update((SCRIPTS / spec.generator).read_bytes())
     h.update(repr(spec.argv(cfg, Path("OUT"))).encode())
+    if spec.derives_from:
+        h.update(input_stamp(INPUTS[spec.derives_from], cfg).encode())
     return h.hexdigest()
 
 
@@ -1015,6 +1166,8 @@ WARM_MARGIN = 1.10
 def nominal_size(cfg: Config, name: str) -> int:
     """What an input would weigh, for a dry run that has not generated it."""
     spec = INPUTS[name]
+    if spec.nominal_bytes is not None:
+        return spec.nominal_bytes
     if not spec.scales:
         return 2 * MIB
     return int(cfg.size_gib * GIB)
@@ -1053,11 +1206,11 @@ class Stager:
 
     def cold_path(self, name: str) -> Path:
         self.ensure_generated(name)
-        return self.cfg.cache_dir / f"{name}.sql"
+        return self.cfg.cache_dir / input_file(name)
 
     def ensure_generated(self, name: str) -> Path:
         spec = INPUTS[name]
-        out = self.cfg.cache_dir / f"{name}.sql"
+        out = self.cfg.cache_dir / input_file(name)
         stamp = self.cfg.cache_dir / f"{name}.stamp"
         want = input_stamp(spec, self.cfg)
         if out.exists() and stamp.exists() and stamp.read_text().strip() == want:
@@ -1068,6 +1221,12 @@ class Stager:
                 self.log(f"  [dry-run] would generate {name} -> {out}")
             return out
         self.cfg.cache_dir.mkdir(parents=True, exist_ok=True)
+        # A derived input's source is generated first, and by this same path,
+        # so its own stamp is checked rather than assumed present: the whole
+        # point of folding the source's stamp into this one is that a moved
+        # source generator rebuilds both files, not just the outer one's stamp.
+        if spec.derives_from:
+            self.ensure_generated(spec.derives_from)
         self.log(f"  generating {name} -> {out}")
         run(spec.argv(self.cfg, out), cwd=SCRIPTS)
         stamp.write_text(want + "\n")
@@ -1075,7 +1234,7 @@ class Stager:
         # the old bytes.
         self._profiles.pop(name, None)
         self._staged.pop(name, None)
-        warm = self.cfg.warm_dir / f"{name}.sql"
+        warm = self.cfg.warm_dir / input_file(name)
         if warm.exists():
             warm.unlink()
         return out
@@ -1098,7 +1257,7 @@ class Stager:
         figure that had to re-copy 3 GiB before every sitting would pay for
         nothing."""
         src = self.ensure_generated(name)
-        dst = self.cfg.nvme_dir / f"{name}.sql"
+        dst = self.cfg.nvme_dir / input_file(name)
         stamp = self.cfg.nvme_dir / f"{name}.stamp"
         want = input_stamp(INPUTS[name], self.cfg)
         if dst.exists() and stamp.exists() and stamp.read_text().strip() == want:
@@ -1116,18 +1275,24 @@ class Stager:
 
     def _adopt_warm_dir(self) -> None:
         """Whatever a previous session left on tmpfs counts against the budget
-        and is a candidate for eviction like anything else."""
+        and is a candidate for eviction like anything else.
+
+        Named per input rather than globbed by suffix: an input's file name is
+        `input_file`'s to say, and a glob that knew about `.sql` alone stopped
+        seeing half the staging area the day a `.xz` leg was registered."""
         if self.cfg.dry_run or not self.cfg.warm_dir.exists():
             return
-        for path in self.cfg.warm_dir.glob("*.sql"):
-            self._staged[path.stem] = path.stat().st_size
+        for name in INPUTS:
+            path = self.cfg.warm_dir / input_file(name)
+            if path.exists():
+                self._staged[name] = path.stat().st_size
 
     def _warm_bytes(self) -> int:
         return sum(self._staged.values())
 
     def warm_path(self, name: str, figure_index: int = 0) -> Path:
         src = self.ensure_generated(name)
-        dst = self.cfg.warm_dir / f"{name}.sql"
+        dst = self.cfg.warm_dir / input_file(name)
         size = file_size(self.cfg, src, name)
         if self._staged.get(name) == size and (self.cfg.dry_run or dst.exists()):
             return dst
@@ -1163,7 +1328,7 @@ class Stager:
             self.log(f"  evicting {victim} from tmpfs")
             del self._staged[victim]
             if not self.cfg.dry_run:
-                (self.cfg.warm_dir / f"{victim}.sql").unlink(missing_ok=True)
+                (self.cfg.warm_dir / input_file(victim)).unlink(missing_ok=True)
 
     def plan(self, figures: Sequence[Figure]) -> None:
         """Record which figures want each input warm, so eviction can pick the
@@ -1182,7 +1347,7 @@ class Stager:
         """What an input weighs: measured if it has been generated, nominal if
         not. Nominal is the low estimate -- every generator overshoots its
         target by a few KB -- which is what WARM_MARGIN is for."""
-        path = self.cfg.cache_dir / f"{name}.sql"
+        path = self.cfg.cache_dir / input_file(name)
         if path.exists():
             return path.stat().st_size
         return nominal_size(self.cfg, name)
@@ -1230,10 +1395,17 @@ class Stager:
             for fig in figures
             for n in (*fig.cold_inputs, *fig.warm_inputs, *fig.nvme_inputs)
         }
+        # A derived input's source is generated onto the same disk, so it is
+        # part of what the space check is about even where no figure names it.
+        for name in list(wanted):
+            source = INPUTS[name].derives_from
+            while source:
+                wanted.add(source)
+                source = INPUTS[source].derives_from
         missing = sum(
             self.expected_size(n)
             for n in wanted
-            if not (self.cfg.cache_dir / f"{n}.sql").exists()
+            if not (self.cfg.cache_dir / input_file(n)).exists()
         )
         try:
             self.cfg.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -1268,7 +1440,7 @@ class Stager:
         want = sum(
             self.expected_size(n)
             for n in wanted
-            if not (self.cfg.nvme_dir / f"{n}.sql").exists()
+            if not (self.cfg.nvme_dir / input_file(n)).exists()
         )
         if want > free:
             return [
@@ -1287,7 +1459,7 @@ class Stager:
         if self.cfg.keep_warm or self.cfg.dry_run:
             return
         for name in list(self._staged):
-            path = self.cfg.warm_dir / f"{name}.sql"
+            path = self.cfg.warm_dir / input_file(name)
             if path.exists():
                 self.log(f"  removing {path}")
                 path.unlink()
@@ -1490,6 +1662,23 @@ CHUNK_SIZES: tuple[int, ...] = (64 << 10, 256 << 10, 1 << 20, 4 << 20, 8 << 20, 
 #: The row every other chunk-size row is a ratio against.
 CHUNK_DEFAULT = 1 << 20
 
+#: The worker counts `xz-decode-scaling` is taken at, and the row order of its
+#: table. One is the probe this figure replaces; 24 is every hardware thread on
+#: the recorded apparatus; 12 is its physical cores, which is where SMT stops
+#: adding a core and starts sharing one.
+DECODE_WORKERS: tuple[int, ...] = (1, 2, 4, 8, 12, 16, 24)
+
+#: The row every other decode row is a ratio against — one worker, which is
+#: what the serial path this project ships has today.
+DECODE_BASELINE = 1
+
+#: What the decode figure's container is given, against the register's 512 MB.
+#: At 24 workers over 24 MiB blocks the decoder holds 24 decoded slots, 26
+#: compressed windows and 24 LZMA2 dictionaries — around 950 MB on the
+#: generated leg, whose compressed windows are the larger of the two. It is an
+#: apparatus departure and the figure's own table says so.
+DECODE_MEMORY = "2g"
+
 
 def fmt_chunk(size: int) -> str:
     """A chunk size as the table spells it — KiB below a mebibyte, else MiB.
@@ -1578,6 +1767,23 @@ def _script(command: str) -> str:
             f"{q} parse --source /dump.sql --dqcache /tmp/x.dqcache "
             f"--chunk-size {size} >/dev/null"
         )
+    if command.startswith("decode-"):
+        # The `xz_decode` example, not `pgdq`: nothing in the library decodes
+        # concurrently yet, so this figure reaches the decoder's own bulk entry
+        # point directly. `/pgdq` is the harness's fixed mount point for
+        # whichever binary a spec names, and `/dump.sql` its fixed mount point
+        # for the input, whatever that input actually is.
+        #
+        # **Nothing is redirected.** The instrument's stdout is where the
+        # decoded byte count and the admitted worker count come back, which is
+        # what the table's rate is computed from and what says the worker count
+        # was not clamped.
+        workers = command.rpartition("-")[2]
+        if not workers.isdigit():
+            raise ValueError(f"unknown command shape {command!r}")
+        if int(workers) not in DECODE_WORKERS:
+            raise ValueError(f"{command!r} names a worker count the figure does not carry")
+        return f"time /pgdq --source /dump.sql --workers {workers}"
     if command == "dd":
         return "time dd if=/dump.sql of=/dev/null bs=4M"
     raise ValueError(f"unknown command shape {command!r}")
@@ -1597,6 +1803,18 @@ class Session:
         self.records: list[dict] = []
         self.figure_index = 0
         self.figure_id = ""
+        #: The container memory limit in force, which `emit` sets per figure.
+        #: `None` means the recorded 512 MB.
+        self.memory: str | None = None
+        #: The key-value lines the last run's own stdout carried. Only the
+        #: decode instrument writes any; a figure that wants one wants it
+        #: *beside* the wall clock rather than instead of it, which is why it
+        #: is neither a second reading nor part of the RSS dict.
+        self._last_stdout: dict[str, str] = {}
+        #: Those lines, kept per reading key, so a figure can compute a rate
+        #: from what the binary said it decoded rather than from a file size a
+        #: second mechanism would have to agree with.
+        self.reported: dict[str, dict[str, str]] = {}
         self._dry_reps: dict[str, int] = {}
         self._last_telemetry: dict[str, float] = {}
         self._last_rss: float | None = None
@@ -1614,6 +1832,8 @@ class Session:
             return self.cfg.bin_nocensus
         if which == "before":
             return ensure_before_binary(self.cfg, self.log)
+        if which == "xzdecode":
+            return ensure_xz_decode_binary(self.cfg, self.log)
         if which.startswith("alloc:"):
             return ensure_allocator_binary(self.cfg, which.removeprefix("alloc:"), self.log)
         raise ValueError(f"unknown binary {which!r}")
@@ -1639,14 +1859,15 @@ class Session:
             mounts.insert(0, f"{self.binary_path(spec.binary)}:/pgdq:ro")
         if spec.command == "parse-cache-out":
             mounts.append(f"{self.cfg.warm_dir}:/out")
+        memory = self.memory or self.cfg.memory
         argv = [
             *self.cfg.container_argv(),
             "run",
             "--rm",
             "-m",
-            self.cfg.memory,
+            memory,
             "--memory-swap",
-            self.cfg.memory,
+            memory,
         ]
         for m in mounts:
             argv += ["-v", m]
@@ -1669,6 +1890,19 @@ class Session:
             self._dry_reps[key] = rep + 1
             digest = hashlib.sha256(f"{key}/{rep}".encode()).digest()
             self._last_rss = 6000 + digest[1] / 255 * 500 if "rss" in spec.command else None
+            # A plausible instrument report, for the same reason the reading is
+            # plausible: a dry run must exercise every division a table performs
+            # rather than stopping at the first missing key.
+            self._last_stdout = (
+                {
+                    "plaintext": str(3 * GIB),
+                    "delivered": str(3 * GIB),
+                    "workers": spec.command.rpartition("-")[2],
+                    "blocks": str(DECODE_WORKERS[-1] * 8),
+                }
+                if spec.command.startswith("decode-")
+                else {}
+            )
             return 0.4 + digest[0] / 255 * 5.0
         # The counters bracket the run as tightly as possible: two procfile
         # reads, outside the timer, either side of the subprocess. Their
@@ -1684,6 +1918,7 @@ class Session:
             )
         seconds = parse_bash_time(proc.stderr)
         self._last_rss = parse_maxrss_kib(proc.stderr) if "rss" in spec.command else None
+        self._last_stdout = parse_reported(proc.stdout)
         telemetry = counter_delta(before, after)
         telemetry.update(self.sampler.window(mono_start, mono_end))
         self.records.append(
@@ -1693,6 +1928,7 @@ class Session:
                 "maxrss_kib": self._last_rss,
                 "wall_including_container": round(time.time() - started, 3),
                 "telemetry": telemetry,
+                "reported": self._last_stdout,
                 "argv": argv,
             }
         )
@@ -1722,6 +1958,12 @@ class Session:
                 # quantity it carries is one the machine's load cannot move.
                 if self._last_rss is not None:
                     self.rss.setdefault(spec.key(figure), []).append(self._last_rss)
+                # The instrument's own report is a property of the *input and
+                # the flags*, identical across reps, so the last one stands for
+                # all of them rather than accumulating a list of one repeated
+                # answer.
+                if self._last_stdout:
+                    self.reported[spec.key(figure)] = self._last_stdout
 
     def take(self, spec: RunSpec, rep: int) -> float:
         """One reading, retaken while the machine says it was contended.
@@ -1938,6 +2180,50 @@ def ensure_before_binary(cfg: Config, log: Callable[[str], None]) -> Path:
     return cfg.bin_before
 
 
+#: Whether this process has already built the `xz_decode` instrument. Per
+#: process rather than per file, for the reason the allocator legs are: a
+#: binary left in `runs/` by an earlier session was built from whatever the
+#: source said then, and this figure's whole content is that decoder's rate.
+_XZ_DECODE_BUILT = False
+
+
+def ensure_xz_decode_binary(cfg: Config, log: Callable[[str], None]) -> Path:
+    """`pgdump_query`'s `xz_decode` example, built and copied beside the other
+    measurement binaries.
+
+    Mechanical, so the harness does it rather than asking for a binary — the
+    line between the two is the census-off patch's: that one is a *source
+    edit* no harness should perform, and this is a `cargo build` of a committed
+    target.
+
+    **An example target, so `target/release/pgdq` is untouched.** Every other
+    figure in a sweep is timed against that binary, and a build that replaced
+    it would re-time all of them against something else — the failure the
+    allocator legs' separate target directories exist to prevent, one target
+    kind along.
+    """
+    global _XZ_DECODE_BUILT
+    out = cfg.out_dir / "pgdq-xz-decode"
+    if _XZ_DECODE_BUILT:
+        return out
+    if cfg.dry_run:
+        # Announced once, not once per rep: a real run leaves the binary
+        # behind, which is the memo; a dry run has to keep its own.
+        log(f"  [dry-run] would build the xz_decode instrument into {out}")
+        _XZ_DECODE_BUILT = True
+        return out
+    log(f"  building the xz_decode instrument into {out}")
+    cfg.out_dir.mkdir(parents=True, exist_ok=True)
+    run(
+        ["cargo", "build", "--release", "-p", "pgdump_query", "--example", "xz_decode"],
+        cwd=REPO,
+    )
+    shutil.copyfile(REPO / "target/release/examples/xz_decode", out)
+    out.chmod(0o755)
+    _XZ_DECODE_BUILT = True
+    return out
+
+
 #: The three legs of the `allocator` figure, in the order the table carries
 #: them. `system` is the feature-free build -- the platform allocator, glibc's
 #: `malloc` on the recorded apparatus -- and is spelled the way the binary
@@ -2151,6 +2437,13 @@ class Figure:
     #: read off it, and `share_readings` writes the table's provenance
     #: paragraph from it.
     shares: tuple[Shared, ...] = ()
+    #: The container memory limit this figure's runs are given, where the
+    #: recorded 512 MB is not what it needs. It is an **apparatus** departure,
+    #: so a figure that sets it says so in its own table: the register's one
+    #: line is "3.00 GiB inputs read by a `glibc` binary in a 512 MB
+    #: `postgres:16` container", and a figure holding N decoded 24 MiB blocks
+    #: at once cannot be one of them at 24 workers.
+    memory: str | None = None
     #: Documents that repeat this figure's numbers, or the claim it licenses.
     #: `depends` is the edge into a figure -- what invalidates it; this is the
     #: edge out -- what a moved figure invalidates. Both exist for the same
@@ -3126,6 +3419,91 @@ def run_allocator(session: Session) -> str:
     return table + "\n\n" + provenance + note + "\n" + _per_rep(figure, session, specs)
 
 
+# -- xz decode scaling ------------------------------------------------------
+
+#: The two legs, in the table's column order, with the caption each carries.
+#: The generated one first, because it is the one anybody can re-take.
+DECODE_LEGS: tuple[tuple[str, str], ...] = (
+    ("control_xz", "Generated control"),
+    ("koji_xz", "koji, 128 streams"),
+)
+
+
+def _decode_specs() -> list[RunSpec]:
+    return [
+        RunSpec("xzdecode", leg, f"decode-{workers}", "warm-parallel", f"{label}, {workers}w")
+        for leg, label in DECODE_LEGS
+        for workers in DECODE_WORKERS
+    ]
+
+
+def run_xz_decode_scaling(session: Session) -> str:
+    """Plaintext decode rate against worker count, over two `.xz` files.
+
+    **The rate's denominator comes from the instrument, not from a file size.**
+    A compressed input's plaintext volume is in its seek table and nowhere the
+    harness can `stat`, so the binary prints what it decoded and the table
+    divides that by the wall clock. It also prints the worker count its plan
+    admitted and refuses to run when that is short of what was asked for, so no
+    row here can be a second reading of a lower count wearing a higher label.
+
+    **Every row is read against the one-worker row of its own leg**, which is
+    both the figure's content — what the second core through the twenty-fourth
+    buy — and its witness, this being a regime where the machine's own busyness
+    cannot gate a reading (`CONTENTION_LIMITS`).
+
+    **Five reps.** The spread that matters here is between adjacent worker
+    counts near the top of the curve, where the increments are small; three
+    reps resolved the bottom of the curve and left the top ambiguous, and the
+    whole sitting is minutes rather than the hour a sweep costs.
+    """
+    ensure_xz_decode_binary(session.cfg, session.log)
+    specs = _decode_specs()
+    session.sweep("xz-decode-scaling", specs, session.cfg.reps(5))
+
+    by_leg: dict[str, dict[int, list[float]]] = {leg: {} for leg, _ in DECODE_LEGS}
+    plaintext: dict[str, int] = {}
+    for spec in specs:
+        workers = int(spec.command.rpartition("-")[2])
+        by_leg[spec.input][workers] = session.get("xz-decode-scaling", spec)
+        reported = session.reported.get(spec.key("xz-decode-scaling"), {})
+        if "delivered" in reported:
+            plaintext[spec.input] = int(reported["delivered"])
+
+    rows = []
+    for workers in DECODE_WORKERS:
+        cells = [str(workers) + (" *(serial)*" if workers == DECODE_BASELINE else "")]
+        for leg, _ in DECODE_LEGS:
+            values = by_leg[leg][workers]
+            got, base = median(values), median(by_leg[leg][DECODE_BASELINE])
+            rate = fmt_rate(plaintext.get(leg, 0), got)
+            cells.append(f"{fmt_median_spread(values)} · {rate} · {base / got:.2f}×")
+        rows.append(cells)
+    table = md_table(["Workers", *(label for _, label in DECODE_LEGS)], rows)
+
+    sizes = []
+    for leg, label in DECODE_LEGS:
+        compressed = file_size(
+            session.cfg, session.input_path(leg, "warm-parallel"), leg
+        )
+        plain = plaintext.get(leg, 0)
+        ratio = f"{plain / compressed:.1f}×" if compressed else "—"
+        sizes.append(
+            f"- {label}: {_fmt_bytes(compressed)} compressed, {_fmt_bytes(plain)} of plaintext, "
+            f"{ratio}"
+        )
+    notes = (
+        "\n\nEach cell is wall clock, the plaintext rate it implies, and the speedup over that "
+        f"leg's own one-worker row. The instrument is `pgdump_query/examples/xz_decode.rs` in a "
+        f"{DECODE_MEMORY} container — **not** the register's 512 MB, which cannot hold "
+        f"{DECODE_WORKERS[-1]} decoded 24 MiB blocks — and it refuses a run whose plan admits "
+        "fewer workers than were asked for.\n\n"
+        + "\n".join(sizes)
+        + "\n"
+    )
+    return table + notes + "\n" + _per_rep("xz-decode-scaling", session, specs)
+
+
 def _fmt_ns(ns: float) -> str:
     return f"{ns / 1000:.2f} µs" if ns >= 1000 else f"{ns:.0f} ns"
 
@@ -3468,13 +3846,47 @@ FIGURES_BY_ID = {f.id: f for f in FIGURES}
 #: built and never run is a claim nobody checked, and it is invisible unless
 #: something names it.
 #:
-#: **Empty is the healthy state, not a disused mechanism.** Both entries it
-#: carried have left by the two exits the list has: `projection-widths` was
-#: taken and moved into `FIGURES`, and `composite-isolated` — which isolated one
-#: column by declaring it two ways over byte-identical rows — was deleted
-#: unpublished, because `projection-widths` makes the same isolation a
-#: subtraction between two adjacent rows of one table over one file.
-UNTAKEN: list[Figure] = []
+#: **Empty is the healthy state, not a disused mechanism.** Two earlier entries
+#: left by the two exits the list has: `projection-widths` was taken and moved
+#: into `FIGURES`, and `composite-isolated` — which isolated one column by
+#: declaring it two ways over byte-identical rows — was deleted unpublished,
+#: because `projection-widths` makes the same isolation a subtraction between
+#: two adjacent rows of one table over one file.
+UNTAKEN: list[Figure] = [
+    # Built here, and not yet in the document. The instrument runs and the
+    # readings are in `runs/`; what it is waiting for is a **commit to name**.
+    # A figure published outside a stamped sweep declares the commit it was
+    # taken at inside its own marker, and every reader of the stamp — `--stale`,
+    # acknowledgement spentness, `--verify-additive` — argues from that; a
+    # sitting taken from a working tree that carries this figure's own
+    # instrument has no such commit, and naming the parent would publish a
+    # marker pointing at a tree where the instrument does not exist. So the
+    # entry sits here until a sitting can be taken on the commit that lands it,
+    # which is `--figure xz-decode-scaling` and minutes rather than an hour.
+    Figure(
+        id="xz-decode-scaling",
+        section="What a second decode worker buys, and what the twenty-fourth does not",
+        stage="warm-parallel",
+        # Not the library's read path: no `pgdq` runs here at all. What can move
+        # this figure is the decoder, the instrument that drives it, and the
+        # generators behind the two files — including the perf generator, which
+        # the control leg's bytes are a compression of.
+        depends=(
+            "vendor/xz-seek/src/",
+            "pgdump_query/examples/xz_decode.rs",
+            "scripts/generate_xz_input.py",
+            *GEN_PERF,
+        ),
+        quoted_by=(
+            "docs/design/architecture.md",
+            "docs/design/roadmap-P16-parallel-scan.md",
+            "docs/status/STATUS.md",
+        ),
+        warm_inputs=("control_xz", "koji_xz"),
+        memory=DECODE_MEMORY,
+        run=run_xz_decode_scaling,
+    )
+]
 
 #: A figure that no sweep produces, because it is computed *across* two of
 #: them. It still gets a section, a marker and both declared edges — it is one
@@ -4440,6 +4852,11 @@ def emit(cfg: Config, figures: Sequence[Figure]) -> int:
             continue
         log(f"\n=== {fig.id} ({fig.stage}) — {fig.section}")
         session.figure_id = fig.id
+        # Per figure and reset each time, so a figure that needs more than the
+        # recorded 512 MB cannot leave the next one running under its ceiling.
+        session.memory = fig.memory
+        if fig.memory:
+            log(f"    container memory {fig.memory}, against the recorded {cfg.memory}")
         first_record = len(session.records)
         started = time.time()
         try:
@@ -5377,7 +5794,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--figure", action="append", default=[], help="figure id (repeatable, or comma-separated)")
     parser.add_argument(
         "--stage",
-        choices=["cold", "cold-nvme", "warm", "criterion"],
+        choices=["cold", "cold-nvme", "warm", "warm-parallel", "criterion"],
         help="every figure of one stage",
     )
     parser.add_argument(

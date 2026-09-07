@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import collections
 import contextlib
+import hashlib
 import io
 import json
 import re
@@ -1191,11 +1192,11 @@ class Untaken(unittest.TestCase):
     figure the doc is missing — those pull in opposite directions, which is why
     the two registers are separate.
 
-    **`measure.UNTAKEN` is empty as this stands, so every case below is
-    vacuous.** They are kept rather than deleted with the last entry: an
-    instrument is registered here the moment one is built, and a register whose
-    checks were deleted along with its contents acquires an entry with nothing
-    holding it."""
+    `measure.UNTAKEN` carries `xz-decode-scaling`, whose instrument runs and
+    whose readings are in `runs/`: what it waits on is a **commit to name** as
+    its sitting, since a figure published outside a stamped sweep declares one
+    inside its own marker and a sitting taken from a tree that carries the
+    instrument uncommitted has none."""
 
     def test_an_untaken_instrument_is_not_a_figure_the_doc_must_carry(self):
         for fig in measure.UNTAKEN:
@@ -1228,6 +1229,177 @@ class Untaken(unittest.TestCase):
     def test_no_id_collides_with_a_figure(self):
         ids = [f.id for f in measure.ALL_FIGURES] + [f.id for f in measure.UNTAKEN]
         self.assertEqual(len(ids), len(set(ids)))
+
+
+class XzDecodeScaling(unittest.TestCase):
+    """The decode-scaling figure: two `.xz` legs, seven worker counts.
+
+    It is the register's first figure that runs no `pgdq` at all, its first
+    compressed input, its first fourth regime and its first departure from the
+    512 MB container — so what these hold is that each of those is *declared*
+    rather than inherited, since every one of them fails by emitting a
+    perfectly plausible table of something else.
+    """
+
+    def test_both_legs_are_compressed_inputs(self):
+        # Staging, eviction and stamping all key on the file name, so an input
+        # staged as `.sql` would collide with the plain dump it is a
+        # compression of and the two would evict each other.
+        for leg, _ in measure.DECODE_LEGS:
+            with self.subTest(leg=leg):
+                self.assertEqual(measure.INPUTS[leg].suffix, ".xz")
+                self.assertTrue(measure.input_file(leg).endswith(".xz"))
+
+    def test_a_plain_input_is_still_a_sql_file(self):
+        self.assertEqual(measure.input_file("control"), "control.sql")
+
+    def test_the_generated_leg_is_a_compression_of_the_control(self):
+        # Not a second generation of similar rows: the two would be different
+        # bytes behind one register, and the perf generator's own changes would
+        # reach the plain figures and not this one.
+        self.assertEqual(measure.INPUTS["control_xz"].derives_from, "control")
+
+    def test_a_derived_input_folds_its_source_stamp_in(self):
+        # Otherwise a change to `generate_perf_data.py` regenerates every plain
+        # input and leaves the compressed leg measuring pre-change rows.
+        cfg = measure.Config()
+        spec = measure.INPUTS["control_xz"]
+        got = measure.input_stamp(spec, cfg)
+        unfolded = hashlib.sha256()
+        unfolded.update((measure.SCRIPTS / spec.generator).read_bytes())
+        unfolded.update(repr(spec.argv(cfg, Path("OUT"))).encode())
+        self.assertNotEqual(got, unfolded.hexdigest())
+
+    def test_the_perf_generator_reaches_the_generated_leg(self):
+        touched = [f.id for f, _ in measure.figures_touched(["scripts/generate_perf_data.py"])]
+        self.assertNotIn("xz-decode-scaling", touched)
+        # ...because `figures_touched` walks the taken register only. The
+        # declaration is what a fold-in will read, so hold the declaration.
+        fig = measure.SELECTABLE_BY_ID["xz-decode-scaling"]
+        self.assertIn("scripts/generate_perf_data.py", fig.depends)
+
+    def test_the_decoder_and_the_instrument_are_declared(self):
+        # No `pgdq` runs here, so none of the library's own paths can move this
+        # figure and none of them is declared. What can is the decoder, the
+        # binary that drives it, and the generators behind the two files.
+        fig = measure.SELECTABLE_BY_ID["xz-decode-scaling"]
+        self.assertIn("vendor/xz-seek/src/", fig.depends)
+        self.assertIn("pgdump_query/examples/xz_decode.rs", fig.depends)
+        self.assertIn("scripts/generate_xz_input.py", fig.depends)
+        for path in fig.depends:
+            self.assertFalse(path.startswith("pgdump_query/src/"), path)
+
+    def test_a_compressed_input_has_its_own_nominal_size(self):
+        # A dry run that guessed 3.00 GiB for a compressed leg would size the
+        # tmpfs budget against a file several times larger than the one staged.
+        cfg = measure.Config()
+        for leg, _ in measure.DECODE_LEGS:
+            with self.subTest(leg=leg):
+                self.assertLess(measure.nominal_size(cfg, leg), cfg.size_gib * measure.GIB)
+
+    def test_every_registered_worker_count_has_a_command_shape(self):
+        for workers in measure.DECODE_WORKERS:
+            with self.subTest(workers=workers):
+                script = measure._script(f"decode-{workers}")
+                self.assertIn(f"--workers {workers}", script)
+                self.assertEqual(script.count("time "), 1)
+
+    def test_the_instrument_stdout_is_not_redirected(self):
+        # It is where the decoded byte count comes back, which is the rate's
+        # denominator: a compressed input's plaintext volume is in its seek
+        # table and nowhere the harness can `stat`.
+        self.assertNotIn(">", measure._script("decode-8"))
+
+    def test_a_worker_count_the_figure_does_not_carry_is_an_error(self):
+        for command in ("decode-3", "decode-", "decode-all"):
+            with self.subTest(command=command):
+                with self.assertRaises(ValueError):
+                    measure._script(command)
+
+    def test_the_baseline_row_is_one_worker(self):
+        # Every cell is a ratio against it, and it is the serial path this
+        # build ships today.
+        self.assertEqual(measure.DECODE_BASELINE, 1)
+        self.assertEqual(measure.DECODE_WORKERS[0], measure.DECODE_BASELINE)
+
+    def test_the_parallel_regime_reads_from_tmpfs(self):
+        # It is `warm` staging under a different gate, not a fourth device: a
+        # regime names a device, and this one names the same one `warm` does.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cfg = measure.Config(
+                cache_dir=root / "ssd", warm_dir=root / "shm", nvme_dir=root / "nvme",
+                dry_run=True,
+            )
+            stager = measure.Stager(cfg, lambda _m: None)
+            stager.plan([measure.SELECTABLE_BY_ID["xz-decode-scaling"]])
+            session = measure.Session(cfg, stager, lambda _m: None)
+            got = session.input_path("control_xz", "warm-parallel")
+            self.assertEqual(got, root / "shm" / "control_xz.xz")
+
+    def test_the_parallel_regime_gates_steal_and_nothing_else(self):
+        # A 24-worker decode drives the machine to the nineties by
+        # construction, so `cpu_busy_pct` cannot gate it; `cpu_steal_pct` is
+        # about a neighbour rather than about this run and still can.
+        self.assertIsNone(
+            measure.contention_verdict(
+                {"cpu_busy_pct": 96.0, "psi_cpu_some_pct": 40.0}, "warm-parallel"
+            )
+        )
+        self.assertIsNotNone(
+            measure.contention_verdict({"cpu_steal_pct": 12.0}, "warm-parallel")
+        )
+
+    def test_the_figure_declares_more_memory_than_the_recorded_apparatus(self):
+        # 24 decoded 24 MiB blocks, their compressed windows and their
+        # dictionaries do not fit the register's 512 MB, and a figure that
+        # departs from the recorded apparatus has to say so rather than inherit
+        # it.
+        fig = measure.SELECTABLE_BY_ID["xz-decode-scaling"]
+        self.assertEqual(fig.memory, measure.DECODE_MEMORY)
+        self.assertNotEqual(measure.DECODE_MEMORY, measure.Config().memory)
+
+    def test_every_other_figure_runs_under_the_recorded_memory(self):
+        for fig in measure.ALL_FIGURES:
+            with self.subTest(figure=fig.id):
+                self.assertIsNone(fig.memory)
+
+    def test_the_koji_leg_takes_whole_streams_from_past_the_head(self):
+        # koji's first 3 GiB of plaintext compresses about 56x against the
+        # file's own 19.4x, and a decode rate is per plaintext byte, so a slice
+        # cut at the head would report a rate for bytes unlike the rest of it.
+        args = measure.INPUTS["koji_xz"].args
+        self.assertIn("--from-offset", args)
+        self.assertGreater(measure.KOJI_XZ_OFFSET, 0)
+        self.assertEqual(str(measure.KOJI_XZ_STREAMS), args[args.index("--streams") + 1])
+
+    def test_the_koji_leg_has_a_block_for_every_worker(self):
+        # A range with fewer blocks than workers clamps, and the instrument
+        # refuses a clamped run — so a stream count under the largest worker
+        # count would make the top of the table unrunnable rather than wrong.
+        self.assertGreaterEqual(measure.KOJI_XZ_STREAMS, measure.DECODE_WORKERS[-1])
+
+    def test_a_stage_selection_does_not_reach_it(self):
+        # `--stage warm` splits on `+`, so `warm-parallel` is its own stage and
+        # not a `warm` figure with a suffix.
+        self.assertNotIn("warm", measure.SELECTABLE_BY_ID["xz-decode-scaling"].stage.split("+"))
+
+
+class Reported(unittest.TestCase):
+    """`key=value` lines a timed binary prints about its own run."""
+
+    def test_it_reads_the_keys_it_is_given(self):
+        got = measure.parse_reported("workers=8\nplaintext=3221225472\ndelivered=3221225472\n")
+        self.assertEqual(got["workers"], "8")
+        self.assertEqual(got["delivered"], "3221225472")
+
+    def test_anything_else_is_ignored_rather_than_refused(self):
+        # A binary is free to print whatever else it likes; a parser that
+        # refused would couple every instrument's output to this one's shape.
+        self.assertEqual(measure.parse_reported("hello\nworkers=2\n= \n"), {"workers": "2"})
+
+    def test_no_report_is_an_empty_report(self):
+        self.assertEqual(measure.parse_reported(""), {})
 
 
 class Staleness(unittest.TestCase):

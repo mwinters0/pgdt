@@ -580,6 +580,30 @@ commits to a figure: the number a caller actually wants is concurrent decode
 throughput against the plain path's device-bound figures, and that is unreachable
 until parallel decode exists.
 
+**The instrument that replaces those probes exists and its figure is not
+published yet.** `pgdump_query/examples/xz_decode.rs` decodes an `.xz` file's
+whole plaintext at a declared worker count through the decoder's own bulk entry
+point — reaching past this source deliberately, so that what it measures is the
+decoder rather than what `XzSource` currently does with it — and
+`scripts/measure.py` registers it as `xz-decode-scaling` over two inputs, a
+generated control and a stream-aligned slice of the koji download, both at
+koji's container parameters. It is in `measure.UNTAKEN` until a sitting can name
+the commit it was taken at, so the paragraph above is still the only thing this
+document says about the numbers
+([`../status/STATUS.md`](../status/STATUS.md)).
+
+**A decode rate is a property of the bytes, so it is quoted with their
+density.** koji is not a file with a compression ratio but one with a ratio
+*range*: sampled at twelve depths it runs from 5.02× to 33.05×, against a
+whole-file 19.41×. The probe above and the figure's koji leg are both taken on
+one slice of that range, and the legs themselves show what the range is worth —
+the control's 5.4× bytes decode at ~200 MB/s on one core where koji's 15.70×
+bytes decode at ~431. So a rate stated here names the density it was measured
+at, and the two legs are chosen to bracket the corpus rather than to contrast
+synthetic bytes with real ones. The profile and what it settles are beside the
+slice
+([`roadmap-P16.1-xz-decode-scaling-notes.md`](roadmap-P16.1-xz-decode-scaling-notes.md)).
+
 **The decoder is a vendored crate, not a published dependency.** No published
 crate answers a positioned read over an `.xz` file — `liblzma`'s safe Rust
 surface exposes no stream-index parser or block decoder, and a survey of
