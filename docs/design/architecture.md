@@ -571,36 +571,44 @@ the identity that guards it.
 **Concurrent `read_range` calls serialize on the mutex**, and nothing calls
 concurrently today — every read loop in this crate is sequential. Parallel,
 stream-aligned decode is the parallel-scan work's, and that is where the scaling
-is: on this corpus one core decodes ~446 MB/s of plaintext where four concurrent
-per-stream decodes reach ~1.48 GB/s, and `xz`'s own threaded decoder gains
-nothing on a many-streams file because it parallelises blocks *within* a stream.
-Those are probes, not registered figures — no harness, no `drop_caches`
-discipline — and no document may quote them as measurements. Nothing here
-commits to a figure: the number a caller actually wants is concurrent decode
-throughput against the plain path's device-bound figures, and that is unreachable
-until parallel decode exists.
+is: one core decodes ~435 MB/s of plaintext on koji's 15.70× bytes where four
+concurrent per-stream decodes reach ~1.50 GB/s, and `xz`'s own threaded decoder
+gains nothing on a many-streams file because it parallelises blocks *within* a
+stream. The first two are
+[`measurements.md`](measurements.md), "What a second decode worker buys", and
+the third remains a probe. What that figure does not answer is the number a
+caller actually wants — concurrent decode throughput against the plain path's
+device-bound figures — which stays unreachable until parallel decode exists.
 
-**The instrument that replaces those probes exists and its figure is not
-published yet.** `pgdump_query/examples/xz_decode.rs` decodes an `.xz` file's
-whole plaintext at a declared worker count through the decoder's own bulk entry
-point — reaching past this source deliberately, so that what it measures is the
-decoder rather than what `XzSource` currently does with it — and
+**Scaling stops well short of the worker count.** Both legs of that figure are
+within a few percent of linear to four workers; past that koji flattens hard,
+reaching 7.78× its one-worker rate at twenty-four, where the twenty-fourth
+worker buys essentially nothing over the sixteenth. So a worker count read off a
+linear extrapolation of a one-core rate is a floor on what will be needed, not
+an estimate of what will suffice — which is what the parallel-scan work sizes
+against.
+
+**The instrument is `pgdump_query/examples/xz_decode.rs`**, which decodes an
+`.xz` file's whole plaintext at a declared worker count through the decoder's own
+bulk entry point — reaching past this source deliberately, so that what it
+measures is the decoder rather than what `XzSource` currently does with it.
 `scripts/measure.py` registers it as `xz-decode-scaling` over two inputs, a
 generated control and a stream-aligned slice of the koji download, both at
-koji's container parameters. It is in `measure.UNTAKEN` until a sitting can name
-the commit it was taken at, so the paragraph above is still the only thing this
-document says about the numbers
-([`../status/STATUS.md`](../status/STATUS.md)).
+koji's container parameters. So `XzSource`'s own internal concurrency, when it
+arrives, is measured *against* that curve rather than expected to change it: a
+result materially below it is the library's, which is the comparison the figure
+was built to make possible.
 
 **A decode rate is a property of the bytes, so it is quoted with their
 density.** koji is not a file with a compression ratio but one with a ratio
 *range*: sampled at twelve depths it runs from 5.02× to 33.05×, against a
-whole-file 19.41×. The probe above and the figure's koji leg are both taken on
-one slice of that range, and the legs themselves show what the range is worth —
-the control's 5.4× bytes decode at ~200 MB/s on one core where koji's 15.70×
-bytes decode at ~431. So a rate stated here names the density it was measured
+whole-file 19.41×. The figure's koji leg is taken on one slice of that range,
+and the legs themselves show what the range is worth — the control's 5.45×
+bytes decode at ~205 MB/s on one core where koji's 15.70× bytes decode at ~435.
+So a rate stated here names the density it was measured
 at, and the two legs are chosen to bracket the corpus rather than to contrast
-synthetic bytes with real ones. The profile and what it settles are beside the
+synthetic bytes with real ones; the slice's density is gated at the generator
+rather than remembered, so a rate cannot be published without it. The profile and what it settles are beside the
 slice
 ([`roadmap-P16.1-xz-decode-scaling-notes.md`](roadmap-P16.1-xz-decode-scaling-notes.md)).
 

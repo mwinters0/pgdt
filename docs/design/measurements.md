@@ -8,18 +8,21 @@ kept**.
 **Session stamp.** Every figure below — every section carrying a
 `<!-- figure: … -->` marker, and no other — was taken by `scripts/measure.py` on
 2026-09-05, against commit `af15eac`, under the `system` allocator. **17 of the
-18 figures below come from that sitting.** The other carries its own sitting
-commit inside its marker, and every reader of this stamp argues from that
-instead: `peak-rss` (`7ee5db5`). One sweep, one apparatus — which is what
+19 figures below come from that sitting.** The other 2 carry their own sitting
+commits inside their markers, and every reader of this stamp argues from those
+instead: `peak-rss` (`7ee5db5`), `xz-decode-scaling` (`7d21c6e`). One sweep, one
+apparatus — which is what
 lets these tables be differenced against each other, and what "are these
 figures from before or after my change" is answered by. `uv run measure.py
 --stale` reads each figure's own commit back and names the figures a diff has
 invalidated since. Of the seventeen, sixteen come from the sweep itself and
 `session-drift` is derived *across* two — that sweep and a second one begun the
-minute it finished — which no sweep can take. `peak-rss` is the eighteenth,
-taken alone and saying so in its marker; it is the only figure here denominated
-in bytes rather than seconds and it shares no reading with any of the others,
-which is what permits it ("A figure may be published outside the sweep", below).
+minute it finished — which no sweep can take. The two standing outside are each
+taken alone and say so in their markers, and each is permitted for the same
+reason: neither shares a reading with any other figure here ("A figure may be
+published outside the sweep", below). `peak-rss` is the only figure denominated
+in bytes rather than seconds; `xz-decode-scaling` times no `pgdq` at all, being
+a property of the decoder rather than of the read path.
 So no table here carries a partial-sitting note, and no absolute in this
 document is a cross-sitting reading — which has not been true since the
 `ba2fc12` stamp, under which ten of the seventeen stood outside the sweep. The
@@ -2022,6 +2025,60 @@ section, not a rule at the top of the same file.
 
 Both sweeps are `runs/measure-*` directories; the table is computed from their
 `raw.json`, never transcribed.
+
+## What a second decode worker buys, and what the twenty-fourth does not
+
+<!-- figure: xz-decode-scaling — taken at `7d21c6e` — reproduce with `cd scripts && uv run measure.py --figure xz-decode-scaling` -->
+
+| Workers | Generated control | koji, 128 streams |
+|---|---|---|
+| 1 *(serial)* | **15.72 s** (15.61–15.96) · ~205 MB/s · 1.00× | **7.40 s** (7.37–7.42) · ~435 MB/s · 1.00× |
+| 2 | **8.59 s** (8.58–8.61) · ~375 MB/s · 1.83× | **3.94 s** (3.93–3.94) · ~819 MB/s · 1.88× |
+| 4 | **4.61 s** (4.60–4.63) · ~698 MB/s · 3.41× | **2.14 s** (2.13–2.15) · ~1503 MB/s · 3.45× |
+| 8 | **2.51 s** (2.49–2.51) · ~1284 MB/s · 6.27× | **1.267 s** (1.266–1.296) · ~2543 MB/s · 5.84× |
+| 12 | **1.866 s** (1.837–1.878) · ~1726 MB/s · 8.42× | **1.034 s** (1.030–1.040) · ~3116 MB/s · 7.16× |
+| 16 | **1.672 s** (1.660–1.683) · ~1927 MB/s · 9.40× | **0.971 s** (0.967–0.978) · ~3318 MB/s · 7.62× |
+| 24 | **1.456 s** (1.451–1.464) · ~2212 MB/s · 10.80× | **0.951 s** (0.945–0.953) · ~3388 MB/s · 7.78× |
+
+Each cell is wall clock, the plaintext rate it implies, and the speedup over that leg's own one-worker row. The instrument is `pgdump_query/examples/xz_decode.rs` in a 2g container — **not** the register's 512 MB, which cannot hold 24 decoded 24 MiB blocks — and it refuses a run whose plan admits fewer workers than were asked for.
+
+- Generated control: 563.8 MB compressed, 3.00 GiB of plaintext, 5.45×
+- koji, 128 streams: 195.7 MB compressed, 3.00 GiB of plaintext, 15.70× (`scripts/generate_xz_input.py` refuses a slice outside 14–18×)
+
+Per-rep readings (s):
+- Generated control, 1w: 15.80, 15.96, 15.67, 15.72, 15.61
+- Generated control, 2w: 8.61, 8.58, 8.60, 8.59, 8.59
+- Generated control, 4w: 4.63, 4.60, 4.61, 4.61, 4.62
+- Generated control, 8w: 2.51, 2.49, 2.51, 2.50, 2.51
+- Generated control, 12w: 1.850, 1.866, 1.868, 1.837, 1.878
+- Generated control, 16w: 1.669, 1.660, 1.683, 1.674, 1.672
+- Generated control, 24w: 1.464, 1.453, 1.456, 1.459, 1.451
+- koji, 128 streams, 1w: 7.42, 7.38, 7.41, 7.40, 7.37
+- koji, 128 streams, 2w: 3.93, 3.93, 3.94, 3.94, 3.94
+- koji, 128 streams, 4w: 2.14, 2.13, 2.13, 2.15, 2.14
+- koji, 128 streams, 8w: 1.267, 1.296, 1.278, 1.267, 1.266
+- koji, 128 streams, 12w: 1.032, 1.034, 1.040, 1.038, 1.030
+- koji, 128 streams, 16w: 0.978, 0.967, 0.967, 0.971, 0.973
+- koji, 128 streams, 24w: 0.945, 0.948, 0.953, 0.951, 0.951
+
+Apparatus over every run in this table: CPU stall ≤1.61%, I/O stall ≤3.78%, machine ≤58% busy, steal ≤0.00%, busiest core ≥3.59 GHz, ≤72°C.
+
+**A decode rate is a rate per plaintext byte, so it is a property of the bytes,
+and the two legs are the proof.** The control's 5.45× decodes at ~205 MB/s on
+one core where koji's 15.70× decodes at ~435 — so nothing may say "koji decodes
+at 435 MB/s"; it says *3.00 GiB at 15.70× decodes at 435 MB/s*. koji is nowhere
+near homogeneous enough for one slice to stand for it — sampled at twelve depths
+its regions run from 5.02× to 33.05× — which is why the slice's density is
+gated rather than remembered, and why the control leg, sitting on top of koji's
+densest sampled region, is the floor to size workers against rather than koji's.
+
+**The curve is the transferable finding, and it does not survive past four
+workers.** Both legs are within a few percent of linear to four; past that koji
+flattens hard, reaching 7.78× at twenty-four, where the twenty-fourth worker
+buys essentially nothing over the sixteenth. The control keeps climbing further
+— 10.80× at twenty-four — which is the same ordering its lower density predicts.
+So a worker count read off a linear extrapolation of a one-worker rate is a
+**floor on what will be needed**, not an estimate of what will suffice.
 
 ## koji full scan — the regression check
 

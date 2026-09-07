@@ -22,14 +22,15 @@ from being taken.
 Today the answer is *serial decode*. `io::XzSource` holds one `xz_seek::Reader`
 behind a `std::sync::Mutex` (see [`architecture.md`](architecture.md), "The
 compressed source"), so a compressed scan runs at one core's decode rate —
-**~446 MB/s** of plaintext, a probe rather than a figure — whatever the device
+**~435 MB/s** of plaintext on koji's 15.70× bytes — whatever the device
 underneath could have offered.
 
 ### What each stage costs, per thread
 
 | Stage | Rate | Source |
 |---|---|---|
-| xz decode, one core | ~446 MB/s plaintext | probe ([`architecture.md`](architecture.md), "The compressed source") |
+| xz decode, one core | ~435 MB/s plaintext at 15.70× | [`measurements.md`](measurements.md), "What a second decode worker buys" |
+| xz decode, 24 cores | ~3,388 MB/s plaintext at 15.70× | the same figure, koji leg's 24-worker row |
 | Structure discovery (`parse`) | **7049 MB/s** | [`measurements.md`](measurements.md), "Scan throughput by input shape", warm `COPY` row |
 | Extraction, `--schema-mode strings` | ~940 MB/s | [`measurements.md`](measurements.md) |
 | Extraction, typed | ~680 MB/s | [`measurements.md`](measurements.md) |
@@ -51,9 +52,14 @@ project owns, so a plain-file `parse` is device-bound on all of them — cold on
 the NVMe it is **1.06×** the `dd` floor, and the entire prize for parallelising
 it is the **0.076 s** by which a 1.314 s scan exceeds that floor, before a
 splitter's own coordination comes out of it. On a compressed file the same scan
-is bounded by 446 MB/s of decode, which is *below* every device's offer, so
-every worker added converts directly into throughput until the device is
-reached again.
+is bounded by ~435 MB/s of decode, which is *below* every device's offer, so
+every worker added converts into throughput — but at a falling rate, and the
+device is never reached. Twenty-four decode workers on koji's bytes reach
+~3,388 MB/s against the HDD's implied ~4,656 MB/s, and scaling has flattened
+long before that: 7.78× one worker at twenty-four, where the twenty-fourth buys
+essentially nothing over the sixteenth. Decode stays the bound on a compressed
+file at every worker count this machine can offer, which is a stronger
+statement of the case for parallelising it than the linear reading was.
 
 **Parallel extraction is worth something everywhere, plain input included.**
 Extraction runs at 680–940 MB/s, which is *below* the SATA SSD's floor and far
@@ -90,9 +96,12 @@ What that buys, at 12 physical cores / 24 threads:
   **10 GB/s** for `parse` against the plain path's 2451 MB/s, and roughly
   **6.5 GB/s** for a typed query against the plain path's CPU-bound 680 MB/s.
 
-These are arithmetic, not readings. Two of the inputs are probes rather than
-figures — the 446 MB/s decode rate above all — and the phase re-takes them as
-registered figures before resting anything on the ratio.
+These are arithmetic, not readings. The decode rate they rest on is now a
+registered figure — [`measurements.md`](measurements.md), "What a second decode
+worker buys" — and it says the scaling is **sublinear past four workers**, so
+every projection above that multiplies a one-core rate by a worker count is a
+floor on what will be needed rather than an estimate of what will suffice. The
+remaining probe is `parallel-scan-throughput`, which 16.13 takes.
 
 ## Settled decisions
 
@@ -120,7 +129,8 @@ case of the parallel one.
 Not "the compressed path" and not "the scan" — the rule is one line, and the
 three cases fall out of it rather than being enumerated:
 
-- **Decode: always.** It is 446 MB/s against every device's offer.
+- **Decode: always.** It is ~435 MB/s on one core against every device's offer,
+  and still below the HDD's at twenty-four.
 - **Extraction: always, plain input included.** It is 680–940 MB/s against a
   561 MB/s SATA floor and a 2602 MB/s NVMe floor, so a typed `query` is
   CPU-bound on every device this project owns whatever the source is.
@@ -364,15 +374,17 @@ refusal.
 This phase's opening slices produce the evidence that decides what the later
 ones are worth, so — per `../process.md`, "Slice numbering" — its numbers past
 those are **allocation order rather than schedule**. The thesis table at the
-top of this document is arithmetic resting on a **probe**: the 446 MB/s decode
-rate is explicitly not a registered figure.
+top of this document is arithmetic, and one of its two load-bearing inputs is
+now measured.
 
 Two figures are load-bearing and are taken before the design is committed to:
 
 - **`xz-decode-scaling`** — decode rate against worker count, taken by
-  `scripts/measure.py`, over the koji `.xz` and a generated control. It turns
-  the probe into a figure and says whether the near-linear four-worker reading
-  holds to 12 and to 24.
+  `scripts/measure.py`, over the koji `.xz` and a generated control. **Taken**:
+  the near-linear reading holds to four workers and not past it — 7.78× at
+  twenty-four on koji, 10.80× on the control — so the worker counts this
+  document's arithmetic names are floors rather than estimates, and the slices
+  that price parallelism read the figure rather than the table.
 - **`parallel-scan-throughput`** — `pgdq parse` and `pgdq query` against
   `--jobs`, on the HDD, the SATA SSD and the NVMe, compressed and plain.
 

@@ -1272,10 +1272,12 @@ class XzDecodeScaling(unittest.TestCase):
         self.assertNotEqual(got, unfolded.hexdigest())
 
     def test_the_perf_generator_reaches_the_generated_leg(self):
+        # The control leg is a *compression of* `control`, so a change to the
+        # perf generator moves the bytes this figure decodes. `figures_touched`
+        # walks the taken register, which is where this figure now sits, so the
+        # declaration has to be reachable through it rather than merely present.
         touched = [f.id for f, _ in measure.figures_touched(["scripts/generate_perf_data.py"])]
-        self.assertNotIn("xz-decode-scaling", touched)
-        # ...because `figures_touched` walks the taken register only. The
-        # declaration is what a fold-in will read, so hold the declaration.
+        self.assertIn("xz-decode-scaling", touched)
         fig = measure.SELECTABLE_BY_ID["xz-decode-scaling"]
         self.assertIn("scripts/generate_perf_data.py", fig.depends)
 
@@ -1361,7 +1363,12 @@ class XzDecodeScaling(unittest.TestCase):
         self.assertNotEqual(measure.DECODE_MEMORY, measure.Config().memory)
 
     def test_every_other_figure_runs_under_the_recorded_memory(self):
+        # A departure is a departure only while it is the exception, so this
+        # holds the rest of the register to the recorded apparatus rather than
+        # to whatever each figure happens to declare.
         for fig in measure.ALL_FIGURES:
+            if fig.id == "xz-decode-scaling":
+                continue
             with self.subTest(figure=fig.id):
                 self.assertIsNone(fig.memory)
 

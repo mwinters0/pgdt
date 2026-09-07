@@ -3849,41 +3849,6 @@ FIGURES: list[Figure] = [
         shares=ALLOCATOR_SHARES,
         run=run_allocator,
     ),
-]
-
-FIGURES_BY_ID = {f.id: f for f in FIGURES}
-
-#: Instruments that are **built but whose figure has not been taken**.
-#:
-#: A sweep does not run these and the doc carries no table for them, which is
-#: why they sit outside `ALL_FIGURES`: the marker reconciliation would
-#: otherwise demand a section with no numbers under it, and `quoted_by` would
-#: have to name consumers of a figure that does not exist yet. `--figure <id>`
-#: still selects one, which is how the reading gets taken — and taking it moves
-#: the entry into `FIGURES`, where the doc-side checks start applying.
-#:
-#: The distinction is worth a list rather than a comment because *built* and
-#: *taken* fail differently. An instrument nobody built is work; an instrument
-#: built and never run is a claim nobody checked, and it is invisible unless
-#: something names it.
-#:
-#: **Empty is the healthy state, not a disused mechanism.** Two earlier entries
-#: left by the two exits the list has: `projection-widths` was taken and moved
-#: into `FIGURES`, and `composite-isolated` — which isolated one column by
-#: declaring it two ways over byte-identical rows — was deleted unpublished,
-#: because `projection-widths` makes the same isolation a subtraction between
-#: two adjacent rows of one table over one file.
-UNTAKEN: list[Figure] = [
-    # Built here, and not yet in the document. The instrument runs and the
-    # readings are in `runs/`; what it is waiting for is a **commit to name**.
-    # A figure published outside a stamped sweep declares the commit it was
-    # taken at inside its own marker, and every reader of the stamp — `--stale`,
-    # acknowledgement spentness, `--verify-additive` — argues from that; a
-    # sitting taken from a working tree that carries this figure's own
-    # instrument has no such commit, and naming the parent would publish a
-    # marker pointing at a tree where the instrument does not exist. So the
-    # entry sits here until a sitting can be taken on the commit that lands it,
-    # which is `--figure xz-decode-scaling` and minutes rather than an hour.
     Figure(
         id="xz-decode-scaling",
         section="What a second decode worker buys, and what the twenty-fourth does not",
@@ -3906,8 +3871,36 @@ UNTAKEN: list[Figure] = [
         warm_inputs=("control_xz", "koji_xz"),
         memory=DECODE_MEMORY,
         run=run_xz_decode_scaling,
-    )
+    ),
 ]
+
+FIGURES_BY_ID = {f.id: f for f in FIGURES}
+
+#: Instruments that are **built but whose figure has not been taken**.
+#:
+#: A sweep does not run these and the doc carries no table for them, which is
+#: why they sit outside `ALL_FIGURES`: the marker reconciliation would
+#: otherwise demand a section with no numbers under it, and `quoted_by` would
+#: have to name consumers of a figure that does not exist yet. `--figure <id>`
+#: still selects one, which is how the reading gets taken — and taking it moves
+#: the entry into `FIGURES`, where the doc-side checks start applying.
+#:
+#: The distinction is worth a list rather than a comment because *built* and
+#: *taken* fail differently. An instrument nobody built is work; an instrument
+#: built and never run is a claim nobody checked, and it is invisible unless
+#: something names it.
+#:
+#: **Empty is the healthy state, not a disused mechanism.** Three earlier
+#: entries left by the two exits the list has. Two were taken and moved into
+#: `FIGURES`: `projection-widths`, and `xz-decode-scaling` — which waited here
+#: for a *commit to name*, a figure published outside a stamped sweep declaring
+#: inside its own marker the commit it was taken at, so a sitting run from a
+#: working tree carrying the instrument had none and could only name a parent
+#: where the instrument does not exist. The third, `composite-isolated` — which
+#: isolated one column by declaring it two ways over byte-identical rows — was
+#: deleted unpublished, because `projection-widths` makes the same isolation a
+#: subtraction between two adjacent rows of one table over one file.
+UNTAKEN: list[Figure] = []
 
 #: A figure that no sweep produces, because it is computed *across* two of
 #: them. It still gets a section, a marker and both declared edges — it is one
