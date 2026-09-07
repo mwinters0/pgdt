@@ -300,18 +300,24 @@ are worth, and the orderings that do bind are named in
       may be a decoded 24 or 128 MiB xz block where four fixed ones would have
       been the whole cgroup; the count is unchanged at every chunk size the
       register measures. `max_source_span` is re-derived and unmoved: on a
-      block-shaped source the pool's slot budget is the bound and the cap is a
-      batch-size knob. Notes:
+      block-shaped source the cap is a batch-size knob, and the bound it stops
+      being is the pool's slot budget once `16.4.1` makes that budget bound
+      what is outstanding. Notes:
       [`../design/roadmap-P16.4-block-pool-notes.md`](../design/roadmap-P16.4-block-pool-notes.md)
 - [ ] **16.4.1** Backpressure — a slot acquisition that waits instead of
-      allocating. **Earned**: the pool cannot tell a serial reader
-      legitimately holding `(max_source_span / chunk) + 1` buffers from a
-      worker holding one slot, so a wait is a deadlock for the first, and it
-      lands with the first concurrent consumer
+      allocating, one slot per waiting holder, plus an option-validation error
+      when `max_source_span` is `None` and `Parallelism` is not `Serial`.
+      **Earned**: the pool cannot tell a serial reader legitimately holding
+      `(max_source_span / chunk) + 1` buffers from a worker holding one slot,
+      so a wait is a deadlock for the first; it lands with the first concurrent
+      consumer because that is what a test needs
       ([`history/2026-09-07.md`](history/2026-09-07.md), "16.4 split:
-      backpressure needs its consumer").
+      backpressure has no test without a second holder").
 - [ ] **16.5** `XzSource` internally concurrent — per-call block decode over a
-      shared `SeekTable`, replacing the single `Reader` behind a mutex.
+      shared `SeekTable`, replacing the single `Reader` behind a mutex, with a
+      second `BufferPool` for the block unit
+      ([`history/2026-09-07.md`](history/2026-09-07.md), "16.5 takes a second
+      pool, because a pool describes one unit").
 - [ ] **16.6** `ByteRangeSource::partitions` — the defaulted advisory and both
       implementations. No consumer yet.
 - [ ] **16.7** The `Parallelism` surface — the library enum defaulting to
@@ -481,20 +487,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`16.4` was split rather than landed whole, and backpressure is the half
-  left out.** The call: a `take` that waits for a free slot cannot be landed
-  ahead of a concurrent consumer, because one serial reader legitimately holds
-  `(max_source_span / chunk) + 1` pooled buffers — unbounded under
-  `max_source_span: None` — and the pool cannot tell that holder from a worker
-  that should wait, so a wait is a deadlock on the path every command takes
-  today. It earned `16.4.1`, ordered with or after the first of `16.5` and
-  `16.10`, and the spec's row was rewritten to the sizing change that landed
-  ([`../design/roadmap-P16-parallel-scan.md`](../design/roadmap-P16-parallel-scan.md),
-  "Slices"; reasoning in
-  [`history/2026-09-07.md`](history/2026-09-07.md), "16.4 split: backpressure
-  needs its consumer"). **What a reconsideration would change**: if
-  backpressure is judged landable now — waiting only above a caller-set budget,
-  say, with the serial path exempt by construction — then `16.4.1` folds back
-  into `16.5` rather than standing as its own row, and the phase carries one
-  fewer third-level increment. What it would not change is the sizing, which
-  landed on its own terms.
+None open.

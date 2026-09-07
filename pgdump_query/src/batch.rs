@@ -109,9 +109,10 @@ pub struct QueryOptions {
     /// arithmetic rounds out to 24 or 128 MiB units, so a cap under one unit
     /// promises a bound the unit makes impossible — and a batch confined to
     /// one worker's range inside one block pins exactly that block whatever
-    /// the cap says. There the pool's slot budget is the bound and this stays
-    /// a batch-size knob (`docs/design/architecture.md`, "Three flush
-    /// triggers, and only one of them bounds memory").
+    /// the cap says. There this stays a batch-size knob, and the bound is to
+    /// be the pool's slot budget once a slot acquisition waits — which it does
+    /// not yet (`docs/design/architecture.md`, "Three flush triggers, and only
+    /// one of them bounds memory").
     pub max_source_span: Option<usize>,
     /// Whether to resolve column types against the dump's DDL — see
     /// `docs/design/architecture.md`, "Arrow assembly and the zero-copy path". Every

@@ -171,11 +171,13 @@ const POOL_MAX_BYTES: usize = 8 << 20;
 ///
 /// **What it does not do is block.** A `take` the free list cannot serve
 /// allocates, so the pool bounds what it *keeps* and never what is
-/// outstanding. That is the right shape for one reader and the wrong one for
-/// N: the parallel design wants a slot acquisition that waits, which is a
-/// change with a consumer rather than a constant, and the reason it is not
-/// here is beside the mechanism (`docs/design/architecture.md`, "Execution
-/// model and API surface").
+/// outstanding — [`BufferPool::slots`] is a ceiling on the free list, not a
+/// memory bound. That is the right shape for one reader and the wrong one for
+/// N: the parallel design wants a slot acquisition that waits, and the reason
+/// it is not here is beside the mechanism (`docs/design/architecture.md`,
+/// "Execution model and API surface"). The short version is that the serial
+/// reader is the one holder a wait must exempt, so a wait with nothing else in
+/// the tree can assert only what this `take` already guarantees.
 #[derive(Debug, Default)]
 struct BufferPool {
     /// A poisoned lock is not a corruption hazard here — the only thing under
@@ -193,6 +195,14 @@ struct BufferPool {
     /// must not have to wait behind a `take` on another task. `Relaxed` is
     /// enough — nothing is published through it, and a hint that arrives a
     /// buffer late costs one allocation.
+    ///
+    /// **One value, so one pool describes one read unit.** It drives both
+    /// [`BufferPool::keeps`] and [`BufferPool::slot_bytes`], and a pool asked
+    /// to serve two units is wrong for one of them either way: at the smaller
+    /// unit the larger buffer is dropped on release, and at the larger one the
+    /// slot count collapses under the smaller reads. A source that acquires a
+    /// second read unit takes a second pool rather than a second hint
+    /// (`docs/design/architecture.md`, "The compressed source").
     hinted: AtomicUsize,
 }
 

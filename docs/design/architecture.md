@@ -211,15 +211,29 @@ of the two ways to be wrong.
 *Rejected:* **backpressure — a `take` that waits for a free slot instead of
 allocating.** It is what turns the slot count into a bound on what is
 *outstanding* rather than only on what is idle, and the parallel design wants
-it; it cannot be landed ahead of a concurrent consumer, because the pool cannot
-tell the two holders apart. One serial reader legitimately holds
-`(max_source_span / chunk) + 1` buffers at once — 65 at the defaults, and
-unbounded under `max_source_span: None` — since a batch pins every chunk it has
-taken a view into until it flushes; a worker given an LF-split range inside one
-block holds exactly one slot. A wait is backpressure for the second and a
-deadlock for the first, and nothing in a `take` call says which is calling. So
-the wait arrives with the discipline that makes it safe: one slot per holder,
-and a budget the caller set for the concurrency it asked for.
+it; it is not here because the pool cannot tell its two holders apart. One
+serial reader legitimately holds `(max_source_span / chunk) + 1` buffers at
+once — 65 at the defaults, and unbounded under `max_source_span: None` — since
+a batch pins every chunk it has taken a view into until it flushes; a worker
+given an LF-split range inside one block holds exactly one slot. A wait is
+backpressure for the second and a deadlock for the first, and nothing in a
+`take` call says which is calling.
+
+**The exemption is what would make a wait safe, not a caller-set budget.** At
+the defaults the serial reader reaches 65 MiB against a 64 MiB budget, so any
+budget below its reach deadlocks, and under `max_source_span: None` no finite
+budget is above it — which is also why an unbounded span and a waiting pool
+cannot both be had, and why the pair is to be refused rather than silently
+clamped. A budget is a knob on the holders that do wait.
+
+**What defers it is testability rather than the absence of a consumer**, which
+is a weaker claim than it looks: `ByteRangeSource::partitions` is landing with
+no consumer at all, and it is fine because a pure function's whole contract is
+its return value. A blocking acquire has no behaviour except its interaction
+with holders, so with only the exempt holder in the tree the strongest
+assertion available is "it did not block" — precisely what the non-waiting
+`take` above already guarantees. The wait therefore arrives with the second
+holder, and with the discipline that makes it safe: one slot per holder.
 
 **One-off-ness is a property of the caller, so the caller says it.**
 `ByteRangeSource::hint_read_size` is a third, advisory method — defaulted to
@@ -446,6 +460,21 @@ it costs 24 MiB resident on a file of ~24 MiB blocks and 128 MiB on a
 since every read but the two backward ones is sequential and those are served
 with no waste by the streaming form. *Also rejected:* decoding from the covering
 block on every call, which re-decodes 24–128 MiB per 1 MiB read.
+
+**A source with two read units takes two pools, not two hints.** `XzSource`
+reads chunk-shaped today and shares one `io::BufferPool` with the read loop
+above it; a per-call block decode gives it a second unit, and `BufferPool`'s
+announced unit is a single value driving both what it keeps and how it sizes a
+slot ("Execution model and API surface"). One pool set to the chunk length
+drops every decoded block on release, making each decode a fresh `calloc` of
+24 or 128 MiB; set to the block length it keeps blocks and takes the chunk
+path's pooling away, which is the **1.83×** a miss costs
+([`measurements.md`](measurements.md), "What the read chunk size is worth"). So
+the block decoder is given its own pool, each keeping the existing derivation
+intact, and how the two budgets sum is the caller's parallelism budget to
+state. *Rejected:* an announced *set* of units, with the keep rule and the slot
+count reasoning over it — it complicates both rules to buy what a second pool
+gives structurally.
 
 **Exactly two callers read backwards**, which is what bounds that decision.
 `stream.rs`'s replay loop re-reads a block the mapping pass has already walked
@@ -3007,12 +3036,18 @@ impossible.
 
 **What replaces it is not a bigger number.** A batch confined to one worker's
 LF-split range inside one block pins exactly that block whatever the cap says,
-so on a block-shaped source the bound is the pool's slot budget — `slots ×
-(decoded block + dictionary)`, one slot per worker — and this cap goes back to
-being what the other two triggers are: a knob on how large a batch gets.
-Neither the default nor the trigger changes, because on a chunk-shaped source
-the original derivation still holds exactly; what changed is which mechanism
-the memory claim is read off ("Execution model and API surface").
+so on a block-shaped source this cap goes back to being what the other two
+triggers are: a knob on how large a batch gets. Neither the default nor the
+trigger changes, because on a chunk-shaped source the original derivation still
+holds exactly; what changes is which mechanism the memory claim is read off
+("Execution model and API surface").
+
+**What is to be read off instead does not exist yet.** The intended bound is
+the pool's slot budget — `slots × (decoded block + dictionary)`, one slot per
+worker — and it becomes a bound only when a slot acquisition waits, because
+`BufferPool` today bounds what it *keeps* and never what is outstanding. Until
+that lands there is no memory bound on a block-shaped source at all, which is
+the state a `parallel-peak-rss` figure would be measuring against.
 
 *Rejected: compacting the batch's views once selectivity drops below a
 threshold.* It admits an unbounded peak before the threshold trips, and it
