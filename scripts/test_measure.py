@@ -253,9 +253,11 @@ class Scripts(unittest.TestCase):
 class WorkerCount(unittest.TestCase):
     """A worker count is apparatus, so nothing here inherits the CLI's.
 
-    `pgdq --jobs` defaults to the machine's available parallelism, and that
-    default moved underneath every figure in the document without one command
-    shape changing — the failure this reconciles against. `--stale` cannot see
+    `pgdq --jobs`' default moved underneath every figure in the document twice
+    — to the machine's available parallelism and back to 1 — without one
+    command shape changing, which is the failure this reconciles against. That
+    it now agrees with `SWEEP_JOBS` is a coincidence of the day and not a
+    reason to inherit it. `--stale` cannot see
     it either: staleness says *re-take*, never *the apparatus moved underneath
     you*."""
 
@@ -2520,8 +2522,8 @@ class ProfileRecipe(unittest.TestCase):
 
     def test_every_profiled_invocation_states_its_worker_count(self):
         # The sixth silent failure: a sampling profile's buckets are per
-        # thread, so a profile taken at the machine's available parallelism
-        # attributes a scan among workers the figure it explains never ran.
+        # thread, so a profile that inherited the CLI's default would attribute
+        # a scan among workers the figure it explains never ran.
         recorded = [ln for ln in self._recipe().splitlines() if ln.strip().startswith("-- ")]
         self.assertEqual(
             len(recorded), len(measure.PROFILE_INPUTS) * len(measure.PROFILE_SHAPES)

@@ -54,23 +54,25 @@ impl From<CliSchemaMode> for SchemaMode {
 /// scanning commands (`docs/design/architecture.md`, "Execution model and API
 /// surface").
 ///
-/// **The CLI defaults to parallel where the library defaults to serial**, this
-/// being a program a person ran on purpose rather than a component inside
-/// someone else's. `--jobs 1` is the serial path, as a property of
-/// `Parallelism::workers` rather than of anything here.
+/// **The CLI defaults to the serial path, as the library does**: a person who
+/// states neither flag gets the arrangement every published figure was taken
+/// under, and parallelism is asked for. `--jobs 1` is that path as a property
+/// of `Parallelism::workers` rather than of anything here.
 #[derive(Args)]
 struct ParallelArgs {
-    /// Ceiling on concurrent workers. Defaults to this machine's available
-    /// parallelism; `--jobs 1` is the serial path.
+    /// How many workers pgdq may ask for. Defaults to 1, the serial path.
     ///
-    /// **A ceiling, not a request** — two input shapes admit no parallelism
-    /// whatever this says: a `.xz` file with one block, and an `INSERT` run
-    /// (`docs/manual/dump-inspection.md`). What it reaches is `query`'s row
-    /// replay, cut into at most this many sub-streams read at once and merged
-    /// back into file order; a `parse`'s structure scan, which splits the
-    /// interior of every `COPY` block large enough to cut and folds the answers
-    /// back into one block list; and how many decoded `.xz` blocks the source
-    /// retains, one per would-be reader.
+    /// **It states what is asked for, not what is delivered.** Two input
+    /// shapes admit no parallelism whatever this says: a `.xz` file with one
+    /// block, and an `INSERT` run (`docs/manual/dump-inspection.md`). And on a
+    /// plain file the read buffer pool's own depth binds before this does, so
+    /// a `parse` above `--jobs 4` runs four workers and queues the rest.
+    ///
+    /// What it reaches is `query`'s row replay, cut into at most this many
+    /// sub-streams read at once and merged back into file order; a `parse`'s
+    /// structure scan, which splits the interior of every `COPY` block large
+    /// enough to cut and folds the answers back into one block list; and how
+    /// many decoded `.xz` blocks the source retains, one per would-be reader.
     #[arg(long, value_name = "N", value_parser = parse_jobs)]
     jobs: Option<usize>,
     /// What those workers may hold between them in read buffers, in bytes.
@@ -89,17 +91,24 @@ impl ParallelArgs {
     /// The [`Parallelism`] these flags state, filling in the CLI's own
     /// defaults for whichever was omitted.
     fn resolve(&self) -> Parallelism {
-        let jobs = self.jobs.unwrap_or_else(default_jobs);
+        let jobs = self.jobs.unwrap_or(DEFAULT_JOBS);
         Parallelism::workers(jobs, self.parallel_memory.unwrap_or(DEFAULT_MEMORY_BUDGET))
     }
 }
 
-/// This machine's available parallelism, or one where the platform declines to
-/// say — which is the serial path, and the honest answer when nothing is
-/// known about how many cores a caller has.
-fn default_jobs() -> usize {
-    std::thread::available_parallelism().map_or(1, |n| n.get())
-}
+/// What `--jobs` states when nobody states it: **one**, which
+/// `Parallelism::workers` reads as the serial path.
+///
+/// It was this machine's `available_parallelism()` while `--jobs` bought only
+/// read depth at no memory cost. It buys CPU parallelism now — a query's replay
+/// and a `parse`'s interior split both — and no figure prices that on any of
+/// the three device classes, while two costs are known to exist: read depth is
+/// unmeasured everywhere, and N sub-streams on a HDD are N separated offsets
+/// read at once. So the default is the arrangement every published figure was
+/// taken under, and raising it is a decision `parallel-scan-throughput` is
+/// asked to license (`docs/design/roadmap-P16-parallel-scan.md`, "The caller
+/// sets workers or bytes, whichever binds first").
+const DEFAULT_JOBS: usize = 1;
 
 /// A `--jobs` value: a worker count, and never zero. Zero would read as one
 /// through `Parallelism::workers`, but a person who typed it meant something,
@@ -2048,6 +2057,26 @@ mod tests {
             Err(message) => message,
             Ok(parsed) => panic!("`{spec}` should be refused, parsed as {parsed:?}"),
         }
+    }
+
+    /// **Stating neither flag is the serial path**, which is the one thing
+    /// about `--jobs` no integration test can see: the whole design promise is
+    /// that a partitioned run and a serial one produce the same bytes, so
+    /// nothing in the output distinguishes them and a default that drifted
+    /// back to `available_parallelism()` would pass every other test in the
+    /// tree. That drift is exactly what happened to the measurement harness
+    /// (`docs/design/measurements.md`, "The apparatus"), so the default is
+    /// pinned here rather than left to the constant's doc comment.
+    #[test]
+    fn stating_no_parallelism_flag_is_the_serial_path() {
+        let stated = ParallelArgs { jobs: None, parallel_memory: None };
+        assert_eq!(stated.resolve(), Parallelism::Serial);
+        assert_eq!(DEFAULT_JOBS, 1);
+
+        // And a stated count above one is not: the flag still reaches the
+        // value, so this pins the default rather than the plumbing.
+        let asked = ParallelArgs { jobs: Some(8), parallel_memory: None };
+        assert_eq!(asked.resolve(), Parallelism::workers(8, pgdump_query::DEFAULT_MEMORY_BUDGET));
     }
 
     /// The bare spelling, unchanged: no whitespace anywhere means nothing to

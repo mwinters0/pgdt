@@ -58,8 +58,8 @@ BINARIES: dict[str, Path] = {
 
 #: The worker count every leg states, which is the harness's — a resident set
 #: is exactly the quantity a worker count moves, since each worker holds read
-#: buffers of its own, so a leg inheriting the CLI's `available_parallelism()`
-#: default would attribute a growth this apparatus never measured
+#: buffers of its own, so a leg inheriting whatever the CLI's `--jobs` defaults
+#: to on the day would attribute a growth this apparatus never measured
 #: (`measure.SWEEP_JOBS`; `measurements.md`, "The apparatus"). `info` takes no
 #: such flag and states none.
 JOBS = f"--jobs {measure.SWEEP_JOBS}"

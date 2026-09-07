@@ -239,8 +239,27 @@ It is a two-state enum — `Serial`, or `Workers { jobs, memory_bytes }` — and
 **the library defaults to `Serial`**, which is the serial code path this build
 has rather than a pool of one: an embeddable component does not spawn threads by
 surprise, so parallelism is opted into ([`roadmap.md`](roadmap.md), "Project
-goals"). The CLI makes the opposite default, being a program a person ran on
-purpose.
+goals"). **The CLI makes the same default**, `--jobs` being 1: it defaulted to
+`available_parallelism()` while the number bought read depth at no memory cost,
+and it now buys CPU parallelism that no figure prices on any device class, so
+what a person who states nothing gets is the arrangement every published table
+was taken under. Raising it is a decision `parallel-scan-throughput` is asked to
+license, not a default shipped ahead of the evidence
+([`roadmap-P16-parallel-scan.md`](roadmap-P16-parallel-scan.md), "The caller
+sets workers or bytes, whichever binds first").
+
+**A stated `--jobs` is what is asked for, not what is delivered**, and on a
+plain file the chunk pool is what binds first: `LocalFileSource::partitions`
+answers one read chunk per partition, so `worker_count` at the 64 MiB default
+affords 64 — but `hint_parallelism` clamps that pool to `POOL_DEPTH`, so
+`BufferPool::slots()` is 4 at the 1 MiB chunk and a fifth fused worker blocks
+for a slot. The wait is doing what it was built for; the consequence is that a
+plain-file `parse` above `--jobs 4` runs four workers and queues the rest, which
+the flag's own help text and the manual both say rather than promising a ceiling
+the shape does not deliver. `POOL_DEPTH` is left where it is: raising it with a
+worker count is the resident-set trade the paragraph on the `jobs` half declines
+below, and moving it belongs with the work that makes one stated number bound
+both memory terms.
 
 **Two numbers, whichever binds first, mirroring
 `xz_seek::Bulk::new(workers, budget_bytes)`** — the interface a compressed

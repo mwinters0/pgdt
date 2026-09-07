@@ -112,14 +112,14 @@ Eighteen standing rules for reading anything below:
   replacements are worth, is "Which allocator a figure was taken under" below;
   it is also where a figure here being a **CLI** figure is stated, the choice
   being the binary's and never the library's.
-- **A worker count is apparatus too, so every invocation states one.** `pgdq
-  --jobs` defaults to this machine's available parallelism, so a command that
-  says nothing measures the hardware it ran on rather than an arrangement
-  anybody chose — and that default moved underneath every figure in this
-  document without one command shape changing and without `--stale` having
-  anything to say, staleness meaning *re-take* and never *the apparatus moved
-  underneath you*. So nothing `scripts/measure.py` builds inherits it: every
-  figure's shape states `--jobs 1`, so does the profile recipe — where the cost
+- **A worker count is apparatus too, so every invocation states one.** A command
+  that says nothing measures whatever `pgdq --jobs` defaults to that day rather
+  than an arrangement anybody chose — and that default has already moved
+  underneath every figure in this document twice, once to available parallelism
+  and once back to 1, without one command shape changing and without `--stale`
+  having anything to say, staleness meaning *re-take* and never *the apparatus
+  moved underneath you*. So nothing `scripts/measure.py` builds inherits it:
+  every figure's shape states `--jobs 1`, so does the profile recipe — where the cost
   of getting it wrong is sharper, a sampling profile's buckets being per thread
   — and `uv run measure.py --check` fails a shape that pins no count. koji is
   the one invocation that takes the count as a parameter (`--koji-jobs`),

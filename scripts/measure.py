@@ -1690,11 +1690,14 @@ DECODE_BASELINE = 1
 #: The worker count every `pgdq` invocation this harness makes states, and the
 #: one every registered figure is therefore taken at.
 #:
-#: **A worker count is apparatus, on the same argument the allocator is.** The
-#: CLI's `--jobs` default is `available_parallelism()`, so a shape that states
-#: nothing measures whatever the machine happens to have — and the default moved
-#: underneath nineteen figures without a single shape changing, which is a
-#: figure whose apparatus nothing in the document can name. So no invocation
+#: **A worker count is apparatus, on the same argument the allocator is.** A
+#: shape that states nothing measures whatever the CLI's `--jobs` defaults to
+#: that day — and that default has already moved underneath nineteen figures
+#: twice, to `available_parallelism()` and back to 1, without a single shape
+#: changing, which is a figure whose apparatus nothing in the document can
+#: name. The value here is 1 because that reproduces the published sitting, not
+#: because it now agrees with the CLI; the two are free to diverge again and
+#: nothing about this constant follows the flag. So no invocation
 #: here inherits it: `_script` states it, `profile_argv` states it, the koji
 #: recipe takes it as a parameter, and `--check` refuses a shape that pins no
 #: count (`measurements.md`, "The apparatus").
@@ -1734,10 +1737,9 @@ def _script(command: str) -> str:
     timed command's redirection, which deletes the figure and leaves a labelled
     run with no number under it.
 
-    **Every `pgdq` shape states its worker count**, because the CLI's default is
-    the machine's available parallelism and a shape that inherits it measures
-    whatever hardware it ran on -- see `SWEEP_JOBS`. `--check` refuses a shape
-    that pins none."""
+    **Every `pgdq` shape states its worker count**, because a shape that
+    inherits the CLI's default measures whatever that default is on the day --
+    see `SWEEP_JOBS`. `--check` refuses a shape that pins none."""
     q = "time /pgdq"
     j = f"--jobs {SWEEP_JOBS}"
     if command == "parse":
@@ -1874,11 +1876,11 @@ _NO_WORKERS = ("dd",)
 def worker_count_problems() -> list[str]:
     """Command shapes that inherit a worker count instead of stating one.
 
-    The mechanical half of "a worker count is apparatus" (`SWEEP_JOBS`): the
-    CLI's `--jobs` default is the machine's available parallelism, so a shape
-    that pins nothing measures the hardware it ran on and no table can say
-    which arrangement it read. That is how the default moved underneath
-    nineteen figures with no shape changing and nothing noticing."""
+    The mechanical half of "a worker count is apparatus" (`SWEEP_JOBS`): a
+    shape that pins nothing measures whatever the CLI's `--jobs` defaults to
+    that day, and no table can say which arrangement it read. That is how the
+    default moved underneath nineteen figures twice with no shape changing and
+    nothing noticing."""
     return [
         command
         for command in command_shapes()
@@ -5526,9 +5528,9 @@ def cmd_check(doc: Path) -> int:
         print()
     if unpinned:
         print(
-            "Command shapes inheriting a worker count — the CLI's `--jobs` default is this\n"
-            "machine's available parallelism, so a shape that states none measures whatever\n"
-            f"hardware it ran on. State `--jobs {SWEEP_JOBS}`:"
+            "Command shapes inheriting a worker count — a shape that states none measures\n"
+            "whatever the CLI's `--jobs` happens to default to on the day, which has already\n"
+            f"moved twice. State `--jobs {SWEEP_JOBS}`:"
         )
         for command in unpinned:
             print(f"  {command}")

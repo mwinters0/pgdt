@@ -55,10 +55,11 @@ fn query(dump: &Path, table: &str, extra: &[&str]) -> Output {
 /// budgets bracket the read chunk: 1 MiB is one chunk buffer's worth, which is
 /// the pool's one-slot floor, and 512 MiB is more than anything here can use.
 ///
-/// **The reference is `--jobs 1`, not the default**, since `--jobs` now cuts
-/// the replay: an omitted flag is this machine's available parallelism, so a
-/// default reference would compare one partitioned run against another and
-/// pass however the merge ordered them.
+/// **The reference is `--jobs 1` stated, not the default**, since `--jobs` cuts
+/// the replay. The default is 1 today, so the two coincide — but a reference
+/// that inherited it would follow the default wherever it goes next, and a
+/// parallel one would compare one partitioned run against another and pass
+/// however the merge ordered them.
 #[test]
 fn a_query_reads_the_same_rows_at_any_stated_parallelism() {
     let dump = fixture("16/edge_cases/default.sql");

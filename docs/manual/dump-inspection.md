@@ -175,10 +175,10 @@ fit the budget is read a different way — see `--parallel-memory` below.
 The flag exists for a device unlike any of those three. If you have one and
 find a size that beats 1 MiB on it, that is worth reporting.
 
-### `--jobs` and `--parallel-memory`: the ceiling and the budget
+### `--jobs` and `--parallel-memory`: the workers and the budget
 
-`parse` and `query` take two more numbers: a ceiling on how many things pgdq
-does at once, and a bound on what those may hold in memory.
+`parse` and `query` take two more numbers: how many workers to ask for, and a
+bound on what those may hold in memory.
 
 **`--parallel-memory <bytes>` is how much memory pgdq's read buffers may hold,
 and it defaults to 64 MiB.** It is a bound rather than a target: pgdq will not
@@ -197,8 +197,12 @@ have the memory, `--parallel-memory 256000000` buys the block path back. If you
 do not, nothing is wrong — the file reads fine, just with more decoding on
 backward reads.
 
-**`--jobs <n>` is a ceiling on concurrent workers, and it defaults to your
-machine's core count.** `--jobs 1` is the single-threaded path.
+**`--jobs <n>` is how many workers pgdq may ask for, and it defaults to 1** —
+the single-threaded path. Nothing runs in parallel unless you say so.
+
+It states what is asked for rather than what you get: two input shapes admit no
+parallelism at all whatever you set, and a plain file gets fewer workers than
+you named. Both are below.
 
 For `query` it cuts the row reading up: the parts of the file holding the rows
 you asked for are split into at most this many pieces, read at the same time,
@@ -229,10 +233,14 @@ line-anchored statement boundary a second reader could start from, which is
 unfortunate, because it is also the shape that costs the most: about five times
 a `COPY` block's CPU per byte.
 
-A plain (uncompressed) file *is* split, but do not expect much from it: pgdq's
-structure scan of one is already faster than any disk we have measured, so on
-that shape the disk is what you are waiting for and raising `--jobs` moves a
-number that was not the bottleneck.
+A plain (uncompressed) file *is* split, but do not expect much from it, and it
+is the shape where the number you state is not the number you get. pgdq's read
+buffers are pooled four deep on such a file, and a worker needs one to read
+with, so a fifth worker waits for a fourth to finish: above `--jobs 4` you get
+four. That ceiling costs little today, because pgdq's structure scan of a plain
+file is already faster than any disk we have measured — on that shape the disk
+is what you are waiting for, and raising `--jobs` moves a number that was not
+the bottleneck.
 
 ## `info`: reporting what is known
 
