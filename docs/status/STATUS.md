@@ -117,6 +117,13 @@ sizes the constants gave (`POOL_DEPTH` chunk slots at every chunk size the
 register measures) and no registered figure has a compressed input, which is
 where the budget decides anything else
 ([`../design/roadmap-P16.7.1-stated-budget-notes.md`](../design/roadmap-P16.7.1-stated-budget-notes.md)).
+The backpressure slice moved `io.rs` a sixth time — and `scan.rs` and
+`stream.rs` with it — and is likewise **executed by every registered command
+shape**, so reachability does not apply and it is red on its own terms; what
+can be said without an oracle is that no read in this build takes the wait's
+slow path, since every transient loop holds one buffer against a `slots()` of
+at least one, and no read allocates that did not allocate before
+([`../design/roadmap-P16.4.1-backpressure-notes.md`](../design/roadmap-P16.4.1-backpressure-notes.md)).
 **One published number actually moves**, the
 `chunk-size` table's 16 MiB row, which was taken when a chunk that large missed
 the buffer pool; that row is called out where it stands. A stale figure obliges
@@ -178,7 +185,7 @@ anywhere, one read chunk each, and a source that overrides nothing declines to
 advise — nothing consumes any of it yet
 ([`../design/architecture.md`](../design/architecture.md), "Execution model and
 API surface"). A file with no more than one block is **warned about, never refused** (`DiagnosticKind::NonSeekableCompressedSource`, naming `xz -T0` and `--block-size=<size>`). The decoder is a frozen read-only vendored copy of `xz-seek` at `vendor/xz-seek/` (`CLAUDE.local.md`), not a published dependency, since this project is its first consumer and that consumption is what vets the interface. gzip/zstd are not read — `pg_dump -Fp --compress=…` output is unreadable today and is P15's (gzip) and P18's (zstd, lz4) ([`../design/pg-dump-compatibility.md`](../design/pg-dump-compatibility.md)) ([`../design/architecture.md`](../design/architecture.md), "The compressed source") |
-| Caller-stated parallelism | **the value, and the read path's memory budget reads it; no worker scheduler does** — `Parallelism` is `Serial` or `Workers { jobs, memory_bytes }`, mirroring `xz_seek::Bulk::new(workers, budget_bytes)`, with `Serial` the library default and one worker spelled `Serial` rather than as a `Workers` of one, so `--jobs 1` is the serial path as a property of the value. It sits on `ScanOptions` and `QueryOptions` both, and each of the three read loops announces it to the source through a sixth defaulted trait method, `hint_parallelism` — the mapping pass and `scan` from `ScanOptions`, the replay from `QueryOptions`, so a query's two passes are bounded separately. The **bytes** size every pool: `LocalFileSource`'s one free list, and `XzSource`'s two, divided chunks-first so one stated number bounds the source rather than each pool; and they draw the block-decode line, `BLOCK_DECODE_MAX_BYTES`' flat 256 MiB having retired into `BlockCache::affordable`, which is what stops the pool's one-slot floor from making the stated number a fiction. The **jobs** half is the block pool's retention depth, one decoded block per would-be reader, floored at `POOL_DEPTH`; the chunk pool's depth is deliberately untouched by it. `DEFAULT_MEMORY_BUDGET` is 64 MiB — the serial path's number, under which every published figure was taken — so `xz -9 -T0`'s ~192 MiB blocks and `xz --block-size=128MiB` now fall back to the streaming reader where a flat cap took them down the block path over budget; the recourse is `--parallel-memory`, and the fallback is silent by decision ([`../design/architecture.md`](../design/architecture.md), "Execution model and API surface" and "The compressed source"). The CLI states both: `--jobs` (defaulting to available parallelism, `--jobs 1` the serial path) and `--parallel-memory` (defaulting to 64 MiB), zero refused for each ([`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--jobs` and `--parallel-memory`") |
+| Caller-stated parallelism | **the value, and the read path's memory budget reads it; no worker scheduler does** — `Parallelism` is `Serial` or `Workers { jobs, memory_bytes }`, mirroring `xz_seek::Bulk::new(workers, budget_bytes)`, with `Serial` the library default and one worker spelled `Serial` rather than as a `Workers` of one, so `--jobs 1` is the serial path as a property of the value. It sits on `ScanOptions` and `QueryOptions` both, and each of the three read loops announces it to the source through a sixth defaulted trait method, `hint_parallelism` — the mapping pass and `scan` from `ScanOptions`, the replay from `QueryOptions`, so a query's two passes are bounded separately. **The stated bytes are now a ceiling on what is outstanding, not only on what is idle**: `BufferPool::obtain` waits while `slots()` waiting-class buffers are out, and which reads wait is a **seventh** defaulted method, `hint_holder_class` — `scan` and the mapping pass announce `HolderClass::Transient` and may wait, the replay loop announces `Retaining` and allocates past the budget instead, because `RetainedChunks` pins every chunk a batch has taken a view into and the batch then goes to the caller. The charge rides on the buffer rather than on the pool's current class, and is discharged whether or not the ceiling keeps the buffer. So the bound is two terms and only one is the library's: the waiting holders' slots, and what in-flight batches pin ([`../design/architecture.md`](../design/architecture.md), "Execution model and API surface"). The **bytes** size every pool: `LocalFileSource`'s one free list, and `XzSource`'s two, divided chunks-first so one stated number bounds the source rather than each pool; and they draw the block-decode line, `BLOCK_DECODE_MAX_BYTES`' flat 256 MiB having retired into `BlockCache::affordable`, which is what stops the pool's one-slot floor from making the stated number a fiction. The **jobs** half is the block pool's retention depth, one decoded block per would-be reader, floored at `POOL_DEPTH`; the chunk pool's depth is deliberately untouched by it. `DEFAULT_MEMORY_BUDGET` is 64 MiB — the serial path's number, under which every published figure was taken — so `xz -9 -T0`'s ~192 MiB blocks and `xz --block-size=128MiB` now fall back to the streaming reader where a flat cap took them down the block path over budget; the recourse is `--parallel-memory`, and the fallback is silent by decision ([`../design/architecture.md`](../design/architecture.md), "Execution model and API surface" and "The compressed source"). The CLI states both: `--jobs` (defaulting to available parallelism, `--jobs 1` the serial path) and `--parallel-memory` (defaulting to 64 MiB), zero refused for each ([`../manual/dump-inspection.md`](../manual/dump-inspection.md), "`--jobs` and `--parallel-memory`") |
 | Remote input (`--source https://…`), over `object_store` | not started — P14, carved out of P6. `ByteRangeSource` is already shaped against `get_range`/`head`, and there is exactly one implementation: `LocalFileSource` |
 | Python bindings, DataFusion `TableProvider` | not started — P6 |
 | Device-bound scan performance campaign | **complete** — P7, single-threaded throughout and aimed at the row-extraction path; parallelism is P16. Twelve library changes on timed paths, four measured refusals, and the decomposition that is its durable half ([`../design/architecture.md`](../design/architecture.md), "Where a scan's time goes"). Warm on the 3.00 GiB control a typed `pgdq query` is 15.0× the `dd` floor where it was 31×, a `strings` one 10.9× where it was 13.3×, and a `parse` 1.43×; cold on the SATA SSD every scan shape is inside the device, and cold on NVMe the `COPY` path is 1.06× it. What it refused, and why, is beside each mechanism as a rejected alternative |
@@ -330,25 +337,15 @@ are worth, and the orderings that do bind are named in
       being is the pool's slot budget once `16.4.1` makes that budget bound
       what is outstanding. Notes:
       [`../design/roadmap-P16.4-block-pool-notes.md`](../design/roadmap-P16.4-block-pool-notes.md)
-- [ ] **16.4.1** Backpressure — a slot acquisition that waits instead of
-      allocating, one slot per waiting holder, and the exemption stated by
-      **holder class**: a read that will be retained into a batch never waits.
-      **Earned**: the pool cannot tell a holder that retains into a batch from
-      a worker that decodes and discards, so a wait is a deadlock for the
-      first; it lands with the first concurrent consumer because that is what a
-      test needs ([`history/2026-09-07.md`](history/2026-09-07.md), "16.4
-      split: backpressure has no test without a second holder"). **16.5
-      supplied that holder**, and its release-before-acquire frees a slot only
-      on `parse`, where no batch is built
-      ([`../design/roadmap-P16.5-xz-concurrency-notes.md`](../design/roadmap-P16.5-xz-concurrency-notes.md)).
-      The row's option-validation commitment is **withdrawn**: the pair it
-      named was neither necessary nor sufficient, and how many slots are
-      outstanding is a property of consumer code
-      ([`history/2026-09-07.md`](history/2026-09-07.md), "The wait is exempted
-      by holder class, not validated by an option pair"). **Not started; its
-      two waits are over** — 16.5 supplied the second holder and 16.7.1 gave
-      the pool a budget of the caller's to wait on, so what is left is the wait
-      itself and the holder-class exemption.
+- [x] **16.4.1** Backpressure — `BufferPool::obtain` waits while `slots()`
+      waiting-class buffers are out, the buffer carries the charge, and the
+      exemption is stated by **holder class** through a seventh defaulted
+      method, `hint_holder_class`: `scan` and the mapping pass announce
+      `Transient` and may wait, the replay loop announces `Retaining` and never
+      does. The row's option-validation commitment was **withdrawn** before the
+      slice ([`history/2026-09-07.md`](history/2026-09-07.md), "The wait is
+      exempted by holder class, not validated by an option pair"). Notes:
+      [`../design/roadmap-P16.4.1-backpressure-notes.md`](../design/roadmap-P16.4.1-backpressure-notes.md)
 - [x] **16.5** `XzSource` internally concurrent — a read decodes the blocks it
       lands in, into a second `BufferPool` of its own, with the reader's mutex
       held to *name* a `BlockTask` and never across a decode; a read inside one
@@ -546,4 +543,22 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-Nothing open.
+- **The serial `scan` and mapping loops announce the *waiting* class, rather
+  than every loop in this build staying exempt until a scheduler exists.** The
+  decision is which loops carry `HolderClass::Transient`. Announcing it on the
+  two discard loops is what makes the bound reachable and testable today — the
+  wait is exercised against real contention rather than only asserted not to
+  have blocked — and it is what the spec row's "a read that will be retained
+  into a batch never waits" implies by exclusion. What it costs is that a
+  hang-shaped failure mode now sits on the hottest read path in the build: if
+  any transient loop ever holds two reads alive at once against a one-slot
+  pool, it blocks forever instead of allocating. Nothing today does — each
+  chunk is dropped at the end of its iteration, the carry copies what it keeps,
+  and `map::attach_text` holds one coalesced read at a time — and
+  `tests/holder_class.rs` pins which loop announces what, but no check can pin
+  the one-buffer discipline itself. Reconsidering it would mean announcing
+  `Retaining` from all three loops and letting `16.10`'s worker be the first
+  transient holder: the mechanism, the exemption and the tests all stand
+  unchanged, and what is lost is that nothing in the shipped build would
+  exercise the wait
+  ([`../design/roadmap-P16.4.1-backpressure-notes.md`](../design/roadmap-P16.4.1-backpressure-notes.md)).

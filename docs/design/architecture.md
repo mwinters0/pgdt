@@ -153,7 +153,7 @@ which is what the CLI holds. Worth knowing when a similar rework is costed
 elsewhere: the two forms are not a matter of taste, and which one is needed is
 decided by whether anything constructs a source it cannot name.
 
-**Three of the six defaulted methods exist for a source the local file is
+**Three of the seven defaulted methods exist for a source the local file is
 not.** `stored_size()` is the bytes as stored on the device where `size()` is
 the addressable length — equal for a plain file, divergent for a decompressing
 one, and it is what the cache's staleness check reads, so that check stays a
@@ -164,9 +164,10 @@ that cannot answer exactly (gzip's `ISIZE` is useless above 4 GiB, zstd's frame
 content size is optional), added in the pass that reshaped these signatures
 because a later pass would have had to touch them all again for one bool.
 `seek_table()` hands a compressed source's block index to the cache without the
-cache knowing what kind of source it holds. The other three are answered by
-every source: `hint_read_size` and `hint_parallelism` are about the caller
-rather than the source and are described below, and `partitions` is next.
+cache knowing what kind of source it holds. The other four are answered by
+every source: `hint_read_size`, `hint_parallelism` and `hint_holder_class` are
+about the caller rather than the source and are described below, and
+`partitions` is next.
 
 **A source advises its own partitioning, and the layer above never learns what
 is underneath.** `partitions(range)` answers a `Partitioning` — where this
@@ -325,71 +326,102 @@ chunk size the read-chunk sweep measured, so every published figure was taken
 under it and stays under it. What it costs is named where it bites, at the
 block-decode line below.
 
-*Rejected:* **backpressure — a `take` that waits for a free slot instead of
-allocating.** It is what turns the slot count into a bound on what is
-*outstanding* rather than only on what is idle, and the parallel design wants
-it; it is not here because the pool cannot tell its two kinds of holder apart.
-A holder that **retains into a batch** holds every slot it has taken a view
-into until that batch flushes — `(max_source_span / chunk) + 1` chunk buffers
-for the serial reader, 65 at the defaults and unbounded under
-`max_source_span: None`; on a block-shaped source the same span is three or
-four whole decoded blocks against a pool of two ("The compressed source"). A
-worker that **decodes and discards** holds exactly one slot. A wait is
-backpressure for the second and a deadlock for the first, and nothing in a
-`take` call says which is calling.
+**Backpressure is what turns the slot count into a bound on what is
+*outstanding* rather than only on what is idle**, and it is the caller's class
+that decides whether an acquisition waits. `BufferPool::obtain` blocks while
+`slots()` waiting-class buffers are already out, and the buffer it hands back
+carries the charge, so the matching release cannot be lost to a class announced
+in between. The unwaiting take underneath it is what the exempt class gets.
 
-**The exemption is what would make a wait safe, and it is stated by holder
-class rather than by a caller's settings.** A read that will be retained into a
-batch never waits; it allocates past the budget exactly as the `take` above
-does. The failing configuration is otherwise `Parallelism::Serial` at both
-defaults, not an exotic one: one serial query over a 24 MiB-block `.xz` pins
-three or four block slots against the two a 64 MiB budget affords, so a wait
-applied to that holder hangs with no worker in the picture and no `None` in
-sight.
+**The two kinds of holder are not distinguishable from inside the pool, so the
+caller states which it is.** A holder that **retains into a batch** holds every
+slot it has taken a view into until that batch flushes —
+`(max_source_span / chunk) + 1` chunk buffers for the serial replay loop, 65 at
+the defaults and unbounded under `max_source_span: None`; on a block-shaped
+source the same span is three or four whole decoded blocks against a pool of
+two ("The compressed source"). A holder that **reads, consumes and drops**
+holds exactly one. A wait is backpressure for the second and a deadlock for the
+first — the only task that could free the slot would be the one waiting on it —
+and nothing in a `read_range` call says which is calling.
 
-**No option validation can stand in for that exemption, because the library
-does not hold the holder.** `TableStream` yields its `RecordBatch`es to the
-caller, and a `Utf8View` batch carries the block views its columns were built
-on — so a consumer that collects every batch pins every block the query
-touched, and one that drops each batch before pulling the next pins one
-batch's worth. How many slots are outstanding is a property of consumer code,
-which no pair of option values predicts. *Rejected: an option-validation error
-refusing `max_source_span: None` together with a non-`Serial` `Parallelism`.*
-It was derived while the chunk pool was the only pool, and the block pool moved
-the failure out from under it: the pair it names is neither necessary — the
-default finite span hangs — nor sufficient — a `None` span with a consumer that
-drops each batch does not. A check that is right in neither direction costs
-more than no check, because it reads as proof that the configuration is safe.
+**So the exemption is stated by holder class, through a seventh defaulted
+method.** `hint_holder_class(HolderClass)` is announced once per read loop,
+beside the chunk size and the budget, and it is the same shape one-off-ness
+takes below and for the same reason. `HolderClass::Retaining` never waits: it
+allocates past the budget exactly as every read did before the class existed,
+which is also the default, so a source nobody announces to is unchanged.
+`HolderClass::Transient` waits. The three read loops split two to one — `scan`
+and the mapping pass are transient, since the carry copies what it keeps and an
+`Event` borrows only for the callback, and the replay loop is retaining,
+because `batch::RetainedChunks` pins every chunk a batch has taken a view into
+and the batch then goes to the caller.
 
-**A caller-set budget therefore bounds the workers, and what a batch pins is
-stated beside it rather than folded in.** The bound has two terms: the waiting
-holders' slots, which is a ceiling the library sets, and what in-flight batches
-pin — `max_source_span` rounded out to the retained unit, times however many
-batches the caller keeps — which is not. Two honest terms beat one term that
-quietly assumes the second away.
+**Announcing the transient class is a promise about the loop, not a request.**
+A loop that keeps two reads alive at once against a one-slot pool blocks
+forever, so the discipline is *one slot per waiting holder* and it is a
+property of the caller, like one-off-ness is. Where two pools serve one loop
+the acquisition order is fixed as well: a read that needs both takes the chunk
+slot first and the block slot inside it, never the other way round, so two
+waiting readers cannot hold each other's next slot.
 
-**What defers it is testability rather than the absence of a consumer**, which
-is a weaker claim than it looks: `ByteRangeSource::partitions` has landed with
-no consumer at all, and it is fine because a pure function's whole contract is
-its return value. A blocking acquire has no behaviour except its interaction
-with holders, so with only the exempt holder in the tree the strongest
-assertion available is "it did not block" — precisely what the non-waiting
-`take` above already guarantees. The wait therefore arrives with the first
-holder that decodes and discards, and with the discipline that makes it safe:
-one slot per *waiting* holder.
+**The failing configuration without the exemption would be
+`Parallelism::Serial` at both defaults, not an exotic one**: one serial query
+over a 24 MiB-block `.xz` pins three or four block slots against the two a
+64 MiB budget affords, so a wait applied to that holder hangs with no worker in
+the picture and no `None` in sight.
 
-**The block pool is a second holder already, and its release-before-acquire is
-not the discipline it looks like.** `XzSource`'s retained blocks ("The
-compressed source") sit in a pool of their own and can occupy every slot in it,
-and the retention does **release before it acquires**: eviction runs down to
-one below the slot count and then takes. On `parse` that is enough, because no
-batch is built and the cache's own reference is the only one — the buffer a
-decode is about to want is one it has already given up. On a query it frees
-nothing. The drain drops the cache's reference while the batch's views keep the
-buffer outstanding, so the block pool's holder and the batch-building holder
-are the same slots counted twice. Release-before-acquire is therefore a
-property of the `parse` shape rather than of the pool, and what makes a wait
-safe on both shapes is the batch-class exemption above.
+**No option validation can stand in for the exemption, because the library does
+not hold the holder.** `TableStream` yields its `RecordBatch`es to the caller,
+and a `Utf8View` batch carries the block views its columns were built on — so a
+consumer that collects every batch pins every block the query touched, and one
+that drops each batch before pulling the next pins one batch's worth. How many
+slots are outstanding is a property of consumer code, which no pair of option
+values predicts. *Rejected: an option-validation error refusing
+`max_source_span: None` together with a non-`Serial` `Parallelism`.* It was
+derived while the chunk pool was the only pool, and the block pool moved the
+failure out from under it: the pair it names is neither necessary — the default
+finite span hangs — nor sufficient — a `None` span with a consumer that drops
+each batch does not. A check that is right in neither direction costs more than
+no check, because it reads as proof that the configuration is safe.
+
+**A caller-set budget therefore bounds the waiting holders, and what a batch
+pins is stated beside it rather than folded in.** The bound has two terms: the
+waiting holders' slots, which is a ceiling the library sets and the only one
+`PoolState::charged` counts, and what in-flight batches pin — `max_source_span`
+rounded out to the retained unit, times however many batches the caller keeps —
+which is not. Two honest terms beat one term that quietly assumes the second
+away. *Rejected: counting every outstanding buffer against the ceiling.* It
+states one number instead of two, and it makes the exempt class able to block
+the waiting one — which is the deadlock read back in through the counter after
+the exemption removed it from the wait.
+
+*Rejected: discharging a slot only where the released buffer is kept.* The
+ceiling refuses a buffer above `POOL_MAX_BYTES` that nobody announced, and a
+charge tied to the keep would leak one slot per refused release until every
+transient reader blocked. The charge is discharged the moment its holder lets
+go, whether the buffer is pooled or dropped.
+
+**A wait was not landable before its second holder existed**, which is why this
+is not in the change that made the pool block-capable:
+`ByteRangeSource::partitions` landed with no consumer at all and that was fine,
+because a pure function's whole contract is its return value, where a blocking
+acquire has no behaviour except its interaction with holders. With only the
+exempt holder in the tree the strongest available assertion is "it did not
+block", which the unwaiting take already guaranteed. The test that buys the
+mechanism is two threads against a one-slot pool.
+
+**The block pool's release-before-acquire is not a second discipline, it is a
+property of the `parse` shape.** `XzSource`'s retained blocks ("The compressed
+source") sit in a pool of their own and can occupy every slot in it, and the
+retention does release before it acquires: eviction runs down to one below the
+slot count and then takes. On `parse` that is enough, because no batch is built
+and the cache's own reference is the only one — the buffer a decode is about to
+want is one it has already given up, so a transient loop's block decode never
+actually waits. On a query it frees nothing: the drain drops the cache's
+reference while the batch's views keep the buffer outstanding, so the block
+pool's holder and the batch-building holder are the same slots counted twice.
+That shape is a query, and a query's replay announces the exempt class, so the
+two facts meet rather than collide.
 
 **One-off-ness is a property of the caller, so the caller says it.**
 `ByteRangeSource::hint_read_size` is a third, advisory method — defaulted to
@@ -626,6 +658,13 @@ together rather than each separately. Measured on the 3.00 GiB `.xz` control
 streaming form held 16.2 MiB, which is the pool's two slots, and the two runs
 produce byte-identical caches. *Rejected:* a retained set with a bound of its
 own — two numbers for one bound, which is what the byte budget replaced.
+
+**Evicting before acquiring is also what lets this holder wait.** A transient
+read loop holds no decoded block of its own between reads, so the drain to
+`slots - 1` leaves the slot the decode is about to take and the pool's wait
+never fires ("Execution model and API surface"). A retaining loop's batch keeps
+those buffers outstanding past the drain — which is why that class does not
+wait at all, rather than why the order matters.
 
 **A retained chunk pins the whole block it views, so `parse` is the shape that
 holds least.** `pgdq parse` builds no batches, so `RetainedChunks` never runs
@@ -3370,10 +3409,12 @@ block pool's slot budget — `slots × (decoded block + dictionary)`, one slot p
 worker — and the pool that budget belongs to now exists and holds the decoded
 blocks ("The compressed source"): a serial `parse` of the 3.00 GiB `.xz`
 control reads **64.7 MiB** resident, which is that budget's two 24 MiB slots
-plus what a plain scan holds. It is a bound on what is *retained* and not yet on
-what is outstanding, because `BufferPool` still allocates on a miss rather than
-waiting. Until that lands the number is a steady state rather than a ceiling,
-which is what a `parallel-peak-rss` figure would be measuring against.
+plus what a plain scan holds. It is a ceiling for the loops that announce
+`HolderClass::Transient` — `scan` and the mapping pass, whose acquisitions wait
+rather than allocate past it ("Execution model and API surface") — and a steady
+state for the replay loop, which is exempt because it pins chunks into batches.
+So the number a `parallel-peak-rss` figure measures against is a ceiling on a
+`parse` and two terms on a `query`.
 
 *Rejected: compacting the batch's views once selectivity drops below a
 threshold.* It admits an unbounded peak before the threshold trips, and it

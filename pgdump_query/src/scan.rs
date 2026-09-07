@@ -26,7 +26,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use bytes::Bytes;
 
 use crate::copy::{CopyHeader, is_terminator, parse_copy_header, scan_dollar_quotes};
-use crate::io::{ByteRangeSource, Parallelism};
+use crate::io::{ByteRangeSource, HolderClass, Parallelism};
 use crate::{Error, Result};
 
 /// The start of a COPY data block.
@@ -568,6 +568,12 @@ where
     // to keep them inside (`ByteRangeSource::hint_parallelism`).
     source.hint_read_size(options.chunk_size);
     source.hint_parallelism(options.parallelism);
+    // **This loop consumes each chunk before it reads the next**, so its reads
+    // may wait for a pooled slot rather than allocating past that budget
+    // (`ByteRangeSource::hint_holder_class`). Nothing here outlives the
+    // iteration that read it: the carry copies what it keeps, and an `Event`
+    // borrows only for the callback.
+    source.hint_holder_class(HolderClass::Transient);
     let mut scanner = CopyScanner::new();
     let mut carry = ChunkCarry::new();
     let mut read_pos = 0u64;
