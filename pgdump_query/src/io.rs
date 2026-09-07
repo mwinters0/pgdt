@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::num::NonZeroUsize;
 use std::ops::Range;
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
@@ -197,6 +198,74 @@ impl Partitioning {
             PartitionBoundaries::Anywhere => None,
             PartitionBoundaries::At(offsets) => Some(offsets.len() + 1),
         }
+    }
+}
+
+/// How much concurrency a caller allows a scan or a query, and how much
+/// memory that concurrency may hold
+/// (`docs/design/architecture.md`, "Execution model and API surface").
+///
+/// **The library defaults to [`Parallelism::Serial`]**, which is the serial
+/// code path this build has and not a pool of one: an embeddable component
+/// does not spawn threads by surprise, so parallelism is opted into. The CLI
+/// makes the opposite default, being a program a person ran on purpose.
+///
+/// **Two numbers, and whichever binds first wins**, mirroring
+/// `xz_seek::Bulk::new(workers, budget_bytes)` — which is the interface a
+/// compressed source's decode is ultimately planned against, so the surface a
+/// caller states it in is the same shape. Neither is defaulted inside
+/// [`Parallelism::Workers`]: the right worker count is a property of the
+/// caller's device and build, and bytes are the only one of the two that can
+/// be promised to a memory cgroup.
+///
+/// **`Serial` is a state, not the number one.** One worker and the serial path
+/// are the same execution, so [`Parallelism::workers`] answers `Serial` for a
+/// count of one rather than building a degenerate `Workers` nobody can tell
+/// from it — which is what keeps "is this parallel" a match on the value
+/// instead of a comparison against a magic number.
+///
+/// **Nothing reads this yet.** It is the surface the caller states its budget
+/// in; the mechanisms that read it are the pool budget and the worker
+/// scheduler, neither of which is in this build
+/// (`docs/design/architecture.md`, "Execution model and API surface").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Parallelism {
+    /// The serial code path: one thread, reading in file order.
+    #[default]
+    Serial,
+    /// At most `jobs` concurrent workers, holding at most `memory_bytes`
+    /// between them.
+    Workers {
+        /// The ceiling on concurrent workers — a ceiling rather than a
+        /// request, since three input shapes admit no parallelism at all
+        /// (`docs/design/roadmap-P16-parallel-scan.md`, "`--jobs` is a
+        /// ceiling, not a request").
+        jobs: NonZeroUsize,
+        /// What those workers may hold resident between them, in bytes. This
+        /// is the number a memory cgroup is denominated in, and the one a
+        /// worker count cannot be promised to: the same count is 192 MiB on a
+        /// file of 24 MiB blocks and 1 GiB on a file of 128 MiB ones.
+        memory_bytes: u64,
+    },
+}
+
+impl Parallelism {
+    /// `jobs` workers inside `memory_bytes`, or [`Parallelism::Serial`] where
+    /// `jobs` is one or zero.
+    ///
+    /// Zero reads as one rather than as an error, exactly as
+    /// `xz_seek::Bulk::new` reads it: it is a shape a caller's own arithmetic
+    /// produces, and an error would only make them do that arithmetic twice.
+    pub fn workers(jobs: usize, memory_bytes: u64) -> Self {
+        match NonZeroUsize::new(jobs) {
+            Some(jobs) if jobs.get() > 1 => Self::Workers { jobs, memory_bytes },
+            _ => Self::Serial,
+        }
+    }
+
+    /// Whether this is the serial path.
+    pub fn is_serial(&self) -> bool {
+        matches!(self, Self::Serial)
     }
 }
 
@@ -1257,6 +1326,33 @@ mod tests {
         source.hint_read_size(chunk);
         source.pool.give(vec![0u8; chunk]);
         assert_eq!(source.pool.free.lock().unwrap().len(), 1);
+    }
+
+    /// The library's own default is the serial path, and it is that on both
+    /// option structs — an embeddable component does not spawn threads by
+    /// surprise, so parallelism is opted into
+    /// (`docs/design/architecture.md`, "Execution model and API surface").
+    #[test]
+    fn the_library_defaults_to_serial() {
+        assert_eq!(Parallelism::default(), Parallelism::Serial);
+        assert!(crate::scan::ScanOptions::default().parallelism.is_serial());
+        assert!(crate::batch::QueryOptions::default().parallelism.is_serial());
+    }
+
+    /// One worker **is** the serial path, so it is spelled that way rather
+    /// than as a `Workers` of one nobody can tell from it; zero is a caller's
+    /// own arithmetic and reads as one, exactly as `xz_seek::Bulk::new` reads
+    /// it.
+    #[test]
+    fn one_worker_and_none_are_both_the_serial_state() {
+        assert_eq!(Parallelism::workers(0, 512 << 20), Parallelism::Serial);
+        assert_eq!(Parallelism::workers(1, 512 << 20), Parallelism::Serial);
+        let eight = Parallelism::workers(8, 512 << 20);
+        assert!(!eight.is_serial());
+        assert_eq!(
+            eight,
+            Parallelism::Workers { jobs: NonZeroUsize::new(8).unwrap(), memory_bytes: 512 << 20 }
+        );
     }
 
     /// The pool holds `POOL_DEPTH` buffers and no more, and a take picks the

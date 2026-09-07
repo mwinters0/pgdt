@@ -542,17 +542,19 @@ free number rather than being inserted.
 **The orderings that bind regardless of what the evidence says:** 16.1 and 16.2
 first; **16.3 before 16.4**, so the pinning rework happens in one layer rather
 than straddling two; **16.4 before 16.5, 16.8 and 16.10**, all three of which
-run N readers; **16.5 before 16.10**, which depends on it; **16.7 before 16.9**;
-**16.10 before 16.12**. **16.4.1 lands with or after the first of 16.5 and
-16.10**, whichever runs first, since a wait with no second holder is a
-deadlock rather than a bound — **and after 16.7**, which is a second binding
+run N readers; **16.5 before 16.10**, which depends on it; **16.7 before
+16.7.1**, which reads the value it defines; **16.7.1 before 16.9**, which needs
+the flags; **16.10 before 16.12**. **16.4.1 lands with or after the first of
+16.5 and 16.10**, whichever runs first, since a wait with no second holder is a
+deadlock rather than a bound — **and after 16.7.1**, which is a second binding
 found while 16.6 was being written
 ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "16.4.1
 waits on 16.7"): a wait has no number to wait on until a caller states a
-budget, so wired to today's constant it would be a wait on the serial path's
-number. The condition that once also named `Parallelism` is gone — the
-exemption is by holder class (this document's `16.4.1` row) — but the budget
-binding stands on its own.
+budget *and the pool reads it*, so wired to today's constant it would be a wait
+on the serial path's number, and against a value nothing consumes it would be a
+wait on a number that never arrives. The condition that once also named
+`Parallelism` is gone — the exemption is by holder class (this document's
+`16.4.1` row) — but the budget binding stands on its own.
 
 ### Evidence
 
@@ -570,7 +572,8 @@ binding stands on its own.
 | **16.4.1** | **Backpressure** — a slot acquisition that waits for a free slot instead of allocating, which is what turns the slot count into a bound on what is outstanding. **Earned, not planned** ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "16.4 split: backpressure has no test without a second holder"): the pool cannot tell a serial reader legitimately holding `(max_source_span / chunk) + 1` buffers — unbounded under `max_source_span: None` — from a worker holding one slot, so a wait is backpressure for the second and a deadlock for the first. The **exemption** is what makes a wait safe, not the budget: at the defaults the serial reader reaches 65 MiB against a 64 MiB budget, and under `None` no finite budget is above its reach. It lands with the first concurrent consumer because that is what a test needs — a blocking acquire has no behaviour except its interaction with holders, and against the exempt holder alone the strongest assertion is "it did not block", which the non-waiting `take` already guarantees. Two commitments come with it, and the second replaced an option-validation error the block pool made unsound ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "The wait is exempted by holder class, not validated by an option pair"): **one slot per waiting holder**, and the exemption stated by **holder class** — a read that will be retained into a batch never waits, whatever `Parallelism` and `max_source_span` say, because the batch is yielded to the caller and how many slots are outstanding is then a property of consumer code. The stated bound is two terms: the waiting holders' slots, and what in-flight batches pin. |
 | **16.5** | **`XzSource` internally concurrent** — the single `xz_seek::Reader` behind a `std::sync::Mutex` gives way to per-call block decode over a shared immutable `SeekTable` and the block pool, so concurrent `read_range` calls genuinely run concurrently. The block decoder gets a **pool of its own**, not a second unit announced into the chunk pool ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "16.5 takes a second pool, because a pool describes one unit"): `BufferPool::hinted` is one atomic driving both `keeps()` and `slot_bytes()`, so a single pool serving two units drops every block on release at the chunk length, or takes the chunk path's pooling away at the block length. |
 | **16.6** | **`ByteRangeSource::partitions`** — the defaulted partitioning advisory, with `LocalFileSource`'s and `XzSource`'s answers and their per-partition footprints. `XzSource` has **two** answers, read off the read path it took rather than off the seek table: block boundaries where it block-decodes, and **one partition** where it fell back to the streaming reader, whose restart-and-discard positioning makes N workers worse than serial. No consumer yet. |
-| **16.7** | **The `Parallelism` surface** — the library enum defaulting to `Serial`, its `ScanOptions`/`QueryOptions` wiring, and the CLI's `--jobs` / `--parallel-memory`. Includes the manual page: the degradation curve, and the one sentence saying why an `INSERT` run cannot be parallelized. **`BLOCK_DECODE_MAX_BYTES` becomes a consequence of the stated budget rather than a constant beside it**: the 256 MiB cap and `POOL_BUDGET_BYTES` are unrelated numbers today, and the latter is not a bound above its own slot size, since `BufferPool::slots` clamps to at least one. A file with more than one block is seekable for a client willing to allocate a block, so what the cap declines is memory — and the budget is where a caller says how much of it they have ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "The block-decode cap declines memory, not seekability"). |
+| **16.7** | **The `Parallelism` value** — the library enum defaulting to `Serial`, with `Workers { jobs, memory_bytes }` mirroring `xz_seek::Bulk::new(workers, budget_bytes)` and one worker spelled as `Serial` rather than as a `Workers` of one, and its `ScanOptions`/`QueryOptions` wiring. No consumer: the surface is where a caller states the two numbers, and both mechanisms that read them are `16.7.1`'s. |
+| **16.7.1** | **What the stated budget decides, and the flags that state it** — `POOL_BUDGET_BYTES` and the block pool's depth become the caller's numbers, **`BLOCK_DECODE_MAX_BYTES` becomes a consequence of the stated budget rather than a constant beside it** (the 256 MiB cap and the 64 MiB budget are unrelated numbers today, and the latter is not a bound above its own slot size, since `BufferPool::slots` clamps to at least one; a file with more than one block is seekable for a client willing to allocate a block, so what the cap declines is memory — and the budget is where a caller says how much of it they have, [`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "The block-decode cap declines memory, not seekability"), and the CLI's `--jobs` / `--parallel-memory` with the manual page: the degradation curve, and the one sentence saying why an `INSERT` run cannot be parallelized. **Earned, not planned** ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "16.7 split: a value, then what reads it"): the row paired a value with a rework of the two pools every timed path runs through, and the flags are only honest once the number they state changes something. |
 | **16.8** | **Partitioned replay** — `TableStream` splits into N sub-streams over a complete map, each internally in file order, for a plain source and a compressed one alike. |
 | **16.9** | **The CLI's k-way merge** on source offset, holding one batch per partition, so `pgdq query` keeps file order at N × batch rather than an open-ended reorder buffer. |
 | **16.10** | **The leader** — opens a `COPY` region, hands its LF-split interior to fused decode-and-parse workers, and merges census, row counts and spans at `CopyEnd`. Adds a "Relied on by" line to I7 and I15, which are what make LF-splitting sound. |
@@ -589,3 +592,13 @@ predict.** The row paired a sizing change with a *bound*, and a bound is only
 reviewable against the holders it bounds — which is a different seam from the
 mechanism/evidence one the process names, and one that only shows up once a
 slice is being written.
+
+**16.7 earned the second, at the seam between a value and what reads it.** The
+row paired a plain enum with a rework of the two buffer pools every timed path
+runs through, and the rework turns on a choice this document does not make —
+whether the default budget stays where `POOL_BUDGET_BYTES` is, and a large-block
+`.xz` therefore falls back to streaming, or rises to where the cap is, and every
+compressed scan retains more. Both are visible only once the derivation is being
+written. The CLI flags follow the rework rather than the value, because a flag
+whose number changes nothing is surface that lies to a user, where an option
+field documented as unread is not.

@@ -202,6 +202,40 @@ names 8 MiB a worker as the practical allowance. A caller budgeting workers adds
 both; a number that silently guessed a dictionary size would be wrong by 8× on a
 `-9` file.
 
+**`Parallelism` is the caller's half of that same question**, and it sits on
+both option structs: `ScanOptions::parallelism` and `QueryOptions::parallelism`,
+because a query runs a mapping scan and a replay and the two split differently.
+It is a two-state enum — `Serial`, or `Workers { jobs, memory_bytes }` — and
+**the library defaults to `Serial`**, which is the serial code path this build
+has rather than a pool of one: an embeddable component does not spawn threads by
+surprise, so parallelism is opted into ([`roadmap.md`](roadmap.md), "Project
+goals"). The CLI makes the opposite default, being a program a person ran on
+purpose.
+
+**Two numbers, whichever binds first, mirroring
+`xz_seek::Bulk::new(workers, budget_bytes)`** — the interface a compressed
+source's decode is ultimately planned against, so the surface a caller states it
+in has the same shape. Neither is defaulted inside `Workers`: the right worker
+count is a property of the caller's device and build, which this library cannot
+see, and bytes are the only one of the two that can be promised to a memory
+cgroup, where the same count is 192 MiB on a file of 24 MiB blocks and 1 GiB on
+a file of 128 MiB ones.
+
+**`Serial` is a state, not the number one.** One worker and the serial path are
+the same execution, so `Parallelism::workers(1, …)` answers `Serial` rather than
+building a degenerate `Workers` nobody can tell from it; zero reads as one, the
+way `Bulk::new` reads it, because it is a shape a caller's own arithmetic
+produces. That is what keeps "is this parallel" a match on the value instead of
+a comparison against a magic number, and it is what makes `--jobs 1` the serial
+path as a property of the value rather than of the CLI.
+
+**Nothing reads it yet, and that is the honest state of the surface**, in the
+same sense `size_is_exact` is carried and unread. The two mechanisms that
+consume it are the read path's memory budget — where the stated bytes replace
+`POOL_BUDGET_BYTES` and the block-decode cap retires into them ("The compressed
+source") — and the worker scheduler; neither is in this build, so a caller that
+sets the field gets the serial path, which is what leaving it alone gives.
+
 **The local backend pools its read buffers, and the trait shape is why.**
 `read_range` returns owned `Bytes` because `get_range` does, so the obvious
 implementation allocates one buffer per chunk — and `vec![0u8; len]` is

@@ -45,7 +45,7 @@ use bytes::Bytes;
 use crate::cache::CacheMode;
 use crate::copy::{CopyHeader, RawRow, RowSplit};
 use crate::decode;
-use crate::io::ByteRangeSource;
+use crate::io::{ByteRangeSource, Parallelism};
 use crate::nested::{self, RangeLiteral};
 use crate::pgtype::NestedPlan;
 use crate::predicate::Expr;
@@ -129,6 +129,15 @@ pub struct QueryOptions {
     /// How far a query's mapping scan walks before it starts returning rows
     /// — see [`ScanExtent`].
     pub scan_extent: ScanExtent,
+    /// How much concurrency this query may use, and what it may hold while it
+    /// does — [`Parallelism::Serial`] by default, and stated here as well as
+    /// on [`ScanOptions`] because a query runs two passes with different
+    /// shapes: a mapping scan, and a replay this phase splits into partitions
+    /// (`docs/design/architecture.md`, "Execution model and API surface").
+    ///
+    /// **Nothing reads it yet.** The scheduler that would is not in this
+    /// build, so a caller that sets it gets the serial path.
+    pub parallelism: Parallelism,
 }
 
 impl Default for QueryOptions {
@@ -142,6 +151,7 @@ impl Default for QueryOptions {
             schema_mode: SchemaMode::default(),
             database: None,
             scan_extent: ScanExtent::default(),
+            parallelism: Parallelism::default(),
         }
     }
 }

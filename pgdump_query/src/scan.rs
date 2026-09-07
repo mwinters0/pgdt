@@ -26,7 +26,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use bytes::Bytes;
 
 use crate::copy::{CopyHeader, is_terminator, parse_copy_header, scan_dollar_quotes};
-use crate::io::ByteRangeSource;
+use crate::io::{ByteRangeSource, Parallelism};
 use crate::{Error, Result};
 
 /// The start of a COPY data block.
@@ -511,11 +511,28 @@ pub struct ScanOptions {
     /// stopping there would be indistinguishable from reaching EOF and would
     /// silently truncate the index they return.
     pub cancel: Option<Arc<AtomicBool>>,
+    /// How much concurrency this scan may use, and what it may hold while it
+    /// does — [`Parallelism::Serial`] by default, which is the serial code
+    /// path this build has rather than a pool of one
+    /// (`docs/design/architecture.md`, "Execution model and API surface").
+    ///
+    /// **Nothing reads it yet**, in the same sense
+    /// [`crate::ByteRangeSource::size_is_exact`] is not read: the surface is
+    /// where a caller states the two numbers, and the mechanisms that consume
+    /// them — the read path's memory budget and the worker scheduler — are not
+    /// in this build. A caller that sets it gets the serial path, which is
+    /// what it would have got by leaving it alone.
+    pub parallelism: Parallelism,
 }
 
 impl Default for ScanOptions {
     fn default() -> Self {
-        Self { chunk_size: DEFAULT_CHUNK_SIZE, max_line_bytes: 64 << 20, cancel: None }
+        Self {
+            chunk_size: DEFAULT_CHUNK_SIZE,
+            max_line_bytes: 64 << 20,
+            cancel: None,
+            parallelism: Parallelism::default(),
+        }
     }
 }
 

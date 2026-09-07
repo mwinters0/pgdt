@@ -170,6 +170,7 @@ anywhere, one read chunk each, and a source that overrides nothing declines to
 advise — nothing consumes any of it yet
 ([`../design/architecture.md`](../design/architecture.md), "Execution model and
 API surface"). A file with no more than one block is **warned about, never refused** (`DiagnosticKind::NonSeekableCompressedSource`, naming `xz -T0` and `--block-size=<size>`). The decoder is a frozen read-only vendored copy of `xz-seek` at `vendor/xz-seek/` (`CLAUDE.local.md`), not a published dependency, since this project is its first consumer and that consumption is what vets the interface. gzip/zstd are not read — `pg_dump -Fp --compress=…` output is unreadable today and is P15's (gzip) and P18's (zstd, lz4) ([`../design/pg-dump-compatibility.md`](../design/pg-dump-compatibility.md)) ([`../design/architecture.md`](../design/architecture.md), "The compressed source") |
+| Caller-stated parallelism | **the value only, and nothing reads it** — `Parallelism` is `Serial` or `Workers { jobs, memory_bytes }`, mirroring `xz_seek::Bulk::new(workers, budget_bytes)`, with `Serial` the library default and one worker spelled `Serial` rather than as a `Workers` of one, so `--jobs 1` is the serial path as a property of the value. It sits on `ScanOptions` and `QueryOptions` both, a query splitting its mapping scan and its replay differently. The two mechanisms that would consume it — the buffer pools' budget, where the stated bytes replace `POOL_BUDGET_BYTES` and `BLOCK_DECODE_MAX_BYTES` retires into them, and the worker scheduler — are not in this build, so setting either field gets the serial path ([`../design/architecture.md`](../design/architecture.md), "Execution model and API surface") |
 | Remote input (`--source https://…`), over `object_store` | not started — P14, carved out of P6. `ByteRangeSource` is already shaped against `get_range`/`head`, and there is exactly one implementation: `LocalFileSource` |
 | Python bindings, DataFusion `TableProvider` | not started — P6 |
 | Device-bound scan performance campaign | **complete** — P7, single-threaded throughout and aimed at the row-extraction path; parallelism is P16. Twelve library changes on timed paths, four measured refusals, and the decomposition that is its durable half ([`../design/architecture.md`](../design/architecture.md), "Where a scan's time goes"). Warm on the 3.00 GiB control a typed `pgdq query` is 15.0× the `dd` floor where it was 31×, a `strings` one 10.9× where it was 13.3×, and a `parse` 1.43×; cold on the SATA SSD every scan shape is inside the device, and cold on NVMe the `COPY` path is 1.06× it. What it refused, and why, is beside each mechanism as a rejected alternative |
@@ -337,8 +338,9 @@ are worth, and the orderings that do bind are named in
       outstanding is a property of consumer code
       ([`history/2026-09-07.md`](history/2026-09-07.md), "The wait is exempted
       by holder class, not validated by an option pair"). **Not started, and
-      waits on 16.7** for a caller-stated budget to wait against
-      ([`history/2026-09-07.md`](history/2026-09-07.md), "16.4.1 waits on
+      waits on 16.7.1** — 16.7 landed the value a caller states a budget in,
+      but the pool still reads a constant, and a wait needs a budget the *pool*
+      reads ([`history/2026-09-07.md`](history/2026-09-07.md), "16.4.1 waits on
       16.7").
 - [x] **16.5** `XzSource` internally concurrent — a read decodes the blocks it
       lands in, into a second `BufferPool` of its own, with the reader's mutex
@@ -356,9 +358,20 @@ are worth, and the orderings that do bind are named in
       fallback says one partition however many boundaries its table has; the
       default declines to advise. No consumer. Notes:
       [`../design/roadmap-P16.6-partitioning-advisory-notes.md`](../design/roadmap-P16.6-partitioning-advisory-notes.md)
-- [ ] **16.7** The `Parallelism` surface — the library enum defaulting to
-      `Serial`, and the CLI's `--jobs` / `--parallel-memory`, with the manual
-      page.
+- [x] **16.7** The `Parallelism` value — the L1 enum, `Serial` or
+      `Workers { jobs, memory_bytes }`, defaulting to `Serial` and spelling one
+      worker as `Serial` rather than as a `Workers` nobody can tell from it, on
+      `ScanOptions` and `QueryOptions` both. No consumer: nothing reads either
+      field, which the doc comments say. Notes:
+      [`../design/roadmap-P16.7-parallelism-surface-notes.md`](../design/roadmap-P16.7-parallelism-surface-notes.md)
+- [ ] **16.7.1** What the stated budget decides, and the flags that state it —
+      `POOL_BUDGET_BYTES` and the block pool's depth become the caller's
+      numbers, `BLOCK_DECODE_MAX_BYTES` retires into them, and the CLI gains
+      `--jobs` / `--parallel-memory` with the manual page. **Earned**: the row
+      paired a value with a rework of the two pools every timed path runs
+      through, and the derivation turns on a choice with two defensible answers
+      and no free one ([`history/2026-09-07.md`](history/2026-09-07.md),
+      "16.7 split: a value, then what reads it"). Not started.
 - [ ] **16.8** Partitioned replay — `TableStream` splits into N sub-streams
       over a complete map, plain and compressed.
 - [ ] **16.9** The CLI's k-way merge on source offset, one batch per partition.
