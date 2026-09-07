@@ -83,11 +83,13 @@ of the shared block for it
 ([`architecture.md`](architecture.md), "The compressed source"). 16.8 and 16.10
 are what honour it.
 
-**16.4.1 is not the next slice; 16.7 is.** Backpressure names `Parallelism` in
-the condition it validates, has no budget to wait on until a caller states one,
-and — the finding this slice turned up — cannot rest on the block pool's
-release-before-acquire discipline on the query path, where `batch::RetainedChunks`
-holds views into more blocks than the pool has slots. The reasoning is
+**16.4.1 is not the next slice; 16.7 is.** Backpressure has no budget to wait
+on until a caller states one, and — the finding this slice turned up — cannot
+rest on the block pool's release-before-acquire discipline on the query path,
+where `batch::RetainedChunks` holds views into more blocks than the pool has
+slots. The reasoning is
 [`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "16.4.1
 waits on 16.7", and the spec's binding-orderings line now carries the
-dependency.
+dependency. That finding also cost the row its option-validation commitment,
+which the same day's review withdrew (that file, "The wait is exempted by
+holder class, not validated by an option pair").

@@ -322,23 +322,24 @@ are worth, and the orderings that do bind are named in
       what is outstanding. Notes:
       [`../design/roadmap-P16.4-block-pool-notes.md`](../design/roadmap-P16.4-block-pool-notes.md)
 - [ ] **16.4.1** Backpressure — a slot acquisition that waits instead of
-      allocating, one slot per waiting holder, plus an option-validation error
-      when `max_source_span` is `None` and `Parallelism` is not `Serial`.
-      **Earned**: the pool cannot tell a serial reader legitimately holding
-      `(max_source_span / chunk) + 1` buffers from a worker holding one slot,
-      so a wait is a deadlock for the first; it lands with the first concurrent
-      consumer because that is what a test needs
-      ([`history/2026-09-07.md`](history/2026-09-07.md), "16.4 split:
-      backpressure has no test without a second holder"). **16.5 supplied that
-      holder**, and it keeps the discipline in a form 16.4 did not anticipate —
-      release before acquire rather than one slot per holder
+      allocating, one slot per waiting holder, and the exemption stated by
+      **holder class**: a read that will be retained into a batch never waits.
+      **Earned**: the pool cannot tell a holder that retains into a batch from
+      a worker that decodes and discards, so a wait is a deadlock for the
+      first; it lands with the first concurrent consumer because that is what a
+      test needs ([`history/2026-09-07.md`](history/2026-09-07.md), "16.4
+      split: backpressure has no test without a second holder"). **16.5
+      supplied that holder**, and its release-before-acquire frees a slot only
+      on `parse`, where no batch is built
       ([`../design/roadmap-P16.5-xz-concurrency-notes.md`](../design/roadmap-P16.5-xz-concurrency-notes.md)).
-      **Not started, and now waits on 16.7**: this row validates a condition
-      naming `Parallelism`, has no caller-stated budget to wait on, and the
-      block pool's release-before-acquire is not sufficient on the query path,
-      where `batch::RetainedChunks` holds views into more blocks than the pool
-      has slots ([`history/2026-09-07.md`](history/2026-09-07.md), "16.4.1
-      waits on 16.7").
+      The row's option-validation commitment is **withdrawn**: the pair it
+      named was neither necessary nor sufficient, and how many slots are
+      outstanding is a property of consumer code
+      ([`history/2026-09-07.md`](history/2026-09-07.md), "The wait is exempted
+      by holder class, not validated by an option pair"). **Not started, and
+      waits on 16.7** for a caller-stated budget to wait against
+      ([`history/2026-09-07.md`](history/2026-09-07.md), "16.4.1 waits on
+      16.7").
 - [x] **16.5** `XzSource` internally concurrent — a read decodes the blocks it
       lands in, into a second `BufferPool` of its own, with the reader's mutex
       held to *name* a `BlockTask` and never across a decode; a read inside one
@@ -522,21 +523,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **16.4.1 was skipped and 16.6 taken in its place, and the row's validation
-  condition may be the wrong one.** The decision to weigh is whether 16.4.1's
-  option-validation commitment — an error when `max_source_span` is `None` and
-  `Parallelism` is not `Serial` — is still the right check now that the block
-  pool is a holder. The pair it names is a *sufficient* cause of an
-  unsatisfiable budget, not the only one: on the query path
-  `batch::RetainedChunks` holds zero-copy views into whole decoded blocks, so a
-  finite `max_source_span` of 64 MiB already pins roughly four 24 MiB blocks
-  against a block pool of two slots, and a waiting acquire deadlocks there with
-  no `None` in sight. The live relation is between the caller's budget and
-  `max_source_span`, and the `None` case is its degenerate end. Skipping the
-  slice itself needs no answer — the row names `Parallelism`, which is 16.7's,
-  so it could not have been delivered whole
-  ([`history/2026-09-07.md`](history/2026-09-07.md), "16.4.1 waits on 16.7") —
-  but if the condition is to be rewritten, that is a spec edit and belongs
-  before the slice is written rather than inside it. Reconsidering it costs one
-  spec row; leaving it costs a validation that passes while the configuration it
-  was meant to catch still hangs.
+Nothing open.

@@ -80,15 +80,17 @@ already stale on `io.rs`.
 
 ## What the next slice inherits
 
-**16.4.1 now has its second holder.** The block pool is a holder that is not
-the serial reader, and it keeps the discipline a wait needs in a form the notes
-for 16.4 did not anticipate: not *one slot per holder*, but **release before
-acquire**. The retention gives up a slot down to `slots - 1` and then takes, so
-the slot a decode is about to want is one the cache has already freed; a holder
-that frees before it asks can wait without deadlocking whatever else that pool
-serves. Whoever writes the wait should hold the block pool to that property
-rather than to a per-holder count, and the serial chunk reader still needs the
-exemption for the reason 16.4 recorded.
+**16.4.1 now has its second holder, and release-before-acquire is not the
+discipline it looked like.** The block pool is a holder that is not the serial
+reader, and the retention gives up a slot down to `slots - 1` and then takes —
+which is sufficient on `parse`, where no batch is built and the cache's own
+reference is the only one. On a query it frees nothing: the drain drops the
+cache's reference while the batch's views keep the buffer outstanding, so the
+two holders are the same slots counted twice
+([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "The wait
+is exempted by holder class, not validated by an option pair"). What makes a
+wait safe on both shapes is the exemption stated by holder class: a read that
+will be retained into a batch never waits.
 
 **Two concurrent misses on one block decode it twice.** Accepted rather than
 coordinated: an in-flight map would put every reader through a second lock —

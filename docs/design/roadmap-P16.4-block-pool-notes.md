@@ -67,12 +67,13 @@ split: backpressure has no test without a second holder"):
   its reach deadlocks, and under `max_source_span: None` no finite budget is
   above it. Design the exemption first; the budget is a knob on the holders
   that do wait.
-- **`max_source_span: None` and a waiting pool are refused together.** An
-  unbounded holder makes any finite budget unsatisfiable, and the symptom is a
-  hang rather than an error, so `16.4.1` raises an option-validation error
-  naming both settings when the span is `None` and `Parallelism` is not
-  `Serial`. Clamping `None` to the budget was rejected: `None` is a caller
-  saying explicitly that they do not want this cut.
+- **The exemption is by holder class, and no option pair stands in for it.**
+  This slice's analysis reached an option-validation error refusing
+  `max_source_span: None` together with a non-`Serial` `Parallelism`; the block
+  pool then moved the failure out from under it, and the commitment is withdrawn
+  ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "The
+  wait is exempted by holder class, not validated by an option pair"). A read
+  that will be retained into a batch never waits, whatever the settings say.
 - **The budget stops being a constant.** `POOL_BUDGET_BYTES` is the serial
   path's, and a pool serving N workers a block each is given its budget by the
   caller — which is `Parallelism`'s byte half (16.7), so a wait wired before

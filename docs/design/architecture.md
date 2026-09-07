@@ -250,20 +250,45 @@ of the two ways to be wrong.
 *Rejected:* **backpressure — a `take` that waits for a free slot instead of
 allocating.** It is what turns the slot count into a bound on what is
 *outstanding* rather than only on what is idle, and the parallel design wants
-it; it is not here because the pool cannot tell its two holders apart. One
-serial reader legitimately holds `(max_source_span / chunk) + 1` buffers at
-once — 65 at the defaults, and unbounded under `max_source_span: None` — since
-a batch pins every chunk it has taken a view into until it flushes; a worker
-given an LF-split range inside one block holds exactly one slot. A wait is
+it; it is not here because the pool cannot tell its two kinds of holder apart.
+A holder that **retains into a batch** holds every slot it has taken a view
+into until that batch flushes — `(max_source_span / chunk) + 1` chunk buffers
+for the serial reader, 65 at the defaults and unbounded under
+`max_source_span: None`; on a block-shaped source the same span is three or
+four whole decoded blocks against a pool of two ("The compressed source"). A
+worker that **decodes and discards** holds exactly one slot. A wait is
 backpressure for the second and a deadlock for the first, and nothing in a
 `take` call says which is calling.
 
-**The exemption is what would make a wait safe, not a caller-set budget.** At
-the defaults the serial reader reaches 65 MiB against a 64 MiB budget, so any
-budget below its reach deadlocks, and under `max_source_span: None` no finite
-budget is above it — which is also why an unbounded span and a waiting pool
-cannot both be had, and why the pair is to be refused rather than silently
-clamped. A budget is a knob on the holders that do wait.
+**The exemption is what would make a wait safe, and it is stated by holder
+class rather than by a caller's settings.** A read that will be retained into a
+batch never waits; it allocates past the budget exactly as the `take` above
+does. The failing configuration is otherwise `Parallelism::Serial` at both
+defaults, not an exotic one: one serial query over a 24 MiB-block `.xz` pins
+three or four block slots against the two a 64 MiB budget affords, so a wait
+applied to that holder hangs with no worker in the picture and no `None` in
+sight.
+
+**No option validation can stand in for that exemption, because the library
+does not hold the holder.** `TableStream` yields its `RecordBatch`es to the
+caller, and a `Utf8View` batch carries the block views its columns were built
+on — so a consumer that collects every batch pins every block the query
+touched, and one that drops each batch before pulling the next pins one
+batch's worth. How many slots are outstanding is a property of consumer code,
+which no pair of option values predicts. *Rejected: an option-validation error
+refusing `max_source_span: None` together with a non-`Serial` `Parallelism`.*
+It was derived while the chunk pool was the only pool, and the block pool moved
+the failure out from under it: the pair it names is neither necessary — the
+default finite span hangs — nor sufficient — a `None` span with a consumer that
+drops each batch does not. A check that is right in neither direction costs
+more than no check, because it reads as proof that the configuration is safe.
+
+**A caller-set budget therefore bounds the workers, and what a batch pins is
+stated beside it rather than folded in.** The bound has two terms: the waiting
+holders' slots, which is a ceiling the library sets, and what in-flight batches
+pin — `max_source_span` rounded out to the retained unit, times however many
+batches the caller keeps — which is not. Two honest terms beat one term that
+quietly assumes the second away.
 
 **What defers it is testability rather than the absence of a consumer**, which
 is a weaker claim than it looks: `ByteRangeSource::partitions` has landed with
@@ -271,18 +296,22 @@ no consumer at all, and it is fine because a pure function's whole contract is
 its return value. A blocking acquire has no behaviour except its interaction
 with holders, so with only the exempt holder in the tree the strongest
 assertion available is "it did not block" — precisely what the non-waiting
-`take` above already guarantees. The wait therefore arrives with the second
-holder, and with the discipline that makes it safe: one slot per holder.
+`take` above already guarantees. The wait therefore arrives with the first
+holder that decodes and discards, and with the discipline that makes it safe:
+one slot per *waiting* holder.
 
-**The block pool is a second holder already, and it keeps that discipline a
-different way.** `XzSource`'s retained blocks ("The compressed source") sit in
-a pool of their own and can occupy every slot in it, which would look like the
-serial reader's unbounded hold — except that the retention **releases before it
-acquires**: eviction runs down to one below the slot count and then takes, so
-the buffer a decode is about to want is one the cache has already given up.
-A holder that frees a slot before asking for one can wait without deadlocking
-whatever else that pool serves, which is the same property "one slot per
-holder" buys and is the form the block path takes.
+**The block pool is a second holder already, and its release-before-acquire is
+not the discipline it looks like.** `XzSource`'s retained blocks ("The
+compressed source") sit in a pool of their own and can occupy every slot in it,
+and the retention does **release before it acquires**: eviction runs down to
+one below the slot count and then takes. On `parse` that is enough, because no
+batch is built and the cache's own reference is the only one — the buffer a
+decode is about to want is one it has already given up. On a query it frees
+nothing. The drain drops the cache's reference while the batch's views keep the
+buffer outstanding, so the block pool's holder and the batch-building holder
+are the same slots counted twice. Release-before-acquire is therefore a
+property of the `parse` shape rather than of the pool, and what makes a wait
+safe on both shapes is the batch-class exemption above.
 
 **One-off-ness is a property of the caller, so the caller says it.**
 `ByteRangeSource::hint_read_size` is a third, advisory method — defaulted to
