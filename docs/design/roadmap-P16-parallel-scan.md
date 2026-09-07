@@ -545,7 +545,12 @@ than straddling two; **16.4 before 16.5, 16.8 and 16.10**, all three of which
 run N readers; **16.5 before 16.10**, which depends on it; **16.7 before 16.9**;
 **16.10 before 16.12**. **16.4.1 lands with or after the first of 16.5 and
 16.10**, whichever runs first, since a wait with no second holder is a
-deadlock rather than a bound.
+deadlock rather than a bound — **and after 16.7**, which is a second binding
+found while 16.6 was being written
+([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "16.4.1
+waits on 16.7"): this row names `Parallelism` in the condition it validates and
+has no number to wait on until a caller states a budget, and the budget is what
+decides whether the block pool's holders can wait at all.
 
 ### Evidence
 

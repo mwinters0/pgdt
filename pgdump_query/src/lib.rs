@@ -24,7 +24,8 @@ pub use index::{
     preamble_only, union_census,
 };
 pub use io::{
-    ByteRangeSource, KnownCompression, LocalFileSource, Recognized, XzSource, open_local,
+    ByteRangeSource, KnownCompression, LocalFileSource, PartitionBoundaries, Partitioning,
+    Recognized, XzSource, open_local,
 };
 pub use map::{
     DataBlock, InsertRun, LargeObjectRegion, Span, SpanBody, SpanText, TEXT_CAP, TilingIssue,

@@ -141,6 +141,15 @@ wraps whatever supplies its compressed bytes, local or remote — so neither
 knows about the other, and a seek table is L1 data like the rest of the cache
 (rule 5).
 
+**A source advises its own partitioning, which is what keeps decode scheduling
+out of L4.** `ByteRangeSource::partitions` answers where this source would like
+a range split and what one partition costs it resident; a scheduler above asks,
+runs the partitions and never names a source type
+([`architecture.md`](architecture.md), "Execution model and API surface"). The
+alternative — L4 calling `xz-seek`'s block pieces directly — would put block
+scheduling in the query layer and make it name the compressed source, which is
+rule 1 read backwards.
+
 ## Known deviations
 
 One piece of code sits outside its layer. It is recorded so that nobody treats

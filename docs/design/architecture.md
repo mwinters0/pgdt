@@ -101,11 +101,14 @@ trait ByteRangeSource: Send + Sync {
     fn modified(&self)
         -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>>;
 
-    // defaulted, and each one exists for a source the local file is not
+    // defaulted; every one is outside the `object_store` mirror
     fn stored_size(&self) -> …          { self.size() }
     fn size_is_exact(&self) -> bool     { true }
     fn hint_read_size(&self, _len: usize) {}
     fn seek_table(&self) -> Option<xz_seek::SeekTable> { None }
+    fn partitions(&self, _range: Range<u64>) -> Partitioning {
+        Partitioning::single(0)
+    }
 }
 ```
 
@@ -149,7 +152,7 @@ which is what the CLI holds. Worth knowing when a similar rework is costed
 elsewhere: the two forms are not a matter of taste, and which one is needed is
 decided by whether anything constructs a source it cannot name.
 
-**Three of the four defaulted methods exist for a source the local file is
+**Three of the five defaulted methods exist for a source the local file is
 not.** `stored_size()` is the bytes as stored on the device where `size()` is
 the addressable length — equal for a plain file, divergent for a decompressing
 one, and it is what the cache's staleness check reads, so that check stays a
@@ -160,8 +163,44 @@ that cannot answer exactly (gzip's `ISIZE` is useless above 4 GiB, zstd's frame
 content size is optional), added in the pass that reshaped these signatures
 because a later pass would have had to touch them all again for one bool.
 `seek_table()` hands a compressed source's block index to the cache without the
-cache knowing what kind of source it holds. `hint_read_size` is the fourth and
-is about the caller rather than the source; it is described below.
+cache knowing what kind of source it holds. The other two are answered by every
+source: `hint_read_size` is about the caller rather than the source and is
+described below, and `partitions` is next.
+
+**A source advises its own partitioning, and the layer above never learns what
+is underneath.** `partitions(range)` answers a `Partitioning` — where this
+source is willing to be split, and what one concurrent reader costs it resident
+— so a scheduler asks, runs the partitions, and names no source type
+([`layering.md`](layering.md)). `LocalFileSource` answers **anywhere, one read
+chunk each**: a positioned read costs the same at every offset. A
+block-decoding `XzSource` answers **at these block boundaries, a block plus a
+chunk buffer each** — 32 MiB against koji's 24 MiB blocks — which is what keeps
+two workers from decoding one block twice ("The compressed source"). The
+default is one partition at no stated cost: a source that has not thought about
+concurrency must not be split by a caller that assumed silence was consent.
+P14 inherits the question with a different answer, a ranged-GET size.
+
+**Where a split is permitted is a two-armed enum, not a list plus a flag.**
+`PartitionBoundaries::Anywhere` cannot be enumerated and `At(offsets)` cannot be
+generated, so they are genuinely different answers; an empty `At` is one
+partition, and it is a **policy** — a source that could enumerate boundaries and
+still advises none is saying that splitting makes its readers worse, which is
+exactly what the streaming-fallback compressed source says. *Rejected:* a third
+`Single` arm for that case. It would be operationally identical to `At([])` —
+both yield one partition — and the 64 MiB budget's own lesson was that a second
+number for one bound reads as a second authority; the policy belongs in the
+source's doc comment, where the reason is, rather than in an arm whose effect
+duplicates another's.
+
+**`partition_bytes` is what the source's own pools hold per partition, and it
+says what it excludes.** For the compressed source that is a decoded block slot
+plus the chunk buffer a straddling read is assembled into. Outside it are the
+decoder's fixed compressed input buffer, which is `xz-seek`'s, and the LZMA2
+dictionary, which is written in each *block header* and so is not in the seek
+table — `xz_seek::RangePlan::footprint` excludes it for that same reason and
+names 8 MiB a worker as the practical allowance. A caller budgeting workers adds
+both; a number that silently guessed a dictionary size would be wrong by 8× on a
+`-9` file.
 
 **The local backend pools its read buffers, and the trait shape is why.**
 `read_range` returns owned `Bytes` because `get_range` does, so the obvious
@@ -227,7 +266,7 @@ cannot both be had, and why the pair is to be refused rather than silently
 clamped. A budget is a knob on the holders that do wait.
 
 **What defers it is testability rather than the absence of a consumer**, which
-is a weaker claim than it looks: `ByteRangeSource::partitions` is landing with
+is a weaker claim than it looks: `ByteRangeSource::partitions` has landed with
 no consumer at all, and it is fine because a pure function's whole contract is
 its return value. A blocking acquire has no behaviour except its interaction
 with holders, so with only the exempt holder in the tree the strongest
@@ -556,6 +595,24 @@ blocks — to spare a duplicate decode that only a shared block boundary
 produces. What keeps concurrent readers off each other's blocks is how the
 range was split, which is the source's own business to advise on rather than
 the pool's to arbitrate.
+
+**So this source's two read paths give two partitioning answers, and which one
+applies is read off the path it took rather than off the seek table.** While it
+block-decodes, `partitions(range)` answers the block starts inside `range`, so a
+partition is a whole number of blocks and the duplicate decode above cannot
+arise; a scheduler that splits anywhere else pays it twice over, since two
+workers inside one block each decode all of it. On the **streaming fallback**
+it answers **one partition**, whatever the table says. Such a file still has
+block boundaries, but reaching an offset inside a block has one route —
+restart at that block's start and decode forward, discarding — so two workers
+on different partitions each force the other's restart and parallel mode over
+it is *worse than serial* rather than merely unaccelerated. Nothing is given up
+by that: LZMA2's dictionary runs the length of a block, so a block is the
+parallel unit entire, and the shape this reaches in practice is a single-block
+file, which has no second worker to give at any budget. *Rejected: reading the
+advice off the seek table alone*, which is the same code for both paths and is
+wrong for exactly the file the cap declines — a multi-block file written with
+large blocks, whose boundaries are real and unusable.
 
 **Exactly two callers read backwards**, and both are now cheap where they land
 in a retained block. `stream.rs`'s replay loop re-reads a block the mapping

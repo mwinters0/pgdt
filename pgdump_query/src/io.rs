@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::ops::Range;
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -92,6 +93,110 @@ pub trait ByteRangeSource: Send + Sync {
     /// it, not hold a borrow across an `await`.
     fn seek_table(&self) -> Option<xz_seek::SeekTable> {
         None
+    }
+    /// How this source would like `range` split across concurrent readers,
+    /// and what one of those readers costs it resident
+    /// (`docs/design/architecture.md`, "Execution model and API surface").
+    ///
+    /// **Advisory, and the caller never learns what is underneath.** A
+    /// scheduler asks the source how to split, runs the partitions, and names
+    /// no source type; a local file answers "anywhere, one buffer each" and a
+    /// compressed one answers "at these block boundaries, a block each". That
+    /// is what keeps decode scheduling out of the query layer, and it is the
+    /// question a remote source inherits with a different answer — a
+    /// ranged-GET size.
+    ///
+    /// **The default declines to advise**: one partition, at no stated cost.
+    /// A source that has not thought about being read concurrently must not be
+    /// split by a caller that assumed it had, and a cost is meaningless for a
+    /// split that is not happening.
+    fn partitions(&self, _range: Range<u64>) -> Partitioning {
+        Partitioning::single(0)
+    }
+}
+
+/// Where a source is willing to be split
+/// (`docs/design/architecture.md`, "Execution model and API surface").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PartitionBoundaries {
+    /// Anywhere in the range: no offset costs more to start reading at than
+    /// another. A plain file's answer, and what a caller may cut into as many
+    /// equal pieces as it has workers.
+    Anywhere,
+    /// Only at these offsets — ascending, and strictly inside the range, so
+    /// `n` of them describe `n + 1` partitions.
+    ///
+    /// **An empty list is "one partition", and it is a policy rather than an
+    /// absence.** A source that could enumerate boundaries and still advises
+    /// none is saying that splitting this range makes its readers worse, not
+    /// that it failed to find a seam — which is exactly what a compressed
+    /// source reading through a restart-and-discard decoder says
+    /// (`docs/design/architecture.md`, "The compressed source").
+    At(Vec<u64>),
+}
+
+/// A source's answer to [`ByteRangeSource::partitions`]: where to split, and
+/// what one partition holds resident while it reads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Partitioning {
+    boundaries: PartitionBoundaries,
+    partition_bytes: u64,
+}
+
+impl Partitioning {
+    /// Split anywhere; each partition holds `partition_bytes`.
+    pub fn anywhere(partition_bytes: u64) -> Self {
+        Self { boundaries: PartitionBoundaries::Anywhere, partition_bytes }
+    }
+
+    /// Split only at `offsets`, which are sorted and deduplicated here so the
+    /// ascending order the accessor promises is a property of the value rather
+    /// than of every source that builds one.
+    pub fn at(mut offsets: Vec<u64>, partition_bytes: u64) -> Self {
+        offsets.sort_unstable();
+        offsets.dedup();
+        Self { boundaries: PartitionBoundaries::At(offsets), partition_bytes }
+    }
+
+    /// One partition: this range is not to be split at all.
+    pub fn single(partition_bytes: u64) -> Self {
+        Self::at(Vec::new(), partition_bytes)
+    }
+
+    /// Where this source is willing to be split. Any offsets are ascending
+    /// and deduplicated, [`Partitioning::at`] having made them so.
+    pub fn boundaries(&self) -> &PartitionBoundaries {
+        &self.boundaries
+    }
+
+    /// What one concurrent reader costs this source resident, in bytes:
+    /// **the buffers the source itself allocates per partition**, and nothing
+    /// else.
+    ///
+    /// For a plain file that is one read chunk. For a compressed one it is a
+    /// decoded block plus the chunk buffer a read straddling a block boundary
+    /// is assembled into — 32 MiB against the 24 MiB blocks koji's download
+    /// carries.
+    ///
+    /// **Two costs are deliberately outside it, and a caller budgeting workers
+    /// adds them.** The decoder's own compressed input buffer is `xz-seek`'s
+    /// and fixed; and the LZMA2 dictionary is written in each block's *header*,
+    /// which the seek table does not carry and which would cost a source read
+    /// per block to learn — `xz_seek::RangePlan::footprint` excludes it for
+    /// that same reason and names 8 MiB a worker as the allowance on the files
+    /// this reads.
+    pub fn partition_bytes(&self) -> u64 {
+        self.partition_bytes
+    }
+
+    /// How many partitions this advice describes, or `None` for
+    /// [`PartitionBoundaries::Anywhere`], which is bounded by the caller's
+    /// worker count rather than by the source.
+    pub fn max_partitions(&self) -> Option<usize> {
+        match &self.boundaries {
+            PartitionBoundaries::Anywhere => None,
+            PartitionBoundaries::At(offsets) => Some(offsets.len() + 1),
+        }
     }
 }
 
@@ -390,6 +495,15 @@ impl ByteRangeSource for LocalFileSource {
     /// for.
     fn hint_read_size(&self, len: usize) {
         self.pool.hint(len);
+    }
+
+    /// **Anywhere, one buffer each.** A positioned read costs the same at
+    /// every offset, so nothing about this source prefers one split point to
+    /// another, and what a partition holds is one read chunk — the pool's own
+    /// slot size, which is the length a read loop announced or the ceiling
+    /// where none has ([`BufferPool::slot_bytes`]).
+    fn partitions(&self, _range: Range<u64>) -> Partitioning {
+        Partitioning::anywhere(self.pool.slot_bytes() as u64)
     }
 }
 
@@ -771,6 +885,52 @@ impl XzSource {
             .slice(..len))
     }
 
+    /// This source's partitioning advice, read off the **read path it took**
+    /// rather than off the seek table.
+    ///
+    /// Two answers, and which one applies is `blocks`:
+    ///
+    /// **Block-decoding** — the boundaries are the block starts inside
+    /// `range`, so a partition is a whole number of blocks and two workers
+    /// never decode the same block twice
+    /// (`docs/design/architecture.md`, "The compressed source"). A partition
+    /// holds one decoded block slot plus the chunk buffer a read straddling a
+    /// boundary is assembled into.
+    ///
+    /// **Streaming fallback** — one partition, whatever the table says. Such a
+    /// file still has block boundaries, but reaching an offset inside a block
+    /// has one route through `xz_seek::Reader::read_at`: restart at that
+    /// block's start and decode forward, discarding. Two workers on different
+    /// partitions would each force the other's restart, so parallel mode over
+    /// it is **worse than serial** rather than merely unaccelerated. Nothing is
+    /// given up by it — LZMA2's dictionary runs the length of a block, so a
+    /// block is the parallel unit entire, and the shape this reaches in
+    /// practice is a single-block file, which has no second worker to give at
+    /// any budget.
+    ///
+    /// Taken as a free function over the two pieces of state it reads, so the
+    /// fallback arm is assertable against a table that *does* have blocks —
+    /// which no fixture can produce, a block above
+    /// [`BLOCK_DECODE_MAX_BYTES`] being a quarter-gigabyte of plaintext.
+    fn partition_advice(
+        table: &xz_seek::SeekTable,
+        blocks: Option<&BlockCache>,
+        chunk_bytes: u64,
+        range: Range<u64>,
+    ) -> Partitioning {
+        let Some(cache) = blocks else {
+            return Partitioning::single(chunk_bytes);
+        };
+        let covering = table.blocks_in(range.clone());
+        let at = covering
+            .filter_map(|i| {
+                let start = table.blocks[i].uncompressed_offset;
+                (start > range.start && start < range.end).then_some(start)
+            })
+            .collect();
+        Partitioning::at(at, cache.unit as u64 + chunk_bytes)
+    }
+
     /// The fallback: one live decode, restarted on a backward seek, serialized
     /// by the reader's mutex. It is what a file whose blocks are above
     /// [`BLOCK_DECODE_MAX_BYTES`] is read through, where decoding a block
@@ -863,6 +1023,15 @@ impl ByteRangeSource for XzSource {
 
     fn seek_table(&self) -> Option<xz_seek::SeekTable> {
         Some((*self.table).clone())
+    }
+
+    fn partitions(&self, range: Range<u64>) -> Partitioning {
+        Self::partition_advice(
+            &self.table,
+            self.blocks.as_deref(),
+            self.pool.slot_bytes() as u64,
+            range,
+        )
     }
 }
 
@@ -1128,6 +1297,128 @@ mod tests {
             assert_eq!(pool.slot_bytes(), unit);
             assert_eq!(pool.slots(), slots, "unit {unit}");
         }
+    }
+
+    /// A source implementing nothing but the three required methods, to pin
+    /// what the *defaults* answer — the only way to read a defaulted body,
+    /// since both shipped sources override this one.
+    struct BareSource;
+
+    impl ByteRangeSource for BareSource {
+        fn read_range(
+            &self,
+            _offset: u64,
+            _len: usize,
+        ) -> Pin<Box<dyn Future<Output = Result<Bytes>> + Send + '_>> {
+            Box::pin(async { Ok(Bytes::new()) })
+        }
+        fn size(&self) -> Pin<Box<dyn Future<Output = Result<u64>> + Send + '_>> {
+            Box::pin(async { Ok(0) })
+        }
+        fn modified(
+            &self,
+        ) -> Pin<Box<dyn Future<Output = Result<Option<SystemTime>>> + Send + '_>> {
+            Box::pin(async { Ok(None) })
+        }
+    }
+
+    /// A source that has not thought about being read concurrently advises
+    /// one partition, so a scheduler cannot split it on the assumption that
+    /// silence means consent.
+    #[test]
+    fn a_source_that_does_not_advise_gets_one_partition() {
+        let advice = BareSource.partitions(0..1 << 30);
+        assert_eq!(advice.max_partitions(), Some(1));
+        assert_eq!(advice.boundaries(), &PartitionBoundaries::At(Vec::new()));
+        assert_eq!(advice.partition_bytes(), 0);
+    }
+
+    /// A plain file prefers no split point to another, and a partition costs
+    /// one read chunk — the caller's own announced number where it announced
+    /// one, which is the same value the pool sizes a slot by.
+    #[test]
+    fn a_plain_file_advises_anywhere_at_one_buffer_each() {
+        let (_file, source) = source_of(b"0123456789abcdef");
+        let advice = source.partitions(0..16);
+        assert_eq!(advice.boundaries(), &PartitionBoundaries::Anywhere);
+        assert_eq!(advice.max_partitions(), None);
+        assert_eq!(advice.partition_bytes(), POOL_MAX_BYTES as u64);
+
+        source.hint_read_size(4 << 20);
+        assert_eq!(source.partitions(0..16).partition_bytes(), 4 << 20);
+    }
+
+    /// A block-decoding `.xz` advises its block boundaries, so a partition is
+    /// a whole number of blocks and two workers never decode one block twice.
+    /// The boundaries are ascending and strictly inside the range: the block
+    /// containing `range.start` begins at or before it, and is not a split.
+    #[tokio::test]
+    async fn an_xz_source_advises_its_block_boundaries() {
+        let payload = xz_test_payload();
+        let compressed = xz_compress(&payload, &["--block-size=4096"]);
+        let source = XzSource::open(compressed.path()).unwrap();
+        let table = source.seek_table().unwrap();
+        let starts: Vec<u64> = table.blocks.iter().map(|b| b.uncompressed_offset).collect();
+        assert!(starts.len() > 2, "this test needs several blocks, got {}", starts.len());
+
+        let whole = source.partitions(0..payload.len() as u64);
+        assert_eq!(whole.boundaries(), &PartitionBoundaries::At(starts[1..].to_vec()));
+        assert_eq!(whole.max_partitions(), Some(starts.len()));
+
+        // A range opening inside a block: that block's own start is behind
+        // `range.start` and is not offered as a split.
+        let from = starts[1] + 10;
+        let inner = source.partitions(from..payload.len() as u64);
+        assert_eq!(inner.boundaries(), &PartitionBoundaries::At(starts[2..].to_vec()));
+
+        // A range inside one block has nothing to split at.
+        let one = source.partitions(from..from + 10);
+        assert_eq!(one.max_partitions(), Some(1));
+
+        // A partition holds one decoded block plus the chunk buffer a
+        // straddling read is assembled into.
+        let unit = source.blocks.as_ref().unwrap().unit as u64;
+        assert_eq!(whole.partition_bytes(), unit + POOL_MAX_BYTES as u64);
+    }
+
+    /// **A streaming-fallback source advises one partition even though its
+    /// table has boundaries.** Reaching an offset inside a block there means
+    /// restarting that block and discarding forward, so two workers each force
+    /// the other's restart and parallel mode is worse than serial. Asserted
+    /// against a synthetic multi-block table: a real file whose blocks are
+    /// above [`BLOCK_DECODE_MAX_BYTES`] is a quarter-gigabyte of plaintext per
+    /// block, which no fixture can be.
+    #[test]
+    fn a_streaming_fallback_source_advises_one_partition() {
+        let block = |i: u64| xz_seek::BlockEntry {
+            compressed_offset: 12 + i * 128,
+            uncompressed_offset: i * 4096,
+            unpadded_size: 64,
+            uncompressed_size: 4096,
+        };
+        let table = xz_seek::SeekTable {
+            compressed_file_size: 1 << 20,
+            streams: vec![xz_seek::StreamEntry {
+                compressed_offset: 0,
+                uncompressed_offset: 0,
+                compressed_size: 1 << 20,
+                uncompressed_size: 4 * 4096,
+                check: xz_seek::Check::Crc64,
+                padding: 0,
+                first_block: 0,
+                block_count: 4,
+            }],
+            blocks: (0..4).map(block).collect(),
+        };
+        assert!(table.is_seekable(), "the table has boundaries to advise");
+
+        let cache = BlockCache::for_table(&table).expect("4 KiB blocks decode whole");
+        let decoding = XzSource::partition_advice(&table, Some(&cache), 1 << 20, 0..4 * 4096);
+        assert_eq!(decoding.max_partitions(), Some(4));
+
+        let streaming = XzSource::partition_advice(&table, None, 1 << 20, 0..4 * 4096);
+        assert_eq!(streaming.max_partitions(), Some(1));
+        assert_eq!(streaming.partition_bytes(), 1 << 20, "one chunk buffer, one reader");
     }
 
     /// `xz` is not `mise`-pinned (`docs/design/architecture.md`, "Testing
