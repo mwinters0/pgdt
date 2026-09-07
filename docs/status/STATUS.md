@@ -483,9 +483,15 @@ are worth, and the orderings that do bind are named in
       divides the stated bytes by `partition_bytes + max_source_span`, so one
       number bounds a query rather than half of one. Admitted after spec time,
       so the number is the next free one rather than a position.
-- [ ] **16.16** `--jobs` defaults to 1 until `16.13` licenses the parallel
-      default with a number. The flags are unchanged; what moves is what a
-      person who states neither gets.
+- [ ] **16.16** `--jobs` defaults to 1, and its help text stops calling itself
+      a ceiling it does not deliver on a plain source. The flags are unchanged;
+      what moves is what a person who states neither gets. **This row is the
+      flip and nothing more** — raising the default once `16.13` has a number is
+      a decision change backed by evidence that does not exist yet, so it is not
+      pre-allocated. **Moved ahead of `16.11`** by the review of 2026-09-07, and
+      behind `M69`, which blocks
+      ([`history/2026-09-07.md`](history/2026-09-07.md), "The parallel default
+      is a correction the tree has not made").
 
 ## Known deficiencies
 
@@ -638,20 +644,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-- **`16.16` was not pulled forward, so a default `pgdq parse` is parallel with
-  no figure behind it.** `16.10.2` wires the leader into the mapping pass while
-  the CLI's `--jobs` still defaults to this machine's core count, so from this
-  commit until `16.16` lands, anyone running `pgdq parse` or `pgdq query`
-  without flags gets a split structure scan that `16.13` has not yet priced.
-  That is the order the phase's slice list states — `16.16` is the last row, and
-  its own sentence is "`--jobs` defaults to 1 **until** `16.13` licenses the
-  parallel default with a number" — and the slice was landed in order rather
-  than reaching past four rows to change a default. What would change if it were
-  reconsidered: taking `16.16` next instead of `16.11` costs nothing and buys a
-  tree whose default is the measured one throughout, at the price of `16.12`'s
-  determinism test and `16.13`'s figures both having to state `--jobs`
-  explicitly, which they would have to anyway. Nothing is wrong today — the
-  parallel and serial paths are asserted equal over four fixtures and the caches
-  are byte-identical on a 300 MiB file — the exposure is that the default is
-  unmeasured, not that it is wrong
-  ([`../design/roadmap-P16.10.2-mapping-leader-notes.md`](../design/roadmap-P16.10.2-mapping-leader-notes.md)).
+Nothing open.

@@ -99,22 +99,75 @@ The one exception: **never commit a round that failed verification or left its
 box unticked.** Leave that in the tree exactly as the subagent left it, so the
 maintainer sees what the subagent saw.
 
-**5. Decide.** Stop, or start the next round from step 1.
+**5. Triage a new "Decisions worth another look" entry.** Most of what rounds
+raise there is not a design call at all — it is the loop asking where a piece of
+work goes and in what order. Those cost the maintainer a review cycle and give
+them nothing to decide, so settle them here. See "Scheduling and labelling are
+yours" below.
+
+**6. Decide.** Stop, or start the next round from step 1.
+
+## Scheduling and labelling are yours
+
+An entry is yours to settle when it is **purely about where work goes and in
+what order, inside the open phase** — and the test is whether any answer to it
+changes what the phase delivers when it is done. If the deliverable is the same
+either way and only the route differs, decide it, apply it, and keep going.
+
+What that covers, typically: a slice that should be split and its remainder
+numbered; an out-of-band row that blocks the open phase and should be picked up
+first; a slice landing before another with no dependency between them; a
+mis-set `Blocks` column; work filed as a slice that is out-of-band by the
+ledger's admission rule, or the reverse.
+
+Settle one the way `/dwal` would and under the same obligations, which is what
+keeps this from becoming a shortcut past the record. Read the mechanism and
+check the entry's claims — an entry written by a spent subagent is often wrong
+about the tree. Route the work by `roadmap.md`'s admission rule rather than by
+preference. File the reasoning where `docs/process.md`'s "Where does this fact
+go?" table sends it, **delete** the entry rather than annotating it, and commit
+that as its own change, separate from the slice's. Then start the next round
+from step 1 — the baseline is re-read, so a reordering you just applied is
+picked up as the new next slice.
+
+**Hand it to the maintainer whenever the order changes the outcome.** Some
+sequencing decides what gets built, not merely when: a slice that would be taken
+on evidence a later one is meant to produce, a measurement whose apparatus a
+reordering would change, a split whose halves would ship different contracts, an
+ordering that forecloses an option the phase was holding open. Those look like
+bookkeeping and are not, and the tell is that you can name something the phase
+would deliver differently. When you can, stop — that is the entry the section
+exists for.
+
+**When in doubt, stop.** Settling one of these wrongly spends the maintainer's
+review on a plan that has already moved, which is worse than the cycle it saved.
+Two further bounds, from `docs/process.md`'s "Working unattended": anything that
+would bind **beyond** the open phase — a standing rule, an invariant, a `KD<k>`
+re-targeted onto a phase nobody has grilled, a spec *rationale* reversed — is
+never yours, whatever it looks like from inside; and amending a spec to record a
+reordering is fine, while amending one to change why a decision was made is not.
+
+Report every entry you settled this way in the final report, quoted as it stood,
+with what you decided and what you changed. The maintainer is reading it
+afterwards rather than in the loop, so it must stand on its own.
 
 ## Stop conditions
 
 Any one of these ends the loop. Report it plainly; do not work around it.
 
-- **A new entry under "Decisions worth another look."** This is the primary
-  one. That section exists for calls the maintainer should weigh, so a new
-  entry is the subagent asking for review — continuing past it would stack
-  more work on an unreviewed judgement.
+- **A new entry under "Decisions worth another look" that step 5 did not
+  settle.** This is the primary one. That section exists for calls the
+  maintainer should weigh, so a new entry is the subagent asking for review —
+  continuing past it would stack more work on an unreviewed judgement. An entry
+  that is purely in-phase scheduling or labelling is not such a call and does
+  not stop the loop; step 5 settles it and the round continues.
 - **The slice's box is still unticked**, including when the subagent split it
   and left an earned `<N>.<M>.<K>` behind — or, for an out-of-band round, the
   ledger row's Date is still empty. A split is a re-plan, and the next
   slice may no longer be the right one. The one exception is a round that
   handed off a long job: its box is unticked *by design*, and the follow-up
-  subagent in step 5 is what ticks it.
+  subagent dispatched in "A round that launches a long job", step 5, is what
+  ticks it.
 - **`cargo test`, `clippy`, or `fmt --check` fails**, whatever the report said.
 - **No unticked slices remain in the phase.** Do not roll into the next phase:
   a phase needs grilling and a spec before it has slices, and grilling needs

@@ -282,6 +282,22 @@ above states the intent the figure is asked to license rather than a default
 shipped ahead of it. `--jobs` and `--parallel-memory` are unchanged as flags:
 what moves is only what a person who states neither gets.
 
+**Amended again: the flip is a correction to execute, not a position at the end
+of the phase, and the worker count is apparatus**
+([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "The
+parallel default is a correction the tree has not made"). The first of the three
+reasons above is spent — `16.10.2` landed, so there *is* CPU parallelism to buy —
+and the two that remain argue for landing the correction sooner rather than
+holding it. So **`16.16` runs ahead of `16.11`** rather than last; the numbers
+are identifiers and the index table is the schedule, so nothing is renumbered.
+Two further things move with it. Every registered figure's command shape, the
+profile recipe and the koji recipe **state `--jobs` explicitly** instead of
+inheriting whatever the CLI default is — worker count is part of the apparatus
+on the same argument [`measurements.md`](measurements.md) already makes for the
+allocator, and no shape stated it while the default changed meaning underneath
+the register. And `--jobs`' own help text stops calling itself a ceiling on
+concurrent workers, which on a plain source is `min(jobs, 4)`.
+
 *Rejected:* deriving the byte budget by reading the cgroup limit. It is
 attractive given that every koji run here is in a 512 MB cgroup, but it makes
 memory behaviour depend on a kernel interface nothing in this project has
@@ -619,7 +635,7 @@ wait on a number that never arrives. The condition that once also named
 | **16.10.2** | **The mapping pass runs the leader** — `stream::map_forward` offers each open `COPY` region to `leader::scan_region` and closes a region it took through the same path a serial `CopyEnd` takes: the census onto the `Builder`, `on_copy_end`, the splice, the throttle's save and the target check, with the serial scanner repositioned past the block. `pgdq parse --jobs` then buys something. **Earned, not planned**: `16.10.1` paired a self-contained scheduler with a rework of the loop every `parse` and every query's first pass runs through, which is the seam `../process.md`'s "Size a slice by its review, not by its scope" names ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "16.10.1 split again: the scheduler, then the loop that runs it"). The remainder of a mis-sized *third-level* slice is the next increment under its parent, not a fourth level and not the next free phase-level number — the shape `11.6.1`→`11.6.2` and `4.4.2`→`4.4.3`→`4.4.4` already set, now stated in [`../process.md`](../process.md), "Slice numbering". It was briefly numbered `16.17`, which is what commit `f65f9f6`'s message calls it. |
 | **16.11** | **Error ordering** — a failing worker records and stops, the scheduler drains the partitions before it, and the lowest-offset error is the one raised. Asserted, not documented. |
 | **16.12** | **The determinism test** — `pgdq parse --jobs 1` and `--jobs 8` produce byte-identical `.dqcache` files over every fixture, and both equal what this build produces today. |
-| **16.13** | **`parallel-scan-throughput` and `parallel-peak-rss`** — `parse` and `query` against `--jobs` on the HDD, SATA SSD and NVMe, compressed and plain; RSS against `--jobs` at two block sizes. Both carry an apparatus gate of their own, a figure that occupies 24 threads being unable to inherit the sweep's quiet-machine one. |
+| **16.13** | **`parallel-scan-throughput` and `parallel-peak-rss`** — `parse` and `query` against `--jobs` on the HDD, SATA SSD and NVMe, compressed and plain; RSS against `--jobs` at two block sizes. Both carry an apparatus gate of their own, a figure that occupies 24 threads being unable to inherit the sweep's quiet-machine one. **On a plain source the curve flattens at four workers because the chunk pool binds, not because the scan stops scaling** — `POOL_DEPTH` clamps `BufferPool::slots()` and a fifth fused worker waits ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "The plain-file leader is capped at four workers by the chunk pool"). Read the plain legs against that ceiling or the figure publishes a pool constant as a scaling result; `16.15` is where the ceiling itself is re-derived. |
 | **16.14** | **koji verification** — one detached `pgdq parse --jobs` of the `.xz` in a 512 MB cgroup, per `CLAUDE.md`'s long-running-process rule, whose `.dqcache` must be byte-identical to the one the serial 784 GB scan already produced. Outside the register, with an `<!-- outside-register: … -->` marker. |
 
 **16.10 was named here in advance as the row most likely to earn a

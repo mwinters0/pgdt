@@ -33,7 +33,12 @@ conditions become transitions, and nothing else changes.
 **Override 1 — a new entry under "Decisions worth another look" is a
 transition, not a stop.** That entry is the round asking for review, and review
 is available: commit the round if it is clean, then dispatch a grillmaster and
-let it settle the frontier. When one returns having committed its closures,
+let it settle the frontier.
+
+`gosub`'s step 5 still runs first and is unchanged here: an entry that is purely
+in-phase scheduling or labelling is settled and deleted there, so it never
+reaches this override and costs no grillmaster. What this override picks up is
+what step 5 left standing — the entries that are actually design calls. When one returns having committed its closures,
 resume at step 1 of `gosub`'s "One round" — a fresh baseline, because the
 frontier is now empty and the ledger may have grown a blocking row that the
 next round will pick up ahead of the next slice.
