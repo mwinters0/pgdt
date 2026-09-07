@@ -44,6 +44,43 @@ pub fn fixture(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures").join(relative)
 }
 
+/// Every real `pg_dump` output file the fixture generator produced, across all
+/// six routine versions and every schema — read off the tree rather than
+/// listed, so a new schema or flag set is swept the moment the generator
+/// writes it. Includes the degenerate shapes: `data-only`, `schema-only`,
+/// `inserts`/`column-inserts` (no `COPY` blocks at all), and `dumpall`
+/// (concatenated, multi-`\connect`).
+///
+/// A deliberate second copy of `pgdump_query/tests/common/mod.rs`'s function of
+/// the same name, for the reason stated at the top of this file: the two test
+/// crates cannot share a module, and a path helper is what each one needs
+/// before it can address a fixture at all.
+pub fn all_fixtures() -> Vec<PathBuf> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures");
+    let mut out = Vec::new();
+    for version in std::fs::read_dir(&root).unwrap() {
+        let version = version.unwrap().path();
+        if !version.is_dir() {
+            continue;
+        }
+        for schema in std::fs::read_dir(&version).unwrap() {
+            let schema = schema.unwrap().path();
+            if !schema.is_dir() {
+                continue;
+            }
+            for entry in std::fs::read_dir(&schema).unwrap() {
+                let path = entry.unwrap().path();
+                if path.extension().is_some_and(|e| e == "sql") {
+                    out.push(path);
+                }
+            }
+        }
+    }
+    assert!(!out.is_empty(), "fixture discovery found nothing — did the tree move?");
+    out.sort();
+    out
+}
+
 /// `scripts/`, which is the working directory every `uv run` here needs.
 pub fn scripts_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts")

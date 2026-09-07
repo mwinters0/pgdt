@@ -4159,6 +4159,14 @@ asserts the leader was reached at all, off the `MayWait` announcement only its
 scheduler makes; `a_cancelled_parallel_region_banks_nothing_and_stays_resumable`
 covers the third arm.
 
+**The byte-identity itself is asserted on the file, not on the index** —
+`pgdump_query-cli/tests/determinism.rs`, over every fixture in the tree. An
+index comparison is the stronger statement about the *scan* and the weaker one
+about the *artifact*: a field that compares equal and encodes differently would
+leave `pgdq info` saying one thing after a serial scan and another after a
+parallel one, with nothing in the library's tests able to see it. See "Testing
+philosophy" for what the legs are and why they state a chunk size.
+
 ### Projection
 
 **A projection names columns**, resolved per block against that block's own
@@ -8424,6 +8432,26 @@ conjunction under `--where` and an equality under `--filter`, which is the
 whole reason there are two flags and cannot be seen from either alone.
 `pgdump_query/tests/map_file.rs` separately covers that a real interruption
 leaves that same shape.
+
+**`determinism.rs` is where the parallel scan's central promise is asserted on
+the artifact a user keeps**: `pgdq parse` writes one `.dqcache`, byte for byte,
+whatever `--jobs` says — over every fixture the generator produced, discovered
+off the tree the way `every_fixture_tiles_exactly` discovers its own. The
+reference is `--jobs 1` **stated**, never inherited, so it cannot follow the
+default wherever that goes next; the flagless leg is asserted against it rather
+than used as it. **The parallel legs state a chunk size, and that is
+load-bearing rather than tuning.** `LocalFileSource`'s partition unit is the
+read chunk and `scan_region` declines a region with less than one partition left
+in the file, so at the shipped 1 MiB every fixture — the largest is 66 KB — is
+declined whole and a `--jobs 8` leg would be the serial path compared to itself.
+512 bytes cuts nearly every block, 4 KiB cuts the larger ones and leaves the
+rest, and one generated dump past four shipped chunks carries the **shipped**
+configuration run parallel with no chunk size stated at all — with its own
+precondition asserted against `DEFAULT_CHUNK_SIZE`, so a raised default fails
+the test rather than hollowing it out. Each leg writes a cache path of its own,
+because the library refuses to overwrite a cache recorded against another file
+(see [the cache](#the-cache)), and every leg reads the fixture where it lies,
+since the identity a cache records is that file's size and mtime.
 
 **`xz_source.rs` is the compressed source's end-to-end half**, and the only
 place `.xz` reaches the real binary; the library-level parity lives beside it in

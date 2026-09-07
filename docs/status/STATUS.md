@@ -176,6 +176,10 @@ on. Its leader hunk is unreachable from every registered command shape —
 the window loop runs — and its CLI hunk is reachable but is one comparison per
 slot per fill round on the path where nothing fails
 ([`../design/roadmap-P16.11-error-ordering-notes.md`](../design/roadmap-P16.11-error-ordering-notes.md)).
+The determinism slice is the first of this phase to touch **no declared path at
+all** — two test files and `architecture.md`, which is a `quoted_by` edge rather
+than a `depends` one — so it needs no excuse and gets none
+([`../design/roadmap-P16.12-determinism-notes.md`](../design/roadmap-P16.12-determinism-notes.md)).
 **One published number actually moves**, the
 `chunk-size` table's 16 MiB row, which was taken when a chunk that large missed
 the buffer pool; that row is called out where it stands. A stale figure obliges
@@ -493,8 +497,16 @@ are worth, and the orderings that do bind are named in
       out. Both assertions were shown to fail on the previous code first.
       Notes:
       [`../design/roadmap-P16.11-error-ordering-notes.md`](../design/roadmap-P16.11-error-ordering-notes.md)
-- [ ] **16.12** The determinism test — `--jobs 1` and `--jobs 8` byte-identical
-      over every fixture.
+- [x] **16.12** The determinism test — `pgdq parse` writes one `.dqcache`, byte
+      for byte, whatever `--jobs` says: all 109 fixtures against a stated
+      `--jobs 1` reference, over five legs including the flagless one, plus a
+      generated dump past four shipped chunks parsed at `--jobs` 1/4/8/24 with
+      no chunk size stated. **The parallel legs state a chunk size because
+      otherwise they are the serial path compared to itself** — every fixture
+      block sits under `scan_region`'s floor at the shipped 1 MiB — and both
+      tests were shown to fail on an injected `leader::merge` fold first. No
+      library code. Notes:
+      [`../design/roadmap-P16.12-determinism-notes.md`](../design/roadmap-P16.12-determinism-notes.md)
 - [ ] **16.13** `parallel-scan-throughput` and `parallel-peak-rss`, each with
       an apparatus gate of its own.
 - [ ] **16.14** koji verification — one detached `--jobs` parse of the `.xz`,
