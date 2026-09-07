@@ -320,7 +320,11 @@ terminator.
 starts inside a `COPY` block resyncs to a *line start* and never hands the
 scanner a mid-row byte, because this claim is about a line start and a row's
 own tail can be the two bytes `\.` (a value ending in an escaped backslash, cut
-between them). Otherwise nothing built: the scanner enumerates lines, and the
+between them). Also `architecture.md`, "The interior split", which is the same
+resync read from the cold side: a piece of an open block's interior finds its
+first row at a line start, and the earliest piece reporting a `\.` line holds
+the real terminator precisely because no line inside the block can be mistaken
+for one. Otherwise nothing built: the scanner enumerates lines, and the
 needle search this would also make safe is deferred rather than refused
 (`architecture.md`, "parse-profile").
 **Re-verify:** the `public.escapes` fixture test already asserts the escaping
@@ -852,7 +856,11 @@ row per `chr(n)` codepoint) round-tripping through
 **Relied on by:** `pgdump_query/src/copy.rs`'s `encode_field`, which only
 implements these seven escapes and is therefore *not* a general COPY-text
 encoder — it is exactly `decode_field`'s inverse for text `pg_dump` could
-have produced, no more.
+have produced, no more. Also `architecture.md`, "The interior split": `\n` is
+one of the seven, so a literal LF byte inside a data region is always a row
+boundary and never part of a value — which is what makes an LF-split of an open
+`COPY` block's interior a split into whole rows, and what lets a cut know
+nothing about rows at all.
 
 **Re-verify:** `grep -n "case '\\\\b'" src/backend/commands/copyto.c` in a new
 major's source — confirm the mnemonic set and the "no octal/hex on output"

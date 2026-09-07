@@ -91,7 +91,7 @@ header. A caller that reads it off an arbitrary partition gets the default
 
 **Nothing spawns yet.** The sub-streams are `Send` and the tests drive them
 interleaved through `join_all`, but no thread is created and
-`tokio::task::spawn_blocking` is not reached from here — that is 16.10's
+`tokio::task::spawn_blocking` is not reached from here — that is 16.10.1's
 worker, and it is also what first grants a `WaitPolicy::MayWait`.
 
 **The chunk pool's depth is still `POOL_DEPTH`.** 16.7.1 left it there because

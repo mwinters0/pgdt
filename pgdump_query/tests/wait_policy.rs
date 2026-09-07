@@ -4,7 +4,7 @@
 //! **The claim these tests exist for**: no read loop in the shipped build
 //! grants [`WaitPolicy::MayWait`], so nothing here can block on a slot. The
 //! wait is real, tested against a bare pool, and armed by the first holder
-//! that needs it — `16.10`'s fused worker. Until then a loop that *could*
+//! that needs it — `16.10.1`'s fused worker. Until then a loop that *could*
 //! wait safely still does not, because the two failure directions are not
 //! comparable: a bound that fails to bind costs memory and is visible, and a
 //! wait granted wrongly is a hang with nothing to measure.
@@ -101,7 +101,7 @@ async fn a_structural_scan_grants_no_wait() {
 /// A query is two loops over one source, and the second could not grant a wait
 /// even if the build armed the bound: the replay pins every chunk a batch has
 /// taken a view into. Both state the same thing today, which is the property
-/// this records — `16.10` is what makes the sequence interesting.
+/// this records — `16.10.1` is what makes the sequence interesting.
 #[tokio::test]
 async fn a_query_grants_no_wait_in_either_loop() {
     let source = RecordingSource::wrap(LocalFileSource::open(edge_cases()).unwrap());

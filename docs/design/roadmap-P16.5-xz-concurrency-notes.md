@@ -97,7 +97,7 @@ coordinated: an in-flight map would put every reader through a second lock —
 serializing the common case, different readers on different blocks — to spare a
 duplicate decode that only a shared block boundary produces. What keeps
 concurrent readers off each other's blocks is how the range was split, which is
-16.6's advisory to answer and 16.8/16.10's to honour. **A scheduler that hands
+16.6's advisory to answer and 16.8/16.10.1's to honour. **A scheduler that hands
 workers ranges not aligned to block boundaries pays this twice over**, since
 two workers inside one block each decode all of it.
 
@@ -106,7 +106,7 @@ two workers inside one block each decode all of it.
 one gets one — which is fine for a serial reader and *not* enough for N
 workers, each of which needs a block of its own retained or it re-decodes on
 every chunk. 16.7's byte half is what raises it; a `--jobs 8` run against
-today's constant would thrash, and that is the first thing 16.8 or 16.10 will
+today's constant would thrash, and that is the first thing 16.8 or 16.10.1 will
 see if the budget is still a constant when they land.
 
 **`BLOCK_DECODE_MAX_BYTES` becomes that budget's consequence, not a second

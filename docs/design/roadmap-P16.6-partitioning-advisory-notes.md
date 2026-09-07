@@ -80,7 +80,7 @@ whatever the advisory says a partition costs.
 **The advisory is an advisory: nothing enforces alignment.** A scheduler is free
 to split an `XzSource` somewhere the advice did not offer, and pays two decodes
 of the shared block for it
-([`architecture.md`](architecture.md), "The compressed source"). 16.8 and 16.10
+([`architecture.md`](architecture.md), "The compressed source"). 16.8 and 16.10.1
 are what honour it.
 
 **16.4.1 is not the next slice; 16.7 is.** Backpressure has no budget to wait

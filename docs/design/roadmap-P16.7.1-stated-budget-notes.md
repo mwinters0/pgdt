@@ -96,7 +96,7 @@ not be written.
 **A scheduler that raises `--jobs` gets more retained blocks and nothing else
 until it also raises `--parallel-memory`.** At the default budget a 24 MiB-block
 file affords two slots whatever `jobs` says, because the budget binds first.
-16.8 and 16.10 will want to state both numbers together, and the arithmetic
+16.8 and 16.10.1 will want to state both numbers together, and the arithmetic
 they should size against is the partitioning advisory's
 `partition_bytes` — a decoded block plus a chunk buffer per partition, plus the
 LZMA2 dictionary and `xz-seek`'s input buffer, which that method deliberately

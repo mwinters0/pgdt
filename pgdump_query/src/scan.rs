@@ -573,7 +573,7 @@ where
     // keeps and an `Event` borrows only for the callback — so it *could* be
     // made to wait safely; what it would buy is exposure rather than coverage,
     // the wait's own test driving a bare pool, and the two failure directions
-    // are not comparable. `16.10`'s fused worker is the first holder that
+    // are not comparable. `16.10.1`'s fused worker is the first holder that
     // needs the bound and is where it is armed
     // (`docs/design/architecture.md`, "Execution model and API surface").
     source.hint_wait_policy(WaitPolicy::NeverWait);

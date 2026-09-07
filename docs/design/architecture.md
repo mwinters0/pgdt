@@ -43,6 +43,7 @@ through.
 | `batch.rs`, the zero-copy `Utf8View` path, a batch's flush triggers | [Arrow assembly and the zero-copy path](#arrow-assembly-and-the-zero-copy-path) |
 | `stream.rs`, `map_forward`/`map_file`, replay, resume, projection, predicates, the `--filter` term grammar, the `--where` expression grammar | [Query: mapping and streaming are separate passes](#query-mapping-and-streaming-are-separate-passes) |
 | splitting a replay into sub-streams, how a piece finds its first and last row, how the caller's two numbers bound them | [Partitioned replay](#partitioned-replay) |
+| `leader.rs`, splitting an open `COPY` block's interior, what a piece answers and how the pieces fold back | [The interior split](#the-interior-split) |
 | where a scan's time actually goes, before proposing to make one faster | [Where a scan's time goes](#where-a-scans-time-goes) |
 | `alloc.rs`, a `#[global_allocator]`, what a figure's apparatus line names | [The allocator is the binary's choice](#the-allocator-is-the-binarys-choice) |
 | `cache.rs`, the format version, cache modes | [The cache](#the-cache) |
@@ -73,6 +74,7 @@ through.
 | Array / record / range / multirange literal decode + render-back, and the `*_in` supersets a filter literal is read with | `pgdump_query/src/nested.rs` | L2 |
 | Arrow batch assembly (`ColumnBuilder`, `RowBatcher`), the retained read chunks a zero-copy view points into (`RetainedChunks`), push-mode `read_table` | `pgdump_query/src/batch.rs` | L3 |
 | Pull-mode `table_stream`, `map_forward`, `map_file` (`pgdq parse`'s scan), replay, `ResumeToken`, `ScanExtent` | `pgdump_query/src/stream.rs` | L4 |
+| What one piece of an open `COPY` block's interior answers (`scan_piece`), and how the pieces fold back into the block's totals (`merge`) | `pgdump_query/src/leader.rs` | L4 |
 | Post-parse predicate | `pgdump_query/src/predicate.rs` | L4 |
 | CLI (`pgdq parse` / `info` / `query`), the `--filter` term grammar | `pgdump_query-cli/src/main.rs` | above L4 |
 | The `--where` expression grammar | `pgdump_query-cli/src/where_expr.rs` | above L4 |
@@ -3886,6 +3888,76 @@ its first row.** It needs no separate read, since the discarded line ends
 exactly where the piece's first row begins — and it is unsound for the `\.`
 reason above, and on a block-decoding source it would decode the *previous*
 block to read one byte.
+
+### The interior split
+
+The cold counterpart of the replay above, and the same piece semantics read
+from the other side. A serial leader that has just scanned
+`COPY … FROM stdin;` knows every byte until `\.` is line-structured rows, so
+the block's interior can be handed out in LF-split ranges to workers that never
+parse *structure* — the leader has already proved there is none in there to
+find. `leader.rs` (L4) is the **parse** half of that arrangement:
+`scan_piece` is what one worker runs and `merge` is what the leader does with
+the answers. Neither reads a source, spawns anything, or knows how the cuts
+were chosen.
+
+**A piece answers four things about itself**: how many rows it owns, its own
+array-shape census, the `\.` terminator if it held one, and the offset it
+consumed through. Nothing above may read a piece's census on its own — it
+describes the rows that piece saw and no others, which is exactly the
+half-censused block "What the census decides, and who may believe it" refuses —
+so it exists only to be merged.
+
+**`merge` folds the pieces in file order and stops at the first terminator.**
+Row counts sum and censuses union, and `ArrayShape`'s merge is min-of-mins,
+max-of-maxes and OR of the `[lb:ub]=` flag over `ArrayShape::default()` — a
+bounded semilattice, so commutative, associative and idempotent. What the order
+decides is which pieces are *in* the fold, since everything past the terminator
+is not part of the block at all. No terminator anywhere in the window is
+`None`, which is the leader's signal to hand out more of the interior rather
+than to close the block short.
+
+**A piece past the block's end may report a terminator of its own** — it is
+scanning DDL as though it were rows, and a `\.` line inside a dollar-quoted
+body reads as one. That costs nothing: every piece *before* the true terminator
+is inside the block, where I7 makes a `\.` line unambiguous, so the earliest
+report is always the real one.
+
+**The cut semantics are the replay's, not a second set.** A piece's `limit` is
+not where reading stops: it runs through the line ending at the first LF at or
+after `limit`, which is the row the next piece's resync then skips — so a row
+straddling a cut belongs to the piece before it, once, and a cut needs to know
+nothing about rows. The resync is a real forward read for the same reason a
+sub-stream's is: I7's guarantee is about a **line start**, and a row's own tail
+can be the two bytes `\.`, which is `a\.` written as COPY TEXT writes it.
+Consequently `scan_piece` must be handed bytes running *past* its limit, far
+enough to finish that line; only the caller knows what it read, so that is the
+caller's half of the contract.
+
+**The property the whole mechanism rests on is that the split is invisible in
+the answer.** It is the argument `full.spans == eager.spans` makes about
+assembly routes, applied to the one the workers add:
+`a_split_interior_answers_what_the_serial_scanner_answers` cuts every `COPY`
+block of six fixtures ten ways and asserts the merged row count, terminator,
+end and census against what the serial `CopyScanner` and `map::Builder` state
+for the same block — and separately asserts that some cut really did give two
+pieces rows of their own, since otherwise the equality is the serial path
+compared to itself.
+
+**The census fold is one function with two callers**, `map::census_row`.
+The serial mapping pass keeps its census on the `Builder` and a worker keeps
+its own, so the accumulator differs and the fold must not: two copies of it
+would be two censuses free to drift, which is the confidently-wrong schema the
+both-bounds design exists to prevent. It is also the patch point the census-off
+binary is built from ([`measurements.md`](measurements.md), "The census on
+brace-free rows"), and it now isolates the census for every caller rather than
+for the mapping pass alone.
+
+*Rejected:* **giving the worker its own copy of the fold and a test asserting
+the two agree.** It leaves the measurement recipe's anchor untouched, which was
+its whole appeal, and it buys that by making a drift *detectable* where sharing
+makes it *impossible* — and the recipe survives the move intact, one sentence
+of `measurements.md` naming the new function.
 
 ### Projection
 

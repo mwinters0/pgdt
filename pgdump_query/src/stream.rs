@@ -518,7 +518,7 @@ async fn map_forward(
     // **This loop grants no wait** (`ByteRangeSource::hint_wait_policy`). It
     // builds spans, not batches, so every chunk is consumed and dropped inside
     // the iteration that read it and a wait would be safe — but no shipped
-    // loop arms the bound until `16.10`'s fused worker needs it
+    // loop arms the bound until `16.10.1`'s fused worker needs it
     // (`docs/design/architecture.md`, "Execution model and API surface").
     source.hint_wait_policy(WaitPolicy::NeverWait);
     let mut scanner = CopyScanner::resume(seg_start, None);

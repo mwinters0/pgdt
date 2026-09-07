@@ -88,7 +88,7 @@ coverage, and the two failure directions are not comparable.
 the discipline, and it is a property of the worker loop rather than anything
 the pool can check: a worker that decodes a block, parses its rows and drops
 them fits; one that accumulates two ranges' buffers before parsing deadlocks
-against a one-slot pool. `16.10`'s fused worker is the first real instance.
+against a one-slot pool. `16.10.1`'s fused worker is the first real instance.
 
 **A partitioned *replay* (`16.8`) grants no wait either, and that is not an
 oversight.** Splitting replay into N sub-streams does not change what a batch

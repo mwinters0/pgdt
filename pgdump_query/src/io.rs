@@ -1881,7 +1881,7 @@ mod tests {
     /// with another holder: with one it can only be asserted not to have
     /// blocked, which the unwaiting take already guaranteed. **No shipped read
     /// loop grants this permission**, so this is where the mechanism is
-    /// exercised at all until `16.10`'s fused worker arrives.
+    /// exercised at all until `16.10.1`'s fused worker arrives.
     #[test]
     fn a_permitted_wait_takes_a_slot_rather_than_allocating() {
         let unit = 1 << 20;

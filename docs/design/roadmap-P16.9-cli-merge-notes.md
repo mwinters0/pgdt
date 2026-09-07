@@ -46,7 +46,7 @@ it had rows — which is the same block the serial path announced from.
 slots, and after the first round exactly one is empty. So the concurrency the
 merge exposes is a burst at the start plus one lookahead batch per sub-stream;
 it is an *ordering* mechanism, and the throughput it does not buy is what
-16.10's workers are for. The practical consequence worth knowing is the one
+16.10.1's workers are for. The practical consequence worth knowing is the one
 that did not happen: 24 sub-streams do not turn a plain-file query into 24
 interleaved sequential reads.
 
@@ -66,7 +66,7 @@ reference runs are now pinned at `--jobs 1`, and a new test asserts the printed
 
 ## What the next slice inherits
 
-**16.10's leader has a printer to hand rows to.** The CLI's side of "the
+**16.10.1's leader has a printer to hand rows to.** The CLI's side of "the
 library hands out partitions; the CLI merges them" is done and does not change
 when the *cold* path grows workers: the leader's output still reaches the user
 through `table_stream_partitions` and this merge, provided each piece it hands

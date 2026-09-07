@@ -258,7 +258,7 @@ written and stopped being true at `16.9`. The budget was a bound on what the
 sub-stream costs in both terms, `partition_bytes + max_source_span`, and one
 number bounds a query rather than one number bounding half of it. And the CLI's
 parallel default was set when `--jobs` bought I/O depth at no memory cost;
-until `16.10` there is no CPU parallelism to buy, the I/O depth is unmeasured on
+until `16.10.1` there is no CPU parallelism to buy, the I/O depth is unmeasured on
 every device, and on a HDD N sub-streams read at N separated offsets at once.
 So **`--jobs` defaults to 1 until `16.13` measures a gain**, and the sentence
 above states the intent the figure is asked to license rather than a default
@@ -558,11 +558,13 @@ free number rather than being inserted.
 
 **The orderings that bind regardless of what the evidence says:** 16.1 and 16.2
 first; **16.3 before 16.4**, so the pinning rework happens in one layer rather
-than straddling two; **16.4 before 16.5, 16.8 and 16.10**, all three of which
-run N readers; **16.5 before 16.10**, which depends on it; **16.7 before
+than straddling two; **16.4 before 16.5, 16.8 and 16.10.1**, all three of which
+run N readers; **16.5 before 16.10.1**, which depends on it; **16.7 before
 16.7.1**, which reads the value it defines; **16.7.1 before 16.9**, which needs
-the flags; **16.10 before 16.12**. **16.4.1 lands with or after the first of
-16.5 and 16.10**, whichever runs first, since a wait with no second holder is a
+the flags; **16.10 before 16.10.1**, which is what "the evidence half lands
+first" means here; **16.10.1 before 16.12**. **16.4.1 lands with or after the
+first of 16.5 and 16.10.1**, whichever runs first, since a wait with no second
+holder is a
 deadlock rather than a bound — **and after 16.7.1**, which is a second binding
 found while 16.6 was being written
 ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "16.4.1
@@ -593,16 +595,26 @@ wait on a number that never arrives. The condition that once also named
 | **16.7.1** | **What the stated budget decides, and the flags that state it** — `POOL_BUDGET_BYTES` and the block pool's depth become the caller's numbers, **`BLOCK_DECODE_MAX_BYTES` becomes a consequence of the stated budget rather than a constant beside it** (the 256 MiB cap and the 64 MiB budget are unrelated numbers today, and the latter is not a bound above its own slot size, since `BufferPool::slots` clamps to at least one; a file with more than one block is seekable for a client willing to allocate a block, so what the cap declines is memory — and the budget is where a caller says how much of it they have, [`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "The block-decode cap declines memory, not seekability"), and the CLI's `--jobs` / `--parallel-memory` with the manual page: the degradation curve, and the one sentence saying why an `INSERT` run cannot be parallelized. **Earned, not planned** ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "16.7 split: a value, then what reads it"): the row paired a value with a rework of the two pools every timed path runs through, and the flags are only honest once the number they state changes something. |
 | **16.8** | **Partitioned replay** — `TableStream` splits into N sub-streams over a complete map, each internally in file order, for a plain source and a compressed one alike. |
 | **16.9** | **The CLI's k-way merge** on source offset, holding one batch per partition, so `pgdq query` keeps file order at N × batch rather than an open-ended reorder buffer. |
-| **16.10** | **The leader** — opens a `COPY` region, hands its LF-split interior to fused decode-and-parse workers, and merges census, row counts and spans at `CopyEnd`. Adds a "Relied on by" line to I7 and I15, which are what make LF-splitting sound. |
+| **16.10** | **The interior split** — what one LF-split piece of an open `COPY` block's interior answers on its own (rows, its own census, the `\.` terminator if it held one), and how the pieces fold back into the block's totals. Pure and synchronous: the body a fused worker runs, and the merge the leader performs, with no source, no dispatch and no consumer. Adds a "Relied on by" line to I7 and I15, which are what make LF-splitting sound. |
+| **16.10.1** | **The leader** — the scheduler that cuts an open `COPY` region's interior where the source advises, runs the fused decode-and-parse workers over the pieces, and merges `16.10`'s answer into `map::Builder` and the `DumpIndex` at `CopyEnd`; the first read loop to grant `WaitPolicy::MayWait`; `pgdq parse --jobs`. **Earned, not planned** ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "16.10 split: the parse, then the scheduler that feeds it"). |
 | **16.11** | **Error ordering** — a failing worker records and stops, the scheduler drains the partitions before it, and the lowest-offset error is the one raised. Asserted, not documented. |
 | **16.12** | **The determinism test** — `pgdq parse --jobs 1` and `--jobs 8` produce byte-identical `.dqcache` files over every fixture, and both equal what this build produces today. |
 | **16.13** | **`parallel-scan-throughput` and `parallel-peak-rss`** — `parse` and `query` against `--jobs` on the HDD, SATA SSD and NVMe, compressed and plain; RSS against `--jobs` at two block sizes. Both carry an apparatus gate of their own, a figure that occupies 24 threads being unable to inherit the sweep's quiet-machine one. |
 | **16.14** | **koji verification** — one detached `pgdq parse --jobs` of the `.xz` in a 512 MB cgroup, per `CLAUDE.md`'s long-running-process rule, whose `.dqcache` must be byte-identical to the one the serial 784 GB scan already produced. Outside the register, with an `<!-- outside-register: … -->` marker. |
 
-**16.10 is the largest slice here and is the one most likely to earn a
-`16.10.1`.** Said now rather than discovered mid-slice: it is the only row that
-pairs a new scheduler with a merge into three already-tested structures, and if
-the two halves need different confidences at review, the split is at that seam.
+**16.10 was named here in advance as the row most likely to earn a
+`16.10.1`, and it did** — the prediction being that it is the only row pairing
+a new scheduler with a merge into three already-tested structures, and that if
+the two halves needed different confidences at review the split was at that
+seam. **The seam it actually earned is one step to the left of that**, at the
+recurring mechanism/evidence one: the *parse* a worker runs and the fold the
+leader performs are pure, synchronous and checkable against the serial scanner's
+own answer, where the scheduler is dispatch plus a restructure of `map_forward`,
+which every `parse` and every query's first pass runs through. So `16.10` is the
+half that can be reviewed against a reference it did not produce, and `16.10.1`
+is the half that reworks a tested core path
+([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md),
+"16.10 split: the parse, then the scheduler that feeds it").
 
 **16.4 earned the phase's first third level, and at a seam this document did not
 predict.** The row paired a sizing change with a *bound*, and a bound is only

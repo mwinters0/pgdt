@@ -6,6 +6,7 @@ pub mod diagnostic;
 mod error;
 pub mod index;
 mod io;
+mod leader;
 pub mod map;
 pub mod nested;
 pub mod pgtype;

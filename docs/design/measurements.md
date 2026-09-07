@@ -1427,8 +1427,11 @@ that puts a `{` or `[` into the default rows invalidates both.
 
 **The census-off binary is a source patch, which no harness performs.** Build
 it once, by hand: put a bare `return;` as the first statement of `pub(crate) fn
-on_row` in `map.rs` — the pre-filter and everything after it, and nothing else
-— then
+census_row` in `map.rs` — the pre-filter and everything after it, and nothing
+else. That is the fold itself rather than `Builder::on_row`, which now
+delegates to it, so the patch isolates the census for **every** caller, the
+interior workers included ([`architecture.md`](architecture.md), "The interior
+split"). Then
 
 ```sh
 cargo build --release -p pgdump_query-cli          # default target: glibc
