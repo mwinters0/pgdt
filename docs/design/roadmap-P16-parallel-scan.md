@@ -293,6 +293,20 @@ the query layer and make L4 name its source. Two changes keep every layer where
   others that exist for a source the local file is not
   ([`architecture.md`](architecture.md), "Execution model and API surface").
 
+**The advisory is read off the read path the source actually took, never off
+the seek table alone.** An `XzSource` whose largest block is above
+`BLOCK_DECODE_MAX_BYTES` still has a seek table and still has block boundaries,
+but every read goes through the mutex-guarded streaming reader, where reaching
+an offset inside a block has one route — restart at that block's start and
+discard forward (`vendor/xz-seek/src/reader.rs`: *"a backward move within a
+block restarts"*). Two workers on different partitions of such a file would
+each force the other's restart, so parallel mode over it is **worse than
+serial**, not merely unaccelerated. That source advises **one partition**, and
+nothing is given up by it: the shape this reaches in practice is a single-block
+file, whose one block is the parallel unit entire — LZMA2's dictionary runs the
+length of a block, so no budget buys a second worker anything
+([`architecture.md`](architecture.md), "The compressed source").
+
 L4's scheduler asks the source how to split, runs N workers that each
 `read_range` and parse, and never learns what is underneath. **P14 inherits the
 question correctly**: a remote source's natural partitioning is a ranged-GET
@@ -548,7 +562,7 @@ deadlock rather than a bound.
 | **16.4** | **The block pool's sizing** — `io::BufferPool` from four fixed slots to a byte budget the slot count is derived from, so a slot may be a decoded xz block, and `RowBatcher::max_source_span` re-derived against block-shaped rather than chunk-shaped pinning. |
 | **16.4.1** | **Backpressure** — a slot acquisition that waits for a free slot instead of allocating, which is what turns the slot count into a bound on what is outstanding. **Earned, not planned** ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "16.4 split: backpressure has no test without a second holder"): the pool cannot tell a serial reader legitimately holding `(max_source_span / chunk) + 1` buffers — unbounded under `max_source_span: None` — from a worker holding one slot, so a wait is backpressure for the second and a deadlock for the first. The **exemption** is what makes a wait safe, not the budget: at the defaults the serial reader reaches 65 MiB against a 64 MiB budget, and under `None` no finite budget is above its reach. It lands with the first concurrent consumer because that is what a test needs — a blocking acquire has no behaviour except its interaction with holders, and against the exempt holder alone the strongest assertion is "it did not block", which the non-waiting `take` already guarantees. Two commitments come with it: **one slot per holder** for the waiting side, and an **option-validation error** naming both settings when `max_source_span` is `None` and `Parallelism` is not `Serial`, since an unbounded holder makes any finite budget unsatisfiable and the symptom is a hang rather than an error. |
 | **16.5** | **`XzSource` internally concurrent** — the single `xz_seek::Reader` behind a `std::sync::Mutex` gives way to per-call block decode over a shared immutable `SeekTable` and the block pool, so concurrent `read_range` calls genuinely run concurrently. The block decoder gets a **pool of its own**, not a second unit announced into the chunk pool ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "16.5 takes a second pool, because a pool describes one unit"): `BufferPool::hinted` is one atomic driving both `keeps()` and `slot_bytes()`, so a single pool serving two units drops every block on release at the chunk length, or takes the chunk path's pooling away at the block length. |
-| **16.6** | **`ByteRangeSource::partitions`** — the defaulted partitioning advisory, with `LocalFileSource`'s and `XzSource`'s answers and their per-partition footprints. No consumer yet. |
+| **16.6** | **`ByteRangeSource::partitions`** — the defaulted partitioning advisory, with `LocalFileSource`'s and `XzSource`'s answers and their per-partition footprints. `XzSource` has **two** answers, read off the read path it took rather than off the seek table: block boundaries where it block-decodes, and **one partition** where it fell back to the streaming reader, whose restart-and-discard positioning makes N workers worse than serial. No consumer yet. |
 | **16.7** | **The `Parallelism` surface** — the library enum defaulting to `Serial`, its `ScanOptions`/`QueryOptions` wiring, and the CLI's `--jobs` / `--parallel-memory`. Includes the manual page: the degradation curve, and the one sentence saying why an `INSERT` run cannot be parallelized. **`BLOCK_DECODE_MAX_BYTES` becomes a consequence of the stated budget rather than a constant beside it**: the 256 MiB cap and `POOL_BUDGET_BYTES` are unrelated numbers today, and the latter is not a bound above its own slot size, since `BufferPool::slots` clamps to at least one. A file with more than one block is seekable for a client willing to allocate a block, so what the cap declines is memory — and the budget is where a caller says how much of it they have ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "The block-decode cap declines memory, not seekability"). |
 | **16.8** | **Partitioned replay** — `TableStream` splits into N sub-streams over a complete map, each internally in file order, for a plain source and a compressed one alike. |
 | **16.9** | **The CLI's k-way merge** on source offset, holding one batch per partition, so `pgdq query` keeps file order at N × batch rather than an open-ended reorder buffer. |
