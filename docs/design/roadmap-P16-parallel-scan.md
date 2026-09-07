@@ -248,6 +248,23 @@ The defaults split by audience:
 - **The CLI defaults to parallel**, with `--jobs <n>` and `--parallel-memory
   <bytes>` capping it. `--jobs 1` is the serial path.
 
+**Amended: the stated bytes bound both memory terms, and the CLI's parallel
+default waits on the figure that justifies it**
+([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "What a
+default `pgdq query` may hold"). Two things were true when the split above was
+written and stopped being true at `16.9`. The budget was a bound on what the
+*source* retained, and the replay's sub-streams now multiply what a query
+**pins** as well — so `worker_count` divides the stated bytes by what one
+sub-stream costs in both terms, `partition_bytes + max_source_span`, and one
+number bounds a query rather than one number bounding half of it. And the CLI's
+parallel default was set when `--jobs` bought I/O depth at no memory cost;
+until `16.10` there is no CPU parallelism to buy, the I/O depth is unmeasured on
+every device, and on a HDD N sub-streams read at N separated offsets at once.
+So **`--jobs` defaults to 1 until `16.13` measures a gain**, and the sentence
+above states the intent the figure is asked to license rather than a default
+shipped ahead of it. `--jobs` and `--parallel-memory` are unchanged as flags:
+what moves is only what a person who states neither gets.
+
 *Rejected:* deriving the byte budget by reading the cgroup limit. It is
 attractive given that every koji run here is in a 512 MB cgroup, but it makes
 memory behaviour depend on a kernel interface nothing in this project has

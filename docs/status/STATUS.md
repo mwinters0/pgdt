@@ -425,6 +425,13 @@ are worth, and the orderings that do bind are named in
       an apparatus gate of its own.
 - [ ] **16.14** koji verification — one detached `--jobs` parse of the `.xz`,
       cache byte-identical to the serial 784 GB scan. Outside the register.
+- [ ] **16.15** The stated budget bounds both memory terms — `worker_count`
+      divides the stated bytes by `partition_bytes + max_source_span`, so one
+      number bounds a query rather than half of one. Admitted after spec time,
+      so the number is the next free one rather than a position.
+- [ ] **16.16** `--jobs` defaults to 1 until `16.13` licenses the parallel
+      default with a number. The flags are unchanged; what moves is what a
+      person who states neither gets.
 
 ## Known deficiencies
 
@@ -577,25 +584,4 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-**`pgdq query`'s default resident set is now up to N × what it was, and
-`--parallel-memory` does not bound that half.** 16.9 switched the CLI to the
-partitioned entry point at `--jobs`' default, this machine's available
-parallelism — 24 here. Each sub-stream keeps its own `RetainedChunks` while its
-in-flight batch pins them, and `QueryOptions::max_source_span` allows 64 MiB of
-that *per stream*, so the worst case is 24 × 64 MiB where it was one. The
-stated budget bounds the source's pools and not this, which
-[`../design/architecture.md`](../design/architecture.md), "Execution model and
-API surface" already says in the abstract ("the bound is two terms and only one
-is the library's"); what is new is that the CLI now reaches the second term by
-default. The call was to wire the flag as the spec states it
-([`../design/roadmap-P16-parallel-scan.md`](../design/roadmap-P16-parallel-scan.md),
-"The caller sets workers or bytes, whichever binds first" — the CLI defaults to
-parallel) rather than to invent a cap this slice was not asked to decide, and
-to say so here. In practice a batch flushes at `max_rows` (8192) long before
-the span cap on ordinary rows, so the ceiling is reached only by a table
-averaging ~8 KB a row; nothing measures it yet, and `parallel-peak-rss`
-(16.13) is the figure that would. What would change if reconsidered: either the
-CLI divides `max_source_span` by the sub-stream count, or the span cap moves
-inside the stated budget so one number bounds both terms — the second is the
-larger change and the one the spec's "memory is bounded by a block pool with
-backpressure" argument points at.
+Nothing open.

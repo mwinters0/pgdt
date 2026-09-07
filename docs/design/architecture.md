@@ -432,7 +432,19 @@ waiting holders' slots, which is a ceiling the library sets and the only one
 `PoolState::charged` counts, and what in-flight batches pin — `max_source_span`
 rounded out to the retained unit, times however many batches the caller keeps —
 which is not. Two honest terms beat one term that quietly assumes the second
-away. *Rejected: counting every outstanding buffer against the ceiling.* It
+away.
+
+**The second term has two factors, and the library owns one of them.** How much
+a single batch pins is a property of consumer code, which is the argument above
+and is why the term is not folded in. *How many* such batches exist at once is
+not: `table_stream_partitions` decides how many sub-streams a caller is handed,
+and a caller merging them in file order holds one batch from each, so the
+library's own choice of N multiplies whatever the consumer keeps per stream.
+`worker_count` is where those meet — it already divides the stated budget by
+what one concurrent reader costs the *source*, and a sub-stream's held batch is
+the same kind of per-reader cost arriving from the other side.
+
+*Rejected: counting every outstanding buffer against the ceiling.* It
 states one number instead of two, and it lets a loop that granted nothing block
 one that granted a wait — which is the deadlock read back in through the
 counter after the exemption removed it from the wait.
