@@ -10,7 +10,7 @@ kept**.
 2026-09-05, against commit `af15eac`, under the `system` allocator. **17 of the
 19 figures below come from that sitting.** The other 2 carry their own sitting
 commits inside their markers, and every reader of this stamp argues from those
-instead: `peak-rss` (`7ee5db5`), `xz-decode-scaling` (`7d21c6e`). One sweep, one
+instead: `peak-rss` (`41c96bb`), `xz-decode-scaling` (`7d21c6e`). One sweep, one
 apparatus — which is what
 lets these tables be differenced against each other, and what "are these
 figures from before or after my change" is answered by. `uv run measure.py
@@ -31,8 +31,9 @@ hand, and `--check` fails a document carrying any other.
 
 **Not everything printed below is a figure, and the ones that are not say so.**
 A section outside the register carries an `<!-- outside-register: <id> -->`
-marker under its heading — koji and the `cargo bench` tripwires are the two —
-and the stamp above makes no claim about its readings. `uv run measure.py
+marker under its heading — koji, the `cargo bench` tripwires and the RSS
+attribution are the three — and the stamp above makes no claim about its
+readings. `uv run measure.py
 --check` reconciles those declarations against the harness's own list of what it
 does not own, both ways, and fails if a declared section also carries a figure
 marker; `--list` prints each one with why it is outside. See "The apparatus"
@@ -1010,24 +1011,24 @@ thousands of them.
 
 ## What a scan holds resident, per byte and per block
 
-<!-- figure: peak-rss — taken at `7ee5db5` — reproduce with `cd scripts && uv run measure.py --figure peak-rss` -->
+<!-- figure: peak-rss — taken at `41c96bb` — reproduce with `cd scripts && uv run measure.py --figure peak-rss` -->
 
 | Input | Bytes | `COPY` blocks | Peak RSS |
 |---|---|---|---|
-| `one_block` | 2.0 MB | 1 | **5.88 MiB** (5.79–6.05) |
-| `control` | 3.00 GiB | 1 | **5.64 MiB** (5.56–5.88) |
-| `blocks500` | 242 KB | 500 | **9.53 MiB** (9.31–10.04) |
-| `blocks4000` | 1.9 MB | 4,000 | **43.59 MiB** (43.25–43.84) |
+| `one_block` | 2.0 MB | 1 | **5.90 MiB** (5.86–5.91) |
+| `control` | 3.00 GiB | 1 | **5.85 MiB** (5.65–6.00) |
+| `blocks500` | 242 KB | 500 | **9.73 MiB** (9.36–9.75) |
+| `blocks4000` | 1.9 MB | 4,000 | **43.78 MiB** (43.76–46.80) |
 
-Every subtraction is against `one_block`, the 1-block 2.0 MB pivot. **Per byte:** 1535× the bytes costs **-248 KiB**. **Per block**, at byte counts within an order of magnitude of the pivot's: 500 blocks cost +3.65 MiB (+7,667 bytes a block), and 4,000 blocks cost +37.71 MiB (+9,889 bytes a block).
+Every subtraction is against `one_block`, the 1-block 2.0 MB pivot. **Per byte:** 1535× the bytes costs **-52 KiB**. **Per block**, at byte counts within an order of magnitude of the pivot's: 500 blocks cost +3.82 MiB (+8,036 bytes a block), and 4,000 blocks cost +37.88 MiB (+9,931 bytes a block).
 
 Per-rep readings:
-- `one_block`: 5.88 MiB, 5.79 MiB, 6.05 MiB
-- `control`: 5.64 MiB, 5.88 MiB, 5.56 MiB
-- `blocks500`: 9.31 MiB, 10.04 MiB, 9.53 MiB
-- `blocks4000`: 43.84 MiB, 43.25 MiB, 43.59 MiB
+- `one_block`: 5.86 MiB, 5.91 MiB, 5.90 MiB
+- `control`: 5.65 MiB, 5.85 MiB, 6.00 MiB
+- `blocks500`: 9.73 MiB, 9.75 MiB, 9.36 MiB
+- `blocks4000`: 43.78 MiB, 46.80 MiB, 43.76 MiB
 
-Apparatus over every run in this table: CPU stall ≤0.23%, I/O stall ≤10.34%, machine ≤4% busy, steal ≤0.00%, busiest core ≥3.92 GHz, ≤56°C.
+Apparatus over every run in this table: CPU stall ≤0.27%, I/O stall ≤10.36%, machine ≤4% busy, steal ≤0.00%, busiest core ≥3.60 GHz, ≤55°C.
 
 Four inputs, each a warm `pgdq parse`, reporting peak resident set instead of
 wall clock — the only table here whose reading is not a time, so the rules about
@@ -1062,21 +1063,22 @@ cannot do: 74 blocks over 784 GB is block-poor, so a cost scaling with block
 count cannot express itself in it at all.
 
 **What this says.** Nothing accumulates per byte — 1535× the bytes moves the
-reading by −248 KiB, inside the two rows' own spreads. Something accumulates
-**per block**: ~7.7 KB a block at 500 and ~9.9 KB at 4,000, so a 4,000-block
-scan sits at 43.6 MiB where a 1-block one sits at 5.9 MiB. The "flat ~9 MiB"
+reading by −52 KiB, inside the two rows' own spreads. Something accumulates
+**per block**: ~8.0 KB a block at 500 and ~9.9 KB at 4,000, so a 4,000-block
+scan sits at 43.8 MiB where a 1-block one sits at 5.9 MiB. The "flat ~9 MiB"
 the design used to quote was therefore true of one axis and wrong about the
 other, and the axis it was wrong about is the one its own input could not have
 caught.
 
-**What accumulates is not identified, and this table does not attribute it.**
-The map holds a span per block and `map::Builder::snapshot` clones the whole
-list per save (`KD5`); this input's final cache is 2.5 MB; and glibc returns
-little of what a churn of whole-list clones frees. Any of those would produce a
-per-block resident cost and separating them needs a measurement this figure does
-not take. Registered as `KD14`.
+**What that growth is made of is the next section**, which is a diagnostic
+rather than a figure: this table measures the whole, and attributing it needs
+legs — another allocator, a scan that stops at the preamble, an index merely
+loaded — that no sweep would re-take. The finding is that most of it is *live
+structure per table* rather than any of the three churn mechanisms `KD14` was
+written against, and that a `parse` at 4,000 blocks holds about 4 KB a block
+more than an `info` over the same finished index does.
 
-**This figure was taken alone**, on 2026-09-05, not in the sweep the session
+**This figure was taken alone**, on 2026-09-07, not in the sweep the session
 stamp names — and the commit it was taken at is in its marker above rather than
 in this sentence, which is what `--stale`, the acknowledgement register and
 `--verify-additive` all read it from. It borrows no reading and republishes
@@ -1084,6 +1086,113 @@ none, and it is the only table here denominated in bytes, so no absolute in this
 document is differenced across the two sittings; that is exactly the condition
 under which a figure may enter the document from a sitting of its own ("A figure
 may be published outside the sweep", above).
+
+**Two sittings a day apart moved nothing here**, which is itself worth
+recording: the previous sitting at `7ee5db5` read 5.88 / 5.64 / 9.53 / 43.59
+MiB against this one's 5.90 / 5.85 / 9.73 / 43.78, every one inside the other's
+spread. Three rounds of read-path, compressed-source and cache work — genuinely
+under this figure's declared paths, so genuinely stale — changed what a scan
+holds resident by nothing a three-rep instrument can see.
+
+## What the per-block resident growth is made of
+
+<!-- outside-register: rss-attribution — nothing in this section is a figure; see "The apparatus" -->
+
+The section above measures the growth; this one attributes it. **Nothing here is
+a figure**, and the marker says so where a reader meets the section: it answers
+*which of several mechanisms*, read as a proportion, and its legs — a second and
+a third allocator, a scan stopped at the preamble, an index merely loaded from a
+cache — are diagnostic ones no sweep would re-take. It has the standing the
+profiling recipe has ([`architecture.md`](architecture.md), "Where a scan's time
+goes"), and for the same reason: a proportion needs no quiet machine, and a
+resident set is not a timing at all.
+
+**The instrument is `peak-rss`'s**, which is what lets the first row be read
+against that table: the same `getrusage` wrapper, the same `postgres:16`
+container under the same 512 MB limit, the same tmpfs-staged inputs, three reps,
+median. What differs is that every leg is taken at **two** block counts, so each
+reading is a *slope in blocks* rather than one absolute at 4,000 with a fixed
+baseline folded into it.
+
+| Leg | 500 blocks | 4,000 blocks | Per block |
+|---|---|---|---|
+| `parse` — the `peak-rss` row | 9.58 MiB | 44.26 MiB | **+10,390 B** |
+| `parse`, jemalloc | 117.70 MiB | 163.43 MiB | +13,703 B |
+| `parse`, mimalloc | 31.00 MiB | 69.11 MiB | +11,415 B |
+| `parse --preamble-only` | 7.85 MiB | 27.88 MiB | **+6,002 B** |
+| `info --dqcache` over the finished cache | 7.33 MiB | 26.43 MiB | **+5,722 B** |
+| `query` (no match), cached | 9.67 MiB | 45.64 MiB | +10,778 B |
+| `query` (no match), `--dqcache none` | 10.60 MiB | 54.18 MiB | **+13,056 B** |
+| `query` (no match), `--dqcache none`, jemalloc | 119.52 MiB | 155.88 MiB | +10,894 B |
+| `query` (no match), `--dqcache none`, mimalloc | 32.96 MiB | 62.61 MiB | +8,881 B |
+
+Per-rep readings (MiB, 500 then 4,000):
+- `parse`: 9.49, 9.58, 9.88 · 44.80, 44.24, 44.26
+- `parse`, jemalloc: 117.70, 119.88, 117.34 · 163.60, 163.43, 161.69
+- `parse`, mimalloc: 31.00, 33.25, 30.95 · 69.36, 69.11, 68.98
+- `parse --preamble-only`: 7.62, 7.86, 7.85 · 27.88, 27.82, 28.08
+- `info`: 7.33, 7.37, 7.33 · 26.69, 26.43, 25.91
+- no match, cached: 9.72, 9.67, 9.52 · 45.64, 45.30, 46.62
+- no match, none: 10.77, 10.49, 10.60 · 52.31, 54.61, 54.18
+- no match, none, jemalloc: 119.53, 119.52, 117.87 · 155.33, 155.88, 156.29
+- no match, none, mimalloc: 32.87, 32.96, 33.35 · 64.66, 62.61, 61.03
+
+**Most of it is live structure per *table*, and no `COPY` block has to be
+scanned to pay it.** `parse --preamble-only` stops at the end of the schema
+section, before a single data block is read, and it is already carrying
+**+6,002 B** of the `parse` row's +10,390 — three fifths. `info` over the
+finished cache agrees to within 5%: **+5,722 B** to hold an index that was
+deserialized rather than built, with no scanner, no census and no splice
+anywhere in the process. Two entirely different routes to the same structures
+cost the same, which is what says the number is the structures and not the
+route.
+
+The two legs cannot be told apart by this input, because `blocks4000` gives
+every table exactly one `COPY` block — but they are told apart by *when*: the
+preamble leg pays it before the data section exists. So this is a per-table
+cost, and a dump with tables it never dumps rows for pays it too. The manual
+already says it that way ([`../manual/dump-inspection.md`](../manual/dump-inspection.md),
+"`--chunk-size`"): roughly 10 KB per table, and a few thousand tables is tens of
+megabytes before any chunk size is chosen.
+
+**The allocator is not the culprit in the shape that ships.** Under the throttle
+— the shipped `parse` — glibc has the *lowest* slope of the three: +10,390 B
+against mimalloc's +11,415 and jemalloc's +13,703, and jemalloc's baseline alone
+is 118 MiB where glibc's is 9.58. So "glibc returns little of what a churn of
+clones frees" cannot be what the growth is: an allocator that returns more does
+not make it smaller. It is also the reason the `allocator` figure above says
+nothing about memory: it is a timing table, and these three binaries differ
+resident by an order of magnitude at rest.
+
+**Retention is real, but only where the throttle is off.** `--dqcache none`
+splices per block (`KD5`), and there glibc's +13,056 B sits **4,175 B above
+mimalloc's +8,881** — the one place a different allocator recovers anything.
+Against its own cached twin, which differs in that one flag and nothing else,
+the un-throttled splice costs **+2,278 B a block**. That is the whole-list
+clone's price in resident bytes, and it is a fifth of the growth rather than its
+cause. It is also the **noisiest leg here** — a second sitting of the same
+script an hour earlier read +1,303 B for it, where every other leg moved by
+under 3% — so read it as one to two kilobytes and not as a third digit.
+
+**What is left is the scan's own working set**, and it is the remainder rather
+than a leg: a full `parse` holds ~4.5 KB a block more than an `info` over the
+same finished index. Spans, census and TOC accrue there, and so does whatever
+the throttled splices leave behind.
+
+Reproduce it with `cd scripts && uv run rss_attribution.py`, which prints the
+table above and writes no artifact. Its legs are nine `nerdctl run`s of the form
+
+```sh
+sudo nerdctl run --rm -m 512m --memory-swap 512m \
+  -v <binary>:/pgdq:ro -v /dev/shm/pgdq-rss/blocks4000.sql:/dump.sql:ro \
+  -v /dev/shm/pgdq-rss:/out \
+  postgres:16 bash -c '<getrusage wrapper> /pgdq <command> >/dev/null'
+```
+
+where `<binary>` is `target/release/pgdq` or one of the `allocator` figure's
+legs — which the script does not build, since building them is that figure's own
+apparatus rule — and the wrapper is `scripts/measure.py`'s own `rss_wrapper`,
+imported rather than copied.
 
 ## What the read chunk size is worth
 
@@ -2178,7 +2287,7 @@ block — and this document's own standing rules say koji cannot test the second
 count "cannot express itself in it at all". Both halves are cheap on inputs the
 harness already stages, so they are "What a scan holds resident, per byte and
 per block" above, which found the per-block half **false**: ~9.9 KB a block, and
-43.6 MiB at 4,000 blocks. As a registered figure the claim now carries a
+43.8 MiB at 4,000 blocks. As a registered figure the claim now carries a
 `depends` edge that goes red when the read path moves — which is what did not
 happen for a whole slice, leaving the row a megabyte high with its designated
 correction aimed at a run that captures no memory figure at all.

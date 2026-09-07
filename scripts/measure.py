@@ -4303,6 +4303,16 @@ NOT_OURS = {
             "`--koji-recipe`, which prints it — and never runs it.",
         ),
         Outside(
+            "rss-attribution",
+            "What the per-block resident growth is made of",
+            "A diagnostic, not a figure: it attributes `peak-rss`'s growth among mechanisms, "
+            "which is a proportion rather than a number the design quotes, and its legs are a "
+            "second and a third allocator, a scan stopped at the preamble and an index merely "
+            "loaded — none of which a sweep would re-take. Same standing as the profiling "
+            "recipe. `scripts/rss_attribution.py` takes it, reusing this module's "
+            "`rss_wrapper`, `Config` and input names so the legs are this apparatus.",
+        ),
+        Outside(
             "benches",
             "benches/decoders.rs per-type pairs, benches/whole_file.rs",
             "Tripwires, not figures: they quote no number in the doc, so there is no table to "

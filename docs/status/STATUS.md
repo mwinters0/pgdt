@@ -15,13 +15,14 @@ which is where a session touching one meets its rejected alternatives and its
 limitations. The capability table below says what state each is in.
 
 [`../design/measurements.md`](../design/measurements.md) carries the `af15eac`
-stamp of 2026-09-05, and **seventeen of its eighteen tables come from one
+stamp of 2026-09-05, and **seventeen of its nineteen tables come from one
 sitting**: sixteen from the scan-performance wrap sweep and `session-drift`,
 which no sweep can take because it is derived *across* two, from that sweep and
-a second begun the minute it finished. The eighteenth is `peak-rss`, taken alone
-at `7ee5db5` and **saying so inside its own figure marker**, which is where
+a second begun the minute it finished. The other two are `peak-rss`, taken alone
+at `41c96bb`, and `xz-decode-scaling`, taken alone at `7d21c6e`, each **saying
+so inside its own figure marker**, which is where
 `--stale`, acknowledgement spentness and `--verify-additive` each read the
-commit they argue that figure from; it shares no reading with any of the others,
+commit they argue that figure from; neither shares a reading with any other,
 which is the condition under which a figure may be published outside a sweep at
 all. So no table carries a partial-sitting note and no absolute in the
 document is a cross-sitting reading. The fresh
@@ -77,7 +78,7 @@ that disqualifies a sweep
 directionally"). Session drift over 92 shared readings is a median absolute
 **1.6%** and a largest 14.3%.
 
-**Seventeen of the eighteen figures are stale, and no acknowledgement can
+**Sixteen of the nineteen figures are stale, and no acknowledgement can
 excuse them.** Three rounds of library work did it. Making the buffer pool keep
 the chunk size a read loop announces changed `io.rs`, `scan.rs`, `stream.rs` and
 the CLI; then the compressed-input work reshaped every `ByteRangeSource`
@@ -89,23 +90,23 @@ times a run is red, and `session-drift` has been red on `scripts/measure.py`
 since the harness took the derived direction of the borrow graph. Those changes
 add executable lines, so neither mechanical oracle applies: reachability excuses
 only a diff no command shape executes, and byte-identity settles generator
-changes alone. `nested-decode-micro` is the one figure still green, timing
-decoders that none of it touched. **One published number actually moves**, the
+changes alone. `nested-decode-micro` is the one *sweep* figure still green,
+timing decoders that none of it touched; the two figures taken alone are green
+because each was taken after the work — `peak-rss` at `41c96bb` and
+`xz-decode-scaling` at `7d21c6e`. **One published number actually moves**, the
 `chunk-size` table's 16 MiB row, which was taken when a chunk that large missed
 the buffer pool; that row is called out where it stands. A stale figure obliges
 no sweep ([`../design/measurements.md`](../design/measurements.md), "A stale
 figure does not oblige a sweep"), and a sweep is what re-takes these: seventeen
-of the eighteen tables from one sitting is the property the `af15eac` stamp has
+of the nineteen tables from one sitting is the property the `af15eac` stamp has
 and a partial sitting would spend.
 
-`peak-rss` is the one whose staleness changed character rather than arriving
-with the rest. It was a **false positive** until the compressed-input work: taken
-at `7ee5db5`, later than every commit that had then touched the paths it
-declares, and red only because the harness read one commit for the whole
-document rather than each figure's own sitting. That is fixed — the sitting is
-in the figure's own marker and `--stale` ranges it from there — and what is
-left is genuine: `io.rs`, `cache.rs`, `map.rs`, `scan.rs` and `stream.rs` all
-moved between `7ee5db5` and `HEAD`, and those are executable changes.
+**`peak-rss`'s staleness was genuine and cost nothing.** `io.rs`, `cache.rs`,
+`map.rs`, `scan.rs` and `stream.rs` all moved between `7ee5db5` and `41c96bb`,
+and those are executable changes — but the re-take at `41c96bb` reads 5.90 /
+5.85 / 9.73 / 43.78 MiB against 5.88 / 5.64 / 9.53 / 43.59, every one inside the
+other's spread. Three rounds of read-path, compressed-source and cache work
+changed what a scan holds resident by nothing a three-rep instrument can see.
 
 The two acknowledgements the register carries still stand and still hold for
 what they name. `measure.ACKNOWLEDGED` records P7's wrap and keystone, whose
@@ -167,16 +168,18 @@ goes"**.
 [`../design/measurements.md`](../design/measurements.md) come from the
 `af15eac` sweep of 2026-09-05, folded in whole, each table carrying an
 apparatus line and none carrying a partial-sitting note. `--check` reconciles
-eighteen markers against eighteen figures, **and the register's boundary as
-well**: the two sections the harness does not own — koji and the `cargo bench`
-tripwires — each carry an `<!-- outside-register: <id> -->` marker reconciled
+nineteen markers against nineteen figures, **and the register's boundary as
+well**: the three sections the harness does not own — koji, the `cargo bench`
+tripwires and the RSS attribution — each carry an
+`<!-- outside-register: <id> -->` marker reconciled
 against `measure.NOT_OURS` both ways and held to carrying no figure marker, so
 the session stamp's "every figure below" now claims only what the register
 holds. `session-drift` is derived across that sweep and a second begun the
 minute it finished on the same commit, which is the pair `--drift` reads;
-`peak-rss` is the eighteenth, taken alone at `7ee5db5`, which its marker
-declares and `--check` holds to descending from the stamp, standing in no borrow
-edge, and being accounted for in the stamp's generated sentence.
+`peak-rss` (`41c96bb`) and `xz-decode-scaling` (`7d21c6e`) were each taken
+alone, which their markers declare and `--check` holds to descending from the
+stamp, standing in no borrow edge, and being accounted for in the stamp's
+generated sentence.
 `measure.ACKNOWLEDGED` carries the two commits of P7's wrap and keystone, both
 comment-only against a declared path; the previous six were spent by this stamp
 and `--check` named them so they were deleted rather than kept as sediment.
@@ -269,9 +272,13 @@ are worth, and the orderings that do bind are named in
       the control — so the phase's worker counts are floors, not estimates. No
       library code. Notes:
       [`../design/roadmap-P16.1-xz-decode-scaling-notes.md`](../design/roadmap-P16.1-xz-decode-scaling-notes.md)
-- [ ] **16.2** `KD14`'s attribution, and `peak-rss` re-taken at HEAD — two
-      readings separating the span list from the whole-list clone from the
-      allocator. No library code.
+- [x] **16.2** `KD14`'s attribution, and `peak-rss` re-taken at HEAD — the
+      figure is re-taken at `41c96bb` and moved by nothing, and the growth is
+      attributed: three fifths is live structure per *table*, the un-throttled
+      whole-list clone is one to two kilobytes a block, and glibc has the lowest
+      slope of three allocators. `KD14` (`../design/measurements.md`, "What the per-block
+      resident growth is made of"). No library code. Notes:
+      [`../design/roadmap-P16.2-rss-attribution-notes.md`](../design/roadmap-P16.2-rss-attribution-notes.md)
 - [ ] **16.3** `layering.md`'s L3 deviation closed — the `Bytes` →
       `arrow::Buffer` conversion and the chunk-retention deque move from
       `stream.rs` into `batch.rs`, behaviour-preserving.
@@ -433,10 +440,10 @@ here rather than reading as a phase nobody has sliced.
   driver's answer bounds ours".
 
 - **KD14** — peak resident set is flat in dump bytes but grows ~9.9 KB per
-  `COPY` block, so a 4,000-block `parse` holds **43.6 MiB** against a one-block
-  one's 5.9 MiB, and what accumulates is not attributed. **(c) unowned** — the
-  growth itself has no owner; **P16's 16.2 closes the attribution clause
-  only**. Detail:
+  table, three fifths of it live structure the preamble alone pays, so a
+  4,000-table `parse` holds **43.8 MiB** against a one-block one's 5.9 MiB.
+  **(c) unowned**; promoted by a dump with tens of thousands of tables, nothing
+  in hand being one. Detail:
   [`../design/architecture.md`](../design/architecture.md), "`parse` resumes,
   and saves as it goes".
 
@@ -449,4 +456,22 @@ answer; where the review affirms a call and changes nothing, its reasoning goes
 beside the mechanism it governs first. Full rules:
 [`../process.md`](../process.md), "Decisions worth another look".
 
-None open.
+**The `KD14` attribution was published as a diagnostic, not as a registered
+figure.** The decision: should "What the per-block resident growth is made of"
+([`../design/measurements.md`](../design/measurements.md)) be a `Figure` in
+`measure.FIGURES` with `depends`/`quoted_by` edges, re-taken by every sweep,
+instead of an `outside-register` section `scripts/rss_attribution.py` takes? It was made
+this way because the reading is a *proportion* — which of several mechanisms —
+rather than a number the design quotes; because its legs are diagnostic ones no
+sweep would take (two more allocators, a scan stopped at the preamble, an index
+merely loaded); and because a resident set is not a timing, so none of the
+apparatus control a figure exists for is doing anything for it. That is the
+standing the profiling recipe has. What reconsidering it would change: the
+attribution's numbers would acquire staleness edges and be re-taken with the
+document, at the cost of about four minutes a sweep and a register that carries
+a table nobody differences. A second consideration pushed the same way and
+should be named rather than hidden: a registered figure must declare the commit
+it was taken at, so building the instrument and publishing its reading are two
+commits ([`roadmap-P16.1-xz-decode-scaling-notes.md`](../design/roadmap-P16.1-xz-decode-scaling-notes.md),
+"How the table reached `measurements.md`"), which an unattended session that
+does not commit cannot do.

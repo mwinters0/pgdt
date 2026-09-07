@@ -5986,24 +5986,37 @@ is `(c) unowned` rather than owned by a phase that would not have closed it.
 **The same series measured in memory grows too, and by more than the spans
 account for.** Peak resident set is flat in *bytes* — 1535× the bytes of a
 one-block dump moves it by less than the readings' own spread — and it is **not**
-flat in *blocks*: ~7.7 KB a block at 500 and ~9.9 KB at 4,000, so a 4,000-block
-`parse` sits at 43.6 MiB where a one-block one sits at 5.9 MiB
-([`measurements.md`](measurements.md), "What a scan holds resident"). Three
-mechanisms could produce that and the figure separates none of them: the span
-list itself, the whole-list clone above, and glibc returning little of what a
-churn of clones frees. That is deficiency `KD14`
-(`../status/STATUS.md`, "Known deficiencies"), unowned, and what would promote it
-is a dump with tens of thousands of blocks — which nothing in hand is, koji
-having 74. What it already changes is how the design's memory claim reads: the
-~5.9 MiB every consumer above quotes is the *one-block* reading, and they say so.
+flat in *blocks*: ~8.0 KB a block at 500 and ~9.9 KB at 4,000, so a 4,000-block
+`parse` sits at 43.8 MiB where a one-block one sits at 5.9 MiB
+([`measurements.md`](measurements.md), "What a scan holds resident"). That is
+deficiency `KD14` (`../status/STATUS.md`, "Known deficiencies"), unowned, and
+what would promote it is a dump with tens of thousands of tables — which nothing
+in hand is, koji having 74 blocks. What it already changes is how the design's
+memory claim reads: the ~5.9 MiB every consumer above quotes is the *one-block*
+reading, and they say so.
 
-**The growth is unowned but its attribution is not.** The parallel-scan phase's
-`16.2` separates the three mechanisms — a reading each for the span list, the
-whole-list clone and the allocator — and closes that clause alone; the growth
-itself stays unowned, because knowing which of the three it is does not fix any
-of them. The phase takes the attribution rather than the fix because its central
-promise is a memory bound, and a bound cannot be multiplied by N workers without
-knowing what one scan already holds.
+**It is attributed, and it is mostly none of the three things this paragraph
+used to name.** Three fifths of it is **live structure per table**, paid before a
+data block is read: `parse --preamble-only` stops at the end of the schema
+section and is already carrying **+6,002 B a block**, and an `info` over the
+finished cache — an index deserialized rather than built, with no scanner,
+census or splice anywhere — costs **+5,722 B**, two different routes agreeing to
+within 5% ([`measurements.md`](measurements.md), "What the per-block resident
+growth is made of"). The whole-list clone is real and smaller: turning the
+throttle off with `--dqcache none`, against a cached twin differing in that flag
+alone, costs **one to two kilobytes a block**. And the allocator is not it —
+under the shipped shape glibc has the *lowest* slope of the three, +10,390 B
+against mimalloc's +11,415 and jemalloc's +13,703, so an allocator that returns
+more does not make the growth smaller. Only where the throttle is off does
+retention appear at all, and there mimalloc recovers ~4 KB a block. What is
+left, ~4.5 KB a block, is the scan's own working set over what holding the
+finished index costs.
+
+**So the parallel phase's bound is not multiplied by its workers.** The
+dominant term is per *table* and is parsed once, by the leader, before any
+worker exists; what N workers multiply is the block-sized decode slot, which is
+budgeted rather than incidental. Knowing which of the mechanisms it was does not
+fix any of them, which is why attributing it left the growth itself unowned.
 
 **A save count is a property of the apparatus, not only of `K`.** The throttle
 is a ratio against the last save's own duration, so a faster machine, libc or

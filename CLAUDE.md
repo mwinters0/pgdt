@@ -39,6 +39,7 @@ cd scripts && uv run measure.py --figure <id> --alone   # borrowing nothing: a d
 cd scripts && uv run measure.py --all             # the whole sweep: ~1 h, detach it
 cd scripts && uv run measure.py --profile-recipe  # the sampling-profile sequence, printed; minutes, not detached
 cd scripts && uv run python -m unittest test_measure   # the harness's own tests
+cd scripts && uv run rss_attribution.py           # a diagnostic, not a figure: what the per-block resident growth is made of
 
 cd scripts && uv run deficiencies.py              # deficiency register: index vs. detail entries vs. code markers vs. the slice pairing vs. the roadmap's phase index
 cd scripts && uv run python -m unittest test_deficiencies  # that check's own tests
@@ -349,7 +350,8 @@ heading**, so a heading may quote a number and be rewritten when that number
 moves; `--check` reconciles the markers against the register, reports a partial
 sitting the doc still carries, and prints each figure's consumers. **A section
 the harness does not own declares itself the same way**, with an
-`<!-- outside-register: <id> -->` marker — koji and the `cargo bench` tripwires
+`<!-- outside-register: <id> -->` marker — koji, the `cargo bench` tripwires and
+the RSS attribution `scripts/rss_attribution.py` takes
 — which `--check` reconciles against `measure.NOT_OURS` both ways and holds to
 carrying no figure marker, since the session stamp's "every figure below" claims
 only what the register holds. **A figure may be published outside the sweep, and
