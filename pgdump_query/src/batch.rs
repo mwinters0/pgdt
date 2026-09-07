@@ -93,15 +93,25 @@ pub struct QueryOptions {
     pub max_bytes: Option<usize>,
     /// Cap on the source byte span an in-flight batch covers — the distance
     /// from the start of its first selected row to the end of its latest.
-    /// This is the only one of the three triggers that bounds what a batch
-    /// **pins**: the zero-copy `Utf8View` path hands the builder a clone of
-    /// each read chunk it takes a view into, and those chunks are held until
-    /// the batch flushes, whereas `max_rows` counts *selected* rows and
-    /// `max_bytes` counts *selected* field bytes — both of which a hard
-    /// filter makes arbitrarily sparse in the file
+    /// This is the trigger that bounds what a batch **pins** on a
+    /// chunk-shaped source: the zero-copy `Utf8View` path hands the builder a
+    /// clone of each read chunk it takes a view into, and those chunks are
+    /// held until the batch flushes, whereas `max_rows` counts *selected*
+    /// rows and `max_bytes` counts *selected* field bytes — both of which a
+    /// hard filter makes arbitrarily sparse in the file
     /// (`docs/design/architecture.md`, "Arrow assembly and the zero-copy
     /// path"). Defaults to 64 MiB, which no ordinary query reaches; `None`
     /// leaves a batch's span unbounded.
+    ///
+    /// **What it bounds is the span rounded out to the retained unit, and on
+    /// a block-shaped source it is no longer the bound at all.** The 64 MiB
+    /// is 64 default read chunks; against a decoded xz block the same
+    /// arithmetic rounds out to 24 or 128 MiB units, so a cap under one unit
+    /// promises a bound the unit makes impossible — and a batch confined to
+    /// one worker's range inside one block pins exactly that block whatever
+    /// the cap says. There the pool's slot budget is the bound and this stays
+    /// a batch-size knob (`docs/design/architecture.md`, "Three flush
+    /// triggers, and only one of them bounds memory").
     pub max_source_span: Option<usize>,
     /// Whether to resolve column types against the dump's DDL — see
     /// `docs/design/architecture.md`, "Arrow assembly and the zero-copy path". Every

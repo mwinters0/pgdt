@@ -95,19 +95,37 @@ pub trait ByteRangeSource: Send + Sync {
     }
 }
 
-/// How many released buffers a [`LocalFileSource`] keeps.
+/// How deep a [`BufferPool`] would like to be, in slots.
 ///
 /// A scan holds one chunk at a time, so one slot would serve it; the query
 /// replay path retains chunks past the read that produced them
 /// (`crate::batch::RetainedChunks`), so the buffer of chunk *N* can still be
-/// alive when chunk *N+1* is read. Four is that depth with room to spare, and
-/// it is what bounds the pool's contribution to RSS: four buffers of at most
-/// `max(POOL_MAX_BYTES, announced)` bytes each. In the steady state those are
-/// chunk buffers — 4 MiB at the default chunk size, four times a raised one —
-/// but a sub-ceiling one-off can hold a slot too ([`BufferPool::keeps`]), so
-/// an RSS claim is read against the bound rather than against the steady
-/// state.
-const POOL_SLOTS: usize = 4;
+/// alive when chunk *N+1* is read. Four is that depth with room to spare.
+///
+/// **It is a wish, not the bound** — [`POOL_BUDGET_BYTES`] is the bound, and
+/// the two together are what make a slot able to hold a decoded xz block
+/// rather than only a read chunk (`docs/design/architecture.md`, "Execution
+/// model and API surface").
+const POOL_DEPTH: usize = 4;
+
+/// What a [`BufferPool`] may hold in free buffers at once, in bytes.
+///
+/// **The pool is bounded in bytes because a block pool cannot be bounded in
+/// slots.** [`POOL_DEPTH`] slots of a decoded 128 MiB xz block is 512 MiB —
+/// the whole cgroup the measurements run in — so a pool whose slot size is
+/// free and whose count is fixed states no bound at all. Turning the constant
+/// into a byte budget makes the count the consequence
+/// ([`BufferPool::slots`]) and the memory the constant, which is the currency
+/// an RSS claim is made in.
+///
+/// 64 MiB is [`POOL_DEPTH`] slots at the largest chunk size the read-chunk
+/// sweep measured (`docs/design/measurements.md`, "What the read chunk size is
+/// worth"), so nothing at or below 16 MiB loses a slot to it and the 1.83×
+/// pool miss that row prices cannot come back through this ceiling. A
+/// 24 MiB block gets two slots and a 128 MiB block one; a pool that has to
+/// serve N workers a block each is given its budget by the caller rather than
+/// by this number.
+const POOL_BUDGET_BYTES: usize = 64 << 20;
 
 /// The largest buffer worth keeping, in bytes, for a length nobody has
 /// announced as a read size.
@@ -150,6 +168,14 @@ const POOL_MAX_BYTES: usize = 8 << 20;
 /// buffer whole and the `Bytes` handed back is sliced down to the bytes that
 /// were actually read, which is why a short final chunk does not shrink a
 /// pooled buffer and force the next full chunk to grow one back.
+///
+/// **What it does not do is block.** A `take` the free list cannot serve
+/// allocates, so the pool bounds what it *keeps* and never what is
+/// outstanding. That is the right shape for one reader and the wrong one for
+/// N: the parallel design wants a slot acquisition that waits, which is a
+/// change with a consumer rather than a constant, and the reason it is not
+/// here is beside the mechanism (`docs/design/architecture.md`, "Execution
+/// model and API surface").
 #[derive(Debug, Default)]
 struct BufferPool {
     /// A poisoned lock is not a corruption hazard here — the only thing under
@@ -157,8 +183,9 @@ struct BufferPool {
     /// rather than propagating a panic from an unrelated task.
     free: Mutex<Vec<Vec<u8>>>,
     /// The read length a caller announced through
-    /// [`ByteRangeSource::hint_read_size`], or `0` for none — a buffer of
-    /// exactly this length is kept past [`POOL_MAX_BYTES`].
+    /// [`ByteRangeSource::hint_read_size`], or `0` for none — the pool's slot
+    /// size, and a buffer of exactly this length is kept past
+    /// [`POOL_MAX_BYTES`].
     ///
     /// It is an atomic rather than part of the `Mutex` because it is written
     /// once per read loop and read once per released buffer, and because
@@ -187,9 +214,31 @@ impl BufferPool {
     }
 
     /// Announce the read length a loop is about to repeat, so a buffer of
-    /// that length survives [`POOL_MAX_BYTES`].
+    /// that length survives [`POOL_MAX_BYTES`] and the pool's slot size is
+    /// the unit that loop retains.
     fn hint(&self, len: usize) {
         self.hinted.store(len, Ordering::Relaxed);
+    }
+
+    /// The pool's slot size: the unit a read loop announced, or
+    /// [`POOL_MAX_BYTES`] where nothing has been announced — which is the
+    /// largest buffer [`BufferPool::keeps`] will take in that case, so the
+    /// two rules bound the same thing.
+    fn slot_bytes(&self) -> usize {
+        match self.hinted.load(Ordering::Relaxed) {
+            0 => POOL_MAX_BYTES,
+            len => len,
+        }
+    }
+
+    /// How many free buffers this pool holds: [`POOL_DEPTH`] where the budget
+    /// affords it, fewer where a slot is large, never zero.
+    ///
+    /// **This is what makes the pool block-capable.** At the 1 MiB default
+    /// chunk it is 4, exactly the fixed count it replaces; at a decoded
+    /// 128 MiB xz block it is 1, where four would have been the whole cgroup.
+    fn slots(&self) -> usize {
+        (POOL_BUDGET_BYTES / self.slot_bytes()).clamp(1, POOL_DEPTH)
     }
 
     /// Whether a released buffer is worth keeping: anything under the ceiling,
@@ -202,8 +251,8 @@ impl BufferPool {
     /// to tell apart. Below the ceiling nothing is told apart: a span read
     /// under 8 MiB is pooled like any other buffer, exactly as it was before a
     /// hint existed. That is a deliberate floor rather than an oversight —
-    /// [`POOL_SLOTS`] bounds what it can cost, and the ceiling has to keep
-    /// working for a source no caller ever announced to.
+    /// [`BufferPool::slots`] bounds what it can cost, and the ceiling has to
+    /// keep working for a source no caller ever announced to.
     fn keeps(&self, len: usize) -> bool {
         len <= POOL_MAX_BYTES || len == self.hinted.load(Ordering::Relaxed)
     }
@@ -212,8 +261,9 @@ impl BufferPool {
         if !self.keeps(buf.len()) {
             return;
         }
+        let slots = self.slots();
         let mut free = self.free.lock().unwrap_or_else(|e| e.into_inner());
-        if free.len() < POOL_SLOTS {
+        if free.len() < slots {
             free.push(buf);
         }
     }
@@ -715,7 +765,7 @@ mod tests {
         assert_eq!(source.pool.free.lock().unwrap().len(), 1);
     }
 
-    /// The pool holds `POOL_SLOTS` buffers and no more, and a take picks the
+    /// The pool holds `POOL_DEPTH` buffers and no more, and a take picks the
     /// smallest that fits rather than the first.
     #[test]
     fn the_pool_is_bounded_and_takes_the_smallest_that_fits() {
@@ -723,11 +773,36 @@ mod tests {
         for len in [8usize, 64, 32, 16, 128] {
             pool.give(vec![0u8; len]);
         }
-        assert_eq!(pool.free.lock().unwrap().len(), POOL_SLOTS);
+        assert_eq!(pool.free.lock().unwrap().len(), POOL_DEPTH);
         assert_eq!(pool.take(16).len(), 16);
         assert_eq!(pool.take(16).len(), 32);
         // Nothing left that fits: a fresh allocation, exactly as long as asked.
         assert_eq!(pool.take(1024).len(), 1024);
+    }
+
+    /// The slot count is a consequence of the announced unit, which is what
+    /// makes a decoded xz block a slot the pool can state a bound for: four
+    /// 128 MiB slots would be the whole 512 MB cgroup the measurements run
+    /// in, so the count falls rather than the budget rising.
+    #[test]
+    fn the_slot_count_falls_out_of_the_announced_unit() {
+        let pool = BufferPool::default();
+        // Nothing announced: the ceiling stands in for the unit.
+        assert_eq!(pool.slot_bytes(), POOL_MAX_BYTES);
+        assert_eq!(pool.slots(), POOL_DEPTH);
+
+        // The two chunk sizes the sweep brackets keep the depth the fixed
+        // count gave; a 24 MiB block halves it and a 128 MiB block — larger
+        // than the whole budget — gets one slot rather than none, since a
+        // pool that refused to keep a block at all would hand back the fresh
+        // `calloc` it exists to remove.
+        for (unit, slots) in
+            [(1 << 20, POOL_DEPTH), (16 << 20, POOL_DEPTH), (24 << 20, 2), (128 << 20, 1)]
+        {
+            pool.hint(unit);
+            assert_eq!(pool.slot_bytes(), unit);
+            assert_eq!(pool.slots(), slots, "unit {unit}");
+        }
     }
 
     /// `xz` is not `mise`-pinned (`docs/design/architecture.md`, "Testing

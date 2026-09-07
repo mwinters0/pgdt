@@ -477,7 +477,9 @@ impl ChunkCarry {
 /// size it is about to repeat ([`crate::ByteRangeSource::hint_read_size`]), so
 /// a chunk of any size is kept and reused by the local source's buffer pool
 /// rather than allocated and zeroed afresh. What a larger chunk does cost is
-/// the pool holding up to four buffers of it
+/// the pool holding four buffers of it, or 64 MiB's worth, whichever is fewer
+/// — the slot count falls out of a byte budget, so the cost levels off rather
+/// than scaling with the size
 /// (`docs/design/architecture.md`, "Execution model and API surface").
 pub const DEFAULT_CHUNK_SIZE: usize = 1 << 20;
 

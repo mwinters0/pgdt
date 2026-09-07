@@ -183,16 +183,43 @@ is what returns it**, which is what makes this safe for the query replay path:
 that path retains a chunk in `batch::SourceChunk` for as long as a zero-copy
 `Utf8View` points into it ("Arrow assembly and the zero-copy path"), so the
 buffer must not be recycled on the read loop's schedule. And **the pool is
-bounded at both ends** — four slots, and nothing above 8 MiB kept unless a
+bounded at both ends** — a byte budget, and nothing above 8 MiB kept unless a
 caller announced it as its read size — because `map::attach_text`'s coalesced
 span read can be far larger than a chunk and happens once per map, and holding
 one of those for the life of the process would trade a scan's ~5.9 MiB resident
 set ([`measurements.md`](measurements.md), "What a scan holds resident") for an
 allocation nothing asks for twice. The bound that follows is
-`4 × max(8 MiB, announced)`, not four chunks: **below the ceiling a one-off is
-pooled like anything else**, since the ceiling is what has to keep working for a
-source no caller announced to, and the hint only separates the two above it. An
+`slots × max(8 MiB, announced)`, not four chunks: **below the ceiling a one-off
+is pooled like anything else**, since the ceiling is what has to keep working for
+a source no caller announced to, and the hint only separates the two above it. An
 RSS claim is read against that bound rather than against the steady state.
+
+**The slot count is derived from a byte budget, because a block pool cannot be
+bounded in slots.** The count was a constant 4; the bound is now
+`POOL_BUDGET_BYTES` — 64 MiB — and the count is
+`(budget / unit).clamp(1, 4)`, where the unit is the length a read loop
+announced or the 8 MiB ceiling where nothing has. At the 1 MiB default chunk
+and at the 16 MiB the sweep brackets it is still 4, so nothing the read-chunk
+figure measures loses a slot and the **1.83×** a pool miss costs cannot come
+back through this ceiling; at a decoded 24 MiB xz block it is 2 and at a
+128 MiB block 1, where four fixed slots would have been 512 MiB — the whole
+cgroup the measurements run in. **A unit larger than the whole budget gets one
+slot rather than none**: refusing to keep a block at all would hand every
+reader back the `calloc` the pool exists to remove, which is the more expensive
+of the two ways to be wrong.
+
+*Rejected:* **backpressure — a `take` that waits for a free slot instead of
+allocating.** It is what turns the slot count into a bound on what is
+*outstanding* rather than only on what is idle, and the parallel design wants
+it; it cannot be landed ahead of a concurrent consumer, because the pool cannot
+tell the two holders apart. One serial reader legitimately holds
+`(max_source_span / chunk) + 1` buffers at once — 65 at the defaults, and
+unbounded under `max_source_span: None` — since a batch pins every chunk it has
+taken a view into until it flushes; a worker given an LF-split range inside one
+block holds exactly one slot. A wait is backpressure for the second and a
+deadlock for the first, and nothing in a `take` call says which is calling. So
+the wait arrives with the discipline that makes it safe: one slot per holder,
+and a budget the caller set for the concurrency it asked for.
 
 **One-off-ness is a property of the caller, so the caller says it.**
 `ByteRangeSource::hint_read_size` is a third, advisory method — defaulted to
@@ -315,7 +342,8 @@ parse CPU is already hidden behind the read on that device, and overlapping
 harder cannot recover what is already overlapped.
 
 **What a raised chunk size costs is memory, and the bound is the caller's own
-number.** `POOL_SLOTS` is 4, so a 16 MiB chunk can hold 64 MiB against the
+number.** The pool's budget affords four slots at 16 MiB, so a 16 MiB chunk can
+hold 64 MiB against the
 ~5.9 MiB a one-block scan otherwise sits at
 ([`measurements.md`](measurements.md), "What a scan holds resident") — which a
 caller who asked for 16 MiB buffers has largely accepted already. That is the whole cost, and it is stated in the
@@ -2967,6 +2995,24 @@ matching nothing from flushing a batch that pins nothing.
 inside the 512 MB cgroup the measurements run in. The perf inputs are ~3.86 and
 ~4.49 KB/row, so a full-selectivity 8192-row batch spans ~32–37 MiB and still
 hits `max_rows` first. `None` restores an unbounded span.
+
+**The cap bounds the span rounded out to the *retained unit*, and the unit is
+not always a read chunk.** The 64 MiB was derived as 64 default chunks, so the
+rounding cost at most one chunk either side and the cap and the bound were the
+same number to within a percent. A decoded xz block is the retained unit on the
+parallel compressed path, and there the same arithmetic rounds out to 24 or
+128 MiB — so a 64 MiB cap cannot round out to one 128 MiB block at all, and
+stating it as a memory bound there would be stating a bound the unit makes
+impossible.
+
+**What replaces it is not a bigger number.** A batch confined to one worker's
+LF-split range inside one block pins exactly that block whatever the cap says,
+so on a block-shaped source the bound is the pool's slot budget — `slots ×
+(decoded block + dictionary)`, one slot per worker — and this cap goes back to
+being what the other two triggers are: a knob on how large a batch gets.
+Neither the default nor the trigger changes, because on a chunk-shaped source
+the original derivation still holds exactly; what changed is which mechanism
+the memory claim is read off ("Execution model and API surface").
 
 *Rejected: compacting the batch's views once selectivity drops below a
 threshold.* It admits an unbounded peak before the threshold trips, and it

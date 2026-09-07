@@ -149,9 +149,12 @@ sizes either side of it were ties rather than improvements.
 
 Two things are worth knowing if you change it anyway. **Small is slower**:
 64 KiB costs about 50% more CPU than 1 MiB, because the per-chunk work is paid
-sixteen times as often. **Large costs memory**: read buffers are reused at
-whatever size you ask for, and up to four of them are held, so a 16 MiB chunk
-is 64 MiB of resident memory on top of whatever the scan already holds.
+sixteen times as often. **Large costs memory, and the cost levels off**: read
+buffers are reused at whatever size you ask for, and the pool holds four of
+them or 64 MiB's worth, whichever is fewer — so a 16 MiB chunk is 64 MiB of
+resident memory on top of whatever the scan already holds, and a 32 MiB chunk
+is the same 64 MiB rather than double it. Past 64 MiB the pool keeps a single
+buffer, which is the size you asked for.
 
 What it already holds does not grow with the *size* of the dump — a 3 GiB file
 costs no more than a 2 MB one, a few megabytes either way — but it does grow

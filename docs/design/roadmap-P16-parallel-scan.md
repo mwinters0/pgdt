@@ -529,7 +529,9 @@ free number rather than being inserted.
 first; **16.3 before 16.4**, so the pinning rework happens in one layer rather
 than straddling two; **16.4 before 16.5, 16.8 and 16.10**, all three of which
 run N readers; **16.5 before 16.10**, which depends on it; **16.7 before 16.9**;
-**16.10 before 16.12**.
+**16.10 before 16.12**. **16.4.1 lands with or after the first of 16.5 and
+16.10**, whichever runs first, since a wait with no second holder is a
+deadlock rather than a bound.
 
 ### Evidence
 
@@ -543,7 +545,8 @@ run N readers; **16.5 before 16.10**, which depends on it; **16.7 before 16.9**;
 | Slice | What it commits to |
 |---|---|
 | **16.3** | **`layering.md`'s L3 deviation closed** — the `Bytes` → `arrow::Buffer` conversion and the chunk-retention deque move from `stream.rs` (L4) into `batch.rs` (L3), behaviour-preserving, with that doc's table and deviation list updated in the same change. |
-| **16.4** | **The block pool** — `io::BufferPool` from four fixed slots to budget-sized, block-capable slots with backpressure, and `RowBatcher::max_source_span` re-derived against block-shaped rather than chunk-shaped pinning. |
+| **16.4** | **The block pool's sizing** — `io::BufferPool` from four fixed slots to a byte budget the slot count is derived from, so a slot may be a decoded xz block, and `RowBatcher::max_source_span` re-derived against block-shaped rather than chunk-shaped pinning. |
+| **16.4.1** | **Backpressure** — a slot acquisition that waits for a free slot instead of allocating, which is what turns the slot count into a bound on what is outstanding. **Earned, not planned** ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md), "16.4 split: backpressure needs its consumer"): the pool cannot tell a serial reader legitimately holding `(max_source_span / chunk) + 1` buffers — unbounded under `max_source_span: None` — from a worker holding one slot, so a wait is backpressure for the second and a deadlock for the first. It lands with the first concurrent consumer, which is what supplies the one-slot-per-holder discipline and the caller budget. |
 | **16.5** | **`XzSource` internally concurrent** — the single `xz_seek::Reader` behind a `std::sync::Mutex` gives way to per-call block decode over a shared immutable `SeekTable` and the block pool, so concurrent `read_range` calls genuinely run concurrently. |
 | **16.6** | **`ByteRangeSource::partitions`** — the defaulted partitioning advisory, with `LocalFileSource`'s and `XzSource`'s answers and their per-partition footprints. No consumer yet. |
 | **16.7** | **The `Parallelism` surface** — the library enum defaulting to `Serial`, its `ScanOptions`/`QueryOptions` wiring, and the CLI's `--jobs` / `--parallel-memory`. Includes the manual page: the degradation curve, and the one sentence saying why an `INSERT` run cannot be parallelized. |
@@ -559,3 +562,9 @@ run N readers; **16.5 before 16.10**, which depends on it; **16.7 before 16.9**;
 `16.10.1`.** Said now rather than discovered mid-slice: it is the only row that
 pairs a new scheduler with a merge into three already-tested structures, and if
 the two halves need different confidences at review, the split is at that seam.
+
+**16.4 earned the phase's first third level, and at a seam this document did not
+predict.** The row paired a sizing change with a *bound*, and a bound is only
+reviewable against the holders it bounds — which is a different seam from the
+mechanism/evidence one the process names, and one that only shows up once a
+slice is being written.

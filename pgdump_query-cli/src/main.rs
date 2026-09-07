@@ -81,7 +81,8 @@ enum Command {
         /// chunk size is worth") — so this is a tuning escape hatch for a
         /// device unlike those, not a knob with a win behind it. A raised
         /// value keeps its buffer pooling and costs memory instead: the read
-        /// path holds up to four buffers of whatever size you ask for.
+        /// path holds four buffers of whatever size you ask for, or 64 MiB's
+        /// worth, whichever is fewer.
         #[arg(long, value_name = "BYTES", value_parser = parse_chunk_size)]
         chunk_size: Option<usize>,
     },
