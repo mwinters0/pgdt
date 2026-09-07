@@ -177,8 +177,8 @@ find a size that beats 1 MiB on it, that is worth reporting.
 
 ### `--jobs` and `--parallel-memory`: the ceiling and the budget
 
-`parse` and `query` take two more numbers, and today only the second of them
-changes anything you can measure.
+`parse` and `query` take two more numbers: a ceiling on how many things pgdq
+does at once, and a bound on what those may hold in memory.
 
 **`--parallel-memory <bytes>` is how much memory pgdq's read buffers may hold,
 and it defaults to 64 MiB.** It is a bound rather than a target: pgdq will not
@@ -198,11 +198,22 @@ do not, nothing is wrong — the file reads fine, just with more decoding on
 backward reads.
 
 **`--jobs <n>` is a ceiling on concurrent workers, and it defaults to your
-machine's core count.** `--jobs 1` is the single-threaded path. Today no part
-of pgdq runs workers, so what this actually bounds is how many decoded `.xz`
-blocks are kept at once — one per worker you allowed, if `--parallel-memory`
-leaves room for them. Raising it on its own therefore does nothing; raising it
-together with the budget lets a compressed file keep more of itself decoded.
+machine's core count.** `--jobs 1` is the single-threaded path.
+
+For `query` it cuts the row reading up: the parts of the file holding the rows
+you asked for are split into at most this many pieces, read at the same time,
+and printed back in the file's own order — so the rows and their order are the
+same at every setting, and only the reading changes. What it buys today is
+overlap in the *reading*; the rows are still turned into output one thread at
+a time, so on a plain file on a fast disk raising it will not show up on a
+clock. On a compressed file the reading is the expensive part, and there it
+can.
+
+It also bounds how many decoded `.xz` blocks are kept at once — one per worker
+you allowed, if `--parallel-memory` leaves room for them. `parse` runs no
+workers yet, so there that bound is all `--jobs` does: raising it on its own
+does nothing, and raising it together with the budget lets a compressed file
+keep more of itself decoded.
 
 **Three shapes will never get parallelism, whatever you set.** A plain
 (uncompressed) file's structure scan is already faster than any disk we have

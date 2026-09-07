@@ -229,6 +229,104 @@ async fn a_small_batch_size_flushes_at_a_piece_boundary_without_losing_a_row() {
     }
 }
 
+/// **The key a caller merges the sub-streams back on.** A `RecordBatch`
+/// carries no position, so `TableStream::batch_source_offset` is what
+/// `pgdq query` sorts one-batch-per-partition on
+/// (`docs/design/architecture.md`, "Partitioned replay").
+///
+/// The sub-streams are drained **round-robin**, which is the arrival order a
+/// caller polling them concurrently sees — and it is asserted here to be
+/// something other than file order, so that the sort below is doing work
+/// rather than re-confirming an order the draining already had. That is why
+/// the fixture is the eight-row `edge_cases` widgets against two sub-streams
+/// rather than a table with one row per partition, where round-robin *is*
+/// file order and the assertion would hold for the wrong reason.
+#[tokio::test]
+async fn batches_sorted_on_their_source_offset_are_the_serial_order() {
+    let source = LocalFileSource::open(edge_cases()).unwrap();
+    let options = QueryOptions { max_rows: 1, max_bytes: None, ..Default::default() };
+    let expected = serial_rows(&source, "public.widgets", options.clone()).await;
+    assert!(expected.len() > 3, "the oracle needs several rows per partition");
+
+    let options = QueryOptions { parallelism: Parallelism::workers(2, 1 << 30), ..options };
+    let mut streams = table_stream_partitions(
+        &source,
+        "public.widgets",
+        ScanOptions::default(),
+        options,
+        CacheMode::Disabled,
+    )
+    .await
+    .unwrap();
+    assert!(streams.len() > 1, "one sub-stream would make this the serial path");
+
+    // One batch per live sub-stream per pass, which is the merge's own fill
+    // round: nothing is ever held beyond a batch apiece.
+    let mut arrived: Vec<(u64, Rows)> = Vec::new();
+    let mut live = vec![true; streams.len()];
+    while live.iter().any(|l| *l) {
+        for (index, stream) in streams.iter_mut().enumerate() {
+            if !live[index] {
+                continue;
+            }
+            match stream.next().await {
+                Some(batch) => {
+                    arrived.push((stream.batch_source_offset(), rows_of(&batch.unwrap())));
+                }
+                None => live[index] = false,
+            }
+        }
+    }
+
+    let unsorted: Rows = arrived.iter().flat_map(|(_, rows)| rows.clone()).collect();
+    assert_ne!(unsorted, expected, "round-robin arrival was already file order");
+
+    arrived.sort_by_key(|(offset, _)| *offset);
+    let offsets: Vec<u64> = arrived.iter().map(|(offset, _)| *offset).collect();
+    assert!(
+        offsets.windows(2).all(|pair| pair[0] < pair[1]),
+        "two batches claim one start, so the key does not order them: {offsets:?}"
+    );
+    let merged: Rows = arrived.into_iter().flat_map(|(_, rows)| rows).collect();
+    assert_eq!(merged, expected);
+}
+
+/// The offset a batch reports is **where its first row starts**, not where
+/// its sub-stream stopped: the byte before it is the LF that ended the
+/// previous line. Checked against the file's own bytes, since nothing else
+/// in the library would notice the two being swapped — they order identically
+/// within one stream.
+#[tokio::test]
+async fn a_reported_offset_is_the_start_of_a_row() {
+    let path = types_fixture(16, "default");
+    let bytes = std::fs::read(&path).unwrap();
+    let source = LocalFileSource::open(&path).unwrap();
+    let options = QueryOptions { max_rows: 1, max_bytes: None, ..Default::default() };
+    let mut stream = table_stream(
+        &source,
+        "public.t_int",
+        ScanOptions::default(),
+        options,
+        None,
+        CacheMode::Disabled,
+    );
+
+    let mut seen = 0usize;
+    let mut previous: Option<u64> = None;
+    while let Some(batch) = stream.next().await {
+        batch.unwrap();
+        let offset = stream.batch_source_offset();
+        assert!(offset > 0 && (offset as usize) < bytes.len(), "offset {offset} is off the file");
+        assert_eq!(bytes[offset as usize - 1], b'\n', "offset {offset} does not follow an LF");
+        if let Some(previous) = previous {
+            assert!(previous < offset, "{previous} then {offset}");
+        }
+        previous = Some(offset);
+        seen += 1;
+    }
+    assert!(seen > 1, "one batch would say nothing about the ordering");
+}
+
 /// A table the dump does not carry is one sub-stream that yields nothing, so
 /// a caller never has to tell "no partitions" from "no rows".
 #[tokio::test]

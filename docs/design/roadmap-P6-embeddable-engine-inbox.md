@@ -433,6 +433,14 @@ an engine usually asks for a count it chose; and a partition's row count is
 unknown until it is read, so nothing here can answer a statistics call at plan
 time until P10 lands.
 
+**One public method exists for the merge alone**: `TableStream::batch_source_offset`,
+the offset of the batch just yielded's first row, which is what `pgdq query`
+sorts one-batch-per-partition on. An engine that schedules the partitions
+itself never needs it — it is the same shape of question as `read_table`
+having no non-test caller, and it comes to this phase for the same reason: a
+surface kept for one consumer is a surface this phase decides whether the
+embedded API promises.
+
 **Why the ordering still holds.** This phase's reason for going last is that it
 presents surfaces over mechanisms that are still moving. P16 has now settled
 the one beneath it — the byte source's shape, its partitioning advisory, and

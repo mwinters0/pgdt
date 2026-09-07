@@ -304,13 +304,14 @@ impl Partitioning {
 /// from it — which is what keeps "is this parallel" a match on the value
 /// instead of a comparison against a magic number.
 ///
-/// **The read path's buffer budget reads it; no worker scheduler does yet.**
-/// `memory_bytes` is what both pools in a source are sized from, and it is
-/// what decides whether a compressed source can afford to decode a whole block
-/// ("The compressed source"); `jobs` is the block pool's depth, one retained
-/// block per concurrent reader. The scheduler that would actually run those
-/// readers is not in this build, so `jobs` is today a ceiling on retention
-/// rather than on concurrency
+/// **Two mechanisms read it, and neither of them spawns.** `memory_bytes` is
+/// what both pools in a source are sized from, and it is what decides whether
+/// a compressed source can afford to decode a whole block ("The compressed
+/// source"); `jobs` is the block pool's depth, one retained block per
+/// concurrent reader, and — capped by what the bytes afford — how many
+/// sub-streams a partitioned replay is cut into
+/// (`crate::table_stream_partitions`). The caller runs those sub-streams, so
+/// what `jobs` states is a ceiling rather than a request
 /// (`docs/design/architecture.md`, "Execution model and API surface").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Parallelism {

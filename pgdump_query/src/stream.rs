@@ -964,6 +964,7 @@ pub struct TableStream<'a> {
     position: Arc<Mutex<ResumeToken>>,
     resolved_schema: Arc<Mutex<ResolvedSchema>>,
     comparison_notes: Arc<Mutex<Vec<ComparisonNote>>>,
+    batch_offset: Arc<Mutex<u64>>,
 }
 
 impl<'a> Stream for TableStream<'a> {
@@ -1021,6 +1022,28 @@ impl<'a> TableStream<'a> {
     /// diverge on one block and not on another.
     pub fn comparison_notes(&self) -> Vec<ComparisonNote> {
         self.comparison_notes.lock().unwrap().clone()
+    }
+
+    /// Where in the source the batch [`futures::StreamExt::next`] last
+    /// returned begins: the offset of its first row, and 0 before anything
+    /// has been polled.
+    ///
+    /// **This is the key a caller merges partitions on.** A `RecordBatch`
+    /// carries no position, and the sub-streams of a partitioned replay
+    /// ([`table_stream_partitions`]) each run in file order over a contiguous
+    /// run of the file — so a caller holding one batch per sub-stream and
+    /// always emitting the lowest of these offsets re-assembles the serial
+    /// order at N × batch, which is what `pgdq query` does
+    /// (`docs/design/architecture.md`, "Partitioned replay").
+    ///
+    /// It is a *start*, not the end [`Self::resume_token`] reports: the two
+    /// order identically here, batches of one replay never overlapping, and a
+    /// start is the one that stays a merge key if that ever stops holding.
+    /// A batch carrying no rows — reachable only through a `max_rows` of 0,
+    /// which makes every row event a flush — reports the scanner's position
+    /// instead, so the value is monotone within a sub-stream either way.
+    pub fn batch_source_offset(&self) -> u64 {
+        *self.batch_offset.lock().unwrap()
     }
 }
 
@@ -1207,12 +1230,13 @@ impl Segment {
     }
 }
 
-/// The three values a [`TableStream`] publishes to its owner while it runs.
+/// The four values a [`TableStream`] publishes to its owner while it runs.
 #[derive(Clone)]
 struct StreamShared {
     position: Arc<Mutex<ResumeToken>>,
     resolved_schema: Arc<Mutex<ResolvedSchema>>,
     comparison_notes: Arc<Mutex<Vec<ComparisonNote>>>,
+    batch_offset: Arc<Mutex<u64>>,
 }
 
 impl StreamShared {
@@ -1221,6 +1245,7 @@ impl StreamShared {
             position: Arc::new(Mutex::new(token)),
             resolved_schema: Arc::new(Mutex::new(ResolvedSchema::default())),
             comparison_notes: Arc::new(Mutex::new(Vec::new())),
+            batch_offset: Arc::new(Mutex::new(0)),
         }
     }
 
@@ -1233,6 +1258,7 @@ impl StreamShared {
             position: self.position,
             resolved_schema: self.resolved_schema,
             comparison_notes: self.comparison_notes,
+            batch_offset: self.batch_offset,
         }
     }
 }
@@ -1863,9 +1889,13 @@ fn replay<'a>(
                                         )?;
                                     }
                                     if batcher.should_flush() {
+                                        let begins_at = batcher
+                                            .batch_start()
+                                            .unwrap_or_else(|| scanner.position());
                                         let batch = batcher.flush()?;
                                         chunks.invalidate_block_cache();
                                         rows_emitted += batch.num_rows() as u64;
+                                        *shared.batch_offset.lock().unwrap() = begins_at;
                                         *shared.position.lock().unwrap() =
                                             snapshot(&scanner, &active, rows_emitted, fingerprint);
                                         yield batch;
@@ -1877,9 +1907,12 @@ fn replay<'a>(
                                 if let Some((_, _, mut batcher, _, _)) = active.take()
                                     && !batcher.is_empty()
                                 {
+                                    let begins_at =
+                                        batcher.batch_start().unwrap_or_else(|| scanner.position());
                                     let batch = batcher.flush()?;
                                     chunks.invalidate_block_cache();
                                     rows_emitted += batch.num_rows() as u64;
+                                    *shared.batch_offset.lock().unwrap() = begins_at;
                                     *shared.position.lock().unwrap() =
                                         snapshot(&scanner, &active, rows_emitted, fingerprint);
                                     yield batch;
@@ -1934,8 +1967,10 @@ fn replay<'a>(
             if let Some((_, _, mut batcher, _, _)) = active.take()
                 && !batcher.is_empty()
             {
+                let begins_at = batcher.batch_start().unwrap_or_else(|| scanner.position());
                 let batch = batcher.flush()?;
                 rows_emitted += batch.num_rows() as u64;
+                *shared.batch_offset.lock().unwrap() = begins_at;
                 *shared.position.lock().unwrap() =
                     snapshot(&scanner, &active, rows_emitted, fingerprint);
                 yield batch;

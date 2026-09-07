@@ -232,7 +232,8 @@ produces. That is what keeps "is this parallel" a match on the value instead of
 a comparison against a magic number, and it is what makes `--jobs 1` the serial
 path as a property of the value rather than of the CLI.
 
-**The read path's buffer budget reads it; no worker scheduler does yet.** Each
+**The read path's buffer budget reads it, and so does the replay's split; no
+worker scheduler does yet.** Each
 of the three read loops announces the value to the source through a sixth
 defaulted method, `hint_parallelism`, at the same point it announces its chunk
 size — the mapping pass and `scan` from `ScanOptions`, the replay from
@@ -240,15 +241,18 @@ size — the mapping pass and `scan` from `ScanOptions`, the replay from
 of it what its own read units require: `LocalFileSource` sizes its one free
 list from the bytes, and `XzSource` divides them between its two pools and
 decides from the remainder whether it can afford to decode a whole block at all
-("The compressed source"). The scheduler that would run the workers is not in
-this build, so a caller that sets the field still gets the serial path —
-executing it inside the memory it asked for, which leaving the field alone does
-not promise.
+("The compressed source"). Nothing in the library spawns: a partitioned replay
+hands its sub-streams to the caller, and the mapping pass has no split at all,
+so a caller that sets the field and drains in order has executed the serial
+path — inside the memory it asked for, which leaving the field alone does not
+promise.
 
-**The `jobs` half is therefore a retention depth today, not a concurrency
-one.** It is the *block* pool's slot ceiling — one retained decoded block per
+**The `jobs` half is a retention depth and a sub-stream ceiling, not a thread
+count.** It is the *block* pool's slot ceiling — one retained decoded block per
 concurrent reader, floored at `POOL_DEPTH` because a block pool of one drains
-before every decode. The chunk pool's depth is deliberately left alone by it: a
+before every decode — and, capped by what the bytes afford, how many pieces
+`table_stream_partitions` cuts a replay into ("Partitioned replay"). The chunk
+pool's depth is deliberately left alone by it: a
 chunk buffer is taken and released inside a single `read_range`, so what its
 free list has to hold is the replay path's depth, and raising the ceiling with
 a worker count would grow a query's resident set by `(jobs - POOL_DEPTH)`
@@ -614,8 +618,10 @@ argued, and nothing else in the register states it.
 `pgdq query` is a pull-mode caller by necessity: rendering a nested column
 needs the stream's `NestedPlan`s *while* iterating, and push mode hands the
 `ResolvedSchema` back only once the stream is drained. It reads
-`stream.resolved_schema().plans` per batch rather than once, since a block's
-schema is per-block (see "Nested columns"). That leaves `read_table` with no
+`resolved_schema().plans` per batch rather than once, since a block's
+schema is per-block (see "Nested columns") — and, since it consumes the
+partitioned entry point, off the sub-stream that produced the batch and at the
+moment it produced it ("Partitioned replay"). That leaves `read_table` with no
 non-test caller, filed in
 [`roadmap-P6-embeddable-engine-inbox.md`](roadmap-P6-embeddable-engine-inbox.md)
 for the phase that decides whether push mode keeps its place.
@@ -3793,6 +3799,63 @@ sub-stream, whose first segment starts at a `COPY` header. What N sub-streams
 cost resident is N times one: each holds its own read chunks while its
 in-flight batch pins them (`QueryOptions::max_source_span`), and the source
 holds `partition_bytes` per concurrent reader on top.
+
+#### `pgdq query` merges the sub-streams back into file order
+
+The engine wants partitions and a person wants the order they typed the query
+expecting, so `pgdq query` is the caller that takes the first and prints the
+second. It is the only consumer of `table_stream_partitions` in the tree, and
+it reaches the serial path through it as well: `--jobs 1` is
+`Parallelism::Serial` is one sub-stream, so there is no second code path to
+keep in agreement with this one.
+
+**The merge holds one batch per sub-stream, and that is the whole bound.** Each
+round fills every empty slot — in the first round that is all of them, and
+afterwards only the one just drained — and then prints whichever held batch
+begins earliest in the file. A sub-stream that runs ahead of the printer
+therefore stops one batch in, so the reorder buffer is N × batch rather than
+whatever it takes for the laggard to catch up. The fills are one `join_all`, so
+the reads of every sub-stream that wants one are in flight together; nothing is
+spawned, and the CPU work of turning rows into output stays on the one task.
+
+**The merge key is `TableStream::batch_source_offset`**, published beside the
+resume token, the resolved schema and the comparison notes as a fourth value a
+stream states about itself while it runs. A `RecordBatch` carries no position,
+and the offset is not recoverable from one: it is `RowBatcher`'s existing
+`span` lower bound — the first row the batch took — read before the flush that
+clears it. It is a **start** and not the end the resume token reports; the two
+order identically, batches of one replay never overlapping, and a start stays
+a merge key if that ever stops holding.
+
+**Two things the printer needs travel with the batch rather than being read at
+print time.** The block's `NestedPlan`s are taken when the batch is taken,
+because by the time it is printed its own sub-stream may have moved on to a
+block whose header named other columns. The comparison notes are announced off
+the *first* sub-stream instead — its first segment starts at a `COPY` header,
+so it has resolved a schema whether or not it had rows to show for it, which is
+the block the serial path announced from too.
+
+**Error ordering is not yet the file's.** `join_all` answers in argument order,
+so the failure raised is the earliest in the file *among one round's reads*;
+a sub-stream that fails while an earlier one is still running is not held back
+for it. Draining the partitions before a failing one, so the lowest-offset
+error wins outright, is separate work
+([`roadmap-P16-parallel-scan.md`](roadmap-P16-parallel-scan.md), "The lowest-offset error wins").
+
+*Rejected:* **reordering inside `TableStream` into one merged stream.** It puts
+a buffer the consumer controls inside the library, and it takes the partitions
+away from the caller that wanted them — an engine's `TableProvider::scan` is
+handed partitions precisely so it can schedule them itself. *Also rejected:*
+**emitting unordered and relaxing the contract.** Pre-1.0 nothing forbids it,
+and it gives up file order for the CLI's reader to buy an engine nothing it
+asked for.
+
+*Rejected:* **merging on the resume token's offset**, which is already
+published and needs no new value. It orders identically today — a batch's end
+and its start sort the same way when batches do not overlap — and it is the
+scanner's position rather than the batch's, so it would keep working by
+coincidence until something yielded a batch that did not end where the scanner
+stood.
 
 *Rejected:* **splitting only at block boundaries**, one sub-stream per `COPY`
 block. It needs no resync and no tiling rule at all — and it is worth nothing

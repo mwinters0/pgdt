@@ -54,10 +54,15 @@ fn query(dump: &Path, table: &str, extra: &[&str]) -> Output {
 /// Every setting of the two flags answers the same rows on a plain file. The
 /// budgets bracket the read chunk: 1 MiB is one chunk buffer's worth, which is
 /// the pool's one-slot floor, and 512 MiB is more than anything here can use.
+///
+/// **The reference is `--jobs 1`, not the default**, since `--jobs` now cuts
+/// the replay: an omitted flag is this machine's available parallelism, so a
+/// default reference would compare one partitioned run against another and
+/// pass however the merge ordered them.
 #[test]
 fn a_query_reads_the_same_rows_at_any_stated_parallelism() {
     let dump = fixture("16/edge_cases/default.sql");
-    let reference = query(&dump, "public.widgets", &[]);
+    let reference = query(&dump, "public.widgets", &["--jobs", "1"]);
     assert!(reference.status.success(), "{}", stderr_of(&reference));
     for extra in [
         vec!["--jobs", "1"],
@@ -83,7 +88,8 @@ fn a_compressed_query_agrees_across_the_budget_that_changes_its_read_path() {
     let plain = plain_dir.path().join("edge_cases.sql");
     std::fs::copy(edge_cases_sql(), &plain).unwrap();
 
-    let reference = query(&plain, "public.widgets", &[]);
+    // As above: the serial path is the oracle, named rather than defaulted to.
+    let reference = query(&plain, "public.widgets", &["--jobs", "1"]);
     assert!(reference.status.success(), "{}", stderr_of(&reference));
     for extra in [
         vec![],
@@ -96,6 +102,29 @@ fn a_compressed_query_agrees_across_the_budget_that_changes_its_read_path() {
         let out = query(&compressed, "public.widgets", &extra);
         assert!(out.status.success(), "{extra:?}: {}", stderr_of(&out));
         assert_eq!(stdout_of(&out), stdout_of(&reference), "{extra:?} changed the rows");
+    }
+}
+
+/// **The merge prints file order, not arrival order.** `pgdq query` holds one
+/// batch per sub-stream and emits the one that begins earliest in the file
+/// (`docs/design/architecture.md`, "Partitioned replay"), so the `id` column
+/// of a table written 1..5 reads 1..5 at every job count — where a printer
+/// that emitted whatever finished first would interleave them.
+///
+/// Asserted against the file's own order rather than against another run, so
+/// it fails on a merge that is consistently wrong as well as on one that is
+/// unstable. `public.widgets` is five rows in a 371-byte data region, which
+/// eight workers cut into eight pieces, so the ids really do come from
+/// different sub-streams.
+#[test]
+fn the_merge_prints_file_order_at_every_job_count() {
+    let dump = fixture("16/edge_cases/default.sql");
+    for jobs in ["1", "2", "3", "5", "8", "24"] {
+        let out = query(&dump, "public.widgets", &["--jobs", jobs, "--column", "id"]);
+        assert!(out.status.success(), "--jobs {jobs}: {}", stderr_of(&out));
+        let printed = stdout_of(&out);
+        let ids: Vec<&str> = printed.lines().skip(1).collect();
+        assert_eq!(ids, ["1", "2", "3", "4", "5"], "--jobs {jobs} printed out of file order");
     }
 }
 

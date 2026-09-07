@@ -65,9 +65,11 @@ struct ParallelArgs {
     ///
     /// **A ceiling, not a request** — three input shapes admit no parallelism
     /// whatever this says: a plain-file `parse`, a `.xz` file with one block,
-    /// and an `INSERT` run (`docs/manual/dump-inspection.md`). No worker
-    /// scheduler is in this build either, so what this bounds today is how
-    /// many decoded `.xz` blocks the source retains, one per would-be reader.
+    /// and an `INSERT` run (`docs/manual/dump-inspection.md`). What it reaches
+    /// today is `query`'s row replay, which it cuts into at most this many
+    /// sub-streams read at once and merged back into file order, and how many
+    /// decoded `.xz` blocks the source retains, one per would-be reader.
+    /// `parse` runs no workers yet, so there it is the retention bound alone.
     #[arg(long, value_name = "N", value_parser = parse_jobs)]
     jobs: Option<usize>,
     /// What those workers may hold between them in read buffers, in bytes.
@@ -654,6 +656,27 @@ fn name_taken_verbatim(err: pgdump_query::Error) -> anyhow::Error {
 /// it into either would invert the layering. An embedder reads
 /// `TableStream::comparison_notes` for the same facts; what it *should* be
 /// handed is filed in `docs/design/roadmap-P6-embeddable-engine-inbox.md`.
+/// One sub-stream's place in `pgdq query`'s k-way merge: at most one batch,
+/// held with the two things a `RecordBatch` does not carry and the printer
+/// needs (`docs/design/architecture.md`, "Partitioned replay").
+///
+/// **One batch per partition is the whole bound.** Each sub-stream yields in
+/// file order and the sub-streams themselves are in file order, so emitting
+/// the held batch with the lowest source offset re-assembles the serial order
+/// while never holding more than N batches — where an unordered stream merged
+/// by buffering until the gap closes is bounded by nothing.
+enum Slot {
+    /// Nothing held: this sub-stream is polled in the next fill round.
+    Empty,
+    /// A batch waiting its turn, with the source offset it begins at — the
+    /// merge key — and the nested plans of the block it came from, read at
+    /// the moment it was taken because its sub-stream may since have moved to
+    /// a block with a different schema.
+    Held { offset: u64, batch: RecordBatch, plans: Vec<NestedPlan> },
+    /// Drained, or stopped at an error already raised. Never polled again.
+    Done,
+}
+
 fn announce_comparisons(stream: &pgdump_query::TableStream<'_>) {
     for note in stream.comparison_notes() {
         eprintln!("warning: {}", note.message());
@@ -969,18 +992,100 @@ async fn main() -> Result<()> {
             // been drained (`docs/design/architecture.md`, "Arrow assembly
             // and the zero-copy path"). The scan itself is the same one —
             // `read_table` drains this stream internally.
-            let mut stream = pgdump_query::table_stream(
+            //
+            // Partitioned, not serial: the split is where `--jobs` becomes
+            // something other than a bound on what the source retains, and
+            // `Parallelism::Serial` — `--jobs 1` — is one sub-stream, so the
+            // serial path is reached through the same call rather than
+            // branched to (`docs/design/architecture.md`, "Partitioned
+            // replay"). What `table_stream` reports as its stream's first
+            // item, this reports from the `await`; both are the same errors
+            // with the same wording.
+            let mut streams = pgdump_query::table_stream_partitions(
                 source.as_ref(),
                 &table,
                 scan_options(chunk_size, &parallel),
                 query_options,
-                None,
                 mode,
-            );
+            )
+            .await
+            .map_err(name_taken_verbatim)?;
             let mut announced = false;
-            while let Some(batch) = stream.next().await.transpose().map_err(name_taken_verbatim)? {
+            let mut slots: Vec<Slot> = streams.iter().map(|_| Slot::Empty).collect();
+            loop {
+                // Refill every empty slot at once. In the first round that is
+                // every sub-stream; after it, only the one just drained — so
+                // the reads a sub-stream ahead of the printer issues stop at
+                // one batch, which is what makes the merge's bound N × batch
+                // rather than a reorder buffer.
+                let failed = {
+                    let fills = streams
+                        .iter_mut()
+                        .zip(slots.iter_mut())
+                        .filter(|(_, slot)| matches!(slot, Slot::Empty))
+                        .map(|(stream, slot)| async move {
+                            match stream.next().await {
+                                Some(Ok(batch)) => {
+                                    *slot = Slot::Held {
+                                        offset: stream.batch_source_offset(),
+                                        // The plans belong to the block this
+                                        // batch came from, so they are taken
+                                        // now: by the time it is printed its
+                                        // own sub-stream may have moved on to
+                                        // a block whose header named other
+                                        // columns.
+                                        plans: stream.resolved_schema().plans,
+                                        batch,
+                                    };
+                                    None
+                                }
+                                Some(Err(err)) => {
+                                    *slot = Slot::Done;
+                                    Some(err)
+                                }
+                                None => {
+                                    *slot = Slot::Done;
+                                    None
+                                }
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    // `join_all` answers in argument order, which is partition
+                    // order, which is file order — so the first failure in it
+                    // is the earliest in the file *among this round's reads*.
+                    // Draining the partitions before a failing one so that the
+                    // lowest-offset error wins outright is 16.11's.
+                    futures::future::join_all(fills).await.into_iter().flatten().next()
+                };
+                if let Some(err) = failed {
+                    return Err(name_taken_verbatim(err));
+                }
+                // The k-way merge itself: the held batch that begins earliest
+                // in the file is the next one to print.
+                let Some(next) = slots
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, slot)| match slot {
+                        Slot::Held { offset, .. } => Some((*offset, index)),
+                        _ => None,
+                    })
+                    .min()
+                    .map(|(_, index)| index)
+                else {
+                    break;
+                };
+                let Slot::Held { batch, plans, .. } =
+                    std::mem::replace(&mut slots[next], Slot::Empty)
+                else {
+                    unreachable!("the slot the merge picked is the one it just read")
+                };
                 if !announced {
-                    announce_comparisons(&stream);
+                    // Off the first sub-stream, not off the one this batch
+                    // came from: its first segment starts at a `COPY` header,
+                    // so it has resolved a schema by now whether or not it had
+                    // rows to show for it — which is the block the serial path
+                    // announced from too.
+                    announce_comparisons(&streams[0]);
                     announced = true;
                 }
                 any_batch = true;
@@ -994,11 +1099,7 @@ async fn main() -> Result<()> {
                     println!("{}", names.join("\t"));
                     header_printed = true;
                 }
-                // Re-read per batch: a table's blocks each carry their own
-                // schema (a header-less block names its columns from its
-                // first row), so the plans belong to the block the batch came
-                // from, not to the query.
-                print_batch(&batch, &stream.resolved_schema().plans)?;
+                print_batch(&batch, &plans)?;
                 rows += batch.num_rows() as u64;
             }
             // A query that matched a block but selected no rows still
@@ -1006,7 +1107,7 @@ async fn main() -> Result<()> {
             // is made at the first batch when there is one so it precedes the
             // rows rather than trailing them.
             if !announced {
-                announce_comparisons(&stream);
+                announce_comparisons(&streams[0]);
             }
             if any_batch {
                 eprintln!("{rows} row(s)");

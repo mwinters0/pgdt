@@ -135,13 +135,16 @@ pub struct QueryOptions {
     /// shapes: a mapping scan, and a replay this phase splits into partitions
     /// (`docs/design/architecture.md`, "Execution model and API surface").
     ///
-    /// **The replay's buffer budget reads it; no worker scheduler does yet.**
-    /// The replay loop announces it to the source
+    /// **The replay's buffer budget reads it, and so does the split.** The
+    /// replay loop announces it to the source
     /// ([`crate::ByteRangeSource::hint_parallelism`]) where the mapping pass
     /// announces [`ScanOptions::parallelism`], so the two passes are bounded
-    /// separately. The scheduler that would split the replay is not in this
-    /// build, so a caller that sets this still gets the serial path, executing
-    /// it inside the memory it asked for.
+    /// separately; and `jobs`, capped by what the bytes afford, is how many
+    /// sub-streams [`crate::table_stream_partitions`] hands back. Nothing here
+    /// spawns — the caller runs them — so a caller that sets this and then
+    /// drains the sub-streams in order has executed the serial path inside the
+    /// memory it asked for, which is what [`crate::table_stream`] does with
+    /// this field on its own.
     pub parallelism: Parallelism,
 }
 
@@ -867,6 +870,19 @@ impl RowBatcher {
 
     pub(crate) fn is_empty(&self) -> bool {
         self.rows_in_batch == 0
+    }
+
+    /// Where in the source the in-flight batch begins — the offset of its
+    /// first pushed row — or `None` while no row has landed in it.
+    ///
+    /// It is the `span`'s lower bound, which is already maintained for the
+    /// third flush trigger, so this is a reading of existing state rather
+    /// than a second one kept beside it. Read **before** [`Self::flush`],
+    /// which clears the span; what it is for is the key a caller merging
+    /// several partitions of one replay back into file order sorts on
+    /// (`docs/design/architecture.md`, "Partitioned replay").
+    pub(crate) fn batch_start(&self) -> Option<u64> {
+        self.span.map(|(start, _)| start)
     }
 
     /// Columns in this block's schema — the field count a resumed stream
