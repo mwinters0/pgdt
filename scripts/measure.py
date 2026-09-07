@@ -1507,8 +1507,17 @@ class Stager:
         path = self.warm_path(name) if name in self._staged else self.cold_path(name)
         tmp = self.cfg.cache_dir / f"{name}.profile.dqcache"
         tmp.unlink(missing_ok=True)
+        # `--jobs` even though nothing here is timed: the row counts this
+        # returns are the divisor under every per-row number in the document,
+        # and no invocation this harness makes inherits a CLI default that
+        # moves underneath it (`SWEEP_JOBS`).
         run(
-            [str(self.cfg.bin_pgdq), "parse", "--source", str(path), "--dqcache", str(tmp)],
+            [
+                str(self.cfg.bin_pgdq), "parse",
+                "--source", str(path),
+                "--dqcache", str(tmp),
+                "--jobs", str(SWEEP_JOBS),
+            ],
             quiet=True,
         )
         out = run(
@@ -1678,6 +1687,25 @@ DECODE_WORKERS: tuple[int, ...] = (1, 2, 4, 8, 12, 16, 24)
 #: what the serial path this project ships has today.
 DECODE_BASELINE = 1
 
+#: The worker count every `pgdq` invocation this harness makes states, and the
+#: one every registered figure is therefore taken at.
+#:
+#: **A worker count is apparatus, on the same argument the allocator is.** The
+#: CLI's `--jobs` default is `available_parallelism()`, so a shape that states
+#: nothing measures whatever the machine happens to have — and the default moved
+#: underneath nineteen figures without a single shape changing, which is a
+#: figure whose apparatus nothing in the document can name. So no invocation
+#: here inherits it: `_script` states it, `profile_argv` states it, the koji
+#: recipe takes it as a parameter, and `--check` refuses a shape that pins no
+#: count (`measurements.md`, "The apparatus").
+#:
+#: **It is 1 because that is the arrangement the published sitting measured**,
+#: not because serial is preferred: every table in the document was taken when
+#: `parse` and `query` were serial paths, so a re-take at this value reproduces
+#: that apparatus rather than replacing it. Raising it is an apparatus change
+#: and obliges a re-sweep, exactly as changing the allocator would.
+SWEEP_JOBS = 1
+
 #: What the decode figure's container is given, against the register's 512 MB.
 #: At 24 workers over 24 MiB blocks the decoder holds 24 decoded slots, 26
 #: compressed windows and 24 LZMA2 dictionaries — around 950 MB on the
@@ -1704,10 +1732,16 @@ def _script(command: str) -> str:
     The timer is a bash builtin inside the container. Nothing redirects stderr
     inside a timed command -- some shells route `time`'s own report through the
     timed command's redirection, which deletes the figure and leaves a labelled
-    run with no number under it."""
+    run with no number under it.
+
+    **Every `pgdq` shape states its worker count**, because the CLI's default is
+    the machine's available parallelism and a shape that inherits it measures
+    whatever hardware it ran on -- see `SWEEP_JOBS`. `--check` refuses a shape
+    that pins none."""
     q = "time /pgdq"
+    j = f"--jobs {SWEEP_JOBS}"
     if command == "parse":
-        return f"{q} parse --source /dump.sql --dqcache /tmp/x.dqcache >/dev/null"
+        return f"{q} parse --source /dump.sql --dqcache /tmp/x.dqcache {j} >/dev/null"
     if command == "parse-rss":
         # The same `parse` as above, wrapped so the run reports its own peak
         # resident set as well as its wall clock. The redirection is outside
@@ -1715,22 +1749,25 @@ def _script(command: str) -> str:
         # stderr, where bash's `time` report already goes.
         return (
             f"time {rss_wrapper(platform.machine())} /pgdq parse --source /dump.sql "
-            "--dqcache /tmp/x.dqcache >/dev/null"
+            f"--dqcache /tmp/x.dqcache {j} >/dev/null"
         )
     if command == "parse-preamble":
-        return f"{q} parse --preamble-only --source /dump.sql --dqcache /tmp/x.dqcache >/dev/null"
+        return (
+            f"{q} parse --preamble-only --source /dump.sql --dqcache /tmp/x.dqcache "
+            f"{j} >/dev/null"
+        )
     if command == "parse-cache-out":
         # The cache goes to the mounted tmpfs, not the container's own layer,
         # and the removal is outside the timer.
         return (
             "rm -f /out/measure.dqcache; "
-            f"{q} parse --source /dump.sql --dqcache /out/measure.dqcache >/dev/null"
+            f"{q} parse --source /dump.sql --dqcache /out/measure.dqcache {j} >/dev/null"
         )
     if command in ("query-typed", "query-strings"):
         mode = command.split("-")[1]
         return (
             f"{q} query --source /dump.sql --table public.perf --dqcache none "
-            f"--schema-mode {mode} >/dev/null"
+            f"--schema-mode {mode} {j} >/dev/null"
         )
     if command.startswith("query-project-"):
         # Typed, always: the figure is about what building a column costs, and
@@ -1740,7 +1777,7 @@ def _script(command: str) -> str:
             raise ValueError(f"unknown command shape {command!r}")
         return (
             f"{q} query --source /dump.sql --table public.perf --dqcache none "
-            f"--schema-mode typed {projection_flags(int(width))} >/dev/null"
+            f"--schema-mode typed {projection_flags(int(width))} {j} >/dev/null"
         )
     if command.startswith("query-where-"):
         # `strings`, always, for two reasons that agree. The typed `=` decodes
@@ -1754,11 +1791,14 @@ def _script(command: str) -> str:
         expr = predicate_expr(command.removeprefix("query-where-"))
         return (
             f"{q} query --source /dump.sql --table public.perf --dqcache none "
-            f"--schema-mode strings --where '{expr}' >/dev/null"
+            f"--schema-mode strings --where '{expr}' {j} >/dev/null"
         )
     if command == "query-nomatch":
         # Maps to EOF (the table never matches) and never saves.
-        return f"{q} query --source /dump.sql --table public.nosuchtable --dqcache none >/dev/null"
+        return (
+            f"{q} query --source /dump.sql --table public.nosuchtable --dqcache none "
+            f"{j} >/dev/null"
+        )
     if command.startswith("parse-chunk-"):
         # The read chunk, the one lever of the three I/O defaults that is a
         # value rather than a scheme. `parse` rather than `query`: this is
@@ -1771,7 +1811,7 @@ def _script(command: str) -> str:
             raise ValueError(f"{command!r} names a chunk size the figure does not carry")
         return (
             f"{q} parse --source /dump.sql --dqcache /tmp/x.dqcache "
-            f"--chunk-size {size} >/dev/null"
+            f"--chunk-size {size} {j} >/dev/null"
         )
     if command.startswith("decode-"):
         # The `xz_decode` example, not `pgdq`: nothing in the library decodes
@@ -1793,6 +1833,57 @@ def _script(command: str) -> str:
     if command == "dd":
         return "time dd if=/dump.sql of=/dev/null bs=4M"
     raise ValueError(f"unknown command shape {command!r}")
+
+
+def command_shapes() -> tuple[str, ...]:
+    """Every command shape `_script` builds, enumerated.
+
+    `_script` parses its argument rather than matching it, so the
+    parameterized families are expanded from the registries that define them
+    — one list, not two. What this exists for is the worker-count
+    reconciliation below, which has to iterate the shapes to check them;
+    `test_measure.py` holds it against `_script`'s own branches, so a shape
+    added there and not here is an error rather than a silent exemption."""
+    return (
+        "parse",
+        "parse-rss",
+        "parse-preamble",
+        "parse-cache-out",
+        "query-typed",
+        "query-strings",
+        "query-nomatch",
+        *(f"query-project-{w}" for w in PROJECTION_WIDTHS),
+        *(f"query-where-{s}" for s in PREDICATE_SHAPES),
+        *(f"parse-chunk-{n}" for n in CHUNK_SIZES),
+        *(f"decode-{w}" for w in DECODE_WORKERS),
+        "dd",
+    )
+
+
+#: A worker count stated on a command line: `pgdq`'s `--jobs`, or the decode
+#: instrument's own `--workers`. Either spelling pins the count; what fails is
+#: a shape carrying neither.
+_WORKER_COUNT = re.compile(r"--(?:jobs|workers) \d+")
+
+#: The one shape that states no worker count and is right not to: `dd` is the
+#: device floor, not a run of ours. Named rather than inferred, so a second
+#: non-`pgdq` shape has to be admitted here on purpose.
+_NO_WORKERS = ("dd",)
+
+
+def worker_count_problems() -> list[str]:
+    """Command shapes that inherit a worker count instead of stating one.
+
+    The mechanical half of "a worker count is apparatus" (`SWEEP_JOBS`): the
+    CLI's `--jobs` default is the machine's available parallelism, so a shape
+    that pins nothing measures the hardware it ran on and no table can say
+    which arrangement it read. That is how the default moved underneath
+    nineteen figures with no shape changing and nothing noticing."""
+    return [
+        command
+        for command in command_shapes()
+        if command not in _NO_WORKERS and not _WORKER_COUNT.search(_script(command))
+    ]
 
 
 class Session:
@@ -2342,7 +2433,10 @@ def count_saves(
     Traced on the host and untimed, so strace's overhead reaches no figure.
     **Both** `open` and `openat`: glibc uses one and musl the other, and
     tracing a single call silently reports zero saves against the other libc.
-    `std::fs::write` opens once per save; the first open is the load's miss."""
+    `std::fs::write` opens once per save; the first open is the load's miss.
+
+    Untimed, but the save count it returns is published, and `-f` follows every
+    thread — so it states its worker count like everything else here."""
     cache = cfg.warm_dir / "savecount.dqcache"
     cache.unlink(missing_ok=True)
     if cfg.dry_run:
@@ -2351,6 +2445,7 @@ def count_saves(
         [
             "strace", "-f", "-e", "trace=open,openat",
             str(binary), "parse", "--source", str(dump), "--dqcache", str(cache),
+            "--jobs", str(SWEEP_JOBS),
         ],
         text=True,
         stdout=subprocess.DEVNULL,
@@ -5034,7 +5129,7 @@ def cmd_list() -> None:
 KOJI_DUMP = _env("PGDQ_KOJI_DUMP", "/mnt/wd12t/fedora/koji/koji-2026-07-23.dump")
 
 
-def koji_recipe(cfg: Config, name: str, wrap: bool) -> str:
+def koji_recipe(cfg: Config, name: str, wrap: bool, jobs: int = SWEEP_JOBS) -> str:
     """The koji invocation, printed rather than run.
 
     koji is deliberately outside the sweep — a different medium, ~54 minutes,
@@ -5053,6 +5148,16 @@ def koji_recipe(cfg: Config, name: str, wrap: bool) -> str:
       colocated default lands in the container's ephemeral layer and is
       destroyed with it — an hour of scanning thrown away with no error, since
       the write itself succeeds.
+
+    **The worker count is a parameter here, where every other invocation this
+    module builds pins `SWEEP_JOBS`.** koji's leg is not a table in the
+    register: what it checks is that a scan of the real sample comes back
+    byte-identical, and the parallel scan's verification is a leg at some
+    count against a serial one. So the count is stated on the command line the
+    way it is everywhere else — nothing inherits the CLI default — and *which*
+    count is the caller's to say. The wrap sequence states one count for both
+    of its legs, since resuming a scan under a different arrangement is a
+    second variable in a check that has one.
     """
     mounts = (
         f'  -v "{cfg.bin_pgdq}:/pgdq:ro" \\\n'
@@ -5066,7 +5171,7 @@ def koji_recipe(cfg: Config, name: str, wrap: bool) -> str:
             + mounts
             + f"  {cfg.image} \\\n"
             f"  sh -c 'exec /pgdq parse --source /dump.sql --dqcache /out/{cache} "
-            f">> /out/{log} 2>&1'"
+            f"--jobs {jobs} >> /out/{log} 2>&1'"
         )
 
     out = ["cargo build --release -p pgdump_query-cli   # default target: glibc", "mkdir -p runs", ""]
@@ -5113,14 +5218,15 @@ def koji_recipe(cfg: Config, name: str, wrap: bool) -> str:
     return "\n".join(out)
 
 
-def cmd_koji(wrap: bool) -> int:
+def cmd_koji(wrap: bool, jobs: int) -> int:
     cfg = Config()
     print(
         "# koji is not part of the sweep: a different medium, ~54 minutes, and a\n"
         "# byte-for-byte regression check rather than a throughput figure. Run this\n"
         "# detached and read it in a later session (CLAUDE.md, \"Long-running processes\").\n"
+        f"# The scan below runs at --jobs {jobs}; --koji-jobs states another.\n"
     )
-    print(koji_recipe(cfg, "pgdq-koji", wrap))
+    print(koji_recipe(cfg, "pgdq-koji", wrap, jobs))
     return 0
 
 
@@ -5211,7 +5317,12 @@ def profile_argv(command: str, source: Path | str, cache: Path | str) -> list[st
     change to a measured invocation that misses this one fails there rather
     than being discovered in a profile that quietly measured something else."""
     if command == "parse":
-        return ["parse", "--source", str(source), "--dqcache", str(cache)]
+        return [
+            "parse",
+            "--source", str(source),
+            "--dqcache", str(cache),
+            "--jobs", str(SWEEP_JOBS),
+        ]
     if command in ("query-strings", "query-typed"):
         mode = command.split("-")[1]
         return [
@@ -5220,6 +5331,7 @@ def profile_argv(command: str, source: Path | str, cache: Path | str) -> list[st
             "--table", "public.perf",
             "--dqcache", "none",
             "--schema-mode", mode,
+            "--jobs", str(SWEEP_JOBS),
         ]
     raise ValueError(f"unknown profile shape {command!r}")
 
@@ -5227,9 +5339,9 @@ def profile_argv(command: str, source: Path | str, cache: Path | str) -> list[st
 def profile_recipe(cfg: Config) -> str:
     """The whole sequence, with every path filled in.
 
-    Five things here decide whether the profile is of the thing it claims to
+    Six things here decide whether the profile is of the thing it claims to
     be, and each fails *silently* -- a profile comes back, it just describes
-    something else. `test_measure.py` asserts all five:
+    something else. `test_measure.py` asserts all six:
 
     * **the `profiling` binary, never `target/release/pgdq`.** `release`
       carries no line tables and no frame pointers, so `perf` attributes every
@@ -5257,6 +5369,14 @@ def profile_recipe(cfg: Config) -> str:
       there reaches the `debuginfod` fetch. It prints which of the two it took,
       because both a skew and a failed fetch otherwise surface as a profile
       that looks entirely plausible -- see `DEBUGINFOD` above.
+    * **the worker count, stated rather than inherited.** `profile_argv` carries
+      `--jobs SWEEP_JOBS` for the same reason `_script` does, and here the
+      consequence is sharper than a moved number: a sampling profile's buckets
+      are per *thread*, so a profile taken at the machine's available
+      parallelism attributes a scan among workers the figure it explains never
+      ran. The shape-equality assertion is what holds the two together, and it
+      compares two shapes that each pin a count rather than two that each
+      inherit one.
 
     And one thing that is not a mistake but reads like one: **no container.**
     A profile is about proportions, and the cgroup adds capability plumbing
@@ -5360,8 +5480,9 @@ def cmd_profile() -> int:
 def cmd_check(doc: Path) -> int:
     """Reconcile the register against the doc: which figures have landed a
     marker, which markers name nothing, where the register's boundary runs,
-    which figures were taken outside the stamped sweep, and which documents a
-    fold-in must re-read because they repeat a figure's numbers."""
+    which figures were taken outside the stamped sweep, which documents a
+    fold-in must re-read because they repeat a figure's numbers, and whether
+    every command shape states the worker count it is taken at."""
     text = doc.read_text()
     found = markers_in(doc)
     sittings = figure_sittings(text)
@@ -5378,6 +5499,7 @@ def cmd_check(doc: Path) -> int:
     ]
     duplicated = sorted({m for m in found if found.count(m) > 1})
     missing = [f.id for f in ALL_FIGURES if f.id not in found]
+    unpinned = worker_count_problems()
 
     print(
         f"{doc.relative_to(REPO)} carries {len(set(found))} of {len(ALL_FIGURES)} figure markers.\n"
@@ -5402,6 +5524,20 @@ def cmd_check(doc: Path) -> int:
         for line in dangling:
             print(f"  {line}")
         print()
+    if unpinned:
+        print(
+            "Command shapes inheriting a worker count — the CLI's `--jobs` default is this\n"
+            "machine's available parallelism, so a shape that states none measures whatever\n"
+            f"hardware it ran on. State `--jobs {SWEEP_JOBS}`:"
+        )
+        for command in unpinned:
+            print(f"  {command}")
+        print()
+    else:
+        print(
+            f"Every command shape states its worker count (`--jobs {SWEEP_JOBS}`, and "
+            f"`--workers` for the\ndecode instrument), so no figure below inherits one.\n"
+        )
     if outside:
         print(
             "Declared outside the register — sections whose readings this harness did not\n"
@@ -5522,6 +5658,7 @@ def cmd_check(doc: Path) -> int:
             unknown
             or duplicated
             or dangling
+            or unpinned
             or undeclared
             or unknown_outside
             or both
@@ -5861,6 +5998,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="with --koji-recipe: the stop-report-resume-compare sequence instead",
     )
     parser.add_argument(
+        "--koji-jobs",
+        type=int,
+        default=SWEEP_JOBS,
+        metavar="N",
+        help=f"with --koji-recipe: the worker count the scan states (default {SWEEP_JOBS}); "
+        "koji's parallel leg is a leg at some count against a serial one, so the recipe "
+        "takes it rather than pinning it",
+    )
+    parser.add_argument(
         "--profile-recipe",
         action="store_true",
         help="print the sampling-profile sequence — the harness owns it but never runs it",
@@ -5882,7 +6028,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.drift:
         return cmd_drift(*args.drift)
     if args.koji_recipe:
-        return cmd_koji(args.wrap)
+        return cmd_koji(args.wrap, args.koji_jobs)
     if args.profile_recipe:
         return cmd_profile()
     if args.check:

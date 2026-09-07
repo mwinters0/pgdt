@@ -43,7 +43,7 @@ All figures are on the hardware `CLAUDE.local.md` describes. Synthetic inputs
 are regenerable with `--seed 42` and are **never committed** — they measure
 throughput, not correctness, which stays entirely fixture-based.
 
-Seventeen standing rules for reading anything below:
+Eighteen standing rules for reading anything below:
 
 - **Every figure is a ratio, never a disk throughput.** Page-cache state
   dominates. A number taken warm on a freshly generated file can be twice what
@@ -112,6 +112,23 @@ Seventeen standing rules for reading anything below:
   replacements are worth, is "Which allocator a figure was taken under" below;
   it is also where a figure here being a **CLI** figure is stated, the choice
   being the binary's and never the library's.
+- **A worker count is apparatus too, so every invocation states one.** `pgdq
+  --jobs` defaults to this machine's available parallelism, so a command that
+  says nothing measures the hardware it ran on rather than an arrangement
+  anybody chose — and that default moved underneath every figure in this
+  document without one command shape changing and without `--stale` having
+  anything to say, staleness meaning *re-take* and never *the apparatus moved
+  underneath you*. So nothing `scripts/measure.py` builds inherits it: every
+  figure's shape states `--jobs 1`, so does the profile recipe — where the cost
+  of getting it wrong is sharper, a sampling profile's buckets being per thread
+  — and `uv run measure.py --check` fails a shape that pins no count. koji is
+  the one invocation that takes the count as a parameter (`--koji-jobs`),
+  because what it checks is a leg at some count against a serial one rather
+  than a table. **1 is what the published sitting measured**, every table here
+  having been taken while `parse` and `query` were serial paths, so a re-take
+  at that value reproduces the apparatus rather than replacing it; raising it
+  is an apparatus change and obliges a re-sweep, exactly as changing the
+  allocator would.
 - **Never quote a standard error or a *t* from one sweep — give the median and
   the observed spread.** Within-sweep dispersion measures the *reps*, not the
   measurement: the allocator, the stage's position in the session and the
@@ -362,14 +379,32 @@ and no marker has ever been stripped. So this boundary is discipline, recorded
 here rather than left to be re-derived — and the honest statement of the
 protection is the marker and the banner together, not the check alone.
 
-**One line, in three regimes: 3.00 GiB inputs read by a `glibc` binary in a
-512 MB `postgres:16` container, timed by that container's own `bash`.** Warm
+**One line, in three regimes: 3.00 GiB inputs read at `--jobs 1` by a `glibc`
+binary in a 512 MB `postgres:16` container, timed by that container's own
+`bash`.** Warm
 figures read from `/dev/shm`; cold ones read from the SSD with `drop_caches`
 before every run, including before the floor; `cold-nvme` ones are that same
 discipline against a copy of the input on the NVMe. Nothing else builds or runs
 on the machine while a sweep does — a `cargo` job across 24 cores moves the
 numbers being taken, which is "a koji figure taken while local work ran is not
 a figure" one scale down.
+
+**The worker count is in that line because it is stated rather than inherited**
+— `measure.SWEEP_JOBS`, carried by every shape `_script` builds, by the profile
+recipe's argv, and by the three untimed invocations that publish numbers all the
+same: the host `parse` the per-row divisors come from, the `strace`d save count
+the quadratic table quotes, and the RSS attribution's legs, where a worker count
+is precisely the quantity being attributed. `--check` reconciles the shapes. A test holds the number in that sentence against
+the harness's, so raising one without the other fails rather than publishing a
+line that describes the previous arrangement.
+
+*Rejected:* recording, per figure, the count it was actually taken at. That is
+the stronger guarantee — it survives the constant being changed between two
+sittings, where one line for the document does not — but it is figure-register
+surgery: a fourth per-figure datum beside `depends`, `quoted_by` and `shares`,
+read back out of the doc the way a sitting commit is, with its own reconciliation.
+The register is the place a change like that gets grilled, and the defect being
+closed here is a default nothing named at all.
 
 **A regime names a device, and a figure that reads the wrong one still emits a
 plausible table.** That is why the three staging areas are three directories
@@ -1860,7 +1895,7 @@ for i in 1 2 3 4 5; do for f in control composite arrays; do for m in strings ty
     -v "$D/$f.sql:/dump.sql:ro" \
     postgres:16 bash -c \
     "time /pgdq query --source /dump.sql --table public.perf --dqcache none \
-       --schema-mode $m >/dev/null"
+       --schema-mode $m --jobs 1 >/dev/null"
 done; done; done
 ```
 
@@ -2588,7 +2623,7 @@ with the cache **disabled entirely** the map is O(blocks²) exactly as it was:
 
 ```sh
 # maps to EOF (the table never matches) and never saves
-/pgdq query --source /dump.sql --table public.nosuchtable --dqcache none
+/pgdq query --source /dump.sql --table public.nosuchtable --dqcache none --jobs 1
 ```
 
 <!-- figure: map-only — reproduce with `cd scripts && uv run measure.py --figure map-only` -->

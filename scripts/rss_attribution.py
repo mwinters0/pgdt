@@ -56,7 +56,15 @@ BINARIES: dict[str, Path] = {
     "mimalloc": CFG.out_dir / "pgdq-alloc-mimalloc",
 }
 
-PARSE = "parse --source /dump.sql --dqcache /tmp/x.dqcache"
+#: The worker count every leg states, which is the harness's — a resident set
+#: is exactly the quantity a worker count moves, since each worker holds read
+#: buffers of its own, so a leg inheriting the CLI's `available_parallelism()`
+#: default would attribute a growth this apparatus never measured
+#: (`measure.SWEEP_JOBS`; `measurements.md`, "The apparatus"). `info` takes no
+#: such flag and states none.
+JOBS = f"--jobs {measure.SWEEP_JOBS}"
+
+PARSE = f"parse --source /dump.sql --dqcache /tmp/x.dqcache {JOBS}"
 #: `parse` refuses `--dqcache none` outright — "cache is disabled, but `parse`
 #: requires a cache file" — so the un-throttled splice, one whole-list rebuild
 #: per block, is reachable only through `query`. Its cached twin differs in that
@@ -69,13 +77,14 @@ LEGS: dict[str, tuple[str, str]] = {
     "parse, jemalloc": ("jemalloc", PARSE),
     "parse, mimalloc": ("mimalloc", PARSE),
     "parse --preamble-only": (
-        "system", "parse --preamble-only --source /dump.sql --dqcache /tmp/x.dqcache"
+        "system",
+        f"parse --preamble-only --source /dump.sql --dqcache /tmp/x.dqcache {JOBS}",
     ),
     "info over the finished cache": ("system", "info --dqcache /out/CACHE.dqcache"),
-    "no match, cached": ("system", f"{NOMATCH} /tmp/x.dqcache"),
-    "no match, none": ("system", f"{NOMATCH} none"),
-    "no match, none, jemalloc": ("jemalloc", f"{NOMATCH} none"),
-    "no match, none, mimalloc": ("mimalloc", f"{NOMATCH} none"),
+    "no match, cached": ("system", f"{NOMATCH} /tmp/x.dqcache {JOBS}"),
+    "no match, none": ("system", f"{NOMATCH} none {JOBS}"),
+    "no match, none, jemalloc": ("jemalloc", f"{NOMATCH} none {JOBS}"),
+    "no match, none, mimalloc": ("mimalloc", f"{NOMATCH} none {JOBS}"),
 }
 
 MAXRSS = re.compile(r"^maxrss_kib=(\d+)$", re.M)

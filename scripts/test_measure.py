@@ -19,6 +19,7 @@ from __future__ import annotations
 import collections
 import contextlib
 import hashlib
+import inspect
 import io
 import json
 import re
@@ -247,6 +248,105 @@ class Scripts(unittest.TestCase):
             with self.subTest(command=command):
                 with self.assertRaises(ValueError):
                     measure._script(command)
+
+
+class WorkerCount(unittest.TestCase):
+    """A worker count is apparatus, so nothing here inherits the CLI's.
+
+    `pgdq --jobs` defaults to the machine's available parallelism, and that
+    default moved underneath every figure in the document without one command
+    shape changing — the failure this reconciles against. `--stale` cannot see
+    it either: staleness says *re-take*, never *the apparatus moved underneath
+    you*."""
+
+    def test_every_shape_states_a_worker_count(self):
+        self.assertEqual(measure.worker_count_problems(), [])
+
+    def test_a_shape_that_inherits_one_is_reported(self):
+        # The check must fail loudly, since the shape it would pass still runs
+        # and still produces a table.
+        with unittest.mock.patch.object(
+            measure, "_script", lambda c: "time /pgdq parse --source /dump.sql"
+        ):
+            reported = measure.worker_count_problems()
+        self.assertEqual(
+            sorted(reported),
+            sorted(c for c in measure.command_shapes() if c != "dd"),
+        )
+
+    def test_check_fails_on_a_shape_that_inherits_one(self):
+        with unittest.mock.patch.object(
+            measure, "_script", lambda c: "time /pgdq parse --source /dump.sql"
+        ):
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                code = measure.cmd_check(measure.REPO / "docs/design/measurements.md")
+        self.assertEqual(code, 1)
+        self.assertIn("inheriting a worker count", out.getvalue())
+
+    def test_the_enumeration_covers_every_branch_of_the_builder(self):
+        """`command_shapes` is a second list of what `_script` accepts, and a
+        second list drifts. This is what stops a shape added there from being
+        exempted from the reconciliation by not being enumerated here."""
+        src = inspect.getsource(measure._script)
+        exact = set(re.findall(r'command == "([^"]+)"', src))
+        for group in re.findall(r"command in \(([^)]*)\)", src):
+            exact |= set(re.findall(r'"([^"]+)"', group))
+        prefixes = set(re.findall(r'command\.startswith\("([^"]+)"\)', src))
+        shapes = set(measure.command_shapes())
+        self.assertTrue(exact)
+        self.assertTrue(prefixes)
+        self.assertEqual(exact - shapes, set())
+        for prefix in prefixes:
+            with self.subTest(prefix=prefix):
+                self.assertTrue([s for s in shapes if s.startswith(prefix)])
+
+    def test_the_only_exempt_shape_runs_no_binary_of_ours(self):
+        # `dd` is the device floor. Anything else claiming the exemption would
+        # be a pgdq run measuring whatever the machine had.
+        for command in measure._NO_WORKERS:
+            with self.subTest(command=command):
+                self.assertNotIn("/pgdq", measure._script(command))
+
+    def test_the_decode_instrument_pins_its_own_spelling(self):
+        # It is not `pgdq`, so it has no `--jobs`; `--workers` is the same
+        # statement in the instrument's own vocabulary, and the figure's whole
+        # axis is that count.
+        for workers in measure.DECODE_WORKERS:
+            with self.subTest(workers=workers):
+                self.assertIn(f"--workers {workers}", measure._script(f"decode-{workers}"))
+
+    def test_the_untimed_profiling_parse_states_one_too(self):
+        # Untimed, but its row counts are the divisor under every per-row
+        # number in the document.
+        src = inspect.getsource(measure.Stager.profile)
+        self.assertIn('"--jobs", str(SWEEP_JOBS)', src)
+
+    def test_the_traced_save_count_states_one_too(self):
+        # Untimed as well, and its number is published — and `strace -f`
+        # follows every thread a parallel mapping pass would spawn.
+        src = inspect.getsource(measure.count_saves)
+        self.assertIn('"--jobs", str(SWEEP_JOBS)', src)
+
+    def test_the_rss_attribution_states_one_on_every_leg_that_takes_it(self):
+        # A resident set is exactly the quantity a worker count moves, each
+        # worker holding read buffers of its own. `info` has no such flag.
+        import rss_attribution
+
+        for leg, (_, args) in rss_attribution.LEGS.items():
+            with self.subTest(leg=leg):
+                if args.startswith("info"):
+                    self.assertNotIn("--jobs", args)
+                else:
+                    self.assertIn(f"--jobs {measure.SWEEP_JOBS}", args)
+
+    def test_the_apparatus_line_states_the_count_the_harness_pins(self):
+        """The document's one apparatus line names the worker count, and the
+        number in it is the harness's — a sentence describing the previous
+        arrangement is exactly what this whole reconciliation is against."""
+        doc = (measure.REPO / "docs/design/measurements.md").read_text()
+        section = doc.split("\n## The apparatus\n", 1)[1].split("\n## ", 1)[0]
+        stated = set(re.findall(r"--jobs (\d+)", section))
+        self.assertEqual(stated, {str(measure.SWEEP_JOBS)})
 
 
 class Allocator(unittest.TestCase):
@@ -2225,8 +2325,8 @@ class KojiRecipe(unittest.TestCase):
     hand-maintained copies is how a documented command was found that could
     not execute. Each assertion below is a mistake that has cost a run."""
 
-    def _recipe(self, wrap=False) -> str:
-        return measure.koji_recipe(measure.Config(), "pgdq-koji", wrap)
+    def _recipe(self, wrap=False, jobs=measure.SWEEP_JOBS) -> str:
+        return measure.koji_recipe(measure.Config(), "pgdq-koji", wrap, jobs)
 
     def test_pgdq_is_pid_one(self):
         # A compound command cannot be exec'd, so nothing may be appended to
@@ -2285,6 +2385,28 @@ class KojiRecipe(unittest.TestCase):
         legs = [ln for ln in wrap.splitlines() if "exec /pgdq parse" in ln]
         self.assertEqual(len(legs), 2)
         self.assertEqual(legs[0], legs[1])
+
+    def test_the_scan_states_its_worker_count(self):
+        # Nothing this module builds inherits the CLI's `--jobs` default, koji
+        # included — a 784 GB scan that cannot say how many workers read it is
+        # not a regression check against anything.
+        self.assertIn(f"--jobs {measure.SWEEP_JOBS}", self._recipe())
+
+    def test_the_worker_count_is_the_callers_to_state(self):
+        # koji's parallel leg is a leg at some count against a serial one, so
+        # the count is a parameter here where every other invocation pins it.
+        self.assertIn("--jobs 8", self._recipe(jobs=8))
+        self.assertNotIn("--jobs 1 ", self._recipe(jobs=8))
+
+    def test_the_wrap_legs_agree_on_the_count(self):
+        # Resuming under a different arrangement is a second variable in a
+        # check that has one. `test_the_wrap_resumes_the_identical_command`
+        # holds the whole line; this says which part of it matters.
+        legs = [ln for ln in self._recipe(wrap=True, jobs=8).splitlines() if "--jobs" in ln]
+        self.assertEqual(len(legs), 2)
+        for line in legs:
+            with self.subTest(line=line):
+                self.assertIn("--jobs 8", line)
 
     def test_every_continued_line_carries_its_continuation(self):
         # A dropped trailing backslash silently splits one command into two.
@@ -2395,6 +2517,18 @@ class ProfileRecipe(unittest.TestCase):
             if re.match(r"^# \d+\. ", ln)
         ]
         self.assertEqual(numbered, list(range(len(numbered))))
+
+    def test_every_profiled_invocation_states_its_worker_count(self):
+        # The sixth silent failure: a sampling profile's buckets are per
+        # thread, so a profile taken at the machine's available parallelism
+        # attributes a scan among workers the figure it explains never ran.
+        recorded = [ln for ln in self._recipe().splitlines() if ln.strip().startswith("-- ")]
+        self.assertEqual(
+            len(recorded), len(measure.PROFILE_INPUTS) * len(measure.PROFILE_SHAPES)
+        )
+        for line in recorded:
+            with self.subTest(line=line):
+                self.assertIn(f"--jobs {measure.SWEEP_JOBS}", line)
 
     def test_no_container_is_involved(self):
         # A profile is about proportions, and the 512 MB cgroup adds capability

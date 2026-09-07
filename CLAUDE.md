@@ -32,7 +32,7 @@ cd scripts && uv run python -m unittest test_floor_mapping  # that check's own t
 
 cd scripts && uv run measure.py --list            # every figure, and what invalidates each
 cd scripts && uv run measure.py --stale           # which figures a diff has made stale
-cd scripts && uv run measure.py --check           # figure markers vs the doc, and each figure's consumers
+cd scripts && uv run measure.py --check           # figure markers vs the doc, each figure's consumers, and that every command shape pins a worker count
 cd scripts && uv run measure.py --verify-additive # inputs regenerated at two revisions, compared byte for byte
 cd scripts && uv run measure.py --figure <id>     # re-take one figure — one whole table, plus what it borrows
 cd scripts && uv run measure.py --figure <id> --alone   # borrowing nothing: a diagnostic sitting, marked NOT PUBLISHABLE
@@ -121,6 +121,15 @@ reports it whether the run finished or was signalled.
 so the colocated default (`/dump.sql.dqcache`) lands in the container's
 ephemeral writable layer and is destroyed with the container — throwing away an
 hour of scanning without an error, since the write itself succeeds.
+
+**The scan states its worker count, and `--koji-jobs N` is what changes it.**
+Nothing the harness builds inherits `--jobs`' CLI default — that is the
+apparatus rule
+([`docs/design/measurements.md`](docs/design/measurements.md), "The apparatus")
+— and koji is the one invocation that takes the count as a parameter rather
+than pinning it, since what it checks is a leg at some count against a serial
+one. Both legs of `--wrap` state the same count, a resume under a different
+arrangement being a second variable in a check that has one.
 
 A later session reads `runs/pgdq-koji-scan.log`; `sudo nerdctl inspect -f
 '{{.State.Status}}' pgdq-koji` says whether it is still going.
@@ -373,13 +382,14 @@ subtraction, and needs no quiet machine, because what it reports is a
 proportion. So it produces a `runs/` artifact, never a median, an apparatus
 line or a `measurements.md` marker. **Read it against a figure, not instead of
 one**: the profiled invocations are the same command shapes the sweep times,
-and `scripts/test_measure.py` is what holds them so. Five of its details decide
+and `scripts/test_measure.py` is what holds them so. Six of its details decide
 whether the profile describes what it claims to — the `profiling` binary rather
 than `release`, `-C force-frame-pointers=yes` on the build line, `--call-graph
-fp` matching it, a warm input, and libc's own symbols, without which half of a
-`parse` profile is bare addresses — and each fails by returning a
+fp` matching it, a warm input, libc's own symbols, without which half of a
+`parse` profile is bare addresses, and a stated `--jobs`, a sampling profile's
+buckets being per thread — and each fails by returning a
 plausible-looking profile of something else, which is why they are asserted
-rather than remembered. **The symbols are the one of the five that is a
+rather than remembered. **The symbols are the one of the six that is a
 property of the machine rather than of the command**, so they are set up once
 rather than passed: [`CONTRIBUTING.md`](CONTRIBUTING.md), "Profiling", is how,
 and `CLAUDE.local.md` records that it is done here. **Read that section before
