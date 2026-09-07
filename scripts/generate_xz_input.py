@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-"""The two `.xz` inputs the `xz-decode-scaling` figure is taken on.
+"""The `.xz` inputs the register's compressed figures are taken on.
 
-Both are read by `pgdump_query/examples/xz_decode.rs` under
-`scripts/measure.py`, and both exist to answer one question — how a block
-decoder's plaintext throughput scales with worker count — over the two kinds of
-bytes that answer it differently:
+Two of them are `xz-decode-scaling`'s, read by
+`pgdump_query/examples/xz_decode.rs` under `scripts/measure.py`, and both exist
+to answer one question — how a block decoder's plaintext throughput scales with
+worker count — over the two kinds of bytes that answer it differently:
 
 * **`--from-dump`** compresses an input `scripts/measure.py` already generates
   (the brace-free `control`, today) at koji's own container parameters:
   preset 6, so an 8 MiB LZMA2 dictionary, 24 MiB blocks, CRC64. It is
   reproducible on any machine from committed sources, which is what makes the
-  figure re-takeable by someone who does not have koji.
+  figure re-takeable by someone who does not have koji. `--block-size` moves
+  the one parameter of those that a figure is taken *over* — a compressed
+  reader's per-worker footprint is one decoded block — and moves it only within
+  `BLOCK_SIZES`.
 
 * **`--from-koji`** copies a **byte-exact prefix** of the upstream koji
   download, cut at a stream boundary. Real data at a real compression ratio,
@@ -68,6 +71,20 @@ PRESET = "6"
 BLOCK_SIZE = "24MiB"
 CHECK = "crc64"
 
+#: The block sizes `--block-size` will accept, and the only ones any figure
+#: asks for.
+#:
+#: **An allowlist rather than a pass-through to `xz`.** The block size is the
+#: quantity a compressed figure's per-worker footprint *is*, so a typo'd or
+#: casually chosen value produces a perfectly valid `.xz` file whose table row
+#: describes a shape nobody registered — the same failure the koji density gate
+#: refuses one column over. `24MiB` is koji's own and stays the default, so an
+#: invocation that names nothing writes exactly the bytes it wrote before;
+#: `128MiB` is the second shape `parallel-peak-rss` reads, chosen because it is
+#: what `xz --block-size=128MiB` writes and what the locally recompressed koji
+#: copy has (`CLAUDE.local.md`).
+BLOCK_SIZES = ("24MiB", "128MiB")
+
 #: The magic an `.xz` stream opens with, and the two bytes its footer closes
 #: with. A boundary between two concatenated streams is the second followed by
 #: the first, with optional four-byte-aligned zero padding in between.
@@ -103,14 +120,23 @@ KOJI_RATIO_MIN = 14.0
 KOJI_RATIO_MAX = 18.0
 
 
-def compress(source: Path, out: Path, threads: int) -> None:
+def compress(source: Path, out: Path, threads: int, block_size: str = BLOCK_SIZE) -> None:
     """`source` compressed into `out` at koji's container parameters.
 
     Through the `xz` binary rather than through Python's `lzma`, because the
     block size is the whole point and `lzma` exposes no way to set one: a
     single-block file admits exactly one worker, which would make every row of
     this figure's table the same reading.
+
+    `block_size` is the one parameter a caller may move, and only within
+    `BLOCK_SIZES`. Everything else stays koji's, so two legs at two block sizes
+    differ in the one variable their table is about.
     """
+    if block_size not in BLOCK_SIZES:
+        raise SystemExit(
+            f"block size {block_size!r} is not one any figure asks for; "
+            f"registered: {', '.join(BLOCK_SIZES)}"
+        )
     if shutil.which("xz") is None:
         raise SystemExit("xz is not on PATH, and the block size cannot be set without it")
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -121,7 +147,7 @@ def compress(source: Path, out: Path, threads: int) -> None:
                 "xz",
                 f"-{PRESET}",
                 f"-T{threads}",
-                f"--block-size={BLOCK_SIZE}",
+                f"--block-size={block_size}",
                 f"--check={CHECK}",
                 "-c",
             ],
@@ -319,12 +345,20 @@ def main() -> None:
         default=0,
         help="with --from-dump: xz worker threads (default 0, meaning as many as there are cores)",
     )
+    parser.add_argument(
+        "--block-size",
+        default=BLOCK_SIZE,
+        choices=BLOCK_SIZES,
+        help=f"with --from-dump: the uncompressed block size (default {BLOCK_SIZE}, koji's own). "
+        "A compressed reader's per-worker footprint is one decoded block, so this is the "
+        "variable a two-block-size figure is taken over",
+    )
     args = parser.parse_args()
 
     if args.from_dump is not None:
         if not args.from_dump.exists():
             raise SystemExit(f"{args.from_dump} does not exist")
-        compress(args.from_dump, args.out, args.threads)
+        compress(args.from_dump, args.out, args.threads, args.block_size)
         compressed, uncompressed = xz_totals(args.out)
         ratio = uncompressed / compressed
     else:

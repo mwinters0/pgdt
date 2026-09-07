@@ -1102,6 +1102,38 @@ INPUTS["control_xz"] = InputSpec(
     # tmpfs is recoverable and under-reserving is a figure lost mid-sweep.
     nominal_bytes=700 * MIB,
 )
+#: The same plaintext as `control_xz`, written in 128 MiB blocks instead of
+#: koji's 24 MiB — the second block size `parallel-peak-rss` is taken at.
+#:
+#: **Two block sizes because a resident set at one of them is a number about the
+#: file, not about the library.** A compressed reader's per-worker footprint is
+#: one decoded block, so the same stated budget admits a different number of
+#: concurrent readers at each size, and a figure taken at one would publish that
+#: file's shape as the library's bound
+#: (`docs/design/roadmap-P16-parallel-scan.md`, "Two memory figures").
+#:
+#: 128 MiB is the size the locally recompressed koji copy has and what
+#: `xz --block-size=128MiB` writes (`CLAUDE.local.md`), so it is a shape a user
+#: reaches with one flag rather than a number chosen to make a point. It is also
+#: the size the shipped 64 MiB budget declines outright: at `--jobs 1` this leg
+#: reads through the streaming fallback, and every row above it block-decodes —
+#: which is a discontinuity between the first two rows and is what the table
+#: says about them.
+#:
+#: It derives from `control` exactly as `control_xz` does, so both compressed
+#: legs are compressions of the same bytes and a change to the perf generator
+#: regenerates all three.
+INPUTS["control_xz128"] = InputSpec(
+    "control_xz128",
+    "generate_xz_input.py",
+    ("--from-dump", "@SOURCE@", "--block-size", "128MiB"),
+    scales=False,
+    suffix=".xz",
+    derives_from="control",
+    # Larger blocks compress a shade better than smaller ones; the same
+    # generous nominal `control_xz` carries, for the same reason.
+    nominal_bytes=700 * MIB,
+)
 #: The koji download, and where in it the koji leg's streams are taken from.
 #: **Not the head of the file**: koji's first 3 GiB of plaintext compresses
 #: 56.19x against the whole file's 19.41x, and a decode rate is per plaintext
@@ -1687,8 +1719,82 @@ DECODE_WORKERS: tuple[int, ...] = (1, 2, 4, 8, 12, 16, 24)
 #: what the serial path this project ships has today.
 DECODE_BASELINE = 1
 
+#: The `--jobs` values the two `parallel-*` figures are taken at, and the row
+#: order of their tables.
+#:
+#: **The same counts as `DECODE_WORKERS`, deliberately.** The decode figure is
+#: the floor these two are read against — it says what the decoder alone does
+#: with N workers — so a row of one that has no counterpart in the other would
+#: be a comparison nobody can make. The endpoints carry the same meaning here:
+#: 1 is the serial path this project ships, 12 is the machine's physical cores,
+#: 24 is every hardware thread.
+#:
+#: **The range deliberately runs past where a plain source stops scaling.**
+#: `POOL_DEPTH` clamps `BufferPool::slots()` to four, so a fifth fused worker on
+#: a plain file waits; the rows above four are what puts that ceiling in the
+#: table rather than leaving a reader to infer that the scan stopped scaling
+#: (`docs/design/roadmap-P16-parallel-scan.md`, "Slices", `16.13`).
+PARALLEL_JOBS: tuple[int, ...] = (1, 2, 4, 8, 12, 16, 24)
+
+#: The row every other parallel row is a ratio against: `--jobs 1`, which the
+#: CLI turns into `Parallelism::Serial` — the serial code path this project
+#: ships, not a pool of one.
+PARALLEL_BASELINE = 1
+
+#: The command-shape families whose worker count is a figure's **axis** rather
+#: than the apparatus's constant, spelled as the prefixes `_script` dispatches
+#: on. Each is an existing shape's name with `-jobs-<n>` appended, so the shape
+#: a parallel row measures is nameable as "the warm throughput table's row,
+#: under N workers".
+#:
+#: Declared as a constant because three things read it and a fourth would
+#: otherwise have to guess: `_script` dispatches on it, `command_shapes`
+#: enumerates it, and `pinned_count_problems` uses it as the *only* exemption
+#: from `SWEEP_JOBS`. A family added to `_script` and not here states a count
+#: nothing reconciles.
+JOBS_AXIS: tuple[str, ...] = ("parse-jobs-", "parse-rss-jobs-", "query-typed-jobs-")
+
+#: What `--parallel-memory` states on every row of both `parallel-*` figures.
+#:
+#: **One value for every row, because the axis is the worker count.** A budget
+#: that grew with `--jobs` would make each row a different apparatus, and the
+#: table's ratios would be over two variables at once.
+#:
+#: **1 GiB, because it must admit the widest row's partitions on the coarsest
+#: input.** A block-decoding `XzSource` charges one partition a decoded block
+#: plus a chunk buffer, so 24 workers over 24 MiB blocks want ~600 MiB and 24
+#: over 128 MiB blocks want more than any budget this machine would state — the
+#: 128 MiB leg is bound by its own block size and says so, which is the whole
+#: point of taking `parallel-peak-rss` at two of them. Below this the widest
+#: rows would be silently clamped by `worker_count`, and a clamped row is a
+#: lower count wearing a higher label.
+#:
+#: **`--jobs 1` cannot state it at all**, `Parallelism::workers(1, _)` being
+#: `Serial` and `Serial` carrying no budget, so the baseline row runs at
+#: `DEFAULT_MEMORY_BUDGET`. That is the serial arrangement this project ships,
+#: which is what a speedup is a speedup over, and each table says so.
+PARALLEL_BUDGET = 1 << 30
+
+#: What the two `parallel-*` figures' containers are given, against the
+#: register's 512 MB. `PARALLEL_BUDGET` is what the library is told it may
+#: hold; this is the room the container gives it to hold that, plus the
+#: decoder's own dictionaries and the batches in flight. An apparatus
+#: departure, and each figure's own table says so.
+PARALLEL_MEMORY = "3g"
+
 #: The worker count every `pgdq` invocation this harness makes states, and the
-#: one every registered figure is therefore taken at.
+#: one every registered figure is taken at **except the two whose axis it is**.
+#:
+#: **The exemption is by axis, and it is what `JOBS_AXIS` names.** A figure
+#: measuring what the second worker buys cannot state one count for every row —
+#: its rows *are* the counts — so it states `PARALLEL_JOBS` instead, exactly as
+#: the decode instrument states `DECODE_WORKERS` in its own vocabulary. What the
+#: exemption is not is a licence to inherit: every one of those shapes still
+#: states a count, `worker_count_problems` still refuses a shape that pins none,
+#: and `pinned_count_problems` refuses a shape that pins something *other* than
+#: this constant without declaring itself an axis. So the failure this whole
+#: reconciliation exists against — a shape whose count moved because a default
+#: did — is closed on both sides rather than opened by the exemption.
 #:
 #: **A worker count is apparatus, on the same argument the allocator is.** A
 #: shape that states nothing measures whatever the CLI's `--jobs` defaults to
@@ -1815,6 +1921,37 @@ def _script(command: str) -> str:
             f"{q} parse --source /dump.sql --dqcache /tmp/x.dqcache "
             f"--chunk-size {size} {j} >/dev/null"
         )
+    if command.startswith(JOBS_AXIS):
+        # The three shapes whose worker count is a figure's axis rather than the
+        # apparatus's constant. Everything else about them is the shape they are
+        # named after, so a row of `parallel-scan-throughput` and the
+        # corresponding row of `scan-throughput-warm` differ in `--jobs` and
+        # `--parallel-memory` and nothing else.
+        #
+        # **The budget is stated on every row, including the first, where it is
+        # inert**: `--jobs 1` is `Parallelism::Serial` and `Serial` carries no
+        # budget, so the baseline runs at the library's own default. Writing the
+        # flag anyway keeps the argv one shape rather than two, and the table is
+        # what says the baseline is the serial path.
+        shape, _, jobs = command.rpartition("-jobs-")
+        if not jobs.isdigit():
+            raise ValueError(f"unknown command shape {command!r}")
+        if int(jobs) not in PARALLEL_JOBS:
+            raise ValueError(f"{command!r} names a job count the figure does not carry")
+        p = f"--jobs {jobs} --parallel-memory {PARALLEL_BUDGET}"
+        if shape == "parse":
+            return f"{q} parse --source /dump.sql --dqcache /tmp/x.dqcache {p} >/dev/null"
+        if shape == "parse-rss":
+            return (
+                f"time {rss_wrapper(platform.machine())} /pgdq parse --source /dump.sql "
+                f"--dqcache /tmp/x.dqcache {p} >/dev/null"
+            )
+        if shape == "query-typed":
+            return (
+                f"{q} query --source /dump.sql --table public.perf --dqcache none "
+                f"--schema-mode typed {p} >/dev/null"
+            )
+        raise ValueError(f"unknown command shape {command!r}")
     if command.startswith("decode-"):
         # The `xz_decode` example, not `pgdq`: nothing in the library decodes
         # concurrently yet, so this figure reaches the decoder's own bulk entry
@@ -1857,6 +1994,7 @@ def command_shapes() -> tuple[str, ...]:
         *(f"query-project-{w}" for w in PROJECTION_WIDTHS),
         *(f"query-where-{s}" for s in PREDICATE_SHAPES),
         *(f"parse-chunk-{n}" for n in CHUNK_SIZES),
+        *(f"{family}{n}" for family in JOBS_AXIS for n in PARALLEL_JOBS),
         *(f"decode-{w}" for w in DECODE_WORKERS),
         "dd",
     )
@@ -1886,6 +2024,30 @@ def worker_count_problems() -> list[str]:
         for command in command_shapes()
         if command not in _NO_WORKERS and not _WORKER_COUNT.search(_script(command))
     ]
+
+
+def pinned_count_problems() -> list[str]:
+    """Command shapes stating a worker count that is neither `SWEEP_JOBS` nor a
+    declared axis.
+
+    The other half of the exemption `JOBS_AXIS` opens. `worker_count_problems`
+    catches a shape that pins *nothing*; this catches one that pins something
+    else — a shape edited to `--jobs 4` because a sitting wanted it that day, or
+    a shape moved into a parallel family without being declared one. Either
+    produces a table whose apparatus line is wrong about it, which is the same
+    defect from the other side and is the one no `--stale` can see.
+
+    The decode instrument states `--workers`, not `--jobs`, and its counts are
+    its own figure's axis; it is exempt for the same reason, by prefix.
+    """
+    bad = []
+    for command in command_shapes():
+        if command in _NO_WORKERS or command.startswith(("decode-", *JOBS_AXIS)):
+            continue
+        stated = set(_WORKER_COUNT.findall(_script(command)))
+        if stated != {f"--jobs {SWEEP_JOBS}"}:
+            bad.append(f"{command} states {', '.join(sorted(stated)) or 'nothing'}")
+    return bad
 
 
 class Session:
@@ -3622,6 +3784,209 @@ def run_xz_decode_scaling(session: Session) -> str:
     return table + notes + "\n" + _per_rep("xz-decode-scaling", session, specs)
 
 
+# -- what a second scan worker buys -----------------------------------------
+
+#: The four legs of `parallel-scan-throughput`, in the table's column order:
+#: an input, the command family whose `-jobs-<n>` shapes it is run under, and
+#: the caption the column carries.
+#:
+#: **Two axes crossed, both of which the phase argues about separately.**
+#: Plain against `.xz` is whether there is a decoder in front of the scan;
+#: `parse` against a typed `query` is discovery against extraction. The phase's
+#: rule is one line over those two — *parallelize what is CPU-bound* — and it
+#: predicts three of the four columns to scale and the plain `parse` one to be
+#: bound elsewhere (`docs/design/roadmap-P16-parallel-scan.md`, "What this phase
+#: parallelizes is what is CPU-bound"). A table missing a column cannot check
+#: that rule; it would confirm whichever half it kept.
+PARALLEL_LEGS: tuple[tuple[str, str, str], ...] = (
+    ("control", "parse", "Plain, `parse`"),
+    ("control", "query-typed", "Plain, typed `query`"),
+    ("control_xz", "parse", "`.xz`, `parse`"),
+    ("control_xz", "query-typed", "`.xz`, typed `query`"),
+)
+
+#: The input whose byte count a leg's rate is per.
+#:
+#: **A compressed leg's rate is per *plaintext* byte, and the plaintext is a
+#: registered input.** `control_xz` is a compression of `control`, so the
+#: plaintext volume is `control`'s own size exactly — no instrument has to
+#: report it and no seek table has to be read, which is the one thing
+#: `xz-decode-scaling` could not do (its koji leg is a prefix of a file nothing
+#: here generates). Dividing by the *compressed* size instead would state a rate
+#: five times too low under a heading that reads like the plain one's.
+PARALLEL_PLAINTEXT: dict[str, str] = {"control": "control", "control_xz": "control"}
+
+
+def _parallel_specs() -> list[RunSpec]:
+    return [
+        RunSpec("pgdq", inp, f"{family}-jobs-{jobs}", "warm-parallel", f"{label}, {jobs}j")
+        for inp, family, label in PARALLEL_LEGS
+        for jobs in PARALLEL_JOBS
+    ]
+
+
+def run_parallel_scan_throughput(session: Session) -> str:
+    """Wall clock against `--jobs`, over four legs of one 3.00 GiB plaintext.
+
+    **Every cell is read against the one-job cell of its own leg**, which is
+    both the figure's content — what the second worker through the twenty-fourth
+    buy — and its witness: `warm-parallel` gates on almost nothing, a reading
+    that occupies every hardware thread being busy by construction, so what
+    stands in for the gate is that a machine busy with someone else's work moves
+    a leg's whole column and leaves the ratio (`CONTENTION_LIMITS`).
+
+    **The baseline row is the serial path, not a pool of one.** `--jobs 1` is
+    `Parallelism::Serial`, which carries no budget, so that row runs at the
+    library's `DEFAULT_MEMORY_BUDGET` where every other row runs at
+    `PARALLEL_BUDGET`. That is the arrangement this project ships and the one
+    every published table was taken under, which is what makes it the right
+    denominator; it also means the first row of a compressed leg is not the same
+    apparatus as the rest, and the note says so.
+
+    **Five reps**, for `xz-decode-scaling`'s reason: the increments that matter
+    are between adjacent counts near the top of the curve, where three reps
+    leave the ordering ambiguous.
+    """
+    figure = "parallel-scan-throughput"
+    specs = _parallel_specs()
+    session.sweep(figure, specs, session.cfg.reps(5))
+
+    by_leg: dict[tuple[str, str], dict[int, list[float]]] = {}
+    for spec in specs:
+        family, _, jobs = spec.command.rpartition("-jobs-")
+        by_leg.setdefault((spec.input, family), {})[int(jobs)] = session.get(figure, spec)
+
+    rows = []
+    for jobs in PARALLEL_JOBS:
+        cells = [str(jobs) + (" *(serial)*" if jobs == PARALLEL_BASELINE else "")]
+        for inp, family, _ in PARALLEL_LEGS:
+            values = by_leg[(inp, family)][jobs]
+            got, base = median(values), median(by_leg[(inp, family)][PARALLEL_BASELINE])
+            nbytes = file_size(
+                session.cfg,
+                session.input_path(PARALLEL_PLAINTEXT[inp], "warm-parallel"),
+                PARALLEL_PLAINTEXT[inp],
+            )
+            cells.append(
+                f"{fmt_median_spread(values)} · {fmt_rate(nbytes, got)} · {base / got:.2f}×"
+            )
+        rows.append(cells)
+    table = md_table(["`--jobs`", *(label for _, _, label in PARALLEL_LEGS)], rows)
+
+    plain = file_size(session.cfg, session.input_path("control", "warm-parallel"), "control")
+    compressed = file_size(
+        session.cfg, session.input_path("control_xz", "warm-parallel"), "control_xz"
+    )
+    notes = (
+        "\n\nEach cell is wall clock, the plaintext rate it implies, and the speedup over that "
+        "leg's own one-job row. Both `.xz` legs decode the same "
+        f"{_fmt_bytes(plain)} of plaintext the plain legs read directly "
+        f"({_fmt_bytes(compressed)} on disk, {plain / compressed:.2f}×), so a rate is "
+        "comparable across all four columns.\n\n"
+        f"Every row states `--parallel-memory {PARALLEL_BUDGET}` "
+        f"({_fmt_bytes(PARALLEL_BUDGET)}) in a {PARALLEL_MEMORY} container — **not** the "
+        "register's 512 MB, which cannot hold twenty-four decoded 24 MiB blocks. The "
+        "one-job row is the exception and is not an apparatus of its own choosing: "
+        "`--jobs 1` is `Parallelism::Serial`, which states no budget, so it runs at the "
+        "library's 64 MiB default — the serial arrangement this project ships, which is "
+        "what a speedup is a speedup over.\n\n"
+        "**A plain leg's `--jobs` is what is asked for, not what is delivered.** "
+        "`POOL_DEPTH` clamps the chunk pool to four slots, so a fifth fused worker on a "
+        "plain source waits: the rows above four say what that ceiling costs, not that "
+        "the scan stopped scaling.\n"
+    )
+    return table + notes + "\n" + _per_rep(figure, session, specs)
+
+
+# -- what a parallel scan holds resident ------------------------------------
+
+#: The two legs of `parallel-peak-rss`: the same plaintext at two block sizes.
+#: See `INPUTS["control_xz128"]` for why one of them would be a figure about the
+#: file rather than about the library.
+PARALLEL_RSS_LEGS: tuple[tuple[str, str], ...] = (
+    ("control_xz", "24 MiB blocks"),
+    ("control_xz128", "128 MiB blocks"),
+)
+
+
+def _parallel_rss_specs() -> list[RunSpec]:
+    return [
+        RunSpec("pgdq", leg, f"parse-rss-jobs-{jobs}", "warm-parallel", f"{label}, {jobs}j")
+        for leg, label in PARALLEL_RSS_LEGS
+        for jobs in PARALLEL_JOBS
+    ]
+
+
+def run_parallel_peak_rss(session: Session) -> str:
+    """Peak resident set against `--jobs`, at two `.xz` block sizes.
+
+    **The claim under test is that one stated number bounds the read path**, so
+    the table's own witness is the column that stops rising: a leg whose peak
+    keeps climbing with `--jobs` is a budget that is not a bound. Two block
+    sizes because a compressed reader's per-worker footprint is one decoded
+    block, so the count the budget admits is a property of the *file* — at one
+    size the table would publish that file's shape as the library's ceiling.
+
+    **The 128 MiB leg's first row reads through the streaming fallback**, the
+    serial default budget being unable to hold a block that size
+    (`BlockCache::affordable`), and every row above it block-decodes. That is a
+    discontinuity between two adjacent rows rather than a defect, and it is the
+    single clearest reading of what the budget decides.
+
+    **Three reps**, as `peak-rss` takes: a peak is a maximum rather than a mean,
+    so it is far steadier across reps than a wall clock, and the reps are here
+    to catch an outlier rather than to resolve a small difference.
+    """
+    figure = "parallel-peak-rss"
+    specs = _parallel_rss_specs()
+    session.sweep(figure, specs, session.cfg.reps(3))
+
+    by_leg: dict[str, dict[int, list[float]]] = {}
+    for spec in specs:
+        jobs = int(spec.command.rpartition("-jobs-")[2])
+        by_leg.setdefault(spec.input, {})[jobs] = session.get_rss(figure, spec)
+
+    rows = []
+    for jobs in PARALLEL_JOBS:
+        cells = [str(jobs) + (" *(serial)*" if jobs == PARALLEL_BASELINE else "")]
+        for leg, _ in PARALLEL_RSS_LEGS:
+            values = by_leg[leg][jobs]
+            delta = median(values) - median(by_leg[leg][PARALLEL_BASELINE])
+            cells.append(
+                fmt_mib_median_spread(values)
+                + ("" if jobs == PARALLEL_BASELINE else f" · {fmt_rss_delta(delta)}")
+            )
+        rows.append(cells)
+    table = md_table(["`--jobs`", *(label for _, label in PARALLEL_RSS_LEGS)], rows)
+
+    sizes = []
+    for leg, label in PARALLEL_RSS_LEGS:
+        sizes.append(
+            f"- {label}: `{leg}`, "
+            f"{_fmt_bytes(file_size(session.cfg, session.input_path(leg, 'warm-parallel'), leg))}"
+            " compressed"
+        )
+    notes = (
+        "\n\nEach cell is peak resident set, and the change from that leg's own one-job row. "
+        f"Every row states `--parallel-memory {PARALLEL_BUDGET}` "
+        f"({_fmt_bytes(PARALLEL_BUDGET)}) in a {PARALLEL_MEMORY} container — an apparatus "
+        "departure from the register's 512 MB, which is smaller than the budget under "
+        "test. The one-job row states nothing the library reads: `--jobs 1` is "
+        "`Parallelism::Serial`, so it runs at the 64 MiB default, and on the 128 MiB leg "
+        "that is a block it cannot hold — that row reads through the streaming fallback "
+        "and every row above it block-decodes.\n\n"
+        + "\n".join(sizes)
+        + "\n\nPer-rep readings (peak RSS):\n"
+        + "\n".join(
+            f"- {spec.label}: "
+            + ", ".join(fmt_mib(v) for v in session.get_rss(figure, spec))
+            for spec in specs
+        )
+        + "\n"
+    )
+    return table + notes
+
+
 def _fmt_ns(ns: float) -> str:
     return f"{ns / 1000:.2f} µs" if ns >= 1000 else f"{ns:.0f} ns"
 
@@ -3987,17 +4352,72 @@ FIGURES_BY_ID = {f.id: f for f in FIGURES}
 #: built and never run is a claim nobody checked, and it is invisible unless
 #: something names it.
 #:
-#: **Empty is the healthy state, not a disused mechanism.** Three earlier
-#: entries left by the two exits the list has. Two were taken and moved into
-#: `FIGURES`: `projection-widths`, and `xz-decode-scaling` — which waited here
-#: for a *commit to name*, a figure published outside a stamped sweep declaring
-#: inside its own marker the commit it was taken at, so a sitting run from a
-#: working tree carrying the instrument had none and could only name a parent
-#: where the instrument does not exist. The third, `composite-isolated` — which
-#: isolated one column by declaring it two ways over byte-identical rows — was
-#: deleted unpublished, because `projection-widths` makes the same isolation a
-#: subtraction between two adjacent rows of one table over one file.
-UNTAKEN: list[Figure] = []
+#: **Empty is the healthy state, not a disused mechanism**, and the two entries
+#: below are here for the reason the list exists: a figure published outside a
+#: stamped sweep declares inside its own marker the commit it was taken at, and
+#: a sitting run from a working tree carrying its own uncommitted apparatus has
+#: no such commit to name. `xz-decode-scaling` waited here for exactly that and
+#: left when the commit existed. Three earlier entries left by the two exits the
+#: list has: `projection-widths` and `xz-decode-scaling` were taken and moved
+#: into `FIGURES`, and `composite-isolated` — which isolated one column by
+#: declaring it two ways over byte-identical rows — was deleted unpublished,
+#: because `projection-widths` makes the same isolation a subtraction between two
+#: adjacent rows of one table over one file.
+UNTAKEN: list[Figure] = [
+    # The phase's central throughput claim, and the first figure in the register
+    # whose axis is the worker count of `pgdq` itself. `depends` is the union of
+    # everything a parallel scan runs through — the scanner, the map, the read
+    # path, the leader, the decoder, and the CLI where `--jobs` is parsed — plus
+    # both generators behind its inputs. It is wide on purpose: this figure is
+    # the one that would be quietly wrong if any of them changed.
+    Figure(
+        id="parallel-scan-throughput",
+        section="What a second scan worker buys, and where the plain path stops",
+        stage="warm-parallel",
+        depends=(
+            *SCAN,
+            *MAP,
+            *READ,
+            *NESTED,
+            *DECODE,
+            *QUERY_CLI,
+            "pgdump_query/src/leader.rs",
+            "vendor/xz-seek/src/",
+            "scripts/generate_xz_input.py",
+            *GEN_PERF,
+        ),
+        # Nothing yet: an untaken figure's numbers are in no document, so it has
+        # no edge out. The fold-in is what gives it one, and `docs/design/
+        # roadmap-P16-parallel-scan.md`'s projections are what it will answer.
+        quoted_by=(),
+        warm_inputs=("control", "control_xz"),
+        memory=PARALLEL_MEMORY,
+        run=run_parallel_scan_throughput,
+    ),
+    # The phase's central *memory* claim: one stated number bounds the read
+    # path. `depends` is narrower than its sibling's — nothing here decodes a
+    # field or renders a row, the shape being `parse` — but it carries the same
+    # read path, leader and decoder, which is where a resident set is decided.
+    Figure(
+        id="parallel-peak-rss",
+        section="What a parallel scan holds resident, at two block sizes",
+        stage="warm-parallel",
+        depends=(
+            *SCAN,
+            *MAP,
+            *READ,
+            *QUERY_CLI,
+            "pgdump_query/src/leader.rs",
+            "vendor/xz-seek/src/",
+            "scripts/generate_xz_input.py",
+            *GEN_PERF,
+        ),
+        quoted_by=(),
+        warm_inputs=("control_xz", "control_xz128"),
+        memory=PARALLEL_MEMORY,
+        run=run_parallel_peak_rss,
+    ),
+]
 
 #: A figure that no sweep produces, because it is computed *across* two of
 #: them. It still gets a section, a marker and both declared edges — it is one
@@ -5502,6 +5922,7 @@ def cmd_check(doc: Path) -> int:
     duplicated = sorted({m for m in found if found.count(m) > 1})
     missing = [f.id for f in ALL_FIGURES if f.id not in found]
     unpinned = worker_count_problems()
+    misspinned = pinned_count_problems()
 
     print(
         f"{doc.relative_to(REPO)} carries {len(set(found))} of {len(ALL_FIGURES)} figure markers.\n"
@@ -5535,10 +5956,20 @@ def cmd_check(doc: Path) -> int:
         for command in unpinned:
             print(f"  {command}")
         print()
+    elif misspinned:
+        print(
+            "Command shapes stating a worker count that is neither the apparatus's nor a\n"
+            f"declared axis. State `--jobs {SWEEP_JOBS}`, or add the family to "
+            "`measure.JOBS_AXIS`\nand give it a figure whose rows are the counts:"
+        )
+        for line in misspinned:
+            print(f"  {line}")
+        print()
     else:
         print(
-            f"Every command shape states its worker count (`--jobs {SWEEP_JOBS}`, and "
-            f"`--workers` for the\ndecode instrument), so no figure below inherits one.\n"
+            f"Every command shape states its worker count (`--jobs {SWEEP_JOBS}`, "
+            f"`--workers` for the\ndecode instrument, and `PARALLEL_JOBS` for the "
+            f"{len(JOBS_AXIS)} families whose axis it is), so no\nfigure below inherits one.\n"
         )
     if outside:
         print(
@@ -5661,6 +6092,7 @@ def cmd_check(doc: Path) -> int:
             or duplicated
             or dangling
             or unpinned
+            or misspinned
             or undeclared
             or unknown_outside
             or both

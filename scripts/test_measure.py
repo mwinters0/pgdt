@@ -294,6 +294,14 @@ class WorkerCount(unittest.TestCase):
         for group in re.findall(r"command in \(([^)]*)\)", src):
             exact |= set(re.findall(r'"([^"]+)"', group))
         prefixes = set(re.findall(r'command\.startswith\("([^"]+)"\)', src))
+        # A branch may dispatch on a *named* tuple of prefixes rather than on a
+        # literal — `JOBS_AXIS` does, because three other places read the same
+        # list. Resolving the name here is what keeps such a branch inside this
+        # reconciliation: written to match literals only, the test would pass
+        # while a whole family of shapes went unenumerated, which is precisely
+        # the drift it exists to catch.
+        for name in re.findall(r"command\.startswith\((_?[A-Z][A-Z_0-9]*)\)", src):
+            prefixes |= set(getattr(measure, name))
         shapes = set(measure.command_shapes())
         self.assertTrue(exact)
         self.assertTrue(prefixes)
@@ -1295,11 +1303,11 @@ class Untaken(unittest.TestCase):
     figure the doc is missing — those pull in opposite directions, which is why
     the two registers are separate.
 
-    `measure.UNTAKEN` carries `xz-decode-scaling`, whose instrument runs and
-    whose readings are in `runs/`: what it waits on is a **commit to name** as
-    its sitting, since a figure published outside a stamped sweep declares one
-    inside its own marker and a sitting taken from a tree that carries the
-    instrument uncommitted has none."""
+    What an entry waits on is a **commit to name** as its sitting, since a
+    figure published outside a stamped sweep declares one inside its own marker
+    and a sitting taken from a tree that carries the instrument uncommitted has
+    none. `xz-decode-scaling` waited here for exactly that and left when the
+    commit existed; the two `parallel-*` figures wait on it now."""
 
     def test_an_untaken_instrument_is_not_a_figure_the_doc_must_carry(self):
         for fig in measure.UNTAKEN:
@@ -1332,6 +1340,270 @@ class Untaken(unittest.TestCase):
     def test_no_id_collides_with_a_figure(self):
         ids = [f.id for f in measure.ALL_FIGURES] + [f.id for f in measure.UNTAKEN]
         self.assertEqual(len(ids), len(set(ids)))
+
+
+class ParallelFigures(unittest.TestCase):
+    """The two `parallel-*` figures: the first in the register whose axis is
+    `pgdq`'s own `--jobs`.
+
+    Every assertion here is a way to get a plausible table of the wrong thing,
+    which is the family this module already covers for the allocator legs and
+    the census binary. Three of them matter most, and each fails silently
+    without a test. A **clamped row** — a stated count the library quietly
+    reduces because the budget cannot hold that many partitions — is a lower
+    count wearing a higher label, and the resulting table is monotone and wrong.
+    A **shape drifting off `SWEEP_JOBS`** puts a second worker count in the
+    register with nothing saying so, which is the defect `M69` closed one level
+    up. And a **leg whose rate is per compressed byte** reads five times too
+    slow under a heading that looks like the plain leg's.
+    """
+
+    def test_both_figures_are_built_and_not_taken(self):
+        # They are apparatus, not readings: the sitting is a slice of its own,
+        # because a figure published outside a stamped sweep names the commit it
+        # was taken at and an uncommitted harness has none to name.
+        untaken = [f.id for f in measure.UNTAKEN]
+        self.assertIn("parallel-scan-throughput", untaken)
+        self.assertIn("parallel-peak-rss", untaken)
+
+    def test_every_registered_job_count_has_a_shape_in_every_family(self):
+        for family in measure.JOBS_AXIS:
+            for jobs in measure.PARALLEL_JOBS:
+                with self.subTest(family=family, jobs=jobs):
+                    script = measure._script(f"{family}{jobs}")
+                    self.assertIn(f"--jobs {jobs} ", script)
+                    self.assertEqual(script.count("time "), 1)
+
+    def test_a_job_count_the_figures_do_not_carry_is_an_error(self):
+        # The shape is parsed rather than matched, so an unregistered count has
+        # to be refused explicitly or it would run at whatever was typed and be
+        # read as a row of the table.
+        for command in ("parse-jobs-3", "parse-jobs-", "parse-jobs-all",
+                        "query-typed-jobs-7", "parse-rss-jobs-x"):
+            with self.subTest(command=command):
+                with self.assertRaises(ValueError):
+                    measure._script(command)
+
+    def test_a_family_declared_but_not_built_is_an_error(self):
+        # `JOBS_AXIS` is what `_script` dispatches on and what `command_shapes`
+        # enumerates, so a prefix added to it with no branch behind it would
+        # otherwise produce a shape the reconciliation counts and the builder
+        # cannot make.
+        with unittest.mock.patch.object(
+            measure, "JOBS_AXIS", (*measure.JOBS_AXIS, "query-strings-jobs-")
+        ):
+            with self.assertRaises(ValueError):
+                measure._script("query-strings-jobs-4")
+
+    def test_every_row_states_the_same_budget(self):
+        # The axis is the worker count; a budget that moved with it would make
+        # each row a different apparatus and the ratios a comparison of two
+        # variables.
+        for family in measure.JOBS_AXIS:
+            for jobs in measure.PARALLEL_JOBS:
+                with self.subTest(family=family, jobs=jobs):
+                    self.assertIn(
+                        f"--parallel-memory {measure.PARALLEL_BUDGET}",
+                        measure._script(f"{family}{jobs}"),
+                    )
+
+    def test_the_budget_admits_the_widest_row_on_the_coarser_leg(self):
+        # A block-decoding source charges one partition a decoded block plus a
+        # chunk buffer, and `worker_count` divides the stated bytes by that. A
+        # budget below `jobs x (block + chunk)` clamps the top rows silently.
+        block = 24 * measure.MIB
+        want = measure.PARALLEL_JOBS[-1] * (block + measure.CHUNK_DEFAULT)
+        self.assertGreaterEqual(measure.PARALLEL_BUDGET, want)
+
+    def test_the_container_holds_more_than_the_budget_it_states(self):
+        # The library is told it may hold `PARALLEL_BUDGET`; the container has
+        # to have room for that plus the decoder's dictionaries and the batches
+        # in flight, or the figure OOMs instead of measuring.
+        self.assertTrue(measure.PARALLEL_MEMORY.endswith("g"))
+        self.assertGreater(
+            int(measure.PARALLEL_MEMORY[:-1]) * measure.GIB, measure.PARALLEL_BUDGET
+        )
+        self.assertNotEqual(measure.PARALLEL_MEMORY, measure.Config().memory)
+
+    def test_both_figures_declare_that_departure(self):
+        for fid in ("parallel-scan-throughput", "parallel-peak-rss"):
+            with self.subTest(figure=fid):
+                self.assertEqual(
+                    measure.SELECTABLE_BY_ID[fid].memory, measure.PARALLEL_MEMORY
+                )
+
+    def test_the_baseline_row_is_one_job(self):
+        # `--jobs 1` is `Parallelism::Serial` — the serial code path this
+        # project ships, which is what a speedup is a speedup over.
+        self.assertEqual(measure.PARALLEL_BASELINE, 1)
+        self.assertEqual(measure.PARALLEL_JOBS[0], measure.PARALLEL_BASELINE)
+
+    def test_the_range_runs_past_the_plain_path_ceiling(self):
+        # `POOL_DEPTH` clamps the chunk pool to four slots, so a fifth fused
+        # worker on a plain source waits. A table stopping at four would leave a
+        # reader to infer the scan stopped scaling.
+        self.assertGreater(measure.PARALLEL_JOBS[-1], 4)
+        self.assertIn(4, measure.PARALLEL_JOBS)
+
+    def test_the_counts_match_the_decode_figures(self):
+        # `xz-decode-scaling` is the floor these are read against: it says what
+        # the decoder alone does with N workers, and a row with no counterpart
+        # there is a comparison nobody can make.
+        self.assertEqual(measure.PARALLEL_JOBS, measure.DECODE_WORKERS)
+
+    def test_a_compressed_legs_rate_is_per_plaintext_byte(self):
+        # `control_xz` is a compression of `control`, so the plaintext volume is
+        # a registered input's own size. Dividing by the compressed size would
+        # state a rate five times too low under a heading that reads like the
+        # plain leg's.
+        for inp, _, _ in measure.PARALLEL_LEGS:
+            with self.subTest(input=inp):
+                plaintext = measure.PARALLEL_PLAINTEXT[inp]
+                self.assertIn(plaintext, measure.INPUTS)
+                self.assertEqual(measure.INPUTS[plaintext].suffix, ".sql")
+        self.assertEqual(measure.PARALLEL_PLAINTEXT["control_xz"], "control")
+
+    def test_a_compressed_leg_derives_from_the_plaintext_it_is_divided_by(self):
+        # Not merely "some plain input of the same nominal size": the two must
+        # be the same bytes, or the rate is per a volume the run never decoded.
+        for inp, _, _ in measure.PARALLEL_LEGS:
+            spec = measure.INPUTS[inp]
+            if spec.suffix == ".xz":
+                with self.subTest(input=inp):
+                    self.assertEqual(spec.derives_from, measure.PARALLEL_PLAINTEXT[inp])
+
+    def test_both_axes_are_crossed_in_the_throughput_legs(self):
+        # Plain against `.xz` is whether a decoder is in front of the scan;
+        # `parse` against a typed `query` is discovery against extraction. The
+        # phase's rule is one line over those two, and a table missing a column
+        # would confirm whichever half it kept.
+        self.assertEqual(
+            sorted({(inp, cmd) for inp, cmd, _ in measure.PARALLEL_LEGS}),
+            sorted(
+                (inp, cmd)
+                for inp in ("control", "control_xz")
+                for cmd in ("parse", "query-typed")
+            ),
+        )
+
+    def test_the_rss_legs_differ_only_in_block_size(self):
+        # The figure's whole content is that a compressed reader's per-worker
+        # footprint is one decoded block, so a second variable between the legs
+        # would make the two columns incomparable.
+        legs = [measure.INPUTS[leg] for leg, _ in measure.PARALLEL_RSS_LEGS]
+        self.assertEqual({s.derives_from for s in legs}, {"control"})
+        self.assertEqual({s.generator for s in legs}, {"generate_xz_input.py"})
+        sizes = {
+            s.args[s.args.index("--block-size") + 1] if "--block-size" in s.args else "24MiB"
+            for s in legs
+        }
+        self.assertEqual(sizes, {"24MiB", "128MiB"})
+
+    def test_the_second_block_size_is_one_the_generator_admits(self):
+        # The generator refuses a size no figure asks for, so a typo here is an
+        # error rather than a valid `.xz` whose table row describes a shape
+        # nobody registered.
+        import generate_xz_input
+
+        spec = measure.INPUTS["control_xz128"]
+        self.assertIn(
+            spec.args[spec.args.index("--block-size") + 1], generate_xz_input.BLOCK_SIZES
+        )
+
+    def test_the_compressed_inputs_have_their_own_nominal_size(self):
+        cfg = measure.Config()
+        for leg, _ in measure.PARALLEL_RSS_LEGS:
+            with self.subTest(leg=leg):
+                self.assertLess(measure.nominal_size(cfg, leg), cfg.size_gib * measure.GIB)
+
+    def test_both_figures_read_the_parallel_gate(self):
+        # `warm-parallel` gates on steal alone: a reading that occupies every
+        # hardware thread is busy by construction, so `warm`'s row would discard
+        # every rep of both these figures.
+        for fid in ("parallel-scan-throughput", "parallel-peak-rss"):
+            with self.subTest(figure=fid):
+                self.assertEqual(measure.SELECTABLE_BY_ID[fid].stage, "warm-parallel")
+
+    def test_the_declared_paths_carry_the_leader_and_the_decoder(self):
+        # These are the two mechanisms `--jobs` newly reaches; a figure about
+        # them that declared neither would read green across the work that moves
+        # it most.
+        for fid in ("parallel-scan-throughput", "parallel-peak-rss"):
+            with self.subTest(figure=fid):
+                depends = measure.SELECTABLE_BY_ID[fid].depends
+                self.assertIn("pgdump_query/src/leader.rs", depends)
+                self.assertIn("vendor/xz-seek/src/", depends)
+                self.assertIn("pgdump_query/src/io.rs", depends)
+
+    def test_a_stage_selection_does_not_reach_them(self):
+        for fid in ("parallel-scan-throughput", "parallel-peak-rss"):
+            with self.subTest(figure=fid):
+                self.assertNotIn(
+                    "warm", measure.SELECTABLE_BY_ID[fid].stage.split("+")
+                )
+
+
+class PinnedWorkerCount(unittest.TestCase):
+    """The other half of the `JOBS_AXIS` exemption.
+
+    `worker_count_problems` catches a shape that pins *nothing*. This catches
+    one that pins something else — a shape edited to `--jobs 4` for a sitting,
+    or moved into a parallel family without being declared one. Both produce a
+    table whose apparatus line is wrong about it, which no `--stale` can see:
+    staleness says *re-take*, never *the apparatus moved underneath you*."""
+
+    def test_nothing_outside_the_axis_states_another_count(self):
+        self.assertEqual(measure.pinned_count_problems(), [])
+
+    def test_a_shape_that_drifts_off_the_constant_is_reported(self):
+        with unittest.mock.patch.object(
+            measure, "_script", lambda c: "time /pgdq parse --source /dump.sql --jobs 4"
+        ):
+            reported = measure.pinned_count_problems()
+        self.assertTrue(reported)
+        self.assertTrue(all("states --jobs 4" in line for line in reported))
+
+    def test_the_axis_families_are_exempt(self):
+        # They are the exemption, so nothing this reports may name one.
+        with unittest.mock.patch.object(
+            measure, "_script", lambda c: "time /pgdq parse --source /dump.sql --jobs 4"
+        ):
+            reported = measure.pinned_count_problems()
+        for line in reported:
+            with self.subTest(line=line):
+                self.assertFalse(line.startswith(measure.JOBS_AXIS))
+                self.assertFalse(line.startswith("decode-"))
+
+    def test_check_fails_on_a_shape_that_drifts(self):
+        with unittest.mock.patch.object(
+            measure, "_script", lambda c: "time /pgdq parse --source /dump.sql --jobs 4"
+        ):
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                code = measure.cmd_check(measure.REPO / "docs/design/measurements.md")
+        self.assertEqual(code, 1)
+        self.assertIn("neither the apparatus's nor a", out.getvalue())
+
+    def test_every_axis_family_has_a_figure_whose_rows_are_the_counts(self):
+        """An exemption with no figure behind it is a shape that states an
+        arbitrary count and calls it an axis."""
+        wanted = set(measure.JOBS_AXIS)
+        for fig in measure.EVERY_FIGURE + measure.UNTAKEN:
+            if fig.stage != "warm-parallel":
+                continue
+            for spec in _figure_specs(fig.id):
+                for family in list(wanted):
+                    if spec.command.startswith(family):
+                        wanted.discard(family)
+        self.assertEqual(wanted, set())
+
+
+def _figure_specs(fid: str) -> list:
+    """The `RunSpec`s one parallel figure sweeps, without running it."""
+    if fid == "parallel-scan-throughput":
+        return measure._parallel_specs()
+    if fid == "parallel-peak-rss":
+        return measure._parallel_rss_specs()
+    return []
 
 
 class XzDecodeScaling(unittest.TestCase):
@@ -1464,15 +1736,31 @@ class XzDecodeScaling(unittest.TestCase):
         self.assertEqual(fig.memory, measure.DECODE_MEMORY)
         self.assertNotEqual(measure.DECODE_MEMORY, measure.Config().memory)
 
+    #: Every figure permitted to depart from the recorded 512 MB, and nothing
+    #: else. Each is a figure that holds N decoded blocks at once, which is the
+    #: one reason the register admits: the departure is stated in that figure's
+    #: own table.
+    MEMORY_DEPARTURES = {
+        "xz-decode-scaling",
+        "parallel-scan-throughput",
+        "parallel-peak-rss",
+    }
+
     def test_every_other_figure_runs_under_the_recorded_memory(self):
         # A departure is a departure only while it is the exception, so this
         # holds the rest of the register to the recorded apparatus rather than
-        # to whatever each figure happens to declare.
-        for fig in measure.ALL_FIGURES:
-            if fig.id == "xz-decode-scaling":
+        # to whatever each figure happens to declare. `EVERY_FIGURE`, not
+        # `ALL_FIGURES`: an untaken instrument is exactly where a departure
+        # arrives unnoticed, since no table of its is in the doc to state it.
+        for fig in measure.EVERY_FIGURE:
+            if fig.id in self.MEMORY_DEPARTURES:
                 continue
             with self.subTest(figure=fig.id):
                 self.assertIsNone(fig.memory)
+
+    def test_nothing_departs_without_being_named_here(self):
+        declared = {f.id for f in measure.EVERY_FIGURE if f.memory is not None}
+        self.assertEqual(declared, self.MEMORY_DEPARTURES)
 
     def test_the_koji_leg_takes_whole_streams_from_past_the_head(self):
         # koji's first 3 GiB of plaintext compresses about 56x against the

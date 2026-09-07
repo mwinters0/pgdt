@@ -229,6 +229,13 @@ you allowed, if `--parallel-memory` leaves room for them. So on a compressed
 file `--jobs` and `--parallel-memory` are worth raising together: more workers
 with no room to hold what they decode buys less than either number suggests.
 
+> **Do not raise `--jobs` on an `.xz` file in this build.** `parse` at
+> `--jobs 2` or more over a compressed dump stops and never finishes, whatever
+> `--parallel-memory` says, and Ctrl-C will not end it — you have to kill it
+> outright (`kill -9`), and it saves nothing. `--jobs 1`, the default, is
+> unaffected, and so is every setting on a plain file. This is a defect, not a
+> limit; it is being fixed.
+
 **Two shapes will never get parallelism, whatever you set.** An `.xz` file with
 a single block has no seam to split at — the warning above says so when you hit
 it. And an `INSERT` run — a dump taken with `pg_dump --inserts` — has no

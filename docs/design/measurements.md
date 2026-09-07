@@ -398,6 +398,21 @@ is precisely the quantity being attributed. `--check` reconciles the shapes. A t
 the harness's, so raising one without the other fails rather than publishing a
 line that describes the previous arrangement.
 
+**A figure whose *axis* is the worker count is the one exemption, and it is
+declared rather than inferred.** Such a figure's rows are the counts, so it
+cannot state one for all of them; its command shapes are named in
+`measure.JOBS_AXIS` and take theirs from `measure.PARALLEL_JOBS`, exactly as the
+decode instrument takes its `--workers` from `measure.DECODE_WORKERS`, and each
+such figure's own table states what it varied. That is an exemption from the
+*constant*, never from stating a count: `worker_count_problems` still refuses a
+shape that pins nothing, and `pinned_count_problems` refuses one that pins some
+third number without declaring itself an axis — so the failure this whole
+reconciliation exists against, a shape whose count moved because a default did,
+is closed on both sides. It is the same shape of departure a figure that
+declares its own container memory makes, and it is licensed on the same terms:
+stated in the table, reconciled by `--check`, and the exception rather than the
+rule.
+
 *Rejected:* recording, per figure, the count it was actually taken at. That is
 the stronger guarantee — it survives the constant being changed between two
 sittings, where one line for the document does not — but it is figure-register
