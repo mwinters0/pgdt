@@ -35,6 +35,13 @@ about the first hundred. Stream padding, if a file had any, is a whole number
 of four-byte zero groups between the two, so the scan steps back over zeros
 before it checks.
 
+**The koji slice's density is gated, not remembered.** A decode rate is a rate
+per plaintext byte, so it is a property of the bytes, and koji's own regions
+differ from one another by 6.6x — so the slice's compression ratio is divided
+out of the file that was just written and refused unless it is in the band
+`KOJI_RATIO_MIN`/`KOJI_RATIO_MAX`. Both legs report the ratio whether they gate
+on it or not, since it is what the figure's rates are quoted with.
+
 Generated, never committed. `scripts/measure.py` owns the paths and the sizes;
 this script owns the bytes.
 
@@ -72,6 +79,29 @@ STREAM_FOOTER_MAGIC = b"\x59\x5a"
 #: enough that the scan holds nothing interesting.
 SCAN_CHUNK = 32 * 1024 * 1024
 
+#: The band the koji slice's compression ratio must land in, and the reason it
+#: is a band rather than a remembered number.
+#:
+#: A decode rate is a rate per *plaintext* byte, so it is a property of the
+#: bytes: this figure's own two legs are the proof, the generated control at
+#: 5.4x decoding around 200 MB/s on one core where koji's 15.70x decodes around
+#: 431. koji is nowhere near homogeneous — sampled at twelve depths it runs
+#: from 5.02x to 33.05x — so `--from-offset` picks a draw rather than a
+#: representative, and a moved offset, or a koji dump refreshed next year,
+#: could land in the 31.74x band and republish a rate for quite different bytes
+#: under the same table heading. That is the failure this instrument already
+#: refuses twice elsewhere: what comes out is a plausible table rather than an
+#: error.
+#:
+#: The band brackets the 15.70x the published slice has, wide enough that
+#: ordinary drift in the corpus does not fire it and narrow enough that a slice
+#: from another of koji's regions does. Widening it is a decision about which
+#: bytes the figure is taken on, so it is made in the open — the constant is
+#: hashed into the input's stamp, so changing it regenerates the slice and the
+#: figure that reads it goes stale.
+KOJI_RATIO_MIN = 14.0
+KOJI_RATIO_MAX = 18.0
+
 
 def compress(source: Path, out: Path, threads: int) -> None:
     """`source` compressed into `out` at koji's container parameters.
@@ -100,6 +130,65 @@ def compress(source: Path, out: Path, threads: int) -> None:
             check=True,
         )
     tmp.replace(out)
+
+
+def parse_xz_totals(text: str) -> tuple[int, int]:
+    """`(compressed, uncompressed)` bytes out of `xz --list --robot` output.
+
+    The `totals` line is tab-separated and positional:
+    `totals streams blocks compressed uncompressed ratio check padding files`.
+    Parsed apart from the subprocess call so the parsing is testable without a
+    file to run `xz` against.
+    """
+    for line in text.splitlines():
+        fields = line.split("\t")
+        if fields[0] == "totals" and len(fields) > 4:
+            return int(fields[3]), int(fields[4])
+    raise SystemExit("xz --list --robot printed no totals line")
+
+
+def xz_totals(path: Path) -> tuple[int, int]:
+    """What `path` holds: `(compressed, uncompressed)` bytes.
+
+    The plaintext volume of an `.xz` file is written down in its stream
+    indexes and nowhere a `stat` can reach it, so this is the only cheap way
+    to divide one by the other. It costs a seek per stream rather than a read:
+    `xz --list` walks footers backwards, and 128 of them return instantly on a
+    local file — the 85 s the koji *download* takes is 31,150 of them on an
+    HDD.
+    """
+    if shutil.which("xz") is None:
+        raise SystemExit("xz is not on PATH, and an .xz file's plaintext size is in its index")
+    proc = subprocess.run(
+        ["xz", "--list", "--robot", str(path)],
+        stdout=subprocess.PIPE,
+        text=True,
+        check=True,
+    )
+    return parse_xz_totals(proc.stdout)
+
+
+def check_koji_density(compressed: int, uncompressed: int, offset: int) -> float:
+    """The slice's compression ratio, refused unless it is in the band.
+
+    Refused rather than reported, because the thing being guarded against
+    produces a perfectly plausible table: a slice from another of koji's
+    regions decodes at its own rate, and the table would publish that rate
+    under a heading naming this figure's bytes.
+    """
+    if compressed <= 0:
+        raise SystemExit("the slice is empty, so it has no compression ratio")
+    ratio = uncompressed / compressed
+    if not KOJI_RATIO_MIN <= ratio <= KOJI_RATIO_MAX:
+        raise SystemExit(
+            f"the slice at offset {offset} compresses {ratio:.2f}x, outside the "
+            f"{KOJI_RATIO_MIN:g}-{KOJI_RATIO_MAX:g}x this figure is taken on "
+            f"({uncompressed} plaintext bytes in {compressed} compressed). A decode rate is a "
+            "rate per plaintext byte, so bytes of another density belong to a different figure: "
+            "move the offset (PGDQ_KOJI_XZ_OFFSET) to a region inside the band, or decide in the "
+            "open that the figure is taken on these bytes and widen KOJI_RATIO_MIN/MAX"
+        )
+    return ratio
 
 
 def stream_boundaries(fh, wanted: int, base: int = 0) -> list[int]:
@@ -236,6 +325,8 @@ def main() -> None:
         if not args.from_dump.exists():
             raise SystemExit(f"{args.from_dump} does not exist")
         compress(args.from_dump, args.out, args.threads)
+        compressed, uncompressed = xz_totals(args.out)
+        ratio = uncompressed / compressed
     else:
         if not args.from_koji.exists():
             raise SystemExit(
@@ -244,9 +335,24 @@ def main() -> None:
             )
         start, end = koji_slice(args.from_koji, args.out, args.streams, args.from_offset)
         print(f"streams {args.streams} from {start} to {end}", file=sys.stderr)
+        # Read off the slice that was written rather than off the source, and
+        # after it is written rather than before: what the figure is taken on
+        # is this file. A refusal leaves it in place — `measure.py` writes the
+        # stamp only for a generator that exited 0, so the next sitting
+        # regenerates regardless, and the bytes are still there to run
+        # `xz --list` against.
+        compressed, uncompressed = xz_totals(args.out)
+        ratio = check_koji_density(compressed, uncompressed, args.from_offset)
 
     size = args.out.stat().st_size
     print(f"wrote {args.out} ({size / (1024 * 1024):.1f} MiB)", file=sys.stderr)
+    # The density every sitting of this figure quotes with its rates. The
+    # harness reports it again from the instrument's own delivered byte count,
+    # which is the same division over the bytes that were actually decoded.
+    print(
+        f"plaintext {uncompressed} bytes, compressed {compressed}, ratio {ratio:.2f}x",
+        file=sys.stderr,
+    )
 
 
 if __name__ == "__main__":

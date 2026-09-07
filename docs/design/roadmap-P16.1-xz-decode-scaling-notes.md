@@ -12,7 +12,9 @@ is [`../status/STATUS.md`](../status/STATUS.md).
   through `RangeRead::read`, and prints `key=value` lines about what it did.
 - **`scripts/generate_xz_input.py`** — the two `.xz` inputs: `--from-dump`
   compresses a plain dump at koji's own container parameters, `--from-koji`
-  copies a stream-aligned slice of the koji download.
+  copies a stream-aligned slice of the koji download and **refuses one whose
+  compression ratio is outside 14–18×**, which is the density every rate this
+  figure publishes is a rate of.
 - **`scripts/measure.py`** — the `xz-decode-scaling` register entry, in
   `UNTAKEN`; compressed inputs; a derived input; the `warm-parallel` regime;
   per-figure container memory; and the instrument-report channel.
@@ -119,14 +121,38 @@ the spread leg one already spans, and a table of one file at three depths says
 something about koji rather than about the decoder.
 
 **The slice's density is asserted, not remembered.** `PGDQ_KOJI_XZ_OFFSET` is a
-bare constant today, and a moved offset — or a koji dump refreshed next year —
-could land in the 12 G-like 31.74× band and republish a rate for quite different
-bytes under the same table heading. That is the same failure mode the instrument
+bare constant, and a moved offset — or a koji dump refreshed next year — could
+land in the 12 G-like 31.74× band and republish a rate for quite different bytes
+under the same table heading. That is the same failure mode the instrument
 already refuses twice, where what comes out is a plausible table rather than an
-error. The generator knows both sizes at the moment it cuts the slice, so the
-ratio is a division: it is reported per sitting and gated to **14–18×**, and it
-lands *before* the sitting that publishes the figure, since
-`generate_xz_input.py` is one of the figure's own `depends`.
+error. So the generator divides the slice's plaintext by its compressed size the
+moment it has cut it and **refuses anything outside 14–18×**
+(`generate_xz_input.py`, `check_koji_density`); the figure's own table quotes the
+ratio and the band beside it, from the instrument's delivered byte count, so a
+published rate can never appear without the density it is a rate of.
+
+**The band brackets a draw, and the region it was drawn from is homogeneous.**
+Sub-slices of the chosen region — its first 1, 8 and 127 streams — compress
+15.82×, 15.89× and 15.70×, so the width is not absorbing within-region noise; it
+is absorbing a slice cut slightly elsewhere, against a corpus whose regions
+differ by 6.6×. The head of the download re-measures at exactly the 56.19× the
+profile above recorded, and the gate refuses it.
+
+**The gate is at the cut, not at the emit, and both places had a claim.** What
+argues for the emit is that publication is where the claim is made; what settles
+it is that the generator is the only place the wrong bytes can still be cheap.
+A gate that fired inside `run_xz_decode_scaling` would throw away a sitting's
+readings to report something the generator could have refused before the first
+one, and no path through the harness reaches a sitting with a slice the gated
+generator did not cut: `generate_xz_input.py`'s bytes and the `--from-offset`
+argument are both hashed into the input's stamp, so a moved offset, a changed
+band or a changed generator all regenerate the slice.
+
+**One consequence for the next sitting: both `.xz` legs regenerate.** The stamp
+covers the generator's source, and `control_xz` names it too — so landing this
+recompresses the 3.00 GiB control at preset 6 and re-cuts the koji slice off the
+HDD before the first reading. Minutes, not an hour, and it happens inside the
+`--figure` run.
 
 **The generated leg is a *compression of* `control`, not a second generation.**
 `InputSpec.derives_from` is what says so, and the source's stamp folds into the
@@ -185,15 +211,20 @@ excuse it.
 
 So the entry sits in `measure.UNTAKEN` — which is exactly what that list is
 for — and the sitting stands as a `runs/` artifact and as the findings above.
-**Taking it is one command and minutes**, on the commit that lands this slice:
+The density gate has since moved `generate_xz_input.py`, which the figure
+declares, so that sitting is now stale on its own terms as well: what will be
+published is the sitting taken after it, not that one.
+
+**Taking it is one command and minutes**, on the commit that lands the gate:
 
 ```sh
 cd scripts && uv run measure.py --figure xz-decode-scaling
 ```
 
-That emits the table with its own sitting marker; folding it in also means
-replacing the session stamp's accounting sentence with the one `--check` prints,
-since the register grows from 18 figures to 19.
+Both `.xz` legs regenerate first, the generator's own bytes being part of their
+stamps. That emits the table with its own sitting marker; folding it in also
+means replacing the session stamp's accounting sentence with the one `--check`
+prints, since the register grows from 18 figures to 19.
 
 ## Artifacts
 

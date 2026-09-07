@@ -184,10 +184,12 @@ and `--check` named them so they were deleted rather than kept as sediment.
 **One instrument is built and its figure is not in the document.**
 `measure.UNTAKEN` carries `xz-decode-scaling` — plaintext decode rate against
 worker count, over a generated `.xz` control and a stream-aligned slice of the
-koji download. The instrument runs and the readings are in `runs/`; what the
-entry waits on is a **commit to name** as its sitting, a figure published
-outside a stamped sweep declaring one inside its own marker and a sitting taken
-from a tree carrying its own instrument uncommitted having none. Taking it is
+koji download whose compression ratio the generator **gates to 14–18×**, that
+density being what a rate per plaintext byte is a rate *of*. The instrument runs
+and the readings are in `runs/`; what the entry waits on is a **commit to name**
+as its sitting, a figure published outside a stamped sweep declaring one inside
+its own marker and no sitting so far having run from a tree that both carries
+the apparatus and is committed. Taking it is
 `cd scripts && uv run measure.py --figure xz-decode-scaling` and minutes, and
 folding it in also replaces the session stamp's accounting sentence, which
 `--check` prints
@@ -264,18 +266,17 @@ are worth, and the orderings that do bind are named in
 
 - [ ] **16.1** `xz-decode-scaling` — the 446 MB/s decode probe becomes a
       registered figure, at 1/2/4/8/12/16/24 workers. No library code.
-      **The instrument, the two `.xz` inputs and the register entry landed and
-      the sitting was taken; the table is not in
+      **The instrument, the two `.xz` inputs, the register entry and the koji
+      leg's density gate have landed; the table is not in
       [`../design/measurements.md`](../design/measurements.md).** The entry is in
       `measure.UNTAKEN` because a figure published outside a stamped sweep names
-      the commit it was taken at inside its own marker, and this sitting ran
-      from a tree carrying its own instrument uncommitted. What remains is the
-      koji leg's density gate — the slice's compression ratio reported per
-      sitting and gated to 14–18×, which must land *before* the publishing
-      sitting because `generate_xz_input.py` is one of the figure's `depends` —
-      then one command on the landing commit, `cd scripts && uv run measure.py
-      --figure xz-decode-scaling`, plus moving the entry into `FIGURES` and
-      replacing the stamp's accounting sentence. Notes:
+      the commit it was taken at inside its own marker, and no sitting so far
+      ran from a tree that both carries the apparatus and is committed. What
+      remains is one command on the commit that lands the gate, `cd scripts &&
+      uv run measure.py --figure xz-decode-scaling` — minutes, plus the
+      regeneration of both `.xz` legs, whose stamps carry the generator the gate
+      changed — then moving the entry into `FIGURES` and replacing the stamp's
+      accounting sentence with the one `--check` prints. Notes:
       [`../design/roadmap-P16.1-xz-decode-scaling-notes.md`](../design/roadmap-P16.1-xz-decode-scaling-notes.md)
 - [ ] **16.2** `KD14`'s attribution, and `peak-rss` re-taken at HEAD — two
       readings separating the span list from the whole-list clone from the

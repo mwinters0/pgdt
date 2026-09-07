@@ -27,6 +27,7 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
+import generate_xz_input
 import measure
 
 
@@ -1383,6 +1384,65 @@ class XzDecodeScaling(unittest.TestCase):
         # `--stage warm` splits on `+`, so `warm-parallel` is its own stage and
         # not a `warm` figure with a suffix.
         self.assertNotIn("warm", measure.SELECTABLE_BY_ID["xz-decode-scaling"].stage.split("+"))
+
+    # -- the koji leg's density ------------------------------------------
+    #
+    # The generator is the figure's apparatus as much as the instrument is, and
+    # `scripts/generate_xz_input.py` is one of the figure's own `depends`, so
+    # its gate is held here with the rest of them rather than in a test module
+    # of its own.
+
+    def test_the_published_slice_density_is_inside_the_band(self):
+        # 15.70x is what the 20 GB region yields and what every rate this
+        # figure publishes is quoted against. A band that did not contain it
+        # would refuse the figure's own input.
+        self.assertEqual(
+            generate_xz_input.check_koji_density(205215196, 3221749760, 20_000_000_000),
+            3221749760 / 205215196,
+        )
+
+    def test_kojis_head_is_refused(self):
+        # The whole reason `--from-offset` exists: koji's first 3 GiB of
+        # plaintext compresses 56.19x against the file's own 19.41x, and a
+        # decode rate is a rate per plaintext byte, so a slice cut there is a
+        # rate for other bytes under this figure's heading.
+        with self.assertRaises(SystemExit) as raised:
+            generate_xz_input.check_koji_density(57341052, 3221749760, 0)
+        self.assertIn("56.19x", str(raised.exception))
+
+    def test_a_sparser_region_is_refused_too(self):
+        # The band is two-sided: koji sampled at twelve depths runs from 5.02x
+        # to 33.05x, and both ends are bytes this figure is not taken on.
+        with self.assertRaises(SystemExit):
+            generate_xz_input.check_koji_density(3221749760 // 5, 3221749760, 16_000_000_000)
+
+    def test_an_empty_slice_has_no_ratio(self):
+        with self.assertRaises(SystemExit):
+            generate_xz_input.check_koji_density(0, 0, 0)
+
+    def test_the_totals_line_is_read_positionally(self):
+        # `xz --list --robot` is tab-separated and positional, and the fields
+        # this reads are the compressed and uncompressed totals — the second of
+        # which is written down nowhere a `stat` can reach.
+        got = generate_xz_input.parse_xz_totals(
+            "name\tkoji_xz.xz\n"
+            "file\t128\t128\t205215196\t3221749760\t0.064\tCRC64\t0\n"
+            "totals\t128\t128\t205215196\t3221749760\t0.064\tCRC64\t0\t1\n"
+        )
+        self.assertEqual(got, (205215196, 3221749760))
+
+    def test_the_table_quotes_the_band_the_slice_was_cut_within(self):
+        # The clause is selected by the leg's own key, so a renamed input would
+        # drop it silently; and the band is imported rather than respelled, so
+        # the number the table prints is the number a slice was refused
+        # against.
+        self.assertIn("koji_xz", [leg for leg, _ in measure.DECODE_LEGS])
+        self.assertEqual(measure.KOJI_RATIO_MIN, generate_xz_input.KOJI_RATIO_MIN)
+        self.assertEqual(measure.KOJI_RATIO_MAX, generate_xz_input.KOJI_RATIO_MAX)
+
+    def test_output_with_no_totals_line_is_refused(self):
+        with self.assertRaises(SystemExit):
+            generate_xz_input.parse_xz_totals("name\tkoji_xz.xz\n")
 
 
 class Reported(unittest.TestCase):

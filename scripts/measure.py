@@ -120,6 +120,12 @@ from acknowledged import ACKNOWLEDGED, Acknowledged
 # executable sits behind its `__main__` guard.
 import generate_perf_data as perf
 
+# The band the koji leg's compression ratio is gated to, imported for the same
+# reason: the figure's table quotes the ratio every sitting, and a band spelled
+# again here could drift from the one the generator actually refuses a slice
+# against. Import-safe on the same terms.
+from generate_xz_input import KOJI_RATIO_MAX, KOJI_RATIO_MIN
+
 REPO = Path(__file__).resolve().parent.parent
 SCRIPTS = REPO / "scripts"
 
@@ -3487,10 +3493,25 @@ def run_xz_decode_scaling(session: Session) -> str:
             session.cfg, session.input_path(leg, "warm-parallel"), leg
         )
         plain = plaintext.get(leg, 0)
-        ratio = f"{plain / compressed:.1f}×" if compressed else "—"
+        ratio = f"{plain / compressed:.2f}×" if compressed else "—"
+        # The koji leg's density is the one that can move between sittings, an
+        # offset or a refreshed download landing in a region of quite different
+        # bytes, so it is gated where the slice is cut and named here — a rate
+        # per plaintext byte is a property of the bytes, and a table that
+        # quoted one without its density would be quoting it of koji.
+        # Stated as what the apparatus refuses, not as a verdict on the number
+        # beside it: the ratio is printed from the readings and the band is the
+        # generator's, so a sentence claiming the one is inside the other would
+        # be the table vouching for itself.
+        gate = (
+            f" (`scripts/generate_xz_input.py` refuses a slice outside "
+            f"{KOJI_RATIO_MIN:g}–{KOJI_RATIO_MAX:g}×)"
+            if leg == "koji_xz"
+            else ""
+        )
         sizes.append(
             f"- {label}: {_fmt_bytes(compressed)} compressed, {_fmt_bytes(plain)} of plaintext, "
-            f"{ratio}"
+            f"{ratio}{gate}"
         )
     notes = (
         "\n\nEach cell is wall clock, the plaintext rate it implies, and the speedup over that "
