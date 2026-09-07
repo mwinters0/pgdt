@@ -74,7 +74,7 @@ use crate::index::{
     ArrayShape, CopyBlock, DumpIndex, scan_preamble, tiling_diagnostics, toc_coverage_diagnostic,
     union_census,
 };
-use crate::io::{ByteRangeSource, HolderClass};
+use crate::io::{ByteRangeSource, WaitPolicy};
 use crate::map::{Builder, Span, SpanBody, attach_text};
 use crate::preamble::{DumpMetadata, dump_metadata_from_spans};
 use crate::predicate::{ComparisonNote, Expr, PredicateOp, ResolvedExpr, resolve_term};
@@ -492,10 +492,12 @@ async fn map_forward(
     // (`ByteRangeSource::hint_read_size`, `hint_parallelism`).
     source.hint_read_size(scan_options.chunk_size);
     source.hint_parallelism(scan_options.parallelism);
-    // The mapping pass builds spans, not batches, so every chunk is consumed
-    // and dropped inside the iteration that read it: this loop's reads may
-    // wait for a pooled slot (`ByteRangeSource::hint_holder_class`).
-    source.hint_holder_class(HolderClass::Transient);
+    // **This loop grants no wait** (`ByteRangeSource::hint_wait_policy`). It
+    // builds spans, not batches, so every chunk is consumed and dropped inside
+    // the iteration that read it and a wait would be safe — but no shipped
+    // loop arms the bound until `16.10`'s fused worker needs it
+    // (`docs/design/architecture.md`, "Execution model and API surface").
+    source.hint_wait_policy(WaitPolicy::NeverWait);
     let mut scanner = CopyScanner::resume(seg_start, None);
     let mut read_pos = seg_start;
     let mut carry = ChunkCarry::new();
@@ -1317,14 +1319,16 @@ pub fn table_stream<'a>(
         // because they split differently.
         source.hint_read_size(scan_options.chunk_size);
         source.hint_parallelism(query_options.parallelism);
-        // **The replay loop is the exempt holder**, and stating it here is
-        // what un-states the mapping pass's transient class on the same
-        // source. `RetainedChunks` pins every chunk a batch has taken a
-        // `Utf8View` into until that batch flushes, and the batch then goes to
-        // the caller, so this loop can hold many buffers at once and can never
-        // be the task that frees one it is waiting on
-        // (`ByteRangeSource::hint_holder_class`).
-        source.hint_holder_class(HolderClass::Retaining);
+        // **The replay loop could not grant a wait even if the shipped loops
+        // armed the bound**, which is what makes stating it here different
+        // from the two above: `RetainedChunks` pins every chunk a batch has
+        // taken a `Utf8View` into until that batch flushes, and the batch then
+        // goes to the caller, so this loop holds many buffers at once and can
+        // never be the task that frees one it would be waiting on
+        // (`ByteRangeSource::hint_wait_policy`). Stated here rather than left
+        // to the default, so that whatever the mapping pass above granted is
+        // un-stated on the same source.
+        source.hint_wait_policy(WaitPolicy::NeverWait);
 
         // Only the first replayed block can start mid-block (a resumed
         // stream paused between two of its rows); its scanner and in-flight

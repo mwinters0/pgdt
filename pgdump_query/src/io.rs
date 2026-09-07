@@ -140,27 +140,32 @@ pub trait ByteRangeSource: Send + Sync {
     /// a free slot instead of allocating past the budget it was given — but
     /// only for a holder that drops each read before it takes the next, since
     /// a holder that accumulates reads is the only thing that could free the
-    /// slot it is waiting on. [`HolderClass`] is where a read loop says which
-    /// it is.
+    /// slot it is waiting on. [`WaitPolicy`] is where a read loop says whether
+    /// it may be made to wait.
     ///
     /// **Advisory, and it defaults to doing nothing** — which is
-    /// [`HolderClass::Retaining`]'s behaviour, the one that never waits, so a
-    /// source nobody announces to allocates exactly as it would without the
-    /// method.
-    fn hint_holder_class(&self, _class: HolderClass) {}
+    /// [`WaitPolicy::NeverWait`]'s behaviour, so a source nobody announces to
+    /// allocates exactly as it would without the method.
+    fn hint_wait_policy(&self, _policy: WaitPolicy) {}
 }
 
-/// How long the caller of a read loop holds the bytes each read hands it, and
-/// therefore whether that loop's reads may **wait** for a pooled slot
-/// (`docs/design/architecture.md`, "Execution model and API surface").
+/// Whether a read loop's acquisitions may be made to **wait** for a pooled
+/// slot (`docs/design/architecture.md`, "Execution model and API surface").
 ///
-/// **The distinction is a deadlock, not a preference.** A holder that retains
+/// **It is a permission, not a description of the holder.** What the pool needs
+/// to know is whether it may block this loop, and a loop grants that or
+/// withholds it; how long the loop happens to keep its bytes is the *reason*
+/// behind the answer rather than the answer itself. Naming it after the holder
+/// made `scan` — which retains nothing — state something false about itself in
+/// order to select the behaviour it wanted.
+///
+/// **The distinction is a deadlock, not a preference.** A loop that retains
 /// into a batch holds every buffer it has taken a view into until that batch
 /// flushes — `(max_source_span / chunk) + 1` chunk buffers for the serial
 /// replay loop, and three or four whole decoded blocks against a pool of two
-/// on a compressed source. If such a holder waited, the only task that could
-/// free the slot would be the one waiting for it. A holder that reads,
-/// consumes and drops holds exactly one buffer, so a wait is backpressure.
+/// on a compressed source. If such a loop waited, the only task that could
+/// free the slot would be the one waiting for it. A loop that reads, consumes
+/// and drops holds exactly one buffer, so a wait is backpressure.
 ///
 /// **No pair of option values stands in for this.** `TableStream` yields its
 /// batches to the caller and a `Utf8View` batch carries the buffers its
@@ -168,24 +173,27 @@ pub trait ByteRangeSource: Send + Sync {
 /// consumer code (`docs/design/architecture.md`, "Execution model and API
 /// surface").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum HolderClass {
-    /// The bytes may outlive the read that produced them — retained into a
-    /// batch, or handed to a consumer that decides how long to keep them.
+pub enum WaitPolicy {
+    /// This loop is never to be blocked: a read allocates past the pool's
+    /// budget rather than waiting for a slot.
     ///
-    /// **Never waits**: a read of this class allocates past the pool's budget
-    /// rather than blocking, which is what every read in this build did before
-    /// the class existed and is why it is the default.
+    /// **The default, and what every read in this build did before the policy
+    /// existed.** It is the safe answer in the direction that matters — a
+    /// policy that fails to bind costs memory and shows up in `peak-rss`,
+    /// where a wait that should not have been permitted is a hang with nothing
+    /// to measure — so a source nobody announces to cannot block, and a loop
+    /// whose discipline is in any doubt grants nothing.
     #[default]
-    Retaining,
-    /// The bytes are consumed and dropped before this loop's next read, so the
-    /// holder holds **one** buffer at a time.
+    NeverWait,
+    /// This loop may be blocked until a slot frees, which is what turns the
+    /// pool's slot count into a bound on what is *outstanding* rather than
+    /// only on what is idle.
     ///
-    /// A read of this class waits for a free slot instead of allocating, which
-    /// is what turns the pool's slot count into a bound on what is
-    /// *outstanding* rather than only on what is idle. Announcing it is a
-    /// promise about the loop, not a request: a loop that keeps two reads
-    /// alive at once against a one-slot pool blocks forever.
-    Transient,
+    /// **Granting it is a promise about the loop**: that it consumes and drops
+    /// each read before taking the next, so it holds **one** buffer at a time.
+    /// A loop that grants this and then keeps two reads alive at once against
+    /// a one-slot pool blocks forever.
+    MayWait,
 }
 
 /// Where a source is willing to be split
@@ -445,18 +453,18 @@ const POOL_MAX_BYTES: usize = 8 << 20;
 /// were actually read, which is why a short final chunk does not shrink a
 /// pooled buffer and force the next full chunk to grow one back.
 ///
-/// **Whether an acquisition blocks is the caller's class, not the pool's
+/// **Whether an acquisition blocks is the caller's permission, not the pool's
 /// policy.** [`BufferPool::obtain`] waits for a free slot where the read loop
-/// announced [`HolderClass::Transient`] — which is what turns
+/// granted [`WaitPolicy::MayWait`] — which is what turns
 /// [`BufferPool::slots`] into a bound on what is *outstanding* rather than
-/// only on what is idle — and allocates past the budget where it announced
-/// [`HolderClass::Retaining`], the class that pins buffers into batches and so
-/// would deadlock on a wait (`docs/design/architecture.md`, "Execution model
-/// and API surface"). [`BufferPool::take`] is the unwaiting primitive
-/// underneath both.
+/// only on what is idle — and allocates past the budget where it granted
+/// [`WaitPolicy::NeverWait`], which is what a loop pinning buffers into
+/// batches must grant, since a wait there deadlocks
+/// (`docs/design/architecture.md`, "Execution model and API surface").
+/// [`BufferPool::take`] is the unwaiting primitive underneath both.
 #[derive(Debug)]
 struct BufferPool {
-    /// The free list and the count of waiting-class buffers outstanding, under
+    /// The free list and the count of charged buffers outstanding, under
     /// one lock because [`BufferPool::returned`] is what a waiting acquisition
     /// blocks on and a condvar needs the state it waits on beside it.
     ///
@@ -517,17 +525,17 @@ struct BufferPool {
     /// second read unit takes a second pool rather than a second hint
     /// (`docs/design/architecture.md`, "The compressed source").
     hinted: AtomicUsize,
-    /// The holder class of the read loop currently reading through this pool,
-    /// as [`HolderClass`] encodes it — [`HolderClass::Retaining`] until one is
-    /// announced, so a pool nobody has spoken to never waits.
+    /// What the read loop currently reading through this pool permits, as
+    /// [`WaitPolicy`] encodes it — [`WaitPolicy::NeverWait`] until one is
+    /// granted, so a pool nobody has spoken to never waits.
     ///
     /// `Relaxed` for the same reason [`BufferPool::hinted`] is: it is written
     /// once per read loop, nothing is published through it, and a value that
     /// arrives a buffer late costs one allocation. It is read *inside* the
-    /// state lock by [`BufferPool::obtain`], so a class that changes between
+    /// state lock by [`BufferPool::obtain`], so a policy that changes between
     /// the read and the wait cannot leave a charge unmatched — the charge is
     /// carried by the buffer, not re-derived at release.
-    class: AtomicUsize,
+    policy: AtomicUsize,
 }
 
 /// What a [`BufferPool`] holds under its lock.
@@ -535,7 +543,7 @@ struct BufferPool {
 struct PoolState {
     /// Buffers nobody is using, at most [`BufferPool::slots`] of them.
     free: Vec<Vec<u8>>,
-    /// Buffers handed to a [`HolderClass::Transient`] holder and not yet
+    /// Buffers handed to a [`WaitPolicy::MayWait`] loop and not yet
     /// returned — the term a waiting acquisition is bounded by, and the only
     /// one of the two the library sets. What in-flight batches pin is the
     /// caller's and is deliberately not counted here
@@ -551,7 +559,7 @@ impl Default for BufferPool {
             budget: AtomicUsize::new(DEFAULT_MEMORY_BUDGET as usize),
             depth: AtomicUsize::new(POOL_DEPTH),
             hinted: AtomicUsize::new(0),
-            class: AtomicUsize::new(HolderClass::Retaining as usize),
+            policy: AtomicUsize::new(WaitPolicy::NeverWait as usize),
         }
     }
 }
@@ -575,24 +583,23 @@ impl BufferPool {
         }
     }
 
-    /// The buffer for one read, waiting or allocating according to the holder
-    /// class the read loop announced.
+    /// The buffer for one read, waiting or allocating according to what the
+    /// read loop permitted.
     ///
-    /// [`HolderClass::Transient`] blocks while [`BufferPool::slots`] buffers
-    /// of that class are already out, so the pool's slot count bounds what is
-    /// outstanding; the buffer carries the charge, so the matching release
-    /// cannot be lost to a class announced in between.
-    /// [`HolderClass::Retaining`] takes the same buffer without blocking and
+    /// [`WaitPolicy::MayWait`] blocks while [`BufferPool::slots`] buffers
+    /// taken under that permission are already out, so the pool's slot count
+    /// bounds what is outstanding; the buffer carries the charge, so the
+    /// matching release cannot be lost to a policy granted in between.
+    /// [`WaitPolicy::NeverWait`] takes the same buffer without blocking and
     /// without charging.
     ///
-    /// **The wait is safe only because a transient holder holds one buffer.**
-    /// A caller announcing that class and then keeping two reads alive at once
-    /// against a one-slot pool blocks forever; that is the promise
-    /// [`ByteRangeSource::hint_holder_class`] documents, and the three read
-    /// loops in this build are what keep it.
+    /// **The wait is safe only because a waiting loop holds one buffer.**
+    /// A caller granting that permission and then keeping two reads alive at
+    /// once against a one-slot pool blocks forever; that is the promise
+    /// [`ByteRangeSource::hint_wait_policy`] documents.
     fn obtain(self: &Arc<Self>, len: usize) -> PooledBuffer {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        let charged = self.class() == HolderClass::Transient;
+        let charged = self.policy() == WaitPolicy::MayWait;
         if charged {
             // Re-read the ceiling every pass: `set_limits` may raise it while
             // this holder waits, and a wait against a stale number would
@@ -630,21 +637,21 @@ impl BufferPool {
         self.budget.load(Ordering::Relaxed)
     }
 
-    /// The holder class of the loop currently reading through this pool.
-    fn class(&self) -> HolderClass {
-        match self.class.load(Ordering::Relaxed) {
-            n if n == HolderClass::Transient as usize => HolderClass::Transient,
-            _ => HolderClass::Retaining,
+    /// What the loop currently reading through this pool permits.
+    fn policy(&self) -> WaitPolicy {
+        match self.policy.load(Ordering::Relaxed) {
+            n if n == WaitPolicy::MayWait as usize => WaitPolicy::MayWait,
+            _ => WaitPolicy::NeverWait,
         }
     }
 
-    /// State the holder class of the read loop about to start.
+    /// State what the read loop about to start permits.
     ///
     /// It governs acquisitions made *after* it: a buffer already out keeps the
-    /// charge it was taken with, which is what makes the two classes safe to
+    /// charge it was taken with, which is what makes the two policies safe to
     /// alternate across a query's mapping and replay passes.
-    fn set_class(&self, class: HolderClass) {
-        self.class.store(class as usize, Ordering::Relaxed);
+    fn set_policy(&self, policy: WaitPolicy) {
+        self.policy.store(policy as usize, Ordering::Relaxed);
     }
 
     /// State the budget and the slot ceiling this pool is to work inside.
@@ -713,8 +720,8 @@ impl BufferPool {
         self.state.lock().unwrap_or_else(|e| e.into_inner()).free.len()
     }
 
-    /// How many waiting-class buffers are out — the term a waiting
-    /// acquisition is bounded by.
+    /// How many buffers taken under a granted wait are out — the term a
+    /// waiting acquisition is bounded by.
     #[cfg(test)]
     fn charged(&self) -> usize {
         self.state.lock().unwrap_or_else(|e| e.into_inner()).charged
@@ -752,9 +759,9 @@ struct PooledBuffer {
     buf: Option<Vec<u8>>,
     pool: Arc<BufferPool>,
     /// Whether this buffer counts against [`PoolState::charged`] — set by
-    /// [`BufferPool::obtain`] from the holder class in force when it was
+    /// [`BufferPool::obtain`] from the [`WaitPolicy`] in force when it was
     /// taken, and carried here rather than re-derived at release so that a
-    /// class announced in between cannot leave the count wrong.
+    /// policy granted in between cannot leave the count wrong.
     charged: bool,
 }
 
@@ -886,12 +893,13 @@ impl ByteRangeSource for LocalFileSource {
         self.pool.set_limits(budget_bytes(parallelism), POOL_DEPTH);
     }
 
-    /// **One read unit, so one class to state.** A transient loop's reads wait
-    /// for a free chunk buffer rather than allocating past the stated budget;
-    /// a retaining one's allocate, because the buffers it is holding are the
-    /// only ones that could free a slot.
-    fn hint_holder_class(&self, class: HolderClass) {
-        self.pool.set_class(class);
+    /// **One read unit, so one policy to state.** A loop that permits a wait
+    /// gets one: its reads block for a free chunk buffer rather than
+    /// allocating past the stated budget. A loop that does not permit one
+    /// allocates, because the buffers it is holding may be the only ones that
+    /// could free a slot.
+    fn hint_wait_policy(&self, policy: WaitPolicy) {
+        self.pool.set_policy(policy);
     }
 }
 
@@ -1041,12 +1049,12 @@ impl BlockCache {
     /// blocks are dropped down to one below the slot count *first*, so the
     /// buffer this take reuses is usually the one that eviction just released.
     ///
-    /// **Eviction before acquisition is what lets this holder wait at all.**
-    /// A transient read loop holds no decoded block of its own between reads,
-    /// so dropping the cache's own references down to `slots - 1` leaves a
-    /// slot for the acquisition below and the wait never fires; a retaining
-    /// loop's batch keeps those buffers outstanding past the drain, which is
-    /// exactly why that class is exempt from waiting
+    /// **Eviction before acquisition is what would let a waiting holder
+    /// through here.** A read loop holding no decoded block of its own between
+    /// reads leaves the drain to `slots - 1` free to hand it the slot the
+    /// acquisition below is about to take, so the wait would never fire; a
+    /// loop pinning chunks into batches keeps those buffers outstanding past
+    /// the drain, which is exactly why such a loop grants no wait at all
     /// ([`BufferPool::obtain`], and `docs/design/architecture.md`, "Execution
     /// model and API surface").
     ///
@@ -1506,17 +1514,17 @@ impl ByteRangeSource for XzSource {
         self.apportion();
     }
 
-    /// **Both pools, one class.** The two units are read by the same loop, so
-    /// a transient loop's chunk assembly and block decode both wait and a
-    /// retaining one's both allocate.
+    /// **Both pools, one policy.** The two units are read by the same loop, so
+    /// where a wait is permitted the chunk assembly and the block decode both
+    /// wait, and where it is not both allocate.
     ///
     /// A read that needs both takes the **chunk** slot first and the block
     /// slot inside it ([`XzSource::read_by_blocks`]), never the other way
     /// round, so two waiting readers cannot hold each other's next slot.
-    fn hint_holder_class(&self, class: HolderClass) {
-        self.pool.set_class(class);
+    fn hint_wait_policy(&self, policy: WaitPolicy) {
+        self.pool.set_policy(policy);
         if let Some(blocks) = &self.blocks {
-            blocks.pool.set_class(class);
+            blocks.pool.set_policy(policy);
         }
     }
 
@@ -1864,20 +1872,22 @@ mod tests {
         assert_eq!(source.pool.slots(), POOL_DEPTH, "serial states no number");
     }
 
-    /// **Backpressure**: a transient holder waits for a slot instead of
+    /// **Backpressure**: a loop that permits a wait gets one instead of
     /// allocating past the stated budget, which is what turns the slot count
     /// into a bound on what is *outstanding* rather than on what is idle.
     ///
     /// Two threads, because a wait has no behaviour except its interaction
     /// with another holder: with one it can only be asserted not to have
-    /// blocked, which the unwaiting take already guaranteed.
+    /// blocked, which the unwaiting take already guaranteed. **No shipped read
+    /// loop grants this permission**, so this is where the mechanism is
+    /// exercised at all until `16.10`'s fused worker arrives.
     #[test]
-    fn a_transient_read_waits_for_a_slot_rather_than_allocating() {
+    fn a_permitted_wait_takes_a_slot_rather_than_allocating() {
         let unit = 1 << 20;
         let pool = Arc::new(BufferPool::default());
         pool.hint(unit);
         pool.set_limits(unit, POOL_DEPTH);
-        pool.set_class(HolderClass::Transient);
+        pool.set_policy(WaitPolicy::MayWait);
         assert_eq!(pool.slots(), 1, "one slot, so the second holder must wait for the first");
 
         let held = pool.obtain(unit);
@@ -1902,22 +1912,21 @@ mod tests {
         assert_eq!(pool.charged(), 0, "every charge is discharged when its buffer returns");
     }
 
-    /// The exemption, and it is stated by holder class rather than by any
-    /// setting: a read that will be retained into a batch allocates past the
-    /// budget instead of waiting. Three buffers at once against a one-slot
-    /// pool on **one** thread — a wait here would be the deadlock the
-    /// exemption exists to prevent, so this test hangs rather than fails if
-    /// the class is ignored.
+    /// The exemption, and it is stated by permission rather than by any
+    /// setting: a loop that grants no wait allocates past the budget instead.
+    /// Three buffers at once against a one-slot pool on **one** thread — a
+    /// wait here would be the deadlock the exemption exists to prevent, so
+    /// this test hangs rather than fails if the policy is ignored.
     #[test]
-    fn a_retaining_read_allocates_past_the_budget_rather_than_waiting() {
+    fn an_unpermitted_wait_allocates_past_the_budget_instead() {
         let unit = 1 << 20;
         let pool = Arc::new(BufferPool::default());
         pool.hint(unit);
         pool.set_limits(unit, POOL_DEPTH);
         assert_eq!(pool.slots(), 1);
 
-        // The default class, and the one the replay loop announces.
-        assert_eq!(pool.class(), HolderClass::Retaining);
+        // The default, and what all three shipped read loops state.
+        assert_eq!(pool.policy(), WaitPolicy::NeverWait);
         let held: Vec<_> = (0..3).map(|_| pool.obtain(unit)).collect();
         assert_eq!(held.len(), 3);
         assert_eq!(pool.charged(), 0, "an exempt read charges no slot");
@@ -1926,36 +1935,36 @@ mod tests {
         assert_eq!(pool.free_len(), 1, "the slot count still bounds what is kept");
     }
 
-    /// The charge belongs to the buffer, not to the pool's current class, so a
-    /// query's two passes may announce different classes over one source while
-    /// the earlier pass's buffers are still out. And it is discharged whether
+    /// The charge belongs to the buffer, not to the pool's current policy, so
+    /// a source may be handed different permissions by successive loops while
+    /// an earlier one's buffers are still out. And it is discharged whether
     /// or not the buffer is kept — counting only the kept ones would leak a
-    /// slot per refused release until every transient reader blocked.
+    /// slot per refused release until every waiting reader blocked.
     #[test]
-    fn a_charge_outlives_the_class_that_took_it_and_survives_a_refused_release() {
+    fn a_charge_outlives_the_policy_that_took_it_and_survives_a_refused_release() {
         let pool = Arc::new(BufferPool::default());
-        pool.set_class(HolderClass::Transient);
+        pool.set_policy(WaitPolicy::MayWait);
         let held = pool.obtain(POOL_MAX_BYTES + 1);
         assert_eq!(pool.charged(), 1);
 
-        pool.set_class(HolderClass::Retaining);
+        pool.set_policy(WaitPolicy::NeverWait);
         drop(held);
         assert_eq!(pool.charged(), 0);
         assert_eq!(pool.free_len(), 0, "a buffer above the ceiling is still dropped");
     }
 
-    /// The class reaches the pool through the trait method, which is the only
-    /// way a read loop has of announcing one — and the default is the exempt
-    /// class, so a source nobody announces to allocates exactly as it did
-    /// before the class existed.
+    /// The policy reaches the pool through the trait method, which is the only
+    /// way a read loop has of granting one — and the default is to permit no
+    /// wait, so a source nobody announces to allocates exactly as it did
+    /// before the policy existed.
     #[test]
-    fn a_source_states_the_holder_class_to_its_pool() {
+    fn a_source_states_the_wait_policy_to_its_pool() {
         let (_file, source) = source_of(b"0123456789abcdef");
-        assert_eq!(source.pool.class(), HolderClass::Retaining);
-        source.hint_holder_class(HolderClass::Transient);
-        assert_eq!(source.pool.class(), HolderClass::Transient);
-        source.hint_holder_class(HolderClass::Retaining);
-        assert_eq!(source.pool.class(), HolderClass::Retaining);
+        assert_eq!(source.pool.policy(), WaitPolicy::NeverWait);
+        source.hint_wait_policy(WaitPolicy::MayWait);
+        assert_eq!(source.pool.policy(), WaitPolicy::MayWait);
+        source.hint_wait_policy(WaitPolicy::NeverWait);
+        assert_eq!(source.pool.policy(), WaitPolicy::NeverWait);
     }
 
     /// A source implementing nothing but the three required methods, to pin
@@ -2399,23 +2408,23 @@ mod tests {
         assert_eq!(held(&one).2, POOL_DEPTH, "serial keeps the pool's own depth");
     }
 
-    /// Two read units, one holder class: the loop that reads a compressed
+    /// Two read units, one wait policy: the loop that reads a compressed
     /// source is the same loop for its chunk assembly and its block decode, so
-    /// a transient loop's reads wait in both pools and a retaining one's
-    /// allocate in both.
+    /// a permitted wait applies in both pools and a withheld one in neither.
     #[tokio::test]
-    async fn a_compressed_source_states_the_class_to_both_pools() {
+    async fn a_compressed_source_states_the_policy_to_both_pools() {
         let payload = xz_test_payload();
         let compressed = xz_compress(&payload, &["--block-size=4096"]);
         let source = XzSource::open(compressed.path()).unwrap();
-        let classes =
-            |source: &XzSource| (source.pool.class(), source.blocks.as_ref().unwrap().pool.class());
-        assert_eq!(classes(&source), (HolderClass::Retaining, HolderClass::Retaining));
-        source.hint_holder_class(HolderClass::Transient);
-        assert_eq!(classes(&source), (HolderClass::Transient, HolderClass::Transient));
+        let policies = |source: &XzSource| {
+            (source.pool.policy(), source.blocks.as_ref().unwrap().pool.policy())
+        };
+        assert_eq!(policies(&source), (WaitPolicy::NeverWait, WaitPolicy::NeverWait));
+        source.hint_wait_policy(WaitPolicy::MayWait);
+        assert_eq!(policies(&source), (WaitPolicy::MayWait, WaitPolicy::MayWait));
 
-        // And the block path still reads correctly while it is waiting-class:
-        // `BlockCache::slot` evicts before it acquires, so a transient reader
+        // And the block path still reads correctly while a wait is permitted:
+        // `BlockCache::slot` evicts before it acquires, so a waiting reader
         // always finds the slot it is about to want.
         source.hint_read_size(1024);
         let got = source.read_range(0, 4096).await.unwrap();

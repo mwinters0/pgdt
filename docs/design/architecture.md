@@ -165,7 +165,7 @@ content size is optional), added in the pass that reshaped these signatures
 because a later pass would have had to touch them all again for one bool.
 `seek_table()` hands a compressed source's block index to the cache without the
 cache knowing what kind of source it holds. The other four are answered by
-every source: `hint_read_size`, `hint_parallelism` and `hint_holder_class` are
+every source: `hint_read_size`, `hint_parallelism` and `hint_wait_policy` are
 about the caller rather than the source and are described below, and
 `partitions` is next.
 
@@ -327,66 +327,79 @@ under it and stays under it. What it costs is named where it bites, at the
 block-decode line below.
 
 **Backpressure is what turns the slot count into a bound on what is
-*outstanding* rather than only on what is idle**, and it is the caller's class
-that decides whether an acquisition waits. `BufferPool::obtain` blocks while
-`slots()` waiting-class buffers are already out, and the buffer it hands back
-carries the charge, so the matching release cannot be lost to a class announced
-in between. The unwaiting take underneath it is what the exempt class gets.
+*outstanding* rather than only on what is idle**, and it is the caller's
+permission that decides whether an acquisition waits. `BufferPool::obtain`
+blocks while `slots()` buffers taken under that permission are already out, and
+the buffer it hands back carries the charge, so the matching release cannot be
+lost to a policy granted in between. The unwaiting take underneath it is what a
+loop granting nothing gets.
 
 **The two kinds of holder are not distinguishable from inside the pool, so the
-caller states which it is.** A holder that **retains into a batch** holds every
-slot it has taken a view into until that batch flushes —
+caller states what may be done to it.** A loop that **retains into a batch**
+holds every slot it has taken a view into until that batch flushes —
 `(max_source_span / chunk) + 1` chunk buffers for the serial replay loop, 65 at
 the defaults and unbounded under `max_source_span: None`; on a block-shaped
 source the same span is three or four whole decoded blocks against a pool of
-two ("The compressed source"). A holder that **reads, consumes and drops**
-holds exactly one. A wait is backpressure for the second and a deadlock for the
-first — the only task that could free the slot would be the one waiting on it —
-and nothing in a `read_range` call says which is calling.
+two ("The compressed source"). A loop that **reads, consumes and drops** holds
+exactly one. A wait is backpressure for the second and a deadlock for the first
+— the only task that could free the slot would be the one waiting on it — and
+nothing in a `read_range` call says which is calling.
 
-**So the exemption is stated by holder class, through a seventh defaulted
-method.** `hint_holder_class(HolderClass)` is announced once per read loop,
+**So the exemption is stated as a permission, through a seventh defaulted
+method.** `hint_wait_policy(WaitPolicy)` is announced once per read loop,
 beside the chunk size and the budget, and it is the same shape one-off-ness
-takes below and for the same reason. `HolderClass::Retaining` never waits: it
-allocates past the budget exactly as every read did before the class existed,
-which is also the default, so a source nobody announces to is unchanged.
-`HolderClass::Transient` waits. The three read loops split two to one — `scan`
-and the mapping pass are transient, since the carry copies what it keeps and an
-`Event` borrows only for the callback, and the replay loop is retaining,
-because `batch::RetainedChunks` pins every chunk a batch has taken a view into
-and the batch then goes to the caller.
+takes below and for the same reason. `WaitPolicy::NeverWait` allocates past the
+budget exactly as every read did before the policy existed, and it is the
+default, so a source nobody announces to is unchanged. `WaitPolicy::MayWait`
+blocks.
 
-**Announcing the transient class is a promise about the loop, not a request.**
-A loop that keeps two reads alive at once against a one-slot pool blocks
-forever, so the discipline is *one slot per waiting holder* and it is a
-property of the caller, like one-off-ness is. Where two pools serve one loop
-the acquisition order is fixed as well: a read that needs both takes the chunk
-slot first and the block slot inside it, never the other way round, so two
-waiting readers cannot hold each other's next slot.
+**It is a permission and not a description of the holder, which is what the
+name has to carry.** What the pool needs to know is whether it may block this
+loop; how long the loop keeps its bytes is the *reason* behind the answer
+rather than the answer itself. Named after the holder, `scan` — which retains
+nothing — had to call itself retaining in order to select the behaviour it
+wanted, which is a false statement about the loop made in order to reach a true
+one about the pool.
 
-**The two failure directions are not comparable, which is why the exempt class
-is the `Default`.** The exempt class where the waiting one was right means the
-bound fails to bind: more memory, degraded, and visible in `peak-rss`. The
-waiting class where it was wrong means a hang, with no output and nothing to
-measure. So a source nobody announces to cannot hang, and a loop whose
-discipline is in any doubt takes the exempt class rather than the tighter
-bound.
+**No read loop in this build grants the permission.** The replay loop cannot:
+`batch::RetainedChunks` pins every chunk a batch has taken a view into and the
+batch then goes to the caller. `scan` and the mapping pass could — the carry
+copies what it keeps and an `Event` borrows only for the callback — and still
+do not, because what a shipped loop's grant buys is exposure rather than
+coverage (below). The first holder that genuinely needs the bound is the fused
+worker, and it is what arms the wait.
 
-**The wait's own test does not run through a read loop, so which class the
-shipped loops announce is not what covers it.**
-`a_transient_read_waits_for_a_slot_rather_than_allocating` drives a bare
-`BufferPool` through `set_class` — two threads against one slot, with a
+**Granting the permission is a promise about the loop, not a request.** A loop
+that keeps two reads alive at once against a one-slot pool blocks forever, so
+the discipline is *one slot per waiting holder* and it is a property of the
+caller, like one-off-ness is. Where two pools serve one loop the acquisition
+order is fixed as well: a read that needs both takes the chunk slot first and
+the block slot inside it, never the other way round, so two waiting readers
+cannot hold each other's next slot.
+
+**The two failure directions are not comparable, which is why `NeverWait` is
+the `Default` and why a loop in any doubt grants nothing.** A bound that fails
+to bind costs memory: degraded, and visible in `peak-rss`. A wait granted where
+it was wrong is a hang on a hot read path, with no output and nothing to
+measure. So a source nobody announces to cannot hang.
+
+**The wait's own test does not run through a read loop, which is why no shipped
+loop has to grant the permission to keep it covered.**
+`a_permitted_wait_takes_a_slot_rather_than_allocating` drives a bare
+`BufferPool` through `set_policy` — two threads against one slot, with a
 negative assertion before the release — and constructs no source at all. That
 matters because the reachability of the wait in a serial build reads like a
-coverage argument and is not one: what a production loop's announcement decides
-is exposure, not what is tested. `tests/holder_class.rs` is the separate half,
-recording which loop announces which, since the pool cannot see it.
+coverage argument and is not one: what a production loop's grant decides is
+exposure, not what is tested. `tests/wait_policy.rs` is the separate half,
+recording what each loop states, since the pool cannot see it.
 
-Reversing which class the two discard loops announce, and renaming the pair to
-state the permission rather than describe the holder, is the out-of-band
-`M68` ([`../status/history/2026-09-07.md`](../status/history/2026-09-07.md),
-"The holder class is a permission, and the shipped loops take the exempt
-one").
+*Rejected: gating the wait on `Parallelism::Serial` rather than on the
+permission.* Under `Serial` there is one reader, so a bound on what is
+outstanding buys nothing — but a gate there would arm the wait exactly when
+`--jobs` is stated, putting a second axis back on a mechanism reduced to one,
+and its distinction from the option validation refused below (that one inferred
+*safety* from an option pair; this infers *pointlessness* from a worker count)
+is too fine to survive being read later.
 
 **The failing configuration without the exemption would be
 `Parallelism::Serial` at both defaults, not an exotic one**: one serial query
@@ -415,24 +428,25 @@ waiting holders' slots, which is a ceiling the library sets and the only one
 rounded out to the retained unit, times however many batches the caller keeps —
 which is not. Two honest terms beat one term that quietly assumes the second
 away. *Rejected: counting every outstanding buffer against the ceiling.* It
-states one number instead of two, and it makes the exempt class able to block
-the waiting one — which is the deadlock read back in through the counter after
-the exemption removed it from the wait.
+states one number instead of two, and it lets a loop that granted nothing block
+one that granted a wait — which is the deadlock read back in through the
+counter after the exemption removed it from the wait.
 
 *Rejected: discharging a slot only where the released buffer is kept.* The
 ceiling refuses a buffer above `POOL_MAX_BYTES` that nobody announced, and a
 charge tied to the keep would leak one slot per refused release until every
-transient reader blocked. The charge is discharged the moment its holder lets
+waiting reader blocked. The charge is discharged the moment its holder lets
 go, whether the buffer is pooled or dropped.
 
 **A wait was not landable before its second holder existed**, which is why this
 is not in the change that made the pool block-capable:
 `ByteRangeSource::partitions` landed with no consumer at all and that was fine,
 because a pure function's whole contract is its return value, where a blocking
-acquire has no behaviour except its interaction with holders. With only the
-exempt holder in the tree the strongest available assertion is "it did not
-block", which the unwaiting take already guaranteed. The test that buys the
-mechanism is two threads against a one-slot pool.
+acquire has no behaviour except its interaction with holders. Against one
+holder the strongest available assertion is "it did not block", which the
+unwaiting take already guaranteed. The test that buys the mechanism is two
+threads against a one-slot pool, and it is where the wait lives until a read
+loop grants one.
 
 **The block pool's release-before-acquire is not a second discipline, it is a
 property of the `parse` shape.** `XzSource`'s retained blocks ("The compressed
@@ -440,12 +454,12 @@ source") sit in a pool of their own and can occupy every slot in it, and the
 retention does release before it acquires: eviction runs down to one below the
 slot count and then takes. On `parse` that is enough, because no batch is built
 and the cache's own reference is the only one — the buffer a decode is about to
-want is one it has already given up, so a transient loop's block decode never
-actually waits. On a query it frees nothing: the drain drops the cache's
-reference while the batch's views keep the buffer outstanding, so the block
-pool's holder and the batch-building holder are the same slots counted twice.
-That shape is a query, and a query's replay announces the exempt class, so the
-two facts meet rather than collide.
+want is one it has already given up, so a `parse`'s block decode would never
+actually wait even where a wait were permitted. On a query it frees nothing:
+the drain drops the cache's reference while the batch's views keep the buffer
+outstanding, so the block pool's holder and the batch-building holder are the
+same slots counted twice. That shape is a query, and a query's replay grants no
+wait, so the two facts meet rather than collide.
 
 **One-off-ness is a property of the caller, so the caller says it.**
 `ByteRangeSource::hint_read_size` is a third, advisory method — defaulted to
@@ -683,12 +697,13 @@ streaming form held 16.2 MiB, which is the pool's two slots, and the two runs
 produce byte-identical caches. *Rejected:* a retained set with a bound of its
 own — two numbers for one bound, which is what the byte budget replaced.
 
-**Evicting before acquiring is also what lets this holder wait.** A transient
-read loop holds no decoded block of its own between reads, so the drain to
-`slots - 1` leaves the slot the decode is about to take and the pool's wait
-never fires ("Execution model and API surface"). A retaining loop's batch keeps
-those buffers outstanding past the drain — which is why that class does not
-wait at all, rather than why the order matters.
+**Evicting before acquiring is also what would let a waiting holder through
+here.** A read loop that holds no decoded block of its own between reads leaves
+the drain to `slots - 1` free to hand it the slot the decode is about to take,
+so the pool's wait would never fire ("Execution model and API surface"). A
+loop pinning chunks into batches keeps those buffers outstanding past the drain
+— which is why such a loop grants no wait at all, rather than why the order
+matters.
 
 **A retained chunk pins the whole block it views, so `parse` is the shape that
 holds least.** `pgdq parse` builds no batches, so `RetainedChunks` never runs
@@ -3433,12 +3448,11 @@ block pool's slot budget — `slots × (decoded block + dictionary)`, one slot p
 worker — and the pool that budget belongs to now exists and holds the decoded
 blocks ("The compressed source"): a serial `parse` of the 3.00 GiB `.xz`
 control reads **64.7 MiB** resident, which is that budget's two 24 MiB slots
-plus what a plain scan holds. It is a ceiling for the loops that announce
-`HolderClass::Transient` — `scan` and the mapping pass, whose acquisitions wait
-rather than allocate past it ("Execution model and API surface") — and a steady
-state for the replay loop, which is exempt because it pins chunks into batches.
-So the number a `parallel-peak-rss` figure measures against is a ceiling on a
-`parse` and two terms on a `query`.
+plus what a plain scan holds. It is a ceiling only for a loop that grants
+`WaitPolicy::MayWait`, and **no loop in this build does** — the fused worker is
+the first that will ("Execution model and API surface"), so today it is a
+steady state everywhere and a `parallel-peak-rss` figure measures against a
+ceiling on a `parse` and two terms on a `query` once that worker lands.
 
 *Rejected: compacting the batch's views once selectivity drops below a
 threshold.* It admits an unbounded peak before the threshold trips, and it

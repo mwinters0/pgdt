@@ -24,8 +24,8 @@ pub use index::{
     preamble_only, union_census,
 };
 pub use io::{
-    ByteRangeSource, DEFAULT_MEMORY_BUDGET, HolderClass, KnownCompression, LocalFileSource,
-    Parallelism, PartitionBoundaries, Partitioning, Recognized, XzSource, open_local,
+    ByteRangeSource, DEFAULT_MEMORY_BUDGET, KnownCompression, LocalFileSource, Parallelism,
+    PartitionBoundaries, Partitioning, Recognized, WaitPolicy, XzSource, open_local,
 };
 pub use map::{
     DataBlock, InsertRun, LargeObjectRegion, Span, SpanBody, SpanText, TEXT_CAP, TilingIssue,
